@@ -61,6 +61,21 @@ typedef struct {
 typedef struct CettaPrimeRegularKernelPreparedExpectedV1
     CettaPrimeRegularKernelPreparedExpectedV1;
 
+typedef struct CettaPrimeRegularKernelContextMemoV1 CettaPrimeRegularKernelContextMemoV1;
+/* Optional nested request scope for successful intrinsic-context checks.
+ * Keys are owned exact scalar-data snapshots, independent of value equality.
+ * The caller holds the arena and symbol table through the scope. A changed
+ * arena identity/epoch or symbol-table instance disables reuse. Active
+ * universe solving and negative results never use a cached verdict.
+ * Allocation refusal returns NULL and leaves ordinary checking available. */
+CettaPrimeRegularKernelContextMemoV1 *
+cetta_prime_regular_kernel_context_memo_enter_v1(Arena *arena);
+void cetta_prime_regular_kernel_context_memo_leave_v1(
+    CettaPrimeRegularKernelContextMemoV1 *memo);
+bool cetta_prime_regular_kernel_context_memo_stats_v1(
+    const CettaPrimeRegularKernelContextMemoV1 *memo,
+    uint64_t *hits, uint64_t *stored);
+
 typedef struct {
     CettaPrimeRegularKernelStatus status;
     CettaPrimeRegularKernelPreparedExpectedV1 *prepared;

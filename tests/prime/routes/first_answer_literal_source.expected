@@ -1,0 +1,19 @@
+(literal 1)
+(computed 1)
+(symbols a)
+(let-star 1)
+(nested 1)
+(prefix 1)
+(prefix 2)
+(list 1)
+(every 1)
+(every 2)
+(every 3)
+[()]
+[()]
+[()]
+[()]
+[()]
+[((() ()))]
+[()]
+[(() () ())]

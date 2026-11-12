@@ -20,6 +20,8 @@
 #include <pthread.h>
 
 typedef struct ResultSet ResultSet;
+typedef struct CettaModuleSourceCatalogue CettaModuleSourceCatalogue;
+typedef struct CettaModuleSourceReference CettaModuleSourceReference;
 typedef struct EvalOutcome EvalOutcome;
 
 #define CETTA_MAX_CMDLINE_ARGS 256
@@ -163,6 +165,7 @@ typedef struct CettaHEModuleRunScope {
 
 typedef struct CettaLibraryContext {
     CettaEvalSession session;
+    struct CettaPrimeInterpretationSelection *prime_interpretation;
     pthread_mutex_t named_mutexes_init_lock;
     bool named_mutexes_init_lock_ready;
     struct CettaEvalMutexRegistry *named_mutexes;
@@ -295,6 +298,8 @@ typedef struct CettaLibraryContext {
      * state, with the same lifetime as this host. */
     void *prime_lf_guest;
     void (*prime_lf_guest_free)(void *guest);
+    CettaModuleSourceCatalogue *module_sources;
+    struct CettaModuleSourceScope *module_source_scope;
     /* Immutable standard definitions retained independently of editable
      * program spaces. Owned by the evaluator for this library session. */
     void *prime_standard_library;
@@ -552,6 +557,45 @@ bool cetta_library_petta_resolve_reference(
 bool cetta_library_module_source_path(CettaLibraryContext *ctx,
                                       const char *spec, char *out,
                                       size_t out_size);
+/* A source catalogue pins MeTTa bytes and resolved import edges. It grants
+ * no execution authority or lifetime for an import's destination. The host
+ * holds this context quiescent while preparing, selecting or freezing it. */
+bool cetta_library_source_catalogue_begin(CettaLibraryContext *ctx);
+bool cetta_library_source_catalogue_freeze(CettaLibraryContext *ctx);
+/* Prepare the actual import/include route's existing module spec. Native
+ * activation stays with the corresponding ordinary execution wrapper. */
+bool cetta_library_module_source_capture(CettaLibraryContext *ctx,
+    const CettaModuleSpec *spec, Arena *arena, CettaModuleSourceReference **reference,
+    Atom **error_out);
+void cetta_library_module_source_release(CettaModuleSourceReference *reference);
+bool cetta_library_module_source_view(const CettaModuleSourceReference *reference,
+    const uint8_t **bytes, size_t *length, const char **canonical_path);
+void cetta_library_module_source_storage(const CettaModuleSourceReference *reference,
+    CettaStorageCensus *census);
+typedef enum {
+    CETTA_MODULE_SOURCE_UNSELECTED,
+    CETTA_MODULE_SOURCE_CAPTURED,
+    CETTA_MODULE_SOURCE_NO_TEXT,
+    CETTA_MODULE_SOURCE_REFUSED
+} CettaModuleSourceLookup;
+CettaModuleSourceLookup cetta_library_module_source_lookup(CettaLibraryContext *ctx,
+    const char *spec, const uint8_t **bytes, size_t *length);
+typedef struct CettaModuleSourceScope {
+    CettaLibraryContext *context;
+    CettaModuleSourceCatalogue *catalogue;
+    struct CettaModuleSourceScope *previous;
+    const struct CettaModuleSourceImage *image;
+    CettaModuleProviderFlags requirements;
+    uint32_t depth;
+    char directory[PATH_MAX];
+    bool active;
+} CettaModuleSourceScope;
+/* Select the importing image and its relative resolution directory. A scope
+ * retains source storage; its caller keeps the context live through leave. */
+bool cetta_library_module_source_enter(CettaLibraryContext *ctx,
+    const CettaModuleSourceReference *reference, CettaModuleSourceScope *scope);
+/* An unbalanced directory/scope stack refuses leave and retains the scope. */
+bool cetta_library_module_source_leave(CettaModuleSourceScope *scope);
 bool cetta_library_include_module(CettaLibraryContext *ctx, const char *spec,
                                   Space *space, Arena *eval_arena,
                                   Arena *persistent_arena, Registry *registry,
@@ -587,6 +631,10 @@ bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
  * its first preparation, final materialization and cleanup have atomic costs. */
 struct RhocalcPayloadProvider;
 bool cetta_library_native_execution_supported(const CettaLibraryContext *ctx, SymbolId head);
+/* Owned services whose complete interpretation consumes immutable data and
+ * does not dispatch payload code or access external state. This classifies
+ * execution effects; callers still establish source and input authority. */
+bool cetta_library_native_execution_data_only(const CettaLibraryContext *ctx, SymbolId head);
 bool cetta_library_native_execution_open(CettaLibraryContext *ctx, Space *space,
     Arena *arena, Atom *call, const struct RhocalcPayloadProvider *payload,
     CettaOwnedExecution *out);

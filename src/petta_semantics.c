@@ -3511,7 +3511,8 @@ bool petta_semantics_existence_view(const Atom *expression,
         if (reified->kind != ATOM_EXPR || reified->expr.len != 2u ||
             reified->expr.elems[0]->kind != ATOM_SYMBOL ||
             (atom_symbol_current_id(reified->expr.elems[0]) != primary_reify &&
-             atom_symbol_current_id(reified->expr.elems[0]) != g_builtin_syms.collapse))
+             atom_symbol_current_id(reified->expr.elems[0]) !=
+                 g_builtin_syms.collapse))
             continue;
         const Atom *match = reified->expr.elems[1];
         bool once = match->kind == ATOM_EXPR && match->expr.len == 2u &&

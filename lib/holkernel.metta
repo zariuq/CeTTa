@@ -29,6 +29,15 @@
 (= (hol:check-dag $k $rows $root)
    (function (chain (eval (__cetta_lib_hol_check-dag $k $rows $root)) $result (return $result))))
 
+; A checkpoint owns the exact declaration history used by the checker.
+(: hol:check-dag-at (-> %Undefined% Atom %Undefined% Atom))
+(: __cetta_lib_hol_check-dag-at (-> Atom Atom Atom Atom))
+(= (hol:check-dag-at $environment $rows $root)
+   (function (chain (eval (__cetta_lib_hol_check-dag-at $environment $rows $root)) $result (return $result))))
+
+(= (hol:admits-at $environment $theorem)
+   (function (chain (eval (__cetta_lib_hol_admits-at $environment $theorem)) $result (return $result))))
+
 (: hol:budget (-> %Undefined% %Undefined% Atom))
 (: __cetta_lib_hol_budget (-> Atom Atom Atom))
 (= (hol:budget $k $budget)

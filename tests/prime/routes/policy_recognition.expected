@@ -1,0 +1,8 @@
+z
+a
+[a]
+[(pair (result z) 1)]
+[a]
+[()]
+[(a b)]
+[(once (search-policy atp-saturation) untouched)]

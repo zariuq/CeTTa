@@ -1993,6 +1993,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --emit-runtime-stats <file.metta> # dump runtime counters to stderr after execution\n", out);
     fputs("       cetta --emit-prime-need-trace <file.metta> # emit exact Prime occurrences, receipts, and completion to stderr\n", out);
     fputs("       cetta --lang prime --prime-rewrite-frontier <monolithic|candidate-local|demand-cohort> <file.metta>\n", out);
+    fputs("       cetta --lang prime --prime-eval-residuals <answered|completed|carried> <file.metta> # experimental: how eval treats a returned residual\n", out);
     fputs("       cetta --lang prime --oracle-audit <file.metta>    # replay every oracle answer through the declared equations; stop on a mismatch\n", out);
     fputs("       cetta --lang prime --oracle-residues <file.metta> # check oracle sums and products modulo three primes; stop on a mismatch\n", out);
     fputs("       cetta --eval-hashcons <file.metta>      # experimental: hash-cons eval-arena atoms\n", out);
@@ -2195,6 +2196,8 @@ typedef struct {
     PeTTaCompiledReaderV1 *petta_reader;
     PeTTaCompiledDocumentV1 petta_document;
     bool petta_document_open;
+    /* The foreign or Prolog runtime refused its final shutdown. */
+    bool shutdown_failed;
 } CettaMainCleanup;
 
 /* The document's forms the run has yet to finish stay in the universe. */
@@ -2208,6 +2211,16 @@ static void cetta_main_document_roots(const TermUniverse *universe,
         visit(visit_context, cleanup->atom_ids[i]);
 }
 
+/* Escaped values may keep a private library context alive until the last
+ * arena root is released. Foreign contexts are finalized only after those
+ * owners have detached, while symbol identities still live: a domain runs
+ * this after freeing its storage and before its identity tables. */
+static void cetta_main_cleanup_retire(void *context) {
+    CettaMainCleanup *cleanup = context;
+    cetta_foreign_global_shutdown();
+    if (!cetta_lib_prolog_global_shutdown()) cleanup->shutdown_failed = true;
+}
+
 static void cetta_main_cleanup_tail(void *context) {
     CettaMainCleanup *cleanup = context;
     free(cleanup->inline_buf);
@@ -2218,6 +2231,9 @@ static void cetta_main_cleanup_tail(void *context) {
     }
     while (state_cell_reclamation_due())
         (void)state_cell_reclaim_bounded(4096u);
+
+    if (!cleanup->term_domain)
+        cetta_main_cleanup_retire(cleanup);
 }
 
 static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
@@ -2299,23 +2315,21 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
 
     if (cleanup->term_domain && cleanup->term_domain_scope &&
         cetta_term_domain_close_if_last(cleanup->term_domain_scope,
-            cleanup->term_domain, cetta_main_cleanup_tail, cleanup)) {
+            cleanup->term_domain, cetta_main_cleanup_tail,
+            cetta_main_cleanup_retire, cleanup)) {
         cleanup->term_domain_scope = NULL;
         cleanup->term_domain = NULL;
-        return ok;
+        return ok && !cleanup->shutdown_failed;
     }
     cetta_main_cleanup_tail(cleanup);
+    /* A domain other holders keep: its storage outlives this run. */
+    if (cleanup->term_domain)
+        cetta_main_cleanup_retire(cleanup);
     if (cleanup->term_domain_scope) {
         cetta_term_domain_leave(cleanup->term_domain_scope);
         cleanup->term_domain_scope = NULL;
     }
-
-    /* Escaped values may have kept a private library context alive until
-     * the last arena root above was released. Finalize foreign contexts only
-     * after those owners have detached, while symbol identities still live. */
-    cetta_foreign_global_shutdown();
-    if (!cetta_lib_prolog_global_shutdown()) ok = false;
-
+    if (cleanup->shutdown_failed) ok = false;
     if (cleanup->term_domain) {
         cetta_term_domain_release(cleanup->term_domain);
         cleanup->term_domain = NULL;
@@ -2840,6 +2854,7 @@ static int cetta_main(int argc, char **argv) {
     bool petta_strict = false;
     bool petta_strict_det = false;
     const char *prime_rewrite_frontier = NULL;
+    const char *prime_eval_residuals = NULL;
     bool eval_hashcons = false;
     bool list_profiles = false;
     bool translate_mode = false;
@@ -3002,6 +3017,23 @@ static int cetta_main(int argc, char **argv) {
                 return 2;
             }
             prime_rewrite_frontier = value;
+            continue;
+        }
+        if (strcmp(argv[i], "--prime-eval-residuals") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            const char *value = argv[++i];
+            if (strcmp(value, "answered") != 0 &&
+                strcmp(value, "completed") != 0 &&
+                strcmp(value, "carried") != 0) {
+                fprintf(stderr,
+                        "error: invalid Prime eval residuals '%s'\n",
+                        value);
+                return 2;
+            }
+            prime_eval_residuals = value;
             continue;
         }
         if (strcmp(argv[i], "--eval-hashcons") == 0) {
@@ -3305,6 +3337,7 @@ static int cetta_main(int argc, char **argv) {
             list_profiles || source_endpoint.syntax != CETTA_SYNTAX_AUTO ||
             import_mode_overridden || petta_strict || petta_strict_det ||
             emit_prime_need_trace || prime_rewrite_frontier ||
+            prime_eval_residuals ||
             prefer_rationals_cli || curried_arrows_cli || eval_hashcons ||
             fuel_override_requested ||
             num_threads_requested || value_bytes || rho_reduction_limit_requested ||
@@ -3394,6 +3427,12 @@ static int cetta_main(int argc, char **argv) {
     if (prime_rewrite_frontier && lang->id != CETTA_LANGUAGE_PRIME) {
         fprintf(stderr,
                 "error: --prime-rewrite-frontier requires --lang prime\n");
+        free(inline_buf);
+        return 2;
+    }
+    if (prime_eval_residuals && lang->id != CETTA_LANGUAGE_PRIME) {
+        fprintf(stderr,
+                "error: --prime-eval-residuals requires --lang prime\n");
         free(inline_buf);
         return 2;
     }
@@ -3737,6 +3776,11 @@ static int cetta_main(int argc, char **argv) {
         cetta_eval_session_record_generic_setting(
             &runtime.libraries.session, "prime-rewrite-frontier",
             CETTA_EVAL_OPTION_VALUE_SYMBOL, prime_rewrite_frontier, 0);
+    }
+    if (prime_eval_residuals) {
+        cetta_eval_session_record_generic_setting(
+            &runtime.libraries.session, "prime-eval-residuals",
+            CETTA_EVAL_OPTION_VALUE_SYMBOL, prime_eval_residuals, 0);
     }
     eval_set_library_context(&runtime.libraries);
     cleanup.parser_rational_literals_old =

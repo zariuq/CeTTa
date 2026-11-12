@@ -1,0 +1,14 @@
+{"id":"1","command":"create","name":"arithmetic"}
+{"id":"2","command":"declare","source":"(hol:inductive Nat (u 0) (: Z Nat) (: S (-> Nat Nat)))"}
+{"id":"3","command":"declare","source":"(hol:define add (-> Nat Nat Nat) (= (add $n Z) $n) (= (add $n (S $m)) (S (add $n $m))))"}
+{"id":"4","command":"run","expression":"(add (S Z) (S Z))"}
+{"id":"5","command":"inspect","name":"add","characters":1000}
+{"id":"6","command":"goal","goal":"right-unit","checker":"type","statement":"(-> (n : Nat) (id Nat (add n Z) n))","description":"Addition by zero preserves its input."}
+{"id":"7","command":"propose","candidate":"wrong","goal":"right-unit","strategy":"reflexivity","proof":"(lam n (refl (S n)))"}
+{"id":"8","command":"check","candidate":"wrong","budget":100000}
+{"id":"9","command":"status","goal":"right-unit","budget":100000}
+{"id":"10","command":"propose","candidate":"right","goal":"right-unit","strategy":"reflexivity","proof":"(lam n (refl n))"}
+{"id":"11","command":"check","candidate":"right","budget":100000}
+{"id":"12","command":"publish","attempt":"right","name":"right-unit","budget":100000}
+{"id":"13","command":"note","note":"next","text":"Explore the left identity, which needs induction.","source":"arithmetic-workflow"}
+{"id":"14","command":"save","path":"arithmetic.math.json","budget":100000}

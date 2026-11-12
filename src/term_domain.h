@@ -37,7 +37,10 @@ void cetta_term_domain_leave(CettaTermDomainScope *);
  * Consume both only when they are the final references. The disposer runs
  * during logical finalization, with physical storage still live; new retains
  * refuse the closed owner. An inhibited/sweeping TU declines. False leaves
- * both references and the scope intact. */
+ * both references and the scope intact. A non-null retirer runs after the
+ * domain's storage is freed and before its symbol, variable and hash-cons
+ * tables are, for runtimes that must outlive every stored value but not the
+ * identities those values name. */
 bool cetta_term_domain_close_if_last(CettaTermDomainScope *, CettaTermDomain *,
-    void (*dispose)(void *), void *context);
+    void (*dispose)(void *), void (*retire)(void *), void *context);
 #endif

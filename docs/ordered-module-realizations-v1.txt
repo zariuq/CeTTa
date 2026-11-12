@@ -1,0 +1,93 @@
+One module, two retained clients
+
+The frontend uses the existing checked .module parser and module:assemble /
+module:rewrite-rules interface. The assembled ModuleRewriteRulesV1 contains
+the authoritative LanguageDef and portable declaration origins. Both clients
+consume that one captured value and the same checked PremiseProvider snapshot.
+The default worker enumeration is explicit: portable origin strings in lexical order,
+or an explicitly supplied permutation of every physical declaration index.
+This is a worker policy, not a global MeTTa answer order. Cross-machine
+completion compares full occurrence multisets, with bindings and provenance.
+Each worker resumes its own captured publication without replay or omission.
+The compiled artifact records the resulting index-to-origin table and binds
+the exact presentation, order and snapshot by content hashes.
+Its sorted-program table binds each declared root sort to a fused program.
+The checked subject sort selects that entry before matching. A variable-root
+rule for another sort is an empty candidate, and original declaration ordinals
+remain intact when rules of other sorts are skipped.
+
+Authored execution loads the six pinned GSLT sources quoted by the PeTTa
+bridges, then executes gslt:program:run, gslt:program:resume and publication.
+The root job requests retain scoped bindings, premise states and RuleJobReceipt
+values. No contextual traversal is licensed by this client.
+
+Fused execution runs the OrderedMatchMachineLanguage PApp-encoded program and
+machine constructors: mm-switch, mm-dispatch, mm-drop, mm-try, mm-prefilter,
+binding decisions, positive query operations and template construction.
+It keeps each actual encoded state, leaf ordinal, captured bindings, current
+bindings and provider-row choices. It never invokes the authored program
+driver. Branch work precedes fallback work, including after suspension.
+
+The public binding observation visits every declared TypeContext variable by
+name and returns Some(value) or None. Repeated or foreign names are rejected.
+The ternary fixture deliberately shows that the raw association-list layouts
+of the two matchers differ. Both raw receipts and full residual states remain
+available; only the declared logical observer supplies the common boundary.
+
+Bounded delivery runs in MeTTa. Before work, the actual session-owned cursor
+must have the expected lineage, the consumed count must equal the captured
+receipt count, and the captured receipts must remain a prefix of publication.
+Selection takes at most the requested number of remaining occurrences. Zero
+selection preserves the cursor. Work budget and answer limit are independent.
+A completed state is not restarted; failed candidates publish no occurrence.
+
+The executable profile checks base-sorted constructor signatures, closed
+subjects, equation-free first-order rules, variable availability, positive
+provider modes and typed finite provider rows. Query arguments can contain
+nested first-order constructor patterns. All input arguments must be bound
+before their query starts; outputs become available to later queries. Metadata
+names must have the string representation required by the language codec.
+Builtin eq, binders, collections,
+conversion equations and unsupported premise forms are refused. Refusal keeps
+the submitted rule/module/provider syntax as data. Provider rule examples
+enter through the existing ModuleRuleOccurrenceV1 / RewriteRule representation;
+the current .module text reader does not author those query declarations.
+
+Run the focused gate:
+
+  make test-ordered-module-realizations-v1
+
+The reader binary, reader artifact, runtime and output destination are
+configurable through ORDERED_MODULE_*_V1 Make variables. To run a single
+consumer directly, use tools/module_ordered_realizations_v1.py with
+--reader-cetta and --reader-artifact. Select --route authored, fused or both.
+--schedule 0:0,16:1,128:1,128:100 exercises retained slices.
+--fused-enumeration reverse-complete retains private fused results until the
+finite local search completes, then publishes them in reverse. It has the same
+full occurrence multiset while once may select a different valid occurrence.
+The declaration policy remains the default for both existing workers. --provider and
+--rule-occurrences accept the existing checked representation illustrated by
+tests/ordered_module/. Complete occurrence multisets are compared when both workers reach completion;
+unfinished cuts retain their own remaining work and do not assert equality
+of currently available batches. For per-policy list comparisons, the chosen work
+schedules must reach equivalent source boundaries; raw work counts differ.
+Retained calls validate the runtime, authored sources, fused execution library
+and delivery library revisions before doing work, including zero-work calls.
+
+Evidence boundary
+
+The external .module reader is independently qualified executable code.
+There is no claim here that its original bytes-to-language decoding is proved
+in Lean. The native gate observes the actual shared draft CeTTa binary in its
+PeTTa dialect. Its differential checks are implementation evidence, separate
+from the Lean correspondence and separate from formal correctness of the C
+implementation. The gate compares actual native readouts with a separately
+stated direct source observer and detects native publication mutations that
+lose duplicates, add successes or restart delivery. A completed permutation
+is accepted by the semantic observer; a falsely advertised declaration order
+is separately detected as a worker-policy mismatch.
+
+Qualification writes generated client inputs, raw output, diagnostics,
+refused syntax and a summary with binary/library/parser hashes. Measurements
+report successful matched rows, each backend's own primitive work and its
+serialized retained observation size. They do not claim a runtime speedup.

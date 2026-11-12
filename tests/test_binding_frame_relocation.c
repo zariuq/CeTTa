@@ -261,6 +261,70 @@ static void inventory_growth(void) {
     arena_free(&source); arena_free(&destination);
 }
 
+typedef struct {
+    PrimeNeedArenaAudit *audit;
+    unsigned visits;
+} SchemaAudit;
+
+static bool audit_schema_name(const Atom *atom, void *context) {
+    SchemaAudit *audit = context;
+    audit->visits++;
+    return prime_need_arena_audit_atom(audit->audit, atom);
+}
+
+static void retained_schema_names(void) {
+    Arena stable, forbidden;
+    arena_init_detached(&stable); arena_init_detached(&forbidden);
+    CettaFrameIdentity epoch = fresh(), spare_epoch = fresh();
+    Bindings bindings;
+    prepare(&bindings, &stable, epoch);
+    BindingsFrameIndexEntry *entry = frame(&bindings, epoch);
+    BindingsFrameSchema *expanded = bindings_frame_schema_clone_capacity(entry->schema, 4u);
+    CHECK(expanded && entry->slot_len == 2u, "prepare extra presentation beyond the logical slots");
+    if (!expanded) abort();
+    bindings_frame_schema_release(entry->schema); entry->schema = expanded;
+    Atom *hidden = atom_var_with_name_key(&stable,
+        atom_expr2(&forbidden, atom_symbol(&forbidden, "hidden"),
+                   atom_string(&forbidden, "name")), var_id_from_base(91u));
+    expanded->name_keys[3] = hidden;
+    PrimeNeedArenaAudit *owner = prime_need_arena_audit_new(&forbidden);
+    SchemaAudit audit = {.audit = owner};
+    CHECK(owner && bindings_logical_atoms_satisfy(&bindings, audit_schema_name, &audit),
+          "ordinary logical roots exclude presentation outside their slot domain");
+    audit.visits = 0u;
+    CHECK(!bindings_retained_schema_atoms_satisfy(&bindings, audit_schema_name, &audit) &&
+          audit.visits == 2u && entry->schema == expanded && expanded->name_keys[3] == hidden,
+          "retained-schema audit finds a hidden structural name without changing its owner");
+    prime_need_arena_audit_free(owner);
+    owner = prime_need_arena_audit_new(&forbidden);
+    audit.audit = owner;
+    expanded->name_keys[3] = atom_expr2(&stable, atom_symbol(&stable, "held"), atom_int(&stable, 9));
+    audit.visits = 0u;
+    CHECK(bindings_retained_schema_atoms_satisfy(&bindings, audit_schema_name, &audit) &&
+          audit.visits == 2u,
+          "all populated schema-capacity keys are inspected when their payloads are held");
+
+    BindingsBuilder builder;
+    CHECK(bindings_builder_init(&builder, NULL), "prepare an actual recycled frame owner");
+    uint32_t mark = bindings_builder_save(&builder);
+    CHECK(bindings_builder_register_complete_frame_schema(&builder, expanded, spare_epoch),
+          "publish a temporary complete frame before rollback");
+    bindings_builder_rollback(&builder, mark);
+    audit.visits = 0u;
+    CHECK(builder.current.frame_index && builder.current.frame_index->spare_len == 1u &&
+          !bindings_retained_schema_atoms_satisfy(&builder.current, audit_schema_name, &audit) &&
+          audit.visits == 0u,
+          "recycled spares decline before a dead backing or presentation is traversed");
+    CHECK(!bindings_retained_schema_atoms_satisfy(NULL, audit_schema_name, &audit) &&
+          !bindings_retained_schema_atoms_satisfy(&bindings, NULL, NULL),
+          "unknown schema audit inputs refuse conservatively");
+    bindings_builder_free(&builder);
+    prime_need_arena_audit_free(owner);
+    bindings_free(&bindings);
+    arena_free(&forbidden); arena_free(&stable);
+    cetta_frame_identity_release(epoch); cetta_frame_identity_release(spare_epoch);
+}
+
 static void identical_snapshot_merge(void) {
     Arena arena; arena_init(&arena);
     CettaFrameIdentity epoch = fresh(), context_epoch = fresh();
@@ -327,7 +391,7 @@ int main(void) {
     distinct_occurrences_and_episodes();
     failed_episode(false); failed_episode(true);
     cached_image_does_not_clear_failure(); schema_only_relocation(); inventory_growth();
-    identical_snapshot_merge();
+    identical_snapshot_merge(); retained_schema_names();
     bindings_thread_cache_free(); g_var_intern = NULL; var_intern_free(&vars);
     g_symbols = NULL; symbol_table_free(&symbols);
     printf("BindingFrameRelocation checks=%u failures=%u\n", checks, failures);

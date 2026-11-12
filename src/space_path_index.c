@@ -1252,9 +1252,9 @@ static CettaSpacePathIndex *path_wide_index(
         : NULL;
 }
 
-/* Choose a rigid coordinate after a variable in the trie's structural order.
- * Prefix-selective patterns keep their existing access path. Explicit frames
- * make the coordinate search independent of the C call stack. */
+/* Choose a rigid coordinate after a variable, or a rigid string which the
+ * primary trie cannot distinguish. Prefix-selective patterns keep their
+ * existing access path. Explicit frames avoid C recursion. */
 static CettaSpacePathIndex *path_demand(Space *space, Atom *pattern,
                                       uint64_t *key, bool *rent,
                                       CettaIndex **rented,
@@ -1295,8 +1295,11 @@ static CettaSpacePathIndex *path_demand(Space *space, Atom *pattern,
         Atom *child = frame->term->expr.elems[frame->child];
         if (child && child->kind == ATOM_VAR)
             unbound = true;
+        /* Past the trie's levels a bound value is keyed though no variable
+         * precedes it: the trie holds every row below there in one leaf. */
         if (path_query_key(child, &kind, key) &&
-            (unbound || depth > CETTA_INDEX_DEPTH_LIMIT || kind == CETTA_SPACE_PATH_STRING_HASH_KEY)) {
+            (unbound || depth > CETTA_INDEX_DEPTH_LIMIT ||
+             kind == CETTA_SPACE_PATH_STRING_HASH_KEY)) {
             if (frame->child != 0u) {
                 found = true;
                 break;
@@ -1746,7 +1749,8 @@ static bool path_candidates(Space *space, CettaSpacePathIndex *index, Atom *patt
                             CettaIndex *count, CettaIndex *capacity);
 
 bool space_path_index_candidates(Space *space, Atom *pattern,
-                                CettaIndex **out, CettaIndex *count, CettaIndex *capacity) {
+                                CettaIndex **out, CettaIndex *count,
+                                CettaIndex *capacity) {
     if (capacity) *capacity = 0;
     space_dense_settle_for_pattern(space, pattern);
     if (!space || !space->native.universe || !out || !count || space->overlay_base ||
@@ -1810,7 +1814,8 @@ bool space_path_index_candidates(Space *space, Atom *pattern,
  * its head is not a symbol. */
 static bool path_candidates_head(Space *space, CettaSpacePathIndex *index,
                                  SymbolId query_head, uint64_t key, bool broad,
-                                 CettaIndex **out, CettaIndex *count, CettaIndex *capacity) {
+                                 CettaIndex **out, CettaIndex *count,
+                                 CettaIndex *capacity) {
     path_budget_touch(index);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_POSITION_INDEX_LOOKUP);
     PathPosting *posting, *headed;
@@ -2434,7 +2439,7 @@ static HeadRowKind head_row_kind(const TermUniverse *universe, AtomId id,
     }
     if (header->tag != ATOM_EXPR)
         return HEAD_ROW_NONE;
-    CettaExprLen arity = (CettaExprLen)(header->aux32 & CETTA_TERM_HDR_DATA_MASK);
+    CettaExprLen arity = tu_authored_arity(universe, id);
     if (arity == 0u)
         return HEAD_ROW_NONE;
     /* Private list, callable and compound carriers spell a logical shape
@@ -2573,6 +2578,27 @@ static bool head_index_current(const Space *space,
         index->source_len == space->native.len;
 }
 
+static bool head_index_extend(Space *space, CettaSpaceHeadIndex *index) {
+    if (space->native.marked || space->match_backend.native.match_trie_pins ||
+        index->universe != space->native.universe ||
+        index->universe_instance != space->native.universe->instance_id ||
+        index->universe_epoch != space->native.universe->storage_epoch ||
+        index->prefix_epoch != space->prefix_epoch ||
+        index->source_len > space->native.len)
+        return false;
+    size_t width = cetta_atom_id_storage_width_bytes_from_bits(space->native.atom_id_width_bits);
+    if (!width || !space->native.atom_ids) return false;
+    /* Only the authenticated physical suffix is missing. Publishing the new
+     * ceiling last prevents a partially extended index from being current. */
+    for (CettaIndex row = index->source_len; row < space->native.len; row++) {
+        AtomId id = cetta_atom_id_storage_load_bits(space->native.atom_ids + (size_t)row * width,
+            space->native.atom_id_width_bits);
+        head_index_add_row(index, id, row);
+    }
+    index->source_len = space->native.len;
+    return true;
+}
+
 static CettaSpaceHeadIndex *head_index_build(Space *space) {
     size_t width = cetta_atom_id_storage_width_bytes_from_bits(
         space->native.atom_id_width_bits);
@@ -2618,7 +2644,8 @@ CettaSpaceHeadIndex *space_head_index_prepare(Space *space) {
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
         return NULL;
     SpaceMatchNativeState *state = &space->match_backend.native;
-    if (state->head_index && !head_index_current(space, state->head_index))
+    if (state->head_index && !head_index_current(space, state->head_index) &&
+        !head_index_extend(space, state->head_index))
         space_head_index_retire(space);
     if (!state->head_index)
         state->head_index = head_index_build(space);
@@ -2674,6 +2701,9 @@ bool space_head_index_open(Space *space, const Atom *pattern,
     cursor->keyed = head_posting_find(
         index, head_key(atom_symbol_current_id(pattern->expr.elems[0]), length));
     cursor->open = head_posting_find(index, head_key(SYMBOL_ID_NONE, length));
+    /* A data symbol need not be registered. Its keyed probe then is the
+     * same open-head posting, which must still be enumerated only once. */
+    if (cursor->keyed == cursor->open) cursor->keyed = HEAD_NONE;
     cursor->keyed_next = cursor->keyed != HEAD_NONE
         ? index->postings[cursor->keyed].front : 0u;
     cursor->open_next = cursor->open != HEAD_NONE

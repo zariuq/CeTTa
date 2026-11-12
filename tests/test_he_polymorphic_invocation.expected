@@ -1,0 +1,8 @@
+[7]
+[True]
+[(Pair 7 True)]
+[(Pair True 7)]
+[(Pair 7 True)]
+[Yes]
+[Yes]
+[(Error (same 7 True) (BadArgType 2 Number Bool))]

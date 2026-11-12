@@ -136,7 +136,7 @@ void cetta_term_domain_leave(CettaTermDomainScope *scope) {
 }
 
 static void domain_destroy(CettaTermDomain *domain,
-        void (*dispose)(void *), void *context) {
+        void (*dispose)(void *), void (*retire)(void *), void *context) {
     /* Resource finalizers see the domain whose objects they are retiring.
      * The final release is serialized with interpreter/session switching. */
     SymbolTable *symbols = g_symbols;
@@ -148,6 +148,7 @@ static void domain_destroy(CettaTermDomain *domain,
     if (dispose) dispose(context);
     term_universe_free(&domain->universe);
     arena_free(&domain->persistent);
+    if (retire) retire(context);
     if (domain->shares_atoms) hashcons_free(&domain->hashcons);
     var_intern_free(&domain->variables);
     symbol_table_free(&domain->symbols);
@@ -164,11 +165,12 @@ void cetta_term_domain_release(void *context) {
     uint64_t before = atomic_fetch_sub_explicit(&domain->references, 1u,
                                                 memory_order_acq_rel);
     if (!before) abort();
-    if (before == 1u) domain_destroy(domain, NULL, NULL);
+    if (before == 1u) domain_destroy(domain, NULL, NULL, NULL);
 }
 
 bool cetta_term_domain_close_if_last(CettaTermDomainScope *scope,
-        CettaTermDomain *owned, void (*dispose)(void *), void *context) {
+        CettaTermDomain *owned, void (*dispose)(void *), void (*retire)(void *),
+        void *context) {
     if (!owned || !scope || scope->domain != owned || !dispose ||
         g_symbols != &owned->symbols || g_var_intern != &owned->variables ||
         g_hashcons != (owned->shares_atoms ? &owned->hashcons : NULL) ||
@@ -178,6 +180,6 @@ bool cetta_term_domain_close_if_last(CettaTermDomainScope *scope,
     if (!atomic_compare_exchange_strong_explicit(&owned->references, &expected, 0u,
             memory_order_acq_rel, memory_order_relaxed)) return false;
     (void)domain_scope_detach(scope);
-    domain_destroy(owned, dispose, context);
+    domain_destroy(owned, dispose, retire, context);
     return true;
 }

@@ -656,6 +656,7 @@ static void sj_admitted_grow(SjAdmissionSpace *space) {
 static uint64_t g_admission_epoch = 1u;
 
 uint64_t prime_scoped_judgment_admission_epoch(void) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     return g_admission_epoch;
 }
 
@@ -734,8 +735,11 @@ static void sj_admission_follows_contents(uint64_t from, uint64_t to) {
     }
 }
 
+static void sj_env_retires_instance(uint64_t instance);
+
 static void sj_admission_retires_instance(uint64_t instance) {
     CETTA_SCOPED_SHARED_TRANSITION(retirement);
+    sj_env_retires_instance(instance);
     if (!g_admission_space_capacity) return;
     size_t slot = sj_admission_space_slot(instance, g_admission_space_capacity);
     SjAdmissionSpace **link = &g_admission_spaces[slot];
@@ -776,6 +780,7 @@ void prime_scoped_judgment_storage_census(CettaStorageCensus *census) {
 }
 
 void prime_scoped_judgment_follow_space_contents(void) {
+    CETTA_SCOPED_SHARED_TRANSITION(subscription);
     static bool follows_contents = false;
     if (!follows_contents) {
         space_set_contents_moved_hook(sj_admission_follows_contents);
@@ -952,12 +957,46 @@ static SjSetEnv g_set_envs[SJ_PROFILE_COUNT];
 static SjSetEnv *g_current_set_env = &g_set_envs[SJ_PROFILE_HOL];
 #define g_set_env (*g_current_set_env)
 
+/* The derived overlay borrows its source universe. Retire that view while
+ * the source header and universe are still alive, including views reached
+ * through an overlay chain. Invalidation precedes recursive Space retirement. */
+static void sj_env_retires_instance(uint64_t instance) {
+    for(size_t i=0u;i<SJ_PROFILE_COUNT;i++) {
+        SjSetEnv *env=&g_set_envs[i];
+        if(!env->overlay_ready)continue;
+        bool own=env->overlay.instance_id==instance;
+        bool borrowed=env->base_instance==instance;
+        for(const Space *base=env->overlay.overlay_base;!borrowed && base;base=base->overlay_base)
+            borrowed=base->instance_id==instance;
+        if(!own && !borrowed)continue;
+        env->overlay_ready=false;
+        env->base_instance=0u;env->base_revision=0u;
+        env->constant_count=0u;env->current_constant_count=0u;
+        env->current_instance=0u;env->current_revision=0u;
+        env->current_mutation=0u;env->current_admission=0u;
+        for(size_t d=0u;d<env->def_count;d++) {
+            for(size_t r=0u;r<env->defs[d].rule_count;r++)free(env->defs[d].rules[r].pats);
+            free(env->defs[d].rules);
+        }
+        free(env->defs);env->defs=NULL;env->def_count=0u;
+        env->kernel_rules=NULL;
+        if(env->kernel_rule_arena_ready) {
+            env->kernel_rule_arena_ready=false;
+            arena_free(&env->kernel_rule_arena);
+        }
+        env->stored=NULL;env->stored_count=0u;
+        env->stored_atoms=NULL;env->stored_atom_count=0u;
+        if(!own)space_free(&env->overlay);
+    }
+}
+
 #include "prime_common_set_profile.inc"
 
 /* A declaration selects its space's theory, not an evaluator-wide default.
  * Cache only the lookup at an exact space instance and revision. A changed
  * declaration must be observed before any judgment or proof reuse. */
 static SjTheoryProfile sj_space_profile(Space *space) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     if (!space) return SJ_PROFILE_UNSELECTED;
     for (const Space *s = space; s; s = s->overlay_base)
         for (size_t i = 0u; i < SJ_PROFILE_COUNT; i++) {
@@ -1289,6 +1328,7 @@ static bool sj_space_reads_through(const Space *space, const Space *overlay) {
 }
 
 static SjSetEnv *sj_env(Space *space) {
+    prime_scoped_judgment_follow_space_contents();
     SjTheoryProfile profile = sj_space_profile(space);
     /* Internal type/declaration services may use the logical core without
      * interpreting set: forms. No set constants or axioms enter that core. */
@@ -4928,8 +4968,14 @@ static bool sj_dependencies_current_as(SjProofState *st, Atom *record,
             prior->require_admission == require_admission)
             return sj_dependencies_walk(st, record, depth, require_admission, prior->memo, &height);
     }
+    CettaPrimeDeclarationContextMemoV1 *declarations=
+        prime_semantics_declaration_context_memo_enter(&st->env->overlay,st->arena);
+    CettaPrimeRegularKernelContextMemoV1 *contexts=
+        cetta_prime_regular_kernel_context_memo_enter_v1(st->arena);
     g_dependency_walk = &walk;
     bool current = sj_dependencies_walk(st, record, depth, require_admission, &memo, &height);
+    cetta_prime_regular_kernel_context_memo_leave_v1(contexts);
+    prime_semantics_declaration_context_memo_leave(declarations);
     g_dependency_walk = walk.outer;
     return current;
 }
@@ -4985,6 +5031,7 @@ static void sj_current_constant_remember(SjSetEnv *env, Atom *name) {
 
 bool prime_scoped_constant_context_current(Arena *a, Space *space, Atom *name,
     CettaPrimeLevelBudgetV1 *budget, Atom **reason) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     if (reason) *reason = NULL;
     if (!a || !space || !name || name->kind != ATOM_SYMBOL) return true;
     const Space *root = space;
@@ -5067,6 +5114,7 @@ bool prime_scoped_constant_context_current(Arena *a, Space *space, Atom *name,
 }
 
 void prime_scoped_prepare_context(Space *space) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     static _Thread_local bool preparing;
     if (!space || preparing) return;
     preparing = true;
@@ -8299,6 +8347,7 @@ static Atom *sj_typed_call_judge(SjProofState *st, Atom *judgment, Atom *term) {
 
 Atom *prime_scoped_typed_query_judge(Arena *a, Space *space, Atom *judgment,
                                      Atom *term, bool limited, uint64_t steps) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     if (!a || !term || term->kind != ATOM_EXPR || term->expr.len < 2u)
         return NULL;
     term = sj_query_scope_body(a, term);
@@ -13315,6 +13364,7 @@ static int sj_space_identity_selection(Space *space) {
 }
 
 int prime_space_identity_policy(Space *space) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     /* A view built over a space (an overlay) is in that space's mode. */
     for (const Space *s = space; s; s = s->overlay_base) {
         int selected = sj_space_identity_selection((Space *)s);
@@ -13946,6 +13996,7 @@ static Atom *sj_judge(Arena *a, Space *space, Atom *judgment,
 
 Atom *prime_scoped_judgment_judge(Arena *a, Space *space, Atom *judgment,
                                   bool steps_limited, uint64_t steps) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     SjSetEnv *previous_env = g_current_set_env;
     SjTheoryProfile previous_profile = g_sj_signature_profile;
     Atom *result = sj_judge(a, space, judgment, steps_limited, steps, false);
@@ -15106,6 +15157,7 @@ static _Thread_local bool g_implicit_active;
 
 Atom *prime_scoped_implicit_term(Arena *a, Space *space, Atom *term, Atom *expected,
                                  PrimeImplicitReport *report) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     if (report) *report = (PrimeImplicitReport){0};
     if (!a || !space || !term || g_parameterized_admissions == 0u || g_implicit_active)
         return term;
@@ -15130,6 +15182,7 @@ Atom *prime_scoped_implicit_term(Arena *a, Space *space, Atom *term, Atom *expec
  * in place and the second at the first one's type, or the other way round. */
 Atom *prime_scoped_implicit_judgment(Arena *a, Space *space, Atom *judgment,
                                      PrimeImplicitReport *report) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     if (report) *report = (PrimeImplicitReport){0};
     if (!a || !space || !judgment || judgment->kind != ATOM_EXPR ||
         judgment->expr.len < 2u || g_parameterized_admissions == 0u || g_implicit_active)
@@ -15344,6 +15397,7 @@ static Atom *sj_implicit_open(SjProofState *st, Atom *w, Atom *domain) {
  * expected type here, and its arguments are read at the domains its type
  * gives.  NULL when nothing changes. */
 Atom *prime_scoped_implicit_call(Arena *a, Space *space, Atom *call) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     if (!a || !space || !call || call->kind != ATOM_EXPR || call->expr.len < 2u ||
         g_parameterized_admissions == 0u || g_implicit_active)
         return NULL;
@@ -15529,6 +15583,7 @@ static void sj_ext_walk(SjExtensionWalk *w, Atom *t) {
 
 Atom *prime_scoped_judgment_completeness_assumed(Arena *a, Space *space, Atom *left,
                                                  Atom *right) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     SjSetEnv *env = sj_env(space);
     if (!a || !env) return NULL;
     SjProofState st;
@@ -15618,6 +15673,7 @@ static bool sj_lists_constructor_term(Atom *t) {
 
 const char *prime_scoped_judgment_refutation_without_completeness(
     Arena *a, Space *space, Atom *left, Atom *right) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     Atom *nonempty = atom_is_symbol(left, "nil") ? right
                      : atom_is_symbol(right, "nil") ? left : NULL;
     if (!a || !sj_is_expr(nonempty, "cons", 3u) || !sj_lists_constructor_term(nonempty))

@@ -1001,6 +1001,19 @@ struct CettaPreparedPureProgram {
 
 };
 
+/* Cuts retain immutable memo chunks. The running machine keeps its ordinary
+ * flat columns; only equal checkpoint bytes share storage. */
+#define PREPARED_PURE_CUT_MEMO_CHUNK 64u
+typedef struct {
+    size_t references, length;
+    Atom *keys[PREPARED_PURE_CUT_MEMO_CHUNK];
+    Atom *values[PREPARED_PURE_CUT_MEMO_CHUNK];
+    uint8_t states[PREPARED_PURE_CUT_MEMO_CHUNK];
+    uint8_t ready[PREPARED_PURE_CUT_MEMO_CHUNK];
+    PreparedPureDemandOrigin origins[PREPARED_PURE_CUT_MEMO_CHUNK];
+    PreparedPureDemandOrigin value_origins[PREPARED_PURE_CUT_MEMO_CHUNK];
+} PreparedPureMemoCutChunk;
+
 struct CettaPreparedServiceCut {
     CettaPreparedServiceCut *next;
     CettaPreparedPureClosedExecution *execution;
@@ -1010,14 +1023,12 @@ struct CettaPreparedServiceCut {
     PreparedPureFrame *frames;
     Atom **frame_atoms, **values, **slots, **entry_arguments;
     PreparedPureContext *contexts;
-    Atom **memo_keys, **memo_values;
-    uint8_t *memo_states;
-    uint8_t *value_ready,*slot_ready,*memo_ready,*entry_ready;
-    PreparedPureDemandOrigin *value_origins,*slot_origins,*memo_origins,*entry_origins;
-    PreparedPureDemandOrigin *memo_value_origins;
+    PreparedPureMemoCutChunk **memo_chunks;
+    size_t memo_chunk_count, memo_length;
+    uint8_t *value_ready,*slot_ready,*entry_ready;
+    PreparedPureDemandOrigin *value_origins,*slot_origins,*entry_origins;
     size_t frames_length, frame_atoms_length, values_length, slots_length;
     size_t contexts_length, entry_arguments_length;
-    size_t memo_keys_length, memo_values_length, memo_states_length;
 };
 
 struct CettaPreparedPureClosedExecution {
@@ -2952,9 +2963,11 @@ static bool prepared_pure_bind_var_index(
 }
 
 static bool prepared_pure_pattern_needs_host(const Atom *pattern) {
-    const BindingsStructureHooks *structure = bindings_structure_hooks();
+    BindingsStructureHooks captured_structure __attribute__((cleanup(bindings_structure_hooks_release))) = {0};
+    if (!bindings_structure_hooks_capture(&captured_structure, bindings_structure_hooks())) return true;
+    const BindingsStructureHooks *structure = &captured_structure;
     return (structure && structure->code_pattern &&
-            structure->code_pattern(pattern)) ||
+            structure->code_pattern(structure->context, pattern)) ||
         (eval_current_language_id &&
          eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
          prime_semantics_pattern_takes_code_apart(pattern));
@@ -4773,8 +4786,11 @@ static bool prepared_pure_compile_inert_bind_pattern(
     if (!prepared_pure_compile_bind_pattern(
             program, context, pattern, pattern_index_out))
         return false;
-    /* A bound variable in a Need pattern consumes its cell's value. The
-     * structural matcher only compares slots; it cannot demand that cell. */
+    /* A bound variable in a Need pattern consumes its cell's value. Admit
+     * that comparison only when the entry itself carries a value
+     * certificate; execution rechecks the selected occurrence's slot before
+     * the structural matcher reads it, so a recursive unready call still
+     * returns to its canonical continuation. */
     if (program->call_mode == CETTA_GSLT_PURE_CALL_CALL_BY_NEED) {
         const PreparedPureBindPattern *bound =
             &program->bind_patterns[*pattern_index_out];
@@ -6393,11 +6409,12 @@ static bool prepared_pure_compile_eval_with_role_in_source(
                  * demands. An answer attempt also certifies its own reached
                  * rejection after an earlier demand read. */
                 bool unobserved = !program->compile_result_demand_observed;
-                bool rejected = !program->closed_program || prepared_pure_wants_answers(program);
+                bool rejected = !program->closed_program ||
+                    prepared_pure_wants_answers(program) ||
+                    program->service_source_nodes;
                 if (program->closed_program && (unobserved || rejected))
                     program->compile_answer_gate_refused = true;
-                if (!program->closed_program || prepared_pure_wants_answers(program) ||
-                    program->service_source_nodes)
+                if (rejected)
                     return prepared_pure_reject(
                         program, "projection requires a single-result attempt",
                         source);
@@ -9558,6 +9575,39 @@ static PreparedPureMatchState prepared_pure_match_bind_pattern(
     uint32_t local_base, Atom *value) {
     return prepared_pure_match_bind_pattern_into(
         program, descriptor, local_base, value, true);
+}
+
+/* The matcher compares a prebound variable with its slot. Under Need that
+ * comparison is valid only after the slot is a value. Retained services
+ * carry the exact readiness bit; an ordinary exclusive execution can still
+ * establish readiness for syntax whose head is not callable in this pinned
+ * program. */
+static bool prepared_pure_bind_prebound_values_ready(
+        CettaPreparedPureProgram *program,
+        const PreparedPureBindPattern *descriptor,
+        uint32_t local_base) {
+    if (!program || !descriptor ||
+        descriptor->first_var > program->bind_var_len ||
+        descriptor->var_count >
+            program->bind_var_len - descriptor->first_var)
+        return false;
+    for (uint32_t i = 0u; i < descriptor->var_count; i++) {
+        const PreparedPureBindVar *binding =
+            &program->bind_vars[descriptor->first_var + i];
+        if (!binding->prebound)
+            continue;
+        size_t slot = (size_t)local_base + binding->slot;
+        if (slot >= program->slot_len || !program->slots[slot])
+            return false;
+        bool ready = program->execution &&
+            program->execution->roles_active
+                ? prepared_pure_slot_ready(program, slot)
+                : !prepared_pure_expression_is_callable(
+                    program, program->slots[slot]);
+        if (!ready)
+            return false;
+    }
+    return true;
 }
 
 typedef enum {
@@ -16197,8 +16247,12 @@ prepared_pure_program_compile_closed_mode(
     bool total_structural_equality,
     CettaMatchDecisionSemanticIdentity match_decision_semantics,
     bool answer_producer, bool service_source_nodes,
-    PreparedPureResultMode result_mode, CettaPreparedPureCompileReport *report) {
-    if (report) *report = (CettaPreparedPureCompileReport){.status = CETTA_PREPARED_PURE_COMPILE_INPUT_REFUSED};
+    PreparedPureResultMode result_mode,
+    CettaPreparedPureCompileReport *report) {
+    if (report)
+        *report = (CettaPreparedPureCompileReport){
+            .status = CETTA_PREPARED_PURE_COMPILE_INPUT_REFUSED,
+        };
     bool optional_result = result_mode != PREPARED_PURE_RESULT_SINGLE;
     if (optional_result && (answer_producer || service_source_nodes ||
             call_mode != CETTA_GSLT_PURE_CALL_EAGER ||
@@ -16310,6 +16364,8 @@ prepared_pure_program_compile_closed_mode(
                         : "a body left to the node executor");
     }
     if (optional_result && !program->code_ready) {
+        prepared_pure_compile_failure_report(report, space, program, false,
+            entry_arguments_are_values, call_mode, answer_producer);
         cetta_prepared_pure_program_free(program);
         return NULL;
     }
@@ -16370,13 +16426,14 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_result(
     const CettaPreparedPureSourceView *source_view,
     bool entry_arguments_are_values,
     bool total_structural_equality,
-    CettaMatchDecisionSemanticIdentity match_decision_semantics) {
+    CettaMatchDecisionSemanticIdentity match_decision_semantics,
+    CettaPreparedPureCompileReport *report) {
     return prepared_pure_program_compile_closed_mode(
         space, expression, call_mode, boolean_value, construct_value,
         constructs_expression, opaque_value, register_view,
         expression_view, pattern_view, source_view, entry_arguments_are_values,
         total_structural_equality, match_decision_semantics, false, false,
-        PREPARED_PURE_RESULT_INFER, NULL);
+        PREPARED_PURE_RESULT_INFER, report);
 }
 
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_service(
@@ -17398,7 +17455,8 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
     size_t nursery_budget_bytes,
     CettaPreparedPureInterruptPollFn interrupt_poll,
     void *interrupt_context,
-    Atom **result_out, CettaCallOutcome *outcome, bool *native_entered);
+    Atom **result_out, CettaCallOutcome *outcome, bool *native_entered,
+    CettaEvalCompletion *completion);
 
 static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
     CettaPreparedPureProgram *program, Arena *arena, uint32_t first_code,
@@ -17524,7 +17582,8 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_invoke_native_source(
 static PreparedPureRunResult prepared_pure_native_invoke(
         CettaPreparedPureAnswerCursor *cursor, Atom *head, Atom *const *arguments,
         uint32_t arity, bool execute, CettaCallOutcome *outcome, bool *entered,
-        Atom **inline_value) {
+        Atom **inline_value, CettaEvalCompletion *completion) {
+    *completion = CETTA_EVAL_COMPLETE;
     CettaPreparedPureProgram *program = cursor->program;
     if (!prepared_pure_answer_cursor_reserve(cursor, arity))
         goto capacity;
@@ -17536,12 +17595,23 @@ static PreparedPureRunResult prepared_pure_native_invoke(
     }
     CettaInvocation invocation = {.head = binding_value_from_atom(head),
         .supplied = {.atoms = arguments, .count = arity}};
-    CettaEvalCompletion completion;
-    *entered = prepared_pure_invoke_native_source(program, cursor->arena,
-        &invocation, execute, outcome, &completion);
+    *entered = execute && program->source_view.native_call &&
+        program->source_view.native_call(program->source_view.native_context,
+            program->space, cursor->arena, &invocation, outcome, completion);
     cursor->native_started |= *entered;
-    if (completion != CETTA_EVAL_COMPLETE) {
-        cetta_eval_completion_record(&cursor->completion, completion);
+    /* A complete pre-entry decline transfers no output storage. */
+    if (!*entered && *completion == CETTA_EVAL_COMPLETE)
+        *outcome = (CettaCallOutcome){0};
+    /* An incomplete call interrupts a body offer, which answers all or
+     * nothing, and any cursor of a language that does not keep the values an
+     * incomplete native earned. A Prime streaming cursor keeps them: the
+     * boundary retains the packet and the invocation's own cause, and the
+     * cursor hands off after them without claiming a completed frontier. An
+     * owner that asked for the native result always receives it there. */
+    if (*completion != CETTA_EVAL_COMPLETE && !cursor->native_transfer_requested &&
+        (cursor->body_root_pending ||
+         !program->source_view.native_keeps_incomplete_values)) {
+        cetta_eval_completion_record(&cursor->completion, *completion);
         (void)prepared_pure_answer_cursor_handoff(cursor,
             CETTA_PREPARED_PURE_HANDOFF_INTERRUPT);
         return PREPARED_PURE_RUN_HANDOFF;
@@ -17552,13 +17622,14 @@ static PreparedPureRunResult prepared_pure_native_invoke(
         (void)prepared_pure_answer_cursor_handoff(cursor, CETTA_PREPARED_PURE_HANDOFF_STALE);
         return PREPARED_PURE_RUN_HANDOFF;
     }
-    if (*entered && outcome->kind == CETTA_CALL_VALUE && outcome->term &&
+    if (*entered && *completion == CETTA_EVAL_COMPLETE &&
+        outcome->kind == CETTA_CALL_VALUE && outcome->term &&
         outcome->result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
         !atom_has_vars(outcome->term) && !atom_has_thread_local_resource(outcome->term)) {
         *inline_value = outcome->term;
         return PREPARED_PURE_RUN_ANSWER;
     }
-    if (*entered && outcome->kind == CETTA_CALL_FAILURE)
+    if (*entered && *completion == CETTA_EVAL_COMPLETE && outcome->kind == CETTA_CALL_FAILURE)
         return PREPARED_PURE_RUN_CONTINUE;
     return PREPARED_PURE_RUN_HANDOFF;
 capacity:
@@ -17569,7 +17640,7 @@ capacity:
 static PreparedPureRunResult prepared_pure_native_retain(
         CettaPreparedPureAnswerCursor *cursor, Atom *head, Atom *const *arguments,
         uint32_t arity, CettaCallOutcome outcome, bool entered,
-        const PreparedPureContinuation *continuation) {
+        const PreparedPureContinuation *continuation, CettaEvalCompletion completion) {
     /* Synchronous native calls borrow their operands. Only a retained native
      * producer can outlive the parent's current heap segment. Own its full
      * frontier before installing the opaque producer, while detachment can
@@ -17607,6 +17678,7 @@ static PreparedPureRunResult prepared_pure_native_retain(
     if (entered)
         cetta_owned_execution_init(&native->producer, &native->returns,
                                   cetta_call_return_next, NULL);
+    native->producer.completion = completion;
     prepared_pure_answer_cursor_push_reserved(cursor, PREPARED_PURE_NATIVE_FRAME,
         ok ? owned : arguments, arity, NULL, NULL);
     cursor->frames[cursor->frame_len - 1u].native = native;
@@ -17616,6 +17688,7 @@ static PreparedPureRunResult prepared_pure_native_retain(
         return PREPARED_PURE_RUN_HANDOFF;
     }
     if (!entered) {
+        cetta_eval_completion_record(&cursor->completion, completion);
         (void)prepared_pure_answer_cursor_handoff(cursor,
             CETTA_PREPARED_PURE_HANDOFF_NATIVE_RETURN);
         return PREPARED_PURE_RUN_HANDOFF;
@@ -17653,8 +17726,9 @@ static PreparedPureRunResult prepared_pure_answer_cursor_native(
         cursor->scratch_remaining = scratch;
     CettaCallOutcome outcome = {0};
     bool entered = false;
+    CettaEvalCompletion completion;
     PreparedPureRunResult result = prepared_pure_native_invoke(cursor, node.atom,
-        arguments, arity, execute_native, &outcome, &entered, inline_value);
+        arguments, arity, execute_native, &outcome, &entered, inline_value, &completion);
     if (result != PREPARED_PURE_RUN_HANDOFF ||
         (cursor->handoff != CETTA_PREPARED_PURE_HANDOFF_NONE &&
          cursor->handoff != CETTA_PREPARED_PURE_HANDOFF_STALE))
@@ -17675,7 +17749,7 @@ static PreparedPureRunResult prepared_pure_answer_cursor_native(
         }
     }
     result = prepared_pure_native_retain(cursor, node.atom, arguments, arity,
-        outcome, entered, continuation);
+        outcome, entered, continuation, completion);
     if (!captured) {
         (void)prepared_pure_answer_cursor_handoff(cursor, CETTA_PREPARED_PURE_HANDOFF_LIMIT);
         return PREPARED_PURE_RUN_HANDOFF;
@@ -17852,7 +17926,7 @@ static bool prepared_pure_answer_step_return(
               step->register_count, true, 0u, NULL, NULL, &value, outcome)
         : prepared_pure_program_execute_internal(
               program, cursor->arena, NULL, NULL, NULL, step->node,
-              slot_count, true, 0u, NULL, NULL, &value, outcome, NULL);
+              slot_count, true, 0u, NULL, NULL, &value, outcome, NULL, NULL);
     program->frame_len = 0u;
     program->value_len = 0u;
     program->slot_len = slot_count;
@@ -18314,7 +18388,7 @@ static const CettaOwnedReturn *prepared_pure_native_pending(
 
 bool cetta_prepared_pure_answer_cursor_native_boundary(
         CettaPreparedPureAnswerCursor *cursor, CettaInvocation *invocation,
-        bool *entered, CettaOwnedReturn *returned) {
+        bool *entered, CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
     if (!cursor || !invocation || !entered || !returned ||
         (cursor->handoff != CETTA_PREPARED_PURE_HANDOFF_NATIVE_RETURN &&
          cursor->handoff != CETTA_PREPARED_PURE_HANDOFF_STALE) ||
@@ -18330,6 +18404,7 @@ bool cetta_prepared_pure_answer_cursor_native_boundary(
     if (frame->head_index != PREPARED_PURE_NATIVE_FRAME || !frame->native)
         return false;
     const PreparedPureNativeFrame *native = frame->native;
+    if (completion) *completion = native->producer.completion;
     *invocation = (CettaInvocation){.head = binding_value_from_atom(native->head),
         .supplied = {.atoms = &cursor->arguments[frame->argument_base], .count = frame->arity}};
     *entered = native->entered;
@@ -18349,6 +18424,23 @@ bool cetta_prepared_pure_answer_cursor_native_boundary(
     return false;
 }
 
+/* While this handoff is installed the cursor performs no further work.
+ * Only an explicit replacement owner can acknowledge this attempt. */
+static bool prepared_pure_preparation_refused(
+        const CettaPreparedPureAnswerCursor *cursor, CettaEvalCompletion cause) {
+    if (!cursor || cursor->handoff != CETTA_PREPARED_PURE_HANDOFF_NATIVE_RETURN ||
+        !cursor->frame_len ||
+        (cause != CETTA_EVAL_INCOMPLETE_CAPACITY && cause != CETTA_EVAL_INCOMPLETE_HOST_FAILURE) ||
+        cursor->completion != cause)
+        return false;
+    const PreparedPureAnswerFrame *frame = &cursor->frames[cursor->frame_len - 1u];
+    const PreparedPureNativeFrame *native = frame->head_index == PREPARED_PURE_NATIVE_FRAME
+        ? frame->native : NULL;
+    return native && !native->entered && !native->producer.computation &&
+        !native->producer.has_pending && !native->bindings && !native->transferred &&
+        !native->body_active && native->producer.completion == cause;
+}
+
 bool cetta_prepared_pure_answer_cursor_complete_native(
         CettaPreparedPureAnswerCursor *cursor, CettaOwnedExecution *replacement,
         bool completes_callers) {
@@ -18356,7 +18448,7 @@ bool cetta_prepared_pure_answer_cursor_complete_native(
     bool entered;
     CettaOwnedReturn returned;
     if (!replacement || !replacement->computation || !replacement->next ||
-        !cetta_prepared_pure_answer_cursor_native_boundary(cursor, &call, &entered, &returned))
+        !cetta_prepared_pure_answer_cursor_native_boundary(cursor, &call, &entered, &returned, NULL))
         return false;
     if (cursor->handoff != CETTA_PREPARED_PURE_HANDOFF_NATIVE_RETURN)
         return false;
@@ -18364,9 +18456,15 @@ bool cetta_prepared_pure_answer_cursor_complete_native(
     if (completes_callers && !entered)
         return false;
     if (!entered) {
+        if (cursor->completion != CETTA_EVAL_COMPLETE &&
+            !prepared_pure_preparation_refused(cursor, cursor->completion))
+            return false;
         native->producer = *replacement;
         *replacement = (CettaOwnedExecution){0};
         native->entered = cursor->native_started = true;
+        /* A new owner acknowledges the refused preparation attempt, not
+         * an entered call. Its own completion now governs this frontier. */
+        cursor->completion = CETTA_EVAL_COMPLETE;
     } else if (native->bindings && native->bindings->bind.awaiting_body &&
                native->producer.terminal) {
         if (!cetta_owned_bind_resume(&native->producer, &native->bindings->bind, replacement))
@@ -18408,7 +18506,7 @@ bool cetta_prepared_pure_answer_cursor_native_transfer_ready(
     bool entered = false;
     if (!cursor || !cursor->native_transfer_requested || !cursor->owns_arena ||
         !cetta_prepared_pure_answer_cursor_native_boundary(
-            cursor, &invocation, &entered, &returned) || !entered)
+            cursor, &invocation, &entered, &returned, NULL) || !entered)
         return false;
     const PreparedPureNativeFrame *native = cursor->frames[cursor->frame_len - 1u].native;
     bool stale = cursor->handoff == CETTA_PREPARED_PURE_HANDOFF_STALE;
@@ -18480,11 +18578,13 @@ bool cetta_prepared_pure_answer_cursor_resume_native(
         CettaOwnedExecution *execution, CettaOwnedExecution *replacement) {
     if (!execution || execution == replacement || !execution->terminal ||
         execution->stop != CETTA_OWNED_EXECUTION_HANDOFF ||
-        execution->completion != CETTA_EVAL_COMPLETE ||
         execution->next != cetta_prepared_pure_answer_cursor_return ||
+        (execution->completion != CETTA_EVAL_COMPLETE &&
+         !prepared_pure_preparation_refused(execution->computation, execution->completion)) ||
         !cetta_prepared_pure_answer_cursor_complete_native(
             execution->computation, replacement, false))
         return false;
+    execution->completion = CETTA_EVAL_COMPLETE;
     execution->terminal = false;
     execution->stop = CETTA_OWNED_EXECUTION_PAUSED;
     return true;
@@ -18633,9 +18733,11 @@ prepared_pure_answer_cursor_next_kernel(
             const CettaOwnedReturn *returned = NULL;
             CettaOwnedExecutionStep next = cetta_owned_execution_loan(&native->producer, &returned);
             if (next == CETTA_OWNED_EXECUTION_COMPLETE) {
-                if (native->producer.completion != CETTA_EVAL_COMPLETE)
+                if (native->producer.completion != CETTA_EVAL_COMPLETE) {
+                    cetta_eval_completion_record(&cursor->completion, native->producer.completion);
                     return prepared_pure_answer_cursor_handoff(cursor,
                         CETTA_PREPARED_PURE_HANDOFF_NATIVE_RETURN);
+                }
                 prepared_pure_answer_cursor_pop_native(cursor);
                 continue;
             }
@@ -20014,12 +20116,13 @@ static bool prepared_pure_code_readback(CettaPreparedPureAnswerCursor *cursor,
  * tagged return and live continuation in one copy episode. */
 static void prepared_pure_code_retain(CettaPreparedPureAnswerCursor *cursor,
         const PreparedPureContinuation *outer, Atom *head, Atom *const *arguments,
-        uint32_t arity, CettaCallOutcome outcome, bool entered) {
+        uint32_t arity, CettaCallOutcome outcome, bool entered,
+        CettaEvalCompletion completion) {
     prepared_pure_answer_cursor_body_root(cursor);
     const PreparedPureContinuation *continuation = outer;
     bool ok = prepared_pure_code_readback(cursor, NULL, outer, &continuation);
     (void)prepared_pure_native_retain(cursor, head, arguments, arity,
-        outcome, entered, continuation);
+        outcome, entered, continuation, completion);
     if (!ok)
         (void)prepared_pure_answer_cursor_handoff(cursor, CETTA_PREPARED_PURE_HANDOFF_LIMIT);
 }
@@ -20292,15 +20395,17 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
                         CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) {
                     CettaCallOutcome outcome = {0};
                     bool entered = false;
+                    CettaEvalCompletion completion;
                     PreparedPureRunResult called = prepared_pure_native_invoke(
-                        cursor, node->atom, values, count, true, &outcome, &entered, &value);
+                        cursor, node->atom, values, count, true, &outcome, &entered, &value,
+                        &completion);
                     if (called == PREPARED_PURE_RUN_CONTINUE)
                         goto empty;
                     if (called == PREPARED_PURE_RUN_HANDOFF) {
                         if (cursor->handoff == CETTA_PREPARED_PURE_HANDOFF_NONE ||
                             cursor->handoff == CETTA_PREPARED_PURE_HANDOFF_STALE)
                             prepared_pure_code_retain(cursor, continuation, node->atom,
-                                values, count, outcome, entered);
+                                values, count, outcome, entered, completion);
                         goto residual;
                     }
                 } else {
@@ -20979,11 +21084,13 @@ declined:
         CettaCallOutcome outcome = {0};
         bool entered = false;
         Atom *unused = NULL;
+        CettaEvalCompletion completion;
         (void)prepared_pure_native_invoke(cursor, decline_node->atom,
-            arguments, active_code->operand_count, false, &outcome, &entered, &unused);
+            arguments, active_code->operand_count, false, &outcome, &entered, &unused,
+            &completion);
         if (cursor->handoff == CETTA_PREPARED_PURE_HANDOFF_NONE)
             prepared_pure_code_retain(cursor, continuation, decline_node->atom,
-                arguments, active_code->operand_count, outcome, false);
+                arguments, active_code->operand_count, outcome, false, completion);
         goto residual;
     }
     if (cursor)
@@ -21149,7 +21256,9 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
     CettaPreparedPureInterruptPollFn interrupt_poll,
     void *interrupt_context,
     Atom **result_out, CettaPreparedPureClosedExecution *execution,
-    CettaCallOutcome *outcome, bool *native_entered) {
+    CettaCallOutcome *outcome, bool *native_entered,
+    CettaEvalCompletion *completion) {
+    if (completion) *completion = CETTA_EVAL_COMPLETE;
     if (native_entered) *native_entered = false;
     if (result_out)
         *result_out = NULL;
@@ -21767,6 +21876,8 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
             if (node->auxiliary >= program->bind_pattern_len)
                 return prepared_pure_runtime_decline(
                     program, "let pattern descriptor is invalid", node);
+            const PreparedPureBindPattern *bind_pattern =
+                &program->bind_patterns[node->auxiliary];
             Atom *value = NULL; bool value_ready=false;
             PreparedPureDemandOrigin value_origin={0};
             if (frame->state == 0u) {
@@ -21795,9 +21906,15 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
                 value_ready=prepared_pure_immediate_ready(program,&program->nodes[program->children[node->first_child]],frame->local_base,value);
                 value_origin=prepared_pure_immediate_origin(program,&program->nodes[program->children[node->first_child]],frame->local_base,1u);
             }
+            if (program->call_mode ==
+                    CETTA_GSLT_PURE_CALL_CALL_BY_NEED &&
+                !prepared_pure_bind_prebound_values_ready(
+                    program, bind_pattern, frame->local_base))
+                return prepared_pure_runtime_decline(
+                    program, "let pattern awaits a prebound value", node);
             PreparedPureMatchState matched =
                 prepared_pure_match_bind_pattern(
-                    program, &program->bind_patterns[node->auxiliary],
+                    program, bind_pattern,
                     frame->local_base, value);
             if (matched == PREPARED_PURE_MATCH_MISMATCH) {
                 if (outcome)
@@ -21812,7 +21929,7 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
                 return prepared_pure_runtime_decline(
                     program, "let pattern matcher failed", node);
             if (execution && execution->roles_active) {
-                const PreparedPureBindPattern *binding=&program->bind_patterns[node->auxiliary];
+                const PreparedPureBindPattern *binding=bind_pattern;
                 for (uint32_t i=0u;i<binding->var_count;i++) {
                     const PreparedPureBindVar *variable=&program->bind_vars[binding->first_var+i];
                     size_t slot=(size_t)frame->local_base+variable->slot;
@@ -22112,10 +22229,12 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
             /* There is no local continuation after this call. Keep the
              * provider's packet verbatim, even if malformed: its caller must
              * fault rather than retry an operation that has already entered. */
-            CettaEvalCompletion completion;
+            CettaEvalCompletion native_completion;
             bool entered = prepared_pure_invoke_native_source(program, arena,
-                &invocation, true, outcome, &completion);
-            if (entered || completion != CETTA_EVAL_COMPLETE) {
+                &invocation, true, outcome, &native_completion);
+            if (completion)
+                cetta_eval_completion_record(completion, native_completion);
+            if (entered || native_completion != CETTA_EVAL_COMPLETE) {
                 *native_entered = entered;
                 prepared_pure_memo_clear(program);
                 program->frame_len = program->value_len = program->slot_len = 0u;
@@ -22208,7 +22327,9 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
     size_t nursery_budget_bytes,
     CettaPreparedPureInterruptPollFn interrupt_poll,
     void *interrupt_context,
-    Atom **result_out, CettaCallOutcome *outcome, bool *native_entered) {
+    Atom **result_out, CettaCallOutcome *outcome, bool *native_entered,
+    CettaEvalCompletion *completion) {
+    if (completion) *completion = CETTA_EVAL_COMPLETE;
     if (native_entered) *native_entered=false;
     if (result_out) *result_out=NULL;
     if (outcome) *outcome=(CettaCallOutcome){0};
@@ -22225,7 +22346,8 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
     bool completed = prepared_pure_program_execute_retained(
         program, arena, accumulator, item, runtime_expression, step_node,
         step_slot_count, closed, nursery_budget_bytes, interrupt_poll,
-        interrupt_context, result_out, NULL, outcome, native_entered);
+        interrupt_context, result_out, NULL, outcome, native_entered,
+        completion);
     space_type_stamps_run_leave(outer_scope);
     g_prepared_pure_stamp_program = outer_program;
     g_prepared_pure_stamp_arena = outer_arena;
@@ -22238,22 +22360,31 @@ bool cetta_prepared_pure_program_execute(
     return prepared_pure_program_execute_internal(
         program, arena, accumulator, item, NULL,
         PREPARED_PURE_RUNTIME_NODE, 0u, false, 0u,
-        NULL, NULL, result_out, NULL, NULL);
+        NULL, NULL, result_out, NULL, NULL, NULL);
 }
 
 bool cetta_prepared_pure_program_execute_controlled(
     CettaPreparedPureProgram *program, Arena *arena,
     Atom *accumulator, Atom *item,
     CettaPreparedPureInterruptPollFn interrupt_poll,
-    void *interrupt_context, CettaCallOutcome *outcome) {
+    void *interrupt_context, CettaCallOutcome *outcome,
+    CettaEvalCompletion *completion) {
     if (!outcome)
         return false;
+    CettaEvalCompletion local_completion = CETTA_EVAL_COMPLETE;
+    if (!completion) completion = &local_completion;
     Atom *value = NULL;
     bool native_entered = false;
     bool completed = prepared_pure_program_execute_internal(
         program, arena, accumulator, item, NULL,
         PREPARED_PURE_RUNTIME_NODE, 0u, false, 0u,
-        interrupt_poll, interrupt_context, &value, outcome, &native_entered);
+        interrupt_poll, interrupt_context, &value, outcome, &native_entered, completion);
+    if (!completed && !native_entered && *completion != CETTA_EVAL_COMPLETE) {
+        *outcome = cetta_call_interrupted();
+        return true;
+    }
+    if (*completion == CETTA_EVAL_COMPLETE && outcome->kind == CETTA_CALL_INTERRUPTED)
+        *completion = CETTA_EVAL_INCOMPLETE_CANCELLED;
     if (completed)
         *outcome = cetta_call_completed_value(value);
     return completed || native_entered || outcome->kind == CETTA_CALL_FAILURE ||
@@ -22288,7 +22419,7 @@ bool cetta_prepared_pure_program_execute_closed_controlled(
         program, arena, NULL, NULL, NULL,
         PREPARED_PURE_RUNTIME_NODE, 0u, true,
         nursery_budget_bytes, interrupt_poll, interrupt_context,
-        &value, outcome, NULL);
+        &value, outcome, NULL, NULL);
     if (completed)
         *outcome = cetta_call_completed_value(value);
     return completed || outcome->kind == CETTA_CALL_FAILURE ||
@@ -22304,7 +22435,7 @@ bool cetta_prepared_pure_program_execute_closed_expression_controlled(
         program, arena, NULL, NULL, expression,
         PREPARED_PURE_RUNTIME_NODE, 0u, true,
         nursery_budget_bytes, interrupt_poll, interrupt_context,
-        result_out, NULL, NULL);
+        result_out, NULL, NULL, NULL);
 }
 
 typedef struct {
@@ -22338,7 +22469,7 @@ CettaPreparedPureOptionalResult cetta_prepared_pure_program_execute_closed_optio
         program, arena, NULL, NULL, NULL, PREPARED_PURE_RUNTIME_NODE, 0u,
         true, nursery_budget_bytes,
         interrupt_poll ? prepared_pure_optional_poll : NULL, &poll,
-        result_out, NULL, &returned, NULL);
+        result_out, NULL, &returned, NULL, NULL);
     if (poll.interrupted || returned.kind == CETTA_CALL_INTERRUPTED)
         return CETTA_PREPARED_PURE_OPTIONAL_INTERRUPTED;
     if (returned.kind == CETTA_CALL_FAILURE)
@@ -22353,16 +22484,87 @@ CettaPreparedPureOptionalResult cetta_prepared_pure_program_execute_closed_optio
  * including context_reads, can grow when a later runtime head is compiled;
  * they remain in the exclusive Program and are never rolled back by a cut.
  * The enclosing execution owns every cut's lifetime. */
+static void prepared_pure_cut_memo_drop(CettaPreparedServiceCut *cut) {
+    for (size_t i=0u;i<cut->memo_chunk_count;i++) {
+        PreparedPureMemoCutChunk *chunk=cut->memo_chunks[i];
+        if (!chunk) continue;
+        assert(chunk->references);
+        if (!--chunk->references) free(chunk);
+    }
+    free(cut->memo_chunks);
+    cut->memo_chunks=NULL;
+    cut->memo_chunk_count=cut->memo_length=0u;
+}
+
+static bool prepared_pure_cut_memo_capture(CettaPreparedServiceCut *cut,
+    const CettaPreparedPureClosedExecution *execution) {
+    const CettaPreparedPureProgram *p=execution->program;
+    size_t length=p->memo_len;
+    if (!execution->roles_active ||
+        length>execution->memo_ready_capacity ||
+        length>execution->memo_origins_capacity ||
+        length>execution->memo_value_origins_capacity)
+        return false;
+    size_t count=length/PREPARED_PURE_CUT_MEMO_CHUNK +
+        (length%PREPARED_PURE_CUT_MEMO_CHUNK!=0u);
+    if (count>SIZE_MAX/sizeof(*cut->memo_chunks)) return false;
+    cut->memo_chunks=count ? calloc(count,sizeof(*cut->memo_chunks)) : NULL;
+    if (count && !cut->memo_chunks) return false;
+    cut->memo_chunk_count=count;
+    cut->memo_length=length;
+    const CettaPreparedServiceCut *previous=execution->cuts;
+    for (size_t i=0u;i<count;i++) {
+        size_t base=i*PREPARED_PURE_CUT_MEMO_CHUNK;
+        size_t used=length-base;
+        if (used>PREPARED_PURE_CUT_MEMO_CHUNK) used=PREPARED_PURE_CUT_MEMO_CHUNK;
+        PreparedPureMemoCutChunk *chunk=previous && i<previous->memo_chunk_count
+            ? previous->memo_chunks[i] : NULL;
+        bool equal=chunk && chunk->length==used;
+#define SAME(field, source) \
+        (memcmp(chunk->field,(source)+base,used*sizeof(*chunk->field))==0)
+        equal=equal && SAME(keys,p->memo_keys) && SAME(values,p->memo_values) &&
+            SAME(states,p->memo_states) && SAME(ready,execution->memo_ready) &&
+            SAME(origins,execution->memo_origins) &&
+            SAME(value_origins,execution->memo_value_origins);
+#undef SAME
+        if (equal) {
+            if (chunk->references==SIZE_MAX) return false;
+            chunk->references++;
+        } else {
+            chunk=malloc(sizeof(*chunk));
+            if (!chunk) return false;
+            chunk->references=1u;chunk->length=used;
+#define COPY(field, source) \
+            memcpy(chunk->field,(source)+base,used*sizeof(*chunk->field))
+            COPY(keys,p->memo_keys);COPY(values,p->memo_values);
+            COPY(states,p->memo_states);COPY(ready,execution->memo_ready);
+            COPY(origins,execution->memo_origins);
+            COPY(value_origins,execution->memo_value_origins);
+#undef COPY
+        }
+        cut->memo_chunks[i]=chunk;
+    }
+    return true;
+}
+
+static const PreparedPureMemoCutChunk *prepared_pure_cut_memo_chunk(
+    const CettaPreparedServiceCut *cut,size_t index) {
+    assert(index<cut->memo_length);
+    return cut->memo_chunks[index/PREPARED_PURE_CUT_MEMO_CHUNK];
+}
+
+#define PREPARED_PURE_CUT_MEMO(cut,field,index) \
+    (prepared_pure_cut_memo_chunk((cut),(index))->field[(index)%PREPARED_PURE_CUT_MEMO_CHUNK])
+
 static void prepared_pure_service_cut_free(CettaPreparedServiceCut *cut) {
     if (!cut) return;
 #define DROP(field) free(cut->field)
     DROP(frames); DROP(frame_atoms); DROP(values); DROP(slots);
     DROP(contexts); DROP(entry_arguments);
-    DROP(memo_keys); DROP(memo_values); DROP(memo_states);
-    DROP(value_ready); DROP(slot_ready); DROP(memo_ready); DROP(entry_ready);
-    DROP(value_origins); DROP(slot_origins); DROP(memo_origins); DROP(entry_origins);
-    DROP(memo_value_origins);
+    DROP(value_ready); DROP(slot_ready); DROP(entry_ready);
+    DROP(value_origins); DROP(slot_origins); DROP(entry_origins);
 #undef DROP
+    prepared_pure_cut_memo_drop(cut);
     free(cut);
 }
 
@@ -22428,17 +22630,15 @@ CettaPreparedServiceCut *cetta_prepared_pure_closed_service_capture(
     CAPTURE(values,value_len); CAPTURE(slots,slot_len);
     CAPTURE(contexts,context_len);
     CAPTURE(entry_arguments,entry_argument_count);
-    CAPTURE(memo_keys,memo_len); CAPTURE(memo_values,memo_len);
-    CAPTURE(memo_states,memo_len);
 #undef CAPTURE
+    if (!prepared_pure_cut_memo_capture(cut,execution)) goto failed;
 #define CAPTURE_ROLE(field,length) do {     if (cut->length) {         cut->field=malloc(cut->length);         if (!cut->field) goto failed;         memcpy(cut->field,execution->field,cut->length);     } } while (0)
     CAPTURE_ROLE(value_ready,values_length); CAPTURE_ROLE(slot_ready,slots_length);
-    CAPTURE_ROLE(memo_ready,memo_keys_length); CAPTURE_ROLE(entry_ready,entry_arguments_length);
+    CAPTURE_ROLE(entry_ready,entry_arguments_length);
 #undef CAPTURE_ROLE
 #define CAPTURE_ORIGIN(field,length) do {     if (cut->length) {         if (cut->length>SIZE_MAX/sizeof(*cut->field)) goto failed;         cut->field=malloc(cut->length*sizeof(*cut->field));         if (!cut->field) goto failed;         memcpy(cut->field,execution->field,cut->length*sizeof(*cut->field));     } } while (0)
     CAPTURE_ORIGIN(value_origins,values_length); CAPTURE_ORIGIN(slot_origins,slots_length);
-    CAPTURE_ORIGIN(memo_origins,memo_keys_length); CAPTURE_ORIGIN(entry_origins,entry_arguments_length);
-    CAPTURE_ORIGIN(memo_value_origins,memo_keys_length);
+    CAPTURE_ORIGIN(entry_origins,entry_arguments_length);
 #undef CAPTURE_ORIGIN
     cut->next=execution->cuts; execution->cuts=cut;
     goto done;
@@ -22537,10 +22737,10 @@ bool cetta_prepared_pure_closed_service_export(
         if (!ok) goto done;
         if (frame->memo_index!=PREPARED_PURE_NO_MEMO) {
             requesting_memo=frame->memo_index;
-            ok=requesting_memo<cut->memo_keys_length &&
-                cut->memo_keys[requesting_memo]==source &&
-                prepared_pure_origin_equal(cut->memo_origins[requesting_memo],origin) &&
-                cut->memo_states[requesting_memo]==PREPARED_PURE_MEMO_EVALUATING;
+            ok=requesting_memo<cut->memo_length &&
+                PREPARED_PURE_CUT_MEMO(cut,keys,requesting_memo)==source &&
+                prepared_pure_origin_equal(PREPARED_PURE_CUT_MEMO(cut,origins,requesting_memo),origin) &&
+                PREPARED_PURE_CUT_MEMO(cut,states,requesting_memo)==PREPARED_PURE_MEMO_EVALUATING;
             if (!ok) goto done;
         }
     }
@@ -22553,25 +22753,25 @@ bool cetta_prepared_pure_closed_service_export(
         PreparedPureExportNode *node=&nodes[index];
         if (!node->initialized) {
             for (size_t followed=0u;!node->ready && !(application && index==root);followed++) {
-                size_t memo=cut->memo_keys_length;
-                for (size_t i=0u;i<cut->memo_keys_length;i++)
+                size_t memo=cut->memo_length;
+                for (size_t i=0u;i<cut->memo_length;i++)
                     /* Only this exact unentered application transfers its
                      * own pending demand. An ancestor or child already in
                      * flight cannot become a fresh native thunk. */
                     if (!(index==root && i==requesting_memo) &&
-                        cut->memo_keys[i]==node->value &&
-                        prepared_pure_origin_equal(cut->memo_origins[i],node->origin)) {
+                        PREPARED_PURE_CUT_MEMO(cut,keys,i)==node->value &&
+                        prepared_pure_origin_equal(PREPARED_PURE_CUT_MEMO(cut,origins,i),node->origin)) {
                         memo=i;break;
                     }
-                if (memo==cut->memo_keys_length) break;
-                if (cut->memo_states[memo]!=PREPARED_PURE_MEMO_VALUE ||
-                    !cut->memo_values[memo] || followed>=cut->memo_keys_length) {
+                if (memo==cut->memo_length) break;
+                if (PREPARED_PURE_CUT_MEMO(cut,states,memo)!=PREPARED_PURE_MEMO_VALUE ||
+                    !PREPARED_PURE_CUT_MEMO(cut,values,memo) || followed>=cut->memo_length) {
                     ok=false;break;
                 }
                 Atom *old=node->value;
                 PreparedPureDemandOrigin old_origin=node->origin;
-                node->value=cut->memo_values[memo];node->ready=cut->memo_ready[memo];
-                node->origin=cut->memo_value_origins[memo];
+                node->value=PREPARED_PURE_CUT_MEMO(cut,values,memo);node->ready=PREPARED_PURE_CUT_MEMO(cut,ready,memo);
+                node->origin=PREPARED_PURE_CUT_MEMO(cut,value_origins,memo);
                 if (old==node->value && prepared_pure_origin_equal(old_origin,node->origin))
                     break;
             }
@@ -22652,22 +22852,22 @@ bool cetta_prepared_pure_closed_service_restore(
     FIT(frames,frame_cap); FIT(frame_atoms,frame_atom_cap);
     FIT(values,value_cap); FIT(slots,slot_cap); FIT(contexts,context_cap);
     FIT(entry_arguments,entry_argument_count);
-    FIT(memo_keys,memo_key_cap); FIT(memo_values,memo_value_cap);
-    FIT(memo_states,memo_state_cap);
 #undef FIT
+    if (cut->memo_length>p->memo_key_cap || cut->memo_length>p->memo_value_cap ||
+        cut->memo_length>p->memo_state_cap) {ok=false;goto done;}
     if (!execution->roles_active || cut->values_length>execution->value_ready_capacity ||
-        cut->slots_length>execution->slot_ready_capacity || cut->memo_keys_length>execution->memo_ready_capacity ||
+        cut->slots_length>execution->slot_ready_capacity || cut->memo_length>execution->memo_ready_capacity ||
         cut->entry_arguments_length>execution->entry_ready_capacity) {ok=false;goto done;}
     if (cut->values_length>execution->value_origins_capacity ||
         cut->slots_length>execution->slot_origins_capacity ||
-        cut->memo_keys_length>execution->memo_origins_capacity ||
-        cut->memo_keys_length>execution->memo_value_origins_capacity ||
+        cut->memo_length>execution->memo_origins_capacity ||
+        cut->memo_length>execution->memo_value_origins_capacity ||
         cut->entry_arguments_length>execution->entry_origins_capacity) {ok=false;goto done;}
     /* Insertion grows at its declared load threshold, which can exceed one
      * half. Restoration needs an empty probe bucket, not a stricter load
      * policy than the table that captured this valid prefix. */
-    if (cut->memo_keys_length &&
-        (!p->memo_buckets || p->memo_bucket_cap<=cut->memo_keys_length)) {
+    if (cut->memo_length &&
+        (!p->memo_buckets || p->memo_bucket_cap<=cut->memo_length)) {
         ok=false;goto done;
     }
 #define RESTORE(field,length) do { \
@@ -22678,18 +22878,27 @@ bool cetta_prepared_pure_closed_service_restore(
     RESTORE(values,value_len); RESTORE(slots,slot_len);
     RESTORE(contexts,context_len);
     RESTORE(entry_arguments,entry_argument_count);
-    RESTORE(memo_keys,memo_len); RESTORE(memo_values,memo_len);
-    RESTORE(memo_states,memo_len);
 #undef RESTORE
 #define RESTORE_ROLE(field,length) if (cut->length) memcpy(execution->field,cut->field,cut->length)
     RESTORE_ROLE(value_ready,values_length); RESTORE_ROLE(slot_ready,slots_length);
-    RESTORE_ROLE(memo_ready,memo_keys_length); RESTORE_ROLE(entry_ready,entry_arguments_length);
+    RESTORE_ROLE(entry_ready,entry_arguments_length);
 #undef RESTORE_ROLE
 #define RESTORE_ORIGIN(field,length) if (cut->length) memcpy(execution->field,cut->field,cut->length*sizeof(*cut->field))
     RESTORE_ORIGIN(value_origins,values_length); RESTORE_ORIGIN(slot_origins,slots_length);
-    RESTORE_ORIGIN(memo_origins,memo_keys_length); RESTORE_ORIGIN(entry_origins,entry_arguments_length);
-    RESTORE_ORIGIN(memo_value_origins,memo_keys_length);
+    RESTORE_ORIGIN(entry_origins,entry_arguments_length);
 #undef RESTORE_ORIGIN
+    for (size_t chunk_index=0u;chunk_index<cut->memo_chunk_count;chunk_index++) {
+        const PreparedPureMemoCutChunk *chunk=cut->memo_chunks[chunk_index];
+        size_t base=chunk_index*PREPARED_PURE_CUT_MEMO_CHUNK;
+#define MEMO_RESTORE(target,field) \
+        memcpy((target)+base,chunk->field,chunk->length*sizeof(*chunk->field))
+        MEMO_RESTORE(p->memo_keys,keys);MEMO_RESTORE(p->memo_values,values);
+        MEMO_RESTORE(p->memo_states,states);MEMO_RESTORE(execution->memo_ready,ready);
+        MEMO_RESTORE(execution->memo_origins,origins);
+        MEMO_RESTORE(execution->memo_value_origins,value_origins);
+#undef MEMO_RESTORE
+    }
+    p->memo_len=cut->memo_length;
     if (p->memo_bucket_cap) {
         memset(p->memo_buckets,0,p->memo_bucket_cap*sizeof(*p->memo_buckets));
         for (uint32_t i=0u;i<p->memo_len;i++) {
@@ -22867,7 +23076,7 @@ CettaPreparedClosedStep cetta_prepared_pure_closed_step(
             ? prepared_pure_run_code_from(program,arena,program->body.first_code,
                 program->body.register_count,false,0u,NULL,NULL,answer,NULL)
             : prepared_pure_program_execute_retained(program,arena,NULL,NULL,NULL,
-                PREPARED_PURE_RUNTIME_NODE,0u,true,0u,NULL,NULL,answer,execution,NULL,NULL);
+                PREPARED_PURE_RUNTIME_NODE,0u,true,0u,NULL,NULL,answer,execution,NULL,NULL,NULL);
         *spent=allowance-execution->remaining;
         if (ok) {
             status=execution->status=program->optional_empty
@@ -23078,8 +23287,12 @@ static bool prepared_pure_value_has_callable_node(
 
 bool cetta_prepared_pure_program_value_is_fully_evaluated(
     CettaPreparedPureProgram *program, Atom *value, bool *complete) {
-    if (complete) *complete = false;
-    if (!program || program->execution || !value || !complete) return false;
+    if (complete)
+        *complete = false;
+    if (!program || !value || !complete)
+        return false;
+    if (program->execution)
+        return false;
     bool callable = atom_graph_any_checked(value,
         prepared_pure_value_has_callable_node,
         prepared_pure_result_data_barrier, program, SIZE_MAX, complete);
@@ -23264,15 +23477,17 @@ void cetta_prepared_pure_program_storage_census(const CettaPreparedPureProgram *
 #define CUT_COUNT(field) cetta_storage_array(census,cut->field,cut->field##_length,sizeof(*cut->field),0u)
         CUT_COUNT(frames); CUT_COUNT(frame_atoms); CUT_COUNT(values); CUT_COUNT(slots);
         CUT_COUNT(contexts); CUT_COUNT(entry_arguments);
-        CUT_COUNT(memo_keys); CUT_COUNT(memo_values); CUT_COUNT(memo_states);
+        cetta_storage_array(census,cut->memo_chunks,cut->memo_chunk_count,
+            sizeof(*cut->memo_chunks),0u);
+        for (size_t chunk_index=0u;chunk_index<cut->memo_chunk_count;chunk_index++)
+            (void)cetta_storage_object(census,cut->memo_chunks[chunk_index],
+                sizeof(*cut->memo_chunks[chunk_index]),CETTA_STORAGE_BLOCK);
         cetta_storage_array(census,cut->value_ready,cut->values_length,1u,0u);
         cetta_storage_array(census,cut->slot_ready,cut->slots_length,1u,0u);
-        cetta_storage_array(census,cut->memo_ready,cut->memo_keys_length,1u,0u);
         cetta_storage_array(census,cut->entry_ready,cut->entry_arguments_length,1u,0u);
 #define CUT_ORIGIN_COUNT(field,length) cetta_storage_array(census,cut->field,cut->length,sizeof(*cut->field),0u)
         CUT_ORIGIN_COUNT(value_origins,values_length); CUT_ORIGIN_COUNT(slot_origins,slots_length);
-        CUT_ORIGIN_COUNT(memo_origins,memo_keys_length); CUT_ORIGIN_COUNT(entry_origins,entry_arguments_length);
-        CUT_ORIGIN_COUNT(memo_value_origins,memo_keys_length);
+        CUT_ORIGIN_COUNT(entry_origins,entry_arguments_length);
 #undef CUT_ORIGIN_COUNT
 #undef CUT_COUNT
     }

@@ -1,0 +1,270 @@
+Persistent mathematical programming in Prime
+===========================================
+
+A mathematical workspace contains an isolated theory and ordinary research
+data. Programs can inspect declarations, construct conjectures, generate
+proof candidates, call the native checker, and save their investigation.
+Loading a checkpoint reconstructs a fresh theory and rechecks its published
+proofs. A saved success flag does not establish a theorem.
+
+Try the ordinary MeTTa example:
+
+    cettap --no-results examples/prime/math_spaces.metta
+
+It defines addition once, runs it, rejects an incorrect proof, checks and
+publishes the right identity, and reconstructs the result from a snapshot.
+The proof is universal in its natural-number argument, not a test of a few
+concrete additions. Tests in tests/prime/math_spaces/programming_workflow.metta
+also prove map fusion by list induction and reject reversed composition.
+
+Agent commands
+--------------
+
+The JSON Lines interface keeps a single Prime process alive. An LLM, another
+MeTTa program, or a human controller can drive the same operations:
+
+    mkdir -p runtime/math-demo
+    python3 tools/math_space.py --workspace-root runtime/math-demo \
+        < examples/prime/math_spaces.jsonl
+
+Restart and use the saved theorem in another proof:
+
+    python3 tools/math_space.py --workspace-root runtime/math-demo \
+        < examples/prime/math_spaces_reopen.jsonl
+
+The first example creates a new checkpoint. If that file already exists,
+load it before saving changes, or choose another workspace directory. A new
+controller cannot silently overwrite an existing investigation.
+
+--binary selects the C runtime. --timeout bounds each complete exchange in
+wall-clock seconds, including pipe writes and complete response framing.
+Calls sharing a MathSpaceSession are serialized. A timeout closes that
+session; a timed-out save reports uncertain because the rename may already
+have happened. Load the checkpoint to inspect its actual committed state.
+--reply-characters selects the result-text budget; increase it to retrieve
+large evidence without clipping.
+
+HE and PeTTa hosts can use math_space_client instead of embedding a Prime
+theory in their own interpreter. HE imports math_space_client; PeTTa imports
+(library math_space_client). Open, use and close the client within one active
+evaluation scope:
+
+    !(let* (($client (math:client-open BINARY PROJECT 30))
+            ($reply (math:client-call $client
+              "{\"id\":\"s1\",\"command\":\"summary\"}"))
+            ($closed (math:client-close $client))) $reply)
+
+BINARY and PROJECT are controller-selected strings. Keep one request in
+flight per client. The five-argument open form additionally selects a Lean
+checkout (or an empty string) and the stream/frame byte budget. The client
+uses an owned process and preserves JSON as data. A lost response after
+queueing reports uncertainty. Live process handles are not checkpoint data.
+The library declares CommandSpec metadata in GödelClaw's existing format;
+its discovery and an actual HE/PeTTa checking workflow are covered by
+tools/test_prime_math_client.py. No live agent is started by that test.
+
+Every request has a text id and a command. Unknown fields, duplicate JSON
+keys, unsupported commands and invalid budgets are refused. Statements and
+proofs are text containing one MeTTa expression; the reader creates data.
+There is no command that evaluates an arbitrary host program.
+
+    {"id":"g1","command":"goal","goal":"identity","checker":"type",
+     "statement":"(-> (n : Nat) (id Nat n n))","description":"Identity."}
+    {"id":"p1","command":"propose","candidate":"reflexivity","goal":"identity",
+     "strategy":"my-strategy","proof":"(lam n (refl n))"}
+    {"id":"c1","command":"check","candidate":"reflexivity","budget":100000}
+
+A goal records a conjecture. Propose records evidence without checking it.
+Check invokes type:check or hol:proves against the exact statement and current
+theory. Publish invokes the native theorem publisher, which checks again.
+Status checks a recorded theorem name against the current goal. Rejecting a
+candidate does not refute the conjecture. An unfinished check does neither.
+HOL candidates use the kernel's proof syntax, for example
+(pf:all-intro (pf:imp-intro (pf:hyp 0))). A chosen proof-building programme
+can expand friendly pf:fix/pf:assume syntax before submitting quoted evidence.
+The checker does not execute that supplied proof text as a host programme.
+
+The native entry point is examples/math_space_agent.metta. Run it with
+--lang prime --no-results when supplying your own process broker. The Python
+controller additionally restricts save/load paths to its selected workspace
+root. This path policy is not an operating-system sandbox.
+
+Research context and inspection
+------------------------------
+
+Summary returns counts and a revision. View retrieves bounded pages from
+definitions, goals, candidates, attempts, history, publications, notes and
+links. Each entry carries its full character count and digest; clipped text
+is marked. Read retrieves one named goal, candidate, attempt or historical
+attempt. Inspect reads a declaration's actual type, source and dependencies.
+
+    {"id":"v1","command":"view","section":"goals","cursor":"start",
+     "rows":5,"characters":800}
+    {"id":"r1","command":"read","section":"candidates","key":"reflexivity",
+     "characters":2000}
+
+Pass the returned Math:Cursor as the next cursor's expression text. Changing
+the theory or research records expires it. This prevents an agent from
+mistaking a page from an earlier investigation for its current context.
+Notes can retain plans, observations and source references; links relate
+them to goals. Neither has theorem authority. Published rows in a view are
+records: use status for a current native checking result.
+
+Replies contain state, result text, character count, digest and coverage.
+Clipping is explicit. A digest identifies content; it is not a signature,
+proof or semantic equivalence certificate. The result uses MeTTa syntax,
+including quoted expressions, rather than inventing another term language.
+
+Programming over mathematics
+----------------------------
+
+Import math_space for the in-memory interface, math_space_store for portable
+snapshots, math_space_files for filesystem checkpoints, and math_space_views
+for bounded inspection and the CommandSpec metadata used by GödelClaw.
+
+    !(bind! &math (math:new "arithmetic"))
+    !(math:declare &math
+        (quote (hol:inductive Nat (u 0) (: Z Nat) (: S (-> Nat Nat)))))
+    !(math:declare &math
+        (quote (hol:define add (-> Nat Nat Nat)
+          (= (add $n Z) $n)
+          (= (add $n (S $m)) (S (add $n $m))))))
+    !(math:run &math (quote (add (S Z) (S Z))))
+
+Declarations use the existing native datatype/definition admission rules.
+Execution selects that theory's admitted rules, so ordinary conflicting
+equations do not acquire permission to change its mathematical computation.
+The workspace currently selects the base HOL/type profile. Its declaration
+interface accepts hol:inductive and hol:define, and does not add axioms.
+
+An ordinary MeTTa function can produce proof data:
+
+    (= (right-unit-proof) (quote (lam n (refl n))))
+    !(math:propose &math "proof" "right-unit" "reflexivity" (right-unit-proof))
+    !(math:check &math "proof" 100000)
+    !(math:publish &math "proof" right-unit 100000)
+
+Quote writes literal syntax. When building syntax from computed values, use
+cons-atom and math:code; quoting a local variable's spelling is not the same
+operation. Inspection does not execute that syntax. Math:run explicitly
+selects admitted mathematical execution. Unsupported computations return
+Math:Residual with the retained syntax. Type:normalize can additionally
+inspect the source, normal form and type in the same theory.
+
+The agent qualification builds a useful proof-carrying selector. It checks
+the general size bound, publishes it, and defines certified-topk with a
+dependent pair result: selected rows and evidence that their length is at
+most the budget. Its first projection computes the rows. Named opaque
+theorems are not automatically computational definitions; the current
+normalizer can leave the complete pair as a residual while its projection
+computes and its dependent type checks.
+
+Live attempts bind a fresh session, the theory's mutation counter and the
+exact conjecture. Changing a definition, removing and reinserting a row, or
+publishing another theorem conservatively expires older pending evidence.
+Retry uses a new attempt id under the current task. After restart, resume
+explicitly retries a historical attempt; saved session handles are not reused.
+
+The existing mathematical_workspace library can read the same theory with
+math:presentation and run supported first-order GSLT routes with math:via.
+Their proposed endpoints and evidence go through the same checking and
+publication workflow. An operational report saying Established is not itself
+authority. tests/prime/math_spaces/gslt_routes.metta checks this boundary and
+reconstructs a route-derived theorem after restart.
+
+Checkpoint semantics
+--------------------
+
+Snapshots contain admitted source, published proof programs, research data,
+history and the expected theory rows. The existing printer/reader checks
+variable sharing within each artifact. Source, native context and research
+have independent syntactic scopes. Replay resolves dependencies between
+definitions and theorems together. The final context comparison retains
+row multiplicity and shared variables, allowing row reordering.
+Malformed records, duplicate goal/candidate/attempt ids, orphan evidence and
+unsupported source operations are refused. Unrecorded axioms and unsupported
+profiles do not silently become part of a reconstructed base workspace.
+
+Save first validates reconstruction, then takes a stable file lock, compares
+the expected checkpoint revision, writes and syncs an exclusive temporary
+file, atomically renames it, and syncs the directory. Load captures immutable
+bytes under the lock before doing fresh native replay. Crash recovery tests
+cover both sides of the rename, concurrent writers and path aliases.
+
+The checking budget is a native checking-work budget, not a time limit.
+Zero means no checking work in the math: interface. Publication and declaration
+still contain existing native operations without a work-budget argument;
+the process broker's wall timeout bounds those complete agent operations.
+The separate ai-math:itp interface uses zero for unbounded budgets, so its
+budget values must not be forwarded without translating their meaning.
+
+Foreign proposal services
+-------------------------
+
+math_space_providers supplies ordinary MeTTa request builders for Peniel's
+Mathematics AI ATP /gnn/predict_tactic, /pln/evaluate and /prove endpoints:
+
+    !(let $request (math:peniel-tactics "True" 3)
+       (math:peniel-call curl "http://localhost:8000" tactics $request 2000 8192))
+
+Curl uses the existing owned process API, with separate request data, deadline
+and capture limit. Native selects the existing HTTP provider when that build
+has it. Responses are Math:ForeignProposal "lean4" data. Even solved=true,
+a high PLN score, or a remembered replay verdict cannot publish a native
+Prime theorem. Math:remember-provider saves the observation as a research
+note. The transport tests use a local protocol peer and, optionally, the
+actual upstream Pydantic request classes. They do not claim model inference.
+
+Retained Lean receipts have a separate, working checking route. Select the
+trusted ai-mathematician checkout as a controller option, then submit the
+receipt file as data:
+
+    python3 tools/math_space.py --lean-root CHECKOUT --workspace-root PROJECT
+
+    {"id":"r1","command":"lean-replay","target":"orIL",
+     "certificate":"proofs/orIL.olean","milliseconds":10000,"bytes":65536}
+
+The selected guard's --certificate mode independently replays declarations,
+compares the exact original target type and universe parameters, rejects
+added axioms, and enforces the earlier-declaration frontier from trusted
+compiled source positions. A successful result is checked-foreign, with the
+actual statement, used declarations and axioms. The corpus target must
+already exist in that selected environment. This is not an elaborator for
+arbitrary new Lean conjectures or an automatic transport to Prime.
+
+The broker detects changes to the selected guard and guest-module files.
+Their fingerprints, a project-relative artifact path and the observation
+are retained in research notes. These are historical records; run lean-replay
+again to obtain a fresh checking result after restart. Keep external receipt
+files alongside the checkpoint: their binary content is not embedded in the
+native snapshot. The fingerprints are selected-file identities, not a
+cryptographic attestation or a complete hash of the entire Lean installation.
+
+Yenat's ai-math:itp-check-with remains the isolated tactic route for its
+corpus. Certificate replay does not disable that isolation or execute a
+request's tactic text. On a host where the isolated worker cannot start,
+new untrusted tactics remain unavailable; already-produced receipts can
+still be checked. Persistent Lean sessions are useful for exploration, but
+a live environment id is not a durable certificate.
+
+Persistent ATP's default replay callback can report a fixture verdict, and
+its inspected resume route restarts search from a remembered request. A
+controller must select a real replay checker and distinguish that restart
+from recovering a durable search frontier. Moving a checked result between
+Lean and Prime requires a checked interpretation/transport for those theories.
+
+Qualification
+-------------
+
+    python3 tools/test_prime_math_spaces.py --binary ./cetta
+    python3 tools/test_prime_math_agent.py --binary ./cetta
+    python3 tools/test_prime_math_providers.py --binary ./cetta
+    python3 tools/test_prime_math_client.py --binary ./cetta
+
+The first gate checks native and snapshot boundaries plus file races and
+crashes. The second drives a real selector programme through two independent
+sessions and checks timeout handling. The third qualifies the external
+proposal protocol. Existing mathematical programming consumers are covered
+by tools/test_prime_mathematical_workspace.py. These are implementation tests
+against the native checker, not a proof that the entire C runtime refines a
+Lean semantics.

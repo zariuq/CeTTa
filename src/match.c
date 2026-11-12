@@ -3227,9 +3227,22 @@ void bindings_reader_context_set(Bindings *bindings, PrimeNeedReaderContext *con
     prime_need_reader_context_release(old);
 }
 
+/* A fresh carrier has no old reader edge to release. Construct it directly
+ * from the source; replacement still uses the initialized-owner operation.
+ * Each writable Bindings retains its own carrier address. */
+static void bindings_prime_store(Bindings *dst, const PrimeOccurrence *source) {
+    if (dst->prime_ext) {
+        prime_occurrence_assign(dst->prime_ext, source);
+    } else {
+        PrimeOccurrence *image = cetta_malloc(sizeof(*image));
+        prime_occurrence_copy(image, source);
+        dst->prime_ext = image;
+    }
+}
+
 void bindings_prime_assign(Bindings *dst, const Bindings *src) {
     if (bindings_prime_present(src))
-        prime_occurrence_assign(bindings_prime_ext_materialize(dst),src->prime_ext);
+        bindings_prime_store(dst, src->prime_ext);
     else if (dst->prime_ext) prime_occurrence_clear(dst->prime_ext);
 }
 
@@ -3255,7 +3268,7 @@ void bindings_prime_set(Bindings *dst, const PrimeNeedSnapshot *need,
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
         if (receipt) value.receipt=*receipt;
 #endif
-        prime_occurrence_assign(bindings_prime_ext_materialize(dst),&value);
+        bindings_prime_store(dst, &value);
     } else if (dst->prime_ext) prime_occurrence_clear(dst->prime_ext);
 }
 
@@ -4197,6 +4210,29 @@ bool bindings_logical_atoms_satisfy(
                     return false;
                 }
             }
+        }
+    }
+    return true;
+}
+
+bool bindings_retained_schema_atoms_satisfy(const Bindings *bindings,
+        AtomTreePredicate predicate, void *context) {
+    if (!bindings || !predicate)
+        return false;
+    const BindingsFrameIndex *index = bindings->frame_index;
+    if (!index)
+        return true;
+    if (index->len > index->cap || (index->len && !index->frames) || index->spare_len)
+        return false;
+    for (uint32_t i = 0u; i < index->len; i++) {
+        const BindingsFrameSchema *schema = index->frames[i].schema;
+        if (!schema || schema->len > schema->cap ||
+            (schema->cap && !schema->name_keys))
+            return false;
+        for (uint32_t slot = 0u; slot < schema->cap; slot++) {
+            const Atom *key = schema->name_keys[slot];
+            if (key && !predicate(key, context))
+                return false;
         }
     }
     return true;
@@ -5180,11 +5216,13 @@ CettaMatchCompletion bindings_try_merge_live_checked(
         ? CETTA_MATCH_MATCHED : failure;
 }
 
-CettaMatchCompletion bindings_import_production_checked(Arena *owner,
+static CettaMatchCompletion bindings_import_production_kernel(Arena *owner,
     const PrimeNeedReadCapture *reads, uint64_t thunk_id,
     const Bindings *common, const Bindings *entrance,
     const Bindings *production, const Bindings *recipient,
-    PrimeNeedStateInitialValue initial_value, void *context, Bindings *out) {
+    PrimeNeedStateInitialValue initial_value, void *context, Bindings *out,
+    bool borrow_production,bool *borrowed) {
+    if(borrowed)*borrowed=false;
     if (!owner || !common || !entrance || !production || !recipient || !out ||
         !prime_need_read_capture_has_cuts(reads, bindings_need_view(common),
                                          bindings_need_view(entrance)))
@@ -5192,9 +5230,14 @@ CettaMatchCompletion bindings_import_production_checked(Arena *owner,
     PrimeNeedSnapshot need;
     PrimeNeedBranchState state;
     CettaWeightLedger weights;
-    CettaMatchCompletion result = prime_need_snapshot_import_production_checked(
-        owner, reads, bindings_need_view(production), thunk_id,
-        bindings_need_view(recipient), &need);
+    bool need_borrowed=false;
+    CettaMatchCompletion result=borrow_production
+        ?prime_need_snapshot_import_production_borrowed_checked(owner,reads,
+            bindings_need_view(production),thunk_id,
+            bindings_need_view(recipient),&need,&need_borrowed)
+        :prime_need_snapshot_import_production_checked(owner,reads,
+            bindings_need_view(production),thunk_id,
+            bindings_need_view(recipient),&need);
     if (result != CETTA_MATCH_MATCHED) return result;
     result = prime_need_branch_state_import_suffix(owner,
         bindings_branch_state_view(common), bindings_branch_state_view(entrance),
@@ -5249,6 +5292,7 @@ CettaMatchCompletion bindings_import_production_checked(Arena *owner,
             bindings_reader_context_set(&staged,readers);
             prime_need_reader_context_release(readers);
             bindings_replace(out, &staged);
+            if(borrowed)*borrowed=need_borrowed;
         } else {
             prime_need_reader_context_release(readers);
             bindings_free(&staged);
@@ -5256,6 +5300,26 @@ CettaMatchCompletion bindings_import_production_checked(Arena *owner,
     }
     else bindings_free(&staged);
     return result;
+}
+
+CettaMatchCompletion bindings_import_production_checked(Arena *owner,
+    const PrimeNeedReadCapture *reads,uint64_t thunk_id,
+    const Bindings *common,const Bindings *entrance,
+    const Bindings *production,const Bindings *recipient,
+    PrimeNeedStateInitialValue initial_value,void *context,Bindings *out) {
+    return bindings_import_production_kernel(owner,reads,thunk_id,common,entrance,
+        production,recipient,initial_value,context,out,false,NULL);
+}
+
+CettaMatchCompletion bindings_import_production_borrowed_checked(Arena *owner,
+    const PrimeNeedReadCapture *reads,uint64_t thunk_id,
+    const Bindings *common,const Bindings *entrance,
+    const Bindings *production,const Bindings *recipient,
+    PrimeNeedStateInitialValue initial_value,void *context,Bindings *out,
+    bool *borrowed) {
+    if(!borrowed)return CETTA_MATCH_INCOMPLETE;
+    return bindings_import_production_kernel(owner,reads,thunk_id,common,entrance,
+        production,recipient,initial_value,context,out,true,borrowed);
 }
 
 bool bindings_clone_merge(Bindings *dst, const Bindings *base,
@@ -5532,10 +5596,11 @@ typedef struct {
  * a substitution-cache key: the key is the node and the whole scope it is
  * read in. Quotation depth also determines how the language's structure
  * hooks read and form an image. Completed images retain that full context;
- * the active-source table uses only source and lexical scope, so a malformed
- * raw cycle cannot evade detection by adding quotation depth. Both tables
- * belong to one immutable environment observation and are never retained
- * across a binding mutation. */
+ * the active-source table uses only source and lexical scope (epoch and
+ * kind), so a malformed raw cycle cannot evade detection by adding
+ * quotation depth or a reading position. Both tables belong to one
+ * immutable environment observation and are never retained across a
+ * binding mutation. */
 typedef struct {
     Atom *source;
     Atom *image;
@@ -5580,6 +5645,11 @@ static bool bindings_apply_graph_key_equal(const BindingApplyGraphEntry *entry,
         Atom *source, BindingsApplyScope scope, uint32_t code_depth) {
     return entry->source == source && bindings_apply_scope_eq(entry->scope, scope) &&
         entry->code_depth == code_depth;
+}
+
+/* A scope's lexical part, the key of the active-source table. */
+static BindingsApplyScope bindings_apply_lexical_scope(BindingsApplyScope scope) {
+    return (BindingsApplyScope){.epoch = scope.epoch, .kind = scope.kind};
 }
 
 static BindingApplyGraphEntry *bindings_apply_graph_slot(
@@ -6063,6 +6133,47 @@ const BindingsStructureHooks *bindings_structure_hooks(void) {
     return g_bindings_structure_hooks;
 }
 
+bool bindings_structure_hooks_capture(BindingsStructureHooks *out,
+        const BindingsStructureHooks *source) {
+    if (!out || out == source) return false;
+    *out = (BindingsStructureHooks){0};
+    if (!source) return true;
+    if ((source->capture || source->context) && (!source->retain || !source->release)) return false;
+    BindingsStructureHooks captured = *source;
+    if (source->capture) {
+        captured.context = NULL;
+        if (!source->capture(source->context, &captured.context)) {
+            if (captured.context) source->release(captured.context);
+            return false;
+        }
+        captured.capture = NULL;
+    } else if (source->retain) {
+        source->retain(source->context);
+    }
+    if (captured.is_current && !captured.is_current(captured.context)) {
+        if (captured.release) captured.release(captured.context);
+        return false;
+    }
+    *out = captured;
+    return true;
+}
+
+void bindings_structure_hooks_release(BindingsStructureHooks *hooks) {
+    if (!hooks) return;
+    if (!hooks->capture && hooks->release) hooks->release(hooks->context);
+    *hooks = (BindingsStructureHooks){0};
+}
+
+void bindings_structure_hooks_storage(const BindingsStructureHooks *hooks,
+        CettaStorageCensus *census) {
+    if (!hooks || !hooks->context) return;
+    if (hooks->capture || !hooks->storage) {
+        cetta_storage_refuse(census, "BindingInterpretationOwner");
+        return;
+    }
+    hooks->storage(hooks->context, census);
+}
+
 enum { BINDINGS_APPLY_INLINE_FRAMES = 32u };
 
 typedef struct {
@@ -6232,6 +6343,7 @@ typedef struct {
     uint32_t seen_len, depth, expressions;
     CettaExprIndex prefix;
     const BindingsStructureHooks *hooks;
+    BindingsStructureHooks owned_hooks;
     BindingApplyGraph *graph;
     BindingApplyGraph observed;
     BindingsApplyFrame inline_items[BINDINGS_APPLY_INLINE_FRAMES];
@@ -6242,9 +6354,13 @@ typedef struct {
 
 static inline void bindings_apply_walk_init(BindingsApplyWalk *walk,
         BindingsApplyFold *fold, Atom *atom, BindingsApplyScope scope,
-        uint32_t seen_len, bool epoch_fold, BindingApplyGraph *graph) {
+        uint32_t seen_len, bool epoch_fold, BindingApplyGraph *graph,
+        const BindingsStructureHooks *structure) {
     *walk = (BindingsApplyWalk){.fold = fold, .atom = atom, .scope = scope,
-        .seen_len = seen_len, .hooks = g_bindings_structure_hooks, .graph = graph};
+        .seen_len = seen_len, .graph = graph};
+    if (!bindings_structure_hooks_capture(&walk->owned_hooks, structure))
+        walk->phase = BINDINGS_WALK_REFUSED;
+    else if (structure) walk->hooks = &walk->owned_hooks;
     walk->frames = (BindingsApplyFrames){.items = walk->inline_items,
         .cap = BINDINGS_APPLY_INLINE_FRAMES};
     walk->may_observe = !walk->hooks && !graph &&
@@ -6256,6 +6372,7 @@ static void bindings_apply_walk_release(BindingsApplyWalk *walk) {
         atom_expr_assembly_free(walk->frames.items[i].assembly);
     if (walk->frames.heap) free(walk->frames.items);
     free(walk->observed.entries);
+    bindings_structure_hooks_release(&walk->owned_hooks);
 }
 
 /* One traversal serves synchronous and retained callers. Synchronous entry
@@ -6308,7 +6425,7 @@ descend:
         bool created = false;
         BindingApplyGraphEntry *active = walk->graph->active_path
             ? bindings_apply_graph_enter(walk->graph->active_path, walk->atom,
-                walk->scope, 0u, &created) : NULL;
+                bindings_apply_lexical_scope(walk->scope), 0u, &created) : NULL;
         if (walk->graph->active_path && (!active || active->active)) goto failed;
         BindingApplyGraphEntry *entry = bindings_apply_graph_enter(walk->graph,
             walk->atom, walk->scope, walk->depth, &created);
@@ -6372,7 +6489,7 @@ ascend:
         if (walk->result) {
             if (hooks && hooks->code_reading && child_depth > 0u &&
                 elems[top->next]->kind == ATOM_VAR) {
-                walk->result = hooks->code_reading(walk->result);
+                walk->result = hooks->code_reading(hooks->context, walk->result);
                 if (!walk->result) goto failed;
             }
             if (!top->draft && !top->assembly && walk->result != elems[top->next]) {
@@ -6409,17 +6526,17 @@ ascend:
         if (walk->result && changed && hooks && hooks->formed_node &&
             len > 0u && elems[0]->kind == ATOM_VAR &&
             walk->result->expr.elems[0] && walk->result->expr.elems[0]->kind == ATOM_SYMBOL)
-            walk->result = hooks->formed_node(fold->a, walk->result, top->code_depth > 0u);
+            walk->result = hooks->formed_node(hooks->context, fold->a, walk->result, top->code_depth > 0u);
         else if (walk->result && changed && hooks && hooks->own_list &&
                 atom_sequence_is_own_list(top->atom))
-            walk->result = hooks->own_list(fold->a, walk->result);
+            walk->result = hooks->own_list(hooks->context, fold->a, walk->result);
         if (walk->graph && walk->graph->cap) {
             BindingApplyGraphEntry *entry = bindings_apply_graph_slot(walk->graph,
                 top->atom, top->scope, top->code_depth);
             if (entry->source) entry->image = walk->result;
             if (walk->graph->active_path)
                 bindings_apply_graph_slot(walk->graph->active_path, top->atom,
-                    top->scope, 0u)->active = false;
+                    bindings_apply_lexical_scope(top->scope), 0u)->active = false;
         }
         walk->frames.len--;
         if (!walk->result) goto failed;
@@ -6461,7 +6578,8 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
         BindingsApplyScope scope, uint32_t seen_len, bool epoch_fold,
         BindingApplyGraph *graph) {
     BindingsApplyWalk walk;
-    bindings_apply_walk_init(&walk, fold, atom, scope, seen_len, epoch_fold, graph);
+    bindings_apply_walk_init(&walk, fold, atom, scope, seen_len, epoch_fold, graph,
+        bindings_structure_hooks());
     BindingsApplyWalkPhase phase = bindings_apply_walk_drive(&walk, epoch_fold, false);
     Atom *result = phase == BINDINGS_WALK_COMPLETE ? walk.result : NULL;
     bindings_apply_walk_release(&walk);
@@ -6474,7 +6592,6 @@ struct BindingsApplySession {
     BindingApplySeen seen;
     BindingApplyMemo memo;
     BindingApplyGraph graph, active_path;
-    BindingsStructureHooks hooks;
     VarId seen_inline[BINDINGS_SEEN_STACK_CAP];
     VarId memo_ids[BINDINGS_MEMO_STACK_CAP];
     Atom *memo_values[BINDINGS_MEMO_STACK_CAP];
@@ -6497,19 +6614,21 @@ BindingsApplySession *bindings_apply_session_new(const Bindings *b, Arena *a,
     session->fold = (BindingsApplyFold){.b = (Bindings *)b, .a = a,
         .seen = &session->seen, .memo = &session->memo,
         .track_cycles = b->cycle_state != BINDINGS_CYCLE_ACYCLIC};
-    const BindingsStructureHooks *hooks = bindings_structure_hooks();
-    if (hooks) session->hooks = *hooks;
+    bool identity = (!bindings_has_bound_values(b) &&
+        binding_value_kind(source) == BINDING_VALUE_MATERIALIZED) || !atom_has_vars(source.skeleton);
+    const BindingsStructureHooks *hooks = identity ? NULL : bindings_structure_hooks();
     if (shared_graph && !session->fold.track_cycles)
         session->graph.active_path = hooks ? &session->active_path : NULL;
     bindings_apply_walk_init(&session->walk, &session->fold, source.skeleton,
         (BindingsApplyScope){.epoch = binding_value_epoch(source),
             .kind = binding_value_kind(source)}, 0u, false,
-        shared_graph && !session->fold.track_cycles ? &session->graph : NULL);
-    session->walk.hooks = hooks ? &session->hooks : NULL;
+        shared_graph && !session->fold.track_cycles ? &session->graph : NULL, hooks);
+    if (session->walk.phase == BINDINGS_WALK_REFUSED) {
+        bindings_apply_session_free(session);
+        return NULL;
+    }
     /* Preserve the existing identity cases, including their borrowed root. */
-    if ((!bindings_has_bound_values(b) &&
-            binding_value_kind(source) == BINDING_VALUE_MATERIALIZED) ||
-            !atom_has_vars(source.skeleton)) {
+    if (identity) {
         session->walk.phase = BINDINGS_WALK_ASCEND;
         session->walk.result = source.skeleton;
     }
@@ -6524,7 +6643,9 @@ BindingsApplyStatus bindings_apply_session_advance(BindingsApplySession *session
     if (!session || !result || !used) return BINDINGS_APPLY_REFUSED;
     if (session->arena->identity != session->arena_identity ||
             session->arena->reset_epoch != session->arena_epoch ||
-            session->arena->hashcons != session->hashcons) {
+            session->arena->hashcons != session->hashcons ||
+            (session->walk.hooks && session->walk.hooks->is_current &&
+             !session->walk.hooks->is_current(session->walk.hooks->context))) {
         session->walk.phase = BINDINGS_WALK_REFUSED;
         return BINDINGS_APPLY_REFUSED;
     }
@@ -7921,11 +8042,8 @@ void bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark) {
         bb->current.cycle_state = entry->cycle_state;
         restored_derived_nonzero = entry->derived_nonzero;
         restored = true;
-        if (prime || bb->current.prime_ext) {
-            PrimeOccurrence *current=bindings_prime_ext_materialize(&bb->current);
-            if (prime) prime_occurrence_assign(current,prime);
-            else prime_occurrence_clear(current);
-        }
+        if (prime) bindings_prime_store(&bb->current, prime);
+        else if (bb->current.prime_ext) prime_occurrence_clear(bb->current.prime_ext);
         bindings_builder_drop_prime_trail(bb,entry->prime_state_mark);
     }
     bool frame_values_restored =
@@ -14323,7 +14441,7 @@ static BindingApplyGraphEntry *match_graph_check_entry(MatchGraphCheck *check,
             return NULL;
         }
         if (!check->graph.cap) { *valid = false; return NULL; }
-        check->probe = bindings_apply_graph_hash(atom, scope, 0u) &
+        check->probe = bindings_apply_graph_hash(atom, bindings_apply_lexical_scope(scope), 0u) &
             (check->graph.cap - 1u);
         check->memo_phase = MATCH_GRAPH_MEMO_LOOKUP;
     }
@@ -14373,13 +14491,15 @@ static BindingApplyGraphEntry *match_graph_check_entry(MatchGraphCheck *check,
     case MATCH_GRAPH_MEMO_LOOKUP: {
         match_graph_check_debit(budget, CETTA_COST_INDEX_VISIT);
         BindingApplyGraphEntry *entry = &check->graph.entries[check->probe];
-        if (entry->source && !bindings_apply_graph_key_equal(entry, atom, scope, 0u)) {
+        if (entry->source && !bindings_apply_graph_key_equal(entry, atom,
+                bindings_apply_lexical_scope(scope), 0u)) {
             check->probe = (check->probe + 1u) & (check->graph.cap - 1u);
             return NULL;
         }
         if (!entry->source) {
             if (!entering) { *valid = false; return NULL; }
-            *entry = (BindingApplyGraphEntry){.source = atom, .scope = scope};
+            *entry = (BindingApplyGraphEntry){.source = atom,
+                .scope = bindings_apply_lexical_scope(scope)};
             ++check->graph.len;
         }
         check->memo_phase = MATCH_GRAPH_MEMO_IDLE;
@@ -14923,6 +15043,7 @@ retry_pair:
              right_plan->kind != right->kind)) {
             goto fail;
         }
+        AtomKind right_shape = right_plan ? right_plan->kind : right->kind;
         if (left == right) {
             bool same_environment = match_shared_occurrence_same_environment(
                 left_original, right_original, left_epoch, right_epoch);
@@ -15047,7 +15168,7 @@ retry_pair:
                 left_frame = NULL;
                 goto retry_pair_with_budget;
             }
-            if (right->kind == ATOM_VAR) {
+            if (right_shape == ATOM_VAR) {
                 VarId right_id = right_original
                     ? var_epoch_id(right->var_id, right_epoch)
                     : right->var_id;
@@ -15169,7 +15290,7 @@ retry_pair:
             }
             continue;
         }
-        if (right->kind == ATOM_VAR) {
+        if (right_shape == ATOM_VAR) {
             VarId right_id = right_original
                 ? var_epoch_id(right->var_id, right_epoch)
                 : right->var_id;
@@ -15222,7 +15343,7 @@ retry_pair:
             }
             continue;
         }
-        if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
+        if (left->kind == ATOM_SYMBOL && right_shape == ATOM_SYMBOL) {
             if (!atom_symbols_equal(left, right)) {
                 if (attempt_resolving_bound)
                     attempt_repeated_var = true;
@@ -15230,7 +15351,7 @@ retry_pair:
             }
             continue;
         }
-        if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED) {
+        if (left->kind == ATOM_GROUNDED && right_shape == ATOM_GROUNDED) {
             if (!atom_eq_with_resolved_spaces(left, right)) {
                 if (attempt_resolving_bound)
                     attempt_repeated_var = true;
@@ -15246,7 +15367,7 @@ retry_pair:
                 attempt_repeated_var = true;
             goto fail;
         }
-        if (left->kind == ATOM_EXPR && right->kind == ATOM_EXPR &&
+        if (left->kind == ATOM_EXPR && right_shape == ATOM_EXPR &&
             (match_expr_is_list(left) || match_expr_is_list(right))) {
             MatchListMeeting meet;
             MatchListOutcome list_outcome = match_list_meet(a, left, right, &meet);
@@ -15301,11 +15422,11 @@ retry_pair:
                 goto fail;
             continue;
         }
-        if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
+        if (left->kind != ATOM_EXPR || right_shape != ATOM_EXPR ||
             atom_authored_len(left) != atom_authored_len(right) ||
             (right_plan &&
-             (atom_authored_len(right) != right->expr.len ||
-              (atom_authored_len(right) != 0u && !right_plan->children)))) {
+             (right_plan->child_count != right->expr.len ||
+              (right->expr.len != 0u && !right_plan->children)))) {
             if (attempt_resolving_bound)
                 attempt_repeated_var = true;
             if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
@@ -17104,7 +17225,6 @@ bool bindings_eq(Bindings *a, Bindings *b) {
     return true;
 }
 
-
 void bindings_frame_schema_storage_census(const BindingsFrameSchema *schema,
         CettaStorageCensus *census) {
     if (!schema || !cetta_storage_array(census, schema, schema->cap,
@@ -17470,6 +17590,8 @@ bool bindings_checkpoint_compare(const Bindings *a,const Bindings *b,
 #undef BC_I
 #undef BC_A
 
+/* The ordinary plan reader uses the same ordered walk and write policy.
+ * A private frame owns the separate early-refutation permission above. */
 bool match_atoms_epoch_builder_planned(
         Atom *left, Atom *right, const CettaOpenPatternPlan *right_plan,
         BindingsBuilder *builder, Arena *arena, CettaFrameIdentity epoch) {

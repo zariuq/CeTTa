@@ -134,7 +134,6 @@ bool cetta_prepared_pure_closed_own_execution(
     CettaOwnedExecution *driver, CettaPreparedPureClosedExecution *execution,
     const void *owner, uint64_t quantum);
 
-
 typedef enum {
     CETTA_PREPARED_PURE_COMPILE_UNCERTIFIED,
     CETTA_PREPARED_PURE_COMPILE_READY,
@@ -381,6 +380,12 @@ typedef struct {
 } CettaPreparedPureSourceProjection;
 typedef const void *(*CettaPreparedPureProjectSourceFn)(
     void *context, const CettaPreparedPureSourceProjection *projection);
+/* True only when `source_view` has an immutable identity retained by
+ * `context` for the lifetime of every cache that uses this adapter. A
+ * temporary source descriptor may still be compiled and executed once, but
+ * its address cannot key a reusable program or refusal. */
+typedef bool (*CettaPreparedPureSourceIdentityRetainedFn)(
+    void *context, const void *source_view);
 /* Whether the tier admits spellings by their normal form (the admission
  * normalizer's rules; CETTA_ADMISSION_NORMALIZE=0 turns it off). */
 bool cetta_prepared_pure_admission_normalize_enabled(void);
@@ -394,6 +399,7 @@ typedef struct {
     CettaPreparedPureSourceChildFn child;
     CettaPreparedPureEquationSourceFn equation_rhs;
     CettaPreparedPureProjectSourceFn project_source;
+    CettaPreparedPureSourceIdentityRetainedFn cache_identity_retained;
     /* Decline a named executable occurrence whose admitted rule semantics
      * this compiler cannot realize. Checked during compilation, including
      * callees, and at runtime-created application boundaries. */
@@ -403,7 +409,9 @@ typedef struct {
      * declines before entry and transfers no packet. True with complete
      * status transfers the tagged result, including zero or raised control.
      * Completion reports this invocation's own cause, independently of any
-     * enclosing diagnostic; incomplete calls authorize no following work.
+     * enclosing diagnostic or the receiver's episode. A false return with
+     * incomplete completion is a preparation refusal; it never licenses
+     * fallback or claims native entry, and authorizes no following work.
      * The native context is separate because a language's source-plan owner
      * and its library registry have distinct lifetimes and representations. */
     void *native_context;
@@ -411,6 +419,11 @@ typedef struct {
         void *context, Space *space, Arena *arena,
         const CettaInvocation *invocation, CettaCallOutcome *outcome,
         CettaEvalCompletion *completion);
+    /* The language keeps the values an incomplete native earned (Prime): a
+     * streaming cursor hands them off with the native's own cause and claims
+     * no completed frontier. Otherwise an incomplete native interrupts the
+     * cursor and the caller's evaluation answers the call (HE, PeTTa). */
+    bool native_keeps_incomplete_values;
 } CettaPreparedPureSourceView;
 
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
@@ -478,7 +491,8 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_result(
     const CettaPreparedPureSourceView *source_view,
     bool entry_arguments_are_values,
     bool total_structural_equality,
-    CettaMatchDecisionSemanticIdentity match_decision_semantics);
+    CettaMatchDecisionSemanticIdentity match_decision_semantics,
+    CettaPreparedPureCompileReport *report);
 
 /* Compile an eager, effect-free at-most-one worker from actual equations.
  * Arguments must have the supplied value interpretation; unsupported code
@@ -614,7 +628,8 @@ bool cetta_prepared_pure_program_execute_controlled(
     CettaPreparedPureProgram *program, Arena *arena,
     Atom *accumulator, Atom *item,
     CettaPreparedPureInterruptPollFn interrupt_poll,
-    void *interrupt_context, CettaCallOutcome *outcome);
+    void *interrupt_context, CettaCallOutcome *outcome,
+    CettaEvalCompletion *completion);
 
 /* Execute using a caller-owned scratch arena.  A nonzero nursery budget
  * enables copying collection at the machine's generated-root loop boundary;
@@ -837,8 +852,10 @@ CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_advance(
 /* Read-only completion evidence for the retained frontier. True means every
  * remaining call has matched and has no untried equation, so only reclamation
  * remains. This executes no body, continuation, guard or interrupt observer;
- * it does not release the borrowed answer. An unmatched call, lost authority
- * or a handoff cannot establish completion. */
+ * it does not release the borrowed answer. An unmatched call, a running
+ * program, a pending body root or a handoff cannot establish completion;
+ * established exhaustion needs no new execution authority. A withdrawn
+ * answer restores an unfinished equation and revokes that certificate. */
 bool cetta_prepared_pure_answer_cursor_frontier_is_complete(
     const CettaPreparedPureAnswerCursor *cursor);
 
@@ -875,13 +892,6 @@ bool cetta_prepared_pure_answer_cursor_own_execution_bounded(
 CettaOwnedExecutionStep cetta_prepared_pure_answer_cursor_return(
     void *cursor, CettaOwnedReturn *returned, CettaEvalCompletion *completion);
 
-/* Read the retained equation frontier without interpreting or polling it.
- * Untried equations, no-rule observations and handoff refuse completion.
- * Established exhaustion needs no new execution authority. A withdrawn
- * answer restores an unfinished equation and revokes that certificate. */
-bool cetta_prepared_pure_answer_cursor_frontier_is_complete(
-    const CettaPreparedPureAnswerCursor *cursor);
-
 /* Withdraw the answer just produced: restore the frontier to the state
  * before the step that produced it.  A consumer calls this when the answer
  * needs a treatment the producer does not own. */
@@ -916,7 +926,7 @@ CettaPreparedPureHandoffReason cetta_prepared_pure_answer_cursor_handoff_reason(
  * resumption of compiled work. */
 bool cetta_prepared_pure_answer_cursor_native_boundary(
     CettaPreparedPureAnswerCursor *cursor, CettaInvocation *invocation,
-    bool *entered, CettaOwnedReturn *returned);
+    bool *entered, CettaOwnedReturn *returned, CettaEvalCompletion *completion);
 /* Move a replacement producer for that boundary into the retained cursor.
  * An entered packet remains live until the replacement finishes. A stale or
  * interrupted cursor refuses the move without changing either owner. */

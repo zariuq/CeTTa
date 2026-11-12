@@ -310,7 +310,7 @@ static void prime_migration_walk(PrimeMigration *m, Atom *term, bool pattern,
     } else {
         for (size_t i = 0u; i < n; i++) prime_lex_force_id(e, shared[i]->var_id, true);
         for (CettaExprIndex i = 0u; i < atom_authored_len(term); i++) {
-            PrimeChildRole role = prime_child_role(term, i);
+            PrimeChildRole role = prime_child_role(m->elab->interpretation, term, i);
             if (role == PRIME_CHILD_PATTERN_PAIRS) {
                 Atom *pairs = term->expr.elems[i];
                 for (CettaExprIndex j = 0u; pairs->kind == ATOM_EXPR && j < pairs->expr.len; j++) {

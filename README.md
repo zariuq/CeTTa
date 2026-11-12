@@ -5,10 +5,12 @@ runs several MeTTa dialects over one shared substrate (atoms, spaces,
 matching, indexing and memory management), and it hosts native proof kernels
 for HOL Light, MM0 and Megalodon.
 
-PeTTa is the default language. Its reference is
-[corrected stable PeTTa](https://github.com/godelclaw/PeTTa/tree/stable-fixed),
-preserving the stable language's typing policy.
-Hyperon Experimental MeTTa and the other languages are selected with `--lang`.
+PeTTa is the default language: corrected stable PeTTa, with its reference,
+accepted repairs and differences described in
+[the compatibility contract](docs/petta_compatibility.txt) and the pinned
+[corrected stable PeTTa reference](https://github.com/godelclaw/PeTTa/tree/stable-fixed).
+Hyperon
+Experimental MeTTa and the other languages are selected with `--lang`.
 
 ```bash
 make
@@ -82,7 +84,7 @@ implementation, and a program is written for one of them.
 
 | `--lang` | Language | Profiles (`--profile`) |
 |---|---|---|
-| `petta` (default) | Corrected stable PeTTa | `extended` adds CeTTa's labeled extensions; `typecheck-v2` and `typecheck-v3` add native type checking (`petta@1.1`); `petta@1.1.c` is the typed line with declarations as call contracts |
+| `petta` (default) | Corrected stable PeTTa | `extended` adds CeTTa's labeled extensions; `typecheck-v2` and `typecheck-v3` add opt-in native type checking (`petta@1.1`); `petta@1.1.c` is the typed line with declarations as call contracts |
 | `he` | Hyperon Experimental MeTTa 0.2.10, in CeTTa's fork | `he` (default) is the fork with its deliberate differences; `he-compat` keeps the Rust implementation's behavior where `he` differs; `extended` adds CeTTa's labeled extensions; `he-prime` adds dependent binders and typed inhabitation search |
 | `prime` | Experimental local Prime adapter, very much a work in progress | Frozen compatibility endpoint `prime@0.0.1` |
 | `hol-light` | the HOL Light kernel, checking HOLR proof streams | `standard` (default), `open`, `sealed` |
@@ -430,10 +432,6 @@ and service reserve on both glibc and musl.
 run with `native_probes=true` selects experimental macOS and Windows/MSYS2 core
 ownership probes, without repeating the Linux matrix already run on pushes.
 Those probes do not establish full agent or service support on either OS.
-`make test-petta-release-reference` validates the pinned PeTTa reference and
-library metadata. `make test-petta-corrected-stable` checks the current accepted
-observations. The [compatibility contract](docs/petta_compatibility.txt) explains
-which repairs supersede historical reference behavior.
 
 For changes to foreign callbacks, run:
 
@@ -1263,7 +1261,6 @@ Useful workloads:
 - `tests/test_pathmap_counted_space_interface.metta`: multiset semantics over PathMap
 - `tests/bench_duplicate_conjunction_he.metta`: duplicate conjunction parity test
 
-## CLI
 ## Working on CeTTa
 
 Start with the contract for the dialect you are changing:

@@ -4,7 +4,8 @@ and PeTTa.
 Each dialect runs its own program against the same checker: Prime with the
 importing space as the theory space, HE and PeTTa (extended profiles) with
 explicit theory spaces.  Every program's output must equal its expected
-output exactly.
+output exactly. Mixed theory judgments also run with one and two workers;
+both executions preserve the same theory-specific verdicts and multiplicities.
 """
 
 from __future__ import annotations
@@ -14,9 +15,15 @@ from pathlib import Path
 import subprocess
 
 RUNS = (
-    ("prime", ["--lang", "prime"]),
-    ("he", ["--lang", "he", "--profile", "extended"]),
-    ("petta", ["--lang", "petta", "--profile", "extended"]),
+    ("prime", ["--lang", "prime"], "hol_import.prime"),
+    ("he", ["--lang", "he", "--profile", "extended"], "hol_import.he"),
+    ("petta", ["--lang", "petta", "--profile", "extended"], "hol_import.petta"),
+    ("petta serial judgments",
+     ["--lang", "petta", "--profile", "extended", "--num-threads", "1"],
+     "hol_set_judgments.petta"),
+    ("petta parallel judgments",
+     ["--lang", "petta", "--profile", "extended", "--num-threads", "2"],
+     "hol_set_judgments.petta"),
 )
 
 
@@ -29,9 +36,9 @@ def main() -> None:
     args.binary = args.binary.resolve()
     directory = repository / "tests" / "hol_import"
     failures = 0
-    for dialect, options in RUNS:
-        program = directory / f"hol_import.{dialect}.metta"
-        expected = program.with_name(f"hol_import.{dialect}.expected").read_text()
+    for dialect, options, stem in RUNS:
+        program = directory / f"{stem}.metta"
+        expected = directory.joinpath(f"{stem}.expected").read_text()
         result = subprocess.run([str(args.binary), *options, str(program)], cwd=repository,
                                 capture_output=True, text=True, timeout=args.timeout)
         output = result.stdout + result.stderr

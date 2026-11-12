@@ -3715,7 +3715,7 @@ static void he_canonical_ambient_capture(HeCanonicalAmbient *state) {
     state->options = *active_eval_options_const();
     state->persistent = g_eval_fallback_universe.persistent_arena;
     state->universe = g_eval_term_universe_override;
-    state->temporary_spaces = g_made_spaces;
+
     state->new_spaces = g_new_space_track;
     state->evaluation_depth = g_metta_eval_depth;
     state->observation_present = g_eval_observation_demand_present;
@@ -3759,7 +3759,7 @@ static void he_canonical_ambient_install(const HeCanonicalAmbient *state) {
     term_universe_set_persistent_arena(&g_eval_fallback_universe,
         state->persistent);
     g_eval_term_universe_override = state->universe;
-    g_made_spaces = state->temporary_spaces;
+
     g_new_space_track = state->new_spaces;
     g_metta_eval_depth = state->evaluation_depth;
     g_eval_observation_demand_present = state->observation_present;

@@ -5,6 +5,19 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include "../src/match.h"
+#include "../src/eval.h"
+#include "../src/shared_transition.h"
+
+static bool g_expect_unlocked_computation, g_locked_computation;
+static size_t g_checked_computations;
+static bool query_evaluate_interaction(Space *space, Arena *arena, Atom *expression,
+        Atom ***values, size_t *length, Atom **error) {
+    if (g_expect_unlocked_computation) {
+        g_checked_computations++;
+        g_locked_computation |= cetta_shared_transition_guard_held_by_current_thread();
+    }
+    return eval_interaction_values(space, arena, expression, values, length, error);
+}
 
 static bool g_cancel;
 static bool g_incomplete_match;
@@ -50,7 +63,9 @@ static void *query_realloc(void *p, size_t bytes) {
 #define match_atoms_builder_checked query_match_materialized
 #define calloc query_calloc
 #define realloc query_realloc
+#define eval_interaction_values query_evaluate_interaction
 #include "../src/interaction_core.c"
+#undef eval_interaction_values
 #undef realloc
 #undef calloc
 #undef eval_native_interrupted
@@ -538,6 +553,58 @@ static void computed_frontier_capacity(bool capacity_failure) {
     space_free(&program); arena_free(&a);
 }
 
+static void prepared_prefix_resumption(bool changed, bool aba) {
+    Arena a; arena_init_detached(&a);
+    Space program, work, dependency, unrelated;
+    space_init(&program); space_init(&work); space_init(&dependency); space_init(&unrelated);
+    pending(&work, &a);
+    Atom *marker = atom_symbol(&a, "marker");
+    space_add(&dependency, marker);
+    Atom *loc = atom_space(&a, &work), *dep = atom_space(&a, &dependency);
+    Atom *parts[] = {form(&a, "take", atom_symbol(&a, "pending")),
+        atom_expr3(&a, atom_symbol(&a, "read"), dep, marker),
+        atom_expr3(&a, atom_symbol(&a, "let"), atom_var(&a, "x"), atom_int(&a, 7))};
+    Atom *args[] = {loc, conjunction(&a, parts, 3u),
+        atom_expr3(&a, atom_symbol(&a, "add-atom"), loc, atom_symbol(&a, "done"))};
+    CettaCallOutcome out = {0};
+    CHECK(op_fire_prepared(&a, args, 3u, &out));
+    Atom *need = out.term;
+    CHECK(ia_head(need, "ia:need", 3u));
+    if (ia_head(need, "ia:need", 3u)) {
+        IaResumeToken *token = ia_resume_token_of(need->expr.elems[1]);
+        CHECK(token && token->machine->prepare_publication);
+        Atom *forged_value = atom_int(&a, 999);
+        CHECK(failed(resume(&a, need->expr.elems[1], atom_expr(&a, &forged_value, 1u))));
+        CHECK(token && token->machine->waiting && !token->machine->retired);
+        size_t original_reads = token ? token->machine->seen.len : 0u;
+        uint64_t original_revision = space_revision(&dependency);
+        if (changed) {
+            if (aba) { CHECK(space_remove(&dependency, marker)); space_add(&dependency, marker); }
+            else space_add(&dependency, atom_symbol(&a, "arrival"));
+        } else space_add(&unrelated, atom_symbol(&a, "arrival"));
+        CHECK((space_revision(&dependency) != original_revision) == changed);
+        Atom *compute_args[] = {need->expr.elems[1]};
+        g_expect_unlocked_computation = true;
+        g_locked_computation = false; g_checked_computations = 0u;
+        cetta_shared_transition_scope_enter();
+        CHECK(op_compute(&program, &a, compute_args, 1u, &out));
+        cetta_shared_transition_scope_leave();
+        g_expect_unlocked_computation = false;
+        CHECK(!g_locked_computation);
+        CHECK(g_checked_computations == (changed ? 0u : 1u));
+        CHECK(changed ? failed(out.term) : fired(out.term));
+        CHECK(holds(&work, atom_symbol(&a, changed ? "pending" : "done")));
+        CHECK(!holds(&work, atom_symbol(&a, changed ? "done" : "pending")));
+        CHECK(token && token->machine->retired);
+        CHECK(original_reads >= 2u);
+        CHECK(op_compute(&program, &a, compute_args, 1u, &out) && failed(out.term));
+    }
+    Atom *forged_args[] = {form(&a, "ia:need", atom_int(&a, 1))};
+    CHECK(op_compute(&program, &a, forged_args, 1u, &out) && failed(out.term));
+    space_free(&unrelated); space_free(&dependency); space_free(&work); space_free(&program);
+    arena_free(&a);
+}
+
 int main(void) {
     SymbolTable symbols; symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols, &g_builtin_syms); g_symbols = &symbols;
@@ -571,6 +638,9 @@ int main(void) {
     in_flight_request_refuses_reentry();
     computed_frontier_capacity(false);
     computed_frontier_capacity(true);
+    prepared_prefix_resumption(false, false);
+    prepared_prefix_resumption(true, false);
+    prepared_prefix_resumption(true, true);
     for (size_t i = 0; i < 12u; i++) {
         allocation_refusal(true, i);
         allocation_refusal(false, i);

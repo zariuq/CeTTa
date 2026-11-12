@@ -1,5 +1,10 @@
 (hol:profile base)
 
+; A returned evidence packet has an executable caller-side spelling, but
+; ordinary native delivery must still leave it as data.
+(= (he-accept $answer)
+   (chain (println! RESULT_PACKET_EXECUTED) $_ result-packet-ran))
+
 ; Search proposes arguments; the native dependent checker accepts the proof.
 !(bind! &thy (let $profile-space (new-space) (let $_ (add-atom $profile-space (hol:profile base)) $profile-space)))
 !(add-atom &thy (: A (u 0)))
@@ -90,6 +95,18 @@
 ; program gives its head an equation.
 (= (next a h) the-proof-ran)
 !(search-first-inhabitant &thy (P (f a)) 2)
+; Native return and validation keep the packet and its proof as evidence.
+!(let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
+      (search-first-inhabitant &thy (P (f a)) 2)
+      evidence-returned)
+!(let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
+      (search-first-inhabitant &thy (P (f a)) 2)
+      (type:check &thy $proof (P (f a))))
+; Explicit activation is a different operation in the caller's world.
+!(let $packet (search-first-inhabitant &thy (P (f a)) 2) (eval $packet))
+!(let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
+      (search-first-inhabitant &thy (P (f a)) 2)
+      (eval $proof))
 !(let (he-accept (typed-answer-v2 (: $proof $type) $substitution))
       (search-first-inhabitant &thy (P (f a)) 2)
       (let $removed (remove-atom &thy (: h (P a)))

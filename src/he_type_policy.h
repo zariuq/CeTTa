@@ -167,6 +167,9 @@ typedef struct {
     /* HE treats metatype recognition as an early success; its mismatch
      * still permits inferred declared types. Other clients may reject it. */
     bool infer_after_metatype_mismatch;
+    /* A client that rejects the mismatch still admits an argument declared
+     * to have that metatype: a computation answering an atom of that form. */
+    bool metatype_by_declared_type;
     /* Report the result type after the argument path's refinement. */
     bool report_refined_result;
     /* A programmable classifier supplies positive membership answers;

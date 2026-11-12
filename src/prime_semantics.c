@@ -4,6 +4,7 @@
 
 #include "prime_semantics.h"
 
+#include <assert.h>
 #include <limits.h>
 #include <math.h>
 #include <pthread.h>
@@ -3438,9 +3439,53 @@ static void prime_kernel_query_record(
     }
 }
 
-static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
+/* A dependency walk may ask for many declarations in one unchanged
+ * source. Preserve their checked preparation, while each query keeps its
+ * ordinary checking and complete authority-currentness tests. The busy bit
+ * prevents reentrant synthesis from modifying a borrowed in-progress frame. */
+struct CettaPrimeDeclarationContextMemoV1 {
+    struct CettaPrimeDeclarationContextMemoV1 *previous;
+    PrimeRegularDeclarationContext declarations;
+    Space *space;
+    Arena *arena;
+    uint64_t arena_epoch;
+    uint32_t arena_identity;
+    const SymbolTable *symbols;
+    uint64_t symbol_instance;
+    CettaLanguageId language;
+    CettaPrimeInterpretation *interpretation;
+    CettaNikDirectAuthorityTokenV1 authority;
+    bool busy;
+};
+static _Thread_local CettaPrimeDeclarationContextMemoV1 *g_prime_regular_dependency_cache;
+
+CettaPrimeDeclarationContextMemoV1 *prime_semantics_declaration_context_memo_enter(Space *space,Arena *arena) {
+    if(!space || !arena || !arena->identity)return NULL;
+    CettaPrimeDeclarationContextMemoV1 *cache=calloc(1u,sizeof(*cache));
+    if(!cache)return NULL;
+    if(!cetta_prime_typing_direct_authority_token_v1(space,UINT32_C(0x4445434c),
+            &cache->authority)) {free(cache);return NULL;}
+    cache->interpretation=prime_interpretation_capture_current();
+    if(!cache->interpretation) {free(cache);return NULL;}
+    cache->space=space;cache->arena=arena;cache->arena_epoch=arena->reset_epoch;
+    cache->arena_identity=arena->identity;cache->symbols=g_symbols;
+    cache->symbol_instance=symbol_table_instance_id(g_symbols);
+    cache->language=eval_current_language_id();
+    cache->previous=g_prime_regular_dependency_cache;
+    g_prime_regular_dependency_cache=cache;
+    return cache;
+}
+void prime_semantics_declaration_context_memo_leave(CettaPrimeDeclarationContextMemoV1 *cache) {
+    if(!cache)return;
+    assert(cache==g_prime_regular_dependency_cache && !cache->busy);
+    g_prime_regular_dependency_cache=cache->previous;
+    prime_regular_declaration_context_free(&cache->declarations);
+    prime_interpretation_release(cache->interpretation);
+    free(cache);
+}
+static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term_in_context(
     Space *space, Arena *arena, Atom *term, Atom *expected,
-    PrimeResourceLedger *ledger, bool synthesize, bool normalize) {
+    PrimeResourceLedger *ledger, bool synthesize, bool normalize, PrimeRegularDeclarationContext *declarations) {
     if (!space || !arena || !term || !ledger ||
         (!synthesize && !expected))
         return (PrimeRegularTermCheckingDecision){0};
@@ -3463,13 +3508,12 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
     CettaPrimeRegularKernelBudget judgment_steps =
         prime_regular_kernel_budget(ledger);
     recognition_budget.within = &judgment_steps;
-    PrimeRegularDeclarationContext declarations = {0};
     PrimeRegularDeclaredElaboration declaration_elaboration =
         prime_elaborate_declared_regular_term(
-            space, arena, term, &declarations, &recognition_budget);
+            space, arena, term, declarations, &recognition_budget);
     if (declaration_elaboration.status !=
         CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
-        prime_regular_declaration_context_free(&declarations);
+
         if (!declaration_elaboration.owned)
             return (PrimeRegularTermCheckingDecision){0};
         prime_account_exhausted_recognition(
@@ -3487,11 +3531,11 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
     if (!synthesize) {
         PrimeRegularDeclaredElaboration expected_elaboration =
             prime_elaborate_declared_regular_term(
-                space, arena, expected, &declarations,
+                space, arena, expected, declarations,
                 &recognition_budget);
         if (expected_elaboration.status !=
             CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
-            prime_regular_declaration_context_free(&declarations);
+
             if (!expected_elaboration.owned)
                 return (PrimeRegularTermCheckingDecision){0};
             prime_account_exhausted_recognition(
@@ -3504,16 +3548,16 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
         expected_lowered = expected_elaboration.lowered;
     }
 
-    if (!normalize && declarations.count == 0u &&
+    if (!normalize && declarations->count == 0u &&
         (synthesize || !prime_kernel_query_capturing())) {
-        prime_regular_declaration_context_free(&declarations);
+
         return (PrimeRegularTermCheckingDecision){0};
     }
 
     CettaPrimeRegularKernelBudget budget = prime_regular_kernel_budget(ledger);
     if (!prime_regular_declaration_charge(
             &budget, recognition_budget.spent)) {
-        prime_regular_declaration_context_free(&declarations);
+
         prime_account_regular_kernel(
             ledger, synthesize ? PRIME_RESOURCE_SYNTHESIS
                                : PRIME_RESOURCE_CHECKING,
@@ -3525,12 +3569,12 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
 
     PrimeRegularDeclarationOccurrenceResult instantiated_term =
         prime_regular_declaration_instantiate_occurrences_rec(
-            arena, &declarations, lowered.pattern, &budget);
+            arena, declarations, lowered.pattern, &budget);
     if (instantiated_term.status !=
             CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED ||
         !instantiated_term.pattern) {
         CettaPrimeRegularKernelStatus status = instantiated_term.status;
-        prime_regular_declaration_context_free(&declarations);
+
         prime_account_regular_kernel(
             ledger, synthesize ? PRIME_RESOURCE_SYNTHESIS
                                : PRIME_RESOURCE_CHECKING,
@@ -3547,13 +3591,13 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
     if (!synthesize) {
         PrimeRegularDeclarationOccurrenceResult instantiated_expected =
             prime_regular_declaration_instantiate_occurrences_rec(
-                arena, &declarations, expected_lowered.pattern, &budget);
+                arena, declarations, expected_lowered.pattern, &budget);
         if (instantiated_expected.status !=
                 CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED ||
             !instantiated_expected.pattern) {
             CettaPrimeRegularKernelStatus status =
                 instantiated_expected.status;
-            prime_regular_declaration_context_free(&declarations);
+
             prime_account_regular_kernel(
                 ledger, PRIME_RESOURCE_CHECKING, &budget);
             return prime_declared_term_decision(
@@ -3576,7 +3620,7 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
             elaborated.status == CETTA_PRIME_REGULAR_PATTERN_BUDGET_EXHAUSTED
                 ? CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED
                 : CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE;
-        prime_regular_declaration_context_free(&declarations);
+
         prime_account_regular_kernel(
             ledger, synthesize ? PRIME_RESOURCE_SYNTHESIS
                                : PRIME_RESOURCE_CHECKING,
@@ -3602,7 +3646,7 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
                     CETTA_PRIME_REGULAR_PATTERN_BUDGET_EXHAUSTED
                 ? CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED
                 : CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE;
-            prime_regular_declaration_context_free(&declarations);
+
             prime_account_regular_kernel(
                 ledger, PRIME_RESOURCE_CHECKING, &budget);
             return prime_declared_term_decision(
@@ -3617,14 +3661,14 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
     }
 
     Atom *context = prime_regular_declaration_kernel_context(
-        space, arena, &declarations, &budget);
+        space, arena, declarations, &budget);
 
     if (!synthesize && prime_kernel_query_capturing()) {
         prime_kernel_query_record(
-            declarations.count > 0u ? "declared" : "closed", context, NULL,
+            declarations->count > 0u ? "declared" : "closed", context, NULL,
             elaborated.term, expected_intrinsic,
-            declarations.level_parameters, declarations.level_parameter_count);
-        prime_regular_declaration_context_free(&declarations);
+            declarations->level_parameters, declarations->level_parameter_count);
+
         prime_account_regular_kernel(
             ledger, PRIME_RESOURCE_CHECKING, &budget);
         return prime_declared_term_decision(
@@ -3638,22 +3682,22 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
         computed =
             cetta_prime_regular_kernel_normalize_intrinsic_instantiating_levels_v1(
                 arena, context, elaborated.term,
-                declarations.level_parameters,
-                declarations.level_parameter_count, &budget);
+                declarations->level_parameters,
+                declarations->level_parameter_count, &budget);
         result = (CettaPrimeRegularKernelResult){
             computed.status, computed.type, computed.reason};
     } else if (synthesize) {
         result =
             cetta_prime_regular_kernel_synth_intrinsic_instantiating_levels_v1(
                 arena, context, elaborated.term,
-                declarations.level_parameters,
-                declarations.level_parameter_count, &budget);
+                declarations->level_parameters,
+                declarations->level_parameter_count, &budget);
     } else {
         result =
             cetta_prime_regular_kernel_check_intrinsic_instantiating_levels_v1(
                 arena, context, elaborated.term, expected_intrinsic,
-                declarations.level_parameters,
-                declarations.level_parameter_count, &budget);
+                declarations->level_parameters,
+                declarations->level_parameter_count, &budget);
     }
     bool current = cetta_prime_typing_direct_authority_token_v1_is_current(
         &authority_token, space, UINT32_C(0x4445434c));
@@ -3661,12 +3705,12 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
                         result.status ==
                             CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
         ? prime_regular_declaration_quote_intrinsic(
-              arena, &declarations, result.type)
+              arena, declarations, result.type)
         : NULL;
     Atom *quoted_term = result.status ==
                             CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
         ? prime_regular_declaration_quote_intrinsic(
-              arena, &declarations, elaborated.term)
+              arena, declarations, elaborated.term)
         : NULL;
     Atom *detail = result.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED
         ? (synthesize ? quoted_type : expected)
@@ -3676,9 +3720,9 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
                   : "declared-regular-checking");
     if (normalize && result.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
         Atom *normal = prime_regular_declaration_quote_intrinsic(
-            arena, &declarations, computed.term);
+            arena, declarations, computed.term);
         Atom *source_type = prime_regular_declaration_quote_intrinsic(
-            arena, &declarations, computed.source_type);
+            arena, declarations, computed.source_type);
         normal = normal ? cetta_prime_regular_term_quote_named_v1(arena, normal) : NULL;
         source_type = source_type
             ? cetta_prime_regular_term_quote_named_v1(arena, source_type) : NULL;
@@ -3693,7 +3737,7 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
             detail = prime_expr1(arena, "normal-form-quotation-failed");
         }
     }
-    prime_regular_declaration_context_free(&declarations);
+
     prime_account_regular_kernel(
         ledger, synthesize ? PRIME_RESOURCE_SYNTHESIS
                            : PRIME_RESOURCE_CHECKING,
@@ -3715,6 +3759,35 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
             prime_expr1(arena, "declaration-term-quotation-failed"), NULL);
     return prime_declared_term_decision(
         true, result.status, detail, quoted_term);
+}
+
+static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
+    Space *space,Arena *arena,Atom *term,Atom *expected,
+    PrimeResourceLedger *ledger,bool synthesize,bool normalize) {
+    CettaPrimeDeclarationContextMemoV1 *cache=g_prime_regular_dependency_cache;
+    bool reuse=cache && synthesize && !normalize && !prime_kernel_query_capturing() &&
+        cache->space==space && cache->arena==arena && !cache->busy &&
+        cache->arena_epoch==arena->reset_epoch && cache->arena_identity==arena->identity &&
+        cache->symbols==g_symbols && cache->symbol_instance==symbol_table_instance_id(g_symbols) &&
+        cache->language==eval_current_language_id() && prime_interpretation_is_current(cache->interpretation);
+
+    if(reuse && !cetta_prime_typing_direct_authority_token_v1_is_current(
+            &cache->authority,space,UINT32_C(0x4445434c))) {
+        prime_regular_declaration_context_free(&cache->declarations);
+        reuse=cetta_prime_typing_direct_authority_token_v1(
+            space,UINT32_C(0x4445434c),&cache->authority);
+    }
+    PrimeRegularDeclarationContext local={0};
+    PrimeRegularDeclarationContext *declarations=reuse ? &cache->declarations : &local;
+    if(reuse)cache->busy=true;
+    PrimeRegularTermCheckingDecision result=prime_resolve_declared_regular_term_in_context(
+        space,arena,term,expected,ledger,synthesize,normalize,declarations);
+    if(reuse) {
+        cache->busy=false;
+        if(!result.owned || result.status!=CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+            prime_regular_declaration_context_free(&cache->declarations);
+    } else prime_regular_declaration_context_free(&local);
+    return result;
 }
 
 static PrimeFormStatus prime_form_declared_regular_type(
@@ -4365,6 +4438,7 @@ bool cetta_prime_typing_observe_checking_v1(
     Arena *arena, Space *space,
     const CettaPrimeTypingCheckingCandidateV1 *candidate,
     CettaPrimeTypingCheckingObservationV1 *observation_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     if (observation_out)
         *observation_out = (CettaPrimeTypingCheckingObservationV1){0};
     if (!arena || !space || !candidate || !candidate->term ||
@@ -4445,6 +4519,7 @@ bool cetta_prime_typing_observe_formation_v1(
     Arena *arena, Space *space,
     const CettaPrimeTypingFormationCandidateV1 *candidate,
     CettaPrimeTypingFormationObservationV1 *observation_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     if (observation_out)
         *observation_out = (CettaPrimeTypingFormationObservationV1){0};
     if (!arena || !space || !candidate || !candidate->type ||
@@ -4514,6 +4589,7 @@ bool cetta_prime_typing_observe_synthesis_v1(
     Arena *arena, Space *space,
     const CettaPrimeTypingSynthesisCandidateV1 *candidate,
     CettaPrimeTypingSynthesisObservationV1 *observation_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     if (observation_out)
         *observation_out = (CettaPrimeTypingSynthesisObservationV1){0};
     if (!arena || !space || !candidate || !candidate->term ||
@@ -4583,6 +4659,7 @@ bool cetta_prime_typing_observe_checking_bag_v1(
     Arena *arena, Space *space,
     const CettaPrimeTypingCheckingCandidateV1 *candidates, size_t count,
     CettaPrimeTypingCheckingBagV1 *bag_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     if (bag_out) *bag_out = (CettaPrimeTypingCheckingBagV1){0};
     if (!arena || !space || !bag_out ||
         (count != 0u && !candidates) ||
@@ -6179,6 +6256,69 @@ Atom *prime_semantics_project_pair(Atom *call) {
  * never observes how its argument was written and respects the equality of
  * arguments. */
 
+typedef struct PrimeScopeShape PrimeScopeShape;
+typedef struct PrimeSubstValue PrimeSubstValue;
+/* One synchronous use borrows an owned interpretation. Quotation and
+ * substitution roles belong to this invocation, never to a library or TLS. */
+typedef struct {
+    const PrimeScopeShape *items;
+    size_t len;
+    CettaPrimeScopeProfile profile;
+    bool seal, in_code;
+    uint64_t symbols;
+    const Atom *quoted_hole;
+    const PrimeSubstValue *substitution;
+} PrimeInterpretation;
+
+static int prime_semantics_read_source_bytes_ids_interpreted(const PrimeInterpretation *interpretation, CettaLibraryContext *library, PrimeCompiledReaderV1 *reader,
+    const uint8_t *bytes, size_t length, TermUniverse *universe, AtomId **out_ids,
+    char *error_buf, size_t error_buf_size);
+static Atom *prime_semantics_env_apply_interpreted(const PrimeInterpretation *interpretation, Arena *arena, const Bindings *store,
+                                Atom *term);
+static Atom *prime_semantics_scope_activation_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *term, Atom *space);
+static Atom *prime_semantics_dispatch_interpreted(const PrimeInterpretation *interpretation, Arena *a, Atom *head, Atom **args,
+                               uint32_t nargs);
+static Atom *prime_semantics_beta_value_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *call,
+                                 Atom *runtime_argument);
+static bool prime_semantics_meta_core_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *term);
+static Atom *prime_semantics_new_open_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *term);
+static Atom *prime_semantics_subst_value_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *term, Atom *var,
+                                  Atom *value, Atom *runtime_value,
+                                  CettaCallResultForm result_form);
+static int prime_semantics_read_source_file_ids_interpreted(const PrimeInterpretation *interpretation, CettaLibraryContext *library, PrimeCompiledReaderV1 *reader,
+    const char *filename, TermUniverse *universe, AtomId **out_ids,
+    char *error_buf, size_t error_buf_size);
+static Atom *prime_semantics_lift_app_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *const *codes,
+                               size_t count);
+static Atom *prime_semantics_open_code_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *code);
+static PrimeIterationStep prime_semantics_iteration_step_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *call,
+                                                  Atom *space, Atom **out);
+static bool prime_semantics_binders_eq_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *left, Atom *right);
+static bool prime_semantics_code_unify_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *pattern, Atom *value,
+                                Bindings *bindings, bool *matched);
+static Atom *prime_semantics_elaborate_form_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *form);
+static Atom *prime_semantics_lift_let_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *keys, Atom *codes,
+                               Atom *code);
+static Atom *prime_semantics_beta_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *call);
+static Atom *prime_semantics_form_built_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *built);
+static bool prime_semantics_elaborate_read_forms_interpreted(const PrimeInterpretation *interpretation, CettaLibraryContext *library, PrimeCompiledReaderV1 *reader, TermUniverse *universe,
+                                          AtomId *forms, size_t count);
+static bool prime_semantics_has_free_store_names_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *term,
+                                         bool *has_names);
+static bool prime_semantics_contextual_match_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *pattern,
+                                      Atom *value, Bindings *bindings,
+                                      Atom **branch, bool *matched);
+static Atom *prime_semantics_env_apply_pattern_interpreted(const PrimeInterpretation *interpretation, Arena *arena, const Bindings *store,
+                                        Atom *term);
+static Atom *prime_semantics_pattern_activation_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *term);
+static bool prime_semantics_binder_takes_code_apart_interpreted(const PrimeInterpretation *interpretation, const Atom *term);
+static Atom *prime_semantics_subst_var_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *term, Atom *var,
+                                Atom *value);
+static Atom *prime_semantics_authored_head_step_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *term);
+static int prime_semantics_read_source_text_ids_interpreted(const PrimeInterpretation *interpretation, CettaLibraryContext *library, PrimeCompiledReaderV1 *reader,
+    const char *text, TermUniverse *universe, AtomId **out_ids,
+    char *error_buf, size_t error_buf_size);
+
 static bool prime_form(const Atom *atom, const char *head) {
     return atom && atom->kind == ATOM_EXPR && atom->expr.len == 2u &&
            is_symbol_named(atom->expr.elems[0], head);
@@ -6415,7 +6555,7 @@ static Atom *prime_code_with_payload(Arena *arena, Atom *code, Atom *payload) {
  * A document's own declarations hold in all of it.  A library's hold in a
  * document that imports it, from the import onward: the reader reads the
  * declarations of the library where the import stands.  Code formed while
- * the program runs reads every declaration read so far. */
+ * the program runs reads the declarations accepted by its selected context. */
 typedef enum {
     PRIME_SHAPE_WORD = 0,
     PRIME_SHAPE_ANY,
@@ -6425,52 +6565,227 @@ typedef enum {
     PRIME_SHAPE_BODY,
 } PrimeShapeRole;
 
-#define PRIME_SHAPE_ARGS 8u
+typedef struct {
+    uint8_t role;
+    SymbolId word;
+} PrimeScopeShapeItem;
 
 typedef struct {
+    _Atomic size_t references;
+    size_t count;
+    PrimeScopeShapeItem items[];
+} PrimeScopeShapeItems;
+
+struct PrimeScopeShape {
     SymbolId binder;          /* the declared form's head */
     SymbolId head;            /* its first word, or SYMBOL_ID_NONE */
     bool source_form;         /* one of `binder`'s source forms */
     bool rest;                /* the items after the head repeat */
     CettaExprLen len;         /* the number of items, without `...` */
-    uint8_t role[PRIME_SHAPE_ARGS];
-    SymbolId word[PRIME_SHAPE_ARGS];
-} PrimeScopeShape;
+    PrimeScopeShapeItems *items;
+};
 
 typedef struct {
     PrimeScopeShape *items;
     size_t len, cap;
 } PrimeScopeShapes;
 
-typedef struct PrimeScopeShapeStorage {
-    struct PrimeScopeShapeStorage *previous;
-    PrimeScopeShape items[];
-} PrimeScopeShapeStorage;
+static void prime_scope_shape_retain(const PrimeScopeShape *shape) {
+    if (!shape->items) return;
+    size_t previous = atomic_fetch_add_explicit(&shape->items->references,
+        1u, memory_order_relaxed);
+    assert(previous && previous < SIZE_MAX);
+    (void)previous;
+}
 
-/* Every declaration read so far, for code formed while the program runs.
- * It only grows: a reader loads the count, then the array, and an array
- * that was replaced remains owned by the cache's version chain, so a reader
- * on another thread never sees freed memory. */
-static pthread_mutex_t g_prime_scope_shapes_lock = PTHREAD_MUTEX_INITIALIZER;
-static PrimeScopeShapeStorage *g_prime_scope_shapes_storage;
-static PrimeScopeShape *_Atomic g_prime_scope_shapes_items = NULL;
-static _Atomic size_t g_prime_scope_shapes_len = 0u;
-static size_t g_prime_scope_shapes_cap = 0u;
-/* The declarations in force while a document is read. */
-static __thread bool g_prime_scope_shapes_reading = false;
-static __thread const PrimeScopeShape *g_prime_scope_shapes_doc = NULL;
-static __thread size_t g_prime_scope_shapes_doc_len = 0u;
+static void prime_scope_shape_release(const PrimeScopeShape *shape) {
+    if (!shape->items) return;
+    size_t previous = atomic_fetch_sub_explicit(&shape->items->references,
+        1u, memory_order_acq_rel);
+    assert(previous);
+    if (previous == 1u) free(shape->items);
+}
 
-static const PrimeScopeShape *prime_scope_shapes_in_force(size_t *len) {
-    if (g_prime_scope_shapes_reading) {
-        *len = g_prime_scope_shapes_doc_len;
-        return g_prime_scope_shapes_doc;
+static void prime_scope_shapes_truncate(PrimeScopeShapes *shapes, size_t len) {
+    assert(len <= shapes->len);
+    while (shapes->len > len)
+        prime_scope_shape_release(&shapes->items[--shapes->len]);
+}
+
+static void prime_scope_shapes_free(PrimeScopeShapes *shapes) {
+    prime_scope_shapes_truncate(shapes, 0u);
+    free(shapes->items);
+    memset(shapes, 0, sizeof(*shapes));
+}
+
+struct CettaPrimeInterpretation {
+    _Atomic size_t references;
+    CettaPrimeScopeProfile profile;
+    bool seal, comparison_compat;
+    CettaLanguageId comparison_language;
+    uint64_t symbols;
+    PrimeScopeShape *items;
+    size_t len, capacity;
+};
+
+static PrimeInterpretation prime_interpretation_use(const CettaPrimeInterpretation *owner) {
+    return (PrimeInterpretation){.items = owner->items, .len = owner->len,
+        .profile = owner->profile, .seal = owner->seal, .symbols = owner->symbols};
+}
+
+struct CettaPrimeInterpretationSelection {
+    pthread_mutex_t mutex;
+    CettaPrimeInterpretation *current;
+};
+
+static CettaPrimeInterpretation *prime_interpretation_new(
+        CettaPrimeScopeProfile profile, bool seal, size_t count,
+        CettaLanguageId language, bool he_compat) {
+    if (count > SIZE_MAX / sizeof(PrimeScopeShape)) return NULL;
+    CettaPrimeInterpretation *view = calloc(1u, sizeof(*view));
+    if (!view) return NULL;
+    if (count && !(view->items = malloc(count * sizeof(*view->items)))) {
+        free(view);
+        return NULL;
     }
-    *len = atomic_load_explicit(&g_prime_scope_shapes_len,
-                                memory_order_acquire);
-    return *len ? atomic_load_explicit(&g_prime_scope_shapes_items,
-                                       memory_order_acquire)
-                : NULL;
+    atomic_init(&view->references, 1u);
+    view->profile = profile;
+    view->seal = seal;
+    view->comparison_language = language;
+    view->comparison_compat = he_compat;
+    view->symbols = symbol_table_instance_id(g_symbols);
+    view->capacity = count;
+    return view;
+}
+
+void prime_interpretation_retain(CettaPrimeInterpretation *view) {
+    if (!view) return;
+    size_t previous = atomic_fetch_add_explicit(&view->references, 1u, memory_order_relaxed);
+    assert(previous && previous < SIZE_MAX);
+    (void)previous;
+}
+
+void prime_interpretation_release(CettaPrimeInterpretation *view) {
+    if (!view) return;
+    size_t previous = atomic_fetch_sub_explicit(&view->references, 1u, memory_order_acq_rel);
+    assert(previous);
+    if (previous != 1u) return;
+    for (size_t i = 0u; i < view->len; i++)
+        prime_scope_shape_release(&view->items[i]);
+    free(view->items);
+    free(view);
+}
+
+bool prime_interpretation_is_current(const CettaPrimeInterpretation *view) {
+    return view && view->symbols && view->symbols == symbol_table_instance_id(g_symbols);
+}
+
+static CettaPrimeInterpretation *prime_interpretation_pin(
+        const CettaPrimeInterpretationSelection *source) {
+    if (!source) return NULL;
+    CettaPrimeInterpretationSelection *selection = (CettaPrimeInterpretationSelection *)source;
+    pthread_mutex_lock(&selection->mutex);
+    CettaPrimeInterpretation *view = selection->current;
+    prime_interpretation_retain(view);
+    pthread_mutex_unlock(&selection->mutex);
+    return view;
+}
+
+CettaPrimeInterpretation *prime_interpretation_capture(
+        const CettaPrimeInterpretationSelection *source) {
+    CettaPrimeInterpretation *view = prime_interpretation_pin(source);
+    if (prime_interpretation_is_current(view)) return view;
+    /* An embedder may construct an empty context before the runtime's
+     * symbol table. Bind that unselected default once, at actual use. Never
+     * refresh a view that has already named a symbol universe. */
+    if (view && !view->symbols && !view->len && symbol_table_instance_id(g_symbols)) {
+        CettaPrimeInterpretation *bound = prime_interpretation_new(view->profile, view->seal, 0u,
+            view->comparison_language, view->comparison_compat);
+        if (bound) {
+            CettaPrimeInterpretationSelection *selection = (CettaPrimeInterpretationSelection *)source;
+            pthread_mutex_lock(&selection->mutex);
+            bool accepted = selection->current == view;
+            if (accepted) {
+                selection->current = bound;
+                prime_interpretation_retain(bound);
+            }
+            pthread_mutex_unlock(&selection->mutex);
+            if (accepted) {
+                prime_interpretation_release(view);
+                prime_interpretation_release(view);
+                return bound;
+            }
+            prime_interpretation_release(bound);
+        }
+    }
+    prime_interpretation_release(view);
+    return NULL;
+}
+
+CettaPrimeInterpretation *prime_interpretation_capture_current(void) {
+    CettaLibraryContext *library = eval_current_library_context();
+    if (!symbol_table_instance_id(g_symbols)) return NULL;
+    return library ? prime_interpretation_capture(library->prime_interpretation)
+        : prime_interpretation_new(prime_scope_profile_default(), false, 0u,
+            eval_current_language_id(), eval_current_uses_rust_he_compat_semantics());
+}
+
+CettaPrimeInterpretationSelection *prime_interpretation_selection_new(
+        CettaLanguageId language, bool he_compat, bool seal) {
+    CettaPrimeInterpretationSelection *selection = calloc(1u, sizeof(*selection));
+    if (!selection) return NULL;
+    if (pthread_mutex_init(&selection->mutex, NULL) != 0) {
+        free(selection);
+        return NULL;
+    }
+    selection->current = prime_interpretation_new(prime_scope_profile_default(), seal, 0u, language, he_compat);
+    if (!selection->current) {
+        pthread_mutex_destroy(&selection->mutex);
+        free(selection);
+        return NULL;
+    }
+    return selection;
+}
+
+CettaPrimeInterpretationSelection *prime_interpretation_selection_copy(
+        const CettaPrimeInterpretationSelection *source) {
+    CettaPrimeInterpretation *view = prime_interpretation_capture(source);
+    if (!view) return NULL;
+    CettaPrimeInterpretationSelection *selection = calloc(1u, sizeof(*selection));
+    if (!selection || pthread_mutex_init(&selection->mutex, NULL) != 0) {
+        free(selection);
+        prime_interpretation_release(view);
+        return NULL;
+    }
+    selection->current = view;
+    return selection;
+}
+
+void prime_interpretation_selection_free(CettaPrimeInterpretationSelection *selection) {
+    if (!selection) return;
+    prime_interpretation_release(selection->current);
+    pthread_mutex_destroy(&selection->mutex);
+    free(selection);
+}
+
+void prime_interpretation_storage(const CettaPrimeInterpretation *view,
+        CettaStorageCensus *census) {
+    if (!view || !cetta_storage_object(census, view, sizeof(*view), CETTA_STORAGE_BLOCK)) return;
+    cetta_storage_array(census, view->items, view->capacity, sizeof(*view->items), 0u);
+    for (size_t i = 0u; i < view->len; i++) {
+        const PrimeScopeShapeItems *items = view->items[i].items;
+        cetta_storage_array(census, items, items->count,
+            sizeof(*items->items), sizeof(*items));
+    }
+}
+
+void prime_interpretation_selection_storage(const CettaPrimeInterpretationSelection *selection,
+        CettaStorageCensus *census) {
+    if (!selection || !cetta_storage_object(census, selection, sizeof(*selection), CETTA_STORAGE_BLOCK)) return;
+    CettaPrimeInterpretation *view = prime_interpretation_pin(selection);
+    if (!view) cetta_storage_refuse(census, "BindingInterpretationOwner");
+    else prime_interpretation_storage(view, census);
+    prime_interpretation_release(view);
 }
 
 static bool prime_scope_shape_equal(const PrimeScopeShape *a,
@@ -6480,61 +6795,96 @@ static bool prime_scope_shape_equal(const PrimeScopeShape *a,
         a->len != b->len)
         return false;
     for (CettaExprIndex i = 0u; i < a->len; i++)
-        if (a->role[i] != b->role[i] || a->word[i] != b->word[i])
+        if (a->items->items[i].role != b->items->items[i].role ||
+            a->items->items[i].word != b->items->items[i].word)
             return false;
     return true;
 }
 
-static bool prime_scope_shapes_publish(const PrimeScopeShape *shape) {
-    pthread_mutex_lock(&g_prime_scope_shapes_lock);
-    size_t len = atomic_load_explicit(&g_prime_scope_shapes_len,
-                                      memory_order_relaxed);
-    PrimeScopeShape *items = atomic_load_explicit(&g_prime_scope_shapes_items,
-                                                  memory_order_relaxed);
-    bool known = false;
-    for (size_t i = 0u; i < len && !known; i++)
-        known = prime_scope_shape_equal(&items[i], shape);
-    if (!known && len == g_prime_scope_shapes_cap) {
-        size_t cap = g_prime_scope_shapes_cap ? g_prime_scope_shapes_cap * 2u
-                                              : 16u;
-        if (cap < g_prime_scope_shapes_cap ||
-            cap > (SIZE_MAX - sizeof(PrimeScopeShapeStorage)) / sizeof(PrimeScopeShape)) {
-            pthread_mutex_unlock(&g_prime_scope_shapes_lock);
-            return false;
-        }
-        PrimeScopeShapeStorage *storage = malloc(sizeof(*storage) + sizeof(*items) * cap);
-        if (!storage) {
-            pthread_mutex_unlock(&g_prime_scope_shapes_lock);
-            return false;
-        }
-        storage->previous = g_prime_scope_shapes_storage;
-        g_prime_scope_shapes_storage = storage;
-        PrimeScopeShape *grown = storage->items;
-        if (len) memcpy(grown, items, sizeof(*grown) * len);
-        atomic_store_explicit(&g_prime_scope_shapes_items, grown,
-                              memory_order_release);
-        items = grown;
-        g_prime_scope_shapes_cap = cap;
-    }
-    if (!known && len < g_prime_scope_shapes_cap) {
-        items[len] = *shape;
-        atomic_store_explicit(&g_prime_scope_shapes_len, len + 1u,
-                              memory_order_release);
-    }
-    pthread_mutex_unlock(&g_prime_scope_shapes_lock);
+bool prime_interpretation_equal(const CettaPrimeInterpretation *left,
+        const CettaPrimeInterpretation *right) {
+    if (left == right) return true;
+    if (!left || !right || left->symbols != right->symbols || left->seal != right->seal ||
+        left->comparison_language != right->comparison_language ||
+        left->comparison_compat != right->comparison_compat ||
+        left->profile.ownership != right->profile.ownership ||
+        left->profile.lifetime != right->profile.lifetime ||
+        left->profile.readout != right->profile.readout || left->len != right->len) return false;
+    for (size_t i = 0u; i < left->len; i++)
+        if (!prime_scope_shape_equal(&left->items[i], &right->items[i])) return false;
     return true;
+}
+
+/* Prepare outside the selection lock. Publication has one linearization
+ * point; a concurrent selection change refuses this unpublished candidate.
+ * The declaration order and first-fitting interpretation are unchanged. */
+static bool prime_interpretation_publish(CettaPrimeInterpretationSelection *selection,
+        const PrimeScopeShapes *added, const CettaPrimeScopeProfile *profile,
+        const bool *seal) {
+    CettaPrimeInterpretation *before = prime_interpretation_capture(selection);
+    if (!before) return false;
+    size_t added_len = added ? added->len : 0u;
+    bool unchanged = (!profile || (profile->ownership == before->profile.ownership &&
+        profile->lifetime == before->profile.lifetime && profile->readout == before->profile.readout)) &&
+        (!seal || *seal == before->seal);
+    for (size_t i = 0u; unchanged && i < added_len; i++) {
+        bool known = false;
+        for (size_t k = 0u; k < before->len && !known; k++)
+            known = prime_scope_shape_equal(&before->items[k], &added->items[i]);
+        unchanged = known;
+    }
+    if (unchanged) {
+        prime_interpretation_release(before);
+        return true;
+    }
+
+    if (added_len > SIZE_MAX - before->len) {
+        prime_interpretation_release(before);
+        return false;
+    }
+    CettaPrimeInterpretation *next = prime_interpretation_new(
+        profile ? *profile : before->profile, seal ? *seal : before->seal,
+        before->len + added_len, before->comparison_language, before->comparison_compat);
+    if (!next) {
+        prime_interpretation_release(before);
+        return false;
+    }
+    if (before->len) memcpy(next->items, before->items, before->len * sizeof(*next->items));
+    next->len = before->len;
+    for (size_t i = 0u; i < next->len; i++)
+        prime_scope_shape_retain(&next->items[i]);
+    for (size_t i = 0u; i < added_len; i++) {
+        bool known = false;
+        for (size_t k = 0u; k < next->len && !known; k++)
+            known = prime_scope_shape_equal(&next->items[k], &added->items[i]);
+        if (!known) {
+            next->items[next->len++] = added->items[i];
+            prime_scope_shape_retain(&added->items[i]);
+        }
+    }
+    pthread_mutex_lock(&selection->mutex);
+    bool accepted = selection->current == before;
+    if (accepted) selection->current = next;
+    pthread_mutex_unlock(&selection->mutex);
+    if (accepted) prime_interpretation_release(before); /* selection's hold */
+    else prime_interpretation_release(next);
+    prime_interpretation_release(before); /* preparation's hold */
+    return accepted;
 }
 
 static bool prime_scope_shapes_push(PrimeScopeShapes *set,
                                     const PrimeScopeShape *shape) {
     if (set->len == set->cap) {
         size_t cap = set->cap ? set->cap * 2u : 8u;
+        if (cap <= set->cap || cap > SIZE_MAX / sizeof(*set->items))
+            return false;
         PrimeScopeShape *grown = realloc(set->items, sizeof(*grown) * cap);
         if (!grown) return false;
         set->items = grown;
         set->cap = cap;
     }
     set->items[set->len++] = *shape;
+    prime_scope_shape_retain(shape);
     return true;
 }
 
@@ -6548,19 +6898,19 @@ static CettaExprIndex prime_scope_item_at(const PrimeScopeShape *shape,
 static PrimeShapeRole prime_scope_role_at(const PrimeScopeShape *shape,
                                           CettaExprIndex index) {
     CettaExprIndex item = prime_scope_item_at(shape, index);
-    return item < shape->len ? (PrimeShapeRole)shape->role[item]
+    return item < shape->len ? (PrimeShapeRole)shape->items->items[item].role
                              : PRIME_SHAPE_ANY;
 }
 
 static bool prime_scope_shape_fits(const PrimeScopeShape *shape,
                                    const Atom *term) {
     CettaExprLen len = term->expr.len;
-    if (shape->rest ? len + 1u < shape->len : len != shape->len)
+    if (shape->rest ? len < shape->len - 1u : len != shape->len)
         return false;
     for (CettaExprIndex i = 0u; i < len; i++) {
         CettaExprIndex item = prime_scope_item_at(shape, i);
-        if (shape->role[item] == PRIME_SHAPE_WORD &&
-            !atom_is_symbol_id(term->expr.elems[i], shape->word[item]))
+        if (shape->items->items[item].role == PRIME_SHAPE_WORD &&
+            !atom_is_symbol_id(term->expr.elems[i], shape->items->items[item].word))
             return false;
     }
     return true;
@@ -6568,7 +6918,7 @@ static bool prime_scope_shape_fits(const PrimeScopeShape *shape,
 
 /* The declaration `term` has: as a binding form when `binder` is
  * SYMBOL_ID_NONE, otherwise as a source form of `binder`. */
-static const PrimeScopeShape *prime_scope_shape_of(const Atom *term,
+static const PrimeScopeShape *prime_scope_shape_of(const PrimeInterpretation *interpretation, const Atom *term,
                                                    SymbolId binder) {
     bool source = binder != SYMBOL_ID_NONE;
     if (!term || term->kind != ATOM_EXPR || term->expr.len < 1u ||
@@ -6576,8 +6926,8 @@ static const PrimeScopeShape *prime_scope_shape_of(const Atom *term,
         (!source && (term->expr.len < 2u ||
                      term->expr.elems[0]->kind != ATOM_SYMBOL)))
         return NULL;
-    size_t count;
-    const PrimeScopeShape *shapes = prime_scope_shapes_in_force(&count);
+    size_t count = interpretation->len;
+    const PrimeScopeShape *shapes = interpretation->items;
     if (!count) return NULL;
     SymbolId head = term->expr.elems[0]->kind == ATOM_SYMBOL
         ? atom_symbol_current_id(term->expr.elems[0]) : SYMBOL_ID_NONE;
@@ -6597,12 +6947,12 @@ static const PrimeScopeShape *prime_scope_shape_of(const Atom *term,
  * pattern positions of the source forms written there. */
 #define PRIME_SCOPE_SOURCE_DEPTH 10000u
 
-static bool prime_scope_gather(SymbolId binder, Atom *arg, PrimeShapeRole role,
+static bool prime_scope_gather(const PrimeInterpretation *interpretation, SymbolId binder, Atom *arg, PrimeShapeRole role,
                                Atom ***items, size_t *len, size_t *cap,
                                unsigned depth) {
     const PrimeScopeShape *form = role == PRIME_SHAPE_SOURCE &&
                                           depth < PRIME_SCOPE_SOURCE_DEPTH
-        ? prime_scope_shape_of(arg, binder) : NULL;
+        ? prime_scope_shape_of(interpretation, arg, binder) : NULL;
     if (!form) {
         if (!arg || !atom_has_vars(arg)) return true;
         if (*len == *cap) {
@@ -6618,14 +6968,14 @@ static bool prime_scope_gather(SymbolId binder, Atom *arg, PrimeShapeRole role,
     for (CettaExprIndex i = 0u; i < arg->expr.len; i++) {
         PrimeShapeRole inner = prime_scope_role_at(form, i);
         if ((inner == PRIME_SHAPE_PATTERN || inner == PRIME_SHAPE_SOURCE) &&
-            !prime_scope_gather(binder, arg->expr.elems[i], inner, items, len,
+            !prime_scope_gather(interpretation, binder, arg->expr.elems[i], inner, items, len,
                                 cap, depth + 1u))
             return false;
     }
     return true;
 }
 
-static Atom *prime_scope_form_patterns(Arena *arena,
+static Atom *prime_scope_form_patterns(const PrimeInterpretation *interpretation, Arena *arena,
                                        const PrimeScopeShape *shape,
                                        const Atom *term) {
     Atom **items = NULL;
@@ -6637,7 +6987,7 @@ static Atom *prime_scope_form_patterns(Arena *arena,
     for (CettaExprIndex i = 1u; ok && i < term->expr.len; i++) {
         PrimeShapeRole role = prime_scope_role_at(shape, i);
         if (role == PRIME_SHAPE_PATTERN || role == PRIME_SHAPE_SOURCE)
-            ok = prime_scope_gather(shape->head, term->expr.elems[i], role,
+            ok = prime_scope_gather(interpretation, shape->head, term->expr.elems[i], role,
                                     &items, &len, &cap, 0u);
     }
     Atom *result = ok ? atom_expr(arena, items, (CettaExprLen)len) : NULL;
@@ -6645,63 +6995,90 @@ static Atom *prime_scope_form_patterns(Arena *arena,
     return result;
 }
 
-/* A declaration read from a document, `(scope:binder SHAPE)` or
- * `(scope:source H SHAPE)`.  False for any other form, and for a
- * declaration it cannot read (that stays data). */
-static bool prime_scope_shape_read(TermUniverse *u, AtomId id,
-                                   PrimeScopeShape *out) {
-    if (tu_kind(u, id) != ATOM_EXPR) return false;
+typedef enum {
+    PRIME_SCOPE_SHAPE_DATA,
+    PRIME_SCOPE_SHAPE_DECLARATION,
+    PRIME_SCOPE_SHAPE_INCOMPLETE,
+} PrimeScopeShapeRead;
+
+static uint8_t prime_scope_shape_role(SymbolId sym, CettaExprIndex index,
+                                       bool source) {
+    if (!index && !source) return PRIME_SHAPE_WORD;
+    const char *word = symbol_bytes(g_symbols, sym);
+    if (word && strcmp(word, "_") == 0) return PRIME_SHAPE_ANY;
+    if (word && strcmp(word, "value") == 0) return PRIME_SHAPE_VALUE;
+    if (word && strcmp(word, "pattern") == 0) return PRIME_SHAPE_PATTERN;
+    if (word && strcmp(word, "source") == 0) return PRIME_SHAPE_SOURCE;
+    if (word && strcmp(word, "body") == 0) return PRIME_SHAPE_BODY;
+    return PRIME_SHAPE_WORD;
+}
+
+/* Unknown or malformed declarations stay data. A valid declaration whose
+ * storage cannot be prepared refuses the document without publishing it. */
+static PrimeScopeShapeRead prime_scope_shape_read(TermUniverse *u, AtomId id,
+                                                 PrimeScopeShape *out) {
+    if (tu_kind(u, id) != ATOM_EXPR) return PRIME_SCOPE_SHAPE_DATA;
     CettaExprLen n = tu_arity(u, id);
-    if (n != 2u && n != 3u) return false;
+    if (n != 2u && n != 3u) return PRIME_SCOPE_SHAPE_DATA;
     AtomId head = tu_child(u, id, 0u);
-    if (tu_kind(u, head) != ATOM_SYMBOL) return false;
+    if (tu_kind(u, head) != ATOM_SYMBOL) return PRIME_SCOPE_SHAPE_DATA;
     const char *name = symbol_bytes(g_symbols, tu_sym(u, head));
     bool source;
     if (name && n == 2u && strcmp(name, "scope:binder") == 0) source = false;
     else if (name && n == 3u && strcmp(name, "scope:source") == 0) source = true;
-    else return false;
-    memset(out, 0, sizeof(*out));
-    out->source_form = source;
+    else return PRIME_SCOPE_SHAPE_DATA;
+    PrimeScopeShape result = {.source_form = source};
     if (source) {
         AtomId binder = tu_child(u, id, 1u);
-        if (tu_kind(u, binder) != ATOM_SYMBOL) return false;
-        out->binder = tu_sym(u, binder);
+        if (tu_kind(u, binder) != ATOM_SYMBOL) return PRIME_SCOPE_SHAPE_DATA;
+        result.binder = tu_sym(u, binder);
     }
     AtomId shape = tu_child(u, id, source ? 2u : 1u);
-    if (tu_kind(u, shape) != ATOM_EXPR) return false;
+    if (tu_kind(u, shape) != ATOM_EXPR) return PRIME_SCOPE_SHAPE_DATA;
     CettaExprLen len = tu_arity(u, shape);
-    if (len < 2u || len > PRIME_SHAPE_ARGS) return false;
-    out->len = len;
+    if (len < 2u) return PRIME_SCOPE_SHAPE_DATA;
+    result.len = len;
     bool binds = false;
+    uint8_t first_role = PRIME_SHAPE_WORD;
     for (CettaExprIndex i = 0u; i < len; i++) {
         AtomId item = tu_child(u, shape, i);
-        if (tu_kind(u, item) != ATOM_SYMBOL) return false;
+        if (tu_kind(u, item) != ATOM_SYMBOL) return PRIME_SCOPE_SHAPE_DATA;
         SymbolId sym = tu_sym(u, item);
         const char *word = symbol_bytes(g_symbols, sym);
         if (word && strcmp(word, "...") == 0) {
-            if (i + 1u != len || out->rest ||
-                i <= (out->role[0] == PRIME_SHAPE_WORD ? 1u : 0u))
-                return false;
-            out->rest = true;
-            out->len = len - 1u;
+            if (i + 1u != len || result.rest ||
+                i <= (first_role == PRIME_SHAPE_WORD ? 1u : 0u))
+                return PRIME_SCOPE_SHAPE_DATA;
+            result.rest = true;
+            result.len = len - 1u;
             continue;
         }
-        uint8_t role = PRIME_SHAPE_WORD;
-        if (i == 0u && !source) role = PRIME_SHAPE_WORD;
-        else if (word && strcmp(word, "_") == 0) role = PRIME_SHAPE_ANY;
-        else if (word && strcmp(word, "value") == 0) role = PRIME_SHAPE_VALUE;
-        else if (word && strcmp(word, "pattern") == 0) role = PRIME_SHAPE_PATTERN;
-        else if (word && strcmp(word, "source") == 0) role = PRIME_SHAPE_SOURCE;
-        else if (word && strcmp(word, "body") == 0) role = PRIME_SHAPE_BODY;
-        out->role[i] = role;
-        if (role == PRIME_SHAPE_WORD) out->word[i] = sym;
+        uint8_t role = prime_scope_shape_role(sym, i, source);
+        if (!i) first_role = role;
         if (role == PRIME_SHAPE_PATTERN || role == PRIME_SHAPE_SOURCE)
             binds = true;
     }
-    out->head = out->role[0] == PRIME_SHAPE_WORD ? out->word[0]
-                                                 : SYMBOL_ID_NONE;
-    if (!source) out->binder = out->head;
-    return source || binds;
+    if (!source && !binds) return PRIME_SCOPE_SHAPE_DATA;
+    if (result.len > (SIZE_MAX - sizeof(PrimeScopeShapeItems)) /
+            sizeof(PrimeScopeShapeItem))
+        return PRIME_SCOPE_SHAPE_INCOMPLETE;
+    size_t count = (size_t)result.len;
+    result.items = malloc(sizeof(*result.items) +
+        count * sizeof(*result.items->items));
+    if (!result.items) return PRIME_SCOPE_SHAPE_INCOMPLETE;
+    atomic_init(&result.items->references, 1u);
+    result.items->count = count;
+    for (CettaExprIndex i = 0u; i < result.len; i++) {
+        SymbolId sym = tu_sym(u, tu_child(u, shape, i));
+        uint8_t role = prime_scope_shape_role(sym, i, source);
+        result.items->items[i] = (PrimeScopeShapeItem){
+            .role = role, .word = role == PRIME_SHAPE_WORD ? sym : SYMBOL_ID_NONE};
+    }
+    result.head = first_role == PRIME_SHAPE_WORD
+        ? result.items->items[0].word : SYMBOL_ID_NONE;
+    if (!source) result.binder = result.head;
+    *out = result;
+    return PRIME_SCOPE_SHAPE_DECLARATION;
 }
 
 /* The declarations a library holds, read where a document imports it: the
@@ -6709,12 +7086,12 @@ static bool prime_scope_shape_read(TermUniverse *u, AtomId id,
  * read once is not read again. */
 typedef struct {
     char *path;
+    uint64_t symbols;
     size_t first, count;
 } PrimeScopeLibraryShapes;
 
 static pthread_mutex_t g_prime_scope_library_lock = PTHREAD_MUTEX_INITIALIZER;
 /* The prepared reader of the document being read, while it is elaborated. */
-static __thread PrimeCompiledReaderV1 *g_prime_scope_reader = NULL;
 
 /* A library's text, or NULL. */
 static uint8_t *prime_scope_read_text(const char *path, size_t *len_out) {
@@ -6759,9 +7136,52 @@ static PrimeScopeLibraryShapes *g_prime_scope_libraries = NULL;
 static size_t g_prime_scope_libraries_len = 0u, g_prime_scope_libraries_cap = 0u;
 static PrimeScopeShapes g_prime_scope_library_shapes;
 
-static bool prime_scope_library_shapes(const char *spec,
+static bool prime_scope_read_library_shapes(PrimeCompiledReaderV1 *provided, const uint8_t *text, size_t text_len,
+    PrimeScopeShapes *out) {
+    if (!text) return false;
+    if (!prime_scope_text_mentions(text, text_len)) return true;
+    PrimeCompiledReaderV1 *owned = !provided
+        ? prime_compiled_reader_v1_new() : NULL;
+    PrimeCompiledReaderV1 *reader = provided ? provided : owned;
+    char error[256] = {0};
+    TermUniverse universe;
+    Arena universe_arena;
+    arena_init(&universe_arena);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &universe_arena);
+    AtomId *ids = NULL;
+    int n = reader && (reader == provided ||
+            prime_compiled_reader_v1_prepare(reader, error, sizeof(error)))
+        ? prime_compiled_reader_v1_parse_bytes_ids(reader, text, text_len,
+            &universe, &ids, NULL, error, sizeof(error)) : -1;
+    bool ok = n >= 0;
+    for (int i = 0; i < n && ok; i++) {
+        PrimeScopeShape shape;
+        PrimeScopeShapeRead read = prime_scope_shape_read(&universe, ids[i], &shape);
+        if (read == PRIME_SCOPE_SHAPE_INCOMPLETE) ok = false;
+        if (read == PRIME_SCOPE_SHAPE_DECLARATION) {
+            ok = prime_scope_shapes_push(out, &shape);
+            prime_scope_shape_release(&shape);
+        }
+    }
+    free(ids);
+    term_universe_free(&universe);
+    arena_free(&universe_arena);
+    prime_compiled_reader_v1_free(owned);
+    return ok;
+}
+
+static bool prime_scope_library_shapes(CettaLibraryContext *ctx, PrimeCompiledReaderV1 *reader, const char *spec,
                                        PrimeScopeShapes *out) {
-    CettaLibraryContext *ctx = eval_current_library_context();
+    if (!spec) return true;
+    const uint8_t *captured = NULL;
+    size_t captured_length = 0u;
+    CettaModuleSourceLookup lookup = cetta_library_module_source_lookup(
+        ctx, spec, &captured, &captured_length);
+    if (lookup == CETTA_MODULE_SOURCE_CAPTURED)
+        return prime_scope_read_library_shapes(reader, captured, captured_length, out);
+    if (lookup == CETTA_MODULE_SOURCE_NO_TEXT) return true;
+    if (lookup == CETTA_MODULE_SOURCE_REFUSED) return false;
     char path[PATH_MAX];
     if (!ctx || !spec ||
         !cetta_library_module_source_path(ctx, spec, path, sizeof(path)))
@@ -6770,7 +7190,8 @@ static bool prime_scope_library_shapes(const char *spec,
     bool ok = true;
     const PrimeScopeLibraryShapes *known = NULL;
     for (size_t i = 0u; i < g_prime_scope_libraries_len && !known; i++)
-        if (strcmp(g_prime_scope_libraries[i].path, path) == 0)
+        if (g_prime_scope_libraries[i].symbols == symbol_table_instance_id(g_symbols) &&
+            strcmp(g_prime_scope_libraries[i].path, path) == 0)
             known = &g_prime_scope_libraries[i];
     if (!known) {
         size_t first = g_prime_scope_library_shapes.len;
@@ -6778,37 +7199,9 @@ static bool prime_scope_library_shapes(const char *spec,
          * no such word declares nothing and is not parsed again. */
         size_t text_len = 0u;
         uint8_t *text = prime_scope_read_text(path, &text_len);
-        bool declares = text && prime_scope_text_mentions(text, text_len);
-        /* The reader of the document being read is ready already. */
-        PrimeCompiledReaderV1 *owned = declares && !g_prime_scope_reader
-            ? prime_compiled_reader_v1_new() : NULL;
-        PrimeCompiledReaderV1 *reader = !declares ? NULL
-            : g_prime_scope_reader ? g_prime_scope_reader : owned;
-        char error[256] = {0};
-        TermUniverse universe;
-        Arena universe_arena;
-        arena_init(&universe_arena);
-        term_universe_init(&universe);
-        term_universe_set_persistent_arena(&universe, &universe_arena);
-        AtomId *ids = NULL;
-        int n = reader && (reader == g_prime_scope_reader ||
-                           prime_compiled_reader_v1_prepare(reader, error,
-                                                            sizeof(error)))
-            ? prime_compiled_reader_v1_parse_bytes_ids(reader, text, text_len,
-                                                       &universe, &ids, NULL,
-                                                       error, sizeof(error))
-            : 0;
+        ok = prime_scope_read_library_shapes(reader, text, text_len,
+            &g_prime_scope_library_shapes);
         free(text);
-        for (int i = 0; i < n && ok; i++) {
-            PrimeScopeShape shape;
-            if (prime_scope_shape_read(&universe, ids[i], &shape))
-                ok = prime_scope_shapes_push(&g_prime_scope_library_shapes,
-                                             &shape);
-        }
-        free(ids);
-        term_universe_free(&universe);
-        arena_free(&universe_arena);
-        prime_compiled_reader_v1_free(owned);
         if (ok && g_prime_scope_libraries_len == g_prime_scope_libraries_cap) {
             size_t cap = g_prime_scope_libraries_cap
                 ? g_prime_scope_libraries_cap * 2u : 8u;
@@ -6827,12 +7220,13 @@ static bool prime_scope_library_shapes(const char *spec,
         if (copy) {
             g_prime_scope_libraries[g_prime_scope_libraries_len] =
                 (PrimeScopeLibraryShapes){
-                    .path = copy, .first = first,
+                    .path = copy, .symbols = symbol_table_instance_id(g_symbols), .first = first,
                     .count = g_prime_scope_library_shapes.len - first};
             known = &g_prime_scope_libraries[g_prime_scope_libraries_len++];
         } else {
             ok = false;
         }
+        if (!ok) prime_scope_shapes_truncate(&g_prime_scope_library_shapes, first);
     }
     for (size_t i = 0u; ok && known && i < known->count; i++)
         ok = prime_scope_shapes_push(
@@ -6856,7 +7250,7 @@ static const char *prime_scope_import_spec(TermUniverse *u, AtomId id) {
  * its own top-level declarations first (they hold in all of it), then each
  * declaration a query or an imported library makes, at its position.
  * `positions[k]` is the first form the k-th declaration holds in. */
-static bool prime_scope_shapes_scan(TermUniverse *u, const AtomId *forms,
+static bool prime_scope_shapes_scan(CettaLibraryContext *library, PrimeCompiledReaderV1 *reader, TermUniverse *u, const AtomId *forms,
                                     size_t count, PrimeScopeShapes *doc,
                                     size_t **positions) {
     *positions = NULL;
@@ -6865,9 +7259,14 @@ static bool prime_scope_shapes_scan(TermUniverse *u, const AtomId *forms,
             tu_kind(u, forms[i - 1u]) == ATOM_SYMBOL &&
             tu_sym(u, forms[i - 1u]) == g_builtin_syms.bang;
         PrimeScopeShape shape;
-        if (!after_bang && prime_scope_shape_read(u, forms[i], &shape) &&
-            !prime_scope_shapes_push(doc, &shape))
-            return false;
+        if (after_bang) continue;
+        PrimeScopeShapeRead read = prime_scope_shape_read(u, forms[i], &shape);
+        if (read == PRIME_SCOPE_SHAPE_INCOMPLETE) return false;
+        if (read == PRIME_SCOPE_SHAPE_DECLARATION) {
+            bool added = prime_scope_shapes_push(doc, &shape);
+            prime_scope_shape_release(&shape);
+            if (!added) return false;
+        }
     }
     size_t whole = doc->len;
     for (size_t i = 0u; i < count; i++) {
@@ -6877,9 +7276,13 @@ static bool prime_scope_shapes_scan(TermUniverse *u, const AtomId *forms,
         if (!after_bang) continue;
         size_t before = doc->len;
         PrimeScopeShape shape;
-        if (prime_scope_shape_read(u, forms[i], &shape)) {
-            if (!prime_scope_shapes_push(doc, &shape)) return false;
-        } else if (!prime_scope_library_shapes(prime_scope_import_spec(
+        PrimeScopeShapeRead read = prime_scope_shape_read(u, forms[i], &shape);
+        if (read == PRIME_SCOPE_SHAPE_INCOMPLETE) return false;
+        if (read == PRIME_SCOPE_SHAPE_DECLARATION) {
+            bool added = prime_scope_shapes_push(doc, &shape);
+            prime_scope_shape_release(&shape);
+            if (!added) return false;
+        } else if (!prime_scope_library_shapes(library, reader, prime_scope_import_spec(
                        u, forms[i]), doc)) {
             return false;
         }
@@ -6893,9 +7296,6 @@ static bool prime_scope_shapes_scan(TermUniverse *u, const AtomId *forms,
         for (size_t k = before; k < doc->len; k++) grown[k] = i;
     }
     if (doc->len > whole && !*positions) return false;
-    for (size_t k = 0u; k < doc->len; k++)
-        if (!prime_scope_shapes_publish(&doc->items[k]))
-            return false;
     return true;
 }
 
@@ -6912,7 +7312,7 @@ typedef enum {
     PRIME_CHILD_PATTERN_PAIRS,
 } PrimeChildRole;
 
-static PrimeChildRole prime_child_role(const Atom *term,
+static PrimeChildRole prime_child_role(const PrimeInterpretation *interpretation, const Atom *term,
                                        CettaExprIndex index) {
     if (!term || term->kind != ATOM_EXPR || term->expr.len == 0u ||
         !term->expr.elems[0] || term->expr.elems[0]->kind != ATOM_SYMBOL ||
@@ -6938,7 +7338,7 @@ static PrimeChildRole prime_child_role(const Atom *term,
          head == g_builtin_syms.filter_atom) &&
         (len == 4u || space_match_where_grade(term)))
         return index == 2u ? PRIME_CHILD_PATTERN : PRIME_CHILD_VALUE;
-    const PrimeScopeShape *declared = prime_scope_shape_of(term,
+    const PrimeScopeShape *declared = prime_scope_shape_of(interpretation, term,
                                                            SYMBOL_ID_NONE);
     if (declared) {
         PrimeShapeRole role = prime_scope_role_at(declared, index);
@@ -7049,9 +7449,9 @@ bool prime_semantics_has_scope_activation(const Atom *term) {
            (prime_iter_template(term, &iter) && iter.own != 0u);
 }
 
-Atom *prime_semantics_pattern_activation(Arena *arena, Atom *term) {
+static Atom *prime_semantics_pattern_activation_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *term) {
     return prime_sequential_scopes(term) || prime_pattern_source(term)
-        ? prime_semantics_scope_activation(arena, term, NULL) : term;
+        ? prime_semantics_scope_activation_interpreted(interpretation, arena, term, NULL) : term;
 }
 
 /* The slot a binder is filling (prime_semantics_subst_var).  Inside a
@@ -7060,24 +7460,22 @@ Atom *prime_semantics_pattern_activation(Arena *arena, Atom *term) {
  * slot is filled there too, as a hole of quoted code: textually, since the
  * code's own binders are syntax and bind nothing at this level.  Any other
  * substitution, an alpha renaming included, stops at the seal. */
-static __thread const Atom *g_prime_subst_quoted_hole = NULL;
 
-typedef struct {
+struct PrimeSubstValue {
     const Atom *key;
     Atom *syntax;
     Atom *runtime;
     CettaCallResultForm result_form;
-} PrimeSubstValue;
-static __thread const PrimeSubstValue *g_prime_subst_value = NULL;
+};
 
-static Atom *prime_bindings_formed_node(Arena *arena, Atom *node,
+static Atom *prime_bindings_formed_node(const PrimeInterpretation *interpretation, Arena *arena, Atom *node,
                                         bool in_code);
 
 /* `value` for every occurrence of the variable `id` in quoted code.  An
  * expression whose head it fills with a symbol forms the construct it
  * names, in code (prime_bindings_formed_node): a binder formed so is
  * sealed, as every substitution's is. */
-static Atom *prime_fill_quoted_hole(Arena *arena, Atom *term, VarId id,
+static Atom *prime_fill_quoted_hole(const PrimeInterpretation *interpretation, Arena *arena, Atom *term, VarId id,
                                     Atom *value) {
     if (!term) return NULL;
     if (term->kind == ATOM_VAR) return var_id_eq(term->var_id, id) ? value : term;
@@ -7085,7 +7483,7 @@ static Atom *prime_fill_quoted_hole(Arena *arena, Atom *term, VarId id,
     Atom **items = NULL;
     for (CettaExprIndex i = 0u; i < term->expr.len; i++) {
         Atom *child = term->expr.elems[i];
-        Atom *next = prime_fill_quoted_hole(arena, child, id, value);
+        Atom *next = prime_fill_quoted_hole(interpretation, arena, child, id, value);
         if (!next) return NULL;
         if (next != child && !items) {
             items = arena_alloc(arena, sizeof(Atom *) * (size_t)term->expr.len);
@@ -7100,7 +7498,7 @@ static Atom *prime_fill_quoted_hole(Arena *arena, Atom *term, VarId id,
     if (filled && term->expr.elems[0]->kind == ATOM_VAR &&
         var_id_eq(term->expr.elems[0]->var_id, id) && items[0] &&
         items[0]->kind == ATOM_SYMBOL)
-        filled = prime_bindings_formed_node(arena, filled, true);
+        filled = prime_bindings_formed_node(interpretation, arena, filled, true);
     return filled;
 }
 
@@ -7113,36 +7511,36 @@ static Atom *prime_spliced_syntax(Atom *value) {
                                                   : value;
 }
 
-static Atom *prime_value_into_code(Arena *arena, Atom *value);
-static Atom *prime_formed_by_substitution(Arena *arena, Atom *term);
+static Atom *prime_value_into_code(const PrimeInterpretation *interpretation, Arena *arena, Atom *value);
+static Atom *prime_formed_by_substitution(const PrimeInterpretation *interpretation, Arena *arena, Atom *term);
 
 /* Whether `term` uses the binder with key `key` freely.  The written types of
  * a group are read before the group's own names are bound; a group that binds
  * the key hides it from the later groups and the body, and so do an own
  * name and a template parameter. */
-static bool prime_binder_occurs_free_in(Arena *arena, const Atom *key,
+static bool prime_binder_occurs_free_in(const PrimeInterpretation *interpretation, Arena *arena, const Atom *key,
                                         Atom *term, bool pattern);
 
-static bool prime_binder_occurs_free_pairs(Arena *arena, const Atom *key,
+static bool prime_binder_occurs_free_pairs(const PrimeInterpretation *interpretation, Arena *arena, const Atom *key,
                                            Atom *pairs) {
     if (!pairs || pairs->kind != ATOM_EXPR)
-        return prime_binder_occurs_free_in(arena, key, pairs, false);
+        return prime_binder_occurs_free_in(interpretation, arena, key, pairs, false);
     for (CettaExprIndex i = 0u; i < pairs->expr.len; i++) {
         Atom *pair = pairs->expr.elems[i];
         if (pair && pair->kind == ATOM_EXPR && pair->expr.len == 2u) {
-            if (prime_binder_occurs_free_in(arena, key, pair->expr.elems[0],
+            if (prime_binder_occurs_free_in(interpretation, arena, key, pair->expr.elems[0],
                                             true) ||
-                prime_binder_occurs_free_in(arena, key, pair->expr.elems[1],
+                prime_binder_occurs_free_in(interpretation, arena, key, pair->expr.elems[1],
                                             false))
                 return true;
-        } else if (prime_binder_occurs_free_in(arena, key, pair, false)) {
+        } else if (prime_binder_occurs_free_in(interpretation, arena, key, pair, false)) {
             return true;
         }
     }
     return false;
 }
 
-static bool prime_binder_occurs_free_in(Arena *arena, const Atom *key,
+static bool prime_binder_occurs_free_in(const PrimeInterpretation *interpretation, Arena *arena, const Atom *key,
                                         Atom *term, bool pattern) {
     if (!key || !term) return false;
     if (prime_binder_reference(key, term)) return true;
@@ -7152,16 +7550,16 @@ static bool prime_binder_occurs_free_in(Arena *arena, const Atom *key,
     if (!pattern && prime_code_like(term)) return false;
     if (!pattern && prime_sequential_scopes(term)) {
         Atom *expanded = prime_sequential_expand(arena, term);
-        return !expanded || prime_binder_occurs_free_in(arena, key, expanded,
+        return !expanded || prime_binder_occurs_free_in(interpretation, arena, key, expanded,
                                                         false);
     }
     CettaExprIndex source_at = pattern ? 0u : prime_pattern_source(term);
     if (source_at) {
-        if (prime_binder_occurs_free_in(arena, key,
+        if (prime_binder_occurs_free_in(interpretation, arena, key,
                                         term->expr.elems[source_at], false))
             return true;
         Atom *lambda = prime_pattern_lambda(arena, term, source_at);
-        return !lambda || prime_binder_occurs_free_in(arena, key, lambda,
+        return !lambda || prime_binder_occurs_free_in(interpretation, arena, key, lambda,
                                                       false);
     }
     /* In a pattern position a lambda or template form is a pattern that
@@ -7171,7 +7569,7 @@ static bool prime_binder_occurs_free_in(Arena *arena, const Atom *key,
         for (size_t g = 0u; g < telescope.count; g++) {
             const CettaPrimeLambdaBinderGroupV1 *group = &telescope.groups[g];
             for (size_t t = 0u; group->typed && t < group->types_count; t++) {
-                if (prime_binder_occurs_free_in(
+                if (prime_binder_occurs_free_in(interpretation,
                         arena, key,
                         group->syntax->expr.elems[group->types_start + t],
                         pattern))
@@ -7180,42 +7578,42 @@ static bool prime_binder_occurs_free_in(Arena *arena, const Atom *key,
             if (prime_group_binds(group, key)) return false;
         }
         if (prime_own_binds(telescope.own, key)) return false;
-        return prime_binder_occurs_free_in(arena, key, term->expr.elems[2],
+        return prime_binder_occurs_free_in(interpretation, arena, key, term->expr.elems[2],
                                            pattern);
     }
     PrimeIterTemplate iter;
     if (!pattern && prime_iter_template(term, &iter)) {
         for (CettaExprIndex i = 1u; i < iter.first_param; i++)
-            if (prime_binder_occurs_free_in(arena, key, term->expr.elems[i],
+            if (prime_binder_occurs_free_in(interpretation, arena, key, term->expr.elems[i],
                                             pattern))
                 return true;
         if (prime_iter_binds(term, &iter, key)) return false;
-        return prime_binder_occurs_free_in(arena, key,
+        return prime_binder_occurs_free_in(interpretation, arena, key,
                                            term->expr.elems[iter.body],
                                            pattern);
     }
     if (!pattern && prime_new_form(term))
         return !prime_new_binds(term, key) &&
-               prime_binder_occurs_free_in(arena, key, term->expr.elems[2],
+               prime_binder_occurs_free_in(interpretation, arena, key, term->expr.elems[2],
                                            pattern);
     for (CettaExprIndex i = 0u; i < term->expr.len; i++) {
         PrimeChildRole role = pattern ? PRIME_CHILD_PATTERN
-                                      : prime_child_role(term, i);
+                                      : prime_child_role(interpretation, term, i);
         bool occurs = role == PRIME_CHILD_PATTERN_PAIRS
-            ? prime_binder_occurs_free_pairs(arena, key, term->expr.elems[i])
-            : prime_binder_occurs_free_in(arena, key, term->expr.elems[i],
+            ? prime_binder_occurs_free_pairs(interpretation, arena, key, term->expr.elems[i])
+            : prime_binder_occurs_free_in(interpretation, arena, key, term->expr.elems[i],
                                           role == PRIME_CHILD_PATTERN);
         if (occurs) return true;
     }
     return false;
 }
 
-static bool prime_binder_occurs_free(Arena *arena, const Atom *key,
+static bool prime_binder_occurs_free(const PrimeInterpretation *interpretation, Arena *arena, const Atom *key,
                                      Atom *term) {
-    return prime_binder_occurs_free_in(arena, key, term, false);
+    return prime_binder_occurs_free_in(interpretation, arena, key, term, false);
 }
 
-static Atom *prime_subst_in(Arena *arena, Atom *term, const Atom *key,
+static Atom *prime_subst_in(const PrimeInterpretation *interpretation, Arena *arena, Atom *term, const Atom *key,
                             Atom *value, bool pattern);
 
 /* A group with one element replaced. */
@@ -7236,7 +7634,7 @@ static Atom *prime_group_with(Arena *arena,
  * written types of the later groups and the body, each until a later group
  * or the own list binds the key.  A binder whose scope does not use the key
  * is never reached by the substitution, so it is never renamed. */
-static bool prime_key_free_after(Arena *arena,
+static bool prime_key_free_after(const PrimeInterpretation *interpretation, Arena *arena,
                                  const CettaPrimeLambdaBinderGroupV1 *groups,
                                  size_t count, Atom **group_syntax, size_t g,
                                  Atom *body, Atom *own, const Atom *key,
@@ -7245,14 +7643,48 @@ static bool prime_key_free_after(Arena *arena,
         CettaPrimeLambdaBinderGroupV1 group = groups[h];
         group.syntax = group_syntax[h];
         for (size_t t = 0u; group.typed && t < group.types_count; t++)
-            if (prime_binder_occurs_free_in(
+            if (prime_binder_occurs_free_in(interpretation,
                     arena, key, group.syntax->expr.elems[group.types_start + t],
                     pattern))
                 return true;
         if (prime_group_binds(&group, key)) return false;
     }
     if (own && prime_own_binds(own, key)) return false;
-    return prime_binder_occurs_free_in(arena, key, body, pattern);
+    return prime_binder_occurs_free_in(interpretation, arena, key, body, pattern);
+}
+
+static bool prime_spelling_unused(SymbolId id, void *context) {
+    return id != *(const SymbolId *)context;
+}
+
+/* The fresh variable that renames the binder `key`.  It shows the binder's
+ * name, with the least numeric suffix that no symbol or variable of `scope`
+ * spells, so the printed term reads back as the same term. */
+static Atom *prime_fresh_binder(Arena *arena, const Atom *key,
+                                Atom *const *scope, size_t count) {
+    const char *name =
+        key && key->kind == ATOM_SYMBOL ? atom_symbol_bytes((Atom *)key)
+        : key && key->kind == ATOM_VAR && key->symbol_number != SYMBOL_ID_NONE
+            ? symbol_bytes(g_symbols, key->symbol_number) : NULL;
+    if (!name) name = "binder";
+    size_t size = strlen(name) + 24u;
+    char *spelling = cetta_malloc(size);
+    if (!spelling) return NULL;
+    Atom *fresh = NULL;
+    for (unsigned long long suffix = 0u;; suffix++) {
+        if (suffix) snprintf(spelling, size, "%s%llu", name, suffix);
+        else snprintf(spelling, size, "%s", name);
+        SymbolId id = symbol_lookup_cstr(g_symbols, spelling);
+        bool unused = true;
+        for (size_t i = 0u; unused && id != SYMBOL_ID_NONE && i < count; i++)
+            unused = atom_visit_syntax_symbols(scope[i], prime_spelling_unused,
+                                               &id);
+        if (!unused) continue;
+        fresh = atom_var_with_id(arena, spelling, fresh_var_id());
+        break;
+    }
+    free(spelling);
+    return fresh;
 }
 
 /* Substitute `value` for the binder with key `key` in a telescope's written
@@ -7263,7 +7695,7 @@ static bool prime_key_free_after(Arena *arena,
  * `keep_first_types` the first group's written types are not entered: they
  * belong to the context outside this telescope, as when beta splits a
  * group. */
-static bool prime_subst_telescope_in(
+static bool prime_subst_telescope_in(const PrimeInterpretation *interpretation,
     Arena *arena, const CettaPrimeLambdaBinderGroupV1 *groups, size_t count,
     Atom **group_syntax, Atom **body, Atom **own, const Atom *key,
     Atom *value, bool keep_first_types, bool pattern) {
@@ -7274,7 +7706,7 @@ static bool prime_subst_telescope_in(
                             t < group.types_count; t++) {
             size_t position = group.types_start + t;
             Atom *type = group.syntax->expr.elems[position];
-            Atom *next = prime_subst_in(arena, type, key, value, pattern);
+            Atom *next = prime_subst_in(interpretation, arena, type, key, value, pattern);
             if (!next) return false;
             if (next == type) continue;
             group.syntax = prime_group_with(arena, &group, position, next);
@@ -7285,15 +7717,22 @@ static bool prime_subst_telescope_in(
         for (size_t i = 0u; i < group.names_count; i++) {
             Atom *name = cetta_prime_lambda_binder_name_v1(&group, i);
             Atom *name_key = prime_binder_key(name);
-            if (!name_key || !prime_binder_occurs_free(arena, name_key, value) ||
-                !prime_key_free_after(arena, groups, count, group_syntax, g,
+            if (!name_key || !prime_binder_occurs_free(interpretation, arena, name_key, value) ||
+                !prime_key_free_after(interpretation, arena, groups, count, group_syntax, g,
                                       *body, own ? *own : NULL, key, pattern))
                 continue;
             /* The binder would capture a name the value uses. Rename it.
              * Alpha-equivalent binders must not change the value. */
-            Atom *fresh = atom_var_with_id(arena, "binder", fresh_var_id());
+            Atom **scope = arena_alloc(arena, sizeof(Atom *) * (count + 3u));
+            if (!scope) return false;
+            memcpy(scope, group_syntax, sizeof(Atom *) * count);
+            scope[count] = *body;
+            scope[count + 1u] = own ? *own : NULL;
+            scope[count + 2u] = value;
+            Atom *fresh = prime_fresh_binder(arena, name_key, scope,
+                                             count + 3u);
             if (!fresh ||
-                !prime_subst_telescope_in(arena, groups + g + 1u,
+                !prime_subst_telescope_in(interpretation, arena, groups + g + 1u,
                                           count - g - 1u,
                                           group_syntax + g + 1u, body, own,
                                           name_key, fresh, false, pattern))
@@ -7307,15 +7746,15 @@ static bool prime_subst_telescope_in(
     }
     if (own && *own) {
         if (prime_own_binds(*own, key)) return true;
-        bool key_in_body = prime_binder_occurs_free_in(arena, key, *body,
+        bool key_in_body = prime_binder_occurs_free_in(interpretation, arena, key, *body,
                                                        pattern);
         for (CettaExprIndex j = PRIME_OWN_FIRST;
              key_in_body && j < (*own)->expr.len; j++) {
             Atom *name = (*own)->expr.elems[j];
-            if (!prime_binder_occurs_free(arena, name, value)) continue;
+            if (!prime_binder_occurs_free(interpretation, arena, name, value)) continue;
             Atom *fresh = atom_var_like(arena, name, fresh_var_id());
             Atom *renamed = fresh
-                ? prime_subst_in(arena, *body, name, fresh, pattern) : NULL;
+                ? prime_subst_in(interpretation, arena, *body, name, fresh, pattern) : NULL;
             Atom *list = renamed ? prime_list_with(arena, *own, j, fresh)
                                  : NULL;
             if (!list) return false;
@@ -7323,18 +7762,18 @@ static bool prime_subst_telescope_in(
             *own = list;
         }
     }
-    Atom *next = prime_subst_in(arena, *body, key, value, pattern);
+    Atom *next = prime_subst_in(interpretation, arena, *body, key, value, pattern);
     if (!next) return false;
     *body = next;
     return true;
 }
 
-static bool prime_subst_telescope(Arena *arena,
+static bool prime_subst_telescope(const PrimeInterpretation *interpretation, Arena *arena,
                                   const CettaPrimeLambdaBinderGroupV1 *groups,
                                   size_t count, Atom **group_syntax,
                                   Atom **body, Atom **own, const Atom *key,
                                   Atom *value, bool keep_first_types) {
-    return prime_subst_telescope_in(arena, groups, count, group_syntax, body,
+    return prime_subst_telescope_in(interpretation, arena, groups, count, group_syntax, body,
                                     own, key, value, keep_first_types,
                                     false);
 }
@@ -7357,7 +7796,7 @@ static Atom *prime_lambda_rebuild(Arena *arena, Atom *head, bool listed,
  * initial value) take it in the enclosing scope; the body takes it unless a
  * parameter or an own name binds the key, after renaming any of them the
  * value uses freely. */
-static Atom *prime_subst_iter(Arena *arena, Atom *term,
+static Atom *prime_subst_iter(const PrimeInterpretation *interpretation, Arena *arena, Atom *term,
                               const PrimeIterTemplate *view, const Atom *key,
                               Atom *value, bool pattern) {
     CettaExprLen len = term->expr.len;
@@ -7366,7 +7805,7 @@ static Atom *prime_subst_iter(Arena *arena, Atom *term,
     for (CettaExprIndex i = 0u; i < len; i++) items[i] = term->expr.elems[i];
     bool changed = false;
     for (CettaExprIndex i = 1u; i < view->first_param; i++) {
-        items[i] = prime_subst_in(arena, term->expr.elems[i], key, value,
+        items[i] = prime_subst_in(interpretation, arena, term->expr.elems[i], key, value,
                                   pattern);
         if (!items[i]) return NULL;
         changed = changed || items[i] != term->expr.elems[i];
@@ -7374,14 +7813,14 @@ static Atom *prime_subst_iter(Arena *arena, Atom *term,
     if (!prime_iter_binds(term, view, key)) {
         Atom *body = items[view->body];
         Atom *own = view->own ? items[view->own] : NULL;
-        bool key_in_body = prime_binder_occurs_free_in(arena, key, body,
+        bool key_in_body = prime_binder_occurs_free_in(interpretation, arena, key, body,
                                                        pattern);
         for (CettaExprIndex p = 0u; key_in_body && p < view->param_count;
              p++) {
             CettaExprIndex at = view->first_param + p;
-            if (!prime_binder_occurs_free(arena, items[at], value)) continue;
+            if (!prime_binder_occurs_free(interpretation, arena, items[at], value)) continue;
             Atom *fresh = atom_var_like(arena, items[at], fresh_var_id());
-            body = fresh ? prime_subst_in(arena, body, items[at], fresh,
+            body = fresh ? prime_subst_in(interpretation, arena, body, items[at], fresh,
                                           pattern)
                          : NULL;
             if (!body) return NULL;
@@ -7390,14 +7829,14 @@ static Atom *prime_subst_iter(Arena *arena, Atom *term,
         for (CettaExprIndex j = PRIME_OWN_FIRST;
              key_in_body && own && j < own->expr.len; j++) {
             Atom *name = own->expr.elems[j];
-            if (!prime_binder_occurs_free(arena, name, value)) continue;
+            if (!prime_binder_occurs_free(interpretation, arena, name, value)) continue;
             Atom *fresh = atom_var_like(arena, name, fresh_var_id());
-            body = fresh ? prime_subst_in(arena, body, name, fresh, pattern)
+            body = fresh ? prime_subst_in(interpretation, arena, body, name, fresh, pattern)
                          : NULL;
             own = body ? prime_list_with(arena, own, j, fresh) : NULL;
             if (!own) return NULL;
         }
-        body = prime_subst_in(arena, body, key, value, pattern);
+        body = prime_subst_in(interpretation, arena, body, key, value, pattern);
         if (!body) return NULL;
         items[view->body] = body;
         if (view->own) items[view->own] = own;
@@ -7410,46 +7849,46 @@ static Atom *prime_subst_iter(Arena *arena, Atom *term,
 /* Substitution in `(new (names) body)`: the names bind in the body, so a
  * name of the same key stops it; a name that `value` uses freely is renamed
  * in its scope first, when the key occurs there. */
-static Atom *prime_subst_new(Arena *arena, Atom *term, const Atom *key,
+static Atom *prime_subst_new(const PrimeInterpretation *interpretation, Arena *arena, Atom *term, const Atom *key,
                              Atom *value) {
     if (prime_new_binds(term, key)) return term;
     Atom *names = term->expr.elems[1];
     Atom *body = term->expr.elems[2];
-    bool key_in_body = prime_binder_occurs_free_in(arena, key, body, false);
+    bool key_in_body = prime_binder_occurs_free_in(interpretation, arena, key, body, false);
     for (CettaExprIndex i = 0u; key_in_body && i < names->expr.len; i++) {
         Atom *name = names->expr.elems[i];
-        if (!prime_binder_occurs_free(arena, name, value)) continue;
+        if (!prime_binder_occurs_free(interpretation, arena, name, value)) continue;
         Atom *fresh = atom_var_like(arena, name, fresh_var_id());
-        body = fresh ? prime_subst_in(arena, body, name, fresh, false) : NULL;
+        body = fresh ? prime_subst_in(interpretation, arena, body, name, fresh, false) : NULL;
         names = body ? prime_list_with(arena, names, i, fresh) : NULL;
         if (!names) return NULL;
     }
-    body = prime_subst_in(arena, body, key, value, false);
+    body = prime_subst_in(interpretation, arena, body, key, value, false);
     if (!body) return NULL;
     if (names == term->expr.elems[1] && body == term->expr.elems[2])
         return term;
     return atom_expr3(arena, term->expr.elems[0], names, body);
 }
 
-static Atom *prime_subst_pairs(Arena *arena, Atom *pairs, const Atom *key,
+static Atom *prime_subst_pairs(const PrimeInterpretation *interpretation, Arena *arena, Atom *pairs, const Atom *key,
                                Atom *value) {
     if (!pairs || pairs->kind != ATOM_EXPR)
-        return prime_subst_in(arena, pairs, key, value, false);
+        return prime_subst_in(interpretation, arena, pairs, key, value, false);
     Atom **items = NULL;
     for (CettaExprIndex i = 0u; i < pairs->expr.len; i++) {
         Atom *pair = pairs->expr.elems[i];
         Atom *next;
         if (pair && pair->kind == ATOM_EXPR && pair->expr.len == 2u) {
-            Atom *pattern = prime_subst_in(arena, pair->expr.elems[0], key,
+            Atom *pattern = prime_subst_in(interpretation, arena, pair->expr.elems[0], key,
                                            value, true);
-            Atom *branch = prime_subst_in(arena, pair->expr.elems[1], key,
+            Atom *branch = prime_subst_in(interpretation, arena, pair->expr.elems[1], key,
                                           value, false);
             if (!pattern || !branch) return NULL;
             next = pattern == pair->expr.elems[0] &&
                            branch == pair->expr.elems[1]
                 ? pair : atom_expr2(arena, pattern, branch);
         } else {
-            next = prime_subst_in(arena, pair, key, value, false);
+            next = prime_subst_in(interpretation, arena, pair, key, value, false);
         }
         if (!next) return NULL;
         if (next != pair && !items) {
@@ -7469,11 +7908,11 @@ static Atom *prime_subst_pairs(Arena *arena, Atom *pairs, const Atom *key,
  * or a template parameter), renames a binder that would capture a name of
  * `value`, never enters a quotation in value position, and fills the
  * references in pattern positions, quoted or not (rule 4). */
-static Atom *prime_subst_in(Arena *arena, Atom *term, const Atom *key,
+static Atom *prime_subst_in(const PrimeInterpretation *interpretation, Arena *arena, Atom *term, const Atom *key,
                             Atom *value, bool pattern) {
     if (!term || !key) return NULL;
     if (prime_binder_reference(key, term)) {
-        const PrimeSubstValue *role = g_prime_subst_value;
+        const PrimeSubstValue *role = interpretation->substitution;
         return !pattern && role && role->syntax == value &&
                 prime_same_key(role->key, key)
             ? role->runtime : value;
@@ -7483,9 +7922,9 @@ static Atom *prime_subst_in(Arena *arena, Atom *term, const Atom *key,
      * (atom_is_quotation, the seal every Prime binder shares), except that
      * a binder fills its own slot where it is a hole of quoted code. */
     if (!pattern && atom_is_quotation(term)) {
-        const Atom *hole = g_prime_subst_quoted_hole;
+        const Atom *hole = interpretation->quoted_hole;
         return hole && key->kind == ATOM_VAR && var_id_eq(key->var_id, hole->var_id)
-            ? prime_fill_quoted_hole(arena, term, key->var_id,
+            ? prime_fill_quoted_hole(interpretation, arena, term, key->var_id,
                                      prime_spliced_syntax(value))
             : term;
     }
@@ -7493,15 +7932,15 @@ static Atom *prime_subst_in(Arena *arena, Atom *term, const Atom *key,
     if (!pattern && prime_sequential_scopes(term)) {
         Atom *expanded = prime_sequential_expand(arena, term);
         Atom *next = expanded
-            ? prime_subst_in(arena, expanded, key, value, false) : NULL;
+            ? prime_subst_in(interpretation, arena, expanded, key, value, false) : NULL;
         return prime_sequential_restore(arena, term, next);
     }
     CettaExprIndex source_at = pattern ? 0u : prime_pattern_source(term);
     if (source_at) {
-        Atom *source = prime_subst_in(arena, term->expr.elems[source_at],
+        Atom *source = prime_subst_in(interpretation, arena, term->expr.elems[source_at],
                                        key, value, false);
         Atom *lambda = prime_pattern_lambda(arena, term, source_at);
-        lambda = lambda ? prime_subst_in(arena, lambda, key, value, false)
+        lambda = lambda ? prime_subst_in(interpretation, arena, lambda, key, value, false)
                          : NULL;
         return prime_pattern_restore(arena, lambda, source, source_at);
     }
@@ -7515,7 +7954,7 @@ static Atom *prime_subst_in(Arena *arena, Atom *term, const Atom *key,
             groups[g] = telescope.groups[g].syntax;
         Atom *body = term->expr.elems[2];
         Atom *own = telescope.own;
-        if (!prime_subst_telescope_in(arena, telescope.groups,
+        if (!prime_subst_telescope_in(interpretation, arena, telescope.groups,
                                       telescope.count, groups, &body, &own,
                                       key, value, false, pattern))
             return NULL;
@@ -7530,15 +7969,15 @@ static Atom *prime_subst_in(Arena *arena, Atom *term, const Atom *key,
     }
     PrimeIterTemplate iter;
     if (!pattern && prime_iter_template(term, &iter))
-        return prime_subst_iter(arena, term, &iter, key, value, pattern);
+        return prime_subst_iter(interpretation, arena, term, &iter, key, value, pattern);
     if (!pattern && prime_new_form(term))
-        return prime_subst_new(arena, term, key, value);
+        return prime_subst_new(interpretation, arena, term, key, value);
     Atom **items = NULL;
     for (CettaExprIndex i = 0u; i < term->expr.len; i++) {
         Atom *child = term->expr.elems[i];
         PrimeChildRole role = pattern ? PRIME_CHILD_PATTERN
-                                      : prime_child_role(term, i);
-        const PrimeSubstValue *returned = g_prime_subst_value;
+                                      : prime_child_role(interpretation, term, i);
+        const PrimeSubstValue *returned = interpretation->substitution;
         /* A completed symbol is data until explicitly used as a call head.
          * Keep that head visible to construct formation. A source argument
          * still uses its shared cell here, including a bare-symbol source. */
@@ -7549,8 +7988,8 @@ static Atom *prime_subst_in(Arena *arena, Atom *term, const Atom *key,
             prime_binder_reference(key, child);
         Atom *next = formed_head ? value
             : role == PRIME_CHILD_PATTERN_PAIRS
-            ? prime_subst_pairs(arena, child, key, value)
-            : prime_subst_in(arena, child, key, value,
+            ? prime_subst_pairs(interpretation, arena, child, key, value)
+            : prime_subst_in(interpretation, arena, child, key, value,
                              role == PRIME_CHILD_PATTERN);
         if (!next) return NULL;
         if (next != child && !items) {
@@ -7567,45 +8006,43 @@ static Atom *prime_subst_in(Arena *arena, Atom *term, const Atom *key,
      * symbol names: a lambda is elaborated, a binder sealed. */
     if (rebuilt && !pattern && items[0] != term->expr.elems[0] &&
         items[0] && items[0]->kind == ATOM_SYMBOL)
-        rebuilt = prime_formed_by_substitution(arena, rebuilt);
+        rebuilt = prime_formed_by_substitution(interpretation, arena, rebuilt);
     return rebuilt;
 }
 
-static Atom *prime_subst_binder(Arena *arena, Atom *term, const Atom *key,
+static Atom *prime_subst_binder(const PrimeInterpretation *interpretation, Arena *arena, Atom *term, const Atom *key,
                                 Atom *value) {
-    return prime_subst_in(arena, term, key, value, false);
+    return prime_subst_in(interpretation, arena, term, key, value, false);
 }
 
-Atom *prime_semantics_subst_value(Arena *arena, Atom *term, Atom *var,
+static Atom *prime_semantics_subst_value_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *term, Atom *var,
                                   Atom *value, Atom *runtime_value,
                                   CettaCallResultForm result_form) {
     if (!arena || !term || !var || var->kind != ATOM_VAR || !value ||
         !runtime_value)
         return NULL;
-    const Atom *saved = g_prime_subst_quoted_hole;
-    const PrimeSubstValue *saved_value = g_prime_subst_value;
     PrimeSubstValue role = {var, value, runtime_value, result_form};
-    g_prime_subst_quoted_hole = var;
-    g_prime_subst_value = &role;
+    PrimeInterpretation substitution = *interpretation;
+    substitution.quoted_hole = var;
+    substitution.substitution = &role;
     /* Capture avoidance and code splicing inspect the original value.
      * Only references in runtime positions receive its value carrier. */
-    Atom *result = prime_subst_in(arena, term, var, value, false);
-    g_prime_subst_value = saved_value;
-    g_prime_subst_quoted_hole = saved;
+    Atom *result = prime_subst_in(&substitution, arena, term, var, value, false);
     return result;
 }
 
-Atom *prime_semantics_subst_var(Arena *arena, Atom *term, Atom *var,
+static Atom *prime_semantics_subst_var_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *term, Atom *var,
                                 Atom *value) {
-    return prime_semantics_subst_value(
+    return prime_semantics_subst_value_interpreted(interpretation,
         arena, term, var, value, value, CETTA_CALL_RESULT_EXPRESSION);
 }
 
 /* A lambda with the binder or own name `key` renamed to a fresh variable
- * throughout its scope (alpha conversion).  The lambda itself when `key`
- * binds nothing in it. */
-static Atom *prime_lambda_rename_binder(Arena *arena, Atom *term,
-                                        const Atom *key) {
+ * throughout its scope (alpha conversion), shown apart from the names of
+ * `inserted`, the values substitution puts in that scope.  The lambda itself
+ * when `key` binds nothing in it. */
+static Atom *prime_lambda_rename_binder(const PrimeInterpretation *interpretation, Arena *arena, Atom *term,
+                                        const Atom *key, Atom *inserted) {
     PrimeLambdaTelescope telescope;
     if (!prime_lambda_telescope(arena, term, &telescope)) return NULL;
     Atom **groups = arena_alloc(arena, sizeof(Atom *) * telescope.count);
@@ -7621,9 +8058,10 @@ static Atom *prime_lambda_rename_binder(Arena *arena, Atom *term,
             Atom *name_key = prime_binder_key(
                 cetta_prime_lambda_binder_name_v1(&group, i));
             if (!name_key || !prime_same_key(name_key, key)) continue;
-            Atom *fresh = atom_var_with_id(arena, "binder", fresh_var_id());
+            Atom *scope[] = {term, inserted};
+            Atom *fresh = prime_fresh_binder(arena, name_key, scope, 2u);
             if (!fresh ||
-                !prime_subst_telescope_in(arena, telescope.groups + g + 1u,
+                !prime_subst_telescope_in(interpretation, arena, telescope.groups + g + 1u,
                                           telescope.count - g - 1u,
                                           groups + g + 1u, &body, &own,
                                           name_key, fresh, false, false))
@@ -7641,7 +8079,7 @@ static Atom *prime_lambda_rename_binder(Arena *arena, Atom *term,
         Atom *name = own->expr.elems[j];
         if (!prime_same_key(name, key)) continue;
         Atom *fresh = atom_var_like(arena, name, fresh_var_id());
-        body = fresh ? prime_subst_in(arena, body, name, fresh, false) : NULL;
+        body = fresh ? prime_subst_in(interpretation, arena, body, name, fresh, false) : NULL;
         own = body ? prime_list_with(arena, own, j, fresh) : NULL;
         if (!own) return NULL;
         return prime_lambda_rebuild(arena, term->expr.elems[0],
@@ -7653,7 +8091,7 @@ static Atom *prime_lambda_rename_binder(Arena *arena, Atom *term,
 
 /* A map-atom or foldl-atom template with its parameter or own name `key`
  * renamed to a fresh variable throughout the body. */
-static Atom *prime_iter_rename_binder(Arena *arena, Atom *term,
+static Atom *prime_iter_rename_binder(const PrimeInterpretation *interpretation, Arena *arena, Atom *term,
                                       const PrimeIterTemplate *view,
                                       const Atom *key) {
     CettaExprLen len = term->expr.len;
@@ -7664,7 +8102,7 @@ static Atom *prime_iter_rename_binder(Arena *arena, Atom *term,
         CettaExprIndex at = view->first_param + p;
         if (!prime_same_key(items[at], key)) continue;
         Atom *fresh = atom_var_like(arena, items[at], fresh_var_id());
-        items[view->body] = fresh ? prime_subst_in(arena, items[view->body],
+        items[view->body] = fresh ? prime_subst_in(interpretation, arena, items[view->body],
                                                    items[at], fresh, false)
                                   : NULL;
         if (!items[view->body]) return NULL;
@@ -7676,7 +8114,7 @@ static Atom *prime_iter_rename_binder(Arena *arena, Atom *term,
         Atom *name = own->expr.elems[j];
         if (!prime_same_key(name, key)) continue;
         Atom *fresh = atom_var_like(arena, name, fresh_var_id());
-        items[view->body] = fresh ? prime_subst_in(arena, items[view->body],
+        items[view->body] = fresh ? prime_subst_in(interpretation, arena, items[view->body],
                                                    name, fresh, false)
                                   : NULL;
         items[view->own] = items[view->body]
@@ -7711,6 +8149,7 @@ typedef struct {
 } PrimeEnvWatch;
 
 typedef struct {
+    const PrimeInterpretation *interpretation;
     Arena *arena;
     Bindings *store;
     bool seal;
@@ -7807,7 +8246,7 @@ static bool prime_env_bind(PrimeEnvSubst *s, const Atom *key) {
 static void prime_env_note_insert(PrimeEnvSubst *s, Atom *image) {
     for (size_t i = s->watch_base; i < s->watch_len; i++) {
         if (!s->watch[i].captured &&
-            prime_binder_occurs_free(s->arena, s->watch[i].key, image))
+            prime_binder_occurs_free(s->interpretation, s->arena, s->watch[i].key, image))
             s->watch[i].captured = true;
     }
 }
@@ -7949,7 +8388,7 @@ static Atom *prime_env_subst_lambda(PrimeEnvSubst *s, Atom *term,
                                        telescope.count, body, telescope.own)
                 : term;
         }
-        term = prime_lambda_rename_binder(s->arena, term, captured);
+        term = prime_lambda_rename_binder(s->interpretation, s->arena, term, captured, body);
         if (!term) {
             s->failed = true;
             return NULL;
@@ -8002,7 +8441,7 @@ static Atom *prime_env_subst_iter(PrimeEnvSubst *s, Atom *term,
             changed = changed || body != term->expr.elems[view.body];
             return changed ? atom_expr(s->arena, items, len) : term;
         }
-        term = prime_iter_rename_binder(s->arena, term, &view, captured);
+        term = prime_iter_rename_binder(s->interpretation, s->arena, term, &view, captured);
         if (!term) {
             s->failed = true;
             return NULL;
@@ -8014,14 +8453,14 @@ static Atom *prime_env_subst_iter(PrimeEnvSubst *s, Atom *term,
 
 /* `(new (names) body)` with its name `key` renamed to a fresh variable
  * throughout its scope; the form itself when `key` names none of them. */
-static Atom *prime_new_rename_binder(Arena *arena, Atom *term,
+static Atom *prime_new_rename_binder(const PrimeInterpretation *interpretation, Arena *arena, Atom *term,
                                      const Atom *key) {
     Atom *names = term->expr.elems[1];
     for (CettaExprIndex j = 0u; j < names->expr.len; j++) {
         Atom *name = names->expr.elems[j];
         if (!prime_same_key(name, key)) continue;
         Atom *fresh = atom_var_like(arena, name, fresh_var_id());
-        Atom *body = fresh ? prime_subst_in(arena, term->expr.elems[2], name,
+        Atom *body = fresh ? prime_subst_in(interpretation, arena, term->expr.elems[2], name,
                                             fresh, false)
                            : NULL;
         Atom *list = body ? prime_list_with(arena, names, j, fresh) : NULL;
@@ -8055,7 +8494,7 @@ static Atom *prime_env_subst_new(PrimeEnvSubst *s, Atom *term) {
             if (!rebuilt) s->failed = true;
             return rebuilt;
         }
-        term = prime_new_rename_binder(s->arena, term, captured);
+        term = prime_new_rename_binder(s->interpretation, s->arena, term, captured);
         if (!term) {
             s->failed = true;
             return NULL;
@@ -8104,9 +8543,9 @@ static Atom *prime_env_subst(PrimeEnvSubst *s, Atom *term, bool pattern) {
             if (image == var) continue;
             /* A value entering code keeps the binding structure it was
              * formed with (prime_value_into_code). */
-            Atom *entering = prime_value_into_code(s->arena, image);
+            Atom *entering = prime_value_into_code(s->interpretation, s->arena, image);
             payload = entering
-                ? prime_fill_quoted_hole(s->arena, payload, var->var_id,
+                ? prime_fill_quoted_hole(s->interpretation, s->arena, payload, var->var_id,
                                          entering)
                 : NULL;
         }
@@ -8158,7 +8597,7 @@ static Atom *prime_env_subst(PrimeEnvSubst *s, Atom *term, bool pattern) {
         for (CettaExprIndex i = 0u; i < term->expr.len; i++) {
             Atom *child = term->expr.elems[i];
             PrimeChildRole role = pattern ? PRIME_CHILD_PATTERN
-                                          : prime_child_role(term, i);
+                                          : prime_child_role(s->interpretation, term, i);
             Atom *next = role == PRIME_CHILD_PATTERN_PAIRS
                 ? prime_env_subst_pairs(s, child)
                 : prime_env_subst(s, child, role == PRIME_CHILD_PATTERN);
@@ -8186,7 +8625,7 @@ static Atom *prime_env_subst(PrimeEnvSubst *s, Atom *term, bool pattern) {
              * the symbol names: a lambda is elaborated, a binder sealed. */
             if (result && !pattern && items[0] != term->expr.elems[0] &&
                 items[0] && items[0]->kind == ATOM_SYMBOL) {
-                result = prime_formed_by_substitution(s->arena, result);
+                result = prime_formed_by_substitution(s->interpretation, s->arena, result);
                 if (!result) s->failed = true;
             }
         }
@@ -8195,15 +8634,15 @@ static Atom *prime_env_subst(PrimeEnvSubst *s, Atom *term, bool pattern) {
     return result;
 }
 
-static Atom *prime_env_apply_mode(Arena *arena, const Bindings *store,
+static Atom *prime_env_apply_mode(const PrimeInterpretation *interpretation, Arena *arena, const Bindings *store,
                                   Atom *term, bool pattern) {
     if (!arena || !term || !store || !atom_has_vars(term) ||
         !bindings_has_bound_values(store))
         return term;
-    PrimeEnvSubst s = {
+    PrimeEnvSubst s = {.interpretation = interpretation,
         .arena = arena,
         .store = (Bindings *)store,
-        .seal = prime_quote_seal_active(),
+        .seal = interpretation->seal,
     };
     Atom *result = prime_env_subst(&s, term, pattern);
     free(s.hidden);
@@ -8213,14 +8652,14 @@ static Atom *prime_env_apply_mode(Arena *arena, const Bindings *store,
     return s.failed ? NULL : result;
 }
 
-Atom *prime_semantics_env_apply(Arena *arena, const Bindings *store,
+static Atom *prime_semantics_env_apply_interpreted(const PrimeInterpretation *interpretation, Arena *arena, const Bindings *store,
                                 Atom *term) {
-    return prime_env_apply_mode(arena, store, term, false);
+    return prime_env_apply_mode(interpretation, arena, store, term, false);
 }
 
-Atom *prime_semantics_env_apply_pattern(Arena *arena, const Bindings *store,
+static Atom *prime_semantics_env_apply_pattern_interpreted(const PrimeInterpretation *interpretation, Arena *arena, const Bindings *store,
                                         Atom *term) {
-    return prime_env_apply_mode(arena, store, term, true);
+    return prime_env_apply_mode(interpretation, arena, store, term, true);
 }
 
 /* A typed group without its first name: `(x y z : A)` becomes `(y z : A)`,
@@ -8265,6 +8704,7 @@ static bool prime_scope_record_read(const Atom *own,
                                     CettaPrimeScopeProfile *out);
 
 typedef struct {
+    const PrimeInterpretation *interpretation;
     Arena *arena;
     VarId *hidden;
     size_t hidden_len, hidden_cap;
@@ -8362,7 +8802,7 @@ static void prime_free_names_walk(PrimeFreeNames *f, Atom *term,
     } else {
         for (CettaExprIndex i = 0u; i < term->expr.len && !f->failed; i++) {
             PrimeChildRole role = pattern ? PRIME_CHILD_PATTERN
-                                          : prime_child_role(term, i);
+                                          : prime_child_role(f->interpretation, term, i);
             Atom *child = term->expr.elems[i];
             if (role == PRIME_CHILD_PATTERN_PAIRS && child &&
                 child->kind == ATOM_EXPR) {
@@ -8385,10 +8825,10 @@ static void prime_free_names_walk(PrimeFreeNames *f, Atom *term,
     f->nesting--;
 }
 
-bool prime_semantics_has_free_store_names(Arena *arena, Atom *term,
+static bool prime_semantics_has_free_store_names_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *term,
                                          bool *has_names) {
     if (!arena || !term || !has_names) return false;
-    PrimeFreeNames names = {.arena = arena};
+    PrimeFreeNames names = {.interpretation = interpretation, .arena = arena};
     Atom *own = atom_prime_template_own_hidden(term)
         ? term->expr.elems[term->expr.len - 1u] : NULL;
     for (CettaExprIndex i = PRIME_OWN_FIRST;
@@ -8415,7 +8855,7 @@ static Atom *prime_rename_everywhere(Arena *arena, Atom *term,
                                      Atom *const *from, Atom *const *to,
                                      size_t count, uint32_t nesting);
 
-static bool prime_scope_copy(Arena *arena, CettaFrameIdentityScope *identities,
+static bool prime_scope_copy(const PrimeInterpretation *interpretation, Arena *arena, CettaFrameIdentityScope *identities,
                              Atom **body, Atom **own,
                              Atom *const *names, size_t count,
                              bool store_names) {
@@ -8430,7 +8870,7 @@ static bool prime_scope_copy(Arena *arena, CettaFrameIdentityScope *identities,
             : store_names
                 ? prime_rename_everywhere(arena, *body, &names[i], &fresh, 1u,
                                           0u)
-                : prime_subst_in(arena, *body, names[i], fresh, false);
+                : prime_subst_in(interpretation, arena, *body, names[i], fresh, false);
         if (!next) return false;
         *body = next;
         for (CettaExprIndex j = PRIME_OWN_FIRST; *own && j < (*own)->expr.len;
@@ -8446,7 +8886,7 @@ static bool prime_scope_copy(Arena *arena, CettaFrameIdentityScope *identities,
 
 /* Activate a template whose body is `*body` and own list `*own`, with
  * parameters `params`: the copies replace the own slots in both. */
-static bool prime_scope_activate(Arena *arena, Atom **body, Atom **own,
+static bool prime_scope_activate(const PrimeInterpretation *interpretation, Arena *arena, Atom **body, Atom **own,
                                  Atom *const *params, size_t param_count) {
     if (!*own || !atom_is_prime_own_list(*own)) return true;
     CETTA_FRAME_IDENTITY_SCOPE(identities);
@@ -8455,20 +8895,20 @@ static bool prime_scope_activate(Arena *arena, Atom **body, Atom **own,
     if (count && !names) return false;
     for (size_t i = 0u; i < count; i++)
         names[i] = (*own)->expr.elems[PRIME_OWN_FIRST + i];
-    if (!prime_scope_copy(arena, &identities, body, own, names, count, true))
+    if (!prime_scope_copy(interpretation, arena, &identities, body, own, names, count, true))
         return false;
     CettaPrimeScopeProfile record;
     if (!prime_scope_record_read(*own, &record) ||
         record.readout != CETTA_PRIME_READOUT_SNAPSHOT)
         return true;
-    PrimeFreeNames free_names = {.arena = arena};
+    PrimeFreeNames free_names = {.interpretation = interpretation, .arena = arena};
     for (size_t p = 0u; p < param_count; p++)
         prime_free_names_hide(&free_names, params[p]);
     for (CettaExprIndex j = PRIME_OWN_FIRST; j < (*own)->expr.len; j++)
         prime_free_names_hide(&free_names, (*own)->expr.elems[j]);
     prime_free_names_walk(&free_names, *body, false);
     bool ok = !free_names.failed &&
-              prime_scope_copy(arena, &identities, body, own,
+              prime_scope_copy(interpretation, arena, &identities, body, own,
                                free_names.found, free_names.found_len, true);
     free(free_names.found);
     free(free_names.hidden);
@@ -8479,14 +8919,14 @@ static bool prime_scope_activate(Arena *arena, Atom **body, Atom **own,
  * slot throughout the body, an instance of its own as an activation's own
  * slot is, and the body is what runs.  NULL when the form is not a `new`
  * or a copy could not be made. */
-Atom *prime_semantics_new_open(Arena *arena, Atom *term) {
+static Atom *prime_semantics_new_open_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *term) {
     if (!arena || !prime_new_form(term)) return NULL;
     Atom *names = term->expr.elems[1];
     Atom *body = term->expr.elems[2];
     if (names->expr.len == 0u) return body;
     CETTA_FRAME_IDENTITY_SCOPE(identities);
     Atom *own = NULL;
-    if (!prime_scope_copy(arena, &identities, &body, &own, names->expr.elems,
+    if (!prime_scope_copy(interpretation, arena, &identities, &body, &own, names->expr.elems,
                           (size_t)names->expr.len, false))
         return NULL;
     return body;
@@ -8532,7 +8972,7 @@ static Atom *prime_iter_with(Arena *arena, Atom *call, CettaExprIndex index,
     return atom_expr(arena, items, call->expr.len);
 }
 
-PrimeIterationStep prime_semantics_iteration_step(Arena *arena, Atom *call,
+static PrimeIterationStep prime_semantics_iteration_step_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *call,
                                                   Atom *space, Atom **out) {
     *out = NULL;
     PrimeIterTemplate view;
@@ -8568,13 +9008,13 @@ PrimeIterationStep prime_semantics_iteration_step(Arena *arena, Atom *call,
     Atom *own = call->expr.elems[view.own];
     Atom *params[2] = {call->expr.elems[view.first_param],
                        fold ? call->expr.elems[view.first_param + 1u] : NULL};
-    if (!prime_scope_activate(arena, &body, &own, params, view.param_count))
+    if (!prime_scope_activate(interpretation, arena, &body, &own, params, view.param_count))
         return PRIME_ITERATION_DECLINE;
     Atom *head = elements[0];
     Atom *values[2] = {fold ? call->expr.elems[2] : head,
                        fold ? head : NULL};
     for (CettaExprIndex p = 0u; p < view.param_count; p++) {
-        body = prime_subst_in(arena, body, params[p], values[p], false);
+        body = prime_subst_in(interpretation, arena, body, params[p], values[p], false);
         if (!body) return PRIME_ITERATION_DECLINE;
     }
     /* The rest shares the list's storage where it can
@@ -8607,7 +9047,7 @@ PrimeIterationStep prime_semantics_iteration_step(Arena *arena, Atom *call,
     return *out ? PRIME_ITERATION_REENTER : PRIME_ITERATION_DECLINE;
 }
 
-Atom *prime_semantics_scope_activation(Arena *arena, Atom *term, Atom *space) {
+static Atom *prime_semantics_scope_activation_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *term, Atom *space) {
     if (prime_sequential_scopes(term))
         return prime_sequential_expand(arena, term);
     CettaExprIndex source_at = prime_pattern_source(term);
@@ -8616,14 +9056,14 @@ Atom *prime_semantics_scope_activation(Arena *arena, Atom *term, Atom *space) {
         if (!lambda) return NULL;
         Atom *body = lambda->expr.elems[2], *own = lambda->expr.elems[3];
         Atom *param = lambda->expr.elems[1];
-        if (!prime_scope_activate(arena, &body, &own, &param, 1u)) return NULL;
+        if (!prime_scope_activate(interpretation, arena, &body, &own, &param, 1u)) return NULL;
         /* Only the pattern and continuation were renamed. The source
          * remains outside that scope and retains its original demand. */
         return prime_list_with(arena, body, source_at,
                                term->expr.elems[source_at]);
     }
     Atom *next = NULL;
-    PrimeIterationStep step = prime_semantics_iteration_step(arena, term, space, &next);
+    PrimeIterationStep step = prime_semantics_iteration_step_interpreted(interpretation, arena, term, space, &next);
     return step == PRIME_ITERATION_DECLINE ? term : next;
 }
 
@@ -8633,9 +9073,9 @@ Atom *prime_semantics_scope_activation(Arena *arena, Atom *term, Atom *space) {
  * never entered. An argument is contracted when the evaluator evaluates it,
  * so a term that reaches the root only as data, such as the tail of a list
  * or a quoted term, is not rewritten. */
-Atom *prime_semantics_authored_head_step(Arena *arena, Atom *term) {
+static Atom *prime_semantics_authored_head_step_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *term) {
     if (!arena || !term || term->kind != ATOM_EXPR) return term;
-    Atom *next = prime_semantics_beta(arena, term);
+    Atom *next = prime_semantics_beta_interpreted(interpretation, arena, term);
     if (!next) next = prime_semantics_project_pair(term);
     if (!next) next = prime_semantics_identity_iota(term);
     return next ? next : term;
@@ -8651,7 +9091,7 @@ bool prime_semantics_is_authored_lambda(Arena *arena, Atom *term) {
  * that remain are kept (annotated reduction, `ATm.Step.betaTyped`, whose
  * erasure is ordinary beta: `Step.erasure`, WrittenDomains.lean).  The
  * remaining arguments apply to the result. */
-Atom *prime_semantics_beta_value(Arena *arena, Atom *call,
+static Atom *prime_semantics_beta_value_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *call,
                                  Atom *runtime_argument) {
     if (!arena || !call || call->kind != ATOM_EXPR || call->expr.len < 2u ||
         !runtime_argument)
@@ -8660,7 +9100,7 @@ Atom *prime_semantics_beta_value(Arena *arena, Atom *call,
     /* A lambda with its crossing set, (meta (lam ...) {...}), applies as the
      * lambda: its elaboration applied the set. */
     if (atom_is_prime_meta(function) &&
-        prime_semantics_meta_core(arena, function))
+        prime_semantics_meta_core_interpreted(interpretation, arena, function))
         function = function->expr.elems[1];
     PrimeLambdaTelescope telescope;
     if (!prime_lambda_telescope(arena, function, &telescope) ||
@@ -8697,19 +9137,18 @@ Atom *prime_semantics_beta_value(Arena *arena, Atom *call,
     if (own) {
         Atom **params = NULL;
         size_t param_count = prime_lambda_params(arena, &telescope, &params);
-        if (!prime_scope_activate(arena, &body, &own, params, param_count))
+        if (!prime_scope_activate(interpretation, arena, &body, &own, params, param_count))
             return NULL;
     }
     Atom *key = prime_binder_key(binder);
-    const PrimeSubstValue *saved = g_prime_subst_value;
+    PrimeInterpretation substitution = *interpretation;
     PrimeSubstValue role = {
         key, argument, runtime_argument, CETTA_CALL_RESULT_EXPRESSION};
     if (runtime_argument != argument)
-        g_prime_subst_value = &role;
+        substitution.substitution = &role;
     bool substituted = !key ||
-        prime_subst_telescope(arena, rest, rest_count, rest_syntax, &body,
+        prime_subst_telescope(&substitution, arena, rest, rest_count, rest_syntax, &body,
                               &own, key, argument, has_siblings);
-    g_prime_subst_value = saved;
     if (!substituted)
         return NULL;
     Atom *reduct = rest_count == 0u
@@ -8727,8 +9166,8 @@ Atom *prime_semantics_beta_value(Arena *arena, Atom *call,
     return atom_expr(arena, items, call->expr.len - 1u);
 }
 
-Atom *prime_semantics_beta(Arena *arena, Atom *call) {
-    return prime_semantics_beta_value(arena, call,
+static Atom *prime_semantics_beta_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *call) {
+    return prime_semantics_beta_value_interpreted(interpretation, arena, call,
         call && call->kind == ATOM_EXPR && call->expr.len >= 2u
             ? call->expr.elems[1] : NULL);
 }
@@ -8736,14 +9175,18 @@ Atom *prime_semantics_beta(Arena *arena, Atom *call) {
 /* The seal of quoted code (atom_is_quotation) while the session seals:
  * Prime unless its profile is quote-as-written.  It follows the session's
  * language and profile, as the active language does. */
-static __thread bool g_prime_quote_seal = false;
-
-void prime_quote_seal_set(bool active) {
-    g_prime_quote_seal = active;
+bool prime_quote_seal_set(bool active) {
+    CettaLibraryContext *library = eval_current_library_context();
+    return library && prime_interpretation_publish(library->prime_interpretation,
+        NULL, NULL, &active);
 }
 
 bool prime_quote_seal_active(void) {
-    return g_prime_quote_seal;
+    CettaPrimeInterpretation *view = prime_interpretation_capture_current();
+    if (!view) eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+    bool seal = view && view->seal;
+    prime_interpretation_release(view);
+    return seal;
 }
 
 /* ── Elaboration of authored forms: the binding structure ──────────────
@@ -9037,17 +9480,18 @@ bool prime_scope_profile_from_atom(const Atom *decl,
  * (its whole-document declaration, or the default), then each query
  * declaration evaluated, from its position onward.  Code formed while the
  * program runs (parse) is elaborated under it. */
-static __thread bool g_prime_scope_runtime_set = false;
-static __thread CettaPrimeScopeProfile g_prime_scope_runtime;
-
-void prime_scope_runtime_profile_set(CettaPrimeScopeProfile profile) {
-    g_prime_scope_runtime = profile;
-    g_prime_scope_runtime_set = true;
+bool prime_scope_runtime_profile_set(CettaPrimeScopeProfile profile) {
+    CettaLibraryContext *library = eval_current_library_context();
+    return library && prime_interpretation_publish(library->prime_interpretation,
+        NULL, &profile, NULL);
 }
 
 CettaPrimeScopeProfile prime_scope_runtime_profile(void) {
-    return g_prime_scope_runtime_set ? g_prime_scope_runtime
-                                     : prime_scope_profile_default();
+    CettaPrimeInterpretation *view = prime_interpretation_capture_current();
+    if (!view) eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+    CettaPrimeScopeProfile profile = view ? view->profile : prime_scope_profile_default();
+    prime_interpretation_release(view);
+    return profile;
 }
 
 /* ── Elaboration state ─────────────────────────────────────────────── */
@@ -9150,6 +9594,7 @@ typedef struct {
 } PrimeLexForce;
 
 typedef struct {
+    const PrimeInterpretation *interpretation;
     Arena *arena;
     CettaPrimeScopeProfile profile;
     Atom *record;
@@ -9342,7 +9787,7 @@ static bool prime_braces_all_vars(const Atom *braces) {
 }
 
 /* How the core reads a crossing set on `inner`. */
-static PrimeMetaKind prime_meta_kind(Arena *arena, Atom *inner) {
+static PrimeMetaKind prime_meta_kind(const PrimeInterpretation *interpretation, Arena *arena, Atom *inner) {
     if (!inner || inner->kind != ATOM_EXPR) return PRIME_META_NONE;
     if (atom_is_quotation(inner)) return PRIME_META_QUOTE;
     PrimeLambdaTelescope telescope;
@@ -9355,15 +9800,15 @@ static PrimeMetaKind prime_meta_kind(Arena *arena, Atom *inner) {
         atom_symbol_current_id(inner->expr.elems[0]) != g_builtin_syms.equals &&
         atom_symbol_current_id(inner->expr.elems[0]) != g_builtin_syms.unify)
         for (CettaExprIndex i = 1u; i < inner->expr.len; i++)
-            if (prime_child_role(inner, i) != PRIME_CHILD_VALUE)
+            if (prime_child_role(interpretation, inner, i) != PRIME_CHILD_VALUE)
                 return PRIME_META_BINDER;
     return PRIME_META_NONE;
 }
 
-bool prime_semantics_meta_core(Arena *arena, Atom *term) {
+static bool prime_semantics_meta_core_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *term) {
     Atom *inner, *braces;
     return prime_meta_braces(term, &inner, &braces) &&
-           prime_meta_kind(arena, inner) != PRIME_META_NONE;
+           prime_meta_kind(interpretation, arena, inner) != PRIME_META_NONE;
 }
 
 /* The crossing set of a core construct: its variables as an expression.
@@ -9533,7 +9978,7 @@ static Atom *prime_elab_binders_lambda(PrimeElab *e, Atom *authored,
             }
             Atom *twin = prime_elab_binder_twin(e, name);
             if (e->failed || twin == name) continue;
-            if (!prime_subst_telescope_in(
+            if (!prime_subst_telescope_in(e->interpretation,
                     e->arena, telescope->groups + g + 1u,
                     telescope->count - g - 1u, groups + g + 1u, &body, &own,
                     name, twin, false, false)) {
@@ -9607,7 +10052,7 @@ static Atom *prime_elab_binders_iter(PrimeElab *e, Atom *authored,
         }
         Atom *twin = prime_elab_binder_twin(e, items[at]);
         if (e->failed || twin == items[at]) continue;
-        body = prime_subst_in(e->arena, body, items[at], twin, false);
+        body = prime_subst_in(e->interpretation, e->arena, body, items[at], twin, false);
         if (!body) e->failed = true;
         items[at] = twin;
     }
@@ -9640,7 +10085,7 @@ static Atom *prime_elab_binders_new(PrimeElab *e, Atom *term) {
         }
         Atom *twin = prime_elab_binder_twin(e, name);
         if (e->failed || twin == name) continue;
-        body = prime_subst_in(e->arena, body, name, twin, false);
+        body = prime_subst_in(e->interpretation, e->arena, body, name, twin, false);
         names = body ? prime_list_with(e->arena, names, i, twin) : NULL;
         if (!names) e->failed = true;
     }
@@ -9735,7 +10180,7 @@ static void prime_elab_make_fresh(PrimeElab *e, Atom *pattern, Atom *crossing,
         }
         entry->atom = fresh;
         for (size_t k = 0u; k < count && !e->failed; k++) {
-            region[k] = prime_fill_quoted_hole(e->arena, region[k],
+            region[k] = prime_fill_quoted_hole(e->interpretation, e->arena, region[k],
                                                names[i]->var_id, fresh);
             if (!region[k]) e->failed = true;
         }
@@ -9833,12 +10278,12 @@ static Atom *prime_elab_binders_crossing(PrimeElab *e, Atom *term, Atom *inner,
             items[2] = atom_expr(e->arena, out, branches->expr.len);
             if (!items[2]) e->failed = true;
         }
-    } else if (prime_scope_shape_of(inner, SYMBOL_ID_NONE)) {
+    } else if (prime_scope_shape_of(e->interpretation, inner, SYMBOL_ID_NONE)) {
         /* A declared form: the names at its pattern positions, outside the
          * set, are made fresh in its patterns and bodies. */
         const PrimeScopeShape *declared =
-            prime_scope_shape_of(inner, SYMBOL_ID_NONE);
-        Atom *patterns = prime_scope_form_patterns(e->arena, declared, inner);
+            prime_scope_shape_of(e->interpretation, inner, SYMBOL_ID_NONE);
+        Atom *patterns = prime_scope_form_patterns(e->interpretation, e->arena, declared, inner);
         Atom **region = arena_alloc(e->arena, sizeof(Atom *) * (size_t)len);
         CettaExprIndex *at = arena_alloc(e->arena,
                                          sizeof(CettaExprIndex) * (size_t)len);
@@ -9899,13 +10344,13 @@ static Atom *prime_elab_binders(PrimeElab *e, Atom *term, bool pattern) {
         result = prime_elab_binders_new(e, term);
     } else if (e->code_depth == 0u &&
                prime_meta_braces(term, &meta_inner, &meta_braces) &&
-               prime_meta_kind(e->arena, meta_inner) == PRIME_META_BINDER) {
+               prime_meta_kind(e->interpretation, e->arena, meta_inner) == PRIME_META_BINDER) {
         result = prime_elab_binders_crossing(e, term, meta_inner, meta_braces);
     } else {
         Atom **items = NULL;
         for (CettaExprIndex i = 0u; i < term->expr.len && !e->failed; i++) {
             Atom *child = term->expr.elems[i];
-            PrimeChildRole role = prime_child_role(term, i);
+            PrimeChildRole role = prime_child_role(e->interpretation, term, i);
             Atom *next = role == PRIME_CHILD_PATTERN_PAIRS
                 ? prime_elab_binders_pairs(e, child)
                 : prime_elab_binders(e, child, role == PRIME_CHILD_PATTERN);
@@ -10010,7 +10455,7 @@ static bool prime_elab_hole_scope(const PrimeElab *e, VarId id,
 /* The patterns of a binding construct that scope over its child `index`: a
  * let's body, the template of match, chain and filter-atom, the branches of
  * unify, an equation's body.  case, switch and let* bind pair by pair. */
-static size_t prime_elab_binder_cover(const Atom *term, CettaExprIndex index,
+static size_t prime_elab_binder_cover(const PrimeInterpretation *interpretation, const Atom *term, CettaExprIndex index,
                                       CettaExprIndex patterns[2]) {
     if (!term || term->kind != ATOM_EXPR || term->expr.len == 0u ||
         !term->expr.elems[0] || term->expr.elems[0]->kind != ATOM_SYMBOL)
@@ -10039,7 +10484,7 @@ static size_t prime_elab_binder_cover(const Atom *term, CettaExprIndex index,
     }
     /* A declared form: its pattern and source arguments scope over its
      * bodies (the first two of them, which is all a declaration has). */
-    const PrimeScopeShape *declared = prime_scope_shape_of(term,
+    const PrimeScopeShape *declared = prime_scope_shape_of(interpretation, term,
                                                            SYMBOL_ID_NONE);
     if (declared && prime_scope_role_at(declared, index) == PRIME_SHAPE_BODY) {
         size_t count = 0u;
@@ -10470,7 +10915,7 @@ static void prime_scope_note_fresh(PrimeElab *e, Atom *pattern,
 static void prime_scope_note_binder_fresh(PrimeElab *e, Atom *binder,
                                           const Atom *braces) {
     for (CettaExprIndex i = 1u; i < binder->expr.len && !e->failed; i++) {
-        PrimeChildRole role = prime_child_role(binder, i);
+        PrimeChildRole role = prime_child_role(e->interpretation, binder, i);
         Atom *child = binder->expr.elems[i];
         if (role == PRIME_CHILD_PATTERN) {
             prime_scope_note_fresh(e, child, braces);
@@ -10632,9 +11077,9 @@ static Atom *prime_scope_walk_children(PrimeElab *e, Atom *term, bool pattern,
     Atom **items = NULL;
     for (CettaExprIndex i = 0u; i < term->expr.len && !e->failed; i++) {
         PrimeChildRole role = pattern ? PRIME_CHILD_PATTERN
-                                      : prime_child_role(term, i);
+                                      : prime_child_role(e->interpretation, term, i);
         CettaExprIndex covers[2];
-        size_t count = pattern ? 0u : prime_elab_binder_cover(term, i, covers);
+        size_t count = pattern ? 0u : prime_elab_binder_cover(e->interpretation, term, i, covers);
         size_t child_holes = e->holes_len;
         for (size_t k = 0u; k < count; k++)
             prime_elab_push_holes(e, term->expr.elems[covers[k]], false);
@@ -10696,7 +11141,7 @@ static Atom *prime_scope_walk(PrimeElab *e, Atom *term, bool pattern,
         result = prime_elab_rebuild_meta(e, term, quote, braces);
     } else if (!pattern &&
                prime_meta_braces(term, &meta_inner, &meta_braces) &&
-               prime_meta_kind(e->arena, meta_inner) == PRIME_META_BINDER) {
+               prime_meta_kind(e->interpretation, e->arena, meta_inner) == PRIME_META_BINDER) {
         /* A pattern binder's crossing set refers to the scope around and is
          * no occurrence written there; the names its patterns made fresh
          * are this scope's. */
@@ -11088,12 +11533,12 @@ static Atom *prime_lex_resolve_children(PrimeElab *e, Atom *term,
     Atom **items = NULL;
     for (CettaExprIndex i = 0u; i < term->expr.len && !e->failed; i++) {
         CettaExprIndex covers[2];
-        size_t count = pattern ? 0u : prime_elab_binder_cover(term, i, covers);
+        size_t count = pattern ? 0u : prime_elab_binder_cover(e->interpretation, term, i, covers);
         size_t holes_mark = e->holes_len;
         for (size_t k = 0u; k < count; k++)
             prime_elab_push_holes(e, term->expr.elems[covers[k]], false);
         PrimeChildRole role = pattern ? PRIME_CHILD_PATTERN
-                                      : prime_child_role(term, i);
+                                      : prime_child_role(e->interpretation, term, i);
         items = prime_elab_items_for(
             e, term, items, i,
             prime_lex_resolve(e, term->expr.elems[i],
@@ -11143,7 +11588,7 @@ static Atom *prime_lex_resolve(PrimeElab *e, Atom *term, bool pattern) {
     Atom *meta_inner, *meta_braces;
     if (!pattern && prime_meta_braces(term, &meta_inner, &meta_braces) &&
         prime_braces_all_vars(meta_braces) &&
-        prime_meta_kind(e->arena, meta_inner) == PRIME_META_QUOTE) {
+        prime_meta_kind(e->interpretation, e->arena, meta_inner) == PRIME_META_QUOTE) {
         Atom *braces = prime_lex_resolve(e, meta_braces, false);
         size_t mark = prime_elab_push_crossing_holes(e, meta_braces);
         Atom *crossing = atom_expr(e->arena, meta_braces->expr.elems + 1u,
@@ -11156,7 +11601,7 @@ static Atom *prime_lex_resolve(PrimeElab *e, Atom *term, bool pattern) {
         result = prime_elab_rebuild_meta(e, term, quote, braces);
     } else if (!pattern &&
                prime_meta_braces(term, &meta_inner, &meta_braces) &&
-               prime_meta_kind(e->arena, meta_inner) == PRIME_META_BINDER) {
+               prime_meta_kind(e->interpretation, e->arena, meta_inner) == PRIME_META_BINDER) {
         Atom *braces = prime_lex_resolve(e, meta_braces, false);
         e->pending_crossing = prime_elab_crossing(e, meta_braces);
         Atom *inner = prime_lex_resolve(e, meta_inner, false);
@@ -11271,7 +11716,7 @@ static Atom *prime_lex_resolve(PrimeElab *e, Atom *term, bool pattern) {
                 result = term;
             }
         }
-    } else if (prime_scope_shape_of(term, SYMBOL_ID_NONE)) {
+    } else if (prime_scope_shape_of(e->interpretation, term, SYMBOL_ID_NONE)) {
         /* A declared binding form: a value argument is read in the scope
          * around; the names at its pattern positions get fresh slots, in
          * force in its patterns and bodies (a source form's value positions
@@ -11280,8 +11725,8 @@ static Atom *prime_lex_resolve(PrimeElab *e, Atom *term, bool pattern) {
          * order; a value read after the slots are made is read with them
          * set aside. */
         const PrimeScopeShape *declared =
-            prime_scope_shape_of(term, SYMBOL_ID_NONE);
-        Atom *patterns = prime_scope_form_patterns(e->arena, declared, term);
+            prime_scope_shape_of(e->interpretation, term, SYMBOL_ID_NONE);
+        Atom *patterns = prime_scope_form_patterns(e->interpretation, e->arena, declared, term);
         Atom **items = arena_alloc(e->arena, sizeof(Atom *) * (size_t)len);
         if (!patterns || !items) {
             e->failed = true;
@@ -11523,7 +11968,7 @@ static void prime_elab_seal_collect(PrimeElab *e, Atom *term, uint32_t depth,
     } else {
         for (CettaExprIndex i = 0u; i < term->expr.len && !e->failed; i++) {
             PrimeChildRole role = pattern ? PRIME_CHILD_PATTERN
-                                          : prime_child_role(term, i);
+                                          : prime_child_role(e->interpretation, term, i);
             if (role == PRIME_CHILD_PATTERN_PAIRS)
                 prime_elab_seal_collect_pairs(e, term->expr.elems[i], depth);
             else
@@ -11683,7 +12128,7 @@ static Atom *prime_elab_seal_apply(PrimeElab *e, Atom *term, uint32_t depth,
         for (CettaExprIndex i = 0u; i < term->expr.len && !e->failed; i++) {
             Atom *child = term->expr.elems[i];
             PrimeChildRole role = pattern ? PRIME_CHILD_PATTERN
-                                          : prime_child_role(term, i);
+                                          : prime_child_role(e->interpretation, term, i);
             Atom *next = role == PRIME_CHILD_PATTERN_PAIRS
                 ? prime_elab_seal_apply_pairs(e, child, depth)
                 : prime_elab_seal_apply(e, child, depth,
@@ -11853,14 +12298,14 @@ static bool prime_scope_migration_emit(PrimeElab *e, Atom *form);
 
 /* The binding structure of a whole authored form under `profile`: steps 1
  * to 3 above.  NULL when the form cannot be elaborated. */
-static Atom *prime_elab_run(Arena *arena, Atom *form,
+static Atom *prime_elab_run(const PrimeInterpretation *interpretation, Arena *arena, Atom *form,
                             CettaPrimeScopeProfile profile) {
     if (!arena || !form) return NULL;
     if (!atom_has_vars(form)) return form;
-    PrimeElab e = {
+    PrimeElab e = {.interpretation = interpretation,
         .arena = arena,
         .profile = profile,
-        .seal = prime_quote_seal_active(),
+        .seal = interpretation->seal,
     };
     g_prime_elab_error[0] = '\0';
     e.record = prime_scope_record(arena, profile);
@@ -11913,19 +12358,19 @@ static Atom *prime_elab_run(Arena *arena, Atom *form,
 /* A form formed while the program runs, from text (parse), is elaborated as
  * the reader elaborates a form, under the profile in force
  * (prime_scope_runtime_profile). */
-Atom *prime_semantics_elaborate_form(Arena *arena, Atom *form) {
-    return prime_elab_run(arena, form, prime_scope_runtime_profile());
+static Atom *prime_semantics_elaborate_form_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *form) {
+    return prime_elab_run(interpretation, arena, form, interpretation->profile);
 }
 
 /* The seal of a term formed at run time (step 3 alone): a mention inside a
  * quotation in value position, of a variable a pattern of the term binds at
  * a lower quote depth, becomes the quotation's own variable, exactly as in
  * a form the reader elaborated.  NULL on failure. */
-static Atom *prime_seal_formed(Arena *arena, Atom *term) {
+static Atom *prime_seal_formed(const PrimeInterpretation *interpretation, Arena *arena, Atom *term) {
     if (!arena || !term || !atom_has_vars(term) ||
-        !prime_quote_seal_active())
+        !interpretation->seal)
         return term;
-    PrimeElab e = {.arena = arena, .seal = true};
+    PrimeElab e = {.interpretation = interpretation, .arena = arena, .seal = true};
     prime_elab_seal_collect(&e, term, 0u, false);
     Atom *result = e.failed ? NULL : prime_elab_seal_apply(&e, term, 0u, false);
     bool failed = e.failed;
@@ -11963,13 +12408,14 @@ static Atom *prime_seal_formed(Arena *arena, Atom *term) {
  * list: the profile in force, with the reference readout, since a template
  * elaborated under the snapshot readout always carries its record
  * (prime_elab_own_list). */
-static Atom *prime_value_record(Arena *arena) {
-    CettaPrimeScopeProfile profile = prime_scope_runtime_profile();
+static Atom *prime_value_record(const PrimeInterpretation *interpretation, Arena *arena) {
+    CettaPrimeScopeProfile profile = interpretation->profile;
     profile.readout = CETTA_PRIME_READOUT_REFERENCE;
     return prime_scope_record(arena, profile);
 }
 
 typedef struct {
+    const PrimeInterpretation *interpretation;
     Arena *arena;
     Atom *record;
     VarId *hidden;
@@ -11991,7 +12437,7 @@ static void prime_value_marks_hide(PrimeValueMarks *m, const Atom *key) {
 /* Whether the lambda `term`, read under the binders hidden in `m`, holds a
  * store name free: a name neither it nor an enclosing binder binds. */
 static bool prime_value_holds_store_name(PrimeValueMarks *m, Atom *term) {
-    PrimeFreeNames f = {.arena = m->arena};
+    PrimeFreeNames f = {.interpretation = m->interpretation, .arena = m->arena};
     for (size_t i = 0u; i < m->hidden_len && !f.failed; i++) {
         if (!prime_env_reserve((void **)&f.hidden, &f.hidden_cap,
                                f.hidden_len + 1u, sizeof(*f.hidden))) {
@@ -12126,7 +12572,7 @@ static Atom *prime_value_marks_walk(PrimeValueMarks *m, Atom *term,
         Atom **items = NULL;
         for (CettaExprIndex i = 0u; i < term->expr.len && !m->failed; i++) {
             Atom *child = term->expr.elems[i];
-            PrimeChildRole role = prime_child_role(term, i);
+            PrimeChildRole role = prime_child_role(m->interpretation, term, i);
             Atom *next = child;
             if (role == PRIME_CHILD_VALUE) {
                 next = prime_value_marks_walk(m, child, true);
@@ -12194,10 +12640,10 @@ static Atom *prime_value_marks_walk(PrimeValueMarks *m, Atom *term,
 
 /* `value` with its lambdas' records (prime_value_marks_walk), the root
  * included when `mark_root`.  NULL on failure. */
-static Atom *prime_value_marked(Arena *arena, Atom *value, bool mark_root) {
+static Atom *prime_value_marked(const PrimeInterpretation *interpretation, Arena *arena, Atom *value, bool mark_root) {
     if (!arena || !value || value->kind != ATOM_EXPR || !atom_has_vars(value))
         return value;
-    PrimeValueMarks m = {.arena = arena, .record = prime_value_record(arena)};
+    PrimeValueMarks m = {.interpretation = interpretation, .arena = arena, .record = prime_value_record(interpretation, arena)};
     if (!m.record) return NULL;
     Atom *result = prime_value_marks_walk(&m, value, mark_root);
     free(m.hidden);
@@ -12208,9 +12654,9 @@ static Atom *prime_value_marked(Arena *arena, Atom *value, bool mark_root) {
  * code of `lift`: its lambdas keep the binding structure they were formed
  * with.  Contextual code (a part taken out from under binders) enters as
  * its own syntax (prime_spliced_syntax). */
-static Atom *prime_value_into_code(Arena *arena, Atom *value) {
+static Atom *prime_value_into_code(const PrimeInterpretation *interpretation, Arena *arena, Atom *value) {
     if (prime_semantics_contextual_code(value)) return value->expr.elems[1];
-    return prime_value_marked(arena, value, true);
+    return prime_value_marked(interpretation, arena, value, true);
 }
 
 /* Whether `term` is a lambda or a map-atom/foldl-atom template not yet
@@ -12226,10 +12672,10 @@ static bool prime_formed_template(Arena *arena, Atom *term) {
     return prime_iter_template(inner, &iter) && iter.own == 0u;
 }
 
-static bool prime_formed_binder(const Atom *term) {
+static bool prime_formed_binder(const PrimeInterpretation *interpretation, const Atom *term) {
     if (!term || term->kind != ATOM_EXPR || term->expr.len < 2u) return false;
     for (CettaExprIndex i = 1u; i < term->expr.len; i++)
-        if (prime_child_role(term, i) != PRIME_CHILD_VALUE) return true;
+        if (prime_child_role(interpretation, term, i) != PRIME_CHILD_VALUE) return true;
     return false;
 }
 
@@ -12308,12 +12754,12 @@ static Atom *prime_formed_root_record(PrimeElab *e, Atom *term) {
  * steps 1 and 3 of a form's elaboration under `profile`, the binders and the
  * seal, and the root's record.  Ownership, step 2, is never decided here.
  * NULL when the term cannot be formed. */
-static Atom *prime_elab_formed(Arena *arena, Atom *form,
+static Atom *prime_elab_formed(const PrimeInterpretation *interpretation, Arena *arena, Atom *form,
                                CettaPrimeScopeProfile profile) {
-    PrimeElab e = {
+    PrimeElab e = {.interpretation = interpretation,
         .arena = arena,
         .profile = profile,
-        .seal = prime_quote_seal_active(),
+        .seal = interpretation->seal,
     };
     g_prime_elab_error[0] = '\0';
     e.record = prime_scope_record(arena, profile);
@@ -12336,29 +12782,27 @@ static Atom *prime_elab_formed(Arena *arena, Atom *form,
  * a substitution): the parts' lambdas keep their records first.  The
  * thread's quoted-hole filling (prime_semantics_subst_var) is not the
  * pass's: it is set aside.  NULL when the term cannot be formed. */
-static Atom *prime_form_elaborate(Arena *arena, Atom *term, bool from_parts) {
+static Atom *prime_form_elaborate(const PrimeInterpretation *interpretation, Arena *arena, Atom *term, bool from_parts) {
     if (!prime_formed_relevant(term)) return term;
-    Atom *marked = from_parts ? prime_value_marked(arena, term, false) : term;
+    Atom *marked = from_parts ? prime_value_marked(interpretation, arena, term, false) : term;
     if (!marked) return NULL;
-    const Atom *saved_hole = g_prime_subst_quoted_hole;
-    g_prime_subst_quoted_hole = NULL;
-    Atom *result = prime_elab_formed(arena, marked,
-                                     prime_scope_runtime_profile());
-    g_prime_subst_quoted_hole = saved_hole;
+    PrimeInterpretation formation = *interpretation;
+    formation.quoted_hole = NULL;
+    Atom *result = prime_elab_formed(&formation, arena, marked, formation.profile);
     return result;
 }
 
 /* A newly formed pattern binder introduces its pattern slots under LF.
  * Its already formed children retain their records and captures. */
-static Atom *prime_form_pattern(Arena *arena, Atom *term) {
+static Atom *prime_form_pattern(const PrimeInterpretation *interpretation, Arena *arena, Atom *term) {
     if (prime_pattern_source(term)) return term;
-    CettaPrimeScopeProfile profile = prime_scope_runtime_profile();
+    CettaPrimeScopeProfile profile = interpretation->profile;
     Atom *inner = term, *braces = NULL;
     if (!prime_meta_braces(term, &inner, &braces)) inner = term;
     if (profile.ownership == CETTA_PRIME_OWNERSHIP_LEXICAL_FRESH &&
-        prime_meta_kind(arena, inner) == PRIME_META_BINDER)
-        return prime_elab_run(arena, term, profile);
-    return prime_formed_binder(term) ? prime_seal_formed(arena, term) : term;
+        prime_meta_kind(interpretation, arena, inner) == PRIME_META_BINDER)
+        return prime_elab_run(interpretation, arena, term, profile);
+    return prime_formed_binder(interpretation, term) ? prime_seal_formed(interpretation, arena, term) : term;
 }
 
 /* A term built at run time from parts (cons-atom, union-atom).  Its root is
@@ -12375,34 +12819,33 @@ static Atom *prime_form_pattern(Arena *arena, Atom *term) {
  *     the quotation is built;
  *   - any other term is returned as it is.
  * NULL on failure. */
-Atom *prime_semantics_form_built(Arena *arena, Atom *built) {
+static Atom *prime_semantics_form_built_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *built) {
     if (!arena || !built || built->kind != ATOM_EXPR || built->expr.len < 2u ||
         !atom_has_vars(built))
         return built;
     if (atom_is_quotation(built)) {
-        Atom *payload = prime_value_marked(arena, built->expr.elems[1], true);
+        Atom *payload = prime_value_marked(interpretation, arena, built->expr.elems[1], true);
         return payload == built->expr.elems[1]
             ? built : prime_code_with_payload(arena, built, payload);
     }
     if (prime_formed_template(arena, built))
-        return prime_form_elaborate(arena, built, true);
-    return prime_form_pattern(arena, built);
+        return prime_form_elaborate(interpretation, arena, built, true);
+    return prime_form_pattern(interpretation, arena, built);
 }
 
 /* A term whose head a substitution has just filled with the symbol at its
  * head: a lambda or template formed so is formed (prime_elab_formed), a
  * binder formed so is sealed as a written one (in code too).  In code a
  * lambda stays syntax: it is formed when the code is opened. */
-static __thread uint32_t g_prime_forming_in_code = 0u;
 
-static Atom *prime_formed_by_substitution(Arena *arena, Atom *term) {
+static Atom *prime_formed_by_substitution(const PrimeInterpretation *interpretation, Arena *arena, Atom *term) {
     if (!term || term->kind != ATOM_EXPR || term->expr.len < 2u ||
         !term->expr.elems[0] || term->expr.elems[0]->kind != ATOM_SYMBOL ||
         !atom_has_vars(term))
         return term;
-    if (g_prime_forming_in_code == 0u && prime_formed_template(arena, term))
-        return prime_form_elaborate(arena, term, true);
-    return prime_form_pattern(arena, term);
+    if (!interpretation->in_code && prime_formed_template(arena, term))
+        return prime_form_elaborate(interpretation, arena, term, true);
+    return prime_form_pattern(interpretation, arena, term);
 }
 
 /* `term` with each variable `from[i]` replaced by `to[i]` wherever it
@@ -12486,7 +12929,7 @@ static Atom *prime_code_opening(Arena *arena, Atom *code) {
  * keeps its record.  Contextual code `(quote M (k ...))` opens as the
  * function of its binders, `(lam (k ...) M)`.  NULL when `code` is no code
  * value or the opened term cannot be formed. */
-Atom *prime_semantics_open_code(Arena *arena, Atom *code) {
+static Atom *prime_semantics_open_code_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *code) {
     if (!arena || !prime_code_like(code)) return NULL;
     Atom *payload = prime_code_opening(arena, code);
     if (!payload) return NULL;
@@ -12497,7 +12940,7 @@ Atom *prime_semantics_open_code(Arena *arena, Atom *code) {
                              binders, payload);
         if (!payload) return NULL;
     }
-    return prime_form_elaborate(arena, payload, false);
+    return prime_form_elaborate(interpretation, arena, payload, false);
 }
 
 /* ── Prime's binding structure in the generic substitution ─────────────
@@ -12519,10 +12962,10 @@ Atom *prime_semantics_open_code(Arena *arena, Atom *code) {
  *     code apart may bind a name the scope owns, and that name's value then
  *     stands in its place, so no activation or opening copies it
  *     (prime_bindings_own_list). */
-static Atom *prime_bindings_formed_node(Arena *arena, Atom *node, bool in_code) {
-    if (in_code) g_prime_forming_in_code++;
-    Atom *formed = prime_formed_by_substitution(arena, node);
-    if (in_code) g_prime_forming_in_code--;
+static Atom *prime_bindings_formed_node(const PrimeInterpretation *interpretation, Arena *arena, Atom *node, bool in_code) {
+    PrimeInterpretation formation = *interpretation;
+    formation.in_code = formation.in_code || in_code;
+    Atom *formed = prime_formed_by_substitution(&formation, arena, node);
     return formed;
 }
 
@@ -12851,13 +13294,13 @@ bool prime_semantics_pattern_takes_code_apart(const Atom *pattern) {
     return owned;
 }
 
-bool prime_semantics_binder_takes_code_apart(const Atom *term) {
+static bool prime_semantics_binder_takes_code_apart_interpreted(const PrimeInterpretation *interpretation, const Atom *term) {
     if (!term || term->kind != ATOM_EXPR || term->expr.len < 2u ||
         !term->expr.elems[0] || term->expr.elems[0]->kind != ATOM_SYMBOL ||
         atom_symbol_current_id(term->expr.elems[0]) == g_builtin_syms.equals)
         return false;
     for (CettaExprIndex i = 1u; i < term->expr.len; i++) {
-        PrimeChildRole role = prime_child_role(term, i);
+        PrimeChildRole role = prime_child_role(interpretation, term, i);
         Atom *child = term->expr.elems[i];
         if (role == PRIME_CHILD_PATTERN &&
             prime_semantics_pattern_takes_code_apart(child))
@@ -12884,6 +13327,7 @@ Atom *prime_semantics_code_canonical(Arena *arena, Atom *term,
 }
 
 typedef struct {
+    const PrimeInterpretation *interpretation;
     Arena *arena;
     Bindings *bindings;
     /* binder keys of the code in scope, outermost first: the value's, and
@@ -12960,7 +13404,7 @@ static Atom *prime_contextual_part(PrimeContextualMatch *c,
         bool shadowed = false;
         for (size_t j = i + 1u; j < binders->len && !shadowed; j++)
             shadowed = prime_same_key(binders->items[j], key);
-        if (!shadowed && prime_binder_occurs_free(c->arena, key, part))
+        if (!shadowed && prime_binder_occurs_free(c->interpretation, c->arena, key, part))
             keys[count++] = key;
     }
     if (count == 0u) return part;
@@ -13005,15 +13449,15 @@ static Atom *prime_contextual_rename(PrimeContextualMatch *c, Atom *part,
         bool shadowed = false;
         for (size_t j = i + 1u; j < count && !shadowed; j++)
             shadowed = prime_same_key(from->items[j], source);
-        if (shadowed || !prime_binder_occurs_free(c->arena, source, value))
+        if (shadowed || !prime_binder_occurs_free(c->interpretation, c->arena, source, value))
             continue;
         temps[i] = atom_var_with_id(c->arena, "binder", fresh_var_id());
-        value = temps[i] ? prime_subst_binder(c->arena, value, source, temps[i])
+        value = temps[i] ? prime_subst_binder(c->interpretation, c->arena, value, source, temps[i])
                          : NULL;
     }
     for (size_t i = 0u; i < count && value; i++) {
         if (!temps[i]) continue;
-        value = prime_subst_binder(c->arena, value, temps[i], to->items[i]);
+        value = prime_subst_binder(c->interpretation, c->arena, value, temps[i], to->items[i]);
         side->items[i] = to->items[i];
     }
     return value;
@@ -13209,13 +13653,13 @@ static bool prime_contextual_escaped(const Bindings *bindings) {
     return false;
 }
 
-bool prime_semantics_contextual_match(Arena *arena, Atom *pattern,
+static bool prime_semantics_contextual_match_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *pattern,
                                       Atom *value, Bindings *bindings,
                                       Atom **branch, bool *matched) {
     if (matched) *matched = true;
     if (!arena || !pattern || !value || !bindings) return false;
     if (!prime_pattern_quotes(pattern, 0u)) return true;
-    PrimeContextualMatch c = {.arena = arena, .bindings = bindings};
+    PrimeContextualMatch c = {.interpretation = interpretation, .arena = arena, .bindings = bindings};
     prime_contextual_walk(&c, pattern, value, false);
     if (!c.failed && matched && prime_contextual_escaped(bindings))
         *matched = false;
@@ -13242,7 +13686,7 @@ bool prime_semantics_contextual_match(Arena *arena, Atom *pattern,
  * space query use it after their candidates are selected.  *matched is
  * false when they do not match, and `bindings` is then unchanged.  False on
  * failure. */
-bool prime_semantics_code_unify(Arena *arena, Atom *pattern, Atom *value,
+static bool prime_semantics_code_unify_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *pattern, Atom *value,
                                 Bindings *bindings, bool *matched) {
     *matched = false;
     if (!arena || !pattern || !value || !bindings) return false;
@@ -13258,7 +13702,7 @@ bool prime_semantics_code_unify(Arena *arena, Atom *pattern, Atom *value,
     Bindings taken;
     bindings_builder_take(&builder, &taken);
     bool kept = true;
-    if (!prime_semantics_contextual_match(arena, pattern, value, &taken, NULL,
+    if (!prime_semantics_contextual_match_interpreted(interpretation, arena, pattern, value, &taken, NULL,
                                           &kept)) {
         bindings_free(&taken);
         return false;
@@ -13323,13 +13767,67 @@ static Atom *prime_bindings_code_selection(Arena *arena, Atom *term) {
     return prime_code_selection_rec(arena, term, 0u);
 }
 
+static bool prime_hook_capture(void *context, void **out) {
+    (void)context;
+    *out = prime_interpretation_capture_current();
+    if (!*out) eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+    return *out != NULL;
+}
+static void prime_hook_retain(void *context) { prime_interpretation_retain(context); }
+static void prime_hook_release(void *context) { prime_interpretation_release(context); }
+static void prime_hook_storage(const void *context, CettaStorageCensus *census) {
+    prime_interpretation_storage(context, census);
+}
+static bool prime_hook_current(const void *context) {
+    return prime_interpretation_is_current(context);
+}
+static Atom *prime_hook_formed(const void *context, Arena *arena, Atom *term, bool in_code) {
+    PrimeInterpretation interpretation = prime_interpretation_use(context);
+    return prime_bindings_formed_node(&interpretation, arena, term, in_code);
+}
+static Atom *prime_hook_code_reading(const void *context, Atom *term) {
+    (void)context;
+    return prime_bindings_code_reading(term);
+}
+static Atom *prime_hook_own_list(const void *context, Arena *arena, Atom *term) {
+    (void)context;
+    return prime_bindings_own_list(arena, term);
+}
+static bool prime_hook_code_pattern(const void *context, const Atom *term) {
+    (void)context;
+    return prime_semantics_code_pattern(term);
+}
+static bool prime_hook_code_match(const void *context, Arena *arena, Atom *pattern,
+        Atom *value, Bindings *bindings, bool *matched) {
+    const CettaPrimeInterpretation *owner = context;
+    /* The generic matcher's numeric lane is an actual comparison input.
+     * Metadata-only callbacks do not require the receiver's language. */
+    if (!prime_interpretation_is_current(owner) ||
+        owner->comparison_language != eval_current_language_id() ||
+        owner->comparison_compat != eval_current_uses_rust_he_compat_semantics()) {
+        if (matched) *matched = false;
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return false;
+    }
+    PrimeInterpretation interpretation = prime_interpretation_use(owner);
+    return prime_semantics_code_unify_interpreted(&interpretation, arena, pattern, value, bindings, matched);
+}
+static Atom *prime_hook_code_selection(const void *context, Arena *arena, Atom *term) {
+    (void)context;
+    return prime_bindings_code_selection(arena, term);
+}
 static const BindingsStructureHooks prime_binding_structure_hooks = {
-    .formed_node = prime_bindings_formed_node,
-    .code_reading = prime_bindings_code_reading,
-    .own_list = prime_bindings_own_list,
-    .code_pattern = prime_semantics_code_pattern,
-    .code_match = prime_semantics_code_unify,
-    .code_selection = prime_bindings_code_selection,
+    .capture = prime_hook_capture,
+    .retain = prime_hook_retain,
+    .release = prime_hook_release,
+    .storage = prime_hook_storage,
+    .is_current = prime_hook_current,
+    .formed_node = prime_hook_formed,
+    .code_reading = prime_hook_code_reading,
+    .own_list = prime_hook_own_list,
+    .code_pattern = prime_hook_code_pattern,
+    .code_match = prime_hook_code_match,
+    .code_selection = prime_hook_code_selection,
 };
 
 const BindingsStructureHooks *prime_semantics_binding_hooks(void) {
@@ -13355,6 +13853,7 @@ typedef struct {
 } PrimeEqBinder;
 
 typedef struct {
+    const PrimeInterpretation *interpretation;
     Arena *arena;
     PrimeEqBinder *binders;
     size_t len, cap;
@@ -13635,7 +14134,7 @@ static Atom *prime_eq_canon(PrimeEqCanon *c, Atom *term, bool pattern) {
         for (CettaExprIndex i = 0u; i < len && !c->failed; i++) {
             Atom *child = term->expr.elems[i];
             PrimeChildRole role = pattern ? PRIME_CHILD_PATTERN
-                                          : prime_child_role(term, i);
+                                          : prime_child_role(c->interpretation, term, i);
             Atom *next;
             if (role == PRIME_CHILD_PATTERN_PAIRS && child->kind == ATOM_EXPR) {
                 Atom **pairs = arena_alloc(
@@ -13708,12 +14207,12 @@ static bool prime_eq_binds(const Atom *term, uint32_t nesting) {
     return false;
 }
 
-bool prime_semantics_binders_eq(Arena *arena, Atom *left, Atom *right) {
+static bool prime_semantics_binders_eq_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *left, Atom *right) {
     if (!arena || !left || !right || left->kind != ATOM_EXPR ||
         right->kind != ATOM_EXPR ||
         (!prime_eq_binds(left, 0u) && !prime_eq_binds(right, 0u)))
         return false;
-    PrimeEqCanon a = {.arena = arena}, b = {.arena = arena};
+    PrimeEqCanon a = {.interpretation = interpretation, .arena = arena}, b = {.interpretation = interpretation, .arena = arena};
     Atom *left_form = prime_eq_canon(&a, left, false);
     Atom *right_form = prime_eq_canon(&b, right, false);
     bool failed = a.failed || b.failed;
@@ -13942,7 +14441,7 @@ static void prime_census_template(Arena *arena, PrimeScopeCensus *c,
     c->with_captured += captured > 0u;
 }
 
-static void prime_census_walk(Arena *arena, Atom *term, bool pattern,
+static void prime_census_walk(const PrimeInterpretation *interpretation, Arena *arena, Atom *term, bool pattern,
                               const PrimeCensusIds *all, PrimeScopeCensus *c,
                               uint32_t nesting) {
     if (!term || term->kind != ATOM_EXPR || nesting > PRIME_ENV_NESTING_LIMIT)
@@ -13983,11 +14482,11 @@ static void prime_census_walk(Arena *arena, Atom *term, bool pattern,
         for (size_t g = 0u; g < telescope.count; g++) {
             const CettaPrimeLambdaBinderGroupV1 *group = &telescope.groups[g];
             for (size_t t = 0u; group->typed && t < group->types_count; t++)
-                prime_census_walk(
+                prime_census_walk(interpretation,
                     arena, group->syntax->expr.elems[group->types_start + t],
                     false, all, c, nesting + 1u);
         }
-        prime_census_walk(arena, term->expr.elems[2], false, all, c,
+        prime_census_walk(interpretation, arena, term->expr.elems[2], false, all, c,
                           nesting + 1u);
         return;
     }
@@ -13996,9 +14495,9 @@ static void prime_census_walk(Arena *arena, Atom *term, bool pattern,
         Atom *own = iter.own ? term->expr.elems[iter.own] : NULL;
         prime_census_template(arena, c, term, &iter, own);
         for (CettaExprIndex i = 1u; i < iter.first_param; i++)
-            prime_census_walk(arena, term->expr.elems[i], false, all, c,
+            prime_census_walk(interpretation, arena, term->expr.elems[i], false, all, c,
                               nesting + 1u);
-        prime_census_walk(arena, term->expr.elems[iter.body], false, all, c,
+        prime_census_walk(interpretation, arena, term->expr.elems[iter.body], false, all, c,
                           nesting + 1u);
         return;
     }
@@ -14030,31 +14529,31 @@ static void prime_census_walk(Arena *arena, Atom *term, bool pattern,
     }
     for (CettaExprIndex i = 0u; i < term->expr.len; i++) {
         PrimeChildRole role = pattern ? PRIME_CHILD_PATTERN
-                                      : prime_child_role(term, i);
+                                      : prime_child_role(interpretation, term, i);
         Atom *child = term->expr.elems[i];
         if (role == PRIME_CHILD_PATTERN_PAIRS && child &&
             child->kind == ATOM_EXPR) {
             for (CettaExprIndex k = 0u; k < child->expr.len; k++) {
                 Atom *pair = child->expr.elems[k];
                 if (pair && pair->kind == ATOM_EXPR && pair->expr.len == 2u) {
-                    prime_census_walk(arena, pair->expr.elems[0], true, all,
+                    prime_census_walk(interpretation, arena, pair->expr.elems[0], true, all,
                                       c, nesting + 1u);
-                    prime_census_walk(arena, pair->expr.elems[1], false, all,
+                    prime_census_walk(interpretation, arena, pair->expr.elems[1], false, all,
                                       c, nesting + 1u);
                 } else {
-                    prime_census_walk(arena, pair, false, all, c,
+                    prime_census_walk(interpretation, arena, pair, false, all, c,
                                       nesting + 1u);
                 }
             }
         } else {
-            prime_census_walk(arena, child, role == PRIME_CHILD_PATTERN, all,
+            prime_census_walk(interpretation, arena, child, role == PRIME_CHILD_PATTERN, all,
                               c, nesting + 1u);
         }
     }
 }
 
 /* One read form, elaborated under every ownership option and counted. */
-static bool prime_scope_census_form(TermUniverse *universe, AtomId id,
+static bool prime_scope_census_form(const PrimeInterpretation *interpretation, TermUniverse *universe, AtomId id,
                                     PrimeScopeCensus *census) {
     if (tu_kind(universe, id) != ATOM_EXPR) return true;
     Arena arena;
@@ -14067,7 +14566,7 @@ static bool prime_scope_census_form(TermUniverse *universe, AtomId id,
             .lifetime = CETTA_PRIME_LIFETIME_PER_CALL,
             .readout = CETTA_PRIME_READOUT_REFERENCE,
         };
-        Atom *elaborated = prime_elab_run(&arena, form, profile);
+        Atom *elaborated = prime_elab_run(interpretation, &arena, form, profile);
         if (!elaborated) {
             ok = false;
             break;
@@ -14081,7 +14580,7 @@ static bool prime_scope_census_form(TermUniverse *universe, AtomId id,
         }
         prime_census_sort(&all);
         census[o].forms++;
-        prime_census_walk(&arena, elaborated, false, &all, &census[o], 0u);
+        prime_census_walk(interpretation, &arena, elaborated, false, &all, &census[o], 0u);
         free(all.ids);
     }
     arena_free(&arena);
@@ -14164,7 +14663,7 @@ static bool prime_scope_profile_equal(CettaPrimeScopeProfile a,
  * as HE's `!(pragma! ...)` does; the query itself, when it runs, sets the
  * profile code formed at run time is elaborated under.  A declaration stays
  * in the document. */
-bool prime_semantics_elaborate_read_forms(TermUniverse *universe,
+static bool prime_semantics_elaborate_read_forms_interpreted(const PrimeInterpretation *interpretation, CettaLibraryContext *library, PrimeCompiledReaderV1 *reader, TermUniverse *universe,
                                           AtomId *forms, size_t count) {
     if (!universe || (count && !forms)) return false;
     g_prime_elab_error[0] = '\0';
@@ -14190,25 +14689,23 @@ bool prime_semantics_elaborate_read_forms(TermUniverse *universe,
         profile = declared;
         document_declared = true;
     }
-    if (g_prime_scope_reading_document)
-        prime_scope_runtime_profile_set(profile);
+    CettaPrimeScopeProfile main_profile = profile;
     /* The declared binding forms in force at each form (prime_scope_shape_of). */
     PrimeScopeShapes doc_shapes = {0};
     size_t *shape_positions = NULL;
-    if (!prime_scope_shapes_scan(universe, forms, count, &doc_shapes,
+    if (!prime_scope_shapes_scan(library, reader, universe, forms, count, &doc_shapes,
                                  &shape_positions)) {
-        free(doc_shapes.items);
+        prime_scope_shapes_free(&doc_shapes);
         free(shape_positions);
         snprintf(g_prime_elab_error, sizeof g_prime_elab_error,
                  "the declared binding forms could not be read");
         return false;
     }
-    bool shapes_reading = g_prime_scope_shapes_reading;
-    const PrimeScopeShape *shapes_doc = g_prime_scope_shapes_doc;
-    size_t shapes_doc_len = g_prime_scope_shapes_doc_len;
-    g_prime_scope_shapes_reading = true;
-    g_prime_scope_shapes_doc = doc_shapes.items;
-    g_prime_scope_shapes_doc_len = shape_positions ? 0u : doc_shapes.len;
+    PrimeInterpretation document = {
+        .profile = profile, .seal = interpretation->seal,
+        .symbols = interpretation->symbols, .items = doc_shapes.items,
+        .len = shape_positions ? 0u : doc_shapes.len,
+    };
     Arena scratch;
     arena_init(&scratch);
     bool ok = true;
@@ -14221,10 +14718,10 @@ bool prime_semantics_elaborate_read_forms(TermUniverse *universe,
         bool after_bang = i > 0u &&
             tu_kind(universe, forms[i - 1u]) == ATOM_SYMBOL &&
             tu_sym(universe, forms[i - 1u]) == g_builtin_syms.bang;
-        while (g_prime_scope_shapes_doc_len < doc_shapes.len &&
+        while (document.len < doc_shapes.len &&
                shape_positions &&
-               shape_positions[g_prime_scope_shapes_doc_len] <= i)
-            g_prime_scope_shapes_doc_len++;
+               shape_positions[document.len] <= i)
+            document.len++;
         bool is_declaration = false;
         CettaPrimeScopeProfile declared;
         bool valid = prime_scope_declaration(universe, forms[i], &declared,
@@ -14235,18 +14732,19 @@ bool prime_semantics_elaborate_read_forms(TermUniverse *universe,
             if (after_bang && valid) profile = declared;
             continue;
         }
+        document.profile = profile;
         if (planning && profile.ownership == CETTA_PRIME_OWNERSHIP_MERCURY_IMPLICIT) {
             Arena plan_arena;
             arena_init(&plan_arena);
             Atom *raw = term_universe_copy_atom(universe, &plan_arena, forms[i]);
             g_prime_migration_form = i;
             g_prime_migration_active = true;
-            Atom *checked = raw ? prime_elab_run(&plan_arena, raw, profile) : NULL;
+            Atom *checked = raw ? prime_elab_run(&document, &plan_arena, raw, profile) : NULL;
             g_prime_migration_active = false;
             if (!checked) ok = false;
             arena_free(&plan_arena);
         }
-        if (counting && !planning && !prime_scope_census_form(universe, forms[i], census))
+        if (counting && !planning && !prime_scope_census_form(&document, universe, forms[i], census))
             ok = false;
         int relevant = prime_elab_ids_relevant(universe, forms[i], profile);
         if (relevant < 0) {
@@ -14265,7 +14763,7 @@ bool prime_semantics_elaborate_read_forms(TermUniverse *universe,
                     g_prime_scope_form_index++;
         }
         g_prime_scope_reading_main = g_prime_scope_reading_document;
-        Atom *elaborated = form ? prime_elab_run(&scratch, form, profile)
+        Atom *elaborated = form ? prime_elab_run(&document, &scratch, form, profile)
                                 : NULL;
         g_prime_scope_reading_main = false;
         if (!elaborated) {
@@ -14284,18 +14782,18 @@ bool prime_semantics_elaborate_read_forms(TermUniverse *universe,
         arena_reset(&scratch, mark);
     }
     arena_free(&scratch);
-    g_prime_scope_shapes_reading = shapes_reading;
-    g_prime_scope_shapes_doc = shapes_doc;
-    g_prime_scope_shapes_doc_len = shapes_doc_len;
-    free(doc_shapes.items);
+    if (ok && library)
+        ok = prime_interpretation_publish(library->prime_interpretation, &doc_shapes,
+            g_prime_scope_reading_document ? &main_profile : NULL, NULL);
+    prime_scope_shapes_free(&doc_shapes);
     free(shape_positions);
     if (ok && counting && !planning) prime_scope_census_print(census);
     if (ok && planning) printf("{\"kind\":\"complete\",\"forms\":%zu}\n", count);
     return ok;
 }
 
-static int prime_semantics_read_source_ids(PrimeCompiledReaderV1 *reader,
-    const char *source, bool file, TermUniverse *universe, AtomId **out_ids,
+static int prime_semantics_read_source_ids(const PrimeInterpretation *interpretation, CettaLibraryContext *library, PrimeCompiledReaderV1 *reader,
+    const char *source, size_t length, bool file, TermUniverse *universe, AtomId **out_ids,
     char *error_buf, size_t error_buf_size) {
     if (out_ids) *out_ids = NULL;
     if (error_buf && error_buf_size) error_buf[0] = '\0';
@@ -14316,13 +14814,11 @@ static int prime_semantics_read_source_ids(PrimeCompiledReaderV1 *reader,
     int count = file
         ? prime_compiled_reader_v1_parse_file_ids(reader, source, universe,
             out_ids, NULL, error_buf, error_buf_size)
-        : prime_compiled_reader_v1_parse_text_ids(reader, source, universe,
+        : prime_compiled_reader_v1_parse_bytes_ids(reader,
+            (const uint8_t *)source, length, universe,
             out_ids, NULL, error_buf, error_buf_size);
-    PrimeCompiledReaderV1 *outer_reader = g_prime_scope_reader;
-    g_prime_scope_reader = reader;
     bool elaborated = count <= 0 ||
-        prime_semantics_elaborate_read_forms(universe, *out_ids, (size_t)count);
-    g_prime_scope_reader = outer_reader;
+        prime_semantics_elaborate_read_forms_interpreted(interpretation, library, reader, universe, *out_ids, (size_t)count);
     if (!elaborated) {
         const char *why = prime_semantics_elaboration_error();
         if (error_buf && error_buf_size)
@@ -14343,17 +14839,25 @@ static int prime_semantics_read_source_ids(PrimeCompiledReaderV1 *reader,
     return count;
 }
 
-int prime_semantics_read_source_text_ids(PrimeCompiledReaderV1 *reader,
+static int prime_semantics_read_source_bytes_ids_interpreted(const PrimeInterpretation *interpretation, CettaLibraryContext *library, PrimeCompiledReaderV1 *reader,
+    const uint8_t *bytes, size_t length, TermUniverse *universe, AtomId **out_ids,
+    char *error_buf, size_t error_buf_size) {
+    return prime_semantics_read_source_ids(interpretation, library, reader, (const char *)bytes, length,
+        false, universe, out_ids, error_buf, error_buf_size);
+}
+
+static int prime_semantics_read_source_text_ids_interpreted(const PrimeInterpretation *interpretation, CettaLibraryContext *library, PrimeCompiledReaderV1 *reader,
     const char *text, TermUniverse *universe, AtomId **out_ids,
     char *error_buf, size_t error_buf_size) {
-    return prime_semantics_read_source_ids(reader, text, false, universe,
+    return prime_semantics_read_source_ids(interpretation, library, reader, text,
+        text ? strlen(text) : 0u, false, universe,
         out_ids, error_buf, error_buf_size);
 }
 
-int prime_semantics_read_source_file_ids(PrimeCompiledReaderV1 *reader,
+static int prime_semantics_read_source_file_ids_interpreted(const PrimeInterpretation *interpretation, CettaLibraryContext *library, PrimeCompiledReaderV1 *reader,
     const char *filename, TermUniverse *universe, AtomId **out_ids,
     char *error_buf, size_t error_buf_size) {
-    return prime_semantics_read_source_ids(reader, filename, true, universe,
+    return prime_semantics_read_source_ids(interpretation, library, reader, filename, 0u, true, universe,
         out_ids, error_buf, error_buf_size);
 }
 
@@ -14420,7 +14924,7 @@ static Atom *prime_lift_result(Arena *arena, Atom *code, Atom *body,
         : NULL;
 }
 
-static Atom *prime_lift_let_in_code(Arena *arena, Atom *keys, Atom *codes,
+static Atom *prime_lift_let_in_code(const PrimeInterpretation *interpretation, Arena *arena, Atom *keys, Atom *codes,
                                     Atom *code) {
     if (!arena || !keys || !codes || !prime_code_like(code)) return NULL;
     if (prime_lift_anonymous_key(keys))
@@ -14434,7 +14938,7 @@ static Atom *prime_lift_let_in_code(Arena *arena, Atom *keys, Atom *codes,
         Atom *value = prime_code_payload(codes);
         return value
             ? prime_lift_result(arena, code,
-                                prime_subst_binder(arena, body, key, value),
+                                prime_subst_binder(interpretation, arena, body, key, value),
                                 &key, 1u)
             : NULL;
     }
@@ -14461,12 +14965,12 @@ static Atom *prime_lift_let_in_code(Arena *arena, Atom *keys, Atom *codes,
         if (!slots[i]) continue;
         fresh[i] = atom_var_with_id(arena, "slot", fresh_var_id());
         body = fresh[i]
-            ? prime_subst_binder(arena, body, slots[i], fresh[i]) : NULL;
+            ? prime_subst_binder(interpretation, arena, body, slots[i], fresh[i]) : NULL;
         if (!body) return NULL;
     }
     for (size_t i = 0u; i < count; i++) {
         if (!slots[i]) continue;
-        body = prime_subst_binder(arena, body, fresh[i], values[i]);
+        body = prime_subst_binder(interpretation, arena, body, fresh[i], values[i]);
         if (!body) return NULL;
     }
     return prime_lift_result(arena, code, body, slots, count);
@@ -14474,15 +14978,15 @@ static Atom *prime_lift_let_in_code(Arena *arena, Atom *keys, Atom *codes,
 
 /* `lift let` acts on code: a binder its substitution forms there is
  * sealed, and a lambda stays syntax until the code is opened. */
-Atom *prime_semantics_lift_let(Arena *arena, Atom *keys, Atom *codes,
+static Atom *prime_semantics_lift_let_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *keys, Atom *codes,
                                Atom *code) {
-    g_prime_forming_in_code++;
-    Atom *result = prime_lift_let_in_code(arena, keys, codes, code);
-    g_prime_forming_in_code--;
+    PrimeInterpretation formation = *interpretation;
+    formation.in_code = true;
+    Atom *result = prime_lift_let_in_code(&formation, arena, keys, codes, code);
     return result;
 }
 
-Atom *prime_semantics_lift_app(Arena *arena, Atom *const *codes,
+static Atom *prime_semantics_lift_app_interpreted(const PrimeInterpretation *interpretation, Arena *arena, Atom *const *codes,
                                size_t count) {
     if (!arena || !codes || count == 0u)
         return NULL;
@@ -14495,7 +14999,7 @@ Atom *prime_semantics_lift_app(Arena *arena, Atom *const *codes,
     /* The application code is sealed as the reader seals code: a binder
      * formed here (@let applied to a pattern and a body) seals the quoted
      * mentions of its pattern's names in the body. */
-    return prime_seal_formed(
+    return prime_seal_formed(interpretation,
         arena, prime_code_value(arena,
                                 atom_expr(arena, items, (CettaExprLen)count)));
 }
@@ -15164,6 +15668,7 @@ static Atom *prime_judge_accounted(
     Arena *a, Space *space, Atom *judgment, bool steps_limited,
     uint64_t steps, CettaPrimeTypingResourceObservationV1 *resources_out,
     Atom **canonical_term_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     eval_prime_judgment_enter();
     Atom *verdict = prime_judge_accounted_body(
         a, space, judgment, steps_limited, steps, resources_out,
@@ -15979,7 +16484,7 @@ bool prime_semantics_op_data_arg(const char *name, uint32_t arg_index) {
     return name && strcmp(name, "prime:elaborate") == 0 && arg_index == 0u;
 }
 
-Atom *prime_semantics_dispatch(Arena *a, Atom *head, Atom **args,
+static Atom *prime_semantics_dispatch_interpreted(const PrimeInterpretation *interpretation, Arena *a, Atom *head, Atom **args,
                                uint32_t nargs) {
     if (eval_current_language_id() != CETTA_LANGUAGE_PRIME ||
         !head || head->kind != ATOM_SYMBOL) {
@@ -15997,7 +16502,7 @@ Atom *prime_semantics_dispatch(Arena *a, Atom *head, Atom **args,
         if (nargs != 1u)
             return prime_refuted(a, atom_expr(a, &head, 1u),
                                  prime_expr1(a, "prime-elaborate-arity"));
-        Atom *formed = prime_semantics_elaborate_form(a, args[0]);
+        Atom *formed = prime_semantics_elaborate_form_interpreted(interpretation, a, args[0]);
         return formed
             ? atom_expr2(a, atom_symbol_id(a, g_builtin_syms.quote), formed)
             : prime_refuted(a, args[0],
@@ -16039,4 +16544,355 @@ bool prime_semantics_theorem_instance_empty(uint64_t instance, size_t limit,
     }
     *empty=true;
     return true;
+}
+
+/* Public entry captures one interpretation; nested operations use its
+ * explicit input even when another library is entered by a callback. */
+int prime_semantics_read_source_bytes_ids(PrimeCompiledReaderV1 *reader,
+    const uint8_t *bytes, size_t length, TermUniverse *universe, AtomId **out_ids,
+    char *error_buf, size_t error_buf_size) {
+    CettaLibraryContext *library = eval_current_library_context();
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return -1;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    int result = prime_semantics_read_source_bytes_ids_interpreted(&use, library, reader, bytes, length, universe, out_ids, error_buf, error_buf_size);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+Atom *prime_semantics_env_apply(Arena *arena, const Bindings *store,
+                                Atom *term) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return NULL;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    Atom * result = prime_semantics_env_apply_interpreted(&use, arena, store, term);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+Atom *prime_semantics_scope_activation(Arena *arena, Atom *term, Atom *space) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return NULL;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    Atom * result = prime_semantics_scope_activation_interpreted(&use, arena, term, space);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+Atom *prime_semantics_dispatch(Arena *a, Atom *head, Atom **args,
+                               uint32_t nargs) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return NULL;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    Atom * result = prime_semantics_dispatch_interpreted(&use, a, head, args, nargs);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+Atom *prime_semantics_beta_value(Arena *arena, Atom *call,
+                                 Atom *runtime_argument) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return NULL;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    Atom * result = prime_semantics_beta_value_interpreted(&use, arena, call, runtime_argument);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+bool prime_semantics_meta_core(Arena *arena, Atom *term) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return false;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    bool result = prime_semantics_meta_core_interpreted(&use, arena, term);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+Atom *prime_semantics_new_open(Arena *arena, Atom *term) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return NULL;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    Atom * result = prime_semantics_new_open_interpreted(&use, arena, term);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+Atom *prime_semantics_subst_value(Arena *arena, Atom *term, Atom *var,
+                                  Atom *value, Atom *runtime_value,
+                                  CettaCallResultForm result_form) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return NULL;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    Atom * result = prime_semantics_subst_value_interpreted(&use, arena, term, var, value, runtime_value, result_form);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+int prime_semantics_read_source_file_ids(PrimeCompiledReaderV1 *reader,
+    const char *filename, TermUniverse *universe, AtomId **out_ids,
+    char *error_buf, size_t error_buf_size) {
+    CettaLibraryContext *library = eval_current_library_context();
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return -1;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    int result = prime_semantics_read_source_file_ids_interpreted(&use, library, reader, filename, universe, out_ids, error_buf, error_buf_size);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+Atom *prime_semantics_lift_app(Arena *arena, Atom *const *codes,
+                               size_t count) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return NULL;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    Atom * result = prime_semantics_lift_app_interpreted(&use, arena, codes, count);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+Atom *prime_semantics_open_code(Arena *arena, Atom *code) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return NULL;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    Atom * result = prime_semantics_open_code_interpreted(&use, arena, code);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+PrimeIterationStep prime_semantics_iteration_step(Arena *arena, Atom *call,
+                                                  Atom *space, Atom **out) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return PRIME_ITERATION_REFUSED;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    PrimeIterationStep result = prime_semantics_iteration_step_interpreted(&use, arena, call, space, out);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+bool prime_semantics_binders_eq(Arena *arena, Atom *left, Atom *right) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return false;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    bool result = prime_semantics_binders_eq_interpreted(&use, arena, left, right);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+bool prime_semantics_code_unify(Arena *arena, Atom *pattern, Atom *value,
+                                Bindings *bindings, bool *matched) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return false;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    bool result = prime_semantics_code_unify_interpreted(&use, arena, pattern, value, bindings, matched);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+Atom *prime_semantics_elaborate_form(Arena *arena, Atom *form) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return NULL;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    Atom * result = prime_semantics_elaborate_form_interpreted(&use, arena, form);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+Atom *prime_semantics_lift_let(Arena *arena, Atom *keys, Atom *codes,
+                               Atom *code) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return NULL;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    Atom * result = prime_semantics_lift_let_interpreted(&use, arena, keys, codes, code);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+Atom *prime_semantics_beta(Arena *arena, Atom *call) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return NULL;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    Atom * result = prime_semantics_beta_interpreted(&use, arena, call);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+Atom *prime_semantics_form_built(Arena *arena, Atom *built) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return NULL;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    Atom * result = prime_semantics_form_built_interpreted(&use, arena, built);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+bool prime_semantics_elaborate_read_forms(TermUniverse *universe,
+                                          AtomId *forms, size_t count) {
+    CettaLibraryContext *library = eval_current_library_context();
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return false;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    bool result = prime_semantics_elaborate_read_forms_interpreted(&use, library, NULL, universe, forms, count);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+bool prime_semantics_has_free_store_names(Arena *arena, Atom *term,
+                                         bool *has_names) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return false;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    bool result = prime_semantics_has_free_store_names_interpreted(&use, arena, term, has_names);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+bool prime_semantics_contextual_match(Arena *arena, Atom *pattern,
+                                      Atom *value, Bindings *bindings,
+                                      Atom **branch, bool *matched) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return false;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    bool result = prime_semantics_contextual_match_interpreted(&use, arena, pattern, value, bindings, branch, matched);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+Atom *prime_semantics_env_apply_pattern(Arena *arena, const Bindings *store,
+                                        Atom *term) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return NULL;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    Atom * result = prime_semantics_env_apply_pattern_interpreted(&use, arena, store, term);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+Atom *prime_semantics_pattern_activation(Arena *arena, Atom *term) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return NULL;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    Atom * result = prime_semantics_pattern_activation_interpreted(&use, arena, term);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+bool prime_semantics_binder_takes_code_apart(const Atom *term) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return false;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    bool result = prime_semantics_binder_takes_code_apart_interpreted(&use, term);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+Atom *prime_semantics_subst_var(Arena *arena, Atom *term, Atom *var,
+                                Atom *value) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return NULL;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    Atom * result = prime_semantics_subst_var_interpreted(&use, arena, term, var, value);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+Atom *prime_semantics_authored_head_step(Arena *arena, Atom *term) {
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return NULL;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    Atom * result = prime_semantics_authored_head_step_interpreted(&use, arena, term);
+    prime_interpretation_release(interpretation);
+    return result;
+}
+
+int prime_semantics_read_source_text_ids(PrimeCompiledReaderV1 *reader,
+    const char *text, TermUniverse *universe, AtomId **out_ids,
+    char *error_buf, size_t error_buf_size) {
+    CettaLibraryContext *library = eval_current_library_context();
+    CettaPrimeInterpretation *interpretation = prime_interpretation_capture_current();
+    if (!interpretation) {
+        eval_native_interrupt(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return -1;
+    }
+    PrimeInterpretation use = prime_interpretation_use(interpretation);
+    int result = prime_semantics_read_source_text_ids_interpreted(&use, library, reader, text, universe, out_ids, error_buf, error_buf_size);
+    prime_interpretation_release(interpretation);
+    return result;
 }

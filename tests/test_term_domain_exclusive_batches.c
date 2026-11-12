@@ -46,16 +46,16 @@ static void batch_case(TermUniverseStoreFormat format) {
     CettaProofBatchStore *store = space_proof_batch_store_borrow(&payload.space, layout.head[0]);
     CettaProofBatchView *view = NULL;
     assert(store && cetta_proof_batch_capture(store, &view) == CETTA_PROOF_BATCH_OK);
-    assert(!cetta_term_domain_close_if_last(&scope, domain, dispose_space, &payload));
+    assert(!cetta_term_domain_close_if_last(&scope, domain, dispose_space, NULL, &payload));
     assert(!payload.disposed && scope.domain == domain);
     dispose_space(&payload);
     assert(cetta_proof_batch_view_count(view) == 1u && cetta_proof_batch_view_current(view));
-    assert(!cetta_term_domain_close_if_last(&scope, domain, dispose_space, &payload));
+    assert(!cetta_term_domain_close_if_last(&scope, domain, dispose_space, NULL, &payload));
     assert(payload.disposed == 1u && scope.domain == domain);
     cetta_proof_batch_view_release(view);
     assert(!cetta_proof_batch_diagnostics().bytes);
     arena_free(&syntax);
-    assert(cetta_term_domain_close_if_last(&scope, domain, dispose_space, &payload));
+    assert(cetta_term_domain_close_if_last(&scope, domain, dispose_space, NULL, &payload));
     assert(!scope.domain && payload.disposed == 2u && freed_universes == 1u && freed_symbols == 1u);
     observed_universe = NULL; observed_symbols = NULL;
 
@@ -69,7 +69,7 @@ static void batch_case(TermUniverseStoreFormat format) {
         .arity = {3u, 3u}, .head = {atom_symbol_current_id(parse(&syntax, "rows")), atom_symbol_current_id(parse(&syntax, "C"))},
         .universe_instance = u->instance_id, .storage_epoch = u->storage_epoch};
     arena_free(&syntax);
-    assert(cetta_term_domain_close_if_last(&scope, domain, closed_factory, &f));
+    assert(cetta_term_domain_close_if_last(&scope, domain, closed_factory, NULL, &f));
     assert(f.called == 1u && !scope.domain && !g_symbols && !g_var_intern && !g_hashcons);
     printf("PASS: %s actual batch Pool/view prevents exclusive close; closed-owner batch factory refuses without publication\n",
         format == TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1 ? "compact" : "wide");

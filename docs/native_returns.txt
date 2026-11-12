@@ -1758,6 +1758,7 @@ fallback retains its existing behavior.
 A native service reached through borrowed synchronous interpretation uses an
 ordinary owned child receiver while the borrowing caller stays live. Retained
 or controlled ancestors keep their existing admission and lifetime boundary.
+
 It also bounds repeated source observations after a retained refusal.
 CompilerRefusalReport joins the prepared compiler's reporting and publication
 algorithm to that cache. Native classifier and authority reads retain their

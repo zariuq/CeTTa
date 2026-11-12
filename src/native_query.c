@@ -1949,7 +1949,8 @@ static bool native_query_adds_tuples(const CettaNativeQuery *query,
     for (size_t c = 2u; c < data->len; c++)
         if (nodes[c].kind == NATIVE_QUERY_NODE_EXPRESSION)
             return false;
-    return space_dense_may_hold(effect->target, atom_symbol_current_id(nodes[1].atom));
+    return space_dense_may_hold(
+        effect->target, atom_symbol_current_id(nodes[1].atom));
 }
 
 /* Whether the guard's instance, a flat fact (h c1 ... ck), is one a flat

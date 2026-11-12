@@ -55,7 +55,7 @@ static void payload_drop(void *context) {
     } else {
         if (p->reenter) {
             assert(cetta_term_domain_universe(p->domain)->collection_inhibit == 1u);
-            assert(!cetta_term_domain_close_if_last(p->scope, p->domain, dispose_space, p));
+            assert(!cetta_term_domain_close_if_last(p->scope, p->domain, dispose_space, NULL, p));
             assert(p->scope->domain == p->domain && p->disposed == 1u);
         }
         assert(capture_try(p->domain, &p->capture));
@@ -91,16 +91,16 @@ static void row_finalizer(TermUniverseStoreFormat format, unsigned kind) {
     assert(payload.references == 1u && !payload.released);
     if (kind == 0u) {
         term_universe_collection_inhibit_enter(observed_universe);
-        assert(!cetta_term_domain_close_if_last(&scope, domain, dispose_space, &payload));
+        assert(!cetta_term_domain_close_if_last(&scope, domain, dispose_space, NULL, &payload));
         assert(scope.domain == domain && !payload.disposed);
         term_universe_collection_inhibit_leave(observed_universe);
-        assert(cetta_term_domain_close_if_last(&scope, domain, dispose_space, &payload));
+        assert(cetta_term_domain_close_if_last(&scope, domain, dispose_space, NULL, &payload));
         assert(!scope.domain && !payload.space_live && payload.disposed == 1u);
         assert(payload.released == 1u && payload.attempts == 1u && !payload.capture.image);
     } else {
         if (kind == 1u) {
             assert(cetta_term_domain_retain(domain));
-            assert(!cetta_term_domain_close_if_last(&scope, domain, dispose_space, &payload));
+            assert(!cetta_term_domain_close_if_last(&scope, domain, dispose_space, NULL, &payload));
         }
         assert(scope.domain == domain && !payload.disposed && !payload.released);
         assert(observed_universe->collection_mode == TERM_UNIVERSE_COLLECTION_RECLAIM);
@@ -108,10 +108,10 @@ static void row_finalizer(TermUniverseStoreFormat format, unsigned kind) {
         assert(term_universe_collect(observed_universe, NULL));
         assert(payload.released == 1u && payload.capture.image);
         if (kind == 1u) cetta_term_domain_release(domain);
-        assert(!cetta_term_domain_close_if_last(&scope, domain, dispose_space, &payload));
+        assert(!cetta_term_domain_close_if_last(&scope, domain, dispose_space, NULL, &payload));
         assert(cetta_proof_image_matches_universe(payload.capture.image, observed_universe));
         capture_drop(&payload.capture);
-        assert(cetta_term_domain_close_if_last(&scope, domain, dispose_space, &payload));
+        assert(cetta_term_domain_close_if_last(&scope, domain, dispose_space, NULL, &payload));
         assert(!scope.domain && payload.disposed == 2u);
     }
     assert(freed_universes == 1u && freed_symbols == 1u);

@@ -57,3 +57,15 @@
      (ready-pattern:lookup (: @$r (-> $a (-> $b Bool)))) no))
 !(collapse (ready-pattern:probe @(ready-pattern-parent A A)))
 !(collapse (ready-pattern:probe @(ready-pattern-missing A A)))
+
+; A bound pattern cell can choose, and repeated occurrences share its value
+; and committed effects. Other syntax in the same pattern stays data.
+(= (lp $x) (let (pair $x $x $y) (pair 2 2 shared) $y){$x})
+(= (noisy-two) (let $_ (println! demanded) 2))
+!(l (either))
+!(lp (either))
+!(lp (noisy-two))
+!(collapse (let (fact (+ 1 1) $y) (fact 2 two) $y))
+; A mismatching cell and a quoted expression do not become fresh binders.
+!(collapse (l 1))
+!(collapse (l (quote (+ 1 1))))

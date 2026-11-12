@@ -471,8 +471,8 @@ static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
     while (true) {
         SymbolSlot *entry = &st->slots[slot];
         if (entry->id == SYMBOL_ID_NONE) {
-            /* Leave room for the published exclusive upper bound. Never
-             * wrap to the reserved zero ID, even after future retirement. */
+            /* Existing IDs remain usable at capacity; a new ID cannot
+             * wrap the exclusive published extent back to zero. */
             if (entry_len == UINT32_MAX) {
                 errno = EOVERFLOW;
                 return SYMBOL_ID_NONE;

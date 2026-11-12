@@ -79,7 +79,9 @@ static bool petta_projection_begin_form(void *raw) {
 /* A token's id: a truth value, a number, or a symbol. */
 static AtomId petta_projection_token_id(PeTTaProjectionContextV1 *context,
                                         const uint8_t *bytes, size_t len) {
-    TermUniverse *universe = context->universe;
+    TermUniverse *universe = context ? context->universe : NULL;
+    if (!universe)
+        return CETTA_ATOM_ID_NONE;
     if (len == 4u && memcmp(bytes, "True", 4u) == 0) {
         return tu_intern_symbol(
             universe,

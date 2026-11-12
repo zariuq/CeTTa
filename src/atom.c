@@ -770,6 +770,17 @@ bool arena_owns_ptr(const Arena *a, const void *ptr) {
            arena_block_list_owns_ptr(a->spare, ptr);
 }
 
+bool arena_has_live_span(const Arena *arena, const void *source, size_t bytes) {
+    if (!arena || !source || !bytes) return false;
+    uintptr_t address = (uintptr_t)source;
+    for (const ArenaBlock *block = arena->head; block; block = block->next) {
+        uintptr_t start = (uintptr_t)block->data;
+        if (address >= start && address - start <= block->used &&
+            bytes <= block->used - (address - start)) return true;
+    }
+    return false;
+}
+
 bool arena_owns_atom(const Arena *a, const Atom *atom) {
     return a && atom && a->identity != 0u &&
            atom->arena_id == a->identity;
@@ -1381,11 +1392,10 @@ static bool arena_retained_owner_set_index_reserve(ArenaRetainedOwnerSet *set,
     }
     if (set->slot_cap >= wanted)
         return true;
-    uint32_t *slots = cetta_malloc((size_t)wanted * sizeof(*slots));
-    if (!slots) return false;
-    free(set->slots);
-    set->slots = slots;
-    memset(set->slots, 0, (size_t)wanted * sizeof(*set->slots));
+    if(SIZE_MAX/(size_t)wanted<sizeof(*set->slots))return false;
+    uint32_t *slots=calloc(wanted,sizeof(*slots));
+    if(!slots)return false;
+    free(set->slots);set->slots=slots;
     set->slot_cap = wanted;
     set->slot_mask = wanted - 1u;
     /* Reinsert in acquisition order, which keeps every probe chain made of
@@ -1415,18 +1425,17 @@ static bool arena_retained_owner_set_records_reserve(ArenaRetainedOwnerSet *set,
         capacity *= 2u;
     }
     if (capacity != 0u &&
-        SIZE_MAX / (size_t)capacity < sizeof(*set->holds))
+        (SIZE_MAX / (size_t)capacity < sizeof(*set->holds)||
+         SIZE_MAX / (size_t)capacity < sizeof(*set->index)))
         return false;
-    ArenaFinalizer **holds = cetta_malloc((size_t)capacity * sizeof(*holds));
-    uint32_t *index = cetta_malloc((size_t)capacity * sizeof(*index));
-    if (!holds || !index) { free(holds); free(index); return false; }
-    if (set->len) {
-        memcpy(holds, set->holds, (size_t)set->len * sizeof(*holds));
-        memcpy(index, set->index, (size_t)set->len * sizeof(*index));
+    ArenaFinalizer **holds=malloc((size_t)capacity*sizeof(*holds));
+    uint32_t *index=malloc((size_t)capacity*sizeof(*index));
+    if(!holds||!index) {free(holds);free(index);return false;}
+    if(set->len) {
+        memcpy(holds,set->holds,(size_t)set->len*sizeof(*holds));
+        memcpy(index,set->index,(size_t)set->len*sizeof(*index));
     }
-    free(set->holds); free(set->index);
-    set->holds = holds;
-    set->index = index;
+    free(set->holds);free(set->index);set->holds=holds;set->index=index;
     set->cap = capacity;
     return true;
 }
@@ -1458,8 +1467,8 @@ bool arena_retain_owner_with_storage(Arena *a, void *owner,
     if (!a || !owner || !retain || !release)
         return false;
     if (!a->retained_owners) {
-        a->retained_owners = cetta_malloc(sizeof(*a->retained_owners));
-        if (!a->retained_owners) return false;
+        a->retained_owners = malloc(sizeof(*a->retained_owners));
+        if(!a->retained_owners)return false;
         *a->retained_owners = (ArenaRetainedOwnerSet){0};
         arena_account_persistent_bytes(
             a, arena_retained_owner_set_bytes(a->retained_owners));
@@ -1468,12 +1477,15 @@ bool arena_retain_owner_with_storage(Arena *a, void *owner,
     if (arena_retained_owner_set_find(set, owner, release))
         return true;
     size_t before = arena_retained_owner_set_bytes(set);
-    if (set->len >= ARENA_RETAINED_OWNER_SET_MAX_CAPACITY / 2u ||
-        !arena_retained_owner_set_records_reserve(set, set->len + 1u) ||
-        !arena_retained_owner_set_index_reserve(set, set->len + 1u))
-        return false;
-    ArenaFinalizer *held = cetta_malloc(sizeof(*held));
-    if (!held) return false;
+    bool ready=set->len<ARENA_RETAINED_OWNER_SET_MAX_CAPACITY/2u&&
+        arena_retained_owner_set_records_reserve(set,set->len+1u)&&
+        arena_retained_owner_set_index_reserve(set,set->len+1u);
+    /* Capacity can survive a refused acquisition, just as it survives a
+     * reset. Charge it before any exit; live membership is still unchanged. */
+    arena_account_persistent_bytes(a,arena_retained_owner_set_bytes(set)-before);
+    if(!ready)return false;
+    ArenaFinalizer *held = malloc(sizeof(*held));
+    if(!held)return false;
     retain(owner);
     *held = (ArenaFinalizer){.fn = release, .ptr = owner, .next = a->finalizers,
                              .storage = storage};
@@ -1488,7 +1500,6 @@ bool arena_retain_owner_with_storage(Arena *a, void *owner,
     set->len = position + 1u;
     /* The set's capacity survives a partial reset; the hold itself is
      * released by the reset that pops it. */
-    arena_account_persistent_bytes(a, arena_retained_owner_set_bytes(set) - before);
     arena_account_external_bytes(a, sizeof(*held));
     return true;
 }
@@ -1517,6 +1528,52 @@ const void *arena_retained_owner_at(const Arena *arena,
         index--;
     }
     return NULL;
+}
+
+bool arena_retained_owners_satisfy(const Arena *arena,
+        bool (*predicate)(const void *,void (*)(void *),CettaStorageVisitor,void *),
+        void *context) {
+    if(!arena || !predicate) return false;
+    const ArenaRetainedOwnerSet *set=arena->retained_owners;
+    if(!set) return true;
+    if(set->len>set->cap || (set->cap && (!set->holds || !set->index)) ||
+        (set->slot_cap && (!set->slots || (set->slot_cap&(set->slot_cap-1u)) ||
+            set->slot_mask!=set->slot_cap-1u)) ||
+        (set->len && !set->slot_cap)) return false;
+    size_t indexed=0u;
+    for(uint32_t slot=0u;slot<set->slot_cap;slot++) {
+        uint32_t entry=set->slots[slot];
+        if(!entry) continue;
+        if(entry>set->len || set->index[entry-1u]!=slot) return false;
+        indexed++;
+    }
+    if(indexed!=set->len) return false;
+    for(uint32_t i=0u;i<set->len;i++) {
+        const ArenaFinalizer *held=set->holds[i];
+        if(!held || !held->ptr || !held->fn || set->index[i]>=set->slot_cap ||
+            set->slots[set->index[i]]!=i+1u) return false;
+    }
+    for(uint32_t i=0u;i<set->len;i++) {
+        const ArenaFinalizer *held=set->holds[i];
+        if(!predicate(held->ptr,held->fn,held->storage,context)) return false;
+    }
+    return true;
+}
+
+bool arena_finalizers_satisfy(const Arena *arena,
+        bool (*predicate)(const void *,void (*)(void *),CettaStorageVisitor,void *),
+        void *context) {
+    if(!arena || !predicate) return false;
+    const ArenaFinalizer *slow=arena->finalizers,*fast=arena->finalizers;
+    while(fast && fast->next) {
+        slow=slow->next;fast=fast->next->next;
+        if(slow==fast) return false;
+    }
+    for(const ArenaFinalizer *node=arena->finalizers;node;node=node->next)
+        if(!node->ptr || !node->fn) return false;
+    for(const ArenaFinalizer *node=arena->finalizers;node;node=node->next)
+        if(!predicate(node->ptr,node->fn,node->storage,context)) return false;
+    return true;
 }
 
 /* What one retained owner costs an arena that holds no other: its hold and
@@ -10022,13 +10079,7 @@ Atom *atom_deep_copy_single(Arena *dst, Atom *src) {
     return atom_deep_copy(dst, src);
 }
 
-AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst) {
-    if (!dst)
-        return NULL;
-    AtomDeepCopySession *session = cetta_malloc(sizeof(*session));
-    if (!session) return NULL;
-    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES,
-        sizeof(*session));
+static void atom_deep_copy_session_init(AtomDeepCopySession *session, Arena *dst) {
     session->dst = dst;
     session->destination_scope = NULL;
     session->objects_by_source = NULL;
@@ -10044,6 +10095,16 @@ AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst) {
     session->inventories = NULL;
     session->cursor = NULL;
     atom_deep_copy_memo_init(&session->memo);
+}
+
+AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst) {
+    if (!dst)
+        return NULL;
+    AtomDeepCopySession *session = cetta_malloc(sizeof(*session));
+    if (!session) return NULL;
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES,
+        sizeof(*session));
+    atom_deep_copy_session_init(session, dst);
     return session;
 }
 
@@ -10622,31 +10683,19 @@ bool atom_deep_copy_session_destination_for_owner(
     return false;
 }
 
-static bool atom_deep_copy_arena_has_span(const Arena *arena,
-    const void *source, size_t bytes) {
-    if (!arena || !source || !bytes) return false;
-    uintptr_t address = (uintptr_t)source;
-    for (const ArenaBlock *block = arena->head; block; block = block->next) {
-        uintptr_t start = (uintptr_t)block->data;
-        if (address >= start && address - start <= block->used &&
-            bytes <= block->used - (address - start)) return true;
-    }
-    return false;
-}
-
 bool atom_deep_copy_session_owner_of_span(const AtomDeepCopySession *session,
     const void *source, size_t bytes, const Arena *fallback,
     const Arena **source_owner, Arena **image_owner) {
     if (!session || !source_owner || !image_owner || !session->dst ||
         !atom_deep_copy_arena_map_current(session)) return false;
     if (!session->memo.arenas) {
-        if (!atom_deep_copy_arena_has_span(fallback, source, bytes)) return false;
+        if (!arena_has_live_span(fallback, source, bytes)) return false;
         *source_owner = fallback; *image_owner = session->dst;
         return true;
     }
     for (size_t i = 0u; i < session->memo.arena_count; i++) {
         AtomDeepCopyArenaPair pair = session->memo.arenas[i].pair;
-        if (atom_deep_copy_arena_has_span(pair.source, source, bytes)) {
+        if (arena_has_live_span(pair.source, source, bytes)) {
             *source_owner = pair.source; *image_owner = pair.destination;
             return true;
         }
@@ -11073,9 +11122,7 @@ bool atom_deep_copy_session_install_inventory(AtomDeepCopySession *session,
     return true;
 }
 
-void atom_deep_copy_session_free(AtomDeepCopySession *session) {
-    if (!session)
-        return;
+static void atom_deep_copy_session_dispose(AtomDeepCopySession *session) {
     assert(!session->destination_scope);
     if (session->cursor) {
         AtomDeepCopyCursor *cursor=session->cursor;
@@ -11103,9 +11150,35 @@ void atom_deep_copy_session_free(AtomDeepCopySession *session) {
         free(session->region.arenas[a].kept);
     free(session->region.arenas);
     atom_deep_copy_memo_free(&session->memo);
+}
+
+void atom_deep_copy_session_free(AtomDeepCopySession *session) {
+    if (!session)
+        return;
+    atom_deep_copy_session_dispose(session);
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_FREE_BYTES,
         sizeof(*session));
     free(session);
+}
+
+bool atom_deep_copy_terms_mapped(Arena *dst, Atom *const *sources, Atom **images,
+    size_t count, AtomDeepCopyLeafMap map, void *context) {
+    if (!dst || !map || (count && (!sources || !images)) ||
+        count > SIZE_MAX / sizeof(*images))
+        return false;
+    if (!count)
+        return true;
+    AtomDeepCopySession session;
+    atom_deep_copy_session_init(&session, dst);
+    session.map = map;
+    session.map_context = context;
+    bool ok = true;
+    for (size_t i = 0u; ok && i < count; i++) {
+        images[i] = atom_deep_copy_session_copy(&session, sources[i]);
+        ok = images[i] != NULL;
+    }
+    atom_deep_copy_session_dispose(&session);
+    return ok;
 }
 
 void atom_deep_copy_session_storage_census(const AtomDeepCopySession *session,

@@ -4,6 +4,7 @@
 
 #include "eval.h"
 #include "prime_scoped_judgments.h"
+#include "shared_transition.h"
 
 /* The HE and PeTTa extended profiles reach Prime's native logic and its set
  * theories through this module: `import hol` for hol: judgments, `import set`
@@ -112,6 +113,9 @@ bool cetta_hol_module_call(CettaLibraryContext *context, Space *space,
     (void)space;
     if (!head || head->kind != ATOM_SYMBOL || !hol_module_enabled(context))
         return false;
+    /* Profile selection and the returned stored/theory views belong to
+     * this whole synchronous operation, through answer construction. */
+    CETTA_SCOPED_SHARED_TRANSITION(judgment_operation);
     bool try_judgment = false;
     bool hol = false;
     Atom *written = hol_requested_judgment(arena, head, arguments, count, &try_judgment, &hol);

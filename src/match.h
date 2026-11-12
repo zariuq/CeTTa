@@ -660,6 +660,13 @@ bool      bindings_logical_atoms_closed_for_arena(
  * constraints. The callback does not change substitution authority. */
 bool      bindings_logical_atoms_satisfy(
               const Bindings *bindings, AtomTreePredicate predicate, void *context);
+/* Inspect every populated presentation key up to each active schema's
+ * physical extent, including keys beyond the current logical slot count.
+ * Recycled spare frames are conservatively unsupported: false is returned
+ * before visiting any key. Their dead backing slots are not logical roots.
+ * Callbacks retain all borrowed syntax owners and may not mutate bindings. */
+bool      bindings_retained_schema_atoms_satisfy(
+              const Bindings *bindings, AtomTreePredicate predicate, void *context);
 /* Complete current payload inspection, including Need, state and coefficient
  * carriers. Callbacks validate their own Atom graphs/external identities;
  * success does not grant substitution, lifetime or source-read authority. */
@@ -882,6 +889,15 @@ CettaMatchCompletion bindings_import_production_checked(Arena *owner,
     const Bindings *common, const Bindings *entrance,
     const Bindings *production, const Bindings *recipient,
     PrimeNeedStateInitialValue initial_value, void *context, Bindings *out);
+/* As above, but an exact-entrance Need result may borrow the production's
+ * immutable physical history. BORROWED is true only on MATCHED and obliges
+ * the host to retain that production owner before publishing OUT. */
+CettaMatchCompletion bindings_import_production_borrowed_checked(Arena *owner,
+    const PrimeNeedReadCapture *reads,uint64_t thunk_id,
+    const Bindings *common,const Bindings *entrance,
+    const Bindings *production,const Bindings *recipient,
+    PrimeNeedStateInitialValue initial_value,void *context,Bindings *out,
+    bool *borrowed);
 bool      bindings_clone_merge(Bindings *dst, const Bindings *base,
                                const Bindings *extra);
 bool      bindings_contains_private_variant_slots(const Bindings *b);
@@ -927,9 +943,17 @@ static inline bool bindings_logically_empty(const Bindings *b) {
  *                its value stands in its place.  NULL fails the
  *                application. */
 typedef struct {
-    Atom *(*formed_node)(Arena *a, Atom *node, bool in_code);
-    Atom *(*code_reading)(Atom *image);
-    Atom *(*own_list)(Arena *a, Atom *list);
+    void *context;
+    /* A provider captures its interpretation once; a captured closure has
+     * capture == NULL and retains the same immutable owner on copying. */
+    bool (*capture)(void *context, void **owned_context);
+    void (*retain)(void *context);
+    void (*release)(void *context);
+    void (*storage)(const void *context, CettaStorageCensus *census);
+    bool (*is_current)(const void *context);
+    Atom *(*formed_node)(const void *context, Arena *a, Atom *node, bool in_code);
+    Atom *(*code_reading)(const void *context, Atom *image);
+    Atom *(*own_list)(const void *context, Arena *a, Atom *list);
     /* The match of a pattern that takes code apart: the equation query and
      * the space query call these after selecting a candidate.
      *   code_pattern  whether matching `pattern` takes code apart (it holds
@@ -938,17 +962,26 @@ typedef struct {
      *                 binder by binder: *matched is false when they do not
      *                 match, and `bindings` is then unchanged.  False on
      *                 failure. */
-    bool (*code_pattern)(const Atom *pattern);
-    bool (*code_match)(Arena *a, Atom *pattern, Atom *value,
+    bool (*code_pattern)(const void *context, const Atom *pattern);
+    bool (*code_match)(const void *context, Arena *a, Atom *pattern, Atom *value,
                        Bindings *bindings, bool *matched);
     /*   code_selection  `term` as an index reads it to select candidates:
      *                   code that holds binders, whose spellings decide
      *                   nothing, a fresh variable.  `term` itself when it
      *                   holds none; NULL on failure. */
-    Atom *(*code_selection)(Arena *a, Atom *term);
+    Atom *(*code_selection)(const void *context, Arena *a, Atom *term);
 } BindingsStructureHooks;
 void bindings_structure_hooks_set(const BindingsStructureHooks *hooks);
 const BindingsStructureHooks *bindings_structure_hooks(void);
+/* out must be distinct and empty. A provider returns one owned context on
+ * success; any non-NULL context returned on refusal is released here.
+ * Providers and non-NULL captured contexts require retain/release together.
+ * Stateless hooks need neither. Refusal clears out and preserves source. */
+bool bindings_structure_hooks_capture(BindingsStructureHooks *out,
+    const BindingsStructureHooks *source);
+void bindings_structure_hooks_release(BindingsStructureHooks *hooks);
+void bindings_structure_hooks_storage(const BindingsStructureHooks *hooks,
+    CettaStorageCensus *census);
 /* Whether the children of `atom` stand one quotation deeper: a quotation
  * `(quote X)`, and the forms with its head that carry a list last. */
 static inline bool bindings_structure_quotes_children(const Atom *atom) {
@@ -971,8 +1004,9 @@ typedef enum {
 } BindingsApplyStatus;
 /* Retain the existing value-application traversal. The caller holds an
  * unchanged logical binding image and the source graph, its payload owners
- * and runtime context. The hook table is copied; callback runtime state is
- * still supplied by that context. shared_graph selects the same acyclic
+ * and runtime resources. The hook closure captures and owns the selected
+ * binding interpretation; changing or retiring its library does not change
+ * a pending application. shared_graph selects the same acyclic
  * node-sharing interpretation as bindings_apply_graph; cycles keep the
  * ordinary variable-path interpretation.
  *
@@ -1079,6 +1113,23 @@ bool bindings_from_atom(Atom *atom, Bindings *out);
 void bindings_owners_retain(BindingsOwners *owners);
 void bindings_owners_release(BindingsOwners *owners);
 void bindings_inherit_owners(Bindings *destination, const Bindings *source);
+/* Read-only enumeration of bundled saved-value owners. Callers hold valid
+ * shares and exclude mutation/close throughout every callback. No provider
+ * method is invoked; unknown implementations refuse. Successful enumeration
+ * grants neither a persistent lifetime invariant nor invocation authority. */
+typedef struct {
+    bool (*span)(const void *, size_t, void *);
+    bool (*arena)(const Arena *, void *);
+    bool (*bindings)(const Bindings *, void *);
+    AtomTreePredicate atom;
+} BindingsOwnedSyntaxVisitor;
+
+bool bindings_owners_visit_values(const BindingsOwners *owners,
+    bool (*span)(const void *, size_t, void *),
+    bool (*provider)(const CettaBindingsValue *, void *), void *context);
+bool bindings_value_visit_owned_syntax(const CettaBindingsValue *value,
+    const BindingsOwnedSyntaxVisitor *visitor, void *context);
+
 void      binding_set_init(BindingSet *bs);
 void      binding_set_free(BindingSet *bs);
 bool      binding_set_push(BindingSet *bs, const Bindings *b);

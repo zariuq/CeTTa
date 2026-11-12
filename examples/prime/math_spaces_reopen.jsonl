@@ -1,0 +1,8 @@
+{"id":"1","command":"load","path":"arithmetic.math.json","budget":100000}
+{"id":"2","command":"status","goal":"right-unit","budget":100000}
+{"id":"3","command":"goal","goal":"concrete","checker":"type","statement":"(id Nat (add (S Z) Z) (S Z))","description":"Reuse the saved universal result."}
+{"id":"4","command":"propose","candidate":"reuse","goal":"concrete","strategy":"known-lemma","proof":"(right-unit (S Z))"}
+{"id":"5","command":"check","candidate":"reuse","budget":100000}
+{"id":"6","command":"view","section":"history","cursor":"start","rows":4,"characters":600}
+{"id":"7","command":"run","expression":"(add (S Z) (S Z))"}
+{"id":"8","command":"save","path":"arithmetic.math.json","budget":100000}
