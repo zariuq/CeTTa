@@ -849,7 +849,8 @@ bool cetta_fs_call(CettaLibraryContext *ctx, Arena *arena, Atom *head,
          op == g_builtin_syms.lib_fs_lock || op == g_builtin_syms.lib_fs_unlock) &&
         cetta_native_handle_arg(args[0], writer_kind, &id))
         kind = writer_kind;
-    if (op == g_builtin_syms.lib_fs_close && cetta_native_handle_arg(args[0], directory_kind, &id))
+    if ((op == g_builtin_syms.lib_fs_close || op == g_builtin_syms.lib_fs_sync) &&
+        cetta_native_handle_arg(args[0], directory_kind, &id))
         kind = directory_kind;
     if (!cetta_native_handle_arg(args[0], kind, &id)) goto handle;
     FsCursor *cursor = cetta_native_handle_get(ctx, kind, id);
