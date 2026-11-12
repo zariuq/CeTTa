@@ -24,6 +24,22 @@
    (function (chain (eval (__cetta_lib_source_input_rows_v1 $view $heads)) $rows (return $rows)){$rows}))
 (= (langdef:input-view-record $view)
    (function (chain (eval (__cetta_lib_source_input_record_v1 $view)) $record (return $record)){$record}))
+; An occurrence view keeps each captured occurrence's coordinate. Its one
+; selection lends structural occurrence records; a contraction removes
+; exactly the selected occurrences it names from the unchanged captured
+; Space, reports another Space as distinct, and otherwise refuses.
+(: __cetta_lib_source_occurrence_capture_v1 (-> Atom Atom))
+(: __cetta_lib_source_occurrence_select_v1 (-> Atom Atom Atom))
+(: __cetta_lib_source_occurrence_contract_v1 (-> Atom Atom Atom Atom))
+(: langdef:capture-occurrences (-> %Undefined% Atom))
+(: langdef:occurrence-select (-> %Undefined% Atom Atom))
+(: langdef:occurrence-contract (-> %Undefined% %Undefined% Atom Atom))
+(= (langdef:capture-occurrences $space)
+   (function (chain (eval (__cetta_lib_source_occurrence_capture_v1 $space)) $view (return $view)){$view}))
+(= (langdef:occurrence-select $view $heads)
+   (function (chain (eval (__cetta_lib_source_occurrence_select_v1 $view $heads)) $rows (return $rows)){$rows}))
+(= (langdef:occurrence-contract $view $space $ordinals)
+   (function (chain (eval (__cetta_lib_source_occurrence_contract_v1 $view $space $ordinals)) $result (return $result)){$result}))
 (: __cetta_lib_source_cursor_new_v1 (-> Atom Atom))
 (: __cetta_lib_source_cursor_state_v1 (-> Atom Atom))
 (: __cetta_lib_source_cursor_replace_v1 (-> Atom Atom Atom))
