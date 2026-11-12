@@ -661,6 +661,7 @@ static bool prime_standard_public_native(SymbolId name);
 static bool prime_standard_grounded(SymbolId name);
 static bool prime_standard_callable(SymbolId name);
 static bool prime_standard_head_unchanged(Space *space, SymbolId name);
+static bool prime_standard_head_native_only(Space *space, SymbolId name);
 static bool prime_standard_library_unchanged(Space *space);
 static Atom *prime_standard_call_view(Arena *arena, Atom *call);
 static __thread bool g_active_dependent_telescope = false;
@@ -8810,7 +8811,7 @@ static unsigned eval_admitted_rule_forms(void) {
 
 static bool eval_space_has_equations(Space *space, SymbolId head) {
     if (prime_standard_public_native(head) &&
-        prime_standard_head_unchanged(space, head)) return false;
+        prime_standard_head_native_only(space, head)) return false;
     return eval_space_has_equations_raw(space, head);
 }
 
@@ -8825,7 +8826,7 @@ static bool eval_space_has_equations_raw(Space *space, SymbolId head) {
 static bool eval_rule_head_arity_bounds(Space *space, SymbolId head,
     CettaExprLen *minimum, CettaExprLen *maximum, bool *has_exact, CettaExprLen arity) {
     if (prime_standard_public_native(head) &&
-        prime_standard_head_unchanged(space, head)) {
+        prime_standard_head_native_only(space, head)) {
         if (minimum) *minimum = 0u;
         if (maximum) *maximum = 0u;
         if (has_exact) *has_exact = false;
@@ -10948,7 +10949,7 @@ static bool native_control_profile_active(void) {
 
 static bool eval_equations_may_match_known_head(Space *space, SymbolId head) {
     if (prime_standard_public_native(head) &&
-        prime_standard_head_unchanged(space, head)) return false;
+        prime_standard_head_native_only(space, head)) return false;
     if (space_equations_may_match_known_head(space, head)) return true;
     return space_has_graded_equations(space) && native_control_profile_active() &&
            space_equations_may_match_known_head_view(space, head);
@@ -17356,7 +17357,7 @@ static LoopViewCacheSlot *loop_view_lookup(Space *s, SymbolId head) {
     if (!s || head == SYMBOL_ID_NONE)
         return NULL;
     if (prime_standard_public_native(head) &&
-        prime_standard_head_unchanged(s, head)) return NULL;
+        prime_standard_head_native_only(s, head)) return NULL;
     if ((eval_admitted_rule_forms() & CETTA_RULE_SYNTAX_DIRECTIONAL) &&
         space_directional_rules_may_match_known_head(s, head))
         return NULL;
@@ -37864,7 +37865,7 @@ static Atom *eval_expand_ground_singleton_equation(
 
     SymbolId head = atom_symbol_current_id(bound_call->expr.elems[0]);
     if (prime_standard_public_native(head) &&
-        prime_standard_head_unchanged(space, head)) return NULL;
+        prime_standard_head_native_only(space, head)) return NULL;
     CettaExprLen arity = bound_call->expr.len - 1u;
     if (!space_head_call_untyped(space, head, arity))
         return NULL;
@@ -50836,7 +50837,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                             }
                             if (!dispatched && is_grounded_op(atom_head_symbol_id(call_atom)) &&
                                 prime_standard_public_native(atom_head_symbol_id(call_atom)) &&
-                                prime_standard_head_unchanged(s, atom_head_symbol_id(call_atom))) {
+                                prime_standard_head_native_only(s, atom_head_symbol_id(call_atom))) {
                                 /* Skip the editable delegate after the original
                                  * native operation declined. Keep the ordinary
                                  * residual expression: a later binding may make
@@ -94283,6 +94284,14 @@ static __attribute__((noinline)) MettaDispatchResult metta_storage_dispatch(
         char first_library_candidate[PATH_MAX];
         first_library_candidate[0] = '\0';
         Atom *missing_library = NULL;
+        /* Prime keeps the native heads' rows the program shows before the
+         * import, to tell what an import of CeTTa's library adds. */
+        PrimeStandardImportMark prime_import_mark = {0};
+        if (language_id == CETTA_LANGUAGE_PRIME && !error && dest.space) {
+            (void)eval_prime_standard_import_begin(dest.space, &prime_import_mark);
+            if (g_library_context)
+                g_library_context->last_import_from_library = false;
+        }
         if (!error && dest.space) {
             if (has_library_reference) {
                 for (uint32_t occurrence = 0u;; occurrence++) {
@@ -94373,11 +94382,15 @@ static __attribute__((noinline)) MettaDispatchResult metta_storage_dispatch(
                 }
             }
         }
+        if (language_id == CETTA_LANGUAGE_PRIME) {
+            if (!error && imported)
+                eval_prime_standard_note_import(dest.space, &prime_import_mark,
+                    cetta_library_last_import_from_library(g_library_context));
+            eval_prime_standard_import_end(&prime_import_mark);
+        }
         if (!error && imported) {
             if (language_id == CETTA_LANGUAGE_PETTA)
                 petta_specializer_note_import(dest.space);
-            if (language_id == CETTA_LANGUAGE_PRIME)
-                eval_prime_standard_note_import(dest.space);
             if (dest.is_fresh) {
                 Arena *pa = eval_storage_arena(a);
                 Atom *space_value = atom_space(pa, dest.space);

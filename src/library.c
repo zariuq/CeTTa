@@ -13189,6 +13189,21 @@ static CettaLoadedModule *loaded_he_named_module(CettaLibraryContext *ctx,
     return NULL;
 }
 
+/* Whether `path`, a canonical module path, is a file of CeTTa's own library:
+ * one under the library root's lib/, dialect spellings included. */
+static bool library_path_is_cetta_library(const CettaLibraryContext *ctx,
+                                          const char *path) {
+    char root[PATH_MAX], canonical[PATH_MAX];
+    if (!ctx || !path || !path[0] || !ctx->root_dir[0]) return false;
+    int n = snprintf(root, sizeof root, "%s/lib", ctx->root_dir);
+    return n > 0 && (size_t)n < sizeof root && realpath(root, canonical) &&
+        cetta_path_strip_prefix(path, canonical, NULL);
+}
+
+bool cetta_library_last_import_from_library(const CettaLibraryContext *ctx) {
+    return ctx && ctx->last_import_from_library;
+}
+
 static bool library_import_module(CettaLibraryContext *ctx, const char *spec,
                                  Space *space, bool target_is_fresh,
                                  Arena *eval_arena,
@@ -13227,11 +13242,15 @@ static bool library_import_module(CettaLibraryContext *ctx, const char *spec,
         }
         if (module_space_out && target_is_fresh)
             *module_space_out = plan.execution_target_space;
-        return load_module_file(ctx, plan.canonical_path,
+        bool loaded = load_module_file(ctx, plan.canonical_path,
                                 plan.logical_target_space,
                                 plan.execution_target_space, eval_arena,
                                 persistent_arena, registry, fuel, NULL, NULL,
                                 error_out);
+        if (loaded)
+            ctx->last_import_from_library =
+                library_path_is_cetta_library(ctx, plan.canonical_path);
+        return loaded;
     }
 
     CettaLoadedModule *entry = loaded_he_named_module(ctx, spec, registry);
@@ -13244,7 +13263,11 @@ static bool library_import_module(CettaLibraryContext *ctx, const char *spec,
         if (!target_is_fresh) {
             int64_t document = imported_file_lookup(ctx, logical_space, plan.canonical_path);
             if (document_source_active(ctx, logical_space, plan.canonical_path) ||
-                (document >= 0 && !ctx->imported_files[document].loading)) return true;
+                (document >= 0 && !ctx->imported_files[document].loading)) {
+                ctx->last_import_from_library =
+                    library_path_is_cetta_library(ctx, plan.canonical_path);
+                return true;
+            }
         }
     }
     if (entry || library_loads_he_module(ctx, &plan) ||
@@ -13274,12 +13297,18 @@ static bool library_import_module(CettaLibraryContext *ctx, const char *spec,
          * them only after its standard-library import actually succeeded. */
         if (imported && word_interface && entry->provider_kind == CETTA_MODULE_PROVIDER_STDLIB_FILE)
             ctx->active_mask |= interface->bit;
+        if (imported)
+            ctx->last_import_from_library =
+                entry->provider_kind == CETTA_MODULE_PROVIDER_STDLIB_FILE;
         return imported;
     }
     bool imported = execute_import_plan(ctx, &plan, eval_arena, persistent_arena,
                                        registry, fuel, NULL, error_out);
     if (imported && word_interface && plan.provider_kind == CETTA_MODULE_PROVIDER_STDLIB_FILE)
         ctx->active_mask |= interface->bit;
+    if (imported)
+        ctx->last_import_from_library =
+            library_path_is_cetta_library(ctx, plan.canonical_path);
     return imported;
 }
 
@@ -13568,6 +13597,7 @@ bool cetta_library_import(CettaLibraryContext *context, const char *name,
         int fuel, Atom **error) {
     bool ok = library_import_native(context, name, space, arena, persistent, registry, fuel, error);
     if (!ok) observe_import_failure(context, name, error ? *error : NULL);
+    else context->last_import_from_library = true;
     return ok;
 }
 bool cetta_library_import_module(CettaLibraryContext *context, const char *name,

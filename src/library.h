@@ -299,6 +299,10 @@ typedef struct CettaLibraryContext {
      * program spaces. Owned by the evaluator for this library session. */
     void *prime_standard_library;
     void (*prime_standard_library_free)(void *library);
+    /* Whether the import that completed last read CeTTa's own library: a
+     * registered library or a file under the library root's lib/. Set as an
+     * import returns, so the imports it contains have already set theirs. */
+    bool last_import_from_library;
     bool prime_relational_plan_enabled;
     struct CettaPettaRuntimeState *petta_runtime;
     PettaProgram *petta_program;
@@ -454,6 +458,7 @@ bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
 /* Whether `error`, as cetta_library_import_module reports a failure, says
  * that no file answers the requested module. */
 bool cetta_library_import_error_is_missing_module(Atom *error);
+bool cetta_library_last_import_from_library(const CettaLibraryContext *ctx);
 /* Whether `space` is a module space the library context owns and frees. */
 bool cetta_library_owns_space(const CettaLibraryContext *ctx,
                               const Space *space);
