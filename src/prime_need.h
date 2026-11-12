@@ -152,6 +152,9 @@ void prime_need_read_capture_storage(const PrimeNeedReadCapture *capture,CettaSt
 bool prime_need_read_capture_complete(const PrimeNeedReadCapture *capture);
 /* The enclosing packet uses these exact captured cuts, including storage
  * watermarks. A separately copied capture must travel with its mapped cuts. */
+/* The capture's cut worlds and read origins lie outside the audited arena. */
+bool prime_need_arena_audit_read_capture(
+    PrimeNeedArenaAudit *audit, const PrimeNeedReadCapture *capture);
 bool prime_need_read_capture_has_cuts(const PrimeNeedReadCapture *capture,
     const PrimeNeedSnapshot *context, const PrimeNeedSnapshot *entrance);
 void prime_need_read_scope_enter(PrimeNeedReadScope *scope, PrimeNeedReadCapture *capture);
@@ -696,6 +699,13 @@ bool prime_need_branch_state_payloads_satisfy(const PrimeNeedBranchState *state,
 bool prime_need_arena_audit_branch_state(
     PrimeNeedArenaAudit *audit, const PrimeNeedBranchState *state);
 void prime_need_arena_audit_free(PrimeNeedArenaAudit *audit);
+/* The arena this audit refuses. */
+const Arena *prime_need_arena_audit_forbidden(
+    const PrimeNeedArenaAudit *audit);
+/* Record that the caller inspects HOLDER against this audit's arena. FIRST
+ * is true exactly once per holder; false return is allocation failure. */
+bool prime_need_arena_audit_first_visit(
+    PrimeNeedArenaAudit *audit, const void *holder, bool *first);
 bool prime_need_branch_state_equal(
     const PrimeNeedBranchState *left,
     const PrimeNeedBranchState *right);

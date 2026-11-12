@@ -369,6 +369,10 @@ struct PrimeNeedArenaAudit {
     const Arena *forbidden;
     PrimeNeedPointerSet snapshot_frames;
     PrimeNeedPointerSet receipt_frames;
+    /* Holders outside the Need heap that a caller has already inspected
+     * against this arena, such as call-source graphs reached from many
+     * reader contexts. */
+    PrimeNeedPointerSet holders;
 };
 
 static uint64_t prime_need_arena_id_bloom_mask(uint32_t identity) {
@@ -771,7 +775,19 @@ void prime_need_arena_audit_free(PrimeNeedArenaAudit *audit) {
         return;
     free(audit->snapshot_frames.slots);
     free(audit->receipt_frames.slots);
+    free(audit->holders.slots);
     free(audit);
+}
+
+const Arena *prime_need_arena_audit_forbidden(
+    const PrimeNeedArenaAudit *audit) {
+    return audit ? audit->forbidden : NULL;
+}
+
+bool prime_need_arena_audit_first_visit(
+    PrimeNeedArenaAudit *audit, const void *holder, bool *first) {
+    return audit && holder && first &&
+           prime_need_pointer_set_insert(&audit->holders, holder, first);
 }
 
 #if CETTA_PRIME_RECEIPT_PRIMARY_INDEX
@@ -1728,6 +1744,23 @@ fail:
 
 bool prime_need_read_capture_complete(const PrimeNeedReadCapture *capture) {
     return capture && capture->complete;
+}
+
+/* A production's read capture keeps its two cut worlds and the origins of
+ * the cells it read. None may lie in the audited arena. */
+bool prime_need_arena_audit_read_capture(
+    PrimeNeedArenaAudit *audit, const PrimeNeedReadCapture *capture) {
+    if (!audit)
+        return false;
+    if (!capture)
+        return true;
+    if (!prime_need_arena_audit_snapshot(audit, &capture->context) ||
+        !prime_need_arena_audit_snapshot(audit, &capture->entrance))
+        return false;
+    for (size_t i = 0u; i < capture->length; i++)
+        if (arena_owns_atom(audit->forbidden, capture->reads[i].origin))
+            return false;
+    return true;
 }
 
 bool prime_need_read_capture_has_cuts(const PrimeNeedReadCapture *capture,

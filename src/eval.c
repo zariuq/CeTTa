@@ -55320,19 +55320,31 @@ static bool prime_eval_stack_carrier_owner_excludes_arenas(
            carrier->owner != second;
 }
 
+static bool prime_eval_stack_audit_reader_context(
+    PrimeNeedArenaAudit *eval_audit, PrimeNeedArenaAudit *survivor_audit,
+    const PrimeNeedReaderContext *context);
+static bool prime_eval_stack_audit_call_sources(
+    PrimeNeedArenaAudit *eval_audit, PrimeNeedArenaAudit *survivor_audit,
+    const PrimeNativeTopEpisode *episode);
+
+/* The collector moves what the stack's holders list and frees the rest of
+ * the two arenas a commit invalidates.  A Need world in a listed binding is
+ * not moved, so it may hold nothing in either arena: the exact arena audits
+ * below decide that, for closed and mixed-lifetime worlds alike.  A reader
+ * context is not moved either; each of its values must be a call link or
+ * call reader whose source graph the call-source audit admits. */
 static bool prime_eval_stack_audit_bindings(
     PrimeNeedArenaAudit *eval_audit,
     PrimeNeedArenaAudit *survivor_audit,
     const Bindings *bindings) {
-    if (!bindings || bindings_reader_context_view(bindings) ||
+    if (!bindings ||
+        (bindings_reader_context_view(bindings) &&
+         !prime_eval_stack_audit_reader_context(
+             eval_audit, survivor_audit,
+             bindings_reader_context_view(bindings))) ||
         (bindings_weight_view(bindings)->length &&
          (bindings_weight_view(bindings)->owner == g_prime_eval_stack_driver->arena ||
           bindings_weight_view(bindings)->owner == &g_eval_gc.survivor)) ||
-        !prime_need_snapshot_owner_excludes_arena(
-            bindings_need_view(bindings),
-            g_prime_eval_stack_driver->arena) ||
-        !prime_need_snapshot_owner_excludes_arena(
-            bindings_need_view(bindings), &g_eval_gc.survivor) ||
         !prime_eval_stack_carrier_owner_excludes_arenas(
             bindings_branch_state_view(bindings),
             g_prime_eval_stack_driver->arena, &g_eval_gc.survivor)
@@ -55367,10 +55379,6 @@ static bool prime_eval_stack_audit_snapshot_carrier(
     const PrimeNeedSnapshot *snapshot,
     const PrimeNeedBranchState *carrier) {
     if (!snapshot || !carrier ||
-        !prime_need_snapshot_owner_excludes_arena(
-            snapshot, g_prime_eval_stack_driver->arena) ||
-        !prime_need_snapshot_owner_excludes_arena(
-            snapshot, &g_eval_gc.survivor) ||
         !prime_eval_stack_carrier_owner_excludes_arenas(
             carrier, g_prime_eval_stack_driver->arena,
             &g_eval_gc.survivor))
@@ -55536,6 +55544,8 @@ static bool prime_eval_stack_audit_driver(
                 frame->cell.capture_var_ids);
 #endif
     }
+    valid = valid && prime_eval_stack_audit_call_sources(
+        eval_audit, survivor_audit, g_prime_top_storage_owner);
 
     prime_need_arena_audit_free(eval_audit);
     prime_need_arena_audit_free(survivor_audit);
@@ -55708,7 +55718,6 @@ static bool prime_eval_stack_preserve_completed_worlds(
 static bool prime_eval_stack_collect(
     PrimeEvalStackDriver *driver) {
     if (!driver || driver->prepared_opaque_frames ||
-        (g_prime_top_storage_owner && g_prime_top_storage_owner->call_sources) ||
         !prime_eval_stack_preserve_completed_worlds(driver) ||
         !prime_eval_stack_audit_driver(driver))
         return false;
@@ -63205,6 +63214,8 @@ static bool prime_native_control_audit(PrimeNativeControl *control) {
             !arena_owns_ptr(&g_eval_gc.survivor, frame->cell.capture_var_ids);
 #endif
     }
+    valid = valid && prime_eval_stack_audit_call_sources(
+        eval_audit, survivor_audit, g_prime_top_storage_owner);
     prime_need_arena_audit_free(eval_audit);
     prime_need_arena_audit_free(survivor_audit);
     return valid;
@@ -87333,6 +87344,199 @@ struct PrimeNeedCallForceReader {
     CettaSharedReturnCheckpoint *position;
 };
 
+/* Call sources are holders the collector neither traces nor moves.  A cell
+ * keeps its reference and common cut; a slot keeps its inputs and its
+ * production; a production keeps its cuts, loan, reads and reference.  They
+ * live across a collection where they are, so none may hold anything in an
+ * arena the commit frees.  Logical atoms are walked node by node; Need,
+ * branch and receipt carriers go through the exact arena audits.  Each holder
+ * is inspected once per audit. */
+static bool prime_eval_stack_atom_avoids(
+    PrimeNeedArenaAudit *audit, const Atom *atom) {
+    const Arena *forbidden = prime_need_arena_audit_forbidden(audit);
+    if (!forbidden)
+        return false;
+    if (!atom)
+        return true;
+    PrimeEvalStackSupportBuffer scan;
+    prime_eval_stack_support_buffer_init(&scan);
+    bool avoids = prime_eval_stack_support_buffer_push(&scan, (Atom *)atom);
+    while (avoids && scan.len > 0u) {
+        const Atom *node = scan.items[--scan.len];
+        bool first = false;
+        if (!node)
+            continue;
+        if (!prime_need_arena_audit_first_visit(audit, node, &first)) {
+            avoids = false;
+            break;
+        }
+        if (!first)
+            continue;
+        if (arena_owns_atom(forbidden, node)) {
+            avoids = false;
+            break;
+        }
+        if (node->kind == ATOM_EXPR)
+            for (CettaExprIndex i = 0u; avoids && i < node->expr.len; i++)
+                avoids = prime_eval_stack_support_buffer_push(
+                    &scan, node->expr.elems[i]);
+    }
+    prime_eval_stack_support_buffer_free(&scan);
+    return avoids;
+}
+
+static bool prime_eval_stack_atom_avoids_both(
+    PrimeNeedArenaAudit *eval_audit, PrimeNeedArenaAudit *survivor_audit,
+    const Atom *atom) {
+    return prime_eval_stack_atom_avoids(eval_audit, atom) &&
+           prime_eval_stack_atom_avoids(survivor_audit, atom);
+}
+
+typedef struct {
+    PrimeNeedArenaAudit *eval_audit;
+    PrimeNeedArenaAudit *survivor_audit;
+} PrimeEvalStackHeldAudit;
+
+static bool prime_eval_stack_held_atom_avoids(const Atom *atom, void *raw) {
+    PrimeEvalStackHeldAudit *held = raw;
+    return prime_eval_stack_atom_avoids_both(
+        held->eval_audit, held->survivor_audit, atom);
+}
+
+/* Bindings an unmoved holder keeps: the listed-binding audit for its
+ * carriers and readers, and its logical atoms, which nothing moves here. */
+static bool prime_eval_stack_audit_held_bindings(
+    PrimeNeedArenaAudit *eval_audit, PrimeNeedArenaAudit *survivor_audit,
+    const Bindings *bindings) {
+    PrimeEvalStackHeldAudit held = {eval_audit, survivor_audit};
+    return prime_eval_stack_audit_bindings(
+               eval_audit, survivor_audit, bindings) &&
+           bindings_logical_atoms_satisfy(
+               bindings, prime_eval_stack_held_atom_avoids, &held);
+}
+
+static bool prime_eval_stack_audit_input_states(
+    PrimeNeedArenaAudit *eval_audit, PrimeNeedArenaAudit *survivor_audit,
+    const PrimeNeedCallInputState *states, size_t count) {
+    for (size_t i = 0u; i < count; i++) {
+        const PrimeNeedCallInputState *state = &states[i];
+        if (!prime_eval_stack_atom_avoids_both(
+                eval_audit, survivor_audit, state->value) ||
+            !prime_eval_stack_atom_avoids_both(
+                eval_audit, survivor_audit, state->initial) ||
+            !prime_eval_stack_atom_avoids_both(
+                eval_audit, survivor_audit, state->content_type) ||
+            !prime_need_arena_audit_branch_state(eval_audit, &state->state) ||
+            !prime_need_arena_audit_branch_state(survivor_audit, &state->state))
+            return false;
+    }
+    return true;
+}
+
+static bool prime_eval_stack_audit_call_inputs(
+    PrimeNeedArenaAudit *eval_audit, PrimeNeedArenaAudit *survivor_audit,
+    const PrimeNeedCallInputs *inputs) {
+    bool first = false;
+    if (!inputs)
+        return true;
+    if (!prime_need_arena_audit_first_visit(eval_audit, inputs, &first))
+        return false;
+    return !first ||
+        (prime_eval_stack_audit_held_bindings(
+             eval_audit, survivor_audit, &inputs->lexical) &&
+         prime_eval_stack_audit_input_states(
+             eval_audit, survivor_audit, inputs->states, inputs->state_count));
+}
+
+static bool prime_eval_stack_audit_call_hub(
+    PrimeNeedArenaAudit *eval_audit, PrimeNeedArenaAudit *survivor_audit,
+    const PrimeNeedCallSources *hub);
+
+static bool prime_eval_stack_audit_production(
+    PrimeNeedArenaAudit *eval_audit, PrimeNeedArenaAudit *survivor_audit,
+    const PrimeNeedForceProduction *source) {
+    bool first = false;
+    if (!source)
+        return true;
+    if (!prime_need_arena_audit_first_visit(eval_audit, source, &first))
+        return false;
+    if (!first)
+        return true;
+    bool valid =
+        prime_eval_stack_audit_held_bindings(
+            eval_audit, survivor_audit, &source->common) &&
+        prime_eval_stack_audit_held_bindings(
+            eval_audit, survivor_audit, &source->entrance) &&
+        prime_eval_stack_audit_held_bindings(
+            eval_audit, survivor_audit, &source->loan_environment) &&
+        prime_eval_stack_atom_avoids_both(
+            eval_audit, survivor_audit, source->reference) &&
+        prime_eval_stack_atom_avoids_both(
+            eval_audit, survivor_audit, source->cell.origin) &&
+        prime_eval_stack_atom_avoids_both(
+            eval_audit, survivor_audit, source->cell.cached) &&
+        prime_need_arena_audit_read_capture(eval_audit, source->reads) &&
+        prime_need_arena_audit_read_capture(survivor_audit, source->reads) &&
+        prime_eval_stack_audit_call_inputs(
+            eval_audit, survivor_audit, source->input_context) &&
+        prime_eval_stack_audit_input_states(
+            eval_audit, survivor_audit,
+            source->local_states, source->local_state_count) &&
+        (!source->call_sources ||
+         prime_eval_stack_audit_call_hub(
+             eval_audit, survivor_audit, source->call_sources));
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+    valid = valid &&
+        !arena_owns_ptr(prime_need_arena_audit_forbidden(eval_audit),
+                        source->cell.capture_var_ids) &&
+        !arena_owns_ptr(prime_need_arena_audit_forbidden(survivor_audit),
+                        source->cell.capture_var_ids);
+#endif
+    return valid;
+}
+
+static bool prime_eval_stack_audit_call_hub(
+    PrimeNeedArenaAudit *eval_audit, PrimeNeedArenaAudit *survivor_audit,
+    const PrimeNeedCallSources *hub) {
+    bool first = false;
+    if (!hub)
+        return true;
+    if (!prime_need_arena_audit_first_visit(eval_audit, hub, &first))
+        return false;
+    if (!first)
+        return true;
+    for (const PrimeNeedCallSourceCell *cell = hub->cells; cell; cell = cell->next) {
+        if (!prime_eval_stack_atom_avoids_both(
+                eval_audit, survivor_audit, cell->reference) ||
+            !prime_eval_stack_audit_held_bindings(
+                eval_audit, survivor_audit, &cell->common))
+            return false;
+        for (const PrimeNeedCallSourceSlot *slot = cell->slots; slot; slot = slot->next)
+            if (!prime_eval_stack_audit_call_inputs(
+                    eval_audit, survivor_audit, slot->inputs) ||
+                !prime_eval_stack_audit_production(
+                    eval_audit, survivor_audit, slot->source))
+                return false;
+        for (const PrimeNeedCallForkPoint *point = cell->forks; point; point = point->next)
+            if (!prime_eval_stack_audit_production(
+                    eval_audit, survivor_audit, point->origin) ||
+                !prime_eval_stack_audit_production(
+                    eval_audit, survivor_audit, point->snapshot))
+                return false;
+    }
+    return true;
+}
+
+static bool prime_eval_stack_audit_call_sources(
+    PrimeNeedArenaAudit *eval_audit, PrimeNeedArenaAudit *survivor_audit,
+    const PrimeNativeTopEpisode *episode) {
+    for (; episode; episode = episode->source_episode)
+        for (const PrimeNeedCallSources *hub = episode->call_sources; hub; hub = hub->next)
+            if (!prime_eval_stack_audit_call_hub(eval_audit, survivor_audit, hub))
+                return false;
+    return true;
+}
+
 static bool prime_need_call_link_current(const PrimeNeedCallLink *link) {
     return link && link->lease && link->lease->context &&
         link->lease->generation==link->generation && link->sources &&
@@ -87465,6 +87669,48 @@ static const PrimeNeedReaderValueOps prime_need_call_reader_ops={
     .retain=prime_need_call_reader_hold,.release=prime_need_call_reader_release,
     .storage=prime_need_call_reader_storage,.payloads=prime_need_call_payloads,
     .settled=prime_need_call_reader_settled,.lives_in=prime_need_call_reader_lives_in};
+
+typedef struct {
+    PrimeNeedArenaAudit *eval_audit;
+    PrimeNeedArenaAudit *survivor_audit;
+} PrimeEvalStackReaderAudit;
+
+/* A call link or call reader admits its current source graph; a retired link
+ * keeps only identities.  Another reader kind has no audit here. */
+static CettaMatchCompletion prime_eval_stack_audit_reader_value(
+    uint64_t key, const PrimeNeedReaderValue *value, void *raw) {
+    (void)key;
+    PrimeEvalStackReaderAudit *audit = raw;
+    if (!value || !value->value)
+        return CETTA_MATCH_MATCHED;
+    const PrimeNeedCallLink *link = NULL;
+    if (value->operations == &prime_need_call_link_ops)
+        link = value->value;
+    else if (value->operations == &prime_need_call_reader_ops)
+        link = ((const PrimeNeedCallForceReader *)value->value)->link;
+    else
+        return CETTA_MATCH_REFUTED;
+    return !link || !link->sources ||
+           prime_eval_stack_audit_call_hub(
+               audit->eval_audit, audit->survivor_audit, link->sources)
+        ? CETTA_MATCH_MATCHED : CETTA_MATCH_REFUTED;
+}
+
+static bool prime_eval_stack_audit_reader_context(
+    PrimeNeedArenaAudit *eval_audit, PrimeNeedArenaAudit *survivor_audit,
+    const PrimeNeedReaderContext *context) {
+    bool first = false;
+    if (!context)
+        return true;
+    if (!prime_need_arena_audit_first_visit(eval_audit, context, &first))
+        return false;
+    if (!first)
+        return true;
+    PrimeEvalStackReaderAudit audit = {eval_audit, survivor_audit};
+    return prime_need_reader_context_visit(
+               context, prime_eval_stack_audit_reader_value, &audit) ==
+           CETTA_MATCH_MATCHED;
+}
 
 /* Call links and their scoped reader checkpoints borrow the episode's
  * producer graph. Other reader-value owners need their own graph transport. */
@@ -89686,7 +89932,11 @@ static CettaMatchCompletion prime_need_call_register_cell(PrimeNeedCallSources *
     cell->session=lookup.session;cell->thunk=thunk;cell->authority=view.authority_id;
     cell->cursor_key=prime_need_fresh_source_occurrence();
     cell->reference=atom_deep_copy(&hub->episode->arena,reference);
-    if(!cell->cursor_key || !cell->reference || !bindings_clone(&cell->common,common)) {
+    /* The cell lives as long as its episode, longer than the evaluator or
+     * search machine that registered it: like its reference, the logical
+     * atoms of its common cut are the episode's own copies. */
+    if(!cell->cursor_key || !cell->reference || !bindings_clone(&cell->common,common) ||
+        !bindings_promote_logical_atoms_to_arena(&cell->common,&hub->episode->arena)) {
         bindings_free(&cell->common);free(cell);return CETTA_MATCH_INCOMPLETE;
     }
     PrimeNeedCallIdentity identity={.session=cell->session,.thunk=cell->thunk,.authority=cell->authority};
@@ -100207,7 +100457,11 @@ tail_call: ;
         } else if (g_eval_gc.external_owner_depth != 1u) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_EVAL_TAIL_BLOCKED_EXTERNAL_OWNER);
-        } else if (os->len != 0u) {
+        } else if (os->len != 0u &&
+                   !(heap_driver->active_task &&
+                     os == heap_driver->active_task->target)) {
+            /* Published answers are live roots only in the task's own
+             * target, which the collector moves with the task. */
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_EVAL_TAIL_BLOCKED_LIVE_OUTCOME);
         } else if (!prime_eval_stack_collect(heap_driver)) {
