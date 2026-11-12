@@ -51526,6 +51526,8 @@ typedef enum {
     PRIME_EVAL_STACK_FRAME_CAPSULE_SEARCH,
     PRIME_EVAL_STACK_FRAME_NATIVE_SERVICE,
     PRIME_EVAL_STACK_FRAME_CHOICE,
+    /* A `function` delimiter whose body runs on this stack. */
+    PRIME_EVAL_STACK_FRAME_FUNCTION,
 } PrimeEvalStackFrameKind;
 
 typedef enum {
@@ -51989,6 +51991,7 @@ static bool prime_eval_stack_frame_holds_alternative(
     case PRIME_EVAL_STACK_FRAME_FORCE:
     case PRIME_EVAL_STACK_FRAME_NORMALIZE_ATOM:
     case PRIME_EVAL_STACK_FRAME_NORMALIZE_CHILDREN:
+    case PRIME_EVAL_STACK_FRAME_FUNCTION:
         return untaken;
     case PRIME_EVAL_STACK_FRAME_BIND_FINISH:
         return frame->child_initialized &&
@@ -54729,6 +54732,10 @@ static void prime_eval_stack_push(PrimeEvalStackFrame *frame) {
     case PRIME_EVAL_STACK_FRAME_LET:
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PRIME_EVAL_STACK_FRAME_LET);
+        break;
+    case PRIME_EVAL_STACK_FRAME_FUNCTION:
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PRIME_EVAL_STACK_FRAME_FUNCTION);
         break;
     case PRIME_EVAL_STACK_FRAME_EQUATION_SEARCH:
         break;
@@ -60443,6 +60450,89 @@ static void prime_eval_stack_resume_normalize_children(
     prime_eval_stack_pop();
 }
 
+/* `function` is a control delimiter.  On this stack its body is bound into
+ * the frame's child, so the body's continuations may suspend and publish
+ * there, as they may not into a native answer set.  The frame resumes when
+ * the body is done and gives each answer as the recursive form does:
+ * (return v) gives v, under the bindings projected for the body and v; any
+ * other answer is NoReturn, or the fault it already is; no answer at all is
+ * one NoReturn. */
+static bool prime_eval_stack_schedule_function(
+    Space *s, Arena *a, Atom *body, int fuel, bool preserve_bindings,
+    const Bindings *env, OutcomeSet *target) {
+    PrimeEvalStackDriver *driver = g_prime_eval_stack_driver;
+    if (!driver || driver->poison_depth != 0u ||
+        !prime_eval_stack_target_is_owned(target) ||
+        driver->raw_call_depth != 1u)
+        return false;
+    PrimeEvalStackFrame *frame =
+        prime_eval_stack_frame_new(PRIME_EVAL_STACK_FRAME_FUNCTION);
+    frame->space = s;
+    frame->arena = a;
+    frame->target = target;
+    frame->atom = body;
+    frame->fuel = fuel;
+    frame->preserve_bindings = preserve_bindings;
+    frame->evaluator_id = g_prime_need_evaluator_id;
+    outcome_set_init(&frame->child);
+    frame->child_initialized = true;
+    if (!bindings_clone(&frame->env, env)) {
+        prime_eval_stack_frame_free(frame);
+        return false;
+    }
+    frame->env_initialized = true;
+    prime_eval_stack_push(frame);
+    if (prime_eval_stack_schedule_bind(
+            s, a, body, fuel, env, g_prime_need_evaluator_id, &frame->child))
+        return true;
+    assert(driver->top == frame);
+    prime_eval_stack_pop();
+    return false;
+}
+
+static void prime_eval_stack_resume_function(PrimeEvalStackFrame *frame) {
+    Atom *body = frame->atom;
+    while (frame->index < frame->child.len) {
+        Outcome *item = &frame->child.items[frame->index];
+        if (!prime_eval_stack_return_ownership_ready(frame, item))
+            return;
+        frame->index++;
+        Atom *r = outcome_atom_materialize(frame->arena, item);
+        if (!r) {
+            if (eval_unwinding()) {
+                prime_eval_stack_pop();
+                return;
+            }
+            continue;
+        }
+        Atom *answer = r;
+        if (!(atom_head_symbol_id(r) == g_builtin_syms.return_text &&
+              r->expr.len == 2u))
+            answer = atom_is_error(r) ? r : atom_error(frame->arena,
+                atom_expr2(frame->arena, atom_symbol(frame->arena, "function"), body),
+                atom_symbol(frame->arena, "NoReturn"));
+        else
+            answer = r->expr.elems[1];
+        Bindings continuation;
+        if (bindings_project_function_result(
+                frame->arena, body, answer, &item->env, &continuation)) {
+            prime_eval_stack_add_prefixed(frame, answer, &continuation);
+            bindings_free(&continuation);
+        }
+    }
+    if (frame->child.len == 0u) {
+        Bindings none;
+        bindings_init(&none);
+        prime_eval_stack_add_prefixed(frame, atom_error(frame->arena,
+            atom_expr2(frame->arena, atom_symbol(frame->arena, "function"), body),
+            atom_symbol(frame->arena, "NoReturn")), &none);
+        bindings_free(&none);
+    }
+    OutcomeSet *published = frame->target;
+    prime_eval_stack_pop();
+    prime_eval_stack_stream_note(published);
+}
+
 static void prime_eval_stack_resume_top(void) {
     PrimeEvalStackFrame *frame = g_prime_eval_stack_driver->top;
     assert(frame != NULL);
@@ -60465,6 +60555,9 @@ static void prime_eval_stack_resume_top(void) {
         return;
     case PRIME_EVAL_STACK_FRAME_IF:
         prime_eval_stack_resume_if(frame);
+        return;
+    case PRIME_EVAL_STACK_FRAME_FUNCTION:
+        prime_eval_stack_resume_function(frame);
         return;
     case PRIME_EVAL_STACK_FRAME_LET:
         prime_eval_stack_resume_let(frame);
@@ -99717,7 +99810,10 @@ static __attribute__((noinline)) MettaDispatchResult metta_function_dispatch(
         if (language_id == CETTA_LANGUAGE_PRIME) {
             Atom *code = prime_need_ready_code(a, body, CURRENT_ENV);
             if (code) body = code;
-            /* `function` is a control delimiter.  Its body may force a
+            if (prime_eval_stack_schedule_function(
+                    s, a, body, fuel, preserve_bindings, CURRENT_ENV, os))
+                return METTA_DISPATCH_HANDLED;
+            /* Off the stack, `function` is a control delimiter.  Its body may force a
                branch-local thunk, so Prime must retain the body's outcome
                heap while unwrapping `(return value)`.  Projection includes
                the incoming body's identities, so bindings through caller
