@@ -337,6 +337,7 @@ int main(int argc, char **argv) {
         printf("%s\nwork: the costliest theorem took %llu units (budget %llu)\n", summary,
                (unsigned long long)most_work, (unsigned long long)options.theorem_work);
         printf("reading: %llu relation calls\n", (unsigned long long)gn_calls());
+        printf("elaboration: %llu conversions\n", (unsigned long long)mg_elab_conversion_steps(e));
     }
     int status;
     if (run != MG_RUN_OK) {

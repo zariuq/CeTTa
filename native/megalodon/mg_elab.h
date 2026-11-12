@@ -55,6 +55,10 @@ typedef struct {
 MgElab *mg_elab_new(const MgElabOptions *options);
 /* The aby steps native aby tried and proved so far. */
 void mg_elab_aby_counts(const MgElab *e, uint64_t *tried, uint64_t *proved);
+/* The conversions the tactic engine was asked for so far (rewrite, apply,
+ * exact and the others compare terms up to beta, eta and definitions): an
+ * exact count of its work, as the kernel's work units are of the kernel's. */
+uint64_t mg_elab_conversion_steps(const MgElab *e);
 void mg_elab_free(MgElab *e);
 
 /* Megalodon's mgcheck of the next file: sections and the local context
