@@ -7,14 +7,14 @@ linked
 true
 (state-reaches (5 2))
 done
-(dropped-unreached (205 202))
+(dropped-freed (5 2))
 true
-(closure-reaches (206 202))
-(running-binding-unreached (207 203))
+(closure-reaches (6 2))
+(running-binding-unreached (7 3))
 true
-(outer-unreached-in-transaction (209 208))
-(removed-unreached-after-commit (209 204))
+(outer-unreached-in-transaction (8 7))
+(removed-unreached-after-commit (8 3))
 rows
-((between-answers 1 (212 204)) (between-answers 2 (212 204)))
+((between-answers 1 (11 3)) (between-answers 2 (11 3)))
 true
-(stale-state-ignored (212 204))
+(stale-state-ignored (11 3))

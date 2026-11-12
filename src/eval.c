@@ -28018,6 +28018,12 @@ Atom *eval_capture_registry_tokens(Registry *registry, Arena *a, Atom *atom) {
 }
 
 /* ── Space root seam (shadow) ─────────────────────────────────────────────
+ * The tracked spaces are those the evaluator made and keeps: the held ones
+ * (`new-space` and the space operations make them, and a safe point frees
+ * them once no arena holds them) and the session's own (a PeTTa space a
+ * name's first mutation makes, a space a branch transferred).  A snapshot
+ * or a statistics inventory, published as a copy, is a temporary and is
+ * not counted.
  * Which tracked spaces the global roots reach: the current registry's
  * bindings and named states, then everything a reached value holds (a
  * space, a state cell's value and content type, a captured closure's
@@ -28175,15 +28181,31 @@ static void eval_space_trace_drain(EvalSpaceTrace *trace) {
     }
 }
 
+/* Whether the kept space at INDEX of set SET is a tracked one: every
+ * session-owned space is; a held one is unless published as a copy. */
+static bool eval_space_trace_counts(TempSpaceSet *set, CettaCount index) {
+    return set == &g_new_space_track ||
+           !space_published_as_copy(set->items[index].space);
+}
+
+static uint64_t eval_tracked_space_count(void) {
+    TempSpaceSet *kept[] = {&g_new_space_track, &g_made_spaces, &g_listed_spaces};
+    uint64_t count = 0u;
+    for (size_t s = 0u; s < sizeof(kept) / sizeof(kept[0]); s++)
+        for (CettaCount i = 0u; i < kept[s]->len; i++)
+            count += eval_space_trace_counts(kept[s], i);
+    return count;
+}
+
 /* The tracked spaces not reached from the global roots (see above). */
 static uint64_t eval_tracked_spaces_unreached(Registry *registry) {
     EvalSpaceTrace trace = {0};
     Arena keys;
     arena_init(&keys);
-    for (CettaCount i = 0u; i < g_new_space_track.len; i++)
-        eval_pointer_set_add(&trace.live, g_new_space_track.items[i].space);
-    for (CettaCount i = 0u; i < g_made_spaces.len; i++)
-        eval_pointer_set_add(&trace.live, g_made_spaces.items[i].space);
+    TempSpaceSet *kept[] = {&g_new_space_track, &g_made_spaces, &g_listed_spaces};
+    for (size_t s = 0u; s < sizeof(kept) / sizeof(kept[0]); s++)
+        for (CettaCount i = 0u; i < kept[s]->len; i++)
+            eval_pointer_set_add(&trace.live, kept[s]->items[i].space);
     for (uint32_t i = 0u; registry && i < registry->len; i++) {
         const Atom *value = registry->entries[i].value;
         if (value && value->kind == ATOM_GROUNDED &&
@@ -28199,9 +28221,11 @@ static uint64_t eval_tracked_spaces_unreached(Registry *registry) {
     }
     eval_space_trace_drain(&trace);
     uint64_t unreached = 0u;
-    for (CettaCount i = 0u; i < g_new_space_track.len; i++)
-        if (!eval_pointer_set_has(&trace.spaces, g_new_space_track.items[i].space))
-            unreached++;
+    for (size_t s = 0u; s < sizeof(kept) / sizeof(kept[0]); s++)
+        for (CettaCount i = 0u; i < kept[s]->len; i++)
+            if (eval_space_trace_counts(kept[s], i) &&
+                !eval_pointer_set_has(&trace.spaces, kept[s]->items[i].space))
+                unreached++;
     arena_free(&keys);
     free(trace.seen.slots);
     free(trace.spaces.slots);
@@ -28218,7 +28242,7 @@ static Atom *runtime_stats_inventory_atom(Arena *a) {
     held_space_register(inventory, true);
     cetta_runtime_stats_snapshot(&stats);
     stats.counters[CETTA_RUNTIME_COUNTER_SPACE_TRACKED_COUNT] =
-        g_new_space_track.len;
+        eval_tracked_space_count();
     stats.counters[CETTA_RUNTIME_COUNTER_SPACE_SHADOW_UNREACHED_COUNT] =
         eval_tracked_spaces_unreached(g_registry);
     cetta_runtime_stats_populate_space(inventory, a, &stats);
