@@ -51528,6 +51528,8 @@ typedef enum {
     PRIME_EVAL_STACK_FRAME_CHOICE,
     /* A `function` delimiter whose body runs on this stack. */
     PRIME_EVAL_STACK_FRAME_FUNCTION,
+    /* A reification (collapse) whose stream runs on this stack. */
+    PRIME_EVAL_STACK_FRAME_COLLAPSE,
 } PrimeEvalStackFrameKind;
 
 typedef enum {
@@ -51993,6 +51995,9 @@ static bool prime_eval_stack_frame_holds_alternative(
     case PRIME_EVAL_STACK_FRAME_NORMALIZE_CHILDREN:
     case PRIME_EVAL_STACK_FRAME_FUNCTION:
         return untaken;
+    case PRIME_EVAL_STACK_FRAME_COLLAPSE:
+        /* Its answers become one tuple, never alternatives. */
+        return false;
     case PRIME_EVAL_STACK_FRAME_BIND_FINISH:
         return frame->child_initialized &&
             frame->stream_forwarded < frame->child.len;
@@ -54736,6 +54741,10 @@ static void prime_eval_stack_push(PrimeEvalStackFrame *frame) {
     case PRIME_EVAL_STACK_FRAME_FUNCTION:
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PRIME_EVAL_STACK_FRAME_FUNCTION);
+        break;
+    case PRIME_EVAL_STACK_FRAME_COLLAPSE:
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PRIME_EVAL_STACK_FRAME_COLLAPSE);
         break;
     case PRIME_EVAL_STACK_FRAME_EQUATION_SEARCH:
         break;
@@ -60476,7 +60485,7 @@ static bool prime_eval_stack_schedule_function(
     frame->evaluator_id = g_prime_need_evaluator_id;
     outcome_set_init(&frame->child);
     frame->child_initialized = true;
-    if (!bindings_clone(&frame->env, env)) {
+    if (!prime_eval_stack_capture_dynamic_env(&frame->env, env)) {
         prime_eval_stack_frame_free(frame);
         return false;
     }
@@ -60521,6 +60530,9 @@ static void prime_eval_stack_resume_function(PrimeEvalStackFrame *frame) {
         }
     }
     if (frame->child.len == 0u) {
+        __attribute__((cleanup(prime_need_active_leave)))
+        PrimeNeedActiveGuard active;
+        prime_need_active_enter(&active, &frame->env);
         Bindings none;
         bindings_init(&none);
         prime_eval_stack_add_prefixed(frame, atom_error(frame->arena,
@@ -60528,6 +60540,77 @@ static void prime_eval_stack_resume_function(PrimeEvalStackFrame *frame) {
             atom_symbol(frame->arena, "NoReturn")), &none);
         bindings_free(&none);
     }
+    OutcomeSet *published = frame->target;
+    prime_eval_stack_pop();
+    prime_eval_stack_stream_note(published);
+}
+
+/* Reification (collapse) observes its stream's complete bag.  On this stack
+ * the stream is bound into the frame's child, so its continuations may
+ * suspend and publish there.  When the stream is done the frame observes the
+ * returned tuples' private fields, as the recursive form does, and gives the
+ * one tuple of the answers in their native order.  The complete-bag demand
+ * the recursive form announces to the relational machine is a planning hint
+ * only; the stream runs here without it. */
+static bool prime_eval_stack_schedule_collapse(
+    Space *s, Arena *a, Atom *stream, int fuel, bool preserve_bindings,
+    const Bindings *env, OutcomeSet *target) {
+    PrimeEvalStackDriver *driver = g_prime_eval_stack_driver;
+    if (!driver || driver->poison_depth != 0u ||
+        !prime_eval_stack_target_is_owned(target) ||
+        driver->raw_call_depth != 1u)
+        return false;
+    PrimeEvalStackFrame *frame =
+        prime_eval_stack_frame_new(PRIME_EVAL_STACK_FRAME_COLLAPSE);
+    frame->space = s;
+    frame->arena = a;
+    frame->target = target;
+    frame->atom = stream;
+    frame->fuel = fuel;
+    frame->preserve_bindings = preserve_bindings;
+    frame->evaluator_id = g_prime_need_evaluator_id;
+    outcome_set_init(&frame->child);
+    frame->child_initialized = true;
+    if (!prime_eval_stack_capture_dynamic_env(&frame->env, env)) {
+        prime_eval_stack_frame_free(frame);
+        return false;
+    }
+    frame->env_initialized = true;
+    prime_eval_stack_push(frame);
+    if (prime_eval_stack_schedule_bind(
+            s, a, stream, fuel, env, g_prime_need_evaluator_id, &frame->child))
+        return true;
+    assert(driver->top == frame);
+    prime_eval_stack_pop();
+    return false;
+}
+
+static void prime_eval_stack_resume_collapse(PrimeEvalStackFrame *frame) {
+    for (CettaCount i = 0u; i < frame->child.len; i++)
+        if (!prime_eval_stack_return_ownership_ready(frame, &frame->child.items[i]))
+            return;
+    __attribute__((cleanup(prime_need_active_leave)))
+    PrimeNeedActiveGuard active;
+    prime_need_active_enter(&active, &frame->env);
+    prime_need_observe_tuple_returns(
+        frame->space, frame->arena, &frame->child, frame->fuel, &frame->env, NULL);
+    StreamCollectCtx collect = {
+        .reify_need = true,
+    };
+    (void)outcome_set_visit_ordered(
+        frame->arena, &frame->child, CETTA_SEARCH_POLICY_ORDER_NATIVE,
+        stream_visit_collect, &collect);
+    Atom **items = arena_alloc(
+        frame->arena, sizeof(*items) *
+            (collect.buffer.len > 0u ? collect.buffer.len : 1u));
+    CettaExprLen len = 0u;
+    for (CettaCount i = 0u; i < collect.buffer.len; i++)
+        items[len++] = collect.buffer.items[i];
+    Bindings none;
+    bindings_init(&none);
+    prime_eval_stack_add_prefixed(frame, atom_expr(frame->arena, items, len), &none);
+    bindings_free(&none);
+    stream_item_buffer_free(&collect.buffer);
     OutcomeSet *published = frame->target;
     prime_eval_stack_pop();
     prime_eval_stack_stream_note(published);
@@ -60558,6 +60641,9 @@ static void prime_eval_stack_resume_top(void) {
         return;
     case PRIME_EVAL_STACK_FRAME_FUNCTION:
         prime_eval_stack_resume_function(frame);
+        return;
+    case PRIME_EVAL_STACK_FRAME_COLLAPSE:
+        prime_eval_stack_resume_collapse(frame);
         return;
     case PRIME_EVAL_STACK_FRAME_LET:
         prime_eval_stack_resume_let(frame);
@@ -97230,6 +97316,10 @@ static __attribute__((noinline)) MettaDispatchResult metta_sequence_dispatch(
             Atom *stream = reified_body;
             Atom *code = prime_need_ready_code(a, stream, CURRENT_ENV);
             Atom *stream_roots[1] = {code ? code : stream};
+            if (prime_eval_stack_schedule_collapse(
+                    s, a, stream_roots[0], fuel, preserve_bindings,
+                    CURRENT_ENV, os))
+                return METTA_DISPATCH_HANDLED;
             OutcomeSet inner;
             outcome_set_init(&inner);
             __attribute__((cleanup(eval_gc_outcome_suspension_end)))

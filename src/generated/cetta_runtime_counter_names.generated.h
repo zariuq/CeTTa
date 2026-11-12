@@ -1197,6 +1197,7 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
   [CETTA_RUNTIME_COUNTER_TRANSFORM_CURSOR_ACCOUNTED_BYTES_PEAK] = "transform-cursor-accounted-bytes-peak",
   [CETTA_RUNTIME_COUNTER_TRANSFORM_CURSOR_OWNED_BYTES_PEAK] = "transform-cursor-owned-bytes-peak",
   [CETTA_RUNTIME_COUNTER_PRIME_EVAL_STACK_FRAME_FUNCTION] = "prime-eval-stack-frame-function",
+  [CETTA_RUNTIME_COUNTER_PRIME_EVAL_STACK_FRAME_COLLAPSE] = "prime-eval-stack-frame-collapse",
 };
 
 #endif
