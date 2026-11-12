@@ -667,9 +667,6 @@ endif
 ifeq ($(TERM_UNIVERSE_COLLECTION_CHECKS),1)
 BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).collection-checks
 endif
-ifeq ($(TERM_UNIVERSE_COLLECTION_CHECKS),1)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).collection-checks
-endif
 ifeq ($(RHOCOST_COMMIT_AUDIT),1)
 BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).rhocost-audit
 endif
@@ -723,7 +720,7 @@ ifeq ($(CESTA_BUILD)$(CESTA_READ_WARNINGS),11)
 BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).cesta-read
 endif
 ifeq ($(CETTA_PROC_FORK_SPAWN),1)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).proc-fork-spawn
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).proc-fork-spawn
 endif
 # Generated source basenames also occupy the filesystem's component budget.
 # Keep long feature combinations distinct without exceeding that budget.
