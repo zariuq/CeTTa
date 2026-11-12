@@ -5,6 +5,16 @@
 !(import! &self str)
 !(import! &self io)
 
+; Normalize one buffered Chat Completions or Anthropic response body. A JSON
+; object body passes through; an SSE body needs its protocol terminator.
+; Text/tool fragments are provisional until the whole operation succeeds.
+; max-bytes bounds the UTF-8 input; no partial body is returned on refusal.
+(: __cetta_lib_llm_response_body (-> Atom Atom Atom Atom Atom))
+(: llm:v1:response-body (-> %Undefined% %Undefined% %Undefined% %Undefined% Atom))
+(= (llm:v1:response-body $protocol $stream $body $max-bytes)
+   (function (chain (eval (__cetta_lib_llm_response_body $protocol $stream $body $max-bytes)) $result
+     (return $result))))
+
 ; Internal JSON values are held data. Explicit lets compute intermediate calls.
 ; The occurrence-preserving parser rejects duplicate keys before conversion to
 ; the historical JSON vocabulary used by these pure codecs.

@@ -48,6 +48,7 @@
 #include "library_sqlite.h"
 #include "library_durable.h"
 #include "library_json.h"
+#include "llm_stream.h"
 #include "str_natives.h"
 #include "utf8.h"
 #include <math.h>
@@ -13810,6 +13811,16 @@ bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
         return true;
     }
     args = visible;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_LLM) && head && head->kind == ATOM_SYMBOL &&
+        atom_symbol_current_id(head) == g_builtin_syms.lib_llm_response_body) {
+        if (ctx->session.speculative && !cetta_speculative_op_allowed(atom_symbol_current_id(head))) {
+            *out = cetta_call_raised(cetta_effect_denied(a));
+            return true;
+        }
+        Atom *value = eval_native_interrupted() ? NULL : cetta_llm_response_body(a, args, nargs);
+        *out = eval_native_interrupted() ? cetta_call_interrupted() : cetta_call_completed_value(value);
+        return true;
+    }
     if (ctx && cetta_group_sum_call(a, head, args, nargs, out)) return true;
     if (ctx && cetta_key_factorize_call(space, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_TENSOR) &&

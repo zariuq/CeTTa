@@ -1,0 +1,619 @@
+{
+  "schema": 1,
+  "reference": {
+    "repository": "godelclaw",
+    "commit": "9dbb01a21eb6a7ab2a504884b2fcfa48856dd059",
+    "source": "src/provider_stream.py",
+    "sha256": "8fead7ee5936619141632281805630a579b85ba0e65ee5121c062ce0aca7d2d6"
+  },
+  "cases": [
+    {
+      "name": "minimal-chat",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"a\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}\n\ndata: [DONE]\n\n",
+      "limit": 239,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"a\"}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}"
+    },
+    {
+      "name": "terminal-ending-''",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"a\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}\n\ndata: [DONE]",
+      "limit": 237,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"a\"}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}"
+    },
+    {
+      "name": "terminal-ending-'\\n'",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"a\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}\n\ndata: [DONE]\n",
+      "limit": 238,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"a\"}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}"
+    },
+    {
+      "name": "terminal-ending-'\\r'",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"a\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}\n\ndata: [DONE]\r",
+      "limit": 238,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"a\"}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}"
+    },
+    {
+      "name": "terminal-ending-'\\r\\n'",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"a\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}\n\ndata: [DONE]\r\n",
+      "limit": 239,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"a\"}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}"
+    },
+    {
+      "name": "terminal-ending-'\\n\\n'",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"a\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}\n\ndata: [DONE]\n\n",
+      "limit": 239,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"a\"}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}"
+    },
+    {
+      "name": "bom-and-comments",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "﻿:comment\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"a\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}\n\ndata: [DONE]\n\n",
+      "limit": 252,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"a\"}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}"
+    },
+    {
+      "name": "carriage-returns",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"a\"}, \"finish_reason\": null}]}\r\rdata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}\r\rdata: [DONE]\r\r",
+      "limit": 239,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"a\"}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}"
+    },
+    {
+      "name": "crlf",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"a\"}, \"finish_reason\": null}]}\r\n\r\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}\r\n\r\ndata: [DONE]\r\n\r\n",
+      "limit": 245,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"a\"}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}"
+    },
+    {
+      "name": "duplicate-fragments",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"a\", \"reasoning_content\": \"r\", \"reasoning\": \"s\", \"refusal\": \"\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"a\", \"reasoning_content\": \"r\", \"reasoning\": \"s\", \"refusal\": \"\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"a\", \"reasoning_content\": \"r\", \"reasoning\": \"s\", \"refusal\": \"\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 591,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"aaa\", \"reasoning_content\": \"rsrsrs\", \"refusal\": \"\"}, \"finish_reason\": \"stop\"}], \"usage\": {}}"
+    },
+    {
+      "name": "usage-after-finish",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}]}\n\ndata: {\"id\": \"response\", \"choices\": [], \"usage\": {\"completion_tokens\": 0}}\n\ndata: [DONE]\n\n",
+      "limit": 181,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"\"}, \"finish_reason\": \"stop\"}], \"usage\": {\"completion_tokens\": 0}}"
+    },
+    {
+      "name": "empty-usage-replaces",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"old\": 1}}\n\ndata: {\"id\": \"response\", \"choices\": [], \"usage\": {}}\n\ndata: [DONE]\n\n",
+      "limit": 180,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"\"}, \"finish_reason\": \"stop\"}], \"usage\": {}}"
+    },
+    {
+      "name": "invalid-chat-12",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"a\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}\n\ndata: [OTHER]\n\n",
+      "limit": 240,
+      "result": null
+    },
+    {
+      "name": "invalid-chat-13",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": true, \"delta\": {\"content\": \"a\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}\n\ndata: [DONE]\n\n",
+      "limit": 242,
+      "result": null
+    },
+    {
+      "name": "invalid-chat-14",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0.0, \"delta\": {\"content\": \"a\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}\n\ndata: [DONE]\n\n",
+      "limit": 241,
+      "result": null
+    },
+    {
+      "name": "invalid-chat-15",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"changed\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"a\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}\n\ndata: [DONE]\n\n",
+      "limit": 238,
+      "result": null
+    },
+    {
+      "name": "invalid-chat-16",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"a\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}\n\ndata: [DONE]\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"late\"}, \"finish_reason\": null}]}\n\n",
+      "limit": 345,
+      "result": null
+    },
+    {
+      "name": "invalid-chat-17",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"a\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}\n\ndata: [DONE]\n\n",
+      "limit": 239,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"a\"}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}"
+    },
+    {
+      "name": "invalid-chat-18",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": 3}, \"finish_reason\": \"stop\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 117,
+      "result": null
+    },
+    {
+      "name": "invalid-chat-19",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"unknown\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 108,
+      "result": null
+    },
+    {
+      "name": "invalid-chat-20",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"tool_calls\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 111,
+      "result": null
+    },
+    {
+      "name": "invalid-chat-21",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": null}]}\n\ndata: [DONE]\n\n",
+      "limit": 194,
+      "result": null
+    },
+    {
+      "name": "tool-fragments",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"tool_calls\": [{\"index\": 0, \"id\": \"ca\", \"function\": {\"name\": \"r\", \"arguments\": \"{\\\"a\\\":\"}}]}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"tool_calls\": [{\"index\": 0, \"id\": \"ll\", \"function\": {\"name\": \"un\", \"arguments\": \"1}\"}}]}, \"finish_reason\": \"tool_calls\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 378,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"\", \"tool_calls\": [{\"id\": \"call\", \"type\": \"function\", \"function\": {\"name\": \"run\", \"arguments\": \"{\\\"a\\\":1}\"}}]}, \"finish_reason\": \"tool_calls\"}], \"usage\": {}}"
+    },
+    {
+      "name": "invalid-tools-23",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"tool_calls\": [{\"index\": 1, \"id\": \"c\", \"function\": {\"name\": \"run\", \"arguments\": \"{}\"}}]}, \"finish_reason\": \"tool_calls\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 198,
+      "result": null
+    },
+    {
+      "name": "invalid-tools-24",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"tool_calls\": [{\"index\": 0, \"id\": \"c\", \"function\": {\"name\": \"run\", \"arguments\": \"[]\"}}]}, \"finish_reason\": \"tool_calls\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 198,
+      "result": null
+    },
+    {
+      "name": "invalid-tools-25",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"tool_calls\": [{\"index\": 0, \"id\": \"c\", \"function\": {\"name\": \"run\", \"arguments\": \"{}\"}}, {\"index\": 1, \"id\": \"c\", \"function\": {\"name\": \"run\", \"arguments\": \"{}\"}}]}, \"finish_reason\": \"tool_calls\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 271,
+      "result": null
+    },
+    {
+      "name": "invalid-tools-26",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"tool_calls\": [{\"index\": true, \"function\": {}}]}, \"finish_reason\": \"tool_calls\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 158,
+      "result": null
+    },
+    {
+      "name": "invalid-tools-27",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"tool_calls\": [{\"index\": 32, \"function\": {}}]}, \"finish_reason\": \"tool_calls\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 156,
+      "result": null
+    },
+    {
+      "name": "invalid-tools-28",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"tool_calls\": [{\"index\": 0, \"function\": null}]}, \"finish_reason\": \"tool_calls\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 157,
+      "result": null
+    },
+    {
+      "name": "falsey-tools-None",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"tool_calls\": null}, \"finish_reason\": \"stop\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 123,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"\"}, \"finish_reason\": \"stop\"}], \"usage\": {}}"
+    },
+    {
+      "name": "falsey-tools-False",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"tool_calls\": false}, \"finish_reason\": \"stop\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 124,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"\"}, \"finish_reason\": \"stop\"}], \"usage\": {}}"
+    },
+    {
+      "name": "falsey-tools-0",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"tool_calls\": 0}, \"finish_reason\": \"stop\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 120,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"\"}, \"finish_reason\": \"stop\"}], \"usage\": {}}"
+    },
+    {
+      "name": "falsey-tools-''",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"tool_calls\": \"\"}, \"finish_reason\": \"stop\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 121,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"\"}, \"finish_reason\": \"stop\"}], \"usage\": {}}"
+    },
+    {
+      "name": "falsey-tools-{}",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"tool_calls\": {}}, \"finish_reason\": \"stop\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 121,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"\"}, \"finish_reason\": \"stop\"}], \"usage\": {}}"
+    },
+    {
+      "name": "falsey-tools-[]",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"tool_calls\": []}, \"finish_reason\": \"stop\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 121,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"\"}, \"finish_reason\": \"stop\"}], \"usage\": {}}"
+    },
+    {
+      "name": "multi-line-data",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\":\"response\",\ndata: \"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 104,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"\"}, \"finish_reason\": \"stop\"}], \"usage\": {}}"
+    },
+    {
+      "name": "byte-limit-238",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"a\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}\n\ndata: [DONE]\n\n",
+      "limit": 238,
+      "result": null
+    },
+    {
+      "name": "byte-limit-0",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"a\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}\n\ndata: [DONE]\n\n",
+      "limit": 0,
+      "result": null
+    },
+    {
+      "name": "byte-limit--1",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"a\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 3}}\n\ndata: [DONE]\n\n",
+      "limit": -1,
+      "result": null
+    },
+    {
+      "name": "json-passthrough-''",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "{\"a\":1}",
+      "limit": 7,
+      "result": "{\"a\":1}"
+    },
+    {
+      "name": "json-passthrough-' \\t\\r\\n'",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": " \t\r\n{\"a\":1}",
+      "limit": 11,
+      "result": " \t\r\n{\"a\":1}"
+    },
+    {
+      "name": "json-passthrough-'\\x1c'",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "\u001c{\"a\":1}",
+      "limit": 8,
+      "result": "\u001c{\"a\":1}"
+    },
+    {
+      "name": "json-passthrough-'\\u2003'",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": " {\"a\":1}",
+      "limit": 10,
+      "result": " {\"a\":1}"
+    },
+    {
+      "name": "ordinary-disabled-stream",
+      "protocol": "chat-completions",
+      "stream": false,
+      "body": "not json",
+      "limit": 8,
+      "result": "not json"
+    },
+    {
+      "name": "anthropic-text",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"text\", \"text\": \"prefix\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"🌿\\\"\\n\"}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {\"output_tokens\": 2}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 764,
+      "result": "{\"id\": \"msg\", \"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"prefixaa🌿\\\"\\n\"}], \"usage\": {\"input_tokens\": 3, \"output_tokens\": 2}, \"unknown\": {\"λ\": [true, null]}, \"stop_reason\": \"end_turn\"}"
+    },
+    {
+      "name": "anthropic-ending-''",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {}}\n\ndata: {\"type\":\"message_stop\"}",
+      "limit": 292,
+      "result": null
+    },
+    {
+      "name": "anthropic-ending-'\\n'",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {}}\n\ndata: {\"type\":\"message_stop\"}\n",
+      "limit": 293,
+      "result": "{\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}, \"stop_reason\": \"end_turn\"}"
+    },
+    {
+      "name": "anthropic-ending-'\\r\\n'",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {}}\n\ndata: {\"type\":\"message_stop\"}\r\n",
+      "limit": 294,
+      "result": "{\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}, \"stop_reason\": \"end_turn\"}"
+    },
+    {
+      "name": "anthropic-ending-'\\n\\n'",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 294,
+      "result": "{\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}, \"stop_reason\": \"end_turn\"}"
+    },
+    {
+      "name": "anthropic-thinking",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"thinking\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"signature_delta\", \"signature\": \"s\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"thinking_delta\", \"thinking\": \"r\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"signature_delta\", \"signature\": \"s\"}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 753,
+      "result": "{\"id\": \"msg\", \"role\": \"assistant\", \"content\": [{\"type\": \"thinking\", \"signature\": \"ss\", \"thinking\": \"r\"}], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}, \"stop_reason\": \"end_turn\"}"
+    },
+    {
+      "name": "anthropic-tool-json",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"tool_use\", \"id\": \"c\", \"name\": \"run\", \"input\": {}}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"input_json_delta\", \"partial_json\": \"{\\\"λ\\\":\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"input_json_delta\", \"partial_json\": \"true}\"}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"tool_use\"}, \"usage\": {}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 706,
+      "result": "{\"id\": \"msg\", \"role\": \"assistant\", \"content\": [{\"type\": \"tool_use\", \"id\": \"c\", \"name\": \"run\", \"input\": {\"λ\": true}}], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}, \"stop_reason\": \"tool_use\"}"
+    },
+    {
+      "name": "anthropic-tool-no-delta",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"tool_use\", \"id\": \"c\", \"name\": \"run\", \"input\": {\"old\": 1}}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"tool_use\"}, \"usage\": {}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 481,
+      "result": "{\"id\": \"msg\", \"role\": \"assistant\", \"content\": [{\"type\": \"tool_use\", \"id\": \"c\", \"name\": \"run\", \"input\": {\"old\": 1}}], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}, \"stop_reason\": \"tool_use\"}"
+    },
+    {
+      "name": "anthropic-empty-partial-json",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"tool_use\", \"id\": \"c\", \"name\": \"run\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"input_json_delta\", \"partial_json\": \"\"}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 570,
+      "result": null
+    },
+    {
+      "name": "anthropic-wrong-initial-text",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"text\", \"text\": null}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"\"}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 540,
+      "result": null
+    },
+    {
+      "name": "anthropic-unknown-block",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"opaque\", \"arbitrary\": 7}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"unknown_delta\", \"anything\": 3}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 550,
+      "result": "{\"id\": \"msg\", \"role\": \"assistant\", \"content\": [{\"type\": \"opaque\", \"arbitrary\": 7}], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}, \"stop_reason\": \"end_turn\"}"
+    },
+    {
+      "name": "anthropic-unhashable-delta",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"text\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": []}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 504,
+      "result": null
+    },
+    {
+      "name": "invalid-anthropic-56",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"text\", \"text\": \"prefix\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"🌿\\\"\\n\"}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {\"output_tokens\": 2}}\n\ndata: {\"type\":\"message_stop\"}\n\ndata: {\"type\": \"ping\"}\n\n",
+      "limit": 788,
+      "result": null
+    },
+    {
+      "name": "invalid-anthropic-57",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"text\", \"text\": \"prefix\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"🌿\\\"\\n\"}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {\"output_tokens\": 2}}\n\ndata: {\"type\":\"ping\"}\n\n",
+      "limit": 756,
+      "result": null
+    },
+    {
+      "name": "invalid-anthropic-58",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"text\", \"text\": \"prefix\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"thinking_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"🌿\\\"\\n\"}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {\"output_tokens\": 2}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 768,
+      "result": null
+    },
+    {
+      "name": "invalid-anthropic-59",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": false, \"content_block\": {\"type\": \"text\", \"text\": \"prefix\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"🌿\\\"\\n\"}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {\"output_tokens\": 2}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 768,
+      "result": null
+    },
+    {
+      "name": "invalid-anthropic-60",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0.0, \"content_block\": {\"type\": \"text\", \"text\": \"prefix\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"🌿\\\"\\n\"}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {\"output_tokens\": 2}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 766,
+      "result": null
+    },
+    {
+      "name": "invalid-anthropic-61",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"text\", \"text\": \"prefix\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"🌿\\\"\\n\"}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": null}, \"usage\": {\"output_tokens\": 2}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 758,
+      "result": null
+    },
+    {
+      "name": "invalid-anthropic-62",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\":\"user\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"text\", \"text\": \"prefix\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"🌿\\\"\\n\"}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {\"output_tokens\": 2}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 758,
+      "result": null
+    },
+    {
+      "name": "invalid-anthropic-63",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: conflict\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"text\", \"text\": \"prefix\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"🌿\\\"\\n\"}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {\"output_tokens\": 2}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 759,
+      "result": null
+    },
+    {
+      "name": "invalid-anthropic-64",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [1], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"text\", \"text\": \"prefix\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"🌿\\\"\\n\"}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {\"output_tokens\": 2}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 765,
+      "result": null
+    },
+    {
+      "name": "invalid-anthropic-65",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"text\", \"text\": \"prefix\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"🌿\\\"\\n\"}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {\"output_tokens\": 2}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 764,
+      "result": "{\"id\": \"msg\", \"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"prefixaa🌿\\\"\\n\"}], \"usage\": {\"input_tokens\": 3, \"output_tokens\": 2}, \"unknown\": {\"λ\": [true, null]}, \"stop_reason\": \"end_turn\"}"
+    },
+    {
+      "name": "anthropic-ping-before",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "data: {\"type\": \"ping\"}\n\nevent: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"text\", \"text\": \"prefix\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"🌿\\\"\\n\"}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {\"output_tokens\": 2}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 788,
+      "result": "{\"id\": \"msg\", \"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"prefixaa🌿\\\"\\n\"}], \"usage\": {\"input_tokens\": 3, \"output_tokens\": 2}, \"unknown\": {\"λ\": [true, null]}, \"stop_reason\": \"end_turn\"}"
+    },
+    {
+      "name": "anthropic-stop-false",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": false}, \"usage\": {}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 289,
+      "result": "{\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}, \"stop_reason\": false}"
+    },
+    {
+      "name": "anthropic-id-nonstring",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": 7, \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 290,
+      "result": "{\"id\": 7, \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}, \"stop_reason\": \"end_turn\"}"
+    },
+    {
+      "name": "anthropic-content-null",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": null, \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 296,
+      "result": "{\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}, \"stop_reason\": \"end_turn\"}"
+    },
+    {
+      "name": "anthropic-crlf",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\r\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\r\n\r\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"text\", \"text\": \"prefix\"}}\r\n\r\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\r\n\r\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\r\n\r\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"🌿\\\"\\n\"}}\r\n\r\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\r\n\r\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {\"output_tokens\": 2}}\r\n\r\ndata: {\"type\":\"message_stop\"}\r\n\r\n",
+      "limit": 781,
+      "result": "{\"id\": \"msg\", \"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"prefixaa🌿\\\"\\n\"}], \"usage\": {\"input_tokens\": 3, \"output_tokens\": 2}, \"unknown\": {\"λ\": [true, null]}, \"stop_reason\": \"end_turn\"}"
+    },
+    {
+      "name": "anthropic-size-bound",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"text\", \"text\": \"prefix\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"a\"}}\n\ndata: {\"type\": \"content_block_delta\", \"index\": 0, \"delta\": {\"type\": \"text_delta\", \"text\": \"🌿\\\"\\n\"}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {\"output_tokens\": 2}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 763,
+      "result": null
+    },
+    {
+      "name": "syntax-remains-text",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"(Error user boom) !(println! executed) (Empty k) ()\"}, \"finish_reason\": \"stop\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 169,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"(Error user boom) !(println! executed) (Empty k) ()\"}, \"finish_reason\": \"stop\"}], \"usage\": {}}"
+    },
+    {
+      "name": "paired-surrogate",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"\\ud83c\\udf3f\"}, \"finish_reason\": \"stop\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 130,
+      "result": "{\"id\": \"response\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"🌿\"}, \"finish_reason\": \"stop\"}], \"usage\": {}}"
+    },
+    {
+      "name": "unpaired-surrogate",
+      "protocol": "chat-completions",
+      "stream": true,
+      "body": "data: {\"id\": \"response\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"\\ud800\"}, \"finish_reason\": \"stop\"}]}\n\ndata: [DONE]\n\n",
+      "limit": 124,
+      "result": null
+    },
+    {
+      "name": "anthropic-unpaired-surrogate",
+      "protocol": "anthropic",
+      "stream": true,
+      "body": "event: message_start\ndata: {\"type\": \"message_start\", \"message\": {\"id\": \"msg\", \"role\": \"assistant\", \"content\": [], \"usage\": {\"input_tokens\": 3}, \"unknown\": {\"λ\": [true, null]}}}\n\ndata: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"text\", \"text\": \"\\udfff\"}}\n\ndata: {\"type\": \"content_block_stop\", \"index\": 0}\n\ndata: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"end_turn\"}, \"usage\": {}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+      "limit": 448,
+      "result": null
+    }
+  ]
+}

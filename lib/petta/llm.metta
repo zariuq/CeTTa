@@ -5,6 +5,7 @@
 !(import! &self (library json))
 !(import! &self (library str))
 !(import! &self (library io))
+(= (llm:v1:response-body $protocol $stream $body $max-bytes) (__cetta_lib_llm_response_body $protocol $stream $body $max-bytes))
 (: llm:v1:object-get (-> Atom Atom %Undefined%))
 (= (llm:v1:object-get $object $key) (__cetta_lib_json_object_get $object $key))
 (= (llm:v1:get $object $key) (case $object (((llm:v1:failure $code) (llm:v1:failure $code)) ((JsonObject $pairs) (llm:v1:object-get $object $key)) ($other JsonNull))))

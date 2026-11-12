@@ -938,6 +938,7 @@ SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presenta
 SRC += src/library_proc.c
 SRC += src/expand_user.c
 SRC += src/library_fs.c
+SRC += src/llm_stream.c
 SRC += src/petta_priority_heap.c
 SRC += src/library_provenance.c native/provenance/prov_kernel_v1.c
 SRC += src/native_memory.c src/host_services.c src/library_postings.c src/library_asp.c native/asp/asp_cdnl_v1.c native/asp/asp_hall_v1.c native/support/support_v1.c native/smt/euf_cc_v1.c native/smt/lra_simplex_v1.c native/asp/asp_clingo_v1.c native/asp/sat_ipasir_v1.c src/tensor.c src/tensor_bounds.c src/tensor_screening.c src/library_tensor.c src/library_group.c
@@ -37032,6 +37033,22 @@ test-all: test-str-envelopes
 test-str-envelopes: $(BIN) $(STR_ENVELOPES_TEST) tests/support/check_str_envelopes.py
 	@$(call cetta_exec,./$(STR_ENVELOPES_TEST))
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_str_envelopes.py "$(CETTA_SCRIPT_BIN)"
+
+LLM_STREAM_TEST = runtime/test-llm-stream-$(BUILD_OBJ_TAG)
+$(LLM_STREAM_TEST): tests/support/test_llm_stream.c src/llm_stream.c src/llm_stream.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/support/test_llm_stream.c $(filter-out src/llm_stream.$(BUILD_OBJ_TAG).o src/llm_stream.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(LDFLAGS) -Wl,--gc-sections
+
+.PHONY: test-llm-stream
+ifeq ($(ENABLE_JSON_GSLT),1)
+test-all: test-llm-stream
+test-llm-stream: $(LLM_STREAM_TEST) value-worker $(BIN) tests/support/check_llm_stream.py
+	@$(call cetta_exec,./$(LLM_STREAM_TEST))
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_llm_stream.py ./$(VALUE_WORKER_BIN) --he-cetta "$(CETTA_SCRIPT_BIN)"
+else
+test-llm-stream:
+	@echo "test-llm-stream requires ENABLE_JSON_GSLT=1" >&2; exit 1
+endif
 
 FORMAT_FIXED_NATIVE_TEST_V1 = runtime/test-format-fixed-bound-v1-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats)
 $(FORMAT_FIXED_NATIVE_TEST_V1): tests/support/test_format_fixed_bound_v1.c src/str_stream.c src/str_stream.h src/str_natives.c src/string_ops.c src/utf8.h src/native_sha256.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) src/stats.h tests/test_runtime_stats_stubs.h $(BUILD_CONFIG_HEADER)
