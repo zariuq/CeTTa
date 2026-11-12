@@ -599,6 +599,11 @@ int main(int argc, char **argv) {
 
     Atom *path = atom_string(&arena, argv[1]);
     owner = call(ctx, &arena, "open_directory", &path, 1u);
+    sync_eintr = true;
+    check(atom_is_symbol(call(ctx, &arena, "sync", &owner, 1u), "fs:synced"));
+    sync_fault = true;
+    check(failed_code(call(ctx, &arena, "sync", &owner, 1u)) == EIO);
+    sync_fault = false;
     unknown_hint = true;
     Atom *entry = call(ctx, &arena, "next_entry", &owner, 1u);
     check(headed(entry, "fs:entry", 4u));
@@ -614,6 +619,7 @@ int main(int argc, char **argv) {
     check(atom_eq(saved_name, entry->expr.elems[1]));
     check(entries >= 2u);
     close_reader(ctx, &arena, owner);
+    check(headed(call(ctx, &arena, "sync", &owner, 1u), "fs:failed", 7u));
     owner = call(ctx, &arena, "open_directory", &path, 1u);
     directory_fault = true;
     failure = call(ctx, &arena, "next_entry", &owner, 1u);
@@ -653,6 +659,16 @@ int main(int argc, char **argv) {
 
     rename_controls(ctx, &arena, argv[1]);
     writer_controls(ctx, &arena, argv[1]);
+    Atom *hash_args[] = {atom_string(&arena, file), atom_symbol(&arena, "content-sha256")};
+    Atom *hashed = call(ctx, &arena, "metadata", hash_args, 2u);
+    check(headed(hashed, "fs:hashed-v1", 3u));
+    check(headed(hashed->expr.elems[2], "fs:info-v2", 8u));
+    check(fcntl(last_read_fd, F_GETFD) == -1 && errno == EBADF);
+    read_fault = true;
+    check(failed_code(call(ctx, &arena, "metadata", hash_args, 2u)) == EIO);
+    check(fcntl(last_read_fd, F_GETFD) == -1 && errno == EBADF);
+    read_fault = false;
+    check(headed(call(ctx, &arena, "metadata", hash_args, 2u), "fs:hashed-v1", 3u));
     pid_t child = fork();
     assert(child >= 0);
     if (!child) {
