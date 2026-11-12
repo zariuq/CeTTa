@@ -175,7 +175,8 @@
 ; creation mode, which the umask narrows (384 is 0o600, 438 is 0o666).
 ; write-all writes every byte of a text and answers (fs:written bytes); a
 ; fault keeps the owner open and its progress counts the owner's bytes in all.
-; sync is fsync. lock takes exclusive or shared, waiting for a conflicting
+; sync is fsync, including an owned directory after publishing a rename.
+; lock takes exclusive or shared, waiting for a conflicting
 ; holder, as fcntl.flock does; exclusive-nowait and shared-nowait answer
 ; fs:held at once instead. unlock releases it. set-mode is os.fchmod,
 ; answering fs:mode-set; given a path instead of an owner it is os.chmod, which
