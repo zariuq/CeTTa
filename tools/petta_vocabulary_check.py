@@ -16,7 +16,8 @@ In every evaluated position of a spelling (equation bodies and top-level
   - a head CeTTa does not evaluate either, which both read as data.
 
 A head that CeTTa evaluates (a grounded operation or an evaluator form,
-read from src/symbol.h) and that is none of the above is reported.
+read from the builtin table lib/builtin_symbols.data) and that is none of
+the above is reported.
 """
 
 from __future__ import annotations
@@ -38,28 +39,32 @@ CETTA_FORMS_OUTSIDE_PETTA = {
 }
 
 
-def cetta_evaluated_heads(symbol_header: Path) -> set:
-    """The heads CeTTa evaluates: its grounded operations and forms."""
-    text = symbol_header.read_text(encoding="utf-8")
-    spelling = dict(re.findall(r'X\(([A-Za-z_0-9]+),\s*"([^"]+)"\)', text))
+def cetta_evaluated_heads(builtin_table: Path) -> set:
+    """The heads CeTTa evaluates: its grounded operations and forms.
+
+    A grounded operation is a builtin row that is static_grounded,
+    pure_grounded or type_pure_extra (type purity is the pure rows plus the
+    type-only extras)."""
+    text = builtin_table.read_text(encoding="utf-8")
+    columns = re.findall(r"\(Column (\w+) (?:Identifier|Text|Bool)\)", text)
+    if columns[:2] != ["field", "spelling"]:
+        raise SystemExit(f"{builtin_table}: unexpected columns {columns}")
+    flags = columns[2:]
+    wanted = [flags.index(name) for name in
+              ("static_grounded", "pure_grounded", "type_pure_extra")]
+    row = re.compile(r'^\s*\(Row (\w+) "((?:[^"\\]|\\.)*)"((?: (?:true|false))+)\)\s*$',
+                     re.M)
     heads = set(CETTA_FORMS_OUTSIDE_PETTA)
-    lines = text.splitlines()
-    for macro in ("CETTA_STATIC_GROUNDED_SYMBOL_FIELDS",
-                  "CETTA_TYPE_PURE_GROUNDED_SYMBOL_FIELDS"):
-        start = next((i for i, line in enumerate(lines)
-                      if line.startswith(f"#define {macro}(X)")), None)
-        if start is None:
-            raise SystemExit(f"{symbol_header}: cannot read {macro}")
-        body = []
-        index = start
-        while True:
-            body.append(lines[index])
-            if not lines[index].rstrip().endswith("\\"):
-                break
-            index += 1
-        for field in re.findall(r"X\(([A-Za-z_0-9]+)\)", "\n".join(body[1:])):
-            if field in spelling:
-                heads.add(spelling[field])
+    count = 0
+    for field, spelling, cells in row.findall(text):
+        values = cells.split()
+        if len(values) != len(flags):
+            raise SystemExit(f"{builtin_table}: row {field} has {len(values)} flags")
+        count += 1
+        if any(values[i] == "true" for i in wanted):
+            heads.add(spelling)
+    if count == 0:
+        raise SystemExit(f"{builtin_table}: no rows read")
     return heads
 
 
@@ -197,7 +202,7 @@ def main(argv: list[str]) -> int:
         return 2
     vocabulary, lib_he = read_vocabulary(Path(argv[1]))
     root = Path(argv[2]).resolve()
-    builtins = cetta_evaluated_heads(root / "src" / "symbol.h")
+    builtins = cetta_evaluated_heads(root / "lib" / "builtin_symbols.data")
     failed = 0
     for spelling in argv[3:]:
         path = root / spelling
