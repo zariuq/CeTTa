@@ -28,7 +28,9 @@ from gen_semiring_fixtures import SExpr, SpecError, is_form, parse_forms, sexpr
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / "lib" / "gslt_execution_contracts.metta"
-SYMBOL_TABLE = ROOT / "src" / "symbol.h"
+# The builtin vocabulary is one Cesta table (lib/builtin_symbols.data); its
+# generated view lists every row as cesta_table_apply_0(field, "spelling").
+SYMBOL_TABLE = ROOT / "src" / "generated" / "cetta_builtin_symbols.generated.h"
 HEADER = ROOT / "src" / "generated" / "cetta_execution_contracts.generated.h"
 MAKE_FRAGMENT = (
     ROOT / "src" / "generated" / "cetta_execution_contracts.generated.mk"
@@ -211,7 +213,7 @@ def c_enum(name: str) -> str:
 def load_symbol_fields() -> dict[str, str]:
     """Map concrete symbol spellings to their g_builtin_syms field names."""
     fields: dict[str, str] = {}
-    for match in re.finditer(r'X\((\w+),\s*"([^"]*)"\)', SYMBOL_TABLE.read_text()):
+    for match in re.finditer(r'cesta_table_apply_0\((\w+),\s*"([^"]*)"\)', SYMBOL_TABLE.read_text()):
         fields.setdefault(match.group(2), match.group(1))
     if not fields:
         raise SpecError(f"no symbol entries found in {SYMBOL_TABLE}")
