@@ -508,6 +508,17 @@ static size_t prime_standard_skip_retired(const PrimeStandardHead *head,
     return found;
 }
 
+/* A verdict of prime_standard_head_verdict for the library, library rows and
+ * program it read; the head is only compared. */
+typedef struct {
+    uint64_t library;
+    uint64_t rows;
+    SymbolId head;
+    SpaceProgramToken token;
+    bool unchanged;
+    bool library_shown;
+} PrimeStandardHeadVerdictMemo;
+
 /* Whether `space` shows native head `name` as the standard library left it,
  * up to library rows; `library_shown` reports whether it shows any.  An
  * unchanged head runs natively.  Shown alone, its standard rows only name
@@ -531,14 +542,7 @@ static bool prime_standard_head_verdict(Space *space, SymbolId name,
         installed = classifier && space_head_declares_type(space, classifier->original);
     }
     if (!installed && !eval_space_has_equations_raw(space, name)) return true;
-    static _Thread_local struct {
-        uint64_t library;
-        uint64_t rows;
-        SymbolId head;
-        SpaceProgramToken token;
-        bool unchanged;
-        bool library_shown;
-    } cache[64];
+    static _Thread_local PrimeStandardHeadVerdictMemo cache[64];
     size_t slot = name % (sizeof cache / sizeof cache[0]);
     SpaceProgramToken token = space_program_token(space);
     /* Revalidation is real work in a native cost observation. Its memo is

@@ -127,6 +127,9 @@
   (holder src/eval_he_execution.inc HeStreamHeadDecision.head compare-only-cache)
   (holder src/eval_he_execution.inc HeSymbolCallability.symbol compare-only-cache)
   (holder src/eval_owned_execution.inc EvalOwnedHead.head transient)
+  ; Prime's standard-head verdicts are compared by head with the library rows
+  ; and program token they read.
+  (holder src/eval_prime_standard_library.inc PrimeStandardHeadVerdictMemo.head compare-only-cache)
   (holder src/gdl_type_of_native.c GdlNativeSourceNodeV1.occurrence_key unresolved)
   (holder src/grounded.c GroundedOpCache.ids owned-vocabulary)
   ; These tables intern only names from the fixed HE library declarations.
@@ -571,7 +574,6 @@
   (holder src/eval_he_value_index.inc HeValueHeadClass.head unresolved)
   (holder src/eval_prime_standard_library.inc PrimeStandardHead.name unresolved)
   (holder src/eval_prime_standard_library.inc PrimeStandardHead.original unresolved)
-  (holder src/eval_prime_standard_library.inc anonymous[library,head,token,unchanged].head unresolved)
   (holder src/he_type_policy.c CettaHeTypeTables.module_space_no_deps unresolved)
   (holder src/he_type_policy.c CettaHeTypeTables.undeclared unresolved)
   (holder src/library.c ImportAsRename.from unresolved)
