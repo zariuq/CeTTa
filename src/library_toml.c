@@ -174,7 +174,50 @@ static Atom *failure(Arena *a, const char *kind, const char *detail) {
     return atom_expr3(a, atom_symbol(a, "toml:failed"), atom_symbol(a, kind), atom_string(a, detail));
 }
 
-static Atom *to_json(Arena *a, Atom *document) {
+/* Native values preserve TOML types and nonfinite IEEE floats. The JSON API
+ * remains separate: its narrower representation must not constrain clients
+ * that inspect only selected fields of a valid document. */
+static Atom *datum_value(Arena *a, const toml_datum_t *d) {
+    switch (d->type) {
+    case TOML_STRING: return atom_string_n(a, d->u.str.ptr, (size_t)d->u.str.len);
+    case TOML_INT64: return atom_int(a, d->u.int64);
+    case TOML_FP64: return atom_float(a, d->u.fp64);
+    case TOML_BOOLEAN: return atom_bool(a, d->u.boolean);
+    case TOML_DATE: case TOML_TIME: case TOML_DATETIME: case TOML_DATETIMETZ: {
+        JsonText text = {0};
+        put_datum(&text, d);
+        if (text.refusal || text.length < 2u) { free(text.bytes); return NULL; }
+        const char *kind = d->type == TOML_DATE ? "date" : d->type == TOML_TIME ? "time" :
+            d->type == TOML_DATETIME ? "datetime" : "datetime-offset";
+        Atom *value = atom_string_n(a, text.bytes + 1u, text.length - 2u);
+        free(text.bytes);
+        return value ? atom_expr3(a, atom_symbol(a, "TomlTemporalV1"), atom_symbol(a, kind), value) : NULL;
+    }
+    case TOML_ARRAY: case TOML_TABLE: {
+        int32_t count = d->type == TOML_ARRAY ? d->u.arr.size : d->u.tab.size;
+        if (count < 0 || (size_t)count > SIZE_MAX / sizeof(Atom *)) return NULL;
+        Atom **items = count ? calloc((size_t)count, sizeof(*items)) : NULL;
+        if (count && !items) return NULL;
+        for (int32_t i = 0; i < count; ++i) {
+            Atom *value = datum_value(a, d->type == TOML_ARRAY ? &d->u.arr.elem[i] : &d->u.tab.value[i]);
+            if (!value) { free(items); return NULL; }
+            if (d->type == TOML_TABLE) {
+                Atom *key = atom_string_n(a, d->u.tab.key[i], (size_t)d->u.tab.len[i]);
+                value = key ? atom_expr3(a, atom_symbol(a, "TomlFieldV1"), key, value) : NULL;
+            }
+            if (!value) { free(items); return NULL; }
+            items[i] = value;
+        }
+        Atom *fields = atom_expr(a, items, (uint32_t)count);
+        free(items);
+        return fields ? atom_expr2(a, atom_symbol(a, d->type == TOML_ARRAY ? "TomlArrayV1" : "TomlTableV1"), fields) : NULL;
+    }
+    case TOML_UNKNOWN: return NULL;
+    }
+    return NULL;
+}
+
+static Atom *parse_document(Arena *a, Atom *document, bool native_values) {
     const char *text;
     size_t length;
     if (document && document->kind == ATOM_GROUNDED && document->ground.gkind == GV_STRING) {
@@ -190,6 +233,11 @@ static Atom *to_json(Arena *a, Atom *document) {
         Atom *refused = failure(a, "toml:invalid", result.errmsg);
         toml_free(result);
         return refused;
+    }
+    if (native_values) {
+        Atom *value = datum_value(a, &result.toptab);
+        toml_free(result);
+        return value ? value : failure(a, "toml:capacity", "native document construction failed");
     }
     JsonText out = {0};
     put_datum(&out, &result.toptab);
@@ -207,8 +255,10 @@ bool cetta_toml_call(CettaLibraryContext *ctx, Arena *a, Atom *head, Atom **args
         return false;
     const char *operation = nargs == 2u && args[0] && args[0]->kind == ATOM_SYMBOL &&
         args[1] && args[1]->kind == ATOM_EXPR ? atom_name_cstr(args[0]) : NULL;
-    Atom *value = operation && !strcmp(operation, "to-json") && args[1]->expr.len == 1u
-        ? to_json(a, args[1]->expr.elems[0])
+    bool json = operation && !strcmp(operation, "to-json");
+    bool native_values = operation && !strcmp(operation, "parse-value");
+    Atom *value = (json || native_values) && args[1]->expr.len == 1u
+        ? parse_document(a, args[1]->expr.elems[0], native_values)
         : failure(a, "toml:invalid-argument", "expected a toml operation and inert operand tuple");
     *out = cetta_call_completed_value(value);
     return true;

@@ -1,0 +1,6 @@
+!(import! &self (library fs))
+!(import! &self (library toml))
+!(import! &self (library store))
+(= (probe:dispatch (Toml $text)) (__cetta_lib_toml parse-value ($text)))
+(= (probe:dispatch (Metadata $path $links)) (__cetta_lib_fs_metadata $path $links))
+(= (probe:dispatch (Hash $path)) (__cetta_lib_fs_metadata $path content-sha256))

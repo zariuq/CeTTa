@@ -1,4 +1,4 @@
-/* Generated from cesta-protocol/1. Declare the context and native hooks first. */
+/* Generated from a declared Cesta protocol. Declare the context and native hooks first. */
 
 #ifdef CESTA_PROTOCOL_ia_commit_run_DEFINED
 #error "duplicate protocol definition"

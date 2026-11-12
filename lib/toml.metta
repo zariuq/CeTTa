@@ -17,3 +17,11 @@
    (case (toml:to-json $text)
      (((toml:failed $kind $detail) (toml:failed $kind $detail))
       ($json (json:parse $json)))))
+
+; Native TOML values: TomlTableV1/TomlFieldV1 and TomlArrayV1 preserve order;
+; strings, integers, floats and booleans remain ordinary scalar data. IEEE
+; infinities/NaN remain floats; TomlTemporalV1 retains the temporal kind and ISO
+; spelling. This API does not pass the document through JSON.
+(: toml:parse-value (-> %Undefined% Atom))
+(= (toml:parse-value $text)
+   (function (chain (eval (__cetta_lib_toml parse-value ($text))) $value (return $value))))
