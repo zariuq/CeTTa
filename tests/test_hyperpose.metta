@@ -5,9 +5,9 @@
 ; handles still stay on the sequential path.
 
 !(assertEqualToResult (hyperpose (a b Empty c)) (a b c))
-!(assertEqual (collapse (hyperpose (a Empty b))) (a b))
-!(assertEqual (collapse (hyperpose ((superpose (x y)) z))) (x y z))
-!(assertEqual (collapse (hyperpose (same same))) (same same))
+!(assertEqualToResult (hyperpose (a Empty b)) (a b))
+!(assertEqualToResult (hyperpose ((superpose (x y)) z)) (x y z))
+!(assertEqualToResult (hyperpose (same same)) (same same))
 
 !(pragma! num-threads 0)
 !(assertEqual (select 2 (hyperpose (a b c))) (a b))
@@ -20,6 +20,4 @@
   (hyperpose
     ((add-atom &hyperpose-effects (seen a))
      (add-atom &hyperpose-effects (seen b)))))
-!(assertEqual
-  (collapse (match &hyperpose-effects (seen $x) $x))
-  (a b))
+!(assertEqualToResult (match &hyperpose-effects (seen $x) $x) (a b))

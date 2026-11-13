@@ -18,4 +18,4 @@
 !(test (progn (translatePredicate (atom_codes $A (104 105))) $A) hi)
 
 ; Every Prolog solution is an answer.
-!(test (collapse (progn (translatePredicate (between 1 3 $X)) $X)) (1 2 3))
+!(test (sort-atom (collapse (progn (translatePredicate (between 1 3 $X)) $X))) (sort-atom (1 2 3)))

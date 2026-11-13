@@ -76,7 +76,7 @@
      "tests/rhocalc/rho_name_output.rho"
      "tests/rhocalc/rho_open_name_variable.rho"
      "tests/rhocalc/rho_quote_inner_binder_restores_scope.rho"
-     "tests/rhocalc/rho_quote_seals_outer_binder.rho"
+     "tests/rhocalc/rho_quote_drop_names_outer_binder.rho"
      "tests/rhocalc/paper_reflection_name_generation_h4.rho")))
 
 ; --- helpers ---

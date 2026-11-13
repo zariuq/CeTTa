@@ -13,6 +13,6 @@
 !(sort-atom (collapse (match &g $y $y)))
 (= (twice $x) (* 2 $x))
 !(collapse (match &self (e $x) (let $_ (add-atom &w (f $x)) (twice 21))))
-!(collapse (match &self (e $x) (let $_ (add-atom &w (h $x)) (twice $x))))
+!(sort-atom (collapse (match &self (e $x) (let $_ (add-atom &w (h $x)) (twice $x)))))
 !(size-atom (collapse (match &self (e $x) (let $_ (add-atom &w (k $x)) (add-atom &w (k $x))))))
 !(sort-atom (collapse (match &w $y $y)))

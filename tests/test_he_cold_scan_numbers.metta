@@ -17,7 +17,7 @@
 !(collapse (match &self (pair $k 1/4) $k))
 (= (inside) (collapse (match &self (baz 0.5) inside-found)))
 !(inside)
-(= (count-halves) (size-atom (collapse (match &self ($h 0.5) $h))))
+(= (count-halves) (let $halves (collapse (match &self ($h 0.5) $h)) (size-atom $halves)))
 !(count-halves)
 ; Negative cases: different values stay apart.
 !(collapse (match &self (baz 0.25) found))

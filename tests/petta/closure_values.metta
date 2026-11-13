@@ -15,7 +15,7 @@
 !(let $k (quote (+ 1 2)) (let $f (|-> (($a $b)) (p $k $a $b)) ($f (1 2))))
 !(let $k (quote (+ 1 2)) (let $f (|-> ($x) (case $x (($k yes) ($_ no)))) ($f 3)))
 !(let $k (quote (+ 1 2)) (let $f (|-> ($x) (case $x (($k yes) ($_ no)))) ($f (quote (+ 1 2)))))
-!(let $k 5 (let $f (|-> ($x) (+ $k $x)) (collapse (superpose (($f 1) ($f 2))))))
+!(let $k 5 (let $f (|-> ($x) (+ $k $x)) (sort-atom (collapse (superpose (($f 1) ($f 2)))))))
 !(collapse (let $f (|-> ($x) (let $y $x $y)) (($f 1) ($f 2))))
 !(let $f (|-> ($x) (+ $k $x)) (let $k 5 ($f 1)))
 !(let $k 2 (let $f (|-> ($x) (|-> ($y) (+ $k (* $x $y)))) (($f 3) 4)))

@@ -1,0 +1,30 @@
+Module CallOnce {
+  Theory Protocols() {
+    Empty Equations {
+      (call_once_run) == (Protocol "cesta-protocol/1"
+        (Context CallOnceContext)
+        (Hooks
+          (Hook ready call_once_ready guard (Requires identity) (Uses) (Proves result_ready))
+          (Hook permit call_once_permit guard (Requires identity) (Uses) (Proves effect_permit))
+          (Hook perform call_once_perform effect
+            (Requires identity effect_permit) (Uses) (Proves result_ready)
+            (Invalidates effect_permit))
+          (Hook failed call_once_failed guard (Requires identity) (Uses) (Proves failed))
+          (Hook park call_once_park prepare (Requires identity) (Uses) (Proves wake_registered)))
+        (Resources)
+        (Entry (Facts identity) (Owns))
+        (Body
+          (Call ready (Return answered)
+            (Call permit
+              (Call perform (Return answered)
+                (Call failed (Return raised)
+                  (Call park (Return suspended) (Return resource_failure))))
+              (Call failed (Return raised)
+                (Call park (Return suspended) (Return resource_failure))))))
+        (ExitRequires (answered result_ready) (raised failed) (suspended wake_registered))
+        (Checks (Fact identity call_once_identity) (Fact result_ready call_once_result_ready)
+                (Fact effect_permit call_once_has_permit) (Fact failed call_once_has_failed)
+                (Fact wake_registered call_once_wake_registered)));
+    }
+  }
+}

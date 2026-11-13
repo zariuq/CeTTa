@@ -65,7 +65,7 @@
     (gparse:repo-path "tests/support/rhocalc_lib_parse_translator_v3.metta")
     rho-g
     proc
-    (rho-lex-file->toks "tests/rhocalc/rho_quote_seals_outer_binder.rho"))
+    (rho-lex-file->toks "tests/rhocalc/rho_quote_drop_names_outer_binder.rho"))
   (Unique))
 
 !(assertEqualToResult
@@ -74,7 +74,7 @@
       (gparse:repo-path "tests/support/rhocalc_lib_parse_translator_v3.metta")
       rho-g
       proc
-      (rho-lex-file->toks "tests/rhocalc/rho_quote_seals_outer_binder.rho")))
+      (rho-lex-file->toks "tests/rhocalc/rho_quote_drop_names_outer_binder.rho")))
   (Unique))
 
 !(assertEqualToResult

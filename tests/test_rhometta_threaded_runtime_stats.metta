@@ -139,19 +139,14 @@
 !(pragma! num-threads 2)
 !(reset-runtime-stats!)
 
-!(assertEqualToResult
-  (collapse (rhometta:run (eval:kb)))
-  (((rho:val (got 1)) (rho:val (got 2)))))
+!(assertEqualToResult (rhometta:run (eval:kb)) ((rho:val (got 1)) (rho:val (got 2))))
 
 !(bind! &macro-run
    (collapse (rhometta:run (eval:kb-farm))))
 
-!(assertEqual
-  (collapse (rhometta:run (demo:farm)))
-  (collapse
-    (rho:par
+!(assertEqual (rhometta:run (demo:farm)) (rho:par
       (rho:val (demo:deduce-job 0 2))
-      (rho:val (demo:deduce-job 1 2)))))
+      (rho:val (demo:deduce-job 1 2))))
 
 !(assertEqual
   (ecan:extract-vec (rhometta:run (ecan:round (ecan:sti0))))

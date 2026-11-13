@@ -6,8 +6,8 @@
 
 ; A plain symbol names a space, created by its first rows; each row counts.
 !(static-import! facts fixtures/static_import_edges)
-!(collapse (match facts (edge $x $y) ($x $y)))
-!(collapse (get-atoms facts))
+!(sort-atom (collapse (match facts (edge $x $y) ($x $y))))
+!(sort-atom (collapse (get-atoms facts)))
 
 ; The rows are static data: adding or removing a row of their length is
 ; refused as the reference's static predicate refuses it; other lengths
@@ -15,35 +15,35 @@
 !(catch (add-atom facts (edge c d)))
 !(catch (remove-atom facts (edge a b)))
 !(catch (add-atom facts (foo x)))
-!(match facts $p $p)
+!(sort-atom (collapse (match facts $p $p)))
 
 ; Importing a file again changes nothing, whichever space is named.
 !(static-import! facts fixtures/static_import_edges)
 !(static-import! others fixtures/static_import_edges)
-!(collapse (match facts (edge $x $y) ($x $y)))
+!(sort-atom (collapse (match facts (edge $x $y) ($x $y))))
 !(collapse (match others (edge $x $y) ($x $y)))
 
 ; Strings, numbers and nested rows keep their values.
 !(static-import! things fixtures/static_import_values)
 !(collapse (match things (item $s $n $f) ($s $n $f)))
-!(collapse (match things (pair $l $r) ($l $r)))
+!(sort-atom (collapse (match things (pair $l $r) ($l $r))))
 
 ; A second file adds to a multifile predicate (the conversion declares
 ; Space/3 so); any other predicate a second file defines is redefined, and
 ; importing the first file again reloads it, as the reference's consult does.
 !(static-import! facts fixtures/static_import_more_edges)
-!(collapse (match facts (edge $x $y) ($x $y)))
+!(sort-atom (collapse (match facts (edge $x $y) ($x $y))))
 !(static-import! triples fixtures/static_import_triples_a)
 !(static-import! triples fixtures/static_import_triples_b)
 !(collapse (match triples (edge $x $y $z) ($x $y $z)))
 !(static-import! triples fixtures/static_import_triples_a)
-!(collapse (match triples (edge $x $y $z) ($x $y $z)))
+!(sort-atom (collapse (match triples (edge $x $y $z) ($x $y $z))))
 
 ; A .pl file is consulted as it is, its library directives included; the
 ; rows are the facts of the predicates it defines, none of a library's.
 !(static-import! kb fixtures/static_import_library)
-!(collapse (match kb (edge $x $y) ($x $y)))
-!(collapse (get-atoms kb))
+!(sort-atom (collapse (match kb (edge $x $y) ($x $y))))
+!(sort-atom (collapse (get-atoms kb)))
 
 ; use-module! loads a SWI library; an unknown one raises the loader's error.
 !(use-module! lists)

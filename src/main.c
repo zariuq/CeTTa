@@ -1910,6 +1910,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --lang petta --profile extended --syntax <cstyle|pystyle|rhostyle|sexpr> <file> # read by a GSLT presentation compiled at build time\n", out);
     fputs("       cetta --lang petta --syntax <cstyle-gll|pystyle-gll> <file>   # the same presentation by run-time GLL in lib/presentation\n", out);
     fputs("       cetta --lang petta [--syntax S] --print-syntax T <file> # print the document's atoms in presentation T (metta, cstyle, pystyle, rhostyle, sexpr)\n", out);
+    fputs("       cetta --lang petta --print-syntax T --print-hard-keywords <file> # backquote every keyword-spelled symbol, as the run-time route reads it\n", out);
     fputs("       cetta --presentations                           # the compiled presentations: name, version, source digest, certificate\n", out);
     fputs("       cetta --lang petta --syntax S --check-looks <file> # report data looks written where code runs (and calls where data is held)\n", out);
     fputs("       cetta ... --syntax cstyle@1.0 ...               # a presentation at a version: same MAJOR, MINOR at least as high\n", out);

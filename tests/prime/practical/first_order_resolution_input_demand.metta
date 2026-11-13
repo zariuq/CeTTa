@@ -13,7 +13,7 @@
      (tptp-resolution-example:unify:unify-atom () $object (port:atom "p"))
      $object (port:atom "p")))
 !(assertEqual (port:consume (port:bump)) True)
-!(assertEqual (collapse (port:consume (port:choose))) (True False))
+!(assertEqualToResult (port:consume (port:choose)) (True False))
 !(assertEqual
    (tptp-resolution-example:unify:unify-atom () (quote (port:bump)) (port:atom "p"))
    (FOUnify.Fail AtomConstructorMismatch))

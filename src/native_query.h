@@ -61,21 +61,42 @@ typedef bool (*CettaNativeQueryApplyHoles)(
     const CettaSkeleton *skeleton, const AtomId *holes, size_t count);
 
 /* How a filter compares its operands' instances: by id, alike or apart,
- * or as integers, LEFT less than RIGHT or not. */
+ * or as integers, LEFT less than RIGHT or not, equal or not. */
 typedef enum {
     CETTA_NATIVE_FILTER_ALIKE,
     CETTA_NATIVE_FILTER_APART,
     CETTA_NATIVE_FILTER_LESS,
     CETTA_NATIVE_FILTER_NOT_LESS,
+    CETTA_NATIVE_FILTER_INT_ALIKE,
+    CETTA_NATIVE_FILTER_INT_APART,
 } CettaNativeFilterOp;
+
+/* What integer an operand of an integer comparison is: its instance, or one
+ * operation of the two operands of an operand written (HEAD A B), each an
+ * integer or a variable.  A value that is no integer declines the run, as
+ * does a result outside the 64-bit integers (the dialect then answers a big
+ * integer) and a division or remainder with a negative operand or a zero
+ * divisor (whose rounding and whose error are the dialect's): the ordinary
+ * path answers all of those. */
+typedef enum {
+    CETTA_NATIVE_INT_VALUE = 0,
+    CETTA_NATIVE_INT_SUM,
+    CETTA_NATIVE_INT_DIFFERENCE,
+    CETTA_NATIVE_INT_PRODUCT,
+    CETTA_NATIVE_INT_QUOTIENT,
+    CETTA_NATIVE_INT_REMAINDER,
+} CettaNativeIntOperand;
 
 /* A comparison a filtered query's solutions meet (CettaNativeQuery.filters):
  * the instances of LEFT and RIGHT, a variable or an atom each, compared as
- * OP says. */
+ * OP says; for an integer comparison, each read as LEFT_AS and RIGHT_AS
+ * say. */
 typedef struct {
     Atom *left;
     Atom *right;
     CettaNativeFilterOp op;
+    CettaNativeIntOperand left_as;
+    CettaNativeIntOperand right_as;
 } CettaNativeQueryFilter;
 
 /* The most comparisons a query's solutions meet. */

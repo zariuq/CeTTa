@@ -859,6 +859,9 @@ double tu_float(const TermUniverse *universe, AtomId id);
 bool tu_bool(const TermUniverse *universe, AtomId id);
 /* The value of an internal tag, or 0 for any other atom. */
 int64_t tu_internal_tag(const TermUniverse *universe, AtomId id);
+/* Whether the stored term ID is an expression headed by an internal tag,
+ * one whose logical shape is not its encoding (atom_is_carrier). */
+bool tu_is_carrier(const TermUniverse *universe, AtomId id);
 PeTTaValueRepresentation tu_petta_value_representation(
     const TermUniverse *universe, AtomId id);
 const char *tu_string_cstr(const TermUniverse *universe, AtomId id);
@@ -896,6 +899,17 @@ __attribute__((always_inline))
 static inline AtomId tu_child(const TermUniverse *universe, AtomId id,
                               CettaExprIndex idx) {
     return tu_child_from_header(universe, tu_hdr(universe, id), idx);
+}
+
+/* tu_is_carrier of a recorded term, read from its header: a head recorded
+ * as a symbol decides it without reading the child. */
+static inline bool tu_hdr_is_carrier(const TermUniverse *universe,
+                                     const CettaTermHdr *hdr) {
+    return hdr && hdr->tag == ATOM_EXPR &&
+           hdr->sym_or_head == SYMBOL_ID_NONE &&
+           (hdr->aux32 & CETTA_TERM_HDR_DATA_MASK) != 0u &&
+           tu_internal_tag(universe,
+                           tu_child_from_header(universe, hdr, 0u)) != 0;
 }
 
 bool tu_has_vars(const TermUniverse *universe, AtomId id);

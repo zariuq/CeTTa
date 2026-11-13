@@ -42,7 +42,7 @@
 (= (field-choice-call $n $x)
    (field-choice (+ $n 1) (box $x) (box $x)))
 (= (field-choice-call $n $x) (empty))
-!(collapse (field-choice-call 1 $x))
+!(sort-atom (collapse (field-choice-call 1 $x)))
 
 ; Arity is independent of the inline storage capacity and the evaluated
 ; field need not occupy the first argument position.

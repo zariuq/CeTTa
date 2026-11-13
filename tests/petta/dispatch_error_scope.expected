@@ -28,6 +28,6 @@ true
 (fail-in-body 2)
 3
 ()
-((increment 2) 3)
+(3 (increment 2))
 ((fail-in-body 2))
 (2 3)

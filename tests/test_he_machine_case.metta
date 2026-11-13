@@ -12,7 +12,7 @@
 !(no-branch 3)
 (= (two) (superpose (1 2)))
 (= (each) (case (two) ((1 a) (2 b))))
-!(collapse (each))
+!(let $answers (collapse (each)) (sort-atom $answers))
 (= (err) (Error x bad))
 (= (on-error) (case (err) (((Error $a $b) caught) ($v other))))
 !(on-error)

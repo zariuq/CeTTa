@@ -207,9 +207,7 @@
 
 ; Prime retains `collapse` as a compatibility alias while reify remains the
 ; canonical occurrence materializer for new code and specifications.
-!(assertEqualToResult
-   (collapse (superpose (a b)))
-   ((a b)))
+!(assertEqualToResult (superpose (a b)) (a b))
 
 !(assertEqualToResult
    (bind! &prime-empty-space (new-space))

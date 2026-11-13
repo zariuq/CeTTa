@@ -1,0 +1,8 @@
+(fields ((got eq b b)))
+(headed ((got b b)))
+(same (solved))
+(deep (solved))
+(pair ())
+(four ())
+(other-head ())
+(unequal ())

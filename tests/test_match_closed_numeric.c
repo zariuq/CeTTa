@@ -57,8 +57,11 @@ int main(void) {
     Atom *large = box(&arena, &intern, atom_int(&arena, INT64_C(9007199254740993)));
     Atom *rounded = box(&arena, &intern, atom_float(&arena, 9007199254740992.0));
     compare(&arena, large, rounded, false);
+    /* he-compat keeps the integer exact too, as the fixed Hyperon it
+     * follows does (0.2.10 compared the integer rounded to a float). */
     compatibility = true;
-    compare(&arena, large, rounded, true);
+    compare(&arena, large, rounded, false);
+    compare(&arena, one, floating, true);
     compatibility = false;
     Atom *nan = box(&arena, &intern, atom_float(&arena, NAN));
     compare(&arena, nan, nan, false);

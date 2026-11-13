@@ -394,12 +394,14 @@ static void *cetta_test_resource_reader_thread(void *argument) {
     assert(space_occurrence_cursor_init(test->kept, test->pattern, &cursor));
     cetta_test_resource_barrier(test);
     cetta_test_resource_barrier(test);
+    /* The kept space is a stack, so its reads answer newest first. */
     for (size_t i = 0u; i < 3u; i++) {
+        size_t row = 2u - i;
         Atom *atom = NULL;
         CettaIndex index = UINT64_MAX;
         assert(space_occurrence_cursor_next(&cursor, &index, &atom) ==
                SPACE_OCCURRENCE_CURSOR_ITEM);
-        assert(index == i && atom && atom_eq(atom, test->fact[i]));
+        assert(index == row && atom && atom_eq(atom, test->fact[row]));
     }
     assert(space_occurrence_cursor_next(&cursor, NULL, NULL) ==
            SPACE_OCCURRENCE_CURSOR_END);

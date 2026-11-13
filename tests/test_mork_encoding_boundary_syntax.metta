@@ -22,9 +22,7 @@
   (mork:size &ws)
   (3))
 !(mork:add-atom &ws (nest (pair a (pair b c)) (text "x y")))
-!(assertEqual
-  (collapse (mork:get-atoms &ws))
-  ((edge a b)
+!(assertEqualToResult (mork:get-atoms &ws) ((edge a b)
    (nest (pair a (pair b c)) (text "x y"))
    (FList (FSDepth 0) (Cons ("formula" "x") Nil))
    "solo"))
@@ -35,9 +33,7 @@
 !(assertEqualToResult
   (mork:size &copy)
   (4))
-!(assertEqual
-  (collapse (mork:get-atoms &copy))
-  ((edge a b)
+!(assertEqualToResult (mork:get-atoms &copy) ((edge a b)
    (nest (pair a (pair b c)) (text "x y"))
    (FList (FSDepth 0) (Cons ("formula" "x") Nil))
    "solo"))
@@ -49,9 +45,7 @@
 !(assertEqualToResult
   (mork:size &compiled)
   (4))
-!(assertEqual
-  (collapse (mork:get-atoms &compiled))
-  ((edge a b)
+!(assertEqualToResult (mork:get-atoms &compiled) ((edge a b)
    (nest (pair a (pair b c)) (text "x y"))
    (FList (FSDepth 0) (Cons ("formula" "x") Nil))
    "solo"))

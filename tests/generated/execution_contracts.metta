@@ -9,41 +9,35 @@
 
 ; root
 !(assertEqualToResult
-  (collapse
-    (match &effect-space (left $name $key)
-      (match &effect-space (right $key $value) (joined $name $value))))
-  (((joined n0 v0) (joined n1 v1))))
+  (match &effect-space (left $name $key)
+    (match &effect-space (right $key $value) (joined $name $value)))
+  ((joined n0 v0) (joined n1 v1)))
 ; let
 !(assertEqualToResult
-  (collapse
-    (match &effect-space (left $name $key)
-      (let $answer (match &effect-space (right $key $value) (joined $name $value)) $answer)))
-  (((joined n0 v0) (joined n1 v1))))
+  (match &effect-space (left $name $key)
+    (let $answer (match &effect-space (right $key $value) (joined $name $value)) $answer))
+  ((joined n0 v0) (joined n1 v1)))
 ; superpose
 !(assertEqualToResult
-  (collapse
-    (match &effect-space (left $name $key)
-      (superpose ((match &effect-space (right $key $value) (joined $name $value))))))
-  (((joined n0 v0) (joined n1 v1))))
+  (match &effect-space (left $name $key)
+    (superpose ((match &effect-space (right $key $value) (joined $name $value)))))
+  ((joined n0 v0) (joined n1 v1)))
 ; if
 !(assertEqualToResult
-  (collapse
-    (match &effect-space (left $name $key)
-      (if True (match &effect-space (right $key $value) (joined $name $value)) no-result)))
-  (((joined n0 v0) (joined n1 v1))))
+  (match &effect-space (left $name $key)
+    (if True (match &effect-space (right $key $value) (joined $name $value)) no-result))
+  ((joined n0 v0) (joined n1 v1)))
 ; pure
 !(assertEqualToResult
-  (collapse
-    (match &effect-space (left $name $key)
-      (joined $name $key)))
-  (((joined n0 k0) (joined n1 k1))))
+  (match &effect-space (left $name $key)
+    (joined $name $key))
+  ((joined n0 k0) (joined n1 k1)))
 
 ; A user-defined head inherits the relational effect of its body.
 !(assertEqualToResult
-  (collapse
-    (match &effect-space (left $name $key)
-      (generated-relational-wrapper $name $key)))
-  (((joined n0 v0) (joined n1 v1))))
+  (match &effect-space (left $name $key)
+    (generated-relational-wrapper $name $key))
+  ((joined n0 v0) (joined n1 v1)))
 
 ; A template running get-atoms is relational: the pull declines
 ; and the oracle answers per row.

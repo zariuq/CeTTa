@@ -1,5 +1,6 @@
-; Removal leaves the rows it did not remove in their order, whatever reads
-; the space next: a query, a count, a listing, a match that is running.
+; Removal leaves the rows it did not remove, each occurrence once, whatever
+; reads the space next: a query, a count, a listing, a match that is running.
+; A read answers a bag, so each listing is printed sorted.
 
 (F 0)
 (F 1)
@@ -46,13 +47,13 @@
 ; Removal inside a match over the same space: the match reads the rows it
 ; began with.
 !(collapse (match &self (A $i $x) (if (> $x 10) (remove-atom &self (A $i $x)) (empty))))
-!(collapse (match &self (A $i $x) (A $i $x)))
+!(sort-atom (collapse (match &self (A $i $x) (A $i $x))))
 !(collapse (match &self (A 6 $x) $x))
 
 ; Remove and add inside a conjunction.
 !(collapse (match &self (, (F $k) (A $k $x))
      (if (< $x 3) (let $r (remove-atom &self (A $k $x)) (add-atom &self (A $k 100))) (empty))))
-!(collapse (match &self (A $i $x) (A $i $x)))
+!(sort-atom (collapse (match &self (A $i $x) (A $i $x))))
 
 ; Counts and listings read the same rows.
 !(size-atom (collapse (match &self (A $i $x) $i)))
@@ -74,9 +75,9 @@
 !(collapse (match &self (A $i $x) (A $i $x)))
 !(add-atom &self (A 0 zero))
 !(add-atom &self (A 1 one))
-!(collapse (match &self (A $i $x) (A $i $x)))
+!(sort-atom (collapse (match &self (A $i $x) (A $i $x))))
 
 ; Remove every F row: more removed rows than live ones.
 !(collapse (match &self (F $k) (remove-atom &self (F $k))))
 !(collapse (match &self (F $k) $k))
-!(collapse (match &self (A $i $x) (A $i $x)))
+!(sort-atom (collapse (match &self (A $i $x) (A $i $x))))

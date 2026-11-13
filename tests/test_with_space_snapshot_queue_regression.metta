@@ -2,10 +2,9 @@
 !(add-atom &q a)
 !(add-atom &q b)
 !(add-atom &q c)
-!(space-pop &q)
+!(space:queue:pop &q)
 !(assertEqualToResult
-  (with-space-snapshot $snap &q (collapse (get-atoms $snap)))
+  (let $answers (with-space-snapshot $snap &q (collapse (get-atoms $snap)))
+    (sort-atom $answers))
   ((b c)))
-!(assertEqualToResult
-  (collapse (get-atoms &q))
-  ((b c)))
+!(assertEqualToResult (get-atoms &q) (b c))

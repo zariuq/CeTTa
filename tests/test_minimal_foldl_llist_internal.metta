@@ -33,6 +33,6 @@
    (llist-sum (LCons 1 (LCons 2 (LCons 3 LNil))))
    6)
 !(assertEqual
-   (llist-record (LCons first (LCons second LNil)))
+   (let $seen (llist-record (LCons first (LCons second LNil))) (sort-atom $seen))
    (first second))
 !(assertEqual (llist-valid-fold malformed) False)

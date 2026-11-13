@@ -102,12 +102,23 @@ CettaIndex space_match_backend_candidates64(Space *s, Atom *pattern,
         *out = NULL;
     return 0;
 }
+
 uint32_t space_match_backend_candidates(Space *s, Atom *pattern, uint32_t **out) {
     (void)s;
     (void)pattern;
     if (out)
         *out = NULL;
     return 0;
+}
+
+CettaIndex space_match_candidates64(Space *s, Atom *pattern, CettaIndex **out) {
+    return space_match_backend_candidates64(s, pattern, out);
+}
+
+Atom *space_match_candidate_at64(const Space *s, CettaIndex idx) {
+    (void)s;
+    (void)idx;
+    return NULL;
 }
 bool space_match_backend_ground_exact_exists_frontier(
     Space *s, Atom *pattern, bool *out_found) {

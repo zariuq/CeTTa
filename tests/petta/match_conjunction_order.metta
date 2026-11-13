@@ -1,8 +1,11 @@
 ; A conjunctive match whose answers are one bag in any order of its legs
 ; runs next, in each state, the leg with the fewest candidates under the
-; bindings so far.  Where an effect could reach a later leg's snapshot, the
-; legs keep their written order.  The answers are SWI-PeTTa's; each bag is
-; sorted or counted, as search order is not specified.
+; bindings so far.  Where an answer may write to the space, the legs keep
+; their written order, and every leg reads the space as it stood when the
+; match was called.  The answers are SWI-PeTTa's but for the last two: there
+; SWI-PeTTa's later leg reads the link the first answer added, and answers
+; (b b c) and ((a b) (b b) (b b) (b c) (c c)) (the PeTTa spec, [DIFF-20]).
+; Each bag is sorted or counted, as search order is not specified.
 
 (L v0) (R v0) (T v0) (Pair v0 v0) (Triple v0 v0 v0)
 (L v1) (R v1) (T v1) (Pair v1 v1) (Triple v1 v1 v1)

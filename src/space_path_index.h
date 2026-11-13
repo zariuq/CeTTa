@@ -11,7 +11,7 @@ typedef struct CettaSpacePathIndex CettaSpacePathIndex;
 typedef enum {
     CETTA_SPACE_PATH_SYMBOL_KEY = 0,
     CETTA_SPACE_PATH_INTEGER_KEY,
-    /* A ground term keyed by its universe id. */
+    /* An ordinary ground term keyed by its structural hash. */
     CETTA_SPACE_PATH_TERM_KEY,
     /* The bound prefix after the head: a mix of the ids of the first
      * columns, each a value equal only to itself or a ground term. */
@@ -49,11 +49,10 @@ static inline bool space_path_index_leads(const Atom *pattern) {
         pattern->expr.elems[1] && pattern->expr.elems[1]->kind == ATOM_VAR;
 }
 
-/* Whether a column's value is keyed by its term: a ground term whose leaves
- * are all symbols, a nested constant such as a level (S (S Z)).  Equal such
- * terms are one id, and only such a term can match it, so its id selects the
- * rows exactly, where the trie would hold every row's term and cuts a deep
- * one to a wildcard. */
+/* Whether a column has an ordinary ground exact tree as its key. Encoded
+ * and image-backed rows use the same structural hash; other representations
+ * remain uncertain and collisions are checked by the matcher. This avoids
+ * cutting a deep constant to the trie's wildcard. */
 bool space_path_index_term_key_admits(const Atom *element);
 
 /* A scalar prefix needs no second access path. Keep this admission test a
@@ -116,6 +115,27 @@ bool space_path_index_candidates(
  * column's index: an exact count's candidates, however broad, with no trie.
  * The index is built when `build` asks; false when no column is keyed or
  * the Space keeps no such index. */
+/* The index serving a read of PATTERN, as the read's demand of it (the
+ * caller's to free()), with *PRICE the rows it would hand over, counted
+ * without reading them: the shortest offer among those kept for a flat
+ * pattern's columns, else the index of the coordinate
+ * space_path_index_candidates would choose.  NULL where no index serves the
+ * read; *WANTED then says whether one could, the read's walk being rent
+ * toward it (space_path_index_rent).  Nothing is built unless the rent paid
+ * has reached the space's rows: then this read's index is. */
+typedef struct CettaSpacePathDemand CettaSpacePathDemand;
+CettaSpacePathDemand *space_path_index_offer(Space *space, Atom *pattern,
+                                             CettaCount *price, bool *wanted);
+/* The rows the demanded index hands over, as physical rows, ascending: the
+ * rows its price counted.  False when the index is no longer kept, or holds
+ * open rows while rows are marked. */
+bool space_path_index_demand_rows(Space *space,
+                                  const CettaSpacePathDemand *demand,
+                                  CettaIndex **out, CettaCount *count);
+CettaSpacePathDemand *space_path_index_demand_copy(
+    const CettaSpacePathDemand *demand);
+/* ROWS read by a walk for want of an index (space_path_index_offer). */
+void space_path_index_rent(Space *space, CettaCount rows);
 bool space_path_index_lead_candidates(Space *space, Atom *pattern, bool build,
                                       CettaIndex **out, CettaIndex *count);
 /* The rows of a pattern's head whose first columns hold the pattern's bound

@@ -11,7 +11,7 @@
 !(prepared-p2i (prepared-pack (prepared-i2p 2) (prepared-i2p 300)))
 
 ; Overlap is not single-result determinate.  The finite-answer capability may
-; enumerate pure value branches, preserving authored multiplicity and order;
+; enumerate pure value branches, preserving authored multiplicity;
 ; languages without that capability retain canonical bag/retry behavior.
 (= (prepared-choice $x) left)
 (= (prepared-choice $x) right)

@@ -1,0 +1,26 @@
+Module Wait {
+  Theory Protocols() {
+    Empty Equations {
+      (wait_run) == (Protocol "cesta-protocol/1"
+        (Context WaitContext)
+        (Hooks
+          (Hook ready wait_ready effect (Requires) (Uses request) (Proves complete))
+          (Hook failed wait_failed guard (Requires) (Uses request) (Proves))
+          (Hook yield wait_yield prepare (Requires) (Uses request) (Proves)))
+        (Resources (Resource request wait_acquire wait_release wait_transfer
+          (AcquireRequires) (TransferRequires complete)))
+        (Entry (Facts) (Owns))
+        (Body
+          (Acquire request
+            (Loop (Limit budget)
+              (Call ready
+                (Transfer request (Return answered))
+                (Call failed
+                  (Release request (Return raised))
+                  (Call yield (Continue) (Continue))))
+              (Release request (Return suspended)))
+            (Return resource_failure)))
+        (Checks (Fact complete wait_complete) (Own request wait_owned)));
+    }
+  }
+}

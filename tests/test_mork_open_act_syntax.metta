@@ -48,7 +48,5 @@
 !(assertEqualToResult
   (mork:match &compiled (edge c d) hit)
   (hit))
-!(assertEqual
-  (collapse (mork:get-atoms &compiled))
-  ((edge a b) (edge b c) (edge c d)))
+!(assertEqualToResult (mork:get-atoms &compiled) ((edge a b) (edge b c) (edge c d)))
 ; Note: collapse returns a single list, so assertEqual compares one value — safe.

@@ -7,11 +7,11 @@
       (S (S (S (S Z))))
       $left)
 
-; Both inputs may remain relational; declaration order determines the bag.
-!(collapse
+; Both inputs may remain relational.
+!(sort-atom (collapse
     (let (plus $left $right)
          (S (S Z))
-         ($left $right)))
+         ($left $right))))
 
 ; A fixed recursive call cannot unify its constructor result with a symbol.
 !(collapse

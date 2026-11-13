@@ -17,10 +17,10 @@
 (: preserve-nondet-result (-> (-[nondet]-> Number Number)))
 (= (preserve-nondet-result) (produce-nondet))
 
-!(test (collapse (apply-many choose-neighbor 2)) (2 3))
+!(test (sort-atom (collapse (apply-many choose-neighbor 2))) (sort-atom (2 3)))
 !(test
-   (collapse
+   (sort-atom (collapse
       (apply-many
          (|-> ($value) (superpose ($value (+ $value 1))))
-         2))
-   (2 3))
+         2)))
+   (sort-atom (2 3)))

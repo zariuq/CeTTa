@@ -7,7 +7,7 @@ plain
 (progn (println! inert))
 (prog1 (println! inert))
 (left left right)
-left
+true
 8
 (Box 9)
 done

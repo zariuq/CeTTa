@@ -15,8 +15,8 @@
 (friend c d)
 
 !(test
-    (collapse
+    (sort-atom (collapse
       (if (succeedsPredicate (&self friend $x $y))
           ($x $y)
-          NotFound))
-    ((a b) (c d)))
+          NotFound)))
+    (sort-atom ((a b) (c d))))

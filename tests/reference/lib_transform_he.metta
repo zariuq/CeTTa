@@ -581,7 +581,8 @@
 (= (tf:distinct-ground $fp)
    (if (tf:ground $fp)
        (let $keys (tf:keys $fp)
-         (let $sorted (sort-atom $keys) (tf:no-adjacent-equal $sorted)))
+         (let $once (unique-atom $keys)
+           (== (size-atom $once) (size-atom $keys))))
        False))
 
 (= (tf:keys $fp)
@@ -589,15 +590,6 @@
      (let ($e $more) (decons-atom $fp)
        (let ($_mode $s $a) $e
          (let $tail (tf:keys $more) (cons-atom ($a $s) $tail))))))
-
-(= (tf:no-adjacent-equal $xs)
-   (if (tf:nil $xs) True
-     (let ($x $more) (decons-atom $xs) (tf:no-adjacent-from $x $more))))
-
-(= (tf:no-adjacent-from $x $xs)
-   (if (tf:nil $xs) True
-     (let ($y $more) (decons-atom $xs)
-       (if (=alpha $x $y) False (tf:no-adjacent-from $y $more)))))
 
 ; The count, for footprints that repeat an atom or hold variables.
 (= (tf:count $entry $fp)

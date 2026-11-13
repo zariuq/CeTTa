@@ -332,7 +332,6 @@ typedef struct {
     SymbolId head;
     PettaTypeCall *calls;
     uint32_t count;
-    bool hold_body;
     PettaProgramTypeArity *arities;
     size_t arity_len, arity_cap;
 } PettaProgramTypeFamily;
@@ -1722,6 +1721,63 @@ static bool petta_program_builtin_names_data(SymbolId head) {
            head == g_builtin_syms.native_handle;
 }
 
+/* Whether HEAD, if one of CeTTa's clean primary extensions, is offered by
+ * the session: which builtins are such extensions is read once a symbol. */
+static _Atomic uint8_t *g_petta_extension_kind;
+static SymbolId g_petta_extension_limit;
+
+static __attribute__((noinline)) bool petta_program_extension_offered_read(
+    SymbolId head);
+
+/* 0: not read yet; 1: no extension; 2: an extension. */
+static inline bool petta_program_extension_offered(SymbolId head) {
+    _Atomic uint8_t *kinds = atomic_load_explicit(
+        (_Atomic(_Atomic uint8_t *) *)&g_petta_extension_kind,
+        memory_order_relaxed);
+    if (kinds && head < g_petta_extension_limit &&
+        atomic_load_explicit(&kinds[head], memory_order_relaxed) == 1u)
+        return true;
+    return petta_program_extension_offered_read(head);
+}
+
+static __attribute__((noinline)) bool petta_program_extension_offered_read(
+    SymbolId head) {
+    if (!symbol_id_is_builtin(head) || !eval_builtin_symbol_is_clean_extension ||
+        !eval_current_builtin_symbol_allowed)
+        return true;
+    _Atomic uint8_t *kinds = atomic_load_explicit(
+        (_Atomic(_Atomic uint8_t *) *)&g_petta_extension_kind,
+        memory_order_acquire);
+    if (!kinds) {
+        SymbolId limit = g_builtin_syms.native_handle;
+        if (g_builtin_syms.empty_form > limit)
+            limit = g_builtin_syms.empty_form;
+        if (g_builtin_syms.work_exists > limit)
+            limit = g_builtin_syms.work_exists;
+        limit++;
+        _Atomic uint8_t *made = calloc(limit, sizeof(*made));
+        if (!made)
+            return eval_current_builtin_symbol_allowed(head);
+        _Atomic uint8_t *expected = NULL;
+        g_petta_extension_limit = limit;
+        if (!atomic_compare_exchange_strong(
+                (_Atomic(_Atomic uint8_t *) *)&g_petta_extension_kind,
+                &expected, made)) {
+            free(made);
+            made = expected;
+        }
+        kinds = made;
+    }
+    if (head >= g_petta_extension_limit)
+        return true;
+    uint8_t kind = atomic_load_explicit(&kinds[head], memory_order_relaxed);
+    if (kind == 0u) {
+        kind = eval_builtin_symbol_is_clean_extension(head) ? 2u : 1u;
+        atomic_store_explicit(&kinds[head], kind, memory_order_relaxed);
+    }
+    return kind == 1u || eval_current_builtin_symbol_allowed(head);
+}
+
 bool petta_program_head_is_intrinsic(SymbolId head) {
     const PettaIntrinsicNameIds *ids =
         head == SYMBOL_ID_NONE ? NULL : petta_intrinsic_name_ids();
@@ -1763,6 +1819,11 @@ bool petta_program_head_is_intrinsic(SymbolId head) {
              eval_current_pattern_control_arity(head)) ||
             machine_named ||
             typecheck_named);
+}
+
+bool petta_program_head_applies_at_any_arity(SymbolId head) {
+    return petta_program_head_is_intrinsic(head) &&
+        petta_program_extension_offered(head);
 }
 
 typedef struct {
@@ -2746,9 +2807,13 @@ static PettaPlanNode *petta_plan_build_in(
              * its arities, and otherwise a partial application or an
              * over-application, which dispatch decides
              * (RegisteredArity.reference). */
+            /* A clean primary extension the session does not offer is an
+             * unknown name there (plain PeTTa has no `reify`): its call is
+             * data whose arguments are evaluated. */
             node->role = constructor_slot_frame
                 ? PETTA_PLAN_DATA
-                : item.direct_call || petta_program_head_is_intrinsic(head) ||
+                : item.direct_call ||
+                  petta_program_head_applies_at_any_arity(head) ||
                   node->relation_head_admitted ||
                   cetta_petta_head_names_extension(head)
                       ? PETTA_PLAN_STATIC_CALL
@@ -4131,7 +4196,6 @@ static bool petta_program_type_family_build(
     ArenaMark mark = arena_mark(storage);
     Atom **types = NULL;
     uint32_t count = space_get_declared_types(space, storage, head, &types);
-    family->hold_body = petta_type_body_is_data(types, count);
     count = petta_type_unique_signatures(types, count);
     family->calls = count ? calloc(count, sizeof(*family->calls)) : NULL;
     bool ok = !count || family->calls;
@@ -4270,7 +4334,16 @@ bool petta_program_type_calls(PettaProgram *program, Space *space, Atom *head,
     if (ok) {
         *calls_out = calls;
         *count_out = count;
-        *hold_body = family->hold_body;
+        /* The bodies this call enters are those of the equations its
+         * declarations select: of its own number of arguments for a full
+         * call, of the longer declarations for a partial one.  A
+         * declaration of a number of arguments the call does not select
+         * does not decide whether they are held (petta_type_body_is_data). */
+        for (uint32_t i = 0u; i < family->count; i++)
+            if ((complete_call ? supplied == family->calls[i].arity
+                               : supplied <= family->calls[i].arity) &&
+                family->calls[i].hold_result)
+                *hold_body = true;
     } else {
         free(calls);
     }
@@ -4322,7 +4395,7 @@ static PettaProgramAnalysisSpace *petta_program_ensure_analysis_space(
 
 PettaProgram *petta_program_new_with_rules(unsigned admitted_forms) {
     if (!(admitted_forms & CETTA_RULE_SYNTAX_ORDINARY) ||
-        (admitted_forms & ~(CETTA_RULE_SYNTAX_ORDINARY | CETTA_RULE_SYNTAX_DIRECTIONAL)))
+        !cetta_rule_syntax_valid(admitted_forms))
         return NULL;
     PettaProgram *program = calloc(1u, sizeof(*program));
     if (!program) return NULL;
@@ -7730,9 +7803,8 @@ PettaResolvedCallClass petta_program_classify_resolved_call(
         return PETTA_RESOLVED_CALL_MACHINE_LOCAL;
     if (petta_program_head_is_intrinsic(head))
         return PETTA_RESOLVED_CALL_UNSAFE;
-    if (!space_equations_may_match_known_head(space, head) &&
-        (!(program->admitted_rule_forms & CETTA_RULE_SYNTAX_DIRECTIONAL) ||
-         !space_directional_rules_may_match_known_head(space, head)))
+    if (!space_rules_may_match_known_head(space, head,
+            program->admitted_rule_forms))
         return PETTA_RESOLVED_CALL_MACHINE_LOCAL;
     return petta_program_relation_safety(
                program, space, head, call->expr.len - 1u) ==

@@ -15,7 +15,7 @@
 ; Nondeterministic elements.
 (= (choice) (superpose (1 2)))
 (= (tup) (0 (choice) (choice)))
-!(collapse (tup))
+!(let $answers (collapse (tup)) (sort-atom $answers))
 ; A recursion through a tuple-valued accumulator.
 (= (count $n $acc) (if (== $n 0) $acc (count (- $n 1) (0 (+ $n 0) $acc))))
 !(count 3 ())

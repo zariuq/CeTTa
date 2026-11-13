@@ -79,7 +79,7 @@
 !(catch (sort-computed 2))
 !(collapse (let $f (superpose (sort-computed)) ($f 2)))
 !(catch (collapse (dynamic-forward (superpose (divide-or-value)) 2)))
-!(catch (collapse (dynamic-forward (superpose (divide-or-value)) 1)))
+!(catch (sort-atom (collapse (dynamic-forward (superpose (divide-or-value)) 1))))
 
 ; An Atom-typed position keeps syntax even during specialization. Mixed
 ; overloads retain both interpretations through the ordinary call route.
@@ -99,7 +99,7 @@
 !(hold-syntax fail-in-body 2)
 !(run-value increment 2)
 !(catch (collapse (run-value fail-in-body 2)))
-!(catch (collapse (mixed-use increment 2)))
+!(catch (sort-atom (collapse (mixed-use increment 2))))
 !(catch (collapse (mixed-use fail-in-body 2)))
 
 (: map-flat3 (-> Atom %Undefined%))

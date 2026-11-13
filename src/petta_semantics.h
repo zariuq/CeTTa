@@ -337,6 +337,9 @@ typedef struct {
     CettaExprIndex flat_end;
     bool in_flat_tail;
     bool invalid;
+    /* At END: the list ended in a list value (the list kind), not in an
+     * expression. */
+    bool end_list_kind;
 } PeTTaLogicalListCursor;
 
 void petta_semantics_logical_list_cursor_init(
@@ -590,6 +593,34 @@ Atom *petta_semantics_lower(
  */
 bool petta_semantics_term_compare(
     const Atom *left, const Atom *right, int *ordering);
+typedef enum {
+    PETTA_ORDER_ITEM = 0,
+    PETTA_ORDER_END,
+    PETTA_ORDER_END_LIST,
+    PETTA_ORDER_END_TERM,
+    PETTA_ORDER_UNREAD,
+} PeTTaOrderStep;
+
+typedef struct {
+    const Atom *atom;
+    PeTTaLogicalListCursor cursor;
+    CettaExprIndex next;
+    bool logical;
+} PeTTaOrderSide;
+
+bool petta_semantics_order_list_form(const Atom *atom);
+void petta_semantics_order_side_init(PeTTaOrderSide *side, const Atom *atom);
+/* The next element, or how the list ends: END and END_LIST for a proper
+ * list of the expression and the list kind, END_TERM with the term an open
+ * or improper list ends in, UNREAD when the walk cannot go on. */
+PeTTaOrderStep petta_semantics_order_side_next(PeTTaOrderSide *side,
+                                              const Atom **item);
+/* Two ends where two lists that agree so far both end, neither a further
+ * element and not both END_TERM: negative, zero or positive. */
+int petta_semantics_order_ends(PeTTaOrderStep left, const Atom *left_end,
+                               PeTTaOrderStep right,
+                               const Atom *right_end);
+
 
 /* Compare the empty/nonempty expression class against a non-expression
  * leaf without manufacturing an expression or inspecting child storage. */

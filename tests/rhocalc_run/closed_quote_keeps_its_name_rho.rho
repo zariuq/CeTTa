@@ -1,0 +1,2 @@
+// @{*$y | *$y} is a closed name: the receive does not bind the $y inside it.
+for ($y <- @{0}) {@{*$y | *$y}!(0)} | @{0}!(0)

@@ -10,7 +10,7 @@
 !(hide ((add-atom &self (item a))
         (add-atom &self (item b))))
 
-!(collapse (match &self (item $value)
-                  (mutate-on-a $value)))
+!(sort-atom (collapse (match &self (item $value)
+                  (mutate-on-a $value))))
 
-!(collapse (match &self (item $value) $value))
+!(sort-atom (collapse (match &self (item $value) $value)))

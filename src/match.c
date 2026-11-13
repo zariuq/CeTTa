@@ -14347,9 +14347,9 @@ static bool stored_match_push(StoredMatchWorklist *work, BindingValue left,
     return true;
 }
 
-static bool stored_grounded_equal(Atom *left,
-                                  const TermUniverse *candidate_universe,
-                                  AtomId right_id) {
+bool match_stored_grounded_equal(Atom *left,
+                                 const TermUniverse *candidate_universe,
+                                 AtomId right_id) {
     if (tu_kind(candidate_universe, right_id) != ATOM_GROUNDED)
         return false;
     {
@@ -14574,7 +14574,7 @@ retry_pair:
         case ATOM_VAR:
             goto fail;
         case ATOM_GROUNDED:
-            if (!stored_grounded_equal(left, candidate_universe, right_id))
+            if (!match_stored_grounded_equal(left, candidate_universe, right_id))
                 goto fail;
             break;
         case ATOM_EXPR:

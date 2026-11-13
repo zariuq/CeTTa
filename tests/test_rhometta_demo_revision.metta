@@ -58,7 +58,5 @@
            (rho:send (chan 3) (rhometta:eval (combine2 $e1 $e2))))))
      (rho:recv (chan 3) $r (rho:drop $r))))
 
-!(assertEqual
-  (collapse (rhometta:run (revision-chained)))
-  (collapse (rho:val (combine2 (rho:quote (rho:val (agent-evidence a1)))
-                               (rho:quote (rho:val (agent-evidence a2)))))))
+!(assertEqual (rhometta:run (revision-chained)) (rho:val (combine2 (rho:quote (rho:val (agent-evidence a1)))
+                               (rho:quote (rho:val (agent-evidence a2))))))

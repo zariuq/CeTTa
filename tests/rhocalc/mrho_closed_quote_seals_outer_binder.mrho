@@ -1,0 +1,11 @@
+; Any quote that is not a single drop is a closed name, impervious to
+; substitution: the $x inside @{*$x | *$x} is free, not the surrounding
+; receive's binder, and COMM leaves the quoted process as written.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $x
+    (rho:send
+      (rho:quote (rho:par (rho:drop $x) (rho:drop $x)))
+      rho:nil))
+  (rho:send
+    (rho:quote rho:nil)
+    (rho:send (rho:quote rho:nil) rho:nil)))

@@ -55,4 +55,4 @@
 
 !(import! &self (library pkg choice))
 !(test (once (root-choice)) second)
-!(test (collapse (root-choice)) (second first))
+!(test (sort-atom (collapse (root-choice))) (sort-atom (second first)))

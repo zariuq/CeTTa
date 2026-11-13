@@ -239,6 +239,18 @@ typedef struct {
         void *context, SymbolId head, CettaExprLen arity);
     bool (*tabled_relation_join_set)(
         void *context, SymbolId head, CettaExprLen arity, SymbolId join);
+    /* A transform as its library's chain, which the machine translates and
+     * runs as its own continuation: the proposals, then one branch per
+     * proposal, fired and routed only when it is continued, every value of
+     * the chain held by a variable.  CALL is the transform with the caller's
+     * values in place.  NULL leaves the call to the host as one
+     * application. */
+    Atom *(*transform_chain)(
+        void *context, Space *space, Arena *arena, Atom *call);
+    /* The error a failed native collection raised, taken from the host so
+     * that the machine raises it under its own handlers, as it raises a
+     * host application's error.  NULL when the host raised none. */
+    Atom *(*take_raised)(void *context);
 } PettaMachineOptionalServices;
 
 typedef struct {
@@ -445,6 +457,9 @@ typedef struct {
     Space *(*resolve_space)(
         void *context, Space *root_space, Arena *arena,
         Atom *reference);
+    /* A copy of SPACE as it stands, as a space atom in ARENA: what
+     * with-space-snapshot binds.  NULL when it cannot be made. */
+    Atom *(*snapshot_space)(void *context, Space *space, Arena *arena);
     /* Resolve a language-owned value reference only after its authored
      * occurrence reaches a SOLVE boundary.  A successful lookup returns a
      * machine-owned value in `resolved`; an unbound reference succeeds with

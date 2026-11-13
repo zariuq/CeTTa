@@ -1,6 +1,5 @@
-; Positive test: PathMap match order is NOT insertion order.
-; We prove this by showing the multiset is correct while the
-; ordered assertion would fail.
+; The answers of a PathMap match are a bag: every rule's output is there,
+; and no order of them, insertion order or any other, is promised or tested.
 
 !(import! &self mork)
 
@@ -16,16 +15,7 @@
 ; All 4 fire
 !(assertEqualToResult (mork:step! &ws 4) (4))
 
-; Correct: multiset comparison — all 4 present regardless of order
+; All 4 are present, compared as a bag.
 !(assertEqual
   (mork:match &ws (out $x) $x)
   (superpose (zebra aardvark mango cherry)))
-
-; Prove order differs: collect the actual sequence and show it's
-; NOT (zebra aardvark mango cherry) — i.e., NOT insertion order
-!(assertEqualToResult
-  (if (== (collapse (mork:match &ws (out $x) $x))
-          (zebra aardvark mango cherry))
-      order-matches-insertion
-      order-differs-from-insertion)
-  (order-differs-from-insertion))

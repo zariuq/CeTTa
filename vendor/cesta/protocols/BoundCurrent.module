@@ -1,0 +1,76 @@
+Module BoundCurrent {
+  Theory Protocols() {
+    Empty Equations {
+      (bound_current_run) == (Protocol "cesta-protocol/2"
+        (Context BoundCurrentContext)
+        (Hooks
+          (Hook observe bound_observe guard
+            (Requires identity) (Uses job) (Proves current) (Reads store))
+          (Hook mutate bound_mutate effect
+            (Requires current) (Uses job) (Proves) (Writes store))
+          (Hook refresh bound_refresh guard
+            (Requires identity) (Uses job) (Proves current) (Reads store))
+          (Hook publish bound_publish effect
+            (Requires current) (Uses job) (Proves result_ready) (Reads store))
+          (Hook park bound_park prepare
+            (Requires result_ready) (Uses job) (Proves wake_registered)))
+        (Resources
+          (Resource job bound_claim bound_discharge bound_transfer
+            (BoundOwner bound_job_owned)
+            (AcquireRequires identity)
+            (TransferRequires wake_registered)))
+        (Entry (Facts identity) (Owns job))
+        (Body
+          (Call observe
+            (Call mutate
+              (Call refresh
+                (Call publish
+                  (Call park
+                    (TransferTo job (Return suspended))
+                    (Discharge job (Return resource_failure)))
+                  (Discharge job (Return raised)))
+                (Discharge job (Return engine_failure)))
+              (Discharge job (Return raised)))
+            (Discharge job (Return raised))))
+        (Instances store)
+        (Dependencies (Depends current store))
+        (ExitRequires (suspended wake_registered))
+        (Checks
+          (Fact identity bound_identity)
+          (Fact current bound_current)
+          (Fact result_ready bound_result_ready)
+          (Fact wake_registered bound_wake_registered)
+          (Own job bound_job_owned)));
+
+      (bound_claim_run) == (Protocol "cesta-protocol/2"
+        (Context BoundClaimContext)
+        (Hooks)
+        (Resources
+          (Resource job claim_job discharge_job transfer_job
+            (BoundOwner claim_job_owned)
+            (AcquireRequires identity)
+            (TransferRequires)))
+        (Entry (Facts identity) (Owns))
+        (Body
+          (Claim job
+            (Discharge job (Return done))
+            (Return resource_failure)))
+        (Checks (Fact identity claim_identity) (Own job claim_job_owned)));
+
+      (bound_resume_run) == (Protocol "cesta-protocol/2"
+        (Context BoundClaimContext)
+        (Hooks)
+        (Resources
+          (Resource job claim_job discharge_job transfer_job
+            (BoundOwner claim_job_owned)
+            (AcquireRequires identity)
+            (TransferRequires)))
+        (Entry (Facts identity) (Owns))
+        (Body
+          (Resume job
+            (Discharge job (Return done))
+            (Return resource_failure)))
+        (Checks (Fact identity claim_identity) (Own job claim_job_owned)));
+    }
+  }
+}

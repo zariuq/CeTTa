@@ -1,13 +1,13 @@
 ; Declarations and equations are read through the chain of their head.
 
-; Declared types: each head reads its own declarations, in declaration order.
+; Declared types: each head reads its own declarations.
 (: area (-> Number Number))
 (: label (-> Symbol String))
 (: shift (-> Number Number))
 (: shift (-> Symbol Symbol))
 !(get-type area)
 !(get-type label)
-!(collapse (get-type shift))
+!(let $answers (collapse (get-type shift)) (sort-atom $answers))
 ; An undeclared head has no declaration of its neighbours.
 !(get-type perimeter)
 

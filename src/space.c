@@ -13,6 +13,8 @@
 #include "stats.h"
 #include "allocator_info.h"
 #include "eval.h"
+#include "petta_semantics.h"
+#include "space_order.h"
 #include "state_cell.h"
 #pragma weak state_cell_snapshot_acquire
 #pragma weak state_cell_snapshot_release
@@ -1144,10 +1146,15 @@ static DiscNode *disc_insert_atom(DiscPool *pool, DiscNode *node, Atom *a,
         /* Other grounded values sit on the variable branch. */
         return disc_get_var(pool, node, inner);
     case ATOM_EXPR: {
-        /* A list pattern meets lists of every length at least its prefix's,
-         * so it is keyed as a variable. */
-        if (atom_is_list_rest(a))
+        /* A carrier (a list pattern, cons cells, any value headed by an
+         * internal tag) spells a shape other than its encoding: a list
+         * pattern meets lists of every length at least its prefix's, cons
+         * cells meet the list they continue into.  It is keyed as a
+         * variable, and the trie no longer counts exactly. */
+        if (atom_is_carrier(a)) {
+            pool->approximate = true;
             return disc_get_var(pool, node, inner);
+        }
         DiscNode *cur = disc_get_expr(pool, node, a->expr.len,
                                       inner || a->expr.len != 0u);
         for (CettaExprIndex i = 0; i < a->expr.len; i++)
@@ -1199,9 +1206,9 @@ static bool disc_insert_atom_id(DiscPool *pool, DiscNode *node,
         }
         return true;
     case ATOM_EXPR: {
-        if (tu_arity(universe, atom_id) > 0u &&
-            tu_internal_tag(universe, tu_child(universe, atom_id, 0u)) ==
-                CETTA_INTERNAL_TAG_LIST_REST) {
+        /* A carrier is keyed as a variable (disc_insert_atom). */
+        if (tu_is_carrier(universe, atom_id)) {
+            pool->approximate = true;
             *out_leaf = disc_get_var(pool, node, inner);
             return true;
         }
@@ -1230,16 +1237,25 @@ void disc_insert(DiscNode *root, Atom *lhs, CettaIndex eq_idx) {
     disc_add_leaf(pool, leaf, eq_idx);
 }
 
+/* File the atom `atom_id` under `eq_idx`, read in the universe's compact
+ * storage, or decoded where the universe keeps a term without a record (a
+ * cell with an open tail, at any depth).  False only when the atom cannot be
+ * read at all. */
 bool disc_insert_id(DiscNode *root, const TermUniverse *universe,
                     AtomId atom_id, CettaIndex eq_idx) {
     if (!root) return false;
     DiscPool *pool = disc_root_pool(root);
     DiscNode *leaf = NULL;
     CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
-    if (!disc_insert_atom_id(pool, root, universe, atom_id, &leaf, 0u,
-                             &budget, true))
+    if (disc_insert_atom_id(pool, root, universe, atom_id, &leaf, 0u,
+                            &budget, true)) {
+        disc_add_leaf(pool, leaf, eq_idx);
+        return true;
+    }
+    Atom *atom = universe ? term_universe_get_atom(universe, atom_id) : NULL;
+    if (!atom)
         return false;
-    disc_add_leaf(pool, leaf, eq_idx);
+    disc_insert(root, atom, eq_idx);
     return true;
 }
 
@@ -1401,9 +1417,8 @@ static DiscNode *disc_find_atom_id_path(
         return disc_path_step(path, node, DISC_EDGE_VARIABLE,
                               (DiscEdgeKey){0});
     case ATOM_EXPR: {
-        if (tu_arity(universe, atom_id) > 0u &&
-            tu_internal_tag(universe, tu_child(universe, atom_id, 0u)) ==
-                CETTA_INTERNAL_TAG_LIST_REST)
+        /* A carrier was keyed as a variable (disc_insert_atom_id). */
+        if (tu_is_carrier(universe, atom_id))
             return disc_path_step(path, node, DISC_EDGE_VARIABLE,
                                   (DiscEdgeKey){0});
         DiscNode *cur = disc_path_step(
@@ -1833,8 +1848,9 @@ static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next) {
         break;
 
     case ATOM_EXPR:
-        /* A list pattern in a query may meet any indexed term there. */
-        if (atom_is_list_rest(q)) {
+        /* A carrier in a query (a list pattern, cons cells) may meet any
+         * indexed term there. */
+        if (atom_is_carrier(q)) {
             disc_skip_term(node, next);
             break;
         }
@@ -1871,6 +1887,15 @@ void disc_lookup(DiscNode *root, Atom *query, CettaIndex **out,
     dns_free(&final);
 }
 
+/* The match trie and the head index as a rewrite of the rows found them:
+ * the cursors of the views then reading the Space go on in them, and the
+ * last of those views to go frees them. */
+typedef struct SpaceIndexHold {
+    uint32_t references;
+    DiscNode *match_trie;
+    CettaSpaceHeadIndex *head_index;
+} SpaceIndexHold;
+
 /* While current, a pinned view borrows its Space's rows and trie and
  * `space` names that Space.  Detaching copies the rows and their removal
  * marks into the view, takes the trie, and clears `space`: the view is then
@@ -1896,6 +1921,30 @@ struct SpacePinnedOccurrences {
     CettaIndex marked;
     /* The head indexes its cursors read, taken when it detached. */
     CettaSpaceHeadIndex *head_index;
+    /* The match trie and head index a rewrite of the rows took from the
+     * Space for the views reading them, which share them. */
+    struct SpaceIndexHold *indexes;
+    /* A priority space's order over the rows, copied when it detached;
+     * has_order false when it could not be. */
+    CettaOrder order;
+    bool has_order;
+    /* Frozen: a removal that only marked rows left the view on its Space's
+     * rows ("Frozen views").  It reads the rows unmarked now and the rows
+     * marked since it froze, whose stamps are past `freeze_serial`. */
+    bool frozen;
+    uint32_t freeze_serial;
+    struct SpacePinnedOccurrences *frozen_next;
+    /* Its cursors that read the match trie's leaves. */
+    uint32_t index_readers;
+    /* The rows marked since it froze and their terms, which it keeps; and,
+     * once they are many, their bits over [0, gone_bit_rows) with a Fenwick
+     * tree of each word's count, which says how many stand before a row. */
+    CettaIndex *gone_rows;
+    AtomId *gone_ids;
+    CettaIndex gone_len, gone_cap;
+    uint64_t *gone_bits;
+    CettaIndex *gone_tree;
+    CettaIndex gone_bit_rows;
 };
 
 static inline CettaIndex space_mark_lowbit(CettaIndex i) {
@@ -1970,26 +2019,79 @@ typedef struct {
     const CettaIndex *tree;
     CettaIndex rows;
     CettaIndex marked;
+    /* A frozen view: the rows its Space marked since it froze are its own
+     * still.  Their stamps are past `freeze_serial`. */
+    const SpacePinnedOccurrences *frozen;
+    const uint32_t *stamps;
+    CettaIndex stamp_cap;
+    uint32_t freeze_serial;
 } SpaceViewMarks;
 
 static SpaceViewMarks space_view_marks(const SpacePinnedOccurrences *view) {
     if (view->space) {
         const SpaceNativeStorage *n = &view->space->native;
-        return (SpaceViewMarks){n->marks, n->mark_tree, n->mark_rows,
-                                n->marked};
+        SpaceViewMarks marks = {n->marks, n->mark_tree, n->mark_rows,
+                                n->marked, NULL, NULL, 0u, 0u};
+        if (view->frozen) {
+            const SpaceMatchNativeState *st =
+                &view->space->match_backend.native;
+            marks.frozen = view;
+            marks.stamps = st->mark_stamps;
+            marks.stamp_cap = st->mark_stamp_cap;
+            marks.freeze_serial = view->freeze_serial;
+        }
+        return marks;
     }
     return (SpaceViewMarks){view->marks, view->mark_tree, view->mark_rows,
-                            view->marked};
+                            view->marked, NULL, NULL, 0u, 0u};
 }
 
 static inline bool space_view_row_marked(const SpaceViewMarks *m,
                                          CettaIndex row) {
-    return m->marked != 0u && row < m->rows &&
-           ((m->marks[row >> 6] >> (row & 63u)) & 1u) != 0u;
+    if (m->marked == 0u || row >= m->rows ||
+        ((m->marks[row >> 6] >> (row & 63u)) & 1u) == 0u)
+        return false;
+    /* Marked after the view froze: the view reads it still. */
+    return !(m->frozen && row < m->stamp_cap &&
+             m->stamps[row] > m->freeze_serial);
+}
+
+/* How many of a frozen view's rows marked since it froze stand before ROW:
+ * read from their list while they are few, from their bits once kept. */
+static CettaIndex space_gone_before(const SpacePinnedOccurrences *view,
+                                    CettaIndex row) {
+    if (!view->gone_bits) {
+        CettaIndex before = 0u;
+        for (CettaIndex i = 0u; i < view->gone_len; i++)
+            before += view->gone_rows[i] < row ? 1u : 0u;
+        return before;
+    }
+    if (row > view->gone_bit_rows)
+        row = view->gone_bit_rows;
+    CettaIndex before = 0u;
+    for (CettaIndex i = row >> 6; i > 0u; i -= space_mark_lowbit(i))
+        before += view->gone_tree[i];
+    if (row & 63u)
+        before += space_marks_bits(
+            view->gone_bits[row >> 6] & ((UINT64_C(1) << (row & 63u)) - 1u));
+    return before;
+}
+
+/* The rows before ROW a view reads: the live ones, and for a frozen view
+ * those marked since it froze. */
+static CettaIndex space_view_before(const SpaceViewMarks *m, CettaIndex row) {
+    CettaIndex before = m->marked == 0u ? row
+        : row >= m->rows ? m->rows - m->marked + (row - m->rows)
+        : space_marks_live_before(m->marks, m->tree, row);
+    if (m->frozen && m->frozen->gone_len != 0u)
+        before += space_gone_before(m->frozen, row);
+    return before;
 }
 
 /* A live row's logical index: the live rows before it. */
 static CettaIndex space_view_logical(const SpaceViewMarks *m, CettaIndex row) {
+    if (m->frozen)
+        return space_view_before(m, row);
     if (m->marked == 0u)
         return row;
     if (row >= m->rows)
@@ -1999,6 +2101,21 @@ static CettaIndex space_view_logical(const SpaceViewMarks *m, CettaIndex row) {
 
 /* The row holding live logical index `logical`. */
 static CettaIndex space_view_row(const SpaceViewMarks *m, CettaIndex logical) {
+    if (m->frozen && m->frozen->gone_len != 0u) {
+        /* The rows read before a row never fall as the row rises: the row
+         * at an index is the first with more than `logical` rows read up to
+         * and including it. */
+        CettaIndex low = 0u;
+        CettaIndex high = m->frozen->space->native.len;
+        while (low < high) {
+            CettaIndex middle = low + (high - low) / 2u;
+            if (space_view_before(m, middle + 1u) <= logical)
+                low = middle + 1u;
+            else
+                high = middle;
+        }
+        return low;
+    }
     if (m->marked == 0u)
         return logical;
     CettaIndex live_in_tree = m->rows - m->marked;
@@ -2019,6 +2136,99 @@ static CettaIndex space_view_row(const SpaceViewMarks *m, CettaIndex logical) {
     }
     uint64_t live = ~m->marks[word] & space_marks_word_rows(m->rows, word);
     return word * 64u + space_marks_select_bit(live, remaining);
+}
+
+/* ── Order index ───────────────────────────────────────────────────────────
+ * A priority space keeps its rows as a multiset does: an atom is appended, a
+ * removed row is marked, and no add moves a row or renumbers one.  Its order
+ * is one more index over those rows, beside the general ones a full space
+ * keeps: a balanced tree of the live rows (space_order.h) under the standard
+ * order of terms, rows the order does not separate standing in row order.
+ *
+ * The index is derived state, kept as the match trie is.  It takes in the
+ * rows appended since it was last asked (those past `synced`), gives up the
+ * rows marks remove as they are marked, and is renumbered with the rows by
+ * a contraction.  Any other rewrite of the rows retires it (`valid`, and the
+ * prefix stamp it reflects), and the next ordered read builds it again from
+ * the rows: an unhooked path costs that time, never a wrong order. */
+
+/* The rows holding variables whose first variable stands at one node: as an
+ * element (`list` none), or as the rest of the list whose own node is `list`
+ * and which ends there.  Two lists can end at one node (a list that is the
+ * last element of another), and their rests stand apart in the order. */
+enum { SPACE_ORDER_NO_LIST = UINT32_MAX };
+
+typedef struct {
+    uint32_t node;
+    uint32_t list;
+    CettaIndex rows;
+} SpaceOrderBand;
+
+struct SpaceOrder {
+    CettaOrder tree;
+    /* The rows [0, synced) the tree reflects, at the prefix stamped. */
+    CettaIndex synced;
+    uint64_t prefix_epoch;
+    bool valid;
+    /* The rows holding variables, by the node of their first variable, the
+     * nodes of a row counted in preorder from the row itself, node 0, as the
+     * order reads it (a list in any stored form as the list it spells, its
+     * rest one node after its elements).  A pattern is matched by rows that
+     * begin with its ground front, and by rows whose first variable stands
+     * where that front has a term; those are sought only where there are
+     * some.  Ascending by node, each band holding a row. */
+    SpaceOrderBand *bands;
+    uint32_t band_len;
+    uint32_t band_cap;
+    /* The rows that are not exact atoms (space_contains_only_exact_atoms):
+     * a row with a variable, a value only a match decides, or no plain
+     * record. */
+    CettaIndex inexact;
+};
+
+static struct SpaceOrder *space_order_ensure(Space *s);
+static bool space_order_forget_rows(Space *s, const CettaIndex *rows,
+                                    CettaCount count);
+static void space_order_adopt(Space *s, bool follows);
+static bool space_order_current(const Space *s);
+static void space_order_transport(Space *s, const CettaIndex *target,
+                                  CettaIndex source, CettaIndex kept);
+static void space_order_free(Space *s);
+static bool space_priority_remove_positions(Space *s,
+                                            const CettaIndex *positions,
+                                            CettaCount count);
+static void space_order_forget_removed(Space *s, const uint8_t *mask,
+                                       CettaIndex rows);
+static bool space_order_copy_for_frozen(Space *s,
+                                        SpacePinnedOccurrences *view);
+static bool space_frozen_order_next(SpaceOccurrenceCursor *cursor,
+                                    const SpacePinnedOccurrences *view,
+                                    CettaIndex ceiling, uint32_t *row_out);
+static bool space_priority_front_search(Space *s, Atom *pattern, bool begin,
+                                        uint32_t **ranges_out,
+                                        uint32_t *count_out, bool *past_out);
+static void space_order_price(Space *s, Atom *pattern, bool past,
+                              CettaCount *price, DiscNode ***trie,
+                              CettaSpacePathDemand **demand, bool *rent);
+static bool space_occurrence_cursor_buy(SpaceOccurrenceCursor *cursor,
+                                        CettaIndex ceiling);
+/* The nodes of a trie's frontier a read holds (space_order_price), which
+ * end in none. */
+static size_t space_order_trie_len(DiscNode *const *trie) {
+    size_t len = 0u;
+    while (trie[len])
+        len++;
+    return len;
+}
+static bool space_view_order_holds(const SpacePinnedOccurrences *view,
+                                   uint32_t row);
+
+/* The order a view's cursors walk: its Space's while the view is current,
+ * the copy it took when it detached; NULL when there is none to walk. */
+static const CettaOrder *space_view_order(const SpacePinnedOccurrences *view) {
+    if (view->space)
+        return view->space->order ? &view->space->order->tree : NULL;
+    return view->has_order ? &view->order : NULL;
 }
 
 static SpacePinnedOccurrences *space_pinned_occurrences_acquire(Space *s) {
@@ -2065,6 +2275,144 @@ static void space_pinned_occurrences_roots(const TermUniverse *universe,
     }
 }
 
+/* ── Frozen views ──────────────────────────────────────────────────────────
+ * A removal that only marks rows moves none: the rows a reader captured are
+ * still where it read them.  So the view the Space's readers share is not
+ * copied at such a removal.  It is frozen: it stays on the Space's rows, and
+ * the Space, which gives later readers a new view, stamps every row it marks
+ * while a frozen view lives with the serial of the removal.  A frozen view
+ * reads the rows unmarked now and the rows whose stamps are past the serial
+ * it froze at, which is the store as it stood when its readers began.  It
+ * lists the terms of those rows to the collector, and counts them before a
+ * row to give the row the index it had.  A rewrite that moves rows copies a
+ * frozen view as it always copied a view (space_pinned_occurrences_detach).
+ * Only a view none of whose cursors reads the match trie's leaves is
+ * frozen: a removal takes rows out of those, and counts are read from them,
+ * so they must hold the live rows and no others. */
+
+/* CETTA_SPACE_READERS_REFERENCE: every removal copies its readers' view, as
+ * before frozen views; the differential tests compare the two. */
+static bool space_readers_reference(void) {
+    static int reference = -1;
+    if (reference < 0)
+        reference = getenv("CETTA_SPACE_READERS_REFERENCE") != NULL;
+    return reference != 0;
+}
+
+static void space_frozen_roots(const TermUniverse *universe,
+                               TermUniverseRootVisit visit,
+                               void *visit_context, void *ctx) {
+    const SpacePinnedOccurrences *view = ctx;
+    (void)universe;
+    for (CettaIndex i = 0u; i < view->gone_len; i++)
+        visit(visit_context, view->gone_ids[i]);
+}
+
+static void space_gone_free(SpacePinnedOccurrences *view) {
+    free(view->gone_rows);
+    free(view->gone_ids);
+    free(view->gone_bits);
+    free(view->gone_tree);
+    view->gone_rows = NULL;
+    view->gone_ids = NULL;
+    view->gone_bits = NULL;
+    view->gone_tree = NULL;
+    view->gone_len = view->gone_cap = view->gone_bit_rows = 0u;
+}
+
+/* Room for COUNT more rows in a frozen view's list. */
+static bool space_gone_reserve(SpacePinnedOccurrences *view, CettaCount count) {
+    if (count <= view->gone_cap - view->gone_len)
+        return true;
+    CettaIndex cap = view->gone_cap ? view->gone_cap : 8u;
+    while (cap - view->gone_len < count)
+        cap *= 2u;
+    CettaIndex *rows = realloc(view->gone_rows, (size_t)cap * sizeof(*rows));
+    if (!rows)
+        return false;
+    view->gone_rows = rows;
+    AtomId *ids = realloc(view->gone_ids, (size_t)cap * sizeof(*ids));
+    if (!ids)
+        return false;
+    view->gone_ids = ids;
+    view->gone_cap = cap;
+    return true;
+}
+
+enum { SPACE_GONE_LISTED = 64u };
+
+/* A frozen view takes ROW, marked now, among the rows it reads still; the
+ * list has room.  Past SPACE_GONE_LISTED rows their bits are kept too, over
+ * the rows the Space holds now, which are all a cursor of the view may ask
+ * about: the rows before a row are then counted, not listed. */
+static void space_gone_note(SpacePinnedOccurrences *view, CettaIndex row,
+                            AtomId id, CettaIndex space_rows) {
+    view->gone_rows[view->gone_len] = row;
+    view->gone_ids[view->gone_len++] = id;
+    if (!view->gone_bits) {
+        if (view->gone_len <= SPACE_GONE_LISTED)
+            return;
+        size_t words = ((size_t)space_rows + 63u) / 64u;
+        uint64_t *bits = calloc(words ? words : 1u, sizeof(*bits));
+        CettaIndex *tree = calloc(words + 1u, sizeof(*tree));
+        if (!bits || !tree) {
+            /* The list answers, a row at a time. */
+            free(bits);
+            free(tree);
+            return;
+        }
+        for (CettaIndex i = 0u; i < view->gone_len; i++) {
+            CettaIndex gone = view->gone_rows[i];
+            if (gone < space_rows)
+                bits[gone >> 6] |= UINT64_C(1) << (gone & 63u);
+        }
+        for (size_t i = 1u; i <= words; i++)
+            tree[i] = space_marks_bits(bits[i - 1u]);
+        for (size_t i = 1u; i <= words; i++) {
+            size_t parent = i + (size_t)space_mark_lowbit((CettaIndex)i);
+            if (parent <= words)
+                tree[parent] += tree[i];
+        }
+        view->gone_bits = bits;
+        view->gone_tree = tree;
+        view->gone_bit_rows = space_rows;
+        return;
+    }
+    if (row >= view->gone_bit_rows)
+        return;
+    view->gone_bits[row >> 6] |= UINT64_C(1) << (row & 63u);
+    CettaIndex words = (view->gone_bit_rows + 63u) >> 6;
+    for (CettaIndex i = (row >> 6) + 1u; i <= words; i += space_mark_lowbit(i))
+        view->gone_tree[i]++;
+}
+
+static void space_frozen_unlink(Space *s, SpacePinnedOccurrences *view) {
+    SpacePinnedOccurrences **link = &s->match_backend.native.frozen;
+    while (*link && *link != view)
+        link = &(*link)->frozen_next;
+    if (*link)
+        *link = view->frozen_next;
+    view->frozen_next = NULL;
+}
+
+/* A frozen view goes. */
+static void space_frozen_forget(Space *s, SpacePinnedOccurrences *view) {
+    space_frozen_unlink(s, view);
+    term_universe_remove_root_provider(s->native.universe, space_frozen_roots,
+                                       view);
+    space_gone_free(view);
+    view->frozen = false;
+}
+
+/* A view lets go of the indexes it held. */
+static void space_index_hold_release(SpaceIndexHold *hold) {
+    if (!hold || --hold->references != 0u)
+        return;
+    space_head_index_free(hold->head_index);
+    disc_node_free(hold->match_trie);
+    free(hold);
+}
+
 static void space_pinned_occurrences_release(SpacePinnedOccurrences *view) {
     if (!view)
         return;
@@ -2072,8 +2420,11 @@ static void space_pinned_occurrences_release(SpacePinnedOccurrences *view) {
         space_match_native_unpin_trie(view->space);
     if (--view->references != 0u)
         return;
-    if (view->space) {
-        view->space->match_backend.native.pinned = NULL;
+    if (view->space && view->frozen) {
+        space_frozen_forget(view->space, view);
+    } else if (view->space) {
+        if (view->space->match_backend.native.pinned == view)
+            view->space->match_backend.native.pinned = NULL;
     } else {
         term_universe_remove_root_provider(
             view->universe, space_pinned_occurrences_roots, view);
@@ -2086,23 +2437,23 @@ static void space_pinned_occurrences_release(SpacePinnedOccurrences *view) {
         free(view->mark_tree);
         space_head_index_free(view->head_index);
         disc_node_free(view->match_trie);
+        if (view->has_order)
+            cetta_order_free(&view->order);
     }
+    space_index_hold_release(view->indexes);
     if (space_lifetime_unpin)
         space_lifetime_unpin(view->lifetime_hold);
     free(view);
 }
 
-static void space_pinned_occurrences_finish_detach(Space *s,
-                                                    SpacePinnedOccurrences *view) {
+/* The view owns its rows now and borrows the Space no longer. */
+static void space_pinned_occurrences_leave(Space *s,
+                                           SpacePinnedOccurrences *view) {
     SpaceMatchNativeState *st = &s->match_backend.native;
-    view->match_trie = st->match_trie;
-    view->head_index = space_head_index_take(s);
+    /* Each of its cursors held one pin. */
+    st->match_trie_pins = st->match_trie_pins > view->references
+        ? st->match_trie_pins - view->references : 0u;
     view->space = NULL;
-    st->match_trie = NULL;
-    st->match_trie_dirty = false;
-    st->match_trie_stale_occurrences = 0u;
-    st->match_trie_pins = 0u;
-    st->pinned = NULL;
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_SPACE_PINNED_OCCURRENCES_DETACH);
     cetta_runtime_stats_add(
@@ -2118,14 +2469,51 @@ static void space_pinned_occurrences_finish_detach(Space *s,
     }
 }
 
-void space_pinned_occurrences_detach(Space *s) {
-    CETTA_SCOPED_SHARED_TRANSITION(transition);
-    SpaceMatchNativeState *st = s ? &s->match_backend.native : NULL;
-    SpacePinnedOccurrences *view = st ? st->pinned : NULL;
-    if (!view)
-        return;
-    /* The copy is of the rows as they stand, with the rows marked removed
-     * and their marks, so the Space need not contract them first. */
+static void space_pinned_occurrences_finish_detach(Space *s,
+                                                    SpacePinnedOccurrences *view,
+                                                    SpaceIndexHold *hold) {
+    SpaceMatchNativeState *st = &s->match_backend.native;
+    /* A view that froze earlier holds the indexes taken first after it
+     * froze, which are every index its cursors read; it needs no later
+     * ones. */
+    if (!view->indexes) {
+        view->indexes = hold;
+        hold->references++;
+    }
+    st->pinned = NULL;
+    space_pinned_occurrences_leave(s, view);
+}
+
+/* Take the Space's match trie and head index for the views reading it: they
+ * go on in them as they stand, and the Space builds its own again when it
+ * next reads them. */
+static SpaceIndexHold *space_index_hold_take(Space *s) {
+    SpaceMatchNativeState *st = &s->match_backend.native;
+    SpaceIndexHold *hold = cetta_malloc(sizeof(*hold));
+    *hold = (SpaceIndexHold){
+        .match_trie = st->match_trie,
+        .head_index = space_head_index_take(s),
+    };
+    st->match_trie = NULL;
+    st->match_trie_dirty = false;
+    st->match_trie_stale_occurrences = 0u;
+    /* A frozen view's cursors may be reading the head index taken: the
+     * frozen views that hold no indexes yet hold these with the view they
+     * were taken for. */
+    for (SpacePinnedOccurrences *frozen = st->frozen; frozen;
+         frozen = frozen->frozen_next) {
+        if (!frozen->indexes) {
+            frozen->indexes = hold;
+            hold->references++;
+        }
+    }
+    return hold;
+}
+
+/* Copy the Space's rows as they stand, with the rows marked removed and
+ * their marks, into a view: the Space need not contract them first. */
+static void space_pinned_occurrences_copy_rows(Space *s,
+                                               SpacePinnedOccurrences *view) {
     size_t width = cetta_atom_id_storage_width_bytes_from_bits(
         s->native.atom_id_width_bits);
     size_t first = s->kind == SPACE_KIND_QUEUE ? (size_t)s->native.start : 0u;
@@ -2151,12 +2539,185 @@ void space_pinned_occurrences_detach(Space *s) {
         view->mark_rows = s->native.mark_rows;
         view->marked = s->native.marked;
     }
+}
+
+/* The Space's current view takes its own copy of the rows and the indexes
+ * its cursors read. */
+static void space_pinned_occurrences_detach_current(Space *s,
+                                                    SpaceIndexHold *hold) {
+    SpaceMatchNativeState *st = &s->match_backend.native;
+    SpacePinnedOccurrences *view = st->pinned;
+    if (!view)
+        return;
+    /* A priority space's readers go on in its order as it stands. */
+    if (s->kind == SPACE_KIND_PRIORITY) {
+        struct SpaceOrder *order = space_order_ensure(s);
+        cetta_order_init(&view->order);
+        view->has_order = order && cetta_order_copy(&view->order, &order->tree);
+        if (view->has_order)
+            cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_SPACE_ORDER_COPY_ROW,
+                                    order->tree.count);
+    }
+    space_pinned_occurrences_copy_rows(s, view);
     /* A detached view lives while a reader walks it, rarely across a
      * collection, so it lists its rows when one comes rather than counting
      * them when it detaches and again when it goes. */
     (void)term_universe_add_root_provider(
         view->universe, space_pinned_occurrences_roots, view);
-    space_pinned_occurrences_finish_detach(s, view);
+    space_pinned_occurrences_finish_detach(s, view, hold);
+}
+
+/* A frozen view takes its own copy after all: the rows as they stand, with
+ * the marks it froze under (the Space's, less the rows marked since), and a
+ * priority space's order with those rows in it again. */
+static void space_frozen_copy(Space *s, SpacePinnedOccurrences *view,
+                              SpaceIndexHold *hold) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_READER_FROZEN_COPY);
+    if (!view->indexes) {
+        view->indexes = hold;
+        hold->references++;
+    }
+    if (s->kind == SPACE_KIND_PRIORITY)
+        view->has_order = space_order_copy_for_frozen(s, view);
+    space_pinned_occurrences_copy_rows(s, view);
+    for (CettaIndex i = 0u; view->marks && i < view->gone_len; i++) {
+        CettaIndex row = view->gone_rows[i];
+        if (row >= view->mark_rows ||
+            ((view->marks[row >> 6] >> (row & 63u)) & 1u) == 0u)
+            continue;
+        view->marks[row >> 6] &= ~(UINT64_C(1) << (row & 63u));
+        CettaIndex words = (view->mark_rows + 63u) >> 6;
+        for (CettaIndex w = (row >> 6) + 1u; w <= words;
+             w += space_mark_lowbit(w))
+            view->mark_tree[w]++;
+        view->marked--;
+    }
+    (void)term_universe_add_root_provider(
+        view->universe, space_pinned_occurrences_roots, view);
+    space_frozen_forget(s, view);
+    space_pinned_occurrences_leave(s, view);
+}
+
+void space_pinned_occurrences_detach(Space *s) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    if (!s)
+        return;
+    SpaceMatchNativeState *st = &s->match_backend.native;
+    if (!st->frozen && !st->pinned)
+        return;
+    SpaceIndexHold *hold = space_index_hold_take(s);
+    /* Held for the copy itself, so views that take no reference do not
+     * leave it without one. */
+    hold->references++;
+    while (st->frozen)
+        space_frozen_copy(s, st->frozen, hold);
+    space_pinned_occurrences_detach_current(s, hold);
+    space_index_hold_release(hold);
+}
+
+bool space_pinned_index_readers(const Space *s) {
+    const SpacePinnedOccurrences *view =
+        s ? s->match_backend.native.pinned : NULL;
+    return view && view->index_readers != 0u;
+}
+
+/* Room for the stamps of rows [0, rows), a row never marked under a frozen
+ * view having none. */
+static bool space_mark_stamps_reserve(Space *s, CettaIndex rows) {
+    SpaceMatchNativeState *st = &s->match_backend.native;
+    if (rows <= st->mark_stamp_cap)
+        return true;
+    CettaIndex cap = st->mark_stamp_cap ? st->mark_stamp_cap : 64u;
+    while (cap < rows)
+        cap *= 2u;
+    if (cap > SIZE_MAX / sizeof(*st->mark_stamps))
+        return false;
+    uint32_t *stamps = realloc(st->mark_stamps,
+                               (size_t)cap * sizeof(*stamps));
+    if (!stamps)
+        return false;
+    memset(stamps + st->mark_stamp_cap, 0,
+           (size_t)(cap - st->mark_stamp_cap) * sizeof(*stamps));
+    st->mark_stamps = stamps;
+    st->mark_stamp_cap = cap;
+    return true;
+}
+
+void space_frozen_state_free(Space *s) {
+    if (!s)
+        return;
+    SpaceMatchNativeState *st = &s->match_backend.native;
+    free(st->mark_stamps);
+    st->mark_stamps = NULL;
+    st->mark_stamp_cap = 0u;
+    st->mark_serial = 0u;
+}
+
+/* A removal is about to mark rows.  The Space's current view, whose cursors
+ * captured those rows, is frozen where its cursors read rows alone, and
+ * takes its own copy otherwise. */
+static void space_pinned_occurrences_part(Space *s) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    SpaceMatchNativeState *st = &s->match_backend.native;
+    SpacePinnedOccurrences *view = st->pinned;
+    if (!view)
+        return;
+    /* A cursor of the match trie's leaves reads what this removal takes
+     * rows out of, and what counts are read from: its view takes the rows
+     * and the indexes as they stand, and the Space builds its own again.
+     * Frozen views, which do not read those leaves, stay where they are. */
+    if (view->index_readers != 0u) {
+        SpaceIndexHold *hold = space_index_hold_take(s);
+        hold->references++;
+        space_pinned_occurrences_detach_current(s, hold);
+        space_index_hold_release(hold);
+        return;
+    }
+    if (space_readers_reference() || st->mark_serial == UINT32_MAX ||
+        (s->kind == SPACE_KIND_PRIORITY && !space_order_ensure(s)) ||
+        !space_mark_stamps_reserve(s, s->native.len) ||
+        !term_universe_add_root_provider(s->native.universe,
+                                         space_frozen_roots, view)) {
+        space_pinned_occurrences_detach(s);
+        return;
+    }
+    view->frozen = true;
+    view->freeze_serial = st->mark_serial;
+    view->frozen_next = st->frozen;
+    st->frozen = view;
+    st->pinned = NULL;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_READER_FREEZE);
+}
+
+/* The rows about to be marked are stamped, and every frozen view takes them
+ * among the rows it reads still.  False, with nothing changed, without the
+ * room: the frozen views are then copied instead. */
+static bool space_frozen_note_marks(Space *s, const CettaIndex *rows,
+                                    CettaCount count) {
+    SpaceMatchNativeState *st = &s->match_backend.native;
+    if (st->mark_serial == UINT32_MAX ||
+        !space_mark_stamps_reserve(s, s->native.len))
+        return false;
+    for (SpacePinnedOccurrences *view = st->frozen; view;
+         view = view->frozen_next) {
+        if (!space_gone_reserve(view, count))
+            return false;
+    }
+    uint32_t serial = ++st->mark_serial;
+    for (CettaCount i = 0u; i < count; i++) {
+        AtomId id = cetta_atom_id_storage_load_bits(
+            s->native.atom_ids + (size_t)rows[i] *
+                cetta_atom_id_storage_width_bytes_from_bits(
+                    s->native.atom_id_width_bits),
+            s->native.atom_id_width_bits);
+        st->mark_stamps[rows[i]] = serial;
+        for (SpacePinnedOccurrences *view = st->frozen; view;
+             view = view->frozen_next)
+            space_gone_note(view, rows[i], id, s->native.len);
+    }
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_SPACE_READER_FROZEN_MARK,
+                            count);
+    return true;
 }
 
 /* The rows a cursor reads: its Space's while the view is current, the
@@ -2166,14 +2727,834 @@ static CettaCount space_pinned_occurrences_len(
     return view->space ? view->space->native.len : view->len;
 }
 
+/* ── Entry reads ───────────────────────────────────────────────────────────
+ * A reader that reads the space as it stood when it began (space.h, "Entry
+ * reads") needs, of each atom written since, how many more copies the space
+ * holds now, and the atoms removed since, found by what may match them.
+ * While such readers are open the space keeps both in its journal.  Each
+ * write is a step of its atom, numbered by the journal's serial and carrying
+ * the atom's adds less removals so far; the copies an atom gained since a
+ * reader began are its last total less its total at the reader's serial,
+ * found by one search of its steps.  Every atom journalled is held while
+ * the journal lives.  The atoms removed are found by what may match them:
+ * a flat ground pattern is its own atom while no removed atom holds a
+ * variable or is a list's cell, and any other pattern reads a trie of the
+ * removed atoms, made when first read and kept from then on, whose
+ * coordinate is an atom's place in the journal.  A
+ * write that changes no fact, a relation taking rows or giving its facts
+ * back, is not journalled. */
+
+typedef struct {
+    uint64_t serial;
+    int64_t total;
+} SpaceJournalStep;
+
+typedef struct {
+    AtomId id;
+    /* In the trie of atoms removed. */
+    bool removed;
+    uint32_t more_len, more_cap;
+    SpaceJournalStep first;
+    SpaceJournalStep *more;
+} SpaceJournalAtom;
+
+struct SpaceJournal {
+    /* The holds of readers; the journal pins its space while there are
+     * any, and lasts until the space's next write once there are none. */
+    uint32_t readers;
+    void *lifetime_hold;
+    /* Which journal this is, of every space's: its serials are its own,
+     * generation * 2^32 onward, so a serial names the journal it counts. */
+    uint64_t generation;
+    uint64_t serial;
+    /* The serial of the last write the journal could not itemize; at the
+     * journal's first serial for none. */
+    uint64_t lost;
+    /* The dependency stamp of the space when the journal last read it: a
+     * change is a write the journal cannot itemize. */
+    uint64_t dependency_epoch;
+    TermUniverse *universe;
+    SpaceJournalAtom *atoms;
+    uint32_t len, cap;
+    /* Open addressing over the atoms' ids: an atom's place plus one, 0 for
+     * an empty slot. */
+    uint32_t *slots;
+    uint32_t slot_mask;
+    /* The atoms removed: how many, how many of them hold a variable or are
+     * a list's cell, and the trie of them once a read has made it. */
+    uint32_t removed_count;
+    uint32_t removed_open;
+    DiscNode *removed;
+    /* The heads the patterns that read at the journal's points begin with
+     * (space_entry_watch), or every head: a write of an atom with another
+     * symbol at its head is no write any of them can meet, and is not
+     * journalled. */
+    SymbolId *watched;
+    uint32_t watched_len, watched_cap;
+    bool watch_all;
+};
+
+static inline uint32_t space_journal_hash(AtomId id) {
+    uint64_t h = (uint64_t)id * UINT64_C(0x9E3779B97F4A7C15);
+    return (uint32_t)(h >> 32);
+}
+
+static SpaceJournalAtom *space_journal_find(const struct SpaceJournal *j,
+                                            AtomId id) {
+    if (!j->slots)
+        return NULL;
+    for (uint32_t at = space_journal_hash(id) & j->slot_mask;;
+         at = (at + 1u) & j->slot_mask) {
+        uint32_t slot = j->slots[at];
+        if (slot == 0u)
+            return NULL;
+        if (j->atoms[slot - 1u].id == id)
+            return &j->atoms[slot - 1u];
+    }
+}
+
+/* The journal's entry for ID, made when it has none; NULL when out of
+ * memory. */
+static SpaceJournalAtom *space_journal_atom(struct SpaceJournal *j,
+                                            AtomId id) {
+    SpaceJournalAtom *found = space_journal_find(j, id);
+    if (found)
+        return found;
+    if (j->len == j->cap) {
+        uint32_t cap = j->cap ? j->cap * 2u : 16u;
+        if (cap <= j->cap)
+            return NULL;
+        SpaceJournalAtom *atoms = realloc(j->atoms, (size_t)cap * sizeof(*atoms));
+        if (!atoms)
+            return NULL;
+        j->atoms = atoms;
+        j->cap = cap;
+    }
+    /* At most half the slots are taken. */
+    if (!j->slots || 2u * (j->len + 1u) > j->slot_mask + 1u) {
+        uint32_t count = j->slots ? 2u * (j->slot_mask + 1u) : 32u;
+        uint32_t *slots = calloc(count, sizeof(*slots));
+        if (!slots)
+            return NULL;
+        for (uint32_t i = 0u; i < j->len; i++) {
+            uint32_t at = space_journal_hash(j->atoms[i].id) & (count - 1u);
+            while (slots[at] != 0u)
+                at = (at + 1u) & (count - 1u);
+            slots[at] = i + 1u;
+        }
+        free(j->slots);
+        j->slots = slots;
+        j->slot_mask = count - 1u;
+    }
+    uint32_t at = space_journal_hash(id) & j->slot_mask;
+    while (j->slots[at] != 0u)
+        at = (at + 1u) & j->slot_mask;
+    j->slots[at] = j->len + 1u;
+    SpaceJournalAtom *atom = &j->atoms[j->len++];
+    *atom = (SpaceJournalAtom){.id = id};
+    /* Held while the journal lives, so the id names this atom throughout. */
+    term_universe_hold(j->universe, id);
+    return atom;
+}
+
+/* The atom's adds less removals up to and including the write numbered
+ * SERIAL. */
+static int64_t space_journal_total_at(const SpaceJournalAtom *atom,
+                                      uint64_t serial) {
+    if (atom->first.serial > serial)
+        return 0;
+    /* The last of its later steps numbered SERIAL or before. */
+    uint32_t lo = 0u, hi = atom->more_len;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2u;
+        if (atom->more[mid].serial <= serial)
+            lo = mid + 1u;
+        else
+            hi = mid;
+    }
+    return lo == 0u ? atom->first.total : atom->more[lo - 1u].total;
+}
+
+static int64_t space_journal_total(const SpaceJournalAtom *atom) {
+    return atom->more_len ? atom->more[atom->more_len - 1u].total
+                          : atom->first.total;
+}
+
+/* The atoms journalled, held while the journal lives. */
+static void space_journal_roots(const TermUniverse *universe,
+                                TermUniverseRootVisit visit,
+                                void *visit_context, void *ctx) {
+    const struct SpaceJournal *j = ctx;
+    (void)universe;
+    for (uint32_t i = 0u; i < j->len; i++)
+        visit(visit_context, j->atoms[i].id);
+}
+
+static void space_journal_free(struct SpaceJournal *j) {
+    if (!j)
+        return;
+    term_universe_remove_root_provider(j->universe, space_journal_roots, j);
+    for (uint32_t i = 0u; i < j->len; i++) {
+        term_universe_release(j->universe, j->atoms[i].id);
+        free(j->atoms[i].more);
+    }
+    free(j->atoms);
+    free(j->slots);
+    disc_node_free(j->removed);
+    free(j->watched);
+    free(j);
+}
+
+/* Whether a pattern that reads at one of J's points may meet the atom ID:
+ * every atom, once some pattern may begin with any head; otherwise one
+ * whose head is a symbol some pattern begins with, or one that meets
+ * patterns whatever their head (a variable, or one whose head the universe
+ * keeps without a record, as a list's cell). */
+static bool space_journal_watches(const struct SpaceJournal *j, AtomId id) {
+    const TermUniverse *u = j->universe;
+    if (j->watch_all || !u || !tu_hdr(u, id))
+        return true;
+    SymbolId head = SYMBOL_ID_NONE;
+    switch (tu_kind(u, id)) {
+    case ATOM_SYMBOL:
+        head = tu_sym(u, id);
+        break;
+    case ATOM_VAR:
+        return true;
+    case ATOM_EXPR: {
+        if (tu_is_carrier(u, id) || tu_arity(u, id) == 0u)
+            return tu_arity(u, id) != 0u;
+        AtomId first = tu_child(u, id, 0u);
+        if (!tu_hdr(u, first))
+            return true;
+        AtomKind kind = tu_kind(u, first);
+        if (kind == ATOM_VAR)
+            return true;
+        if (kind != ATOM_SYMBOL)
+            return false;
+        head = tu_sym(u, first);
+        break;
+    }
+    default:
+        return false;
+    }
+    for (uint32_t i = 0u; i < j->watched_len; i++)
+        if (j->watched[i] == head)
+            return true;
+    return false;
+}
+
+/* The space changes no fact while a relation takes its rows or gives its
+ * facts back. */
+static inline bool space_journal_quiet(const Space *s);
+
+/* A write to a space whose journal no reader holds ends the journal: no
+ * point it kept can be read again. */
+static bool space_journal_idle_end(Space *s) {
+    struct SpaceJournal *j = s->journal;
+    if (j->readers != 0u)
+        return false;
+    s->journal = NULL;
+    space_journal_free(j);
+    return true;
+}
+
+/* Journal a write the journal cannot itemize: no reader begun before it can
+ * read the space as it stood then. */
+static void space_journal_lose(Space *s) {
+    struct SpaceJournal *j = s ? s->journal : NULL;
+    if (j && !space_journal_idle_end(s))
+        j->lost = ++j->serial;
+}
+
+static __attribute__((noinline, cold)) void space_journal_note_slow(
+        Space *s, AtomId id, int64_t delta) {
+    struct SpaceJournal *j = s->journal;
+    if (space_journal_quiet(s) || space_journal_idle_end(s))
+        return;
+    if (id == CETTA_ATOM_ID_NONE) {
+        space_journal_lose(s);
+        return;
+    }
+    if (!space_journal_watches(j, id))
+        return;
+    SpaceJournalAtom *atom = space_journal_atom(j, id);
+    if (!atom) {
+        space_journal_lose(s);
+        return;
+    }
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_ENTRY_JOURNAL_WRITE);
+    uint64_t serial = ++j->serial;
+    /* Past its own serials the journal can name no point of its own. */
+    if ((serial >> 32) != j->generation)
+        j->lost = UINT64_MAX;
+    if (atom->first.serial == 0u) {
+        atom->first = (SpaceJournalStep){.serial = serial, .total = delta};
+    } else {
+        if (atom->more_len == atom->more_cap) {
+            uint32_t cap = atom->more_cap ? atom->more_cap * 2u : 4u;
+            SpaceJournalStep *more = cap > atom->more_cap
+                ? realloc(atom->more, (size_t)cap * sizeof(*more)) : NULL;
+            if (!more) {
+                space_journal_lose(s);
+                return;
+            }
+            atom->more = more;
+            atom->more_cap = cap;
+        }
+        int64_t total = space_journal_total(atom) + delta;
+        atom->more[atom->more_len] = (SpaceJournalStep){
+            .serial = serial, .total = total};
+        atom->more_len++;
+    }
+    /* A removed atom stays where a reader begun before the removal finds
+     * it.  The removal journals it before it lets go of the row. */
+    if (delta < 0 && !atom->removed) {
+        if (j->removed &&
+            !disc_insert_id(j->removed, j->universe, id,
+                            (CettaIndex)(atom - j->atoms))) {
+            space_journal_lose(s);
+            return;
+        }
+        atom->removed = true;
+        j->removed_count++;
+        if (tu_has_vars(j->universe, id) || tu_is_carrier(j->universe, id))
+            j->removed_open++;
+    }
+}
+
+/* Journal that the space gained DELTA copies of ID (lost them, when
+ * negative), while a reader is open.  A removal calls this before its row
+ * lets go of the atom. */
+static inline void space_journal_note(Space *s, AtomId id, int64_t delta) {
+    if (__builtin_expect(s->journal != NULL, 0))
+        space_journal_note_slow(s, id, delta);
+}
+
+/* The stamp of what a space reads beyond its own rows: the modules it
+ * imports, and an overlay's base. */
+static uint64_t space_entry_dependency_stamp(const Space *s) {
+    uint64_t stamp = s->module_dependency_epoch;
+    if (s->overlay_base && !s->module_own_view)
+        stamp += s->overlay_base->revision;
+    return stamp;
+}
+
+/* One more hold of the journal of S (a mutation target with a journal):
+ * the first pins the space. */
+static void space_journal_hold(Space *s) {
+    if (s->journal->readers++ == 0u)
+        s->journal->lifetime_hold =
+            space_lifetime_pin ? space_lifetime_pin(s) : NULL;
+}
+
+/* A change of what S reads beyond its rows is a write its journal J cannot
+ * itemize. */
+static void space_journal_note_dependencies(Space *s, struct SpaceJournal *j) {
+    uint64_t stamp = space_entry_dependency_stamp(s);
+    if (stamp != j->dependency_epoch) {
+        j->dependency_epoch = stamp;
+        j->lost = ++j->serial;
+    }
+}
+
+/* Whether J keeps every write since SERIAL: a serial it counted. */
+static inline bool space_journal_keeps(const struct SpaceJournal *j,
+                                       uint64_t serial) {
+    return j && (serial >> 32) == j->generation && serial <= j->serial;
+}
+
+/* The journal of TARGET, S's mutation target, made if it has none. */
+static struct SpaceJournal *space_journal_of(Space *s, Space *target) {
+    static _Atomic uint64_t generations;
+    struct SpaceJournal *j = target->journal;
+    if (j) {
+        space_journal_note_dependencies(s, j);
+        return j;
+    }
+    j = calloc(1u, sizeof(*j));
+    if (!j)
+        return NULL;
+    j->universe = target->native.universe;
+    if (j->universe &&
+        !term_universe_add_root_provider(j->universe, space_journal_roots, j)) {
+        free(j);
+        return NULL;
+    }
+    j->generation = ++generations;
+    j->serial = j->lost = j->generation << 32;
+    j->dependency_epoch = space_entry_dependency_stamp(s);
+    target->journal = j;
+    return j;
+}
+
+/* Begin a point on S, holding it when HOLD; a reader that names no pattern
+ * (WATCHING false) reads every atom. */
+static bool space_entry_start(Space *s, SpaceEntry *entry, bool hold,
+                              bool watching) {
+    if (!s || !entry)
+        return false;
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    Space *target = space_mutation_target(s);
+    struct SpaceJournal *j = space_journal_of(s, target);
+    if (!j)
+        return false;
+    if (!watching)
+        j->watch_all = true;
+    if (hold)
+        space_journal_hold(target);
+    *entry = (SpaceEntry){.space = hold ? target : NULL, .serial = j->serial};
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_ENTRY_OPEN);
+    return true;
+}
+
+bool space_entry_begin(Space *s, SpaceEntry *entry) {
+    return space_entry_start(s, entry, false, false);
+}
+
+bool space_entry_begin_watching(Space *s, SpaceEntry *entry) {
+    return space_entry_start(s, entry, false, true);
+}
+
+bool space_entry_open_watching(Space *s, SpaceEntry *entry) {
+    return space_entry_start(s, entry, true, true);
+}
+
+void space_entry_watch_head(Space *s, SymbolId head) {
+    if (!s)
+        return;
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    struct SpaceJournal *j = space_mutation_target(s)->journal;
+    if (!j || j->watch_all)
+        return;
+    if (head == SYMBOL_ID_NONE) {
+        j->watch_all = true;
+        return;
+    }
+    for (uint32_t i = 0u; i < j->watched_len; i++)
+        if (j->watched[i] == head)
+            return;
+    if (j->watched_len == j->watched_cap) {
+        uint32_t cap = j->watched_cap ? j->watched_cap * 2u : 4u;
+        SymbolId *watched = realloc(j->watched, (size_t)cap * sizeof(*watched));
+        if (!watched) {
+            j->watch_all = true;
+            return;
+        }
+        j->watched = watched;
+        j->watched_cap = cap;
+    }
+    j->watched[j->watched_len++] = head;
+}
+
+void space_entry_watch(Space *s, const Atom *pattern) {
+    SymbolId head = SYMBOL_ID_NONE;
+    if (pattern && pattern->kind == ATOM_SYMBOL)
+        head = pattern->sym_id;
+    else if (pattern && pattern->kind == ATOM_EXPR && pattern->expr.len > 0u &&
+             pattern->expr.elems[0]->kind == ATOM_SYMBOL &&
+             !atom_is_carrier(pattern))
+        head = pattern->expr.elems[0]->sym_id;
+    space_entry_watch_head(s, head);
+}
+
+bool space_entry_open(Space *s, SpaceEntry *entry) {
+    return space_entry_start(s, entry, true, false);
+}
+
+bool space_entry_reacquire(Space *s, SpaceEntry *entry) {
+    if (!s || !entry)
+        return false;
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    Space *target = space_mutation_target(s);
+    struct SpaceJournal *j = target->journal;
+    if (j)
+        space_journal_note_dependencies(s, j);
+    if (!space_journal_keeps(j, entry->serial)) {
+        entry->space = NULL;
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_ENTRY_LOST);
+        return false;
+    }
+    space_journal_hold(target);
+    entry->space = target;
+    return true;
+}
+
+void space_entry_hold_again(Space *s) {
+    if (!s)
+        return;
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    if (s->journal)
+        space_journal_hold(s);
+}
+
+void space_entry_release(Space *s) {
+    if (!s)
+        return;
+    void *pin = NULL;
+    {
+        CETTA_SCOPED_SHARED_TRANSITION(transition);
+        struct SpaceJournal *j = s->journal;
+        if (j && j->readers > 0u && --j->readers == 0u) {
+            pin = j->lifetime_hold;
+            j->lifetime_hold = NULL;
+        }
+    }
+    /* The last pin may end the space, and the journal with it. */
+    if (pin && space_lifetime_unpin)
+        space_lifetime_unpin(pin);
+}
+
+void space_entry_close(SpaceEntry *entry) {
+    if (!entry || !entry->space)
+        return;
+    Space *s = entry->space;
+    entry->space = NULL;
+    space_entry_release(s);
+}
+
+Atom *space_entry_point(Arena *arena, const SpaceEntry *entry) {
+    return atom_int(arena, (int64_t)entry->serial);
+}
+
+bool space_entry_from_point(const Atom *point, SpaceEntry *entry) {
+    if (!point || point->kind != ATOM_GROUNDED ||
+        point->ground.gkind != GV_INT)
+        return false;
+    *entry = (SpaceEntry){.serial = (uint64_t)point->ground.ival};
+    return true;
+}
+
+bool space_entry_written(const SpaceEntry *entry) {
+    const struct SpaceJournal *j = entry->space->journal;
+    return !space_journal_keeps(j, entry->serial) || j->serial != entry->serial;
+}
+
+bool space_entry_written_at(Space *s, const SpaceEntry *entry) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    struct SpaceJournal *j = space_mutation_target(s)->journal;
+    if (j)
+        space_journal_note_dependencies(s, j);
+    return !space_journal_keeps(j, entry->serial) || j->serial != entry->serial;
+}
+
+bool space_entry_lost(const SpaceEntry *entry) {
+    const struct SpaceJournal *j = entry->space->journal;
+    return !space_journal_keeps(j, entry->serial) || j->lost > entry->serial;
+}
+
+int64_t space_entry_added(const SpaceEntry *entry, AtomId id) {
+    const struct SpaceJournal *j = entry->space->journal;
+    if (!j || j->serial == entry->serial)
+        return 0;
+    const SpaceJournalAtom *atom = space_journal_find(j, id);
+    if (!atom)
+        return 0;
+    return space_journal_total(atom) -
+           space_journal_total_at(atom, entry->serial);
+}
+
+/* Whether PATTERN is ground and flat: its own atom, or a head and atoms.
+ * A ground atom without variables that is no list's cell meets it only by
+ * being it, as a list's cell spells an expression and an atom it holds is
+ * an atom. */
+static bool space_entry_pattern_flat_ground(const Atom *pattern) {
+    if (pattern->kind == ATOM_VAR)
+        return false;
+    if (pattern->kind != ATOM_EXPR)
+        return true;
+    for (CettaExprIndex i = 0u; i < pattern->expr.len; i++) {
+        AtomKind kind = pattern->expr.elems[i]->kind;
+        if (kind == ATOM_VAR || kind == ATOM_EXPR)
+            return false;
+    }
+    return !atom_is_carrier(pattern);
+}
+
+bool space_entry_removed_each(const SpaceEntry *entry, Atom *pattern,
+                              SpaceEntryRemovedVisit visit, void *context) {
+    struct SpaceJournal *j = entry->space->journal;
+    if (!j || j->removed_count == 0u || j->serial == entry->serial || !pattern)
+        return true;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_ENTRY_CORRECTED_READ);
+    if (j->removed_open == 0u && space_entry_pattern_flat_ground(pattern)) {
+        AtomId id = term_universe_lookup_atom_id(j->universe, pattern);
+        const SpaceJournalAtom *atom = id == CETTA_ATOM_ID_NONE
+            ? NULL : space_journal_find(j, id);
+        if (!atom || !atom->removed)
+            return true;
+        int64_t gained = space_journal_total(atom) -
+                         space_journal_total_at(atom, entry->serial);
+        if (gained < 0)
+            (void)visit(context, atom->id, (uint64_t)-gained);
+        return true;
+    }
+    if (!j->removed) {
+        CETTA_SCOPED_SHARED_TRANSITION(transition);
+        j->removed = disc_node_new();
+        for (uint32_t i = 0u; j->removed && i < j->len; i++) {
+            if (j->atoms[i].removed &&
+                !disc_insert_id(j->removed, j->universe, j->atoms[i].id,
+                                (CettaIndex)i)) {
+                disc_node_free(j->removed);
+                j->removed = NULL;
+            }
+        }
+        if (!j->removed)
+            return false;
+    }
+    CettaIndex *coordinates = NULL;
+    CettaIndex count = 0u, cap = 0u;
+    disc_lookup(j->removed, pattern, &coordinates, &count, &cap);
+    if (count != 0u && !coordinates)
+        return false;
+    bool ok = true;
+    for (CettaIndex i = 0u; ok && i < count; i++) {
+        const SpaceJournalAtom *atom = &j->atoms[coordinates[i]];
+        int64_t gained = space_journal_total(atom) -
+                         space_journal_total_at(atom, entry->serial);
+        if (gained < 0)
+            ok = visit(context, atom->id, (uint64_t)-gained);
+    }
+    free(coordinates);
+    return true;
+}
+
+/* The copies of an atom added since a reader began that a read passes
+ * over: the first that many it meets. */
+typedef struct {
+    AtomId *ids;
+    int64_t *left;
+    uint32_t mask, len;
+} SpaceEntryPassOver;
+
+/* Whether this occurrence of ID, an atom the space gained ADDED copies of
+ * since the reader began, is one passed over.  False also when out of
+ * memory sets *FAILED. */
+static bool space_entry_pass_over(SpaceEntryPassOver *pass, AtomId id,
+                                  int64_t added, bool *failed) {
+    if (!pass->ids || 2u * (pass->len + 1u) > pass->mask + 1u) {
+        uint32_t count = pass->ids ? 2u * (pass->mask + 1u) : 16u;
+        AtomId *ids = malloc(count * sizeof(*ids));
+        int64_t *left = malloc(count * sizeof(*left));
+        if (!ids || !left || count <= pass->mask) {
+            free(ids);
+            free(left);
+            *failed = true;
+            return false;
+        }
+        for (uint32_t i = 0u; i < count; i++)
+            ids[i] = CETTA_ATOM_ID_NONE;
+        for (uint32_t i = 0u; pass->ids && i <= pass->mask; i++) {
+            if (pass->ids[i] == CETTA_ATOM_ID_NONE)
+                continue;
+            uint32_t at = space_journal_hash(pass->ids[i]) & (count - 1u);
+            while (ids[at] != CETTA_ATOM_ID_NONE)
+                at = (at + 1u) & (count - 1u);
+            ids[at] = pass->ids[i];
+            left[at] = pass->left[i];
+        }
+        free(pass->ids);
+        free(pass->left);
+        pass->ids = ids;
+        pass->left = left;
+        pass->mask = count - 1u;
+    }
+    uint32_t at = space_journal_hash(id) & pass->mask;
+    while (pass->ids[at] != CETTA_ATOM_ID_NONE && pass->ids[at] != id)
+        at = (at + 1u) & pass->mask;
+    if (pass->ids[at] == CETTA_ATOM_ID_NONE) {
+        pass->ids[at] = id;
+        pass->left[at] = added;
+        pass->len++;
+    }
+    if (pass->left[at] <= 0)
+        return false;
+    pass->left[at]--;
+    return true;
+}
+
+typedef struct {
+    Atom **items;
+    CettaCount len, cap;
+    const TermUniverse *universe;
+    bool failed;
+} SpaceEntryCandidates;
+
+static bool space_entry_candidates_push(SpaceEntryCandidates *candidates,
+                                        Atom *atom, uint64_t copies) {
+    for (; atom && copies > 0u; copies--) {
+        if (candidates->len == candidates->cap) {
+            CettaCount cap = candidates->cap ? candidates->cap * 2u : 16u;
+            Atom **items = cap > candidates->cap &&
+                    cap <= (CettaCount)(SIZE_MAX / sizeof(*items))
+                ? realloc(candidates->items, (size_t)cap * sizeof(*items))
+                : NULL;
+            if (!items) {
+                candidates->failed = true;
+                return false;
+            }
+            candidates->items = items;
+            candidates->cap = cap;
+        }
+        candidates->items[candidates->len++] = atom;
+    }
+    return true;
+}
+
+static bool space_entry_removed_visit(void *context, AtomId id,
+                                      uint64_t copies) {
+    SpaceEntryCandidates *candidates = context;
+    return space_entry_candidates_push(
+        candidates, term_universe_get_atom(candidates->universe, id), copies);
+}
+
+bool space_entry_candidates(const SpaceEntry *entry, Atom *pattern,
+                            Atom ***out, CettaCount *out_len) {
+    *out = NULL;
+    *out_len = 0u;
+    Space *space = entry->space;
+    if (!space || space_entry_lost(entry)) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_ENTRY_LOST);
+        return false;
+    }
+    SpaceEntryCandidates candidates = {.universe = space->native.universe};
+    SpaceEntryPassOver pass = {0};
+    bool failed = false;
+    SpaceOccurrenceCursor cursor;
+    space_occurrence_cursor_init_empty(&cursor);
+    if (space_occurrence_cursor_init(space, pattern, &cursor)) {
+        candidates.universe = space_occurrence_cursor_universe(&cursor);
+        for (;;) {
+            CettaIndex logical = 0u;
+            AtomId id = CETTA_ATOM_ID_NONE;
+            SpaceOccurrenceCursorStep step = space_occurrence_cursor_next_id(
+                &cursor, &logical, &id);
+            if (step == SPACE_OCCURRENCE_CURSOR_END)
+                break;
+            if (step == SPACE_OCCURRENCE_CURSOR_INVALIDATED) {
+                failed = true;
+                break;
+            }
+            if (id == CETTA_ATOM_ID_NONE)
+                continue;
+            int64_t added = space_entry_added(entry, id);
+            if (added > 0 && space_entry_pass_over(&pass, id, added, &failed))
+                continue;
+            if (failed || !space_entry_candidates_push(
+                              &candidates, term_universe_get_atom(
+                                  candidates.universe, id), 1u)) {
+                failed = true;
+                break;
+            }
+        }
+        space_occurrence_cursor_release(&cursor);
+    } else {
+        /* A space no cursor reads: its candidates, named by their atoms. */
+        space_occurrence_cursor_release(&cursor);
+        CettaIndex *indices = NULL;
+        CettaIndex count = space_match_candidates64(space, pattern, &indices);
+        for (CettaIndex i = 0u; !failed && i < count; i++) {
+            Atom *atom = space_match_candidate_at64(space, indices[i]);
+            if (!atom)
+                continue;
+            AtomId id = term_universe_lookup_atom_id(candidates.universe,
+                                                     atom);
+            if (id == CETTA_ATOM_ID_NONE) {
+                /* An occurrence the journal cannot name. */
+                failed = true;
+                break;
+            }
+            int64_t added = space_entry_added(entry, id);
+            if (added > 0 && space_entry_pass_over(&pass, id, added, &failed))
+                continue;
+            if (failed || !space_entry_candidates_push(&candidates, atom, 1u))
+                failed = true;
+        }
+        free(indices);
+    }
+    free(pass.ids);
+    free(pass.left);
+    if (!failed &&
+        (!space_entry_removed_each(entry, pattern, space_entry_removed_visit,
+                                   &candidates) ||
+         candidates.failed))
+        failed = true;
+    if (failed) {
+        free(candidates.items);
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_ENTRY_LOST);
+        return false;
+    }
+    *out = candidates.items;
+    *out_len = candidates.len;
+    return true;
+}
+
 void space_occurrence_cursor_init_empty(SpaceOccurrenceCursor *cursor) {
     if (cursor)
         memset(cursor, 0, sizeof(*cursor));
 }
 
+/* A heap key orders rows the way the cursor reads them: by the row, or by
+ * its distance below the ceiling for a cursor read descending. */
 static CettaIndex space_occurrence_cursor_head(
         const SpaceOccurrenceCursor *cursor, uint32_t node, CettaIndex leaf) {
-    return (leaf << cursor->heap_node_bits) | node;
+    CettaIndex rank = cursor->descending ? cursor->ceiling - 1u - leaf : leaf;
+    return (rank << cursor->heap_node_bits) | node;
+}
+
+static inline CettaIndex space_occurrence_cursor_head_row(
+        const SpaceOccurrenceCursor *cursor, CettaIndex rank) {
+    return cursor->descending ? cursor->ceiling - 1u - rank : rank;
+}
+
+/* The row trie node I offers a row-order cursor next, false when the node
+ * has no more below the ceiling.  A node's leaves are in row order.
+ * Ascending, leaf_pos is the next leaf, and the first leaf past the ceiling
+ * ends the node; descending, leaf_pos is the count of leaves left below,
+ * and the leaves past the ceiling, which come first, are passed over. */
+static inline bool space_occurrence_cursor_leaf(
+        SpaceOccurrenceCursor *cursor, uint32_t i, CettaIndex *row) {
+    DiscNode *node = cursor->nodes[i];
+    if (!node)
+        return false;
+    if (cursor->descending) {
+        while (cursor->leaf_pos[i] > 0u) {
+            CettaIndex leaf = disc_leaf_at(node, cursor->leaf_pos[i] - 1u);
+            if (leaf < cursor->ceiling) {
+                *row = leaf;
+                return true;
+            }
+            cursor->leaf_pos[i]--;
+        }
+        return false;
+    }
+    if (cursor->leaf_pos[i] >= node->leaf_count)
+        return false;
+    CettaIndex leaf = disc_leaf_at(node, cursor->leaf_pos[i]);
+    if (leaf >= cursor->ceiling) {
+        cursor->leaf_pos[i] = node->leaf_count;
+        return false;
+    }
+    *row = leaf;
+    return true;
+}
+
+static inline void space_occurrence_cursor_leaf_pass(
+        SpaceOccurrenceCursor *cursor, uint32_t i) {
+    if (cursor->descending)
+        cursor->leaf_pos[i]--;
+    else
+        cursor->leaf_pos[i]++;
+}
+
+/* Each node's leaves are read from the first, or, descending, from above
+ * the last the node held when the cursor opened. */
+static void space_occurrence_cursor_leaves_start(
+        SpaceOccurrenceCursor *cursor) {
+    for (uint32_t i = 0u; i < cursor->node_len; i++)
+        cursor->leaf_pos[i] = cursor->descending && cursor->nodes[i]
+            ? cursor->nodes[i]->leaf_count : 0u;
 }
 
 static void space_occurrence_cursor_heap_push(
@@ -2236,16 +3617,10 @@ static void space_occurrence_cursor_prepare_heap(SpaceOccurrenceCursor *cursor) 
         return;
     cursor->heap_node_bits = bits;
     for (uint32_t index = 0u; index < cursor->node_len; index++) {
-        DiscNode *node = cursor->nodes[index];
-        CettaIndex position = cursor->leaf_pos[index];
-        if (!node || position >= node->leaf_count)
-            continue;
-        if (disc_leaf_at(node, position) >= cursor->ceiling) {
-            cursor->leaf_pos[index] = node->leaf_count;
-            continue;
-        }
-        cursor->heap[cursor->heap_len++] = space_occurrence_cursor_head(
-            cursor, index, disc_leaf_at(node, position));
+        CettaIndex row;
+        if (space_occurrence_cursor_leaf(cursor, index, &row))
+            cursor->heap[cursor->heap_len++] =
+                space_occurrence_cursor_head(cursor, index, row);
     }
     for (uint32_t index = cursor->heap_len / 2u; index > 0u; index--)
         space_occurrence_cursor_heap_sift(cursor, index - 1u,
@@ -2261,25 +3636,21 @@ static bool space_occurrence_cursor_heap_next(
         while (cursor->heap_len > 0u &&
                 (cursor->heap[0] >> cursor->heap_node_bits) == best) {
             uint32_t head = (uint32_t)(space_occurrence_cursor_heap_pop(cursor) & mask);
-            DiscNode *node = cursor->nodes[head];
-            CettaIndex position = ++cursor->leaf_pos[head];
-            if (position >= node->leaf_count)
+            space_occurrence_cursor_leaf_pass(cursor, head);
+            CettaIndex row;
+            if (!space_occurrence_cursor_leaf(cursor, head, &row))
                 continue;
-            if (disc_leaf_at(node, position) >= cursor->ceiling) {
-                cursor->leaf_pos[head] = node->leaf_count;
-                continue;
-            }
             /* Popping frees at least one slot. Queue successor heads at the
              * high end, then insert from low to high so no unread head moves. */
             cursor->heap[cursor->node_len - ++deferred_len] =
-                space_occurrence_cursor_head(
-                    cursor, head, disc_leaf_at(node, position));
+                space_occurrence_cursor_head(cursor, head, row);
         }
         for (uint32_t index = cursor->node_len - deferred_len;
              index < cursor->node_len; index++)
             space_occurrence_cursor_heap_push(cursor, cursor->heap[index]);
-        if (best < view_len) {
-            *out = best;
+        CettaIndex row = space_occurrence_cursor_head_row(cursor, best);
+        if (row < view_len) {
+            *out = row;
             return true;
         }
     }
@@ -2317,6 +3688,12 @@ static bool space_occurrence_cursor_capture(
     cursor->occurrences = space_pinned_occurrences_acquire(space);
     if (!cursor->occurrences) return false;
     cursor->pinned = true;
+    /* A cursor of the trie's nodes reads leaves a removal takes rows out of.
+     * A cursor of the head index does not: that index keeps a removed row
+     * until the rows are contracted, and its reader passes it over. */
+    cursor->index_reader = cursor->node_len != 0u;
+    if (cursor->index_reader)
+        cursor->occurrences->index_readers++;
     return space_read_token_prefix_intact(cursor->read);
 }
 
@@ -2424,6 +3801,8 @@ static SpaceKeptOccurrences *space_kept_occurrences_make(
     const CettaSkeleton *skeleton) {
     TermUniverse *universe = owner->native.universe;
     size_t cells = gather->len * gather->arity + gather->len;
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_SPACE_KEPT_GATHER_FACT,
+                            gather->len);
     SpaceKeptOccurrences *kept =
         malloc(sizeof(*kept) + cells * sizeof(AtomId));
     if (!kept)
@@ -2551,6 +3930,103 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
     return true;
 }
 
+/* A priority space's rows the pattern may match, in its order, which is
+ * the index a priority space reads by.  A ground pattern: the rows equal to
+ * it, found by a search.  A pattern with a ground front at any depth: the
+ * ranges of the order whose rows may match it, those beginning with the
+ * front and those holding a variable inside it, each found by a search and
+ * read as its rows are asked for.  A pattern a variable begins, and any
+ * pattern in a space that reads its rows: the order's own walk, a row at a
+ * time, so a first answer costs the rows before it.  A full space prices a
+ * key past the front for either (space_order_price).  Any other pattern in
+ * a full space (one the order cannot search for, such as one a number HE
+ * compares by value begins): the rows its indexes select. */
+static bool space_occurrence_cursor_init_ordered(Space *s, Atom *pattern,
+                                                 SpaceOccurrenceCursor *cursor) {
+    CettaIndex *equal = NULL;
+    CettaIndex equal_len = 0u;
+    if (space_priority_exact_positions(s, pattern, &equal, &equal_len)) {
+        for (CettaIndex i = 0u; i < equal_len && space_has_marks(s); i++)
+            equal[i] = space_marks_select(s, equal[i]);
+        cursor->flat = equal;
+        cursor->flat_len = equal_len;
+        cursor->flat_mode = true;
+        return space_occurrence_cursor_capture(s, cursor);
+    }
+    uint32_t *ranges = NULL;
+    uint32_t range_len = 0u;
+    bool past = false;
+    bool ranged = space_priority_front_search(s, pattern, true, &ranges,
+                                              &range_len, &past);
+    if (ranged || pattern->kind == ATOM_VAR ||
+        space_match_reads_rows(s, s->native.len - s->native.marked) ||
+        (pattern->kind == ATOM_EXPR && pattern->expr.len != 0u &&
+         pattern->expr.elems[0]->kind == ATOM_VAR)) {
+        if (!ranged && !space_order_ensure(s))
+            return false;
+        CettaIndex marked = s->native.marked;
+        CettaCount price = 0u;
+        DiscNode **trie = NULL;
+        CettaSpacePathDemand *demand = NULL;
+        if (!ranged || range_len != 0u)
+            space_order_price(s, pattern, past, &price, &trie, &demand,
+                              &cursor->order_rent);
+        cursor->order_price = (uint32_t)price;
+        cursor->order_offer_trie = trie != NULL;
+        cursor->order_offer.any = trie ? (void *)trie : (void *)demand;
+        /* A price that built the trie settled the marks first, which
+         * renumbers the rows: the ranges are sought again. */
+        if (ranged && marked != s->native.marked) {
+            free(ranges);
+            ranged = space_priority_front_search(s, pattern, true, &ranges,
+                                                 &range_len, &past);
+        }
+        cursor->order_ranges = ranges;
+        cursor->order_range_len = range_len;
+        cursor->order_scan = true;
+        cursor->order_last = CETTA_ORDER_NONE;
+        /* No row may match: the walk is over before it begins. */
+        cursor->order_started = ranged && range_len == 0u;
+        return space_occurrence_cursor_capture(s, cursor);
+    }
+    CettaIndex *positions = NULL;
+    CettaIndex count = space_match_backend_candidates64(s, pattern, &positions);
+    for (CettaIndex i = 0u; i < count && space_has_marks(s); i++)
+        positions[i] = space_marks_select(s, positions[i]);
+    if (!positions)
+        positions = cetta_malloc(sizeof(*positions));
+    cursor->flat = positions;
+    cursor->flat_len = positions ? count : 0u;
+    cursor->flat_mode = true;
+    return space_occurrence_cursor_capture(s, cursor);
+}
+
+static int exact_index_row_compare(const void *left, const void *right);
+
+/* A flat read of a space whose kind orders its rows (a stack, a queue) takes
+ * its candidates in that order, whatever index supplied them: the oldest
+ * first, or the newest first for a stack. */
+static void space_occurrence_cursor_flat_in_kind_order(
+        const Space *s, SpaceOccurrenceCursor *cursor) {
+    if (!space_rows_in_kind_order(s) || cursor->flat_len < 2u)
+        return;
+    CettaIndex *rows = cursor->flat;
+    CettaIndex n = cursor->flat_len;
+    for (CettaIndex i = 1u; i < n; i++) {
+        if (rows[i - 1u] > rows[i]) {
+            qsort(rows, (size_t)n, sizeof(*rows), exact_index_row_compare);
+            break;
+        }
+    }
+    if (cursor->descending) {
+        for (CettaIndex i = 0u, j = n - 1u; i < j; i++, j--) {
+            CettaIndex row = rows[i];
+            rows[i] = rows[j];
+            rows[j] = row;
+        }
+    }
+}
+
 static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
                                               SpaceOccurrenceCursor *cursor) {
     space_dense_settle_for_pattern(s, pattern);
@@ -2562,6 +4038,9 @@ static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
         return false;
     space_linearize(s);
     cursor->space = s;
+    cursor->descending = space_reads_newest_first(s);
+    if (s->kind == SPACE_KIND_PRIORITY)
+        return space_occurrence_cursor_init_ordered(s, pattern, cursor);
     if (pattern->kind == ATOM_VAR ||
         space_match_reads_rows(s, s->native.len)) {
         cursor->full_scan = true;
@@ -2570,6 +4049,7 @@ static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
     if (space_match_native_exact_occurrences(
             s, pattern, &cursor->flat, &cursor->flat_len)) {
         cursor->flat_mode = true;
+        space_occurrence_cursor_flat_in_kind_order(s, cursor);
         return space_occurrence_cursor_capture(s, cursor);
     }
     if (cetta_native_memory_failed && cetta_native_memory_failed()) return false;
@@ -2600,13 +4080,14 @@ static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
          space_path_index_prefix_candidates(s, pattern, true, &cursor->flat,
                                             &cursor->flat_len))) {
         cursor->flat_mode = true;
+        space_occurrence_cursor_flat_in_kind_order(s, cursor);
         return space_occurrence_cursor_capture(s, cursor);
     }
     space_match_native_ensure_trie(s);
     DiscNode *root = s->match_backend.native.match_trie;
     if (!root)
         return false;
-    cursor->row_order = space_is_ordered(s);
+    cursor->row_order = space_rows_in_kind_order(s);
     DiscNodeSet final;
     dns_init(&final);
     disc_step(root, pattern, &final);
@@ -2629,7 +4110,7 @@ static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
             return false;
         }
         memcpy(cursor->nodes, final.nodes, sizeof(*cursor->nodes) * unique);
-        memset(cursor->leaf_pos, 0, sizeof(*cursor->leaf_pos) * unique);
+        space_occurrence_cursor_leaves_start(cursor);
     }
     dns_free(&final);
     if (!space_occurrence_cursor_capture(s, cursor))
@@ -2640,7 +4121,8 @@ static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
 }
 
 /* Both clone modes own their traversal arrays and share only the pinned rows.
- * Rewinding is permitted only while that view is still the whole live prefix. */
+ * Rewinding is permitted only while that view is still the whole live prefix,
+ * and not for a walk that took an index's rows in place of its rest. */
 static bool space_occurrence_cursor_copy(
         const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst,
         bool rewind) {
@@ -2650,10 +4132,13 @@ static bool space_occurrence_cursor_copy(
     if (!src || !src->pinned || !src->space || !src->occurrences)
         return false;
     Space *live = src->occurrences->space;
+    bool frozen = src->occurrences->frozen;
+    /* A frozen view outlives the removals that moved the prefix on. */
     if ((live &&
          (src->read.instance_id != space_instance_id(live) ||
-          src->prefix_epoch != live->prefix_epoch)) ||
-        (rewind && (!live || src->ceiling != live->native.len)) ||
+          (!frozen && src->prefix_epoch != live->prefix_epoch))) ||
+        (rewind && (!live || frozen || src->ceiling != live->native.len ||
+                    (src->flat_mode && src->order_walked != 0u))) ||
         src->ceiling > space_pinned_occurrences_len(src->occurrences) ||
         (src->node_len > 0u && (!src->nodes || !src->leaf_pos)) ||
         (src->flat_mode && src->flat_len > 0u && !src->flat) ||
@@ -2671,13 +4156,61 @@ static bool space_occurrence_cursor_copy(
     dst->pinned = false;
     if (dst->kept)
         dst->kept->references++;
+    dst->order_gone = NULL;
+    dst->order_gone_cap = 0u;
+    dst->order_ranges = NULL;
+    dst->order_offer.any = NULL;
+    if (src->order_ranges) {
+        size_t bytes = 2u * (size_t)(src->order_range_len ? src->order_range_len
+                                                          : 1u) *
+            sizeof(*dst->order_ranges);
+        dst->order_ranges = cetta_malloc(bytes);
+        if (!dst->order_ranges) {
+            dst->order_gone_len = 0u;
+            goto failed;
+        }
+        if (src->order_range_len)
+            memcpy(dst->order_ranges, src->order_ranges, bytes);
+    }
     if (rewind) {
+        dst->order_range_at = 0u;
+        dst->order_range_open = false;
+        dst->order_purge = false;
         dst->full_next = 0u;
+        dst->order_started = false;
+        dst->order_last = CETTA_ORDER_NONE;
+        dst->order_live_known = false;
+        dst->order_live = CETTA_ORDER_NONE;
+        dst->order_gone_seen = 0u;
+        dst->order_gone_len = 0u;
         dst->flat_next = 0u;
         dst->head = src->head_start;
         dst->has_last = false;
         dst->kept_next = 0u;
         dst->kept_turn = false;
+        dst->order_walked = 0u;
+    }
+    if (dst->order_gone_len != 0u) {
+        dst->order_gone = cetta_malloc(sizeof(*dst->order_gone) *
+                                       (size_t)dst->order_gone_len);
+        if (!dst->order_gone) {
+            dst->order_gone_len = 0u;
+            goto failed;
+        }
+        memcpy(dst->order_gone, src->order_gone,
+               sizeof(*dst->order_gone) * (size_t)dst->order_gone_len);
+        dst->order_gone_cap = dst->order_gone_len;
+    }
+    if (src->order_offer.any && !src->order_offer_trie)
+        dst->order_offer.demand =
+            space_path_index_demand_copy(src->order_offer.demand);
+    if (src->order_offer.any && src->order_offer_trie) {
+        size_t bytes = sizeof(*src->order_offer.trie) *
+            (space_order_trie_len(src->order_offer.trie) + 1u);
+        dst->order_offer.trie = cetta_malloc(bytes);
+        if (!dst->order_offer.trie)
+            goto failed;
+        memcpy(dst->order_offer.trie, src->order_offer.trie, bytes);
     }
     if (src->flat_mode && src->flat_len > 0u) {
         dst->flat = cetta_malloc(sizeof(*dst->flat) * (size_t)src->flat_len);
@@ -2693,7 +4226,7 @@ static bool space_occurrence_cursor_copy(
             goto failed;
         memcpy(dst->nodes, src->nodes, sizeof(*dst->nodes) * src->node_len);
         if (rewind)
-            memset(dst->leaf_pos, 0, sizeof(*dst->leaf_pos) * src->node_len);
+            space_occurrence_cursor_leaves_start(dst);
         else
             memcpy(dst->leaf_pos, src->leaf_pos,
                    sizeof(*dst->leaf_pos) * src->node_len);
@@ -2713,6 +4246,8 @@ static bool space_occurrence_cursor_copy(
     }
     dst->occurrences = space_pinned_occurrences_share(src->occurrences);
     dst->pinned = true;
+    if (dst->index_reader)
+        dst->occurrences->index_readers++;
     return true;
 
 failed:
@@ -2759,17 +4294,116 @@ space_occurrence_cursor_next_row(
     const SpacePinnedOccurrences *occurrences = cursor->occurrences;
     if (occurrences->space &&
         (cursor->read.instance_id != space_instance_id(occurrences->space) ||
-         cursor->prefix_epoch != occurrences->space->prefix_epoch))
+         (!occurrences->frozen &&
+          cursor->prefix_epoch != occurrences->space->prefix_epoch)))
         return SPACE_OCCURRENCE_CURSOR_INVALIDATED;
     CettaCount len = space_pinned_occurrences_len(occurrences);
     SpaceViewMarks marks = space_view_marks(occurrences);
+    if (cursor->order_scan) {
+        /* The row after the one yielded last, found in the order as it
+         * stands: rows appended since the pin stand at or past the ceiling
+         * and are passed over, and a removal detached the view with its own
+         * copy of the order first. */
+        CettaIndex ceiling = cursor->ceiling < len ? cursor->ceiling : len;
+        for (;;) {
+            uint32_t row = CETTA_ORDER_NONE;
+            bool ranged = cursor->order_ranges != NULL;
+            if (ranged && cursor->order_range_at == cursor->order_range_len) {
+                cursor->order_started = true;
+                cursor->order_last = CETTA_ORDER_NONE;
+                return SPACE_OCCURRENCE_CURSOR_END;
+            }
+            /* Rent or buy: the walk has passed as many rows as an index
+             * posted, and takes its rows past here instead
+             * (space_order_price).  Between ranges the row read last is the
+             * end of one, which may begin the next: the walk goes on. */
+            if (cursor->order_offer.any &&
+                cursor->order_walked >= cursor->order_price &&
+                (!ranged || cursor->order_range_open ||
+                 !cursor->order_started) &&
+                space_occurrence_cursor_buy(cursor, ceiling))
+                break;
+            if (ranged && !cursor->order_range_open) {
+                /* A range's first row, found when the cursor opened; the
+                 * view holds it still, removed since or not. */
+                row = cursor->order_ranges[2u * cursor->order_range_at];
+                if (!space_view_order_holds(occurrences, row))
+                    return SPACE_OCCURRENCE_CURSOR_INVALIDATED;
+                cursor->order_range_open = true;
+                cursor->order_live_known = false;
+                cursor->order_purge = true;
+            } else if (occurrences->frozen) {
+                /* A frozen view walks its Space's order and the rows marked
+                 * since it froze together. */
+                if (!space_frozen_order_next(cursor, occurrences, ceiling,
+                                             &row))
+                    return SPACE_OCCURRENCE_CURSOR_INVALIDATED;
+            } else {
+                /* A view on its Space reads the order kept current; one
+                 * with its own copy, the copy. */
+                if (occurrences->space &&
+                    !space_order_ensure(occurrences->space))
+                    return SPACE_OCCURRENCE_CURSOR_INVALIDATED;
+                const CettaOrder *order = space_view_order(occurrences);
+                if (!order)
+                    return SPACE_OCCURRENCE_CURSOR_INVALIDATED;
+                if (!cursor->order_started) {
+                    row = cetta_order_least(order);
+                } else if (cursor->order_last == CETTA_ORDER_NONE) {
+                    row = CETTA_ORDER_NONE;
+                } else if (!cetta_order_holds(order, cursor->order_last)) {
+                    return SPACE_OCCURRENCE_CURSOR_INVALIDATED;
+                } else {
+                    row = cetta_order_next(order, cursor->order_last);
+                }
+            }
+            cursor->order_started = true;
+            if (ranged &&
+                (row == CETTA_ORDER_NONE ||
+                 row == cursor->order_ranges[2u * cursor->order_range_at +
+                                             1u])) {
+                /* The range is read; the next begins at its own first row,
+                 * which stands at or after this one. */
+                if (row != CETTA_ORDER_NONE)
+                    cursor->order_last = row;
+                cursor->order_range_at++;
+                cursor->order_range_open = false;
+                continue;
+            }
+            cursor->order_last = row;
+            if (row == CETTA_ORDER_NONE)
+                return SPACE_OCCURRENCE_CURSOR_END;
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_ORDER_WALK_ROW);
+            cursor->order_walked++;
+            /* A row added since the cursor opened is not the cursor's, and
+             * a row the view's marks removed is not the view's. */
+            if (row >= ceiling || space_view_row_marked(&marks, row))
+                continue;
+            if (space_occurrence_cursor_yield(cursor, &marks, row,
+                                              logical_index_out))
+                return SPACE_OCCURRENCE_CURSOR_ITEM;
+        }
+    }
     if (cursor->head_mode) {
         CettaIndex row = 0u;
         CettaIndex ceiling = cursor->ceiling < len ? cursor->ceiling : len;
         while (space_head_index_next(&cursor->head, ceiling,
-                                     marks.marked ? marks.marks : NULL,
+                                     marks.marked && !marks.frozen
+                                         ? marks.marks : NULL,
                                      marks.rows, &row)) {
             if (space_occurrence_cursor_yield(cursor, &marks, row,
+                                              logical_index_out))
+                return SPACE_OCCURRENCE_CURSOR_ITEM;
+        }
+        return SPACE_OCCURRENCE_CURSOR_END;
+    }
+    if (cursor->full_scan && cursor->descending) {
+        /* A stack's rows from its newest down: full_next counts the rows
+         * passed below the ceiling. */
+        while (cursor->full_next < cursor->ceiling) {
+            CettaIndex row = cursor->ceiling - 1u - cursor->full_next++;
+            if (row < len &&
+                space_occurrence_cursor_yield(cursor, &marks, row,
                                               logical_index_out))
                 return SPACE_OCCURRENCE_CURSOR_ITEM;
         }
@@ -2778,6 +4412,16 @@ space_occurrence_cursor_next_row(
     if (cursor->full_scan) {
         while (cursor->full_next < cursor->ceiling &&
                cursor->full_next < len) {
+            /* Sixty-four rows all removed are passed at once: a space its
+             * readers drain from the front keeps the removed rows there
+             * until they are contracted away. */
+            CettaIndex row = cursor->full_next;
+            if (marks.marked && !marks.frozen && (row & 63u) == 0u &&
+                row + 64u <= marks.rows &&
+                marks.marks[row >> 6] == UINT64_MAX) {
+                cursor->full_next = row + 64u;
+                continue;
+            }
             if (space_occurrence_cursor_yield(cursor, &marks,
                     cursor->full_next++, logical_index_out))
                 return SPACE_OCCURRENCE_CURSOR_ITEM;
@@ -2824,33 +4468,27 @@ space_occurrence_cursor_next_row(
         return SPACE_OCCURRENCE_CURSOR_END;
     }
     for (;;) {
-        CettaIndex best = UINT64_MAX;
+        /* The next row of all the nodes in the cursor's direction: the
+         * least, or the greatest for a stack's. */
+        CettaIndex best = 0u;
         bool found = false;
         for (uint32_t i = 0u; i < cursor->node_len; i++) {
-            DiscNode *node = cursor->nodes[i];
-            if (!node)
+            CettaIndex index;
+            if (!space_occurrence_cursor_leaf(cursor, i, &index))
                 continue;
-            while (cursor->leaf_pos[i] < node->leaf_count) {
-                CettaIndex index = disc_leaf_at(node, cursor->leaf_pos[i]);
-                if (index >= cursor->ceiling) {
-                    cursor->leaf_pos[i] = node->leaf_count;
-                    break;
-                }
-                if (!found || index < best) {
-                    best = index;
-                    found = true;
-                }
-                break;
+            if (!found ||
+                (cursor->descending ? index > best : index < best)) {
+                best = index;
+                found = true;
             }
         }
         if (!found)
             return SPACE_OCCURRENCE_CURSOR_END;
         for (uint32_t i = 0u; i < cursor->node_len; i++) {
-            DiscNode *node = cursor->nodes[i];
-            if (!node || cursor->leaf_pos[i] >= node->leaf_count)
-                continue;
-            if (disc_leaf_at(node, cursor->leaf_pos[i]) == best)
-                cursor->leaf_pos[i]++;
+            CettaIndex index;
+            if (space_occurrence_cursor_leaf(cursor, i, &index) &&
+                index == best)
+                space_occurrence_cursor_leaf_pass(cursor, i);
         }
         if (best >= len ||
             !space_occurrence_cursor_yield(cursor, &marks, best,
@@ -3006,7 +4644,7 @@ Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
     }
     if (cursor->has_last && cursor->last_logical == index)
         return space_pinned_occurrences_atom_at_row(occurrences, cursor->last_row);
-    if (occurrences->space)
+    if (occurrences->space && !occurrences->frozen)
         return space_get_at64(occurrences->space, index);
     /* The detached copy holds the rows themselves, marked ones too. */
     SpaceViewMarks marks = space_view_marks(occurrences);
@@ -3028,7 +4666,27 @@ size_t space_occurrence_cursor_accounted_bytes(
         bytes += (size_t)cursor->flat_len * sizeof(*cursor->flat);
     if (cursor->heap)
         bytes += (size_t)cursor->node_len * sizeof(*cursor->heap);
+    if (cursor->order_offer.any && cursor->order_offer_trie)
+        bytes += (space_order_trie_len(cursor->order_offer.trie) + 1u) *
+            sizeof(*cursor->order_offer.trie);
+    if (cursor->order_gone)
+        bytes += (size_t)cursor->order_gone_cap * sizeof(*cursor->order_gone);
+    if (cursor->order_ranges)
+        bytes += 2u * (size_t)cursor->order_range_len *
+            sizeof(*cursor->order_ranges);
     const SpacePinnedOccurrences *view = cursor->occurrences;
+    if (include_view && view && view->space && view->frozen) {
+        /* A frozen view stays on its Space's rows; its own are the rows
+         * removed since it froze, listed, and their bits once they are
+         * many. */
+        bytes += (size_t)view->gone_cap *
+            (sizeof(*view->gone_rows) + sizeof(*view->gone_ids));
+        size_t words = ((size_t)view->gone_bit_rows + 63u) / 64u;
+        if (view->gone_bits)
+            bytes += words * sizeof(*view->gone_bits);
+        if (view->gone_tree)
+            bytes += (words + 1u) * sizeof(*view->gone_tree);
+    }
     if (include_view && view && !view->space) {
         bytes += sizeof(*view);
         /* Live rows and indexes belong to the Space.  Once detached, the
@@ -3042,6 +4700,8 @@ size_t space_occurrence_cursor_accounted_bytes(
             bytes += words * sizeof(*view->marks);
         if (view->mark_tree)
             bytes += (words + 1u) * sizeof(*view->mark_tree);
+        if (view->has_order)
+            bytes += cetta_order_bytes(&view->order);
     }
     return bytes;
 }
@@ -3050,13 +4710,23 @@ void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
     if (!cursor)
         return;
-    if (cursor->pinned)
+    if (cursor->pinned) {
+        /* A walk no index priced, where one could, is rent toward it. */
+        if (cursor->order_rent && cursor->occurrences->space)
+            space_path_index_rent(cursor->occurrences->space,
+                                  cursor->order_walked);
+        if (cursor->index_reader && cursor->occurrences->index_readers != 0u)
+            cursor->occurrences->index_readers--;
         space_pinned_occurrences_release(cursor->occurrences);
+    }
     space_kept_occurrences_release(cursor->kept);
     free(cursor->nodes);
     free(cursor->leaf_pos);
     free(cursor->flat);
     free(cursor->heap);
+    free(cursor->order_offer.any);
+    free(cursor->order_gone);
+    free(cursor->order_ranges);
     space_occurrence_cursor_init_empty(cursor);
 }
 
@@ -3166,6 +4836,9 @@ static bool disc_follow_rigid_exact_path(
             node, query->ground.ival);
         return true;
     case ATOM_EXPR: {
+        /* A carrier's encoding is not the shape it meets rows by. */
+        if (atom_is_carrier(query))
+            return false;
         return disc_follow_rigid_exact_expression_coordinates(
             node, query->expr.elems, query->expr.len,
             out_continuation);
@@ -3453,6 +5126,7 @@ bool disc_project_flat_bound_column(
     if (!space || !root || !pattern || !count_out || !sum_out ||
         !product_out || !product_ok ||
         pattern->kind != ATOM_EXPR || pattern->expr.len == 0u ||
+        atom_is_carrier(pattern) ||
         column >= (size_t)pattern->expr.len ||
         (bind_len > 0u && (!bind_ids || !bind_values)))
         return false;
@@ -3508,6 +5182,7 @@ bool disc_count_flat_bound_vars(
         *out_count = 0u;
     if (!root || !pattern || !out_count ||
         pattern->kind != ATOM_EXPR || pattern->expr.len == 0u ||
+        atom_is_carrier(pattern) ||
         (bind_len > 0u && (!bind_ids || !bind_values)) ||
         disc_find_variable_branch(root))
         return false;
@@ -3559,7 +5234,7 @@ bool disc_count_flat_bound_vars(
 
 bool disc_count_flat_trailing_wildcards(
     const DiscNode *root, const Atom *pattern, CettaIndex *out_count) {
-    if (!pattern || pattern->kind != ATOM_EXPR) {
+    if (!pattern || pattern->kind != ATOM_EXPR || atom_is_carrier(pattern)) {
         if (out_count)
             *out_count = 0u;
         return false;
@@ -3732,11 +5407,7 @@ static void eq_bucket_add_id(EqBucket *b, const Space *s, AtomId lhs_id,
     if (!b->trie)
         b->trie = disc_node_new();
     if (!b->trie) return;
-    if (!disc_insert_id(b->trie, s->native.universe, lhs_id, idx)) {
-        Atom *lhs = term_universe_get_atom(s->native.universe, lhs_id);
-        if (lhs)
-            disc_insert(b->trie, lhs, idx);
-    }
+    disc_insert_id(b->trie, s->native.universe, lhs_id, idx);
     if (!stree_bucket_insert_id(&b->subst, s->native.universe, lhs_id, idx)) {
         Atom *lhs = term_universe_get_atom(s->native.universe, lhs_id);
         if (lhs)
@@ -4286,27 +5957,50 @@ static void ty_ann_index_note_identity(TypeAnnIndex *idx, const Space *s,
 }
 
 /* Whether a row's outer form is open: a variable, an expression headed by
- * no symbol, or a PeTTa value that is not ordinary.  Such a row can match a
+ * a variable, or a PeTTa value that is not ordinary.  Such a row can match a
  * declaration, a subtype or an equation query without being headed by ':',
- * ':<' or '='. */
+ * ':<' or '='.  A row headed by a number, a string or an expression cannot:
+ * its head is never one of those symbols, so (5 x) is data as (f x) is. */
 static bool space_atom_outer_open(const Atom *row) {
     return !row || row->kind == ATOM_VAR || atom_structural_has_rational(row) ||
         (row->kind == ATOM_EXPR && row->expr.len != 0u &&
-         (atom_head_symbol_id(row) == SYMBOL_ID_NONE ||
+         (!row->expr.elems[0] || row->expr.elems[0]->kind == ATOM_VAR ||
           atom_petta_value_representation(row) != PETTA_VALUE_ORDINARY));
 }
 
-static bool space_row_outer_open(const TermUniverse *universe, AtomId row_id) {
+/* A row no symbol heads: open when its form is not its encoding's, or when
+ * a variable heads it.  Kept out of line: few rows come here. */
+static __attribute__((noinline)) bool space_row_headless_open(
+        const TermUniverse *universe, AtomId row_id,
+        const CettaTermHdr *header) {
+    /* A carrier (cons cells, a list pattern, a value that is no list)
+     * spells another shape than its encoding. */
+    if (tu_petta_value_representation(universe, row_id) != PETTA_VALUE_ORDINARY ||
+        tu_is_carrier(universe, row_id))
+        return true;
+    const CettaTermHdr *head =
+        tu_hdr(universe, tu_child_from_header(universe, header, 0u));
+    return !head || (AtomKind)head->tag == ATOM_VAR;
+}
+
+/* Per row on every add: the symbol-headed row is decided inline, the rare
+ * headless one out of line. */
+static inline __attribute__((always_inline)) bool space_row_outer_open(
+        const TermUniverse *universe, AtomId row_id) {
     const CettaTermHdr *header = tu_hdr(universe, row_id);
     if (header) {
         /* These structural tests share the already validated record header. */
         AtomKind kind = (AtomKind)header->tag;
-        return kind == ATOM_VAR ||
-            (kind == ATOM_EXPR &&
-             (header->aux32 & CETTA_TERM_HDR_DATA_MASK) != 0u &&
-             (header->sym_or_head == SYMBOL_ID_NONE ||
-              tu_petta_value_representation(universe, row_id) !=
-                  PETTA_VALUE_ORDINARY));
+        if (kind == ATOM_VAR)
+            return true;
+        if (kind != ATOM_EXPR ||
+            (header->aux32 & CETTA_TERM_HDR_DATA_MASK) == 0u)
+            return false;
+        /* The common row, headed by a symbol, is decided here. */
+        if (header->sym_or_head != SYMBOL_ID_NONE)
+            return tu_petta_value_representation(universe, row_id) !=
+                PETTA_VALUE_ORDINARY;
+        return space_row_headless_open(universe, row_id, header);
     }
     return space_atom_outer_open(term_universe_peek_atom(universe, row_id));
 }
@@ -5475,6 +7169,15 @@ static bool space_overlay_mark_base_removed(Space *s, CettaIndex idx) {
         s->overlay_removed_base_indices[slot] == idx) {
         return true;
     }
+    if (__builtin_expect(s->journal != NULL, 0)) {
+        const Space *base = s->overlay_base;
+        if (base->native.atom_ids && idx < base->native.len)
+            space_journal_note(s, space_atom_id_storage_load_at(
+                base->native.atom_ids, base->native.atom_id_width_bits,
+                base->native.start + idx), -1);
+        else
+            space_journal_lose(s);
+    }
     if (s->overlay_removed_base_len == s->overlay_removed_base_cap) {
         if (s->overlay_removed_base_cap > UINT64_MAX / 2u)
             return false;
@@ -5560,7 +7263,7 @@ static bool space_overlay_remove_local_raw_index(Space *s, CettaIndex raw_idx) {
         space_local_removal_equation_projection(s, raw_idx);
     AtomId removed_id = space_atom_id_storage_load_at(
         s->native.atom_ids, s->native.atom_id_width_bits, raw_idx);
-    if (space_is_ordered(s)) {
+    if (space_rows_in_kind_order(s)) {
         size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
         memmove(s->native.atom_ids + ((size_t)raw_idx * width),
                 s->native.atom_ids + ((size_t)(raw_idx + 1u) * width),
@@ -5615,6 +7318,7 @@ static inline void space_hold_row(Space *s, AtomId atom_id) {
 
 /* A row removed drops its reference. */
 static void space_release_row(Space *s, AtomId atom_id) {
+    space_journal_note(s, atom_id, -1);
     space_note_released(s, 1u);
     space_resource_release(&s->native, atom_id);
     term_universe_release(s->native.universe, atom_id);
@@ -5637,6 +7341,22 @@ static void space_release_rows(Space *s, CettaIndex from, CettaIndex to) {
         space_resource_release(&s->native, id);
         term_universe_release(universe, id);
     }
+}
+
+/* The rows [from, to) leave the space: those not marked are journalled as
+ * removed, then let go of. */
+static void space_remove_rows(Space *s, CettaIndex from, CettaIndex to) {
+    if (__builtin_expect(s->journal != NULL, 0) && s->native.atom_ids) {
+        for (CettaIndex row = from; row < to; row++) {
+            if (s->native.marked != 0u &&
+                space_marks_row_marked(&s->native, row))
+                continue;
+            space_journal_note(s, space_atom_id_storage_load_at(
+                s->native.atom_ids, s->native.atom_id_width_bits,
+                s->native.start + row), -1);
+        }
+    }
+    space_release_rows(s, from, to);
 }
 
 void space_rows_hold(Space *s) {
@@ -5744,6 +7464,9 @@ struct SpaceDense {
     /* Giving a relation back to rows, which changes no fact of the space:
      * the rows it adds publish nothing. */
     bool settling;
+    /* Moving rows into relations, which changes no fact of the space
+     * either: the journal of entry reads takes neither side. */
+    bool moving;
     /* A row whose head is open (a variable, a term without a symbol head, or
      * one stored without a record) has been in the space since its relations
      * began: such a row may stand for a fact of any head. */
@@ -5753,6 +7476,24 @@ struct SpaceDense {
      * meanwhile stay counted (RelationTransferCost). */
     CettaCount pending;
 };
+
+static inline bool space_journal_quiet(const Space *s) {
+    return s->native.dense &&
+           (s->native.dense->settling || s->native.dense->moving);
+}
+
+/* The record of the fact of COLUMNS in HEAD's relation, the atom a row
+ * holding it would hold. */
+static AtomId space_dense_fact_id(Space *s, const SpaceDenseHead *head,
+                                  const AtomId *columns) {
+    if (head->skeleton)
+        return cetta_skeleton_build(s->native.universe, head->skeleton,
+                                    columns);
+    AtomId kids[CETTA_TUPLE_MAX_ARITY + 1u];
+    kids[0] = head->head_id;
+    memcpy(&kids[1], columns, head->arity * sizeof(*kids));
+    return tu_expr_from_ids(s->native.universe, kids, head->arity + 1u);
+}
 
 static __attribute__((noinline, cold)) bool space_proof_non_exact(const Space *s) {
     CETTA_SCOPED_SHARED_TRANSITION(guard);
@@ -6190,6 +7931,9 @@ SpaceProofImageStatus space_attach_proof_image(Space *s, SymbolId symbol,
     SpaceDenseHead *head = space_dense_find(s->native.dense, symbol);
     if (!head) head = space_dense_entry_new(s, symbol, head_id);
     if (!head) { cetta_proof_image_release(image); free(payload); return SPACE_PROOF_IMAGE_CAPACITY; }
+    /* A proof image's rows come at once, which the journal does not
+     * itemize; a declined image changes nothing and loses no point. */
+    space_journal_lose(s);
     assert(head->state != SPACE_DENSE_KEPT);
     space_dense_kept_free(head);
     free(head->skeleton); head->skeleton = NULL;
@@ -6363,6 +8107,9 @@ CettaProofBatchStatus space_publish_proof_batch(Space *s, SymbolId symbol,
     CettaProofBatchStatus status = cetta_proof_batch_commit(transaction);
     if (status != CETTA_PROOF_BATCH_OK) return status;
     if (result.appended_rows) {
+        /* The batch's rows come at once, which the journal does not itemize;
+         * a batch that adds none loses no point. */
+        space_journal_lose(s);
         head->proof->count += result.appended_rows;
         s->native.dense_facts += result.appended_rows;
         /* Later complete keys can introduce open variables. Conservatism
@@ -7114,6 +8861,7 @@ static void space_dense_take_over_rows(Space *s) {
         return;
     }
     size_t taken_len = 0u;
+    dense->moving = true;
     for (size_t i = 0u; i < len; i++) {
         SpaceDenseHead *head = &dense->heads[moves[i].head];
         if (head->state != SPACE_DENSE_KEPT ||
@@ -7128,11 +8876,13 @@ static void space_dense_take_over_rows(Space *s) {
         space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
                                SPACE_MUTATION_PREFIX_APPEND_ONLY);
         (void)space_remove_logical_positions(s, taken, (CettaCount)taken_len);
+        dense->moving = false;
         space_settle_marks(s);
         if (space_dense_trace())
             fprintf(stderr, "space relations: %zu rows move into relations\n",
                     taken_len);
     }
+    dense->moving = false;
     free(taken);
 }
 
@@ -7262,6 +9012,8 @@ static bool space_dense_take_publishing(Space *s, SpaceDenseHead *head,
     if (!added)
         return s->kind == SPACE_KIND_SET;
     s->native.dense_facts++;
+    if (__builtin_expect(s->journal != NULL, 0) && !space_journal_quiet(s))
+        space_journal_note(s, space_dense_fact_id(s, head, columns), 1);
     if (publish)
         space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
                                SPACE_MUTATION_PREFIX_APPEND_ONLY);
@@ -7633,10 +9385,17 @@ static bool space_dense_kept_contains(const SpaceDenseHead *head,
 static bool space_dense_kept_remove(Space *s, SpaceDenseHead *head,
                                     const AtomId *columns) {
     uint32_t numbered = space_dense_kept_numbered(head);
+    /* The fact's record, which holds its columns, journalled once the
+     * relation lets go of them. */
+    AtomId journalled = __builtin_expect(s->journal != NULL, 0) &&
+            !space_journal_quiet(s)
+        ? space_dense_fact_id(s, head, columns) : CETTA_ATOM_ID_NONE;
     if (space_dense_bits(head)) {
         if (!cetta_dense_relation_remove(&head->bits, columns[0], columns[1],
                                          space_dense_release_id, s))
             return false;
+        if (journalled != CETTA_ATOM_ID_NONE)
+            space_journal_note(s, journalled, -1);
         if (g_space_dense_reading == 0u)
             (void)cetta_dense_relation_trim(&head->bits);
     } else {
@@ -7646,6 +9405,8 @@ static bool space_dense_kept_remove(Space *s, SpaceDenseHead *head,
         if (!cetta_tuple_table_remove(&head->table, tuple,
                                       space_dense_release_id, s))
             return false;
+        if (journalled != CETTA_ATOM_ID_NONE)
+            space_journal_note(s, journalled, -1);
         if (g_space_dense_reading == 0u)
             (void)cetta_tuple_table_trim(&head->table);
     }
@@ -8067,7 +9828,8 @@ void space_settle_marks_slow(Space *s) {
  * its own rows. */
 static bool space_marks_admit(const Space *s) {
     return !space_has_overlay_base(s) && !s->module_own_view &&
-           (s->kind == SPACE_KIND_ATOM || s->kind == SPACE_KIND_SET) &&
+           (s->kind == SPACE_KIND_ATOM || s->kind == SPACE_KIND_SET ||
+            s->kind == SPACE_KIND_PRIORITY) &&
            s->imported_len == 0u && !space_has_dependencies(s) &&
            stable_occurrence_transport_enabled() &&
            (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
@@ -8124,8 +9886,13 @@ static void space_logical_positions_publish(
         CettaCount count) {
     if (count == 0u)
         return;
-    /* Pinned readers keep the rows and marks they began with. */
-    space_pinned_occurrences_detach(s);
+    /* Pinned readers keep the rows and marks they began with: a view of
+     * rows alone is frozen where it is, and the rows marked while one is are
+     * stamped for it. */
+    space_pinned_occurrences_part(s);
+    if (s->match_backend.native.frozen &&
+        !space_frozen_note_marks(s, rows, count))
+        space_pinned_occurrences_detach(s);
     /* While no two synced rows share a key, a removed row's key leaves the
      * presence bits with it, read before the row's id is released, and the
      * synced prefix loses the rows it held; once two do, the bits are
@@ -8148,6 +9915,7 @@ static void space_logical_positions_publish(
         presence_removed++;
     }
     SpaceMatchNativeState *native_state = &s->match_backend.native;
+    bool order_follows = space_order_forget_rows(s, rows, count);
     for (CettaCount i = 0u; i < count; i++) {
         space_marks_mark(s, rows[i]);
         /* The row leaves the match trie and the exact index now, so lookups
@@ -8155,6 +9923,7 @@ static void space_logical_positions_publish(
          * settle, and their reader drops marked rows. */
         AtomId atom_id = space_atom_id_storage_load_at(
             s->native.atom_ids, s->native.atom_id_width_bits, rows[i]);
+        space_journal_note(s, atom_id, -1);
         term_universe_release(s->native.universe, atom_id);
         if (native_state->match_trie && !native_state->match_trie_dirty)
             (void)disc_remove_id(native_state->match_trie,
@@ -8176,11 +9945,14 @@ static void space_logical_positions_publish(
     space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
                            SPACE_MUTATION_PREFIX_REWRITTEN);
     space_path_indexes_adopt_prefix_epoch(s, followed_prefix);
+    space_order_adopt(s, order_follows);
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_SPACE_MARKED_ROW, count);
     space_note_released(s, count);
     /* Settle when marked rows reach the live ones: a pass then reads at most
-     * twice the rows it removes. */
-    if (s->native.marked >= s->native.len - s->native.marked)
+     * twice the rows it removes.  A frozen view reads the rows where they
+     * are: the pass waits for it. */
+    if (s->native.marked >= s->native.len - s->native.marked &&
+        !s->match_backend.native.frozen)
         space_settle_marks(s);
 }
 
@@ -8192,6 +9964,1979 @@ bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
     space_logical_positions_publish(s, positions, rows, count);
     free(rows);
     return true;
+}
+
+static int space_order_key_compare(const void *left, const void *right) {
+    const uint64_t *a = left, *b = right;
+    return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
+}
+
+/* ── Order index: keeping it ─────────────────────────────────────────────── */
+
+/* ── The order of a priority space ─────────────────────────────────────────
+ * The standard order of terms (petta_semantics_term_compare): numbers by
+ * value, then strings, the empty expression, symbols by their bytes, and
+ * expressions by their elements in turn and then by length.  A priority
+ * space needs an order on what it holds, a bag of atoms taken up to the
+ * names of their variables, so two things are made exact here:
+ *   - variables are compared by where each first occurs in its own atom
+ *     (the atom's alpha key numbers them so), not by when they were made;
+ *   - leaves the standard order leaves together though they differ (a
+ *     Boolean and a symbol of the same spelling, two NaNs, numbers a build
+ *     without exact arithmetic cannot separate, two spaces) are separated
+ *     by what they are: the kind of atom, the kind of value, then the
+ *     float's bits, the number's digits, the space's serial.
+ * What it still leaves together is one atom of the bag, and stands in row
+ * order.  The stored terms are compared as stored: a row is not decoded to
+ * be placed, and only a leaf the stored cases below do not cover is read as
+ * an atom. */
+enum {
+    SPACE_ORDER_VARIABLE = 0,
+    SPACE_ORDER_NUMBER,
+    SPACE_ORDER_STRING,
+    SPACE_ORDER_NIL,
+    SPACE_ORDER_ATOM,
+    SPACE_ORDER_COMPOUND,
+    /* Past this many nested expressions the atoms themselves are compared,
+     * by the standard order's own worklist. */
+    SPACE_ORDER_DEPTH = 96,
+};
+
+static int space_order_class(const CettaTermHdr *hdr) {
+    switch ((AtomKind)hdr->tag) {
+    case ATOM_VAR:
+        return SPACE_ORDER_VARIABLE;
+    case ATOM_GROUNDED:
+        switch ((GroundedKind)hdr->subtag) {
+        case GV_INT:
+        case GV_FLOAT:
+        case GV_BIGINT:
+        case GV_RATIONAL:
+            return SPACE_ORDER_NUMBER;
+        case GV_STRING:
+            return SPACE_ORDER_STRING;
+        default:
+            return SPACE_ORDER_ATOM;
+        }
+    case ATOM_EXPR:
+        return (hdr->aux32 & CETTA_TERM_HDR_DATA_MASK) != 0u
+            ? SPACE_ORDER_COMPOUND : SPACE_ORDER_NIL;
+    default:
+        return SPACE_ORDER_ATOM;
+    }
+}
+
+static int space_order_sign_text(const char *left, const char *right) {
+    int raw = strcmp(left ? left : "", right ? right : "");
+    return raw < 0 ? -1 : raw > 0 ? 1 : 0;
+}
+
+/* Two different leaves the standard order leaves together. */
+static int space_order_leaf_tie(const TermUniverse *universe, AtomId a,
+                                const CettaTermHdr *ha, AtomId b,
+                                const CettaTermHdr *hb) {
+    if (ha->tag != hb->tag)
+        return ha->tag < hb->tag ? -1 : 1;
+    if ((AtomKind)ha->tag != ATOM_GROUNDED)
+        return 0;
+    if (ha->subtag != hb->subtag)
+        return ha->subtag < hb->subtag ? -1 : 1;
+    switch ((GroundedKind)ha->subtag) {
+    case GV_FLOAT: {
+        double x = tu_float(universe, a), y = tu_float(universe, b);
+        uint64_t p = 0u, q = 0u;
+        memcpy(&p, &x, sizeof(p));
+        memcpy(&q, &y, sizeof(q));
+        return p < q ? -1 : p > q ? 1 : 0;
+    }
+    case GV_BIGINT:
+        return space_order_sign_text(tu_bigint_cstr(universe, a),
+                                     tu_bigint_cstr(universe, b));
+    case GV_RATIONAL:
+        return space_order_sign_text(tu_rational_cstr(universe, a),
+                                     tu_rational_cstr(universe, b));
+    case GV_SPACE: {
+        /* A space's serial is given when it is made: the same from run to
+         * run, where its address is not. */
+        const Atom *x = term_universe_get_atom(universe, a);
+        const Atom *y = term_universe_get_atom(universe, b);
+        const Space *p = x ? (const Space *)x->ground.ptr : NULL;
+        const Space *q = y ? (const Space *)y->ground.ptr : NULL;
+        uint64_t left = p ? p->instance_id : 0u;
+        uint64_t right = q ? q->instance_id : 0u;
+        return left < right ? -1 : left > right ? 1 : 0;
+    }
+    default:
+        return 0;
+    }
+}
+
+/* Two stored terms by their atoms: the standard order's own reading, for a
+ * term the stored cases do not cover. */
+static bool space_order_compare_atoms(const TermUniverse *universe, AtomId a,
+                                      AtomId b, int *order) {
+    Atom *left = term_universe_get_atom(universe, a);
+    Atom *right = term_universe_get_atom(universe, b);
+    return left && right && petta_semantics_term_compare(left, right, order);
+}
+
+/* Whether the order reads the stored expression ID (header HDR) by its atom,
+ * as the standard order reads it: a list stored as anything but a plain
+ * expression (a list value, a list pattern, cons cells), which is read as
+ * the list it spells, and a value that is no list (a compound, a partial).
+ * Every other expression is read from its record, element by element,
+ * which for a plain expression is the same reading. */
+static bool space_order_reads_by_atom(const TermUniverse *universe, AtomId id,
+                                      const CettaTermHdr *hdr) {
+    if ((AtomKind)hdr->tag != ATOM_EXPR ||
+        hdr->sym_or_head != SYMBOL_ID_NONE ||
+        (hdr->aux32 & CETTA_TERM_HDR_DATA_MASK) == 0u)
+        return false;
+    int64_t tag = tu_internal_tag(universe, tu_child(universe, id, 0u));
+    return cetta_internal_tag_is_list(tag) ||
+        tag == (int64_t)CETTA_INTERNAL_TAG_PETTA_OPEN_CONS ||
+        tu_petta_value_representation(universe, id) != PETTA_VALUE_ORDINARY;
+}
+
+static bool space_order_compare_ids(const TermUniverse *universe, AtomId a,
+                                    AtomId b, unsigned depth, int *order) {
+    if (a == b) {
+        *order = 0;
+        return true;
+    }
+    const CettaTermHdr *ha = tu_hdr(universe, a);
+    const CettaTermHdr *hb = tu_hdr(universe, b);
+    if (!ha || !hb || depth > SPACE_ORDER_DEPTH ||
+        space_order_reads_by_atom(universe, a, ha) ||
+        space_order_reads_by_atom(universe, b, hb))
+        return space_order_compare_atoms(universe, a, b, order);
+    int ca = space_order_class(ha), cb = space_order_class(hb);
+    if (ca != cb) {
+        *order = ca < cb ? -1 : 1;
+        return true;
+    }
+    if (ca == SPACE_ORDER_COMPOUND) {
+        CettaExprLen la = (CettaExprLen)(ha->aux32 & CETTA_TERM_HDR_DATA_MASK);
+        CettaExprLen lb = (CettaExprLen)(hb->aux32 & CETTA_TERM_HDR_DATA_MASK);
+        CettaExprLen shared = la < lb ? la : lb;
+        for (CettaExprIndex i = 0u; i < shared; i++) {
+            /* A child's record is read afresh: a comparison may store an
+             * alpha key and so move the records. */
+            AtomId left = tu_child(universe, a, i);
+            AtomId right = tu_child(universe, b, i);
+            if (!space_order_compare_ids(universe, left, right, depth + 1u,
+                                         order))
+                return false;
+            if (*order != 0)
+                return true;
+        }
+        *order = la < lb ? -1 : la > lb ? 1 : 0;
+        return true;
+    }
+    /* Leaves.  The common ones are read from their records. */
+    if ((AtomKind)ha->tag == ATOM_SYMBOL && (AtomKind)hb->tag == ATOM_SYMBOL) {
+        *order = symbol_compare(g_symbols, tu_sym(universe, a),
+                                tu_sym(universe, b));
+        return true;
+    }
+    if ((AtomKind)ha->tag == ATOM_GROUNDED && ha->subtag == GV_INT &&
+        (AtomKind)hb->tag == ATOM_GROUNDED && hb->subtag == GV_INT) {
+        int64_t x = tu_int(universe, a), y = tu_int(universe, b);
+        *order = x < y ? -1 : x > y ? 1 : 0;
+        return true;
+    }
+    if (ca == SPACE_ORDER_VARIABLE) {
+        *order = var_id_cmp(tu_var_id(universe, a), tu_var_id(universe, b));
+        return true;
+    }
+    if (ca == SPACE_ORDER_NIL) {
+        *order = 0;
+        return true;
+    }
+    if (!space_order_compare_atoms(universe, a, b, order))
+        return false;
+    if (*order == 0)
+        *order = space_order_leaf_tie(universe, a, ha, b, hb);
+    return true;
+}
+
+/* Two stored terms in the order of a priority space.  An atom holding
+ * variables is read as its alpha key, whose variables are numbered as they
+ * first occur: two atoms that differ in the names of their variables alone
+ * are one. */
+/* Two stored terms of which one has no stored key (more variables, or
+ * deeper, than a key takes): the atoms themselves, each with its variables
+ * renamed by first occurrence, so their order does not depend on which
+ * variable was made first. */
+static bool space_order_compare_renamed(const TermUniverse *universe, AtomId a,
+                                        AtomId b, int *order) {
+    Atom *left = term_universe_get_atom(universe, a);
+    Atom *right = term_universe_get_atom(universe, b);
+    if (!left || !right)
+        return false;
+    Arena scratch;
+    arena_init_detached(&scratch);
+    Atom *x = term_universe_alpha_canonicalize_atom(&scratch, left);
+    Atom *y = term_universe_alpha_canonicalize_atom(&scratch, right);
+    bool compared = x && y && petta_semantics_term_compare(x, y, order);
+    arena_free(&scratch);
+    return compared;
+}
+
+static bool space_order_compare_terms(TermUniverse *universe, AtomId a,
+                                      AtomId b, int *order) {
+    if (a == b) {
+        *order = 0;
+        return true;
+    }
+    bool a_open = tu_has_vars(universe, a);
+    bool b_open = tu_has_vars(universe, b);
+    /* Unless both hold variables, no variable is ever compared with
+     * another: where one term has a variable the other has none, and a
+     * variable stands before every other term whatever its name.  The
+     * terms' own nodes decide, and no key is made or read. */
+    if (!a_open || !b_open)
+        return space_order_compare_ids(universe, a, b, 0u, order);
+    AtomId left = term_universe_alpha_key_id(universe, a);
+    AtomId right = term_universe_alpha_key_id(universe, b);
+    if (left == CETTA_ATOM_ID_NONE || right == CETTA_ATOM_ID_NONE)
+        return space_order_compare_renamed(universe, a, b, order);
+    return space_order_compare_ids(universe, left, right, 0u, order);
+}
+
+/* The rows an order compares: a Space's, by the terms they hold. */
+typedef struct {
+    TermUniverse *universe;
+    const uint8_t *atom_ids;
+    uint8_t bits;
+} SpaceOrderRows;
+
+static void space_order_rows_open(SpaceOrderRows *rows, const Space *s) {
+    *rows = (SpaceOrderRows){
+        .universe = s->native.universe,
+        .atom_ids = s->native.atom_ids,
+        .bits = s->native.atom_id_width_bits,
+    };
+}
+
+static void space_order_rows_close(SpaceOrderRows *rows) {
+    (void)rows;
+}
+
+static bool space_order_compare(void *context, uint32_t a, uint32_t b,
+                                int *order) {
+    SpaceOrderRows *rows = context;
+    AtomId left = space_atom_id_storage_load_at(rows->atom_ids, rows->bits, a);
+    AtomId right = space_atom_id_storage_load_at(rows->atom_ids, rows->bits, b);
+    /* One stored term is one atom. */
+    if (left == right) {
+        *order = 0;
+        return true;
+    }
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_ORDER_COMPARE);
+    return space_order_compare_terms(rows->universe, left, right, order);
+}
+
+/* The first variable of ATOM read as the order reads it, from node *NODE on
+ * (space_order_first_variable). */
+static bool space_order_first_variable_atom(const Atom *atom, uint32_t *node,
+                                            uint32_t *first, uint32_t *list) {
+    uint32_t at = (*node)++;
+    if (atom->kind == ATOM_VAR) {
+        *first = at;
+        return true;
+    }
+    if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
+        return true;
+    PeTTaOrderSide side;
+    petta_semantics_order_side_init(&side, atom);
+    for (;;) {
+        const Atom *item = NULL;
+        PeTTaOrderStep step = petta_semantics_order_side_next(&side, &item);
+        if (step == PETTA_ORDER_UNREAD)
+            return false;
+        if (step == PETTA_ORDER_ITEM) {
+            if (!space_order_first_variable_atom(item, node, first, list))
+                return false;
+            if (*first != UINT32_MAX)
+                return true;
+            continue;
+        }
+        if (step == PETTA_ORDER_END_TERM) {
+            /* The rest of an open list stands at the node its next element
+             * would; an improper list's end is one node. */
+            uint32_t end_at = (*node)++;
+            if (item->kind == ATOM_VAR) {
+                *first = end_at;
+                *list = at;
+            } else if (atom_has_vars(item)) {
+                *first = end_at;
+            }
+        }
+        return true;
+    }
+}
+
+/* The node, in preorder from *NODE, of the first variable of the stored term
+ * ID, read as the order reads it: in *LIST the node of the list it is the
+ * rest of (a variable that list ends in, which stands before that list's
+ * end where a variable element stands after it), or none for an element.  A plain expression is read from its
+ * records, any other part by its atom (space_order_reads_by_atom).  False
+ * when a part could not be read. */
+static bool space_order_first_variable(const TermUniverse *universe, AtomId id,
+                                       uint32_t *node, uint32_t *first,
+                                       uint32_t *list) {
+    const CettaTermHdr *hdr = tu_hdr(universe, id);
+    if (!hdr || space_order_reads_by_atom(universe, id, hdr)) {
+        const Atom *atom = term_universe_get_atom(universe, id);
+        return atom && space_order_first_variable_atom(atom, node, first, list);
+    }
+    uint32_t at = (*node)++;
+    if ((AtomKind)hdr->tag == ATOM_VAR) {
+        *first = at;
+        return true;
+    }
+    if ((AtomKind)hdr->tag != ATOM_EXPR)
+        return true;
+    CettaExprLen len = (CettaExprLen)(hdr->aux32 & CETTA_TERM_HDR_DATA_MASK);
+    for (CettaExprIndex i = 0u; i < len && *first == UINT32_MAX; i++) {
+        if (!space_order_first_variable(universe, tu_child(universe, id, i),
+                                        node, first, list))
+            return false;
+    }
+    return true;
+}
+
+/* A row whose first variable stands at NODE (the rest of the list at node
+ * LIST, or an element) joins (ADD) or leaves its band.  False when the
+ * bands could not grow, or a row leaves a band that does not hold it. */
+static bool space_order_band(struct SpaceOrder *order, uint32_t node,
+                             uint32_t list, bool add) {
+    uint32_t lo = 0u, hi = order->band_len;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2u;
+        const SpaceOrderBand *at = &order->bands[mid];
+        if (at->node < node || (at->node == node && at->list < list))
+            lo = mid + 1u;
+        else
+            hi = mid;
+    }
+    if (lo == order->band_len || order->bands[lo].node != node ||
+        order->bands[lo].list != list) {
+        if (!add)
+            return false;
+        if (order->band_len == order->band_cap) {
+            uint32_t cap = order->band_cap ? order->band_cap * 2u : 4u;
+            SpaceOrderBand *grown = cetta_fallible_realloc(
+                order->bands, (size_t)cap * sizeof(*grown));
+            if (!grown)
+                return false;
+            order->bands = grown;
+            order->band_cap = cap;
+        }
+        memmove(order->bands + lo + 1u, order->bands + lo,
+                (size_t)(order->band_len - lo) * sizeof(*order->bands));
+        order->bands[lo] = (SpaceOrderBand){.node = node, .list = list};
+        order->band_len++;
+    }
+    SpaceOrderBand *band = &order->bands[lo];
+    if (add) {
+        band->rows++;
+        return true;
+    }
+    if (--band->rows == 0u) {
+        memmove(order->bands + lo, order->bands + lo + 1u,
+                (size_t)(order->band_len - lo - 1u) * sizeof(*order->bands));
+        order->band_len--;
+    }
+    return true;
+}
+
+/* A row holding the stored term ID joins (ADD) or leaves the rows the order
+ * counts: by where its first variable stands, and the rows that are not
+ * exact atoms.  A ground row is counted in no band.  False when the counts could not follow, and
+ * the order is then built again when next asked for. */
+static bool space_order_count(const Space *s, struct SpaceOrder *order,
+                              AtomId id, bool add) {
+    TermUniverse *universe = s->native.universe;
+    const CettaTermHdr *hdr = tu_hdr(universe, id);
+    if (!atom_id_is_exact_indexable(s, id) || !hdr ||
+        tu_petta_value_representation(universe, id) != PETTA_VALUE_ORDINARY)
+        order->inexact += add ? 1u : (CettaIndex)-1;
+    bool open = hdr ? tu_has_vars(universe, id)
+                    : atom_has_vars(term_universe_get_atom(universe, id));
+    if (!open)
+        return true;
+    /* The key first: making it may move the records. */
+    (void)term_universe_alpha_key_id(universe, id);
+    uint32_t node = 0u, first = UINT32_MAX, list = SPACE_ORDER_NO_LIST;
+    if (!space_order_first_variable(universe, id, &node, &first, &list) ||
+        first == UINT32_MAX)
+        return false;
+    return space_order_band(order, first, list, add);
+}
+
+/* The least node at which some row's first variable stands; UINT32_MAX
+ * for a space whose rows are ground. */
+static uint32_t space_order_least_band(const struct SpaceOrder *order) {
+    return order->band_len ? order->bands[0].node : UINT32_MAX;
+}
+
+/* Whether ATOM has no part the order reads otherwise than element by
+ * element: no list stored as anything but a plain expression, and no value
+ * that is no list. */
+static bool space_order_atom_plain(const Atom *atom) {
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len == 0u)
+        return true;
+    if (petta_semantics_order_list_form(atom) ||
+        atom_petta_value_representation(atom) != PETTA_VALUE_ORDINARY)
+        return false;
+    for (CettaExprLen i = 0u; i < atom->expr.len; i++) {
+        if (!space_order_atom_plain(atom->expr.elems[i]))
+            return false;
+    }
+    return true;
+}
+
+/* The nodes of an atom, counted to CAP at most. */
+static uint32_t space_order_atom_nodes(const Atom *atom, uint32_t cap) {
+    uint32_t nodes = 1u;
+    if (atom && atom->kind == ATOM_EXPR) {
+        for (CettaExprLen i = 0u; i < atom->expr.len && nodes < cap; i++)
+            nodes += space_order_atom_nodes(atom->expr.elems[i], cap - nodes);
+    }
+    return nodes;
+}
+
+/* Take ROW of S into the order. */
+static bool space_order_place(const Space *s, struct SpaceOrder *order,
+                              SpaceOrderRows *rows, uint32_t row) {
+    AtomId id = space_atom_id_storage_load_at(rows->atom_ids, rows->bits, row);
+    bool placed =
+        cetta_order_insert(&order->tree, row, space_order_compare, rows) &&
+        space_order_count(s, order, id, true);
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_ORDER_INSERT);
+    return placed;
+}
+
+/* A row the order holds leaves it. */
+static void space_order_drop(const Space *s, struct SpaceOrder *order,
+                             uint32_t row) {
+    if (!cetta_order_holds(&order->tree, row))
+        return;
+    if (!space_order_count(s, order,
+                           space_atom_id_storage_load_at(
+                               s->native.atom_ids,
+                               s->native.atom_id_width_bits, row),
+                           false))
+        order->valid = false;
+    cetta_order_remove(&order->tree, row);
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_ORDER_REMOVE);
+}
+
+/* Sort ROWS, each naming the term IDS has for it, by those terms: a stable
+ * merge, so terms the order does not separate stay as given.  The sorted
+ * rows, in ROWS or in SPARE; NULL when a comparison could not be made. */
+static uint32_t *space_order_sort(uint32_t *rows, uint32_t *spare,
+                                  uint32_t count, TermUniverse *universe,
+                                  const AtomId *ids) {
+    for (uint64_t width = 1u; width < count; width *= 2u) {
+        for (uint64_t lo = 0u; lo < count; lo += 2u * width) {
+            uint64_t mid = lo + width < count ? lo + width : count;
+            uint64_t hi = lo + 2u * width < count ? lo + 2u * width : count;
+            uint64_t left = lo, right = mid, out = lo;
+            while (left < mid && right < hi) {
+                int order = 0;
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_SPACE_ORDER_COMPARE);
+                if (!space_order_compare_terms(universe, ids[rows[left]],
+                                               ids[rows[right]], &order))
+                    return NULL;
+                spare[out++] = order <= 0 ? rows[left++] : rows[right++];
+            }
+            while (left < mid)
+                spare[out++] = rows[left++];
+            while (right < hi)
+                spare[out++] = rows[right++];
+        }
+        uint32_t *swap = rows;
+        rows = spare;
+        spare = swap;
+    }
+    return rows;
+}
+
+/* Build the order from the live rows as they stand. */
+static bool space_order_rebuild(Space *s, struct SpaceOrder *order) {
+    const SpaceNativeStorage *n = &s->native;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_ORDER_REBUILD);
+    order->valid = false;
+    if (n->len >= CETTA_ORDER_NONE)
+        return false;
+    uint32_t len = (uint32_t)n->len;
+    size_t room = len ? len : 1u;
+    uint32_t *rows = cetta_fallible_malloc(room * sizeof(*rows));
+    uint32_t *spare = cetta_fallible_malloc(room * sizeof(*spare));
+    AtomId *ids = cetta_fallible_malloc(room * sizeof(*ids));
+    bool built = rows && spare && ids;
+    uint32_t live = 0u;
+    order->inexact = 0u;
+    order->band_len = 0u;
+    for (uint32_t row = 0u; built && row < len; row++) {
+        if (space_marks_row_marked(n, row))
+            continue;
+        ids[row] = space_atom_id_storage_load_at(
+            n->atom_ids, n->atom_id_width_bits, row);
+        built = space_order_count(s, order, ids[row], true);
+        rows[live++] = row;
+    }
+    uint32_t *sorted = built
+        ? space_order_sort(rows, spare, live, n->universe, ids) : NULL;
+    built = sorted && cetta_order_build(&order->tree, sorted, live, len);
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_SPACE_ORDER_REBUILD_ROW, live);
+    free(ids);
+    free(spare);
+    free(rows);
+    if (!built) {
+        cetta_order_clear(&order->tree);
+        return false;
+    }
+    order->synced = n->len;
+    order->prefix_epoch = s->prefix_epoch;
+    order->valid = true;
+    return true;
+}
+
+/* The order of a priority space, reflecting its rows as they stand: the one
+ * kept, brought up to the rows appended since, or one built now.  NULL for
+ * another kind, an overlay, or when it could not be made. */
+static struct SpaceOrder *space_order_ensure(Space *s) {
+    if (!s || s->kind != SPACE_KIND_PRIORITY || space_has_overlay_base(s) ||
+        s->native.start != 0u)
+        return NULL;
+    CETTA_SCOPED_SHARED_TRANSITION(order_transition);
+    struct SpaceOrder *order = s->order;
+    if (!order) {
+        order = cetta_fallible_malloc(sizeof(*order));
+        if (!order)
+            return NULL;
+        *order = (struct SpaceOrder){0};
+        cetta_order_init(&order->tree);
+        s->order = order;
+    }
+    const SpaceNativeStorage *n = &s->native;
+    if (order->valid && order->prefix_epoch == s->prefix_epoch &&
+        order->synced <= n->len && n->len < CETTA_ORDER_NONE) {
+        if (order->synced < n->len) {
+            SpaceOrderRows rows;
+            space_order_rows_open(&rows, s);
+            for (CettaIndex row = order->synced;
+                 order->valid && row < n->len; row++) {
+                if (!space_marks_row_marked(n, row) &&
+                    !space_order_place(s, order, &rows, (uint32_t)row))
+                    order->valid = false;
+            }
+            space_order_rows_close(&rows);
+            if (order->valid)
+                order->synced = n->len;
+        }
+        if (order->valid)
+            return order;
+    }
+    return space_order_rebuild(s, order) ? order : NULL;
+}
+
+/* Rows about to be marked removed leave the order.  True when the order
+ * follows the removal, and takes the prefix stamp it publishes
+ * (space_order_adopt). */
+static bool space_order_forget_rows(Space *s, const CettaIndex *rows,
+                                    CettaCount count) {
+    struct SpaceOrder *order = s->order;
+    if (!order)
+        return false;
+    if (!order->valid || order->prefix_epoch != s->prefix_epoch) {
+        order->valid = false;
+        return false;
+    }
+    for (CettaCount i = 0u; i < count; i++) {
+        /* A row past the rows taken in is passed over when they are. */
+        if (rows[i] < order->synced)
+            space_order_drop(s, order, (uint32_t)rows[i]);
+    }
+    return true;
+}
+
+static void space_order_adopt(Space *s, bool follows) {
+    if (follows && s->order && s->order->valid)
+        s->order->prefix_epoch = s->prefix_epoch;
+}
+
+/* Whether the order reflects the rows now, so a contraction may renumber it
+ * with them. */
+static bool space_order_current(const Space *s) {
+    return s->order && s->order->valid &&
+           s->order->prefix_epoch == s->prefix_epoch;
+}
+
+/* A contraction renumbered the rows: source row R is row TARGET[R] now, or
+ * gone.  The order goes with them, the rows it had not yet taken in still
+ * following those it had. */
+static void space_order_transport(Space *s, const CettaIndex *target,
+                                  CettaIndex source, CettaIndex kept) {
+    struct SpaceOrder *order = s->order;
+    CettaIndex synced = 0u;
+    CettaIndex reach = order->synced < source ? order->synced : source;
+    for (CettaIndex row = 0u; row < reach; row++) {
+        if (target[row] != SPACE_OCCURRENCE_COORDINATE_REMOVED)
+            synced++;
+    }
+    /* A row the contraction itself removed was given up while its atom
+     * could still be read (space_order_forget_removed). */
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_SPACE_ORDER_TRANSPORT_ROW,
+                            order->tree.count);
+    order->valid = cetta_order_transport(
+        &order->tree, target, reach, SPACE_OCCURRENCE_COORDINATE_REMOVED,
+        kept);
+    order->synced = synced;
+    order->prefix_epoch = s->prefix_epoch;
+}
+
+/* A contraction is about to remove the rows MASK marks, which no mark had
+ * removed: they leave the order while their atoms can still be read. */
+static void space_order_forget_removed(Space *s, const uint8_t *mask,
+                                       CettaIndex rows) {
+    struct SpaceOrder *order = s->order;
+    if (!order || !space_order_current(s))
+        return;
+    CettaIndex reach = order->synced < rows ? order->synced : rows;
+    for (CettaIndex row = 0u; row < reach; row++) {
+        if (mask[row] != 0u)
+            space_order_drop(s, order, (uint32_t)row);
+    }
+}
+
+static void space_order_free(Space *s) {
+    if (!s || !s->order)
+        return;
+    cetta_order_free(&s->order->tree);
+    free(s->order->bands);
+    free(s->order);
+    s->order = NULL;
+}
+
+/* A frozen view copying its rows takes the order they had when it froze:
+ * the Space's order, and the rows marked since in it again. */
+static bool space_order_copy_for_frozen(Space *s,
+                                        SpacePinnedOccurrences *view) {
+    struct SpaceOrder *order = space_order_ensure(s);
+    cetta_order_init(&view->order);
+    if (!order || !cetta_order_copy(&view->order, &order->tree))
+        return false;
+    SpaceOrderRows held;
+    space_order_rows_open(&held, s);
+    bool ok = true;
+    for (CettaIndex i = 0u; ok && i < view->gone_len; i++)
+        ok = cetta_order_insert(&view->order, (uint32_t)view->gone_rows[i],
+                                space_order_compare, &held);
+    space_order_rows_close(&held);
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_SPACE_ORDER_COPY_ROW,
+                            view->order.count);
+    if (!ok)
+        cetta_order_free(&view->order);
+    return ok;
+}
+
+/* Whether a view's order holds ROW: its own copy's, its Space's, or, for a
+ * frozen view, the rows marked since it froze. */
+static bool space_view_order_holds(const SpacePinnedOccurrences *view,
+                                   uint32_t row) {
+    if (view->frozen) {
+        struct SpaceOrder *order = space_order_ensure(view->space);
+        const SpaceMatchNativeState *st = &view->space->match_backend.native;
+        return order && (cetta_order_holds(&order->tree, row) ||
+                         (row < st->mark_stamp_cap &&
+                          st->mark_stamps[row] > view->freeze_serial));
+    }
+    if (view->space && !space_order_ensure(view->space))
+        return false;
+    const CettaOrder *order = space_view_order(view);
+    return order && cetta_order_holds(order, row);
+}
+
+typedef struct {
+    SpaceOrderRows rows;
+    uint32_t last;
+} SpaceOrderAfter;
+
+/* A row against the row read last, which the tree searched need not hold:
+ * by their atoms, then by row. */
+static bool space_order_probe_after(void *context, uint32_t row, int *order) {
+    SpaceOrderAfter *after = context;
+    if (row == after->last) {
+        *order = 0;
+        return true;
+    }
+    if (!space_order_compare(&after->rows, row, after->last, order))
+        return false;
+    if (*order == 0)
+        *order = row < after->last ? -1 : 1;
+    return true;
+}
+
+/* The first row of TREE after the row read last. */
+static bool space_order_first_after(const CettaOrder *tree,
+                                    SpaceOrderAfter *after, uint32_t *out) {
+    if (cetta_order_holds(tree, after->last)) {
+        *out = cetta_order_next(tree, after->last);
+        return true;
+    }
+    return cetta_order_lower_bound(tree, space_order_probe_after, after, out);
+}
+
+/* Whether row A stands before row B in the order: by their atoms, then by
+ * row.  False also when the order of the two could not be read (*OK). */
+static bool space_order_row_before(SpaceOrderRows *rows, uint32_t a,
+                                   uint32_t b, bool *ok) {
+    int placed = 0;
+    if (!space_order_compare(rows, a, b, &placed)) {
+        *ok = false;
+        return false;
+    }
+    return placed != 0 ? placed < 0 : a < b;
+}
+
+/* ROW joins the rows marked since the view froze that the cursor has yet to
+ * read: a heap, least first in the order. */
+static bool space_frozen_gone_push(SpaceOccurrenceCursor *cursor,
+                                   SpaceOrderRows *rows, uint32_t row) {
+    if (cursor->order_gone_len == cursor->order_gone_cap) {
+        uint32_t cap = cursor->order_gone_cap ? cursor->order_gone_cap * 2u
+                                              : 8u;
+        uint32_t *grown = cap > cursor->order_gone_cap
+            ? realloc(cursor->order_gone, (size_t)cap * sizeof(*grown)) : NULL;
+        if (!grown)
+            return false;
+        cursor->order_gone = grown;
+        cursor->order_gone_cap = cap;
+    }
+    bool ok = true;
+    uint32_t at = cursor->order_gone_len++;
+    while (ok && at != 0u) {
+        uint32_t parent = (at - 1u) / 2u;
+        if (!space_order_row_before(rows, row, cursor->order_gone[parent],
+                                    &ok))
+            break;
+        cursor->order_gone[at] = cursor->order_gone[parent];
+        at = parent;
+    }
+    cursor->order_gone[at] = row;
+    return ok;
+}
+
+static bool space_frozen_gone_pop(SpaceOccurrenceCursor *cursor,
+                                  SpaceOrderRows *rows) {
+    bool ok = true;
+    uint32_t len = --cursor->order_gone_len;
+    if (len == 0u)
+        return true;
+    uint32_t moved = cursor->order_gone[len];
+    uint32_t at = 0u;
+    for (;;) {
+        uint32_t child = at * 2u + 1u;
+        if (child >= len)
+            break;
+        if (child + 1u < len &&
+            space_order_row_before(rows, cursor->order_gone[child + 1u],
+                                   cursor->order_gone[child], &ok))
+            child++;
+        if (!ok ||
+            !space_order_row_before(rows, cursor->order_gone[child], moved,
+                                    &ok))
+            break;
+        cursor->order_gone[at] = cursor->order_gone[child];
+        at = child;
+    }
+    cursor->order_gone[at] = moved;
+    return ok;
+}
+
+/* The row a cursor of a frozen view reads next: the lesser of the next row
+ * of its Space's order and the least of the rows marked since the view
+ * froze that it has yet to read, rows at or past CEILING passed over.  The
+ * cursor keeps its place in both, so no step passes a row an earlier step
+ * passed: a row the Space added since is passed once, and a row marked
+ * since is compared once as it is taken in and a logarithm of times in the
+ * heap.  None at the end; false when the order cannot be read. */
+static bool space_frozen_order_next(SpaceOccurrenceCursor *cursor,
+                                    const SpacePinnedOccurrences *view,
+                                    CettaIndex ceiling, uint32_t *row_out) {
+    Space *s = view->space;
+    struct SpaceOrder *order = space_order_ensure(s);
+    *row_out = CETTA_ORDER_NONE;
+    if (!order)
+        return false;
+    if (cursor->order_started && cursor->order_last == CETTA_ORDER_NONE)
+        return true;
+    SpaceOrderAfter after = {.last = cursor->order_last};
+    space_order_rows_open(&after.rows, s);
+    bool ok = true;
+    /* A range begun past rows held to be read later: they are not read. */
+    while (ok && cursor->order_purge && cursor->order_gone_len != 0u &&
+           (cursor->order_gone[0] == cursor->order_last ||
+            !space_order_row_before(&after.rows, cursor->order_last,
+                                    cursor->order_gone[0], &ok)))
+        ok = ok && space_frozen_gone_pop(cursor, &after.rows);
+    cursor->order_purge = false;
+    /* The rows marked since the last step that the cursor has yet to
+     * reach. */
+    for (; ok && cursor->order_gone_seen < view->gone_len;
+         cursor->order_gone_seen++) {
+        CettaIndex gone = view->gone_rows[cursor->order_gone_seen];
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_ORDER_WALK_ROW);
+        if (gone >= ceiling || gone >= CETTA_ORDER_NONE)
+            continue;
+        if (cursor->order_started &&
+            (gone == cursor->order_last ||
+             !space_order_row_before(&after.rows, cursor->order_last,
+                                     (uint32_t)gone, &ok)))
+            continue;
+        ok = ok && space_frozen_gone_push(cursor, &after.rows, (uint32_t)gone);
+    }
+    /* The next row of the Space's order: kept from the last step unless it
+     * was marked since, when the search begins again from where it stood. */
+    if (ok && (!cursor->order_live_known ||
+               (cursor->order_live != CETTA_ORDER_NONE &&
+                !cetta_order_holds(&order->tree, cursor->order_live)))) {
+        uint32_t live = CETTA_ORDER_NONE;
+        if (cursor->order_live_known) {
+            SpaceOrderAfter stood = {.rows = after.rows,
+                                     .last = cursor->order_live};
+            ok = space_order_first_after(&order->tree, &stood, &live);
+        } else if (!cursor->order_started) {
+            live = cetta_order_least(&order->tree);
+        } else {
+            ok = space_order_first_after(&order->tree, &after, &live);
+        }
+        while (ok && live != CETTA_ORDER_NONE && live >= ceiling) {
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_ORDER_WALK_ROW);
+            live = cetta_order_next(&order->tree, live);
+        }
+        cursor->order_live = live;
+        cursor->order_live_known = ok;
+    }
+    if (ok) {
+        uint32_t live = cursor->order_live;
+        uint32_t gone = cursor->order_gone_len ? cursor->order_gone[0]
+                                               : CETTA_ORDER_NONE;
+        bool take_live = live != CETTA_ORDER_NONE &&
+            (gone == CETTA_ORDER_NONE ||
+             space_order_row_before(&after.rows, live, gone, &ok));
+        if (ok && take_live) {
+            *row_out = live;
+            live = cetta_order_next(&order->tree, live);
+            while (live != CETTA_ORDER_NONE && live >= ceiling) {
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_SPACE_ORDER_WALK_ROW);
+                live = cetta_order_next(&order->tree, live);
+            }
+            cursor->order_live = live;
+        } else if (ok && gone != CETTA_ORDER_NONE) {
+            *row_out = gone;
+            ok = space_frozen_gone_pop(cursor, &after.rows);
+        }
+    }
+    space_order_rows_close(&after.rows);
+    return ok;
+}
+
+/* The row of a priority space's atom with RANK atoms before it in its order;
+ * false when it holds no such atom or its order could not be made. */
+static bool space_priority_row(Space *s, CettaIndex rank, CettaIndex *row_out) {
+    struct SpaceOrder *order = space_order_ensure(s);
+    if (!order || rank >= order->tree.count)
+        return false;
+    uint32_t row = rank == 0u ? cetta_order_least(&order->tree)
+                              : cetta_order_select(&order->tree, (uint32_t)rank);
+    if (row == CETTA_ORDER_NONE)
+        return false;
+    *row_out = row;
+    return true;
+}
+
+/* A live row's logical position. */
+static CettaIndex space_row_logical(const Space *s, CettaIndex row) {
+    const SpaceNativeStorage *n = &s->native;
+    SpaceViewMarks marks = {n->marks, n->mark_tree, n->mark_rows, n->marked};
+    return space_view_logical(&marks, row);
+}
+
+/* The place of each of COUNT logical positions among them, in the order a
+ * priority space reads its atoms: RANKS[i] is how many of them stand before
+ * POSITIONS[i], positions the order does not separate standing as given.
+ * The order index ranks each without reading an atom; where no index covers
+ * the rows (an overlay reads its base's rows and its own) the atoms are
+ * compared.  False when the places could not be found. */
+bool space_priority_dense_ranks(Space *s, const CettaIndex *positions,
+                                CettaIndex count, CettaIndex *ranks) {
+    if (count == 0u)
+        return true;
+    if (count >= CETTA_ORDER_NONE)
+        return false;
+    struct SpaceOrder *order = space_order_ensure(s);
+    if (order) {
+        uint64_t *keys =
+            cetta_fallible_malloc((size_t)count * 2u * sizeof(*keys));
+        if (!keys)
+            return false;
+        bool marked = space_has_marks(s);
+        for (CettaIndex i = 0u; i < count; i++) {
+            CettaIndex row = marked ? space_marks_select(s, positions[i])
+                                    : positions[i];
+            if (row >= order->tree.cap ||
+                !cetta_order_holds(&order->tree, (uint32_t)row)) {
+                free(keys);
+                return false;
+            }
+            keys[2u * i] = ((uint64_t)cetta_order_rank(&order->tree,
+                                                        (uint32_t)row) << 32) |
+                (uint64_t)i;
+            keys[2u * i + 1u] = i;
+        }
+        qsort(keys, (size_t)count, 2u * sizeof(*keys), space_order_key_compare);
+        for (CettaIndex place = 0u; place < count; place++)
+            ranks[keys[2u * place + 1u]] = place;
+        free(keys);
+        return true;
+    }
+    uint32_t *slots = cetta_fallible_malloc((size_t)count * sizeof(*slots));
+    uint32_t *spare = cetta_fallible_malloc((size_t)count * sizeof(*spare));
+    AtomId *ids = cetta_fallible_malloc((size_t)count * sizeof(*ids));
+    bool ok = slots && spare && ids && s->native.universe;
+    for (CettaIndex i = 0u; ok && i < count; i++) {
+        slots[i] = (uint32_t)i;
+        ids[i] = space_get_atom_id_at64(s, positions[i]);
+        ok = ids[i] != CETTA_ATOM_ID_NONE;
+    }
+    uint32_t *sorted = ok
+        ? space_order_sort(slots, spare, (uint32_t)count,
+                           s->native.universe, ids)
+        : NULL;
+    for (CettaIndex place = 0u; sorted && place < count; place++)
+        ranks[sorted[place]] = place;
+    free(ids);
+    free(spare);
+    free(slots);
+    return sorted != NULL;
+}
+
+/* Every logical position of S in the order of its atoms. */
+static CettaIndex *space_priority_ordered_positions(Space *s,
+                                                    CettaCount *count_out) {
+    CettaCount count = space_length64(s);
+    CettaIndex *positions =
+        cetta_fallible_malloc((size_t)(count ? count : 1u) * sizeof(*positions));
+    if (!positions)
+        return NULL;
+    for (CettaCount i = 0u; i < count; i++)
+        positions[i] = i;
+    space_priority_order_positions(s, positions, count);
+    *count_out = count;
+    return positions;
+}
+
+/* The logical position of the atom with RANK atoms before it. */
+static bool space_priority_position(const Space *s, CettaIndex rank,
+                                    CettaIndex *position_out) {
+    CettaIndex row = 0u;
+    if (!space_has_overlay_base(s)) {
+        if (!space_priority_row((Space *)s, rank, &row))
+            return false;
+        *position_out = space_row_logical(s, row);
+        return true;
+    }
+    CettaCount count = 0u;
+    CettaIndex *positions = space_priority_ordered_positions((Space *)s, &count);
+    bool found = positions && rank < count;
+    if (found)
+        *position_out = positions[rank];
+    free(positions);
+    return found;
+}
+
+Atom *space_priority_get_at64(const Space *s, CettaIndex rank) {
+    CettaIndex position = 0u;
+    if (!space_priority_position(s, rank, &position))
+        return NULL;
+    return space_get_at64(s, position);
+}
+
+typedef struct {
+    SpaceOrderRows rows;
+    AtomId key;
+} SpaceOrderKeyProbe;
+
+/* A row against a stored term the caller names. */
+static bool space_order_probe_atom(void *context, uint32_t row, int *order) {
+    SpaceOrderKeyProbe *probe = context;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_ORDER_COMPARE);
+    return space_order_compare_terms(
+        probe->rows.universe,
+        space_atom_id_storage_load_at(probe->rows.atom_ids, probe->rows.bits,
+                                      row),
+        probe->key, order);
+}
+
+/* The logical positions of the rows of a priority space equal to the ground
+ * ATOM, ascending.  The order finds them as an exact index would: a search,
+ * then the rows standing with the atom, of which the equal ones hold the
+ * atom's own stored term.  False when they could not be found; *OUT is the
+ * caller's to free. */
+bool space_priority_equal_positions(Space *s, Atom *atom, CettaIndex **out,
+                                    CettaIndex *count_out) {
+    *out = NULL;
+    *count_out = 0u;
+    if (!s || !atom || s->kind != SPACE_KIND_PRIORITY ||
+        space_has_overlay_base(s) || atom_has_vars(atom))
+        return false;
+    struct SpaceOrder *order = space_order_ensure(s);
+    if (!order)
+        return false;
+    CettaIndex count = 0u, cap = 0u;
+    CettaIndex *positions = NULL;
+    bool found = true;
+    /* A term the universe does not hold is no row's. */
+    AtomId id = term_universe_lookup_atom_id(s->native.universe, atom);
+    if (id != CETTA_ATOM_ID_NONE) {
+        SpaceOrderKeyProbe probe = {.key = id};
+        space_order_rows_open(&probe.rows, s);
+        uint32_t row = CETTA_ORDER_NONE;
+        found = cetta_order_lower_bound(&order->tree, space_order_probe_atom,
+                                        &probe, &row);
+        bool marked = space_has_marks(s);
+        while (found && row != CETTA_ORDER_NONE) {
+            AtomId held = space_atom_id_storage_load_at(
+                s->native.atom_ids, s->native.atom_id_width_bits, row);
+            int placed = 0;
+            if (held != id) {
+                if (!space_order_probe_atom(&probe, row, &placed)) {
+                    found = false;
+                    break;
+                }
+                if (placed != 0)
+                    break;
+                /* It stands with the atom and is another term. */
+                row = cetta_order_next(&order->tree, row);
+                continue;
+            }
+            if (count == cap) {
+                cap = cap ? cap * 2u : 4u;
+                CettaIndex *grown =
+                    realloc(positions, (size_t)cap * sizeof(*grown));
+                if (!grown) {
+                    found = false;
+                    break;
+                }
+                positions = grown;
+            }
+            positions[count++] = marked ? space_row_logical(s, row) : row;
+            row = cetta_order_next(&order->tree, row);
+        }
+        space_order_rows_close(&probe.rows);
+    }
+    if (found && !positions)
+        positions = cetta_fallible_malloc(sizeof(*positions));
+    if (!found || !positions) {
+        free(positions);
+        return false;
+    }
+    /* Rows standing together need not be in row order across terms. */
+    if (count > 1u)
+        qsort(positions, (size_t)count, sizeof(*positions),
+              space_order_key_compare);
+    *out = positions;
+    *count_out = count;
+    return true;
+}
+
+/* The logical positions of the rows of a priority space a ground PATTERN
+ * matches, where those are exactly the rows equal to it: the pattern is one
+ * a match decides by identity, and the space holds no row a ground pattern
+ * could match otherwise.  False, having found nothing, where that does not
+ * hold; *OUT is the caller's to free. */
+bool space_priority_exact_positions(Space *s, Atom *pattern, CettaIndex **out,
+                                    CettaIndex *count_out) {
+    *out = NULL;
+    *count_out = 0u;
+    if (!s || !pattern || s->kind != SPACE_KIND_PRIORITY ||
+        space_has_overlay_base(s) || atom_has_vars(pattern) ||
+        !atom_is_exact_indexable(pattern) ||
+        !space_match_ground_pattern_matches_by_identity(pattern))
+        return false;
+    struct SpaceOrder *order = space_order_ensure(s);
+    if (!order)
+        return false;
+    /* Rows with a variable where the atom has a term: where some stand at
+     * a node of the atom, the rows among them that begin as the atom does
+     * are sought, and one found is a row the atom may match unequal.  The
+     * bands are sought by the atom's front, which a list stored otherwise
+     * than as a plain expression ends: such an atom is read by the ranges
+     * (space_priority_candidates). */
+    if (!space_order_atom_plain(pattern))
+        return false;
+    uint32_t least = space_order_least_band(order);
+    /* A rest may stand where the atom's last list ends, the node after it. */
+    if (least <= space_order_atom_nodes(pattern, least + 1u)) {
+        uint32_t *ranges = NULL;
+        uint32_t range_len = 0u;
+        bool past = false;
+        if (!space_priority_front_search(s, pattern, false, &ranges,
+                                         &range_len, &past))
+            return false;
+        free(ranges);
+        if (range_len != 0u)
+            return false;
+    }
+    return space_priority_equal_positions(s, pattern, out, count_out);
+}
+
+/* ── A pattern's ground front, at any depth ───────────────────────────────
+ * The order reads a term's nodes in preorder: a variable before a number,
+ * a string, the empty expression and any other atom, those before an
+ * expression, and an expression's elements in turn, the shorter of two that
+ * begin alike first.  So the rows that begin with a given run of nodes
+ * stand together, and among them those with a variable at the next node
+ * stand first of all that have a node there.
+ *
+ * A pattern's ground front is its nodes before its first variable (or the
+ * first node the dialect does not decide by identity).  A row can match
+ * the pattern only if it begins with that front, or if its own first
+ * variable stands at a node T of the front and it begins with the front's
+ * nodes before T.  Each of those is one range of the order, the ranges for
+ * earlier T standing before those for later T, and all before the rows
+ * that begin with the whole front.  A pattern is read as those ranges, one
+ * after another: a search for each, and the rows of each as they are asked
+ * for. */
+typedef struct {
+    /* The term's id where the term is ground and the universe holds it. */
+    AtomId id;
+    /* The pattern's own part. */
+    const Atom *atom;
+    /* Its nodes, itself included; past any node for an expression the
+     * front ends inside. */
+    uint32_t nodes;
+    uint32_t len;
+    bool compound;
+    /* A list the pattern spells otherwise than as a plain expression: its
+     * elements are the front's, and the front ends where they end, so every
+     * row that agrees with them stands in it, however it goes on. */
+    bool open_end;
+} SpaceOrderFrontNode;
+
+enum { SPACE_ORDER_FRONT_OPEN = UINT32_C(1) << 30 };
+
+typedef struct {
+    SpaceOrderFrontNode *nodes;
+    uint32_t cap;
+    /* The nodes kept, which is the node the front ends at. */
+    uint32_t len;
+    /* The pattern is all front. */
+    bool ground;
+    /* The front ends where a list of the pattern ends (open_end). */
+    bool open_end;
+    /* The nodes could not be kept: nothing may be read from the front. */
+    bool failed;
+    /* The first ground leaf the universe does not hold: no row holds it,
+     * so no row begins with the front past it. */
+    uint32_t unknown;
+} SpaceOrderFront;
+
+static void space_order_front_free(SpaceOrderFront *front) {
+    free(front->nodes);
+    front->nodes = NULL;
+    front->cap = 0u;
+}
+
+/* Room for the front's next node; false (and the front failed) without. */
+static bool space_order_front_room(SpaceOrderFront *front) {
+    if (front->len < front->cap)
+        return true;
+    uint32_t cap = front->cap ? front->cap * 2u : 32u;
+    SpaceOrderFrontNode *grown = cap > front->cap
+        ? cetta_fallible_realloc(front->nodes, (size_t)cap * sizeof(*grown))
+        : NULL;
+    if (!grown) {
+        front->failed = true;
+        return false;
+    }
+    front->nodes = grown;
+    front->cap = cap;
+    return true;
+}
+
+/* Take PATTERN's nodes into the front; false where the front ends. */
+static bool space_order_front_take(const Space *s, Atom *pattern,
+                                   SpaceOrderFront *front) {
+    if (!pattern || pattern->kind == ATOM_VAR || !space_order_front_room(front))
+        return false;
+    uint32_t at = front->len;
+    if (pattern->kind != ATOM_EXPR || pattern->expr.len == 0u) {
+        if (!atom_is_exact_indexable(pattern) ||
+            !space_match_ground_pattern_matches_by_identity(pattern))
+            return false;
+        AtomId id = term_universe_lookup_atom_id(s->native.universe, pattern);
+        if (id == CETTA_ATOM_ID_NONE && front->unknown == UINT32_MAX)
+            front->unknown = at;
+        front->nodes[front->len++] =
+            (SpaceOrderFrontNode){.id = id, .atom = pattern, .nodes = 1u};
+        return true;
+    }
+    if (atom_petta_value_representation(pattern) != PETTA_VALUE_ORDINARY)
+        return false;
+    front->len++;
+    if (petta_semantics_order_list_form(pattern)) {
+        /* A list the pattern spells otherwise than as a plain expression:
+         * its elements, as the order reads them, and the front ends where
+         * they end, open (an empty list value is a leaf the order reads by
+         * its atom, and ends the front here). */
+        PeTTaOrderSide side;
+        petta_semantics_order_side_init(&side, pattern);
+        uint32_t len = 0u;
+        bool whole = true;
+        for (;;) {
+            const Atom *item = NULL;
+            if (petta_semantics_order_side_next(&side, &item) !=
+                PETTA_ORDER_ITEM)
+                break;
+            len++;
+            whole = space_order_front_take(s, (Atom *)item, front);
+            if (!whole)
+                break;
+        }
+        front->nodes[at] = (SpaceOrderFrontNode){
+            .id = CETTA_ATOM_ID_NONE,
+            .atom = pattern,
+            .nodes = SPACE_ORDER_FRONT_OPEN,
+            .len = len,
+            .compound = true,
+            .open_end = whole && !front->failed && len > 0u,
+        };
+        if (front->nodes[at].open_end)
+            front->open_end = true;
+        else if (whole && len == 0u)
+            front->len = at;
+        return false;
+    }
+    bool whole = true;
+    for (CettaExprLen i = 0u; whole && i < pattern->expr.len; i++)
+        whole = space_order_front_take(s, pattern->expr.elems[i], front);
+    /* A whole node's stored term is looked up from its children's, which
+     * the front holds after it, so no part of the pattern is read twice. */
+    AtomId local[16];
+    AtomId *ids = !whole ? NULL : pattern->expr.len <= 16u ? local
+        : cetta_fallible_malloc(pattern->expr.len * sizeof(*ids));
+    bool held = ids != NULL;
+    for (uint32_t i = 0u, child = at + 1u; held && i < pattern->expr.len; i++) {
+        ids[i] = front->nodes[child].id;
+        held = ids[i] != CETTA_ATOM_ID_NONE;
+        child += front->nodes[child].nodes;
+    }
+    AtomId id = held ? tu_expr_lookup_ids(s->native.universe, ids,
+                                          pattern->expr.len)
+                     : CETTA_ATOM_ID_NONE;
+    if (ids != local)
+        free(ids);
+    front->nodes[at] = (SpaceOrderFrontNode){
+        .id = id,
+        .atom = pattern,
+        .nodes = whole ? front->len - at : SPACE_ORDER_FRONT_OPEN,
+        .len = pattern->expr.len,
+        .compound = true,
+    };
+    return whole;
+}
+
+typedef struct {
+    SpaceOrderRows rows;
+    const SpaceOrderFront *front;
+    /* The node at which the rows sought hold a variable; UINT32_MAX for
+     * the rows that begin with the whole front.  `cut_rest`: the rows sought
+     * have their rest there, a list of theirs ending in a variable where the
+     * front goes on, rather than a variable element. */
+    uint32_t cut;
+    bool cut_rest;
+    /* For a rest sought: the node of the list it ends. */
+    uint32_t cut_list;
+    /* The rows sought count as before the key: the search then finds the
+     * first row after them. */
+    bool past;
+    bool decided;
+    bool failed;
+} SpaceOrderFrontProbe;
+
+/* A row whose list ends (STEP, with the term END it ends in, as
+ * petta_semantics_order_side_next gives them) where the front's has node
+ * CHILD.  A list that ends stands before one that goes on, a rest (a
+ * variable it ends in) first of all; in the order the rows that agree so far
+ * stand as: a rest, a number or string end, the end, an atom or compound
+ * end, a variable element, then other elements. */
+static int space_order_front_ended(SpaceOrderFrontProbe *probe,
+                                   uint32_t list, uint32_t child,
+                                   PeTTaOrderStep step, const Atom *end) {
+    bool rest = step == PETTA_ORDER_END_TERM && end && end->kind == ATOM_VAR;
+    if (child == probe->cut && probe->cut_rest && list == probe->cut_list) {
+        probe->decided = true;
+        return rest ? 0 : 1;
+    }
+    if (child == probe->cut && !probe->cut_rest) {
+        probe->decided = true;
+        return -1;
+    }
+    if (child == probe->front->len)
+        probe->decided = true;
+    return -1;
+}
+
+static int space_order_front_atom(SpaceOrderFrontProbe *probe,
+                                  const Atom *atom, uint32_t at);
+
+/* Whether the front's node AT, whose nodes run to STOP, must be read part
+ * by part: the front ends inside it, the node sought (a variable, a rest)
+ * stands inside it, or the list whose rest is sought is it or one inside
+ * it.  A node compared whole would pass the node sought undecided. */
+static bool space_order_front_inside(const SpaceOrderFrontProbe *probe,
+                                     uint32_t at, uint32_t stop) {
+    if (probe->front->len > at && probe->front->len < stop)
+        return true;
+    if (probe->cut == UINT32_MAX)
+        return false;
+    if (probe->cut > at && probe->cut < stop)
+        return true;
+    return probe->cut_rest && probe->cut_list >= at && probe->cut_list < stop;
+}
+
+/* The stored term ID against the front's node AT and what follows it.  A
+ * part the order reads by its atom (space_order_reads_by_atom), or one with
+ * no record, is read so here too. */
+static int space_order_front_node(SpaceOrderFrontProbe *probe, AtomId id,
+                                  uint32_t at) {
+    const TermUniverse *universe = probe->rows.universe;
+    const CettaTermHdr *hdr = tu_hdr(universe, id);
+    if (!hdr || space_order_reads_by_atom(universe, id, hdr)) {
+        const Atom *atom = term_universe_get_atom(universe, id);
+        if (!atom) {
+            probe->failed = true;
+            return 0;
+        }
+        return space_order_front_atom(probe, atom, at);
+    }
+    if (at == probe->cut) {
+        /* A variable here is sought; every other term stands after one,
+         * and every term stands after a rest. */
+        probe->decided = true;
+        if (probe->cut_rest)
+            return 1;
+        return space_order_class(hdr) == SPACE_ORDER_VARIABLE ? 0 : 1;
+    }
+    if (at == probe->front->len) {
+        /* The front ends: the row begins with it. */
+        probe->decided = true;
+        return 0;
+    }
+    const SpaceOrderFrontNode *node = &probe->front->nodes[at];
+    uint32_t stop = at + node->nodes;
+    bool inside = space_order_front_inside(probe, at, stop);
+    if (!inside && node->id != CETTA_ATOM_ID_NONE) {
+        int order = 0;
+        if (!space_order_compare_ids(universe, id, node->id, 1u, &order))
+            probe->failed = true;
+        return order;
+    }
+    if (!node->compound) {
+        /* A leaf the universe does not hold: no row is placed against it. */
+        probe->failed = true;
+        return 0;
+    }
+    if (space_order_class(hdr) != SPACE_ORDER_COMPOUND)
+        return -1;
+    CettaExprLen len = (CettaExprLen)(hdr->aux32 & CETTA_TERM_HDR_DATA_MASK);
+    uint32_t child = at + 1u;
+    for (uint32_t i = 0u; i < node->len; i++) {
+        if (i >= len)
+            return space_order_front_ended(probe, at, child,
+                                           PETTA_ORDER_END, NULL);
+        /* A child's record is read afresh: a comparison may move them.  A
+         * whole ground child holding neither the node sought nor the
+         * front's end is compared at once by its stored term. */
+        AtomId item = tu_child(universe, id, i);
+        const SpaceOrderFrontNode *part = child < probe->front->len
+            ? &probe->front->nodes[child] : NULL;
+        int order = 0;
+        if (!part || part->id == CETTA_ATOM_ID_NONE || child == probe->cut ||
+            space_order_front_inside(probe, child, child + part->nodes))
+            order = space_order_front_node(probe, item, child);
+        else if (item != part->id &&
+                 !space_order_compare_ids(universe, item, part->id, 1u,
+                                          &order))
+            probe->failed = true;
+        if (probe->failed || probe->decided || order != 0)
+            return order;
+        child += part->nodes;
+    }
+    if (node->open_end) {
+        probe->decided = true;
+        return 0;
+    }
+    if (child == probe->cut && probe->cut_rest && at == probe->cut_list) {
+        /* A rest is sought where the front's list ends: a list that ends
+         * there as a plain expression does, or goes on, stands after it. */
+        probe->decided = true;
+        return 1;
+    }
+    return len > node->len ? 1 : 0;
+}
+
+/* ATOM against the front's node AT and what follows it, read as the order
+ * reads it: a list in any stored form as the list it spells
+ * (petta_semantics_order_side_next), every other term as itself. */
+static int space_order_front_atom(SpaceOrderFrontProbe *probe,
+                                  const Atom *atom, uint32_t at) {
+    if (at == probe->cut) {
+        probe->decided = true;
+        if (probe->cut_rest)
+            return 1;
+        return atom->kind == ATOM_VAR ? 0 : 1;
+    }
+    if (at == probe->front->len) {
+        probe->decided = true;
+        return 0;
+    }
+    const SpaceOrderFrontNode *node = &probe->front->nodes[at];
+    uint32_t stop = at + node->nodes;
+    bool inside = space_order_front_inside(probe, at, stop);
+    if (!inside && !node->open_end && node->nodes != SPACE_ORDER_FRONT_OPEN) {
+        int order = 0;
+        if (!petta_semantics_term_compare(atom, node->atom, &order))
+            probe->failed = true;
+        return order;
+    }
+    if (!node->compound) {
+        probe->failed = true;
+        return 0;
+    }
+    if (atom->kind != ATOM_EXPR || atom->expr.len == 0u) {
+        /* No expression, or the empty one: before every non-empty list. */
+        return -1;
+    }
+    PeTTaOrderSide side;
+    petta_semantics_order_side_init(&side, atom);
+    uint32_t child = at + 1u;
+    for (uint32_t i = 0u; i < node->len; i++) {
+        const Atom *item = NULL;
+        PeTTaOrderStep step = petta_semantics_order_side_next(&side, &item);
+        if (step == PETTA_ORDER_UNREAD) {
+            probe->failed = true;
+            return 0;
+        }
+        if (step != PETTA_ORDER_ITEM)
+            return space_order_front_ended(probe, at, child, step, item);
+        int order = space_order_front_atom(probe, item, child);
+        if (probe->failed || probe->decided || order != 0)
+            return order;
+        child += probe->front->nodes[child].nodes;
+    }
+    if (node->open_end) {
+        probe->decided = true;
+        return 0;
+    }
+    /* The front's list ends here, as a plain expression ends. */
+    const Atom *end = NULL;
+    PeTTaOrderStep step = petta_semantics_order_side_next(&side, &end);
+    if (step == PETTA_ORDER_UNREAD) {
+        probe->failed = true;
+        return 0;
+    }
+    if (child == probe->cut && probe->cut_rest && at == probe->cut_list) {
+        /* A rest is sought where the front's list ends. */
+        probe->decided = true;
+        return step == PETTA_ORDER_END_TERM && end->kind == ATOM_VAR ? 0 : 1;
+    }
+    if (step == PETTA_ORDER_ITEM)
+        return 1;
+    return petta_semantics_order_ends(step, end, PETTA_ORDER_END, NULL);
+}
+
+static bool space_order_probe_front(void *context, uint32_t row, int *order) {
+    SpaceOrderFrontProbe *probe = context;
+    AtomId id = space_atom_id_storage_load_at(probe->rows.atom_ids,
+                                              probe->rows.bits, row);
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_ORDER_COMPARE);
+    probe->decided = false;
+    probe->failed = false;
+    int placed = space_order_front_node(probe, id, 0u);
+    if (probe->failed)
+        return false;
+    *order = placed == 0 && probe->past ? -1 : placed;
+    return true;
+}
+
+/* One range: the rows holding a variable (or, REST, their rest) at node
+ * CUT that begin with the front before it, or (CUT none) the rows beginning
+ * with the front.  Added to RANGES when it holds a row. */
+static bool space_order_front_range(const struct SpaceOrder *order,
+                                    SpaceOrderFrontProbe *probe, uint32_t cut,
+                                    uint32_t list, uint32_t *ranges,
+                                    uint32_t *count) {
+    uint32_t first = CETTA_ORDER_NONE, end = CETTA_ORDER_NONE;
+    probe->cut = cut;
+    probe->cut_rest = list != SPACE_ORDER_NO_LIST;
+    probe->cut_list = list;
+    probe->past = false;
+    if (!cetta_order_lower_bound(&order->tree, space_order_probe_front, probe,
+                                 &first))
+        return false;
+    if (first == CETTA_ORDER_NONE)
+        return true;
+    int placed = 1;
+    if (!space_order_probe_front(probe, first, &placed))
+        return false;
+    if (placed != 0)
+        return true;
+    /* The row the range ends before, sought from its first: a range of r
+     * rows costs about 2 log2 r comparisons more, whatever the order's size. */
+    probe->past = true;
+    if (!cetta_order_lower_bound_from(&order->tree, space_order_probe_front,
+                                      probe, first, &end))
+        return false;
+    ranges[2u * *count] = first;
+    ranges[2u * *count + 1u] = end;
+    (*count)++;
+    return true;
+}
+
+/* PATTERN's leaves that are no variable. */
+static uint64_t space_pattern_ground_leaves(const Atom *pattern) {
+    if (!pattern || pattern->kind == ATOM_VAR)
+        return 0u;
+    if (pattern->kind != ATOM_EXPR || pattern->expr.len == 0u)
+        return 1u;
+    uint64_t leaves = 0u;
+    for (CettaExprLen i = 0u; i < pattern->expr.len; i++)
+        leaves += space_pattern_ground_leaves(pattern->expr.elems[i]);
+    return leaves;
+}
+
+typedef struct {
+    uint32_t first;
+    uint32_t end;
+    uint32_t rank;
+} SpaceOrderRange;
+
+static int space_order_range_compare(const void *left, const void *right) {
+    const SpaceOrderRange *a = left, *b = right;
+    return a->rank < b->rank ? -1 : a->rank > b->rank ? 1 : 0;
+}
+
+/* The ranges of the order whose rows may match PATTERN, ascending: pairs of
+ * a range's first row and the row it ends before (none: the last row of the
+ * order); without BEGIN, those of the rows holding a variable inside the
+ * front alone.  *PAST_OUT, even where the search declines, in a space that
+ * keeps its general indexes: whether PATTERN holds a ground leaf its front
+ * does not reach, one past its first variable or one the order does not
+ * search by (a number the dialect compares by value).  False, having found
+ * nothing, for a pattern with no ground front worth a search, or a
+ * comparison that could not be made: the pattern is then read by a walk.
+ * *RANGES_OUT is the caller's to free; none for a pattern no row matches. */
+static bool space_priority_front_search(Space *s, Atom *pattern, bool begin,
+                                        uint32_t **ranges_out,
+                                        uint32_t *count_out, bool *past_out) {
+    *ranges_out = NULL;
+    *count_out = 0u;
+    *past_out = false;
+    if (!s || !pattern || s->kind != SPACE_KIND_PRIORITY ||
+        space_has_overlay_base(s))
+        return false;
+    SpaceOrderFront front = {.unknown = UINT32_MAX};
+    front.ground = space_order_front_take(s, pattern, &front);
+    /* Asked of a space with general indexes only: none prices a strict
+     * one's reads (space_order_price). */
+    uint64_t reached = 0u;
+    for (uint32_t i = 0u; i < front.len && !front.failed; i++)
+        reached += !front.nodes[i].compound;
+    *past_out = !front.failed && !front.ground &&
+        !space_match_reads_rows(s, s->native.len - s->native.marked) &&
+        space_pattern_ground_leaves(pattern) > reached;
+    /* A front of the pattern's own node alone selects nearly every row. */
+    if (front.failed || front.len == 0u || (front.len == 1u && !front.ground)) {
+        space_order_front_free(&front);
+        return false;
+    }
+    struct SpaceOrder *order = space_order_ensure(s);
+    if (!order) {
+        space_order_front_free(&front);
+        return false;
+    }
+    /* A row may match without beginning with the front where its first
+     * variable stands at a node of the front: as an element before the
+     * front ends, or as a rest (its list ends in a variable there) up to
+     * where it ends; past a leaf no row holds, no row begins with it. */
+    bool begins = front.unknown == UINT32_MAX || front.unknown >= front.len;
+    uint32_t vars_before = begins ? front.len : front.unknown + 1u;
+    uint32_t rests_to = begins ? front.len : front.unknown;
+    uint32_t most = 1u + order->band_len;
+    uint32_t *ranges = cetta_fallible_malloc(2u * most * sizeof(*ranges));
+    if (!ranges) {
+        space_order_front_free(&front);
+        return false;
+    }
+    SpaceOrderFrontProbe probe = {.front = &front};
+    space_order_rows_open(&probe.rows, s);
+    uint32_t count = 0u;
+    bool ok = true;
+    for (uint32_t b = 0u; ok && b < order->band_len; b++) {
+        const SpaceOrderBand *band = &order->bands[b];
+        if (band->node > rests_to && band->node >= vars_before)
+            break;
+        if (band->list == SPACE_ORDER_NO_LIST) {
+            if (band->node < vars_before)
+                ok = space_order_front_range(order, &probe, band->node,
+                                             SPACE_ORDER_NO_LIST, ranges,
+                                             &count);
+            continue;
+        }
+        /* A rest where an open front ends stands in the front's range. */
+        if (band->node <= rests_to &&
+            !(begins && band->node == front.len && front.open_end))
+            ok = space_order_front_range(order, &probe, band->node,
+                                         band->list, ranges, &count);
+    }
+    if (ok && begins && begin)
+        ok = space_order_front_range(order, &probe, UINT32_MAX,
+                                     SPACE_ORDER_NO_LIST, ranges, &count);
+    space_order_rows_close(&probe.rows);
+    space_order_front_free(&front);
+    if (!ok) {
+        free(ranges);
+        return false;
+    }
+    /* The ranges are disjoint (each row's first variable stands at one
+     * node); their readers take them ascending. */
+    if (count > 1u) {
+        SpaceOrderRange *sorted =
+            cetta_fallible_malloc((size_t)count * sizeof(*sorted));
+        if (!sorted) {
+            free(ranges);
+            return false;
+        }
+        for (uint32_t i = 0u; i < count; i++)
+            sorted[i] = (SpaceOrderRange){
+                .first = ranges[2u * i],
+                .end = ranges[2u * i + 1u],
+                .rank = cetta_order_rank(&order->tree, ranges[2u * i]),
+            };
+        qsort(sorted, (size_t)count, sizeof(*sorted),
+              space_order_range_compare);
+        for (uint32_t i = 0u; i < count; i++) {
+            ranges[2u * i] = sorted[i].first;
+            ranges[2u * i + 1u] = sorted[i].end;
+        }
+        free(sorted);
+    }
+    *ranges_out = ranges;
+    *count_out = count;
+    return true;
+}
+
+/* Rent or buy.  A space that keeps its general indexes, read by a pattern
+ * holding a ground leaf past the order's front, has two ways to the rows
+ * the pattern may match: the order's walk, which a reader may stop at any
+ * answer, a row at a time; and an index's rows, taken at once at the cost
+ * of their number.  A reader that may stop early cannot know which costs
+ * less.  It walks and counts the rows it passes; the index posts the rows
+ * it would hand over, counted without reading them; once the walk has
+ * passed as many, the read takes the index's rows standing past its place
+ * (space_occurrence_cursor_buy).  Whatever the reader goes on to take,
+ * that costs at most twice the cheaper way, where switching at any point
+ * fixed in advance costs unboundedly more for some reader.  A reader taking
+ * every row knows both counts and pays the cheaper
+ * (space_priority_candidates).  A ground pattern is priced by the nodes of
+ * the trie its descent ends at, a trie the full profile keeps; a pattern
+ * with variables by a position index (space_path_index_offer).  A read no
+ * index prices, where one could, pays the rows it walks toward one (*RENT,
+ * space_path_index_rent).  The caller zeroes the outputs. */
+static void space_order_price(Space *s, Atom *pattern, bool past,
+                              CettaCount *price, DiscNode ***trie,
+                              CettaSpacePathDemand **demand, bool *rent) {
+    if (!past || space_match_reads_rows(s, s->native.len - s->native.marked))
+        return;
+    if (atom_has_vars(pattern)) {
+        *demand = space_path_index_offer(s, pattern, price, rent);
+        *rent = *rent && !*demand;
+        return;
+    }
+    space_match_native_ensure_trie(s);
+    const SpaceMatchNativeState *st = &s->match_backend.native;
+    if (!st->match_trie || st->match_trie_dirty)
+        return;
+    DiscNodeSet final;
+    dns_init(&final);
+    disc_step(st->match_trie, pattern, &final);
+    dns_unique(&final);
+    /* Distinct nodes hold distinct rows; no node is a price of none. */
+    for (uint32_t i = 0u; i < final.n; i++)
+        *price += final.nodes[i]->leaf_count;
+    if (final.n == final.c)
+        dns_grow(&final);
+    final.nodes[final.n] = NULL;
+    *trie = final.nodes;
+}
+
+/* The rows an index priced for a read hands over (space_order_price), as
+ * physical rows; false when they are no longer to be had. */
+static bool space_order_offer_rows(Space *s, DiscNode *const *trie,
+                                   const CettaSpacePathDemand *demand,
+                                   CettaIndex **rows_out,
+                                   CettaCount *count_out) {
+    if (demand)
+        return space_path_index_demand_rows(s, demand, rows_out, count_out);
+    const DiscNodeSet final = {.nodes = (DiscNode **)trie,
+                               .n = (uint32_t)space_order_trie_len(trie)};
+    CettaIndex capacity = 0u;
+    *rows_out = NULL;
+    *count_out = 0u;
+    disc_collect_leaves(&final, rows_out, count_out, &capacity);
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_CANDIDATES,
+                            *count_out);
+    return true;
+}
+
+/* A walk that has passed as many rows as an index posted (space_order_price)
+ * takes the index's rows standing past the last row it passed, below the
+ * ceiling, in place of the rest of the walk; its answers are those it gave
+ * and those rows', none twice.  Only while its view is its Space's own,
+ * unchanged since the read began: the index then holds the view's rows and
+ * rows added since, which stand at or past the ceiling.  False otherwise,
+ * the walk going on with no price. */
+static bool space_occurrence_cursor_buy(SpaceOccurrenceCursor *cursor,
+                                        CettaIndex ceiling) {
+    const SpacePinnedOccurrences *view = cursor->occurrences;
+    struct SpaceOrder *order = view->space && !view->frozen
+        ? space_order_ensure(view->space) : NULL;
+    CettaIndex *rows = NULL;
+    CettaCount count = 0u;
+    bool bought = order &&
+        space_order_offer_rows(
+            view->space,
+            cursor->order_offer_trie ? cursor->order_offer.trie : NULL,
+            cursor->order_offer_trie ? NULL : cursor->order_offer.demand,
+            &rows, &count);
+    free(cursor->order_offer.any);
+    cursor->order_offer.any = NULL;
+    if (!bought) {
+        free(rows);
+        return false;
+    }
+    /* The rows the walk has yet to pass: every one before it began, those
+     * after its last row since, none once it is over. */
+    bool over = cursor->order_started && cursor->order_last == CETTA_ORDER_NONE;
+    uint64_t from = cursor->order_started && !over
+        ? (uint64_t)cetta_order_rank(&order->tree, cursor->order_last) + 1u
+        : 0u;
+    /* A read of a priority space answers in its order, and the rows bought
+     * go on in it, though an index lists them as they were posted: each is
+     * kept as its rank above its row, sorted, and read back. */
+    CettaCount kept = 0u;
+    for (CettaCount i = 0u; !over && i < count; i++) {
+        CettaIndex row = rows[i];
+        if (row >= ceiling || row >= order->tree.cap ||
+            !cetta_order_holds(&order->tree, (uint32_t)row))
+            continue;
+        uint64_t rank = cetta_order_rank(&order->tree, (uint32_t)row);
+        if (rank >= from)
+            rows[kept++] = (rank << 32) | (uint32_t)row;
+    }
+    qsort(rows, (size_t)kept, sizeof(*rows), space_order_key_compare);
+    for (CettaCount i = 0u; i < kept; i++)
+        rows[i] &= UINT32_MAX;
+    free(cursor->flat);
+    cursor->flat = rows;
+    cursor->flat_len = kept;
+    cursor->flat_next = 0u;
+    cursor->flat_mode = true;
+    cursor->order_scan = false;
+    return true;
+}
+
+/* The logical positions of the rows that are the open ATOM, the same or the
+ * same but for the names of its variables: they stand together in the order
+ * under one key, so a search finds the first and the rest follow.  False
+ * when they could not be found this way (an atom with no key); *OUT is the
+ * caller's to free. */
+bool space_priority_alike_positions(Space *s, Atom *atom, CettaIndex **out,
+                                    CettaIndex *count_out) {
+    *out = NULL;
+    *count_out = 0u;
+    if (!s || !atom || !space_is_priority(s) || space_has_overlay_base(s) ||
+        !atom_has_vars(atom) || !s->native.universe)
+        return false;
+    struct SpaceOrder *order = space_order_ensure(s);
+    if (!order)
+        return false;
+    /* The key is made, not looked up: nothing keeps a row's key in the
+     * universe between collections, so a key that is not held says nothing
+     * of the rows.  A key made anew is the same term as the one the rows
+     * were placed by, and the order's comparisons make each row's again. */
+    AtomId key = term_universe_store_alpha_key(s->native.universe, atom);
+    if (key == CETTA_ATOM_ID_NONE)
+        return false;
+    SpaceOrderKeyProbe probe = {.key = key};
+    space_order_rows_open(&probe.rows, s);
+    uint32_t row = CETTA_ORDER_NONE;
+    bool found = cetta_order_lower_bound(&order->tree, space_order_probe_atom,
+                                         &probe, &row);
+    CettaIndex *positions = NULL;
+    CettaIndex count = 0u, cap = 0u;
+    bool marked = space_has_marks(s);
+    while (found && row != CETTA_ORDER_NONE) {
+        int placed = 0;
+        if (!space_order_probe_atom(&probe, row, &placed)) {
+            found = false;
+            break;
+        }
+        if (placed != 0)
+            break;
+        if (count == cap) {
+            CettaIndex wider = cap ? cap * 2u : 4u;
+            CettaIndex *grown = cetta_fallible_realloc(
+                positions, (size_t)wider * sizeof(*positions));
+            if (!grown) {
+                found = false;
+                break;
+            }
+            positions = grown;
+            cap = wider;
+        }
+        positions[count++] = marked ? space_row_logical(s, row) : row;
+        row = cetta_order_next(&order->tree, row);
+    }
+    space_order_rows_close(&probe.rows);
+    /* Every row gathered is a row the order was walked over for this read. */
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_SPACE_ORDER_WALK_ROW, count);
+    if (found && !positions)
+        positions = cetta_fallible_malloc(sizeof(*positions));
+    if (!found || !positions) {
+        free(positions);
+        return false;
+    }
+    *out = positions;
+    *count_out = count;
+    return true;
+}
+
+/* The rows of RANGES, as space_priority_front_search gives them, counted by
+ * their ranks without reading one. */
+static uint64_t space_order_ranges_rows(const struct SpaceOrder *order,
+                                        const uint32_t *ranges,
+                                        uint32_t count) {
+    uint64_t rows = 0u;
+    for (uint32_t r = 0u; r < count; r++) {
+        uint32_t end = ranges[2u * r + 1u];
+        rows += (end == CETTA_ORDER_NONE ? order->tree.count
+                                         : cetta_order_rank(&order->tree, end)) -
+            cetta_order_rank(&order->tree, ranges[2u * r]);
+    }
+    return rows;
+}
+
+bool space_priority_candidates(Space *s, Atom *pattern, CettaIndex **out,
+                               CettaIndex *count_out) {
+    *out = NULL;
+    *count_out = 0u;
+    if (space_priority_exact_positions(s, pattern, out, count_out))
+        return true;
+    uint32_t *ranges = NULL;
+    uint32_t range_len = 0u;
+    bool past = false;
+    if (!space_priority_front_search(s, pattern, true, &ranges, &range_len,
+                                     &past))
+        return false;
+    uint64_t held = space_order_ranges_rows(s->order, ranges, range_len);
+    CettaCount price = 0u, count = 0u;
+    DiscNode **trie = NULL;
+    CettaSpacePathDemand *demand = NULL;
+    bool rent = false;
+    CettaIndex marked = s->native.marked;
+    space_order_price(s, pattern, past, &price, &trie, &demand, &rent);
+    CettaIndex *positions = NULL;
+    bool bought = (trie || demand) && price < held &&
+        space_order_offer_rows(s, trie, demand, &positions, &count);
+    free(trie);
+    free(demand);
+    /* A price that built the trie settled the marks first, which renumbers
+     * the rows: the ranges are sought again. */
+    if (!bought && marked != s->native.marked) {
+        free(ranges);
+        if (!space_priority_front_search(s, pattern, true, &ranges, &range_len,
+                                         &past))
+            return false;
+        held = space_order_ranges_rows(s->order, ranges, range_len);
+    }
+    if (bought) {
+        count = space_marks_physical_to_logical(s, positions, count);
+        if (!positions)
+            positions = cetta_fallible_malloc(sizeof(*positions));
+    } else {
+        if (rent)
+            space_path_index_rent(s, held);
+        free(positions);
+        count = 0u;
+        const struct SpaceOrder *order = s->order;
+        bool marks = space_has_marks(s);
+        positions = cetta_fallible_malloc(
+            (size_t)(held ? held : 1u) * sizeof(*positions));
+        for (uint32_t r = 0u; positions && r < range_len; r++)
+            for (uint32_t row = ranges[2u * r];
+                 row != CETTA_ORDER_NONE && row != ranges[2u * r + 1u];
+                 row = cetta_order_next(&order->tree, row))
+                positions[count++] = marks ? space_row_logical(s, row) : row;
+        /* Every row gathered is a row the order was walked over. */
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_SPACE_ORDER_WALK_ROW,
+                                count);
+    }
+    free(ranges);
+    if (!positions)
+        return false;
+    *out = positions;
+    *count_out = count;
+    return true;
+}
+
+/* Put COUNT logical positions of a priority space in the order it reads
+ * them.  Left as they are when the order cannot be found. */
+void space_priority_order_positions(Space *s, CettaIndex *positions,
+                                    CettaIndex count) {
+    if (count < 2u)
+        return;
+    struct SpaceOrder *order = space_order_ensure(s);
+    /* Every atom: the order's own walk. */
+    if (order && count == order->tree.count) {
+        bool marked = space_has_marks(s);
+        CettaIndex at = 0u;
+        for (uint32_t row = cetta_order_least(&order->tree);
+             row != CETTA_ORDER_NONE && at < count;
+             row = cetta_order_next(&order->tree, row))
+            positions[at++] = marked ? space_row_logical(s, row) : row;
+        return;
+    }
+    CettaIndex *ranks = cetta_fallible_malloc((size_t)count * 2u * sizeof(*ranks));
+    if (!ranks)
+        return;
+    CettaIndex *given = ranks + count;
+    memcpy(given, positions, (size_t)count * sizeof(*given));
+    if (space_priority_dense_ranks(s, given, count, ranks)) {
+        for (CettaIndex i = 0u; i < count; i++)
+            positions[ranks[i]] = given[i];
+    }
+    free(ranks);
 }
 
 void space_linearize(Space *s) {
@@ -8233,6 +11978,8 @@ const char *space_kind_name(SpaceKind kind) {
         return "hash";
     case SPACE_KIND_SET:
         return "set";
+    case SPACE_KIND_PRIORITY:
+        return "priority";
     }
     return "unknown";
 }
@@ -8259,6 +12006,10 @@ bool space_kind_from_name(const char *name, SpaceKind *out) {
         *out = SPACE_KIND_SET;
         return true;
     }
+    if (strcmp(name, "priority") == 0) {
+        *out = SPACE_KIND_PRIORITY;
+        return true;
+    }
     return false;
 }
 
@@ -8273,7 +12024,20 @@ void space_set_strict(Space *s, bool strict) {
 }
 
 bool space_is_ordered(const Space *s) {
+    return s && (s->kind == SPACE_KIND_STACK || s->kind == SPACE_KIND_QUEUE ||
+                 s->kind == SPACE_KIND_PRIORITY);
+}
+
+bool space_rows_in_kind_order(const Space *s) {
     return s && (s->kind == SPACE_KIND_STACK || s->kind == SPACE_KIND_QUEUE);
+}
+
+bool space_reads_newest_first(const Space *s) {
+    return s && s->kind == SPACE_KIND_STACK;
+}
+
+bool space_is_priority(const Space *s) {
+    return s && s->kind == SPACE_KIND_PRIORITY;
 }
 
 bool space_is_stack(const Space *s) {
@@ -8305,6 +12069,9 @@ void space_mark_derived_state_dirty(Space *s) {
     if (!s)
         return;
     space_mark_secondary_indexes_dirty(s);
+    /* Its callers rewrote rows: the order over them is built again. */
+    if (s->order)
+        s->order->valid = false;
     /* The presence bitset is add-monotone: incremental add paths keep it current
        and do NOT route through here, so any caller of this helper (removal, bulk
        replace, backend-direct store, external mutation) may have
@@ -8323,6 +12090,8 @@ static void space_clear_native_logical_view(Space *s) {
     space_pinned_occurrences_detach(s);
     space_release_rows(s, 0u, s->native.len);
     space_marks_reset(s);
+    if (s->order)
+        s->order->valid = false;
     free(s->native.atom_ids);
     s->native.atom_ids = NULL;
     s->native.start = 0;
@@ -8423,7 +12192,7 @@ space_local_removal_equation_projection(const Space *s, CettaIndex raw_idx) {
     AtomId removed_id = space_local_get_atom_id_at64(s, raw_idx);
     SpaceMutationEquationProjection result =
         space_atom_equation_projection(s, removed_id, NULL);
-    if (!space_is_ordered(s) && raw_idx + 1u < s->native.len) {
+    if (!space_rows_in_kind_order(s) && raw_idx + 1u < s->native.len) {
         CettaIndex tail = s->native.len - 1u;
         result = space_merge_equation_projection(
             result,
@@ -8477,7 +12246,7 @@ static SpaceDispatchRetention space_transport_dispatch_coordinates(
         !(projection & (SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
                         SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE));
     if ((!retained.equations && !retained.declarations) ||
-        (!transport && !space_is_ordered(s)))
+        (!transport && !space_rows_in_kind_order(s)))
         return retained;
     CettaCount source_len = transport ? transport->source_len : s->native.len;
     CettaCount target_len = transport ? transport->target_len : source_len - 1u;
@@ -8621,6 +12390,7 @@ static inline __attribute__((always_inline)) bool space_store_via_backend_primar
     atom_exact_indexable = atom_id_is_exact_indexable(s, atom_id);
     if (!space_match_backend_store_atom_id_direct(s, atom_id, atom))
         return false;
+    space_journal_note(s, atom_id, 1);
     space_append_backend_primary_shadow_id(s, atom_id);
     space_mark_backend_primary_atom_mutation(s, atom_id, atom);
     if (keep_pathmap_exact_metadata) {
@@ -8672,6 +12442,7 @@ static inline __attribute__((always_inline)) bool space_store_atom_via_backend_p
     atom_exact_indexable = atom_is_exact_indexable(atom);
     if (!space_match_backend_store_atom_direct(s, atom))
         return false;
+    space_journal_lose(s);
     space_mark_backend_primary_atom_mutation(
         s, CETTA_ATOM_ID_NONE, atom);
     if (keep_pathmap_exact_metadata) {
@@ -8698,7 +12469,15 @@ static bool space_remove_via_backend_primary(Space *s, AtomId atom_id) {
     had_non_exact_atom =
         keep_pathmap_exact_metadata && s->native.has_non_exact_atoms;
     atom_exact_indexable = atom_id_is_exact_indexable(s, atom_id);
-    if (!space_match_backend_remove_atom_id_direct(s, atom_id))
+    if (s->journal) {
+        /* Journalled while the id is held, then let go of if the backend
+         * removed nothing. */
+        space_journal_note(s, atom_id, -1);
+        if (!space_match_backend_remove_atom_id_direct(s, atom_id)) {
+            space_journal_note(s, atom_id, 1);
+            return false;
+        }
+    } else if (!space_match_backend_remove_atom_id_direct(s, atom_id))
         return false;
     space_mark_backend_primary_atom_mutation(s, atom_id, NULL);
     if (keep_pathmap_exact_metadata) {
@@ -8726,6 +12505,7 @@ static bool space_remove_atom_via_backend_primary(Space *s, Atom *atom) {
     atom_exact_indexable = atom_is_exact_indexable(atom);
     if (!space_match_backend_remove_atom_direct(s, atom))
         return false;
+    space_journal_lose(s);
     space_mark_backend_primary_atom_mutation(
         s, CETTA_ATOM_ID_NONE, atom);
     if (keep_pathmap_exact_metadata) {
@@ -8751,6 +12531,7 @@ static bool space_truncate_via_backend_primary64(Space *s, CettaCount new_len) {
             s, new_len, old_len);
     if (!space_match_backend_truncate_direct64(s, new_len))
         return false;
+    space_journal_lose(s);
     space_mark_indexes_dirty(s);
     space_publish_mutation(
         s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
@@ -8975,6 +12756,8 @@ bool space_try_init_with_universe(Space *s, TermUniverse *universe) {
     s->kind = SPACE_KIND_ATOM;
     s->strict = false;
     s->dense_from_first = false;
+    s->order = NULL;
+    s->journal = NULL;
     space_native_storage_init_empty(s, universe);
     s->instance_id = space_fresh_instance_id();
     s->revision = 0;
@@ -9412,6 +13195,9 @@ void space_free(Space *s) {
        Space before consulting a token. */
     space_execution_analysis_note_mutation(s);
     space_pinned_occurrences_detach(s);
+    /* Readers still open read a space that is gone: they find no journal. */
+    space_journal_free(s->journal);
+    s->journal = NULL;
     space_dependencies_unlink(s);
     space_detach_from_universe(s);
     space_release_rows(s, 0u, s->native.len);
@@ -9420,6 +13206,7 @@ void space_free(Space *s) {
     term_universe_resource_owner_free(s->native.resource_owner);
     s->native.resource_owner = NULL;
     space_marks_free(s);
+    space_order_free(s);
     free(s->native.atom_ids);
     s->native.atom_ids = NULL;
     s->native.atom_id_width_bits = 0;
@@ -9680,10 +13467,13 @@ static bool space_equation_cursor_index_matches(
         ? term_universe_get_atom(
               cursor->member.space->native.universe, equation_id)
         : NULL;
-    Atom *lhs = NULL;
-    Atom *rhs = NULL;
-    if (!equation || !is_equation_atom(equation, &lhs, &rhs))
+    /* The index files `=` rows; the cursor's qualifier decides which of
+     * them are rules, exactly as resolving an occurrence will. */
+    CettaRuleDescriptor rule;
+    if (!equation || !cetta_rule_view(equation, CETTA_RULE_SYNTAX_ORDINARY |
+            (cursor->admitted_forms & CETTA_RULE_SYNTAX_NAMED_HEAD), &rule))
         return false;
+    Atom *lhs = rule.head;
     SymbolId lhs_head = eq_head_symbol(lhs);
 #if CETTA_BUILD_WITH_RUNTIME_STATS || defined(CETTA_RUNTIME_STATS_IMPL)
     if (wildcard && lhs_head == SYMBOL_ID_NONE &&
@@ -9731,9 +13521,10 @@ static void space_equation_cursor_enter(SpaceEquationCursor *cursor,
                                         Space *s, bool own_only) {
     if (!space_has_overlay_base(s))
         ensure_eq_index(s);
+    unsigned forms = cursor->admitted_forms & CETTA_RULE_SYNTAX_FORMS;
     bool extended_projection = cursor->head == SYMBOL_ID_NONE ||
-        (cursor->admitted_forms != CETTA_RULE_SYNTAX_ORDINARY &&
-        (!(cursor->admitted_forms & CETTA_RULE_SYNTAX_ORDINARY) ||
+        (forms != CETTA_RULE_SYNTAX_ORDINARY &&
+        (!(forms & CETTA_RULE_SYNTAX_ORDINARY) ||
          space_has_overlay_base(s) || s->native.eq_idx.directional_present));
     cursor->member = space_read_token(s);
     cursor->own_only = own_only;
@@ -9768,8 +13559,7 @@ bool space_rule_cursor_init(Space *s, SymbolId head, unsigned admitted_forms,
                             SpaceEquationCursor *cursor) {
     if (cursor)
         memset(cursor, 0, sizeof(*cursor));
-    if (!s || !cursor || !admitted_forms ||
-        (admitted_forms & ~(CETTA_RULE_SYNTAX_ORDINARY | CETTA_RULE_SYNTAX_DIRECTIONAL)))
+    if (!s || !cursor || !cetta_rule_syntax_valid(admitted_forms))
         return false;
     cursor->read = space_read_token(s);
     cursor->head = head;
@@ -9833,7 +13623,10 @@ static SpaceEquationCursorStep space_equation_cursor_member_next(
 
     EqBucket *exact = s->native.eq_idx.buckets
         ? &s->native.eq_idx.buckets[symbol_hash(cursor->head)] : NULL;
-    EqBucket *wildcard = &s->native.eq_idx.wildcard;
+    /* No row of the unnamed-head bucket is a rule with a named head. */
+    EqBucket *wildcard =
+        cursor->admitted_forms & CETTA_RULE_SYNTAX_NAMED_HEAD
+            ? NULL : &s->native.eq_idx.wildcard;
     CettaIndex exact_index = 0u;
     CettaIndex wildcard_index = 0u;
     AtomId exact_id = CETTA_ATOM_ID_NONE;
@@ -11045,6 +14838,7 @@ static void space_publish_mutation(
 void space_note_external_backend_mutation(Space *s) {
     if (!s)
         return;
+    space_journal_lose(s);
     space_mark_derived_state_dirty(s);
     space_publish_mutation(
         s, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE,
@@ -11165,6 +14959,7 @@ static bool space_add_stored_id_as(Space *s, AtomId atom_id,
     }
     s->native.len++;
     space_hold_row(s, atom_id);
+    space_journal_note(s, atom_id, 1);
     /* A row stored as its own presence key, the bitset synced up to it:
      * the bitset takes it now, and no later sync reads its key again. */
     if (set_checked && !s->native.id_present_dirty &&
@@ -11400,6 +15195,9 @@ space_proof_append_disjoint(Space *s, const AtomId *keys, CettaCount count) {
         space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_ALLOCATION_FAILED);
         return SPACE_PROOF_APPEND_FAILED;
     }
+    /* Every input is valid: the rows come now, at once, which the journal
+     * does not itemize.  A declined append loses no point. */
+    space_journal_lose(s);
     term_universe_collection_inhibit_enter(u);
     CettaU64Index pure, seen;
     cetta_u64_index_init(&pure); cetta_u64_index_init(&seen);
@@ -11476,6 +15274,9 @@ space_proof_append_disjoint(Space *s, const AtomId *keys, CettaCount count) {
             !space_atom_id_storage_store_at(replacement, bits, s->native.len + i, fresh[i]))
             goto finished;
     }
+    /* Frozen views copy their rows as any rewrite makes them. */
+    if (s->match_backend.native.frozen)
+        space_pinned_occurrences_detach(s);
     SpacePinnedOccurrences *view = s->match_backend.native.pinned;
     if (view) {
         size_t old_width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
@@ -11494,7 +15295,8 @@ space_proof_append_disjoint(Space *s, const AtomId *keys, CettaCount count) {
             goto finished;
         }
         captured = NULL;
-        space_pinned_occurrences_finish_detach(s, view);
+        space_pinned_occurrences_finish_detach(s, view,
+                                               space_index_hold_take(s));
     }
     /* All recoverable preparation is complete. Pure data holds, pointer
      * exchange and native index retirement cannot refuse publication. */
@@ -11623,8 +15425,10 @@ static bool space_add_atom_ids_batch_rows(Space *s, const AtomId *atom_ids,
                 ty_ann_index_note_row(&s->native.ty_idx, s, atom_ids[i]);
         }
         s->native.len = next_len;
-        for (CettaCount i = 0u; i < atom_count; i++)
+        for (CettaCount i = 0u; i < atom_count; i++) {
             space_hold_row(s, atom_ids[i]);
+            space_journal_note(s, atom_ids[i], 1);
+        }
         /* A current exact index stays current, a row at a time; a dirty
          * one would cost its next reader the whole space. */
         if (!s->native.exact_idx_dirty) {
@@ -11691,6 +15495,7 @@ static bool space_add_atom_ids_batch_rows(Space *s, const AtomId *atom_ids,
         if (added != (uint64_t)atom_count)
             return false;
         for (CettaCount i = 0; i < atom_count; i++) {
+            space_journal_note(s, atom_ids[i], 1);
             space_append_backend_primary_shadow_id(s, atom_ids[i]);
             space_mark_backend_primary_atom_mutation(
                 s, atom_ids[i], NULL);
@@ -11839,12 +15644,18 @@ static bool space_admit_atom_impl(Space *s, Arena *fallback,
 }
 
 bool space_admit_atom(Space *s, Arena *fallback, Atom *atom) {
-    return space_admit_atom_impl(s, fallback, NULL, atom);
+    bool admitted = space_admit_atom_impl(s, fallback, NULL, atom);
+    if (admitted && space_is_ordered(space_mutation_target(s)))
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_PUSH);
+    return admitted;
 }
 
 bool space_admit_atom_from_source_arena(
     Space *s, Arena *fallback, const Arena *source_arena, Atom *atom) {
-    return space_admit_atom_impl(s, fallback, source_arena, atom);
+    bool admitted = space_admit_atom_impl(s, fallback, source_arena, atom);
+    if (admitted && space_is_ordered(space_mutation_target(s)))
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_PUSH);
+    return admitted;
 }
 
 bool space_admit_atoms_batch_from_source_arena(
@@ -12165,8 +15976,23 @@ static void space_replace_contents_classified(
     dst->deps = dst->importers = NULL;
     dst->dep_count = dst->dep_cap = 0u;
     dst->importer_count = dst->importer_cap = 0u;
+    /* Readers of dst read on: every atom it held leaves, every atom src
+     * holds comes. */
+    struct SpaceJournal *journal = dst->journal;
+    if (journal) {
+        CettaCount old_len = space_length64(dst);
+        for (CettaIndex i = 0u; i < old_len; i++)
+            space_journal_note(dst, space_get_atom_id_at64(dst, i), -1);
+        dst->journal = NULL;
+    }
     space_free(dst);
     space_move_storage_and_backend(dst, src);
+    if (journal) {
+        dst->journal = journal;
+        CettaCount new_len = space_length64(dst);
+        for (CettaIndex i = 0u; i < new_len; i++)
+            space_journal_note(dst, space_get_atom_id_at64(dst, i), 1);
+    }
     dst->imported_len = imported;
     dst->deps = deps;
     dst->dep_count = dep_count;
@@ -12973,9 +16799,104 @@ static Atom *space_scoped_read_at(SpaceScopedReads *reads, const Space *s,
     return space_get_at64(s, index);
 }
 
+/* Remove one copy of a ground atom from a priority space: the order finds
+ * its rows, and one is removed as any data row is.  *REMOVED_OUT says
+ * whether one was; false when the order could not answer. */
+/* BY_EQUALITY: the caller removes the atom its dialect's equality finds,
+ * which the order's search finds only where that equality is identity: a
+ * number HE compares by value equals atoms the search does not meet, so
+ * the rows are then the caller's to read. */
+static bool space_priority_remove_ground(Space *s, Atom *atom,
+                                         bool by_equality,
+                                         bool *removed_out) {
+    CettaIndex *equal = NULL;
+    CettaIndex count = 0u;
+    if (!s || !atom || !space_is_priority(s) || space_has_overlay_base(s) ||
+        atom_has_vars(atom) ||
+        (by_equality &&
+         !space_match_ground_pattern_matches_by_identity(atom)) ||
+        !space_priority_equal_positions(s, atom, &equal, &count))
+        return false;
+    /* A ground atom is the only atom equal to it up to variables' names. */
+    *removed_out = count != 0u &&
+        space_priority_remove_positions(s, equal, 1u);
+    free(equal);
+    return count == 0u || *removed_out;
+}
+
+/* Remove one copy of an atom with variables from a priority space, as any
+ * other space removes one: the stored atom that is the atom itself, its
+ * variables too, where one is held; else the stored atom that is the same
+ * but for its variables' names, where exactly one is.  The atoms that are
+ * the same but for those names stand together in the order, under one key,
+ * so they are found by a search and one is removed as any data row is.
+ * *REMOVED_OUT says whether one was; false when the order could not answer:
+ * the atom's key does not form, or a search could not be made. */
+static bool space_priority_remove_open(Space *s, Atom *atom,
+                                       bool *removed_out) {
+    *removed_out = false;
+    if (!s || !atom || !space_is_priority(s) || space_has_overlay_base(s) ||
+        !atom_has_vars(atom) || !s->native.universe)
+        return false;
+    struct SpaceOrder *order = space_order_ensure(s);
+    if (!order)
+        return false;
+    /* The key is made, not looked up: nothing keeps a row's key in the
+     * universe between collections, so a key that is not held says nothing
+     * of the rows. */
+    AtomId key = term_universe_store_alpha_key(s->native.universe, atom);
+    if (key == CETTA_ATOM_ID_NONE)
+        return false;
+    AtomId itself = term_universe_lookup_atom_id(s->native.universe, atom);
+    SpaceOrderKeyProbe probe = {.key = key};
+    space_order_rows_open(&probe.rows, s);
+    uint32_t row = CETTA_ORDER_NONE;
+    bool found = cetta_order_lower_bound(&order->tree, space_order_probe_atom,
+                                         &probe, &row);
+    uint32_t same = CETTA_ORDER_NONE, alike = CETTA_ORDER_NONE;
+    CettaCount alike_count = 0u;
+    while (found && row != CETTA_ORDER_NONE) {
+        int placed = 0;
+        if (!space_order_probe_atom(&probe, row, &placed)) {
+            found = false;
+            break;
+        }
+        if (placed != 0)
+            break;
+        AtomId held = space_atom_id_storage_load_at(
+            s->native.atom_ids, s->native.atom_id_width_bits, row);
+        /* The first by row of each. */
+        if (held == itself && (same == CETTA_ORDER_NONE || row < same))
+            same = row;
+        if (alike == CETTA_ORDER_NONE || row < alike)
+            alike = row;
+        alike_count++;
+        /* Two alike and none the atom itself so far: the rest are read only
+         * to find the atom itself, which stands among them. */
+        row = cetta_order_next(&order->tree, row);
+    }
+    space_order_rows_close(&probe.rows);
+    if (!found)
+        return false;
+    uint32_t chosen = same != CETTA_ORDER_NONE ? same
+        : alike_count == 1u ? alike : CETTA_ORDER_NONE;
+    if (chosen == CETTA_ORDER_NONE)
+        return true;
+    CettaIndex position = space_has_marks(s) ? space_row_logical(s, chosen)
+                                             : chosen;
+    *removed_out = space_priority_remove_positions(s, &position, 1u);
+    return *removed_out;
+}
+
 bool space_remove(Space *s, Atom *atom) {
     if (!space_proof_prepare_storage(space_mutation_target(s))) return false;
     SpaceScopedReads reads __attribute__((cleanup(space_scoped_reads_close))) = {0};
+    bool removed = false;
+    if (space_priority_remove_ground(space_mutation_target(s), atom, true,
+                                     &removed))
+        return removed;
+    if (space_priority_remove_open(space_mutation_target(s), atom, &removed))
+        return removed;
     space_settle_marks(s);
     s = space_mutation_target(s);
     if (!s)
@@ -13118,7 +17039,7 @@ bool space_remove(Space *s, Atom *atom) {
 
     AtomId swap_removed_id = CETTA_ATOM_ID_NONE, swap_moved_id = CETTA_ATOM_ID_NONE;
     CettaIndex swap_moved_from = 0u;
-    if (space_is_ordered(s)) {
+    if (space_rows_in_kind_order(s)) {
         size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
         AtomId removed_id = space_atom_id_storage_load_at(
             s->native.atom_ids, s->native.atom_id_width_bits, remove_idx);
@@ -13211,6 +17132,15 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
 }
 
 static bool space_remove_atom_id_rows(Space *s, AtomId atom_id) {
+    Space *target = space_mutation_target(s);
+    if (target && space_is_priority(target) && !space_has_overlay_base(target) &&
+        atom_id != CETTA_ATOM_ID_NONE && target->native.universe &&
+        !tu_has_vars(target->native.universe, atom_id)) {
+        bool removed = false;
+        Atom *atom = term_universe_get_atom(target->native.universe, atom_id);
+        if (space_priority_remove_ground(target, atom, false, &removed))
+            return removed;
+    }
     space_settle_marks(s);
     s = space_mutation_target(s);
     if (!s || atom_id == CETTA_ATOM_ID_NONE)
@@ -13254,9 +17184,9 @@ static bool space_remove_atom_id_rows(Space *s, AtomId atom_id) {
     CettaIndex start = s->imported_len;
     bool before = false, found = false;
     CettaIndex first = 0u;
-    if (!space_is_ordered(s))
+    if (!space_rows_in_kind_order(s))
         ensure_exact_index(s);
-    if (!space_is_ordered(s) &&
+    if (!space_rows_in_kind_order(s) &&
         space_exact_rows(s, atom_id, s->imported_len, &before, &found, &first)) {
         if (!found)
             return false;
@@ -13270,7 +17200,7 @@ static bool space_remove_atom_id_rows(Space *s, AtomId atom_id) {
         SpaceDispatchRetention retained = space_transport_dispatch_coordinates(
             s, equation_projection, NULL, i);
         space_pinned_occurrences_detach(s);
-        if (space_is_ordered(s)) {
+        if (space_rows_in_kind_order(s)) {
             size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
             memmove(s->native.atom_ids + ((size_t)i * width),
                     s->native.atom_ids + ((size_t)(i + 1u) * width),
@@ -13337,6 +17267,8 @@ bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,
         return false;
     if (batch_result == SPACE_BACKEND_BATCH_APPLIED) {
         if (removed != 0) {
+            /* The backend reports a count, not which atoms went. */
+            space_journal_lose(s);
             for (CettaCount i = 0; i < atom_count; i++)
                 space_mark_backend_primary_atom_mutation(
                     s, atom_ids[i], NULL);
@@ -13465,6 +17397,13 @@ static bool space_contract_occurrence_mask(
         space_free(&empty);
         return ok;
     }
+    /* The masked atoms leave the space; settling only contracts rows the
+     * space omits already. */
+    if (__builtin_expect(s->journal != NULL, 0) && !settling) {
+        for (CettaIndex i = 0u; i < logical_len && i < mask_len; i++)
+            if (remove_mask[i] != 0u)
+                space_journal_note(s, space_get_atom_id_at64(s, i), -1);
+    }
 
     if (stable_occurrence_transport_enabled() && !space_has_overlay_base(s) &&
         logical_len <= SIZE_MAX / sizeof(CettaIndex) &&
@@ -13504,6 +17443,8 @@ static bool space_contract_occurrence_mask(
         if (transport_result == SPACE_BACKEND_BATCH_APPLIED) {
             SpaceDispatchRetention retained = space_transport_dispatch_coordinates(
                 s, equation_projection, &transport, SPACE_OCCURRENCE_COORDINATE_REMOVED);
+            if (!settling)
+                space_order_forget_removed(s, remove_mask, logical_len);
             /* A current exact index holds the live rows: marked rows left it
              * when marked, and the rows this mask removes leave it now, while
              * their ids are still stored. */
@@ -13556,9 +17497,12 @@ static bool space_contract_occurrence_mask(
              * presence bits, keyed by the live rows' alpha keys over that
              * view, still hold, stale only if they were. */
             bool presence_dirty = s->native.id_present_dirty;
+            bool order_follows = space_order_current(s);
             space_mark_derived_state_dirty(s);
             if (settling)
                 s->native.id_present_dirty = presence_dirty;
+            if (order_follows)
+                space_order_transport(s, source_to_target, logical_len, target);
             s->native.eq_idx_dirty = !retained.equations;
             s->native.ty_idx_dirty = !retained.declarations;
             s->native.exact_idx_dirty =
@@ -13568,6 +17512,7 @@ static bool space_contract_occurrence_mask(
             if (!settling)
                 space_publish_mutation(
                     s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
+            space_order_adopt(s, order_follows);
             cetta_runtime_stats_add(
                 CETTA_RUNTIME_COUNTER_SPACE_STABLE_COORDINATE_TRANSPORT_RETAINED_MOVE,
                 moved);
@@ -14170,11 +18115,100 @@ Atom *space_peek(const Space *s) {
     CettaCount logical_len = space_length64(s);
     if (!s || logical_len == 0)
         return NULL;
+    if (space_is_priority(s))
+        return space_priority_get_at64(s, 0u);
     return space_get_at64(s, space_is_queue(s) ? 0 : (logical_len - 1));
+}
+
+/* Remove the atoms at ascending logical positions: by marks where the space
+ * admits them, by one contraction otherwise. */
+static bool space_priority_remove_positions(Space *s,
+                                            const CettaIndex *positions,
+                                            CettaCount count) {
+    if (count == 0u)
+        return true;
+    if (!space_has_overlay_base(s) &&
+        space_remove_logical_positions(s, positions, count))
+        return true;
+    CettaCount logical_len = space_length64(s);
+    uint8_t *mask = calloc((size_t)(logical_len ? logical_len : 1u), 1u);
+    if (!mask)
+        return false;
+    for (CettaCount i = 0u; i < count; i++)
+        mask[positions[i]] = 1u;
+    CettaCount removed = 0u;
+    bool contracted = space_remove_occurrence_mask_stable(
+        s, mask, logical_len, &removed);
+    free(mask);
+    return contracted && removed == count;
+}
+
+/* Take a priority space's least atom: the row its order names is removed as
+ * any data row is, by a mark, so no row moves and no index is rebuilt; a row
+ * marks do not admit (an equation, a declaration) is contracted away. */
+static bool space_priority_pop(Space *s, Atom **out) {
+    CettaIndex position = 0u;
+    if (!space_priority_position(s, 0u, &position))
+        return false;
+    Atom *least = space_get_at64(s, position);
+    if (!least)
+        return false;
+    if (out)
+        *out = least;
+    return space_priority_remove_positions(s, &position, 1u);
+}
+
+/* Keep a priority space's NEW_LEN least atoms. */
+static bool space_priority_truncate(Space *s, CettaCount new_len) {
+    CettaCount logical_len = space_length64(s);
+    if (new_len > logical_len)
+        return false;
+    if (new_len == logical_len)
+        return true;
+    CettaCount going = logical_len - new_len;
+    CettaIndex *positions = NULL, *last = NULL;
+    if (!space_has_overlay_base(s)) {
+        /* The greatest atoms: the order from rank NEW_LEN on, a search and
+         * a step for each, not a sort of the space. */
+        struct SpaceOrder *order = space_order_ensure(s);
+        if (!order || order->tree.count != logical_len)
+            return false;
+        positions = cetta_fallible_malloc((size_t)going * sizeof(*positions));
+        if (!positions)
+            return false;
+        uint32_t row = new_len == 0u
+            ? cetta_order_least(&order->tree)
+            : cetta_order_select(&order->tree, (uint32_t)new_len);
+        CettaCount found = 0u;
+        for (; row != CETTA_ORDER_NONE && found < going;
+             row = cetta_order_next(&order->tree, row))
+            positions[found++] = space_row_logical(s, row);
+        if (found != going) {
+            free(positions);
+            return false;
+        }
+        last = positions;
+    } else {
+        /* An overlay reads its base's rows and its own: no order index
+         * covers them, and its atoms are sorted. */
+        CettaCount count = logical_len;
+        positions = space_priority_ordered_positions(s, &count);
+        if (!positions)
+            return false;
+        last = positions + new_len;
+    }
+    /* They go by their positions, ascending. */
+    if (going > 1u)
+        qsort(last, (size_t)going, sizeof(*last), space_order_key_compare);
+    bool removed = space_priority_remove_positions(s, last, going);
+    free(positions);
+    return removed;
 }
 
 bool space_pop(Space *s, Atom **out) {
     if (!space_proof_prepare_mutation(s)) return false;
+    if (space_is_priority(s))
+        return space_priority_pop(s, out);
     space_dense_settle(s, SYMBOL_ID_NONE);
     space_prepare_prefix_rewrite(s);
     CettaCount logical_len;
@@ -14196,11 +18230,16 @@ bool space_pop(Space *s, Atom **out) {
             return false;
         if (out)
             *out = top;
-        if (local_len > 0)
-            return space_overlay_remove_local_raw_index(s, local_len - 1u);
+        /* A queue gives its oldest atom, which is its base's while the base
+         * shows any; a stack its newest, its own while it holds any. */
+        bool from_base = space_is_queue(s) ? base_visible > 0 : local_len == 0;
+        if (!from_base)
+            return space_overlay_remove_local_raw_index(
+                s, space_is_queue(s) ? 0u : local_len - 1u);
         if (base_visible > 0) {
             CettaIndex raw = 0;
-            if (!space_overlay_visible_base_raw_index(s, base_visible - 1u, &raw) ||
+            if (!space_overlay_visible_base_raw_index(
+                    s, space_is_queue(s) ? 0u : base_visible - 1u, &raw) ||
                 !space_overlay_mark_base_removed(s, raw)) {
                 return false;
             }
@@ -14230,13 +18269,13 @@ bool space_pop(Space *s, Atom **out) {
     if (!space_match_backend_materialize_native_storage(s, NULL))
         return false;
     if (space_is_queue(s)) {
-        space_release_rows(s, 0u, 1u);
+        space_remove_rows(s, 0u, 1u);
         s->native.start++;
         s->native.len--;
         if (s->native.len == 0)
             s->native.start = 0;
     } else {
-        space_release_rows(s, s->native.len - 1u, s->native.len);
+        space_remove_rows(s, s->native.len - 1u, s->native.len);
         s->native.len--;
     }
     space_mark_indexes_dirty(s);
@@ -14247,6 +18286,8 @@ bool space_pop(Space *s, Atom **out) {
 }
 
 bool space_truncate(Space *s, uint32_t new_len) {
+    if (space_is_priority(s))
+        return space_truncate64(s, new_len);
     space_prepare_prefix_rewrite(s);
     uint32_t logical_len;
 
@@ -14267,7 +18308,7 @@ bool space_truncate(Space *s, uint32_t new_len) {
     SpaceMutationEquationProjection equation_projection =
         space_logical_removed_range_equation_projection(
             s, new_len, logical_len);
-    space_release_rows(s, new_len, s->native.len);
+    space_remove_rows(s, new_len, s->native.len);
     s->native.len = new_len;
     if (s->native.len == 0)
         s->native.start = 0;
@@ -14280,6 +18321,8 @@ bool space_truncate(Space *s, uint32_t new_len) {
 
 bool space_truncate64(Space *s, CettaCount new_len) {
     if (!space_proof_prepare_mutation(s)) return false;
+    if (space_is_priority(s))
+        return space_priority_truncate(s, new_len);
     space_dense_settle(s, SYMBOL_ID_NONE);
     space_prepare_prefix_rewrite(s);
     CettaCount logical_len;
@@ -14305,7 +18348,7 @@ bool space_truncate64(Space *s, CettaCount new_len) {
             SpaceMutationEquationProjection equation_projection =
                 space_logical_removed_range_equation_projection(
                     s, new_len, logical_len);
-            space_release_rows(s, want_local, s->native.len);
+            space_remove_rows(s, want_local, s->native.len);
             s->native.len = want_local;
             if (s->native.len == 0)
                 s->native.start = 0;
@@ -14320,7 +18363,10 @@ bool space_truncate64(Space *s, CettaCount new_len) {
         SpaceMutationEquationProjection equation_projection =
             space_logical_removed_range_equation_projection(
                 s, new_len, logical_len);
-        space_release_rows(s, 0u, s->native.len);
+        /* The base's atoms leave the view too, which the journal does not
+         * itemize here. */
+        space_journal_lose(s);
+        space_remove_rows(s, 0u, s->native.len);
         s->native.len = 0;
         s->native.start = 0;
         if (new_len == 0) {
@@ -14351,7 +18397,7 @@ bool space_truncate64(Space *s, CettaCount new_len) {
     SpaceMutationEquationProjection equation_projection =
         space_logical_removed_range_equation_projection(
             s, new_len, logical_len);
-    space_release_rows(s, new_len, s->native.len);
+    space_remove_rows(s, new_len, s->native.len);
     s->native.len = new_len;
     if (s->native.len == 0)
         s->native.start = 0;
@@ -14373,12 +18419,28 @@ CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out) {
     space_dense_settle_for_pattern(s, atom);
     /* Settling marks and building the index are physical transitions. */
     CETTA_SCOPED_SHARED_TRANSITION(exact_match_indices);
-    space_settle_marks(s);
     if (out)
         *out = NULL;
-    /* Exact index is maintained for ALL space kinds - enable for native too */
+    /* A priority space's order finds the rows equal to an atom, marks or
+     * none, whether or not it keeps an exact index. */
+    if (s && atom && s->kind == SPACE_KIND_PRIORITY &&
+        !space_has_overlay_base(s) && !atom_has_variables(atom) &&
+        atom_is_exact_indexable(atom)) {
+        CettaIndex *equal = NULL;
+        CettaIndex n = 0u;
+        if (space_priority_equal_positions(s, atom, &equal, &n)) {
+            if (n != 0u && out)
+                *out = equal;
+            else
+                free(equal);
+            return n;
+        }
+    }
+    /* An atom no row can equal settles nothing: the rows are read by
+     * position only to find the rows equal to it. */
     if (!s || !atom || atom_has_variables(atom) || !atom_is_exact_indexable(atom))
         return 0;
+    space_settle_marks(s);
     if (space_has_overlay_base(s)) {
         CettaCount logical_len = space_length64(s);
         CettaIndex *matches = cetta_malloc(sizeof(CettaIndex) * (size_t)logical_len);
@@ -14407,9 +18469,21 @@ CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out) {
     AtomId query_id = term_universe_lookup_atom_id(s->native.universe, atom);
     if (query_id == CETTA_ATOM_ID_NONE)
         return 0;
-    ensure_exact_index(s);
     CettaIndex *matches = NULL;
-    CettaIndex n = exact_index_rows(&s->native.exact_idx, query_id, &matches);
+    CettaIndex n = 0u;
+    if (space_keeps_exact_index(s)) {
+        ensure_exact_index(s);
+        n = exact_index_rows(&s->native.exact_idx, query_id, &matches);
+    } else if (s->native.len != 0u) {
+        /* A strict space keeps no exact index: its rows answer, read in
+         * turn, as they answer its every general match. */
+        space_linearize(s);
+        matches = cetta_malloc(sizeof(CettaIndex) * (size_t)s->native.len);
+        for (CettaIndex i = 0u; matches && i < s->native.len; i++) {
+            if (space_get_atom_id_at64(s, i) == query_id)
+                matches[n++] = i;
+        }
+    }
     if (n == 0) {
         free(matches);
         return 0;
@@ -14544,16 +18618,6 @@ bool space_contains_exact_symbol_application(
         id_present_contains(&s->native, query_id);
 }
 
-/* Whether `match` reads PATTERN as a query over parts: a conjunction
- * (, P ...) or a disjunction (| P ...), whose rows no membership test of
- * the pattern itself answers, even when it is ground. */
-static bool space_match_pattern_is_connective(Atom *const *elems,
-                                              CettaExprLen len) {
-    return len >= 1u && elems[0]->kind == ATOM_SYMBOL &&
-        (elems[0]->sym_id == g_builtin_syms.comma ||
-         elems[0]->sym_id == g_builtin_syms.pipe);
-}
-
 bool space_match_exists_ground_exact(Space *s, Atom *pattern,
                                      bool *out_applicable) {
     bool found = false;
@@ -14562,9 +18626,7 @@ bool space_match_exists_ground_exact(Space *s, Atom *pattern,
         *out_applicable = false;
     if (!s || !pattern || atom_has_vars(pattern) ||
         !atom_is_exact_indexable(pattern) || space_has_dependencies(s) ||
-        (pattern->kind == ATOM_EXPR &&
-         space_match_pattern_is_connective(pattern->expr.elems,
-                                           pattern->expr.len))) {
+        match_pattern_is_connective(pattern)) {
         return false;
     }
     /* Membership answers only where a present pattern matches by identity. */
@@ -14604,7 +18666,7 @@ bool space_match_exists_ground_exact_expression_coordinates(
     if (out_applicable)
         *out_applicable = false;
     if (!s || coordinate_count == 0u || !coordinates ||
-        space_match_pattern_is_connective(coordinates, coordinate_count) ||
+        match_head_is_connective(coordinates[0]) ||
         space_has_overlay_base(s) || space_has_dependencies(s) ||
         space_engine_uses_pathmap(s->match_backend.kind) ||
         !s->native.universe || !space_contains_only_exact_atoms(s)) {
@@ -14702,6 +18764,12 @@ bool space_contains_only_exact_atoms(Space *s) {
         }
         return true;
     }
+    /* A priority space's order counts the rows that are not. */
+    if (s->kind == SPACE_KIND_PRIORITY) {
+        struct SpaceOrder *order = space_order_ensure(s);
+        if (order)
+            return order->inexact == 0u;
+    }
     if (!ensure_has_non_exact_atoms(s))
         return false;
     return !s->native.has_non_exact_atoms;
@@ -14746,7 +18814,9 @@ CettaIndex space_exact_index_rows_ids64(Space *s, SymbolId head,
  * per query would cost the whole space each time; a rebuild would also
  * settle marks a query leaves to their own schedule.  A strict space builds
  * none.  The caller holds the space's transition. */
-static bool exact_index_head_exact(Space *s, SymbolId head) {
+/* Whether S's exact index files its rows as they stand, rebuilt here where
+ * it may be. */
+static bool exact_index_current(Space *s) {
     if (space_has_proof_image(s, SYMBOL_ID_NONE)) return false;
     if (s->native.exact_idx_dirty) {
         if (!space_keeps_exact_index(s) ||
@@ -14755,6 +18825,12 @@ static bool exact_index_head_exact(Space *s, SymbolId head) {
             return false;
         exact_index_rebuild(s);
     }
+    return true;
+}
+
+static bool exact_index_head_exact(Space *s, SymbolId head) {
+    if (!exact_index_current(s))
+        return false;
     ExactAtomIndex *idx = &s->native.exact_idx;
     if (idx->inexact_unheaded != 0u)
         return false;
@@ -14821,9 +18897,12 @@ static bool space_exact_removal_id_is_dense(
 
 /* The caller holds the space transition.  Admission and every fallible row
  * allocation precede any write, including in the immediate specialization. */
+/* BY_IDENTITY: the rows wanted are those holding the ids themselves, so a
+ * row with a variable under the head is no concern; the index must be
+ * current. */
 static bool space_exact_removal_admitted(Space *s, SymbolId head,
                                          const AtomId *ids, size_t count,
-                                         Atom *dense_atom) {
+                                         Atom *dense_atom, bool by_identity) {
     if (!s || head == SYMBOL_ID_NONE || (count && !ids) ||
         (dense_atom && count != 1u) || !s->native.universe ||
         count > SIZE_MAX / sizeof(*ids) ||
@@ -14833,7 +18912,8 @@ static bool space_exact_removal_admitted(Space *s, SymbolId head,
         return false;
     /* A row holding a variable could unify with an instance without
      * equalling it; the index certifies there is none under this head. */
-    if (!exact_index_head_exact(s, head))
+    if (by_identity ? !exact_index_current(s)
+                    : !exact_index_head_exact(s, head))
         return false;
     /* Only an exact row is filed under its id. */
     for (size_t i = 0u; i < count; i++) {
@@ -14866,12 +18946,14 @@ static bool space_exact_removal_append_rows(const ExactAtomIndex *idx,
     return true;
 }
 
+/* TAKE nonzero: at most TAKE rows, the first by position, selected by
+ * identity; a relation's fact is selected only where the rows are fewer. */
 static bool space_exact_removal_select(Space *s, SymbolId head,
                                        const AtomId *ids, size_t count,
-                                       Atom *dense_atom,
+                                       Atom *dense_atom, CettaCount take,
                                        SpaceExactRemoval *selection) {
     if (!selection || !space_exact_removal_admitted(
-            s, head, ids, count, dense_atom))
+            s, head, ids, count, dense_atom, take != 0u))
         return false;
     ExactAtomIndex *idx = &s->native.exact_idx;
     AtomId *owned_ids = count > 1u
@@ -14930,6 +19012,14 @@ static bool space_exact_removal_select(Space *s, SymbolId head,
     for (CettaIndex i = 0u; i < position_len; i++) {
         if (unique == 0u || positions[unique - 1u] != positions[i])
             positions[unique++] = positions[i];
+    }
+    if (take != 0u && unique >= take) {
+        unique = take;
+        dense_count = 0u;
+        dense_selected = 0u;
+        selection->id_dense_single = 0u;
+        if (dense_ids)
+            memset(dense_ids, 0, count * sizeof(*dense_ids));
     }
     CettaIndex *physical = NULL;
     if (!space_logical_positions_prepare(s, positions, unique, &physical)) {
@@ -14999,7 +19089,7 @@ bool space_store_effect_prepare_remove_exact(
     SpaceExactRemoval selection = {0};
     CETTA_SCOPED_SHARED_TRANSITION(exact_preparation);
     if (!space_exact_removal_select(
-            s, head, ids, count, dense_atom, &selection))
+            s, head, ids, count, dense_atom, 0u, &selection))
         return false;
     effect->kind = SPACE_STORE_EFFECT_REMOVE_POSITIONS;
     if (!space_store_effect_prepare(effect, s, receipt, selection.selected_len)) {
@@ -15047,7 +19137,7 @@ bool space_remove_exact_ids_immediate(Space *s, SymbolId head,
     if (out_rows)
         *out_rows = 0u;
     CETTA_SCOPED_SHARED_TRANSITION(immediate_exact_removal);
-    if (!space_exact_removal_admitted(s, head, ids, count, dense_atom))
+    if (!space_exact_removal_admitted(s, head, ids, count, dense_atom, false))
         return false;
     /* With no ordinary rows there is no fallible preparation to protect.
      * The destructive route itself supplies membership and multiplicity. */
@@ -15066,8 +19156,34 @@ bool space_remove_exact_ids_immediate(Space *s, SymbolId head,
     }
     SpaceExactRemoval selection = {0};
     if (!space_exact_removal_select(
-            s, head, ids, count, dense_atom, &selection))
+            s, head, ids, count, dense_atom, 0u, &selection))
         return false;
+    bool ok = space_exact_removal_publish(s, &selection, false, out_removed);
+    if (ok && out_rows)
+        *out_rows = selection.row_len;
+    space_exact_removal_dispose(&selection);
+    return ok;
+}
+
+bool space_take_exact_id(Space *s, SymbolId head, AtomId id, Atom *dense_atom,
+                         CettaCount copies, CettaCount *out_removed,
+                         CettaCount *out_rows) {
+    if (out_removed)
+        *out_removed = 0u;
+    if (out_rows)
+        *out_rows = 0u;
+    if (copies == 0u)
+        return true;
+    CETTA_SCOPED_SHARED_TRANSITION(exact_take);
+    SpaceExactRemoval selection = {0};
+    if (!space_exact_removal_select(
+            s, head, &id, 1u, dense_atom, copies, &selection))
+        return false;
+    /* Fewer copies than taken: nothing leaves. */
+    if (selection.selected_len != copies) {
+        space_exact_removal_dispose(&selection);
+        return true;
+    }
     bool ok = space_exact_removal_publish(s, &selection, false, out_removed);
     if (ok && out_rows)
         *out_rows = selection.row_len;
@@ -15202,7 +19318,9 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
         const Space *space = (const Space *)atom->ground.ptr;
         const char *space_type = "atom";
         if (space) {
-            if (space_is_stack(space)) {
+            if (space_is_priority(space)) {
+                space_type = "priority";
+            } else if (space_is_stack(space)) {
                 space_type = "stack";
             } else if (space_is_queue(space)) {
                 space_type = "queue";
@@ -15624,6 +19742,38 @@ static void space_annotated_types_append(SpaceAnnotatedTypes *list,
     list->types[list->count++] = type;
 }
 
+/* The type the declaration ANNOTATION, (: subject type), gives ATOM, as
+ * HE's query (: atom $t) reads it: the type of an equal subject, and of a
+ * subject holding variables that unifies with the atom (a variable subject
+ * declares every atom), renamed apart and instantiated by that meeting.
+ * 1 with *out set, 0 when the declaration says nothing of the atom, -1 when
+ * allocation fails. */
+static int ty_ann_type_meeting(Arena *a, Atom *annotation, Atom *atom,
+                               Atom **out) {
+    Atom *subject = annotation->expr.elems[1];
+    Atom *type = annotation->expr.elems[2];
+    *out = NULL;
+    if (atom_eq(subject, atom)) {
+        *out = atom_has_vars(type) ? cetta_instantiate_frame_syntax(a, type)
+                                   : atom_deep_copy_shared(a, type);
+        return *out ? 1 : -1;
+    }
+    if (!atom_has_vars(subject))
+        return 0;
+    Atom *renamed = cetta_instantiate_frame_syntax(a, annotation);
+    if (!renamed)
+        return -1;
+    Bindings bindings;
+    bindings_init(&bindings);
+    int met = 0;
+    if (match_atoms(renamed->expr.elems[1], atom, &bindings, a)) {
+        *out = bindings_apply(&bindings, a, renamed->expr.elems[2]);
+        met = *out ? 1 : -1;
+    }
+    bindings_free(&bindings);
+    return met;
+}
+
 /* One member of a type lookup: the space's own declarations, then, unless
  * `own_only`, the ones it holds as imported atoms.  False when allocation
  * fails. */
@@ -15655,18 +19805,16 @@ space_member_annotated_types(
                 continue;
             if (!atom_is_symbol_id(annotation->expr.elems[0], g_builtin_syms.colon))
                 continue;
-            if (!atom_eq(annotation->expr.elems[1], atom))
+            Atom *copy = NULL;
+            int met = ty_ann_type_meeting(a, annotation, atom, &copy);
+            if (met < 0)
+                return false;
+            if (met == 0)
                 continue;
             if (!type_inference_can_add(budget, list->count)) {
                 list->stopped = true;
                 break;
             }
-            Atom *type = annotation->expr.elems[2];
-            Atom *copy = atom_has_vars(type)
-                ? cetta_instantiate_frame_syntax(a, type)
-                : atom_deep_copy_shared(a, type);
-            if (!copy)
-                return false;
             space_annotated_types_append(list, copy);
         }
         return true;
@@ -15678,14 +19826,18 @@ space_member_annotated_types(
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_DECLARED_TYPE_INDEXED_LOOKUP);
     const SpaceHeadChains *index = &s->native.ty_idx.rows;
-    const SpaceHeadChain *chain =
-        space_head_chains_find(index, ty_ann_subject_head(atom));
-    if (!chain || chain->count == 0u)
-        return true;
+    /* Declarations under the atom's head, then those whose subject has no
+     * head, a variable subject among them, which may meet any atom. */
+    SymbolId heads[2] = {ty_ann_subject_head(atom), SYMBOL_ID_NONE};
+    int chains = heads[0] == SYMBOL_ID_NONE ? 1 : 2;
     CettaIndex imported = s->imported_len;
     int passes = own_only || imported == 0u ? 1 : 2;
     /* The space's own declarations precede imported ones. */
     for (int pass = 0; pass < passes && !list->stopped; pass++)
+    for (int c = 0; c < chains && !list->stopped; c++) {
+    const SpaceHeadChain *chain = space_head_chains_find(index, heads[c]);
+    if (!chain || chain->count == 0u)
+        continue;
     for (uint32_t i = chain->first; i != SPACE_HEAD_CHAIN_END; i = index->next[i]) {
         if (imported != 0u &&
             (index->atom_indices[i] < imported) != (pass == 1))
@@ -15730,19 +19882,18 @@ space_member_annotated_types(
             continue;
         if (!atom_is_symbol_id(annotation->expr.elems[0], g_builtin_syms.colon))
             continue;
-        if (!atom_eq(annotation->expr.elems[1], atom))
+        Atom *copy = NULL;
+        int met = ty_ann_type_meeting(a, annotation, atom, &copy);
+        if (met < 0)
+            return false;
+        if (met == 0)
             continue;
         if (!type_inference_can_add(budget, list->count)) {
             list->stopped = true;
             break;
         }
-        Atom *type = annotation->expr.elems[2];
-        Atom *copy = atom_has_vars(type)
-            ? cetta_instantiate_frame_syntax(a, type)
-            : atom_deep_copy_shared(a, type);
-        if (!copy)
-            return false;
         space_annotated_types_append(list, copy);
+    }
     }
     return true;
 }
@@ -20727,6 +24878,61 @@ static bool space_member_equations_may_match_known_head(Space *s,
             return true;
         }
     }
+    return false;
+}
+
+/* One member's rules whose left side applies `head`, as the named-head
+ * qualifier reads rules (cetta_rule_view): no other row is one. */
+static bool space_member_named_rules_may_match(Space *s, SymbolId head,
+                                               unsigned admitted_forms) {
+    if (!s)
+        return false;
+    if (space_has_overlay_base(s)) {
+        CettaCount end = space_length64(s);
+        for (CettaIndex i = space_overlay_visible_base_count(s); i < end; i++) {
+            CettaRuleDescriptor rule;
+            if (cetta_rule_view(space_get_at64(s, i), admitted_forms, &rule) &&
+                rule.head->expr.elems[0]->sym_id == head)
+                return true;
+        }
+        return space_member_named_rules_may_match(
+            (Space *)s->overlay_base, head, admitted_forms);
+    }
+    ensure_eq_index(s);
+    if ((admitted_forms & CETTA_RULE_SYNTAX_DIRECTIONAL) &&
+        eq_head_set_contains(&s->native.eq_idx.directional_heads, head))
+        return true;
+    if (!(admitted_forms & CETTA_RULE_SYNTAX_ORDINARY))
+        return false;
+    const SpaceHeadChains *rows = &s->native.eq_idx.head_rows;
+    const SpaceHeadChain *chain = space_head_chains_find(rows, head);
+    for (uint32_t row = chain ? chain->first : SPACE_HEAD_CHAIN_END;
+         row != SPACE_HEAD_CHAIN_END; row = rows->next[row]) {
+        CettaRuleDescriptor rule;
+        if (cetta_rule_view(space_indexed_occurrence_atom(
+                    s, rows->atom_indices, rows->atom_ids, row),
+                CETTA_RULE_SYNTAX_ORDINARY | CETTA_RULE_SYNTAX_NAMED_HEAD,
+                &rule))
+            return true;
+    }
+    return false;
+}
+
+bool space_rules_may_match_known_head(Space *s, SymbolId head,
+                                      unsigned admitted_forms) {
+    if (!s || head == SYMBOL_ID_NONE)
+        return true;
+    if (!(admitted_forms & CETTA_RULE_SYNTAX_NAMED_HEAD))
+        return ((admitted_forms & CETTA_RULE_SYNTAX_ORDINARY) &&
+                space_equations_may_match_known_head(s, head)) ||
+               ((admitted_forms & CETTA_RULE_SYNTAX_DIRECTIONAL) &&
+                space_directional_rules_may_match_known_head(s, head));
+    if (space_member_named_rules_may_match(s, head, admitted_forms))
+        return true;
+    for (uint32_t d = 0u; d < space_dependency_count(s); d++)
+        if (space_member_named_rules_may_match(
+                space_dependency_at(s, d), head, admitted_forms))
+            return true;
     return false;
 }
 

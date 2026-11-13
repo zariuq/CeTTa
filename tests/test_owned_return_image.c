@@ -567,6 +567,12 @@ static void test_prepared_search_returns(bool change_during_publication) {
         parse(&source, "(= (pick (Cons $x $xs)) $x)")));
     assert(space_admit_atom(&space, &source,
         parse(&source, "(= (pick (Cons $x (Cons $y $ys))) (pick (Cons $y $ys)))")));
+    /* Its head meets the last element and its body answers nothing: the
+     * third answer is not final, so the producer pauses there and resumes
+     * to completion.  Without it selection would know the third answer to
+     * be the last. */
+    assert(space_admit_atom(&space, &source,
+        parse(&source, "(= (pick (Cons $x Nil)) (pick Nil))")));
     CettaPreparedPureProgram *program = cetta_prepared_pure_program_compile_closed_answers(
         &space, parse(&source, "(pick (Cons (pair 7 7) (Cons (pair 7 7) (Cons (pair 9 9) Nil))))"),
         CETTA_GSLT_PURE_CALL_EAGER, atom_bool, atom_expr,

@@ -16,6 +16,4 @@
    (add-atom &tuple-sequence-effects $x))
 
 !(let $_ (((record-tuple-seq M) (record-tuple-seq W)))
-   (assertEqual
-     (collapse (match &tuple-sequence-effects $x $x))
-     (M W)))
+   (assertEqualToResult (match &tuple-sequence-effects $x $x) (M W)))

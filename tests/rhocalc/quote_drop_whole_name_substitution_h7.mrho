@@ -1,8 +1,8 @@
-; H7.2 Literal quote seals the surrounding input scope, even for @{*$x}.
-; The $x inside the quoted drop is free, not the outer receive binder. After
-; quote-drop normalization, the resulting send channel is that free $x.
+; H7.2 A quote of a single drop of a free name is that name (quote-drop).  The
+; receive binds $b, which its body does not use, so COMM substitutes nothing
+; there: the send's channel @{*$x} normalizes to the free name $x.
 (rho:par
-  (rho:recv (rho:quote rho:nil) $x
+  (rho:recv (rho:quote rho:nil) $b
     (rho:send
       (rho:quote (rho:drop $x))
       rho:nil))

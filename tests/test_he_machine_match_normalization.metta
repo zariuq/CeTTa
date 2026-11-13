@@ -4,9 +4,9 @@
 (op (+ 1 2))
 (op (+ 1))
 (op (+ 2 2))
-!(collapse (match &self (op $t) $t))
+!(let $answers (collapse (match &self (op $t) $t)) (sort-atom $answers))
 (= (k) (collapse (match &self (op $t) $t)))
-!(k)
+!(let $answers (k) (sort-atom $answers))
 (= (only-errors) (collapse (match &self (op (+ $a)) (+ $a))))
 !(only-errors)
 
@@ -15,7 +15,7 @@
 (p 2)
 (= (f) (let $r (match &self (p $x) (add-atom &self (q $x)))
           (collapse (match &self (q $y) $y))))
-!(f)
+!(let $answers (f) (sort-atom $answers))
 
 ; A variable of the call, bound through the callee's match.
 (= (h $y) (let $r (match &self (p $y) ok) $y))
@@ -29,4 +29,4 @@
 (= (succ a) b)
 (= (succ b) c)
 !(match &self (node $n) (let $m (succ $n) (step $n $m)))
-!(collapse (match &self (node $n) (succ $n)))
+!(let $answers (collapse (match &self (node $n) (succ $n))) (sort-atom $answers))

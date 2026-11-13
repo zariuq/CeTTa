@@ -16,11 +16,11 @@ before-fault
 refused-call
 (trace! inert-label ignored)
 done
-(1 2 1)
+(1 1 2)
 ()
 payload
 (pair foo foo)
-(a b a b a b)
+(a a a b b b)
 (a)
 (trace! forbidden-trace payload)
 (trace! short)

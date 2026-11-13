@@ -12,5 +12,5 @@
      (collapse (versioned 1)))
 !(let $_equation
      (collapse (add-atom &self (= (versioned $x) new)))
-     (collapse (versioned 1)))
+     (sort-atom (collapse (versioned 1))))
 !(get-memoize-stats)
