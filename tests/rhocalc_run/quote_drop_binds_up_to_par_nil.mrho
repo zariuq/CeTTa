@@ -1,0 +1,7 @@
+;; @(0 | *y | 0) is still a single drop up to P | 0 = P, so it is the name y.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $y
+    (rho:send (rho:quote (rho:par rho:nil (rho:drop $y) rho:nil)) rho:nil))
+  (rho:par
+    (rho:send (rho:quote rho:nil) (rho:send (rho:quote rho:nil) rho:nil))
+    (rho:recv (rho:quote (rho:send (rho:quote rho:nil) rho:nil)) $z rho:nil)))

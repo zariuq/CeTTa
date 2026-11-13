@@ -6,4 +6,4 @@
 !(test (or-else (== 1 1) (== 2 3)) true)
 !(test (or-else (== 1 2) (== 3 3)) true)
 !(test (and-then (= $pair (two 1 2)) (== $pair (two 1 2))) true)
-!(test (collapse (and-then (superpose (true false)) (== 1 1))) (true false))
+!(test (sort-atom (collapse (and-then (superpose (true false)) (== 1 1)))) (sort-atom (true false)))

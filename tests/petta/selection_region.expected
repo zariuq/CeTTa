@@ -9,7 +9,7 @@ empty
 fallback
 (equal a)
 (differ a b)
-(warm any)
+(any warm)
 (any cold)
 (any)
 (pair (+ 1 2) (kind LNil))

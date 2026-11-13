@@ -216,14 +216,22 @@ static inline SymbolSpelling symbol_spelling(
     X(reset_runtime_stats_bang, "reset-runtime-stats!") \
     X(runtime_stats_bang, "runtime-stats!") \
     X(with_space_snapshot, "with-space-snapshot") \
+    X(match_at_point, "__match-at-point") \
     X(space_set_backend_bang, "space-set-backend!") \
     X(space_set_match_backend_bang, "space-set-match-backend!") \
     X(space_len, "space-len") \
-    X(space_push, "space-push") \
-    X(space_peek, "space-peek") \
-    X(space_pop, "space-pop") \
-    X(space_get, "space-get") \
-    X(space_truncate, "space-truncate") \
+    X(space_stack_peek, "space:stack:peek") \
+    X(space_stack_pop, "space:stack:pop") \
+    X(space_stack_get, "space:stack:get") \
+    X(space_stack_truncate, "space:stack:truncate") \
+    X(space_queue_peek, "space:queue:peek") \
+    X(space_queue_pop, "space:queue:pop") \
+    X(space_queue_get, "space:queue:get") \
+    X(space_queue_truncate, "space:queue:truncate") \
+    X(space_priority_peek, "space:priority:peek") \
+    X(space_priority_pop, "space:priority:pop") \
+    X(space_priority_get, "space:priority:get") \
+    X(space_priority_truncate, "space:priority:truncate") \
     X(step_bang, "step!") \
     X(bind_bang, "bind!") \
     X(add_reduct, "add-reduct") \

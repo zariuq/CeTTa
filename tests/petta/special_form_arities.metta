@@ -17,6 +17,6 @@
 !(case 1 ((1 one) (2 two)))
 !(let $x 1 (+ $x 1))
 !(let* (($x 1)) $x)
-!(once (superpose (1 2)))
+!(case (once (superpose (1 2))) ((1 kept) (2 kept)))
 !(let $f (cons-atom case (1)) (g $f))
 !(let $f (cons-atom sealed (a)) (eval $f))

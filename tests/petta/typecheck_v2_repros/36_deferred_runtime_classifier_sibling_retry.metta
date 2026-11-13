@@ -7,10 +7,10 @@
    (if (= $value (cons Error $_)) caught $value))
 
 !(test
-   (collapse
+   (sort-atom (collapse
      (let $typed (the RuntimeOnly $value)
           (let (superpose (bar foo)) $candidate
                (mark-caught
                  (catch
-                   (let $candidate $value $typed))))))
-   (caught foo))
+                   (let $candidate $value $typed)))))))
+   (sort-atom (caught foo)))

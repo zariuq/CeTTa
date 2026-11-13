@@ -38,8 +38,8 @@
 (= (hop $u $t $c (reach $x $x)) (reach $x $x))
 
 ; Positive: depths that cut the chain at each length.
-!(collapse (hop upd stop (S (S (S (S Z)))) (reach a $y)))
-!(collapse (hop upd stop (S (S Z)) (reach a $y)))
+!(sort-atom (collapse (hop upd stop (S (S (S (S Z)))) (reach a $y))))
+!(sort-atom (collapse (hop upd stop (S (S Z)) (reach a $y))))
 !(collapse (hop upd stop Z (reach a $y)))
 
 ; A function argument of the wrong type fixes the context type to Bool:
@@ -59,7 +59,7 @@
 
 ; An open context is no ground Nat: the protocol runs, whose guards accept a
 ; variable and whose callees then match both of their equations.
-!(collapse (hop upd stop $open (reach a $y)))
+!(sort-atom (collapse (hop upd stop $open (reach a $y))))
 
 ; A function with a type variable shared by two parameters keeps its
 ; protocol: the coupled guards decide.
@@ -67,7 +67,7 @@
 (= (same $l $r) (case $r (($l True) ($_ False))))
 (: same-stop (-> $a Nat Bool))
 (= (same-stop $q $d) (same $d Z))
-!(collapse (hop upd same-stop (S (S (S Z))) (reach a $y)))
+!(sort-atom (collapse (hop upd same-stop (S (S (S Z))) (reach a $y))))
 
 ; A constructor whose type variable couples its fields does not type an
 ; application of it: the call keeps its guard, which refuses the pair.
@@ -90,12 +90,12 @@
 ; A declared symbol among the matched rows: the space is not uninterpreted,
 ; the version is refused at entry and the protocol answers.
 (: d Nat)
-!(collapse (hop upd stop (S (S (S (S Z)))) (reach a $y)))
+!(sort-atom (collapse (hop upd stop (S (S (S (S Z)))) (reach a $y))))
 
 ; Rows added later are judged again at the next entry.
 !(remove-atom &self (: d Nat))
 !(add-atom &hokb (link d e))
-!(collapse (hop upd stop (S (S (S (S (S Z))))) (reach a $y)))
+!(sort-atom (collapse (hop upd stop (S (S (S (S (S Z))))) (reach a $y))))
 
 ; A function argument that may raise is called as the dispatch it was, under
 ; the dispatch's handler: the specializer writes `(reduce (ctx-stop ...))`.
@@ -108,5 +108,5 @@
 (= (ctx-upd $q (MkCtx $g $d)) (MkCtx $g (dec $d)))
 (: ctx-stop (-> $a Ctx Bool))
 (= (ctx-stop $q (MkCtx $g $d)) (or (is-zero $d) (== $g stop-here)))
-!(collapse (hop ctx-upd ctx-stop (MkCtx goal (S (S Z))) (reach a $y)))
+!(sort-atom (collapse (hop ctx-upd ctx-stop (MkCtx goal (S (S Z))) (reach a $y))))
 !(collapse (hop ctx-upd ctx-stop (MkCtx stop-here (S (S Z))) (reach a $y)))

@@ -4,7 +4,7 @@
 
 (= (repo-revision-exercise $n)
    (if (== $n 0)
-       (collapse (repo-revision probe))
+       (sort-atom (collapse (repo-revision probe)))
        (let $_ (collapse (repo-revision probe))
          (if (== $n 2)
              (let $_ (add-atom &self (= (repo-revision probe) new))

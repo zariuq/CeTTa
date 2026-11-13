@@ -2185,7 +2185,7 @@ static void he_canonical_match_plan(HeCanonicalFrame *frame) {
             return;
         }
     }
-    if (!frame->sourced_match && !match_query_is_connective(registers->source[0])) {
+    if (!frame->sourced_match && !match_pattern_is_connective(registers->source[0])) {
         MatchStep steps[16];
         /* bodies[i]: the body under legs 0..i. */
         Atom *bodies[16];

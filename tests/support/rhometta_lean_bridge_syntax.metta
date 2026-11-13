@@ -72,9 +72,10 @@
 (= (bridge:owned-space-ok)
    (let $owned (unwrap-rho-val (rhometta:run (eval:owned-space)))
      (let $_ (add-atom $owned postrun)
-       (if (== (collapse (get-atoms $owned)) (original injected postrun))
-           (== (collapse (get-atoms &held-space-direct)) (original))
-           False))))
+       (let $owned-atoms (collapse (get-atoms $owned))
+         (if (== (sort-atom $owned-atoms) (sort-atom (original injected postrun)))
+             (== (collapse (get-atoms &held-space-direct)) (original))
+             False)))))
 
 (= (eval:owned-state)
    (rho:par

@@ -20,9 +20,9 @@
 (= (join $k) (match &self (, (C $k $n) (D $n $v)) $v))
 !(join 2)
 (= (move-all) (collapse (match &self (C $k $n) (let* (($r (remove-atom &self (C $k $n))) ($a (add-atom &self (E $k $n)))) $k))))
-!(move-all)
+!(let $answers (move-all) (sort-atom $answers))
 !(collapse (match &self (C $k $n) $k))
-!(collapse (match &self (E $k $n) $k))
+!(let $answers (collapse (match &self (E $k $n) $k)) (sort-atom $answers))
 ; An odd-even sort pass over the space, as the sort rows.
 (V 0 30) (V 1 10) (V 2 20)
 (next 0 1) (next 1 2)
@@ -34,7 +34,7 @@
                        (if (< $y $x) (swap $i $x $j $y) (empty)))))
 !(pass)
 !(pass)
-!(collapse (match &self (V $i $x) ($i $x)))
+!(let $answers (collapse (match &self (V $i $x) ($i $x))) (sort-atom $answers))
 ; A two-argument if (CeTTa accepts it; the HE reference rejects it).
 (= (cmp2 $x) (if (>= $x 3) big))
 !(cmp2 4)

@@ -20,10 +20,10 @@
 
 ; Backtracking restores both bindings and their attached obligations.
 !(test
-   (collapse
+   (sort-atom (collapse
      (let $typed (the (List Number) ($x))
-          (let (superpose (7 8)) $x $typed)))
-   ((7) (8)))
+          (let (superpose (7 8)) $x $typed))))
+   (sort-atom ((7) (8))))
 
 ; The formal admits Error as data before its argument is evaluated.
 ; A postcondition alone is too late to establish this interpretation.

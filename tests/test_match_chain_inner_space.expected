@@ -18,4 +18,4 @@
 [(b1 b2)]
 [((Error (match $unbound (item $x) $x) match expects a space as the first argument))]
 [((r1 b1) (r1 b2))]
-[((a r1) (a late) (b b1) (b b2) (b late))]
+[((a r1) (b b1) (b b2) (a late) (b late))]

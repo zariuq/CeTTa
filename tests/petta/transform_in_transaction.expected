@@ -1,0 +1,19 @@
+true
+true
+true
+(read-data ((got 1) (got 2)))
+(read-call ((saw 1) (saw 2)))
+(read-once (saw 1))
+(take-into (1 1))
+(committed ((took 1) (took 2)))
+true
+true
+(rolled-back ())
+(rolled-back-once ())
+(kept-after-rollback ((m 1) (m 2)))
+(outside (1))
+(r-final ((m 1) (out 2)))
+true
+(take-with-let (1))
+(let-rule-left ((taken 7)))
+(let-effects ((logged 7) (logged 7)))

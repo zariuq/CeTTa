@@ -1,0 +1,98 @@
+-- ISO C11 (N1570) source structure for translation phases 3 and 4:
+-- preprocessing tokens (6.4) and preprocessing directives (6.10).
+-- Phases 1-2 (trigraphs, line splices) and the white space and comments of
+-- phase 3 are source data that the scanner keeps exactly as token trivia.
+Module CPreprocessingModule {
+  Theory CPPLexical() {
+    Empty Exports { CPPHeaderName; CPPIdentifier; CPPNumber; CPPCharacter; CPPString;
+      CPPPunctuator; CPPOther; CPPNewLine; CPPLParen; }
+    Terms {
+      -- ISO 6.4.7: header-name; the scanner forms one only where 6.10.2 reads it.
+      token CPPHeaderName (('<' (char - ["\n\r\x00>"])+ '>') | ('"' (char - ["\n\r\x00\""])+ '"'));
+      -- ISO 6.4.2: identifiers as phase 3 spells them; GCC also reads '$' and
+      -- extended characters, which the C token grammar then checks.
+      token CPPIdentifier ((letter | '_' | '$' | ('\\' ["uU"]) | ["\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff"])
+        (letter | digit | '_' | '$' | ('\\' ["uU"]) | ["\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff"])*);
+      -- ISO 6.4.8: pp-number, with the same identifier-nondigit continuations.
+      token CPPNumber ((digit | ('.' digit))
+        (digit | letter | '_' | '$' | '.' | (["eEpP"] ["+-"]) | ('\\' ["uU"]) | ["\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff"])*);
+      -- ISO 6.4.4.4 / 6.4.5 as phase 3 forms them: escapes are read by phase 5.
+      token CPPCharacter (["LuU"]? '\'' ((char - ["'\\\n\r"]) | ('\\' (char - ["\n\r"])))* '\'');
+      token CPPString ((["LuU"] | {"u8"})? '"' ((char - ["\"\\\n\r"]) | ('\\' (char - ["\n\r"])))* '"');
+      -- ISO 6.4.6: punctuators, digraph spellings included.
+      token CPPPunctuator ({"%:%:"} | {"..."} | {"<<="} | {">>="} | {"->"} | {"++"} | {"--"} |
+        {"<<"} | {">>"} | {"<="} | {">="} | {"=="} | {"!="} | {"&&"} | {"||"} | {"*="} |
+        {"/="} | {"%="} | {"+="} | {"-="} | {"&="} | {"^="} | {"|="} | {"##"} | {"<:"} |
+        {":>"} | {"<%"} | {"%>"} | {"%:"} | ["[](){}.&*+-~!/%<>^|?:;=,#"]);
+      -- ISO 6.4p1: each non-white-space character that cannot be one of the above.
+      token CPPOther (char - [" \t\n\x0b\x0c\r"]);
+      -- ISO 6.10: new-line, and lparen: a ( not immediately preceded by white space.
+      token CPPNewLine '\n';
+      token CPPLParen '(';
+    }
+  }
+  Theory CPreprocessing(lexical: CPPLexical) {
+    lexical Exports { PreprocessingFile; GroupPart; IfSection; IfGroup; ElifGroup;
+      OptionalElseGroup; ElseGroup; EndifLine; ControlLine; TextLine; NonDirective; ReplacementList;
+      OptionalPPTokens; OptionalIdentifierList; IdentifierList; PPToken; }
+    Terms {
+      -- ISO 6.10: preprocessing-file, group and group-part.
+      PreprocessingFile . PreprocessingFile ::= [GroupPart];
+      terminator GroupPart "";
+      IfSectionPart . GroupPart ::= IfSection;
+      ControlLinePart . GroupPart ::= ControlLine;
+      TextLinePart . GroupPart ::= TextLine;
+      NonDirectivePart . GroupPart ::= "#" NonDirective;
+      -- ISO 6.10: if-section. The markers classify the lines that close a group:
+      -- they have no spelling, and they give the parser that decision from the
+      -- line's directive name rather than from its first character.
+      IfSection . IfSection ::= IfGroup [ElifGroup] OptionalElseGroup EndifLine;
+      terminator ElifGroup "";
+      -- 6.10.1p4: the controlling constant expression is formed from these
+      -- pp-tokens by macro replacement.
+      If . IfGroup ::= "#" "if" [PPToken] CPPNewLine [GroupPart];
+      IfDefined . IfGroup ::= "#" "ifdef" CPPIdentifier CPPNewLine [GroupPart];
+      IfNotDefined . IfGroup ::= "#" "ifndef" CPPIdentifier CPPNewLine [GroupPart];
+      Elif . ElifGroup ::= "<elif-line>" "#" "elif" [PPToken] CPPNewLine [GroupPart];
+      NoElseGroup . OptionalElseGroup ::= ;
+      SomeElseGroup . OptionalElseGroup ::= ElseGroup;
+      ElseGroup . ElseGroup ::= "<else-line>" "#" "else" CPPNewLine [GroupPart];
+      EndifLine . EndifLine ::= "<endif-line>" "#" "endif" CPPNewLine;
+      -- ISO 6.10: control-line.
+      Include . ControlLine ::= "#" "include" [PPToken] CPPNewLine;
+      DefineObject . ControlLine ::= "#" "define" CPPIdentifier ReplacementList CPPNewLine;
+      DefineFunction . ControlLine ::= "#" "define" CPPIdentifier CPPLParen OptionalIdentifierList ")" ReplacementList CPPNewLine;
+      DefineVariadic . ControlLine ::= "#" "define" CPPIdentifier CPPLParen "..." ")" ReplacementList CPPNewLine;
+      DefineVariadicList . ControlLine ::= "#" "define" CPPIdentifier CPPLParen IdentifierList "," "..." ")" ReplacementList CPPNewLine;
+      Undef . ControlLine ::= "#" "undef" CPPIdentifier CPPNewLine;
+      Line . ControlLine ::= "#" "line" [PPToken] CPPNewLine;
+      Error . ControlLine ::= "#" "error" OptionalPPTokens CPPNewLine;
+      Pragma . ControlLine ::= "#" "pragma" OptionalPPTokens CPPNewLine;
+      NullDirective . ControlLine ::= "#" CPPNewLine;
+      -- ISO 6.10: text-line and non-directive.
+      TextLine . TextLine ::= OptionalPPTokens CPPNewLine;
+      NonDirective . NonDirective ::= [PPToken] CPPNewLine;
+      -- ISO 6.10: replacement-list, pp-tokens (optional and nonempty) and
+      -- identifier-list (as written, left recursive).
+      ReplacementList . ReplacementList ::= OptionalPPTokens;
+      NoPPTokens . OptionalPPTokens ::= ;
+      PPTokens . OptionalPPTokens ::= [PPToken];
+      terminator nonempty PPToken "";
+      NoIdentifiers . OptionalIdentifierList ::= ;
+      Identifiers . OptionalIdentifierList ::= IdentifierList;
+      ParameterName . IdentifierList ::= CPPIdentifier;
+      MoreParameterNames . IdentifierList ::= IdentifierList "," CPPIdentifier;
+      -- ISO 6.4: preprocessing-token.
+      PPHeaderName . PPToken ::= CPPHeaderName;
+      PPIdentifier . PPToken ::= CPPIdentifier;
+      PPNumber . PPToken ::= CPPNumber;
+      PPCharacter . PPToken ::= CPPCharacter;
+      PPString . PPToken ::= CPPString;
+      PPPunctuator . PPToken ::= CPPPunctuator;
+      PPOther . PPToken ::= CPPOther;
+      entrypoints PreprocessingFile;
+    }
+  }
+  Theory CPP() { CPreprocessing(CPPLexical()) }
+  theory CPP()
+}

@@ -192,6 +192,45 @@ static bool module_match_answers(Space *space, Arena *arena,
     return strcmp(rendered, expected) == 0;
 }
 
+static int module_text_compare(const void *left, const void *right) {
+    const char *const *a = left, *const *b = right;
+    return strcmp(*a, *b);
+}
+
+/* The answers of PATTERN as a bag: their texts sorted, against EXPECTED
+ * written sorted.  A read answers a bag in every kind of space; an ordered
+ * kind shows its order through peek, pop, get and truncate alone. */
+static bool module_match_bag(Space *space, Arena *arena, const char *pattern,
+                             const char *expected) {
+    Atom *query = module_atom(arena, pattern);
+    SubstMatchSet matches;
+    space_subst_query(space, arena, query, &matches);
+    const char *texts[16];
+    CettaCount count = 0u;
+    for (CettaIndex i = 0u; i < matches.len && count < 16u; i++) {
+        Bindings final_b;
+        if (!space_subst_match_with_seed(space, query, &matches.items[i],
+                                         NULL, arena, &final_b))
+            continue;
+        Atom *answer = bindings_apply(&final_b, arena, query);
+        bindings_free(&final_b);
+        char *text = atom_to_string(arena, answer);
+        texts[count++] = text ? text : "?";
+    }
+    smset_free(&matches);
+    qsort(texts, (size_t)count, sizeof(*texts), module_text_compare);
+    char rendered[512];
+    size_t used = 0u;
+    rendered[0] = '\0';
+    for (CettaCount i = 0u; i < count && used < sizeof(rendered); i++)
+        used += (size_t)snprintf(rendered + used, sizeof(rendered) - used,
+                                 "%s%s", i ? " " : "", texts[i]);
+    if (strcmp(rendered, expected) != 0)
+        fprintf(stderr, "match of %s as a bag: [%s], expected [%s]\n", pattern,
+                rendered, expected);
+    return strcmp(rendered, expected) == 0;
+}
+
 static bool module_types_are(Space *space, Arena *arena, const char *subject,
                              const char *expected) {
     Atom **types = NULL;
@@ -508,6 +547,85 @@ static bool space_module_dependency_contract(void) {
     space_add(&a_mod, module_atom(&scratch, "(dep-fact a2)"));
     space_free(&a_mod);
     space_free(&d_mod);
+
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+    return true;
+}
+
+/* A priority space and a queue under an overlay: the overlay reads its
+ * base's atoms and its own (a bag), and peeks and pops in the kind's order;
+ * a pop or a removal through it changes its view alone, and the base stays
+ * as it was. */
+static bool ordered_overlay_contract(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+    arena_init(&persistent);
+    arena_set_runtime_kind(&persistent, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+
+    Space base, overlay;
+    space_init_with_universe(&base, &universe);
+    base.kind = SPACE_KIND_PRIORITY;
+    space_set_strict(&base, true);
+    MODULE_CHECK(space_match_backend_try_set(&base, SPACE_ENGINE_NATIVE));
+    space_add(&base, module_atom(&scratch, "(5 e)"));
+    space_add(&base, module_atom(&scratch, "(2 b)"));
+    space_add(&base, module_atom(&scratch, "(9 i)"));
+    space_init_overlay(&overlay, &base);
+    space_add(&overlay, module_atom(&scratch, "(1 z)"));
+    space_add(&overlay, module_atom(&scratch, "(7 g)"));
+    Atom *least = space_peek(&overlay);
+    MODULE_CHECK(least && atom_eq(least, module_atom(&scratch, "(1 z)")));
+    MODULE_CHECK(module_match_bag(&overlay, &scratch, "($k $v)",
+                                      "(1 z) (2 b) (5 e) (7 g) (9 i)"));
+    MODULE_CHECK(module_match_bag(&overlay, &scratch, "(7 $v)", "(7 g)"));
+    MODULE_CHECK(module_match_bag(&overlay, &scratch, "(2 $v)", "(2 b)"));
+    Atom *popped = NULL;
+    MODULE_CHECK(space_pop(&overlay, &popped) && popped &&
+                 atom_eq(popped, module_atom(&scratch, "(1 z)")));
+    MODULE_CHECK(space_pop(&overlay, &popped) && popped &&
+                 atom_eq(popped, module_atom(&scratch, "(2 b)")));
+    MODULE_CHECK(module_match_bag(&overlay, &scratch, "($k $v)",
+                                      "(5 e) (7 g) (9 i)"));
+    MODULE_CHECK(space_remove(&overlay, module_atom(&scratch, "(9 i)")));
+    MODULE_CHECK(!space_remove(&overlay, module_atom(&scratch, "(9 i)")));
+    space_add(&overlay, module_atom(&scratch, "(3 c)"));
+    MODULE_CHECK(module_match_bag(&overlay, &scratch, "($k $v)",
+                                      "(3 c) (5 e) (7 g)"));
+    least = space_peek(&overlay);
+    MODULE_CHECK(least && atom_eq(least, module_atom(&scratch, "(3 c)")));
+    /* The base is as it was. */
+    MODULE_CHECK(space_length64(&base) == 3u);
+    MODULE_CHECK(module_match_bag(&base, &scratch, "($k $v)",
+                                      "(2 b) (5 e) (9 i)"));
+    space_free(&overlay);
+    space_free(&base);
+
+    Space queue, queue_overlay;
+    space_init_with_universe(&queue, &universe);
+    queue.kind = SPACE_KIND_QUEUE;
+    space_set_strict(&queue, true);
+    MODULE_CHECK(space_match_backend_try_set(&queue, SPACE_ENGINE_NATIVE));
+    space_add(&queue, module_atom(&scratch, "(job a)"));
+    space_add(&queue, module_atom(&scratch, "(job b)"));
+    space_init_overlay(&queue_overlay, &queue);
+    space_add(&queue_overlay, module_atom(&scratch, "(job c)"));
+    Atom *front = space_peek(&queue_overlay);
+    MODULE_CHECK(front && atom_eq(front, module_atom(&scratch, "(job a)")));
+    MODULE_CHECK(space_pop(&queue_overlay, &popped) && popped &&
+                 atom_eq(popped, module_atom(&scratch, "(job a)")));
+    MODULE_CHECK(module_match_bag(&queue_overlay, &scratch, "(job $j)",
+                                      "(job b) (job c)"));
+    MODULE_CHECK(space_length64(&queue) == 2u);
+    MODULE_CHECK(module_match_bag(&queue, &scratch, "(job $j)",
+                                      "(job a) (job b)"));
+    space_free(&queue_overlay);
+    space_free(&queue);
 
     term_universe_free(&universe);
     arena_free(&scratch);
@@ -1257,6 +1375,10 @@ int main(void) {
     }
     if (!space_module_dependency_contract()) {
         fprintf(stderr, "space module dependency contract failure\n");
+        goto cleanup;
+    }
+    if (!ordered_overlay_contract()) {
+        fprintf(stderr, "ordered space overlay contract failure\n");
         goto cleanup;
     }
     if (!he_repeated_import_contract()) {

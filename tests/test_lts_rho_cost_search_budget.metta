@@ -99,9 +99,7 @@
 
 ; The exhaustive frontier retains two concrete purse occurrences when their
 ; equal heads lead to observably different tails.
-!(assertEqualToResult
-  (collapse
-    (lts:rho:cost:steps
+!(assertEqualToResult (lts:rho:cost:steps
       (rho:cost:par
         (rho:cost:signed
           (rho:par
@@ -115,8 +113,7 @@
             (rho:cost:stack-cons left rho:cost:stack-empty)))
         (rho:cost:purse pay
           (rho:cost:stack-cons coin
-            (rho:cost:stack-cons right rho:cost:stack-empty))))))
-  (((lts:rho:cost:step coin
+            (rho:cost:stack-cons right rho:cost:stack-empty))))) ((lts:rho:cost:step coin
       (rho:cost:par
         (rho:cost:purse pay
           (rho:cost:stack-cons coin
@@ -131,4 +128,4 @@
             (rho:cost:stack-cons right rho:cost:stack-empty)))
         (rho:cost:purse pay
           (rho:cost:stack-cons left rho:cost:stack-empty))
-        (rho:cost:signed rho:nil done))))))
+        (rho:cost:signed rho:nil done)))))

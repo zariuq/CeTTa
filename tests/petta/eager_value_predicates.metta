@@ -5,9 +5,9 @@
 !(is-ground (cdr-atom (predicate-open $unknown)))
 !(is-expr (predicate-open $unknown))
 !(is-var $unknown)
-!(collapse (is-var (superpose ($unknown 3 (x)))))
-!(collapse (is-expr (superpose ((x) 3 $unknown))))
-!(collapse (is-ground (superpose ((x) $unknown))))
+!(sort-atom (collapse (is-var (superpose ($unknown 3 (x))))))
+!(sort-atom (collapse (is-expr (superpose ((x) 3 $unknown)))))
+!(sort-atom (collapse (is-ground (superpose ((x) $unknown)))))
 !(collapse (is-var (empty)))
 
 !(bind! &predicate-effects (new-state 0))

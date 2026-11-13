@@ -3,7 +3,7 @@
     (() (add-atom &self (= (cache-probe reuse) one)))
     (() (assertEqualToResult (cache-probe reuse) (one)))
     (() (add-atom &self (= (cache-probe reuse) two)))
-    (() (assertEqual (collapse (cache-probe reuse)) (one two)))
+    (() (assertEqualToResult (cache-probe reuse) (one two)))
     (() (remove-atom &self (= (cache-probe reuse) one)))
     (() (assertEqualToResult (cache-probe reuse) (two)))
   )

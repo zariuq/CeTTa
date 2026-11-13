@@ -28,7 +28,7 @@ def program(path, profile, items, matches):
     with open(path, 'w') as out:
         out.write(f'!(bind! &stack (new-space stack {profile}))\n')
         out.write('(= (fill $k $n) (if (>= $k $n) () '
-                  '(let $t (% $k 7) (let $_ (space-push &stack (item $k (tag $t))) '
+                  '(let $t (% $k 7) (let $_ (add-atom &stack (item $k (tag $t))) '
                   '(fill (+ $k 1) $n)))))\n')
         out.write(f'!(fill 0 {items})\n')
         for k in range(matches):

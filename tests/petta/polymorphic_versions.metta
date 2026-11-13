@@ -13,7 +13,7 @@
 !(len Nil)
 !(collapse (len (Cons 1 (Cons "x" Nil))))
 !(collapse (len (foo)))
-!(collapse (len (superpose ((Cons 1 Nil) (Cons "a" (Cons "b" Nil)) Nil))))
+!(sort-atom (collapse (len (superpose ((Cons 1 Nil) (Cons "a" (Cons "b" Nil)) Nil)))))
 (: sum (-> (List $a) Number))
 (= (sum Nil) 0)
 (= (sum (Cons $x $xs)) (+ $x (sum $xs)))

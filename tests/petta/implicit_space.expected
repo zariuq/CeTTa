@@ -1,5 +1,5 @@
 is ((item 1) (item 1) (item 2)), should ((item 1) (item 1) (item 2)). ✅ 
-is ((item 2)), should ((item 2)). ✅ 
+is ((item 1) (item 2)), should ((item 1) (item 2)). ✅ 
 is (), should (). ✅ 
 is ((item 7)), should ((item 7)). ✅ 
 true

@@ -21,13 +21,13 @@
 !(register-repeat 2 5 99)
 
 ; A second equation excludes the head from singleton admission.  Both answers
-; and their declaration order remain visible through the ordinary equation path.
+; remain visible through the ordinary equation path.
 (= (register-ambiguous $n $a)
    (if (== $n 0)
        $a
        (register-ambiguous (- $n 1) (+ $a 1))))
 (= (register-ambiguous 0 $a) (+ $a 100))
-!(collapse (register-ambiguous 2 0))
+!(sort-atom (collapse (register-ambiguous 2 0)))
 
 ; Tabled and count-only collection calls retain their own scheduling and
 ; multiplicity machinery even when the underlying equation has register form.

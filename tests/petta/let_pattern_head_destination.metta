@@ -19,7 +19,7 @@
 !(collapse (lprest (a b)))
 !(collapse (lpinner ((a b) c)))
 !(collapse (lpboth (p q)))
-!(collapse (lpmem (a b c)))
+!(sort-atom (collapse (lpmem (a b c))))
 ; Wrong lengths and non-expressions give no answer.
 !(collapse (lpfirst (a b c)))
 !(collapse (lpfirst x))

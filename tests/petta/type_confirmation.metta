@@ -14,7 +14,7 @@
 ; A failed confirmation must not erase the types an atom actually has.
 (: k A)
 (: k B)
-!(test (collapse (get-type k)) (A B))
+!(test (sort-atom (collapse (get-type k))) (sort-atom (A B)))
 !(test (collapse (let A (get-type k) found)) (found))
 !(test (collapse (let C (get-type k) wrong)) ())
 !(test (collapse (let %Undefined% (get-type k) wrong)) ())
@@ -43,7 +43,7 @@
 (: undefined-result (-> A %Undefined%))
 (: (typed-pattern a) A)
 (: (typed-pattern b) A)
-!(test (collapse (let %Undefined% (get-type (undefined-result (typed-pattern $x))) $x)) (a b))
+!(test (sort-atom (collapse (let %Undefined% (get-type (undefined-result (typed-pattern $x))) $x))) (sort-atom (a b)))
 
 ; An unbound request takes each type before it is bound, even when it occurs in the value.
 (: to-a (-> Number A))

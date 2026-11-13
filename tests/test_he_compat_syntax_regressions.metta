@@ -7,7 +7,7 @@
 (= (g $x) (+ $x 1))
 (= (f $g) ($g 1))
 (= (f $g) 42)
-!(assertEqualToResult (collapse (f g)) ((2 42)))
+!(assertEqualToResult (f g) (2 42))
 !(remove-atom &self (= (f $g) 42))
 !(assertEqualToResult (collapse (f g)) ((2)))
 

@@ -45,6 +45,6 @@
 (= (chooseKt (cons $h $t) $k)
    (append (prefix-all $h (chooseKt $t (- $k 1))) (chooseKt $t $k)))
 (= (chooseT $L $k) (let $options (chooseKt $L $k) (superpose $options)))
-!(collapse (chooseT (0 1 2 3) 2))
+!(sort-atom (collapse (chooseT (0 1 2 3) 2)))
 !(size-atom (collapse (chooseT (0 1 2 3 4 5 6 7 8 9 10 11 12 13) 7)))
 !(let $a (once (chooseT (0 1 2 3 4 5 6 7 8 9 10 11 12 13) 7)) (size-atom $a))

@@ -70,6 +70,13 @@ typedef struct {
     SymbolId head_count_scanned;
     uint32_t match_trie_pins;
     SpacePinnedOccurrences *pinned;
+    /* Views a removal by marks froze and that are still read (space.c,
+     * "Frozen views"); the serial of the last such removal; and, by row, the
+     * serial of the removal that marked it while a view was frozen. */
+    SpacePinnedOccurrences *frozen;
+    uint32_t mark_serial;
+    uint32_t *mark_stamps;
+    CettaIndex mark_stamp_cap;
     CettaSpacePathIndex *path_indexes;
     struct CettaSpacePathDirectory *path_directory;
     uint32_t path_query_depth;
@@ -77,6 +84,11 @@ typedef struct {
      * rent each has paid toward its next column's index; retired with the
      * path indexes. */
     CettaSpacePathShape *path_shapes;
+    /* Rows ordered reads walked for want of a position index: once they
+     * reach the space's rows, the next read that wants one builds it, so
+     * each build is paid for by that many rows walked
+     * (space_path_index_offer). */
+    CettaCount path_rent;
     /* The rows of each head and length (space_path_index.h), and the
      * retired ones cursors pinned to the current view still read. */
     CettaSpaceHeadIndex *head_index;
@@ -102,6 +114,11 @@ void space_match_native_unpin_trie(Space *s);
  * and trie its cursors captured.  The Space continues with its own rows and
  * a trie rebuilt on demand; the cursors keep draining the captured bag. */
 void space_pinned_occurrences_detach(Space *s);
+/* Whether a cursor of the Space's current view reads the match trie's
+ * leaves: such a view takes the trie before the Space builds another. */
+bool space_pinned_index_readers(const Space *s);
+/* Give back what the Space keeps for frozen views, none of which remain. */
+void space_frozen_state_free(Space *s);
 
 typedef enum {
     IMPORTED_FLAT_SYMBOL = 0,

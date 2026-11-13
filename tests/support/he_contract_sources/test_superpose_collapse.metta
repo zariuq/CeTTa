@@ -8,10 +8,10 @@
 !(assertEqualToResult (superpose ()) ())
 
 ; collapse: collect all results into expression
-!(assertEqual (collapse (superpose (a b c))) (a b c))
+!(assertEqualToResult (superpose (a b c)) (a b c))
 
 ; reify: canonical cross-dialect occurrence materializer
 !(assertEqual (reify (superpose (a a b))) (a a b))
 
 ; superpose + collapse round-trip
-!(assertEqual (collapse (superpose (1 2 3))) (1 2 3))
+!(assertEqualToResult (superpose (1 2 3)) (1 2 3))

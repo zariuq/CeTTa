@@ -65,8 +65,8 @@
 !(assertEqual (list-union [a] [b c]) [a b c])
 
 ; A list's alternatives are its elements; the tag is never one of them.
-!(assertEqual (collapse (superpose [a b])) (a b))
-!(assertEqual (collapse (hyperpose [a b])) (a b))
+!(assertEqualToResult (superpose [a b]) (a b))
+!(assertEqualToResult (hyperpose [a b]) (a b))
 
 ; Equations over lists dispatch on list patterns.
 (= (len []) 0)

@@ -1,0 +1,7 @@
+(h (answered true (guard (got 6 (+ 4 2)) Expression)) ())
+((answered 6 Expression (got (+ 4 2))))
+((pair (+ 1 2) (+ 4 2)))
+((kept (+ 4 2)))
+(h (got 6 (+ 4 2)) (more))
+((got 6 (+ 4 2)) (more))
+((seen 6))

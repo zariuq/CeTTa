@@ -31,7 +31,14 @@ for list_language in petta he prime; do
             "$list_base.metta" > "$list_evidence/$list_language-$list_fixture.out" \
             2> "$list_evidence/$list_language-$list_fixture.stderr"
         test ! -s "$list_evidence/$list_language-$list_fixture.stderr"
-        cmp "$list_expected" "$list_evidence/$list_language-$list_fixture.out"
+        if [[ "$list_language" == prime ]]; then
+            cmp "$list_expected" "$list_evidence/$list_language-$list_fixture.out"
+        else
+            # A query's answers are a bag: compared as one, never by order.
+            tests/support/answers_agree.sh "$list_language" "$list_base.metta" \
+                "$list_expected" "$list_runtime" --lang "$list_language" \
+                < "$list_evidence/$list_language-$list_fixture.out"
+        fi
         list_count=$((list_count + 1))
     done
     if [[ "$list_language" != petta ]]; then

@@ -1,0 +1,2 @@
+// @{*y} is the name y, so the receive binds the bare y inside it.
+for (y <- @{0}) {@{*y}!(0)} | @{0}!(@{0}!(0)) | for (z <- @{@{0}!(0)}) {0}

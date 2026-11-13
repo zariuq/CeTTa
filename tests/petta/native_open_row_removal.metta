@@ -5,13 +5,17 @@
 (p 2)
 (q $z)
 (q 5)
-!(collapse (match &self (p $x) (match &self (q 5) (remove-atom &self (q 7)))))
+!(sort-atom (collapse (match &self (p $x) (match &self (q 5) (remove-atom &self (q 7))))))
 !(collapse (match &self (q $v) $v))
+; A conjunction reads its space as it stood at the call, so (q $z) answers
+; its second leg for both (p 1) and (p 2), and the second removal finds
+; nothing (SWI-PeTTa reads the leg after the first removal: (true); the
+; PeTTa spec, [DIFF-20]).
 !(bind! &c (new-space))
 !(add-atom &c (p 1))
 !(add-atom &c (p 2))
 !(add-atom &c (q $z))
-!(collapse (match &c (, (p $x) (q 5)) (remove-atom &c (q 7))))
+!(sort-atom (collapse (match &c (, (p $x) (q 5)) (remove-atom &c (q 7)))))
 !(collapse (match &c (q $v) $v))
 ; A removal whose head holds no row with a variable reads its rows on the
 ; snapshot as before: the rules of (= ...) are under another head.
@@ -23,7 +27,7 @@
 (seen 2)
 !(size-atom (collapse (match &self (edge $x $y) (match &self (edge $y $z) (remove-atom &self (seen $x))))))
 !(collapse (match &self (seen $s) $s))
-!(collapse (match &self (edge $x $y) (pair $x $y)))
+!(sort-atom (collapse (match &self (edge $x $y) (pair $x $y))))
 !(twice 4)
 
 ; Counted, a removal's answers are only numbered, so the native path may

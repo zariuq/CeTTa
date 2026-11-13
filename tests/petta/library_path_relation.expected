@@ -12,7 +12,7 @@ is false, should false. ✅
 is 2, should 2. ✅ 
 is 3, should 3. ✅ 
 is second, should second. ✅ 
-is (second first), should (second first). ✅ 
+is (first second), should (first second). ✅ 
 true
 true
 true

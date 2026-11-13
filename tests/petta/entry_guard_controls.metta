@@ -15,4 +15,4 @@
 (= (grow ()) first)
 (= (grow $xs) (let ($h $t) (decons-atom $xs) second))
 !(println! (collapse (let $r (grow ()) (let $_ (add-atom &self (= (grow ()) added)) $r))))
-!(println! (collapse (grow ())))
+!(println! (sort-atom (collapse (grow ()))))

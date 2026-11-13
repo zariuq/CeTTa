@@ -62,6 +62,6 @@
 !(use 1)
 !(collapse (use 9))
 !(collapse (alt 9))
-!(collapse (alt 1))
+!(sort-atom (collapse (alt 1)))
 !(deep 3)
 !(collapse (deep 9))

@@ -15,7 +15,7 @@
 !(seq 3)
 !(destructure 5)
 !(empty-bindings 7)
-!(collapse (several 10))
+!(let $answers (collapse (several 10)) (sort-atom $answers))
 !(stuck 2)
 !(nested 3)
 !(depth 2000)

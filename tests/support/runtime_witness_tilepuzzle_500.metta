@@ -42,7 +42,7 @@
 (= (enqueue-all $q ()) ())
 (= (enqueue-all $q $items)
    (let ($head $tail) (decons-atom $items)
-     (let () (space-push $q $head)
+     (let () (add-atom $q $head)
        (enqueue-all $q $tail))))
 
 (= (bfs-step-limited $q $n $limit)
@@ -50,7 +50,7 @@
        $n
        (if (== (space-len $q) 0)
            $n
-           (let* (($state (space-pop $q))
+           (let* (($state (space:stack:pop $q))
                   ($neighbors (collapse
                     (let $snew (move $state $dir)
                       (try-add-unique $snew))))
@@ -60,7 +60,7 @@
 (= (bfs-all-limited $start $limit)
    (let* ((() (add-atom &seen (seen $start)))
           ($q (new-space queue))
-          (() (space-push $q $start)))
+          (() (add-atom $q $start)))
      (bfs-step-limited $q 0 $limit)))
 
 !(reset-runtime-stats!)

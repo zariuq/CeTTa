@@ -17,8 +17,8 @@
 (= (activation-parity $items)
    (activation-for $x $items
      (if (== (% $x 2) 0) (even $x) (odd $x))))
-!(test (collapse (activation-parity (3 4)))
-       ((odd 3) (even 4)))
+!(test (sort-atom (collapse (activation-parity (3 4))))
+       (sort-atom ((odd 3) (even 4))))
 
 !(import! &self ../../lib/petta/lib_he)
 (= (activation-div $x $y $accum)

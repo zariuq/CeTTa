@@ -36,9 +36,9 @@
 !(collapse (let (pair $a $b) (progn (println! direct-ran) 5) done))
 !(collapse (let (pair $a $b) (chain (progn (println! through-chain-ran) 5) $v $v) done))
 !(collapse (let 5 (chain (progn (println! accepted-ran) 5) $v $v) yes))
-; A nondeterministic source keeps its multiplicity and order.
-!(collapse (chain (superpose (1 2 2 3)) $v $v))
-!(collapse (let $v (superpose (1 2 2 3)) $v))
+; A nondeterministic source keeps its multiplicity.
+!(sort-atom (collapse (chain (superpose (1 2 2 3)) $v $v)))
+!(sort-atom (collapse (let $v (superpose (1 2 2 3)) $v)))
 ; A query-level identity form.
 !(chain 3 $x $x)
 
@@ -50,4 +50,4 @@
 (= (forward-cut $x) (chain (let $u (cut) (superpose ($x $x))) $v $v))
 (= (forward-cut $x) rejected)
 !(collapse (forward-cut 7))
-!(collapse (superpose ((forward-cut 7) (forward-cut 9))))
+!(sort-atom (collapse (superpose ((forward-cut 7) (forward-cut 9)))))

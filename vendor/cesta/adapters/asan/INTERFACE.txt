@@ -1,0 +1,31 @@
+Optional arena debug notifications
+=================================
+
+cesta_region.h is ordinary C11 and needs neither Cesta nor a proof assistant.
+With AddressSanitizer enabled it uses the compiler's sanitizer interface.
+Without sanitizer instrumentation the notification macros are constant true
+and do not evaluate their arguments. Real allocator state changes must remain
+outside the notifications.
+
+  CESTA_REGION_INITIALIZE(payload, capacity, live)
+  CESTA_REGION_ACQUIRE(payload, capacity, old_live, new_live)
+  CESTA_REGION_RESET(payload, capacity, old_live, new_live)
+  CESTA_REGION_RELEASE(payload, capacity)
+
+Initialize makes the live prefix addressable and poisons its suffix. Acquire
+unpoisons the newly allocated interval before caller writes. Reset poisons the
+released suffix while preserving the live prefix. Release poisons the payload
+before the allocator publishes it for recycling or frees its real allocation.
+Allocator links, counters and other retained metadata must be outside it.
+
+Each notification returns false on invalid bounds, address overflow, a missing
+nonempty backing, or boundaries that cannot cover complete ASan granules.
+Refusal performs no shadow update. Empty null-backed regions succeed.
+The caller supplies an actual allocation and serializes overlapping updates.
+These are debug notifications, not a pointer-provenance or allocation-identity
+checker. A reused, unpoisoned address can be reached by an old raw pointer;
+native incarnation checks and static lifetime contracts remain separate.
+
+CESTA_REGION_DEBUG may explicitly disable the adapter in a sanitizer build.
+Enabling it requires a compatible AddressSanitizer runtime. It is never linked
+into normal generated programs automatically.

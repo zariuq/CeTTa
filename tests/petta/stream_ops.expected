@@ -1,5 +1,5 @@
 is (a b c d), should (a b c d). ✅ 
-is (a b b c b c c d), should (a b b c b c c d). ✅ 
+is (a b b b c c c d), should (a b b b c c c d). ✅ 
 is (b c c), should (b c c). ✅ 
 is (a b), should (a b). ✅ 
 is (), should (). ✅ 

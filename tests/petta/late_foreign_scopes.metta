@@ -8,7 +8,7 @@
              (let $r ($f $x)
                 (let $x (superpose (1 2 2)) (After $x)))))
        (Tail a)))))
-!(receiver_prefix $x)
+!(sort-atom (receiver_prefix $x))
 
 (= (receiver_delayed $x)
    (collapse
@@ -78,15 +78,15 @@
           (let $f cold_dif (let $r ($f $x) (Prefix $x))))
        (let $f receiver_bad ($f a))
        (Tail a)))))
-!(receiver_inner_recover 2)
-!(let $f receiver_inner_recover ($f 2))
+!(sort-atom (receiver_inner_recover 2))
+!(sort-atom (let $f receiver_inner_recover ($f 2)))
 
 (= (receiver_nested_recovery $x)
    (collapse (superpose
       ((OuterPrefix a)
        (let $f receiver_later_raise ($f $x))
        (OuterTail a)))))
-!(receiver_nested_recovery $x)
+!(sort-atom (receiver_nested_recovery $x))
 
 ; A tentative case match must drain awakened constraints before committing.
 !(callPredicate (Predicate (quote (consult "tests/petta/fixtures/late_foreign_continuation.pl"))))
@@ -106,11 +106,12 @@
             (let $f cold_dif (let $u ($f $x) (Inner $x)))))
           (Outer $r))
        (OuterTail a)))))
-!(receiver_nested_owned 2)
-!(collapse (let ((OuterPrefix a) (Outer ((Inner $y))) (OuterTail a))
-               (receiver_nested_owned $x) (let $y 1 forbidden)))
-!(collapse (let ((OuterPrefix a) (Outer ((Inner $y))) (OuterTail a))
-               (receiver_nested_owned $x) (let $x 1 (let $y 2 (Pair $x $y)))))
+!(sort-atom (receiver_nested_owned 2))
+; The collected answers are a bag: they are read sorted, then taken apart.
+!(collapse (let ((Outer ((Inner $y))) (OuterPrefix a) (OuterTail a))
+               (sort-atom (receiver_nested_owned $x)) (let $y 1 forbidden)))
+!(collapse (let ((Outer ((Inner $y))) (OuterPrefix a) (OuterTail a))
+               (sort-atom (receiver_nested_owned $x)) (let $x 1 (let $y 2 (Pair $x $y)))))
 
 (= (receiver_nested_raise $x)
    (collapse (superpose

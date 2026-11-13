@@ -34,3 +34,12 @@ true
 true
 true
 (true)
+true
+true
+true
+(true true)
+((a b) (a c) (b c) (b d) (c d))
+true
+true
+true
+(a)

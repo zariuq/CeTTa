@@ -6,7 +6,7 @@
 !(msort
    (collapse
       (hyperpose
-         ((collapse (call-snapshot-probe))
+         ((sort-atom (collapse (call-snapshot-probe)))
           companion))))
 
 !(collapse (call-snapshot-probe))

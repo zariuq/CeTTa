@@ -508,7 +508,9 @@ static bool native_query_match_ground(const TermUniverse *universe,
     /* Ground atoms equal only by their ids, and those differ. */
     if (header->tag != ATOM_EXPR || !tu_has_vars(universe, pattern))
         return false;
-    if (depth == NATIVE_QUERY_ROW_DEPTH) {
+    /* A carrier holding a variable (an open list) meets lists its encoding
+     * does not spell: not decided here. */
+    if (depth == NATIVE_QUERY_ROW_DEPTH || tu_is_carrier(universe, pattern)) {
         *full = true;
         return false;
     }
@@ -1477,6 +1479,14 @@ static bool native_query_loops_leg(NativeQueryLoops *loops, size_t depth) {
             ok = false;
             break;
         }
+        /* A carrier row (cons cells, a list pattern) spells a shape other
+         * than its encoding: its length and its first element are not the
+         * list's.  It is not read by ids. */
+        if (tu_is_carrier(loops->universe, id)) {
+            loops->declined = true;
+            ok = false;
+            break;
+        }
         if (tu_kind(loops->universe, id) != ATOM_EXPR ||
             tu_arity(loops->universe, id) != leg->len)
             continue;
@@ -1618,6 +1628,56 @@ static AtomId native_query_instance_id(const NativeQueryTemplate *template,
             return CETTA_ATOM_ID_NONE;
     }
     return tu_expr_from_ids(universe, children, node->arity);
+}
+
+/* The integer a node's value is; false for any other value. */
+static bool native_query_node_int(const NativeQueryNode *node,
+                                  const TermUniverse *universe,
+                                  const AtomId *values, int64_t *out) {
+    AtomId id = node->kind == NATIVE_QUERY_NODE_CONSTANT ? node->id
+        : node->kind == NATIVE_QUERY_NODE_VARIABLE ? values[node->slot]
+        : CETTA_ATOM_ID_NONE;
+    if (id == CETTA_ATOM_ID_NONE || tu_kind(universe, id) != ATOM_GROUNDED ||
+        tu_ground_kind(universe, id) != GV_INT)
+        return false;
+    *out = tu_int(universe, id);
+    return true;
+}
+
+/* The integer an operand of an integer comparison is under a solution
+ * (CettaNativeIntOperand); false where the run must decline. */
+static bool native_query_operand_int(const NativeQueryTemplate *operand,
+                                     CettaNativeIntOperand as,
+                                     const TermUniverse *universe,
+                                     const AtomId *values, int64_t *out) {
+    const NativeQueryNode *nodes = operand->nodes;
+    if (as == CETTA_NATIVE_INT_VALUE)
+        return operand->len == 1u &&
+            native_query_node_int(&nodes[0], universe, values, out);
+    /* (HEAD A B): the expression's node, its head, and its two operands. */
+    int64_t a = 0, b = 0;
+    if (operand->len != 4u || nodes[0].kind != NATIVE_QUERY_NODE_EXPRESSION ||
+        nodes[0].arity != 3u ||
+        !native_query_node_int(&nodes[2], universe, values, &a) ||
+        !native_query_node_int(&nodes[3], universe, values, &b))
+        return false;
+    switch (as) {
+    case CETTA_NATIVE_INT_SUM:
+        return !__builtin_add_overflow(a, b, out);
+    case CETTA_NATIVE_INT_DIFFERENCE:
+        return !__builtin_sub_overflow(a, b, out);
+    case CETTA_NATIVE_INT_PRODUCT:
+        return !__builtin_mul_overflow(a, b, out);
+    case CETTA_NATIVE_INT_QUOTIENT:
+    case CETTA_NATIVE_INT_REMAINDER:
+        if (a < 0 || b <= 0)
+            return false;
+        *out = as == CETTA_NATIVE_INT_QUOTIENT ? a / b : a % b;
+        return true;
+    case CETTA_NATIVE_INT_VALUE:
+        break;
+    }
+    return false;
 }
 
 /* The id of the instance of `template` under `values` when the universe
@@ -2008,20 +2068,19 @@ static bool native_query_visit(void *context, const AtomId *values,
     /* A filtered solution compares each filter's operands, by id or as
      * integers: one a filter refuses answers the other branch. */
     for (size_t filter = 0u; filter < run->filter_count; filter++) {
-        size_t position = 0u;
-        AtomId left = native_query_instance_id(&run->filters[2u * filter],
-                                               &position, run->universe,
-                                               values);
-        position = 0u;
-        AtomId right = native_query_instance_id(
-            &run->filters[2u * filter + 1u], &position, run->universe,
-            values);
-        if (left == CETTA_ATOM_ID_NONE || right == CETTA_ATOM_ID_NONE)
-            return false;
         CettaNativeFilterOp op = query->filters[filter].op;
         bool met;
         if (op == CETTA_NATIVE_FILTER_ALIKE ||
             op == CETTA_NATIVE_FILTER_APART) {
+            size_t position = 0u;
+            AtomId left = native_query_instance_id(
+                &run->filters[2u * filter], &position, run->universe, values);
+            position = 0u;
+            AtomId right = native_query_instance_id(
+                &run->filters[2u * filter + 1u], &position, run->universe,
+                values);
+            if (left == CETTA_ATOM_ID_NONE || right == CETTA_ATOM_ID_NONE)
+                return false;
             /* Ids tell apart only values each equal to itself alone: a
              * value of another kind declines the run, which has made no
              * effect. */
@@ -2033,14 +2092,18 @@ static bool native_query_visit(void *context, const AtomId *values,
         } else {
             /* Integers compare by value; any other value declines the run,
              * and the ordinary path compares it, or raises. */
-            if (tu_kind(run->universe, left) != ATOM_GROUNDED ||
-                tu_ground_kind(run->universe, left) != GV_INT ||
-                tu_kind(run->universe, right) != ATOM_GROUNDED ||
-                tu_ground_kind(run->universe, right) != GV_INT)
+            int64_t left = 0, right = 0;
+            if (!native_query_operand_int(&run->filters[2u * filter],
+                                          query->filters[filter].left_as,
+                                          run->universe, values, &left) ||
+                !native_query_operand_int(&run->filters[2u * filter + 1u],
+                                          query->filters[filter].right_as,
+                                          run->universe, values, &right))
                 return false;
-            met = (tu_int(run->universe, left) <
-                   tu_int(run->universe, right)) ==
-                (op == CETTA_NATIVE_FILTER_LESS);
+            met = op == CETTA_NATIVE_FILTER_LESS ? left < right
+                : op == CETTA_NATIVE_FILTER_NOT_LESS ? !(left < right)
+                : op == CETTA_NATIVE_FILTER_INT_ALIKE ? left == right
+                : left != right;
         }
         if (!met)
             return native_query_else(run, values, weight);
@@ -2120,10 +2183,10 @@ static bool native_query_visit(void *context, const AtomId *values,
             }
         }
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_NATIVE_QUERY_EFFECT_INSTANCE);
-        /* A removal takes every equal row and a set holds one copy, so
-         * each needs the instance once; a bag holds a copy per answer. */
+        /* Set insertion is idempotent. Bag additions and one-occurrence
+         * removals happen once for every witness, including its weight. */
         uint64_t copies =
-            made->removal || made->insert || space_is_set(made->target)
+            made->insert || (!made->removal && space_is_set(made->target))
             ? 1u : weight;
         for (uint64_t copy = 0u; copy < copies; copy++) {
             if (!native_query_act(run, (uint32_t)effect, id))
@@ -2498,6 +2561,23 @@ CettaNativeQueryStatus cetta_native_query_run(
     TermUniverse *universe = query->source->native.universe;
     if (!universe)
         return CETTA_NATIVE_QUERY_DECLINED;
+    /* The engine reads each pattern as the rows it matches; a conjunction
+     * or a union among them is a query over parts, which it does not read. */
+    for (size_t i = 0u; i < query->pattern_count; i++)
+        if (match_pattern_is_connective(query->patterns[i]))
+            return CETTA_NATIVE_QUERY_DECLINED;
+    /* A priority space is read through its order, which finds every row
+     * however it is stored; the general indexes this engine reads may miss a
+     * list stored as cells, and the engine is not used on such a space.  A
+     * stack or a queue answers in its order, which this engine, free to
+     * order its solutions, does not keep: it reads one only for a count. */
+    if (space_is_priority(query->source) ||
+        (space_is_ordered(query->source) && !query->count_only))
+        return CETTA_NATIVE_QUERY_DECLINED;
+    for (size_t i = 0u; query->sources && i < query->pattern_count; i++)
+        if (space_is_priority(query->sources[i]) ||
+            (space_is_ordered(query->sources[i]) && !query->count_only))
+            return CETTA_NATIVE_QUERY_DECLINED;
     /* A source whose rows live only in a forced PathMap index is read
      * there, not copied out for this engine. */
     if (!query->rows) {

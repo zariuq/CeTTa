@@ -791,6 +791,16 @@ uint32_t space_match_backend_candidates(Space *s, Atom *pattern, uint32_t **out)
     return 0;
 }
 
+CettaIndex space_match_candidates64(Space *s, Atom *pattern, CettaIndex **out) {
+    return space_match_backend_candidates64(s, pattern, out);
+}
+
+Atom *space_match_candidate_at64(const Space *s, CettaIndex idx) {
+    (void)s;
+    (void)idx;
+    return NULL;
+}
+
 bool space_match_backend_ground_exact_exists_frontier(
     Space *s, Atom *pattern, bool *out_found) {
     (void)s;
@@ -3286,8 +3296,16 @@ int main(void) {
         &coordinate_existence_applicable));
     assert(!coordinate_existence_applicable);
 
+    /* A term the universe keeps without a record is decoded and filed: the
+     * trie offers it to a query of its own shape. */
     DiscNode *fallback_disc = disc_node_new();
-    assert(!disc_insert_id(fallback_disc, &universe, boxed_id, 99));
+    assert(disc_insert_id(fallback_disc, &universe, boxed_id, 99));
+    CettaIndex *fallback_found = NULL;
+    CettaIndex fallback_len = 0u, fallback_cap = 0u;
+    disc_lookup(fallback_disc, boxed, &fallback_found, &fallback_len,
+                &fallback_cap);
+    assert(fallback_len == 1u && fallback_found[0] == 99u);
+    free(fallback_found);
     disc_node_free(fallback_disc);
 
     SubstTree fallback_stree;

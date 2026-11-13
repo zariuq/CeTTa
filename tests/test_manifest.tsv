@@ -315,8 +315,10 @@ tests/test_he_machine_match_normalization.metta	he	metta	extended	main	native	te
 tests/test_he_match_instances.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_nested_binding_substitution_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_nullary_call_types.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_number_counts.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_path_index_open_rows.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_path_index_swap_removal.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_patterned_declarations.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_program_rule_rows.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_raise_completion.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_reader_naming.metta	he	metta	extended	main	native	test	golden	-
@@ -327,6 +329,7 @@ tests/test_he_scalar_head_tuples.metta	he	metta	extended	main	native	test	golden
 tests/test_he_streamed_relations.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_swap_removal_index.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_typing_derivations.metta	he	metta	extended	main	native	test	golden	-
+tests/test_he_variable_subject_declarations.metta	he	metta	extended	main	native	test	golden	-
 tests/test_he_word_tokens.metta	he	metta	extended	main	native	test	golden	-
 tests/test_hyperpose.metta	he	metta	extended	main	native	test	golden	-
 tests/test_hyperpose_arity.metta	he	metta	extended	main	native	test	golden	-

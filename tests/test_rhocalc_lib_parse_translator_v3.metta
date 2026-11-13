@@ -136,7 +136,7 @@
         (rho:drop (rho:bound 0))))))
 
 !(assertEqual
-  (rho-file->canon "tests/rhocalc/rho_quote_seals_outer_binder.rho")
+  (rho-file->canon "tests/rhocalc/rho_quote_drop_names_outer_binder.rho")
   (Ok
     (rho:par
       (rho:recv-db

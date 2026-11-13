@@ -10,7 +10,7 @@
 (= (read-pair) (let $u (change-state! shared-state (p $x $x)) (let $a (get-state shared-state) (let (p 3 $y) $a (get-state shared-state)))))
 !(read-pair)
 (= (branches) (let $u (change-state! shared-state (h $w)) (let $v (superpose (4 5)) (let $a (get-state shared-state) (let (h $v) $a (get-state shared-state))))))
-!(collapse (branches))
+!(sort-atom (collapse (branches)))
 !(let $u (change-state! shared-state (g $z)) (let $a (get-state shared-state) (let $b (get-state shared-state) (let (g 1) $a $b))))
 (= (read-s) (get-state shared-state))
 (= (through-call) (let $u (change-state! shared-state (k $q)) (let $a (read-s) (let $b (read-s) (let (k 7) $a $b)))))

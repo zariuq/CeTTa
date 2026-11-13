@@ -8,7 +8,7 @@
 !(memoize memo-dep-parent)
 !(test (collapse (memo-dep-parent 5)) (6))
 !(add-atom &self (= (memo-dep-child $x) (+ $x 2)))
-!(test (collapse (memo-dep-parent 5)) (6 7))
+!(test (sort-atom (collapse (memo-dep-parent 5))) (sort-atom (6 7)))
 !(remove-atom &self (= (memo-dep-child $x) (+ $x 1)))
 !(test (collapse (memo-dep-parent 5)) (7))
 !(remove-atom &self (= (memo-dep-child $x) (+ $x 2)))

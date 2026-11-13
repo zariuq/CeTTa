@@ -1,0 +1,21 @@
+true
+true
+(let-code (done))
+(caller-code (true))
+(multiple (true true))
+(raw-meta (Expression))
+(raw-equal (false))
+(quoted-value ((inc 1)))
+(bare-source ((inc 1)))
+(explicit-code (2))
+(stored-code ((call (inc 1)) (left (inc 1)) (right (inc 1)) (seen (inc 1)) (seen (inc 1))))
+(once-code ((tag (inc 1))))
+(destructure ((swap 1 inc)))
+true
+true
+(nested-match (hit))
+true
+(captured-lambda (15))
+(lambda-let ((found 15)))
+(caught-code ((Error (domain_error (function_input_arities + (2)) 3) none)))
+(scoped-cut ((tag (inc 1))))
