@@ -649,7 +649,11 @@
 ; kind, its name, its type or statement, then its provenance.
 (= (mg:named $theory $source)
    (let $found (mg:lookup $theory $source)
-     (if (== $found (Megalodon.found)) (empty) (car-atom (cdr-atom (car-atom (cdr-atom $found)))))))
+     (if (== $found (Megalodon.found)) (empty)
+         (let* (($declarations (cdr-atom $found))
+                ($first (car-atom $declarations))
+                ($fields (cdr-atom $first)))
+           (car-atom $fields)))))
 
 ; ── tactics ──────────────────────────────────────────────────────────────
 ; A tactic is data, run by (mg:run TACTIC THEORY CONTEXT GOAL).  Its answer
