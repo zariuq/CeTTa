@@ -21,3 +21,8 @@
 !(mg:lookup (mg:use (get-state &loaded)) "again")
 !(mg:lookup (mg:use (get-state &loaded)) "pass_again")
 !(mg:lookup (mg:use (get-state &loaded)) "thrice")
+; the kernel's name of a declaration, by either of its source names; none
+; for a name no declaration has
+!(mg:named (mg:use (get-state &loaded)) "twice")
+!(mg:named (mg:use (get-state &loaded)) "again")
+!(collapse (mg:named (mg:use (get-state &loaded)) "thrice"))

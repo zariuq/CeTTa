@@ -111,6 +111,62 @@ left side matches, at a path, top-down, repeated, with its answers kept),
 provers for a rule's premises, and two tactics that rewrite the goal at a
 stated position. An answer is a theorem the kernel made, or nothing.
 
+Two conversions compute. (Cv.eval C) gives a term's value under C: the
+arguments first, then C at the whole, then the value of what results, each
+answer kept, so that a term met again is one lookup and the kept answers say
+what every value was computed from (conv:origins). (Cv.eval-needed SET C)
+computes first only the arguments that a rule of SET needs in a particular
+form, so that the branch a conditional does not take is not computed.
+(Cv.viewed SET VIEW PROVER DEFAULT) is
+a rule set with views: an equation that shows a value in the form a rule's
+left side asks for (a numeral as a successor) is used where the rule then
+applies, and nowhere else. An equation is turned around, and kept in the
+theory under a new name, by eq:turned. An instance of a rule that would
+rewrite a term to itself is no step, and a rule whose two sides are one term
+is refused when it is declared. A file adds its own conversion or prover by
+giving conv:run-with or conv:prove-with for its own form.
+
+A rule whose premise no one proved is not a rule that does not apply. The
+rules of a set are tried in the order declared. One whose left side matches,
+as the term stands or after a view, while its instance was not made is
+passed over; where no rule then applies, the term is left as it is and the
+evidence keeps the first such rule with its reason. (conv:undecided E
+CONTEXT) lists (Undecided TERM NAME WHY): WHY is (Open P) for a premise P
+that was not proved, (Unstated K) for a quantifier that the left side does
+not determine, or Refused. A term that no left side matches has no such
+row. A quantifier the left side leaves open is filled by the prover's
+witness (conv:witness-with) or by the conversion's default.
+
+An open premise is an open goal, and an open goal is a hypothesis.
+(conv:open-premises E CONTEXT) are the premises left open there;
+(conv:assuming E CONTEXT PREMISES) is the context that assumes them; and
+(conv:close-over E ANSWER PREMISES) states what was computed in that
+context as P1 -> .. -> Pk -> TERM = VALUE. That theorem depends on the
+premises and on nothing else: not on a rule, and not on a proof that was
+looked for and not found.
+
+Under a binder the kernel converts by beta, eta and unfolding only; an
+equation made by a theorem is carried in by a lemma of the binder form.
+(conv:declare-binder HEAD LEMMA) names it: F x = G x for every x in X gives
+H X F = H X G. (Cv.under C) converts the body by C under a new variable and
+the hypothesis that it is in X, and the lemma gives the equation of the two
+forms. (Cv.strong C) is a term's value under C and then the same inside its
+binder forms; its answers are kept. (conv:nonlinear E CONTEXT SET HEAD) says
+whether a rule for HEAD names one part of its left side twice: such a rule
+compares two parts of the term, which may be equal only as values under
+their binders.
+
+What a conversion keeps (its answers, the origins of values) is evidence of
+what was done, not knowledge of what holds. (conv:keep-evidence-in SPACE)
+gives it a space of its own, so that it does not change what a query of the
+program's space answers; a long computation should do this. A kept theorem
+is kept by the theory under a name, and its row holds the name: a space
+cannot look up by an index the rows that hold a sealed object, and reads
+every such row at every lookup. A theorem of a context with variables and
+hypotheses is kept closed over them (every hypothesis discharged, every
+variable generalized) and is opened in that context again when it is taken
+back.
+
 Reading
 -------
 

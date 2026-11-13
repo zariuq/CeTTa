@@ -11,3 +11,6 @@ true
 (Megalodon.found (Megalodon.definition "883c0f6c1d1fcab41176c720bad3853c02909a1151bfc3fd9372e65765974c79" (Tp.arr (Tp.base 0) (Tp.base 0)) (source "twice") (also "again") (origin "megalodon-document" 3)))
 (Megalodon.found (Megalodon.theorem "5867641425602c707eaecd5be95229f6fd709c9b58d50af108dfe27cb49ac069" (Tm.all (Tp.prop) (Tm.imp (Tm.db 0) (Tm.db 0))) (source "pass") (also "pass_again") (origin "megalodon-document" 5)))
 (Megalodon.found)
+"883c0f6c1d1fcab41176c720bad3853c02909a1151bfc3fd9372e65765974c79"
+"883c0f6c1d1fcab41176c720bad3853c02909a1151bfc3fd9372e65765974c79"
+()
