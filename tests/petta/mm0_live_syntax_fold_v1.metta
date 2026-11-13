@@ -1,25 +1,16 @@
 (= (mm0:test:live-syntax-ast)
    (node mm0-file
-     (cons
-       (node mm0-delimiter-statement
+     (cons-atom cons (cons-atom (node mm0-delimiter-statement
          (pair
            (node mm0-math-string
-             (cons (cp 32) (cons (cp 40) (cons (cp 32) nil))))
+             (cons-atom cons (cons-atom (cp 32) (cons-atom (cons-atom cons (cons-atom (cp 40) (cons-atom (cons-atom cons (cons-atom (cp 32) (cons-atom nil ()))) ()))) ()))))
            (some
              (node mm0-math-string
-               (cons (cp 32) (cons (cp 41) (cons (cp 32) nil)))))))
-       (cons
-         (node mm0-sort-statement MM0IgnoredSortPayloadV1)
-         (cons
-           (node mm0-delimiter-statement
+               (cons-atom cons (cons-atom (cp 32) (cons-atom (cons-atom cons (cons-atom (cp 41) (cons-atom (cons-atom cons (cons-atom (cp 32) (cons-atom nil ()))) ()))) ()))))))) (cons-atom (cons-atom cons (cons-atom (node mm0-sort-statement MM0IgnoredSortPayloadV1) (cons-atom (cons-atom cons (cons-atom (node mm0-delimiter-statement
              (pair
                (node mm0-math-string
-                 (cons (cp 32)
-                   (cons (cp 42)
-                     (cons (cp 32)
-                       (cons (cp 40) (cons (cp 32) nil))))))
-               none))
-           nil)))))
+                 (cons-atom cons (cons-atom (cp 32) (cons-atom (cons-atom cons (cons-atom (cp 42) (cons-atom (cons-atom cons (cons-atom (cp 32) (cons-atom (cons-atom cons (cons-atom (cp 40) (cons-atom (cons-atom cons (cons-atom (cp 32) (cons-atom nil ()))) ()))) ()))) ()))) ()))))
+               none)) (cons-atom nil ()))) ()))) ())))))
 
 (= (mm0:test:live-syntax-environment)
    (MM0MathClassTableConsV1
@@ -97,13 +88,11 @@
 !(collapse
    (gslt:fn:MM0DelimiterEnvironmentFromAstV1:10
      (node mm0-file
-       (cons
-         (node mm0-delimiter-statement
+       (cons-atom cons (cons-atom (node mm0-delimiter-statement
            (pair
              (node mm0-math-string
-               (cons (cp 40) (cons (cp 41) nil)))
-             none))
-         nil))))
+               (cons-atom cons (cons-atom (cp 40) (cons-atom (cons-atom cons (cons-atom (cp 41) (cons-atom nil ()))) ()))))
+             none)) (cons-atom nil ()))))))
 
 ; A non-MM0 root is outside this fold's authored input shape.
 !(collapse

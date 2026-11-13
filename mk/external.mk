@@ -2689,3 +2689,179 @@ test-transform-swi-smoke: $(BIN) lib/petta/lib_transform_swi.metta tests/petta/t
 		rg -F -q '(remaining ())' "$$work/$$lane.out"; \
 	done; \
 	printf '%s\n' 'PASS: the preserved authored transform runs in CeTTa and SWI-PeTTa'
+
+# transform written in ordinary PeTTa (lib_transform_specs, lib_transform_swi) on
+# SWI-PeTTa itself, against the native firing: fixed and seeded programs.
+.PHONY: test-transform-swi-differential
+test-transform-swi-differential: $(BIN) lib/petta/lib_transform_specs.metta lib/petta/lib_transform_swi.metta \
+		tests/support/check_transform_swi_differential.py tests/support/check_transform_differential.py
+	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" || ! -x "$(PETTA_ORACLE_ROOT)/run.sh" ]]; then \
+		echo 'set PETTA_ORACLE_ROOT to a SWI-PeTTa checkout with executable run.sh'; exit 2; \
+	fi
+	@python3 tests/support/check_transform_swi_differential.py ./$(BIN) --swi "$(PETTA_ORACLE_ROOT)"
+
+# Whole example programs rewritten by transform_only, with transform written in
+# PeTTa: each must pass, rewritten, every test it passes as written, except the
+# programs listed with their reasons in tests/support/petta_transform_only_corpus_known.txt.
+# Programs that do not run as written on CeTTa are not counted.
+.PHONY: test-petta-transform-only-corpus
+test-petta-transform-only-corpus: $(BIN) lib/petta/transform_only.metta lib/petta/lib_petta_by_transform.metta \
+		lib/petta/lib_transform_specs.metta tests/support/check_petta_transform_only.py \
+		tests/support/petta_transform_only_corpus_known.txt
+	@if [[ -z "$(strip $(PETTA_EXAMPLES_ROOT))" || ! -d "$(PETTA_EXAMPLES_ROOT)" ]]; then \
+		echo 'set PETTA_EXAMPLES_ROOT to a directory of PeTTa example programs'; exit 2; \
+	fi
+	@python3 tests/support/check_petta_transform_only.py ./$(BIN) --corpus "$(PETTA_EXAMPLES_ROOT)" \
+		--lane specs --timeout 120 --require-all \
+		--known tests/support/petta_transform_only_corpus_known.txt
+
+# The same corpus with binding, branching and choice rewritten too: let, if, case
+# and superpose as calls of generated functions.
+.PHONY: test-petta-transform-only-corpus-full
+test-petta-transform-only-corpus-full: $(BIN) lib/petta/transform_only.metta lib/petta/lib_petta_by_transform.metta \
+		lib/petta/lib_transform_specs.metta tests/support/check_petta_transform_only.py \
+		tests/support/petta_transform_only_corpus_full_known.txt
+	@if [[ -z "$(strip $(PETTA_EXAMPLES_ROOT))" || ! -d "$(PETTA_EXAMPLES_ROOT)" ]]; then \
+		echo 'set PETTA_EXAMPLES_ROOT to a directory of PeTTa example programs'; exit 2; \
+	fi
+	@python3 tests/support/check_petta_transform_only.py ./$(BIN) --corpus "$(PETTA_EXAMPLES_ROOT)" \
+		--lane specs --timeout 120 --require-all --also binding branching choice \
+		--known tests/support/petta_transform_only_corpus_full_known.txt
+
+# The fixtures of test-petta-transform-only on SWI-PeTTa: the program as written
+# and the rewritten program both run there, with transform written in PeTTa.
+.PHONY: test-petta-transform-only-swi
+test-petta-transform-only-swi: $(BIN) lib/petta/transform_only.metta lib/petta/lib_petta_by_transform.metta \
+		lib/petta/lib_transform_specs.metta tests/support/check_petta_transform_only.py \
+		tests/support/petta_transform_only_swi_known.txt $(wildcard tests/petta/transform_only/*.metta)
+	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" || ! -x "$(PETTA_ORACLE_ROOT)/run.sh" ]]; then \
+		echo 'set PETTA_ORACLE_ROOT to a SWI-PeTTa checkout with executable run.sh'; exit 2; \
+	fi
+	@python3 tests/support/check_petta_transform_only.py ./$(BIN) --corpus tests/petta/transform_only \
+		--lane swi --swi "$(PETTA_ORACLE_ROOT)" --timeout 120 --require-all \
+		--known tests/support/petta_transform_only_swi_known.txt
+
+# The same on SWI-PeTTa with let, if, case and superpose rewritten into calls of
+# generated functions.
+.PHONY: test-petta-transform-only-swi-full
+test-petta-transform-only-swi-full: $(BIN) lib/petta/transform_only.metta lib/petta/lib_petta_by_transform.metta \
+		lib/petta/lib_transform_specs.metta tests/support/check_petta_transform_only.py \
+		tests/support/petta_transform_only_swi_full_known.txt $(wildcard tests/petta/transform_only/*.metta)
+	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" || ! -x "$(PETTA_ORACLE_ROOT)/run.sh" ]]; then \
+		echo 'set PETTA_ORACLE_ROOT to a SWI-PeTTa checkout with executable run.sh'; exit 2; \
+	fi
+	@python3 tests/support/check_petta_transform_only.py ./$(BIN) --corpus tests/petta/transform_only \
+		--lane swi --swi "$(PETTA_ORACLE_ROOT)" --timeout 120 --require-all \
+		--also binding branching choice \
+		--known tests/support/petta_transform_only_swi_full_known.txt
+
+# The example corpus through the round trip on SWI-PeTTa: each program as written
+# and rewritten both run there, with transform written in PeTTa; the programs that
+# do not pass are listed with their reasons.
+.PHONY: test-petta-transform-only-corpus-swi
+test-petta-transform-only-corpus-swi: $(BIN) lib/petta/transform_only.metta lib/petta/lib_petta_by_transform.metta \
+		lib/petta/lib_transform_specs.metta tests/support/check_petta_transform_only.py \
+		tests/support/petta_transform_only_corpus_swi_known.txt
+	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" || ! -x "$(PETTA_ORACLE_ROOT)/run.sh" ]]; then \
+		echo 'set PETTA_ORACLE_ROOT to a SWI-PeTTa checkout with executable run.sh'; exit 2; \
+	fi
+	@if [[ -z "$(strip $(PETTA_EXAMPLES_ROOT))" || ! -d "$(PETTA_EXAMPLES_ROOT)" ]]; then \
+		echo 'set PETTA_EXAMPLES_ROOT to a directory of PeTTa example programs'; exit 2; \
+	fi
+	@python3 tests/support/check_petta_transform_only.py ./$(BIN) --corpus "$(PETTA_EXAMPLES_ROOT)" \
+		--lane swi --swi "$(PETTA_ORACLE_ROOT)" --timeout 120 --require-all \
+		--known tests/support/petta_transform_only_corpus_swi_known.txt
+
+# The machine of transform rules on SWI-PeTTa as well.
+.PHONY: test-petta-machine-swi
+test-petta-machine-swi: $(BIN) lib/petta/petta_machine.metta tests/petta/petta_machine.metta \
+		tests/support/check_petta_machine.py
+	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" || ! -x "$(PETTA_ORACLE_ROOT)/run.sh" ]]; then \
+		echo 'set PETTA_ORACLE_ROOT to a SWI-PeTTa checkout with executable run.sh'; exit 2; \
+	fi
+	@python3 tests/support/check_petta_machine.py ./$(BIN) --swi "$(PETTA_ORACLE_ROOT)"
+
+# GSLT -> PeTTa -> transform, measured by running it.  The direct GSLT compiler's
+# gates are run as they are, with a command in place of theirs that keeps every
+# program they run on the PeTTa lane (tests/support/record_petta_direct_run.sh).
+# Each kept program then runs as written and through the machine of transform
+# rules, and the answers are compared (tests/support/check_gslt_through_machine.py).
+# A gate that fails by itself is named and its programs are still compared: this
+# check is about the two runs of a program agreeing, not about the gate's own
+# expectations.  test-plain-bnf-name-index-v1 is left out while one of its runs
+# does not end.
+GSLT_PETTA_DIRECT_GATES_V1 = \
+	test-gslt-petta-direct-v1 \
+	test-metamath-row-actions-direct-petta-v1 \
+	test-metamath-insert-each-matching-direct-petta-v1 \
+	test-metamath-copy-actions-direct-petta-v1 \
+	test-metamath-cogslt-petta-state-bootstrap-direct-v1 \
+	test-metamath-cogslt-petta-state-transition-direct-v1 \
+	test-metamath-cogslt-petta-proof-bootstrap-direct-v1 \
+	test-metamath-cogslt-petta-proof-trace-direct-v1 \
+	test-mm0-cogslt-secondary-lexer-v1 \
+	test-mm0-cogslt-live-syntax-fold-v1 \
+	test-mm0-cogslt-runtime-live-syntax-v1 \
+	test-mm0-cogslt-sort-environment-v1 \
+	test-mm0-cogslt-term-environment-v1 \
+	test-mm0-cogslt-notation-environment-v1 \
+	test-mm0-cogslt-math-parser-v1 \
+	test-mm0-cogslt-expression-environment-v1 \
+	test-mm0-cogslt-assertion-environment-v1 \
+	test-plain-bnf-denotation-v1
+
+.PHONY: test-gslt-petta-through-transform
+test-gslt-petta-through-transform: $(BIN) lib/petta/petta_machine.metta \
+		tests/support/check_gslt_through_machine.py tests/support/record_petta_direct_run.sh
+	@set -eu; \
+	work=$$(mktemp -d runtime/gslt-through-transform.XXXXXX); \
+	mkdir -p "$$work/corpus" "$$work/runs"; \
+	for gate in $(GSLT_PETTA_DIRECT_GATES_V1); do \
+		$(MAKE) --no-print-directory "$$gate" \
+			CETTA_PETTA_DIRECT_RUN_V1='sh tests/support/record_petta_direct_run.sh '"$(CURDIR)/$$work"'/corpus env CETTA_PETTA_SEARCH_MACHINE=1 $$(CETTA_BIN_INVOKE) --lang petta --' \
+			>"$$work/$$gate.log" 2>&1 \
+			|| echo "  $$gate fails by itself; the programs it ran are compared all the same"; \
+	done; \
+	python3 tests/support/check_gslt_through_machine.py ./$(BIN) \
+		--corpus "$$work/corpus" --keep "$$work/runs" --report "$$work/report.txt"; \
+	echo "  kept: $$work"
+
+# PeTTa's forms written with transform, on SWI-PeTTa as well: every law of
+# test-petta-by-transform holds there with transform written in PeTTa.
+.PHONY: test-petta-by-transform-swi
+test-petta-by-transform-swi: $(BIN) lib/petta/lib_petta_by_transform.metta lib/petta/lib_transform_specs.metta \
+		tests/petta/petta_by_transform.metta tests/support/check_petta_by_transform.py
+	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" || ! -x "$(PETTA_ORACLE_ROOT)/run.sh" ]]; then \
+		echo 'set PETTA_ORACLE_ROOT to a SWI-PeTTa checkout with executable run.sh'; exit 2; \
+	fi
+	@python3 tests/support/check_petta_by_transform.py ./$(BIN) --swi "$(PETTA_ORACLE_ROOT)"
+
+# One step of the calculus written in PeTTa, on SWI-PeTTa as well.
+.PHONY: test-petta-step-rules-swi
+test-petta-step-rules-swi: $(BIN) lib/petta/lib_step_rules.metta tests/petta/step_rules.metta \
+		tests/support/check_step_rules.py
+	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" || ! -x "$(PETTA_ORACLE_ROOT)/run.sh" ]]; then \
+		echo 'set PETTA_ORACLE_ROOT to a SWI-PeTTa checkout with executable run.sh'; exit 2; \
+	fi
+	@python3 tests/support/check_step_rules.py ./$(BIN) --swi "$(PETTA_ORACLE_ROOT)"
+
+# The step written in PeTTa against a reference implementation of the calculus's
+# step, on random firings: TCALC_REFERENCE_ROOT holds tcalc_ref.c and tcalc_ref.h.
+# With PETTA_ORACLE_ROOT set, SWI-PeTTa's agreement is reported as well.
+.PHONY: test-petta-step-rules-reference
+test-petta-step-rules-reference: $(BIN) lib/petta/lib_step_rules.metta \
+		tests/support/check_step_rules_reference.py tests/support/step_reference_driver.c
+	@if [[ -z "$(strip $(TCALC_REFERENCE_ROOT))" || ! -f "$(TCALC_REFERENCE_ROOT)/tcalc_ref.c" ]]; then \
+		echo 'set TCALC_REFERENCE_ROOT to the directory of tcalc_ref.c and tcalc_ref.h'; exit 2; \
+	fi
+	@set -eu; \
+	mkdir -p "$(BOOTSTRAP_TMPDIR)"; \
+	work=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/step-reference.XXXXXX"); \
+	trap 'rm -rf "$$work"' EXIT; \
+	$(CC) -std=c11 -O2 -Wall -Wextra -I"$(TCALC_REFERENCE_ROOT)" tests/support/step_reference_driver.c \
+		"$(TCALC_REFERENCE_ROOT)/tcalc_ref.c" -o "$$work/step_reference_driver"; \
+	if [[ -n "$(strip $(PETTA_ORACLE_ROOT))" ]]; then \
+		python3 tests/support/check_step_rules_reference.py ./$(BIN) "$$work/step_reference_driver" --swi "$(PETTA_ORACLE_ROOT)"; \
+	else \
+		python3 tests/support/check_step_rules_reference.py ./$(BIN) "$$work/step_reference_driver"; \
+	fi

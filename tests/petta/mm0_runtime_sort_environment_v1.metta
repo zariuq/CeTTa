@@ -1,9 +1,9 @@
 !(import! &self langdef)
 
 (= (mm0:test:runtime-wff-name)
-   (cons (cp 119) (cons (cp 102) (cons (cp 102) nil))))
+   (cons-atom cons (cons-atom (cp 119) (cons-atom (cons-atom cons (cons-atom (cp 102) (cons-atom (cons-atom cons (cons-atom (cp 102) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:test:runtime-set-name)
-   (cons (cp 115) (cons (cp 101) (cons (cp 116) nil))))
+   (cons-atom cons (cons-atom (cp 115) (cons-atom (cons-atom cons (cons-atom (cp 101) (cons-atom (cons-atom cons (cons-atom (cp 116) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:test:runtime-provable-modifiers)
    (MM0SortModifiersV1
      MM0ModifierAbsentV1 MM0ModifierAbsentV1
@@ -25,9 +25,7 @@
      (langdef:parse-file $mm0-langdef
        "tests/langdef/mm0/sort_repeated_identical.mm0")
      (let $actual
-       (eval
-         (quote
-           (gslt:fn:MM0SortEnvironmentFromAstV1:1000 $ast)))
+       (gslt:fn:MM0SortEnvironmentFromAstV1:1000 $ast)
        (if
          (== $actual
            (gslt:result:MM0SortEnvironmentFromAstV1:1000
@@ -59,9 +57,7 @@
      (langdef:parse-file $mm0-langdef
        "tests/langdef/mm0/sort_redeclared_conflict.mm0")
      (let $actual
-       (eval
-         (quote
-           (gslt:fn:MM0SortEnvironmentFromAstV1:1000 $ast)))
+       (gslt:fn:MM0SortEnvironmentFromAstV1:1000 $ast)
        (if
          (== $actual
            (gslt:result:MM0SortEnvironmentFromAstV1:1000

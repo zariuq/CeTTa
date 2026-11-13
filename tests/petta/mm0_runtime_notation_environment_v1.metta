@@ -1,30 +1,19 @@
 !(import! &self langdef)
 
 (= (mm0:notation:name:wff)
-   (cons (cp 119) (cons (cp 102) (cons (cp 102) nil))))
+   (cons-atom cons (cons-atom (cp 119) (cons-atom (cons-atom cons (cons-atom (cp 102) (cons-atom (cons-atom cons (cons-atom (cp 102) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:notation:name:neg)
-   (cons (cp 110) (cons (cp 101) (cons (cp 103) nil))))
+   (cons-atom cons (cons-atom (cp 110) (cons-atom (cons-atom cons (cons-atom (cp 101) (cons-atom (cons-atom cons (cons-atom (cp 103) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:notation:name:imp)
-   (cons (cp 105) (cons (cp 109) (cons (cp 112) nil))))
+   (cons-atom cons (cons-atom (cp 105) (cons-atom (cons-atom cons (cons-atom (cp 109) (cons-atom (cons-atom cons (cons-atom (cp 112) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:notation:name:app)
-   (cons (cp 97) (cons (cp 112) (cons (cp 112) nil))))
+   (cons-atom cons (cons-atom (cp 97) (cons-atom (cons-atom cons (cons-atom (cp 112) (cons-atom (cons-atom cons (cons-atom (cp 112) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:notation:name:missing)
-   (cons (cp 109)
-     (cons (cp 105)
-       (cons (cp 115)
-         (cons (cp 115)
-           (cons (cp 105)
-             (cons (cp 110) (cons (cp 103) nil))))))))
+   (cons-atom cons (cons-atom (cp 109) (cons-atom (cons-atom cons (cons-atom (cp 105) (cons-atom (cons-atom cons (cons-atom (cp 115) (cons-atom (cons-atom cons (cons-atom (cp 115) (cons-atom (cons-atom cons (cons-atom (cp 105) (cons-atom (cons-atom cons (cons-atom (cp 110) (cons-atom (cons-atom cons (cons-atom (cp 103) (cons-atom nil ()))) ()))) ()))) ()))) ()))) ()))) ()))))
 (= (mm0:notation:name:unary)
-   (cons (cp 117)
-     (cons (cp 110)
-       (cons (cp 97) (cons (cp 114) (cons (cp 121) nil))))))
+   (cons-atom cons (cons-atom (cp 117) (cons-atom (cons-atom cons (cons-atom (cp 110) (cons-atom (cons-atom cons (cons-atom (cp 97) (cons-atom (cons-atom cons (cons-atom (cp 114) (cons-atom (cons-atom cons (cons-atom (cp 121) (cons-atom nil ()))) ()))) ()))) ()))) ()))))
 (= (mm0:notation:name:binary)
-   (cons (cp 98)
-     (cons (cp 105)
-       (cons (cp 110)
-         (cons (cp 97)
-           (cons (cp 114) (cons (cp 121) nil)))))))
+   (cons-atom cons (cons-atom (cp 98) (cons-atom (cons-atom cons (cons-atom (cp 105) (cons-atom (cons-atom cons (cons-atom (cp 110) (cons-atom (cons-atom cons (cons-atom (cp 97) (cons-atom (cons-atom cons (cons-atom (cp 114) (cons-atom (cons-atom cons (cons-atom (cp 121) (cons-atom nil ()))) ()))) ()))) ()))) ()))) ()))))
 
 (= (mm0:notation:token:tilde)
    (MM0MathScalarsConsV1 (cp 126) MM0MathScalarsNilV1))
@@ -53,7 +42,7 @@
                  (MM0ConstantEntryV1
                    $tilde
                    (MM0FinitePrecedenceV1
-                     (cons (cp 53) (cons (cp 48) nil)))
+                     (cons-atom cons (cons-atom (cp 53) (cons-atom (cons-atom cons (cons-atom (cp 48) (cons-atom nil ()))) ()))))
                    (NatSuccV1
                      (NatSuccV1
                        (NatSuccV1 (NatSuccV1 NatZeroV1)))))
@@ -61,7 +50,7 @@
                    (MM0ConstantEntryV1
                      $arrow
                      (MM0FinitePrecedenceV1
-                       (cons (cp 50) (cons (cp 48) nil)))
+                       (cons-atom cons (cons-atom (cp 50) (cons-atom (cons-atom cons (cons-atom (cp 48) (cons-atom nil ()))) ()))))
                      (NatSuccV1
                        (NatSuccV1
                          (NatSuccV1
@@ -80,7 +69,7 @@
                  (MM0PrefixNotationEntryV1
                    $tilde $neg (NatSuccV1 NatZeroV1)
                    (MM0FinitePrecedenceV1
-                     (cons (cp 53) (cons (cp 48) nil)))
+                     (cons-atom cons (cons-atom (cp 53) (cons-atom (cons-atom cons (cons-atom (cp 48) (cons-atom nil ()))) ()))))
                    (NatSuccV1
                      (NatSuccV1
                        (NatSuccV1 (NatSuccV1 NatZeroV1)))))
@@ -99,7 +88,7 @@
                  (MM0InfixNotationEntryV1
                    $arrow $imp MM0RightAssociativeV1
                    (MM0FinitePrecedenceV1
-                     (cons (cp 50) (cons (cp 48) nil)))
+                     (cons-atom cons (cons-atom (cp 50) (cons-atom (cons-atom cons (cons-atom (cp 48) (cons-atom nil ()))) ()))))
                    (NatSuccV1
                      (NatSuccV1
                        (NatSuccV1
@@ -111,9 +100,7 @@
              (LangDef:ParseAccepted MM0TextualV1 $digest ($ast))
              (langdef:parse-file $mm0-langdef
                "tests/langdef/mm0/notation_environment_positive.mm0")
-             (eval
-               (quote
-                 (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 $ast)))))
+             (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 $ast)))
        MM0RuntimeNotationEnvironmentAcceptedV1))
 
 !(let $missing (mm0:notation:name:missing)
@@ -126,9 +113,7 @@
          (LangDef:ParseAccepted MM0TextualV1 $digest ($ast))
          (langdef:parse-file $mm0-langdef
            "tests/langdef/mm0/notation_environment_unknown_term.mm0")
-         (eval
-           (quote
-             (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 $ast)))))
+         (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 $ast)))
      MM0RuntimeNotationUnknownTermRefusedV1))
 
 !(let $unary (mm0:notation:name:unary)
@@ -141,9 +126,7 @@
          (LangDef:ParseAccepted MM0TextualV1 $digest ($ast))
          (langdef:parse-file $mm0-langdef
            "tests/langdef/mm0/notation_environment_infix_arity.mm0")
-         (eval
-           (quote
-             (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 $ast)))))
+         (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 $ast)))
      MM0RuntimeNotationInfixArityRefusedV1))
 
 !(let $binary (mm0:notation:name:binary)
@@ -156,9 +139,7 @@
          (LangDef:ParseAccepted MM0TextualV1 $digest ($ast))
          (langdef:parse-file $mm0-langdef
            "tests/langdef/mm0/notation_environment_infix_max.mm0")
-         (eval
-           (quote
-             (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 $ast)))))
+         (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 $ast)))
      MM0RuntimeNotationInfixMaximumRefusedV1))
 
 !(let $tilde (mm0:notation:token:tilde)
@@ -172,9 +153,7 @@
          (LangDef:ParseAccepted MM0TextualV1 $digest ($ast))
          (langdef:parse-file $mm0-langdef
            "tests/langdef/mm0/notation_environment_precedence_conflict.mm0")
-         (eval
-           (quote
-             (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 $ast)))))
+         (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 $ast)))
      MM0RuntimeNotationPrecedenceConflictRefusedV1))
 
 !(let $tilde (mm0:notation:token:tilde)
@@ -188,7 +167,5 @@
          (LangDef:ParseAccepted MM0TextualV1 $digest ($ast))
          (langdef:parse-file $mm0-langdef
            "tests/langdef/mm0/notation_environment_redeclaration.mm0")
-         (eval
-           (quote
-             (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 $ast)))))
+         (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 $ast)))
      MM0RuntimeNotationRedeclarationRefusedV1))

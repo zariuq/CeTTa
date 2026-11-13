@@ -186,7 +186,7 @@
 ; mode-specialized relation projections
 ; gslt-lowered-equation-v1 source-rewrite=5 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-scalar-v1 target=mode relation=MM0DelimiterScalarV1 input=1 functional=semidet
 (= (gslt:fn:MM0DelimiterScalarV1:1 $scalar)
-   (let gslt:result:MM0MathClassLookupV1:111 (gslt:fn:MM0MathClassLookupV1:111 $scalar (MM0MathClassTableConsV1 (MM0MathClassEntryV1 (cp 32) MM0MathWhitespaceV1) (MM0MathClassTableConsV1 (MM0MathClassEntryV1 (cp 10) MM0MathWhitespaceV1) MM0MathClassTableNilV1)) MM0MathOrdinaryV1)
+   (let gslt:result:MM0MathClassLookupV1:111 (gslt:fn:MM0MathClassLookupV1:111 $scalar (quote (MM0MathClassTableConsV1 (MM0MathClassEntryV1 (cp 32) MM0MathWhitespaceV1) (MM0MathClassTableConsV1 (MM0MathClassEntryV1 (cp 10) MM0MathWhitespaceV1) MM0MathClassTableNilV1))) MM0MathOrdinaryV1)
    (quote gslt:result:MM0DelimiterScalarV1:1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=6 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-class-merge-left-left-v1 target=mode relation=MM0DelimiterClassMergeV1 input=110 functional=semidet
@@ -230,35 +230,37 @@
    (quote (gslt:result:MM0DelimiterClassPutV1:1110 (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $scalar $addition) MM0MathClassTableNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=16 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-class-put-merge-v1 target=mode relation=MM0DelimiterClassPutV1 input=1110 functional=semidet
-(= (gslt:fn:MM0DelimiterClassPutV1:1110 $scalar $addition (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $scalar $existing) $rest))
+(= (gslt:fn:MM0DelimiterClassPutV1:1110 $scalar $addition $__gslt_input_v1_0_2)
+   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $scalar (cons-atom $existing ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_2
    (let (gslt:result:MM0DelimiterClassMergeV1:110 $merged) (gslt:fn:MM0DelimiterClassMergeV1:110 $existing $addition)
-   (quote (gslt:result:MM0DelimiterClassPutV1:1110 (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $scalar $merged) $rest)))))
+   (quote (gslt:result:MM0DelimiterClassPutV1:1110 (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $scalar $merged) $rest))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=17 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-class-put-tail-v1 target=mode relation=MM0DelimiterClassPutV1 input=1110 functional=semidet
-(= (gslt:fn:MM0DelimiterClassPutV1:1110 $scalar $addition (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $other $class) $rest))
+(= (gslt:fn:MM0DelimiterClassPutV1:1110 $scalar $addition $__gslt_input_v1_0_2)
+   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $other (cons-atom $class ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_2
    (let $_ (gslt:different (different $scalar $other))
    (let (gslt:result:MM0DelimiterClassPutV1:1110 $updated) (gslt:fn:MM0DelimiterClassPutV1:1110 $scalar $addition $rest)
-   (quote (gslt:result:MM0DelimiterClassPutV1:1110 (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $other $class) $updated))))))
+   (quote (gslt:result:MM0DelimiterClassPutV1:1110 (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $other $class) $updated)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=18 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-characters-fold-nil-v1 target=mode relation=MM0DelimiterCharactersFoldV1 input=1110 functional=semidet
 (= (gslt:fn:MM0DelimiterCharactersFoldV1:1110 nil $class $table)
    (quote (gslt:result:MM0DelimiterCharactersFoldV1:1110 $table)))
 
 ; gslt-lowered-equation-v1 source-rewrite=19 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-characters-fold-space-v1 target=mode relation=MM0DelimiterCharactersFoldV1 input=1110 functional=semidet
-(= (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $__gslt_input_v1_0 $class $before)
-   (let (cons (cp 32) $rest) $__gslt_input_v1_0
+(= (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $__gslt_input_v1_0_0 $class $before)
+   (let (cons-atom cons (cons-atom (cons-atom cp (cons-atom 32 ())) (cons-atom $rest ()))) $__gslt_input_v1_0_0
    (let (gslt:result:MM0DelimiterCharactersFoldV1:1110 $after) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $rest $class $before)
    (quote (gslt:result:MM0DelimiterCharactersFoldV1:1110 $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=20 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-characters-fold-newline-v1 target=mode relation=MM0DelimiterCharactersFoldV1 input=1110 functional=semidet
-(= (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $__gslt_input_v1_0 $class $before)
-   (let (cons (cp 10) $rest) $__gslt_input_v1_0
+(= (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $__gslt_input_v1_0_0 $class $before)
+   (let (cons-atom cons (cons-atom (cons-atom cp (cons-atom 10 ())) (cons-atom $rest ()))) $__gslt_input_v1_0_0
    (let (gslt:result:MM0DelimiterCharactersFoldV1:1110 $after) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $rest $class $before)
    (quote (gslt:result:MM0DelimiterCharactersFoldV1:1110 $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=21 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-characters-fold-scalar-v1 target=mode relation=MM0DelimiterCharactersFoldV1 input=1110 functional=semidet
-(= (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $__gslt_input_v1_0 $class $before)
-   (let (cons $scalar $rest) $__gslt_input_v1_0
+(= (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $__gslt_input_v1_0_0 $class $before)
+   (let (cons-atom cons (cons-atom $scalar (cons-atom $rest ()))) $__gslt_input_v1_0_0
    (let $_ (gslt:different (different $scalar (cp 32)))
    (let $_ (gslt:different (different $scalar (cp 10)))
    (let gslt:result:MM0DelimiterScalarV1:1 (gslt:fn:MM0DelimiterScalarV1:1 $scalar)
@@ -271,14 +273,14 @@
    (quote (gslt:result:MM0DelimiterCharactersAfterScalarV1:1110 $table)))
 
 ; gslt-lowered-equation-v1 source-rewrite=23 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-characters-after-scalar-space-v1 target=mode relation=MM0DelimiterCharactersAfterScalarV1 input=1110 functional=semidet
-(= (gslt:fn:MM0DelimiterCharactersAfterScalarV1:1110 $__gslt_input_v1_0 $class $before)
-   (let (cons (cp 32) $rest) $__gslt_input_v1_0
+(= (gslt:fn:MM0DelimiterCharactersAfterScalarV1:1110 $__gslt_input_v1_0_0 $class $before)
+   (let (cons-atom cons (cons-atom (cons-atom cp (cons-atom 32 ())) (cons-atom $rest ()))) $__gslt_input_v1_0_0
    (let (gslt:result:MM0DelimiterCharactersFoldV1:1110 $after) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $rest $class $before)
    (quote (gslt:result:MM0DelimiterCharactersAfterScalarV1:1110 $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=24 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-characters-after-scalar-newline-v1 target=mode relation=MM0DelimiterCharactersAfterScalarV1 input=1110 functional=semidet
-(= (gslt:fn:MM0DelimiterCharactersAfterScalarV1:1110 $__gslt_input_v1_0 $class $before)
-   (let (cons (cp 10) $rest) $__gslt_input_v1_0
+(= (gslt:fn:MM0DelimiterCharactersAfterScalarV1:1110 $__gslt_input_v1_0_0 $class $before)
+   (let (cons-atom cons (cons-atom (cons-atom cp (cons-atom 10 ())) (cons-atom $rest ()))) $__gslt_input_v1_0_0
    (let (gslt:result:MM0DelimiterCharactersFoldV1:1110 $after) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $rest $class $before)
    (quote (gslt:result:MM0DelimiterCharactersAfterScalarV1:1110 $after)))))
 
@@ -287,31 +289,32 @@
    (quote (gslt:result:MM0DelimiterEnvironmentFoldV1:110 $table)))
 
 ; gslt-lowered-equation-v1 source-rewrite=26 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-environment-fold-both-v1 target=mode relation=MM0DelimiterEnvironmentFoldV1 input=110 functional=semidet
-(= (gslt:fn:MM0DelimiterEnvironmentFoldV1:110 $__gslt_input_v1_0 $before)
-   (let (cons (node mm0-delimiter-statement (pair (node mm0-math-string $both) none)) $rest) $__gslt_input_v1_0
+(= (gslt:fn:MM0DelimiterEnvironmentFoldV1:110 $__gslt_input_v1_0_0 $before)
+   (let (cons-atom cons (cons-atom (cons-atom node (cons-atom mm0-delimiter-statement (cons-atom (cons-atom pair (cons-atom (cons-atom node (cons-atom mm0-math-string (cons-atom $both ()))) (cons-atom none ()))) ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_0
    (let (gslt:result:MM0DelimiterCharactersFoldV1:1110 $next) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $both MM0MathBothDelimiterV1 $before)
    (let (gslt:result:MM0DelimiterEnvironmentFoldV1:110 $after) (gslt:fn:MM0DelimiterEnvironmentFoldV1:110 $rest $next)
    (quote (gslt:result:MM0DelimiterEnvironmentFoldV1:110 $after))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=27 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-environment-fold-left-right-v1 target=mode relation=MM0DelimiterEnvironmentFoldV1 input=110 functional=semidet
-(= (gslt:fn:MM0DelimiterEnvironmentFoldV1:110 $__gslt_input_v1_0 $before)
-   (let (cons (node mm0-delimiter-statement (pair (node mm0-math-string $left) (some (node mm0-math-string $right)))) $rest) $__gslt_input_v1_0
+(= (gslt:fn:MM0DelimiterEnvironmentFoldV1:110 $__gslt_input_v1_0_0 $before)
+   (let (cons-atom cons (cons-atom (cons-atom node (cons-atom mm0-delimiter-statement (cons-atom (cons-atom pair (cons-atom (cons-atom node (cons-atom mm0-math-string (cons-atom $left ()))) (cons-atom (cons-atom some (cons-atom (cons-atom node (cons-atom mm0-math-string (cons-atom $right ()))) ())) ()))) ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_0
    (let (gslt:result:MM0DelimiterCharactersFoldV1:1110 $middle) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $left MM0MathLeftDelimiterV1 $before)
    (let (gslt:result:MM0DelimiterCharactersFoldV1:1110 $next) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $right MM0MathRightDelimiterV1 $middle)
    (let (gslt:result:MM0DelimiterEnvironmentFoldV1:110 $after) (gslt:fn:MM0DelimiterEnvironmentFoldV1:110 $rest $next)
    (quote (gslt:result:MM0DelimiterEnvironmentFoldV1:110 $after)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=28 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-environment-fold-other-v1 target=mode relation=MM0DelimiterEnvironmentFoldV1 input=110 functional=semidet
-(= (gslt:fn:MM0DelimiterEnvironmentFoldV1:110 $__gslt_input_v1_0 $before)
-   (let (cons (node $kind $payload) $rest) $__gslt_input_v1_0
+(= (gslt:fn:MM0DelimiterEnvironmentFoldV1:110 $__gslt_input_v1_0_0 $before)
+   (let (cons-atom cons (cons-atom (cons-atom node (cons-atom $kind (cons-atom $payload ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_0
    (let $_ (gslt:different (different $kind mm0-delimiter-statement))
    (let (gslt:result:MM0DelimiterEnvironmentFoldV1:110 $after) (gslt:fn:MM0DelimiterEnvironmentFoldV1:110 $rest $before)
    (quote (gslt:result:MM0DelimiterEnvironmentFoldV1:110 $after))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=29 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-environment-from-ast-v1 target=mode relation=MM0DelimiterEnvironmentFromAstV1 input=10 functional=semidet
-(= (gslt:fn:MM0DelimiterEnvironmentFromAstV1:10 (node mm0-file $statements))
-   (let (gslt:result:MM0DelimiterEnvironmentFoldV1:110 $environment) (gslt:fn:MM0DelimiterEnvironmentFoldV1:110 $statements (MM0MathClassTableConsV1 (MM0MathClassEntryV1 (cp 32) MM0MathWhitespaceV1) (MM0MathClassTableConsV1 (MM0MathClassEntryV1 (cp 10) MM0MathWhitespaceV1) MM0MathClassTableNilV1)))
-   (quote (gslt:result:MM0DelimiterEnvironmentFromAstV1:10 $environment))))
+(= (gslt:fn:MM0DelimiterEnvironmentFromAstV1:10 $__gslt_input_v1_0_0)
+   (let (cons-atom node (cons-atom mm0-file (cons-atom $statements ()))) $__gslt_input_v1_0_0
+   (let (gslt:result:MM0DelimiterEnvironmentFoldV1:110 $environment) (gslt:fn:MM0DelimiterEnvironmentFoldV1:110 $statements (quote (MM0MathClassTableConsV1 (MM0MathClassEntryV1 (cp 32) MM0MathWhitespaceV1) (MM0MathClassTableConsV1 (MM0MathClassEntryV1 (cp 10) MM0MathWhitespaceV1) MM0MathClassTableNilV1))))
+   (quote (gslt:result:MM0DelimiterEnvironmentFromAstV1:10 $environment)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=30 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-live-delimiter-lex-v1 target=mode relation=MM0LiveDelimiterLexV1 input=110 functional=semidet
 (= (gslt:fn:MM0LiveDelimiterLexV1:110 $ast $scalars)
@@ -320,12 +323,14 @@
    (quote (gslt:result:MM0LiveDelimiterLexV1:110 $tokens)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=31 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-whitespace-space-v1 target=mode relation=MM0MathAllowedWhitespaceV1 input=1 functional=semidet
-(= (gslt:fn:MM0MathAllowedWhitespaceV1:1 (cp 32))
-   (quote gslt:result:MM0MathAllowedWhitespaceV1:1))
+(= (gslt:fn:MM0MathAllowedWhitespaceV1:1 $__gslt_input_v1_0_0)
+   (let (cons-atom cp (cons-atom 32 ())) $__gslt_input_v1_0_0
+   (quote gslt:result:MM0MathAllowedWhitespaceV1:1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=32 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-whitespace-newline-v1 target=mode relation=MM0MathAllowedWhitespaceV1 input=1 functional=semidet
-(= (gslt:fn:MM0MathAllowedWhitespaceV1:1 (cp 10))
-   (quote gslt:result:MM0MathAllowedWhitespaceV1:1))
+(= (gslt:fn:MM0MathAllowedWhitespaceV1:1 $__gslt_input_v1_0_0)
+   (let (cons-atom cp (cons-atom 10 ())) $__gslt_input_v1_0_0
+   (quote gslt:result:MM0MathAllowedWhitespaceV1:1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=33 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-entry-ordinary-v1 target=mode relation=MM0MathClassEntryValidV1 input=11 functional=semidet
 (= (gslt:fn:MM0MathClassEntryValidV1:11 $scalar MM0MathOrdinaryV1)
@@ -353,59 +358,67 @@
    (quote gslt:result:MM0MathClassTableNotMemberV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=39 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-table-not-member-cons-v1 target=mode relation=MM0MathClassTableNotMemberV1 input=11 functional=semidet
-(= (gslt:fn:MM0MathClassTableNotMemberV1:11 $scalar (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $other $class) $rest))
+(= (gslt:fn:MM0MathClassTableNotMemberV1:11 $scalar $__gslt_input_v1_0_1)
+   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $other (cons-atom $class ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
    (let $_ (gslt:different (different $scalar $other))
    (let gslt:result:MM0MathClassTableNotMemberV1:11 (gslt:fn:MM0MathClassTableNotMemberV1:11 $scalar $rest)
-   (quote gslt:result:MM0MathClassTableNotMemberV1:11))))
+   (quote gslt:result:MM0MathClassTableNotMemberV1:11)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=40 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-table-valid-nil-v1 target=mode relation=MM0MathClassTableValidV1 input=1 functional=semidet
 (= (gslt:fn:MM0MathClassTableValidV1:1 MM0MathClassTableNilV1)
    (quote gslt:result:MM0MathClassTableValidV1:1))
 
 ; gslt-lowered-equation-v1 source-rewrite=41 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-table-valid-cons-v1 target=mode relation=MM0MathClassTableValidV1 input=1 functional=semidet
-(= (gslt:fn:MM0MathClassTableValidV1:1 (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $scalar $class) $rest))
+(= (gslt:fn:MM0MathClassTableValidV1:1 $__gslt_input_v1_0_0)
+   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $scalar (cons-atom $class ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_0
    (let gslt:result:MM0MathClassEntryValidV1:11 (gslt:fn:MM0MathClassEntryValidV1:11 $scalar $class)
    (let gslt:result:MM0MathClassTableNotMemberV1:11 (gslt:fn:MM0MathClassTableNotMemberV1:11 $scalar $rest)
    (let gslt:result:MM0MathClassTableValidV1:1 (gslt:fn:MM0MathClassTableValidV1:1 $rest)
-   (quote gslt:result:MM0MathClassTableValidV1:1)))))
+   (quote gslt:result:MM0MathClassTableValidV1:1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=42 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-find-head-v1 target=mode relation=MM0MathClassFindV1 input=111 functional=semidet
-(= (gslt:fn:MM0MathClassFindV1:111 $scalar (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $scalar $class) $rest) $class)
-   (quote gslt:result:MM0MathClassFindV1:111))
+(= (gslt:fn:MM0MathClassFindV1:111 $scalar $__gslt_input_v1_0_1 $class)
+   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $scalar (cons-atom $class ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
+   (quote gslt:result:MM0MathClassFindV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=43 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-find-tail-v1 target=mode relation=MM0MathClassFindV1 input=111 functional=semidet
-(= (gslt:fn:MM0MathClassFindV1:111 $scalar (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $other $class) $rest) $found)
+(= (gslt:fn:MM0MathClassFindV1:111 $scalar $__gslt_input_v1_0_1 $found)
+   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $other (cons-atom $class ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
    (let $_ (gslt:different (different $scalar $other))
    (let gslt:result:MM0MathClassFindV1:111 (gslt:fn:MM0MathClassFindV1:111 $scalar $rest $found)
-   (quote gslt:result:MM0MathClassFindV1:111))))
+   (quote gslt:result:MM0MathClassFindV1:111)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=44 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-lookup-default-v1 target=mode relation=MM0MathClassLookupV1 input=111 functional=semidet
 (= (gslt:fn:MM0MathClassLookupV1:111 $scalar MM0MathClassTableNilV1 MM0MathOrdinaryV1)
    (quote gslt:result:MM0MathClassLookupV1:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=45 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-lookup-head-v1 target=mode relation=MM0MathClassLookupV1 input=111 functional=semidet
-(= (gslt:fn:MM0MathClassLookupV1:111 $scalar (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $scalar $class) $rest) $class)
-   (quote gslt:result:MM0MathClassLookupV1:111))
+(= (gslt:fn:MM0MathClassLookupV1:111 $scalar $__gslt_input_v1_0_1 $class)
+   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $scalar (cons-atom $class ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
+   (quote gslt:result:MM0MathClassLookupV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=46 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-lookup-tail-v1 target=mode relation=MM0MathClassLookupV1 input=111 functional=semidet
-(= (gslt:fn:MM0MathClassLookupV1:111 $scalar (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $other $class) $rest) $found)
+(= (gslt:fn:MM0MathClassLookupV1:111 $scalar $__gslt_input_v1_0_1 $found)
+   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $other (cons-atom $class ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
    (let $_ (gslt:different (different $scalar $other))
    (let gslt:result:MM0MathClassLookupV1:111 (gslt:fn:MM0MathClassLookupV1:111 $scalar $rest $found)
-   (quote gslt:result:MM0MathClassLookupV1:111))))
+   (quote gslt:result:MM0MathClassLookupV1:111)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=44 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-lookup-default-v1 target=mode relation=MM0MathClassLookupV1 input=110 functional=semidet
 (= (gslt:fn:MM0MathClassLookupV1:110 $scalar MM0MathClassTableNilV1)
    (quote (gslt:result:MM0MathClassLookupV1:110 MM0MathOrdinaryV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=45 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-lookup-head-v1 target=mode relation=MM0MathClassLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0MathClassLookupV1:110 $scalar (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $scalar $class) $rest))
-   (quote (gslt:result:MM0MathClassLookupV1:110 $class)))
+(= (gslt:fn:MM0MathClassLookupV1:110 $scalar $__gslt_input_v1_0_1)
+   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $scalar (cons-atom $class ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
+   (quote (gslt:result:MM0MathClassLookupV1:110 $class))))
 
 ; gslt-lowered-equation-v1 source-rewrite=46 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-lookup-tail-v1 target=mode relation=MM0MathClassLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0MathClassLookupV1:110 $scalar (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $other $class) $rest))
+(= (gslt:fn:MM0MathClassLookupV1:110 $scalar $__gslt_input_v1_0_1)
+   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $other (cons-atom $class ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
    (let $_ (gslt:different (different $scalar $other))
    (let (gslt:result:MM0MathClassLookupV1:110 $found) (gslt:fn:MM0MathClassLookupV1:110 $scalar $rest)
-   (quote (gslt:result:MM0MathClassLookupV1:110 $found)))))
+   (quote (gslt:result:MM0MathClassLookupV1:110 $found))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=47 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-reverse-scalars-v1 target=mode relation=MM0MathReverseScalarsV1 input=10 functional=semidet
 (= (gslt:fn:MM0MathReverseScalarsV1:10 $input)
@@ -417,9 +430,10 @@
    (quote (gslt:result:MM0MathReverseScalarsAccV1:110 $accumulator)))
 
 ; gslt-lowered-equation-v1 source-rewrite=49 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-reverse-scalars-acc-cons-v1 target=mode relation=MM0MathReverseScalarsAccV1 input=110 functional=semidet
-(= (gslt:fn:MM0MathReverseScalarsAccV1:110 (MM0MathScalarsConsV1 $scalar $rest) $accumulator)
-   (let (gslt:result:MM0MathReverseScalarsAccV1:110 $output) (gslt:fn:MM0MathReverseScalarsAccV1:110 $rest (MM0MathScalarsConsV1 $scalar $accumulator))
-   (quote (gslt:result:MM0MathReverseScalarsAccV1:110 $output))))
+(= (gslt:fn:MM0MathReverseScalarsAccV1:110 $__gslt_input_v1_0_0 $accumulator)
+   (let (cons-atom MM0MathScalarsConsV1 (cons-atom $scalar (cons-atom $rest ()))) $__gslt_input_v1_0_0
+   (let (gslt:result:MM0MathReverseScalarsAccV1:110 $output) (gslt:fn:MM0MathReverseScalarsAccV1:110 $rest (quote (MM0MathScalarsConsV1 $scalar $accumulator)))
+   (quote (gslt:result:MM0MathReverseScalarsAccV1:110 $output)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=50 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-reverse-tokens-v1 target=mode relation=MM0MathReverseTokensV1 input=10 functional=semidet
 (= (gslt:fn:MM0MathReverseTokensV1:10 $input)
@@ -431,22 +445,26 @@
    (quote (gslt:result:MM0MathReverseTokensAccV1:110 $accumulator)))
 
 ; gslt-lowered-equation-v1 source-rewrite=52 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-reverse-tokens-acc-cons-v1 target=mode relation=MM0MathReverseTokensAccV1 input=110 functional=semidet
-(= (gslt:fn:MM0MathReverseTokensAccV1:110 (MM0MathTokensConsV1 $token $rest) $accumulator)
-   (let (gslt:result:MM0MathReverseTokensAccV1:110 $output) (gslt:fn:MM0MathReverseTokensAccV1:110 $rest (MM0MathTokensConsV1 $token $accumulator))
-   (quote (gslt:result:MM0MathReverseTokensAccV1:110 $output))))
+(= (gslt:fn:MM0MathReverseTokensAccV1:110 $__gslt_input_v1_0_0 $accumulator)
+   (let (cons-atom MM0MathTokensConsV1 (cons-atom $token (cons-atom $rest ()))) $__gslt_input_v1_0_0
+   (let (gslt:result:MM0MathReverseTokensAccV1:110 $output) (gslt:fn:MM0MathReverseTokensAccV1:110 $rest (quote (MM0MathTokensConsV1 $token $accumulator)))
+   (quote (gslt:result:MM0MathReverseTokensAccV1:110 $output)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=53 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-lexer-flush-empty-v1 target=mode relation=MM0MathLexerFlushV1 input=10 functional=semidet
-(= (gslt:fn:MM0MathLexerFlushV1:10 (MM0MathLexerStateV1 MM0MathScalarsNilV1 $tokens))
-   (quote (gslt:result:MM0MathLexerFlushV1:10 (MM0MathLexerStateV1 MM0MathScalarsNilV1 $tokens))))
+(= (gslt:fn:MM0MathLexerFlushV1:10 $__gslt_input_v1_0_0)
+   (let (cons-atom MM0MathLexerStateV1 (cons-atom MM0MathScalarsNilV1 (cons-atom $tokens ()))) $__gslt_input_v1_0_0
+   (quote (gslt:result:MM0MathLexerFlushV1:10 (MM0MathLexerStateV1 MM0MathScalarsNilV1 $tokens)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=54 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-lexer-flush-nonempty-v1 target=mode relation=MM0MathLexerFlushV1 input=10 functional=semidet
-(= (gslt:fn:MM0MathLexerFlushV1:10 (MM0MathLexerStateV1 (MM0MathScalarsConsV1 $head $tail) $tokens))
-   (let (gslt:result:MM0MathReverseScalarsV1:10 $forward) (gslt:fn:MM0MathReverseScalarsV1:10 (MM0MathScalarsConsV1 $head $tail))
-   (quote (gslt:result:MM0MathLexerFlushV1:10 (MM0MathLexerStateV1 MM0MathScalarsNilV1 (MM0MathTokensConsV1 (MM0MathTokenV1 $forward) $tokens))))))
+(= (gslt:fn:MM0MathLexerFlushV1:10 $__gslt_input_v1_0_0)
+   (let (cons-atom MM0MathLexerStateV1 (cons-atom (cons-atom MM0MathScalarsConsV1 (cons-atom $head (cons-atom $tail ()))) (cons-atom $tokens ()))) $__gslt_input_v1_0_0
+   (let (gslt:result:MM0MathReverseScalarsV1:10 $forward) (gslt:fn:MM0MathReverseScalarsV1:10 (quote (MM0MathScalarsConsV1 $head $tail)))
+   (quote (gslt:result:MM0MathLexerFlushV1:10 (MM0MathLexerStateV1 MM0MathScalarsNilV1 (MM0MathTokensConsV1 (MM0MathTokenV1 $forward) $tokens)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=55 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-lexer-step-ordinary-v1 target=mode relation=MM0MathLexerStepV1 input=1110 functional=semidet
-(= (gslt:fn:MM0MathLexerStepV1:1110 MM0MathOrdinaryV1 $scalar (MM0MathLexerStateV1 $current $tokens))
-   (quote (gslt:result:MM0MathLexerStepV1:1110 (MM0MathLexerStateV1 (MM0MathScalarsConsV1 $scalar $current) $tokens))))
+(= (gslt:fn:MM0MathLexerStepV1:1110 MM0MathOrdinaryV1 $scalar $__gslt_input_v1_0_2)
+   (let (cons-atom MM0MathLexerStateV1 (cons-atom $current (cons-atom $tokens ()))) $__gslt_input_v1_0_2
+   (quote (gslt:result:MM0MathLexerStepV1:1110 (MM0MathLexerStateV1 (MM0MathScalarsConsV1 $scalar $current) $tokens)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=56 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-lexer-step-whitespace-v1 target=mode relation=MM0MathLexerStepV1 input=1110 functional=semidet
 (= (gslt:fn:MM0MathLexerStepV1:1110 MM0MathWhitespaceV1 $scalar $before)
@@ -454,23 +472,24 @@
    (quote (gslt:result:MM0MathLexerStepV1:1110 $after))))
 
 ; gslt-lowered-equation-v1 source-rewrite=57 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-lexer-step-left-v1 target=mode relation=MM0MathLexerStepV1 input=1110 functional=semidet
-(= (gslt:fn:MM0MathLexerStepV1:1110 MM0MathLeftDelimiterV1 $scalar (MM0MathLexerStateV1 $current $tokens))
-   (let (gslt:result:MM0MathLexerFlushV1:10 $after) (gslt:fn:MM0MathLexerFlushV1:10 (MM0MathLexerStateV1 (MM0MathScalarsConsV1 $scalar $current) $tokens))
-   (quote (gslt:result:MM0MathLexerStepV1:1110 $after))))
+(= (gslt:fn:MM0MathLexerStepV1:1110 MM0MathLeftDelimiterV1 $scalar $__gslt_input_v1_0_2)
+   (let (cons-atom MM0MathLexerStateV1 (cons-atom $current (cons-atom $tokens ()))) $__gslt_input_v1_0_2
+   (let (gslt:result:MM0MathLexerFlushV1:10 $after) (gslt:fn:MM0MathLexerFlushV1:10 (quote (MM0MathLexerStateV1 (MM0MathScalarsConsV1 $scalar $current) $tokens)))
+   (quote (gslt:result:MM0MathLexerStepV1:1110 $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=58 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-lexer-step-right-v1 target=mode relation=MM0MathLexerStepV1 input=1110 functional=semidet
 (= (gslt:fn:MM0MathLexerStepV1:1110 MM0MathRightDelimiterV1 $scalar $before)
-   (let (gslt:result:MM0MathLexerFlushV1:10 (MM0MathLexerStateV1 MM0MathScalarsNilV1 $tokens)) (gslt:fn:MM0MathLexerFlushV1:10 $before)
+   (let (gslt:result:MM0MathLexerFlushV1:10 (cons-atom MM0MathLexerStateV1 (cons-atom MM0MathScalarsNilV1 (cons-atom $tokens ())))) (gslt:fn:MM0MathLexerFlushV1:10 $before)
    (quote (gslt:result:MM0MathLexerStepV1:1110 (MM0MathLexerStateV1 (MM0MathScalarsConsV1 $scalar MM0MathScalarsNilV1) $tokens)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=59 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-lexer-step-both-v1 target=mode relation=MM0MathLexerStepV1 input=1110 functional=semidet
 (= (gslt:fn:MM0MathLexerStepV1:1110 MM0MathBothDelimiterV1 $scalar $before)
-   (let (gslt:result:MM0MathLexerFlushV1:10 (MM0MathLexerStateV1 MM0MathScalarsNilV1 $tokens)) (gslt:fn:MM0MathLexerFlushV1:10 $before)
+   (let (gslt:result:MM0MathLexerFlushV1:10 (cons-atom MM0MathLexerStateV1 (cons-atom MM0MathScalarsNilV1 (cons-atom $tokens ())))) (gslt:fn:MM0MathLexerFlushV1:10 $before)
    (quote (gslt:result:MM0MathLexerStepV1:1110 (MM0MathLexerStateV1 MM0MathScalarsNilV1 (MM0MathTokensConsV1 (MM0MathTokenV1 (MM0MathScalarsConsV1 $scalar MM0MathScalarsNilV1)) $tokens))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=60 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-lexer-finish-v1 target=mode relation=MM0MathLexerFinishV1 input=10 functional=semidet
 (= (gslt:fn:MM0MathLexerFinishV1:10 $state)
-   (let (gslt:result:MM0MathLexerFlushV1:10 (MM0MathLexerStateV1 MM0MathScalarsNilV1 $reverseTokens)) (gslt:fn:MM0MathLexerFlushV1:10 $state)
+   (let (gslt:result:MM0MathLexerFlushV1:10 (cons-atom MM0MathLexerStateV1 (cons-atom MM0MathScalarsNilV1 (cons-atom $reverseTokens ())))) (gslt:fn:MM0MathLexerFlushV1:10 $state)
    (let (gslt:result:MM0MathReverseTokensV1:10 $tokens) (gslt:fn:MM0MathReverseTokensV1:10 $reverseTokens)
    (quote (gslt:result:MM0MathLexerFinishV1:10 $tokens)))))
 
@@ -480,22 +499,23 @@
    (quote (gslt:result:MM0MathLexerLoopV1:1110 $tokens))))
 
 ; gslt-lowered-equation-v1 source-rewrite=62 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-lexer-loop-cons-v1 target=mode relation=MM0MathLexerLoopV1 input=1110 functional=semidet
-(= (gslt:fn:MM0MathLexerLoopV1:1110 $table (MM0MathScalarsConsV1 $scalar $rest) $state)
+(= (gslt:fn:MM0MathLexerLoopV1:1110 $table $__gslt_input_v1_0_1 $state)
+   (let (cons-atom MM0MathScalarsConsV1 (cons-atom $scalar (cons-atom $rest ()))) $__gslt_input_v1_0_1
    (let (gslt:result:MM0MathClassLookupV1:110 $class) (gslt:fn:MM0MathClassLookupV1:110 $scalar $table)
    (let (gslt:result:MM0MathLexerStepV1:1110 $next) (gslt:fn:MM0MathLexerStepV1:1110 $class $scalar $state)
    (let (gslt:result:MM0MathLexerLoopV1:1110 $tokens) (gslt:fn:MM0MathLexerLoopV1:1110 $table $rest $next)
-   (quote (gslt:result:MM0MathLexerLoopV1:1110 $tokens))))))
+   (quote (gslt:result:MM0MathLexerLoopV1:1110 $tokens)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=63 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-secondary-lex-v1 target=mode relation=MM0SecondaryLexV1 input=110 functional=semidet
 (= (gslt:fn:MM0SecondaryLexV1:110 $table $scalars)
    (let gslt:result:MM0MathClassTableValidV1:1 (gslt:fn:MM0MathClassTableValidV1:1 $table)
-   (let gslt:result:MM0MathClassFindV1:111 (gslt:fn:MM0MathClassFindV1:111 (cp 32) $table MM0MathWhitespaceV1)
-   (let gslt:result:MM0MathClassFindV1:111 (gslt:fn:MM0MathClassFindV1:111 (cp 10) $table MM0MathWhitespaceV1)
-   (let (gslt:result:MM0MathLexerLoopV1:1110 $tokens) (gslt:fn:MM0MathLexerLoopV1:1110 $table $scalars (MM0MathLexerStateV1 MM0MathScalarsNilV1 MM0MathTokensNilV1))
+   (let gslt:result:MM0MathClassFindV1:111 (gslt:fn:MM0MathClassFindV1:111 (quote (cp 32)) $table MM0MathWhitespaceV1)
+   (let gslt:result:MM0MathClassFindV1:111 (gslt:fn:MM0MathClassFindV1:111 (quote (cp 10)) $table MM0MathWhitespaceV1)
+   (let (gslt:result:MM0MathLexerLoopV1:1110 $tokens) (gslt:fn:MM0MathLexerLoopV1:1110 $table $scalars (quote (MM0MathLexerStateV1 MM0MathScalarsNilV1 MM0MathTokensNilV1)))
    (quote (gslt:result:MM0SecondaryLexV1:110 $tokens)))))))
 
 
 ; gslt-lowered-entry-v1 gslt:entry:MM0DelimiterEnvironmentFromAstV1:10
-(= (gslt:entry:MM0DelimiterEnvironmentFromAstV1:10 $__gslt_input_v1_0) (gslt:fn:MM0DelimiterEnvironmentFromAstV1:10 $__gslt_input_v1_0))
+(= (gslt:entry:MM0DelimiterEnvironmentFromAstV1:10 $__gslt_input_v1_0_0) (gslt:fn:MM0DelimiterEnvironmentFromAstV1:10 $__gslt_input_v1_0_0))
 ; gslt-lowered-entry-v1 gslt:entry:MM0LiveDelimiterLexV1:110
-(= (gslt:entry:MM0LiveDelimiterLexV1:110 $__gslt_input_v1_0 $__gslt_input_v1_1) (gslt:fn:MM0LiveDelimiterLexV1:110 $__gslt_input_v1_0 $__gslt_input_v1_1))
+(= (gslt:entry:MM0LiveDelimiterLexV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1) (gslt:fn:MM0LiveDelimiterLexV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1))

@@ -58,9 +58,7 @@
      (let
        (gslt:result:MM0DelimiterEnvironmentFromAstV1:10
          (mm0:test:runtime-live-syntax-environment))
-       (eval
-         (quote
-           (gslt:fn:MM0DelimiterEnvironmentFromAstV1:10 $ast)))
+       (gslt:fn:MM0DelimiterEnvironmentFromAstV1:10 $ast)
        MM0RuntimeLiveSyntaxEnvironmentAcceptedV1)))
 
 !(let $mm0-langdef (langdef:load "langdef/mm0/langdef.metta")
@@ -71,10 +69,8 @@
      (let
        (gslt:result:MM0LiveDelimiterLexV1:110
          (mm0:test:runtime-live-syntax-tokens))
-       (eval
-         (quote
-           (gslt:fn:MM0LiveDelimiterLexV1:110
-             $ast (mm0:test:runtime-live-syntax-input))))
+       (gslt:fn:MM0LiveDelimiterLexV1:110
+             $ast (mm0:test:runtime-live-syntax-input))
        MM0RuntimeLiveSyntaxLexAcceptedV1)))
 
 ; Primary syntax accepts the math string as opaque data; the live syntax fold
@@ -85,6 +81,4 @@
      (langdef:parse-file $mm0-langdef
        "tests/langdef/mm0/invalid_multi_scalar_delimiter.mm0")
      (collapse
-       (eval
-         (quote
-           (gslt:fn:MM0DelimiterEnvironmentFromAstV1:10 $ast))))))
+       (gslt:fn:MM0DelimiterEnvironmentFromAstV1:10 $ast))))
