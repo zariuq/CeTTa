@@ -49,7 +49,11 @@ bool petta_type_call_instantiate(Arena *arena, const PettaTypeCall *source,
 PettaTypeArgument petta_type_call_argument(const PettaTypeCall *call,
                                            CettaExprIndex argument,
                                            bool dependent_domains);
-bool petta_type_body_is_data(Atom *const *types, uint32_t count);
+/* Whether an equation of ARITY arguments holds its body as data: some
+ * declaration of that many arguments gives its result as an Atom.  A
+ * declaration of another number of arguments says nothing of it. */
+bool petta_type_body_is_data(Atom *const *types, uint32_t count,
+                             CettaExprLen arity);
 PettaTypeDemand petta_type_demand(const Atom *literal_formal);
 PettaTypeArgument petta_type_argument(Atom *domain, bool dependent_domains);
 bool petta_type_split_domain(Atom *domain, Atom **binder, Atom **formal);

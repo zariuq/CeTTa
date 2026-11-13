@@ -3,7 +3,7 @@
 ; written (empty).
 !(test (collapse (let $x Empty $x)) (Empty))
 !(test (collapse (Empty)) ((Empty)))
-!(test (collapse (superpose (a Empty b))) (a Empty b))
+!(test (sort-atom (collapse (superpose (a Empty b)))) (sort-atom (a Empty b)))
 (= (f) Empty)
 !(test (collapse (f)) (Empty))
 !(test (collapse (car-atom (Empty x))) (Empty))

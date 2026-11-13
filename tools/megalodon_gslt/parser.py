@@ -140,8 +140,9 @@ def generate():
     # Notation environment
 
     E = env_mod
-    for n, a in [('MgEnvV1', 2), ('MgTablesV1', 7), ('MgSectionFrameV1', 2), ('MgPreopEntryV1', 2),
-                 ('MgPostInfEntryV1', 3), ('MgBinderEntryV1', 2), ('MgPostInfV1', 2), ('MgPenvEntryV1', 3),
+    for n, a in [('MgEnvV1', 2), ('MgTablesV1', 7), ('MgSectionFrameV1', 2),
+                 ('MgTrieV1', 2), ('MgTrieNilV1', 0), ('MgTrieKidV1', 3), ('MgTrieGetV1', 3), ('MgTrieKidGetV1', 3),
+                 ('MgTriePutV1', 4), ('MgTrieKidPutV1', 5), ('MgPresentV1', 2), ('MgPostInfV1', 2), ('MgPenvEntryV1', 3),
                  ('MgPenvLookupV1', 3), ('MgLookupPreopV1', 3), ('MgLookupPostInfV1', 3), ('MgLookupBinderV1', 3),
                  ('MgPrioMemberV1', 3), ('MgProjNameV1', 2), ('MgDigitsOnlyV1', 2), ('MgProjAfterV1', 3),
                  ('MgPostInfOfV1', 4), ('MgInitialEnvV1', 1), ('MgDigitV1', 2),
@@ -162,23 +163,37 @@ def generate():
         E.rule('mg-env-digit-%s' % d, '(MgDigitV1 %s MgYesV1)' % cp(d))
     E.rule('mg-env-digit-no', '(MgDigitV1 ?c MgNoV1)', ['(different ?c %s)' % cp(d) for d in DIG])
 
-    # Lookups: the most recent entry for a name.
-    E.rule('mg-lookup-preop-nil', '(MgLookupPreopV1 MgListNilV1 ?x MgNoneV1)')
-    E.rule('mg-lookup-preop-here', '(MgLookupPreopV1 (MgListConsV1 (MgPreopEntryV1 ?x ?p) ?rest) ?x (MgSomeV1 ?p))')
-    E.rule('mg-lookup-preop-next', '(MgLookupPreopV1 (MgListConsV1 (MgPreopEntryV1 ?y ?p) ?rest) ?x ?r)',
-           ['(different ?y ?x)', '(MgLookupPreopV1 ?rest ?x ?r)'])
-    E.rule('mg-lookup-postinf-nil', '(MgLookupPostInfV1 MgListNilV1 ?x MgNoneV1)')
-    E.rule('mg-lookup-postinf-here', '(MgLookupPostInfV1 (MgListConsV1 (MgPostInfEntryV1 ?x ?p ?c) ?rest) ?x (MgSomeV1 (MgPostInfV1 ?p ?c)))')
-    E.rule('mg-lookup-postinf-next', '(MgLookupPostInfV1 (MgListConsV1 (MgPostInfEntryV1 ?y ?p ?c) ?rest) ?x ?r)',
-           ['(different ?y ?x)', '(MgLookupPostInfV1 ?rest ?x ?r)'])
-    E.rule('mg-lookup-binder-nil', '(MgLookupBinderV1 MgListNilV1 ?x MgNoneV1)')
-    E.rule('mg-lookup-binder-here', '(MgLookupBinderV1 (MgListConsV1 (MgBinderEntryV1 ?x ?t) ?rest) ?x (MgSomeV1 ?t))')
-    E.rule('mg-lookup-binder-next', '(MgLookupBinderV1 (MgListConsV1 (MgBinderEntryV1 ?y ?t) ?rest) ?x ?r)',
-           ['(different ?y ?x)', '(MgLookupBinderV1 ?rest ?x ?r)'])
-    E.rule('mg-prio-member-nil', '(MgPrioMemberV1 MgListNilV1 ?p MgNoV1)')
-    E.rule('mg-prio-member-here', '(MgPrioMemberV1 (MgListConsV1 ?p ?rest) ?p MgYesV1)')
-    E.rule('mg-prio-member-next', '(MgPrioMemberV1 (MgListConsV1 ?q ?rest) ?p ?r)',
-           ['(different ?q ?p)', '(MgPrioMemberV1 ?rest ?p ?r)'])
+    # The tables are tries keyed by a name's code points, so a lookup costs
+    # the name's length whatever the table's size.  A node holds the entry of
+    # the name that ends there (MgNoneV1 or MgSomeV1) and one child per next
+    # code point.  A declaration rebuilds only the path to its name, and it
+    # replaces an earlier entry for the name, as Megalodon's tables do; a
+    # table a Section saved is untouched by later declarations.  The priority
+    # sets are tries of the priorities' digits.
+    E.rule('mg-trie-get-here', '(MgTrieGetV1 (MgTrieV1 ?v ?k) MgCpNilV1 ?v)')
+    E.rule('mg-trie-get-down', '(MgTrieGetV1 (MgTrieV1 ?v ?k) (MgCpConsV1 ?c ?rest) ?r)',
+           ['(MgTrieKidGetV1 ?k ?c ?t)', '(MgTrieGetV1 ?t ?rest ?r)'])
+    E.rule('mg-trie-kid-get-nil', '(MgTrieKidGetV1 MgTrieNilV1 ?c (MgTrieV1 MgNoneV1 MgTrieNilV1))')
+    E.rule('mg-trie-kid-get-here', '(MgTrieKidGetV1 (MgTrieKidV1 ?c ?t ?more) ?c ?t)')
+    E.rule('mg-trie-kid-get-next', '(MgTrieKidGetV1 (MgTrieKidV1 ?d ?t ?more) ?c ?r)',
+           ['(different ?d ?c)', '(MgTrieKidGetV1 ?more ?c ?r)'])
+    E.rule('mg-trie-put-here', '(MgTriePutV1 (MgTrieV1 ?v ?k) MgCpNilV1 ?w (MgTrieV1 (MgSomeV1 ?w) ?k))')
+    E.rule('mg-trie-put-down', '(MgTriePutV1 (MgTrieV1 ?v ?k) (MgCpConsV1 ?c ?rest) ?w (MgTrieV1 ?v ?k2))',
+           ['(MgTrieKidPutV1 ?k ?c ?rest ?w ?k2)'])
+    E.rule('mg-trie-kid-put-nil', '(MgTrieKidPutV1 MgTrieNilV1 ?c ?rest ?w (MgTrieKidV1 ?c ?t MgTrieNilV1))',
+           ['(MgTriePutV1 (MgTrieV1 MgNoneV1 MgTrieNilV1) ?rest ?w ?t)'])
+    E.rule('mg-trie-kid-put-here', '(MgTrieKidPutV1 (MgTrieKidV1 ?c ?t ?more) ?c ?rest ?w (MgTrieKidV1 ?c ?t2 ?more))',
+           ['(MgTriePutV1 ?t ?rest ?w ?t2)'])
+    E.rule('mg-trie-kid-put-next', '(MgTrieKidPutV1 (MgTrieKidV1 ?d ?t ?more) ?c ?rest ?w (MgTrieKidV1 ?d ?t ?more2))',
+           ['(different ?d ?c)', '(MgTrieKidPutV1 ?more ?c ?rest ?w ?more2)'])
+    E.rule('mg-present-none', '(MgPresentV1 MgNoneV1 MgNoV1)')
+    E.rule('mg-present-some', '(MgPresentV1 (MgSomeV1 ?w) MgYesV1)')
+
+    # Lookups: the entry for a name, the latest declared.
+    E.rule('mg-lookup-preop', '(MgLookupPreopV1 ?t ?x ?r)', ['(MgTrieGetV1 ?t ?x ?r)'])
+    E.rule('mg-lookup-postinf', '(MgLookupPostInfV1 ?t ?x ?r)', ['(MgTrieGetV1 ?t ?x ?r)'])
+    E.rule('mg-lookup-binder', '(MgLookupBinderV1 ?t ?x ?r)', ['(MgTrieGetV1 ?t ?x ?r)'])
+    E.rule('mg-prio-member', '(MgPrioMemberV1 ?t ?p ?r)', ['(MgTrieGetV1 ?t ?p ?v)', '(MgPresentV1 ?v ?r)'])
 
     # _N names are postfix projections at priority 1.
     E.rule('mg-proj-name-nil', '(MgProjNameV1 MgCpNilV1 MgNoV1)')
@@ -200,13 +215,31 @@ def generate():
     E.rule('mg-postinf-of-table', '(MgPostInfOfV1 MgNoV1 ?post ?x ?b)', ['(MgLookupPostInfV1 ?post ?x ?b)'])
 
     # The initial environment: fun and forall are binders, -> and ^ infix.
+    def trie(entries):
+        # The trie the puts would build, entries in order (a later one replaces
+        # an earlier one with the same name).
+        root = {'v': None, 'k': {}}
+        for name, value in entries:
+            node = root
+            for ch in name:
+                node = node['k'].setdefault(ch, {'v': None, 'k': {}})
+            node['v'] = value
+
+        def text(node):
+            kids = 'MgTrieNilV1'
+            for ch, sub in reversed(list(node['k'].items())):
+                kids = '(MgTrieKidV1 %s %s %s)' % (cp(ch), text(sub), kids)
+            return '(MgTrieV1 %s %s)' % ('MgNoneV1' if node['v'] is None else '(MgSomeV1 %s)' % node['v'], kids)
+        return text(root)
     E.rule('mg-initial-env',
-           '(MgInitialEnvV1 (MgEnvV1 (MgTablesV1 MgListNilV1 %s %s MgListNilV1 %s %s MgListNilV1) MgListNilV1))' % (
-               mglist(['(MgPostInfEntryV1 %s %s MgInfixNoneV1)' % (lit('^'), lit('790')),
-                       '(MgPostInfEntryV1 %s %s MgInfixRightV1)' % (lit('->'), lit('800'))]),
-               mglist(['(MgBinderEntryV1 %s MgTkCommaV1)' % lit('forall'),
-                       '(MgBinderEntryV1 %s MgTkDarrV1)' % lit('fun')]),
-               mglist([lit('790'), lit('800')]), mglist([lit('790'), lit('800')])))
+           '(MgInitialEnvV1 (MgEnvV1 (MgTablesV1 %s %s %s %s %s %s %s) MgListNilV1))' % (
+               trie([]),
+               trie([('->', '(MgPostInfV1 %s MgInfixRightV1)' % lit('800')),
+                     ('^', '(MgPostInfV1 %s MgInfixNoneV1)' % lit('790'))]),
+               trie([('fun', 'MgTkDarrV1'), ('forall', 'MgTkCommaV1')]),
+               trie([]),
+               trie([('800', 'MgYesV1'), ('790', 'MgYesV1')]), trie([('800', 'MgYesV1'), ('790', 'MgYesV1')]),
+               trie([])))
 
     # Priorities: comparison, successor, normal form.
     for a in DIG:
@@ -284,13 +317,17 @@ def generate():
            % (T, taken('a nonright infix operator or postfix operator')))
     E.rule('mg-postinf-right-free',
            '(MgPostInfRightV1 MgNoV1 %s ?x ?p ?pic '
-           '(MgEnvV1 (MgTablesV1 ?pre (MgListConsV1 (MgPostInfEntryV1 ?x ?p ?pic) ?post) ?bind ?pp (MgListConsV1 ?p ?npp) (MgListConsV1 ?p ?rp) ?nrp) ?secs))' % T)
+           '(MgEnvV1 (MgTablesV1 ?pre ?post2 ?bind ?pp ?npp2 ?rp2 ?nrp) ?secs))' % T,
+           ['(MgTriePutV1 ?post ?x (MgPostInfV1 ?p ?pic) ?post2)', '(MgTriePutV1 ?npp ?p MgYesV1 ?npp2)',
+            '(MgTriePutV1 ?rp ?p MgYesV1 ?rp2)'])
     E.rule('mg-postinf-declare-other', '(MgPostInfDeclareV1 MgNoV1 %s ?x ?p ?pic ?out)' % T,
            ['(MgPrioMemberV1 ?rp ?p ?m)', '(MgPostInfOtherV1 ?m %s ?x ?p ?pic ?out)' % T])
     E.rule('mg-postinf-other-taken', '(MgPostInfOtherV1 MgYesV1 %s ?x ?p ?pic %s)' % (T, taken('a right infix operator')))
     E.rule('mg-postinf-other-free',
            '(MgPostInfOtherV1 MgNoV1 %s ?x ?p ?pic '
-           '(MgEnvV1 (MgTablesV1 ?pre (MgListConsV1 (MgPostInfEntryV1 ?x ?p ?pic) ?post) ?bind ?pp (MgListConsV1 ?p ?npp) ?rp (MgListConsV1 ?p ?nrp)) ?secs))' % T)
+           '(MgEnvV1 (MgTablesV1 ?pre ?post2 ?bind ?pp ?npp2 ?rp ?nrp2) ?secs))' % T,
+           ['(MgTriePutV1 ?post ?x (MgPostInfV1 ?p ?pic) ?post2)', '(MgTriePutV1 ?npp ?p MgYesV1 ?npp2)',
+            '(MgTriePutV1 ?nrp ?p MgYesV1 ?nrp2)'])
     E.rule('mg-declare-prefix', '(MgDeclarePrefixV1 %s ?x ?p ?out)' % T,
            ['(MgPrioMemberV1 ?npp ?p ?m)', '(MgPrefixPriorityV1 ?m %s ?x ?p ?out)' % T])
     E.rule('mg-prefix-priority-taken', '(MgPrefixPriorityV1 MgYesV1 %s ?x ?p %s)' % (T, taken('an infix or postfix operator')))
@@ -300,7 +337,8 @@ def generate():
            % (T, mglist(['?x', lit(' is already a binder and cannot be used as a prefix operator.')])))
     E.rule('mg-prefix-binder-free',
            '(MgPrefixBinderV1 MgNoneV1 %s ?x ?p '
-           '(MgEnvV1 (MgTablesV1 (MgListConsV1 (MgPreopEntryV1 ?x ?p) ?pre) ?post ?bind (MgListConsV1 ?p ?pp) ?npp ?rp (MgListConsV1 ?p ?nrp)) ?secs))' % T)
+           '(MgEnvV1 (MgTablesV1 ?pre2 ?post ?bind ?pp2 ?npp ?rp ?nrp2) ?secs))' % T,
+           ['(MgTriePutV1 ?pre ?x ?p ?pre2)', '(MgTriePutV1 ?pp ?p MgYesV1 ?pp2)', '(MgTriePutV1 ?nrp ?p MgYesV1 ?nrp2)'])
     E.rule('mg-binder-token-comma', '(MgBinderTokenV1 MgTrueV1 MgTkCommaV1)')
     E.rule('mg-binder-token-darr', '(MgBinderTokenV1 MgFalseV1 MgTkDarrV1)')
     E.rule('mg-declare-binder', '(MgDeclareBinderV1 %s ?x ?comma ?out)' % T,
@@ -309,8 +347,8 @@ def generate():
            % (T, mglist(['?x', lit(' is already a prefix operator and cannot be used as a binder.')])))
     E.rule('mg-binder-prefix-free',
            '(MgBinderPrefixV1 MgNoneV1 %s ?x ?comma '
-           '(MgEnvV1 (MgTablesV1 ?pre ?post (MgListConsV1 (MgBinderEntryV1 ?x ?tok) ?bind) ?pp ?npp ?rp ?nrp) ?secs))' % T,
-           ['(MgBinderTokenV1 ?comma ?tok)'])
+           '(MgEnvV1 (MgTablesV1 ?pre ?post ?bind2 ?pp ?npp ?rp ?nrp) ?secs))' % T,
+           ['(MgBinderTokenV1 ?comma ?tok)', '(MgTriePutV1 ?bind ?x ?tok ?bind2)'])
     E.rule('mg-enter-section', '(MgEnterSectionV1 (MgEnvV1 ?tables ?secs) ?x (MgEnvV1 ?tables (MgListConsV1 (MgSectionFrameV1 ?x ?tables) ?secs)))')
     E.rule('mg-end-section', '(MgEndSectionV1 (MgEnvV1 ?tables (MgListConsV1 (MgSectionFrameV1 ?x ?saved) ?secs)) ?x (MgEnvV1 ?saved ?secs))')
     # megalodon.ml's End, where the item was read (MgItemStartV1 of the next

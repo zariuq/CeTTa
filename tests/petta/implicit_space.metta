@@ -10,12 +10,12 @@
         (match &implicit-space (item $x) (item $x))))
     ((item 1) (item 1) (item 2)))
 
-; PeTTa remove-atom follows retractall/1 for an exact atom.
+; Removing one occurrence preserves the other copy in this bag.
 !(remove-atom &implicit-space (item 1))
 !(test
     (collapse
       (match &implicit-space (item $x) (item $x)))
-    ((item 2)))
+    ((item 1) (item 2)))
 
 ; A negative query on an existing namespace has no answers.
 !(test

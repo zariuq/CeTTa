@@ -20,19 +20,16 @@
 !(bind! &ss (new-space))
 !(match &ab (: $x $a) (add-atom-nodup &ss (: $x $a)))
 
-!(assertEqualToResult
-  (collapse
-    (with-space-snapshot $ss0 &ss
+!(assertEqualToResult (with-space-snapshot $ss0 &ss
       (match $ss0 (: $x1 $a1)
         (match $ss0 (: $x2 $a2)
           (match &rb (: $f (-> $a1 $a2 $b))
-            (: pair $x1 $x2))))))
-  (((: pair ax-1 ax-1)
+            (: pair $x1 $x2))))) ((: pair ax-1 ax-1)
     (: pair ax-1 ax-2)
     (: pair ax-1 ax-3)
     (: pair ax-2 ax-1)
     (: pair ax-2 ax-2)
-    (: pair ax-2 ax-3))))
+    (: pair ax-2 ax-3)))
 
 !(fs-add-to-ss-nodup &rb &ss)
 
@@ -42,12 +39,9 @@
 !(add-atom &dup (edge a b))
 !(add-atom &dup (edge a b))
 !(add-atom &dup (edge b c))
-!(assertEqualToResult
-  (collapse
-    (match &dup (edge $x $y)
+!(assertEqualToResult (match &dup (edge $x $y)
       (match &dup (edge $y $z)
-        (path $x $y $z))))
-  (((path a b c) (path a b c))))
+        (path $x $y $z))) ((path a b c) (path a b c)))
 !(assertEqualToResult
   (collapse
     (match &dup (edge c $y)

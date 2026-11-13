@@ -20,7 +20,7 @@
 !(add-atom &a (coin 1))
 !(add-atom &a (coin 2))
 !(add-atom &a (coin 5))
-!(spend-each (collapse (transform &a (take (coin $v)) (got $v))))
+!(spend-each (sort-atom (collapse (transform &a (take (coin $v)) (got $v)))))
 !(after-each (show &a))
 
 ; Two copies of one atom are two matches, and each takes one copy.

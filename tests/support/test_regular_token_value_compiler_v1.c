@@ -172,7 +172,9 @@ static bool check_lbnf_document(Arena *arena, char *error, size_t size) {
         {"Root. Root ::= \"x\"; comment \"\";", "empty-comment-delimiter"},
         {"undefined. E ::= \"x\";", "undefined-rule-label"},
         {"Foo. Foo ::= \"x\"; Foo. Bar ::= \"y\";", "constructor-signature-conflict"},
-        {"Root. Root ::= \"x\"; layout toplevel;", "layout"},
+        /* layout is lowered into the token layer; the run-time token
+           route refuses it when it prepares (checked below) */
+        {"Root. Root ::= \"x\"; layout toplevel;", NULL},
         {"Root. Root ::= \"x\"; define f x = x;", "define"},
     };
     Atom *bootstrap = NULL, *refusal = NULL;
@@ -266,6 +268,28 @@ static bool check_lbnf_document(Arena *arena, char *error, size_t size) {
             if (pass && cases[i].reason && !strcmp(cases[i].reason, "empty-grammar"))
                 pass = atom_eq(refusal->expr.elems[2],
                     data(arena, "(LbnfSourceSpanV1 0 0 1 1)"));
+            if (pass && !cases[i].reason && strstr(cases[i].source, "layout toplevel")) {
+                /* The token layer carries the layout declaration; the
+                   run-time token route resolves layout over the grammar's
+                   "{", ";" and "}", and refuses a grammar without them. */
+                CettaLdParserProfileV1 lprofile;
+                CettaLdParserPackV1 lcompiled;
+                CettaParserTokenRuntimeV1 lruntime;
+                char lerror[512] = "";
+                cetta_ld_parser_profile_v1_init(&lprofile);
+                cetta_ld_parser_pack_v1_init(&lcompiled);
+                cetta_parser_token_runtime_v1_init(&lruntime);
+                char *text = atom_to_parseable_string(arena, result.profile);
+                pass = text && strstr(text, "ParserLayoutToplevelV1") &&
+                    compile_lowered(arena, &result, &lprofile, &lcompiled, lerror, sizeof lerror) &&
+                    !cetta_parser_token_runtime_v1_prepare(&lruntime, &lcompiled, lprofile.tokens,
+                        4000000u, lerror, sizeof lerror) &&
+                    strstr(lerror, "needs the terminals");
+                if (!pass) fprintf(stderr, "layout control: %s\n", lerror);
+                cetta_parser_token_runtime_v1_free(&lruntime);
+                cetta_ld_parser_pack_v1_free(&lcompiled);
+                cetta_ld_parser_profile_v1_free(&lprofile);
+            }
         }
         ppnative_v1_result_free(&glr); ppnative_v1_result_free(&gll);
         cetta_parser_token_scan_v1_free(&scan);

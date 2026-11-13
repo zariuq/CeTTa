@@ -1,7 +1,7 @@
 ; Boolean operators are finite relations.  Open arguments enumerate through
-; ordinary machine choice points in the same order as the PeTTa equations.
-!(collapse (if (or $x true) $x))
-!(collapse (not $x))
+; ordinary machine choice points, as the PeTTa equations do.
+!(sort-atom (collapse (if (or $x true) $x)))
+!(sort-atom (collapse (not $x)))
 
 ; Relational member constructs an open list spine.  Relational size-atom then
 ; closes that spine at the demanded length, and the internal representation

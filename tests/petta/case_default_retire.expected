@@ -1,10 +1,14 @@
 6000
 (one two)
 (none)
-(one)
+(picked)
 3
 5.0
 6
 true
 true
 false
+(five none five)
+(none five none)
+()
+((+ 1 2))

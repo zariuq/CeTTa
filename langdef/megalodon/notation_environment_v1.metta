@@ -9,7 +9,6 @@
 ; of metatuples at priority 1.  A refused declaration has no derivation.
 (gslt-presentation-v1 MegalodonNotationEnvironmentV1
   (signature
-    (operator MgBinderEntryV1 2)
     (operator MgBinderPrefixV1 5)
     (operator MgBinderTokenV1 2)
     (operator MgCpConsV1 2)
@@ -50,7 +49,6 @@
     (operator MgPenvEntryV1 3)
     (operator MgPenvLookupV1 3)
     (operator MgPostInfDeclareV1 6)
-    (operator MgPostInfEntryV1 3)
     (operator MgPostInfOfV1 4)
     (operator MgPostInfOtherV1 6)
     (operator MgPostInfPrefixV1 7)
@@ -58,7 +56,7 @@
     (operator MgPostInfV1 2)
     (operator MgPrefixBinderV1 5)
     (operator MgPrefixPriorityV1 5)
-    (operator MgPreopEntryV1 2)
+    (operator MgPresentV1 2)
     (operator MgPrioMemberV1 3)
     (operator MgPriorityNonzeroV1 2)
     (operator MgPriorityValidV1 2)
@@ -76,6 +74,13 @@
     (operator MgStripZerosV1 2)
     (operator MgTablesV1 7)
     (operator MgTokenReadV1 2)
+    (operator MgTrieGetV1 3)
+    (operator MgTrieKidGetV1 3)
+    (operator MgTrieKidPutV1 5)
+    (operator MgTrieKidV1 3)
+    (operator MgTrieNilV1 0)
+    (operator MgTriePutV1 4)
+    (operator MgTrieV1 2)
     (operator cp 1)
     (operator different 2))
   (equations)
@@ -123,50 +128,68 @@
         (different ?c (cp 55))
         (different ?c (cp 56))
         (different ?c (cp 57))))
-    (rule mg-lookup-preop-nil
-      (head (MgLookupPreopV1 MgListNilV1 ?x MgNoneV1))
+    (rule mg-trie-get-here
+      (head (MgTrieGetV1 (MgTrieV1 ?v ?k) MgCpNilV1 ?v))
       (body))
-    (rule mg-lookup-preop-here
-      (head (MgLookupPreopV1 (MgListConsV1 (MgPreopEntryV1 ?x ?p) ?rest) ?x (MgSomeV1 ?p)))
-      (body))
-    (rule mg-lookup-preop-next
-      (head (MgLookupPreopV1 (MgListConsV1 (MgPreopEntryV1 ?y ?p) ?rest) ?x ?r))
+    (rule mg-trie-get-down
+      (head (MgTrieGetV1 (MgTrieV1 ?v ?k) (MgCpConsV1 ?c ?rest) ?r))
       (body
-        (different ?y ?x)
-        (MgLookupPreopV1 ?rest ?x ?r)))
-    (rule mg-lookup-postinf-nil
-      (head (MgLookupPostInfV1 MgListNilV1 ?x MgNoneV1))
+        (MgTrieKidGetV1 ?k ?c ?t)
+        (MgTrieGetV1 ?t ?rest ?r)))
+    (rule mg-trie-kid-get-nil
+      (head (MgTrieKidGetV1 MgTrieNilV1 ?c (MgTrieV1 MgNoneV1 MgTrieNilV1)))
       (body))
-    (rule mg-lookup-postinf-here
-      (head (MgLookupPostInfV1 (MgListConsV1 (MgPostInfEntryV1 ?x ?p ?c) ?rest) ?x (MgSomeV1 (MgPostInfV1 ?p ?c))))
+    (rule mg-trie-kid-get-here
+      (head (MgTrieKidGetV1 (MgTrieKidV1 ?c ?t ?more) ?c ?t))
       (body))
-    (rule mg-lookup-postinf-next
-      (head (MgLookupPostInfV1 (MgListConsV1 (MgPostInfEntryV1 ?y ?p ?c) ?rest) ?x ?r))
+    (rule mg-trie-kid-get-next
+      (head (MgTrieKidGetV1 (MgTrieKidV1 ?d ?t ?more) ?c ?r))
       (body
-        (different ?y ?x)
-        (MgLookupPostInfV1 ?rest ?x ?r)))
-    (rule mg-lookup-binder-nil
-      (head (MgLookupBinderV1 MgListNilV1 ?x MgNoneV1))
+        (different ?d ?c)
+        (MgTrieKidGetV1 ?more ?c ?r)))
+    (rule mg-trie-put-here
+      (head (MgTriePutV1 (MgTrieV1 ?v ?k) MgCpNilV1 ?w (MgTrieV1 (MgSomeV1 ?w) ?k)))
       (body))
-    (rule mg-lookup-binder-here
-      (head (MgLookupBinderV1 (MgListConsV1 (MgBinderEntryV1 ?x ?t) ?rest) ?x (MgSomeV1 ?t)))
-      (body))
-    (rule mg-lookup-binder-next
-      (head (MgLookupBinderV1 (MgListConsV1 (MgBinderEntryV1 ?y ?t) ?rest) ?x ?r))
+    (rule mg-trie-put-down
+      (head (MgTriePutV1 (MgTrieV1 ?v ?k) (MgCpConsV1 ?c ?rest) ?w (MgTrieV1 ?v ?k2)))
       (body
-        (different ?y ?x)
-        (MgLookupBinderV1 ?rest ?x ?r)))
-    (rule mg-prio-member-nil
-      (head (MgPrioMemberV1 MgListNilV1 ?p MgNoV1))
-      (body))
-    (rule mg-prio-member-here
-      (head (MgPrioMemberV1 (MgListConsV1 ?p ?rest) ?p MgYesV1))
-      (body))
-    (rule mg-prio-member-next
-      (head (MgPrioMemberV1 (MgListConsV1 ?q ?rest) ?p ?r))
+        (MgTrieKidPutV1 ?k ?c ?rest ?w ?k2)))
+    (rule mg-trie-kid-put-nil
+      (head (MgTrieKidPutV1 MgTrieNilV1 ?c ?rest ?w (MgTrieKidV1 ?c ?t MgTrieNilV1)))
       (body
-        (different ?q ?p)
-        (MgPrioMemberV1 ?rest ?p ?r)))
+        (MgTriePutV1 (MgTrieV1 MgNoneV1 MgTrieNilV1) ?rest ?w ?t)))
+    (rule mg-trie-kid-put-here
+      (head (MgTrieKidPutV1 (MgTrieKidV1 ?c ?t ?more) ?c ?rest ?w (MgTrieKidV1 ?c ?t2 ?more)))
+      (body
+        (MgTriePutV1 ?t ?rest ?w ?t2)))
+    (rule mg-trie-kid-put-next
+      (head (MgTrieKidPutV1 (MgTrieKidV1 ?d ?t ?more) ?c ?rest ?w (MgTrieKidV1 ?d ?t ?more2)))
+      (body
+        (different ?d ?c)
+        (MgTrieKidPutV1 ?more ?c ?rest ?w ?more2)))
+    (rule mg-present-none
+      (head (MgPresentV1 MgNoneV1 MgNoV1))
+      (body))
+    (rule mg-present-some
+      (head (MgPresentV1 (MgSomeV1 ?w) MgYesV1))
+      (body))
+    (rule mg-lookup-preop
+      (head (MgLookupPreopV1 ?t ?x ?r))
+      (body
+        (MgTrieGetV1 ?t ?x ?r)))
+    (rule mg-lookup-postinf
+      (head (MgLookupPostInfV1 ?t ?x ?r))
+      (body
+        (MgTrieGetV1 ?t ?x ?r)))
+    (rule mg-lookup-binder
+      (head (MgLookupBinderV1 ?t ?x ?r))
+      (body
+        (MgTrieGetV1 ?t ?x ?r)))
+    (rule mg-prio-member
+      (head (MgPrioMemberV1 ?t ?p ?r))
+      (body
+        (MgTrieGetV1 ?t ?p ?v)
+        (MgPresentV1 ?v ?r)))
     (rule mg-proj-name-nil
       (head (MgProjNameV1 MgCpNilV1 MgNoV1))
       (body))
@@ -212,7 +235,7 @@
       (body
         (MgLookupPostInfV1 ?post ?x ?b)))
     (rule mg-initial-env
-      (head (MgInitialEnvV1 (MgEnvV1 (MgTablesV1 MgListNilV1 (MgListConsV1 (MgPostInfEntryV1 (MgCpConsV1 (cp 94) MgCpNilV1) (MgCpConsV1 (cp 55) (MgCpConsV1 (cp 57) (MgCpConsV1 (cp 48) MgCpNilV1))) MgInfixNoneV1) (MgListConsV1 (MgPostInfEntryV1 (MgCpConsV1 (cp 45) (MgCpConsV1 (cp 62) MgCpNilV1)) (MgCpConsV1 (cp 56) (MgCpConsV1 (cp 48) (MgCpConsV1 (cp 48) MgCpNilV1))) MgInfixRightV1) MgListNilV1)) (MgListConsV1 (MgBinderEntryV1 (MgCpConsV1 (cp 102) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 108) (MgCpConsV1 (cp 108) MgCpNilV1)))))) MgTkCommaV1) (MgListConsV1 (MgBinderEntryV1 (MgCpConsV1 (cp 102) (MgCpConsV1 (cp 117) (MgCpConsV1 (cp 110) MgCpNilV1))) MgTkDarrV1) MgListNilV1)) MgListNilV1 (MgListConsV1 (MgCpConsV1 (cp 55) (MgCpConsV1 (cp 57) (MgCpConsV1 (cp 48) MgCpNilV1))) (MgListConsV1 (MgCpConsV1 (cp 56) (MgCpConsV1 (cp 48) (MgCpConsV1 (cp 48) MgCpNilV1))) MgListNilV1)) (MgListConsV1 (MgCpConsV1 (cp 55) (MgCpConsV1 (cp 57) (MgCpConsV1 (cp 48) MgCpNilV1))) (MgListConsV1 (MgCpConsV1 (cp 56) (MgCpConsV1 (cp 48) (MgCpConsV1 (cp 48) MgCpNilV1))) MgListNilV1)) MgListNilV1) MgListNilV1)))
+      (head (MgInitialEnvV1 (MgEnvV1 (MgTablesV1 (MgTrieV1 MgNoneV1 MgTrieNilV1) (MgTrieV1 MgNoneV1 (MgTrieKidV1 (cp 45) (MgTrieV1 MgNoneV1 (MgTrieKidV1 (cp 62) (MgTrieV1 (MgSomeV1 (MgPostInfV1 (MgCpConsV1 (cp 56) (MgCpConsV1 (cp 48) (MgCpConsV1 (cp 48) MgCpNilV1))) MgInfixRightV1)) MgTrieNilV1) MgTrieNilV1)) (MgTrieKidV1 (cp 94) (MgTrieV1 (MgSomeV1 (MgPostInfV1 (MgCpConsV1 (cp 55) (MgCpConsV1 (cp 57) (MgCpConsV1 (cp 48) MgCpNilV1))) MgInfixNoneV1)) MgTrieNilV1) MgTrieNilV1))) (MgTrieV1 MgNoneV1 (MgTrieKidV1 (cp 102) (MgTrieV1 MgNoneV1 (MgTrieKidV1 (cp 117) (MgTrieV1 MgNoneV1 (MgTrieKidV1 (cp 110) (MgTrieV1 (MgSomeV1 MgTkDarrV1) MgTrieNilV1) MgTrieNilV1)) (MgTrieKidV1 (cp 111) (MgTrieV1 MgNoneV1 (MgTrieKidV1 (cp 114) (MgTrieV1 MgNoneV1 (MgTrieKidV1 (cp 97) (MgTrieV1 MgNoneV1 (MgTrieKidV1 (cp 108) (MgTrieV1 MgNoneV1 (MgTrieKidV1 (cp 108) (MgTrieV1 (MgSomeV1 MgTkCommaV1) MgTrieNilV1) MgTrieNilV1)) MgTrieNilV1)) MgTrieNilV1)) MgTrieNilV1)) MgTrieNilV1))) MgTrieNilV1)) (MgTrieV1 MgNoneV1 MgTrieNilV1) (MgTrieV1 MgNoneV1 (MgTrieKidV1 (cp 56) (MgTrieV1 MgNoneV1 (MgTrieKidV1 (cp 48) (MgTrieV1 MgNoneV1 (MgTrieKidV1 (cp 48) (MgTrieV1 (MgSomeV1 MgYesV1) MgTrieNilV1) MgTrieNilV1)) MgTrieNilV1)) (MgTrieKidV1 (cp 55) (MgTrieV1 MgNoneV1 (MgTrieKidV1 (cp 57) (MgTrieV1 MgNoneV1 (MgTrieKidV1 (cp 48) (MgTrieV1 (MgSomeV1 MgYesV1) MgTrieNilV1) MgTrieNilV1)) MgTrieNilV1)) MgTrieNilV1))) (MgTrieV1 MgNoneV1 (MgTrieKidV1 (cp 56) (MgTrieV1 MgNoneV1 (MgTrieKidV1 (cp 48) (MgTrieV1 MgNoneV1 (MgTrieKidV1 (cp 48) (MgTrieV1 (MgSomeV1 MgYesV1) MgTrieNilV1) MgTrieNilV1)) MgTrieNilV1)) (MgTrieKidV1 (cp 55) (MgTrieV1 MgNoneV1 (MgTrieKidV1 (cp 57) (MgTrieV1 MgNoneV1 (MgTrieKidV1 (cp 48) (MgTrieV1 (MgSomeV1 MgYesV1) MgTrieNilV1) MgTrieNilV1)) MgTrieNilV1)) MgTrieNilV1))) (MgTrieV1 MgNoneV1 MgTrieNilV1)) MgListNilV1)))
       (body))
     (rule mg-digit-cmp-0-0
       (head (MgDigitCmpV1 (cp 48) (cp 48) MgEqV1))
@@ -712,8 +735,11 @@
       (head (MgPostInfRightV1 MgYesV1 (MgEnvV1 (MgTablesV1 ?pre ?post ?bind ?pp ?npp ?rp ?nrp) ?secs) ?x ?p ?pic (MgErrorV1 (MgFailureV1 (MgListConsV1 ?x (MgListConsV1 (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 99) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 116) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 98) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 103) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 118) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 112) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 116) (MgCpConsV1 (cp 121) (MgCpConsV1 (cp 32) MgCpNilV1)))))))))))))))))))))))))) (MgListConsV1 ?p (MgListConsV1 (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 115) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 99) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 103) (MgCpConsV1 (cp 104) (MgCpConsV1 (cp 116) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 102) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 120) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 112) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 116) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 112) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 115) (MgCpConsV1 (cp 116) (MgCpConsV1 (cp 102) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 120) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 112) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 116) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 104) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 115) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 116) (MgCpConsV1 (cp 104) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 115) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 112) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 116) (MgCpConsV1 (cp 121) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 108) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 100) (MgCpConsV1 (cp 121) (MgCpConsV1 (cp 46) MgCpNilV1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) MgListNilV1)))) MgItemStartV1))))
       (body))
     (rule mg-postinf-right-free
-      (head (MgPostInfRightV1 MgNoV1 (MgEnvV1 (MgTablesV1 ?pre ?post ?bind ?pp ?npp ?rp ?nrp) ?secs) ?x ?p ?pic (MgEnvV1 (MgTablesV1 ?pre (MgListConsV1 (MgPostInfEntryV1 ?x ?p ?pic) ?post) ?bind ?pp (MgListConsV1 ?p ?npp) (MgListConsV1 ?p ?rp) ?nrp) ?secs)))
-      (body))
+      (head (MgPostInfRightV1 MgNoV1 (MgEnvV1 (MgTablesV1 ?pre ?post ?bind ?pp ?npp ?rp ?nrp) ?secs) ?x ?p ?pic (MgEnvV1 (MgTablesV1 ?pre ?post2 ?bind ?pp ?npp2 ?rp2 ?nrp) ?secs)))
+      (body
+        (MgTriePutV1 ?post ?x (MgPostInfV1 ?p ?pic) ?post2)
+        (MgTriePutV1 ?npp ?p MgYesV1 ?npp2)
+        (MgTriePutV1 ?rp ?p MgYesV1 ?rp2)))
     (rule mg-postinf-declare-other
       (head (MgPostInfDeclareV1 MgNoV1 (MgEnvV1 (MgTablesV1 ?pre ?post ?bind ?pp ?npp ?rp ?nrp) ?secs) ?x ?p ?pic ?out))
       (body
@@ -723,8 +749,11 @@
       (head (MgPostInfOtherV1 MgYesV1 (MgEnvV1 (MgTablesV1 ?pre ?post ?bind ?pp ?npp ?rp ?nrp) ?secs) ?x ?p ?pic (MgErrorV1 (MgFailureV1 (MgListConsV1 ?x (MgListConsV1 (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 99) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 116) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 98) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 103) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 118) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 112) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 116) (MgCpConsV1 (cp 121) (MgCpConsV1 (cp 32) MgCpNilV1)))))))))))))))))))))))))) (MgListConsV1 ?p (MgListConsV1 (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 115) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 99) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 103) (MgCpConsV1 (cp 104) (MgCpConsV1 (cp 116) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 102) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 120) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 112) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 116) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 104) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 115) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 116) (MgCpConsV1 (cp 104) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 115) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 112) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 116) (MgCpConsV1 (cp 121) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 108) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 100) (MgCpConsV1 (cp 121) (MgCpConsV1 (cp 46) MgCpNilV1)))))))))))))))))))))))))))))))))))))))))))))))))))))))) MgListNilV1)))) MgItemStartV1))))
       (body))
     (rule mg-postinf-other-free
-      (head (MgPostInfOtherV1 MgNoV1 (MgEnvV1 (MgTablesV1 ?pre ?post ?bind ?pp ?npp ?rp ?nrp) ?secs) ?x ?p ?pic (MgEnvV1 (MgTablesV1 ?pre (MgListConsV1 (MgPostInfEntryV1 ?x ?p ?pic) ?post) ?bind ?pp (MgListConsV1 ?p ?npp) ?rp (MgListConsV1 ?p ?nrp)) ?secs)))
-      (body))
+      (head (MgPostInfOtherV1 MgNoV1 (MgEnvV1 (MgTablesV1 ?pre ?post ?bind ?pp ?npp ?rp ?nrp) ?secs) ?x ?p ?pic (MgEnvV1 (MgTablesV1 ?pre ?post2 ?bind ?pp ?npp2 ?rp ?nrp2) ?secs)))
+      (body
+        (MgTriePutV1 ?post ?x (MgPostInfV1 ?p ?pic) ?post2)
+        (MgTriePutV1 ?npp ?p MgYesV1 ?npp2)
+        (MgTriePutV1 ?nrp ?p MgYesV1 ?nrp2)))
     (rule mg-declare-prefix
       (head (MgDeclarePrefixV1 (MgEnvV1 (MgTablesV1 ?pre ?post ?bind ?pp ?npp ?rp ?nrp) ?secs) ?x ?p ?out))
       (body
@@ -742,8 +771,11 @@
       (head (MgPrefixBinderV1 (MgSomeV1 ?tok) (MgEnvV1 (MgTablesV1 ?pre ?post ?bind ?pp ?npp ?rp ?nrp) ?secs) ?x ?p (MgErrorV1 (MgFailureV1 (MgListConsV1 ?x (MgListConsV1 (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 115) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 108) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 100) (MgCpConsV1 (cp 121) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 98) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 100) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 100) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 99) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 116) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 98) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 117) (MgCpConsV1 (cp 115) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 100) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 115) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 112) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 102) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 120) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 112) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 116) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 46) MgCpNilV1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) MgListNilV1)) MgItemStartV1))))
       (body))
     (rule mg-prefix-binder-free
-      (head (MgPrefixBinderV1 MgNoneV1 (MgEnvV1 (MgTablesV1 ?pre ?post ?bind ?pp ?npp ?rp ?nrp) ?secs) ?x ?p (MgEnvV1 (MgTablesV1 (MgListConsV1 (MgPreopEntryV1 ?x ?p) ?pre) ?post ?bind (MgListConsV1 ?p ?pp) ?npp ?rp (MgListConsV1 ?p ?nrp)) ?secs)))
-      (body))
+      (head (MgPrefixBinderV1 MgNoneV1 (MgEnvV1 (MgTablesV1 ?pre ?post ?bind ?pp ?npp ?rp ?nrp) ?secs) ?x ?p (MgEnvV1 (MgTablesV1 ?pre2 ?post ?bind ?pp2 ?npp ?rp ?nrp2) ?secs)))
+      (body
+        (MgTriePutV1 ?pre ?x ?p ?pre2)
+        (MgTriePutV1 ?pp ?p MgYesV1 ?pp2)
+        (MgTriePutV1 ?nrp ?p MgYesV1 ?nrp2)))
     (rule mg-binder-token-comma
       (head (MgBinderTokenV1 MgTrueV1 MgTkCommaV1))
       (body))
@@ -759,9 +791,10 @@
       (head (MgBinderPrefixV1 (MgSomeV1 ?q) (MgEnvV1 (MgTablesV1 ?pre ?post ?bind ?pp ?npp ?rp ?nrp) ?secs) ?x ?comma (MgErrorV1 (MgFailureV1 (MgListConsV1 ?x (MgListConsV1 (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 115) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 108) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 100) (MgCpConsV1 (cp 121) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 112) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 102) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 120) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 112) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 116) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 100) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 99) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 111) (MgCpConsV1 (cp 116) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 98) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 117) (MgCpConsV1 (cp 115) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 100) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 115) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 97) (MgCpConsV1 (cp 32) (MgCpConsV1 (cp 98) (MgCpConsV1 (cp 105) (MgCpConsV1 (cp 110) (MgCpConsV1 (cp 100) (MgCpConsV1 (cp 101) (MgCpConsV1 (cp 114) (MgCpConsV1 (cp 46) MgCpNilV1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) MgListNilV1)) MgItemStartV1))))
       (body))
     (rule mg-binder-prefix-free
-      (head (MgBinderPrefixV1 MgNoneV1 (MgEnvV1 (MgTablesV1 ?pre ?post ?bind ?pp ?npp ?rp ?nrp) ?secs) ?x ?comma (MgEnvV1 (MgTablesV1 ?pre ?post (MgListConsV1 (MgBinderEntryV1 ?x ?tok) ?bind) ?pp ?npp ?rp ?nrp) ?secs)))
+      (head (MgBinderPrefixV1 MgNoneV1 (MgEnvV1 (MgTablesV1 ?pre ?post ?bind ?pp ?npp ?rp ?nrp) ?secs) ?x ?comma (MgEnvV1 (MgTablesV1 ?pre ?post ?bind2 ?pp ?npp ?rp ?nrp) ?secs)))
       (body
-        (MgBinderTokenV1 ?comma ?tok)))
+        (MgBinderTokenV1 ?comma ?tok)
+        (MgTriePutV1 ?bind ?x ?tok ?bind2)))
     (rule mg-enter-section
       (head (MgEnterSectionV1 (MgEnvV1 ?tables ?secs) ?x (MgEnvV1 ?tables (MgListConsV1 (MgSectionFrameV1 ?x ?tables) ?secs))))
       (body))

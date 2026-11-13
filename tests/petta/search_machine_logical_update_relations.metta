@@ -11,14 +11,14 @@
       first))
 (= (logical-update-call) second)
 
-; Declaration order and duplicate occurrences are observable.
+; Duplicate occurrences are observable.
 (= (ordered-occurrences) first-order)
 (= (ordered-occurrences) duplicate)
 (= (ordered-occurrences) duplicate)
 (= (ordered-occurrences) last-order)
 
-!(collapse (logical-update-call))
+!(sort-atom (collapse (logical-update-call)))
 ; A later call sees the completed mutation, while its own newly asserted
 ; occurrence again remains invisible until another call begins.
-!(collapse (logical-update-call))
-!(collapse (ordered-occurrences))
+!(sort-atom (collapse (logical-update-call)))
+!(sort-atom (collapse (ordered-occurrences)))

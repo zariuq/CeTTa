@@ -1,0 +1,2 @@
+// @{*@{*$y}} is the name $y: each quote of a single drop is its dropped name.
+for ($y <- @{0}) {@{*@{*$y}}!(0)} | @{0}!(@{0}!(0)) | for (z <- @{@{0}!(0)}) {0}

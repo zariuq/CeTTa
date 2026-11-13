@@ -1,0 +1,5 @@
+# Fixture programs that do not pass on SWI-PeTTa (stable-fixed c3adb86) with transform
+# written in PeTTa when binding, branching and choice are rewritten too.  Name, a tab,
+# the reason.  The rows are those of the two lists this run combines.
+defined_then_mentioned	a part of a control form is a function of its own, entered when it is reached: a body that defines a function and then mentions it as data has the mention in a part entered after the definition, so there it is a call. As written the mention stays data for that invocation.
+partial_body_values	SWI-PeTTa widens the stored equation of a function whose body is a partial application, so that equation is no longer at the arity its rule is read at: called with exactly its written arguments the function answers nothing (as written: a partial application of the function). A body is not wrapped to prevent it: a wrapper delays the unification of the answer and breaks a function run backwards. Calls with the further arguments pass (fixture partial_bodies).

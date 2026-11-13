@@ -1,0 +1,14 @@
+true
+true
+(plain-count (1))
+(plain-made ((st2 (1 $V0) (k $V0))))
+(plain-bound ((bound 5)))
+true
+(computed-count (1))
+(computed-made ((st2 (tuple 1 $V0) (k $V0))))
+(computed-bound ((bound 5)))
+true
+true
+(apart-count (1))
+(apart-made ((both (tuple $V0) (k $V1))))
+(apart-bound ((bound $V0)))

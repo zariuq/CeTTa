@@ -331,6 +331,88 @@ static MgTm *headnorm(MgElab *e, MgTm *m, const Dl **dl) {
     return headnorm1(e, mge_beta_eta_norm(e, m), dl);
 }
 
+/* What conversion remembers.  Megalodon's syntax.ml remembers nothing; the
+ * two shortcuts below give its answers without repeating its work.
+ *
+ * A refuted pair stays refuted.  conv2 decides whether two beta-eta normal
+ * terms are equal up to the definitions in force.  The delta set it is
+ * handed only steers which definitions are unfolded first and recorded: it
+ * does not change the answer, and a refutation records nothing.  So a pair
+ * once refuted is refuted until a definition or its opacity changes
+ * (mge_conv_forget), and is answered from the table.
+ *
+ * A refutation is often asked for more than once.  rewrite asks one
+ * conversion for each subterm it passes before its first match.  When two
+ * terms differ only below several nested definitions, conv2 compares their
+ * arguments, unfolds one side a step and compares again, so the pair at the
+ * bottom is refuted anew at every step of every level above it, and the
+ * work multiplies with the depth (tests/megalodon/scaling_workloads.metta,
+ * the workload "nearly").
+ *
+ * A term is convertible with itself.  Megalodon unfolds and records nothing
+ * to see that; terms are interned here, so it is one comparison.
+ *
+ * One case could put an answer where Megalodon fails: it cannot unfold a
+ * definition with six type variables (delta_exp).  The memory is off once
+ * such a definition exists (conv_memory_off). */
+struct ConvRefuted {
+    MgTm *m, *n;
+    uint64_t epoch;
+};
+
+static size_t refuted_slot(MgTm *m, MgTm *n, size_t cap) {
+    uint64_t h = ((uint64_t)(uintptr_t)m * 0x9E3779B97F4A7C15ull) ^
+                 (((uint64_t)(uintptr_t)n * 0xC2B2AE3D27D4EB4Full) >> 7);
+    h ^= h >> 29;
+    return (size_t)(h & (cap - 1u));
+}
+
+/* A slot is free unless it carries a pair of the current epoch. */
+static bool refuted_live(const MgElab *e, const struct ConvRefuted *s) {
+    return s->m && s->epoch == e->conv_epoch;
+}
+
+static bool refuted_p(const MgElab *e, MgTm *m, MgTm *n) {
+    if (!e->refuted_len)
+        return false;
+    for (size_t i = refuted_slot(m, n, e->refuted_cap);; i = (i + 1u) & (e->refuted_cap - 1u)) {
+        const struct ConvRefuted *s = &e->refuted[i];
+        if (!refuted_live(e, s))
+            return false;
+        if (s->m == m && s->n == n)
+            return true;
+    }
+}
+
+static void refuted_put(const MgElab *e, struct ConvRefuted *slots, size_t cap, MgTm *m, MgTm *n) {
+    for (size_t i = refuted_slot(m, n, cap);; i = (i + 1u) & (cap - 1u)) {
+        struct ConvRefuted *s = &slots[i];
+        if (!refuted_live(e, s)) {
+            *s = (struct ConvRefuted){m, n, e->conv_epoch};
+            return;
+        }
+    }
+}
+
+/* Remember a refuted pair.  The table is kept at most half full; when it
+ * cannot grow the pair is simply not remembered. */
+static void refuted_add(MgElab *e, MgTm *m, MgTm *n) {
+    if ((e->refuted_len + 1u) * 2u > e->refuted_cap) {
+        size_t cap = e->refuted_cap ? e->refuted_cap * 2u : 256u;
+        struct ConvRefuted *slots = calloc(cap, sizeof *slots);
+        if (!slots)
+            return;
+        for (size_t i = 0; i < e->refuted_cap; ++i)
+            if (refuted_live(e, &e->refuted[i]))
+                refuted_put(e, slots, cap, e->refuted[i].m, e->refuted[i].n);
+        free(e->refuted);
+        e->refuted = slots;
+        e->refuted_cap = cap;
+    }
+    refuted_put(e, e->refuted, e->refuted_cap, m, n);
+    ++e->refuted_len;
+}
+
 static bool conv2(MgElab *e, MgTm *m, MgTm *n, const Dl **dl);
 
 static bool convl(MgElab *e, MgTm **ml, MgTm **nl, uint32_t len, const Dl **dl) {
@@ -373,6 +455,15 @@ static bool is_binder_or_imp(const MgTm *m) {
  * was given. */
 static bool conv2(MgElab *e, MgTm *m, MgTm *n, const Dl **dl) {
     const Dl *in = *dl;
+    MgTm *m0 = m, *n0 = n;
+    bool memory = !e->conv_memory_off;
+    ++e->conv_steps;
+    if (memory) {
+        if (m == n)
+            return true;
+        if (refuted_p(e, m, n))
+            return false;
+    }
     for (;;) {
         if (m->tag == MG_TM_LAM && n->tag == MG_TM_LAM) {
             if (m->tp != n->tp)
@@ -445,6 +536,8 @@ static bool conv2(MgElab *e, MgTm *m, MgTm *n, const Dl **dl) {
     }
 fail:
     *dl = in;
+    if (memory)
+        refuted_add(e, m0, n0);
     return false;
 }
 
@@ -580,18 +673,16 @@ static const TpCx *tp_context(MgElab *e, const Cx *cxtm) {
 }
 
 static const PfCx *pf_context(MgElab *e, const Hy *cxpf) {
-    if (!cxpf)
-        return NULL;
-    PfCx *c = TMP(e, PfCx);
-    *c = (PfCx){cxpf->prop, pf_context(e, cxpf->next)};
-    return c;
+    (void)e;
+    return cxpf ? &cxpf->view : NULL;
 }
 
 /* pfproplookup cxpf x */
 static bool hyp_lookup(const Hy *cxpf, const char *x, uint32_t *i, MgTm **prop) {
     uint32_t k = 0;
+    uint32_t key = mge_name_key(x);
     for (; cxpf; cxpf = cxpf->next, ++k)
-        if (strcmp(cxpf->name, x) == 0) {
+        if (cxpf->name_key == key && strcmp(cxpf->name, x) == 0) {
             *i = k;
             *prop = cxpf->prop;
             return true;
@@ -773,13 +864,13 @@ static const Hy *hyps_shift(MgElab *e, const Hy *cxpf) {
         return NULL;
     Hy *h = TMP(e, Hy);
     const Hy *rest = hyps_shift(e, cxpf->next);
-    *h = (Hy){cxpf->name, mge_shift1(e, cxpf->prop), rest};
+    mge_hy_set(h, cxpf->name, mge_shift1(e, cxpf->prop), rest);
     return h;
 }
 
 static const Hy *hy_push(MgElab *e, const Hy *next, const char *name, MgTm *prop) {
     Hy *h = TMP(e, Hy);
-    *h = (Hy){name, prop, next};
+    mge_hy_set(h, name, prop, next);
     return h;
 }
 
@@ -2490,7 +2581,7 @@ static const Cx *cx_perm(MgElab *e, const Cx *next, const char *name, MgTp *tp, 
 
 static const Hy *hy_perm(MgElab *e, const Hy *next, const char *name, MgTm *prop) {
     Hy *h = PERM(e, Hy);
-    *h = (Hy){name, prop, next};
+    mge_hy_set(h, name, prop, next);
     return h;
 }
 
@@ -2499,7 +2590,7 @@ static const Hy *hyps_shift_perm(MgElab *e, const Hy *cxpf) {
         return NULL;
     Hy *h = PERM(e, Hy);
     const Hy *rest = hyps_shift_perm(e, cxpf->next);
-    *h = (Hy){cxpf->name, mge_shift1(e, cxpf->prop), rest};
+    mge_hy_set(h, cxpf->name, mge_shift1(e, cxpf->prop), rest);
     return h;
 }
 
@@ -3627,6 +3718,13 @@ static MgPf *kernel_pf(MgElab *e, MgPf *d, uint32_t levels) {
 
 /* Why a finished proof has no authority: the document's admits first,
  * then a budget that ran out, then aby steps. */
+/* The admission is told what the theorem's proof script asked of the
+ * engine, before it records the theorem's verdict. */
+static void tell_cost(MgElab *e) {
+    if (e->admission)
+        mg_admission_proof_conversions(e->admission, e->conv_steps - e->thm_conv_start);
+}
+
 static MgVerdict unproved_why(const MgElab *e) {
     if (e->admit_used)
         return MG_VERDICT_ADMITTED;
@@ -3728,6 +3826,7 @@ static void qed(MgElab *e) {
         }
         /* a proof with admits has no authority; nor, until the engine
          * evaluates every tactic, an unchecked one */
+        tell_cost(e);
         if (e->admission && !mg_admit_unproved_as(e->admission, unproved_why(e)))
             mge_kernel_refused(e);
         return;
@@ -3736,6 +3835,7 @@ static void qed(MgElab *e) {
     if (k == RAISE_EXHAUSTED) {
         /* the theorem's budget ran out while its proof was checked */
         e->exhausted_proof = true;
+        tell_cost(e);
         if (e->admission && !mg_admit_unproved_as(e->admission, MG_VERDICT_EXHAUSTED))
             mge_kernel_refused(e);
         return;
@@ -3767,12 +3867,14 @@ static void qed_checked(MgElab *e, void *ctx) {
         MgPf *k = kernel_pf(e, dgpf, e->thm_levels);
         for (uint32_t i = 0; i < e->thm_levels; ++i)
             k = pck(e, mg_pf_tplam(e->s, k));
+        tell_cost(e);
         if (!mg_admit_proof(e->admission, k))
             mge_kernel_refused(e);
     }
 }
 
 void mge_proof_begin(MgElab *e, MgTm *atm) {
+    e->thm_conv_start = e->conv_steps;
     e->deltaset = NULL;
     e->prooffun = NULL;
     e->thm_clos = e->clos;
@@ -3946,6 +4048,7 @@ static void eval_pftac(MgElab *e, const MgSourceItem *it) {
         mge_row_begin(e);
         mg_buf_puts(&e->row, "(ADMITTED)\n");
         mge_row_out(e);
+        tell_cost(e);
         if (e->admission && !mg_admit_unproved(e->admission))
             mge_kernel_refused(e);
         if (e->thm_levels > 0u)

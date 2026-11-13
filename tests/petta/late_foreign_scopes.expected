@@ -1,5 +1,5 @@
 true
-((Before a) (After 2) (After 2) (Tail a))
+((After 2) (After 2) (Before a) (Tail a))
 ()
 ((Pair 1 2))
 ((Outer (Inner 2) a))
@@ -18,7 +18,7 @@ true
 (second)
 (second)
 true
-((OuterPrefix a) (Outer ((Inner 2))) (OuterTail a))
+((Outer ((Inner 2))) (OuterPrefix a) (OuterTail a))
 ()
 ((Pair 1 2))
 (Error (evaluation_error undefined) (context (: system (/ is 2)) $V0))

@@ -34,8 +34,8 @@
 
 ; A space is the predicate its name names.
 !(let $v (&self friend $x $y) $v)
-!(collapse (let $g (Predicate (&self friend $x $y))
-    (let $_ (callPredicate $g) ($x $y))))
+!(sort-atom (collapse (let $g (Predicate (&self friend $x $y))
+    (let $_ (callPredicate $g) ($x $y)))))
 !(collapse (let $_ (translatePredicate (&self friend a $who)) $who))
 !(collapse (let $_ (translatePredicate (catch (Predicate (&self missing $x)) $_ fail)) $x))
 

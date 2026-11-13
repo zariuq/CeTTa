@@ -1192,9 +1192,9 @@ def infer_spec_rule_ids(row: dict[str, Any]) -> list[str]:
         for token in [
             "new-space",
             "space-len",
-            "space-get",
-            "space-pop",
-            "space-peek",
+            "space:",
+            "space:",
+            "space:",
             "space-set-backend",
             "space-set-match-backend",
             "space_engine_backend",
@@ -1651,7 +1651,7 @@ def triage_broad_result(row: dict[str, Any]) -> str:
         return "extended-profile-diff"
     if "rational" in path or "bigint" in path or "numeric" in path or "1/2" in text or "999/1000" in text:
         return "grounded-numeric-extension"
-    if any(token in text for token in ["new-space", "space-len", "space-get", "space-pop", "space-peek", "count-atoms"]):
+    if any(token in text for token in ["new-space", "space-len", "space:", "space:", "space:", "count-atoms"]):
         return "native-space-extension"
     if any(token in text for token in ["collapse", "superpose", "bindings", "width_tuple", "fold-by-key"]):
         return "nondet-order-or-collapse-shape"

@@ -6,7 +6,7 @@
 (: shift (-> Atom Atom))
 !(get-type area)
 !(get-type label)
-!(collapse (get-type shift))
+!(sort-atom (collapse (get-type shift)))
 !(get-type perimeter)
 
 (= (twice $x) (* 2 $x))

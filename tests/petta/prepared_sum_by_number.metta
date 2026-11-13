@@ -25,8 +25,8 @@
 
 ; A nondeterministic projection is outside the fused region.  The authored
 ; recursive fold remains authoritative and preserves every choice.
-!(collapse (list:sum-by prepared-sum:choice (1 2)))
-!(collapse (list:fold-map prepared-sum:choice prepared-sum:add 0 (1 2)))
+!(sort-atom (collapse (list:sum-by prepared-sum:choice (1 2))))
+!(sort-atom (collapse (list:fold-map prepared-sum:choice prepared-sum:add 0 (1 2))))
 
 ; Effects exclude the fused region and occur exactly once, left to right, in
 ; the authored recursive fold.

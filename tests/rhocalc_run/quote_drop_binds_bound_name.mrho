@@ -1,0 +1,8 @@
+;; @(*y) is the name y (quote-drop), so the receive binds it.  After the first
+;; COMM the send's channel is the received name @(@0!(0)), which meets the
+;; second receive.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $y (rho:send (rho:quote (rho:drop $y)) rho:nil))
+  (rho:par
+    (rho:send (rho:quote rho:nil) (rho:send (rho:quote rho:nil) rho:nil))
+    (rho:recv (rho:quote (rho:send (rho:quote rho:nil) rho:nil)) $z rho:nil)))

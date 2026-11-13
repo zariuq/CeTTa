@@ -1,7 +1,8 @@
 /*
  * mg-check [-hf|-mizar|-hoas|-setmm] [-I SIGNATURE]... [--theorem NAME]...
  *          [--allow-axiom NAME]... [--allow-document-axioms] [--theorem-work UNITS]
- *          [--prove-aby [--aby-steps N] [--aby-depth N]] [--verbose] FILE
+ *          [--prove-aby [--aby-steps N] [--aby-depth N]] [--verbose]
+ *          [--reference-conversion] FILE
  * mg-check --help
  *
  * Checks a Megalodon document with the native kernel and says what is
@@ -33,6 +34,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "gslt_native_runtime_v1.h"
 #include "mg_core.h"
 #include "mg_elab.h"
 #include "mg_library.h"
@@ -41,7 +43,8 @@
 #define USAGE \
     "usage: mg-check [-hf|-mizar|-hoas|-setmm] [-I SIGNATURE]... [--theorem NAME]...\n" \
     "                [--allow-axiom NAME]... [--allow-document-axioms] [--theorem-work UNITS]\n" \
-    "                [--prove-aby [--aby-steps N] [--aby-depth N]] [--verbose] FILE\n"
+    "                [--prove-aby [--aby-steps N] [--aby-depth N]] [--verbose]\n" \
+    "                [--reference-conversion] FILE\n"
 
 #define HELP \
     "mg-check: check a Megalodon document with a native kernel and say what is verified.\n" \
@@ -72,8 +75,12 @@
     "  --aby-steps N            search steps for each aby step (default 200000)\n" \
     "  --aby-depth N            levels of iterative deepening for each aby step\n" \
     "                           (default 8, at most 64)\n" \
-    "  --verbose                list every theorem, with its identity and the work\n" \
-    "                           its checking took\n" \
+    "  --verbose                list every theorem, with its identity, the\n" \
+    "                           conversions its proof script asked of the tactic\n" \
+    "                           engine and the work its checking took\n" \
+    "  --reference-conversion   run the tactic engine's conversion as Megalodon\n" \
+    "                           does, remembering nothing: the same answers, and\n" \
+    "                           the conversions counted are what Megalodon pays\n" \
     "  --help                   print this help\n" \
     "\n" \
     "The report lists every theorem that is not verified, with its verdict:\n" \
@@ -187,7 +194,8 @@ static void print_theorem(const Ctx *c, const MgLedgerEntry *x, bool verbose) {
         break;
     }
     if (verbose)
-        printf(" (id %s, %llu work units)", id_text(c->theory, x->id), (unsigned long long)x->work);
+        printf(" (id %s, %llu conversions, %llu work units)", id_text(c->theory, x->id),
+               (unsigned long long)x->conversions, (unsigned long long)x->work);
     printf("\n");
 }
 
@@ -214,6 +222,7 @@ int main(int argc, char **argv) {
             allowed.v[allowed.len++] = argv[++i];
         else if (strcmp(a, "--allow-document-axioms") == 0) allow_all = true;
         else if (strcmp(a, "--prove-aby") == 0) options.prove_aby = true;
+        else if (strcmp(a, "--reference-conversion") == 0) options.reference_conversion = true;
         else if (strcmp(a, "--aby-steps") == 0 && i + 1 < argc) {
             char *end;
             const char *v = argv[++i];
@@ -332,9 +341,12 @@ int main(int argc, char **argv) {
         printf("aby: %llu of %llu steps proved by search\n", (unsigned long long)proved,
                (unsigned long long)tried);
     }
-    if (verbose)
+    if (verbose) {
         printf("%s\nwork: the costliest theorem took %llu units (budget %llu)\n", summary,
                (unsigned long long)most_work, (unsigned long long)options.theorem_work);
+        printf("reading: %llu relation calls\n", (unsigned long long)gn_calls());
+        printf("elaboration: %llu conversions\n", (unsigned long long)mg_elab_conversion_steps(e));
+    }
     int status;
     if (run != MG_RUN_OK) {
         const char *nl = strchr(message, '\n');

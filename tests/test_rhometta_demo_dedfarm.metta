@@ -25,9 +25,7 @@
 (= (farm) (rho:par (cell 0 2) (cell 1 2)))
 
 ; Confluent farm: the run residual equals the natively-computed conclusion par.
-!(assertEqual
-  (collapse (rhometta:run (farm)))
-  (collapse (rho:par (rho:val (deduce-job 0 2)) (rho:val (deduce-job 1 2)))))
+!(assertEqual (rhometta:run (farm)) (rho:par (rho:val (deduce-job 0 2)) (rho:val (deduce-job 1 2))))
 
 ; Guard: deduction consistency held; no job degenerated to the (stv 1 0) fallback.
 (= (is-fallback (conclusion $j (stv $s $c))) (and (== $s 1) (== $c 0)))
@@ -36,6 +34,4 @@
 
 ; Threaded re-run preserves the result.
 !(pragma! num-threads 2)
-!(assertEqual
-  (collapse (rhometta:run (farm)))
-  (collapse (rho:par (rho:val (deduce-job 0 2)) (rho:val (deduce-job 1 2)))))
+!(assertEqual (rhometta:run (farm)) (rho:par (rho:val (deduce-job 0 2)) (rho:val (deduce-job 1 2))))

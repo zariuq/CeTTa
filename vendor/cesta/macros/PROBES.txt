@@ -1,0 +1,36 @@
+Switched probes
+===============
+
+Import Probes.module's Switched theory and write:
+
+  (probe STATS (++ trimmed))
+  (probe STATS (call stats_add COUNTER trimmed))
+
+A probe is a statement. Its switch must be a constant expression; a variable
+switch is refused. When the switch is nonzero the effect runs as written.
+When it is zero the effect is not evaluated and emits no code, yet the
+compiler still checks it: undeclared names, wrong argument types and
+invalid operations are errors in every build. A counter that only probes
+read is used by those probes, so it is not reported as set but unused.
+
+The effect is inserted as written in the caller's scope. A probe adds no
+names and introduces no return, break, continue or goto.
+
+Cost
+----
+
+With the switch off, optimized code equals the program written without the
+probes and their counters. Unoptimized code still initializes probe-only
+locals; only their updates and the probe effects disappear. State that only
+probes read, such as record fields, still occupies memory and still receives
+stores outside probes. Keep its declaration under the same switch with
+ordinary C conditionals, and update it only inside probes.
+
+A no-op macro that discards its argument hides the argument from the
+compiler. The disabled build then neither checks the probe nor sees its
+counters used.
+
+Native tests cover both switch states at O0 and O2, effects and their
+counts, sink references only when enabled, removal of disabled probes,
+checking of disabled probes, a variable-switch refusal, native export and
+identical objects against handwritten C.

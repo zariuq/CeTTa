@@ -32,7 +32,7 @@
 (= (counted-control-choice) (+ 1 not-a-number))
 
 (= (counted-items)
-   (collapse (match &self (counted $x) $x)))
+   (sort-atom (collapse (match &self (counted $x) $x))))
 
 !(length (collapse (match &self (counted $x) $x)))
 !(length (collapse (match &self (counted $x) ())))
@@ -51,8 +51,8 @@
 ; values produced by a translation-time VALUE occurrence remain ordinary data,
 ; while a computed zero-result template must decline the single-answer
 ; contract.
-!(collapse
-   (match &self (counted-mixed-error $value) $value))
+!(sort-atom (collapse
+   (match &self (counted-mixed-error $value) $value)))
 !(length
    (collapse
      (match &self (counted-mixed-error $value) $value)))
@@ -121,10 +121,10 @@
      (match &self (counted-nested (tag 9) $value) $value)))
 
 ; The same shape outside COUNT remains fully materialized.
-!(collapse
+!(sort-atom (collapse
    (match &self
           ($relation count-dynamic-marker)
-          ($relation count-dynamic-marker)))
+          ($relation count-dynamic-marker))))
 
 ; A binder the query reads outside its let keeps its collection: counting it
 ; inside the let changes nothing the query shows.

@@ -245,6 +245,33 @@
 (= (dt-i $x $y) (dt-p $y $x))
 !(collapse (dt-t c1 c0))
 
+; 20. A conjunctive match answers from its space as the space stood when the
+;     match was called, whatever its answers add or remove: its answers are
+;     the join of its patterns over the atoms present at the call, so they
+;     do not depend on the order the atoms were stored in, and atoms never in
+;     the space together do not answer.  SWI-PeTTa reads each later pattern
+;     when the search reaches it: one application of the two-hop rule below,
+;     the edges stored backwards, also adds (edge a d) from an edge it has
+;     just added, and the second match answers b from (right b), added after
+;     (left b) was removed.  Logged as a known divergence whether or not the
+;     reference is repaired (Zar, 2026-11-12).
+; SWI-PeTTa: (true true true), ((a b) (a c) (a d) (b c) (b d) (c d)), (a b)
+!(bind! &diff20 (new-space))
+!(add-atom &diff20 (edge c d))
+!(add-atom &diff20 (edge b c))
+!(add-atom &diff20 (edge a b))
+!(collapse (match &diff20 (, (edge $x $y) (edge $y $z))
+             (add-atom &diff20 (edge $x $z))))
+!(sort-atom (collapse (match &diff20 (edge $x $y) ($x $y))))
+!(bind! &diff20-times (new-space))
+!(add-atom &diff20-times (left a))
+!(add-atom &diff20-times (left b))
+!(add-atom &diff20-times (right a))
+!(sort-atom (collapse
+  (let $answer (match &diff20-times (, (left $x) (right $x)) $x)
+    (let $gone (remove-atom &diff20-times (left b))
+      (let $new (add-atom &diff20-times (right b)) $answer)))))
+
 ; Python boolean interchange (qualified separately by test-python-objects,
 ; since this fixture also runs without Python): true/false argument values
 ; become Python bool, including in legacy py-call. Janus's default atom

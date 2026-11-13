@@ -1,0 +1,31 @@
+Optional HOL adapter dependencies
+=================================
+
+The adapter loads external checkouts. Cesta's core build and exported programs
+do not link HOL Light or s2n-bignum. No upstream implementation is vendored here.
+
+s2n-bignum:
+  https://github.com/awslabs/s2n-bignum
+  Inspected checkout: b4f17ee743ebc9b53a26c3cd1908f50f0658314f
+  External interfaces: x86/proofs/base.ml, common/elf.ml, common/overlap.ml,
+  common/safety.ml, common/consttime.ml, x86/proofs/consttime.ml,
+  x86/proofs/equiv.ml, and their dependencies.
+  Those inspected files carry Apache-2.0 OR ISC OR MIT-0 notices.
+  The upstream LICENSE and per-file notices govern the external checkout.
+
+Compiler-output verification examples inspected:
+  https://github.com/jargh/s2n-bignum-dev/tree/mlkem
+  Branch revision: 1d3eaa37e26adeec664dd0ba3f9856d168b45d67
+  x86/proofs/mlkem_native_poly_add_gcc12_O2.ml
+  x86/proofs/mlkem_native_poly_reduce_gcc12_O2.ml
+  x86/proofs/utils/mlkem_native_libc.ml
+  These examples distinguish functional correctness, access-trace safety and
+  explicit contracts for external calls. They are not copied into Cesta.
+
+HOL Light:
+  https://github.com/jrh13/hol-light
+  The external distribution has its own LICENSE and per-file exceptions.
+
+Keep upstream notices and the applicable licence with any future redistributed
+source portions. MIT-0 and ordinary MIT are distinct licence texts. This file
+records provenance; it does not relicense the external dependencies.

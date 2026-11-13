@@ -1,0 +1,13 @@
+true
+(verified (summary (theorems 2) (checked 2) (verified 2) (admitted 0) (aby 0) (dependent 0) (unfinished 0) (out-of-budget 0) (document-axioms 0) (aby-steps-tried 0) (aby-steps-proved 0)))
+(Megalodon.found (Megalodon.definition "883c0f6c1d1fcab41176c720bad3853c02909a1151bfc3fd9372e65765974c79" (Tp.arr (Tp.base 0) (Tp.base 0)) (source "twice") (also "again") (origin "megalodon-document" 3)))
+(Megalodon.found (Megalodon.definition "883c0f6c1d1fcab41176c720bad3853c02909a1151bfc3fd9372e65765974c79" (Tp.arr (Tp.base 0) (Tp.base 0)) (source "twice") (also "again") (origin "megalodon-document" 3)))
+(Megalodon.found (Megalodon.theorem "5867641425602c707eaecd5be95229f6fd709c9b58d50af108dfe27cb49ac069" (Tm.all (Tp.prop) (Tm.imp (Tm.db 0) (Tm.db 0))) (source "pass") (also "pass_again") (origin "megalodon-document" 5)))
+(Megalodon.found (Megalodon.theorem "5867641425602c707eaecd5be95229f6fd709c9b58d50af108dfe27cb49ac069" (Tm.all (Tp.prop) (Tm.imp (Tm.db 0) (Tm.db 0))) (source "pass") (also "pass_again") (origin "megalodon-document" 5)))
+(Megalodon.found)
+(Megalodon.saved "runtime/megalodon-test/other_names.mglib")
+true
+(Megalodon.imported (primitives 1) (parameters 0) (definitions 1) (axioms 0) (theorems 1) (reproved 0) (repeated 0) (identities 0) (realized 0) (unproved 0) (depends-on-unproved 0) (unsupported 0) (revision 3))
+(Megalodon.found (Megalodon.definition "883c0f6c1d1fcab41176c720bad3853c02909a1151bfc3fd9372e65765974c79" (Tp.arr (Tp.base 0) (Tp.base 0)) (source "twice") (also "again") (origin "megalodon-document" 3)))
+(Megalodon.found (Megalodon.theorem "5867641425602c707eaecd5be95229f6fd709c9b58d50af108dfe27cb49ac069" (Tm.all (Tp.prop) (Tm.imp (Tm.db 0) (Tm.db 0))) (source "pass") (also "pass_again") (origin "megalodon-document" 5)))
+(Megalodon.found)

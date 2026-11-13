@@ -239,9 +239,13 @@ static bool key_build(Arena *arena, Atom *root, MorkCompactKeyV1 *key) {
                 }
                 variables[variable_len++] = atom->var_id;
             }
+            /* MORK's bytes: a variable's first occurrence is NewVar (0xC0),
+             * a later one names its slot (0x80 | slot).  0xC0 | slot with a
+             * slot above zero is the tag of a symbol of that size. */
             if (slot >= 64u ||
                 !key_push_byte(
-                    key, (uint8_t)((introduction ? 0xc0u : 0x80u) | slot)))
+                    key, introduction ? (uint8_t)0xc0u
+                                      : (uint8_t)(0x80u | slot)))
                 goto failed;
             break;
         }

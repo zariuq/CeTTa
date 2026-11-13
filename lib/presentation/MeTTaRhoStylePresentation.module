@@ -1,0 +1,191 @@
+{- A presentation of PeTTa atoms in the style of f1r3lang and Rholang,
+   version 2.0.  Version 1.0 is kept, frozen, in
+   MeTTaRhoStylePresentation-1.0.module (--syntax rhostyle@1.0): 2.0 reads
+   p <<- s where count(q <<- s) == 0 as an absence clause, where 1.0 read a
+   guard calling a function named count.
+
+   Every derivation denotes one ordinary MeTTa atom: the form with the same
+   label in MeTTaRhoStylePresentation.forms.metta.  Printing is derived from
+   the same productions, and a leaf is spelled only when reading the spelling
+   back gives the same atom.
+
+   A file is read in order; ";" ends each top-level item (Rholang has no
+   file order, so this is the one place the style extends Rholang):
+     e;                          !e: a process runs
+     @{ a };                     the atom a is data in the program's space
+     contract f(x, y) = { b };   (= (f x y) b)
+     lhs = rhs;   x : T;         other equations, type declarations
+     new &s;                     !(bind! &s (new-space))
+   Processes and terms:
+     for (p <<- s) { t }         (match s p t): peek, no consumption
+     select { rs => outs }       (transform s rs outs): one step
+       receipts rs, joined by &:  p <- s     take (consumes)
+                                  p <<- s    read (peek)
+                                  @{p} <<- s the explicit read (read p): the
+                                             pattern is quoted, taken literally
+                                  ... where count(p <<- s) == 0
+                                             absent: no atom matching p,
+                                             attached to the receipt before
+                                             it as a guard is (or on its own
+                                             when no receipt precedes it)
+                                  let v = e
+                                  ... where g   the guard (let True g)
+                                  all { rs }      (all c): every extension
+                                  once { rs }     (once c): the first one
+                                  unique { rs }   (unique c): exactly one
+                                  collect { rs } into $c   (collect c $c)
+       every receipt names the same store s; outs are made together, t | u;
+       d!(t) | d!(u) routes them into d: (transform s rs (, t u) d)
+     s!(a)                       (add-atom s a)
+     stdout!(e)                  (println! e)
+     new $s in { b }             (let $s (new-space) b)
+     import m in s               (import! s m)
+     let p <- e in { b }         (let p e b): b once per answer of e
+     let p <- e ; q <- f in { b }   (let* ((p e) (q f)) b); let* for one binding
+     let _ <- s1 ; _ <- s2 in { e }   (flow:then s1 (flow:then s2 e)): each
+                                 statement runs to completion, in order, and its
+                                 answers are dropped
+     for (p <= s) { b }          (flow:for-match s p b): b for every match of p
+                                 in the store as the loop starts (a replicated
+                                 receipt that reads)
+     foreach (x <- e) { b }      (flow:for-each e (|-> (x) b)): b for each answer of e
+     foreach (x of [a, b]) { b } (flow:for-each (superpose (a b)) (|-> (x) b)):
+                                 b for each item of a list written in place
+     while (c) { b }             (flow:while c b)
+     repeat { step }             (flow:until-quiet step)
+     match e { p => b, ... }     (case e ((p b) ...))
+     if (c) { t } else { e }     (if c t e)
+     contract(x, y) = { b }      (|-> (x y) b)
+     @e  *e                      (quote e)  (unquote e)
+     f(a, b)                     a call, where it runs
+     f[a, b]  [a, b]             data, where it is held (patterns, sent atoms)
+     (a, b)                      conjunction (, a b)
+     or and == < > <= >= + - * / %   operators; A -> B arrows
+   Words: $x is a variable; `any symbol` is a symbol, as Rholang writes a URI;
+   a name does not end in "!", which sends; _ alone is the wildcard of the
+   sequential let (the symbol _ is written `_`). -}
+Module MeTTaRhoStylePresentation {
+  Theory Lexical() {
+    Empty Terms {
+      comment "//" ;
+      comment "/*" "*/" ;
+      token RVar '$' (letter | digit | ["_'"] | ('-' letter))* ;
+      token RName (letter | '_' | '&') (letter | digit | ["_'"] | ('-' letter) | (':' letter))* ["?"]? ;
+      token RQuoted '`' ((char - ["`\\"]) | ('\\' ["`\\"]))* '`' ;
+      token RRaw 'r' '#' '"' ((char - ["\""]) | ('"' (char - ["#"])))* '"' '#' ;
+    }
+  }
+  Theory Statements(lex: Lexical) {
+    lex Terms {
+      Program . Prog ::= [Stmt] ;
+      terminator Stmt ";" ;
+      SContract . Stmt ::= "contract" Head "(" [Exp] ")" "=" "{" Exp "}" ;
+      SFact . Stmt ::= "@" "{" Exp "}" ;
+      SNew  . Stmt ::= "new" Exp8 ;
+      SEq   . Stmt ::= Exp "=" Exp ;
+      SType . Stmt ::= Exp ":" Exp ;
+      SRun  . Stmt ::= Exp ;
+      HName   . Head ::= RName ;
+      HQuoted . Head ::= RQuoted ;
+      HVar    . Head ::= RVar ;
+
+      ELambda  . Exp ::= "contract" "(" [Exp] ")" "=" "{" Exp "}" ;
+      ELet     . Exp ::= "let" Exp1 "<-" Exp "in" "{" Exp "}" ;
+      ELetSeq  . Exp ::= "let" LBind ";" LBinds "in" "{" Exp "}" ;
+      ELetStar . Exp ::= "let*" [LBind] "in" "{" Exp "}" ;
+      LBindOne . LBind ::= Exp1 "<-" Exp ;
+      LBsMore  . LBinds ::= LBind ";" LBinds ;
+      LBsOne   . LBinds ::= LBind ;
+      separator LBind ";" ;
+      EThen    . Exp ::= "let" "_" "<-" Exp ThenRest ;
+      ThMore   . ThenRest ::= ";" "_" "<-" Exp ThenRest ;
+      ThIn     . ThenRest ::= "in" "{" Exp "}" ;
+      ENew     . Exp ::= "new" Exp8 "in" "{" Exp "}" ;
+      EImport  . Exp ::= "import" Exp1 "in" Exp8 ;
+      ESend    . Exp ::= Exp7 "!" "(" Exp ")" ;
+      EArrow   . Exp ::= Exp1 "->" ArrowTail ;
+      ATLast   . ArrowTail ::= Exp1 ;
+      ATMore   . ArrowTail ::= Exp1 "->" ArrowTail ;
+
+      EOr  . Exp1 ::= Exp1 "or" Exp2 ;
+      EAnd . Exp2 ::= Exp2 "and" Exp3 ;
+      EEq  . Exp3 ::= Exp4 "==" Exp4 ;
+      ELt  . Exp3 ::= Exp4 "<" Exp4 ;
+      EGt  . Exp3 ::= Exp4 ">" Exp4 ;
+      ELe  . Exp3 ::= Exp4 "<=" Exp4 ;
+      EGe  . Exp3 ::= Exp4 ">=" Exp4 ;
+      EAdd . Exp4 ::= Exp4 "+" Exp5 ;
+      ESub . Exp4 ::= Exp4 "-" Exp5 ;
+      EMul . Exp5 ::= Exp5 "*" Exp6 ;
+      EDiv . Exp5 ::= Exp5 "/" Exp6 ;
+      EMod . Exp5 ::= Exp5 "%" Exp6 ;
+      EQuote   . Exp6 ::= "@" Exp6 ;
+      EUnquote . Exp6 ::= "*" Exp6 ;
+      ECall . Exp7 ::= Exp7 "(" [Exp] ")" ;
+      EData . Exp7 ::= Exp7 "[" [Exp] "]" ;
+
+      EVar       . Exp8 ::= RVar ;
+      ESym       . Exp8 ::= RName ;
+      EQSym      . Exp8 ::= RQuoted ;
+      EInt       . Exp8 ::= Integer ;
+      ENegInt    . Exp8 ::= "-" Integer ;
+      EDouble    . Exp8 ::= Double ;
+      ENegDouble . Exp8 ::= "-" Double ;
+      EStr       . Exp8 ::= String ;
+      ERaw       . Exp8 ::= RRaw ;
+      ETuple     . Exp8 ::= "[" [Exp] "]" ;
+      EConj      . Exp8 ::= "(" Exp "," [Exp] ")" ;
+      EPrint     . Exp8 ::= "stdout" "!" "(" Exp ")" ;
+      EIf        . Exp8 ::= "if" "(" Exp ")" "{" Exp "}" "else" "{" Exp "}" ;
+      ECase      . Exp8 ::= "match" Exp "{" [Arm] "}" ;
+      ArmOne     . Arm ::= Exp1 "=>" Exp ;
+      separator Arm "," ;
+      EMatch     . Exp8 ::= "for" "(" Exp1 "<<-" Exp7 ")" "{" Exp "}" ;
+      EForMatch  . Exp8 ::= "for" "(" Exp4 "<=" Exp7 ")" "{" Exp "}" ;
+      EForEach   . Exp8 ::= "foreach" "(" Exp1 "<-" Exp ")" "{" Exp "}" ;
+      EForOf     . Exp8 ::= "foreach" "(" Exp1 "of" Exp ")" "{" Exp "}" ;
+      EWhile     . Exp8 ::= "while" "(" Exp ")" "{" Exp "}" ;
+      ERepeat    . Exp8 ::= "repeat" "{" Exp "}" ;
+      ETransform     . Exp8 ::= "select" "{" Rcpts "=>" Tpls "}" ;
+      ETransformInto . Exp8 ::= "select" "{" Rcpts "=>" Sends "}" ;
+
+      RcWhereMore . Rcpts ::= Rcpt "where" Exp1 "&" RList ;
+      RcWhere     . Rcpts ::= Rcpt "where" Exp1 ;
+      RcAbsentMore . Rcpts ::= Rcpt "where" "count" "(" Exp1 "<<-" Chan ")" "==" Integer "&" RList ;
+      RcAbsent    . Rcpts ::= Rcpt "where" "count" "(" Exp1 "<<-" Chan ")" "==" Integer ;
+      RcMany      . Rcpts ::= Rcpt "&" RList ;
+      RcOne       . Rcpts ::= Rcpt ;
+      RLWhereMore . RList ::= Rcpt "where" Exp1 "&" RList ;
+      RLWhere     . RList ::= Rcpt "where" Exp1 ;
+      RLAbsentMore . RList ::= Rcpt "where" "count" "(" Exp1 "<<-" Chan ")" "==" Integer "&" RList ;
+      RLAbsent    . RList ::= Rcpt "where" "count" "(" Exp1 "<<-" Chan ")" "==" Integer ;
+      RLMore      . RList ::= Rcpt "&" RList ;
+      RLOne       . RList ::= Rcpt ;
+      RTake    . Rcpt ::= Exp1 "<-" Chan ;
+      RRead    . Rcpt ::= Exp1 "<<-" Chan ;
+      RReadQ   . Rcpt ::= "@" "{" Exp1 "}" "<<-" Chan ;
+      RAbsent  . Rcpt ::= "where" "count" "(" Exp1 "<<-" Chan ")" "==" Integer ;
+      RLet     . Rcpt ::= "let" Exp1 "=" Exp1 ;
+      RGuard   . Rcpt ::= "where" Exp1 ;
+      RAll     . Rcpt ::= "all" "{" Rcpts "}" ;
+      ROnce    . Rcpt ::= "once" "{" Rcpts "}" ;
+      RUnique  . Rcpt ::= "unique" "{" Rcpts "}" ;
+      RCollect . Rcpt ::= "collect" "{" Rcpts "}" "into" Exp1 ;
+      ChanOne . Chan ::= Exp7 ;
+
+      TplsMany . Tpls ::= Exp1 "|" [Exp1] ;
+      TplsOne  . Tpls ::= Exp1 ;
+      separator nonempty Exp1 "|" ;
+      SendsMany . Sends ::= Send "|" [Send] ;
+      SendsOne  . Sends ::= Send ;
+      separator nonempty Send "|" ;
+      SendOne . Send ::= Dest "!" "(" Exp ")" ;
+      DestOne . Dest ::= Exp7 ;
+
+      coercions Exp 8 ;
+      separator Exp "," ;
+    }
+  }
+  Theory RhoStyle() { Statements(Lexical()) }
+  theory RhoStyle()
+}

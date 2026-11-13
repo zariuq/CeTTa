@@ -22,5 +22,5 @@
 !(let ($x $y) (let $k (quote ((p a))) (union-atom $k (c))) (joined-held $x $y))
 !(let ($x $y) (union-atom (a) (cons-atom (p b) ())) (joined-cons $x $y))
 ; Unknown operands split a known list, every way.
-!(collapse (let (a b c) (union-atom $x $y) ($x $y)))
+!(sort-atom (collapse (let (a b c) (union-atom $x $y) ($x $y))))
 !(collapse (let (a b) (union-atom $x (b)) $x))

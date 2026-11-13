@@ -6,7 +6,7 @@ is (alpha alpha beta), should (alpha alpha beta). ✅
 is (gamma), should (gamma). ✅ 
 is (alpha alpha beta), should (alpha alpha beta). ✅ 
 is 3, should 3. ✅ 
-is (beta), should (beta). ✅ 
+is (alpha beta), should (alpha beta). ✅ 
 is true, should true. ✅ 
 is true, should true. ✅ 
 is false, should false. ✅ 

@@ -28,9 +28,9 @@
 !(println! (collapse (mmh:match (other) ($key $value) (println! MISMATCH-BODY-MUST-NOT-RUN))))
 
 ; Each occurrence is retained; failed unifications cannot bind later members.
-!(println! (collapse (mmh:match (a a b) $item $item)))
-!(println! (collapse (mmh:match ((a b) (a a) (b b) (a a)) ($x $x) $x)))
+!(println! (let $answers (collapse (mmh:match (a a b) $item $item)) (sort-atom $answers)))
+!(println! (let $answers (collapse (mmh:match ((a b) (a a) (b b) (a a)) ($x $x) $x)) (sort-atom $answers)))
 
 ; Body effects follow member order and occur once per successful occurrence.
-!(println! (collapse (mmh:match ((a 1) (b 2) (a 3)) ($key $value)
-   (let $ignored (println! $key) ($key (+ $value 1))))))
+!(println! (let $answers (collapse (mmh:match ((a 1) (b 2) (a 3)) ($key $value)
+   (let $ignored (println! $key) ($key (+ $value 1))))) (sort-atom $answers)))

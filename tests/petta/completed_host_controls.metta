@@ -12,6 +12,6 @@
 !(catch (completion_direct_raise a))
 !(collapse (let $f completion_direct_raise ($f a)))
 (= (completion_inner_recovery $x)
-   (collapse (superpose
-      ((Prefix a) (let $f cold_immediate_raise ($f $x)) (Tail a)))))
+   (sort-atom (collapse (superpose
+      ((Prefix a) (let $f cold_immediate_raise ($f $x)) (Tail a))))))
 !(completion_inner_recovery a)

@@ -1,0 +1,12 @@
+(coll (mat &self (pmq 1) (lit kept)))
+(coll (mat &self (pmq $V0) (lit kept)))
+(coll (mat &self (pmq 2) (lit kept)))
+(coll (other (match &self (pmq 1) kept)))
+not-empty
+empty
+false
+true
+true
+false
+true
+false

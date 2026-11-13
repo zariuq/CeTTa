@@ -9,7 +9,7 @@
 (= (scope-choice $f) right)
 !(test (collapse (scope-choice scope-id)) (left))
 !(test (collapse (scope-choice scope-checked)) (left))
-!(test (collapse (scope-choice scope-hold)) (left right))
+!(test (sort-atom (collapse (scope-choice scope-hold))) (sort-atom (left right)))
 
 !(bind! &scope-count (new-state 0))
 (= (scope-tick)

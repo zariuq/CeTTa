@@ -1,5 +1,5 @@
 !(import_prolog_function between)
-!(collapse (between 1 3))
+!(sort-atom (collapse (between 1 3)))
 !(callPredicate (Predicate (quote (consult "tests/petta/fixtures/foreign_predicate_bridge.pl"))))
 !(import_prolog_function cetta_foreign_add_one)
 !(cetta_foreign_add_one 41)

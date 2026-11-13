@@ -1,0 +1,35 @@
+CeTTa record-visitor client
+==========================
+
+This optional client qualifies Cesta's record declarations against a pinned
+CeTTa source capture. It does not edit a CeTTa checkout or need Lean.
+
+  python3 adapters/cetta/run.py --cetta-repo REPOSITORY --cesta COMPILER
+
+call_sources.records declares every member of PrimeNeedCallSourceCell. Its
+common binding image and reference are unmoved episode holders: existing native
+predicates must exclude both arenas that collection invalidates. Slot and fork
+graphs retain their native, memoized holder audits. The outer hub loop retains
+responsibility for the separately allocated cell list.
+
+The generated function replaces the hand-written field walk in a private
+source capture. The qualification checks actual field layouts and native
+prototypes, positive lifetime cases, references and binding atoms in each
+forbidden arena, and traversal through the next cell. It also compares Prime
+answers and completed-collection accounting under forced collection.
+
+frame_gate.records classifies every member of PrimeEvalStackFrame. It generates
+the live-frame opaque-reference guard used before collection by the stack and
+native-control collectors. Existing authority, frame-kind, retired-frame,
+evacuation and unmoved-holder audits remain in place. A null-only gate is not
+a complete collection-admission predicate. Bootstrap and final headers are
+generated separately because their Need snapshot layouts differ.
+
+The pinned consumer needs small strict-Clang compatibility edits. The runner
+records each original and modified source hash in its evidence, including the
+native C emitter changes needed by generated readers. It preserves warning
+checks and retains both the ordinary and generated-audit executables.
+
+The adapter is a declaration and generation pilot. Native graph predicates,
+heap provenance, collector commit behavior and root discovery remain explicit
+boundaries. Classifying the fields does not prove the entire collector safe.

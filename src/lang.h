@@ -83,6 +83,11 @@ CettaRelativeModulePolicy cetta_language_relative_module_policy(CettaLanguageId 
 CettaPortableRelationalContract
 cetta_language_portable_relational_contract(CettaLanguageId id);
 CettaCallResultPolicy cetta_language_call_result_policy(CettaLanguageId id);
+/* Whether an equation is a rule only when its left side applies a symbol.
+ * PeTTa's reader makes a function only of `(= (F args...) body)` with F a
+ * symbol; any other equation is a fact of its space.  HE reads a rule of any
+ * head. */
+bool cetta_language_rules_need_named_head(CettaLanguageId id);
 void cetta_language_print_inventory(FILE *out);
 
 #endif /* CETTA_LANG_H */

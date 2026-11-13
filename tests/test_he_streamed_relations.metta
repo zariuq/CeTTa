@@ -9,7 +9,7 @@
 (kinship ann)
 (= (reach $x) (match &self (edge $x $y) $y))
 (= (reach $x) (match &self (edge $x $y) (reach $y)))
-!(collapse (reach a))
+!(let $answers (collapse (reach a)) (sort-atom $answers))
 (= (only a) yes)
 !(collapse (only a))
 !(collapse (only z))

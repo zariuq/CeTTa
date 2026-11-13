@@ -1,0 +1,19 @@
+true
+true
+done
+(numeric-key ((value 55)))
+(missing-key ())
+true
+true
+(string-key ((payload 7)))
+(other-key ((payload 8)))
+(key-count 1)
+true
+true
+(repeated-field (yes))
+true
+(removed-key ())
+true
+(reinserted-key ((value replaced)))
+true
+(retained-owner ((payload retained)))

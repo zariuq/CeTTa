@@ -40,8 +40,37 @@ static void decl_free(MgDecl *d) {
     mg_evidence_destroy(d->evidence);
     mg_footprint_free(&d->deps);
     mg_sys_free(d->source_name);
+    for (uint32_t i = 0; i < d->also_len; ++i)
+        mg_sys_free(d->also_named[i]);
+    mg_sys_free(d->also_named);
     mg_sys_free(d->origin);
     mg_sys_free(d);
+}
+
+bool mg_decl_named(const MgDecl *d, const char *source_name) {
+    if (!source_name)
+        return false;
+    if (d->source_name && strcmp(d->source_name, source_name) == 0)
+        return true;
+    for (uint32_t i = 0; i < d->also_len; ++i)
+        if (strcmp(d->also_named[i], source_name) == 0)
+            return true;
+    return false;
+}
+
+bool mg_decl_also_named(const MgDecl *d, const char *source_name) {
+    MgDecl *w = (MgDecl *)d;
+    if (!source_name || mg_decl_named(d, source_name))
+        return true;
+    char *copy = dup_text(source_name);
+    char **grown = copy ? mg_sys_realloc(w->also_named, sizeof(char *) * ((size_t)w->also_len + 1u)) : NULL;
+    if (!grown) {
+        mg_sys_free(copy);
+        return false;
+    }
+    grown[w->also_len++] = copy;
+    w->also_named = grown;
+    return true;
 }
 
 static void theory_free(MgTheory *t) {

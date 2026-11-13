@@ -10,7 +10,7 @@ is 42, should 42. ✅
 is Error, should Error. ✅ 
 is caught, should caught. ✅ 
 is (7 caught), should (7 caught). ✅ 
-is (caught 9), should (caught 9). ✅ 
+is (9 caught), should (9 caught). ✅ 
 true
 true
 true

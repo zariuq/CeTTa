@@ -31,6 +31,12 @@ typedef struct {
     uint64_t work_used;
     char binding_sha256[65];
     char detail[256];
+    /* A grammar with layout is scanned from its text with the inserted
+       braces and separators written out, three bytes each (" { "); these
+       are the source bytes before which they were inserted, in order, so a
+       position in the scanned text maps back to the source. */
+    uint32_t *layout_inserted;
+    uint32_t layout_inserted_len;
 } CettaParserTokenScanV1;
 
 void cetta_parser_token_runtime_v1_init(CettaParserTokenRuntimeV1 *runtime);
@@ -55,6 +61,13 @@ bool cetta_parser_token_runtime_v1_check_metadata(
 
 void cetta_parser_token_scan_v1_init(CettaParserTokenScanV1 *scan);
 void cetta_parser_token_scan_v1_free(CettaParserTokenScanV1 *scan);
+/* The source position of a position in the scanned text: the same for a
+ * grammar without layout; for one with layout, the inserted bytes before it
+ * are taken away (a position inside an insertion is the source byte the
+ * insertion stands before).  Every inserted byte is ASCII, so the same shift
+ * maps a scalar position. */
+void cetta_parser_token_scan_v1_source_position(const CettaParserTokenScanV1 *scan,
+                                                uint32_t *scalar, uint32_t *byte);
 /* Invalid authorities fail; an input refusal is returned as an explicit
  * outcome with its original source position. Replacement is atomic. */
 bool cetta_parser_token_runtime_v1_scan(

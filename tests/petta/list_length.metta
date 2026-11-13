@@ -6,7 +6,7 @@
 
 ; The argument is evaluated, preserving one result per nondeterministic list.
 !(test
-    (collapse
+    (sort-atom (collapse
       (length
-        (superpose ((a) (a b)))))
-    (1 2))
+        (superpose ((a) (a b))))))
+    (sort-atom (1 2)))

@@ -18,4 +18,4 @@
 ; argument and stays data.  collapse is the occurrence bag; the extended
 ; profile's reify is collapse.
 !(reify (superpose (a a b)))
-!(collapse (superpose (a a b)))
+!(sort-atom (collapse (superpose (a a b))))

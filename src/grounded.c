@@ -1499,14 +1499,14 @@ static bool numeric_arg_is_integral(const NumArg *arg) {
 
 /* ── Number order ─────────────────────────────────────────────────────── */
 
-/* HE outside he-compat orders integers and floats exactly.  PeTTa's
- * arithmetic ordering promotes mixed numbers to floats, as SWI does;
- * its separate value equality remains exact. */
+/* HE orders integers and floats exactly, in he-compat too, as the fixed
+ * Hyperon it follows does (0.2.10 promoted the integer to a float).
+ * PeTTa's arithmetic ordering promotes mixed numbers to floats, as SWI
+ * does; its separate value equality remains exact. */
 static bool grounded_compares_numbers_exactly(void) {
     CettaLanguageId language = eval_current_language_id
         ? eval_current_language_id() : CETTA_LANGUAGE_HE;
-    return language == CETTA_LANGUAGE_HE &&
-        !eval_current_uses_rust_he_compat_semantics();
+    return language == CETTA_LANGUAGE_HE;
 }
 
 /* The exact order of an integer and a float.  False for a NaN, which is

@@ -62,7 +62,7 @@
 !(msort [c a b])
 !(length [a b c])
 !(is-member b [a b c])
-!(collapse (superpose [a b]))
+!(sort-atom (collapse (superpose [a b])))
 
 ; Equations over lists dispatch on list patterns.
 (= (len []) 0)
@@ -90,7 +90,7 @@
 (= (built-pair) [a b])
 !(let [$x $y $z] (union-atom (built-pair) [c]) ($x $y $z))
 !(let [$x | $r] (union-atom [a b] [c]) ($x $r))
-!(collapse (let [a b c] (union-atom $x $y) ($x $y)))
+!(sort-atom (collapse (let [a b c] (union-atom $x $y) ($x $y))))
 !(collapse (let [a b] (union-atom $x [b]) $x))
 !(collapse (let [$x $y] (union-atom (a) (b)) $x))
 

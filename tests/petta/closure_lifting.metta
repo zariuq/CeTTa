@@ -13,7 +13,7 @@
 !(fold-flat (tally live 2) 0 (cons 1 (cons 2 (cons 3 ()))))
 !(fold-flat (tally temp 3) 0 (cons 1 (cons 2 ())))
 !(tallies 40 0)
-!(collapse (match &self (seen live 7 $x) $x))
+!(sort-atom (collapse (match &self (seen live 7 $x) $x)))
 ; A closure carrying data that looks like code keeps it as data.
 (= (pair-with $p $acc $x) (progn (add-atom &self (paired $p $x)) (+ $acc $x)))
 !(fold-flat (pair-with (Pair a (+ 1 2))) 0 (cons 4 (cons 5 ())))
@@ -37,4 +37,4 @@
 (= (walk-on $f (cons $x $xs)) (cons ($f 0 $x) (walk-on $f $xs)))
 !(walk-on (tally temp 4) (cons 1 ()))
 !(add-atom &self (= (walk-on $f (cons $x $xs)) (Extra $x)))
-!(collapse (walk-on (tally temp 4) (cons 1 ())))
+!(sort-atom (collapse (walk-on (tally temp 4) (cons 1 ()))))

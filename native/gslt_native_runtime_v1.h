@@ -305,10 +305,22 @@ void gn_trace_fail(GnCtx *cx, const char *mode);
 #define GN_TRACE_MISS(cx, rule) gn_trace_rule((cx), (rule), false)
 #define GN_TRACE_FAIL(cx, mode) gn_trace_fail((cx), (mode))
 #else
+#ifdef GN_COUNT
+#define GN_TRACE_CALL(cx, mode, n, ...) gn_count_call()
+#else
 #define GN_TRACE_CALL(cx, mode, n, ...) ((void)0)
+#endif
 #define GN_TRACE_RULE(cx, rule) ((void)0)
 #define GN_TRACE_MISS(cx, rule) ((void)0)
 #define GN_TRACE_FAIL(cx, mode) ((void)0)
 #endif
+
+/* A count of a run's work, chosen when the compiled relations are built:
+ * with -DGN_COUNT, each mode entered adds one to a process-wide count,
+ * whatever context it runs in.  The count is deterministic where time is
+ * not, so a gate can compare the work of inputs of different sizes.
+ * Without GN_COUNT the hook is no code, and gn_calls answers 0. */
+void gn_count_call(void);
+uint64_t gn_calls(void);
 
 #endif

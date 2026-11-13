@@ -1,0 +1,86 @@
+Record visitors, version 1
+==========================
+
+Optional record contracts are checked against ordinary C declarations:
+
+  cesta record-visitor --schema frame.records -o frame_visit.h \
+    --cc gcc -std=c11 frame.h
+
+The input remains the real C header or translation unit, with its actual
+typedefs and compiler configuration. The command elaborates declarations,
+not function bodies. It never invokes Lean or another proof assistant.
+No visitor framework or allocation ledger is linked into the program.
+
+  (cesta record-visitors/1
+    (owner atoms)
+    (owner episode)
+    (visitor move
+      (owner atoms) (type "Atom *") (call move_atom_slot)
+      (argument address) (effects write)
+      (obligation "Moves a shared atom through the collector's forwarding map;
+                   updates the borrowed slot and retains no frame/context."))
+    (record "Frame"
+      (function frame_visit) (context "Collector") (receiver write)
+      (field value (borrow read nullable) (owner atoms) (visit move))
+      (field episode (borrow read) (owner episode)
+        (keep "Lifetime carrier outside the collected semispace."))
+      (field revision value)))
+
+Each actual C field must occur exactly once. Pointer-bearing fields, including
+arrays and inline records containing references, need borrow/owns, an owner
+role, and either a visitor or an explicit keep obligation. A value field
+contains no pointers. Owner roles are nominal, author-supplied lifetime domains;
+the generator checks their agreement with the selected native policy. They
+do not infer which runtime arena produced an arbitrary legacy C pointer.
+This is separate from Cesta's existing function-level ownership admission.
+
+Borrow access applies to the referent. A write visitor taking a field by value
+needs write borrowing. Passing a field's address updates the record's slot and
+requires a write receiver. Owning fields retain their release authority;
+mutating their ownership requires a separately specified transfer and is refused
+here. A GC edge therefore does not imply unique ownership.
+
+A function policy names an actual nonvariadic bool function with two parameters:
+context pointer and field argument. A counted policy has a third size_t count.
+The generator checks the real prototype. A macro policy uses (macro NAME) in
+place of (call NAME); its interface is (CONTEXT, ARGUMENT, FAIL), or
+(CONTEXT, ARGUMENT, COUNT, FAIL) when counted. Its meaning remains a named native
+obligation. Types use existing C typedefs/tags, standard scalar spellings and
+pointer qualifiers. Name complex array/function types by a real C typedef.
+
+The record can emit (macro NAME) instead of (function NAME). This supports
+collector declaration headers whose types and policy macros become visible
+only where the arm is expanded. Macro arguments must be side-effect free;
+failure is a caller-provided transfer such as goto failed. Standard C11 type
+and layout assertions check the receiver, context and fields when expanded.
+Function visitors are ordinary static inline C functions. Include the actual
+declarations and policy interfaces before the generated function header.
+
+(when FLAG) skips a visitor when an ordinary integer/bool field is false.
+(count LENGTH) requires a counted visitor and an ordinary unsigned count field.
+Before visiting any fields, generated guards check nonempty null buffers,
+count-to-byte overflow, and fixed-array bounds. Zero counts visit no elements.
+The caller still supplies the actual backing extent for pointer buffers.
+
+Native policies own relocation, forwarding, weak/ephemeron behavior and commit
+semantics. A failed visitor may leave a visited prefix updated. The caller must
+retain the relevant storage or perform its own rollback. Generated field
+coverage is not a proof of a complete root inventory or of collector behavior.
+
+Generation validates the complete module before replacing an output. Each
+requested output is published atomically; generation refusal preserves it.
+Source/schema files and coincident code/facts outputs cannot be overwritten.
+Regenerate when a header, schema, target or compiler configuration changes.
+
+--facts FILE writes declaration/contract metadata for development audits and
+models. It is never required to generate, build, link or run a program. The
+development Lean models concern these added contracts; Cesta users need no
+Lean installation, proof library or proof receipt. Headers retain native C ABI.
+
+Maintainers can replay the declaration and relative region-effect models with
+tests/developer_record_models.py --facts FILE --lean-project PROJECT. This is a
+separate development command, absent from product builds and ordinary tests.
+It checks field coverage, nominal owner agreement and access rights against the
+emitted declarations, with altered-declaration refusals. Native allocation
+provenance, traversal behavior and the generated C execution remain distinct
+obligations.

@@ -12,7 +12,8 @@ open-names	free_name_allowed	open_name_variable_roundtrip_h7.mrho	open name vari
 open-names	quoted_free_name_allowed	open_quoted_name_roundtrip_h7.mrho	open variables under literal quote are valid static data	Meredith-Radestock 2005 quote/substitution discussion
 mrho-elaboration	shadow_same_spelling	mrho_shadow_same_spelling.mrho	nested same-spelling recv binders elaborate to distinct binder identities	Chargueraud 2012 locally nameless representation; Meredith-Radestock 2005 input binder
 mrho-elaboration	free_name_same_spelling_binder	mrho_free_name_same_spelling_binder.mrho	free names remain distinct from same-spelling receive binders	Chargueraud 2012 locally nameless representation; Pitts 2023 locally nameless sets
-mrho-elaboration	quote_seals_outer_scope	mrho_quote_seals_outer_binder.mrho	literal quote clears the surrounding mrho binder stack	Meredith-Radestock 2005 quote/substitution boundary; Flatt 2016 scope metadata
+mrho-elaboration	quote_drop_names_outer_binder	mrho_quote_drop_names_outer_binder.mrho	a quote of a single drop (up to P | 0) is the dropped name, read in the surrounding scope: the receive binds the $x in @{*$x}	Meredith-Radestock 2005 section 2.4 quote-drop and section 2.2 free names
+mrho-elaboration	closed_quote_seals_outer_scope	mrho_closed_quote_seals_outer_binder.mrho	any other quote is a closed name: surrounding receive binders do not reach into it	Meredith-Radestock 2005 section 2.0.4 quoted process impervious to substitution; Flatt 2016 scope metadata
 mrho-elaboration	quote_inner_binder_restores_scope	mrho_quote_inner_binder_restores_scope.mrho	binders inside literal quote do not overwrite outer mrho bindings	Meredith-Radestock 2005 quote/substitution boundary; Flatt 2016 scope metadata
 syntax	quote_inner_binder_restores_scope	rho_quote_inner_binder_restores_scope.rho	binders inside literal quote do not overwrite outer syntax bindings	Meredith-Radestock 2005 quote/substitution boundary
 printer	alpha_mrho	translate_mrho_alpha_to_mrho.expected	mrho printer renames binders whose spelling would capture a free name on reparse	Chargueraud 2012 locally nameless representation; Flatt 2016 scope metadata
@@ -30,7 +31,7 @@ substitution	shadow_recv	capture_shadow_ok_h1.mrho	substitution stops at a shado
 substitution	send_channel	channel_var_h4.mrho	substitution applies in send channel position	Meredith-Radestock 2005 substitution output clause
 substitution	send_payload	paper_reflection_name_generation_h4.mrho	substitution applies in dynamic lift/send payloads	Meredith-Radestock 2005 lift/output clause
 substitution	literal_quote_opaque	quote_substitution_opaque_h7.mrho	substitution does not recur through literal quote	Meredith-Radestock 2005 section 2.0.4 and 2.5
-substitution	quote_drop_sealed	quote_drop_whole_name_substitution_h7.mrho	@{*x} under literal quote normalizes to the free name x when outer scope is sealed	Meredith-Radestock 2005 name equivalence plus quote/substitution boundary
+substitution	quote_drop_free_name	quote_drop_whole_name_substitution_h7.mrho	@{*x} of a free name x normalizes to the channel x; COMM leaves it free	Meredith-Radestock 2005 section 2.4 quote-drop
 substitution	capture_avoidance	capture_avoidance_alpha_h7.mrho	substitution alpha-renames an inner binder before capture	Meredith-Radestock 2005 substitution freshness side-condition
 comm	channel_discrimination	channel_discrimination_survives_after_comm.mrho	unrelated sends/receives on different channels remain after a valid COMM	Meredith-Radestock 2005 channel matching in the reduction relation
 comm	common_fragment_chain	comm_par_chain_h1.mrho	one COMM can leave a nontrivial par residual without relying on DROP contraction or nil-elimination	shared strict-core COMM/par fragment for CeTTa-vs-Lean audits
@@ -44,4 +45,5 @@ syntax	reflection_name_generation	paper_reflection_name_generation_h4.rho	syntax
 syntax	input_guarded_unfold	paper_input_guarded_replication_unfold_h4.rho	syntax rho preserves input-guarded unfolding through one COMM	Meredith-Radestock 2005 replication discussion
 syntax	rotating_witness	rotating_scheduler_persistent_branch.rho	syntax rho preserves the recreating-vs-one-shot scheduler witness shape	operational control choice over the same one-step relation image
 syntax	open_name	rho_open_name_variable.rho	explicit $x is accepted as an open syntax name	local syntax syntax for full core
-syntax	quote_scope	rho_quote_seals_outer_binder.rho	@{...} parses outside the current syntax binder scope	Meredith-Radestock 2005 quote/substitution boundary
+syntax	quote_drop_scope	rho_quote_drop_names_outer_binder.rho	@{*x} is the name x: the surface reader binds it like the mrho reader	Meredith-Radestock 2005 section 2.4 quote-drop
+syntax	closed_quote_scope	rho_closed_quote_seals_outer_binder.rho	any other @{...} is closed: the surface reader does not bind inside it	Meredith-Radestock 2005 section 2.0.4 quoted process impervious to substitution

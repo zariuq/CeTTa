@@ -2,10 +2,10 @@
 
 !(collapse (is-member "a" ("a" "b" "a" "c")))
 !(collapse (is-member "absent" ("a" "b" "a" "c")))
-!(collapse (let true (is-member $item ("a" "b" "a")) $item))
+!(sort-atom (collapse (let true (is-member $item ("a" "b" "a")) $item)))
 !(collapse (let true (is-member "a" ("b" $item "c")) $item))
-!(collapse (let true (is-member "a" ("a" $item "b")) (Held $item $item)))
-!(collapse (let true (is-member "a" ("a" "b")) (superpose (first second))))
+!(sort-atom (collapse (let true (is-member "a" ("a" $item "b")) (Held $item $item))))
+!(sort-atom (collapse (let true (is-member "a" ("a" "b")) (superpose (first second)))))
 !(collapse (let true (is-member "a" ("a" "b" "a" "c"))
             (let $effect (println! member_effect) kept)))
 

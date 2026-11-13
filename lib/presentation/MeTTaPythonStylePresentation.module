@@ -1,0 +1,152 @@
+{- A Python-style presentation of MeTTa atoms, version 1.1: indentation
+   delimits blocks.  1.1 reads every text of 1.0 and adds the data look
+   f{a, b} and the loop over a list's items, for x of [a, b].
+
+   The layout declarations below are BNFC's: each line of the document is a
+   statement (layout toplevel); after ":" a block opens at the column of the
+   next token unless "{" follows, its lines are separated, and a line left
+   of the block closes it; "else" and "yield" close the block before them.
+   CeTTa's LBNF machinery lowers them, and the build-time presentation
+   compiler resolves them into the braces and semicolons of the grammar, so
+   `{ a ; b }` written explicitly reads the same as the indented block.
+
+   A file is read in order, one statement after another:
+     e                           e runs (the standard text writes !e)
+     def f($x): b                a definition (= (f $x) b); a block of several
+                                 lines is the sequence (flow:then s1 (flow:then s2 e))
+     lhs = rhs                   any other equation (= lhs rhs)
+     x :: T                      a type declaration (: x T)
+     atom e                      the atom e, put in the program's space where it
+                                 stands (add-atom(&self, e) does the same and
+                                 answers true, which prints)
+   Expressions:
+     f(a, b)                     a call: (f a b) where it runs
+     f{a, b}  [a, b]             data: (f a b), (a b) where it is held (a
+                                 pattern, an argument declared Atom, an atom
+                                 put in a space); 1.0's f[a, b] reads too;
+                                 [a, b] is also a list whose items run
+                                 (superpose([a, b]))
+     if c: t else: e             (if c t e)
+     case e:                     (case e ((p b) (q c)))
+         p => b
+         q => c
+     [t for p in s]              (match s p t)
+     for x of [a, b]: body       (flow:for-each (superpose (a b)) (|-> (x) body)):
+                                 each item of a list written in place
+     for x in e: body            (flow:for-each e (|-> (x) body)): each answer of e
+     for p from s: body          (flow:for-match s p body)
+     while c: body               (flow:while c body)
+     repeat: step                (flow:until-quiet step)
+     do: s1 ... e                (flow:then s1 ... e); lib_flow states the meaning
+     transform s into d:         (transform s (, (take p) (absent q) (let True g)) t d)
+         take p
+         absent q
+         when g
+     yield t                     several outputs are the tuple (t, u); without
+                                 into they are evaluated as match evaluates
+                                 its template
+     all: / once: / unique:      answer sets of the sources in their block
+     collect $l:                 every match of the block's sources, into $l
+     lambda $x, $y: b            (|-> ($x $y) b)
+     let p = e in b   let* p = e, q = f in b
+     (a, b)  @e  *e  or and == < > <= >= + - * / %  A -> B
+   Words: $x is a variable; `any symbol` is a symbol; # starts a comment;
+   keywords are soft (a name wherever the grammar cannot take the keyword). -}
+Module MeTTaPythonStylePresentation {
+  Theory Lexical() {
+    Empty Terms {
+      comment "#" ;
+      token PVar '$' (letter | digit | ["_'"] | ('-' letter))* ;
+      token PName (letter | '_' | '&') (letter | digit | ["_'"] | ('-' letter) | (':' letter))* ["!?"]? ;
+      token PQuoted '`' ((char - ["`\\"]) | ('\\' ["`\\"]))* '`' ;
+      token PRaw 'r' '#' '"' ((char - ["\""]) | ('"' (char - ["#"])))* '"' '#' ;
+      layout toplevel ;
+      layout ":" ;
+      layout stop "else", "yield" ;
+    }
+  }
+  Theory Statements(lex: Lexical) {
+    lex Terms {
+      Program . Prog ::= [Stmt] ;
+      separator Stmt ";" ;
+      SFact . Stmt ::= "atom" Exp ;
+      SDef  . Stmt ::= "def" Exp7 ":" "{" Seq "}" ;
+      SEq   . Stmt ::= Exp "=" Exp ;
+      SType . Stmt ::= Exp "::" Exp ;
+      SRun  . Stmt ::= Exp ;
+
+      ELambda  . Exp ::= "lambda" [Exp] ":" "{" Exp "}" ;
+      ELet     . Exp ::= "let" Exp1 "=" Exp "in" Exp ;
+      ELetStar . Exp ::= "let*" [Binding] "in" Exp ;
+      BindOne  . Binding ::= Exp1 "=" Exp ;
+      separator nonempty Binding "," ;
+      EArrow   . Exp ::= Exp1 "->" ArrowTail ;
+      ATLast   . ArrowTail ::= Exp1 ;
+      ATMore   . ArrowTail ::= Exp1 "->" ArrowTail ;
+
+      EOr  . Exp1 ::= Exp1 "or" Exp2 ;
+      EAnd . Exp2 ::= Exp2 "and" Exp3 ;
+      EEq  . Exp3 ::= Exp4 "==" Exp4 ;
+      ELt  . Exp3 ::= Exp4 "<" Exp4 ;
+      EGt  . Exp3 ::= Exp4 ">" Exp4 ;
+      ELe  . Exp3 ::= Exp4 "<=" Exp4 ;
+      EGe  . Exp3 ::= Exp4 ">=" Exp4 ;
+      EAdd . Exp4 ::= Exp4 "+" Exp5 ;
+      ESub . Exp4 ::= Exp4 "-" Exp5 ;
+      EMul . Exp5 ::= Exp5 "*" Exp6 ;
+      EDiv . Exp5 ::= Exp5 "/" Exp6 ;
+      EMod . Exp5 ::= Exp5 "%" Exp6 ;
+      EQuote   . Exp6 ::= "@" Exp6 ;
+      EUnquote . Exp6 ::= "*" Exp6 ;
+      ECall . Exp7 ::= Exp7 "(" [Exp] ")" ;
+      EDataLit . Exp7 ::= Exp7 "{" [Exp] "}" ;
+      EData . Exp7 ::= Exp7 "[" [Exp] "]" ;
+
+      EVar       . Exp8 ::= PVar ;
+      ESym       . Exp8 ::= PName ;
+      EQSym      . Exp8 ::= PQuoted ;
+      EInt       . Exp8 ::= Integer ;
+      ENegInt    . Exp8 ::= "-" Integer ;
+      EDouble    . Exp8 ::= Double ;
+      ENegDouble . Exp8 ::= "-" Double ;
+      EStr       . Exp8 ::= String ;
+      ERaw       . Exp8 ::= PRaw ;
+      ETuple     . Exp8 ::= "[" [Exp] "]" ;
+      EConj      . Exp8 ::= "(" Exp "," [Exp] ")" ;
+      EIf        . Exp8 ::= "if" Exp ":" "{" Exp "}" "else" ":" "{" Exp "}" ;
+      ECase      . Exp8 ::= "case" Exp ":" "{" [Arm] "}" ;
+      ArmOne     . Arm ::= Exp1 "=>" Exp ;
+      separator Arm ";" ;
+      EMatch     . Exp8 ::= "[" Exp "for" Exp1 "in" Exp "]" ;
+      EDo        . Exp8 ::= "do" ":" "{" Exp ";" Seq "}" ;
+      SeqMore    . Seq ::= Exp ";" Seq ;
+      SeqLast    . Seq ::= Exp ;
+      EForOf     . Exp8 ::= "for" Exp1 "of" Exp ":" "{" Seq "}" ;
+      EFor       . Exp8 ::= "for" Exp1 "in" Exp ":" "{" Seq "}" ;
+      EForFrom   . Exp8 ::= "for" Exp1 "from" Exp ":" "{" Seq "}" ;
+      EWhile     . Exp8 ::= "while" Exp ":" "{" Seq "}" ;
+      ERepeat    . Exp8 ::= "repeat" ":" "{" Seq "}" ;
+      ETransformInto . Exp ::= "transform" Exp "into" Exp ":" "{" Srcs "}" "yield" Exp1 ;
+      ETransform     . Exp ::= "transform" Exp ":" "{" Srcs "}" "yield" Exp1 ;
+
+      SrcsMany . Srcs ::= Conj ";" [Conj] ;
+      SrcsOne  . Srcs ::= Conj ;
+      separator nonempty Conj ";" ;
+      CTake   . Conj ::= "take" Exp1 ;
+      CRead   . Conj ::= "read" Exp1 ;
+      CAbsent . Conj ::= "absent" Exp1 ;
+      CWhen   . Conj ::= "when" Exp1 ;
+      CLet    . Conj ::= "let" Exp1 "=" Exp1 ;
+      CAll     . Conj ::= "all" ":" "{" Srcs "}" ;
+      COnce    . Conj ::= "once" ":" "{" Srcs "}" ;
+      CUnique  . Conj ::= "unique" ":" "{" Srcs "}" ;
+      CCollect . Conj ::= "collect" Exp1 ":" "{" Srcs "}" ;
+      CPlain  . Conj ::= Exp1 ;
+
+      coercions Exp 8 ;
+      separator Exp "," ;
+    }
+  }
+  Theory PythonStyle() { Statements(Lexical()) }
+  theory PythonStyle()
+}

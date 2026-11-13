@@ -251,7 +251,7 @@
          (let $_ (add-atom &self (rb:callback-seen $item)) (+ $item 100))
          %Undefined% &self))) $mapped
       (return $mapped)))
-!(collapse (match &self (rb:callback-seen $item) $item))
+!(let $answers (collapse (match &self (rb:callback-seen $item) $item)) (sort-atom $answers))
 
 ; Public collection applies its Expression result demand before observation.
 ; The return delimiter holds the projected field instead of re-evaluating it.
@@ -455,7 +455,7 @@
 !(add-atom &rb:symbols plain)
 !(get-atoms &rb:symbols)
 !(match &rb:symbols $value $value)
-!(collapse (match &rb:symbols $value $value))
+!(let $answers (collapse (match &rb:symbols $value $value)) (sort-atom $answers))
 ; Profile filtering must retain declarations authored in an ordinary space.
 !(add-atom &rb:symbols (: once Number))
 !(get-type-space &rb:symbols once)

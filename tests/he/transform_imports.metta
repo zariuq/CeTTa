@@ -4,7 +4,7 @@
 !(bind! &s (new-space))
 !(add-atom &s (job a))
 !(add-atom &s (job b))
-!(sort-atom (collapse (transform &s (take (job $j)) (done $j))))
+!(let $done (collapse (transform &s (take (job $j)) (done $j))) (sort-atom $done))
 !(collapse (match &s (job $j) $j))
 (= (tf:run $space $sources $template $destination) (redefined $sources))
 !(bind! &r (new-space))

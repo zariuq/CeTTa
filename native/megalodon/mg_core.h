@@ -375,6 +375,10 @@ struct MgDecl {
     MgEvidence *evidence;
     /* Provenance (display/source metadata, no authority). */
     char *source_name;
+    /* The other source names of this object: a declaration admitted later
+     * with the same identity is this one under another spelling. */
+    char **also_named;
+    uint32_t also_len;
     char *origin;
     uint64_t line;
 };
@@ -753,6 +757,13 @@ MgStatus mg_theory_publish_known(MgTheory *t, uint64_t captured_rev,
 /* Whether `name` can still be declared in namespace `ns` (fresh in the
  * lineage and not reserved by the profile). */
 bool mg_theory_name_fresh(const MgTheory *t, uint32_t name, MgNamespace ns);
+/* Record that the declaration is also written `source_name` in a source
+ * (provenance, as source_name is; a name it has already is not recorded
+ * twice, and NULL records nothing).  The caller holds the lock.  False when
+ * memory runs out. */
+bool mg_decl_also_named(const MgDecl *d, const char *source_name);
+/* Whether `source_name` is one of the declaration's source names. */
+bool mg_decl_named(const MgDecl *d, const char *source_name);
 /* Footprint of a proof: names of its term operands and cited knowns. */
 bool mg_footprint_add_proof(MgFootprint *f, const MgPf *proof);
 /* Withdrawn / live declarations count (inspection). */

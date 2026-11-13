@@ -659,6 +659,7 @@ typedef struct {
     uint32_t pending_levels;
     MgTm *pending_prop;
     uint64_t pending_line;
+    uint64_t pending_conversions;
     /* names of theorems without authority (ADMITTED, QEDWITHADMITS, and
      * proofs citing one), open addressing over name + 1 */
     uint32_t *unproved;
@@ -684,6 +685,7 @@ typedef struct {
     uint32_t up_off, up_len;   /* cited theorems without authority */
     uint32_t ext;              /* cited knowns from before the ledger */
     uint64_t work;             /* units its checking used (budgeted theorems) */
+    uint64_t conversions;      /* what its proof script asked of the tactic engine */
 } LedgerRow;
 
 struct MgLedger {
@@ -760,7 +762,7 @@ void mg_ledger_get(const MgLedger *l, uint32_t i, MgLedgerEntry *out) {
         .origin = (MgOrigin)r->origin, .verdict = (MgVerdict)r->verdict,
         .axioms = l->pool + r->ax_off, .axiom_count = r->ax_len,
         .unproved = l->pool + r->up_off, .unproved_count = r->up_len,
-        .external_count = r->ext, .work = r->work,
+        .external_count = r->ext, .work = r->work, .conversions = r->conversions,
     };
 }
 
@@ -854,7 +856,7 @@ static void ledger_axiom(Importer *im, const char *name, uint32_t id, uint64_t l
 
 static void ledger_add(MgLedger *l, const char *name, uint32_t id, uint64_t line, bool theorem,
                        MgOrigin origin, MgVerdict verdict, const U32Vec *ax, const U32Vec *up,
-                       uint32_t ext, uint64_t work) {
+                       uint32_t ext, uint64_t work, uint64_t conversions) {
     if (l->incomplete)
         return;
     if (l->len == l->cap) {
@@ -872,7 +874,7 @@ static void ledger_add(MgLedger *l, const char *name, uint32_t id, uint64_t line
     LedgerRow r = {.name = copy, .id = id, .line = line, .theorem = theorem,
                    .origin = (uint8_t)origin, .verdict = (uint8_t)verdict,
                    .ax_len = (uint32_t)ax->len, .up_len = (uint32_t)up->len, .ext = ext,
-                   .work = work};
+                   .work = work, .conversions = conversions};
     if (!copy || !pool_push(l, ax, &r.ax_off) || !pool_push(l, up, &r.up_off)) {
         mg_sys_free(copy);
         l->incomplete = true;
@@ -1047,6 +1049,13 @@ static const MgDecl *existing(Importer *im, uint32_t name, MgNamespace ns) {
     return mg_env_lookup_quiet(mg_theory_snapshot(im->t), name, ns);
 }
 
+/* The object is declared already, under another name or this one: it keeps
+ * this spelling too, so that a lookup by source name finds it. */
+static bool also_named(Importer *im, const MgDecl *d, const char *name, uint64_t line) {
+    return mg_decl_also_named(d, name) ||
+           stop(im, line, MG_NOMEM, "%s: no memory to keep the name%s", name, NULL);
+}
+
 static uint32_t type_levels(const MgTp *t) {
     uint32_t n = 0;
     while (t && t->tag == MG_TP_ALL) {
@@ -1080,7 +1089,7 @@ static bool admit_prim(Importer *im, const char *name, const char *hash, uint64_
     if (d) {
         if (d->type == type && d->def && d->def->tag == MG_TM_PRIM && d->def->n == j) {
             ++im->r->repeated;
-            return true;
+            return also_named(im, d, name, line);
         }
         return stop(im, line, MG_CONFLICT, "PRIM %s: hash already names another term%s", name, NULL);
     }
@@ -1120,7 +1129,7 @@ static bool admit_param(Importer *im, const char *name, const char *hash, uint32
          * Megalodon documents restate their predecessors, refers to it. */
         if (d->type == type) {
             ++im->r->repeated;
-            return true;
+            return also_named(im, d, name, line);
         }
         return stop(im, line, MG_CONFLICT, "PARAM %s: hash already names another term%s", name, NULL);
     }
@@ -1183,7 +1192,7 @@ static bool admit_def(Importer *im, const char *name, const char *hash, uint32_t
         /* The same identity is the same object, whatever its spelling. */
         if (d->type == type && (d->def || body_is_name(normal, h))) {
             ++im->r->repeated;
-            return true;
+            return also_named(im, d, name, line);
         }
         /* A parameter declared by content hash, now given the body that
          * hash names: the kernel verifies the identity. */
@@ -1230,7 +1239,7 @@ static bool admit_axiom(Importer *im, const char *name, const char *hash, uint32
     if (d) {
         ++im->r->repeated; /* the same proposition, already known */
         ledger_axiom(im, name, h, line);
-        return true;
+        return also_named(im, d, name, line);
     }
     if (!axiom_accepted(im, name, hash))
         return stop(im, line, MG_REFUSED,
@@ -1475,7 +1484,8 @@ static void ledger_theorem(Importer *im, MgPf *proof, MgVerdict v) {
     }
     if (ok)
         ledger_add(l, im->pending_name, im->pending_hash, im->pending_line, true, im->item_origin, v,
-                   &ax, &up, ext, im->theorem_work && im->budget ? im->budget->work_used : 0u);
+                   &ax, &up, ext, im->theorem_work && im->budget ? im->budget->work_used : 0u,
+                   im->pending_conversions);
     else
         l->incomplete = true;
     mg_sys_free(ids.v);
@@ -1487,7 +1497,7 @@ static void ledger_axiom(Importer *im, const char *name, uint32_t id, uint64_t l
     if (!im->ledger)
         return;
     U32Vec none = {0};
-    ledger_add(im->ledger, name, id, line, false, im->item_origin, (MgVerdict)0, &none, &none, 0u, 0u);
+    ledger_add(im->ledger, name, id, line, false, im->item_origin, (MgVerdict)0, &none, &none, 0u, 0u, 0u);
 }
 
 /* The pending theorem's check used up its budget: no authority, and the
@@ -1521,7 +1531,7 @@ static bool admit_proof(Importer *im, const char *name, MgPf *proof) {
                         c.reason ? c.reason : "proof does not prove the stated proposition");
         ++im->r->reproved;
         ledger_theorem(im, proof, MG_VERDICT_REPROVED);
-        return true;
+        return also_named(im, d, name, line);
     }
     bool dependent = false;
     MgStatus walk = cites_unproved(im, proof, &dependent);
@@ -1734,6 +1744,10 @@ void mg_admission_record(MgAdmission *a, MgLedger *ledger) { a->im.ledger = ledg
 
 void mg_admission_budget_theorems(MgAdmission *a, uint64_t work) { a->im.theorem_work = work; }
 
+void mg_admission_proof_conversions(MgAdmission *a, uint64_t conversions) {
+    a->im.pending_conversions = conversions;
+}
+
 void mg_admission_set_origin(MgAdmission *a, MgOrigin origin) { a->im.item_origin = origin; }
 
 MgStatus mg_admission_finish(MgAdmission *a) {
@@ -1756,6 +1770,14 @@ static void print_provenance(FILE *out, const MgDecl *d) {
     if (d->source_name) {
         fputs(" (source ", out);
         print_string(out, d->source_name, strlen(d->source_name));
+        fputc(')', out);
+    }
+    if (d->also_len) {
+        fputs(" (also", out);
+        for (uint32_t i = 0; i < d->also_len; ++i) {
+            fputc(' ', out);
+            print_string(out, d->also_named[i], strlen(d->also_named[i]));
+        }
         fputc(')', out);
     }
     if (d->origin) {
@@ -1901,14 +1923,28 @@ static bool load_stop(Loader *ld, uint64_t line, MgStatus st, const char *what,
     return false;
 }
 
+/* The declaration's other source names, (also "N" ...). */
+static bool load_also(const MgDecl *d, const MgSx *x) {
+    for (uint32_t i = 0; d && i < x->len; ++i) {
+        const MgSx *e = x->items[i];
+        if (!mg_sx_head(e, "also"))
+            continue;
+        for (uint32_t k = 1; k < e->len; ++k)
+            if (!mg_decl_also_named(d, sx_string(e->items[k])))
+                return false;
+    }
+    return true;
+}
+
 static bool load_admit(Loader *ld, MgItem *item, const MgSx *x, const char *what,
                        const char *name) {
     item->source_name = find_text(x, "source");
     item->origin = find_text(x, "origin");
     item->line = find_line(x);
-    MgStatus st = mg_theory_admit(ld->t, ld->budget, item, 0, NULL);
+    const MgDecl *d = NULL;
+    MgStatus st = mg_theory_admit(ld->t, ld->budget, item, 0, &d);
     if (st == MG_OK)
-        return true;
+        return load_also(d, x) || load_stop(ld, x->line, MG_NOMEM, what, name, NULL);
     return load_stop(ld, x->line, st, what, name,
                      (st == MG_REFUSED || st == MG_MALFORMED) ? check_reason(ld->t, item)
                                                               : NULL);
@@ -1971,6 +2007,10 @@ static bool load_dag_theorem(Loader *ld, const MgSx *x, const char *name, uint32
                     memcpy(copy, src, k + 1u);
                     ((MgDecl *)d)->source_name = copy;
                 }
+            }
+            if (!load_also(d, x)) {
+                st = MG_NOMEM;
+                why = NULL;
             }
         }
     }

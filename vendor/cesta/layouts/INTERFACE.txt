@@ -1,0 +1,236 @@
+Layouts
+-------
+
+A layout presents a value in one machine word. It is declared once, in a
+module, and every tool reads that declaration: the checker, the Lean
+admission, and the C generator.
+
+  cesta layout check MODULE THEORY
+  cesta layout functions MODULE THEORY
+  cesta layout header MODULE THEORY -o OUTPUT.h
+
+check reads the layouts a theory declares, refuses malformed ones with a
+reason, and prints each accepted layout in a normalized form. header writes
+ordinary C accessors for every layout of the theory; functions prints the
+same accessors as recorded expressions.
+
+Declaration
+-----------
+
+A layout theory declares each layout as an equation:
+
+  Theory Frames() {
+    Empty Equations {
+      (FrameIdentity) == (Layout "cesta-layout/1"
+        (Word 32)
+        (Constants (Const ClassOneFirst (Pow2 20)) ...)
+        (Fields (Field handle "value") (Field generation "value"))
+        (Case (Prefix 1 0)
+          (Place handle (Bits 0 20) (Range 1 (Minus ClassOneFirst 1)))
+          (Place generation (Bits 20 11) (Range 1 2046)))
+        ...
+        (Reserved (Prefix 4 15)
+          (Place handle (Bits 0 28) (Offset HandleLimit))
+          (Place generation (Bits 28 0)))
+        (Location "immutable"));
+    }
+  }
+
+Word        the word's width, 1 to 64 bits.
+Constants   named constants. An expression is a decimal integer, a constant,
+            (Hex "..."), (Pow2 E), (Sum E ...), (Times E ...) or (Minus A B),
+            exact in 64 bits.
+Fields      the value's fields, in order, each with a kind: "value",
+            "any-child", "all-children", "fact", "cache", "occurrence" or
+            "reference". A field written after the word is shared says
+            (Written "after-publication").
+Case        a case of the word: an optional (Prefix LENGTH VALUE) on the top
+            bits, then a Place for every field in the bits below. A place
+            stores the value minus its Offset (default 0) and admits the
+            values in its Range (default: every value its bits hold).
+Reserved    a case that reads words but admits no value.
+Alias       (Alias NAME FIELD CONDITION): a second name for a field, with the
+            condition under which the two must be split.
+Requires    (Requires (AtMost FIELD BITS) REASON): a bound some consumer of
+            the field relies on.
+Location    the word's write discipline: "immutable", "single-owner",
+            "construction" or "atomic".
+From        (From OLD): this layout is a newer version of the layout OLD,
+            declared earlier in the theory. It must read the same fields in
+            the same order, and each admitting case of OLD must lie inside
+            one admitting case of this layout, so every old word has a new
+            word.
+Key         (Key FIELD): FIELD chooses the case. Its ranges must ascend
+            through the admitting cases in prefix order, each lying wholly
+            below the next, so a value's case is the one whose range holds
+            its FIELD.
+
+Checks
+------
+
+A layout is refused when:
+  - a field lies outside the bits below its case's prefix, two fields of a
+    case overlap, or a bit below the prefix is in no field;
+  - a case prefix extends or is shared with another, or some words are in no
+    case (declare those Reserved);
+  - a range admits nothing or does not fit its offset and bits;
+  - two cases admit a common value, or read some words as the same value;
+  - a field is undeclared, missing from a case, placed twice, or has an
+    unknown kind;
+  - an alias names no field or gives no condition, or a requirement does not
+    hold in some case;
+  - a field written after publication shares a word that is not atomic;
+  - a field name would name another accessor;
+  - a word with several cases carries a field of a derived kind;
+  - a key names no field, or its ranges do not ascend through the admitting
+    cases in prefix order.
+
+Normalized form
+---------------
+
+  (cesta-layout/1 NAME WIDTH (Fields (FIELD KIND WRITTEN) ...) TRIE
+    (Location DISCIPLINE) (Aliases (NAME FIELD CONDITION) ...)
+    (Requires (FIELD BITS REASON) ...) [(From OLD)] [(Key FIELD)]
+    [(Constants (Const NAME VALUE EXPRESSION) ...)])
+
+  TRIE ::= (Leaf "admits"|"reserved" (Place SHIFT WIDTH OFFSET LO HI) ...)
+         | (Node TRIE TRIE)
+
+Constants are evaluated, and listed with their values and expressions;
+prefixes become a binary trie whose leaves are the cases, and every case
+lists its places in field order.
+
+Accessors
+---------
+
+For a layout NAME with fields F1 ... Fn in a word of 8, 16, 32 or 64 bits,
+header writes static inline functions:
+
+  uint64_t NAME_F(uintW_t word)        the field's value, for every word
+  bool NAME_valid(uintW_t word)         the word is one a value is written as
+  bool NAME_admits(uint64_t F1, ...)    some case admits the value
+  uintW_t NAME_encode(uint64_t F1, ...) the value's word (0 when none admits it)
+
+A newer version gets NAME_from_OLD(old), the new word for an old word, or 0
+for a word OLD does not decode. Zero may also be a successful encoded word;
+test OLD_valid(old) to distinguish refusal from success. A single-case word also gets
+NAME_set_F(word, value). A single-case word
+with derived kinds gets NAME_derive_init(), NAME_derive_child(acc, child)
+and NAME_derive_finish(acc, own), which build a parent's word from its
+children's, and NAME_value_copy, NAME_store and NAME_relocate, which keep
+exactly the kinds each operation keeps: storing drops occurrence marks.
+
+Every declared constant C is exported as #define NAME_C UINT64_C(VALUE).
+
+Views follow the accessors. A word with several cases gets, for each field,
+
+  uint64_t NAME_F_lo(uintW_t word)       the field's lower bound in the word's case
+  uint64_t NAME_F_hi(uintW_t word)       its upper bound there
+
+A layout with (Key K) gets, for each field,
+
+  uint64_t NAME_F_lo_for_K(uint64_t K)   the field's lower bound in the case
+                                          whose range holds K (0 when none does)
+  uint64_t NAME_F_hi_for_K(uint64_t K)   its upper bound there
+  bool NAME_admits_K(uint64_t K)          some case's range holds K
+
+A keyed layout, or one with a single admitting case, gets
+
+  uintW_t NAME_pack(uint64_t F1, ...)     the word of an admitted value
+
+pack checks nothing: it compares the key once per case and writes each
+field minus its offset into its slot. For a value NAME_admits accepts it
+returns what NAME_encode returns; for any other value its result is
+unspecified, though never undefined behavior. Call it where the value is
+known to be admitted, and NAME_encode elsewhere.
+
+A word whose location is "atomic" is accessed only atomically:
+NAME_atomic_load acquires, NAME_atomic_store releases, and a single-case
+word gets NAME_atomic_set_F, which replaces the field by compare-and-swap of
+the whole word through NAME_set_F, so writers of different fields never lose
+each other's updates.
+
+Each body is one expression over uint64_t: constants, &, |, ~, shifts by
+constants below 64, +, -, ==, <= and ?:. A narrower word is converted to
+uint64_t before use, so no integer promotion changes a value, and a bound
+that always holds is written as 1.
+
+Evidence
+--------
+
+MeTTapedia's LayoutCodes proves, once, for every layout that is well formed:
+a written value reads back; a word that reads as a value is the one word that
+value is written as; and distinct words read as distinct values, valid or
+not. The admission decodes each printed layout in the Lean kernel and decides
+that it is well formed, so these laws hold of the layout the module actually
+declares. A malformed printed layout is decided not admitted.
+
+For CeTTa's frame identities, MeTTapedia also proves that the declared layout
+is the codec CeTTa uses: the same total reading, the same checked reading and
+the same words.
+
+MeTTapedia's LayoutLowering states C's meaning of the accessor expressions
+(unsigned 64-bit arithmetic, a shift by 64 or more undefined) and proves, for
+every well-formed layout, that the accessors compute the layout's reading of
+each field, its checked reading, its encoding, its single-field writes, the
+derived word of a parent (folded child by child) and each operation's word.
+The admission decides, for every declared layout, that the accessors Cesta
+records are exactly that lowering; an accessor with one wrong mask bit is
+refused. LayoutKinds proves what the kinds mean over whole terms: a summary
+bit is set exactly when some (every) leaf has it, so a missing bit proves
+absence, and a derived node never carries an occurrence mark.
+
+The header also names each non-atomic field, validity, encoding, kind and
+view accessor expression CESTA_LAYOUT_NAME_BODY. Migration is function-only.
+BODY formals use private positional names. Printed field parameters use the
+cesta_value_ prefix, so legal logical names such as uint64_t, UINT64_C and
+C keywords cannot capture the C type or literal helpers. Function records
+retain the logical parameter names; expression variables are indexed, so
+this change of C binder spelling preserves their positions.
+The public typed inline function wraps that expression and evaluates each
+call argument once. The BODY macro is an implementation interface for C11
+external-linkage inline adapters, which cannot refer to a static function.
+Use BODY only with already-evaluated, nonvolatile parameters or local values
+of the accessor's declared types. It may repeat or omit parameter reads;
+it promises neither evaluation count nor order for arbitrary expressions.
+Perform volatile and atomic loads before passing their values to BODY.
+
+Admission checks the normalized declaration's field kinds, write phases,
+location, aliases and width requirements as well as the unsigned expression
+records. This checks declared conditions. It does not establish ownership,
+sharing or race freedom of a C program using those declarations. Atomic load,
+store and compare-and-swap wrappers remain outside the unsigned expression
+model. A separate test-layout-bridge gate checks the actual CeTTa codec bridge;
+test-layout-admission first rebuilds the layout models it imports.
+
+The generated headers compile without warnings under GCC and Clang, in c11
+and gnu11, with -Wall -Wextra -Werror -pedantic, and agree with an
+independent reading of the normalized layouts on boundary and random words.
+At a pinned CeTTa revision, CeTTa's own frame-identity decoder agrees with
+the generated reading and validity on every 32-bit word, and its spelling
+with the generated encoding on every valid identity.
+
+MeTTapedia's LayoutViews proves, for every well-formed layout, that the
+bound views compute the bounds of the word's case and that a decoded value
+lies within them; that under an ascending key a value has a word exactly
+when the case its key selects admits it, and the key views compute that
+case's bounds and whether it exists; and that for an admitted value pack
+writes the value's word. The admission decides, for every declared layout,
+that the recorded views are exactly these, that the key ascends, and that
+the exported constants are the declared ones, each re-evaluated from its
+expression; a pack with a wrong case boundary, a wrong constant and a
+descending key are refused.
+
+MeTTapedia's LayoutMigration proves, for a newer version that embeds the
+older one, that a migrated word reads back as the old word's value, that
+exactly the old version's invalid words are refused, and that distinct old
+words never share a new word; the admission decides that the recorded
+NAME_from_OLD is that migration's lowering.
+
+Four threads writing one atomic word through its accessors neither race nor
+lose updates under ThreadSanitizer, under GCC and Clang; the same writes on a
+plain word are reported as a data race, which is why such a word is refused.
+
+Not proved: that GCC and Clang compile the accessor expressions as C defines
+them; that the printed C is the recorded expression; the C11 memory model
+behind the atomic accessors. All three are tested as above.

@@ -6,9 +6,7 @@
 !(case (match &self (snapshot-seed $x) $x)
        (($x (add-atom &self (snapshot-seed (+ $x 1))))))
 
-!(assertEqual
-  (collapse (match &self (snapshot-seed $x) $x))
-  (0 1))
+!(assertEqualToResult (match &self (snapshot-seed $x) $x) (0 1))
 
 ; Consuming one equation can recursively select through the same compiled
 ; decision. Its scratch must not replace the outer call's remaining choices.
@@ -17,6 +15,4 @@
 (= (snapshot-choice outer) third)
 (= (snapshot-choice inner) nested-first)
 (= (snapshot-choice inner) nested-second)
-!(assertEqual
-  (collapse (snapshot-choice outer))
-  (nested-first nested-second second third))
+!(assertEqualToResult (snapshot-choice outer) (nested-first nested-second second third))

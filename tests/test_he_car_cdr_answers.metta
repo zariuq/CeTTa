@@ -10,10 +10,11 @@
 !(car-atom (a b))
 !(cdr-atom (a))
 
-; A collected tuple's head and tail.
-(= (collected-head) (let $c (collapse (superpose ((f g) h))) (car-atom $c)))
+; A collected tuple's head and tail.  A collection's answers come in no
+; promised order, so its answers here are alike.
+(= (collected-head) (let $c (collapse (superpose ((f g) (f g)))) (car-atom $c)))
 !(collected-head)
-(= (collected-tail) (let $c (collapse (superpose (h f g))) (cdr-atom $c)))
+(= (collected-tail) (let $c (collapse (superpose (f f f))) (cdr-atom $c)))
 !(collected-tail)
 
 ; Through a let and a recursive walk.

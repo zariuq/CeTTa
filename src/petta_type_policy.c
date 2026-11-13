@@ -43,10 +43,12 @@ bool petta_type_call_plan(Atom *type, CettaExprLen supplied,
     return true;
 }
 
-bool petta_type_body_is_data(Atom *const *types, uint32_t count) {
+bool petta_type_body_is_data(Atom *const *types, uint32_t count,
+                             CettaExprLen arity) {
     for (uint32_t i = 0u; i < count; i++) {
         PettaTypeCall call;
-        if (petta_type_call_plan(types[i], 0u, &call) && call.hold_result)
+        if (petta_type_call_plan(types[i], 0u, &call) &&
+            call.arity == arity && call.hold_result)
             return true;
     }
     return false;

@@ -9,9 +9,13 @@
                 (let $r ($f $x)
                    (let $x (superpose (1 2 3)) (Kept $x)))))
           (progn (println! forbidden_bound_tail) (Tail a))))))
-!(bound_late $x)
+; Which two answers the bound takes is open: the query reads how many it took
+; and which of them are not among the producer's answers (none).
+!(let $r (bound_late $x)
+   (selected (size-atom $r)
+      (subtraction-atom $r ((Before a) (Kept 2) (Kept 3) (Tail a)))))
 (= (nested_late $x)
-   (collapse
+   (sort-atom (collapse
       (superpose
          ((Before a)
           (collapse
@@ -19,5 +23,5 @@
                 (let $f cold_dif
                    (let $r ($f $x)
                       (let $x (superpose (1 2 2)) (Kept $x))))))
-          (Tail a)))))
+          (Tail a))))))
 !(nested_late $x)

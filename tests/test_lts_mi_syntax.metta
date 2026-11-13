@@ -23,33 +23,24 @@
      (((MIState $rules $term) (== $term (mi-two)))
       ($_ False))))
 
-!(assertEqual
-  (collapse (lts:transitions lts:mi:step
-    (MIState (mi-rules-add) (mi-add (mi-Z) (mi-one)))))
-  (collapse (superpose ((MIState (mi-rules-add) (mi-one))))))
+!(assertEqual (lts:transitions lts:mi:step
+    (MIState (mi-rules-add) (mi-add (mi-Z) (mi-one)))) (superpose ((MIState (mi-rules-add) (mi-one)))))
 
-!(assertEqual
-  (collapse (lts:transitions lts:mi:step
-    (MIState (mi-rules-add) (mi-add (mi-Z) (mi-one)))))
-  (collapse
-    (let $next (mi-step (mi-rules-add) (mi-add (mi-Z) (mi-one)))
+!(assertEqual (lts:transitions lts:mi:step
+    (MIState (mi-rules-add) (mi-add (mi-Z) (mi-one)))) (let $next (mi-step (mi-rules-add) (mi-add (mi-Z) (mi-one)))
       (case $next
         (((MIStep $term) (MIState (mi-rules-add) $term))
-         (MINoStep (superpose ())))))))
+         (MINoStep (superpose ()))))))
 
-!(assertEqual
-  (collapse (lts:trace-2 lts:mi:step
-    (MIState (mi-rules-add) (mi-add (mi-two) (mi-one)))))
-  (collapse (superpose
+!(assertEqual (lts:trace-2 lts:mi:step
+    (MIState (mi-rules-add) (mi-add (mi-two) (mi-one)))) (superpose
     (((MIState (mi-rules-add) (mi-S (mi-add (mi-one) (mi-one))))
-      (MIState (mi-rules-add) (mi-S (mi-S (mi-add (mi-Z) (mi-one))))))))))
+      (MIState (mi-rules-add) (mi-S (mi-S (mi-add (mi-Z) (mi-one)))))))))
 
-!(assertEqual
-  (collapse (lts:trace-2 lts:mi:step
-    (MIState (mi-rules-add) (mi-add (mi-one) (mi-one)))))
-  (collapse (superpose
+!(assertEqual (lts:trace-2 lts:mi:step
+    (MIState (mi-rules-add) (mi-add (mi-one) (mi-one)))) (superpose
     (((MIState (mi-rules-add) (mi-S (mi-add (mi-Z) (mi-one))))
-      (MIState (mi-rules-add) (mi-two)))))))
+      (MIState (mi-rules-add) (mi-two))))))
 
 !(assertEqualToResult
   (lts:is-normal-form lts:mi:step (MIState (mi-rules-add) (mi-one)))

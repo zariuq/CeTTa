@@ -1,0 +1,23 @@
+; A list built with an open tail (cons-atom with an unbound rest) is the list
+; it spells: a pattern meets it, in a read, a count and a removal, as
+; unification of [H|T] does; an improper list meets only its own shape.
+!(bind! &s (new-space))
+!(let $l (cons-atom 3 $t) (add-atom &s (zz $l)))
+!(let $l (cons-atom (2) $u) (add-atom &s (job (n $l))))
+!(let $l (cons-atom 0 b) (add-atom &s (zz $l)))
+!(add-atom &s (zz (4)))
+!(add-atom &s (job (n (5))))
+!(size-atom (collapse (match &s (zz (3)) found)))
+!(size-atom (collapse (match &s (zz (3 7 8)) found)))
+!(size-atom (collapse (match &s (zz (0)) found)))
+!(size-atom (collapse (match &s (zz $x) found)))
+!(size-atom (collapse (match &s (job (n ((2)))) found)))
+!(size-atom (collapse (match &s (job (n ((2) 9))) found)))
+!(size-atom (collapse (match &s (job (n ((3)))) found)))
+!(collapse (match &s (zz (3 $a)) $a))
+!(remove-atom &s (zz (3 1)))
+!(size-atom (collapse (get-atoms &s)))
+!(remove-atom &s (job (n ((2) 1 1))))
+!(size-atom (collapse (get-atoms &s)))
+!(remove-atom &s (zz (9)))
+!(size-atom (collapse (get-atoms &s)))

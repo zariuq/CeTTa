@@ -32,7 +32,7 @@
 (state held 0 (REG 1 0))
 (state held 0 (IC 0))
 !(run held 0)
-!(collapse (match &self (state held $t (REG $k $v)) ($t $k $v)))
+!(let $answers (collapse (match &self (state held $t (REG $k $v)) ($t $k $v))) (sort-atom $answers))
 
 ; Only errors in the collection: the let whose value it is goes on.
 (program alone 0 (INC 0))
@@ -40,7 +40,7 @@
 (state alone 0 (REG 0 "S"))
 (state alone 0 (IC 0))
 !(run alone 0)
-!(collapse (match &self (state alone $t (IC $i)) ($t $i)))
+!(let $answers (collapse (match &self (state alone $t (IC $i)) ($t $i))) (sort-atom $answers))
 
 ; An instruction that faults beside one that halts: the run's completion
 ; drops the error.
@@ -71,7 +71,7 @@
 (kk 0)
 (= (cond-eff $x) (if (> $x 1) (let $u (add-atom &self (big $x)) big) small))
 (= (conditions) (collapse (match &self (kk $x) (cond-eff $x))))
-!(conditions)
+!(let $answers (conditions) (sort-atom $answers))
 !(collapse (match &self (big $y) $y))
 
 ; A call whose equations give an error and a success after an effect.

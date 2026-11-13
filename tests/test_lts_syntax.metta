@@ -18,13 +18,9 @@
 ; to Error. Only a pure singleton Error frontier is propagated.
 (= (mixed:step x) (superpose ((Error mixed msg) ok)))
 
-!(assertEqualToResult
-  (collapse (lts:transitions mock:step a))
-  ((b c)))
+!(assertEqualToResult (lts:transitions mock:step a) (b c))
 
-!(assertEqual
-  (collapse (lts:transitions mock:step a))
-  (collapse (mock:step a)))
+!(assertEqual (lts:transitions mock:step a) (mock:step a))
 
 !(assertEqualToResult
   (lts:is-normal-form mock:step a)
@@ -78,19 +74,12 @@
   (lts:diamond mixed:step mock:false x)
   (False))
 
-!(assertEqual
-  (collapse (lts:transitions mock:step d))
-  (collapse (mock:step d)))
+!(assertEqual (lts:transitions mock:step d) (mock:step d))
 
-!(assertEqualToResult
-  (collapse (lts:trace-2 mock:step a))
-  (((b d) (c e))))
+!(assertEqualToResult (lts:trace-2 mock:step a) ((b d) (c e)))
 
-!(assertEqualToResult
-  (collapse
-    (let $q (lts:transitions mock:step a)
-      (lts:transitions mock:step $q)))
-  ((d e)))
+!(assertEqualToResult (let $q (lts:transitions mock:step a)
+      (lts:transitions mock:step $q)) (d e))
 
 ; Negative example: if a step relation leaves quiescent cases unstated,
 ; lts:is-normal-form cannot detect quiescence correctly.
