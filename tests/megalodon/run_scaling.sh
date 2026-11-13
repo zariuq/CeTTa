@@ -12,7 +12,11 @@
 # The nearly-equal workload is measured at depths D and 2D, D = 10 by
 # default: an engine that repeats a refuted conversion at every level of
 # nesting needs about a thousand times the conversions at twice the depth,
-# and at these depths it still finishes and is reported.
+# and at these depths it still finishes and is reported.  That engine is at
+# hand: mg-check --reference-conversion runs the conversion as Megalodon
+# does.  On this workload it must break the law, or the workload no longer
+# tells the two apart; and the conversions mg-check reports theorem by
+# theorem must add up to the document's.
 set -euo pipefail
 tool=${1:?usage: run_scaling.sh MG_CHECK CETTA}
 cetta=${2:?usage: run_scaling.sh MG_CHECK CETTA}
@@ -73,6 +77,24 @@ for kind in decls notation shared nearly; do
         echo "FAIL scaling $kind (N = $m): kernel work $ru, reader calls $rq, conversions $rv when the size doubles (limit $limit)"; fail=1
     else
         echo "ok   scaling $kind (N = $m): kernel work $ru, reader calls $rq, conversions $rv when the size doubles"
+    fi
+    if [[ $kind == nearly ]]; then
+        conversions() { sed -n 's/^elaboration: \([0-9]*\) conversions$/\1/p'; }
+        r1=$("$tool" --verbose --reference-conversion "$work/$kind-$m.mg" 2>&1 | conversions)
+        r2=$("$tool" --verbose --reference-conversion "$work/$kind-$((2 * m)).mg" 2>&1 | conversions)
+        rr=$(ratio "${r2:-0}" "${r1:-0}" 0)
+        if above "$rr"; then
+            echo "ok   scaling $kind (N = $m): Megalodon's own conversion, conversions $rr when the size doubles (above the limit, as it must be)"
+        else
+            echo "FAIL scaling $kind (N = $m): Megalodon's own conversion stays within the limit ($rr): the workload tells nothing"; fail=1
+        fi
+        each=$("$tool" --verbose "$work/$kind-$((2 * m)).mg" 2>&1 |
+               sed -n 's/^theorem .*, \([0-9]*\) conversions, .*/\1/p' | awk '{s += $1} END {print s + 0}')
+        if [[ "$each" == "${v[2]}" ]]; then
+            echo "ok   scaling $kind (N = $((2 * m))): the theorems' conversions add up to the document's ($each)"
+        else
+            echo "FAIL scaling $kind (N = $((2 * m))): the theorems' conversions add up to $each, the document's are ${v[2]}"; fail=1
+        fi
     fi
 done
 exit $fail
