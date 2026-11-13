@@ -2,13 +2,13 @@
 (0 1 2 3 4)
 (1 2 3 4 5)
 (1 2 3)
-(1 2)
-1
+2
+one-of-them
 (a b)
 (x y z)
 (ok done)
 (done done)
 (a b)
 ((Error stream-probe fail))
-(p q p q)
+(p p q q)
 (deep)

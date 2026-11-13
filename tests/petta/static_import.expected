@@ -5,10 +5,7 @@ true
 (Error (permission_error modify static_procedure (/ facts 3)) (context (: system (/ assertz 1)) $V0))
 (Error (permission_error modify static_procedure (/ facts 3)) (context (: system (/ retractall 1)) $V0))
 true
-(edge a b)
-(edge a b)
-(edge b c)
-(foo x)
+((edge a b) (edge a b) (edge b c) (foo x))
 true
 true
 ((a b) (a b) (b c))

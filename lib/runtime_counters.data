@@ -23,8 +23,8 @@
   (19 IMPORTED_BRIDGE_V2_FALLBACK "imported-bridge-v2-fallback")
   (20 IMPORTED_BRIDGE_V3_HIT "imported-bridge-v3-hit")
   (21 IMPORTED_BRIDGE_V3_FALLBACK "imported-bridge-v3-fallback")
-  (22 SPACE_PUSH "space-push")
-  (23 SPACE_POP "space-pop")
+  (22 SPACE_PUSH "space:ordered:admit")
+  (23 SPACE_POP "space:ordered:pop")
   (24 QUEUE_COMPACT "queue-compact")
   (25 REGISTRY_RESOLVE_HIT "resolve-registry-hit")
   (26 REGISTRY_RESOLVE_REWRITE "resolve-registry-rewrite")
@@ -1290,4 +1290,33 @@
   (1143 TRANSFORM_CURSOR_SCAN_ROW "transform-cursor-scan-row")
   (1144 TRANSFORM_CURSOR_PROPOSAL_ALLOC "transform-cursor-proposal-alloc")
   (1145 TRANSFORM_CURSOR_ACCOUNTED_BYTES_PEAK "transform-cursor-accounted-bytes-peak")
-  (1146 TRANSFORM_CURSOR_OWNED_BYTES_PEAK "transform-cursor-owned-bytes-peak")))
+  (1146 TRANSFORM_CURSOR_OWNED_BYTES_PEAK "transform-cursor-owned-bytes-peak")
+  ; A priority space's order index (space.c, "Order index"): rows taken in and
+  ; given up one at a time, the term comparisons that placed them, whole
+  ; rebuilds from the rows and the rows they read, rows renumbered with a
+  ; contraction, and index rows copied for a detached reader.
+  (1147 SPACE_ORDER_INSERT "space-order-insert")
+  (1148 SPACE_ORDER_REMOVE "space-order-remove")
+  (1149 SPACE_ORDER_COMPARE "space-order-compare")
+  (1150 SPACE_ORDER_REBUILD "space-order-rebuild")
+  (1151 SPACE_ORDER_REBUILD_ROW "space-order-rebuild-row")
+  (1152 SPACE_ORDER_TRANSPORT_ROW "space-order-transport-row")
+  (1153 SPACE_ORDER_COPY_ROW "space-order-copy-row")
+  ; Readers left on their Space's rows by a removal that only marks rows: views
+  ; frozen so, rows marked while one was, and frozen views a later rewrite of
+  ; the rows made copy them after all.
+  (1154 SPACE_READER_FREEZE "space-reader-freeze")
+  (1155 SPACE_READER_FROZEN_MARK "space-reader-frozen-mark")
+  (1156 SPACE_READER_FROZEN_COPY "space-reader-frozen-copy")
+  ; Work a cursor does before the rows it yields: rows an ordered walk
+  ; reaches or passes, and facts of a relation gathered for a cursor.
+  (1157 SPACE_ORDER_WALK_ROW "space-order-walk-row")
+  (1158 SPACE_KEPT_GATHER_FACT "space-kept-gather-fact")
+  ; Readers that read a space as it stood when they began (the later patterns
+  ; of a conjunctive match): readers begun, writes journalled while one was
+  ; open, reads made from the space less the writes since, and reads a write
+  ; the journal could not itemize left to the space as it is.
+  (1159 SPACE_ENTRY_OPEN "space-entry-open")
+  (1160 SPACE_ENTRY_JOURNAL_WRITE "space-entry-journal-write")
+  (1161 SPACE_ENTRY_CORRECTED_READ "space-entry-corrected-read")
+  (1162 SPACE_ENTRY_LOST "space-entry-lost")))

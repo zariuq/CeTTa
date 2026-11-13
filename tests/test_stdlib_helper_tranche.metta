@@ -27,4 +27,4 @@
 
 !(bind! &tmp (new-space))
 !(assertEqual (add-atoms &tmp (a b)) ())
-!(assertEqual (collapse (match &tmp $x $x)) (a b))
+!(assertEqualToResult (match &tmp $x $x) (a b))

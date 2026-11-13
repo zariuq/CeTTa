@@ -16,7 +16,7 @@
 !(add-atom &self (: pat:match% (-> Number Atom Atom %Undefined%)))
 !(collapse (pat:match% (selected-space) (edge a $y)
              (add-atom &events unexpected)))
-!(collapse (get-atoms &events))
+!(sort-atom (collapse (get-atoms &events)))
 
 ; Another query head retains its own declared protocol and shared variables.
 !(collapse
@@ -30,4 +30,4 @@
     (let $_ (add-atom &events let-subject) (tag b)) (kept $x))
 !(pat:case% (let $_ (add-atom &events case-subject) (tag c))
     (((tag $x) (kept $x)) ($other (add-atom &events unexpected))))
-!(collapse (get-atoms &events))
+!(sort-atom (collapse (get-atoms &events)))

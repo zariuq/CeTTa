@@ -135,8 +135,10 @@ static bool relational_row_exact_key(
     const CettaTermHdr *header = tu_hdr(universe, row);
     if (!header || header->tag != ATOM_EXPR || tu_has_vars(universe, row))
         return false;
-    for (CettaExprIndex c = 0u; c < tu_arity(universe, row); c++) {
-        if (!relational_exact_key(check, universe, tu_child(universe, row, c)))
+    CettaExprLen arity = tu_arity(universe, row);
+    for (CettaExprIndex c = 0u; c < arity; c++) {
+        if (!relational_exact_key(check, universe,
+                                  tu_child_from_header(universe, header, c)))
             return false;
     }
     return true;
@@ -678,10 +680,14 @@ static bool relational_plan_prepare_with(
             constants[c] = pattern->expr.elems[c]->kind == ATOM_VAR ? CETTA_ATOM_ID_NONE :
                 term_universe_lookup_atom_id(space->native.universe, pattern->expr.elems[c]);
         }
+        const TermUniverse *universe = space->native.universe;
         for (CettaIndex row = 0u; ready && row < rows; row++) {
             plan->info.scanned_rows++;
             AtomId id = space_get_atom_id_at64(space, row);
-            AtomKind kind = tu_kind(space->native.universe, id);
+            /* The row's record header, read once: nothing below changes the
+             * universe. */
+            const CettaTermHdr *hdr = tu_hdr(universe, id);
+            AtomKind kind = hdr ? (AtomKind)hdr->tag : tu_kind(universe, id);
             /* A whole-atom variable can match every expression factor. Its
              * bindings are not a finite ground tuple in this encoding. */
             if (kind == ATOM_VAR) {
@@ -692,8 +698,14 @@ static bool relational_plan_prepare_with(
              * identity, which no factor can key: one the pattern could match
              * declines the plan.  Its head and length are read from the row
              * itself, since its children have no ids. */
-            if (kind == ATOM_EXPR && !tu_hdr(space->native.universe, id)) {
-                Atom *stored = term_universe_get_atom(space->native.universe, id);
+            if (kind == ATOM_EXPR && !hdr) {
+                Atom *stored = term_universe_get_atom(universe, id);
+                /* A carrier (cons cells, a list pattern) is not read by its
+                 * length or head either: it declines the plan. */
+                if (atom_is_carrier(stored)) {
+                    ready = false;
+                    break;
+                }
                 if (stored && stored->kind == ATOM_EXPR &&
                     (stored->expr.len != pattern->expr.len ||
                      (pattern->expr.len &&
@@ -705,21 +717,29 @@ static bool relational_plan_prepare_with(
                 ready = false;
                 break;
             }
-            if (kind != ATOM_EXPR ||
-                tu_arity(space->native.universe, id) != pattern->expr.len)
+            if (kind != ATOM_EXPR)
+                continue;
+            /* A carrier row (cons cells, a list pattern) spells a shape
+             * other than its encoding: its length is not the list's.  No
+             * factor keys it; it declines the plan. */
+            if (tu_hdr_is_carrier(universe, hdr)) {
+                ready = false;
+                break;
+            }
+            if ((hdr->aux32 & CETTA_TERM_HDR_DATA_MASK) != pattern->expr.len)
                 continue;
             if (pattern->expr.len && pattern->expr.elems[0]->kind == ATOM_SYMBOL) {
-                AtomId head = tu_child(space->native.universe, id, 0u);
-                if (tu_kind(space->native.universe, head) == ATOM_SYMBOL &&
-                    tu_sym(space->native.universe, head) != pattern->expr.elems[0]->sym_id)
+                AtomId head = tu_child_from_header(universe, hdr, 0u);
+                if (tu_kind(universe, head) == ATOM_SYMBOL &&
+                    tu_sym(universe, head) != pattern->expr.elems[0]->sym_id)
                     continue;
             }
-            if (!relational_row_exact_key(&keys, space->native.universe, id)) {
+            if (!relational_row_exact_key(&keys, universe, id)) {
                 /* A row holding a stored variable for a whole column is
                  * joined on its own; any other row the factor cannot key
                  * declines the plan. */
                 ready = !plan->rows_unsorted &&
-                    relational_row_open_key(&keys, space->native.universe, id);
+                    relational_row_open_key(&keys, universe, id);
                 if (ready && !(ground_only && ground_only[i]))
                     ready = relational_open_push(&open, i, id);
                 continue;
@@ -728,7 +748,7 @@ static bool relational_plan_prepare_with(
                 tuple[c] = CETTA_ATOM_ID_NONE;
             bool matched = true;
             for (CettaExprIndex c = 0u; matched && c < pattern->expr.len; c++) {
-                AtomId value = tu_child(space->native.universe, id, c);
+                AtomId value = tu_child_from_header(universe, hdr, c);
                 if (pattern->expr.elems[c]->kind == ATOM_VAR) {
                     size_t position = positions[c];
                     if (position == SIZE_MAX) {
@@ -736,7 +756,7 @@ static bool relational_plan_prepare_with(
                             Atom *item = pattern->expr.elems[previous];
                             if (item->kind == ATOM_VAR &&
                                 var_id_eq(item->var_id, pattern->expr.elems[c]->var_id) &&
-                                tu_child(space->native.universe, id, previous) != value) {
+                                tu_child_from_header(universe, hdr, previous) != value) {
                                 matched = false;
                                 break;
                             }

@@ -1,0 +1,38 @@
+Growable worklists
+=================
+
+Import Worklists.module's Growable theory and write:
+
+  (worklist-push int size_t realloc buffer length capacity value)
+
+element and count are declaration specifiers. count must be an unsigned
+integral type admitted by the native overflow builtins. The allocator has
+the exact signature void *(void *, count). buffer is a modifiable element*
+object; length and capacity are distinct modifiable count objects. The
+supplied value has the element type.
+
+The five executable arguments are acquired in this order: allocator,
+buffer address, length address, capacity address, value. Each is evaluated
+once, including on failure. The callback is invoked only when growth is
+required, and at most once per push.
+
+The macro returns int 1 on success and 0 on failure. Capacity begins at 8
+elements and doubles on growth. Both doubling and capacity*sizeof(element)
+are checked before allocation. A failed allocation, size overflow, aliased
+length/capacity, excessive length, or null buffer with nonzero capacity
+leaves the buffer pointer, length, capacity and existing elements unchanged.
+On success the old prefix is retained, value is appended, and length grows
+by one. The allocator must have realloc-like ownership: NULL preserves the
+old allocation, and success returns a block retaining the old contents.
+
+The caller supplies valid objects and an owned allocation whose actual extent
+matches capacity. The buffer pointer object and counters must not overlap.
+The macro does not introduce return, break, continue or goto. Callers can pop
+in LIFO order using buffer[--length], or inspect the retained prefix directly.
+
+The allocator and all state are explicit arguments. No caller-local queue,
+environment, failure label or capacity name is captured by the library.
+Ordinary C headers and native callback functions remain compiler inputs.
+
+The native test fixture adapts the growable stack pattern used by constructor
+scanners and deep-copy worklists. It does not change downstream runtime code.

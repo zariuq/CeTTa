@@ -61,9 +61,7 @@
   (rhometta:run (pure:comm))
   (rho:nil))
 
-!(assertEqual
-  (collapse (rhometta:transitions (pure:comm)))
-  (collapse (__cetta_lib_rhometta_transitions (pure:comm))))
+!(assertEqual (rhometta:transitions (pure:comm)) (__cetta_lib_rhometta_transitions (pure:comm)))
 
 !(assertEqualToResult
   (rhometta:eval (+ 1 2))
@@ -81,17 +79,11 @@
   (rhometta:run (eval:proc))
   (rho:nil))
 
-!(assertEqualToResult
-  (collapse (rhometta:transitions (eval:multi)))
-  (((rho:val 1) (rho:val 2))))
+!(assertEqualToResult (rhometta:transitions (eval:multi)) ((rho:val 1) (rho:val 2)))
 
-!(assertEqualToResult
-  (collapse (rhometta:run (eval:multi)))
-  (((rho:val 1) (rho:val 2))))
+!(assertEqualToResult (rhometta:run (eval:multi)) ((rho:val 1) (rho:val 2)))
 
-!(assertEqualToResult
-  (collapse (rhometta:run (eval:kb)))
-  (((rho:val (got 1)) (rho:val (got 2)) (rho:val (got 3)))))
+!(assertEqualToResult (rhometta:run (eval:kb)) ((rho:val (got 1)) (rho:val (got 2)) (rho:val (got 3))))
 
 !(assertAlphaEqualToResult
   (rhometta:run (eval:zero))
@@ -131,13 +123,9 @@
   (rhometta:run (eval:data))
   ((rho:val 3)))
 
-!(assertEqualToResult
-  (collapse (rhometta:run (eval:multi)))
-  (((rho:val 1) (rho:val 2))))
+!(assertEqualToResult (rhometta:run (eval:multi)) ((rho:val 1) (rho:val 2)))
 
-!(assertEqualToResult
-  (collapse (rhometta:run (eval:kb)))
-  (((rho:val (got 1)) (rho:val (got 2)) (rho:val (got 3)))))
+!(assertEqualToResult (rhometta:run (eval:kb)) ((rho:val (got 1)) (rho:val (got 2)) (rho:val (got 3))))
 
 !(assertAlphaEqualToResult
   (rhometta:run (eval:zero))

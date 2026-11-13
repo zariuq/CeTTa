@@ -63,4 +63,4 @@
 !(progn
    (add-atom &self (= (revision-leaf $tree)
      (case $tree (((RevisionTip $payload) 2)))))
-   (collapse (revision-root (RevisionBox (RevisionTip a)))))
+   (sort-atom (collapse (revision-root (RevisionBox (RevisionTip a))))))

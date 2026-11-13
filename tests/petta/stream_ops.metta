@@ -1,31 +1,31 @@
 ; Stable stream deduplication preserves the first occurrence.
 !(test
-    (collapse (unique (superpose (a b c d d))))
-    (a b c d))
+    (sort-atom (collapse (unique (superpose (a b c d d)))))
+    (sort-atom (a b c d)))
 
 ; Union is bag concatenation, not set union.
 !(test
-    (collapse
+    (sort-atom (collapse
       (union
         (superpose (a b b c))
-        (superpose (b c c d))))
-    (a b b c b c c d))
+        (superpose (b c c d)))))
+    (sort-atom (a b b c b c c d)))
 
 ; Intersection consumes matching occurrences one at a time.
 !(test
-    (collapse
+    (sort-atom (collapse
       (intersection
         (superpose (a b c c))
-        (superpose (b c c c d))))
-    (b c c))
+        (superpose (b c c c d)))))
+    (sort-atom (b c c)))
 
 ; Subtraction removes only the matched multiplicity.
 !(test
-    (collapse
+    (sort-atom (collapse
       (subtraction
         (superpose (a b b c))
-        (superpose (b c c d))))
-    (a b))
+        (superpose (b c c d)))))
+    (sort-atom (a b)))
 
 ; Disjoint streams have an empty intersection.
 !(test

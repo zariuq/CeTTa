@@ -773,6 +773,7 @@ PeTTaLogicalListStep petta_semantics_logical_list_cursor_next(
             cursor->in_flat_tail = false;
             return petta_semantics_logical_list_cursor_next(cursor, item);
         }
+        cursor->end_list_kind = atom_is_list(cursor->rest);
         cursor->rest = NULL;
         return PETTA_LOGICAL_LIST_END;
     }
@@ -3793,6 +3794,65 @@ static Atom *petta_second_from_pair_lower(
     return atom_expr(arena, let_elems, 4u);
 }
 
+/* (forall G T) as SWI-PeTTa's translator states it.  T is evaluated once,
+ * to the function F.  Then no answer V of the generator may fail the test,
+ * where V passes when some answer of F applied to V is true (an application
+ * with no answer, or with none that is true, fails).  The generator is G as
+ * written, a G that is no application being the application of G to
+ * nothing.  The search stops at the first V that fails, and binds nothing:
+ *   (let F T
+ *     (== () (collapse (once
+ *       (let V G
+ *         (let W (collapse (once (let R (reduce (F V)) (if R yes (empty)))))
+ *           (if (== W ()) fails (empty)))))))) */
+static Atom *petta_forall_lower(Arena *arena, Atom *form) {
+    if (form->expr.len != 3u)
+        return NULL;
+    Atom *generator = form->expr.elems[1];
+    if (generator->kind != ATOM_EXPR || generator->expr.len == 0u)
+        generator = atom_expr(arena, &generator, 1u);
+    Atom *function = atom_var_with_id(arena, "forall-test", fresh_var_id());
+    Atom *value = atom_var_with_id(arena, "forall-value", fresh_var_id());
+    Atom *truth = atom_var_with_id(arena, "forall-truth", fresh_var_id());
+    Atom *passes = atom_var_with_id(arena, "forall-passes", fresh_var_id());
+    Atom *equal = atom_symbol_id(arena, g_builtin_syms.op_eq);
+    Atom *let = atom_symbol_id(arena, g_builtin_syms.let);
+    Atom *when = atom_symbol_id(arena, g_builtin_syms.if_text);
+    Atom *once = atom_symbol_id(arena, g_builtin_syms.once);
+    Atom *collapse = atom_symbol_id(arena, g_builtin_syms.collapse);
+    Atom *no_answer = atom_symbol_id(arena, g_builtin_syms.empty_form);
+    Atom *nothing = no_answer ? atom_expr(arena, &no_answer, 1u) : NULL;
+    Atom *unit = atom_unit(arena);
+    if (!generator || !function || !value || !truth || !passes || !equal ||
+        !let || !when || !once || !collapse || !nothing || !unit)
+        return NULL;
+    Atom *applied = atom_expr2(arena, function, value);
+    Atom *test = applied
+        ? atom_expr2(arena, atom_symbol_id(arena, g_builtin_syms.reduce),
+                     applied)
+        : NULL;
+    Atom *witness[4] = {when, truth, atom_symbol(arena, "yes"), nothing};
+    Atom *some_true[4] = {let, truth, test, atom_expr(arena, witness, 4u)};
+    Atom *first_true = atom_expr2(arena, once, atom_expr(arena, some_true, 4u));
+    Atom *witnessed = first_true ? atom_expr2(arena, collapse, first_true) : NULL;
+    if (!test || !witnessed)
+        return NULL;
+    Atom *fails[4] = {
+        when, atom_expr3(arena, equal, passes, unit),
+        atom_symbol(arena, "forall-fails"), nothing,
+    };
+    Atom *judged[4] = {let, passes, witnessed, atom_expr(arena, fails, 4u)};
+    Atom *each[4] = {let, value, generator, atom_expr(arena, judged, 4u)};
+    Atom *first_failure = atom_expr2(arena, once, atom_expr(arena, each, 4u));
+    Atom *failures = first_failure
+        ? atom_expr2(arena, collapse, first_failure) : NULL;
+    Atom *none = failures ? atom_expr3(arena, equal, unit, failures) : NULL;
+    if (!none)
+        return NULL;
+    Atom *whole[4] = {let, function, form->expr.elems[2], none};
+    return atom_expr(arena, whole, 4u);
+}
+
 Atom *petta_semantics_lower(
     Arena *arena, Atom *form, PeTTaForm kind, SymbolId reify_head) {
     if (!arena || !form || form->kind != ATOM_EXPR ||
@@ -3881,10 +3941,11 @@ Atom *petta_semantics_lower(
     case PETTA_FORM_REDUCE:
     case PETTA_FORM_CATCH:
         return form->expr.len == 2u ? form->expr.elems[1] : NULL;
+    case PETTA_FORM_FORALL:
+        return petta_forall_lower(arena, form);
     case PETTA_FORM_NONE:
     case PETTA_FORM_TEST:
     case PETTA_FORM_IF:
-    case PETTA_FORM_FORALL:
     case PETTA_FORM_PREDICATE:
     case PETTA_FORM_TRANSLATE_PREDICATE:
     case PETTA_FORM_IMPORT_PROLOG_FUNCTION:
@@ -3933,6 +3994,12 @@ typedef enum {
     PETTA_TERM_COMPOUND = 5,
 } PeTTaTermClass;
 
+/* An empty list value, (LIST): the empty list of the list kind. */
+static bool petta_order_empty_list_value(const Atom *atom) {
+    return atom->kind == ATOM_EXPR && atom->expr.len == 1u &&
+           atom_is_list(atom);
+}
+
 static PeTTaTermClass petta_term_class(const Atom *atom) {
     if (atom->kind == ATOM_VAR)
         return PETTA_TERM_VARIABLE;
@@ -3943,7 +4010,8 @@ static PeTTaTermClass petta_term_class(const Atom *atom) {
         return PETTA_TERM_STRING;
     }
     if (atom->kind == ATOM_EXPR)
-        return atom->expr.len ? PETTA_TERM_COMPOUND : PETTA_TERM_NIL;
+        return atom->expr.len && !petta_order_empty_list_value(atom)
+            ? PETTA_TERM_COMPOUND : PETTA_TERM_NIL;
     return PETTA_TERM_ATOM;
 }
 
@@ -4182,6 +4250,13 @@ static int petta_compare_grounded_atoms(
     }
     switch (left->ground.gkind) {
     case GV_SPACE:
+        /* A space's serial is given when it is made: the same from run to
+         * run, where its address is not. */
+        return petta_compare_u64(
+            left->ground.ptr
+                ? space_instance_id((const Space *)left->ground.ptr) : 0u,
+            right->ground.ptr
+                ? space_instance_id((const Space *)right->ground.ptr) : 0u);
     case GV_STATE:
     case GV_CAPTURE:
     case GV_BINDINGS:
@@ -4259,9 +4334,14 @@ static bool petta_term_compare_leaf(
     case PETTA_TERM_STRING:
         *ordering = atom_string_compare(left, right);
         return true;
-    case PETTA_TERM_NIL:
-        *ordering = 0;
+    case PETTA_TERM_NIL: {
+        /* The empty expression, then the empty list value: two values
+         * that never unify, ordered as their lists' ends are. */
+        bool left_list = petta_order_empty_list_value(left);
+        bool right_list = petta_order_empty_list_value(right);
+        *ordering = left_list == right_list ? 0 : left_list ? 1 : -1;
         return true;
+    }
     case PETTA_TERM_ATOM: {
         size_t left_len = 0u, right_len = 0u;
         const char *left_text = petta_known_atom_text(left, &left_len);
@@ -4293,10 +4373,98 @@ typedef struct {
     bool complete;
 } PeTTaOrderPair;
 
+/* One side of a pair of expressions as the order reads it.  A list in any
+ * stored form (a list value, a list pattern, cons cells) is read through the
+ * logical-list cursor, as the list it spells; any other expression as its
+ * elements from the first, which is also what the cursor gives for one.  A
+ * term so has one reading whatever it is compared with, and two stored forms
+ * of one list read alike.
+ *
+ * SWI orders a list as nested pairs '[|]'(H, T).  Where one of two lists
+ * that agree so far ends, its end meets the other's next pair: a variable,
+ * [] and every atom stand before a pair, so the list that ends stands first,
+ * whatever its end.  Where both end, the ends are compared as terms: a
+ * variable before [], [] (the empty expression, then the empty list value)
+ * by its class before the atoms after it, and two other ends as the terms
+ * they are.  Positive: [0|T] < (0) < (0 1) < (0 x).  Negative: [0|T] does
+ * not stand after (0 2), as it would if the cell's tag were read as the
+ * list's first element.  An end that is a compound stands before a pair
+ * here; SWI compares it by arity and name. */
+/* A list value, a list pattern and a cell are each an expression headed by
+ * an internal tag: any other expression is read as written, at one test of
+ * its first element. */
+static inline bool petta_order_reads_as_list(const Atom *atom) {
+    return atom_is_carrier(atom) &&
+           (atom_is_list_form(atom) ||
+            (atom->expr.len == 3u &&
+             atom_is_internal_tag(atom->expr.elems[0],
+                                  CETTA_INTERNAL_TAG_PETTA_OPEN_CONS)));
+}
+
+bool petta_semantics_order_list_form(const Atom *atom) {
+    return petta_order_reads_as_list(atom);
+}
+
+void petta_semantics_order_side_init(PeTTaOrderSide *side, const Atom *atom) {
+    *side = (PeTTaOrderSide){
+        .atom = atom,
+        .logical = petta_semantics_order_list_form(atom),
+    };
+    if (side->logical)
+        petta_semantics_logical_list_cursor_init(&side->cursor, (Atom *)atom);
+}
+
+PeTTaOrderStep petta_semantics_order_side_next(PeTTaOrderSide *side,
+                                              const Atom **item) {
+    *item = NULL;
+    if (!side->logical) {
+        if (side->next < side->atom->expr.len) {
+            *item = side->atom->expr.elems[side->next++];
+            return PETTA_ORDER_ITEM;
+        }
+        return PETTA_ORDER_END;
+    }
+    Atom *got = NULL;
+    switch (petta_semantics_logical_list_cursor_next(&side->cursor, &got)) {
+    case PETTA_LOGICAL_LIST_ITEM:
+        *item = got;
+        return got ? PETTA_ORDER_ITEM : PETTA_ORDER_UNREAD;
+    case PETTA_LOGICAL_LIST_END:
+        return side->cursor.end_list_kind ? PETTA_ORDER_END_LIST
+                                          : PETTA_ORDER_END;
+    case PETTA_LOGICAL_LIST_INVALID:
+        /* An open or improper list ends in the term the walk stopped at. */
+        *item = side->cursor.rest;
+        return side->cursor.rest ? PETTA_ORDER_END_TERM : PETTA_ORDER_UNREAD;
+    }
+    return PETTA_ORDER_UNREAD;
+}
+
+/* Two ends, neither a further element and not both terms. */
+int petta_semantics_order_ends(PeTTaOrderStep left, const Atom *left_end,
+                               PeTTaOrderStep right,
+                               const Atom *right_end) {
+    if (left != PETTA_ORDER_END_TERM && right != PETTA_ORDER_END_TERM) {
+        bool left_list = left == PETTA_ORDER_END_LIST;
+        bool right_list = right == PETTA_ORDER_END_LIST;
+        return left_list == right_list ? 0 : left_list ? 1 : -1;
+    }
+    /* [] against a term an open or improper list ends in, which is never
+     * an empty list itself: their classes decide. */
+    if (left == PETTA_ORDER_END_TERM)
+        return petta_term_class(left_end) < PETTA_TERM_NIL ? -1 : 1;
+    return petta_term_class(right_end) < PETTA_TERM_NIL ? 1 : -1;
+}
+
 typedef struct {
     const Atom *left;
     const Atom *right;
     CettaExprIndex next;
+    /* A pair of which one side is a list form is read side by side
+     * (PeTTaOrderSide); `ended` once its two end terms are compared. */
+    bool logical;
+    bool ended;
+    PeTTaOrderSide sides[2];
 } PeTTaOrderFrame;
 
 typedef struct {
@@ -4398,12 +4566,22 @@ static bool petta_term_compare_graph(
                 }
                 *pair = (PeTTaOrderPair){left, right, false};
                 memo.used++;
-                frames[depth++] = (PeTTaOrderFrame){left, right, 1u};
+                PeTTaOrderFrame *pushed = &frames[depth++];
+                *pushed = (PeTTaOrderFrame){.left = left, .right = right,
+                                            .next = 1u};
                 cetta_runtime_stats_update_max(
                     CETTA_RUNTIME_COUNTER_TERM_ORDER_FRONTIER_PEAK, depth);
-                left = left->expr.elems[0];
-                right = right->expr.elems[0];
-                continue;
+                if (!petta_order_reads_as_list(left) &&
+                    !petta_order_reads_as_list(right)) {
+                    left = left->expr.elems[0];
+                    right = right->expr.elems[0];
+                    continue;
+                }
+                /* A list form: the sides are read as the lists they
+                 * spell, from their first elements, below. */
+                pushed->logical = true;
+                petta_semantics_order_side_init(&pushed->sides[0], left);
+                petta_semantics_order_side_init(&pushed->sides[1], right);
             }
         }
         for (;;) {
@@ -4413,6 +4591,47 @@ static bool petta_term_compare_graph(
                 goto done;
             }
             PeTTaOrderFrame *frame = &frames[depth - 1u];
+            if (frame->logical) {
+                if (frame->ended) {
+                    /* Their ends compared equal, so did the lists. */
+                    petta_order_pair_find(&memo, frame->left, frame->right)
+                        ->complete = true;
+                    depth--;
+                    continue;
+                }
+                const Atom *a = NULL, *b = NULL;
+                PeTTaOrderStep sa = petta_semantics_order_side_next(&frame->sides[0], &a);
+                PeTTaOrderStep sb = petta_semantics_order_side_next(&frame->sides[1], &b);
+                if (sa == PETTA_ORDER_UNREAD || sb == PETTA_ORDER_UNREAD)
+                    goto done;
+                if (sa == PETTA_ORDER_ITEM && sb == PETTA_ORDER_ITEM) {
+                    left = a;
+                    right = b;
+                    break;
+                }
+                if (sa == PETTA_ORDER_ITEM || sb == PETTA_ORDER_ITEM) {
+                    /* The list that ends stands before the one that goes
+                     * on, whatever it ends in. */
+                    *ordering = sa == PETTA_ORDER_ITEM ? 1 : -1;
+                    success = true;
+                    goto done;
+                }
+                if (sa == PETTA_ORDER_END_TERM && sb == PETTA_ORDER_END_TERM) {
+                    frame->ended = true;
+                    left = a;
+                    right = b;
+                    break;
+                }
+                *ordering = petta_semantics_order_ends(sa, a, sb, b);
+                if (*ordering != 0) {
+                    success = true;
+                    goto done;
+                }
+                petta_order_pair_find(&memo, frame->left, frame->right)
+                    ->complete = true;
+                depth--;
+                continue;
+            }
             CettaExprLen shared = frame->left->expr.len < frame->right->expr.len
                 ? frame->left->expr.len : frame->right->expr.len;
             if (frame->next < shared) {
@@ -4465,8 +4684,18 @@ static bool petta_term_compare_flat(
     return true;
 }
 
-bool petta_semantics_term_compare(
-    const Atom *left, const Atom *right, int *ordering) {
+/* Whether an atom is known to hold no internal tag, at any depth, and so
+ * neither is nor holds a list form: its structural facts show it. */
+static inline bool petta_order_holds_no_tag(const Atom *atom) {
+    return (atom->structural_facts & (ATOM_STRUCTURAL_FACTS_VALID |
+                                      ATOM_STRUCTURAL_HAS_INTERNAL_TAG)) ==
+           ATOM_STRUCTURAL_FACTS_VALID;
+}
+
+/* The standard order of two terms.  WRITTEN: both are known to hold no
+ * internal tag, so each is read as written. */
+static inline bool petta_term_compare_in(
+    const Atom *left, const Atom *right, int *ordering, bool written) {
     if (!left || !right || !ordering)
         return false;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_ORDER_PAIR_VISIT);
@@ -4489,10 +4718,24 @@ bool petta_semantics_term_compare(
                         left->ground.ival > right->ground.ival ? 1 : 0;
             return true;
         }
-        if (left->kind == ATOM_EXPR && left->expr.len && right->expr.len)
-            return petta_term_compare_flat(left, right, ordering);
+        if (left->kind == ATOM_EXPR && left->expr.len && right->expr.len) {
+            if (written ||
+                (petta_order_holds_no_tag(left) && petta_order_holds_no_tag(right)) ||
+                (!petta_order_reads_as_list(left) && !petta_order_reads_as_list(right)))
+                return petta_term_compare_flat(left, right, ordering);
+            /* A list form is read as the list it spells (an empty list
+             * value is the empty list of its kind). */
+            if (petta_term_compare_leaf(left, right, ordering))
+                return true;
+            return petta_term_compare_graph(left, right, ordering);
+        }
     }
     return petta_term_compare_leaf(left, right, ordering);
+}
+
+bool petta_semantics_term_compare(
+    const Atom *left, const Atom *right, int *ordering) {
+    return petta_term_compare_in(left, right, ordering, false);
 }
 
 Atom *petta_semantics_msort(Arena *arena, Atom *list) {
@@ -4517,6 +4760,10 @@ Atom *petta_semantics_msort(Arena *arena, Atom *list) {
     Atom **items = arena_alloc(arena, sizeof(*items) * length);
     Atom **scratch = arena_alloc(arena, sizeof(*scratch) * length);
     memcpy(items, list->expr.elems, sizeof(*items) * length);
+    /* The sequence's facts are its elements': when they show no internal
+     * tag, every element is read as written, known once for every
+     * comparison. */
+    bool written = petta_order_holds_no_tag(list);
 
     Atom **source = items;
     Atom **target = scratch;
@@ -4533,9 +4780,9 @@ Atom *petta_semantics_msort(Arena *arena, Atom *list) {
             size_t output = start;
             while (left_index < middle && right_index < end) {
                 int ordering = 0;
-                if (!petta_semantics_term_compare(
+                if (!petta_term_compare_in(
                         source[left_index], source[right_index],
-                        &ordering)) {
+                        &ordering, written)) {
                     return NULL;
                 }
                 target[output++] = ordering <= 0

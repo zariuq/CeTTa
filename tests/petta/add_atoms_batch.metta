@@ -5,7 +5,7 @@
      (BatchValueV1 $result
        (size-atom (collapse (get-atoms $space)))
        (size-atom (collapse (match $space (row 1) hit)))
-       (collapse (match $space (row $value) $value)))))
+       (sort-atom (collapse (match $space (row $value) $value))))))
 
 ; A named space is created with the same policy as add-atom.
 !(add-atoms &batch-named ((named a) (named b)))
@@ -22,4 +22,4 @@
    (LogicalBatch (size-atom (collapse (get-atoms $space))) (collapse (get-atoms $space))))
 !(let* (($space (new-space)) ($rows (cons a (cons b ())))
         ($stored (add-atoms $space $rows)))
-   (LogicalBatch (size-atom (collapse (get-atoms $space))) (collapse (get-atoms $space))))
+   (LogicalBatch (size-atom (collapse (get-atoms $space))) (sort-atom (collapse (get-atoms $space)))))

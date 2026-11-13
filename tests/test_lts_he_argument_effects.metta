@@ -20,18 +20,12 @@
 
 ; Evaluated arguments choose before an equation duplicates its variable.
 !(assertEqualToResult (same (pick)) ((pair a a) (pair b b)))
-!(assertEqualToResult
-  (collapse (lts:he:transitions (same (pick))))
-  (((quote (same a)) (quote (same b)))))
-!(assertEqualToResult
-  (collapse (lts:he:trace-2 (same (pick))))
-  ((((quote (same a)) (quote (pair a a)))
-    ((quote (same b)) (quote (pair b b))))))
+!(assertEqualToResult (lts:he:transitions (same (pick))) ((quote (same a)) (quote (same b))))
+!(assertEqualToResult (lts:he:trace-2 (same (pick))) (((quote (same a)) (quote (pair a a)))
+    ((quote (same b)) (quote (pair b b)))))
 !(assertEqualToResult (pair (pick) (pick))
   ((pair a a) (pair a b) (pair b a) (pair b b)))
-!(assertEqualToResult
-  (collapse (lts:he:transitions (typed-same (pick))))
-  (((quote (typed-same a)) (quote (typed-same b)))))
+!(assertEqualToResult (lts:he:transitions (typed-same (pick))) ((quote (typed-same a)) (quote (typed-same b))))
 
 ; Raw domains retain syntax, including effects and quoted expressions.
 !(assertEqualToResult
@@ -55,9 +49,7 @@
 !(assertEqualToResult
   (collapse (lts:he:transitions (__cetta_lib_user-equation a)))
   (((quote known-user-answer))))
-!(assertEqualToResult
-  (collapse (lts:he:transitions (unknown-fn (pick))))
-  (((quote (unknown-fn a)) (quote (unknown-fn b)))))
+!(assertEqualToResult (lts:he:transitions (unknown-fn (pick))) ((quote (unknown-fn a)) (quote (unknown-fn b))))
 
 ; A request identifies the pending operation and retains the whole context.
 !(assertEqualToResult

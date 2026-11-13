@@ -103,7 +103,7 @@
    (let $y (progn (println! deferred-body) (superpose (a b a)))
      (let* (($z $y)) (quote (pair $x $z)))))
 !(println! deferred-partial)
-!(collapse (let (quote (pair shared $y)) (output-deferred shared) $y))
+!(sort-atom (collapse (let (quote (pair shared $y)) (output-deferred shared) $y)))
 !(println! deferred-duplicates)
 !(collapse (let (quote (pair shared a)) (output-deferred shared) reached))
 !(println! deferred-conflict)

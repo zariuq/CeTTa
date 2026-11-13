@@ -1,6 +1,12 @@
+; The branches' answers are a bag: the space is taken from either place.
 !(case
    (collapse (hyperpose ((new-space) ok)))
    ((($space ok)
+      (progn
+        (add-atom $space (worker-local alive))
+        (match $space (worker-local alive)
+          branch-local-space-readable)))
+    ((ok $space)
       (progn
         (add-atom $space (worker-local alive))
         (match $space (worker-local alive)

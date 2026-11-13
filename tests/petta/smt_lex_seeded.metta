@@ -18,7 +18,7 @@
 (= (stages $r)
    (if (== (get-metatype $r) Symbol) ($r)
      (if (== (car-atom $r) lexicographic)
-         (collapse (let $sp (index-atom $r 1) (let $st (superpose $sp) (verdict $st))))
+         (sort-atom (collapse (let $sp (index-atom $r 1) (let $st (superpose $sp) (verdict $st)))))
          ((verdict $r)))))
 
 ; Z3's objectives, one verdict each

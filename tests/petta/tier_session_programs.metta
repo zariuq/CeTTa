@@ -8,7 +8,7 @@
 !(collapse (f a))
 !(collapse (f a))
 !(add-atom &self (= (g a) two))
-!(collapse (f a))
+!(sort-atom (collapse (f a)))
 !(remove-atom &self (= (g a) one))
 !(collapse (f a))
 (= (h $x) (f $x))

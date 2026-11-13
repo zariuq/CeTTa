@@ -309,8 +309,8 @@
 (filler n298 m298)
 (filler n299 m299)
 ; Leading-free queries whose bound field has open rows of several heads.
-!(collapse (match &self (edge $p c) $p))
-!(collapse (match &self (other $p c) $p))
-!(collapse (match &self ($h $p c) ($h $p)))
+!(sort-atom (collapse (match &self (edge $p c) $p)))
+!(sort-atom (collapse (match &self (other $p c) $p)))
+!(sort-atom (collapse (match &self ($h $p c) ($h $p))))
 !(collapse (match &self (filler $p m7) $p))
-!(collapse (match &self (edge $p e) $p))
+!(sort-atom (collapse (match &self (edge $p e) $p)))

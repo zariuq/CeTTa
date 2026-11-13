@@ -138,9 +138,7 @@
            (reader-state (get-state $s)))))
      (rho:recv (ch:reader) $y (rho:drop $y))))
 
-!(assertEqualToResult
-  (collapse (rhometta:run (eval:ground-space-direct)))
-  (((rho:val (direct-space injected)) (rho:val (direct-space original)))))
+!(assertEqualToResult (rhometta:run (eval:ground-space-direct)) ((rho:val (direct-space injected)) (rho:val (direct-space original))))
 
 !(assertEqualToResult
   (collapse (get-atoms &held-space-direct))
@@ -154,9 +152,7 @@
   (get-state &held-state-direct)
   (0))
 
-!(assertEqualToResult
-  (collapse (rhometta:run (eval:ground-space-wrapped)))
-  (((rho:val (wrapped-space injected)) (rho:val (wrapped-space original)))))
+!(assertEqualToResult (rhometta:run (eval:ground-space-wrapped)) ((rho:val (wrapped-space injected)) (rho:val (wrapped-space original))))
 
 !(assertEqualToResult
   (collapse (get-atoms &held-space-wrapped))
@@ -173,15 +169,11 @@
 !(bind! &owned-space-result
    (unwrap-rho-val (rhometta:run (eval:ground-space-owned))))
 
-!(assertEqualToResult
-  (collapse (get-atoms &owned-space-result))
-  ((original injected)))
+!(assertEqualToResult (get-atoms &owned-space-result) (original injected))
 
 !(add-atom &owned-space-result postrun)
 
-!(assertEqualToResult
-  (collapse (get-atoms &owned-space-result))
-  ((original injected postrun)))
+!(assertEqualToResult (get-atoms &owned-space-result) (original injected postrun))
 
 !(assertEqualToResult
   (collapse (get-atoms &held-space-direct))
@@ -231,9 +223,7 @@
 
 !(pragma! num-threads 2)
 
-!(assertEqualToResult
-  (collapse (rhometta:run (eval:ground-space-direct)))
-  (((rho:val (direct-space injected)) (rho:val (direct-space original)))))
+!(assertEqualToResult (rhometta:run (eval:ground-space-direct)) ((rho:val (direct-space injected)) (rho:val (direct-space original))))
 
 !(assertEqualToResult
   (collapse (get-atoms &held-space-direct))
@@ -247,9 +237,7 @@
   (get-state &held-state-direct)
   (0))
 
-!(assertEqualToResult
-  (collapse (rhometta:run (eval:ground-space-wrapped)))
-  (((rho:val (wrapped-space injected)) (rho:val (wrapped-space original)))))
+!(assertEqualToResult (rhometta:run (eval:ground-space-wrapped)) ((rho:val (wrapped-space injected)) (rho:val (wrapped-space original))))
 
 !(assertEqualToResult
   (collapse (get-atoms &held-space-wrapped))
@@ -266,15 +254,11 @@
 !(bind! &owned-space-result-threaded
    (unwrap-rho-val (rhometta:run (eval:ground-space-owned))))
 
-!(assertEqualToResult
-  (collapse (get-atoms &owned-space-result-threaded))
-  ((original injected)))
+!(assertEqualToResult (get-atoms &owned-space-result-threaded) (original injected))
 
 !(add-atom &owned-space-result-threaded threaded-postrun)
 
-!(assertEqualToResult
-  (collapse (get-atoms &owned-space-result-threaded))
-  ((original injected threaded-postrun)))
+!(assertEqualToResult (get-atoms &owned-space-result-threaded) (original injected threaded-postrun))
 
 !(assertEqualToResult
   (collapse (get-atoms &held-space-direct))

@@ -4,7 +4,7 @@
 (= (hole-empty) (empty))
 
 ; An anonymous binding contributes no user-addressable substitution, but the
-; open producer's authored order and duplicate occurrences remain observable.
+; open producer's duplicate occurrences remain observable.
 (= (discard-many)
    (let $_ (hole-source) kept))
 (= (discard-empty)

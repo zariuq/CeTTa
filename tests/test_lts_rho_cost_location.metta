@@ -18,9 +18,15 @@
         (rho:cost:purse pay rho:cost:stack-empty)
         (rho:cost:signed rho:nil cont))))))
 
-!(assertEqual
-  (collapse
-    (lts:rho:cost:steps
+!(assertEqual (lts:rho:cost:steps
+      (rho:cost:par
+        (rho:cost:signed
+          (rho:par
+            (rho:recv pay $m (rho:cost:signed rho:nil cont))
+            (rho:send pay (rho:cost:signed rho:nil payload)))
+          (rho:cost:sig-mul bob alice))
+        (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+        (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty)))) (__cetta_lib_lts_rho_cost_steps
       (rho:cost:par
         (rho:cost:signed
           (rho:par
@@ -29,16 +35,6 @@
           (rho:cost:sig-mul bob alice))
         (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
         (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty)))))
-  (collapse
-    (__cetta_lib_lts_rho_cost_steps
-      (rho:cost:par
-        (rho:cost:signed
-          (rho:par
-            (rho:recv pay $m (rho:cost:signed rho:nil cont))
-            (rho:send pay (rho:cost:signed rho:nil payload)))
-          (rho:cost:sig-mul bob alice))
-        (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
-        (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty))))))
 
 !(assertEqualToResult
   (lts:rho:cost:step-cost
@@ -111,9 +107,7 @@
           (rho:cost:purse pay rho:cost:stack-empty)
           (rho:cost:signed rho:nil cont))))))
 
-!(assertEqual
-  (collapse
-    (lts:rho:cost:transitions
+!(assertEqual (lts:rho:cost:transitions
       (rho:cost:par
         (rho:cost:signed
           (rho:par
@@ -121,9 +115,7 @@
             (rho:send pay (rho:cost:signed rho:nil payload)))
           (rho:cost:sig-mul bob alice))
         (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
-        (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty)))))
-  (collapse
-    (let $step
+        (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty)))) (let $step
       (lts:rho:cost:steps
         (rho:cost:par
           (rho:cost:signed
@@ -133,7 +125,7 @@
             (rho:cost:sig-mul bob alice))
           (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
           (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty))))
-      (lts:rho:cost:step-state $step))))
+      (lts:rho:cost:step-state $step)))
 
 !(assertEqualToResult
   (collapse
@@ -161,9 +153,15 @@
         (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty)))))
   (()))
 
-!(assertEqual
-  (collapse
-    (lts:rho:cost:trace-2
+!(assertEqual (lts:rho:cost:trace-2
+      (rho:cost:par
+        (rho:cost:signed
+          (rho:par
+            (rho:recv pay $m (rho:cost:signed rho:nil cont))
+            (rho:send pay (rho:cost:signed rho:nil payload)))
+          (rho:cost:sig-mul bob alice))
+        (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
+        (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty)))) (lts:trace-2 lts:rho:cost:transitions
       (rho:cost:par
         (rho:cost:signed
           (rho:par
@@ -172,16 +170,6 @@
           (rho:cost:sig-mul bob alice))
         (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
         (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty)))))
-  (collapse
-    (lts:trace-2 lts:rho:cost:transitions
-      (rho:cost:par
-        (rho:cost:signed
-          (rho:par
-            (rho:recv pay $m (rho:cost:signed rho:nil cont))
-            (rho:send pay (rho:cost:signed rho:nil payload)))
-          (rho:cost:sig-mul bob alice))
-        (rho:cost:purse pay (rho:cost:stack-cons alice rho:cost:stack-empty))
-        (rho:cost:purse pay (rho:cost:stack-cons bob rho:cost:stack-empty))))))
 
 !(assertEqualToResult
   (lts:is-normal-form lts:rho:cost:transitions

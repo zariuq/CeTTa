@@ -4,11 +4,11 @@
    (trace! (at $n)
       (if (== $n 0) done (trace-count-down (- $n 1)))))
 !(trace-count-down 3)
-!(collapse (trace! before-two (superpose (1 2 1))))
+!(sort-atom (collapse (trace! before-two (superpose (1 2 1)))))
 !(collapse (trace! before-empty (empty)))
 !(trace! (trace! label-computation label) (trace! body-computation payload))
 !(let $x foo (trace! (bound $x) (pair $x $x)))
-!(collapse (trace! (superpose (first second first)) (superpose (a b))))
+!(sort-atom (collapse (trace! (superpose (first second first)) (superpose (a b)))))
 !(collapse (once (trace! before-once (superpose (a b)))))
 ; Quotation and computed special-form names remain data.
 !(quote (trace! forbidden-trace payload))

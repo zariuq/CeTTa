@@ -72,21 +72,15 @@
   (collapse (lts:rho:transitions (core:comm)))
   ((rho:nil)))
 
-!(assertEqual
-  (collapse (lts:rho:transitions (core:comm)))
-  (collapse (lts:transitions __cetta_lib_lts_rho_transitions (core:comm))))
+!(assertEqual (lts:rho:transitions (core:comm)) (lts:transitions __cetta_lib_lts_rho_transitions (core:comm)))
 
-!(assertEqualToResult
-  (collapse (lts:rho:transitions (branching:comm)))
-  (((rho:par
+!(assertEqualToResult (lts:rho:transitions (branching:comm)) ((rho:par
       (rho:send (rho:quote rho:nil) rho:nil)
       (rho:send (rho:quote rho:nil) rho:nil))
     (rho:send (rho:quote rho:nil)
-      (rho:send (rho:quote rho:nil) rho:nil)))))
+      (rho:send (rho:quote rho:nil) rho:nil))))
 
-!(assertEqualToResult
-  (collapse (lts:rho:transitions (closed-payload-race:program)))
-  (((rho:par
+!(assertEqualToResult (lts:rho:transitions (closed-payload-race:program)) ((rho:par
       (rho:send (rho:quote rho:nil) rho:nil)
       (rho:send
         (rho:quote (rho:send (rho:quote rho:nil) rho:nil))
@@ -96,7 +90,7 @@
         (rho:send (rho:quote rho:nil) rho:nil))
       (rho:send
         (rho:quote (rho:send (rho:quote rho:nil) rho:nil))
-        rho:nil)))))
+        rho:nil))))
 
 !(assertEqualToResult
   (collapse (lts:rho:transitions (reflection-loader:program)))
@@ -185,9 +179,7 @@
   (collapse (lts:rho:transitions rho:nil))
   (()))
 
-!(assertEqual
-  (collapse (lts:rho:transitions rho:nil))
-  (collapse (lts:transitions __cetta_lib_lts_rho_transitions rho:nil)))
+!(assertEqual (lts:rho:transitions rho:nil) (lts:transitions __cetta_lib_lts_rho_transitions rho:nil))
 
 !(assertEqualToResult
   (lts:rho:is-normal-form rho:nil)
@@ -229,9 +221,7 @@
   (collapse (lts:rho:trace-2 (core:comm)))
   (()))
 
-!(assertEqual
-  (collapse (lts:rho:trace-2 (core:comm)))
-  (collapse (lts:trace-2 lts:rho:transitions (core:comm))))
+!(assertEqual (lts:rho:trace-2 (core:comm)) (lts:trace-2 lts:rho:transitions (core:comm)))
 
 !(assertEqualToResult
   (lts:rho:transitions rho:poop)

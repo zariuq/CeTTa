@@ -141,6 +141,52 @@ int main(void) {
     assert(space_directional_rules_may_match_known_head(&overlay, head));
     space_free(&overlay);
     space_free(&local);
+
+    /* The named-head qualifier reads only rules whose left side applies a
+     * symbol; a variable-headed or bare-symbol left side is a fact.  The
+     * cursor yields nothing its own resolution would refuse (run asserts
+     * it), and the may-match predicate agrees with the cursor. */
+    const unsigned named = CETTA_RULE_SYNTAX_ORDINARY | CETTA_RULE_SYNTAX_NAMED_HEAD;
+    SymbolId other = atom_symbol(&arena, "g")->sym_id;
+    Atom *eq = atom_symbol(&arena, "=");
+    Atom *variable_headed = atom_expr3(&arena, eq,
+        atom_expr2(&arena, atom_var(&arena, "h"), a), atom_int(&arena, 2));
+    Atom *symbol_headed = atom_expr3(&arena, eq, atom_symbol(&arena, "f"),
+                                     atom_int(&arena, 3));
+    Space facts;
+    space_init_with_universe(&facts, &universe);
+    space_add(&facts, symbol_headed);
+    assert(space_rules_may_match_known_head(&facts, head, CETTA_RULE_SYNTAX_ORDINARY));
+    assert(!space_rules_may_match_known_head(&facts, head, named));
+    space_add(&facts, variable_headed);
+    assert(space_rules_may_match_known_head(&facts, other, CETTA_RULE_SYNTAX_ORDINARY));
+    assert(!space_rules_may_match_known_head(&facts, other, named));
+    assert(!space_rules_may_match_known_head(&facts, head, named));
+    assert(run(&facts, &arena, a, named).length == 0u);
+    space_add(&facts, equation(&arena, "=", a, 1));
+    assert(space_rules_may_match_known_head(&facts, head, named));
+    Answers every = run(&facts, &arena, a, CETTA_RULE_SYNTAX_ORDINARY);
+    assert(every.length == 2u && every.values[0] == 2 && every.values[1] == 1);
+    Answers named_only = run(&facts, &arena, a, named);
+    assert(named_only.length == 1u && named_only.values[0] == 1);
+    space_init_overlay(&overlay, &facts);
+    space_add(&overlay, atom_expr3(&arena, eq,
+        atom_expr2(&arena, atom_var(&arena, "k"), a), atom_int(&arena, 4)));
+    assert(run(&overlay, &arena, a, CETTA_RULE_SYNTAX_ORDINARY).length == 3u);
+    Answers overlay_named = run(&overlay, &arena, a, named);
+    assert(overlay_named.length == 1u && overlay_named.values[0] == 1);
+    assert(!space_rules_may_match_known_head(&overlay, other, named));
+    space_free(&overlay);
+    Space importer;
+    space_init_with_universe(&importer, &universe);
+    assert(space_add_dependency(&importer, &facts));
+    assert(space_rules_may_match_known_head(&importer, head, named));
+    assert(!space_rules_may_match_known_head(&importer, other, named));
+    assert(!cetta_rule_syntax_valid(CETTA_RULE_SYNTAX_NAMED_HEAD));
+    assert(cetta_rule_syntax_valid(named) &&
+           !space_rule_cursor_init(&facts, head, CETTA_RULE_SYNTAX_NAMED_HEAD, &cursor));
+    space_free(&importer);
+    space_free(&facts);
     space_free(&space);
     space_free(&dependency);
     term_universe_free(&universe);

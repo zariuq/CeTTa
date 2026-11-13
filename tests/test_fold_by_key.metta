@@ -1,7 +1,8 @@
 ; HE-extended fold-by-key: consume nondeterministic results into one
 ; accumulator per grouping key without rerunning the source query.
 
-!(collapse
+!(let $answers
+  (collapse
     (fold-by-key
       (superpose ((a 1) (b 2) (a 3) (c 4) (b 5)))
       0
@@ -10,6 +11,7 @@
       (let ($key $value) $item $key)
       (let ($key $value) $item
         (eval (+ $acc $value)))))
+  (sort-atom $answers))
 
 !(collapse
     (fold-by-key
@@ -32,17 +34,14 @@
       (eval (+ $acc 1)))
     ())
 
-!(assertEqual
-    (collapse
-      (fold-by-key
+!(assertEqualToResult (fold-by-key
         (superpose ((a 1) Empty (a 2) (b 3)))
         0
         $acc
         $item
         (let ($key $value) $item $key)
         (let ($key $value) $item
-          (eval (+ $acc $value)))))
-    ((a 3) (b 3)))
+          (eval (+ $acc $value)))) ((a 3) (b 3)))
 
 !(fold-by-key
     (superpose (1))

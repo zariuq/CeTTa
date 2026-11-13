@@ -30,4 +30,4 @@
 (record 3 1000)
 !(match &self (record $i $x) (result $i (% (+ (* $x $x) 7) 1000)))
 (= (half $x) (/ $x 2.0))
-!(collapse (match &self (record $i $x) (half $x)))
+!(let $answers (collapse (match &self (record $i $x) (half $x))) (sort-atom $answers))

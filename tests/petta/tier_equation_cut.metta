@@ -32,7 +32,7 @@
 (= (inner) (let $t (cut) in))
 (= (inner) second)
 (= (outer) (let $v (superpose (a b)) (let $i (inner) ($v $i))))
-!(collapse (outer))
+!(sort-atom (collapse (outer)))
 
 (= (as-value) (cut))
 !(as-value)
@@ -42,7 +42,7 @@
 (= (case-cut $k) (case $k ((a (let $t (cut) chose-a)) ($z other))))
 (= (case-cut $k) fallback)
 !(collapse (case-cut a))
-!(collapse (case-cut b))
+!(sort-atom (collapse (case-cut b)))
 
 ; A cut in a recursive call commits that call; the caller's later equation
 ; stays.
@@ -50,7 +50,7 @@
 (= (first-big (cons $h $t))
    (if (> $h 10) (let $c (cut) (found $h)) (first-big $t)))
 (= (first-big (cons $h $t)) never)
-!(collapse (first-big (1 20 30)))
+!(sort-atom (collapse (first-big (1 20 30))))
 !(collapse (first-big (40)))
 
 ; A cut after a goal the host answers drops that goal's other answers too.
@@ -64,7 +64,7 @@
 !(chooseKl (a b c) 2)
 !(chooseKl () 0)
 !(chooseKl (a) 0)
-!(collapse (chooseK (a b c d) 2))
+!(sort-atom (collapse (chooseK (a b c d) 2)))
 ; once answers some witness: any of the combinations.
 !(let $w (once (chooseK (0 1 2 3 4 5 6 7) 4))
    (is-member $w (chooseKl (0 1 2 3 4 5 6 7) 4)))

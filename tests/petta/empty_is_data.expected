@@ -1,6 +1,6 @@
 is (Empty), should (Empty). ✅ 
 is ((Empty)), should ((Empty)). ✅ 
-is (a Empty b), should (a Empty b). ✅ 
+is (Empty a b), should (Empty a b). ✅ 
 is (Empty), should (Empty). ✅ 
 is (Empty), should (Empty). ✅ 
 is true, should true. ✅ 

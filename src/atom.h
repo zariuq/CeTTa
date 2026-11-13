@@ -437,6 +437,18 @@ static inline bool atom_is_internal_tag(
            atom->ground.ival == (int64_t)tag;
 }
 
+/* An expression headed by an internal tag: a list value, a list pattern,
+ * cons cells, a Prolog compound, a partial application, a callable.  What it
+ * spells is not its encoding (cons cells continue into their tail; a rest
+ * stands for any number of elements), so no index prunes by the encoding:
+ * at its place an index offers every row, as it does for a variable, and
+ * the matcher decides.  tu_is_carrier asks the same of a stored term. */
+static inline bool atom_is_carrier(const Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len > 0u &&
+           atom->expr.elems[0] && atom->expr.elems[0]->kind == ATOM_GROUNDED &&
+           atom->expr.elems[0]->ground.gkind == GV_INTERNAL_TAG;
+}
+
 /* A list value, (LIST x1 ... xn). */
 static inline bool atom_is_list(const Atom *atom) {
     return atom && atom->kind == ATOM_EXPR && atom->expr.len >= 1u &&

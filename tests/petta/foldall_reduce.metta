@@ -27,3 +27,15 @@
 !(foldall bump (match &self (n $x) (explode $x)) 0)
 !(foldall + (superpose (1 2 3)) 0)
 !(foldall minus (empty) 5)
+
+; An answer reaches the step as the generator gave it: a step that counts
+; counts every answer, calls among them included, as SWI's foldall/4 does.
+(stored (no-answer))
+(stored (no-answer))
+(stored 5)
+(stored (two-answers))
+(= (no-answer) (empty))
+(= (two-answers) 1)
+(= (two-answers) 2)
+(= (count-step $v $s) (+ $s 1))
+!(foldall count-step (match &self (stored $e) $e) 0)

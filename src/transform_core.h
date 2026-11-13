@@ -3,6 +3,7 @@
 
 #include "atom.h"
 #include "space.h"
+#include "native_query.h"
 #include "symbol.h"
 
 #include <stddef.h>
@@ -26,6 +27,10 @@ bool cetta_transform_call_head_slow(SymbolId head, CettaExprLen arity);
 bool cetta_transform_native_call_head_slow(SymbolId head, CettaExprLen arity);
 bool cetta_transform_run_call_head_slow(SymbolId head, CettaExprLen arity);
 bool cetta_transform_name_head_slow(SymbolId head);
+/* PeTTa code: alpha-rename its parameters and bind the renamed variables to
+ * VALUES as data. Body syntax is preserved at every argument demand. */
+Atom *cetta_transform_bind_code(Arena *arena, Atom *parameters,
+                                 Atom *values, Atom *body);
 
 static inline bool cetta_transform_call_head(SymbolId head, CettaExprLen arity) {
     return arity >= 2u && arity <= 4u && head != SYMBOL_ID_NONE &&
@@ -66,9 +71,8 @@ static inline bool cetta_transform_name_head(SymbolId head) {
 /* The library a firing realizes: the two dialects' libraries differ in how a
  * commit removes a taken atom and in what an error a mutation answers does. */
 typedef enum {
-    /* lib/petta/lib_transform.metta: remove-atom removes every copy, so a take
-     * removes them all and stores back the copies the firing does not take;
-     * a mutation's error is raised. */
+    /* lib/petta/lib_transform.metta: takes consume the required equal
+     * occurrences; a mutation's error is raised. */
     CETTA_TRANSFORM_DIALECT_PETTA = 0,
     /* lib/lib_transform.metta: remove-atom removes one copy, so a take removes
      * exactly the copies it takes; mutation errors propagate as HE values. */
@@ -87,12 +91,22 @@ typedef struct {
      * contracts: NULL, or the error the builtin answers. */
     Atom *(*remove_atom)(void *context, Atom *space_ref, Atom *atom);
     Atom *(*add_atom)(void *context, Atom *space_ref, Atom *atom);
-    /* Optional prepared take.  True retains a completed selection and its
-     * stored multiplicity through an uninterrupted first publication; false
-     * declines reuse and keeps the ordinary validate/remove path.  Commit
-     * consumes the handle; discard releases an unused or invalid candidate. */
+    /* A firing's exact take, independent of the public pattern selector:
+     * COPIES stored atoms that are ATOM
+     * leave SPACE, the first by position.  A stored atom is ATOM when it is
+     * the same atom or, for an atom with variables, the same but for their
+     * names; one ATOM only unifies with stays.  NULL, or the error answered
+     * when SPACE holds fewer, with nothing removed. */
+    Atom *(*take_atom)(void *context, Atom *space_ref, Atom *atom,
+                       size_t copies);
+    /* Optional prepared take.  True retains a completed selection of COPIES
+     * stored atoms that are ATOM, with how many SPACE holds, through an
+     * uninterrupted first publication; false declines reuse and keeps the
+     * ordinary validate/take path.  Commit consumes the handle; discard
+     * releases an unused or invalid candidate. */
     bool (*prepare_take)(void *context, Atom *space_ref, Atom *atom,
-                         void **prepared_out, size_t *stored_out);
+                         size_t copies, void **prepared_out,
+                         size_t *stored_out);
     Atom *(*commit_take)(void *context, void *prepared);
     void (*discard_take)(void *context, void *prepared);
     /* Results of a let's code, in order. HE Error values stay in the list
@@ -101,6 +115,26 @@ typedef struct {
      * Bound source variables arrive protected, as the dialect requires. */
     bool (*evaluate)(void *context, Arena *a, Atom *expression,
                      Atom ***results_out, size_t *len_out, Atom **error_out);
+    /* Optional.  The same results for the code as the transform holds it,
+     * its variables read from BINDINGS, where evaluate is given the code
+     * with their values written in.  The code is then one term for every
+     * candidate of a firing, which the host need translate once.
+     * VARIABLES, when not NULL, is the tuple of the variables the code holds
+     * that BINDINGS leaves unbound, which its evaluation may bind: then
+     * *givens_out holds, for each result, that tuple as its evaluation left
+     * it. */
+    bool (*evaluate_bound)(void *context, Arena *a, Atom *expression,
+                           const Bindings *bindings, Atom *variables,
+                           Atom ***results_out, Atom ***givens_out,
+                           size_t *len_out, Atom **error_out);
+    /* Optional.  A let that is a test of integers, as the comparison a
+     * join of the conjuncts before it can make while it joins
+     * (CettaNativeQueryFilter): the let passes exactly where the
+     * comparison is met, wherever every value compared is an integer the
+     * join can read; for any other value the join declines and the let is
+     * evaluated.  False for a let that is no such test. */
+    bool (*guard_filter)(void *context, Arena *a, Atom *pattern,
+                         Atom *expression, CettaNativeQueryFilter *filter);
     /* Optional native-work meter. Refusal records an incomplete episode in
      * the host; it is never an empty answer or permission to retry elsewhere.
      * A firing reserves its commit step before any store mutation. */
@@ -160,10 +194,12 @@ void cetta_transform_candidate_cursor_close(
 bool cetta_transform_inst(Arena *a, Atom *call, Atom **answer_out);
 
 /* Prepare a public transform for the native step.  `work` owns the returned
- * conjuncts and template.  PeTTa quotes source variables in lets and in a
- * caller template; HE keeps its conjuncts in the data wrapper tf:cs. */
+ * conjuncts and template. PeTTa protects caller templates and syntax-only
+ * let evaluators; bound code reads its variables from the firing's value
+ * environment. HE keeps its conjuncts in the data wrapper tf:cs. */
 bool cetta_transform_prepare(Arena *work, Atom *sources, Atom *template_atom,
                              CettaTransformDialect dialect, bool caller,
+                             bool bound_code,
                              Atom **conjuncts_out, Atom **template_out,
                              Atom **error_out);
 

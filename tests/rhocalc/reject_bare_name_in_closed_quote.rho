@@ -1,0 +1,2 @@
+// A bare name must be bound; inside the closed quote @{*y | *y} the receive's y is not in scope.
+for (y <- @{0}) {@{*y | *y}!(0)} | @{0}!(0)

@@ -17,9 +17,7 @@
 (= (branch-f 1) (branch-g 1))
 (= (branch-f 1) (branch-h 1))
 
-!(assertEqualToResult
-  (collapse (lts:he:transitions (f a)))
-  (((quote b) (quote c))))
+!(assertEqualToResult (lts:he:transitions (f a)) ((quote b) (quote c)))
 
 !(assertEqualToResult
   (collapse (lts:he:transitions (g a)))
@@ -33,21 +31,15 @@
   (collapse (lts:he:transitions (wrap-inner (step-inner 1))))
   (((quote (wrap-inner mid-inner)))))
 
-!(assertEqualToResult
-  (collapse (lts:he:transitions (wrap-branch (branch-f 1))))
-  (((quote (wrap-branch (branch-g 1))) (quote (wrap-branch (branch-h 1))))))
+!(assertEqualToResult (lts:he:transitions (wrap-branch (branch-f 1))) ((quote (wrap-branch (branch-g 1))) (quote (wrap-branch (branch-h 1)))))
 
 !(assertEqualToResult
   (collapse (lts:he:step-state (quote (g a))))
   (((quote (h a)))))
 
-!(assertEqual
-  (collapse (lts:he:step-state (quote (g a))))
-  (collapse (lts:transitions __cetta_lib_lts_he_transitions (quote (g a)))))
+!(assertEqual (lts:he:step-state (quote (g a))) (lts:transitions __cetta_lib_lts_he_transitions (quote (g a))))
 
-!(assertEqual
-  (collapse (lts:he:transitions (g a)))
-  (collapse (lts:transitions lts:he:step-state (quote (g a)))))
+!(assertEqual (lts:he:transitions (g a)) (lts:transitions lts:he:step-state (quote (g a))))
 
 !(assertEqualToResult
   (collapse (lts:he:step-state x))
@@ -57,13 +49,9 @@
   (collapse (lts:he:step-state (g a)))
   (()))
 
-!(assertEqual
-  (collapse (lts:he:step-state (quote x)))
-  (collapse (lts:transitions __cetta_lib_lts_he_transitions (quote x))))
+!(assertEqual (lts:he:step-state (quote x)) (lts:transitions __cetta_lib_lts_he_transitions (quote x)))
 
-!(assertEqual
-  (collapse (lts:he:transitions x))
-  (collapse (lts:transitions lts:he:step-state (quote x))))
+!(assertEqual (lts:he:transitions x) (lts:transitions lts:he:step-state (quote x)))
 
 !(assertEqualToResult
   (collapse (lts:trace-2 lts:he:step-state (quote (g a))))
@@ -77,17 +65,13 @@
   (collapse (lts:he:trace-2 (+ 1 (+ 2 3))))
   ((((quote (+ 1 5)) (quote 6)))))
 
-!(assertEqual
-  (collapse (lts:he:trace-2 (g a)))
-  (collapse (lts:trace-2 lts:he:step-state (quote (g a)))))
+!(assertEqual (lts:he:trace-2 (g a)) (lts:trace-2 lts:he:step-state (quote (g a))))
 
 !(assertEqualToResult
   (collapse (lts:trace-2 lts:he:step-state (quote x)))
   (()))
 
-!(assertEqualToResult
-  (collapse (lts:he:transitions (chain (f a) $r (return $r))))
-  (((quote (chain b $r (return $r))) (quote (chain c $r (return $r))))))
+!(assertEqualToResult (lts:he:transitions (chain (f a) $r (return $r))) ((quote (chain b $r (return $r))) (quote (chain c $r (return $r)))))
 
 !(assertEqualToResult
   (collapse (lts:he:transitions (chain b $r (return $r))))
@@ -97,9 +81,7 @@
   (collapse (lts:he:transitions (chain (g a) $r (return $r))))
   (((quote (chain (h a) $r (return $r))))))
 
-!(assertEqualToResult
-  (collapse (lts:he:transitions (let $x (f a) (wrap $x))))
-  (((quote (let $x b (wrap $x))) (quote (let $x c (wrap $x))))))
+!(assertEqualToResult (lts:he:transitions (let $x (f a) (wrap $x))) ((quote (let $x b (wrap $x))) (quote (let $x c (wrap $x)))))
 
 !(assertEqualToResult
   (collapse (lts:he:transitions (let (pair $x $y) (pair a b) $x)))
@@ -117,18 +99,12 @@
   (collapse (lts:he:transitions (eval (g a))))
   (((quote (g a)))))
 
-!(assertEqualToResult
-  (collapse (lts:he:transitions (case (f a) ((b one) (c two)))))
-  (((quote (case b ((b one) (c two)))) (quote (case c ((b one) (c two)))))))
+!(assertEqualToResult (lts:he:transitions (case (f a) ((b one) (c two)))) ((quote (case b ((b one) (c two)))) (quote (case c ((b one) (c two))))))
 
-!(assertEqualToResult
-  (collapse (lts:he:trace-2 (case (f a) ((b one) (c two)))))
-  ((((quote (case b ((b one) (c two)))) (quote one))
-    ((quote (case c ((b one) (c two)))) (quote two)))))
+!(assertEqualToResult (lts:he:trace-2 (case (f a) ((b one) (c two)))) (((quote (case b ((b one) (c two)))) (quote one))
+    ((quote (case c ((b one) (c two)))) (quote two))))
 
-!(assertEqual
-  (collapse (lts:he:trace-2 (case (f a) ((b one) (c two)))))
-  (collapse (lts:trace-2 lts:he:step-state (quote (case (f a) ((b one) (c two)))))))
+!(assertEqual (lts:he:trace-2 (case (f a) ((b one) (c two)))) (lts:trace-2 lts:he:step-state (quote (case (f a) ((b one) (c two))))))
 
 !(assertEqualToResult
   (collapse (lts:he:transitions (switch z ((z two)))))
@@ -144,10 +120,8 @@
   (collapse (lts:he:transitions (switch-minimal (g a) (((g a) raw) ((h a) evald)))))
   (((quote raw))))
 
-!(assertEqualToResult
-  (collapse (lts:he:trace-2 (let $p (choose-path) done)))
-  ((((quote (let $p left done)) (quote done))
-    ((quote (let $p right done)) (quote done)))))
+!(assertEqualToResult (lts:he:trace-2 (let $p (choose-path) done)) (((quote (let $p left done)) (quote done))
+    ((quote (let $p right done)) (quote done))))
 
 !(assertEqualToResult
   (collapse (lts:he:transitions x))

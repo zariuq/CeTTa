@@ -19,10 +19,6 @@
                (not (has-divisor $n 3))))))
 
 !(pragma! num-threads 1)
-!(assertEqual
-  (collapse (hyperpose ((is-prime 10000019) (is-prime 10000079))))
-  (True True))
+!(assertEqualToResult (hyperpose ((is-prime 10000019) (is-prime 10000079))) (True True))
 !(pragma! num-threads 2)
-!(assertEqual
-  (collapse (hyperpose ((is-prime 10000019) (is-prime 10000079))))
-  (True True))
+!(assertEqualToResult (hyperpose ((is-prime 10000019) (is-prime 10000079))) (True True))

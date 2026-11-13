@@ -1,0 +1,8 @@
+(nullary-held ((+ 1 2)))
+(unary-runs (2))
+(nullary-runs (3))
+(unary-held ((+ 1 1)))
+(plain-unary (2))
+(same-arity-held ((+ 1 1)))
+(extension-plain (6))
+(extension-runs (6))

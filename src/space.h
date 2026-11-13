@@ -192,6 +192,11 @@ typedef enum {
     /* Holds each atom once: adding an atom it holds, or an alpha-variant of
      * one, changes nothing. */
     SPACE_KIND_SET = 4,
+    /* A multiset read in the standard order of terms: its first atom is its
+     * least, a read meets its atoms ascending, and the whole atom is the
+     * key, so the order is a function of the atoms held and of nothing
+     * else.  Its rows are a multiset's; the order is an index over them. */
+    SPACE_KIND_PRIORITY = 5,
 } SpaceKind;
 
 /* ── Space ──────────────────────────────────────────────────────────────── */
@@ -367,6 +372,12 @@ typedef struct Space {
     /* Set when the space lives only while an arena holds an atom of it: the
        evaluator's record of those holds.  NULL for a space its owner frees. */
     struct SpaceHold *arena_hold;
+    /* A priority space's order over its rows (space.c, "Order index"); NULL
+       for every other kind, and until an ordered read first asks for it. */
+    struct SpaceOrder *order;
+    /* The atoms added and removed while a reader reads the space as it
+       stood when it began (space.c, "Entry reads"); NULL while none does. */
+    struct SpaceJournal *journal;
 } Space;
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
@@ -686,9 +697,56 @@ void space_replace_contents(Space *dst, Space *src);
 const char *space_kind_name(SpaceKind kind);
 bool space_kind_from_name(const char *name, SpaceKind *out);
 void space_set_strict(Space *s, bool strict);
+/* A kind that keeps its atoms in an order and gives the order's own
+ * operations (peek, pop, get, truncate): a stack, a queue, a priority
+ * space.  Its reads follow that order, so a reader of rows in any other
+ * order declines for it. */
 bool space_is_ordered(const Space *s);
+/* Whether that order is the order of its rows: a stack's and a queue's,
+ * which keep their history.  A priority space's rows are a bag's, and its
+ * order an index over them: its rows need not be kept in sequence, and a
+ * read that takes no order (a count, a membership) reads it as a bag. */
+bool space_rows_in_kind_order(const Space *s);
+/* Whether a read of the space runs from its newest row to its oldest: a
+ * stack's, whose order is the reverse of its rows'.  A queue's reads run
+ * from the oldest. */
+bool space_reads_newest_first(const Space *s);
 bool space_is_stack(const Space *s);
 bool space_is_queue(const Space *s);
+bool space_is_priority(const Space *s);
+/* The atom of a priority space with RANK atoms before it in its order; NULL
+ * when it holds no such atom. */
+Atom *space_priority_get_at64(const Space *s, CettaIndex rank);
+/* Put COUNT logical positions of a priority space's live rows in the order
+ * the space reads them. */
+void space_priority_order_positions(Space *s, CettaIndex *positions,
+                                    CettaIndex count);
+/* The logical positions of the rows of a priority space equal to the ground
+ * ATOM.  False when they could not be found; *OUT is the caller's to free. */
+bool space_priority_equal_positions(Space *s, Atom *atom, CettaIndex **out,
+                                    CettaIndex *count_out);
+/* The logical positions of the rows of a priority space that may match
+ * PATTERN, for a reader that takes them all, as a bag: the rows equal to a
+ * ground pattern, or the rows of the ranges of the order the pattern's
+ * ground front selects (the rows that begin with it and the rows holding a
+ * variable inside it); in a space that keeps its general indexes, the rows
+ * an index hands over where they are fewer.  False where the order cannot
+ * search for the pattern; *OUT is the caller's to free. */
+bool space_priority_candidates(Space *s, Atom *pattern, CettaIndex **out,
+                               CettaIndex *count_out);
+/* The logical positions of the rows a ground PATTERN matches, found through
+ * the order where they are exactly the rows equal to it.  False where that
+ * does not hold; *OUT is the caller's to free. */
+bool space_priority_exact_positions(Space *s, Atom *pattern, CettaIndex **out,
+                                    CettaIndex *count_out);
+/* The logical positions of the rows that are the open ATOM, the same or the
+ * same but for its variables' names; false when the order cannot find them. */
+bool space_priority_alike_positions(Space *s, Atom *atom, CettaIndex **out,
+                                    CettaIndex *count_out);
+/* RANKS[i]: how many of the COUNT positions stand before POSITIONS[i] in the
+ * order the space reads them.  False when the places could not be found. */
+bool space_priority_dense_ranks(Space *s, const CettaIndex *positions,
+                                CettaIndex count, CettaIndex *ranks);
 bool space_is_hash(const Space *s);
 /* Whether a general match reads LEN rows in turn instead of an index: a
  * small space, or a strict one. */
@@ -907,9 +965,9 @@ SpaceEquationCursorStep space_equation_cursor_next(
 /*
  * Revision-qualified zipper over matching discrimination-trie leaves.
  * Pin a read token, prefix epoch, and occurrence ceiling at init; `next`
- * yields logical indices without copying the bag: in row order for an
- * ordered space (a stack or a queue), in the index's own order for any
- * other, since a space answers a bag.
+ * yields logical indices without copying the bag: in row order for a stack
+ * or a queue, in the standard order of terms for a priority space, in the
+ * index's own order for any other, since a space answers a bag.
  * It walks the Space's rows, skipping those removed by marks when it was
  * pinned, so opening one never contracts the Space.
  * An ordered space's trie nodes are merged lazily in row order. The frontier retains
@@ -935,6 +993,10 @@ typedef struct {
      * merging their trie nodes; any other reads its nodes one after another,
      * and node_next is the node it is on. */
     bool row_order;
+    /* A stack's reads run from its newest row down: the scan, the flat
+     * candidates and the merge of trie nodes go backwards, and a node's
+     * leaf_pos counts the leaves left to read below (space_reads_newest_first). */
+    bool descending;
     uint32_t node_next;
     /* Cached (occurrence, node) keys packed into one index when the captured
      * ranges permit it. Inactive heap slots also hold tied-head advances. */
@@ -952,6 +1014,52 @@ typedef struct {
     bool flat_mode;
     bool full_scan;
     CettaIndex full_next;
+    /* A priority space read through its order index: the rows from the least
+     * on, order_last the row yielded last. */
+    bool order_scan;
+    bool order_started;
+    bool order_rent;
+    bool order_offer_trie;
+    uint32_t order_last;
+    /* On a frozen view the cursor keeps its place in two things read
+     * together: the Space's order, where order_live is the next row it may
+     * read once known; and the rows marked since the view froze, of which
+     * it has taken in the first order_gone_seen and holds, as a heap in the
+     * order, those it has yet to read. */
+    bool order_live_known;
+    uint32_t order_live;
+    CettaIndex order_gone_seen;
+    uint32_t *order_gone;
+    uint32_t order_gone_len, order_gone_cap;
+    /* Rent or buy (space_order_price): the rows the walk has passed, and
+     * the rows an index would hand the read in place of the rest of the
+     * walk (the rows of an order are numbered in 32 bits), while the read
+     * holds that index's offer: the trie's nodes a ground pattern descends
+     * to, ending in none (order_offer_trie), or a position index's demand.
+     * order_rent: the walk is rent toward an index that serves no read
+     * yet. */
+    uint32_t order_walked;
+    uint32_t order_price;
+    union {
+        void *any;
+        DiscNode **trie;
+        CettaSpacePathDemand *demand;
+    } order_offer;
+    /* A pattern read as the ranges of the order whose rows may match it,
+     * one after another (space_priority_front_search): pairs of a range's
+     * first row and the row it ends before, found when the cursor opened;
+     * the range being read, and whether its first row has been.
+     * order_purge: rows a frozen cursor held to read later that stand
+     * before the range now begun are dropped. */
+    uint32_t *order_ranges;
+    uint32_t order_range_len, order_range_at;
+    bool order_range_open;
+    bool order_purge;
+    /* Whether the cursor reads the match trie's leaves, which a removal
+     * takes rows out of: its view is then copied at a removal, where a view
+     * of rows (and of the head index, which keeps a removed row until the
+     * rows are contracted) is left on them. */
+    bool index_reader;
     bool pinned;
     /* The row of the logical index `next` yielded last, which the atom read
      * that follows it takes without searching the marks. */
@@ -1038,6 +1146,91 @@ bool space_head_snapshot_select(const SpaceHeadSnapshot *snapshot,
     const SymbolId *heads, size_t count, SpaceOccurrenceCursor *cursor);
 void space_head_snapshot_release(SpaceHeadSnapshot *snapshot);
 
+/* ── Entry reads ─────────────────────────────────────────────────────────
+ * A reader that begins now and reads later, as the later patterns of a
+ * conjunctive match do, reads the space as it stood when it began, whatever
+ * the program adds or removes meanwhile.  While one is open the space
+ * journals the atoms it adds and removes, and nothing while none is.  A
+ * reader of a space written since it began reads the space as it is, less
+ * the atoms added since and with the atoms removed since: nothing is
+ * copied.  The writes are those of the space the reader names and, for a
+ * module's own view, of the storage it shows.
+ *
+ * The point a reader began at is data (space_entry_point) that an evaluator
+ * carries from one pattern to the next, as it carries bindings.  A hold
+ * keeps the journal, and with it the space, while something that may read
+ * at the point lives; between holds the journal lasts until the space's
+ * next write, so a pattern begun at once after its predecessor let go
+ * (space_entry_reacquire) still reads at the point. */
+typedef struct {
+    /* The space the reader holds; NULL while none is held. */
+    Space *space;
+    /* The journal's count of writes when the reader began.  Each journal
+     * counts in serials of its own, so the serial names the journal too: a
+     * space makes a journal afresh once its last one went with a write. */
+    uint64_t serial;
+} SpaceEntry;
+
+/* Begin reading S as it stands now, and hold it.  False, with nothing
+ * begun, when out of memory. */
+bool space_entry_open(Space *s, SpaceEntry *entry);
+/* Begin reading S as it stands now without holding it: a reader that
+ * reads at the point holds it again (space_entry_reacquire) before the
+ * space's next write. */
+bool space_entry_begin(Space *s, SpaceEntry *entry);
+/* As space_entry_begin and space_entry_open, for a reader that names every
+ * pattern it will read at the point (space_entry_watch), at once and before
+ * any write: the space then journals only the writes of atoms some named
+ * pattern's head may meet, so writes no pattern can meet cost nothing.  A
+ * point begun otherwise reads every atom, and so does any pattern that may
+ * begin with any head (SYMBOL_ID_NONE for space_entry_watch_head). */
+bool space_entry_begin_watching(Space *s, SpaceEntry *entry);
+bool space_entry_open_watching(Space *s, SpaceEntry *entry);
+void space_entry_watch(Space *s, const Atom *pattern);
+void space_entry_watch_head(Space *s, SymbolId head);
+/* Hold the point ENTRY began at again, for a read of S, the space its
+ * pattern names: false, counted as lost, when S is not the space it began
+ * on or its journal no longer keeps every write since. */
+bool space_entry_reacquire(Space *s, SpaceEntry *entry);
+/* Let go of a hold of the space S (an entry's `space`), which holds one
+ * more of the same while a copy of a continuation does. */
+void space_entry_hold_again(Space *s);
+void space_entry_release(Space *s);
+void space_entry_close(SpaceEntry *entry);
+/* ENTRY's point as data, its serial as a number, and back; the point read
+ * back holds nothing. */
+Atom *space_entry_point(Arena *arena, const SpaceEntry *entry);
+bool space_entry_from_point(const Atom *point, SpaceEntry *entry);
+/* Whether the space was written since the reader began. */
+bool space_entry_written(const SpaceEntry *entry);
+/* The same of a point not held, for a read of S, the space its pattern
+ * names: also true when S is not the space it began on or its journal is
+ * gone. */
+bool space_entry_written_at(Space *s, const SpaceEntry *entry);
+/* Whether a write was made since the reader began that the journal does
+ * not itemize (a backend's own rewrite, a change to an imported module):
+ * the space as it stood then cannot be read. */
+bool space_entry_lost(const SpaceEntry *entry);
+/* How many more times the space holds the atom ID than when the reader
+ * began: its adds since, less its removals since. */
+int64_t space_entry_added(const SpaceEntry *entry, AtomId id);
+/* Visit each atom the space held more times when the reader began than it
+ * does now and that PATTERN may match (the caller matches), with how many
+ * more: the atoms removed since, less those added again.  A visit returning
+ * false stops.  False when out of memory. */
+typedef bool (*SpaceEntryRemovedVisit)(void *context, AtomId id,
+                                       uint64_t copies);
+bool space_entry_removed_each(const SpaceEntry *entry, Atom *pattern,
+                              SpaceEntryRemovedVisit visit, void *context);
+/* The occurrences PATTERN may match in the space as it stood when ENTRY
+ * began, as the universe's atoms in a malloc'd array: those it holds now,
+ * less the copies of atoms added since, with the atoms removed since.
+ * False, counted as lost, when the space as it stood cannot be read (a
+ * write the journal does not itemize) or out of memory; the reader then
+ * reads the space as it is. */
+bool space_entry_candidates(const SpaceEntry *entry, Atom *pattern,
+                            Atom ***out, CettaCount *out_len);
+
 bool space_contains_exact(Space *s, Atom *atom);
 /* Exact membership for `(head argument...)`, presented as a borrowed term
  * view.  `out_applicable` is false when the active backend cannot answer from
@@ -1102,6 +1295,16 @@ bool space_remove_exact_ids_immediate(Space *s, SymbolId head,
                                       Atom *dense_atom,
                                       CettaCount *out_removed,
                                       CettaCount *out_rows);
+/* COPIES rows holding the stored term ID leave S, the first by position;
+ * where S holds fewer rows of it, the fact a relation keeps for DENSE_ATOM
+ * is its one further copy.  By identity: a row holding a variable, which ID
+ * could unify with, is another atom and stays.  *OUT_REMOVED is COPIES, or
+ * zero with nothing removed where S holds fewer; *OUT_ROWS excludes a
+ * relation's fact.  False where S keeps no current exact index of its rows
+ * and the caller must read them. */
+bool space_take_exact_id(Space *s, SymbolId head, AtomId id, Atom *dense_atom,
+                         CettaCount copies, CettaCount *out_removed,
+                         CettaCount *out_rows);
 /* The rows holding a ground pattern, ascending, read from a current exact
  * index without settling marks: physical rows while rows are marked. */
 CettaIndex space_exact_index_rows64(Space *s, Atom *pattern, CettaIndex **out);
@@ -1198,6 +1401,13 @@ static inline bool space_directional_rules_may_match_known_head(Space *s, Symbol
     return !space_directional_index_proves_absent(s) &&
         space_directional_rules_may_match_general(s, head);
 }
+/* Whether a rule of the admitted syntax (rule_binding.h) may answer a call
+ * of `head`, in `s` or a module it imports.  Without the named-head
+ * qualifier this is the two predicates above for the admitted forms; with
+ * it, an equation counts only when its left side applies `head`, and a
+ * directional rule only when the index files it under `head`. */
+bool space_rules_may_match_known_head(Space *s, SymbolId head,
+                                      unsigned admitted_forms);
 bool space_extended_rule_head_arity_bounds(Space *s, SymbolId head,
     CettaExprLen *minimum, CettaExprLen *maximum, bool *has_exact,
     CettaExprLen query_arity, unsigned admitted_forms);

@@ -21,7 +21,7 @@
 (= (split ()) none)
 (= (split $xs) (let ($h $t) (decons-atom $xs) ($h $t)))
 !(println! (collapse (split (x y))))
-!(println! (collapse (let $r (split $v) ($v $r))))
+!(println! (sort-atom (collapse (let $r (split $v) ($v $r)))))
 (= (loop $n)
    (if (== $n 0) done
      (let $_ (and True (case (cnt (a b c)) ((3 True) ($other False))))

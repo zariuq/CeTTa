@@ -24,7 +24,7 @@
 ; A surrounding aggregate must not change evaluation ownership or replay the
 ; effectful search.  The five values are produced once each.
 !(collapse (length (collapse (peano-prefix 4))))
-!(collapse (match &self (num $value) $value))
+!(sort-atom (collapse (match &self (num $value) $value)))
 
 ; No fifth successor is introduced by observation or backtracking.
 !(collapse

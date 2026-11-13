@@ -892,9 +892,7 @@ static bool contract_match(ContractScan *scan, Atom *expr,
     if ((!fact || !fact->space) && !named)
         return false;
     if (petta_semantics_contains_cons_constraint(pattern) ||
-        (pattern->kind == ATOM_EXPR && pattern->expr.len > 0u &&
-         (atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma) ||
-          atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.pipe))))
+        match_pattern_is_connective(pattern))
         return false;
     if (named && !scan->purity_only &&
         !contract_note_space(scan, source->sym_id))

@@ -1,0 +1,21 @@
+!(bind! &removal-target (new-space))
+!(bind! &removal-source (new-space))
+(= (fill-removal-target $n)
+   (if (== $n 0) filled
+     (let $_written (add-atom &removal-target (target a))
+       (fill-removal-target (- $n 1)))))
+!(fill-removal-target 8)
+!(add-atom &removal-source (go a))
+!(add-atom &removal-source (go a))
+!(add-atom &removal-source (go a))
+; Equal witnesses remain separate operations, also in a batched query.
+!(removed (collapse (match &removal-source (go $key)
+    (let $_removed (remove-atom &removal-target (target $key)) done))))
+!(left (size-atom (collapse (get-atoms &removal-target))))
+; Removing one equation must retain the other equation's program entry.
+(= (remaining-copy) yes)
+(= (remaining-copy) yes)
+!(remove-atom &self (= (remaining-copy) yes))
+!(program-left (collapse (remaining-copy)))
+!(remove-atom &self (= (remaining-copy) yes))
+!(program-empty (collapse (remaining-copy)))

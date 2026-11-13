@@ -1226,6 +1226,26 @@ bool match_binding_value_atom_id_epoch(
 bool match_atoms_atom_id_epoch(Atom *left, const TermUniverse *candidate_universe,
                                AtomId right_id, Bindings *b, Arena *a,
                                CettaFrameIdentity epoch);
+/* Whether `match` reads a pattern headed by HEAD as a query over parts: a
+ * conjunction (, P ...) or a union (| P ...).  No membership test and no
+ * one-pattern read answers one, even a ground one; it is read part by
+ * part, by the evaluator or the machine. */
+static inline bool match_head_is_connective(const Atom *head) {
+    return head && head->kind == ATOM_SYMBOL &&
+           (head->sym_id == g_builtin_syms.comma ||
+            head->sym_id == g_builtin_syms.pipe);
+}
+
+static inline bool match_pattern_is_connective(const Atom *pattern) {
+    return pattern && pattern->kind == ATOM_EXPR && pattern->expr.len >= 1u &&
+           match_head_is_connective(pattern->expr.elems[0]);
+}
+
+/* Whether a grounded query atom meets the stored atom RIGHT_ID: the
+ * matcher's rule, numbers by value across representations in HE. */
+bool match_stored_grounded_equal(Atom *left,
+                                 const TermUniverse *candidate_universe,
+                                 AtomId right_id);
 
 /* Alpha-equivalence on atoms: two atoms are equivalent up to a bijective
    renaming of variable names. */
