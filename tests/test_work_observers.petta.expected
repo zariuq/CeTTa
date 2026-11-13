@@ -5,7 +5,7 @@
 ((counted 0 paused relational-count-factors) (taken (1 1 1 1 1) complete))
 (exists unknown paused)
 ((exists True more-possible) (exists True more-possible) (counted 1 complete enumerate) (yes))
-((counted 3 complete enumerate) (9 1 2 2))
+((counted 3 complete enumerate) (1 2 2 9))
 ((exists True more-possible) (taken (a a b) complete))
 ((counted 0 paused relational-count-factors) (counted 0 (failed WorkInvalidated) relational-count-factors) (taken () (failed WorkInvalidated)))
 42

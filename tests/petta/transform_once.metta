@@ -3,11 +3,19 @@
 !(add-atom &q (job b))
 !(add-atom &q (receiver alice))
 !(add-atom &q (receiver bob))
-!(once-first (collapse (once (transform &q (, (take (job $j)) (take (receiver $r))) (claimed $j $r)))))
-!(jobs-after-first (sort-atom (collapse (match &q (job $j) $j))))
-!(receivers-after-first (sort-atom (collapse (match &q (receiver $r) $r))))
-!(second (collapse (once (transform &q (, (take (job $j)) (take (receiver $r))) (claimed $j $r)))))
+; Which job and receiver a once claims is open: each claim is one firing,
+; noted in &claims; what it leaves is counted, and the two claims together
+; hold every job and every receiver once.
+!(bind! &claims (new-space))
+!(once-first (let $claims (collapse (once (transform &q (, (take (job $j)) (take (receiver $r))) (claimed $j $r))))
+  (case $claims ((((claimed $j $r)) (let $u (add-atom &claims (claimed $j $r)) one-claim)) ($_ $claims)))))
+!(jobs-after-first (size-atom (collapse (match &q (job $j) $j))))
+!(receivers-after-first (size-atom (collapse (match &q (receiver $r) $r))))
+!(second (let $claims (collapse (once (transform &q (, (take (job $j)) (take (receiver $r))) (claimed $j $r))))
+  (case $claims ((((claimed $j $r)) (let $u (add-atom &claims (claimed $j $r)) one-claim)) ($_ $claims)))))
 !(remaining (collapse (match &q $a $a)))
+!(claimed-jobs (sort-atom (collapse (match &claims (claimed $j $r) $j))))
+!(claimed-receivers (sort-atom (collapse (match &claims (claimed $j $r) $r))))
 !(bind! &d (new-space))
 !(add-atom &d (job a))
 !(add-atom &d (job b))

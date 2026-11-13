@@ -9,7 +9,7 @@
 !(collapse (g (f 1)))
 (: two (-> Number Number))
 (= (two $x) (superpose (1 2)))
-!(collapse (g (two 0)))
+!(sort-atom (collapse (g (two 0))))
 (: hole (-> Number Number))
 (= (hole $x) $y)
 !(collapse (let $r (g (hole 0)) (is-var $r)))

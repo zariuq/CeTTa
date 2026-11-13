@@ -66,7 +66,7 @@
 (e h s19)
 (e s19 s0)
 (e s19 t19)
-!(collapse (let $u (superpose (a b)) (match &self (e $u $v) $v)))
+!(sort-atom (collapse (let $u (superpose (a b)) (match &self (e $u $v) $v))))
 !(sort-atom (collapse (let $u (superpose (a a b)) (match &self (e $u $v) ($u $v)))))
 !(sort-atom (collapse (let $u (superpose (s0 s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16)) (match &self (e $u $v) ($u $v)))))
 !(sort-atom (collapse (let ($u $w) (superpose ((s0 0) (s1 1) (s2 2) (s3 3) (s4 4) (s5 5) (s6 6) (s7 7) (s8 8) (s9 9) (s10 10) (s11 11) (s12 12) (s13 13) (s14 14) (s15 15) (s16 16) (s17 17))) (match &self (e $u $v) ($w $v)))))

@@ -31,4 +31,4 @@
 !(case-writes a)
 !(case-queries x)
 !(switch-writes b)
-!(collapse (match &s (b $n) $n))
+!(let $answers (collapse (match &s (b $n) $n)) (sort-atom $answers))

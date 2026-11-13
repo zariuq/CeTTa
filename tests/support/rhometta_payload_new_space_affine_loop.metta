@@ -50,8 +50,8 @@
 (= (affine:owned-space-ok)
    (let $owned (unwrap-rho-val (rhometta:run (affine:owned-space-once)))
      (let $_ (add-atom $owned postrun)
-       (== (collapse (get-atoms $owned))
-           (born postrun)))))
+       (let $owned-atoms (collapse (get-atoms $owned))
+         (== (sort-atom $owned-atoms) (sort-atom (born postrun)))))))
 
 (= (affine:nested-owned-space-ok)
    (let $owner (unwrap-rho-val (rhometta:run (affine:nested-owned-space-once)))
@@ -66,8 +66,8 @@
 (= (affine:bind-owned-space-ok)
    (let $owned (unwrap-rho-val (rhometta:run (affine:bind-owned-space-once)))
      (let $_ (add-atom $owned postrun)
-       (== (collapse (get-atoms $owned))
-           (via-bind rebound postrun)))))
+       (let $owned-atoms (collapse (get-atoms $owned))
+         (== (sort-atom $owned-atoms) (sort-atom (via-bind rebound postrun)))))))
 
 !(pragma! num-threads 2)
 

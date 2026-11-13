@@ -40,8 +40,8 @@
       (($_tail1 (assertz_space_atom_ref &owned_order_space (ordered tail-1)))
        ($_tail2 (assertz_space_atom_ref &owned_order_space (ordered tail-2)))
        ($_front (asserta_space_atom_ref &owned_order_space (ordered front))))
-      (collapse
-         (match &owned_order_space (ordered $value) $value))))
+      (sort-atom (collapse
+         (match &owned_order_space (ordered $value) $value)))))
 
 ; A plain PeTTa location is also native after its first add.  Temporary rows
 ; asserted through the Prolog-compatible clause-reference syntax must join

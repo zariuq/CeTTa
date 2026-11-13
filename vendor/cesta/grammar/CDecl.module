@@ -1,0 +1,156 @@
+import "CExpr.module" as expr
+Module CDeclModule {
+  Theory CDecl(e: expr.CExpr) {
+    e Exports { Declaration; DeclarationSpecifiers; TypeSpecifier; TypeQualifier;
+      Declarator; DirectDeclarator; TypeName; AbstractDeclarator; Initializer;
+      InitializerElement; Parameter; StructDeclaration; }
+    Terms {
+      -- ISO 6.7: declaration, declaration-specifiers, init-declarator-list.
+      Declaration . Declaration ::= DeclarationSpecifiers OptionalInitDeclarators ";";
+      StaticAssertionDeclaration . Declaration ::= StaticAssertion;
+      -- ISO 6.7.2p2: one unique type, or a nonempty primitive sequence.
+      UniqueDeclarationSpecifiers . DeclarationSpecifiers ::= UniqueTypeSpecifier [NonTypeSpecifier];
+      PrimitiveDeclarationSpecifiers . DeclarationSpecifiers ::= PrimitiveTypeSpecifier [PrimitiveOrNonTypeSpecifier];
+      PrefixedDeclarationSpecifiers . DeclarationSpecifiers ::= NonTypeSpecifier DeclarationSpecifiers;
+      terminator NonTypeSpecifier "";
+      terminator PrimitiveOrNonTypeSpecifier "";
+      PrimitiveSpecifierTail . PrimitiveOrNonTypeSpecifier ::= PrimitiveTypeSpecifier;
+      NonTypeSpecifierTail . PrimitiveOrNonTypeSpecifier ::= NonTypeSpecifier;
+      NoInitDeclarators . OptionalInitDeclarators ::=;
+      InitDeclarators . OptionalInitDeclarators ::= [InitDeclarator];
+      separator nonempty InitDeclarator ",";
+      InitDeclarator . InitDeclarator ::= BoundDeclarator;
+      InitDeclaratorValue . InitDeclarator ::= BoundDeclarator "=" Initializer;
+      _ . BoundDeclarator ::= Declarator;
+      StorageSpecifier . NonTypeSpecifier ::= StorageClass;
+      QualifierSpecifier . NonTypeSpecifier ::= TypeQualifier;
+      FunctionSpecifier . NonTypeSpecifier ::= FunctionSpecifier;
+      AlignmentSpecifier . NonTypeSpecifier ::= AlignmentSpecifier;
+      -- ISO 6.7.1: storage-class-specifier.
+      Typedef . StorageClass ::= "typedef";
+      Extern . StorageClass ::= "extern";
+      Static . StorageClass ::= "static";
+      ThreadLocal . StorageClass ::= "_Thread_local";
+      Auto . StorageClass ::= "auto";
+      Register . StorageClass ::= "register";
+      -- ISO 6.7.2: type-specifier.
+      _ . TypeSpecifier ::= UniqueTypeSpecifier;
+      _ . TypeSpecifier ::= PrimitiveTypeSpecifier;
+      Void . UniqueTypeSpecifier ::= "void";
+      Bool . UniqueTypeSpecifier ::= "_Bool";
+      AtomicType . UniqueTypeSpecifier ::= "_Atomic" "<atomic-parenthesis>" TypeName ")";
+      StructType . UniqueTypeSpecifier ::= StructSpecifier;
+      EnumType . UniqueTypeSpecifier ::= EnumSpecifier;
+      TypedefType . UniqueTypeSpecifier ::= CTypedefName;
+      Char . PrimitiveTypeSpecifier ::= "char";
+      Short . PrimitiveTypeSpecifier ::= "short";
+      Int . PrimitiveTypeSpecifier ::= "int";
+      Long . PrimitiveTypeSpecifier ::= "long";
+      Float . PrimitiveTypeSpecifier ::= "float";
+      Double . PrimitiveTypeSpecifier ::= "double";
+      Signed . PrimitiveTypeSpecifier ::= "signed";
+      Unsigned . PrimitiveTypeSpecifier ::= "unsigned";
+      Complex . PrimitiveTypeSpecifier ::= "_Complex";
+      -- ISO 6.7.2.1: struct-or-union-specifier and member declarations.
+      StructDefinition . StructSpecifier ::= StructOrUnion OptionalIdent "{" [StructDeclaration] "}";
+      StructReference . StructSpecifier ::= StructOrUnion CGeneralName;
+      Struct . StructOrUnion ::= "struct";
+      Union . StructOrUnion ::= "union";
+      NoIdent . OptionalIdent ::=;
+      SomeIdent . OptionalIdent ::= CGeneralName;
+      terminator nonempty StructDeclaration "";
+      StructDeclaration . StructDeclaration ::= SpecifierQualifiers OptionalStructDeclarators ";";
+      StructStaticAssertion . StructDeclaration ::= StaticAssertion;
+      UniqueSpecifierQualifiers . SpecifierQualifiers ::= UniqueTypeSpecifier OptionalTypeQualifiers;
+      PrimitiveSpecifierQualifiers . SpecifierQualifiers ::= PrimitiveTypeSpecifier [PrimitiveOrQualifier];
+      PrefixedSpecifierQualifiers . SpecifierQualifiers ::= TypeQualifier SpecifierQualifiers;
+      terminator PrimitiveOrQualifier "";
+      PrimitiveQualifierTail . PrimitiveOrQualifier ::= PrimitiveTypeSpecifier;
+      QualifierTail . PrimitiveOrQualifier ::= TypeQualifier;
+      NoStructDeclarators . OptionalStructDeclarators ::=;
+      StructDeclarators . OptionalStructDeclarators ::= [StructDeclarator];
+      separator nonempty StructDeclarator ",";
+      StructDeclarator . StructDeclarator ::= Declarator;
+      BitField . StructDeclarator ::= OptionalDeclarator ":" Expr2;
+      NoDeclarator . OptionalDeclarator ::=;
+      SomeDeclarator . OptionalDeclarator ::= Declarator;
+      -- ISO 6.7.2.2: enum-specifier, enumerator-list, enumerator.
+      EnumDefinition . EnumSpecifier ::= "enum" OptionalIdent "{" [Enumerator] "}";
+      EnumDefinitionComma . EnumSpecifier ::= "enum" OptionalIdent "{" [Enumerator] "," "}";
+      EnumReference . EnumSpecifier ::= "enum" CGeneralName;
+      separator nonempty Enumerator ",";
+      Enumerator . Enumerator ::= CGeneralName;
+      EnumeratorValue . Enumerator ::= CGeneralName "=" Expr2;
+      -- ISO 6.7.3: type-qualifier.
+      Const . TypeQualifier ::= "const";
+      Restrict . TypeQualifier ::= "restrict";
+      Volatile . TypeQualifier ::= "volatile";
+      AtomicQualifier . TypeQualifier ::= "_Atomic";
+      -- ISO 6.7.4: function-specifier.
+      Inline . FunctionSpecifier ::= "inline";
+      Noreturn . FunctionSpecifier ::= "_Noreturn";
+      -- ISO 6.7.5: alignment-specifier.
+      AlignasType . AlignmentSpecifier ::= "_Alignas" "(" TypeName ")";
+      AlignasExpression . AlignmentSpecifier ::= "_Alignas" "(" Expr2 ")";
+      -- ISO 6.7.6: declarator and direct-declarator.
+      Declarator . Declarator ::= DirectDeclarator;
+      PointerDeclarator . Declarator ::= Pointer DirectDeclarator;
+      Pointer . Pointer ::= "*" OptionalTypeQualifiers;
+      NestedPointer . Pointer ::= "*" OptionalTypeQualifiers Pointer;
+      NoTypeQualifiers . OptionalTypeQualifiers ::=;
+      SomeTypeQualifiers . OptionalTypeQualifiers ::= [TypeQualifier];
+      separator nonempty TypeQualifier "";
+      NameDeclarator . DirectDeclarator ::= CGeneralName;
+      ParenthesizedDeclarator . DirectDeclarator ::= "(" Declarator ")";
+      ArrayDeclarator . DirectDeclarator ::= DirectDeclarator "[" OptionalTypeQualifiers OptionalExpression "]";
+      StaticArrayDeclarator . DirectDeclarator ::= DirectDeclarator "[" "static" OptionalTypeQualifiers Expr1 "]";
+      QualifiedStaticArrayDeclarator . DirectDeclarator ::= DirectDeclarator "[" [TypeQualifier] "static" Expr1 "]";
+      VariableArrayDeclarator . DirectDeclarator ::= DirectDeclarator "[" OptionalTypeQualifiers "*" "]";
+      FunctionDeclarator . DirectDeclarator ::= DirectDeclarator "(" ParameterTypeList ")";
+      OldFunctionDeclarator . DirectDeclarator ::= DirectDeclarator "(" OptionalIdentifiers ")";
+      NoIdentifiers . OptionalIdentifiers ::=;
+      Identifiers . OptionalIdentifiers ::= [OldParameterName];
+      _ . OldParameterName ::= COrdinaryName;
+      separator nonempty OldParameterName ",";
+      NoExpression . OptionalExpression ::=;
+      SomeExpression . OptionalExpression ::= Expr1;
+      ParameterTypes . ParameterTypeList ::= [Parameter];
+      VariadicParameterTypes . ParameterTypeList ::= [Parameter] "," "...";
+      separator nonempty Parameter ",";
+      NamedParameter . Parameter ::= DeclarationSpecifiers Declarator;
+      AbstractParameter . Parameter ::= DeclarationSpecifiers OptionalAbstractDeclarator;
+      -- ISO 6.7.7: type-name and abstract-declarator.
+      TypeName . TypeName ::= SpecifierQualifiers OptionalAbstractDeclarator;
+      NoAbstractDeclarator . OptionalAbstractDeclarator ::=;
+      SomeAbstractDeclarator . OptionalAbstractDeclarator ::= AbstractDeclarator;
+      AbstractPointer . AbstractDeclarator ::= Pointer;
+      AbstractDeclarator . AbstractDeclarator ::= DirectAbstractDeclarator;
+      PointerAbstractDeclarator . AbstractDeclarator ::= Pointer DirectAbstractDeclarator;
+      ParenthesizedAbstractDeclarator . DirectAbstractDeclarator ::= "(" AbstractDeclarator ")";
+      AbstractArray . DirectAbstractDeclarator ::= "[" OptionalTypeQualifiers OptionalExpression "]";
+      NestedAbstractArray . DirectAbstractDeclarator ::= DirectAbstractDeclarator "[" OptionalTypeQualifiers OptionalExpression "]";
+      AbstractStaticArray . DirectAbstractDeclarator ::= "[" "static" OptionalTypeQualifiers Expr1 "]";
+      NestedAbstractStaticArray . DirectAbstractDeclarator ::= DirectAbstractDeclarator "[" "static" OptionalTypeQualifiers Expr1 "]";
+      AbstractQualifiedStaticArray . DirectAbstractDeclarator ::= "[" [TypeQualifier] "static" Expr1 "]";
+      NestedAbstractQualifiedStaticArray . DirectAbstractDeclarator ::= DirectAbstractDeclarator "[" [TypeQualifier] "static" Expr1 "]";
+      AbstractVariableArray . DirectAbstractDeclarator ::= "[" "*" "]";
+      NestedAbstractVariableArray . DirectAbstractDeclarator ::= DirectAbstractDeclarator "[" "*" "]";
+      AbstractFunction . DirectAbstractDeclarator ::= "(" OptionalParameterTypes ")";
+      NestedAbstractFunction . DirectAbstractDeclarator ::= DirectAbstractDeclarator "(" OptionalParameterTypes ")";
+      NoParameterTypes . OptionalParameterTypes ::=;
+      SomeParameterTypes . OptionalParameterTypes ::= ParameterTypeList;
+      -- ISO 6.7.9: initializer, initializer-list, designation and designator.
+      InitializerExpression . Initializer ::= Expr1;
+      InitializerList . Initializer ::= "{" [InitializerElement] "}";
+      InitializerListComma . Initializer ::= "{" [InitializerElement] "," "}";
+      separator nonempty InitializerElement ",";
+      InitializerElement . InitializerElement ::= Initializer;
+      DesignatedInitializerElement . InitializerElement ::= [Designator] "=" Initializer;
+      separator nonempty Designator "";
+      ArrayDesignator . Designator ::= "[" Expr2 "]";
+      MemberDesignator . Designator ::= "." CGeneralName;
+      -- ISO 6.7.10: static_assert-declaration.
+      StaticAssertion . StaticAssertion ::= "_Static_assert" "(" Expr2 "," [CString] ")" ";";
+    }
+  }
+}

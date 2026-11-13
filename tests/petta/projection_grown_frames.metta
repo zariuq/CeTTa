@@ -7,6 +7,6 @@
 (= (pick-k (cons $h $t) $k)
    (append (map-atom (pick-k $t (- $k 1)) (|-> ($c) (cons $h $c)))
            (pick-k $t $k)))
-!(collapse (pick-k (0 1 2) 2))
+!(sort-atom (collapse (pick-k (0 1 2) 2)))
 !(size-atom (collapse (pick-k (0 1 2 3) 2)))
 !(size-atom (collapse (pick-k (0 1 2 3 4) 2)))

@@ -5,7 +5,7 @@
 (: accepts-even (-> EvenNumber Symbol))
 (= (accepts-even $value) accepted)
 
-!(collapse (get-type 2))
+!(sort-atom (collapse (get-type 2)))
 !(accepts-even 2)
 
 ; A typed higher-order call must validate the callable argument before either

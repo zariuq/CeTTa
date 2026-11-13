@@ -267,9 +267,11 @@ def public_controls(binary, scratch):
         assert rows["associative-left"] == rows["associative-right"]
         for name, reason in [("missing", "missing-production"),
             ("signature", "constructor-signature-conflict"), ("nullable", "nullable-token"),
-            ("layout", "layout"), ("define", "define")]:
+            ("define", "define")]:
             assert headed(rows[name], "LbnfRefusedV1", 3) and rows[name][1] == Symbol(reason)
             assert headed(rows[name][2], "LbnfSourceSpanV1", 4)
+        # A layout declaration is lowered to the reader's layout metadata.
+        assert headed(rows["layout"], "SyntaxGSLTAdmittedV1", 1)
         assert headed(rows["read-data"], "LbnfReadValueV1", 3)
         assert headed(rows["read-data"][3], "LbnfDocumentV1", 2)
         assert headed(rows["lower-data"], "SyntaxGSLTAdmittedV1", 1)

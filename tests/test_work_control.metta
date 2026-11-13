@@ -70,9 +70,10 @@
 (= (mark $x) (let $u (add-atom &self (seen $x)) $x))
 !(let $h (work-new (mark (superpose (1 2 3))))
    (let $a (work-take $h 1)
-     (let $b (collapse (match &self (seen $s) $s))
-       (let $c (work-take $h 5) ($a $b $c)))))
-!(collapse (match &self (seen $s) $s))
+     (let $marks (collapse (match &self (seen $s) $s))
+       (let $b (sort-atom $marks)
+         (let $c (work-take $h 5) ($a $b $c))))))
+!(let $answers (collapse (match &self (seen $s) $s)) (sort-atom $answers))
 
 ; A computation the shared execution does not admit runs on the completed
 ; route: here a relation whose recursion reads a match's binding past it.

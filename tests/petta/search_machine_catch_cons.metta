@@ -68,5 +68,5 @@
 (= (outer-choice) 9)
 
 !(test (mark-caught (catch (typed-error-first))) caught)
-!(test (collapse (mark-caught (catch (typed-choice)))) (7 caught))
-!(test (collapse (outer-choice)) (caught 9))
+!(test (sort-atom (collapse (mark-caught (catch (typed-choice))))) (sort-atom (7 caught)))
+!(test (sort-atom (collapse (outer-choice))) (sort-atom (caught 9)))

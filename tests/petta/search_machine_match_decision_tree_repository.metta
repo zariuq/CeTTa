@@ -36,8 +36,8 @@
          (let $literal (collapse (repo-literal blue))
            (let $duplicate (collapse (repo-duplicate token))
              (let $deep (collapse (repo-deep (node blue payload)))
-               (let $ordered (collapse (repo-ordered token))
-                 (let $overlap (collapse (repo-overlap (pair left right)))
+               (let $ordered (sort-atom (collapse (repo-ordered token)))
+                 (let $overlap (sort-atom (collapse (repo-overlap (pair left right))))
                    (result $nonlinear $literal $duplicate $deep $ordered
                      $overlap)))))))
        (let $_ (collapse (repo-nonlinear $tag left right))

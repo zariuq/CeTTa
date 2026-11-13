@@ -62,11 +62,18 @@
 (: space-set-backend! (-> SpaceType Atom (->)))
 (: space-set-match-backend! (-> SpaceType Atom (->)))
 (: space-len (-> SpaceType Number))
-(: space-push (-> SpaceType Atom (->)))
-(: space-peek (-> SpaceType %Undefined%))
-(: space-pop (-> SpaceType %Undefined%))
-(: space-get (-> SpaceType Number %Undefined%))
-(: space-truncate (-> SpaceType Number (->)))
+(: space:stack:peek (-> (Space stack) %Undefined%))
+(: space:stack:pop (-> (Space stack) %Undefined%))
+(: space:stack:get (-> (Space stack) Number %Undefined%))
+(: space:stack:truncate (-> (Space stack) Number (->)))
+(: space:queue:peek (-> (Space queue) %Undefined%))
+(: space:queue:pop (-> (Space queue) %Undefined%))
+(: space:queue:get (-> (Space queue) Number %Undefined%))
+(: space:queue:truncate (-> (Space queue) Number (->)))
+(: space:priority:peek (-> (Space priority) %Undefined%))
+(: space:priority:pop (-> (Space priority) %Undefined%))
+(: space:priority:get (-> (Space priority) Number %Undefined%))
+(: space:priority:truncate (-> (Space priority) Number (->)))
 (: step! (-> SpaceType Number))
 (: step! (-> SpaceType Number Number))
 (: is-function (-> Type Bool))
@@ -226,7 +233,7 @@
   (@return "One expression datum containing the visible occurrence sequence"))
 
 (@doc select
-  (@desc "HE-extended committed choice over nondeterministic results. The primary form (select results) returns the first occurrence encountered under the active traversal policy. HE compatibility profiles omit their Empty sentinel; Prime treats Empty and faults as ordinary retained occurrences. The extended forms (select k results), (select (search-policy lane) results), and (select k (search-policy lane) results) expose bounded selection and explicit search-lane choice.")
+  (@desc "HE-extended committed choice over nondeterministic results. The primary form (select results) returns one occurrence of the results: a declared search policy decides which, and without one it may be any. HE compatibility profiles omit their Empty sentinel; Prime treats Empty and faults as ordinary retained occurrences. The extended forms (select k results), (select (search-policy lane) results), and (select k (search-policy lane) results) expose bounded selection and explicit search-lane choice.")
   (@params (
     (@param "Result expression to evaluate")))
   (@return "Selected result, or a bounded packet in the two-argument extended form"))
@@ -254,7 +261,7 @@
   (@return "Final accumulator value after folding the surviving results"))
 
 (@doc fold-by-key
-  (@desc "HE-extended grouped fold over nondeterministic results. Evaluates a result fan-out, computes one grouping key per visible occurrence, and folds each group into its own accumulator without first packaging the full result set by key in user code. HE compatibility profiles omit their Empty sentinel; Prime treats inert Empty as ordinary data and does not silently discard fault occurrences. The primary form is (fold-by-key results init $acc $item key step). The policy form (fold-by-key (search-policy lane) results init $acc $item key step) keeps the same lane and ordering controls as select, collect, and fold. The key and step expressions must each produce exactly one result under the active profile. Results are emitted as two-element expressions (key accumulator) in first-encounter order under the active traversal policy.")
+  (@desc "HE-extended grouped fold over nondeterministic results. Evaluates a result fan-out, computes one grouping key per visible occurrence, and folds each group into its own accumulator without first packaging the full result set by key in user code. HE compatibility profiles omit their Empty sentinel; Prime treats inert Empty as ordinary data and does not silently discard fault occurrences. The primary form is (fold-by-key results init $acc $item key step). The policy form (fold-by-key (search-policy lane) results init $acc $item key step) keeps the same lane and ordering controls as select, collect, and fold. The key and step expressions must each produce exactly one result under the active profile. Results are emitted as two-element expressions (key accumulator), one for each key, as a bag; a declared search policy fixes their order.")
   (@params (
     (@param "Result expression to evaluate")
     (@param "Initial accumulator value for each key")
@@ -287,7 +294,7 @@
   (@return "Work handle"))
 
 (@doc work-take
-  (@desc "Advances a retained computation until it has given k more answers, completed, or spent its budget. Answers (taken (a1 ... aj) state), the state being more-possible, complete or paused; the answers after the prefix stay with the handle, in the order the computation produces them. Effects happen when their answers are produced, never again.")
+  (@desc "Advances a retained computation until it has given k more answers, completed, or spent its budget. Answers (taken (a1 ... aj) state), the state being more-possible, complete or paused; the answers after the prefix stay with the handle, each to be taken once. Effects happen when their answers are produced, never again.")
   (@params (
     (@param "Work handle")
     (@param "Number of answers to take")))
@@ -340,8 +347,45 @@
     (@param "Body evaluated with the snapshot binding in scope")))
   (@return "Results produced by evaluating the body against the snapshot-bound space"))
 
+; Notes on a priority space that the documentation below leaves out.
+; - A space among its atoms stands by the serial it was made with; a state,
+;   a capture and a foreign value stand by their address within a run.
+; - The order reads a list stored as anything but a plain expression (a list
+;   value, a list pattern, cons cells with an open tail or an improper end)
+;   as the list it spells, as msort does: a rest before the end, the end
+;   before a further element.  A search reads rows the same way, so every row
+;   has its place and is found by a search, however it is stored and however
+;   many such rows there are.
+; - A pattern is matched by the rows that begin with its ground front and by
+;   the rows whose first variable stands at a node of that front: as an
+;   element, or as the rest of a list ending there.  Those rows are counted
+;   by node (and, for a rest, by the list it ends), and each such band is one
+;   search, sought only where it holds a row.
+; - In HE a number is found by its value, not by a search of the order: a
+;   pattern whose ground front holds one is read from the element before
+;   it, or through the general indexes in a full space.
+; - The general indexes of a full space take a list stored as cells, or any
+;   value headed by an internal tag, as standing for anything at its place:
+;   they never prune by its encoding, and the matcher decides.
+; - For a key past the front, an index of a full space says how many rows it
+;   would hand over without reading them.  A read that may stop at its first
+;   answer walks the order and counts the rows it passes; once they reach
+;   that number it takes the index's rows standing past its place, which
+;   costs at most twice the cheaper way whatever the read goes on to take.
+;   A read that takes every answer pays the cheaper outright.  Reads that
+;   walk for want of an index pay their rows toward one: it is built once
+;   they reach the space's rows, so each build is paid for by its own size.
+; - Equations and declarations may be held; popping or removing one
+;   contracts the rows, which costs the rows after it.
+; - Memory: the order takes 16 bytes a row beyond the row itself; a space
+;   read while atoms are removed from it keeps 4 bytes a row of removal
+;   serials from then on.
+; - PeTTa's remove-atom removes every atom its argument unifies with; HE's
+;   removes one atom equal to it, or the one atom that is the same but for
+;   its variables' names.  A transform's take removes the stored atoms its
+;   match met.
 (@doc new-space
-  (@desc "Creates a fresh mutable space. The HE-compatible form is (new-space). The extended/he-prime form accepts semantic kinds such as stack, queue, hash, or set, and also explicit engine selectors such as native or pathmap. Stack and queue produce ordered spaces with explicit peek/pop/get/truncate behavior under their chosen discipline. Hash-space keeps unordered atomspace semantics but adds efficient exact-membership and nodup support for stable closed atoms. A set space holds each atom once: adding an atom it already holds, or an alpha-variant of one, changes nothing. A kind may be followed by a profile: strict keeps only what the kind needs and reads its rows for a general match; full also keeps the general indexes. Stack and queue are strict unless made full, the other kinds full unless made strict; both profiles answer every operation alike. The MORK lane is no longer constructed through generic new-space: use (mork:new-space) from lib/mork.metta when you want the explicit MORK API.")
+  (@desc "Creates a fresh mutable space. The HE-compatible form is (new-space). The extended/he-prime form accepts semantic kinds such as stack, queue, priority, hash, or set, and also explicit engine selectors such as native or pathmap. Stack and queue produce ordered spaces with explicit peek/pop/get/truncate behavior under their chosen discipline. A priority space holds a bag of atoms with an order of its own, the standard order of terms (variables, numbers by value, strings, symbols by their bytes, then expressions by their elements in turn, the shorter of two that begin alike first; the whole atom is the key, a list is read as the list it spells however it is stored, and variables count by where they first occur): peek and pop give the least atom, get the atom of a rank, truncate keeps the least. The order depends on the atoms held and not on how they arrived. A read of an ordered space (match, a transform's reads) answers in the kind's order: a stack newest first, a queue oldest first, a priority space least first; get-atoms lists the atoms and promises no order. Hash, set and plain spaces have no order. Adding, peeking, popping and reading by rank cost a search of the order, in either profile. A match is read from the order too. A pattern's ground front is what it holds before its first variable, read left to right at any depth; the atoms that begin with that front are found by a search, as are atoms holding a variable where the front has a term, so (job $j), ((w $a) $c) and a ground atom cost a few searches and the atoms they may match. What stands after the first variable does not narrow the search: in a strict space (k $y 7) reads the atoms that begin with k, and a pattern that a variable begins, such as ($w y), reads every atom; a first answer costs the atoms read before it. A full space also keeps general indexes and reads by one where it would hand over fewer atoms than the walk passes, a first answer costing at most twice the cheaper of the two, so there (k $y 7) and ($w y) cost about the atoms they may match. In HE a number is compared by its value and so ends the front: (job 5) is read as (job $n) is, and (5 $x) has no front; a full space reads both through its indexes. To read a strict space by a later key in less, make it full or key a second space by that key. Hash-space keeps unordered atomspace semantics but adds efficient exact-membership and nodup support for stable closed atoms. A set space holds each atom once: adding an atom it already holds, or an alpha-variant of one, changes nothing. A kind may be followed by a profile: strict keeps only what the kind needs and reads its rows for a general match; full also keeps the general indexes. Stack, queue and priority are strict unless made full, the other kinds full unless made strict; both profiles answer every read with the same bag. The MORK lane is no longer constructed through generic new-space: use (mork:new-space) from lib/mork.metta when you want the explicit MORK API.")
   (@params (
     (@param "Optional selector such as stack, queue, hash, native, or pathmap in extension profiles")))
   (@return "Fresh space value"))
@@ -375,34 +419,79 @@
     (@param "Expression or space to inspect")))
   (@return "Element count for expressions, or stored item count for spaces"))
 
-(@doc space-push
-  (@desc "Adds one atom to an ordered space. For stack-spaces this is LIFO push; for queue-spaces this is FIFO enqueue.")
-  (@params (
-    (@param "Target ordered space")
-    (@param "Atom to add")))
-  (@return "Unit on success"))
-
-(@doc space-peek
-  (@desc "Reads the current next element of an ordered space without mutating it. Stack-spaces peek at the top; queue-spaces peek at the front. Empty ordered spaces return a kind-specific runtime error.")
+(@doc space:stack:peek
+  (@desc "Reads the current next element of an ordered space without mutating it. Stack-spaces peek at the top; queue-spaces peek at the front; priority spaces peek at the least atom in the standard order of terms. Empty ordered spaces return a kind-specific runtime error.")
   (@params (
     (@param "Target ordered space")))
-  (@return "Current top/front element"))
+  (@return "Current top, front or least element"))
 
-(@doc space-pop
-  (@desc "Removes and returns the current next element of an ordered space. Stack-spaces pop from the top; queue-spaces dequeue from the front. Empty ordered spaces return a kind-specific runtime error.")
+(@doc space:queue:peek
+  (@desc "Reads the current next element of an ordered space without mutating it. Stack-spaces peek at the top; queue-spaces peek at the front; priority spaces peek at the least atom in the standard order of terms. Empty ordered spaces return a kind-specific runtime error.")
   (@params (
     (@param "Target ordered space")))
-  (@return "Removed top/front element"))
+  (@return "Current top, front or least element"))
 
-(@doc space-get
-  (@desc "Reads the element at a zero-based index from an ordered space's storage. Out-of-bounds indices return an IndexOutOfBounds runtime error.")
+(@doc space:priority:peek
+  (@desc "Reads the current next element of an ordered space without mutating it. Stack-spaces peek at the top; queue-spaces peek at the front; priority spaces peek at the least atom in the standard order of terms. Empty ordered spaces return a kind-specific runtime error.")
+  (@params (
+    (@param "Target ordered space")))
+  (@return "Current top, front or least element"))
+
+(@doc space:stack:pop
+  (@desc "Removes and returns the current next element of an ordered space. Stack-spaces pop from the top; queue-spaces dequeue from the front; priority spaces remove the least atom in the standard order of terms, so popping until empty gives the atoms sorted. Empty ordered spaces return a kind-specific runtime error.")
+  (@params (
+    (@param "Target ordered space")))
+  (@return "Removed top, front or least element"))
+
+(@doc space:queue:pop
+  (@desc "Removes and returns the current next element of an ordered space. Stack-spaces pop from the top; queue-spaces dequeue from the front; priority spaces remove the least atom in the standard order of terms, so popping until empty gives the atoms sorted. Empty ordered spaces return a kind-specific runtime error.")
+  (@params (
+    (@param "Target ordered space")))
+  (@return "Removed top, front or least element"))
+
+(@doc space:priority:pop
+  (@desc "Removes and returns the current next element of an ordered space. Stack-spaces pop from the top; queue-spaces dequeue from the front; priority spaces remove the least atom in the standard order of terms, so popping until empty gives the atoms sorted. Empty ordered spaces return a kind-specific runtime error.")
+  (@params (
+    (@param "Target ordered space")))
+  (@return "Removed top, front or least element"))
+
+(@doc space:stack:get
+  (@desc "Reads the element at a zero-based index of an ordered space. For stack and queue spaces the index is the position in their storage; for a priority space it is the rank, the number of atoms before it in the standard order of terms, so index 0 is what peek reads. Out-of-bounds indices return an IndexOutOfBounds runtime error.")
   (@params (
     (@param "Target ordered space")
     (@param "Zero-based index")))
   (@return "Stored element at that index"))
 
-(@doc space-truncate
-  (@desc "Drops all ordered-space elements at indices greater than or equal to the given zero-based length, preserving the prefix [0, len).")
+(@doc space:queue:get
+  (@desc "Reads the element at a zero-based index of an ordered space. For stack and queue spaces the index is the position in their storage; for a priority space it is the rank, the number of atoms before it in the standard order of terms, so index 0 is what peek reads. Out-of-bounds indices return an IndexOutOfBounds runtime error.")
+  (@params (
+    (@param "Target ordered space")
+    (@param "Zero-based index")))
+  (@return "Stored element at that index"))
+
+(@doc space:priority:get
+  (@desc "Reads the element at a zero-based index of an ordered space. For stack and queue spaces the index is the position in their storage; for a priority space it is the rank, the number of atoms before it in the standard order of terms, so index 0 is what peek reads. Out-of-bounds indices return an IndexOutOfBounds runtime error.")
+  (@params (
+    (@param "Target ordered space")
+    (@param "Zero-based index")))
+  (@return "Stored element at that index"))
+
+(@doc space:stack:truncate
+  (@desc "Drops all ordered-space elements at indices greater than or equal to the given zero-based length, preserving the prefix [0, len). For a priority space the prefix is by rank: the len least atoms stay.")
+  (@params (
+    (@param "Target ordered space")
+    (@param "New retained length")))
+  (@return "Unit on success"))
+
+(@doc space:queue:truncate
+  (@desc "Drops all ordered-space elements at indices greater than or equal to the given zero-based length, preserving the prefix [0, len). For a priority space the prefix is by rank: the len least atoms stay.")
+  (@params (
+    (@param "Target ordered space")
+    (@param "New retained length")))
+  (@return "Unit on success"))
+
+(@doc space:priority:truncate
+  (@desc "Drops all ordered-space elements at indices greater than or equal to the given zero-based length, preserving the prefix [0, len). For a priority space the prefix is by rank: the len least atoms stay.")
   (@params (
     (@param "Target ordered space")
     (@param "New retained length")))

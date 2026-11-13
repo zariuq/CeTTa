@@ -46,9 +46,10 @@ PeTTa remove-atom
     variable retains its existing no-answer behavior.  Ground and indexed fast
     paths select the same occurrences as the general scan.
   Primitive effects
-    Remove every selected occurrence in one stable ordered-bag contraction,
-    including any dense-ground representation, then update derived execution
-    views for the removed rows.
+    Remove every selected occurrence in one contraction, including any
+    dense-ground representation, then update derived execution views for the
+    removed rows.  The occurrences left are a bag: no order of them is
+    promised to a read.
   Result and failure
     Answer true iff at least one occurrence was removed, false for an empty
     match.  Static/type/backend/allocation failures retain their current error
@@ -81,11 +82,13 @@ Transform take
   Primitive effects, HE
     Remove exactly the take count for each guided take, in source order.
   Primitive effects, PeTTa
-    For each guided take, remove all rows matching it, then re-add exactly the
-    surviving copies not taken, in their existing order.  Keeps are computed
-    from the same live selection as the removal; they are not recovered by a
-    second match.  This ordered remove-all/re-add sequence is observable and
-    is not replaced by mask-only deletion.
+    For each guided take, the copies the firing takes leave the store; every
+    other stored atom stays, an atom the taken atom only unifies with
+    included, each occurrence once.  Keeps are computed from the same live
+    selection as the removal; they are not recovered by a second match.  A
+    read of the space answers what stays: in no promised order for a space
+    of no order, and in the kind's order for a stack (newest first), a
+    queue (oldest first) or a priority space (least first).
   Result and failure
     A failed enabling condition produces no firing answer and publishes none
     of that firing's takes.  Once firing begins, preserve ordered primitive

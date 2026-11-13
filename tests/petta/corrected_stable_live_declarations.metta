@@ -60,7 +60,7 @@
 ; This is what happens when an equation is added:
 (= (grow) (let $u (add-atom &self (= (grow) new)) old))
 !(test (collapse (grow)) (old))
-!(test (collapse (grow)) (old new))
+!(test (sort-atom (collapse (grow))) (sort-atom (old new)))
 ; DIFF-14: a later call in this running body sees the new declaration:
 (= (now $x) (was $x))
 (= (running) (let $u (add-atom &self (: now (-> Atom %Undefined%))) (now (+ 1 2))))

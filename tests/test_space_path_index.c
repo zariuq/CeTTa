@@ -46,7 +46,10 @@ static void compare_query_reference(Space *space, Arena *arena, Atom *pattern) {
     SubstMatchSet matches;
     space_subst_query(space, arena, pattern, &matches);
     CettaIndex next = 0u;
-    for (CettaIndex position = 0u; position < space_length64(space); position++) {
+    CettaCount length = space_length64(space);
+    for (CettaIndex ordinal = 0u; ordinal < length; ordinal++) {
+        CettaIndex position = space_is_stack(space)
+            ? length - 1u - ordinal : ordinal;
         Bindings reference;
         bindings_init(&reference);
         bool expected = match_atoms_atom_id_epoch(pattern, space->native.universe,
@@ -86,10 +89,15 @@ static void compare_reference(Space *space, Arena *arena, Atom *pattern) {
     CettaIndex *candidates = NULL;
     CettaIndex count = space_match_backend_candidates64(space, pattern, &candidates);
     CettaIndex next = 0u;
-    for (CettaIndex position = 0u; position < space_length64(space); position++) {
-        while (next < count && candidates[next] < position) {
+    bool reverse = space_is_stack(space);
+    CettaCount length = space_length64(space);
+    for (CettaIndex ordinal = 0u; ordinal < length; ordinal++) {
+        CettaIndex position = reverse ? length - 1u - ordinal : ordinal;
+        while (next < count && (reverse ? candidates[next] > position
+                                       : candidates[next] < position)) {
             if (next != 0u)
-                assert(candidates[next - 1u] < candidates[next]);
+                assert(reverse ? candidates[next - 1u] > candidates[next]
+                               : candidates[next - 1u] < candidates[next]);
             assert(!direct_match(space, arena, pattern, candidates[next]));
             next++;
         }
@@ -104,7 +112,8 @@ static void compare_reference(Space *space, Arena *arena, Atom *pattern) {
         next++;
     }
     for (CettaIndex index = 1u; index < count; index++)
-        assert(candidates[index - 1u] < candidates[index]);
+        assert(reverse ? candidates[index - 1u] > candidates[index]
+                       : candidates[index - 1u] < candidates[index]);
     free(candidates);
 }
 
@@ -257,10 +266,12 @@ static void test_nested_prefix_admission(TermUniverse *universe, Arena *arena) {
     Atom *query = row(arena, head,
         nested(arena, wrapper, atom_int(arena, 7), 257u),
         atom_var(arena, "path-bound-prefix-output"));
-    assert(!space_path_index_may_select(query));
+    assert(space_path_index_may_select(query));
     compare_reference(&space, arena, query);
     CettaSpacePathIndexInfo info;
-    assert(!space_path_indexes_info(&space, &info));
+    assert(space_path_indexes_info(&space, &info));
+    assert(info.path_length == 1u && info.key_kind == CETTA_SPACE_PATH_TERM_KEY &&
+           info.uncertain_rows == 1u);
     query = row(arena, head,
         nested(arena, wrapper, atom_var(arena, "path-nested-prefix-output"), 257u),
         atom_int(arena, 2));
@@ -294,8 +305,8 @@ static void test_nested_paths(TermUniverse *universe, Arena *arena) {
         nested(arena, wrapper, atom_symbol_id(arena, selected), DEPTH));
     compare_reference(&space, arena, query);
     CettaSpacePathIndexInfo info;
-    /* A ground term of symbols after a variable is one id however deep: its
-     * column is keyed by that id.  The row open there, the whole variable
+    /* A ground term after a variable has one structural key however deep.
+     * The row open there, the whole variable
      * and the list carrier stay open. */
     assert(space_path_indexes_info(&space, &info));
     assert(info.path_length == 1u && info.key_kind == CETTA_SPACE_PATH_TERM_KEY &&
@@ -310,15 +321,16 @@ static void test_nested_paths(TermUniverse *universe, Arena *arena) {
                                        atom_expr(arena, &child, 1u)));
     assert(space_path_indexes_info(&space, &info));
     assert(info.index_count == 2u && info.path_length == 2u);
-    /* A deep term ending in a number is no id a query names: the index keys
-     * the number at its deepest leaf. */
+    /* Integer leaves use the same whole-term coordinate as symbolic trees. */
     for (int64_t index = 0; index < 24; index++)
         add(&space, row(arena, head, atom_int(arena, 100 + index),
             nested(arena, wrapper, atom_int(arena, index % 8), DEPTH)));
     compare_reference(&space, arena, row(arena, head, atom_var(arena, "deep-output"),
         nested(arena, wrapper, atom_int(arena, 3), DEPTH)));
     assert(space_path_indexes_info(&space, &info));
-    assert(info.index_count == 3u && info.path_length == DEPTH + 1u);
+    /* Reuse the whole-term index; the newest created index remains the
+     * zero-argument constructor's two-position coordinate above. */
+    assert(info.index_count == 2u && info.path_length == 2u);
     space_free(&space);
 }
 
@@ -695,6 +707,49 @@ static void test_captured_head_projection(TermUniverse *universe, Arena *arena) 
     puts("PASS: captured head projections retain all arities and ordered duplicate occurrences across append, removal, replacement and source release");
 }
 
+/* A native payload must not turn a selective ground argument into an
+ * every-row posting. The key's common constructor prefix is deliberately
+ * longer than the trie's token window. */
+static void test_image_whole_term_keys(TermUniverse *universe, Arena *arena) {
+    const CettaCount sizes[] = {1000u, 4000u};
+    SymbolId head = symbol_intern_cstr(g_symbols, "opaque-key-row");
+    Atom *node = atom_symbol(arena, "Node");
+    for (size_t opaque = 0u; opaque < 2u; opaque++) {
+        for (size_t size = 0u; size < sizeof(sizes) / sizeof(sizes[0]); size++) {
+            Space space, descriptor;
+            space_init_with_universe(&space, universe);
+            space_init_with_universe(&descriptor, universe);
+            Atom *payload = opaque ? atom_space(arena, &descriptor)
+                                   : atom_symbol(arena, "ordinary-payload");
+            Atom *wanted = NULL;
+            for (CettaIndex i = 0u; i < sizes[size]; i++) {
+                Atom *key = atom_expr2(arena, atom_symbol(arena, "Leaf"),
+                                      atom_int(arena, (int64_t)i));
+                for (size_t depth = 0u; depth < 30u; depth++)
+                    key = atom_expr2(arena, node, key);
+                add(&space, row(arena, head, key, payload));
+                if (i == 777u)
+                    wanted = key;
+            }
+            Atom *pattern = row(arena, head, wanted, atom_var(arena, "value"));
+            CettaIndex *candidates = NULL, count = 0u;
+            assert(space_path_index_lead_candidates(&space, pattern, true,
+                                                    &candidates, &count));
+            assert(count == 1u && candidates[0] == 777u);
+            free(candidates);
+            candidates = NULL;
+            count = space_match_candidates64(&space, pattern, &candidates);
+            assert(count == 1u && candidates[0] == 777u);
+            assert(direct_match(&space, arena, pattern, candidates[0]));
+            free(candidates);
+            compare_query_reference(&space, arena, pattern);
+            space_free(&space);
+            space_free(&descriptor);
+        }
+    }
+    puts("PASS: plain and image rows select one whole-term key among 1000 and 4000 common-prefix rows");
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -723,6 +778,7 @@ int main(void) {
     test_shortest_column(&universe, &scratch);
     test_bound_prefix(&universe, &scratch);
     test_captured_head_projection(&universe, &scratch);
+    test_image_whole_term_keys(&universe, &scratch);
 #if CETTA_BUILD_WITH_RUNTIME_STATS
     CettaRuntimeStats stats;
     cetta_runtime_stats_snapshot(&stats);

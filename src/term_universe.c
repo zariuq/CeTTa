@@ -2058,12 +2058,56 @@ static AtomId term_universe_alpha_key_at(TermUniverse *universe, AtomId id,
     return result;
 }
 
+/* The alpha keys asked for lately.  An order compares the same rows many
+ * times, and a key is a walk of the term's records and a lookup of every
+ * part.  An entry is the key of one stored term of one universe at one
+ * state of its storage: a reset, a tracing collection and a counting
+ * collection, each of which may free a term or give its id to another,
+ * change a stamp and so leave every entry unmatched.  A term that has no
+ * key is remembered as having none. */
+typedef struct {
+    uint64_t instance_id;
+    uint64_t storage_epoch;
+    uint64_t collection_epoch;
+    uint64_t counting_collections;
+    AtomId id;
+    AtomId key;
+} TermUniverseAlphaKeyMemo;
+
+enum { TERM_UNIVERSE_ALPHA_KEY_MEMO = 256 };
+
+static __thread TermUniverseAlphaKeyMemo
+    g_term_universe_alpha_key_memo[TERM_UNIVERSE_ALPHA_KEY_MEMO];
+
 AtomId term_universe_alpha_key_id(TermUniverse *universe, AtomId id) {
     if (!universe || id == CETTA_ATOM_ID_NONE)
         return CETTA_ATOM_ID_NONE;
+    TermUniverseAlphaKeyMemo *memo = universe->instance_id != 0u
+        ? &g_term_universe_alpha_key_memo[
+              ((uint64_t)id * UINT64_C(0x9E3779B97F4A7C15) >> 32) %
+              TERM_UNIVERSE_ALPHA_KEY_MEMO]
+        : NULL;
+    if (memo && memo->id == id &&
+        memo->instance_id == universe->instance_id &&
+        memo->storage_epoch == universe->storage_epoch &&
+        memo->collection_epoch == universe->collection_epoch &&
+        memo->counting_collections == universe->counting_collections)
+        return memo->key;
     TermUniverseAlphaKeyVars vars;
     vars.len = 0u;
-    return term_universe_alpha_key_at(universe, id, &vars, 0u);
+    AtomId key = term_universe_alpha_key_at(universe, id, &vars, 0u);
+    /* Making the key stores its parts, which no stamp records: the entry
+     * is written with the stamps as they stand after it. */
+    if (memo)
+        *memo = (TermUniverseAlphaKeyMemo){
+            .instance_id = universe->instance_id,
+            .storage_epoch = universe->storage_epoch,
+            .collection_epoch = universe->collection_epoch,
+            .counting_collections = universe->counting_collections,
+            .id = id,
+            .key = key,
+        };
+    return key;
 }
 
 Atom *term_universe_alpha_canonicalize_atom(Arena *dst, Atom *src) {
@@ -3848,6 +3892,12 @@ int64_t tu_internal_tag(const TermUniverse *universe, AtomId id) {
                    atom->ground.gkind == GV_INTERNAL_TAG
                ? atom->ground.ival
                : 0;
+}
+
+bool tu_is_carrier(const TermUniverse *universe, AtomId id) {
+    const CettaTermHdr *hdr = tu_hdr(universe, id);
+    return hdr ? tu_hdr_is_carrier(universe, hdr)
+               : atom_is_carrier(term_universe_peek_atom(universe, id));
 }
 
 PeTTaValueRepresentation tu_petta_value_representation(
@@ -5882,6 +5932,21 @@ static uint32_t term_universe_ptr_hash(Atom *atom) {
     return (uint32_t)bits;
 }
 
+/* The pointer table keeps, after its slots in the same allocation, a tag
+ * byte for each slot: the high byte of the hash of the atom an occupied
+ * slot names.  A probe compares tags before it decodes a slot's entry, so a
+ * lookup of an atom the table lacks costs a load or two a slot it passes,
+ * wherever the arenas placed the atoms. */
+static inline uint8_t *term_universe_ptr_tags(const TermUniverse *universe) {
+    return universe->ptr_slots +
+           term_universe_slot_storage_width_bytes(universe) *
+               (universe->ptr_mask + 1u);
+}
+
+static inline uint8_t term_universe_ptr_tag(uint32_t hash) {
+    return (uint8_t)(hash >> 24);
+}
+
 static bool term_universe_ptr_reserve(TermUniverse *universe,
                                       size_t min_slots) {
     size_t width = 0;
@@ -5904,18 +5969,19 @@ static bool term_universe_ptr_reserve(TermUniverse *universe,
         }
         size <<= 1;
     }
-    if (size > SIZE_MAX / width) {
+    if (size > SIZE_MAX / (width + 1u)) {
         term_universe_set_error(universe,
                                 TERM_UNIVERSE_ERROR_STORAGE_TOO_LARGE);
         return false;
     }
-    uint8_t *next = cetta_malloc(width * size);
+    uint8_t *next = cetta_malloc((width + 1u) * size);
     if (!next) {
         term_universe_set_error(universe,
                                 TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
         return false;
     }
-    memset(next, 0, width * size);
+    memset(next, 0, (width + 1u) * size);
+    uint8_t *next_tags = next + width * size;
     size_t next_mask = size - 1;
     TU_COLLECTION_PROBE_ENTER();
     if (universe->ptr_slots) {
@@ -5935,6 +6001,7 @@ static bool term_universe_ptr_reserve(TermUniverse *universe,
                 if (term_universe_load_slot_value(universe, next, idx) == 0) {
                     (void)term_universe_store_slot_value(
                         term_universe_store_format(universe), next, idx, slot);
+                    next_tags[idx] = term_universe_ptr_tag(h);
                     break;
                 }
             }
@@ -5962,12 +6029,16 @@ static AtomId term_universe_lookup_ptr_id_probing(
           src->arena_id != persistent->older_identity)))
         return CETTA_ATOM_ID_NONE;
     uint32_t h = term_universe_ptr_hash(src);
+    uint8_t tag = term_universe_ptr_tag(h);
+    const uint8_t *tags = term_universe_ptr_tags(universe);
     for (size_t probe = 0; probe <= universe->ptr_mask; probe++) {
         size_t idx = ((size_t)h + probe) & universe->ptr_mask;
         uint64_t slot =
             term_universe_load_slot_value(universe, universe->ptr_slots, idx);
         if (slot == 0)
             return CETTA_ATOM_ID_NONE;
+        if (tags[idx] != tag)
+            continue;
         AtomId id = slot - 1;
         const TermEntry *entry = term_universe_entry(universe, id);
         if (entry && term_universe_entry_decoded(universe, entry) == src)
@@ -6018,6 +6089,7 @@ static bool term_universe_insert_ptr_id(TermUniverse *universe, AtomId id) {
                                                 universe->ptr_slots, idx,
                                                 (uint64_t)id + 1u))
                 return false;
+            term_universe_ptr_tags(universe)[idx] = term_universe_ptr_tag(h);
             universe->ptr_used++;
             return true;
         }
@@ -7700,6 +7772,8 @@ static void term_universe_ptr_remove(TermUniverse *universe, Atom *atom,
             continue;
         (void)term_universe_store_slot_value(format, universe->ptr_slots, hole,
                                              slot);
+        uint8_t *tags = term_universe_ptr_tags(universe);
+        tags[hole] = tags[next];
         hole = next;
     }
     (void)term_universe_store_slot_value(format, universe->ptr_slots, hole,

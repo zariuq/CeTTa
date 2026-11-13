@@ -5,4 +5,5 @@
 !(pragma! num-threads 2)
 !(case (collapse (hyperpose ((new-space) ok)))
   ((($s ok) ())
+   ((ok $s) ())
    ($_ (Error hyperpose unexpected-handle-frontier))))

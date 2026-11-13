@@ -1,0 +1,4 @@
+(chain (saturated 10))
+(paths 10)
+(lightest-only (incomplete 200))
+(with-age-lane (proved 4))

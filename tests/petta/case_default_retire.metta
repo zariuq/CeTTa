@@ -14,9 +14,11 @@
 
 (= (pick) 1)
 (= (pick) 2)
-!(collapse (case (pick) ((1 one) (2 two) (Empty none))))
+!(sort-atom (collapse (case (pick) ((1 one) (2 two) (Empty none)))))
 !(collapse (case (empty) ((1 one) (Empty none))))
-!(collapse (case (once (pick)) ((1 one) (Empty none))))
+; Which answer once keeps is open; either is a key's answer, so the default
+; retires and the case answers once.
+!(collapse (case (once (pick)) ((1 picked) (2 picked) (Empty none))))
 
 ; Dynamic applications of arithmetic and comparisons.
 (= (apply-op $f $a $b) ($f $a $b))

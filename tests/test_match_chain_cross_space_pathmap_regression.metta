@@ -27,14 +27,11 @@
 !(add-atom &native-right (allowed blue yes))
 !(add-atom &native-right (allowed red no))
 
-!(assertEqualToResult
-  (collapse
-    (match &pm-left (edge $from $mid)
+!(assertEqualToResult (match &pm-left (edge $from $mid)
       (match &native-mid (color $mid $color)
         (match &pm-right (allowed $color yes)
-          (route pathmap-native-pathmap $from $mid $color)))))
-  (((route pathmap-native-pathmap a b blue)
-    (route pathmap-native-pathmap z b blue))))
+          (route pathmap-native-pathmap $from $mid $color)))) ((route pathmap-native-pathmap a b blue)
+    (route pathmap-native-pathmap z b blue)))
 
 !(assertEqualToResult
   (collapse

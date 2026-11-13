@@ -1,18 +1,18 @@
 true
 true
 true
-((reach a d) (reach a c) (reach a b) (reach a a))
-((reach a c) (reach a b) (reach a a))
+((reach a a) (reach a b) (reach a c) (reach a d))
+((reach a a) (reach a b) (reach a c))
 ((reach a a))
 ()
 ((reach a a))
-((reach a d) (reach a c) (reach a b) (reach a a))
-((reach a d) (reach a c) (reach a b) (reach a a))
+((reach a a) (reach a b) (reach a c) (reach a d))
+((reach a a) (reach a b) (reach a c) (reach a d))
 ((reach a a))
 ((reach a a))
-((reach a d) (reach a c) (reach a b) (reach a a))
+((reach a a) (reach a b) (reach a c) (reach a d))
 true
 true
-((reach a e) (reach a d) (reach a c) (reach a b) (reach a a))
-((reach a c) (reach a b) (reach a a))
+((reach a a) (reach a b) (reach a c) (reach a d) (reach a e))
+((reach a a) (reach a b) (reach a c))
 ((reach a a))

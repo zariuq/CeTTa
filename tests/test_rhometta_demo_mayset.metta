@@ -37,9 +37,7 @@
      (rho:recv (chan 2) $z (rho:drop $z))))
 
 ; May-set faithfulness: every derivation of the payload is a distinct outcome.
-!(assertEqual
-  (collapse (rhometta:run (one-ch)))
-  (collapse (rho:val (prove A C))))
+!(assertEqual (rhometta:run (one-ch)) (rho:val (prove A C)))
 
 ; 2 proofs x 3 proofs = 6 quiescent outcomes; nothing dropped, nothing invented.
 !(assertEqual (TupleCount (collapse (rhometta:run (two-ch)))) 6)
@@ -49,7 +47,5 @@
 
 ; Threaded re-run preserves the may-set.
 !(pragma! num-threads 2)
-!(assertEqual
-  (collapse (rhometta:run (one-ch)))
-  (collapse (rho:val (prove A C))))
+!(assertEqual (rhometta:run (one-ch)) (rho:val (prove A C)))
 !(assertEqual (TupleCount (collapse (rhometta:run (two-ch)))) 6)

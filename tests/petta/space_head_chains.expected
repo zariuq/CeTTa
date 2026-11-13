@@ -1,6 +1,6 @@
 (-> Number Number)
 (-> Atom Atom)
-((-> Number Number) (-> Atom Atom))
+((-> Atom Atom) (-> Number Number))
 %Undefined%
 8
 9

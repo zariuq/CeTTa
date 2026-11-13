@@ -5,7 +5,7 @@
 !(collapse (case (superpose ()) ((Empty none) ($x (some $x)))))
 !(collapse (case (empty) (($x first) (Empty second))))
 !(collapse (case Empty ((Empty none) ($x (some $x)))))
-!(collapse (case (superpose (a b)) ((Empty none) ($x (some $x)))))
+!(let $answers (collapse (case (superpose (a b)) ((Empty none) ($x (some $x))))) (sort-atom $answers))
 !(collapse (case (superpose ()) ((foo nofoo))))
 (= (collapsed-default) (collapse (case (empty) (($x inside)))))
 !(collapsed-default)

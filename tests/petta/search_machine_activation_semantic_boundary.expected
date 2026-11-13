@@ -1,5 +1,5 @@
 is 3, should 3. ✅ 
-is ((odd 3) (even 4)), should ((odd 3) (even 4)). ✅ 
+is ((even 4) (odd 3)), should ((even 4) (odd 3)). ✅ 
 is 20, should 20. ✅ 
 true
 true

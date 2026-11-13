@@ -1,5 +1,6 @@
 ; Position indexes follow unordered removal: the removed row leaves its
-; posting and the last row moves to its place, in row order.
+; posting and the last row moves to its place; every other row still
+; answers, once.
 (k a 1)
 (k b 2)
 (k c 1)
@@ -10,20 +11,20 @@
 (k open $v)
 (other x 1)
 (k h 1)
-!(collapse (match &self (k $x 1) $x))
-!(collapse (match &self (k $x 2) $x))
+!(let $answers (collapse (match &self (k $x 1) $x)) (sort-atom $answers))
+!(let $answers (collapse (match &self (k $x 2) $x)) (sort-atom $answers))
 ; Remove from the middle: the last row moves.
 !(remove-atom &self (k c 1))
-!(collapse (match &self (k $x 1) $x))
+!(let $answers (collapse (match &self (k $x 1) $x)) (sort-atom $answers))
 ; Empty a key, then give it a row again.
 !(remove-atom &self (k d 3))
 !(collapse (match &self (k $x 3) $x))
 !(add-atom &self (k d2 3))
-!(collapse (match &self (k $x 3) $x))
+!(let $answers (collapse (match &self (k $x 3) $x)) (sort-atom $answers))
 ; Remove the last row itself, and an open row.
 !(remove-atom &self (k d2 3))
 !(remove-atom &self (k open $v))
-!(collapse (match &self (k $x 1) $x))
+!(let $answers (collapse (match &self (k $x 1) $x)) (sort-atom $answers))
 !(collapse (match &self (k $x 4) $x))
 ; Keys emptied, then new keys: the key table grows past the emptied ones.
 !(add-atom &self (k m10 10))
@@ -69,5 +70,5 @@
 !(remove-atom &self (k n33 33))
 !(collapse (match &self (k $x 33) $x))
 !(collapse (match &self (k $x 45) $x))
-!(collapse (match &self (k $x 1) $x))
+!(let $answers (collapse (match &self (k $x 1) $x)) (sort-atom $answers))
 !(collapse (match &self (other $y 1) $y))

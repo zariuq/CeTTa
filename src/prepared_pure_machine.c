@@ -17412,12 +17412,65 @@ bool cetta_prepared_pure_answer_cursor_resume_native(
     return true;
 }
 
+/* Whether an equation's head refutes a call's arguments: the structural
+ * tests of its compiled match, run over the arguments without binding.  An
+ * argument that is missing or a variable, a list carrier, and everything
+ * below one pass every test, and a repeated variable is not compared.  Each
+ * test is the matcher's own over values (prepared_pure_run_match_ops), so
+ * an equation refuted here is one whose match fails, and one that can match
+ * is never refuted.  `*mismatch` classifies the failure as the match would. */
+static bool prepared_pure_head_refutes(
+    const CettaPreparedPureProgram *program,
+    const PreparedPureEquation *equation, Atom *const *arguments,
+    uint32_t arity, PreparedPureMismatch *mismatch) {
+    if (!equation->compiled_match || equation->variable_arguments ||
+        equation->arity != arity || arity > equation->match_register_count ||
+        equation->match_register_count > PREPARED_PURE_MATCH_MAX_REGISTERS)
+        return false;
+    Atom *registers[PREPARED_PURE_MATCH_MAX_REGISTERS];
+    for (uint32_t index = 0u; index < equation->match_register_count; index++)
+        registers[index] = index < arity ? arguments[index] : NULL;
+    const PreparedPureMatchOp *first =
+        &program->match_ops[equation->first_match_op];
+    for (uint32_t at = 0u; at < equation->match_op_count; at++) {
+        const PreparedPureMatchOp *op = &first[at];
+        if (op->kind != PREPARED_PURE_MATCH_OP_ATOM &&
+            op->kind != PREPARED_PURE_MATCH_OP_EXPR)
+            continue;
+        Atom *value = registers[op->source];
+        bool open = !value || value->kind == ATOM_VAR ||
+            prepared_pure_is_list_carrier(value);
+        bool equal = open;
+        if (!open && op->kind == PREPARED_PURE_MATCH_OP_ATOM)
+            equal = op->literal &&
+                ((value->kind == op->literal->kind &&
+                  atom_eq(op->literal, value)) ||
+                 cetta_he_promoted_numbers_equal(op->literal, value));
+        else if (!open)
+            equal = atom_petta_decomposition_compatible(op->literal, value) &&
+                    value->kind == ATOM_EXPR && value->expr.len == op->length;
+        if (!equal) {
+            *mismatch = at > equation->first_bind_op
+                ? PREPARED_PURE_MISMATCH_AFTER_BIND
+                : PREPARED_PURE_MISMATCH_HEAD;
+            return true;
+        }
+        if (op->kind == PREPARED_PURE_MATCH_OP_EXPR)
+            for (uint32_t child = 0u; child < op->length; child++)
+                registers[op->operand + child] =
+                    open ? NULL : value->expr.elems[child];
+    }
+    return false;
+}
+
 /* Pass over the equations after the selected one that cannot answer the
- * call: those of another arity, and PeTTa equations whose body begins by
- * destructuring an argument decons-atom has no answer for, whose heads take
- * any arguments.  Neither can answer or act, so a call whose remaining
- * equations all fall that way has no alternative behind its answer, as the
- * open-equation machine's entry guard leaves none. */
+ * call: those of another arity, those whose heads refute its arguments
+ * (prepared_pure_head_refutes), each counted as the failed attempt its match
+ * would be, and PeTTa equations whose body begins by destructuring an
+ * argument decons-atom has no answer for, whose heads take any arguments.
+ * None can answer or act, so a call whose remaining equations all fall that
+ * way has no alternative behind its answer, as the open-equation machine's
+ * settle leaves none (oem_settle). */
 static void prepared_pure_skip_refuted(
     const CettaPreparedPureProgram *program, const PreparedPureHead *head,
     PreparedPureAnswerFrame *frame, Atom *const *arguments) {
@@ -17426,15 +17479,22 @@ static void prepared_pure_skip_refuted(
     while (frame->next_equation < head->equation_count) {
         const PreparedPureEquation *equation =
             &program->equations[head->first_equation + frame->next_equation];
-        if (equation->arity == frame->arity &&
-            (!petta || equation->decons_guard_argument >= equation->arity ||
-             !equation->variable_arguments || equation->repeated_variables ||
-             equation->scalar_guard != PREPARED_PURE_NO_SCALAR_GUARD ||
-             !arguments[equation->decons_guard_argument] ||
-             !prepared_pure_petta_decons_refutes(
-                 arguments[equation->decons_guard_argument])))
-            return;
         if (equation->arity == frame->arity) {
+            PreparedPureMismatch mismatch = PREPARED_PURE_MISMATCH_HEAD;
+            if (prepared_pure_head_refutes(program, equation, arguments,
+                                           frame->arity, &mismatch)) {
+                prepared_pure_count_match(PREPARED_PURE_MATCH_MISMATCH,
+                                          mismatch);
+                frame->next_equation++;
+                continue;
+            }
+            if (!petta || equation->decons_guard_argument >= equation->arity ||
+                !equation->variable_arguments || equation->repeated_variables ||
+                equation->scalar_guard != PREPARED_PURE_NO_SCALAR_GUARD ||
+                !arguments[equation->decons_guard_argument] ||
+                !prepared_pure_petta_decons_refutes(
+                    arguments[equation->decons_guard_argument]))
+                return;
             frame->matched_equation = true;
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_PREPARED_PURE_ENTRY_GUARD_REFUTED);

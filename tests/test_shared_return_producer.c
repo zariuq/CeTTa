@@ -574,11 +574,16 @@ static void test_real_prepared_producer(void) {
     term_universe_set_persistent_arena(&universe, &source);
     Space space;
     space_init_with_universe(&space, &universe);
+    /* The third equation answers nothing, but only running it shows that:
+     * it keeps the producer paused after the third answer, as the
+     * protocol below expects, where the first two alone let the producer
+     * prove it is complete (no head matches a one-element list again). */
     const char *equations[] = {
         "(= (pick (Cons $x $xs)) $x)",
         "(= (pick (Cons $x (Cons $y $ys))) (pick (Cons $y $ys)))",
+        "(= (pick (Cons $x Nil)) (pick Nil))",
     };
-    for (size_t i = 0u; i < 2u; ++i)
+    for (size_t i = 0u; i < 3u; ++i)
         assert(space_admit_atom(&space, &source, parse(&source, equations[i])));
     CettaPreparedPureProgram *program = cetta_prepared_pure_program_compile_closed_answers(
         &space, parse(&source, "(pick (Cons (pair 7 7) (Cons (pair 7 7) (Cons (pair 9 9) Nil))))"),

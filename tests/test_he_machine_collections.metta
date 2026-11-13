@@ -5,16 +5,16 @@
 (edge c d)
 (= (succ $x) (match &self (edge $x $y) $y))
 (= (all-succ $x) (collapse (succ $x)))
-!(all-succ a)
+!(let $answers (all-succ a) (sort-atom $answers))
 !(all-succ d)
 (= (twice $x) (collapse (superpose ($x $x))))
 !(twice 1)
 ; Empty and errors inside collapse.
 (= (none) (empty))
 (= (with-empty) (collapse (superpose (1 (none) 2))))
-!(with-empty)
+!(let $answers (with-empty) (sort-atom $answers))
 (= (with-error) (collapse (superpose (1 (Error x bad) 2))))
-!(with-error)
+!(let $answers (with-error) (sort-atom $answers))
 (= (only-error) (collapse (superpose ((Error x bad)))))
 !(only-error)
 ; superpose results reaching a caller.
@@ -42,7 +42,7 @@
             (let $fresh (subtraction-atom $next $seen)
                  (let $all (union-atom $seen $fresh)
                       (reach $fresh $all))))))
-!(reach (a) ())
+!(let $answers (reach (a) ()) (sort-atom $answers))
 !(reach (d) ())
 !(match &self (edge a $y) (let $set (reach ($y) ()) (from $y $set)))
 ; A fault of a set operation's argument type ends the run, as in HE.

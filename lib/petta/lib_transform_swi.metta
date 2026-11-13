@@ -57,13 +57,14 @@
 ; holds fires nothing and answers nothing; an `all` with no extension fires with no
 ; instances.
 ;
-; A `let` expression and a template evaluated by the caller are code whose variables
-; the sources bind to data: each such variable is quoted before the sources run, so a
-; value is never evaluated again, as in `match`.
+; Code keeps its source variables as parameters. Matching supplies their
+; values at the argument boundary, without inserting quote syntax into raw
+; data arguments inside the body.
 ;
-; `remove-atom` removes every copy of an atom, so a take removes them all and stores
-; back the copies the firing does not take.  The stored-back copies follow the atoms
-; added before the commit.
+; The reference clears a taken atom's matching rows and restores the copies
+; the firing keeps. Its local loop accepts one-copy or all-copy removal hosts.
+; The restored copies follow the atoms added before the commit. Exact takes
+; of open stored atoms require the native kernel; this reference counts matches.
 
 ; How the firing is computed.  lib_transform_specs defines the same operation directly
 ; from this description; this library gives the same answers and leaves the same store.
@@ -95,7 +96,7 @@
    (let $plain (tf:normalize (tf:conjuncts $sources))
      (let $vars (tf:source-vars $plain ())
        (let $conjuncts (tf:protect-lets $vars $plain)
-         (let $instance (if (== $destination tf:caller) (tf:protect $vars $template) $template)
+         (let $instance (if (== $destination tf:caller) (tf:protect-template $vars $template) $template)
            (let $matches (tf:propose $space $conjuncts $instance)
              (let (tf:cand $guide) (superpose $matches)
                (let $kc (tf:inst $conjuncts $guide)
@@ -202,6 +203,7 @@
    (case (get-metatype $e)
      ((Variable (if (tf:holds $acc $e) $acc (cons-atom $e $acc)))
       (Expression (tf:vars-each $e $acc))
+      (Empty $acc)
       ($_other $acc))))
 
 (= (tf:vars-each $xs $acc)
@@ -214,17 +216,70 @@
      (let ($w $more) (decons-atom $vars)
        (if (== $w $v) True (tf:holds $more $v)))))
 
-(= (tf:protect $vars $e)
+(= (tf:code-uses $vars $e)
+   ; A compiled callable may have no metatype answer. It is a held value,
+   ; not expression syntax whose internals the library may rename.
    (case (get-metatype $e)
-     ((Variable (if (tf:holds $vars $e) (cons-atom quote (cons-atom $e ())) $e))
-      (Expression (tf:protect-each $vars $e))
-      ($_other $e))))
+     ((Variable (tf:holds $vars $e))
+      (Expression (tf:code-uses-each $vars $e))
+      (Empty False)
+      ($_other False))))
 
-(= (tf:protect-each $vars $xs)
-   (if (== $xs ()) ()
+(= (tf:code-uses-each $vars $xs)
+   (if (== $xs ()) False
      (let ($x $more) (decons-atom $xs)
-       (let $px (tf:protect $vars $x)
-         (let $pmore (tf:protect-each $vars $more) (cons-atom $px $pmore))))))
+       (if (tf:code-uses $vars $x) True (tf:code-uses-each $vars $more)))))
+
+; A private variable is created by an ordinary clause activation.
+(= (tf:fresh-variable) (tf:fresh $private))
+(= (tf:private-mapping $vars)
+   (if (== $vars ()) ()
+     (let ($source $more) (decons-atom $vars)
+       (let (tf:fresh $private) (tf:fresh-variable)
+         (let $entry (tf:triple tf:renaming $source $private)
+           (cons-atom $entry (tf:private-mapping $more)))))))
+(= (tf:renamed-variable $mapping $variable)
+   (if (== $mapping ()) $variable
+     (let ($entry $more) (decons-atom $mapping)
+       (let ($_tag $source $private) (tf:parts $entry)
+         (if (== $source $variable) $private
+             (tf:renamed-variable $more $variable))))))
+(= (tf:rename-code $mapping $expression)
+   (case (get-metatype $expression)
+     ((Variable (tf:renamed-variable $mapping $expression))
+      (Expression (tf:rename-code-each $mapping $expression))
+      (Empty $expression)
+      ($_other $expression))))
+(= (tf:rename-code-each $mapping $expressions)
+   (if (== $expressions ()) ()
+     (let ($one $more) (decons-atom $expressions)
+       (let $renamed (tf:rename-code $mapping $one)
+         (cons-atom $renamed (tf:rename-code-each $mapping $more))))))
+(= (tf:bind-code $mapping $body)
+   (if (== $mapping ()) $body
+     (let ($entry $more) (decons-atom $mapping)
+       (let ($_tag $source $private) (tf:parts $entry)
+         (let $tail (tf:bind-code $more $body)
+           (let $value (cons-atom quote (cons-atom $source ()))
+             (cons-atom let (cons-atom $private
+               (cons-atom $value (cons-atom $tail ()))))))))))
+(= (tf:protect-code $vars $expression)
+   (if (tf:code-uses $vars $expression)
+       (let $mapping (tf:private-mapping $vars)
+         (let $body (tf:rename-code $mapping $expression)
+           (tf:bind-code $mapping $body)))
+       $expression))
+
+(= (tf:protect-template $vars $template)
+   (if (tf:comma $template)
+       (cons-atom , (tf:protect-templates $vars (cdr-atom $template)))
+       (tf:protect-code $vars $template)))
+
+(= (tf:protect-templates $vars $templates)
+   (if (== $templates ()) ()
+     (let ($one $more) (decons-atom $templates)
+       (let $code (tf:protect-code $vars $one)
+         (cons-atom $code (tf:protect-templates $vars $more))))))
 
 (= (tf:protect-lets $vars $cs)
    (if (== $cs ()) ()
@@ -235,7 +290,7 @@
 (= (tf:protect-conjunct $vars $c)
    (case (tf:mode $c)
      ((let (let ($l $pattern $expression) (tf:parts $c)
-             (let $pe (tf:protect $vars $expression) (tf:triple $l $pattern $pe))))
+             (let $pe (tf:protect-code $vars $expression) (tf:triple $l $pattern $pe))))
       (all (let $inner (tf:protect-lets $vars (tf:conjuncts (car-atom (cdr-atom $c))))
                (let $wrapped (cons-atom , $inner) (cons-atom all (cons-atom $wrapped ())))))
       (once (let $inner (tf:protect-lets $vars (tf:conjuncts (car-atom (cdr-atom $c))))
@@ -562,7 +617,7 @@
        (let ($mode $s $a) $e
          (if (== $mode take)
              (let* (($have (tf:stored $s $a))
-                    ($_r (remove-atom $s $a))
+                    ($_r (tf:remove-matching $s $a))
                     ($_b (tf:store-back $s $a (- $have 1))))
                (tf:take-each $more))
              (tf:take-each $more))))))
@@ -575,7 +630,7 @@
          (if (and (== $mode take) (not (is-alpha-member $e $done)))
              (let* (($have (tf:stored $s $a))
                     ($n (tf:count $e $all))
-                    ($_r (remove-atom $s $a))
+                    ($_r (tf:remove-matching $s $a))
                     ($_b (tf:store-back $s $a (- $have $n))))
                (tf:apply-takes $all $more (cons-atom $e $done)))
              (tf:apply-takes $all $more $done))))))
@@ -614,3 +669,8 @@
    (if (== $instances ()) $n
      (let ($i $more) (decons-atom $instances)
        (let $_x (add-atom $s $i) (tf:add-all $s $more (+ $n 1))))))
+
+; The public removal consumes one match. Keep the reference's erase-and-
+; restore protocol by completing that selection before restoring its suffix.
+(= (tf:remove-matching $s $a)
+   (if (remove-atom $s $a) (tf:remove-matching $s $a) ()))

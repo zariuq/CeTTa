@@ -6935,12 +6935,10 @@ bool cetta_he_promoted_kind_equal(int left_kind, int64_t left_int,
     if (!cetta_number_kind_as_float(left_kind, left_int, left_float, &left) ||
         !cetta_number_kind_as_float(right_kind, right_int, right_float, &right))
         return false;
-    /* Hyperon compares the integer rounded to a float, so it finds
-     * 9007199254740993 equal to 9007199254740992.0; he-compat keeps that.
-     * Otherwise an integer equals only the float of exactly its value. */
-    if (eval_current_uses_rust_he_compat_semantics &&
-        eval_current_uses_rust_he_compat_semantics())
-        return left == right;
+    /* An integer equals only the float of exactly its value, in he-compat
+     * too: Hyperon 0.2.10 compared the integer rounded to a float, finding
+     * 9007199254740993 equal to 9007199254740992.0, and the fixed Hyperon
+     * he-compat follows keeps the integer exact. */
     return left_kind == GV_INT
         ? float_is_int64(right_float, left_int)
         : float_is_int64(left_float, right_int);

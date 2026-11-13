@@ -41,6 +41,34 @@ first answering branch; it does not fire all branches and discard their later an
 uninterpreted head, so its argument evaluation can fire several branches. Candidate enumeration itself
 is still eager, so this is not a constant-memory cursor over a large join.
 
+PeTTa routes and held values
+----------------------------
+
+In PeTTa the search machine runs a transform as the chain its library writes:
+tf:propose once, then each proposal a choice of the machine's own, guided,
+fired and routed only when the machine continues it. A branch therefore fires
+against the store the answers before it, and their continuations, left. The
+matched atoms, the instances and the routed values are values of the chain's
+variables: code they hold runs only where the template evaluates it or the
+destination function does, as with match. A transform collected whole whose
+template answers itself, or whose destination is a space, fires its branches
+in turn natively; nothing observes a branch before the next one fires, so the
+answers are the same.
+
+A let conjunct's code may bind variables the firing has not bound, a function
+run backwards or a variable a stored atom holds: the firing keeps what the
+code bound, as the library's (eval $expression) does. An error the code
+raises reaches the caller, whose catch delimits it, on every route; the
+firing commits nothing.
+
+A space whose program holds the library's definitions runs transform
+natively whichever space its import named: the library imported by a module
+that its importer then holds, say.
+
+Inside a transaction a firing reads and changes the transaction's working
+spaces, so its takes and additions are committed or rolled back with the
+transaction; the first answer of a once there is found over the same chain.
+
 HE streaming and errors
 -----------------------
 

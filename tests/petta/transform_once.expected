@@ -2,11 +2,13 @@ true
 true
 true
 true
-(once-first ((claimed a alice)))
-(jobs-after-first (b))
-(receivers-after-first (bob))
-(second ((claimed b bob)))
+(once-first one-claim)
+(jobs-after-first 1)
+(receivers-after-first 1)
+(second one-claim)
 (remaining ())
+(claimed-jobs (a b))
+(claimed-receivers (alice bob))
 true
 true
 (dest-first (1))

@@ -1,0 +1,82 @@
+true
+true
+true
+true
+true
+(all ((1 a) (2 b) (2 b2) (5 e) (9 z)))
+(least (1 a))
+(one 1)
+(take ((given 2 b)))
+(pop (1 a))
+(peek (2 b2))
+(heavy (z))
+(rest ((2 b2) (5 e) (9 z)))
+true
+true
+(full (a c))
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+(open-rows (a b))
+(numbers (1.0 1 1))
+(same-open true)
+(same-numbers true)
+(same-least true)
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+(keyed (five five))
+(least (1 one))
+(fourth (4 four))
+true
+(took ((given 1 one)))
+(after ())
+()
+(kept ((2 two) (3 three) (4 four) (6 six)))
+(held 4)
+(drained ((2 two) (3 three) (4 four) (6 six)))
+true
+true
+true
+true
+(copy-listed ((2 a) (2 b) (5 e) (9 i)))
+(copy-matched (2 2 5 9))
+(copy-keyed (a b))
+(copy-peeked (2 a))
+(copy-popped (pair (2 a) ((2 b) (5 e) (9 i))))
+(copy-added ((1 z) (2 a) (2 b) (5 e) (7 g) (9 i)))
+(copy-added-peek (1 z))
+(copy-drained (taken (2 a) (2 b) (3 c) ((5 e) (9 i))))
+(copied-from ((2 a) (2 b) (5 e) (9 i)))

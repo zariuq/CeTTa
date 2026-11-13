@@ -13,5 +13,5 @@
 !(map-flat wrap (cons 1 (cons 2 (cons 3 ()))))
 !(opens 4)
 !(shared 7)
-!(collapse (superpose ((pair 1 $w) (pair 2 $w))))
+!(sort-atom (collapse (superpose ((pair 1 $w) (pair 2 $w)))))
 !(let $l (opens 3) (pair $l $l))

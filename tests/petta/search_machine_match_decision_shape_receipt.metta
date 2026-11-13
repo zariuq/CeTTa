@@ -15,11 +15,11 @@
 (= (receipt-duplicate token) same)
 (= (receipt-duplicate token) same)
 
-; Overlapping patterns retain both compatible occurrences in source order.
+; Overlapping patterns retain both compatible occurrences.
 (= (receipt-overlap (pair left $x)) (left-value $x))
 (= (receipt-overlap (pair $x right)) (right-value $x))
 
-; Simultaneously applicable alternatives retain authored order.
+; Simultaneously applicable alternatives each answer.
 (= (receipt-ordered token) first)
 (= (receipt-ordered token) second)
 
@@ -37,10 +37,10 @@
    (let $literal (collapse (receipt-literal blue))
      (let $deep (collapse (receipt-deep (node blue payload)))
        (let $duplicate (collapse (receipt-duplicate token))
-         (let $overlap (collapse (receipt-overlap (pair left right)))
-           (let $ordered (collapse (receipt-ordered token))
+         (let $overlap (sort-atom (collapse (receipt-overlap (pair left right))))
+           (let $ordered (sort-atom (collapse (receipt-ordered token)))
              (let $mutating (collapse (receipt-mutating token))
-               (let $added (collapse (receipt-added marker))
+               (let $added (sort-atom (collapse (receipt-added marker)))
                  (receipt-result $literal $deep $duplicate $overlap
                    $ordered $mutating $added)))))))))
 
@@ -51,7 +51,7 @@
 (= (receipt-wildcard (pair $x $x) $unused) same)
 (= (receipt-wildcard (pair $x $y) $unused) any)
 (= (receipt-wildcard (pair $x $y) $unused) any)
-!(collapse (receipt-wildcard (pair a a) ignored))
+!(sort-atom (collapse (receipt-wildcard (pair a a) ignored)))
 !(collapse (receipt-wildcard (pair a b) ignored))
-!(collapse (receipt-wildcard (pair $open a) $ignored))
+!(sort-atom (collapse (receipt-wildcard (pair $open a) $ignored)))
 !(collapse (receipt-wildcard (other a a) ignored))

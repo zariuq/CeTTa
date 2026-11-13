@@ -1,0 +1,106 @@
+Optional machine-code qualification
+===================================
+
+This adapter is independent of the Cesta compiler. Ordinary builds, readable-C
+export and the core test tier require neither HOL Light nor s2n-bignum.
+
+The first pilot qualifies checked/examples/CopySpan.cesta against an explicit
+u32 prefix-copy contract using GCC and Clang. The public C signature remains
+two counted span descriptors. The proof uses the corresponding x86-64 SysV
+register interface and the exact linked symbol bytes.
+
+  make qualify-hol-copy HOL_COPY_FLAGS="--s2n ../repos/s2n-bignum --hol ../repos/hol-light"
+
+Or invoke the independent runner directly:
+
+  python3 adapters/hol/pilot/run.py --s2n ../repos/s2n-bignum --hol ../repos/hol-light
+
+The runner requires GCC, Clang, binutils, and an external HOL Light build with
+module support. It uses HOL Light's own inline-load, compile and link commands.
+S2N and HOLDIR may select the external checkouts. --out selects an empty output
+directory; otherwise a new evidence directory is created under build. Previous
+evidence is retained. --runtime-only performs the native controls and emits no
+proof receipt.
+
+Contract
+--------
+
+The input contains n initialized u32 words. The destination has capacity m,
+with n <= m < 2^61. Both data pointers are aligned to four bytes and non-null
+when their respective lengths are nonzero. The byte extents do not wrap.
+The destination does not overlap the input or code, and both buffers exclude
+the call's stack frame. The theorem also states the stack-pointer bound.
+
+For all inputs satisfying these conditions, including null empty spans:
+
+  - the first n destination words equal the initial source words;
+  - the function returns to its supplied return address with the ABI stack
+    adjustment and permitted register changes;
+  - memory changes are confined to the destination prefix and eight bytes of
+    stack workspace below the incoming stack pointer;
+  - the call's architectural access trace reads only the source and its
+    sixteen-byte stack region, and writes only the destination prefix and
+    stack workspace.
+
+The exact hypotheses and conclusions are printed in the proof log. The same
+loop and call proof generators check the two different compiler outputs.
+Offsets and instruction counts describe a proof recipe; HOL checks every
+instruction transition and the loop argument. A compiler output outside the
+qualified recipe fails without a proof receipt. This does not affect ordinary
+Cesta compilation.
+
+Resource interpretation
+-----------------------
+
+The runner consumes the optional cesta-span-contract/1 interface for the selected
+symbol. Width, access-mode, separation, result-origin, entry-guard and target
+mutations are refused. The copy recipe requires two u32 descriptors, read then
+write, with the declared source-length <= destination-length entry guard.
+
+COPY_GCC_RESOURCE_CORRECT and COPY_CLANG_RESOURCE_CORRECT replace the raw span
+preconditions with an explicit interpretation of finite live allocations,
+incarnation-bearing subranges and ordered active borrowed permissions. The
+generic resource lemmas derive the bounds, alignment and non-aliasing needed
+by the exact machine theorem. Code and stack separation remain explicit ABI
+obligations. Initial source values remain tied to actual machine memory in the
+theorem precondition. Allocation tables and loan lists are proof data only.
+
+The Lean side independently admits emitted permission plans and compares the
+contract emitter with its own signature interpretation. Its general ownership
+model proves usable writer separation, including suspension of parent loans.
+The HOL side proves the borrowed-view interpretation used by this pilot. This
+is not yet a formal translation of Lean proofs into HOL or a proof of the Cesta
+frontend; the correspondence between those representations is a stated boundary.
+
+Evidence and limits
+-------------------
+
+The ELF selector validates target, function type, executable section and symbol
+extent. s2n independently loads the image bytes, and its subprogram rule proves
+that the selected function bytes occur in the image. The runner executes the
+linked bytes, also runs instrumented generated C, and checks preservation of
+the destination tail and source. A second build directory must reproduce the
+same linked image.
+
+Changed instructions, symbol extents or target metadata invalidate the recorded
+artifact identity. A separate semantic mutant uses valid x86 instructions to
+read the destination instead of the source: runtime comparison and a fresh HOL
+proof attempt must both refuse it. The mutant is decoded before the proof
+attempt; it is not rejected merely by comparing against the original byte list.
+
+receipt.json is a reproducibility record, not a signature or certificate
+authority. It names the source, C export, permission plan, compiler commands,
+objects, linked images, symbol bounds, proof input, checker versions and theorem
+names, plus the consumed span contract and resource-bridge theorem names.
+Re-run the gate to verify the proof. --runtime-only writes runtime.json
+instead, without theorem or proof-checker evidence.
+
+This is an explicit span-contract adapter. Its proof target is the selected
+machine code and its declared contract. The frontend's correspondence with
+that contract and whole-program or cryptographic correctness are outside this
+adapter's claims. The trace theorem concerns modeled architectural memory
+accesses; it does not assert constant-time execution or speculative safety.
+
+No upstream implementation is vendored. THIRD_PARTY.txt records the inspected
+sources, revisions and licences. Proof evidence includes copies of the external
+projects' root licence/notice files. Project licences are unchanged.

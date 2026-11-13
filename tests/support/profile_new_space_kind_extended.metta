@@ -1,2 +1,2 @@
-!(get-type new-space)
+!(let $answers (collapse (get-type new-space)) (sort-atom $answers))
 !(new-space 1)

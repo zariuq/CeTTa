@@ -20,8 +20,8 @@
 !(inspect-alias $live $alias)
 !(inspect-two $left $right)
 !(ordinary-single $live)
-!(collapse
+!(sort-atom (collapse
    (let $box (Node $live $live)
      (let $choice (superpose (a b))
        (let $live (cons-atom $choice ())
-         (case $box (((Node (a) (a)) first) ((Node (b) (b)) second) ($other missed)))))))
+         (case $box (((Node (a) (a)) first) ((Node (b) (b)) second) ($other missed))))))))

@@ -14,7 +14,7 @@
 !(probe (b 1))
 !(probe (b 1))
 !(probe (b 2))
-!(collapse (match &dup $y $y))
+!(sort-atom (collapse (match &dup $y $y)))
 
 ; The collection on the left.
 (= (known $x) (if (== (collapse (once (match &dup (s $x) yes))) ()) no yes))
@@ -31,6 +31,8 @@
 !(has-fact 1)
 !(has-fact 2)
 
-; A template that is not a constant stays whole.
-(= (first-b) (collapse (once (match &dup (s (b $n)) $n))))
-!(first-b)
+; A template that is not a constant stays whole: the one answer is the
+; template of one matching row, whichever row that is.
+(= (one-b) (let $one (collapse (once (match &dup (s (b $n)) $n)))
+             (and (== (size-atom $one) 1) (once (is-member (car-atom $one) (1 2))))))
+!(one-b)

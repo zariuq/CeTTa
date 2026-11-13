@@ -1,4 +1,4 @@
 (2 2)
 (2 2)
-((-> Number Number) (-> $V0 $V0))
+((-> $V0 $V0) (-> Number Number))
 100

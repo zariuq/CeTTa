@@ -16,7 +16,7 @@
 !(transaction
    (transaction
      (add-atom &tx-success (nested yes))))
-!(collapse (get-atoms &tx-success))
+!(sort-atom (collapse (get-atoms &tx-success)))
 
 !(bind! tx-state (new-state start))
 !(transaction (change-state! tx-state committed))

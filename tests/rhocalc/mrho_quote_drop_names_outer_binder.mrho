@@ -1,0 +1,11 @@
+; A quote of a single drop is the dropped name (quote-drop: @{*x} = x), so the
+; $x inside @{*$x} is the surrounding receive's binder.  COMM replaces the
+; whole name: the send's channel becomes the received name @{@{0}!(0)}.
+(rho:par
+  (rho:recv (rho:quote rho:nil) $x
+    (rho:send
+      (rho:quote (rho:drop $x))
+      rho:nil))
+  (rho:send
+    (rho:quote rho:nil)
+    (rho:send (rho:quote rho:nil) rho:nil)))

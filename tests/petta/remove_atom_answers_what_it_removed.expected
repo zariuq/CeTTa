@@ -1,0 +1,29 @@
+(absent false)
+(bare false)
+(after-bare 5)
+(ground-meets-stored-variable true)
+(equal-variable-copy false)
+(pattern-meets-two true)
+(exact true)
+(again true)
+(exhausted false)
+(left 1)
+(self-bare false)
+(self-after 2)
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true

@@ -1,0 +1,2 @@
+error: could not parse tests/rhocalc/reject_bare_name_in_closed_quote.rho as rhocalc/rho
+note: bare names are not core rho names; use @{...} near byte 119

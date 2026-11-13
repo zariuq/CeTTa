@@ -3,7 +3,7 @@ member_effect
 true
 (true true)
 (false)
-("a" "b" "a")
+("a" "a" "b")
 ("a")
 ((Held $V0 $V0) (Held "a" "a"))
 (first second)

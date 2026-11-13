@@ -1,0 +1,11 @@
+true
+true
+(before-import ((transform &s (n 1) found)))
+true
+(top-rows ((got 1) (got 2)))
+(module-function-rows ((got 1) (got 2)))
+(own-function-rows ((own 1) (own 2)))
+true
+(rows-after-data-import ((e a b) (e b c)))
+(takes-into-space (1 1))
+(left ((taken 1) (taken 2)))

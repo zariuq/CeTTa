@@ -1,0 +1,7 @@
+1
+1
+(length-and-tail ((got 1 ())))
+(length-then-incompatible-tail ())
+(2)
+3
+3

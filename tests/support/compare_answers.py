@@ -372,10 +372,13 @@ def compare_completed_runs(kinds, expected, actual, representations=None):
 def compare_petta(program, expected, actual, cetta):
     # Keep the invocation's working directory, including for wrapper commands
     # with a relative binary argument. The copy's location beside the source
-    # preserves source-relative imports without changing the process context.
+    # preserves source-relative imports without changing the process context;
+    # its name begins with a dot, so no listing of the fixtures (a shell or
+    # make wildcard, glob.glob) sees it while it exists.
     text = Path(program).read_text()
     source, kinds = framed(text)
-    with tempfile.NamedTemporaryFile('w', suffix='.metta', delete=False,
+    with tempfile.NamedTemporaryFile('w', prefix='.framed-', suffix='.metta',
+                                     delete=False,
                                      dir=os.path.dirname(os.path.abspath(program))) as f:
         f.write(source)
         framed_path = f.name

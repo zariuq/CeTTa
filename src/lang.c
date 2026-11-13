@@ -281,6 +281,10 @@ CettaCallResultPolicy cetta_language_call_result_policy(CettaLanguageId id) {
                                     : CETTA_CALL_RESULT_BY_VALUE;
 }
 
+bool cetta_language_rules_need_named_head(CettaLanguageId id) {
+    return id == CETTA_LANGUAGE_PETTA;
+}
+
 void cetta_language_print_inventory(FILE *out) {
     size_t count = sizeof(CETTA_LANGUAGES) / sizeof(CETTA_LANGUAGES[0]);
     const char *last_canonical = NULL;

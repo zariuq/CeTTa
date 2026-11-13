@@ -312,9 +312,11 @@
 ; An open field answers as `open`, so the output does not depend on fresh
 ; variable numbering.
 (= (shown $v) (if (== (get-metatype $v) Variable) open $v))
-!(collapse (match &self (edge $p c) (shown $p)))
-!(collapse (match &self (other $p c) (shown $p)))
-!(collapse (match &self ($h $p c)
-   (if (== $h =) (empty) ((shown $h) (shown $p)))))
+!(let $answers (collapse (match &self (edge $p c) (shown $p))) (sort-atom $answers))
+!(let $answers (collapse (match &self (other $p c) (shown $p))) (sort-atom $answers))
+!(let $answers
+   (collapse (match &self ($h $p c)
+     (if (== $h =) (empty) ((shown $h) (shown $p)))))
+   (sort-atom $answers))
 !(collapse (match &self (filler $p m7) $p))
-!(collapse (match &self (edge $p e) $p))
+!(let $answers (collapse (match &self (edge $p e) $p)) (sort-atom $answers))

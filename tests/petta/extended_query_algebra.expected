@@ -39,3 +39,26 @@ true
 (named-union b)
 (named-union a)
 (named-union c)
+true
+true
+true
+true
+true
+(named-branch a)
+(named-branch a)
+(named-branch b)
+(named-left-dist a)
+(named-left-dist a)
+(named-left-dist b)
+(named-right-dist a)
+(named-right-dist a)
+(named-right-dist b)
+(body-left-dist a)
+(body-left-dist a)
+(body-left-dist b)
+(self-branch a)
+(self-branch a)
+(self-branch b)
+(self-left-dist a)
+(self-left-dist a)
+(self-left-dist b)

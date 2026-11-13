@@ -2330,25 +2330,25 @@ def render_fixture(spec: Spec) -> str:
     ]
     for name, wrapper in spec.wrappers.items():
         wrapped = substitute(wrapper, relation)
-        expected = ("(((joined n0 v0) (joined n1 v1)))"
+        # The answers are a bag: they are compared as one, never as the
+        # list a collapse would give them in.
+        expected = ("((joined n0 v0) (joined n1 v1))"
                     if contains_relation(wrapper)
-                    else "(((joined n0 k0) (joined n1 k1)))")
+                    else "((joined n0 k0) (joined n1 k1))")
         lines.extend([
             f"; {name}",
             "!(assertEqualToResult",
-            "  (collapse",
-            "    (match &effect-space (left $name $key)",
-            f"      {sexpr(wrapped)}))",
+            "  (match &effect-space (left $name $key)",
+            f"    {sexpr(wrapped)})",
             f"  {expected})",
         ])
     lines.extend([
         "",
         "; A user-defined head inherits the relational effect of its body.",
         "!(assertEqualToResult",
-        "  (collapse",
-        "    (match &effect-space (left $name $key)",
-        f"      ({spec.defined_wrapper} $name $key)))",
-        "  (((joined n0 v0) (joined n1 v1))))",
+        "  (match &effect-space (left $name $key)",
+        f"    ({spec.defined_wrapper} $name $key))",
+        "  ((joined n0 v0) (joined n1 v1)))",
     ])
     for name, _, _ in spec.heads:
         template = HEAD_FIXTURE_TEMPLATES.get(name)
