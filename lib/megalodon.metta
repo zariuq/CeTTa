@@ -104,7 +104,10 @@
 (= (mg:declaration $theory $name)
    (function (chain (eval (__cetta_lib_megalodon_declaration $theory $name)) $result (return $result))))
 
-; Declarations whose source name is SOURCE (imports name objects by content hash).
+; Declarations whose source name is SOURCE (imports name objects by content
+; hash).  A declaration made again under another name is one object with both
+; names: the first is its (source "N"), the later ones its (also "N" ..), and
+; either finds it.
 (: mg:lookup (-> %Undefined% %Undefined% Atom))
 (: __cetta_lib_megalodon_lookup (-> Atom Atom Atom))
 (= (mg:lookup $theory $source)
@@ -641,6 +644,13 @@
 ; The hypotheses of a context, innermost first.
 (= (mg:hypotheses (Megalodon.context $depth $types $hypotheses)) (cdr-atom $hypotheses))
 
+; The kernel's name of the declaration with the source name SOURCE (the first
+; found); no answer when no declaration has it.  A declaration's data is its
+; kind, its name, its type or statement, then its provenance.
+(= (mg:named $theory $source)
+   (let $found (mg:lookup $theory $source)
+     (if (== $found (Megalodon.found)) (empty) (car-atom (cdr-atom (car-atom (cdr-atom $found)))))))
+
 ; ── tactics ──────────────────────────────────────────────────────────────
 ; A tactic is data, run by (mg:run TACTIC THEORY CONTEXT GOAL).  Its answer
 ; is a theorem of CONTEXT |- GOAL up to conversion (a theorem states the
@@ -661,6 +671,11 @@
 ;                             assumption, introduction and backchaining on
 ;                             the hypotheses and the named knowns, at most
 ;                             DEPTH backchaining steps deep
+;   (Tac.conv EQ PATH CONVERSION TACTIC), (Tac.rewrite EQ SOURCE PATH TACTIC),
+;   (Tac.prove EQ PROVER)     with megalodon_equations imported: convert the
+;                             goal's subterm at PATH, or rewrite it by the
+;                             equation SOURCE states, and prove the goal that
+;                             results by TACTIC; or prove the goal by a prover
 ; A SOURCE is (From.hyp I), (From.known NAME), (From.theorem THEOREM),
 ; (From.instance SOURCE (terms M ..)) or (From.type-instance SOURCE (types A ..)).
 
@@ -673,6 +688,9 @@
       ((Tac.apply $source $premise-tactic) (mg:apply $theory $context $goal $source $premise-tactic))
       ((Tac.first $one $two) (mg:first $theory $context $goal $one $two))
       ((Tac.auto $depth $lemmas) (mg:auto $theory $context $goal $depth $lemmas))
+      ((Tac.conv $eq $path $conversion $then) (mg:convert $theory $context $goal $eq $path $conversion $then))
+      ((Tac.rewrite $eq $source $path $then) (mg:rewrite $theory $context $goal $eq $source $path $then))
+      ((Tac.prove $eq $prover) (mg:prove-with $theory $context $goal $eq $prover))
       ($other (Error (mg:run $other) (MegalodonMalformed "unknown tactic"))))))
 
 ; The first answer of ONE, else TWO's.

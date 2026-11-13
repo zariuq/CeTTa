@@ -169,6 +169,10 @@ typedef struct {
     /* The work units checking the theorem used, when the admission budgets
      * each theorem (mg_admission_budget_theorems); else 0. */
     uint64_t work;
+    /* The conversions the tactic engine was asked for while the theorem's
+     * proof script ran (mg_admission_proof_conversions); 0 when the
+     * admission is not told. */
+    uint64_t conversions;
 } MgLedgerEntry;
 
 MgLedger *mg_ledger_new(void);
@@ -195,6 +199,9 @@ bool mg_admit_unproved_as(MgAdmission *a, MgVerdict why);
  * theorem whose budget runs out gets the verdict EXHAUSTED and the
  * admission goes on; work outside theorems is not limited. */
 void mg_admission_budget_theorems(MgAdmission *a, uint64_t work);
+/* What the pending theorem's proof script cost the tactic engine, told
+ * before its proof (or its lack of one) is admitted. */
+void mg_admission_proof_conversions(MgAdmission *a, uint64_t conversions);
 
 /* CeTTa-native libraries. */
 MgStatus mg_library_save(MgTheory *theory, FILE *out, const char **reason);

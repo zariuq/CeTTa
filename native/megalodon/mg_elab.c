@@ -2676,7 +2676,7 @@ static void eval_var(MgElab *e, const MgSourceItem *it) {
     const Hy *pf = NULL;
     for (size_t k = count; k-- > 0;) {
         Hy *h = PERM(e, Hy);
-        *h = (Hy){old[k]->name, mge_tmshift(e, 0u, (int32_t)n, old[k]->prop), pf};
+        mge_hy_set(h, old[k]->name, mge_tmshift(e, 0u, (int32_t)n, old[k]->prop), pf);
         pf = h;
     }
     e->ctxtm = cx;
@@ -2696,7 +2696,7 @@ static void eval_hyp(MgElab *e, const MgSourceItem *it) {
     MgTm *atm = check_tm(e, it->a, mge_ty_prop(e));
     mge_undo_ctx(e);
     Hy *h = PERM(e, Hy);
-    *h = (Hy){x, atm, e->ctxpf};
+    mge_hy_set(h, x, atm, e->ctxpf);
     e->ctxpf = h;
     e->appf = mge_app_push(e, e->appf, APP_HYP, x);
     Clo *c = PERM(e, Clo);
@@ -3090,6 +3090,7 @@ MgElab *mg_elab_new(const MgElabOptions *options) {
         e->prove_aby = options->prove_aby;
         e->aby_max_steps = options->aby_max_steps;
         e->aby_max_depth = options->aby_max_depth;
+        e->conv_memory_off = options->reference_conversion;
     }
     return e;
 }

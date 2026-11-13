@@ -37,8 +37,16 @@ The report lists every theorem that is not verified, with its verdict:
 Then come the axioms the document states, a summary and the verdict. The
 exit status is 0 when every theorem, or each --theorem, is verified, 1 when
 one is not, and 2 when the document does not go through (a syntax error, a
-failure, a kernel refusal). --verbose lists every theorem, with its identity
-and the work its check took.
+failure, a kernel refusal). --verbose lists every theorem, with its identity,
+the conversions its proof script asked of the tactic engine and the work its
+check took.
+
+The tactic engine compares terms up to beta, eta and definitions for rewrite,
+apply, exact and the other tactics. It gives Megalodon's answers but remembers
+the pairs it has refuted, so a refutation is paid once. With
+--reference-conversion it remembers nothing, as Megalodon does: the answers
+are the same, and the conversions counted are then what Megalodon itself
+pays, proof by proof. That finds the proofs that are slow in Megalodon.
 
 Each theorem is checked within a work budget (--theorem-work, in kernel work
 units, default 10^9). A theorem whose check uses it up is not decided, and
@@ -94,6 +102,14 @@ mg: interface), the verdict, the counts, and every axiom and theorem with its
 own verdict. gslt-tokens and gslt-items read a file with Megalodon's syntax
 as GSLT presentations (below). lib/megalodon.metta describes the kernel's
 operations: theories, sessions, rules and libraries.
+
+  !(import! &self (library megalodon_equations))
+
+adds equations on the kernel (lib/megalodon_equations.metta): the laws of
+equality proved in the theory, conversions as data (a rule at the terms its
+left side matches, at a path, top-down, repeated, with its answers kept),
+provers for a rule's premises, and two tactics that rewrite the goal at a
+stated position. An answer is a theorem the kernel made, or nothing.
 
 Reading
 -------

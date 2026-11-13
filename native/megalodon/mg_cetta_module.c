@@ -440,7 +440,7 @@ static const char *decl_kind_name(const MgDecl *d) {
 
 static Atom *decl_atom(Arena *a, const MgTheory *t, const MgDecl *d, bool bodies) {
     const MgName *n = mg_name_get(&t->store, d->name);
-    Atom *items[7];
+    Atom *items[8];
     uint32_t k = 0;
     items[k++] = atom_symbol(a, decl_kind_name(d));
     items[k++] = n ? atom_string_n(a, n->text, n->len) : atom_string(a, "");
@@ -452,6 +452,14 @@ static Atom *decl_atom(Arena *a, const MgTheory *t, const MgDecl *d, bool bodies
         items[k++] = mg_atom_of_tm(a, &t->store, d->prop);
     if (d->source_name)
         items[k++] = atom_expr2(a, atom_symbol(a, "source"), atom_string(a, d->source_name));
+    if (d->also_len) {
+        /* the other spellings under which sources declare this object */
+        Atom **also = arena_alloc(a, sizeof(Atom *) * ((size_t)d->also_len + 1u));
+        also[0] = atom_symbol(a, "also");
+        for (uint32_t i = 0; i < d->also_len; ++i)
+            also[i + 1u] = atom_string(a, d->also_named[i]);
+        items[k++] = atom_expr(a, also, (CettaExprLen)(d->also_len + 1u));
+    }
     if (d->origin)
         items[k++] = atom_expr3(a, atom_symbol(a, "origin"), atom_string(a, d->origin),
                                 atom_int(a, (int64_t)d->line));
@@ -511,7 +519,9 @@ static bool op_declaration(const Call *c) {
 }
 
 /* (mg:lookup THEORY SOURCE-NAME): live declarations whose provenance
- * names SOURCE-NAME (imports name declarations by content hash). */
+ * names SOURCE-NAME, as their first source name or as a later one (imports
+ * name declarations by content hash, so two source names with one content
+ * are one declaration). */
 static bool op_lookup(const Call *c) {
     MgTheory *t = c->nargs == 2u ? theory_of(c->args[0]) : NULL;
     char source[1024];
@@ -522,7 +532,7 @@ static bool op_lookup(const Call *c) {
     size_t hits = 0;
     for (uint64_t i = 0; i < t->decl_len; ++i) {
         const MgDecl *d = t->decls[i];
-        if (mg_env_decl_visible(env, d) && d->source_name && strcmp(d->source_name, source) == 0)
+        if (mg_env_decl_visible(env, d) && mg_decl_named(d, source))
             ++hits;
     }
     Atom **elems = arena_alloc(c->a, sizeof(Atom *) * (hits + 1u));
@@ -530,7 +540,7 @@ static bool op_lookup(const Call *c) {
     elems[k++] = atom_symbol(c->a, "Megalodon.found");
     for (uint64_t i = 0; i < t->decl_len; ++i) {
         const MgDecl *d = t->decls[i];
-        if (mg_env_decl_visible(env, d) && d->source_name && strcmp(d->source_name, source) == 0)
+        if (mg_env_decl_visible(env, d) && mg_decl_named(d, source))
             elems[k++] = decl_atom(c->a, t, d, false);
     }
     pthread_mutex_unlock(&t->lock);

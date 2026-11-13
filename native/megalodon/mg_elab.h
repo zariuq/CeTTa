@@ -50,6 +50,11 @@ typedef struct {
     bool prove_aby;
     uint64_t aby_max_steps;
     uint32_t aby_max_depth;
+    /* The tactic engine's conversion as Megalodon's syntax.ml runs it,
+     * remembering nothing (mg_proof.c conv2).  The answers are the same;
+     * the count of conversions is then what Megalodon itself pays, proof
+     * by proof. */
+    bool reference_conversion;
 } MgElabOptions;
 
 MgElab *mg_elab_new(const MgElabOptions *options);
