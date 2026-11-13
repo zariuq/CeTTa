@@ -306,6 +306,51 @@ static void test_reference(void) {
     run_close(&u);
 }
 
+/* An output is committed with its record: an EMIT or LABEL takes its theorem
+ * when it commits, so dropping the id afterwards changes neither the delivery
+ * nor the label, while the id itself is gone, as DROP says. */
+static void test_outputs_survive_drop(void) {
+    SECTION("outputs survive drop");
+    Asm a;
+    asm_init(&a, 0, HOL_AXIOMS_OPEN);
+    uint64_t nA = NAME(&a, "A"), nx = NAME(&a, "x"), nlab = NAME(&a, "R");
+    uint64_t yA = TYVAR(&a, nA);
+    uint64_t x = T2(&a, HOLR_VAR, nx, yA);
+    uint64_t r = H1(&a, HOLR_REFL, x);                       /* |- x = x */
+    op(&a, HOLR_LABEL);
+    uv(&a, r);
+    uv(&a, nlab);
+    REC1(&a, HOLR_EMIT, r);
+    REC1(&a, HOLR_DROP_THM, r);
+    size_t n;
+    uint8_t *b = asm_finish(&a, &n);
+    save_fixture("emit_label_then_drop", 0, 0, b, n);
+    Run u;
+    run_open(&u, NULL, HOL_AXIOMS_OPEN, NULL);
+    /* a full collection at every record boundary: the dropped id's theorem is
+     * kept by the outputs that took it, and by nothing else */
+    hol_replay_feed(u.r, b, n, true);
+    HolReplayState st;
+    do {
+        st = hol_replay_resume(u.r, 1);
+        hol_gc(u.k);
+    } while (st == HOL_REPLAY_RUNNING);
+    CHECK(st == HOL_REPLAY_ACCEPTED);
+    HolRef delivered, labelled, gone, after;
+    uint64_t ord;
+    CHECK(hol_replay_next(u.r, &delivered, &ord) == HOL_OK && ord == 0);
+    CHECK(hol_replay_next(u.r, &after, &ord) == HOL_STALE);
+    CHECK(hol_replay_nlabels(u.r) == 1);
+    CHECK(hol_replay_label_thm(u.r, 0, &labelled) == HOL_OK);
+    hol_gc(u.k);
+    bool same = false;
+    hol_thm_same_payload(u.k, delivered, labelled, &same);
+    CHECK(same);
+    CHECK(hol_replay_thm(u.r, r, &gone) == HOL_STALE);
+    run_close(&u);
+    free(b);
+}
+
 static void test_truncation_and_prefixes(void) {
     SECTION("truncation");
     unsigned bad = 0;
@@ -884,6 +929,7 @@ int main(void) {
     printf("  sample stream: %zu bytes, %llu records\n", SAMPLE_LEN, (unsigned long long)S_RECORDS);
     save_fixture("sample", 0, 0, SAMPLE, SAMPLE_LEN);
     test_reference();
+    test_outputs_survive_drop();
     test_truncation_and_prefixes();
     test_bit_flips();
     test_garbage();

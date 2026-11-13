@@ -99,11 +99,13 @@ axiom policy.  Theory records extend the replay's environment value.
 
 **Deliveries.**  Each EMIT is one delivery occurrence: equal theorems
 emitted twice are delivered twice (`hol_replay_next`), each as a fresh
-reference with its own proof event.
+reference with its own proof event.  An EMIT or LABEL takes its theorem when
+the record commits, so a later DROP of the id leaves the delivery and the
+label as they were (`hol_replay_label_thm` gives a label's theorem).
 
 **Liveness.**  DROP records are optional; `build/holr-compact` inserts
-them after each id's last use (keeping LABEL/EMIT targets), which bounds
-every replayer's memory by the live part of the proof.
+them after each id's last use, which bounds every replayer's memory by the
+live part of the proof and the outputs not yet read.
 
 ## Laws (tested in `tests/test_stream.c`)
 

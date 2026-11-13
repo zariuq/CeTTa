@@ -547,7 +547,7 @@ static Atom *replay_file(Call *c, const char *path, HolAxiomPolicy policy) {
             if (!pending.labels[i]) { fail(c, HOL_NOMEM, "replay label name"); break; }
             memcpy(pending.labels[i], name, length); pending.labels[i][length] = 0;
             pending.nlabels = i + 1;
-            if (!check(c, hol_replay_thm(replay, theorem, &pending.theorems[i]))) break;
+            if (!check(c, hol_replay_label_thm(replay, i, &pending.theorems[i]))) break;
         }
         if (c->status == HOL_OK) {
             for (size_t i = 0; i < count; ++i)

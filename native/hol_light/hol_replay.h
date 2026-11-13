@@ -124,12 +124,15 @@ HolReplay *hol_replay_clone(const HolReplay *r);
 HolStatus hol_replay_thm(HolReplay *r, uint64_t h, HolRef *out);
 /* The environment reached so far. */
 HolStatus hol_replay_env(HolReplay *r, HolRef *out);
-/* Next delivery occurrence: a fresh reference and its ordinal. */
+/* Next delivery occurrence: a fresh reference to the theorem as its EMIT record
+ * took it (a later DROP of the id does not change it), and its ordinal. */
 HolStatus hol_replay_next(HolReplay *r, HolRef *out, uint64_t *ordinal);
 /* Labels (LABEL records) in order: theorem id and name bytes. */
 size_t hol_replay_nlabels(const HolReplay *r);
 bool hol_replay_label(const HolReplay *r, size_t i, uint64_t *thm, const char **name,
                       size_t *len);
+/* A fresh reference to the theorem of label i, as its LABEL record took it. */
+HolStatus hol_replay_label_thm(HolReplay *r, size_t i, HolRef *out);
 
 /* ---- Structural scan ------------------------------------------------------ */
 
