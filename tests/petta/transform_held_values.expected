@@ -49,3 +49,8 @@ true
 (let-error-row-stays ((s 1)))
 (let-error-caught-inside ((made (Error (domain_error (function_input_arities + (2)) 3) none))))
 (let-error-row-taken ())
+true
+(list-value-open ((parts 1 (2 3))))
+(list-value-decompose ((parts 1 (2 3))))
+(list-value-wrong-head ())
+(list-value-raw-cons ())

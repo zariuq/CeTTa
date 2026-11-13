@@ -33182,6 +33182,13 @@ static bool petta_case_default_arm(const Atom *arm, const PettaPlanNode *plan) {
           atom_is_symbol_id(arm->expr.elems[0], g_builtin_syms.empty);
 }
 
+/* A compacted value arm holds value fields even though it has no child
+ * plans. Absence of a child must not turn its body back into executable code. */
+static const PettaPlanNode *petta_case_body_plan(const PettaPlanNode *arm) {
+    return arm && arm->role == PETTA_PLAN_VALUE
+        ? &petta_machine_value_places[0] : petta_plan_child(arm, 1u);
+}
+
 /* Canonical case needs the same delayed trial boundary. Source plans stay
  * with their original arm indices; only ready successors enter these slices. */
 static bool petta_machine_push_delayed_case(PettaMachineImpl *machine,
@@ -33204,8 +33211,7 @@ static bool petta_machine_push_delayed_case(PettaMachineImpl *machine,
             continue;
         if (remaining > UINT32_MAX - 2u ||
             !petta_push_solve_scoped_planned(machine, branch->expr.elems[1], expected,
-                goal->barrier, petta_plan_child(
-                    petta_plan_child(goal->second_plan, index), 1u),
+                goal->barrier, petta_case_body_plan(petta_plan_child(goal->second_plan, index)),
                 goal->activation_template, goal->activation_epoch,
                 goal->activation_first_entry) ||
             !petta_goal_push(machine, &(PettaGoal){
@@ -35445,8 +35451,8 @@ static bool petta_machine_push_case(PettaMachineImpl *machine,
         Atom *default_body = branch->expr.elems[1];
         if (activation) {
             PettaGoal body_goal = *goal;
-            body_goal.plan = petta_plan_child(
-                petta_plan_child(petta_plan_child(plan, branches_child), index), 1u);
+            body_goal.plan = petta_case_body_plan(
+                petta_plan_child(petta_plan_child(plan, branches_child), index));
             default_body = petta_machine_materialize_activation_source(
                 machine, &body_goal, default_body);
             if (!default_body) {
@@ -35466,10 +35472,8 @@ static bool petta_machine_push_case(PettaMachineImpl *machine,
                 .saw_answer = false,
                 .expression = default_body,
                 .expected = expected,
-                .plan = petta_plan_child(
-                    petta_plan_child(
-                        petta_plan_child(plan, branches_child), index),
-                    1u),
+                .plan = petta_case_body_plan(
+                    petta_plan_child(petta_plan_child(plan, branches_child), index)),
             },
         };
         if (!petta_choice_push(machine, default_choice)) {
@@ -36845,6 +36849,16 @@ static Atom *petta_machine_values_as_variables(
     if (!expression || !plan || expression->kind != ATOM_EXPR ||
         expression->expr.len == 0u)
         return expression;
+    if (plan->role == PETTA_PLAN_VALUE && plan->literal_case_default &&
+        expression->expr.len == 2u) {
+        /* Re-translation must still see the authored Empty arm. Its body
+         * remains a value, including call-shaped data held by a variable. */
+        const PettaPlanNode value = {.role = PETTA_PLAN_VALUE};
+        Atom *body = petta_machine_values_as_variables(
+            machine, expression->expr.elems[1], &value, held);
+        return body ? atom_expr2(&machine->heap, expression->expr.elems[0], body)
+                    : NULL;
+    }
     if (plan->role == PETTA_PLAN_VALUE) {
         Atom *variable = petta_fresh_variable(machine);
         if (!variable)
@@ -41890,10 +41904,7 @@ static bool petta_machine_dispatch_goal(
             if (!petta_push_solve_scoped_planned(
                     machine, branch->expr.elems[1], expected,
                     goal.barrier,
-                    petta_plan_child(
-                        petta_plan_child(
-                            goal.second_plan, index),
-                        1u),
+                    petta_case_body_plan(petta_plan_child(goal.second_plan, index)),
                     goal.activation_template, goal.activation_epoch,
                     goal.activation_first_entry)) {
                 *failure = PETTA_MACHINE_STEP_CAPACITY;

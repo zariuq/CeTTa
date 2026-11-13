@@ -8,3 +8,7 @@
 true
 true
 false
+(five none five)
+(none five none)
+()
+((+ 1 2))

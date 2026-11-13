@@ -30,7 +30,9 @@
 ; fires if the atoms its reads and takes matched are still there when it runs, and
 ; its other conditions are evaluated then, each with its own variables free: absence
 ; and collections over the store at that moment, a unique counted again with its one
-; match the atom the proposal matched, and lets; a branch whose atom an earlier branch took
+; match the atom the proposal matched, and a let evaluated again, the answer its proposal
+; kept first (each answer of a kernel let is a branch of its own); a branch whose atom an
+; earlier branch took
 ; fires nothing.  With reads alone and no `once`, a transform gives exactly the
 ; answers `match` gives.  From the first `all` on, every extension of the branch's
 ; kernel match fires in the branch's one commit, so (, (all p) (all q)) is every
@@ -69,6 +71,14 @@
 ; the firing keeps. Its local loop accepts one-copy or all-copy removal hosts.
 ; The restored copies follow the atoms added before the commit. Exact takes
 ; of open stored atoms require the native kernel; this reference counts matches.
+;
+; Hosts whose branches run in parallel.  "Nothing runs between validation and the
+; commit" holds by itself where branches run one after another.  Where hyperpose
+; runs its branches in threads (SWI-PeTTa), !(tf:atomic!) makes the commit a
+; critical section of the host: a firing's reads and takes are validated, its
+; takes are removed and its instances are routed into a destination space with no
+; other commit in between.  The firing's other conditions (absence, counts,
+; collections, lets) are as of its walk, which runs before and may run code.
 
 ;; ---- the operation ----------------------------------------------------------------
 
@@ -100,15 +110,25 @@
 
 ; A branch's sources: the original conjuncts, each kernel read or take of a pattern
 ; P whose proposal matched the atom A becoming that access of A with (tf:as P A), and
-; a kernel unique followed by (tf:as P A).  Its other conditions are evaluated when
-; it fires, each with its own variables free.
+; a kernel unique followed by (tf:as P A).  A kernel let of a pattern P whose
+; proposal answered V becomes (tf:let-first V P E): the expression is evaluated again
+; and V is tried first.  Its other conditions are evaluated when it fires, each
+; with its own variables free.
 (= (tfs:guided $cs $guide)
    (if (== $cs ()) ()
      (let ($c $rest) (decons-atom $cs)
        (let $mode (tfs:mode $c)
          (if (is-member $mode (all once)) $cs
-           (if (is-member $mode (absent collect let))
+           (if (is-member $mode (absent collect))
                (let $more (tfs:guided $rest $guide) (cons-atom $c $more))
+             (if (== $mode let)
+               ; the branch stands for the answer V its proposal kept: when it fires
+               ; the expression is evaluated again and V is tried first
+               (let ($e $guide2) (decons-atom $guide)
+                 (let ($_let $_none $value) $e
+                   (let ($_l $pattern $expression) (tfs:parts $c)
+                     (let $again (cons-atom tf:let-first (tfs:triple $value $pattern $expression))
+                       (let $more (tfs:guided $rest $guide2) (cons-atom $again $more))))))
                (let (tfs:at $_m $_s $p) (tfs:locate-in $c)
                  (if (and (== $mode unique) (tfs:comma $p))
                      ; a unique joint match: one guide entry per part, bound as the tuple
@@ -122,7 +142,7 @@
                              (if (== $mode unique)
                                  (cons-atom $c (cons-atom $as $more))
                                  (let $access (tfs:triple $use $s $a)
-                                   (cons-atom $access (cons-atom $as $more))))))))))))))))
+                                   (cons-atom $access (cons-atom $as $more)))))))))))))))))
 
 ; The atoms of the next N guide entries, and the guide after them.
 (= (tfs:take-guide $n $guide $acc)
@@ -148,14 +168,25 @@
 ; answer (tfs:fired INSTANCES), one instance per fired row, in row order.
 (= (tfs:fire $space $conjuncts $template)
    (let $candidates (collapse (tfs:walk $space $conjuncts () $template tfs:kernel))
-     (tfs:commit-first $candidates)))
+     (if (tfs:atomic?)
+         (with_mutex tf:commit (tfs:commit-first $candidates))
+         (tfs:commit-first $candidates))))
+
+(= (tf:atomic!) (add-atom &self (tf:atomic)))
+(= (tfs:atomic?) (not (== (collapse (match &self (tf:atomic) on)) ())))
 
 ; The same firing into a destination space: its instances are added after the commit
 ; and the answer is how many.
 (= (tfs:fire-into $space $conjuncts $template $destination)
    (let $comma (tfs:comma $template)
-     (let (tfs:fired $instances) (tfs:fire $space $conjuncts $template)
-       (tfs:add-all $destination (tfs:split $comma $instances) 0))))
+     (let $candidates (collapse (tfs:walk $space $conjuncts () $template tfs:kernel))
+       (if (tfs:atomic?)
+           (with_mutex tf:commit (tfs:commit-into $candidates $comma $destination))
+           (tfs:commit-into $candidates $comma $destination)))))
+
+(= (tfs:commit-into $candidates $comma $destination)
+   (let (tfs:fired $instances) (tfs:commit-first $candidates)
+     (tfs:add-all $destination (tfs:split $comma $instances) 0)))
 
 ;; ---- code and data ----------------------------------------------------------------
 ; The variables the sources can bind: those of their patterns, collections and `let`
@@ -167,6 +198,12 @@
      (let ($c $more) (decons-atom $cs)
        (tfs:source-vars $more (tfs:conjunct-vars $c $acc)))))
 
+; The kind of a term.  A value the host holds that is no atom of the data
+; model, such as the partial application (+ 1) once evaluated, has no metatype;
+; it is a leaf: it holds no variable to bind and no part to match.
+(= (tfs:kind $term)
+   (case (get-metatype $term) (($kind $kind) (Empty tfs:opaque))))
+
 (= (tfs:conjunct-vars $c $acc)
    (case (tfs:mode $c)
      ((let (let ($l $pattern $expression) (tfs:parts $c) (tfs:vars $pattern $acc)))
@@ -175,7 +212,7 @@
       ($_other (tfs:vars $c $acc)))))
 
 (= (tfs:vars $e $acc)
-   (case (get-metatype $e)
+   (case (tfs:kind $e)
      ((Variable (if (tfs:holds $acc $e) $acc (cons-atom $e $acc)))
       (Expression (tfs:vars-each $e $acc))
       (Empty $acc)
@@ -194,7 +231,7 @@
 (= (tfs:code-uses $vars $e)
    ; A compiled callable may have no metatype answer. It is a held value,
    ; not expression syntax whose internals the library may rename.
-   (case (get-metatype $e)
+   (case (tfs:kind $e)
      ((Variable (tfs:holds $vars $e))
       (Expression (tfs:code-uses-each $vars $e))
       (Empty False)
@@ -220,7 +257,7 @@
          (if (== $source $variable) $private
              (tfs:renamed-variable $more $variable))))))
 (= (tfs:rename-code $mapping $expression)
-   (case (get-metatype $expression)
+   (case (tfs:kind $expression)
      ((Variable (tfs:renamed-variable $mapping $expression))
       (Expression (tfs:rename-code-each $mapping $expression))
       (Empty $expression)
@@ -316,7 +353,7 @@
      (match $s $q (if (== $h ,) $body (empty)))))
 
 (= (tfs:comma $x)
-   (if (== (get-metatype $x) Expression)
+   (if (== (tfs:kind $x) Expression)
        (if (== $x ()) False (== (car-atom $x) ,))
        False))
 
@@ -325,11 +362,11 @@
      (if (tfs:comma $sources) (cdr-atom $sources) (cons-atom $sources ()))))
 
 (= (tfs:mode $c)
-   (if (== (get-metatype $c) Expression)
+   (if (== (tfs:kind $c) Expression)
        (if (== $c ()) tfs:plain
          (let $head (car-atom $c)
-           (if (== (get-metatype $head) Variable) tfs:plain
-             (if (is-member $head (read take absent unique collect all once let tf:as)) $head tfs:plain))))
+           (if (== (tfs:kind $head) Variable) tfs:plain
+             (if (is-member $head (read take absent unique collect all once let tf:as tf:let-first)) $head tfs:plain))))
        tfs:plain))
 
 ; (read|take|absent [S] p) as (tfs:at mode S p); a plain pattern reads from SPACE.
@@ -378,6 +415,7 @@
         (all (tfs:all $space $c $rest $fp $template $phase))
         (once (tfs:once $space $c $rest $fp $template $phase))
         (let (tfs:let $space $c $rest $fp $template $phase))
+        (tf:let-first (tfs:let-first $space $c $rest $fp $template $phase))
         (unique (tfs:unique $space $c $rest $fp $template $phase))
         (collect (tfs:collect $space $c $rest $fp $template $phase))
         (absent (tfs:absent $space $c $rest $fp $template $phase))
@@ -407,10 +445,38 @@
    (let ($_as $p $a) (tfs:parts $c)
      (let $p $a (tfs:walk $space $rest $fp $template $phase))))
 
+; A kernel `let` chooses: each of its answers is a match of the kernel, so each is
+; a proposal of its own, and the proposal keeps the answer beside the atoms it
+; matched.
 (= (tfs:let $space $c $rest $fp $template $phase)
    (let ($_l $pattern $expression) (tfs:parts $c)
      (let $value (eval $expression)
-       (let $pattern $value (tfs:walk $space $rest $fp $template $phase)))))
+       (let $pattern $value
+         (let $fp2 (if (== $phase tfs:propose) (tfs:snoc $fp (tfs:triple let none $value)) $fp)
+           (tfs:walk $space $rest $fp2 $template $phase))))))
+
+; (tf:let-first V P E), a kernel let of a branch: the answers of E as they are when
+; the branch fires, those equal to the answer V its proposal kept first, the others
+; after them, each in the order E gives them.  The answers are collected to be put
+; in that order, and a collected answer is a copy: its variables are new.  So each
+; is collected beside the instance of E that gave it, and the chosen answer's
+; instance is met with E again.  The answer's variables are then E's, those of the
+; atoms the branch matched among them, and what E bound in giving the answer holds.
+(= (tfs:let-first $space $c $rest $fp $template $phase)
+   (let ($_h $first $pattern $expression) $c
+     (let $answers (collapse (let $value (eval $expression) (tfs:answered $value $expression)))
+       (let $ordered (tfs:append (tfs:answers-like True $first $answers)
+                                  (tfs:answers-like False $first $answers))
+         (let (tfs:answered $value $instance) (superpose $ordered)
+           (let $expression $instance
+             (let $pattern $value (tfs:walk $space $rest $fp $template $phase))))))))
+
+(= (tfs:answers-like $wanted $first $answers)
+   (if (== $answers ()) ()
+     (let ($a $more) (decons-atom $answers)
+       (let (tfs:answered $value $_instance) $a
+         (let $tail (tfs:answers-like $wanted $first $more)
+           (if (== (=alpha $value $first) $wanted) (cons-atom $a $tail) $tail))))))
 
 (= (tfs:unique $space $c $rest $fp $template $phase)
    (let (tfs:at $mode $s $p) (tfs:locate $space (car-atom (cdr-atom $c)))

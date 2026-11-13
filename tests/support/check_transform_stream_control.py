@@ -466,7 +466,7 @@ def late_cursor_decline(binary):
 """, "late_cursor_decline", extra_env={
         "CETTA_TEST_TRANSFORM_CURSOR_CLONE_FAIL_AT": "3"})
     if proc.returncode != 0 or proc.stdout.splitlines()[-1] != \
-            "(written ((seen (quote a) (quote 1))))":
+            "(written ((seen a 1)))":
         raise AssertionError(
             f"late cursor decline replayed or lost earlier effects: "
             f"{proc.stdout!r}; {proc.stderr!r}")

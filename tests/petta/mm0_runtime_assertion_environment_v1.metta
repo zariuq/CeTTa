@@ -12,13 +12,7 @@
        (mm0:assertion:run-ast $ast))))
 
 (= (mm0:assertion:name:th-arrow)
-   (cons (cp 116)
-     (cons (cp 104)
-       (cons (cp 95)
-         (cons (cp 97)
-           (cons (cp 114)
-             (cons (cp 114)
-               (cons (cp 111) (cons (cp 119) nil)))))))))
+   (cons-atom cons (cons-atom (cp 116) (cons-atom (cons-atom cons (cons-atom (cp 104) (cons-atom (cons-atom cons (cons-atom (cp 95) (cons-atom (cons-atom cons (cons-atom (cp 97) (cons-atom (cons-atom cons (cons-atom (cp 114) (cons-atom (cons-atom cons (cons-atom (cp 114) (cons-atom (cons-atom cons (cons-atom (cp 111) (cons-atom (cons-atom cons (cons-atom (cp 119) (cons-atom nil ()))) ()))) ()))) ()))) ()))) ()))) ()))) ()))))
 
 !(let
    ((gslt:result:MM0SourceEnvironmentFromAstV1:1000
@@ -32,10 +26,8 @@
      (let
        (gslt:result:MM0AssertionLookupV1:110
          (MM0AssertionFoundV1 MM0TheoremDeclarationV1 $position))
-       (eval
-         (quote
-           (gslt:fn:MM0AssertionLookupV1:110
-             (mm0:assertion:name:th-arrow) $declarations)))
+       (gslt:fn:MM0AssertionLookupV1:110
+             (mm0:assertion:name:th-arrow) $declarations)
        MM0RuntimeAssertionEnvironmentPositiveAcceptedV1)))
 
 !(let

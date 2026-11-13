@@ -1,9 +1,11 @@
-; Named PeTTa spaces begin empty. A first removal succeeds without a row.
+; Named PeTTa spaces begin empty. Removing from one finds no occurrence.
 !(remove-atom &first-remove (item $x))
 !(test (collapse (match &first-remove $x $x)) ())
 !(add-atom &first-remove (item 1))
 !(add-atom &first-remove (item 1))
 !(test (collapse (match &first-remove (item $x) $x)) (1 1))
+!(remove-atom &first-remove (item $x))
+!(test (collapse (match &first-remove $x $x)) ((item 1)))
 !(remove-atom &first-remove (item $x))
 !(test (collapse (match &first-remove $x $x)) ())
 

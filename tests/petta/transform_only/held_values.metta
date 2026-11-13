@@ -1,0 +1,23 @@
+; A value that is an expression stays data through every control form: it is
+; bound, branched on, chosen and collected without being evaluated again.
+(= (inc $x) (+ $x 1))
+(= (held) (quote (inc 5)))
+(= (through-let) (let $v (held) (seen $v)))
+(= (through-pattern) (let (pair $v $w) (pair (held) 2) (seen $v $w)))
+(= (through-if $c) (let $v (held) (if $c (yes $v) (no $v))))
+(= (through-case $k) (let $v (held) (case $k ((1 (one $v)) ($other (other $other $v))))))
+(= (through-superpose) (let $v (held) (superpose ((a $v) (b $v)))))
+(= (through-collapse) (let $v (held) (collapse (superpose ((a $v) (b $v))))))
+(= (through-let*) (let* (($v (held)) ($w (wrap $v))) (both $v $w)))
+!(test (through-let) (seen (quote (inc 5))))
+!(test (through-pattern) (seen (quote (inc 5)) 2))
+!(test (through-if True) (yes (quote (inc 5))))
+!(test (through-if False) (no (quote (inc 5))))
+!(test (through-case 1) (one (quote (inc 5))))
+!(test (through-case 7) (other 7 (quote (inc 5))))
+!(test (repr (collapse (through-superpose))) "((a (inc 5)) (b (inc 5)))")
+!(test (repr (through-collapse)) "((a (inc 5)) (b (inc 5)))")
+!(test (through-let*) (both (quote (inc 5)) (wrap (quote (inc 5)))))
+; A value that is evaluated where it is written is evaluated there, once.
+!(test (let $v (inc 5) (seen $v)) (seen 6))
+!(test (if (== (inc 5) 6) (inc 6) never) 7)

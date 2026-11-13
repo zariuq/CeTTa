@@ -16,6 +16,7 @@ typedef struct {
     size_t len;
     size_t cap;
     CettaGsltDirectTargetV1 target; /* the dialect this program is spelled in */
+    size_t input_scope; /* fresh against the source rule variables */
 } DirectBufferV1;
 
 static bool direct_target_is_he_v1(const DirectBufferV1 *program) {
@@ -561,6 +562,34 @@ static bool direct_render_term_v1(DirectBufferV1 *buffer, const Atom *term,
             return false;
     }
     return direct_byte_v1(buffer, (uint8_t)')');
+}
+
+/* Source applications are data, even when their names are PeTTa operations.
+ * cons-atom patterns expose the physical expression spine without invoking a
+ * source constructor's target-language meaning. HE keeps its own pattern syntax. */
+static bool direct_render_data_pattern_v1(
+    DirectBufferV1 *program, const Atom *term, Arena *scratch, size_t depth) {
+    if (direct_target_is_he_v1(program) || !term || term->kind != ATOM_EXPR)
+        return direct_render_term_v1(program, term, scratch, depth);
+    if (depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
+        return false;
+    if (direct_head_v1(term, "metta-nullary", 1u)) {
+        return direct_literal_v1(program, "(cons-atom ") &&
+               direct_render_term_v1(program, term->expr.elems[1], scratch, depth + 1u) &&
+               direct_literal_v1(program, " ())");
+    }
+    for (CettaExprIndex i = 0u; i < term->expr.len; ++i) {
+        if (!direct_literal_v1(program, "(cons-atom ") ||
+            !direct_render_data_pattern_v1(program, term->expr.elems[i], scratch, depth + 1u) ||
+            !direct_byte_v1(program, (uint8_t)' '))
+            return false;
+    }
+    if (!direct_literal_v1(program, "()"))
+        return false;
+    for (CettaExprIndex i = 0u; i < term->expr.len; ++i)
+        if (!direct_byte_v1(program, (uint8_t)')'))
+            return false;
+    return true;
 }
 
 static bool direct_validate_target_equations_v1(
@@ -3100,12 +3129,12 @@ static bool direct_render_type_v1(DirectBufferV1 *program,
 
 static bool direct_render_call_v1(DirectBufferV1 *program,
                                   const Atom *relation,
-                                  Arena *scratch) {
+                                  Arena *scratch, bool pattern) {
     return direct_literal_v1(program, "(gslt:") &&
            direct_literal_v1(
                program, atom_name_cstr(relation->expr.elems[0])) &&
            direct_byte_v1(program, (uint8_t)' ') &&
-           direct_render_term_v1(program, relation, scratch, 0u) &&
+           (pattern ? direct_render_data_pattern_v1 : direct_render_term_v1)(program, relation, scratch, 0u) &&
            direct_byte_v1(program, (uint8_t)')');
 }
 
@@ -3129,9 +3158,9 @@ static bool direct_render_mode_name_v1(
 
 static bool direct_render_input_slot_v1(
     DirectBufferV1 *program, size_t argument) {
-    char name[48];
+    char name[80];
     int length = snprintf(
-        name, sizeof(name), "$__gslt_input_v1_%zu", argument);
+        name, sizeof(name), "$__gslt_input_v1_%zu_%zu", program->input_scope, argument);
     return length > 0 && (size_t)length < sizeof(name) &&
            direct_literal_v1(program, name);
 }
@@ -3273,6 +3302,26 @@ static bool direct_render_entries_v1(
     return true;
 }
 
+static bool direct_choose_input_scope_v1(DirectBufferV1 *program, const DirectRuleV1 *rule) {
+    DirectVariablesV1 variables = {0};
+    bool ok = direct_variables_add_term_v1(&variables, rule->head, 0u, NULL, 0u) &&
+              direct_variables_add_term_v1(&variables, rule->body, 0u, NULL, 0u);
+    if (ok) {
+        for (size_t scope = 0u;; ++scope) {
+            char prefix[64];
+            int len = snprintf(prefix, sizeof(prefix), "__gslt_input_v1_%zu_", scope);
+            if (len < 0 || (size_t)len >= sizeof(prefix)) { ok = false; break; }
+            bool used = false;
+            for (size_t i = 0u; i < variables.len; ++i)
+                if (!strncmp(direct_variable_name_v1(variables.items[i]), prefix, (size_t)len))
+                    used = true;
+            if (!used) { program->input_scope = scope; break; }
+        }
+    }
+    free(variables.items);
+    return ok;
+}
+
 static bool direct_petta_pattern_requires_body_match_v1(
     const Atom *term, size_t depth) {
     if (!term || depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1 ||
@@ -3316,6 +3365,12 @@ static bool direct_petta_pattern_requires_body_match_v1(
     return false;
 }
 
+static bool direct_pattern_in_body_v1(const DirectBufferV1 *program, const Atom *term) {
+    return direct_target_is_he_v1(program)
+        ? direct_petta_pattern_requires_body_match_v1(term, 0u)
+        : term && term->kind == ATOM_EXPR;
+}
+
 /* PeTTa equation heads are evaluation positions.  Keep the generated head
  * slot-based and match the authored source pattern structurally in the
  * body; otherwise a source constructor such as `cons` can be mistaken for a
@@ -3335,10 +3390,10 @@ static bool direct_render_function_rule_head_v1(
             application->expr.elems[argument + 1u];
         if (!direct_byte_v1(program, (uint8_t)' '))
             return false;
-        if (direct_petta_pattern_requires_body_match_v1(pattern, 0u)) {
+        if (direct_pattern_in_body_v1(program, pattern)) {
             if (!direct_render_input_slot_v1(program, argument))
                 return false;
-        } else if (!direct_render_term_v1(
+        } else if (!direct_render_data_pattern_v1(
                        program, pattern, scratch, 0u)) {
             return false;
         }
@@ -3355,11 +3410,15 @@ static bool direct_render_function_call_v1(
             mode))
         return false;
     for (size_t argument = 0u; argument < mode->arity; argument++) {
+        bool held = !direct_target_is_he_v1(program) &&
+            application->expr.elems[argument + 1u]->kind == ATOM_EXPR;
         if (mode->input_ground[argument] &&
             (!direct_byte_v1(program, (uint8_t)' ') ||
+             (held && !direct_literal_v1(program, "(quote ")) ||
              !direct_render_term_v1(
                  program, application->expr.elems[argument + 1u],
-                 scratch, 0u)))
+                 scratch, 0u) ||
+             (held && !direct_byte_v1(program, (uint8_t)')'))))
             return false;
     }
     return direct_byte_v1(program, (uint8_t)')');
@@ -3413,7 +3472,7 @@ static bool direct_render_selected_mode_call_v1(
 
 static bool direct_render_function_result_v1(
     DirectBufferV1 *program, const Atom *application,
-    const DirectBindingModeV1 *mode, Arena *scratch) {
+    const DirectBindingModeV1 *mode, Arena *scratch, bool pattern) {
     size_t output_count = 0u;
     for (size_t argument = 0u; argument < mode->arity; argument++) {
         if (!mode->input_ground[argument])
@@ -3427,7 +3486,7 @@ static bool direct_render_function_result_v1(
     for (size_t argument = 0u; argument < mode->arity; argument++) {
         if (!mode->input_ground[argument] &&
             (!direct_byte_v1(program, (uint8_t)' ') ||
-             !direct_render_term_v1(
+             !(pattern ? direct_render_data_pattern_v1 : direct_render_term_v1)(
                  program, application->expr.elems[argument + 1u],
                  scratch, 0u)))
             return false;
@@ -3441,10 +3500,10 @@ static bool direct_render_function_value_v1(
     const DirectBindingModeV1 *mode, Arena *scratch) {
     if (direct_target_is_he_v1(program))
         return direct_render_function_result_v1(
-            program, application, mode, scratch);
+            program, application, mode, scratch, false);
     return direct_literal_v1(program, "(quote ") &&
            direct_render_function_result_v1(
-               program, application, mode, scratch) &&
+               program, application, mode, scratch, false) &&
            direct_byte_v1(program, (uint8_t)')');
 }
 
@@ -3456,6 +3515,8 @@ static bool direct_render_function_rule_v1(
     size_t body_count = (size_t)rule->body->expr.len - 1u;
     size_t input_count = 0u;
     bool ok = false;
+    if (!direct_choose_input_scope_v1(program, rule))
+        goto done;
 
     for (size_t argument = 0u; argument < mode->arity; argument++) {
         if (mode->input_ground[argument] &&
@@ -3475,10 +3536,10 @@ static bool direct_render_function_rule_v1(
         const Atom *pattern =
             rule->head->expr.elems[argument + 1u];
         if (!mode->input_ground[argument] ||
-            !direct_petta_pattern_requires_body_match_v1(pattern, 0u))
+            !direct_pattern_in_body_v1(program, pattern))
             continue;
         if (!direct_literal_v1(program, "   (let ") ||
-            !direct_render_term_v1(
+            !direct_render_data_pattern_v1(
                 program, pattern, scratch, 0u) ||
             !direct_byte_v1(program, (uint8_t)' ') ||
             !direct_render_input_slot_v1(program, argument) ||
@@ -3505,13 +3566,13 @@ static bool direct_render_function_rule_v1(
             goto done;
         if (callee_mode != NULL && callee_mode->selected) {
             if (!direct_render_function_result_v1(
-                    program, goal, callee_mode, scratch) ||
+                    program, goal, callee_mode, scratch, true) ||
                 !direct_byte_v1(program, (uint8_t)' ') ||
                 !direct_render_selected_mode_call_v1(
                     program, goal, callee_mode, mode, scratch))
                 goto done;
         } else if (!direct_render_guard_binder_v1(program, index) ||
-                   !direct_render_call_v1(program, goal, scratch)) {
+                   !direct_render_call_v1(program, goal, scratch, false)) {
             goto done;
         }
         if (!direct_byte_v1(program, (uint8_t)'\n'))
@@ -3674,22 +3735,31 @@ static bool direct_factor_render_slot_var_v1(
 
 static bool direct_factor_render_template_v1(
     DirectBufferV1 *program, const DirectFactorNodeV1 *node,
-    Arena *scratch) {
+    Arena *scratch, bool pattern) {
     if (node->slot)
         return direct_factor_render_slot_var_v1(program, node);
     if (node->constant != NULL)
-        return direct_render_term_v1(
+        return (pattern ? direct_render_data_pattern_v1 : direct_render_term_v1)(
             program, node->constant, scratch, 0u);
-    if (!direct_byte_v1(program, (uint8_t)'('))
+    bool spine = pattern && !direct_target_is_he_v1(program);
+    if (!spine && !direct_byte_v1(program, (uint8_t)'('))
         return false;
     for (size_t child = 0u; child < node->child_count; child++) {
-        if ((child > 0u &&
-             !direct_byte_v1(program, (uint8_t)' ')) ||
+        if ((spine && !direct_literal_v1(program, "(cons-atom ")) ||
+            (!spine && child > 0u && !direct_byte_v1(program, (uint8_t)' ')) ||
             !direct_factor_render_template_v1(
-                program, node->children[child], scratch))
+                program, node->children[child], scratch, pattern) ||
+            (spine && !direct_byte_v1(program, (uint8_t)' ')))
             return false;
     }
-    return direct_byte_v1(program, (uint8_t)')');
+    if (!spine)
+        return direct_byte_v1(program, (uint8_t)')');
+    if (!direct_literal_v1(program, "()"))
+        return false;
+    for (size_t child = 0u; child < node->child_count; child++)
+        if (!direct_byte_v1(program, (uint8_t)')'))
+            return false;
+    return true;
 }
 
 /* Walks a fact alongside the template, emitting each slot residue.
@@ -3705,7 +3775,8 @@ static bool direct_factor_render_residues_v1(
         if (!*first && !direct_byte_v1(program, (uint8_t)' '))
             return false;
         *first = false;
-        return direct_render_term_v1(program, fact_term, scratch, 0u);
+        return (want_output ? direct_render_term_v1 : direct_render_data_pattern_v1)(
+            program, fact_term, scratch, 0u);
     }
     if (node->constant != NULL)
         return true;
@@ -3844,7 +3915,7 @@ static bool direct_render_factored_group_v1(
             continue;
         if (!direct_byte_v1(program, (uint8_t)' ') ||
             !direct_factor_render_template_v1(
-                program, arg_nodes[argument], scratch))
+                program, arg_nodes[argument], scratch, true))
             goto done;
     }
     if (!direct_literal_v1(program, direct_target_is_he_v1(program)
@@ -3947,7 +4018,7 @@ static bool direct_render_factored_group_v1(
             continue;
         if (!direct_byte_v1(program, (uint8_t)' ') ||
             !direct_factor_render_template_v1(
-                program, arg_nodes[argument], scratch))
+                program, arg_nodes[argument], scratch, false))
             goto done;
     }
     if (!direct_literal_v1(program, direct_target_is_he_v1(program)
@@ -4194,8 +4265,15 @@ static bool direct_render_function_modes_v1(
         any = true;
         {
             DirectEqualityPartitionV1 partition;
-            if (direct_equality_partition_v1(
-                    rules, target_equations, mode, &partition)) {
+            bool partitioned = direct_equality_partition_v1(
+                rules, target_equations, mode, &partition);
+            if (partitioned && !direct_target_is_he_v1(program)) {
+                for (size_t arg = 0u; arg < mode->arity; ++arg)
+                    if (mode->input_ground[arg] &&
+                        partition.equal_rule->head->expr.elems[arg + 1u]->kind == ATOM_EXPR)
+                        partitioned = false;
+            }
+            if (partitioned) {
                 if (!direct_render_equality_partition_v1(
                         program, &partition, mode, scratch) ||
                     !direct_byte_v1(program, (uint8_t)'\n'))
@@ -4267,12 +4345,26 @@ static bool direct_render_rule_v1(DirectBufferV1 *program,
     DirectVariablesV1 known = {0};
     size_t body_count = (size_t)rule->body->expr.len - 1u;
     bool ok = false;
-    if (!direct_render_rule_realization_v1(
-            program, rule, "relation", NULL) ||
-        !direct_literal_v1(program, "(= ") ||
-        !direct_render_call_v1(program, rule->head, scratch) ||
-        !direct_byte_v1(program, (uint8_t)'\n'))
+    if (!direct_choose_input_scope_v1(program, rule) ||
+        !direct_render_rule_realization_v1(program, rule, "relation", NULL) ||
+        !direct_literal_v1(program, "(= "))
         goto done;
+    bool data_entry = !direct_target_is_he_v1(program);
+    if (data_entry) {
+        if (!direct_literal_v1(program, "(gslt:") ||
+            !direct_literal_v1(program, atom_name_cstr(rule->head->expr.elems[0])) ||
+            !direct_byte_v1(program, (uint8_t)' ') ||
+            !direct_render_input_slot_v1(program, 0u) ||
+            !direct_literal_v1(program, ")\n   (let ") ||
+            !direct_render_data_pattern_v1(program, rule->head, scratch, 0u) ||
+            !direct_byte_v1(program, (uint8_t)' ') ||
+            !direct_render_input_slot_v1(program, 0u) ||
+            !direct_byte_v1(program, (uint8_t)'\n'))
+            goto done;
+    } else if (!direct_render_call_v1(program, rule->head, scratch, true) ||
+               !direct_byte_v1(program, (uint8_t)'\n')) {
+        goto done;
+    }
     for (size_t index = 0u; index < body_count; index++) {
         Atom *goal = rule->body->expr.elems[index + 1u];
         const char *relation = atom_name_cstr(goal->expr.elems[0]);
@@ -4292,13 +4384,13 @@ static bool direct_render_rule_v1(DirectBufferV1 *program,
             goto done;
         if (callee_mode != NULL && callee_mode->selected) {
             if (!direct_render_function_result_v1(
-                    program, goal, callee_mode, scratch) ||
+                    program, goal, callee_mode, scratch, true) ||
                 !direct_byte_v1(program, (uint8_t)' ') ||
                 !direct_render_selected_mode_call_v1(
                     program, goal, callee_mode, NULL, scratch))
                 goto done;
         } else if (!direct_render_guard_binder_v1(program, index) ||
-                   !direct_render_call_v1(program, goal, scratch)) {
+                   !direct_render_call_v1(program, goal, scratch, false)) {
             goto done;
         }
         if (!direct_byte_v1(program, (uint8_t)'\n'))
@@ -4314,12 +4406,16 @@ static bool direct_render_rule_v1(DirectBufferV1 *program,
         }
     }
     if (!direct_literal_v1(program, "   ") ||
-        !direct_render_term_v1(program, rule->head, scratch, 0u))
+        (!direct_target_is_he_v1(program) && !direct_literal_v1(program, "(quote ")) ||
+        !direct_render_term_v1(program, rule->head, scratch, 0u) ||
+        (!direct_target_is_he_v1(program) && !direct_byte_v1(program, (uint8_t)')')))
         goto done;
     for (size_t index = 0u; index < body_count; index++) {
         if (!direct_byte_v1(program, (uint8_t)')'))
             goto done;
     }
+    if (data_entry && !direct_byte_v1(program, (uint8_t)')'))
+        goto done;
     ok = direct_literal_v1(program, ")\n");
 
 done:

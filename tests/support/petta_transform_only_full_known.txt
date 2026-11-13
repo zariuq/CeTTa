@@ -1,0 +1,4 @@
+# Fixture programs that do not pass when binding, branching and choice are rewritten
+# too (the control forms as calls of generated functions), on the lane where
+# transform is written in PeTTa.  Name, a tab, the reason.
+defined_then_mentioned	a part of a control form is a function of its own, entered when it is reached: a body that defines a function and then mentions it as data has the mention in a part entered after the definition, so there it is a call. As written the mention stays data for that invocation.

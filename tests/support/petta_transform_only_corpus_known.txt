@@ -1,0 +1,17 @@
+# Example programs that do not pass, rewritten by transform_only, the tests they
+# pass as written, on the lane where transform is written in PeTTa (specs), at
+# 120 seconds each.  One program a line: its name, a tab, the reason.
+fib	cost: every call is a firing of the PeTTa-written transform; the program as written is tabled by the engine
+fibadd	cost
+holbenchmark	cost
+hyperpose_primes	cost
+matespace	cost
+matespace2	cost
+matespacefast	cost
+patrick_iterate_quad	cost
+peano	cost
+peanofast	cost
+permutations	cost
+scale	cost
+forall	engine: on CeTTa a forall generator that runs the PeTTa-written transform yields nothing; SWI-PeTTa answers correctly
+spaces_removeallatoms	the libraries' equations live in the program's &self, which this program empties

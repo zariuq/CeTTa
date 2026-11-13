@@ -46,9 +46,9 @@ PeTTa remove-atom
     variable retains its existing no-answer behavior.  Ground and indexed fast
     paths select the same occurrences as the general scan.
   Primitive effects
-    Remove every selected occurrence in one contraction, including any
+    Remove one selected occurrence in one contraction, including any
     dense-ground representation, then update derived execution views for the
-    removed rows.  The occurrences left are a bag: no order of them is
+    removed row.  The occurrences left are a bag: no order of them is
     promised to a read.
   Result and failure
     Answer true iff at least one occurrence was removed, false for an empty

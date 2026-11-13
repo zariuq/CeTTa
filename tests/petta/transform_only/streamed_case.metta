@@ -1,0 +1,21 @@
+; case takes the first row whose pattern meets the key's value; a row (Empty B)
+; is taken only when the key has no value; the key is evaluated once and its
+; values are met one at a time.
+!(bind! &ticks (new-state 0))
+(= (tick!) (let $v (+ (get-state &ticks) 1) (let $_ (change-state! &ticks $v) $v)))
+(= (kind $x) (case $x ((1 one) (2 two) ($other (many $other)))))
+!(test (kind 1) one)
+!(test (kind 2) two)
+!(test (kind 9) (many 9))
+!(test (collapse (case (superpose (1 2 3)) ((2 two) ($x (other $x))))) ((other 1) two (other 3)))
+!(test (collapse (case (superpose (1 2 3)) ((9 nine)))) ())
+!(test (collapse (case (superpose (1 2 3)) ((2 two) (Empty none)))) (two))
+!(test (collapse (case (empty) ((1 one) (Empty none)))) (none))
+!(test (case (tick!) ((1 first) (2 second) (Empty none))) first)
+!(test (get-state &ticks) 1)
+!(test (once (case (let $v (superpose (5 6 7)) (let $_ (tick!) $v)) ((6 six) (Empty none)))) six)
+!(test (get-state &ticks) 3)
+!(test (collapse (let $y (superpose (1 2 1)) (case (if (== $y 1) 5 (empty)) ((5 five) (Empty none))))) (five none five))
+; A pattern binds for its own row.
+!(test (case (pair 3 4) (((pair $a $a) same) ((pair $a $b) (differ $a $b)))) (differ 3 4))
+!(test (case (pair 4 4) (((pair $a $a) same) ((pair $a $b) (differ $a $b)))) same)

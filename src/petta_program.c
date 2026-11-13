@@ -3338,6 +3338,7 @@ __attribute__((cold, noinline)) const PettaPlanNode *petta_program_project_compu
             : operation == CETTA_CONTROL_CONSTRUCT ? PETTA_PLAN_DATA
             : dynamic ? PETTA_PLAN_DYNAMIC_CALL : PETTA_PLAN_STATIC_CALL,
         .computation = computation,
+        .literal_case_default = source && source->literal_case_default,
         .source_position = source ? source->source_position : 0u,
         .source_debit = source ? source->source_debit : 0u,
         .relation_head_admitted = relation_head_admitted,
