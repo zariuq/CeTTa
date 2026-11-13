@@ -28,7 +28,9 @@ typedef struct {
     uint64_t n, cap;
 } Space;
 
-typedef struct { uint64_t thm; HolName name; } Label;
+/* A LABEL record: the theorem it named (taken when the record commits) and the
+ * id it was given by. */
+typedef struct { uint64_t thm; void *obj; HolName name; } Label;
 
 struct HolReplay {
     HolKernel *k;
@@ -48,7 +50,7 @@ struct HolReplay {
     HolName *names;
     size_t nnames, capnames;
     Space ty, tm, th;
-    uint64_t *emit;               /* EMIT records: theorem ids, in order */
+    void **emit;                  /* EMIT records: the theorems, taken when each commits */
     size_t nemit, capemit, delivered;
     Label *labels;
     size_t nlabels, caplabels;
@@ -73,6 +75,9 @@ static void replay_roots(HolKernel *k, void *ctx) {
         if (r->tm.st[i] == ST_OK) hk_mark_term(k, (HolTerm *)r->tm.obj[i]);
     for (uint64_t i = 0; i < r->th.n; i++)
         if (r->th.st[i] == ST_OK) hk_mark_thm(k, (HolThm *)r->th.obj[i]);
+    /* A committed output keeps its theorem after its id is dropped. */
+    for (size_t i = r->delivered; i < r->nemit; i++) hk_mark_thm(k, (HolThm *)r->emit[i]);
+    for (size_t i = 0; i < r->nlabels; i++) hk_mark_thm(k, (HolThm *)r->labels[i].obj);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -158,9 +163,9 @@ HolReplay *hol_replay_clone(const HolReplay *s) {
     }
     ok = ok && space_copy(&r->ty, &s->ty) && space_copy(&r->tm, &s->tm) && space_copy(&r->th, &s->th);
     if (ok && s->capemit) {
-        r->emit = (uint64_t *)malloc(s->capemit * sizeof(uint64_t));
+        r->emit = (void **)malloc(s->capemit * sizeof(void *));
         ok = r->emit != NULL;
-        if (ok) memcpy(r->emit, s->emit, s->nemit * sizeof(uint64_t));
+        if (ok) memcpy(r->emit, s->emit, s->nemit * sizeof(void *));
     }
     if (ok && s->caplabels) {
         r->labels = (Label *)malloc(s->caplabels * sizeof(Label));
@@ -529,7 +534,7 @@ static bool reserve_outputs(HolReplay *r, const Rec *rc) {
     if (s && !space_reserve(s, rc->info->nout)) return false;
     switch (rc->op) {
     case HOLR_NAME: return grow((void **)&r->names, &r->capnames, r->nnames, sizeof(HolName));
-    case HOLR_EMIT: return grow((void **)&r->emit, &r->capemit, r->nemit, sizeof(uint64_t));
+    case HOLR_EMIT: return grow((void **)&r->emit, &r->capemit, r->nemit, sizeof(void *));
     case HOLR_LABEL: return grow((void **)&r->labels, &r->caplabels, r->nlabels, sizeof(Label));
     case HOLR_NEW_AXIOM: return grow((void **)&r->axioms, &r->capaxioms, r->naxioms, sizeof(uint64_t));
     default: return true;
@@ -910,9 +915,12 @@ HolReplayState hol_replay_resume(HolReplay *r, uint64_t budget) {
                 for (unsigned i = 0; i < need; i++) space_put(outsp, x.out[i], ST_OK);
             if (x.env) r->env = x.env;
             if (rc.op == HOLR_NEW_AXIOM) r->axioms[r->naxioms++] = first;
-            if (rc.op == HOLR_EMIT) r->emit[r->nemit++] = rc.a[0];
+            /* An output is committed with its record: the theorem is taken now,
+             * and a later DROP of the id does not reach it. */
+            if (rc.op == HOLR_EMIT) r->emit[r->nemit++] = r->th.obj[rc.a[0]];
             if (rc.op == HOLR_LABEL) {
                 r->labels[r->nlabels].thm = rc.a[0];
+                r->labels[r->nlabels].obj = r->th.obj[rc.a[0]];
                 r->labels[r->nlabels].name = x.name;
                 r->nlabels++;
             }
@@ -961,11 +969,21 @@ HolStatus hol_replay_env(HolReplay *r, HolRef *out) {
 HolStatus hol_replay_next(HolReplay *r, HolRef *out, uint64_t *ordinal) {
     if (!r || !out) return HOL_MALFORMED;
     if (r->delivered >= r->nemit) return HOL_STALE;
-    uint64_t h = r->emit[r->delivered];
-    HolStatus s = hol_replay_thm(r, h, out);
-    if (s != HOL_OK) return s;
+    hk_begin_call(r->k);
+    HolRef ref = hk_ref_new(r->k, HOL_KIND_THM, r->emit[r->delivered], ++r->k->serial);
+    if (!ref) return r->k->status;
+    *out = ref;
     if (ordinal) *ordinal = r->delivered;
     r->delivered++;
+    return HOL_OK;
+}
+
+HolStatus hol_replay_label_thm(HolReplay *r, size_t i, HolRef *out) {
+    if (!r || !out || i >= r->nlabels) return HOL_MALFORMED;
+    hk_begin_call(r->k);
+    HolRef ref = hk_ref_new(r->k, HOL_KIND_THM, r->labels[i].obj, ++r->k->serial);
+    if (!ref) return r->k->status;
+    *out = ref;
     return HOL_OK;
 }
 
