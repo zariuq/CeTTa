@@ -30,4 +30,4 @@
 !(native-truth-string "True")
 !(native-truth-effects "/once")
 !(collapse (match &self (truth-effect $value) $value))
-!(collapse (let $text (superpose ("/d" "d" "/d")) (native-truth-case $text)))
+!(sort-atom (collapse (let $text (superpose ("/d" "d" "/d")) (native-truth-case $text))))

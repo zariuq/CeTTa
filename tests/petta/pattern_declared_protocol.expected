@@ -12,4 +12,4 @@ true
 rejected
 (kept b)
 (kept c)
-(selected selected let-subject case-subject)
+(case-subject let-subject selected selected)

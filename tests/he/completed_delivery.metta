@@ -87,6 +87,6 @@
 !(let $a (+ $b 1) (let $b 1 (+ $a 10)))
 !(let $a (+ $b 1) (let $b 1 (if (== $a 2) yes no)))
 !(let $a (+ $b 1) (let $b 1 (pair $a)))
-!(collapse (let $a (+ $b 1) (let $b (superpose (1 1 2)) (pair $a))))
+!(let $answers (collapse (let $a (+ $b 1) (let $b (superpose (1 1 2)) (pair $a)))) (sort-atom $answers))
 !(let $a (quote (+ $b 1)) (let $b 1 $a))
 !(collapse (let* (($a (+ $b 1)) ($b "s")) $a))

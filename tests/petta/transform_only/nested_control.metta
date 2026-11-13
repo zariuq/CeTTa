@@ -1,0 +1,26 @@
+; Control forms inside one another and inside recursion, with effects in order.
+!(bind! &log (new-space))
+(= (note! $x) (add-atom &log (noted $x)))
+(= (count-down $n) (if (> $n 0) (let $_ (note! $n) (count-down (- $n 1))) done))
+!(test (count-down 3) done)
+!(test (collapse (match &log (noted $x) $x)) (3 2 1))
+(= (classify $n)
+   (let $r (% $n 3)
+     (case $r
+       ((0 (if (> $n 5) big-fizz fizz))
+        ($k (let* (($a (* $k 2)) ($b (+ $a 1))) (rest $k $a $b)))))))
+!(test (classify 3) fizz)
+!(test (classify 9) big-fizz)
+!(test (classify 5) (rest 2 4 5))
+(= (len $l) (if (== $l ()) 0 (let ($h $t) (decons-atom $l) (+ 1 (len $t)))))
+!(test (len (a b c d)) 4)
+(= (pairs) (let $x (superpose (1 2)) (let $y (superpose (a b)) ($x $y))))
+!(test (collapse (pairs)) ((1 a) (1 b) (2 a) (2 b)))
+!(test (collapse (superpose ((let $x 1 (+ $x 1)) (if True yes no) (case 3 ((3 three)))))) (2 yes three))
+!(test (collapse (if (superpose (True False True)) hit miss)) (hit miss hit))
+!(test (collapse (if (== 1 2) never)) ())
+; A variable bound outside a form is seen inside it, and one bound inside is
+; seen after it.
+(= (outer $x) (let $y (+ $x 1) (if (> $y 2) (let $z (* $x $y) (sum $x $y $z)) (small $x $y))))
+!(test (outer 1) (small 1 2))
+!(test (outer 2) (sum 2 3 6))

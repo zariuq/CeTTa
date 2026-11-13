@@ -1,7 +1,7 @@
 ; Removals keep the exact index: ground queries read it after each removal.
 (A 1 x) (B 2 y) (A 1 x) (C 3 z) (B 2 y) (D 4 w)
 (= (has $a) (collapse (match &self $a found)))
-(= (count-of $a) (size-atom (collapse (match &self $a found))))
+(= (count-of $a) (let $found (collapse (match &self $a found)) (size-atom $found)))
 !(count-of (A 1 x))
 !(remove-atom &self (A 1 x))
 !(count-of (A 1 x))

@@ -5,7 +5,7 @@
 !(add-atom &h (edge b c))
 !(add-atom &h (edge c d))
 !(space-set-backend! &h pathmap)
-!(space-truncate &h 0)
+!(space:stack:truncate &h 0)
 !(assertEqualToResult (size &h) (0))
 !(assertEqualToResult (match &h (edge $x $y) ($x $y)) ())
 !(space-set-backend! &h native-candidate-exact)

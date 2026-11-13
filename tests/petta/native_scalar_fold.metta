@@ -37,7 +37,7 @@
 !(foldl-atom (1.5 2) 0 $a $x (+ $a $x))
 (= (either $a $x) (+ $a $x))
 (= (either $a $x) (- $a $x))
-!(collapse (foldl-atom (1 2) 0 $a $x (either $a $x)))
+!(sort-atom (collapse (foldl-atom (1 2) 0 $a $x (either $a $x))))
 (= (shrink ($p $q) $x) ($p))
 !(collapse (foldl-atom (1 2) (0 0) $acc $x (shrink $acc $x)))
 ; A comparison read as a value, not as a test: the ordinary fold answers

@@ -1,0 +1,18 @@
+; The program's own space holds its atoms as written: facts, equations and
+; declarations, in order; emptied, its functions are gone.
+(friend tim tom)
+(friend tom ann)
+(= (double $x) (+ $x $x))
+(: double (-> Number Number))
+!(test (collapse (match &self (friend $a $b) (pair $a $b))) ((pair tim tom) (pair tom ann)))
+!(test (size-atom (collapse (get-atoms &self))) 4)
+!(test (repr (collapse (match &self (= (double $x) ($op $l $r)) $op))) "(+)")
+!(test (repr (collapse (match &self (: double $type) $type))) "((-> Number Number))")
+!(add-atom &self (friend ann bob))
+!(test (size-atom (collapse (get-atoms &self))) 5)
+!(remove-atom &self (friend tim tom))
+!(test (collapse (match &self (friend $a $b) $a)) (tom ann))
+!(test (double 4) 8)
+!(test (let $done (collapse (match &self $atom (remove-atom &self $atom)))
+         (size-atom (collapse (get-atoms &self)))) 0)
+!(test (repr (double 4)) "(double 4)")

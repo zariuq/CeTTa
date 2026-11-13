@@ -18,8 +18,8 @@
 !(add-atom &right-space (item gamma))
 
 !(test
-    (collapse (match &left-space (item $value) $value))
-    (alpha alpha beta))
+    (sort-atom (collapse (match &left-space (item $value) $value)))
+    (sort-atom (alpha alpha beta)))
 !(test
     (collapse (match &right-space (item $value) $value))
     (gamma))
@@ -27,7 +27,7 @@
 (= (left-space) &left-space)
 !(test
     (let $space (left-space)
-         (collapse (match $space (item $value) $value)))
+         (sort-atom (collapse (match $space (item $value) $value))))
     (alpha alpha beta))
 !(test
     (foldall +
@@ -38,7 +38,7 @@
 !(remove-atom &left-space (item alpha))
 !(test
     (collapse (match &left-space (item $value) $value))
-    (beta))
+    (alpha beta))
 !(test (is-space &left-space) True)
 !(test (is-space (left-space)) True)
 !(test (is-space not-a-space) False)

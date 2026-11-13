@@ -461,6 +461,11 @@ petta_program_relational_execution_class(
 /* True when PeTTa's relational machine, rather than an ordinary user
  * equation or inert constructor, owns the head's execution semantics. */
 bool petta_program_head_is_intrinsic(SymbolId head);
+/* A name the engine provides and this session offers is applied at any
+ * arity, whether the application is written or reached at run time: a call
+ * at one of its arities, otherwise a partial application or an
+ * over-application, which dispatch decides (RegisteredArity.reference). */
+bool petta_program_head_applies_at_any_arity(SymbolId head);
 
 /*
  * PeTTa parses a document before executing its directives.  Registering the

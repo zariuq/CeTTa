@@ -11,18 +11,14 @@
 ; Keep the streamed-template witness genuinely pure.  A variable-headed
 ; expression is conservatively relational under the generated effect law and
 ; therefore belongs on the oracle path, not in this positive discriminator.
-!(assertEqualToResult
-  (collapse (match &pull (row $key $value) $value))
-  ((1 1 2)))
+!(assertEqualToResult (match &pull (row $key $value) $value) (1 1 2))
 
 ; Ground-exact and stored-variable rows in the queried relation form disjoint
 ; indexed and residual partitions.  One cursor presents their exact bag to
 ; every consumer without materializing the whole space.
 !(add-atom &pull (fallback red any))
 !(add-atom &pull (fallback $value any))
-!(assertEqualToResult
-  (collapse (match &pull (fallback red any) hit))
-  ((hit hit)))
+!(assertEqualToResult (match &pull (fallback red any) hit) (hit hit))
 
 ; Multiplicity is retained across the partition boundary: two exact
 ; occurrences plus three residual occurrences make five results.
@@ -74,11 +70,16 @@
 !(add-atom &atoms alpha)
 !(add-atom &atoms beta)
 !(add-atom &atoms beta)
-!(once (get-atoms &atoms))
-!(select 2 (get-atoms &atoms))
-!(collapse (get-atoms &atoms))
-!(fold (get-atoms &atoms) () $acc $item
-  (eval (cons-atom $item $acc)))
+; Which atoms a bounded prefix holds is open, and a fold that lists the atoms
+; meets them in no promised order: a prefix is read by its size and what of it
+; the space does not hold, the fold's list sorted.
+!(case (once (get-atoms &atoms)) ((alpha stored) (beta stored) ($other $other)))
+!(let $r (select 2 (get-atoms &atoms)) (selected (size-atom $r) (subtraction-atom $r (alpha beta beta))))
+!(let $answers (collapse (get-atoms &atoms)) (sort-atom $answers))
+!(let $folded
+   (fold (get-atoms &atoms) () $acc $item
+     (eval (cons-atom $item $acc)))
+   (sort-atom $folded))
 
 ; The expr-row cursor does not carry stored-variable opening contexts yet.
 ; Such spaces must decline before cursor admission and remain on the exact
@@ -156,8 +157,5 @@
 !(add-atom &joined (right k0 v0))
 !(add-atom &joined (left n1 k1))
 !(add-atom &joined (right k1 v1))
-!(assertEqualToResult
-  (collapse
-    (match &joined (left $x $k)
-      (match &joined (right $k $y) ($x $y))))
-  (((n0 v0) (n1 v1))))
+!(assertEqualToResult (match &joined (left $x $k)
+      (match &joined (right $k $y) ($x $y))) ((n0 v0) (n1 v1)))

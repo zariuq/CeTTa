@@ -11,6 +11,4 @@
   (hyperpose
     ((hyperpose-mark-hidden hidden-a)
      (hyperpose-mark-hidden hidden-b))))
-!(assertEqual
-  (collapse (match &hyperpose-hidden-effects (seen $x) $x))
-  (hidden-a hidden-b))
+!(assertEqualToResult (match &hyperpose-hidden-effects (seen $x) $x) (hidden-a hidden-b))

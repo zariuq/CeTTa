@@ -8,7 +8,7 @@
 !(collapse (inc 1.5))
 !(collapse (inc 99999999999999999999))
 !(collapse (inc "s"))
-!(collapse (+ (superpose (1 "x" 2.5)) 0))
+!(sort-atom (collapse (+ (superpose (1 "x" 2.5)) 0)))
 (: slen (-> String Number))
 (= (slen $s) 1)
 !(collapse (slen "abc"))

@@ -19,7 +19,7 @@
 !(collapse (nt 0 "s"))
 (: pick (-> Number %Undefined% Number))
 (= (pick $n $acc) (if (== $n 0) $acc (superpose ((pick (- $n 1) $acc) (pick (- $n 1) 7)))))
-!(collapse (pick 2 1))
+!(sort-atom (collapse (pick 2 1)))
 !(collapse (pick 0 "x"))
 ; So across equations: one whose answer is not shown of the range and another
 ; whose call to itself is used keep the check of every call.

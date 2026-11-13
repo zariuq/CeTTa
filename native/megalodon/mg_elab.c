@@ -113,7 +113,14 @@ bool mge_map_get(const Map *m, uint64_t key, uint64_t *val) {
     return true;
 }
 
+void mge_conv_forget(MgElab *e) {
+    ++e->conv_epoch;
+    e->refuted_len = 0;
+}
+
 void mge_map_set(MgElab *e, Map *m, uint64_t key, uint64_t val) {
+    if (m == &e->sigdelta || m == &e->sigdelta_opaque)
+        mge_conv_forget(e);
     Slot *hit = map_slot(m, key);
     if (hit) {
         hit->val = val;
@@ -2191,6 +2198,8 @@ static void add_sigdelta(MgElab *e, uint32_t h, uint32_t levels, MgTm *m) {
     PTm *d = PERM(e, PTm);
     d->levels = levels;
     d->m = n;
+    if (levels >= 6u)
+        e->conv_memory_off = true;
     mge_map_set(e, &e->sigdelta, h, V(d));
 }
 
@@ -2330,6 +2339,7 @@ void mge_pushpolypf(MgElab *e, const char *x, uint32_t i, MgTm *prop) {
 }
 
 static void run_undo(MgElab *e, size_t mark) {
+    mge_conv_forget(e);
     while (e->undo_len > mark) {
         Undo u = e->undo[--e->undo_len];
         switch (u.kind) {
@@ -2666,7 +2676,7 @@ static void eval_var(MgElab *e, const MgSourceItem *it) {
     const Hy *pf = NULL;
     for (size_t k = count; k-- > 0;) {
         Hy *h = PERM(e, Hy);
-        *h = (Hy){old[k]->name, mge_tmshift(e, 0u, (int32_t)n, old[k]->prop), pf};
+        mge_hy_set(h, old[k]->name, mge_tmshift(e, 0u, (int32_t)n, old[k]->prop), pf);
         pf = h;
     }
     e->ctxtm = cx;
@@ -2686,7 +2696,7 @@ static void eval_hyp(MgElab *e, const MgSourceItem *it) {
     MgTm *atm = check_tm(e, it->a, mge_ty_prop(e));
     mge_undo_ctx(e);
     Hy *h = PERM(e, Hy);
-    *h = (Hy){x, atm, e->ctxpf};
+    mge_hy_set(h, x, atm, e->ctxpf);
     e->ctxpf = h;
     e->appf = mge_app_push(e, e->appf, APP_HYP, x);
     Clo *c = PERM(e, Clo);
@@ -3080,6 +3090,7 @@ MgElab *mg_elab_new(const MgElabOptions *options) {
         e->prove_aby = options->prove_aby;
         e->aby_max_steps = options->aby_max_steps;
         e->aby_max_depth = options->aby_max_depth;
+        e->conv_memory_off = options->reference_conversion;
     }
     return e;
 }
@@ -3088,6 +3099,8 @@ void mg_elab_aby_counts(const MgElab *e, uint64_t *tried, uint64_t *proved) {
     *tried = e->aby_tried;
     *proved = e->aby_proved;
 }
+
+uint64_t mg_elab_conversion_steps(const MgElab *e) { return e->conv_steps; }
 
 void mg_elab_free(MgElab *e) {
     if (!e)
@@ -3110,6 +3123,7 @@ void mg_elab_free(MgElab *e) {
     }
     free(e->frames);
     free(e->undo);
+    free(e->refuted);
     free(e->aby_pool);
     free(e->aby_runs);
     free(e->future);
@@ -3158,6 +3172,7 @@ static void item_body(MgElab *e, void *ctx) {
 int mg_elab_item(MgElab *e, const MgSourceItem *item) {
     e->lineno = item->end_line;
     e->charno = item->end_char;
+    mge_conv_forget(e);
     int k = mge_try_run(e, item_body, (void *)item);
     chunks_free(&e->tmp);
     if (k == 0)

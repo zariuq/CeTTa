@@ -2,13 +2,13 @@ first-effect
 second-effect
 last-effect
 last-effect
-(a b a b a b)
+(a a a b b b)
 (left left left left right right)
 (Box 9)
 done
 (kept)
 ((Box kept) (Box kept))
-(tail tail outside)
+(outside tail tail)
 ()
 true
 ()
@@ -25,6 +25,6 @@ done
 (Box (progn (println! inert) (+ 1 2)))
 ((Box old))
 true
-((Box old) (Box newer))
+((Box newer) (Box old))
 true
 ((Box old))

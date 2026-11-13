@@ -47,12 +47,12 @@
 !(add-atom &mutation-nonlinear (pair c d))
 !(remove-atom &mutation-nonlinear (pair $same $same))
 !(test
-    (collapse (match &mutation-nonlinear (pair $left $right)
-                     (pair $left $right)))
-    ((pair a b) (pair c d)))
+    (sort-atom (collapse (match &mutation-nonlinear (pair $left $right)
+                     (pair $left $right))))
+    (sort-atom ((pair a b) (pair c c) (pair c d))))
 !(test
-    (collapse (match &mutation-nonlinear (tagged-value $value) $value))
-    (quote (first second)))
+    (sort-atom (collapse (match &mutation-nonlinear (tagged-value $value) $value)))
+    (sort-atom (quote (first second))))
 
 ; Stored variables are local to their occurrence.  A closed removal pattern
 ; may match such an open occurrence without capturing any ambient variable.
@@ -82,5 +82,5 @@
 !(add-atom &mutation-negative (row keep-2))
 !(remove-atom &mutation-negative (other $value))
 !(test
-    (collapse (match &mutation-negative (row $value) $value))
-    (keep-1 keep-2))
+    (sort-atom (collapse (match &mutation-negative (row $value) $value)))
+    (sort-atom (keep-1 keep-2)))

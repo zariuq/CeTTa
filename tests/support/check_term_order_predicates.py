@@ -113,6 +113,18 @@ for reference in ("0", "1"):
     check("he", "extended", "!(@< (/ 1 0) 2)",
           "[(Error (/ 1 0) DivisionByZero)]\n", environment)
 
+# An integer and a float compare exactly, in he and in he-compat alike: the
+# fixed Hyperon he-compat follows keeps the integer exact, where 0.2.10
+# rounded it to a float and found 2^53 + 1 equal to the float 2^53.
+exact_numbers = ("!(== 9007199254740993 9007199254740992.0)\n"
+                 "!(< 9007199254740992.0 9007199254740993)\n"
+                 "!(>= 9223372036854775807 9223372036854775808.0)\n"
+                 "!(unify 9007199254740993 9007199254740992.0 same differ)\n"
+                 "!(== 42 42.0)\n")
+for profile in ("he", "he-compat"):
+    check("he", profile, exact_numbers,
+          "[False]\n[True]\n[False]\n[differ]\n[True]\n")
+
 case_source = (root / "tests/he_case_two_sided.metta").read_text()
 case_expected = (root / "tests/he_case_two_sided.expected").read_text()
 for profile in ("he", "he-compat", "extended"):

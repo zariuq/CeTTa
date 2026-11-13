@@ -1,0 +1,56 @@
+true
+true
+true
+(matched-atom-call ((saw (made a (+ 41 1))) (saw (made b c))))
+(matched-atom-body ((saw (made a (+ 41 1))) (saw (made b c))))
+(matched-atom-match ((saw (made a (+ 41 1))) (saw (made b c))))
+(template-code-runs ((saw 2) (saw 2)))
+true
+(row-top ((kept (+ 41 1))))
+(row-body ((kept (+ 41 1))))
+true
+true
+(clause-lists (((+ 1 2) (q 2)) ((p 1) (q 2))))
+(clause-lists-let ((k ((+ 1 2) (q 2))) (k ((p 1) (q 2)))))
+(fn-dest (true))
+(fn-dest-template (true))
+(fn-dest-stored ((got (r (+ 1 2))) (got (w (+ 1 2) (u 7)))))
+(fn-dest-runs (true))
+(fn-dest-ran ((ran 3)))
+(once-fn-dest (got-u (r (+ 1 2))))
+(once-fn-dest-row (got-u (w (+ 41 1))))
+(once-caller-row (saw (+ 41 1)))
+(param-let-value ((made (r (+ 1 2)))))
+(param-let-bound ((kept (r (+ 1 2)))))
+(param-written-code ((made 3)))
+true
+true
+true
+(guard-other-space (1))
+true
+true
+true
+(guard-same-space (1))
+(guard-kept (1 2 3))
+true
+(let-binds ((got 3 3)))
+(let-binds-match ((got 3 3)))
+true
+(let-binds-stored (1))
+(let-binds-stored-row ((cell2 7 (uses 7))))
+(let-binds-nothing ((got 4)))
+(let-binding-refused ())
+true
+(let-error-space (Error (domain_error (function_input_arities + (2)) 3) none))
+(let-error-call (Error (domain_error (function_input_arities + (2)) 3) none))
+(let-error-once (Error (domain_error (function_input_arities + (2)) 3) none))
+(let-error-bare (Error (domain_error (function_input_arities + (2)) 3) none))
+(let-error-all (Error (domain_error (function_input_arities + (2)) 3) none))
+(let-error-row-stays ((s 1)))
+(let-error-caught-inside ((made (Error (domain_error (function_input_arities + (2)) 3) none))))
+(let-error-row-taken ())
+true
+(list-value-open ((parts 1 (2 3))))
+(list-value-decompose ((parts 1 (2 3))))
+(list-value-wrong-head ())
+(list-value-raw-cons ())

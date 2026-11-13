@@ -1,4 +1,4 @@
 (= (choices) (superpose (a b b)))
 
-!(collapse (choices))
+!(sort-atom (collapse (choices)))
 !(collapse (empty))

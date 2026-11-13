@@ -63,13 +63,14 @@
 ; holds fires nothing and answers nothing; an `all` with no extension fires with no
 ; instances.
 ;
-; A `let` expression and a template evaluated by the caller are code whose variables
-; the sources bind to data: each such variable is quoted before the sources run, so a
-; value is never evaluated again, as in `match`.
+; Code keeps its source variables as parameters. Matching supplies their
+; values at the argument boundary, without inserting quote syntax into raw
+; data arguments inside the body.
 ;
-; `remove-atom` removes every copy of an atom, so a take removes them all and stores
-; back the copies the firing does not take.  The stored-back copies follow the atoms
-; added before the commit.
+; The reference clears a taken atom's matching rows and restores the copies
+; the firing keeps. Its local loop accepts one-copy or all-copy removal hosts.
+; The restored copies follow the atoms added before the commit. Exact takes
+; of open stored atoms require the native kernel; this reference counts matches.
 ;
 ; Hosts whose branches run in parallel.  "Nothing runs between validation and the
 ; commit" holds by itself where branches run one after another.  Where hyperpose
@@ -91,7 +92,7 @@
    (let $plain (tfs:normalize (tfs:conjuncts $sources))
      (let $vars (tfs:source-vars $plain ())
        (let $conjuncts (tfs:protect-lets $vars $plain)
-         (let $instance (if (== $destination tfs:caller) (tfs:protect $vars $template) $template)
+         (let $instance (if (== $destination tfs:caller) (tfs:protect-template $vars $template) $template)
            (let $matches (tfs:proposals $space $conjuncts $instance)
              (let (tfs:kmatch $guide) (superpose $matches)
                (let $kc (tfs:guided $conjuncts $guide)
@@ -214,6 +215,7 @@
    (case (tfs:kind $e)
      ((Variable (if (tfs:holds $acc $e) $acc (cons-atom $e $acc)))
       (Expression (tfs:vars-each $e $acc))
+      (Empty $acc)
       ($_other $acc))))
 
 (= (tfs:vars-each $xs $acc)
@@ -226,17 +228,70 @@
      (let ($w $more) (decons-atom $vars)
        (if (== $w $v) True (tfs:holds $more $v)))))
 
-(= (tfs:protect $vars $e)
+(= (tfs:code-uses $vars $e)
+   ; A compiled callable may have no metatype answer. It is a held value,
+   ; not expression syntax whose internals the library may rename.
    (case (tfs:kind $e)
-     ((Variable (if (tfs:holds $vars $e) (cons-atom quote (cons-atom $e ())) $e))
-      (Expression (tfs:protect-each $vars $e))
-      ($_other $e))))
+     ((Variable (tfs:holds $vars $e))
+      (Expression (tfs:code-uses-each $vars $e))
+      (Empty False)
+      ($_other False))))
 
-(= (tfs:protect-each $vars $xs)
-   (if (== $xs ()) ()
+(= (tfs:code-uses-each $vars $xs)
+   (if (== $xs ()) False
      (let ($x $more) (decons-atom $xs)
-       (let $px (tfs:protect $vars $x)
-         (let $pmore (tfs:protect-each $vars $more) (cons-atom $px $pmore))))))
+       (if (tfs:code-uses $vars $x) True (tfs:code-uses-each $vars $more)))))
+
+; A private variable is created by an ordinary clause activation.
+(= (tfs:fresh-variable) (tfs:fresh $private))
+(= (tfs:private-mapping $vars)
+   (if (== $vars ()) ()
+     (let ($source $more) (decons-atom $vars)
+       (let (tfs:fresh $private) (tfs:fresh-variable)
+         (let $entry (tfs:triple tfs:renaming $source $private)
+           (cons-atom $entry (tfs:private-mapping $more)))))))
+(= (tfs:renamed-variable $mapping $variable)
+   (if (== $mapping ()) $variable
+     (let ($entry $more) (decons-atom $mapping)
+       (let ($_tag $source $private) (tfs:parts $entry)
+         (if (== $source $variable) $private
+             (tfs:renamed-variable $more $variable))))))
+(= (tfs:rename-code $mapping $expression)
+   (case (tfs:kind $expression)
+     ((Variable (tfs:renamed-variable $mapping $expression))
+      (Expression (tfs:rename-code-each $mapping $expression))
+      (Empty $expression)
+      ($_other $expression))))
+(= (tfs:rename-code-each $mapping $expressions)
+   (if (== $expressions ()) ()
+     (let ($one $more) (decons-atom $expressions)
+       (let $renamed (tfs:rename-code $mapping $one)
+         (cons-atom $renamed (tfs:rename-code-each $mapping $more))))))
+(= (tfs:bind-code $mapping $body)
+   (if (== $mapping ()) $body
+     (let ($entry $more) (decons-atom $mapping)
+       (let ($_tag $source $private) (tfs:parts $entry)
+         (let $tail (tfs:bind-code $more $body)
+           (let $value (cons-atom quote (cons-atom $source ()))
+             (cons-atom let (cons-atom $private
+               (cons-atom $value (cons-atom $tail ()))))))))))
+(= (tfs:protect-code $vars $expression)
+   (if (tfs:code-uses $vars $expression)
+       (let $mapping (tfs:private-mapping $vars)
+         (let $body (tfs:rename-code $mapping $expression)
+           (tfs:bind-code $mapping $body)))
+       $expression))
+
+(= (tfs:protect-template $vars $template)
+   (if (tfs:comma $template)
+       (cons-atom , (tfs:protect-templates $vars (cdr-atom $template)))
+       (tfs:protect-code $vars $template)))
+
+(= (tfs:protect-templates $vars $templates)
+   (if (== $templates ()) ()
+     (let ($one $more) (decons-atom $templates)
+       (let $code (tfs:protect-code $vars $one)
+         (cons-atom $code (tfs:protect-templates $vars $more))))))
 
 (= (tfs:protect-lets $vars $cs)
    (if (== $cs ()) ()
@@ -247,7 +302,7 @@
 (= (tfs:protect-conjunct $vars $c)
    (case (tfs:mode $c)
      ((let (let ($l $pattern $expression) (tfs:parts $c)
-             (let $pe (tfs:protect $vars $expression) (tfs:triple $l $pattern $pe))))
+             (let $pe (tfs:protect-code $vars $expression) (tfs:triple $l $pattern $pe))))
       (all (let $inner (tfs:protect-lets $vars (tfs:conjuncts (car-atom (cdr-atom $c))))
                (let $wrapped (cons-atom , $inner) (cons-atom all (cons-atom $wrapped ())))))
       (once (let $inner (tfs:protect-lets $vars (tfs:conjuncts (car-atom (cdr-atom $c))))
@@ -580,7 +635,7 @@
          (if (and (== $mode take) (not (is-alpha-member $e $done)))
              (let* (($have (tfs:stored $s $a))
                     ($n (tfs:count $e $all))
-                    ($_r (remove-atom $s $a))
+                    ($_r (tfs:remove-matching $s $a))
                     ($_b (tfs:store-back $s $a (- $have $n))))
                (tfs:apply-takes $all $more (cons-atom $e $done)))
              (tfs:apply-takes $all $more $done))))))
@@ -613,3 +668,7 @@
    (if (== $instances ()) $n
      (let ($i $more) (decons-atom $instances)
        (let $_x (add-atom $s $i) (tfs:add-all $s $more (+ $n 1))))))
+
+; Finish the selection before the reference stores back its retained copies.
+(= (tfs:remove-matching $s $a)
+   (if (remove-atom $s $a) (tfs:remove-matching $s $a) ()))

@@ -79,7 +79,10 @@ static Atom *declaration_label(Atom *body, unsigned group) {
                        head_is(body, "RegularTriviaDeclV1", 3u)))
         return body->expr.elems[1];
     if (group == 5u && (head_is(body, "ParserLineCommentV1", 2u) ||
-                       head_is(body, "ParserBlockCommentV1", 3u)))
+                       head_is(body, "ParserBlockCommentV1", 3u) ||
+                       head_is(body, "ParserLayoutV1", 2u) ||
+                       head_is(body, "ParserLayoutStopV1", 2u) ||
+                       head_is(body, "ParserLayoutToplevelV1", 2u)))
         return body->expr.elems[1];
     return NULL;
 }
@@ -95,6 +98,10 @@ static int declaration_group(Atom *body) {
         head_is(body, "RegularTriviaDeclV1", 3u)) return 4;
     if (head_is(body, "ParserLineCommentV1", 2u) ||
         head_is(body, "ParserBlockCommentV1", 3u)) return 5;
+    /* layout declarations are lexical-stream declarations beside comments */
+    if (head_is(body, "ParserLayoutV1", 2u) ||
+        head_is(body, "ParserLayoutStopV1", 2u) ||
+        head_is(body, "ParserLayoutToplevelV1", 2u)) return 5;
     return -1;
 }
 

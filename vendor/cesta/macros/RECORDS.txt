@@ -1,0 +1,103 @@
+Record families
+===============
+
+Records.module holds declaration families: each use declares one record type
+and the functions that operate on it. The caller chooses the public names.
+The output is ordinary C, with the same instructions as the hand-written
+declarations.
+
+Worklists
+---------
+
+Import the Worklists theory and write:
+
+  (worklist int size_t Ints push_int)
+
+element and count are declaration specifiers; count must be unsigned. This
+declares
+
+  typedef struct Ints { int *data; size_t len, cap; } Ints;
+  static inline int push_int(Ints *self, int value,
+                             void *(*resize)(void *old, size_t bytes));
+
+push returns 1 after appending value and 0 on failure. Capacity begins at 8
+elements and doubles. Doubling and capacity*sizeof(element) are checked before
+the resize call. On every failure the record and its elements are unchanged:
+a null record, len > cap, a null buffer with nonzero capacity, an absent
+resize hook when growth is needed, a size overflow, or a failed resize.
+
+The allocation policy is the resize argument. It has realloc-like ownership:
+NULL preserves the old allocation, and success returns a block that retains
+the old contents. A record over caller-provided storage with spare capacity
+needs no hook and may pass a null one. A zero-initialized record is empty.
+
+Read cursors
+------------
+
+Import the Cursors theory and write:
+
+  (read-cursor int Context Read IntCursor next_int)
+
+element, context and next_type are declaration specifiers; next_type is a
+function-pointer type taking const context * and returning const element *.
+This declares
+
+  typedef struct IntCursor { const Context *ctx; Read next; } IntCursor;
+  static inline const int *next_int(const IntCursor *self);
+
+next_int returns self->next(self->ctx). The cursor borrows its context and
+holds no other state: position, exhaustion and restart belong to the context
+and to the functions the caller admits for next_type.
+
+Under ownership checking the caller declares the callback implementations:
+
+  (callback Read (targets first second))
+  (function first (returns-borrow 0 value))
+  (function second (returns-borrow 0 value))
+
+The family supplies the record fields and next_int's borrowed-result contract.
+The generated body is checked like written code. The result borrows from the
+context, the context outlives the cursor, and next holds only a listed function.
+With ownership checking, the callback type must be a single C typedef name.
+
+State cursors
+-------------
+
+A state cursor contains its navigation context by value:
+
+  (state-cursor int Context Step items IntCursor next_int)
+
+This declares
+
+  typedef struct IntCursor { Context ctx; Step next; } IntCursor;
+  static inline const int *next_int(IntCursor *self);
+
+next_int calls self->next(&self->ctx). Context is an ordinary C structure; the
+caller declares its reference fields and Step's permitted implementations.
+The fourth argument names the context's reference field from which the callback
+borrows its nullable result. For example:
+
+  (record Context (field items (borrow read nullable)))
+  (callback Step (targets advance))
+  (function advance (returns-borrow 0 items nullable))
+
+The family supplies IntCursor's callback field and next_int's result contract,
+which names ctx.items. Each cursor owns its navigation values and borrows the
+data through the context's declared fields. Copying borrowed context fields
+retains their input lifetimes. Owning fields follow the ordinary move rules.
+A borrowed result cannot escape its source lifetime or permit conflicting
+mutation. A null return represents exhaustion when that is the callback's
+declared behavior; the family itself does not choose an iteration policy.
+
+Family-supplied contracts require an explicit (ownership (check-all) ...).
+Without it, expansion remains ordinary C. Identical explicit contracts remain
+compatible; a conflicting declaration is refused. The family does not admit
+unknown callbacks or turn host operations into checked implementations.
+
+Boundary
+--------
+
+A family declares what its template writes; it adds no allocation, hidden
+state or dispatch table. Member access inside a family is tied to the record
+that declares the member. Element lifetime, when elements are themselves
+references, follows the element type's own contracts.

@@ -119,7 +119,10 @@ def acceptance(binary):
         owned = counters.get("transform-cursor-owned-bytes-peak", 0)
         if peak == 0 or owned == 0 or peak < owned:
             raise AssertionError(f"invalid cursor byte accounting: total={peak}, owned={owned}")
-        expected_peaks = {200: (3896, 5600), 400: (3896, 7200)}
+        # The cursor's own vectors, and with them what its readers' view
+        # keeps: the list of the rows removed since the take froze it, not a
+        # copy of the rows, so neither grows with the space.
+        expected_peaks = {200: (4216, 4344), 400: (4216, 4344)}
         if (owned, peak) != expected_peaks[n]:
             raise AssertionError(
                 f"cursor-owned vector accounting changed for n={n}: "
@@ -130,8 +133,10 @@ def acceptance(binary):
               f"owned peak {owned} bytes, entry-inclusive accounted peak {peak} bytes")
     if owned_peaks[0] != owned_peaks[1]:
         raise AssertionError(f"cursor-owned peak grew from n to 2n: {owned_peaks}")
-    if accounted_peaks[1] <= accounted_peaks[0]:
-        raise AssertionError("the taking case did not expose its detached entry-row retention")
+    if accounted_peaks[1] != accounted_peaks[0]:
+        raise AssertionError(
+            "the taking case kept rows for its readers: the accounted peak "
+            f"grew from n to 2n: {accounted_peaks}")
 
     n = 100
     lines = ["!(bind! &s (new-space))"]
@@ -176,9 +181,9 @@ def acceptance(binary):
             raise AssertionError(f"zero-proposal {key}: expected {expected}, got {counters.get(key)}")
     owned = counters.get("transform-cursor-owned-bytes-peak", 0)
     accounted = counters.get("transform-cursor-accounted-bytes-peak", 0)
-    if (owned, accounted) != (3896, 3896):
+    if (owned, accounted) != (4216, 4216):
         raise AssertionError(
-            f"zero-proposal high-water accounting changed: expected {(3896, 3896)}, "
+            f"zero-proposal high-water accounting changed: expected {(4216, 4216)}, "
             f"got {(owned, accounted)}")
     print(f"PASS: zero proposals retain the failed-match owned peak {owned} bytes "
           f"and entry-inclusive peak {accounted} bytes")
@@ -461,7 +466,7 @@ def late_cursor_decline(binary):
 """, "late_cursor_decline", extra_env={
         "CETTA_TEST_TRANSFORM_CURSOR_CLONE_FAIL_AT": "3"})
     if proc.returncode != 0 or proc.stdout.splitlines()[-1] != \
-            "(written ((seen (quote a) (quote 1))))":
+            "(written ((seen a 1)))":
         raise AssertionError(
             f"late cursor decline replayed or lost earlier effects: "
             f"{proc.stdout!r}; {proc.stderr!r}")

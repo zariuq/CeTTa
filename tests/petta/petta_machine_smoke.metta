@@ -1,0 +1,43 @@
+!(import! &self (library lib_transform))
+!(import! &self (library petta_machine))
+
+(: check (-> Atom Atom %Undefined%))
+(= (check $name $expression)
+   (let $host (collapse (eval $expression))
+     (let $machine (catch (pm:answers $expression))
+       (let $_shown (println! (machine $name $machine))
+         (if (=alpha $host $machine) (holds $name (pm:steps)) (FAILS $name $host $machine))))))
+
+(= (colour) red)
+(= (colour) green)
+(= (keep-first) (progn (colour) (cut) kept))
+(= (keep-first) never)
+(= (first-of (cons $h $t)) $h)
+!(pm:program ((= (colour) red) (= (colour) green)
+              (= (keep-first) (progn (colour) (cut) kept))
+              (= (keep-first) never)
+              (= (first-of (cons $h $t)) $h)))
+
+!(check literal 7)
+!(check arithmetic (+ 1 (* 2 3)))
+!(check choices (collapse (colour)))
+!(check cut (collapse (keep-first)))
+!(check list-view (first-of (1 2 3)))
+!(check empty-list (collapse (first-of ())))
+!(check repeated-variable (collapse (let ($x $x) (quote (1 2)) $x)))
+!(check empty-case (collapse (let $y (superpose (1 2 1))
+    (case (if (== $y 1) 5 (empty)) ((5 five) (Empty none))))))
+!(check private-addition
+    (let $s (new-space) (progn (add-atom $s (x 1)) (collapse (get-atoms $s)))))
+!(check duplicate-removal-rollback
+    (let $s (new-space)
+      (progn (add-atom $s (x 1)) (add-atom $s (x 1))
+        (collapse (transaction (progn (remove-atom $s (x 1)) (empty))))
+        (collapse (get-atoms $s)))))
+!(check duplicate-addition-rollback
+    (let $s (new-space)
+      (progn (add-atom $s (x 1))
+        (collapse (transaction (progn (add-atom $s (x 1)) (empty))))
+        (collapse (get-atoms $s)))))
+; A second call also exercises cleanup after the preceding runs.
+!(check cut-again (collapse (keep-first)))

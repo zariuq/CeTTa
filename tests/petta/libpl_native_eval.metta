@@ -12,7 +12,7 @@
              (eval-once (metta "(+ 20 22)"))))
 !(println! (libpl-caught-result
              (eval-caught (metta "(+ 20 22)"))))
-!(println! (libpl-eval-many-result (collapse (eval-many))))
+!(println! (libpl-eval-many-result (sort-atom (collapse (eval-many)))))
 !(println! (libpl-reentrant-result (eval-foreign)))
 !(println! (libpl-dynamic-eval-result
              (eval-once (eval (sread "(+ 20 22)")))))

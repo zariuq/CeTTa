@@ -1,0 +1,21 @@
+(printed (double 4))
+(double 4)
+true
+3
+3
+(written-reduce ((double 4)))
+(built-reduce ((double 4)))
+(built-eval ((double 4)))
+(other-argument ((triple 5)))
+(other-arity ((foo 4 4)))
+((row 8))
+(bare-symbol ((sym 1)))
+((sym-row 5))
+true
+((seven 7))
+((plain (a 3)))
+((other-row 9))
+1
+8
+(named-reduce (10))
+(named-built (12))

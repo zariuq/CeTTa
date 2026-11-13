@@ -7,11 +7,11 @@
 ; A scrutinee binding also constrains branch selection, not only its body.
 !(case (unify $y 5 ok nok) (($y incorrectly-unbound) (ok correctly-bound)))
 ; Distinct alternatives keep distinct binding environments.
-!(collapse (case (superpose ((unify $y 1 ok nok) (unify $y 2 ok nok))) ((ok $y))))
+!(let $answers (collapse (case (superpose ((unify $y 1 ok nok) (unify $y 2 ok nok))) ((ok $y)))) (sort-atom $answers))
 ; An ordinary function returning unit still has alternatives and errors.
 !(nop (empty))
 !(collapse (nop (superpose (1 2))))
-!(collapse (let $_ (nop (superpose ((unify $y 1 ok nok) (unify $y 2 ok nok)))) $y))
+!(let $answers (collapse (let $_ (nop (superpose ((unify $y 1 ok nok) (unify $y 2 ok nok)))) $y)) (sort-atom $answers))
 ; Collapse deliberately collects values without exporting inner bindings.
 !(let $r (collapse (unify $y 8 ok nok)) ($r $y))
 ; Ordinary let is the positive binding-propagation control.

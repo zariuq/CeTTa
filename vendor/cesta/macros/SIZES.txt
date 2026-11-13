@@ -1,0 +1,50 @@
+Checked allocation sizes
+========================
+
+Import Sizes.module's Checked theory and write:
+
+  (array-bytes Pair uint32_t size_t length bytes)
+  (doubled-capacity uint32_t 8u capacity next)
+
+array-bytes computes length * sizeof(element) at unbounded integer precision
+and stores it in bytes when the destination type represents it. The three
+leading fields are compact declaration specifiers: the element type, the
+length type and the destination type. length must have the length type
+exactly; bytes must be an addressable modifiable object of the destination
+type. The element type must be complete. A negative signed length is not
+representable as a size and fails.
+
+doubled-capacity stores initial when capacity is zero and 2 * capacity
+otherwise, when that value is representable in the count type. The count type
+must be unsigned; initial and capacity must have that type exactly, and next
+must be an addressable modifiable object of it.
+
+Both macros return int 1 on success. On failure they return 0 and leave the
+destination unchanged. Arguments are evaluated once, in field order, including
+on failure. Neither macro introduces return, break, continue or goto, and
+both nest in ordinary C expressions.
+
+Cost
+----
+
+The check is the native overflow primitive applied to the operands as
+written. When the operand types make overflow impossible, as for a uint32_t
+length and a small element on a 64-bit target, the compiler removes the
+check: the optimized object equals an unchecked multiplication. When overflow
+is reachable the check remains and costs one multiplication with its
+overflow flag. The computed size is the one the allocation uses, so the
+check and the arithmetic cannot drift apart.
+
+A comparison such as count > SIZE_MAX / sizeof(element) is false for every
+uint32_t count on a 64-bit target. Compilers report it as always false, it
+checks nothing there, and it still requires a separate multiplication. Pass
+the narrow count itself to array-bytes; a wider intermediate copy hides the
+range the compiler needs to remove impossible checks.
+
+calloc(count, size) performs the same check internally. A separate guard in
+front of calloc repeats it.
+
+Native tests cover length, signed and destination boundaries, capacity
+doubling limits, failure preservation, evaluation order, type and category
+refusals, native export, removal of impossible checks, retention of reachable
+checks, and identical objects against handwritten C at O0 and O2.

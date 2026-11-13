@@ -1,6 +1,6 @@
 ; The standard library is a module that &self imports.  Its atoms answer
-; queries after the program's own atoms; listing and removal through &self
-; see only the program's own atoms.
+; queries together with the program's own atoms; listing and removal through
+; &self see only the program's own atoms.
 !(get-type eval)
 (: eval (-> Atom %Undefined%))
 !(get-type eval)
@@ -19,14 +19,14 @@
 !(remove-atom &self (: eval (-> Atom Atom)))
 !(collapse (get-type eval))
 !(collapse (get-atoms &self))
-; Own equations and declarations answer before the library's.
+; Own equations and declarations answer beside the library's.
 (= (id $x) (own-id $x))
-!(collapse (id 5))
-!(collapse (match &self (= (id 7) $r) $r))
+!(let $answers (collapse (id 5)) (sort-atom $answers))
+!(let $answers (collapse (match &self (= (id 7) $r) $r)) (sort-atom $answers))
 (: if (-> Number Number Number Number))
 !(collapse (match &self (: if (-> Number $a $b $c)) $a))
 !(if True ok no)
-; An own equation answers before an imported one, wildcard head or not.
+; An own equation answers beside an imported one, wildcard head or not.
 (= ($f 5) (wild $f))
-!(collapse (id 5))
-!(collapse (match &self (= (id 5) $r) $r))
+!(let $answers (collapse (id 5)) (sort-atom $answers))
+!(let $answers (collapse (match &self (= (id 5) $r) $r)) (sort-atom $answers))

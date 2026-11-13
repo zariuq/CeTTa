@@ -14,4 +14,6 @@
 !(let $l (collapse (cell 7)) (let ($x) $l (cdr-atom $x)))
 !(let $l (collapse (superpose ((cons a foo) (cons b bar)))) (let ($x $y) $l (union-atom (car-atom $x) (car-atom $y))))
 !(let $l (collapse (cons 1 foo)) (let ($x) $l (== $x (cons 1 foo))))
-!(let $l (collapse (cons 1 $t)) (let ($x) $l (once (union-atom $x (3)))))
+; An open cell appends with each length of its tail; which one once keeps is
+; open, and every one starts with the cell's head and ends with the suffix.
+!(let $l (collapse (cons 1 $t)) (let ($x) $l (let $r (once (union-atom $x (3))) (pair (car-atom $r) (last $r)))))

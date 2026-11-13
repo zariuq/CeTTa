@@ -24,4 +24,4 @@
 !(collapse (match &rows (Row 1 2.5) found))
 !(remove-atom &rows (Row 1 1.0))
 !(remove-atom &rows (Row 4 (f 1.0)))
-!(collapse (match &rows (Row $k $v) $k))
+!(sort-atom (collapse (match &rows (Row $k $v) $k)))

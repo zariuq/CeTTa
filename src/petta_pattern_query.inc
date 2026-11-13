@@ -193,7 +193,7 @@ static bool petta_machine_pattern_next(PettaMachineImpl *machine, Atom *state,
         return false;
     }
     return petta_machine_start_match_choice_policy(machine, target, pattern,
-        state, expected, barrier, plan, true);
+        state, expected, barrier, plan, true, NULL, false);
 }
 
 static bool petta_machine_pattern_candidate(PettaMachineImpl *machine,
@@ -247,7 +247,8 @@ static bool petta_machine_pattern_candidate(PettaMachineImpl *machine,
     return petta_goal_push(machine, &(PettaGoal){
         .kind = PETTA_GOAL_PATTERN_NEXT, .barrier = choice->barrier,
         .first = atom_expr(&machine->heap, parts, PAT_QUERY_FIELDS),
-        .second = choice->as.match.expected, .plan = choice->as.match.template_plan});
+        .second = choice->as.match.expected,
+        .plan = petta_match_choice_template_plan(choice)});
 }
 
 static bool petta_machine_pattern_start(PettaMachineImpl *machine, Atom *source,

@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Churning a set space costs time linear in the churn: removing a row and
-adding another, N times over N rows of 65 variables each, costs at most
-sixteen times as much for 8N as for N (rebuilding the presence bits after
-every removal costs about sixty-four times).
+"""Churning a set space costs work linear in the churn: removing a row and
+adding another, N times over N rows of 65 variables each, costs at most ten
+times as much for 8N as for N.  Rebuilding the presence bits after every
+removal costs about sixty-four times; so did the compiled tier when it
+looked up the cells host goals took by scanning every one taken before
+(12.7 times).  Work is counted in user-space instructions (perf stat),
+start-up taken off, so the machine's load does not decide the verdict.
 
 Usage: check_set_churn_scaling.py CETTA
 """
 import os
-import resource
 import subprocess
 import sys
 import tempfile
@@ -28,36 +30,43 @@ def program(n):
         "!(size-atom (collapse (get-atoms &s)))\n")
 
 
-def cpu(cetta, n):
-    with tempfile.NamedTemporaryFile("w", suffix=".metta", delete=False) as f:
-        f.write(program(n))
-        path = f.name
-    try:
-        before = resource.getrusage(resource.RUSAGE_CHILDREN)
-        result = subprocess.run([cetta, "--profile", "extended", "--lang", "petta", path],
-                                capture_output=True, text=True, timeout=600)
-        after = resource.getrusage(resource.RUSAGE_CHILDREN)
-    finally:
-        os.unlink(path)
-    answers = result.stdout.split()
-    if result.returncode != 0 or answers != ["done", "done", str(n)]:
-        print(f"FAIL: exit {result.returncode}, answers {answers[:6]} for "
-              f"{n} rows; {result.stderr[-200:]}")
-        sys.exit(1)
-    return (after.ru_utime - before.ru_utime) + (after.ru_stime - before.ru_stime)
+def instructions(cetta, text, expected):
+    """The user-space instructions CETTA runs TEXT in, its answers checked."""
+    with tempfile.TemporaryDirectory(prefix="set-churn-") as directory:
+        path = os.path.join(directory, "churn.metta")
+        counts = path + ".perf"
+        with open(path, "w") as handle:
+            handle.write(text)
+        result = subprocess.run(
+            ["perf", "stat", "-x,", "-e", "instructions:u", "-o", counts, "--",
+             cetta, "--profile", "extended", "--lang", "petta", path],
+            capture_output=True, text=True, timeout=600)
+        answers = result.stdout.split()
+        if result.returncode != 0 or answers != expected:
+            print(f"FAIL: exit {result.returncode}, answers {answers[:6]}, "
+                  f"expected {expected}; {result.stderr[-200:]}")
+            sys.exit(1)
+        with open(counts) as handle:
+            for line in handle:
+                fields = line.split(",")
+                if len(fields) > 2 and fields[2].startswith("instructions"):
+                    return int(fields[0])
+    print("FAIL: perf gave no instruction count")
+    sys.exit(1)
 
 
 def main():
     cetta = sys.argv[1]
-    small = min(cpu(cetta, 400) for _ in range(3))
-    large = min(cpu(cetta, 3200) for _ in range(2))
-    ratio = large / max(small, 0.01)
-    if ratio > 16.0:
+    startup = instructions(cetta, "!(+ 1 1)\n", ["2"])
+    small = instructions(cetta, program(400), ["done", "done", "400"]) - startup
+    large = instructions(cetta, program(3200), ["done", "done", "3200"]) - startup
+    ratio = large / max(small, 1)
+    if ratio > 10.0:
         print(f"FAIL: set churn grows {ratio:.1f}x for 8x the rows "
-              f"({small:.2f} s at 400, {large:.2f} s at 3200)")
+              f"({small / 1e6:.1f}M instructions at 400, {large / 1e6:.1f}M at 3200)")
         sys.exit(1)
     print(f"PASS: set churn grows {ratio:.1f}x for 8x the rows "
-          f"({small:.2f} s at 400, {large:.2f} s at 3200)")
+          f"({small / 1e6:.1f}M instructions at 400, {large / 1e6:.1f}M at 3200)")
 
 
 if __name__ == "__main__":

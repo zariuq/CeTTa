@@ -51,7 +51,9 @@
        (let $c (work-count $h) ($a $b $c (collapse (match &self (touched 9) yes)))))))
 ; An effectful template is interpreted normally, not treated as one row per result.
 !(let $h (work-new (match &self (p $x) (touch $x)))
-   (let $a (work-count $h) ($a (collapse (match &self (touched $v) $v)))))
+   (let $a (work-count $h)
+     (let $touched (collapse (match &self (touched $v) $v))
+       (let $sorted (sort-atom $touched) ($a $sorted)))))
 ; A previously peeked witness survives transfer of the remaining choices.
 !(let $h (work-new (symbol-choices))
    (let $a (work-exists $h)

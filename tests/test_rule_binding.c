@@ -31,6 +31,35 @@ static void admission(Arena *arena) {
     assert(!cetta_rule_view(quoted, ~0u, &descriptor));
     Atom *extra = atom_expr2(arena, descriptor.source, body);
     assert(!cetta_rule_view(extra, ~0u, &descriptor));
+    /* The named-head qualifier admits a rule whose left side applies a
+     * symbol, in either form; any other left side leaves a fact. */
+    const unsigned named = CETTA_RULE_SYNTAX_ORDINARY |
+        CETTA_RULE_SYNTAX_DIRECTIONAL | CETTA_RULE_SYNTAX_NAMED_HEAD;
+    Atom *a = atom_symbol(arena, "a");
+    assert(cetta_rule_view(atom_expr3(arena, atom_symbol(arena, "="), head, body),
+                           named, &descriptor) && descriptor.head == head);
+    assert(cetta_rule_view(atom_expr3(arena, atom_symbol(arena, "=%"), head, body),
+                           named, &descriptor));
+    Atom *unnamed[] = {
+        atom_expr2(arena, atom_var(arena, "h"), a),
+        atom_expr2(arena, head, a),
+        atom_expr2(arena, atom_int(arena, 1), a),
+        atom_symbol(arena, "f"),
+        atom_var(arena, "x"),
+        atom_unit(arena),
+    };
+    for (size_t i = 0u; i < sizeof(unnamed) / sizeof(unnamed[0]); ++i) {
+        for (unsigned marker = 0u; marker < 2u; ++marker) {
+            Atom *source = atom_expr3(arena,
+                atom_symbol(arena, marker ? "=%" : "="), unnamed[i], body);
+            assert(cetta_rule_view(source, CETTA_RULE_SYNTAX_ORDINARY |
+                                   CETTA_RULE_SYNTAX_DIRECTIONAL, &descriptor));
+            assert(!cetta_rule_view(source, named, &descriptor));
+        }
+    }
+    assert(cetta_rule_syntax_valid(named) &&
+           !cetta_rule_syntax_valid(CETTA_RULE_SYNTAX_NAMED_HEAD) &&
+           !cetta_rule_syntax_valid(named | 8u) && !cetta_rule_syntax_valid(0u));
 }
 
 static void directional_and_ordinary(Arena *arena) {

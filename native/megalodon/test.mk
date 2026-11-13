@@ -112,8 +112,8 @@ $(MG_SEXPRINFO): tests/megalodon/mg_sexprinfo.c $(MEGALODON_KERNEL_SRC) $(MEGALO
 # mg-check: the verdict of the native kernel on a document (what is verified,
 # under which of the document's axioms).
 $(MG_CHECK): tests/megalodon/mg_check.c $(MEGALODON_KERNEL_SRC) $(MEGALODON_HEADERS) \
-		native/megalodon/mg_upstream_tables.inc | $(MEGALODON_TEST_DIR)
-	$(CC) $(MEGALODON_TEST_CFLAGS) -I. -Inative/megalodon $< $(MEGALODON_KERNEL_SRC) -o $@
+		native/megalodon/mg_upstream_tables.inc native/gslt_native_runtime_v1.h | $(MEGALODON_TEST_DIR)
+	$(CC) $(MEGALODON_TEST_CFLAGS) -DGN_COUNT -I. -Inative -Inative/megalodon $< $(MEGALODON_KERNEL_SRC) -o $@
 
 .PHONY: test-megalodon-elab test-megalodon-verdict
 test-megalodon-elab: $(MG_SEXPRINFO)
@@ -244,7 +244,15 @@ test-langdef-megalodon: $(BIN) $(MEGALODON_GSLT_PROGRAM) $(MG_GSLT_NATIVE)
 
 test-megalodon: test-megalodon-core test-megalodon-metta test-seal test-megalodon-source \
 	test-megalodon-elab test-megalodon-verdict test-megalodon-gslt test-megalodon-gslt-native \
-	test-langdef-megalodon
+	test-langdef-megalodon test-megalodon-scaling
+
+# The kernel's work on three generated workloads at sizes 0, N and 2N:
+# doubling the size may at most double the counted work (kernel work units
+# and the reader's relation calls), so a table that grows quadratically, as
+# the notation tables did while they were lists, fails it.
+.PHONY: test-megalodon-scaling
+test-megalodon-scaling: $(MG_CHECK) $(BIN)
+	@bash tests/megalodon/run_scaling.sh $(MG_CHECK) $(BIN)
 
 # Requires the pinned TPTP SyntaxBNF source. Kept separate from the kernel
 # tests because it constructs and checks the official parser artifacts.

@@ -12,9 +12,7 @@
 !(mork:add-atom &ws (edge a b))
 !(mork:add-atom &ws (edge b c))
 
-!(assertEqualToResult
-  (collapse (mork:match &ws (edge $x $y) ($x $y)))
-  (((a b) (b c))))
+!(assertEqualToResult (mork:match &ws (edge $x $y) ($x $y)) ((a b) (b c)))
 !(assertEqualToResult
   (mork:step! &ws 4)
   (1))

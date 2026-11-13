@@ -3,7 +3,31 @@
 
 The candidate and historical executable run the same generated ordinary MeTTa
 programs.  Every output is derived here, independently of either executable.
-There is no positive regression allowance and no offset between workloads.
+There is no offset between workloads: each is judged alone.
+
+Each measure has a resolution, the smallest difference it can tell from the
+accident of where two builds' data lands, and a loss is one measured beyond
+it: for instruction counts INSTRUCTION_RESOLUTION_SHARE of the baseline's
+work (its count with its start-up taken off), for cycles
+TIME_RESOLUTION_SHARE.  (Tables keyed by address probe
+differently in two builds of one program though no code on the path
+changed; such differences were measured at a few hundredths of a percent.)
+
+A workload is measured net of start-up.  Loading the standard library costs
+every process the same instructions whatever it then runs, and that cost
+grows with the library's text (its documentation among it), which is no
+loss in any workload.  So the start-up of each dialect and profile is
+measured on a program of one trivial directive, the same way as a workload
+(an empty file skips work every program does), and its median
+difference is taken off every workload's.  Start-up itself is reported and
+has a bound of its own: it fails when it has grown by more than
+STARTUP_ALLOWANCE_SHARE of the baseline's.
+
+The gate is run against two baselines.  The standing one is a fixed earlier
+revision, so that gains banked since are not spent unseen in small steps
+each of which passes.  The committed head is the other: it says what the
+work in the tree costs beyond what is committed.  Each keeps its build in
+its own work directory.
 """
 from __future__ import annotations
 
@@ -81,9 +105,18 @@ def add_program(dialect, rows, final):
 
 
 def finish_query(dialect, expression):
+    """A query's whole bag of answers, sorted: msort's standard order in
+    PeTTa; in HE, sort-atom's shortlex order of the answers' text, on the
+    collection let has evaluated (sort-atom takes an Expression, which HE
+    passes unevaluated)."""
     if dialect == "petta":
         return f"(msort (collapse {expression}))"
-    return f"(sort-atom (collapse {expression}))"
+    return f"(let $answers (collapse {expression}) (sort-atom $answers))"
+
+
+def he_sorted(items):
+    """sort-atom's order on answers given as their text: shortlex."""
+    return sorted(items, key=lambda item: (len(item), item))
 
 
 def query_case(name, dialect, profile, rows, final, result):
@@ -96,6 +129,18 @@ def query_case(name, dialect, profile, rows, final, result):
     expected.extend(results)
     return Case(f"{name}-{dialect}-{profile}", dialect, profile, source,
                 "\n".join(expected) + "\n")
+
+
+def join_case(name, dialect, profile, size, repeats):
+    """The join of SIZE link rows with SIZE right rows, REPEATS times."""
+    pairs = [f"({i} {i % 11})" for i in range(size)]
+    joined = " ".join(pairs if dialect == "petta" else he_sorted(pairs))
+    rows = ([f"(link {i} {i + 1})" for i in range(size)] +
+            [f"(right {i + 1} {i % 11})" for i in range(size)])
+    query = finish_query(dialect, "(match &s (, (link $x $y) (right $y $z)) ($x $z))")
+    result = f"({joined})" if dialect == "petta" else f"[({joined})]"
+    return query_case(name, dialect, profile, rows, [query] * repeats,
+                      [result] * repeats)
 
 
 def recursion_source(dialect, n, effectful=False):
@@ -190,13 +235,15 @@ def cases(scale):
                              "(" + " ".join(str(i) for i in range(3, small, 17)) + ")"
                              if dialect == "petta" else
                              "[(" + " ".join(str(i) for i in range(3, small, 17)) + ")]")
-            joined = " ".join(f"({i} {i % 11})" for i in range(small))
-            yield query_case("join", dialect, profile,
-                             [f"(link {i} {i + 1})" for i in range(small)] +
-                             [f"(right {i + 1} {i % 11})" for i in range(small)],
-                             finish_query(dialect,
-                                 "(match &s (, (link $x $y) (right $y $z)) ($x $z))"),
-                             f"({joined})" if dialect == "petta" else f"[({joined})]")
+            yield join_case("join", dialect, profile, small, 1)
+            # The same join ten times over the same rows: the join, not the
+            # adds that make its space, is the work, so a cost a join gains
+            # cannot hide behind adds that got cheaper.
+            yield join_case("join-phase", dialect, profile, small, 10)
+            # Larger joins, where what a join pays per row outweighs what it
+            # pays once: a cost added to every row shows there first.
+            for size in (2000 * scale, 4000 * scale):
+                yield join_case(f"join-phase-{size}", dialect, profile, size, 3)
             effect_results = " ".join("true" if dialect == "petta" else "()"
                                       for _ in range(small))
             yield query_case("collection-effectful", dialect, profile,
@@ -273,10 +320,35 @@ def parse_perf(stderr):
     return counters
 
 
-def execute(binary, case, source, seed, perf=True, fixed_layout=False):
-    env = {key: value for key, value in os.environ.items()
-           if not key.startswith("CETTA_")}
+# The caller's variables the executables keep.  Any other is left out: the
+# environment's size moves where the stack starts, and a verdict must not
+# depend on the caller's (the name of its working directory, say).
+INHERITED_ENVIRONMENT = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR")
+# Alignment changes the work of copying and clearing memory, so each matched
+# pair runs at a layout of its own, both executables at the same one, and a
+# median is taken over layouts rather than over one accident of them.
+LAYOUT_STEP = 8
+LAYOUTS = 16
+# The environment is padded to this many bytes before its layout is added,
+# so where the stack starts does not depend on the caller's values either.
+ENVIRONMENT_BYTES = 16384
+
+
+def environment_size(env):
+    return sum(len(key) + len(value) + 2 for key, value in env.items())
+
+
+def execute(binary, case, source, seed, perf=True, fixed_layout=False,
+            layout=0):
+    env = {key: os.environ[key] for key in INHERITED_ENVIRONMENT
+           if key in os.environ}
     env["CETTA_PLACEMENT_KEY"] = str(seed)
+    pad_key = "ORDINARY_PERFORMANCE_PAD"
+    pad = ENVIRONMENT_BYTES - environment_size(env) - len(pad_key) - 2
+    if pad < 0:
+        raise SystemExit("inherited environment exceeds %d bytes" % ENVIRONMENT_BYTES)
+    env[pad_key] = "x" * pad
+    env["ORDINARY_PERFORMANCE_LAYOUT"] = "x" * (LAYOUT_STEP * (layout % LAYOUTS))
     argv = command(binary, case, source)
     if perf:
         argv = ["perf", "stat", "--no-big-num", "-x", ";", "-e",
@@ -284,7 +356,8 @@ def execute(binary, case, source, seed, perf=True, fixed_layout=False):
     if fixed_layout:
         argv = ["setarch", os.uname().machine, "-R"] + argv
     started = time.monotonic()
-    run = subprocess.run(argv, capture_output=True, text=True, env=env, timeout=300)
+    run = subprocess.run(argv, capture_output=True, text=True, env=env,
+                         cwd=Path(source).parent, timeout=300)
     elapsed = time.monotonic() - started
     return {"returncode": run.returncode, "stdout": run.stdout,
             "stderr": run.stderr, "seconds": elapsed,
@@ -337,17 +410,28 @@ def interval(deltas):
             "samples": len(deltas)}
 
 
-def instruction_verdict(deltas):
-    """Instruction counts decide, and exactly.
+# Two builds of one program differ in instructions by where their data lands
+# (tables keyed by address), whatever the source says: a count is resolved
+# to this share of the baseline's median work, its start-up taken off.
+INSTRUCTION_RESOLUTION_SHARE = 0.0025
 
-    The interval of the median paired delta at or below zero passes; wholly
-    above zero fails; anything else is undecided, never a pass.
+
+def instruction_verdict(deltas, baseline, startup_work=0):
+    """Instruction counts decide, to their resolution.
+
+    The interval of the median paired delta at or below the resolution
+    passes; wholly above it fails; anything else is undecided, never a pass.
+    STARTUP_WORK: the baseline's start-up instructions, which are no part of
+    the work the resolution is a share of.
     """
     if not deltas:
         return "unavailable", None
     detail = interval(deltas)
-    verdict = ("pass" if detail["upper_95"] <= 0 else
-               "fail" if detail["lower_95"] > 0 else "inconclusive")
+    detail["resolution"] = INSTRUCTION_RESOLUTION_SHARE * max(
+        statistics.median(baseline) - startup_work, 0)
+    verdict = ("pass" if detail["upper_95"] <= detail["resolution"] else
+               "fail" if detail["lower_95"] > detail["resolution"] else
+               "inconclusive")
     return verdict, detail
 
 
@@ -370,9 +454,37 @@ def time_verdict(deltas, baseline, floor=0.0):
     return ("fail" if detail["lower_95"] > detail["resolution"] else "pass"), detail
 
 
-def qualify_pairs(case, pairs):
+# Start-up (the library's load) may grow by this share of the baseline's
+# before it fails: room for documentation and definitions, not for work.
+STARTUP_ALLOWANCE_SHARE = 0.02
+
+
+def startup_verdict(pairs):
+    """The start-up difference of the two executables, and whether it is
+    within its allowance: (verdict, evidence, median instruction delta,
+    the baseline's median start-up instructions)."""
+    deltas, before = [], []
+    for baseline, candidate in pairs:
+        for run in (baseline, candidate):
+            if run["returncode"] != 0 or \
+                    not isinstance(run["counters"].get("instructions:u"), int):
+                return "unavailable", {"reason": "start-up run failed"}, 0, 0
+        deltas.append(candidate["counters"]["instructions:u"] -
+                      baseline["counters"]["instructions:u"])
+        before.append(baseline["counters"]["instructions:u"])
+    detail = interval(deltas)
+    detail["allowance"] = STARTUP_ALLOWANCE_SHARE * statistics.median(before)
+    verdict = "fail" if detail["lower_95"] > detail["allowance"] else "pass"
+    return verdict, detail, detail["median"], statistics.median(before)
+
+
+def qualify_pairs(case, pairs, startup=0, startup_work=0):
+    """STARTUP: the executables' median start-up difference in instructions,
+    which is no part of the workload's.  STARTUP_WORK: the baseline's own
+    start-up instructions, taken off the work the resolution is a share
+    of."""
     deltas = {"instructions:u": [], "cycles:u": [], "seconds": []}
-    before = {"cycles:u": [], "seconds": []}
+    before = {"instructions:u": [], "cycles:u": [], "seconds": []}
     pair_verdicts = []
     for baseline, candidate in pairs:
         verdict, reason = compare_samples(case, baseline, candidate)
@@ -381,14 +493,17 @@ def qualify_pairs(case, pairs):
             deltas["seconds"].append(candidate["seconds"] - baseline["seconds"])
             before["seconds"].append(baseline["seconds"])
             before["cycles:u"].append(baseline["counters"]["cycles:u"])
+            before["instructions:u"].append(baseline["counters"]["instructions:u"])
             for event in ("instructions:u", "cycles:u"):
                 deltas[event].append(candidate["counters"][event] -
                                      baseline["counters"][event])
+            deltas["instructions:u"][-1] -= startup
     if any(verdict == "fail" for verdict, _ in pair_verdicts):
         return "fail", {"pair_validation": pair_verdicts}
     if any(verdict == "unavailable" for verdict, _ in pair_verdicts):
         return "unavailable", {"pair_validation": pair_verdicts}
-    instructions, instruction_detail = instruction_verdict(deltas["instructions:u"])
+    instructions, instruction_detail = instruction_verdict(
+        deltas["instructions:u"], before["instructions:u"], startup_work)
     cycles, cycle_detail = time_verdict(deltas["cycles:u"], before["cycles:u"])
     seconds, seconds_detail = time_verdict(deltas["seconds"], before["seconds"],
                                            WALL_RESOLUTION_SECONDS)
@@ -420,6 +535,17 @@ def self_test():
         ("cycle noise around zero", [(99, 99, 1.0), (99, 101, 1.0), (99, 100, 1.0)], "pass"),
         ("cycle loss measured", [(99, 105, 1.0), (99, 106, 1.0), (99, 104, 1.0)], "fail"),
     ]
+    # The resolution: a difference within it passes, one beyond it fails.
+    for name, count, expected in (
+            ("instruction difference within the resolution", 100200, "pass"),
+            ("instruction rise beyond the resolution", 100300, "fail")):
+        actual = qualify_pairs(case, [
+            (sample(instructions=100000, cycles=100),
+             sample(instructions=count, cycles=100))])[0]
+        if actual != expected:
+            print(f"FAIL: performance-gate self-test {name}: {actual}, expected {expected}")
+            return 1
+        print(f"PASS: performance-gate self-test {name}: {actual}")
     for name, candidates, expected in batches:
         actual = qualify_pairs(case, [
             (sample(), sample(instructions=count, cycles=cycles, seconds=seconds))
@@ -449,6 +575,11 @@ def build_baseline(root, revision, work):
     stamp = directory / ".ordinary-baseline-built"
     if binary.is_file() and stamp.is_file() and stamp.read_text() == full + "\n":
         return binary
+    # A work directory keeps one baseline: the build of a revision that is
+    # no longer asked for (a head that has moved on) is removed.
+    for stale in work.glob("source-*"):
+        if stale != directory and stale.is_dir():
+            shutil.rmtree(stale)
     if directory.exists():
         shutil.rmtree(directory)
     directory.mkdir(parents=True)
@@ -533,7 +664,10 @@ def main():
               "rounds": args.rounds, "seeds": args.seeds,
               "max_batches": MAX_BATCHES,
               "fixed_layout": args.fixed_layout,
-              "method": "alternating matched pairs; median paired delta; fixed-seed percentile bootstrap; instructions: at or below zero passes, above zero fails, otherwise resampled then undecided; cycles: a measured loss fails; a failure must repeat on fresh samples; wall time reported",
+              "method": "alternating matched pairs; median paired delta; fixed-seed percentile bootstrap; instructions net of the median start-up difference of the same dialect and profile, resolved to a share of the baseline's work with its start-up taken off: at or below the resolution passes, above it fails, otherwise resampled then undecided; cycles: a measured loss fails; a failure must repeat on fresh samples; wall time reported; start-up fails beyond its allowance",
+              "startup_allowance_share": STARTUP_ALLOWANCE_SHARE,
+              "instruction_resolution_share": INSTRUCTION_RESOLUTION_SHARE,
+              "startup": {},
               "cases": {}}
     overall = "pass"
     selected = [case for case in cases(args.scale)
@@ -541,13 +675,47 @@ def main():
     if not selected:
         parser.error("--only selected no workloads; refusing a vacuous pass")
     with tempfile.TemporaryDirectory(prefix="workloads-", dir=work) as temporary:
+        # Start-up of each dialect and profile the workloads use, on an
+        # empty program: sampled as a workload is.
+        startup = {}
+        for dialect, profile in sorted({(case.dialect, case.profile)
+                                        for case in selected}):
+            empty = Case(f"startup-{dialect}-{profile}", dialect, profile,
+                         "!(+ 1 1)\n", "")
+            source = Path(temporary) / f"{empty.name}.metta"
+            source.write_text(empty.source)
+            pairs = []
+            for seed in args.seeds:
+                for turn in range(args.rounds):
+                    order = (("baseline", baseline), ("candidate", candidate))
+                    if turn % 2:
+                        order = tuple(reversed(order))
+                    pair = {label: execute(binary, empty, source, seed,
+                                           fixed_layout=args.fixed_layout,
+                                           layout=len(pairs))
+                            for label, binary in order}
+                    pairs.append((pair["baseline"], pair["candidate"]))
+            verdict, evidence, median, own = startup_verdict(pairs)
+            startup[(dialect, profile)] = (median, own) \
+                if verdict != "unavailable" else (0, 0)
+            report["startup"][f"{dialect}-{profile}"] = {"verdict": verdict,
+                                                         "evidence": evidence}
+            if verdict == "pass":
+                print(f"PASS: start-up {dialect}-{profile}: instructions "
+                      f"{evidence['median']:+.1f} [{evidence['lower_95']:+.1f}, "
+                      f"{evidence['upper_95']:+.1f}], allowance "
+                      f"{evidence['allowance']:.0f}")
+            else:
+                overall = "fail"
+                print(f"{verdict.upper()}: start-up {dialect}-{profile}: {evidence}")
         for case in selected:
             source = Path(temporary) / f"{case.name}.metta"
             source.write_text(case.source)
             rows = []
 
             def batch():
-                """One balanced batch of matched pairs, or the reason none was taken."""
+                """One balanced batch of matched pairs, or the reason none was taken.
+                Its layouts continue where the previous batch's stopped."""
                 pairs = []
                 for seed in args.seeds:
                     # Warm and validate both executables before every matched batch.
@@ -564,7 +732,8 @@ def main():
                         pair = {}
                         for label, binary in order:
                             pair[label] = execute(binary, case, source, seed,
-                                                  fixed_layout=args.fixed_layout)
+                                                  fixed_layout=args.fixed_layout,
+                                                  layout=len(rows))
                         pairs.append((pair["baseline"], pair["candidate"]))
                         verdict, reason = compare_samples(case, pair["baseline"], pair["candidate"])
                         rows.append({"seed": seed, "turn": turn, "validation": verdict,
@@ -585,7 +754,8 @@ def main():
                     if failure:
                         return "fail", {"reason": failure}
                     pairs += more
-                    verdict, evidence = qualify_pairs(case, pairs)
+                    verdict, evidence = qualify_pairs(
+                        case, pairs, *startup[(case.dialect, case.profile)])
                     if verdict != "inconclusive":
                         break
                 return verdict, evidence

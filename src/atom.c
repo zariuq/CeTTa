@@ -6935,12 +6935,10 @@ bool cetta_he_promoted_kind_equal(int left_kind, int64_t left_int,
     if (!cetta_number_kind_as_float(left_kind, left_int, left_float, &left) ||
         !cetta_number_kind_as_float(right_kind, right_int, right_float, &right))
         return false;
-    /* Hyperon compares the integer rounded to a float, so it finds
-     * 9007199254740993 equal to 9007199254740992.0; he-compat keeps that.
-     * Otherwise an integer equals only the float of exactly its value. */
-    if (eval_current_uses_rust_he_compat_semantics &&
-        eval_current_uses_rust_he_compat_semantics())
-        return left == right;
+    /* An integer equals only the float of exactly its value, in he-compat
+     * too: Hyperon 0.2.10 compared the integer rounded to a float, finding
+     * 9007199254740993 equal to 9007199254740992.0, and the fixed Hyperon
+     * he-compat follows keeps the integer exact. */
     return left_kind == GV_INT
         ? float_is_int64(right_float, left_int)
         : float_is_int64(left_float, right_int);
@@ -8704,12 +8702,29 @@ int cetta_format_float(char *buf, size_t size, double value) {
             text[at] = '.'; text[at + 1u] = '0';
         }
         return snprintf(buf, size, "%s", text);
-    } else if (isfinite(value) && floor(value) == value) {
-        if (fabs(value) < 9007199254740992.0)
-            return snprintf(buf, size, "%.1f", value);
-        return snprintf(buf, size, "%.16e", value);
+    } else if (isfinite(value) && floor(value) == value &&
+               fabs(value) < 9007199254740992.0) {
+        return snprintf(buf, size, "%.1f", value);
     } else {
-        return snprintf(buf, size, "%.16g", value);
+        /* The shortest digits that read back to the same double: a fixed
+           %.16g is not always enough (1.9999999999999998 would print as
+           2, which reads back as the integer 2).  The text always has a
+           point (1.0e+20, 1.0e-07, 9007199254740992.0), so it reads back
+           as a float and never as an integer. */
+        char text[48];
+        for (int precision = 1; precision <= 17; precision++) {
+            snprintf(text, sizeof(text), "%.*g", precision, value);
+            if (strtod(text, NULL) == value)
+                break;
+        }
+        if (!strchr(text, '.')) {
+            char *exponent = strchr(text, 'e');
+            size_t at = exponent ? (size_t)(exponent - text) : strlen(text);
+            memmove(text + at + 2u, text + at, strlen(text + at) + 1u);
+            text[at] = '.';
+            text[at + 1u] = '0';
+        }
+        return snprintf(buf, size, "%s", text);
     }
 }
 

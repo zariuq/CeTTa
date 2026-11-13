@@ -23,4 +23,4 @@
 ; new equation on the following call.
 !(add-atom &self
    (= (negative-certificate-target $space special) changed))
-!(collapse (negative-certificate-target &self special))
+!(sort-atom (collapse (negative-certificate-target &self special)))

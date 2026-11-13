@@ -176,8 +176,6 @@ mutations = {
                            "    CettaExprIndex chosen = found ? empty_arm : other_arm;"),
     "guard-case-set": ("    if (!space || !space_is_set(space) ||\n        key->expr.elems[2]->kind != ATOM_EXPR ||",
                        "    if (!space ||\n        key->expr.elems[2]->kind != ATOM_EXPR ||"),
-    "fold-each": ("    return petta_machine_is_rigid_data(machine, atom) &&\n        !(atom->kind == ATOM_SYMBOL &&",
-                  "    return (petta_machine_is_rigid_data(machine, atom) || true) &&\n        !(atom->kind == ATOM_SYMBOL &&"),
     "dispatch-unique": ("        if (meets != PETTA_NATIVE_HEAD_MEETS || ++meeting > 1u)\n            return NULL;\n        only = occurrence;",
                         "        if (meets != PETTA_NATIVE_HEAD_MEETS)\n            return NULL;\n        meeting = 1u;\n        only = occurrence;"),
     "scope-template": ("        atom_eq((Atom *)template, (Atom *)pattern);",

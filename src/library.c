@@ -625,7 +625,9 @@ bool cetta_library_context_try_init_for_language_profile(CettaLibraryContext *ct
         ? petta_program_new_with_rules(CETTA_RULE_SYNTAX_ORDINARY |
             ((profile && (profile->id == CETTA_PROFILE_PETTA_EXTENDED ||
                           profile->id == CETTA_PROFILE_HE_EXTENDED))
-                ? CETTA_RULE_SYNTAX_DIRECTIONAL : 0u)) : NULL;
+                ? CETTA_RULE_SYNTAX_DIRECTIONAL : 0u) |
+            (cetta_language_rules_need_named_head(language_id)
+                ? CETTA_RULE_SYNTAX_NAMED_HEAD : 0u)) : NULL;
     if (needs_occurrence_program && !ctx->petta_program) return false;
     /* A call's head is resolved against the program the call runs in: a plan
      * compiled before a head had equations is rebuilt when the heads it read
@@ -4530,8 +4532,32 @@ static bool library_read_text_file(const char *path, CettaStringBuf *out,
     return true;
 }
 
+/* The standard stream a device path names, or NULL.  Opening such a path
+ * anew would truncate a redirected regular file under the program's own
+ * output, so its text goes through the stream, in order with what the
+ * program has printed. */
+static FILE *library_standard_stream(const char *path) {
+    if (strcmp(path, "/dev/stdout") == 0 || strcmp(path, "/dev/fd/1") == 0 ||
+        strcmp(path, "/proc/self/fd/1") == 0)
+        return stdout;
+    if (strcmp(path, "/dev/stderr") == 0 || strcmp(path, "/dev/fd/2") == 0 ||
+        strcmp(path, "/proc/self/fd/2") == 0)
+        return stderr;
+    return NULL;
+}
+
 static bool library_write_file(const char *path, const char *text, size_t len,
                                bool append, char *errbuf, size_t errbuf_sz) {
+    FILE *stream = library_standard_stream(path);
+    if (stream) {
+        if ((len > 0 && fwrite(text, 1, len, stream) != len) || fflush(stream) != 0) {
+            if (errbuf && errbuf_sz > 0) {
+                snprintf(errbuf, errbuf_sz, "cannot write file: %s", strerror(errno));
+            }
+            return false;
+        }
+        return true;
+    }
     FILE *fp = fopen(path, append ? "ab" : "wb");
 
     if (!fp) {
@@ -5920,7 +5946,8 @@ static Atom *mork_space_new_native(CettaLibraryContext *ctx, Arena *a,
         return atom_error(a, library_call_expr(a, head, args, nargs),
                           atom_string(a, "mork:new-space expects atom or hash discipline"));
     }
-    if (kind == SPACE_KIND_STACK || kind == SPACE_KIND_QUEUE) {
+    if (kind == SPACE_KIND_STACK || kind == SPACE_KIND_QUEUE ||
+        kind == SPACE_KIND_PRIORITY) {
         return atom_error(a, library_call_expr(a, head, args, nargs),
                           atom_string(a, "mork:new-space currently supports only unordered disciplines"));
     }
@@ -5961,7 +5988,8 @@ static Atom *mork_space_open_act_native(CettaLibraryContext *ctx, Arena *a,
         return atom_error(a, library_call_expr(a, head, args, nargs),
                           atom_string(a, "mork-space-open-act expects atom or hash discipline"));
     }
-    if (kind == SPACE_KIND_STACK || kind == SPACE_KIND_QUEUE) {
+    if (kind == SPACE_KIND_STACK || kind == SPACE_KIND_QUEUE ||
+        kind == SPACE_KIND_PRIORITY) {
         return atom_error(a, library_call_expr(a, head, args, nargs),
                           atom_string(a, "mork-space-open-act currently supports only unordered disciplines"));
     }
@@ -10189,9 +10217,12 @@ bool cetta_library_transform_program_current(CettaLibraryContext *ctx, Space *sp
         ctx->transform_scanned_rows = rows;
         return true;
     }
-    if (ctx->transform_read.space != space)
-        return false;
-    bool appended = space_read_token_prefix_intact(ctx->transform_read) &&
+    /* Currency is the definitions a space holds, not which space the import
+     * named: another space holding exactly the library's definitions (the
+     * library imported by a module that its importer then holds, say) runs
+     * transform natively too, once its rows are read. */
+    bool appended = ctx->transform_read.space == space &&
+        space_read_token_prefix_intact(ctx->transform_read) &&
         space_read_token(space).base_dependency_epoch ==
             ctx->transform_read.base_dependency_epoch &&
         rows >= ctx->transform_scanned_rows;

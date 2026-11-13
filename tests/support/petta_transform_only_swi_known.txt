@@ -1,0 +1,3 @@
+# Fixture programs that do not pass, rewritten by transform_only, on SWI-PeTTa
+# (stable-fixed c3adb86) with transform written in PeTTa.  Name, a tab, the reason.
+partial_body_values	SWI-PeTTa widens the stored equation of a function whose body is a partial application, so that equation is no longer at the arity its rule is read at: called with exactly its written arguments the function answers nothing (as written: a partial application of the function). A body is not wrapped to prevent it: a wrapper delays the unification of the answer and breaks a function run backwards. Calls with the further arguments pass (fixture partial_bodies).

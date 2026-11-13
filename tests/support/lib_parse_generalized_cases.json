@@ -81,8 +81,8 @@
           "timeout_sec": 30
         },
         {
-          "name": "syntax-quote-seals-outer-binder",
-          "source": {"kind": "path", "value": "tests/rhocalc/rho_quote_seals_outer_binder.rho"},
+          "name": "syntax-quote-drop-names-outer-binder",
+          "source": {"kind": "path", "value": "tests/rhocalc/rho_quote_drop_names_outer_binder.rho"},
           "expect": "Unique",
           "check_cert": true,
           "timeout_sec": 30

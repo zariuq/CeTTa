@@ -9,7 +9,7 @@
 (= (nested) (match &self (r $x $n) (match &self (s $n $y) ($x $y))))
 (= (join) (collapse (match &self (, (r $x $n) (s $n $y)) ($x $y))))
 !(nested)
-!(join)
+!(let $answers (join) (sort-atom $answers))
 !(match &self (r $x $n) (match &self (s $n $y) ($x $y)))
 ; A space small enough to be scanned row by row.
 !(bind! &k (new-space))
@@ -28,14 +28,14 @@
 !(let $i (superpose (1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24)) (add-atom &w (pad $i)))
 (= (nested-w) (collapse (match &w (r $x $n) (match &w (s $n $y) ($x $y)))))
 (= (join-w) (collapse (match &w (, (r $x $n) (s $n $y)) ($x $y))))
-!(nested-w)
-!(join-w)
+!(let $answers (nested-w) (sort-atom $answers))
+!(let $answers (join-w) (sort-atom $answers))
 ; Rows read through an imported module.
 !(import! &self ./support/frame_schema_facts.metta)
 (= (nested-m) (collapse (match &self (mr $x $n) (match &self (ms $n $y) ($x $y)))))
 (= (join-m) (collapse (match &self (, (mr $x $n) (ms $n $y)) ($x $y))))
-!(nested-m)
-!(join-m)
+!(let $answers (nested-m) (sort-atom $answers))
+!(let $answers (join-m) (sort-atom $answers))
 ; Negative cases: the shared variable still binds both fields to one value.
 (= (mismatch) (collapse (match &self (r $x $n) (match &self (s $n $y) (if (== $x $n) ok bad)))))
 !(mismatch)

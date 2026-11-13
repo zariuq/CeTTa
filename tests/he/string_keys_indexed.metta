@@ -17,7 +17,7 @@
 !(collapse (match &s (Use "delta" $v) $v))
 ; A variable stored at the key matches every key.
 !(add-atom &s (Use $any any))
-!(collapse (match &s (Use "alpha" $v) $v))
+!(let $answers (collapse (match &s (Use "alpha" $v) $v)) (sort-atom $answers))
 !(collapse (match &s (Use "delta" $v) $v))
 ; A query variable at the key reaches the string rows too.
 !(let $r (collapse (match &s (Use $k $v) $v)) (size-atom $r))
@@ -25,7 +25,7 @@
 !(remove-atom &s (Use "alpha" 1))
 !(collapse (match &s (Use "alpha" $v) $v))
 !(add-atom &s (Use "alpha" 11))
-!(collapse (match &s (Use "alpha" $v) $v))
+!(let $answers (collapse (match &s (Use "alpha" $v) $v)) (sort-atom $answers))
 ; Many keys: each lookup finds its own row.
 (= (fill $i $n)
    (if (== $i $n) ok

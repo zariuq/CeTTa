@@ -12,9 +12,7 @@
 !(assertEqualToResult
   (mork:step! &ws)
   (1))
-!(assertEqual
-  (collapse (mork:get-atoms &ws))
-  ((edge a b)
+!(assertEqualToResult (mork:get-atoms &ws) ((edge a b)
    (edge b c)
    (path a c)))
 !(assertEqualToResult

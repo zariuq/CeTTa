@@ -377,7 +377,17 @@ static void test_type_policy_component(Arena *arena) {
         parse_one(arena, "(-> $c $d Atom)"),
     };
     assert(petta_type_unique_signatures(types, 3u) == 2u);
-    assert(petta_type_body_is_data(types, 2u));
+    /* Equations of two arguments hold their bodies under these
+     * declarations; equations of another number of arguments do not. */
+    assert(petta_type_body_is_data(types, 2u, 2u));
+    assert(!petta_type_body_is_data(types, 2u, 1u));
+    assert(!petta_type_body_is_data(types, 2u, 0u));
+    Atom *mixed[] = {
+        parse_one(arena, "(-> Atom)"),
+        parse_one(arena, "(-> Number Number)"),
+    };
+    assert(petta_type_body_is_data(mixed, 2u, 0u));
+    assert(!petta_type_body_is_data(mixed, 2u, 1u));
     assert(atom_alpha_eq(types[0], parse_one(arena, "(-> $x $x Atom)")));
     assert(atom_alpha_eq(types[1], parse_one(arena, "(-> $x $y Atom)")));
 

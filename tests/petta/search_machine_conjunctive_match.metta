@@ -45,8 +45,8 @@
 !(test (length (duplicate-conjunction-answers)) 2)
 !(test (once (is-member (a b c) (duplicate-conjunction-answers))) true)
 
-; A conjunction over another space stays on the general nested-match
-; realization.  This is the negative control for the direct-&self cursor.
+; A conjunction over another space reads through the same cursor, its
+; legs reading the space as it stood at the call.
 !(bind! &conjunction-other (new-space))
 !(add-atom &conjunction-other (other-edge a b))
 !(add-atom &conjunction-other (other-edge b c))
@@ -57,6 +57,22 @@
        (match &conjunction-other
               (, (other-edge $source $middle)
                  (other-edge $middle $target))
+              ($source $middle $target))))
+   1)
+
+; A space declared with a schema reads each pattern through its types, as
+; nested matches, each at the conjunction's point.
+(: TypedEdge Type)
+(: &conjunction-typed (SpaceOf (TypedEdge Atom Atom)))
+!(add-atom &conjunction-typed (typed-edge a b))
+!(add-atom &conjunction-typed (typed-edge b c))
+
+!(test
+   (length
+     (collapse
+       (match &conjunction-typed
+              (, (typed-edge $source $middle)
+                 (typed-edge $middle $target))
               ($source $middle $target))))
    1)
 

@@ -19,8 +19,9 @@
 ; Reads alone answer as match.  Takes validate occurrence multiplicity before
 ; the commit, and nothing runs between validation and the commit.  Proposals,
 ; firings and collect keep occurrence order; collected reads-only answers are
-; a bag where the consumer takes every answer.  PeTTa's remove-atom removes all
-; copies, so the commit restores those not taken.
+; a bag where the consumer takes every answer.  A take removes the copies the
+; firing takes: stored atoms that are the taken atom, the same or the same but
+; for the names of its variables, and no atom it only unifies with.
 
 (: transform (-> Atom Atom Atom %Undefined%))
 (: transform (-> Atom Atom Atom Atom %Undefined%))

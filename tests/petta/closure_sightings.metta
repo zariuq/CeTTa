@@ -16,8 +16,8 @@
 !(both (add-k 3) 1 2)
 !(both (add-k 3) 10 20)
 (= (each $f) ($f (superpose (1 2 3))))
-!(collapse (each (add-k 10)))
-!(collapse (each (add-k 10)))
+!(sort-atom (collapse (each (add-k 10))))
+!(sort-atom (collapse (each (add-k 10))))
 ; Passed on: around a recursion, into a fold's body, beside a closure that
 ; is only applied.
 (= (map-cells $f ()) ())
@@ -38,7 +38,7 @@
 (= (pick $f $x) ($f $x))
 !(pick (add-k 50) 1)
 !(add-atom &self (= (pick $f $x) (Picked ($f $x))))
-!(collapse (pick (add-k 50) 1))
+!(sort-atom (collapse (pick (add-k 50) 1)))
 ; Captured data that looks like a call stays data.
 (Stored (inc 5))
 (= (inc $x) (+ $x 1))

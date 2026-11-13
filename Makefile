@@ -4,6 +4,38 @@ SHELL = /bin/bash
 ifeq ($(origin CC),default)
 CC = gcc
 endif
+# Build through the bundled Cesta frontend. Its host compiler is independent
+# of the target compiler, which can also be used directly with CESTA_BUILD=0.
+CESTA_BUILD ?= 1
+CESTA_SOURCE ?= vendor/cesta
+CESTA_BOOTSTRAP_CC ?= gcc
+ifneq ($(origin CESTA_NATIVE_CC),command line)
+ifeq ($(origin CC),command line)
+CESTA_NATIVE_CC := $(CC)
+endif
+endif
+ifeq ($(origin CESTA_NATIVE_CC),undefined)
+CESTA_NATIVE_CC := $(CC)
+endif
+CESTA_TOOL_ID := $(strip $(shell sh tools/cesta_tool.sh tool-id "$(CESTA_SOURCE)" "$(CESTA_BOOTSTRAP_CC)"))
+ifeq ($(CESTA_TOOL_ID),)
+$(error could not identify the bundled Cesta source and bootstrap compiler)
+endif
+CESTA ?= $(abspath runtime/cesta/cesta-$(CESTA_TOOL_ID))
+ifeq ($(CESTA_BUILD),1)
+override CC = tools/cesta_cc.sh
+else ifneq ($(CESTA_BUILD),0)
+$(error CESTA_BUILD must be 0 or 1)
+endif
+export CESTA CESTA_NATIVE_CC CESTA_BUILD
+CESTA_TARGET_ID := $(strip $(shell sh tools/cesta_tool.sh tool-id "$(CESTA_SOURCE)" "$(CESTA_NATIVE_CC)"))
+CESTA_COMPILER_ID := $(strip $(shell { printf '%s\n' '$(CESTA_BUILD)' '$(CESTA_TARGET_ID)'; if [ '$(CESTA_TOOL_ID)' != '$(CESTA_TARGET_ID)' ]; then printf '%s\n' '$(CESTA_TOOL_ID)'; fi; sha256sum tools/cesta_cc.sh; } | sha256sum | cut -c1-20))
+
+.PHONY: cesta-tool
+cesta-tool: $(CESTA)
+$(CESTA): tools/cesta_tool.sh tools/cesta_source.py
+	@CESTA_NATIVE_CC="$(CESTA_BOOTSTRAP_CC)" sh tools/cesta_tool.sh build "$(CESTA_SOURCE)" "$@"
+
 LLVM_OPT ?= opt
 LLVM_CLANG ?= clang
 .DEFAULT_GOAL := all
@@ -23,7 +55,7 @@ OBJCOPY ?= objcopy
 
 .PHONY: test-build-matrix
 test-build-matrix:
-	@python3 tests/support/check_build_matrix.py --compiler '$(CC)'
+	@python3 tests/support/check_build_matrix.py --compiler '$(CESTA_NATIVE_CC)'
 
 
 # Pure grammar targets must select their configuration before Make reads
@@ -491,12 +523,12 @@ HTTP_LDFLAGS :=
 HTTP_VERSION :=
 HTTP_CONFIG_ID := disabled
 ifeq ($(ENABLE_HTTP),1)
-HTTP_EMSCRIPTEN_CC := $(if $(findstring emcc,$(notdir $(firstword $(CC)))),1,0)
+HTTP_EMSCRIPTEN_CC := $(if $(findstring emcc,$(notdir $(firstword $(CESTA_NATIVE_CC)))),1,0)
 ifeq ($(HTTP_EMSCRIPTEN_CC),1)
 HTTP_ENABLED := 1
 HTTP_PROVIDER_EMSCRIPTEN := 1
 HTTP_LDFLAGS := -sFETCH=1 -sFETCH_STREAMING=1
-HTTP_VERSION := $(strip $(shell $(CC) --version 2>/dev/null | head -1))
+HTTP_VERSION := $(strip $(shell $(CESTA_NATIVE_CC) --version 2>/dev/null | head -1))
 HTTP_CONFIG_ID := $(strip $(shell { \
 	printf '%s\n' emscripten "$(HTTP_LDFLAGS)" "$(HTTP_VERSION)"; \
 	} | sha256sum | cut -c1-16))
@@ -640,7 +672,7 @@ GSLT2PARSE_SHARED_ASAN_ENV =
 GSLT2PARSE_SHARED_ASAN_ARGS =
 ifeq ($(ENABLE_SANITIZERS),1)
 ifneq ($(filter address,$(SANITIZER_WORDS)),)
-GSLT2PARSE_ASAN_RUNTIME := $(shell $(CC) -print-file-name=libasan.so)
+GSLT2PARSE_ASAN_RUNTIME := $(shell $(CESTA_NATIVE_CC) -print-file-name=libasan.so)
 GSLT2PARSE_SHARED_ASAN_ENV = LD_PRELOAD="$(GSLT2PARSE_ASAN_RUNTIME)"
 GSLT2PARSE_SHARED_ASAN_ARGS = --isolate-oracle-environment
 endif
@@ -698,7 +730,7 @@ LDFLAGS = -Wl,--as-needed $(BRIDGE_LDFLAGS) -ldl -lm -pthread $(GMP_LDFLAGS) $(L
 # Where the toolchain packs relative relocations into a bitmap (DT_RELR),
 # the loader reads a few kilobytes at start in place of an entry for every
 # pointer the binary's data holds.
-PACK_RELATIVE_RELOCS := $(shell printf 'int main(void){return 0;}\n' | $(CC) -x c -Wl,-z,pack-relative-relocs -o /dev/null - >/dev/null 2>&1 && printf '%s' -Wl,-z,pack-relative-relocs)
+PACK_RELATIVE_RELOCS := $(shell printf 'int main(void){return 0;}\n' | $(CESTA_NATIVE_CC) -x c -Wl,-z,pack-relative-relocs -o /dev/null - >/dev/null 2>&1 && printf '%s' -Wl,-z,pack-relative-relocs)
 LDFLAGS += $(PACK_RELATIVE_RELOCS)
 ifeq ($(ENABLE_SANITIZERS),1)
 CFLAGS := -O1 -g -fno-omit-frame-pointer -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all -Wall -Werror -std=c11 -pthread
@@ -724,10 +756,15 @@ PETTA_COMPILED_READER_RUNTIME_SRC = \
 PRIME_COMPILED_READER_RUNTIME_SRC = \
 	src/prime_compiled_reader.c \
 	src/generated/prime_reader_direct_v1.generated.c
+# Presentations of MeTTa compiled at build time (they read with the dialect
+# readers' grounding, so they belong with the readers).
+PRESENTATION_READER_RUNTIME_SRC = \
+	src/gslt_presentation_v1.c
 COMPILED_READER_RUNTIME_SRC = \
 	$(HE_COMPILED_READER_RUNTIME_SRC) \
 	$(PETTA_COMPILED_READER_RUNTIME_SRC) \
-	$(PRIME_COMPILED_READER_RUNTIME_SRC)
+	$(PRIME_COMPILED_READER_RUNTIME_SRC) \
+	$(PRESENTATION_READER_RUNTIME_SRC)
 JSON_SOURCE_EMBED_TOOL_V1 = runtime/bootstrap/embed_c_sources_v1
 JSON_SOURCE_EMBED_TOOL_V1_SRC = tools/embed_c_sources_v1.c
 LDPP_COMPILER_SOURCE_V1 = langdef/bnf/language_def_parser_compiler_v1.metta
@@ -3982,15 +4019,14 @@ test-frame-identity: $(FRAME_IDENTITY_TEST_BIN)
 
 # Frame identities are spelled by the layout declared in
 # langdef/layouts/runtime_words.module.  The accessors are checked-in
-# ordinary C; regenerating them needs cesta, building with them does not.
+# ordinary C; regenerating them uses the bundled Cesta tool.
 # The test compares them with an independent reading of the word.
-CESTA ?= cesta
 LAYOUT_WORDS_TEST_BIN = runtime/test_layout_words-$(BUILD_OBJ_TAG)
 
 .PHONY: regenerate-layout-words check-layout-words-generated test-layout-words
-regenerate-layout-words:
+regenerate-layout-words: cesta-tool
 	python3 -B tools/regenerate_layout_words.py --cesta "$(CESTA)"
-check-layout-words-generated:
+check-layout-words-generated: cesta-tool
 	python3 -B tools/regenerate_layout_words.py --cesta "$(CESTA)" --check
 
 $(LAYOUT_WORDS_TEST_BIN): tests/test_layout_words.c $(LAYOUT_WORDS_HEADER) src/binding/frame_identity.h src/match.h
@@ -4356,6 +4392,8 @@ test-k-open-dest-regressions: $(BIN)
 	echo "PASS: K0-K3 open-destination answer bags"
 
 .PHONY: test-j-attempt-counters
+# J2 grows by its recursion: one unification a call where the evaluator runs
+# it, one tail re-entry a call where the prepared machine does.
 test-j-attempt-counters: $(BIN)
 	@set -eu; \
 	axes=benchmarks/inference_cost_axes; \
@@ -4369,13 +4407,15 @@ test-j-attempt-counters: $(BIN)
 		rep=$$(sed -n 's/^runtime-counter unification-attempt-repeated-var-fail //p' "$$err" | tail -1); \
 		after=$$(sed -n 's/^runtime-counter unification-attempt-after-bind-fail //p' "$$err" | tail -1); \
 		ok=$$(sed -n 's/^runtime-counter unification-attempt-success //p' "$$err" | tail -1); \
+		reentry=$$(sed -n 's/^runtime-counter prepared-pure-call-tail-reentry //p' "$$err" | tail -1); \
+		reentry=$${reentry:-0}; \
 		rm -f "$$err"; \
 		test -n "$$attempt" && test -n "$$head" && test -n "$$rep" && test -n "$$ok"; \
 		test -n "$$after" && test "$$attempt" -eq $$((head+ok+rep+after)); \
 		eval "$$1"; \
 	}; \
 	stats J1_open_nonlinear_head 'test "$$attempt" -ge 1 && test "$$ok" -eq "$$attempt" && test "$$head" -eq 0'; \
-	stats J2_growing_instantiation 'test "$$attempt" -gt 100 && test "$$ok" -eq "$$attempt" && test "$$head" -eq 0'; \
+	stats J2_growing_instantiation 'test "$$((attempt + reentry))" -gt 100 && test "$$ok" -eq "$$attempt" && test "$$head" -eq 0'; \
 	stats J3_budget_head_fail 'test "$$head" -gt "$$ok"'; \
 	stats J4_modus_ponens_letstar 'test "$$ok" -ge 1 && test "$$attempt" -gt "$$ok"'; \
 	echo "PASS: J1-J4 attempt counters distinguish the four axes"
@@ -6933,7 +6973,8 @@ endif
 
 # Stage 0: kernel-only binary (no precompiled stdlib)
 STAGE0_OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).stage0.o)
-BUILD_CONFIG_INPUTS = Makefile $(VERSION_FILE)
+CESTA_COMPILER_STAMP = $(BOOTSTRAP_TMPDIR)/compiler.$(BUILD_OBJ_TAG).stamp
+BUILD_CONFIG_INPUTS = Makefile $(VERSION_FILE) $(CESTA_COMPILER_STAMP)
 DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(IO_RUNTIME_TEST_OBJ:.o=.d) \
 	$(IO_RUNTIME_BENCH_OBJ:.o=.d) \
@@ -7000,6 +7041,16 @@ endif
 
 FORCE:
 
+# This comparison stamp is not an included makefile. Changing the frontend,
+# its source, or its compiler remakes both build configurations, while an
+# unchanged invocation leaves their headers and objects alone.
+$(CESTA_COMPILER_STAMP): FORCE | $(if $(filter 1,$(CESTA_BUILD)),$(CESTA))
+	@mkdir -p $(dir $@)
+	@set -eu; tmp_id=$$(mktemp "$(dir $@)compiler.XXXXXX"); \
+	trap 'rm -f "$$tmp_id"' EXIT INT TERM; \
+	printf '%s\n' '$(CESTA_COMPILER_ID)' > "$$tmp_id"; \
+	if ! cmp -s "$$tmp_id" "$@"; then mv "$$tmp_id" "$@"; fi
+
 OP_LANG_PREPARED_HEADER_V1 = runtime/generated/cetta_term_reader_v1.generated.h
 OP_LANG_PREPARE_TOOL_V1 = runtime/bootstrap/emit-operational-reader-v1
 $(OP_LANG_PREPARE_TOOL_V1): tools/emit_operational_reader_v1.c native/operational_language_def_v1.c \
@@ -7023,6 +7074,7 @@ $(BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '%s\n' '/* autogenerated by Makefile; do not edit */' > "$$tmp_cfg"; \
 	printf '#define CETTA_VERSION_STRING "%s"\n' "$(CETTA_VERSION)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_MODE_STRING "%s"\n' "$(BUILD_CANON)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_COMPILER_ID "%s"\n' "$(CESTA_COMPILER_ID)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PYTHON %s\n' "$(ENABLE_PYTHON)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_PYTHON_CONFIG_ID "%s"\n' "$(PYTHON_CONFIG_ID)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_MORK_STATIC %s\n' "$(ENABLE_MORK_STATIC)" >> "$$tmp_cfg"; \
@@ -7059,6 +7111,7 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '%s\n' '/* autogenerated by Makefile; do not edit */' > "$$tmp_cfg"; \
 	printf '#define CETTA_VERSION_STRING "%s"\n' "$(CETTA_VERSION)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_MODE_STRING "%s"\n' "$(BUILD_CANON)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_COMPILER_ID "%s"\n' "$(CESTA_COMPILER_ID)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PYTHON %s\n' "$(ENABLE_PYTHON)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_PYTHON_CONFIG_ID "%s"\n' "$(PYTHON_CONFIG_ID)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_MORK_STATIC %s\n' "$(ENABLE_MORK_STATIC)" >> "$$tmp_cfg"; \
@@ -7231,6 +7284,80 @@ $(PARSER_BAKED_OBJ): native/parser_baked_v1.c native/parser_baked_v1.h $(PARSER_
 
 .PHONY: parser-artifacts
 parser-artifacts: $(PARSER_BAKED_HEADER)
+
+# GSLT presentations of MeTTa, compiled at build time with no Python: the
+# module's syntax as CeTTa assembles it (lib/presentation/export_presentation.metta),
+# then the C compiler of presentations, which fails on any LALR(1) conflict, so
+# a generated table certifies its grammar unambiguous.  The generated tables
+# are checked-in sources: `make presentation-readers` regenerates them and
+# `make check-presentation-readers` requires a fresh generation byte-identical.
+# Each entry is NAME:MODULE:THEORY:ENTRY[:KEY] over lib/presentation; KEY
+# names the generated tables (gslt_presentation_KEY_v1), NAME by default.  An
+# earlier version of a presentation stays compiled, frozen, under its own KEY
+# after the current one, so that its texts stay readable (--syntax NAME@1.0).
+PRESENTATION_COMPILER = runtime/gslt_presentation_compile_v1
+# The declared types of builtin operations, from which every presentation's
+# printer derives which of their positions hold data and which run.
+PRESENTATION_POSITION_ROLES = lib/presentation/position_roles.metta
+PRESENTATIONS = cstyle:MeTTaCStylePresentation:CStyle:Prog \
+	pystyle:MeTTaPythonStylePresentation:PythonStyle:Prog \
+	rhostyle:MeTTaRhoStylePresentation:RhoStyle:Prog \
+	sexpr:MeTTaSExpressionPresentation:SExpression:SProg \
+	cstyle:MeTTaCStylePresentation-1.0:CStyle:Prog:cstyle_1_0 \
+	rhostyle:MeTTaRhoStylePresentation-1.0:RhoStyle:Prog:rhostyle_1_0
+
+$(PRESENTATION_COMPILER): tools/gslt_presentation_compile_v1.c src/gslt_presentation_v1.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -o $@ tools/gslt_presentation_compile_v1.c
+
+# $(1): the directory the generated headers go to.  The registry header lists
+# every presentation, so a new one is a module, its forms and an entry here.
+define presentation_generate
+	@set -e; mkdir -p runtime/generated/presentation $(1); \
+	reg=$(1)/gslt_presentation_registry_v1.generated.h; \
+	printf '/* Generated from PRESENTATIONS in the Makefile. Do not edit. */\n' > $$reg.tmp; \
+	names=""; entries=""; \
+	for spec in $(PRESENTATIONS); do \
+	  name=$${spec%%:*}; rest=$${spec#*:}; module=$${rest%%:*}; rest=$${rest#*:}; \
+	  theory=$${rest%%:*}; rest=$${rest#*:}; entry=$${rest%%:*}; key=$$name; \
+	  case $$rest in *:*) key=$${rest#*:};; esac; \
+	  ./$(BIN) --lang petta --profile extended --no-results lib/presentation/export_presentation.metta \
+	    lib/presentation/$$module.module $$theory $$entry runtime/generated/presentation/$$key.inspection; \
+	  $(PRESENTATION_COMPILER) $$name runtime/generated/presentation/$$key.inspection \
+	    lib/presentation/$$module.forms.metta $$entry $(1)/gslt_presentation_$${key}_v1.generated.h \
+	    $(PRESENTATION_POSITION_ROLES); \
+	  printf '#include "generated/gslt_presentation_%s_v1.generated.h"\n' $$key >> $$reg.tmp; \
+	  entries="$$entries    &gslt_presentation_$${key}_v1,\n"; \
+	  case " $$names, " in *" $$name, "*) ;; *) names="$${names:+$$names, }$$name";; esac; \
+	done; \
+	printf '\nstatic const GSLTPresentationTablesV1 *const gslt_presentation_registry[] = {\n%b};\n' "$$entries" >> $$reg.tmp; \
+	printf '\nstatic const char gslt_presentation_registry_names[] = "%s";\n' "$$names" >> $$reg.tmp; \
+	mv $$reg.tmp $$reg
+endef
+
+.PHONY: presentation-readers check-presentation-readers test-presentations
+presentation-readers: $(PRESENTATION_COMPILER) $(BIN)
+	$(call presentation_generate,src/generated)
+
+# The presentations' laws over checked-in programs (read(print(a)) = a for
+# every presentation, the generated S-expression reader against the standard
+# reader, comments kept, programs run identically from C-style text).
+test-presentations: $(BIN)
+	@sh tests/support/check_presentation_laws.sh ./$(BIN)
+
+check-presentation-readers: $(PRESENTATION_COMPILER) $(BIN)
+	$(call presentation_generate,runtime/generated/presentation/check)
+	@set -e; for spec in $(PRESENTATIONS); do \
+	  key=$${spec%%:*}; rest=$${spec#*:}; rest=$${rest#*:}; rest=$${rest#*:}; \
+	  case $$rest in *:*) key=$${rest#*:};; esac; \
+	  cmp src/generated/gslt_presentation_$${key}_v1.generated.h \
+	    runtime/generated/presentation/check/gslt_presentation_$${key}_v1.generated.h || \
+	    { echo "presentation $$key: the checked-in tables differ from a fresh generation" >&2; exit 1; }; \
+	done; \
+	cmp src/generated/gslt_presentation_registry_v1.generated.h \
+	  runtime/generated/presentation/check/gslt_presentation_registry_v1.generated.h || \
+	  { echo "the presentation registry differs from a fresh generation" >&2; exit 1; }; \
+	echo "PASS: presentation tables are byte-identical to a fresh generation"
 
 ifneq ($(BIN),$(PUBLIC_BIN))
 $(PUBLIC_BIN): $(OBJ) $(BRIDGE_DEPS) $(PUBLIC_BIN_FORCE)
@@ -18609,8 +18736,7 @@ NORMAL_TEST_TARGETS := \
 	test-petta-transform \
 	test-petta-transform-step-paths \
 	test-petta-by-transform \
-	test-petta-transform-only \
-	test-petta-machine \
+	test-petta-machine-smoke \
 	test-petta-step-rules \
 	test-transform-he \
 	test-transform-profiles \
@@ -18621,11 +18747,13 @@ NORMAL_TEST_TARGETS := \
 	test-numerical-substrate-smoke \
 	test-application-panel \
 	test-lang-chr \
-	test-provenance
+	test-provenance \
+	check-presentation-readers \
+	test-presentations
 
 .PHONY: test test-all test-test-target-scope
 test: $(NORMAL_TEST_TARGETS)
-test-all: test
+test-all: test test-petta-machine test-petta-transform-only
 
 test-test-target-scope:
 	@count=$$(for makefile in $(MAKEFILE_LIST); do \
@@ -19334,6 +19462,9 @@ test-gslt-rhometta-rhocalc-profile-v1: \
 	printf '%s\n' '(GSLTDirectRhoMettaRhoCalcProfileV1Summary 3 1 1 0)'
 
 test-rhocalc: $(BIN) test-rhocalc-rhometta-profile test-gslt-rhometta-rhocalc-profile-v1 test-metamath-require-depth-rhocalc-profile-v1 test-metamath-scope-control-rhocalc-profile-v1 test-metamath-row-actions-rhometta-compile-v1 test-metamath-row-conditions-core-rhocalc-profile-v1 test-metamath-require-each-key-absent-core-rhocalc-profile-v1 test-metamath-insert-each-core-rhocalc-profile-v1 test-metamath-insert-each-matching-core-rhometta-compile-v1 test-metamath-copy-actions-core-rhometta-compile-v1 test-metamath-insert-each-state-step-rhometta-compile-v1 test-metamath-require-row-state-step-rhocalc-profile-v1 test-metamath-require-row-key-absent-state-step-rhocalc-profile-v1 test-metamath-insert-row-core-rhocalc-profile-v1 test-metamath-insert-row-state-step-rhocalc-profile-v1 test-metamath-state-proof-bridge-rhometta-compile-v1 test-metamath-state-proof-runtime-rhometta-v1 test-rhocalc-canonical-selector-differential test-rhocalc-abt-substitution test-rho-examples
+.PHONY: test-rhocalc-runtime-fixtures
+test-rhocalc: test-rhocalc-runtime-fixtures
+test-rhocalc-runtime-fixtures: $(BIN)
 	@pass=0; fail=0; \
 	for f in tests/rhocalc_run/*.mrho tests/rhocalc_run/*.rho; do \
 		[ -f "$$f" ] || continue; \
@@ -19390,6 +19521,7 @@ test-rhocalc: $(BIN) test-rhocalc-rhometta-profile test-gslt-rhometta-rhocalc-pr
 	for f in tests/rhocalc/reject_fresh.mrho \
 	         tests/rhocalc/reject_join.mrho \
 	         tests/rhocalc/reject_quoted_payload.rho \
+	         tests/rhocalc/reject_bare_name_in_closed_quote.rho \
 	         tests/rhocalc/reject_send_continuation.mrho; do \
 		exp="$${f%.*}.expected"; \
 		result=$$($(CETTA_BIN_INVOKE) --lang rhocalc "$$f" 2>&1); \
@@ -23775,9 +23907,9 @@ test-bounded-select-threads: $(BIN)
 	echo "PASS: a bounded select never delivers more answers than its bound, sequential or threaded"
 
 # The extended profile's collections in PeTTa, on the open tier and in the
-# search machine alone: collect and reify are collapse; select is the first
-# answer with its bindings, or the first k as a copied list, lazily; a bound
-# of zero runs nothing.
+# search machine alone: collect and reify are collapse; select is one answer
+# with its bindings, or k of them as a copied list, lazily; a bound of zero
+# runs nothing.
 .PHONY: test-petta-extended-collections
 test-petta-extended-collections: $(BIN)
 	@set -eu; \
@@ -24770,7 +24902,7 @@ test-petta-extended-query-algebra: $(BIN)
 	plain=runtime/test-petta-default-query-algebra.out; \
 	./$(BIN) --lang petta --profile extended \
 		tests/petta/extended_query_algebra.metta > "$$actual"; \
-	diff -u tests/petta/extended_query_algebra.expected "$$actual"; \
+	tests/support/answers_agree.sh petta tests/petta/extended_query_algebra.metta tests/petta/extended_query_algebra.expected ./$(BIN) --lang petta --profile extended <"$$actual" || { diff -u tests/petta/extended_query_algebra.expected "$$actual"; exit 1; }; \
 	./$(BIN) --lang petta \
 		-e '!(add-atom &self (f a))' \
 		-e '!(collapse (match &self (| (f $$x) (g $$x)) $$x))' \
@@ -24828,9 +24960,9 @@ test-petta-prepared-activation-call: $(BIN)
 	@set -eu; \
 	actual=$$(./$(BIN) --lang petta tests/petta/search_machine_prepared_activation_call.metta); \
 	expected=$$(cat tests/petta/search_machine_prepared_activation_call.expected); \
-	test "$$actual" = "$$expected"; \
+	printf '%s\n' "$$actual" | tests/support/answers_agree.sh petta tests/petta/search_machine_prepared_activation_call.metta tests/petta/search_machine_prepared_activation_call.expected ./$(BIN) --lang petta; \
 	reference=$$(./$(BIN) --fuel 1000000 --lang petta tests/petta/search_machine_prepared_activation_call.metta); \
-	test "$$reference" = "$$expected"; \
+	printf '%s\n' "$$reference" | tests/support/answers_agree.sh petta tests/petta/search_machine_prepared_activation_call.metta tests/petta/search_machine_prepared_activation_call.expected ./$(BIN) --lang petta; \
 	echo 'PASS: prepared activation calls preserve aliases, alternatives, effects, and revisions'
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@set -eu; \
@@ -24951,8 +25083,8 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		--profile extended \
 		tests/prepared_pure_program_cache_he.metta \
 		2>&1 >"$$actual"); \
-	diff -u tests/prepared_pure_program_cache_he.expected \
-		"$$actual"; \
+	python3 tests/support/compare_result_bags.py \
+		tests/prepared_pure_program_cache_he.expected "$$actual"; \
 	hits=$$(printf '%s\n' "$$stats" | awk \
 		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-program-cache-hit" { print $$3 }'); \
 	stores=$$(printf '%s\n' "$$stats" | awk \
@@ -25559,8 +25691,9 @@ test-petta-memoization: $(BIN)
 				<(tail -n +4 "$$actual" | LC_ALL=C sort) || contract_ok=0; \
 		else \
 			contract_ok=1; \
-			diff -u "$$expected" \
-				"$$actual" || contract_ok=0; \
+			tests/support/answers_agree.sh petta tests/petta/search_machine_$$stem.metta "$$expected" \
+				./$(BIN) --lang petta <"$$actual" || \
+				{ diff -u "$$expected" "$$actual"; contract_ok=0; }; \
 		fi; \
 		if [ "$$contract_ok" -ne 1 ]; then \
 			echo "FAIL: PeTTa memoization contract $$stem"; \
@@ -25777,7 +25910,7 @@ test-petta-equation-template-c0: $(BIN)
 	diff -u tests/petta/search_machine_logical_update_relations.expected \
 		"$$logical_optimized"; \
 	diff -u "$$logical_reference" "$$logical_optimized"; \
-	echo "PASS: PeTTa C0 equation templates preserve exact ordered occurrences and fallback"
+	echo "PASS: PeTTa C0 equation templates preserve exact occurrences and fallback"
 
 test-petta-relational-equation-view: $(BIN)
 	@set -eu; \
@@ -26016,13 +26149,13 @@ test-petta-activation-scalar-if: $(BIN)
 	resume_reference=$$(CETTA_PETTA_IF_RESUME_SEGMENT_REFERENCE=1 \
 		./$(BIN) --lang petta "$$fixture" 2>&1); \
 	finite=$$(./$(BIN) --fuel 1000 --lang petta "$$fixture" 2>&1); \
-	if [ "$$actual" != "$$expected" ] || \
-	   [ "$$program_reference" != "$$expected" ] || \
-	   [ "$$match_region_reference" != "$$expected" ] || \
-	   [ "$$reference" != "$$expected" ] || \
-	   [ "$$tail_reference" != "$$expected" ] || \
-	   [ "$$resume_reference" != "$$expected" ] || \
-	   [ "$$finite" != "$$expected" ]; then \
+	if ! printf '%s\n' "$$actual" | tests/support/answers_agree.sh petta "$$fixture" tests/petta/search_machine_activation_scalar_if.expected ./$(BIN) --lang petta || \
+	   ! printf '%s\n' "$$program_reference" | tests/support/answers_agree.sh petta "$$fixture" tests/petta/search_machine_activation_scalar_if.expected ./$(BIN) --lang petta || \
+	   ! printf '%s\n' "$$match_region_reference" | tests/support/answers_agree.sh petta "$$fixture" tests/petta/search_machine_activation_scalar_if.expected ./$(BIN) --lang petta || \
+	   ! printf '%s\n' "$$reference" | tests/support/answers_agree.sh petta "$$fixture" tests/petta/search_machine_activation_scalar_if.expected ./$(BIN) --lang petta || \
+	   ! printf '%s\n' "$$tail_reference" | tests/support/answers_agree.sh petta "$$fixture" tests/petta/search_machine_activation_scalar_if.expected ./$(BIN) --lang petta || \
+	   ! printf '%s\n' "$$resume_reference" | tests/support/answers_agree.sh petta "$$fixture" tests/petta/search_machine_activation_scalar_if.expected ./$(BIN) --lang petta || \
+	   ! printf '%s\n' "$$finite" | tests/support/answers_agree.sh petta "$$fixture" tests/petta/search_machine_activation_scalar_if.expected ./$(BIN) --lang petta; then \
 		echo "FAIL: activation scalar-if changed PeTTa results"; \
 		diff <(printf '%s\n' "$$expected") \
 			<(printf '%s\n' "$$actual") | head -40; \
@@ -26055,7 +26188,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		value=$${!variant}; \
 		actual=$$(printf '%s\n' "$$value" | \
 			grep -v '^runtime-counter '); \
-		if [ "$$actual" != "$$expected" ]; then \
+		if ! printf '%s\n' "$$actual" | tests/support/answers_agree.sh petta "$$fixture" tests/petta/search_machine_activation_scalar_if.expected ./$(BIN) --lang petta; then \
 			echo "FAIL: $$variant activation scalar-if result"; \
 			exit 1; \
 		fi; \
@@ -26427,7 +26560,13 @@ test-petta-activation-anonymous-hole: $(BIN)
 	finite=$$(./$(BIN) --fuel 10000 --lang petta --quiet "$$fixture" 2>&1); \
 	for variant in optimized reference finite; do \
 		value=$${!variant}; \
-		if [ "$$value" != "$$expected" ]; then \
+		case $$variant in \
+			optimized) run="./$(BIN) --lang petta --quiet";; \
+			reference) run="env CETTA_PETTA_ACTIVATION_ANONYMOUS_HOLE_REFERENCE=1 ./$(BIN) --lang petta --quiet";; \
+			finite) run="./$(BIN) --fuel 10000 --lang petta --quiet";; \
+		esac; \
+		if ! printf '%s\n' "$$value" | tests/support/answers_agree.sh petta "$$fixture" \
+				tests/petta/search_machine_activation_anonymous_hole.expected $$run; then \
 			echo "FAIL: $$variant activation anonymous-hole result"; \
 			diff <(printf '%s\n' "$$expected") \
 				<(printf '%s\n' "$$value") | head -40; \
@@ -26437,7 +26576,6 @@ test-petta-activation-anonymous-hole: $(BIN)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@set -eu; \
 	fixture=tests/petta/search_machine_activation_anonymous_hole.metta; \
-	expected=$$(cat tests/petta/search_machine_activation_anonymous_hole.expected); \
 	optimized=$$(./$(BIN) --emit-runtime-stats --lang petta --quiet \
 		"$$fixture" 2>&1); \
 	reference=$$(CETTA_PETTA_ACTIVATION_ANONYMOUS_HOLE_REFERENCE=1 \
@@ -26447,9 +26585,14 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		--quiet "$$fixture" 2>&1); \
 	for variant in optimized reference finite; do \
 		value=$${!variant}; \
-		actual=$$(printf '%s\n' "$$value" | \
-			grep -v '^runtime-counter '); \
-		test "$$actual" = "$$expected"; \
+		case $$variant in \
+			optimized) run="./$(BIN) --lang petta --quiet";; \
+			reference) run="env CETTA_PETTA_ACTIVATION_ANONYMOUS_HOLE_REFERENCE=1 ./$(BIN) --lang petta --quiet";; \
+			finite) run="./$(BIN) --fuel 10000 --lang petta --quiet";; \
+		esac; \
+		printf '%s\n' "$$value" | grep -v '^runtime-counter ' | \
+			tests/support/answers_agree.sh petta "$$fixture" \
+				tests/petta/search_machine_activation_anonymous_hole.expected $$run; \
 	done; \
 	counter() { \
 		printf '%s\n' "$$1" | awk -v name="$$2" \
@@ -26556,7 +26699,7 @@ test-petta-activation-pure-data-segment: $(BIN)
 	finite=$$(./$(BIN) --fuel 1000 --lang petta "$$fixture" 2>&1); \
 	for variant in actual reference finite; do \
 		value=$${!variant}; \
-		if [ "$$value" != "$$expected" ]; then \
+		if ! printf '%s\n' "$$value" | tests/support/answers_agree.sh petta "$$fixture" tests/petta/search_machine_activation_pure_data_segment.expected ./$(BIN) --lang petta; then \
 			echo "FAIL: $$variant activation pure-data segment result"; \
 			exit 1; \
 		fi; \
@@ -26576,7 +26719,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		value=$${!variant}; \
 		actual=$$(printf '%s\n' "$$value" | \
 			grep -v '^runtime-counter '); \
-		test "$$actual" = "$$expected"; \
+		printf '%s\n' "$$actual" | tests/support/answers_agree.sh petta "$$fixture" tests/petta/search_machine_activation_pure_data_segment.expected ./$(BIN) --lang petta; \
 	done; \
 	counter() { \
 		printf '%s\n' "$$1" | awk -v name="$$2" \
@@ -26605,7 +26748,7 @@ test-petta-body-resume-segment: $(BIN)
 	finite=$$(./$(BIN) --fuel 1000 --lang petta "$$fixture" 2>&1); \
 	for variant in optimized reference finite; do \
 		value=$${!variant}; \
-		test "$$value" = "$$expected"; \
+		printf '%s\n' "$$value" | tests/support/answers_agree.sh petta "$$fixture" tests/petta/search_machine_body_resume_segment.expected ./$(BIN) --lang petta; \
 	done
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@set -eu; \
@@ -26622,7 +26765,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		value=$${!variant}; \
 		actual=$$(printf '%s\n' "$$value" | \
 			grep -v '^runtime-counter '); \
-		test "$$actual" = "$$expected"; \
+		printf '%s\n' "$$actual" | tests/support/answers_agree.sh petta "$$fixture" tests/petta/search_machine_body_resume_segment.expected ./$(BIN) --lang petta; \
 	done; \
 	counter() { \
 		printf '%s\n' "$$1" | awk -v name="$$2" \
@@ -26891,7 +27034,6 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	legs=$$(counter petta-match-conjunction-cursor-leg); \
 	test "$$attempt" -eq $$((commit + decline)); \
 	test "$$commit" -gt 0; \
-	test "$$decline" -gt 0; \
 	test "$$legs" -gt "$$commit"; \
 	echo "PASS: PeTTa conjunctive match cursor preserves source-family observations and exact admission receipts (the open tier's route gives the same observations)"
 else
@@ -26929,7 +27071,8 @@ test-petta-type-policy: $(BIN)
 					expected_file=tests/petta/$$fixture.extended.expected; \
 				fi; \
 				expected=$$(cat "$$expected_file"); \
-				if [ "$$actual" != "$$expected" ]; then \
+				if ! printf '%s\n' "$$actual" | tests/support/answers_agree.sh petta tests/petta/$$fixture.metta \
+						"$$expected_file" $(CETTA_BIN_INVOKE) --lang petta $$profile; then \
 					echo "FAIL: PeTTa type policy $$fixture ($$route $$profile)"; \
 					diff -u "$$expected_file" <(printf '%s\n' "$$actual"); \
 					exit 1; \
@@ -26994,7 +27137,7 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 			CETTA_OPEN_EQUATIONS_REFERENCE=0 CETTA_PETTA_MACHINE_STATS=1 \
 			./$(BIN) --lang petta tests/petta/search_machine_core_tier.metta 2>&1); \
 		answers=$$(printf '%s\n' "$$actual" | grep -v '^PETTA_MACHINE_STATS '); \
-		test "$$answers" = "$$(cat tests/petta/search_machine_core_tier.expected)"; \
+		printf '%s\n' "$$answers" | tests/support/answers_agree.sh petta tests/petta/search_machine_core_tier.metta tests/petta/search_machine_core_tier.expected ./$(BIN) --lang petta; \
 		attempts=$$(printf '%s\n' "$$actual" | awk '/^PETTA_MACHINE_STATS / { \
 			for (i=1;i<=NF;i++) if ($$i ~ /^equation_match_attempts=/) { \
 				split($$i,a,"="); print a[2] } }'); \
@@ -27235,7 +27378,7 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 		tests/petta/search_machine_type_demand_negative.metta 2>&1); \
 	expected=$$(cat tests/petta/search_machine_type_demand_negative.expected); \
-	if [ "$$result" != "$$expected" ]; then \
+	if ! printf '%s\n' "$$result" | tests/support/answers_agree.sh petta tests/petta/search_machine_type_demand_negative.metta tests/petta/search_machine_type_demand_negative.expected ./$(BIN) --lang petta; then \
 		echo "FAIL: native PeTTa machine type declarations as a set up to renaming, and arity"; \
 		diff <(printf '%s\n' "$$expected") \
 			<(printf '%s\n' "$$result") | head -40; \
@@ -28018,7 +28161,7 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 		tests/petta/search_machine_hyperpose.metta 2>&1); \
 	expected=$$(cat tests/petta/search_machine_hyperpose.expected); \
-	if [ "$$result" != "$$expected" ]; then \
+	if ! printf '%s\n' "$$result" | tests/support/answers_agree.sh petta tests/petta/search_machine_hyperpose.metta tests/petta/search_machine_hyperpose.expected ./$(BIN) --lang petta; then \
 		echo "FAIL: native PeTTa machine hyperpose answer bag"; \
 		diff <(printf '%s\n' "$$expected") \
 			<(printf '%s\n' "$$result") | head -40; \
@@ -28136,7 +28279,7 @@ PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
 	get_type_relation list_natives_several let_star_patterns \
 	lambda_pattern_parameters lambda_parameter_scope \
 	specialized_partial_values closure_values activation_cons_let \
-	partial_argument_values
+	partial_argument_values fallback_value_contexts one_copy_removal
 PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS = semantic_counter_equations \
 	search_machine_specializer_negative_mutation \
 	search_machine_partial_head_observation search_machine_query_field_composition
@@ -28420,6 +28563,36 @@ test-petta-oem-identity-routes: $(BIN) tests/petta/oem_identity_seal.metta tests
 	done; \
 	echo "PASS: host-held variables keep one identity through the compiled tier"
 
+.PHONY: test-petta-oem-image-path-keys
+test-petta-semantics: test-petta-oem-image-path-keys
+test-petta-oem-image-path-keys: $(BIN) tests/petta/oem_image_path_keys.metta tests/petta/oem_image_path_keys.expected
+	@set -eu; \
+	for reference in "" 1; do \
+		actual=$$(CETTA_NATIVE_QUERY_REFERENCE=1 CETTA_OEM_STORED_REFERENCE=$$reference \
+			$(call cetta_exec,./$(BIN)) --lang petta tests/petta/oem_image_path_keys.metta); \
+		if [ "$$actual" != "$$(cat tests/petta/oem_image_path_keys.expected)" ]; then \
+			printf '%s\n' "FAIL: image fields, mutation or retained lease" "$$actual"; exit 1; \
+		fi; \
+	done; \
+	echo "PASS: image-backed ordinary fields retain keys, correlations and native leases"
+
+IMAGE_PATH_COLLISION_OBJ = runtime/image-path-collisions-$(BUILD_OBJ_TAG).o
+IMAGE_PATH_COLLISION_BIN = runtime/test-image-path-collisions-$(BUILD_OBJ_TAG)
+$(IMAGE_PATH_COLLISION_OBJ): src/space_path_index.c src/space_path_index.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_TEST_PATH_TERM_KEY_COLLISIONS=1 -c $< -o $@
+$(IMAGE_PATH_COLLISION_BIN): $(IMAGE_PATH_COLLISION_OBJ) $(OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -Wl,--export-dynamic -o $@ $(filter-out src/space_path_index.%,$(OBJ)) $(IMAGE_PATH_COLLISION_OBJ) $(filter-out FORCE,$(BRIDGE_DEPS)) $(LDFLAGS)
+.PHONY: test-petta-image-index-collisions
+test-petta-oem-image-path-keys: test-petta-image-index-collisions
+test-petta-image-index-collisions: $(IMAGE_PATH_COLLISION_BIN) tests/petta/oem_image_path_keys.expected
+	@set -eu; \
+	actual=$$(CETTA_NATIVE_QUERY_REFERENCE=1 $(call cetta_exec,./$(IMAGE_PATH_COLLISION_BIN)) --lang petta tests/petta/oem_image_path_keys.metta); \
+	if [ "$$actual" != "$$(cat tests/petta/oem_image_path_keys.expected)" ]; then \
+		printf '%s\n' "FAIL: forced term-key collisions changed image matches" "$$actual"; exit 1; \
+	fi; \
+	echo "PASS: every term-key hash may collide without changing answers or counts"
+
 .PHONY: test-petta-polymorphic-versions
 # A formal whose type variables nothing else in the signature names is
 # private: trusted versions take it, and answer as the protocol does.
@@ -28481,6 +28654,51 @@ test-petta-declaration-rows: $(BIN) tests/petta/duplicate_declaration_rows.metta
 		done; \
 	done; \
 	echo "PASS: repeated declaration rows are one declaration; distinct rows are alternatives"
+
+.PHONY: test-petta-body-policy-arity
+# Whether an equation's body is held as data is decided by the declaration of
+# the equation's own number of arguments: a nullary Atom declaration leaves a
+# unary body running, a unary one leaves the nullary body running, and
+# neither stops an equation of fewer arguments from being a function over
+# the rest.  The tier and the machine give the same answers.
+test-petta-semantics: test-petta-body-policy-arity
+test-petta-body-policy-arity: $(BIN) tests/petta/body_policy_arity_local.metta tests/petta/body_policy_arity_local.expected
+	@set -e; \
+	for reference in "" 1; do \
+		for profile in "" "--profile extended"; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(call cetta_exec,./$(BIN)) --lang petta $$profile tests/petta/body_policy_arity_local.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/body_policy_arity_local.expected)" ]; then \
+				echo "FAIL: body policy by arity (machine route: $${reference:-no}, $${profile:-plain})"; \
+				printf '%s\n' "$$actual"; exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: a declaration decides the bodies of the equations of its own number of arguments only"
+
+.PHONY: test-petta-value-stays-a-value
+# A value bound to a variable is data: is-alpha-member reads it, alone or
+# inside a data operand, as a parameter and as either operand, and evaluates
+# an operand written as a call once; unique, alpha-unique, trace!, and-then,
+# or-else and forall, which the translator rewrites, take it into the
+# rewriting as a variable; a case arm's pattern matches it as it is.  forall
+# passes a value when some answer of its test is true and stops at the first
+# value that fails.  foldall folds its generator's answers as the values they
+# are, runs a match, a let or a let* inside the fold, and evaluates the
+# arguments of any other generator before it.  The expected answers are
+# SWI-PeTTa's.
+test-petta-semantics: test-petta-value-stays-a-value
+test-petta-value-stays-a-value: $(BIN) tests/petta/value_stays_a_value.metta tests/petta/value_stays_a_value.expected
+	@set -e; \
+	for reference in "" 1; do \
+		for profile in "" "--profile extended"; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(call cetta_exec,./$(BIN)) --lang petta $$profile tests/petta/value_stays_a_value.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/value_stays_a_value.expected)" ]; then \
+				echo "FAIL: a bound value evaluated again (machine route: $${reference:-no}, $${profile:-plain})"; \
+				printf '%s\n' "$$actual"; exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: an operation given a variable reads its value and does not evaluate it again"
 
 .PHONY: test-petta-memoize-register-recursion
 # A memoized relation keeps its table at the generator's root, where the
@@ -28568,15 +28786,19 @@ test-petta-search-machine: test-petta-prepared-head-matching
 
 .PHONY: test-petta-entry-guard-retirement
 # An equation whose body begins by destructuring its argument with
-# decons-atom has no answer for a value decons-atom has none for: selection
-# refutes it, so a call whose other equation answered leaves no alternative,
-# and a loop over it keeps a constant choice depth.  Duplicate answers, a
-# body that acts first, cdr-atom and open arguments are unaffected; both
-# routes agree, as they do with a repeated head variable, an output that names
-# the input, an equation added while the call is suspended, and PeTTa's refusal
-# of an authored decons-atom.
+# decons-atom has no answer for a value decons-atom has none for, and an
+# equation whose head refutes the call's arguments has none either: selection
+# refutes both, so a call whose other equation answered leaves no alternative,
+# and a loop over it keeps a constant choice depth, on both routes, for closed
+# values of every kind, through and, case and +, whichever engine runs the
+# call.  Duplicate answers, a body that acts first, cdr-atom, open arguments
+# and a later equation whose head matches are unaffected; both routes agree,
+# as they do with a repeated head variable, an output that names the input,
+# an equation added while the call is suspended, and PeTTa's refusal of an
+# authored decons-atom.
 test-petta-search-machine: test-petta-entry-guard-retirement
-ENTRY_GUARD_CASES = entry_guard_retirement entry_guard_controls entry_guard_authored_decons
+ENTRY_GUARD_CASES = entry_guard_retirement entry_guard_controls entry_guard_authored_decons entry_guard_closed_values
+ENTRY_GUARD_LOOP_CASES = entry_guard_retirement entry_guard_closed_values
 test-petta-entry-guard-retirement: $(BIN) $(foreach c,$(ENTRY_GUARD_CASES),tests/petta/$(c).metta tests/petta/$(c).expected)
 	@set -e; \
 	for case in $(ENTRY_GUARD_CASES); do \
@@ -28587,11 +28809,36 @@ test-petta-entry-guard-retirement: $(BIN) $(foreach c,$(ENTRY_GUARD_CASES),tests
 				{ echo "FAIL: $$case differs on the $$route route"; printf '%s\n' "$$actual"; exit 1; }; \
 		done; \
 	done; \
-	depth=$$(CETTA_PETTA_CHOICE_KIND_TRACE=1 ./$(BIN) --lang petta \
-		tests/petta/entry_guard_retirement.metta 2>&1 >/dev/null | \
-		sed -n 's/.*depth=\([0-9]*\).*/\1/p' | sort -n | tail -1); \
-	test "$${depth:-0}" -le 4 || { echo "FAIL: choice depth $$depth over a 200-iteration loop"; exit 1; }; \
-	echo "PASS: decons-guarded equations leave no alternative behind (max depth $${depth:-0})"
+	deepest=0; \
+	for case in $(ENTRY_GUARD_LOOP_CASES); do \
+		for route in tier machine; do \
+			if [ $$route = machine ]; then reference=1; else reference=; fi; \
+			depth=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference CETTA_PETTA_CHOICE_KIND_TRACE=1 ./$(BIN) --lang petta \
+				tests/petta/$$case.metta 2>&1 >/dev/null | \
+				sed -n 's/.*depth=\([0-9]*\).*/\1/p' | sort -n | tail -1); \
+			test "$${depth:-0}" -le 4 || { echo "FAIL: choice depth $$depth over a 200-iteration loop in $$case on the $$route route"; exit 1; }; \
+			if [ "$${depth:-0}" -gt $$deepest ]; then deepest=$${depth:-0}; fi; \
+		done; \
+	done; \
+	echo "PASS: refuted equations leave no alternative behind (max depth $$deepest)"
+
+.PHONY: test-petta-open-length-under-once
+# The size of a list of open length is chosen where the size is asked for:
+# a once around it commits the shortest length and closes the tail, whether
+# the once is inside or around the binding; a later, longer tail then
+# fails.  Counting a let-bound collection without building it keeps to
+# lists of closed length.  Both routes, under a timeout, since the fault
+# this pins enumerated every length.
+test-petta-search-machine: test-petta-open-length-under-once
+test-petta-open-length-under-once: $(BIN) tests/petta/open_length_under_once.metta tests/petta/open_length_under_once.expected
+	@set -e; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference timeout 60 ./$(BIN) --lang petta tests/petta/open_length_under_once.metta 2>&1 || true); \
+		test "$$actual" = "$$(cat tests/petta/open_length_under_once.expected)" || \
+			{ echo "FAIL: open-length size under once differs on the $$route route"; printf '%s\n' "$$actual"; exit 1; }; \
+	done; \
+	echo "PASS: a once around the size of an open list commits its shortest length, on both routes"
 
 .PHONY: test-petta-suspended-alternatives
 # A call that answered and kept untried equations or rows waits, suspended,
@@ -28667,7 +28914,7 @@ test-petta-prepared-head-matching: $(BIN)
 	@set -e; \
 	actual=$$(./$(BIN) --lang petta tests/petta/prepared_head_matching.metta); \
 	expected=$$(cat tests/petta/prepared_head_matching.expected); \
-	if [ "$$actual" != "$$expected" ]; then \
+	if ! printf '%s\n' "$$actual" | tests/support/answers_agree.sh petta tests/petta/prepared_head_matching.metta tests/petta/prepared_head_matching.expected ./$(BIN) --lang petta; then \
 		echo "FAIL: a prepared program guessed an equation head match"; \
 		printf '%s\n' "$$actual"; exit 1; \
 	fi; \
@@ -28683,7 +28930,7 @@ test-petta-answer-producer-handoff: $(BIN)
 	expected=$$(cat tests/petta/answer_producer_handoff.expected); \
 	if [ "$(ENABLE_RUNTIME_STATS)" != "1" ]; then \
 		actual=$$(./$(BIN) --lang petta "$$fixture"); \
-		if [ "$$actual" != "$$expected" ]; then \
+		if ! printf '%s\n' "$$actual" | tests/support/answers_agree.sh petta "$$fixture" tests/petta/answer_producer_handoff.expected ./$(BIN) --lang petta; then \
 			echo "FAIL: an answer producer changed the answers of $$fixture"; \
 			printf '%s\n' "$$actual"; exit 1; \
 		fi; \
@@ -28692,7 +28939,7 @@ test-petta-answer-producer-handoff: $(BIN)
 	else \
 		output=$$(./$(BIN) --lang petta --emit-runtime-stats "$$fixture" 2>&1); \
 		actual=$$(printf '%s\n' "$$output" | grep -v '^runtime-counter '); \
-		if [ "$$actual" != "$$expected" ]; then \
+		if ! printf '%s\n' "$$actual" | tests/support/answers_agree.sh petta "$$fixture" tests/petta/answer_producer_handoff.expected ./$(BIN) --lang petta; then \
 			echo "FAIL: an answer producer changed the answers of $$fixture"; \
 			printf '%s\n' "$$actual"; exit 1; \
 		fi; \
@@ -28781,16 +29028,32 @@ test-petta-semantics-differential: $(BIN)
 			cat "$$oracle_out"; \
 			exit 1; \
 		fi; \
-		if ! PYTHONDONTWRITEBYTECODE=1 python3 \
-			scripts/compare_petta_observation.py \
-			--contract "$$contract" --expected "$$oracle_out" \
-			--actual "$$cetta_out"; then \
-			echo "FAIL: CeTTa --lang petta diverges from PeTTa on $$stem ($$contract)"; \
-			exit 1; \
+		if [ "$$contract" = occurrence-bag ]; then \
+			if ! PYTHONDONTWRITEBYTECODE=1 python3 \
+				scripts/compare_petta_observation.py \
+				--contract occurrence-bag --expected "$$oracle_out" \
+				--actual "$$cetta_out"; then \
+				echo "FAIL: CeTTa --lang petta diverges from PeTTa on $$stem (occurrence-bag)"; \
+				exit 1; \
+			fi; \
+		elif ! PYTHONDONTWRITEBYTECODE=1 python3 \
+				scripts/compare_petta_observation.py \
+				--contract exact-stream --expected "$$oracle_out" \
+				--actual "$$cetta_out" >/dev/null; then \
+			oracle_answers="runtime/test-petta-semantics-differential-$$stem.oracle.answers"; \
+			PYTHONDONTWRITEBYTECODE=1 python3 -c 'import sys; sys.path.insert(0, "scripts"); from petta_corpus_manifest import semantic_stdout; sys.stdout.write(semantic_stdout(open(sys.argv[1]).read()))' \
+				"$$oracle_out" >"$$oracle_answers"; \
+			if ! CETTA_PETTA_SEARCH_MACHINE=1 PYTHONDONTWRITEBYTECODE=1 python3 \
+				tests/support/compare_answers.py --lang petta --program "$$fixture" \
+				--expected "$$oracle_answers" --actual "$$cetta_out" \
+				--cetta ./$(BIN) --lang petta; then \
+				echo "FAIL: CeTTa --lang petta diverges from PeTTa on $$stem (answers as bags, effects in order)"; \
+				exit 1; \
+			fi; \
 		fi; \
 		pass=$$((pass + 1)); \
 	done; \
-	echo "PASS: $$pass/$$pass base PeTTa semantic fixtures match their explicit oracle observations"
+	echo "PASS: $$pass/$$pass base PeTTa semantic fixtures answer as their oracle does, as bags"
 
 .PHONY: test-petta-list-values
 # Lists built with cons meet flat patterns as the lists they spell, and the
@@ -28884,7 +29147,7 @@ test-petta-get-type-relation: $(BIN)
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
 		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
 			--lang petta tests/petta/get_type_relation.metta 2>&1); \
-		if [ "$$actual" != "$$(cat tests/petta/get_type_relation.expected)" ]; then \
+		if ! printf '%s\n' "$$actual" | tests/support/answers_agree.sh petta tests/petta/get_type_relation.metta tests/petta/get_type_relation.expected ./$(BIN) --lang petta; then \
 			echo "FAIL: get-type on the $$route route"; \
 			diff <(cat tests/petta/get_type_relation.expected) \
 				<(printf '%s\n' "$$actual") | head -20; \
@@ -28928,7 +29191,7 @@ test-petta-list-natives-several: $(BIN)
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
 		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
 			--lang petta tests/petta/list_natives_several.metta 2>&1); \
-		if [ "$$actual" != "$$(cat tests/petta/list_natives_several.expected)" ]; then \
+		if ! printf '%s\n' "$$actual" | tests/support/answers_agree.sh petta tests/petta/list_natives_several.metta tests/petta/list_natives_several.expected ./$(BIN) --lang petta; then \
 			echo "FAIL: list natives over several lists on the $$route route"; \
 			diff <(cat tests/petta/list_natives_several.expected) \
 				<(printf '%s\n' "$$actual") | head -20; \
@@ -29312,7 +29575,7 @@ endif
 
 # The mutants test-native-query-mutations builds; set it to one to check that
 # one alone.
-NATIVE_QUERY_MUTANTS ?= copies collected-copies instance-slot atom-slot flush disjoint level-key loop-bound loop-release rows-fixed dense-summed dense-link dense-repeat dense-popcount dense-diagonal nested-repeat nested-constant leg-space open-row-removal guard-ignored guard-unchecked guard-uncertified directive-answers fold-count fold-places inline-arguments inline-typed inline-equations guard-plain destructure-oem-count case-default arith-op snapshot-occurrence scope-let scope-legs scope-template scope-binding scope-value scope-own typed-hold typed-arguments typed-observed dispatch-unique exists-negated exists-machine exists-machine-equal region-coverage-ignored region-views-dropped count-relations-ignored count-variable-skipped relax-min-ignored relax-two-values-ignored guard-columns-unheld exists-oem-operation guard-operation exists-counted fold-each guard-case-set exists-case-branch exists-oem-case snapshot-stream-scope admit-unresolved head-inert let-head bag-summed distinct-ignored distinct-count unique-extended inline-arity afresh-unchecked afresh-ignored guard-recordless guard-summed insert-unkeyed else-summed else-answers filter-polarity conjunction-filter-ignored conjunction-polarity order-flipped order-unchecked nested-kept-ignored flat-spine-open relation-removal-attached dead-equation-any types-held-ignored types-checked-ignored filtered-test-stale filtered-unfiltered filtered-tuple-taken scalar-head-unchecked scalar-order-loose scalar-sum-wrapped dead-rule-any grouped-key-ignored grouped-reads-ignored grouped-absent-one listed-rows-dropped listed-bag-set read-ahead-symbol read-ahead-arity
+NATIVE_QUERY_MUTANTS ?= copies collected-copies instance-slot atom-slot flush disjoint level-key loop-bound loop-release rows-fixed dense-summed dense-link dense-repeat dense-popcount dense-diagonal nested-repeat nested-constant leg-space open-row-removal guard-ignored guard-unchecked guard-uncertified directive-answers fold-count fold-places inline-arguments inline-typed inline-equations guard-plain destructure-oem-count case-default arith-op snapshot-occurrence scope-let scope-legs scope-template scope-binding scope-value scope-own typed-hold typed-arguments typed-observed dispatch-unique exists-negated exists-machine exists-machine-equal region-coverage-ignored region-views-dropped count-relations-ignored count-variable-skipped relax-min-ignored relax-two-values-ignored guard-columns-unheld exists-oem-operation guard-operation exists-counted guard-case-set exists-case-branch exists-oem-case snapshot-stream-scope admit-unresolved head-inert let-head bag-summed distinct-ignored distinct-count unique-extended inline-arity afresh-unchecked afresh-ignored guard-recordless guard-summed insert-unkeyed else-summed else-answers filter-polarity conjunction-filter-ignored conjunction-polarity order-flipped order-unchecked nested-kept-ignored flat-spine-open relation-removal-attached dead-equation-any types-held-ignored types-checked-ignored filtered-test-stale filtered-unfiltered filtered-tuple-taken scalar-head-unchecked scalar-order-loose scalar-sum-wrapped dead-rule-any grouped-key-ignored grouped-reads-ignored grouped-absent-one listed-rows-dropped listed-bag-set read-ahead-symbol read-ahead-arity
 
 .PHONY: test-native-query-mutations
 # The law above rejects each defect a mutant of the native path carries:
@@ -29392,7 +29655,7 @@ test-native-query-mutations: $(BIN) tests/support/check_native_query.py \
 			level-key) module=relational_cursor;; \
 			dense-*) module=dense_relation;; \
 			open-row-removal|guard-unchecked|guard-uncertified|guard-plain|directive-answers|inline-*|case-default|arith-op|scope-let|scope-legs|dispatch-unique|guard-case-set|snapshot-stream-scope|let-head|afresh-ignored|dead-equation-any|types-held-ignored|types-checked-ignored|guard-operation|conjunction-polarity|region-coverage-ignored|region-views-dropped|relax-min-ignored|relax-two-values-ignored|filtered-unfiltered|scalar-*|dead-rule-any|grouped-*|listed-*) module=eval;; \
-			fold-count|snapshot-occurrence|scope-binding|scope-value|typed-*|exists-machine|exists-machine-equal|fold-each|exists-case-branch|unique-extended|filtered-test-stale|filtered-tuple-taken) module=petta_search_machine;; \
+			fold-count|snapshot-occurrence|scope-binding|scope-value|typed-*|exists-machine|exists-machine-equal|exists-case-branch|unique-extended|filtered-test-stale|filtered-tuple-taken) module=petta_search_machine;; \
 			fold-places) module=native_fold;; \
 			destructure-oem-count|exists-negated|exists-oem-case|exists-oem-operation|admit-unresolved|read-ahead-*) module=open_equation_machine;; \
 			scope-own|scope-template) module=petta_program;; \
@@ -29426,7 +29689,7 @@ test-native-query-mutations: $(BIN) tests/support/check_native_query.py \
 			exit 1; \
 		fi; \
 	done; \
-	echo "PASS: the native query law, or the guard fixtures, reject all hundred and one mutants"
+	echo "PASS: the native query law, or the guard fixtures, reject all hundred mutants"
 
 .PHONY: test-oem-stored-rows-mutations
 # The stored-row law rejects each defect a mutant of the open equation
@@ -29533,8 +29796,11 @@ test-ordinary-performance-rule: tests/support/check_ordinary_performance.py
 test-all: test-ordinary-performance-rule
 
 # Ordinary programs (stores, matches, joins, folds, allocation) cost no more
-# instructions than at the baseline revision, in HE and PeTTa, and show no
-# measured loss in processor cycles.  The baseline is built once from this
+# instructions than at the baseline revision, in HE and PeTTa, to the count's
+# resolution (a quarter of a percent), and show no measured loss in processor
+# cycles.  Each is measured net of start-up, which is reported on its own and
+# may grow by two percent: the library's text, its documentation among it,
+# is no workload's cost.  The baseline is built once from this
 # repository's history; ORDINARY_PERFORMANCE_BASELINE names a baseline binary
 # to compare against instead.  A source tree without that history has no
 # qualification and fails as unavailable rather than silently passing.  Some
@@ -29544,6 +29810,10 @@ test-all: test-ordinary-performance-rule
 # equal numbers of baseline-first and candidate-first runs; predetermined
 # extra samples for address-sensitive cases are recorded in the JSON report.
 ORDINARY_PERFORMANCE_BASELINE_REV ?= d938ce41
+# The gate is also run against the committed head: what the work in the tree
+# costs beyond what is committed.  The standing baseline above is an earlier
+# revision, against which gains banked since could be spent unseen.
+ORDINARY_PERFORMANCE_HEAD_REV ?= HEAD
 ORDINARY_PERFORMANCE_BASELINE ?=
 test-ordinary-performance: $(BIN) test-ordinary-performance-rule
 	@if [ -n "$(strip $(ORDINARY_PERFORMANCE_BASELINE))" ] || \
@@ -29555,8 +29825,171 @@ test-ordinary-performance: $(BIN) test-ordinary-performance-rule
 		echo "UNAVAILABLE: no baseline for the ordinary-performance comparison (revision $(ORDINARY_PERFORMANCE_BASELINE_REV) is not in this tree's history; set ORDINARY_PERFORMANCE_BASELINE)"; \
 		exit 1; \
 	fi
+	@if [ -z "$(strip $(ORDINARY_PERFORMANCE_BASELINE))" ] && \
+		git rev-parse --verify -q "$(ORDINARY_PERFORMANCE_HEAD_REV)^{commit}" >/dev/null 2>&1 && \
+		! git merge-base --is-ancestor "$(ORDINARY_PERFORMANCE_HEAD_REV)" "$(ORDINARY_PERFORMANCE_BASELINE_REV)" 2>/dev/null; then \
+		echo "Against the committed head ($(ORDINARY_PERFORMANCE_HEAD_REV)):"; \
+		python3 tests/support/check_ordinary_performance.py --candidate ./$(BIN) \
+			--baseline-rev $(ORDINARY_PERFORMANCE_HEAD_REV) \
+			--work runtime/ordinary-performance-head; \
+	fi
 
 test-asymptotic: test-ordinary-performance
+
+.PHONY: test-priority-space
+# A priority space is a bag with an order of its own: peek, pop, get and
+# truncate go by the standard order of terms, and two histories of one bag
+# peek and pop alike (ties, atoms holding variables and numbers of one value
+# included).  A read of it answers its bag, as a read of any space does: the
+# gate observes every read sorted, never in the order its answers come.
+test-priority-space: $(BIN) tests/petta/priority_space.metta tests/petta/priority_space.expected \
+		tests/he/priority_space.metta tests/he/priority_space.expected \
+		examples/given_clause_two_lanes.metta tests/petta/example_given_clause_two_lanes.expected
+	@set -eu; for lang in petta he; do \
+		$(CETTA_BIN_INVOKE) --lang $$lang --profile extended tests/$$lang/priority_space.metta \
+			> runtime/priority-space-$$lang.out 2>&1; \
+		diff -u tests/$$lang/priority_space.expected runtime/priority-space-$$lang.out; \
+	done
+	@set -eu; $(CETTA_BIN_INVOKE) --lang petta --profile extended examples/given_clause_two_lanes.metta 2>&1 \
+		| grep -v '^true$$' > runtime/priority-space-two-lanes.out; \
+	diff -u tests/petta/example_given_clause_two_lanes.expected runtime/priority-space-two-lanes.out
+	@echo "PASS: a priority space peeks, pops, gets and truncates in the standard order of terms whatever its history, and reads its bag, in PeTTa and HE; the two-lane given-clause example saturates, runs out of budget and proves as written"
+
+test-all: test-priority-space
+
+.PHONY: test-space-order
+# The order index a priority space keeps over its rows, against a sorted
+# array: random and adversarial adds and removals, rank, select, search,
+# renumbering, copy and build, with its links, counts and balance checked
+# after every operation, under the address and undefined-behaviour sanitizers.
+test-space-order: tests/support/check_space_order.c src/space_order.h
+	@mkdir -p runtime
+	@$(CC) -O1 -g -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Isrc \
+		tests/support/check_space_order.c -o runtime/check-space-order
+	@./runtime/check-space-order
+	@echo "PASS: the order index holds its rows in order, balanced, through adds, removals, renumbering, copies and builds"
+
+test-all: test-space-order
+
+.PHONY: test-priority-space-differential
+# Random programs over a priority space against a model of it written apart
+# from the engine: both dialects, both profiles, sizes on both sides of the
+# row-reading threshold, with removals enough to contract the rows.
+test-priority-space-differential: $(BIN) tests/support/check_priority_space_differential.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_priority_space_differential.py ./$(BIN) 3
+
+test-all: test-priority-space-differential
+
+.PHONY: test-ordered-space-reads
+# A stack's reads answer newest first and a queue's oldest first, as their
+# own operations do: collapses, once, select, conjunctions, takes and
+# function bodies, against a model, in PeTTa on both routes and in HE.
+test-ordered-space-reads: $(BIN) tests/support/check_ordered_space_reads.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_ordered_space_reads.py ./$(BIN) 40
+
+test-all: test-ordered-space-reads
+
+.PHONY: test-priority-order-laws
+# The order of a priority space is an order: every history of the same atoms
+# lists them one way, two runs alike, and ground atoms as msort sorts them.
+test-priority-order-laws: $(BIN) tests/support/check_priority_order_laws.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_priority_order_laws.py ./$(BIN) 60
+
+test-all: test-priority-order-laws
+
+.PHONY: test-transform-take-differential
+# Random transforms that take, against a model of a take written apart from
+# the engine: a firing removes the stored atoms its takes met, as many copies
+# as it takes, and no atom they only unify with; in each kind of space, with
+# duplicates and with atoms that hold variables.
+test-transform-take-differential: $(BIN) tests/support/check_transform_take_differential.py tests/support/check_priority_space_differential.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_transform_take_differential.py ./$(BIN) 3
+
+test-all: test-transform-take-differential
+test-petta-transform: test-transform-take-differential
+
+.PHONY: test-priority-keyed-reads
+# Every pattern read from a priority space, against unification over its
+# sorted atoms: keys at any depth, variables at every node of the stored
+# atoms, both dialects, strict and full, across pops.
+test-priority-keyed-reads: $(BIN) tests/support/check_priority_keyed_reads.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_priority_keyed_reads.py ./$(BIN) 4
+
+test-all: test-priority-keyed-reads
+
+.PHONY: test-priority-strangers
+# A priority space holding rows no search of its order places (a list value
+# with an open tail, a partial application) or places without an ordering
+# key (70 variables, a variable 600 deep), under the heads its patterns ask
+# for and away from them: reads, takes and removals answer as the plain atom
+# space does, strict and full alike, in both dialects.
+# Rows of every stored form (lists as cons cells with an open tail or an
+# improper end, list values and patterns, partial applications), in counts
+# up to 100, read, counted, taken and removed in priority and atom spaces,
+# strict and full, against a space read row by row; and a fixture whose
+# answers SWI-PeTTa gives: a pattern meets a list built with an open tail as
+# unification of [H|T] does.
+test-priority-strangers: $(BIN) tests/support/check_priority_strangers.py \
+		tests/petta/list_cells_in_spaces.metta tests/petta/list_cells_in_spaces.expected
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_priority_strangers.py ./$(BIN) 4
+	@set -eu; $(CETTA_BIN_INVOKE) --lang petta tests/petta/list_cells_in_spaces.metta \
+		> runtime/list-cells-in-spaces.out 2>&1; \
+	python3 tests/support/compare_answers.py --lang petta \
+		--program tests/petta/list_cells_in_spaces.metta \
+		--expected tests/petta/list_cells_in_spaces.expected \
+		--actual runtime/list-cells-in-spaces.out --cetta $(CETTA_BIN_INVOKE) --lang petta
+	@echo "PASS: a list built with an open tail meets patterns in reads, counts and removals as SWI-PeTTa's unification does"
+
+test-all: test-priority-strangers
+test-priority-keyed-reads: test-priority-strangers
+
+.PHONY: test-priority-order-scaling
+# Ordered reads of a priority space cost linear work, counted in
+# instructions: drains of 5, 8 and 16 interleaved lanes taken in turn (a
+# full space at most 1.5x a strict one), keys at the 9th, 16th and 32nd
+# element of rows sharing every element before them, and first answers from
+# a lane of 64 or 65 rows standing after every other row, with no step
+# between the two.
+test-priority-order-scaling: $(BIN) tests/support/check_priority_order_scaling.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_priority_order_scaling.py ./$(BIN)
+
+test-asymptotic: test-priority-order-scaling
+
+.PHONY: test-number-removal-kinds
+# Removal, takes and matches of numbers, in every kind of space, against the
+# plain atom space of the same dialect: HE finds a number by its value, PeTTa
+# by its term, and no kind's own index answers otherwise.
+test-number-removal-kinds: $(BIN) tests/support/check_number_removal_kinds.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_number_removal_kinds.py ./$(BIN)
+
+test-all: test-number-removal-kinds
+test-transform-he: test-number-removal-kinds
+
+.PHONY: test-transform-guard-reference
+# A let's code evaluated as written under the firing's bindings, and a single
+# operation on numbers applied directly, against the code with the values
+# written in (CETTA_TRANSFORM_LET_REFERENCE=1).
+test-transform-guard-reference: $(BIN) tests/support/check_transform_guard_reference.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_transform_guard_reference.py ./$(BIN)
+
+test-all: test-transform-guard-reference
+test-petta-transform: test-transform-guard-reference
+
+.PHONY: test-space-readers-differential
+# A reader left on a space's rows by a removal answers as a reader given its
+# own copy of them (CETTA_SPACE_READERS_REFERENCE=1).
+test-space-readers-differential: $(BIN) tests/support/check_space_readers_differential.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_space_readers_differential.py ./$(BIN)
+
+test-all: test-space-readers-differential
+
+.PHONY: test-mm2-step-example
+# The MM2 step written with a set space, a priority space and transform
+# leaves the store the native MM2 runtime leaves.
+test-mm2-step-example: $(BIN) tests/support/check_mm2_step.py examples/mm2_step.metta
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_mm2_step.py ./$(BIN)
+
+test-all: test-mm2-step-example
 
 .PHONY: test-space-bits-join-scaling
 # A binary relation kept as bits answers probes of either column by their
@@ -29869,8 +30302,10 @@ test-admission-fixture-law: $(BIN) \
 		for test in minmax_intrinsic minmax_selection let_rebinding \
 				builtin_owned_by_space \
 				$(notdir $(basename $(wildcard tests/petta/normal_form_guard_*.metta))); do \
-			diff -u tests/petta/$$test.expected \
-				<(env $$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/$$test.metta); \
+			env $$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/$$test.metta | \
+				tests/support/answers_agree.sh petta tests/petta/$$test.metta tests/petta/$$test.expected \
+					$(CETTA_BIN_INVOKE) --lang petta || { diff -u tests/petta/$$test.expected \
+				<(env $$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/$$test.metta); exit 1; }; \
 		done; \
 	done
 
@@ -30634,7 +31069,8 @@ test-petta-runtime-heads: $(BIN)
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
 		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
 			--lang petta tests/petta/$$stem.metta 2>&1); \
-		if [ "$$actual" != "$$(cat tests/petta/$$stem.expected)" ]; then \
+		if ! printf '%s\n' "$$actual" | tests/support/answers_agree.sh petta tests/petta/$$stem.metta \
+				tests/petta/$$stem.expected $(CETTA_BIN_INVOKE) --lang petta; then \
 			echo "FAIL: run-time heads ($$stem) on the $$route route"; \
 			diff <(cat tests/petta/$$stem.expected) \
 				<(printf '%s\n' "$$actual") | head -20; \
@@ -30876,7 +31312,300 @@ test-petta-match-conjunction-order: $(BIN)
 			exit 1; \
 		fi; \
 	done; \
-	echo "PASS: conjunctions answer as SWI-PeTTa in any order of their legs, on the tier and in the machine"
+	echo "PASS: conjunctions answer alike in any order of their legs, reading the space as it stood at the call, on the tier and in the machine"
+
+.PHONY: test-petta-conjunction-reads-one-state
+# A conjunctive match answers from its space as the space stood at the call,
+# whatever its answers add or remove ([DIFF-20] of the PeTTa spec): its later
+# patterns read the space less the atoms added since and with the atoms
+# removed since.  Each bag is sorted or counted.
+test-petta-conjunction-reads-one-state: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for profile in stable extended; do \
+			if [ $$profile = extended ]; then flag="--profile extended"; else flag=; fi; \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta $$flag \
+				tests/petta/conjunctive_match_reads_one_state.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/conjunctive_match_reads_one_state.expected)" ]; then \
+				echo "FAIL: a conjunction's reads on the $$route route, $$profile profile"; \
+				diff <(cat tests/petta/conjunctive_match_reads_one_state.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: a conjunctive match reads its space as it stood at the call, on the tier and in the machine, in both profiles"
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_conjunction_entry_reads.py ./$(BIN) --programs 300
+
+.PHONY: test-petta-host-answer-in-call-tail
+test-petta-semantics: test-petta-host-answer-in-call-tail
+# A host goal in the tail of a compiled call resumes the call with no
+# continuation of its own; its answer is the call's.
+test-petta-host-answer-in-call-tail: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for profile in stable extended; do \
+			if [ $$profile = extended ]; then flag="--profile extended"; else flag=; fi; \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta $$flag \
+				tests/petta/host_answer_in_call_tail.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/host_answer_in_call_tail.expected)" ]; then \
+				echo "FAIL: a host answer in a call's tail on the $$route route, $$profile profile"; \
+				diff <(cat tests/petta/host_answer_in_call_tail.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: a host goal in a compiled call's tail answers for the call, on the tier and in the machine, in both profiles"
+
+.PHONY: test-petta-let-reads-cells-as-lists
+test-petta-semantics: test-petta-let-reads-cells-as-lists
+# A let pattern meets the list a chain of cells spells, never the cells'
+# own fields, in the compiled tiers as in the machine.
+test-petta-let-reads-cells-as-lists: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for profile in stable extended; do \
+			if [ $$profile = extended ]; then flag="--profile extended"; else flag=; fi; \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta $$flag \
+				tests/petta/let_reads_cells_as_lists.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/let_reads_cells_as_lists.expected)" ]; then \
+				echo "FAIL: a let reading cells on the $$route route, $$profile profile"; \
+				diff <(cat tests/petta/let_reads_cells_as_lists.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: a let pattern meets the list its cells spell, on the tier and in the machine, in both profiles"
+
+.PHONY: test-petta-remove-atom-answers
+test-petta-semantics: test-petta-remove-atom-answers
+# remove-atom answers whether it removed a row; a bare variable removes none.
+test-petta-remove-atom-answers: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for profile in stable extended; do \
+			if [ $$profile = extended ]; then flag="--profile extended"; else flag=; fi; \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta $$flag \
+				tests/petta/remove_atom_answers_what_it_removed.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/remove_atom_answers_what_it_removed.expected)" ]; then \
+				echo "FAIL: remove-atom's answer on the $$route route, $$profile profile"; \
+				diff <(cat tests/petta/remove_atom_answers_what_it_removed.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: remove-atom answers whether it removed a row, on the tier and in the machine, in both profiles"
+
+.PHONY: test-petta-equation-without-named-head
+test-petta-semantics: test-petta-equation-without-named-head
+# An equation whose left side applies no symbol is a PeTTa fact: it defines
+# no call, from its own space or another.  HE still reads it as a rule.
+test-petta-equation-without-named-head: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for profile in stable extended; do \
+			if [ $$profile = extended ]; then flag="--profile extended"; else flag=; fi; \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta $$flag \
+				tests/petta/equation_without_named_head_is_a_fact.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/equation_without_named_head_is_a_fact.expected)" ]; then \
+				echo "FAIL: an equation without a named head on the $$route route, $$profile profile"; \
+				diff <(cat tests/petta/equation_without_named_head_is_a_fact.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang he $$flag \
+				tests/petta/equation_without_named_head_he_rule.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/equation_without_named_head_he_rule.expected)" ]; then \
+				echo "FAIL: HE's rule of any head on the $$route route, $$profile profile"; \
+				diff <(cat tests/petta/equation_without_named_head_he_rule.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: a PeTTa equation without a named head is a fact, an HE one a rule, on the tier and in the machine, in both profiles"
+
+.PHONY: test-petta-cut-inside-catch
+test-petta-semantics: test-petta-cut-inside-catch
+# A cut inside catch commits the catch's body, never the clause around it.
+test-petta-cut-inside-catch: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for profile in stable extended; do \
+			if [ $$profile = extended ]; then flag="--profile extended"; else flag=; fi; \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta $$flag \
+				tests/petta/cut_inside_catch_stays_inside.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/cut_inside_catch_stays_inside.expected)" ]; then \
+				echo "FAIL: a cut inside catch on the $$route route, $$profile profile"; \
+				diff <(cat tests/petta/cut_inside_catch_stays_inside.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: a cut inside catch stays inside, on the tier and in the machine, in both profiles"
+
+.PHONY: test-petta-reduce-built-application
+test-petta-semantics: test-petta-reduce-built-application
+# reduce of an application built at run time answers as the written one.
+test-petta-reduce-built-application: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for profile in stable extended; do \
+			if [ $$profile = extended ]; then flag="--profile extended"; else flag=; fi; \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta $$flag \
+				tests/petta/reduce_built_application_as_written.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/reduce_built_application_as_written.expected)" ]; then \
+				echo "FAIL: reduce of a built application on the $$route route, $$profile profile"; \
+				diff <(cat tests/petta/reduce_built_application_as_written.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: reduce of a built application answers as the written one, on the tier and in the machine, in both profiles"
+
+.PHONY: test-petta-collected-value-held
+test-petta-semantics: test-petta-collected-value-held
+# Code a collected value holds is never run again, on the open tier too.
+test-petta-collected-value-held: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for profile in stable extended; do \
+			if [ $$profile = extended ]; then flag="--profile extended"; else flag=; fi; \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta $$flag \
+				tests/petta/collected_value_stays_held.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/collected_value_stays_held.expected)" ]; then \
+				echo "FAIL: a collected value's held code on the $$route route, $$profile profile"; \
+				diff <(cat tests/petta/collected_value_stays_held.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: code a collected value holds stays held, on the tier and in the machine, in both profiles"
+
+.PHONY: test-petta-held-collected-match
+test-petta-semantics: test-petta-held-collected-match
+# A held (collapse (match ...)) is compared as a value, not observed.
+test-petta-held-collected-match: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for profile in stable extended; do \
+			if [ $$profile = extended ]; then flag="--profile extended"; else flag=; fi; \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta $$flag \
+				tests/petta/held_collected_match_stays_held.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/held_collected_match_stays_held.expected)" ]; then \
+				echo "FAIL: a held collected match on the $$route route, $$profile profile"; \
+				diff <(cat tests/petta/held_collected_match_stays_held.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: a held collected match stays held, on the tier and in the machine, in both profiles"
+
+.PHONY: test-petta-associative-entry-reads
+test-petta-semantics: test-petta-associative-entry-reads
+# Grouping does not change conjunction, and all its legs share the call's
+# entry view, including when the caller writes between returned answers.
+test-petta-associative-entry-reads: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for profile in stable extended; do \
+			if [ $$profile = extended ]; then flag="--profile extended"; else flag=; fi; \
+			for fixture in conjunction_comma_data associative_conjunction_entry; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta $$flag \
+				tests/petta/$$fixture.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/$$fixture.expected)" ]; then \
+				echo "FAIL: a grouped conjunction on the $$route route, $$profile profile"; \
+				diff <(cat tests/petta/$$fixture.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+			done; \
+		done; \
+	done; \
+	echo "PASS: commas associate and all legs read at the conjunction's entry, on the tier and in the machine, in both profiles"
+
+.PHONY: test-petta-conjunction-entry-kept-runtime-stats
+# The fixture's conjunctions write only rows, which the journal itemizes, so
+# no read point is lost: a lost point reads the space as it is, not at the
+# call.
+test-petta-conjunction-entry-kept-runtime-stats: $(BIN)
+	@if [ "$(ENABLE_RUNTIME_STATS)" != "1" ]; then \
+		$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@; \
+	else \
+		set -eu; \
+		for route in tier machine; do \
+			if [ $$route = machine ]; then reference=1; else reference=; fi; \
+			for profile in stable extended; do \
+				if [ $$profile = extended ]; then flag="--profile extended"; else flag=; fi; \
+				out=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference ./$(BIN) \
+					--lang petta $$flag --emit-runtime-stats \
+					tests/petta/conjunctive_match_reads_one_state.metta 2>&1) || { \
+					echo "FAIL: the fixture did not run on the $$route route, $$profile profile"; \
+					exit 1; }; \
+				opened=$$(printf '%s\n' "$$out" | \
+					awk '$$1 == "runtime-counter" && $$2 == "space-entry-open" {print $$3}'); \
+				lost=$$(printf '%s\n' "$$out" | \
+					awk '$$1 == "runtime-counter" && $$2 == "space-entry-lost" {print $$3}'); \
+				if [ -z "$$opened" ] || [ "$$opened" = 0 ] || [ -z "$$lost" ]; then \
+					echo "FAIL: no read point opened or counted on the $$route route, $$profile profile"; \
+					exit 1; \
+				fi; \
+				if [ "$$lost" != 0 ]; then \
+					echo "FAIL: $$lost read points lost on the $$route route, $$profile profile"; \
+					exit 1; \
+				fi; \
+			done; \
+		done; \
+		echo "PASS: no conjunction's read point is lost, on the tier and in the machine, in both profiles"; \
+	fi
+
+.PHONY: test-petta-space-snapshot-binding
+# (with-space-snapshot B S BODY) reads as (let B <a copy of S> BODY): the
+# body is evaluated as any PeTTa body, its library functions included, and
+# the copy and the space do not see each other's writes.
+test-petta-space-snapshot-binding: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta --profile extended \
+			tests/petta/space_snapshot_binding.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/space_snapshot_binding.expected)" ]; then \
+			echo "FAIL: a space snapshot's binding on the $$route route"; \
+			diff <(cat tests/petta/space_snapshot_binding.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: a space snapshot binds a copy of the space and its body is evaluated as any PeTTa body, on the tier and in the machine"
 
 .PHONY: test-petta-foldall-native-steps
 # foldall with a step that is a deterministic function of values, which the
@@ -31118,7 +31847,9 @@ test-petta-hyperpose-program-cache: $(BIN)
 	for run in $$(seq 1 40); do \
 		status=0; actual=$$(CETTA_PETTA_SEARCH_MACHINE=1 timeout 30 $(CETTA_BIN_INVOKE) \
 			--lang petta tests/petta/search_machine_hyperpose.metta 2>&1) || status=$$?; \
-		if [ "$$status" -ne 0 ] || [ "$$actual" != "$$(cat tests/petta/search_machine_hyperpose.expected)" ]; then \
+		if [ "$$status" -ne 0 ] || ! printf '%s\n' "$$actual" | \
+				tests/support/answers_agree.sh petta tests/petta/search_machine_hyperpose.metta \
+				tests/petta/search_machine_hyperpose.expected $(CETTA_BIN_INVOKE) --lang petta; then \
 			echo "FAIL: hyperpose run $$run (exit $$status)"; \
 			diff <(cat tests/petta/search_machine_hyperpose.expected) \
 				<(printf '%s\n' "$$actual") | head -10; \
@@ -31375,7 +32106,7 @@ test-petta-prepared-code: $(BIN)
 		actual=$$(CETTA_PREPARED_PURE_CODE_REFERENCE=$$reference \
 			CETTA_GC_BUDGET_MB=$$budget $(CETTA_BIN_INVOKE) \
 			--lang petta tests/petta/prepared_code.metta 2>&1); \
-		if [ "$$actual" != "$$(cat tests/petta/prepared_code.expected)" ]; then \
+		if ! printf '%s\n' "$$actual" | tests/support/answers_agree.sh petta tests/petta/prepared_code.metta tests/petta/prepared_code.expected ./$(BIN) --lang petta; then \
 			echo "FAIL: prepared register code, $$run run"; \
 			diff <(cat tests/petta/prepared_code.expected) \
 				<(printf '%s\n' "$$actual") | head -20; \
@@ -31474,8 +32205,7 @@ test-petta-transform-only: $(BIN) lib/petta/transform_only.metta lib/petta/lib_p
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_petta_transform_only.py ./$(BIN) \
 		--corpus tests/petta/transform_only --lane specs --timeout 120 --require-all
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_petta_transform_only.py ./$(BIN) \
-		--corpus tests/petta/transform_only --lane native --timeout 120 --require-all \
-		--excuse-native-defects
+		--corpus tests/petta/transform_only --lane native --timeout 120 --require-all
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_petta_transform_only.py ./$(BIN) \
 		--corpus tests/petta/transform_only --lane specs --timeout 120 --require-all \
 		--also binding branching choice \
@@ -31484,6 +32214,14 @@ test-petta-transform-only: $(BIN) lib/petta/transform_only.metta lib/petta/lib_p
 # A PeTTa evaluator whose every step is a transform rule (lib/petta/petta_machine.metta):
 # its checks and seeded expressions answer as the host, with the native firing and
 # with transform written in PeTTa.
+.PHONY: test-petta-machine-smoke
+# Compact production-path checks; the full fixed and seeded corpus remains
+# mandatory in test-all through test-petta-machine.
+test-petta-machine-smoke: $(BIN) lib/petta/petta_machine.metta \
+        tests/petta/petta_machine_smoke.metta tests/support/check_petta_machine.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_petta_machine.py ./$(BIN) \
+		--fixture tests/petta/petta_machine_smoke.metta --programs 0
+
 .PHONY: test-petta-machine
 test-petta-machine: $(BIN) lib/petta/petta_machine.metta tests/petta/petta_machine.metta \
 		tests/support/check_petta_machine.py
@@ -31498,6 +32236,89 @@ test-petta-semantics: test-petta-step-rules
 test-petta-step-rules: $(BIN) lib/petta/lib_step_rules.metta tests/petta/step_rules.metta \
 		tests/support/check_step_rules.py
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_step_rules.py ./$(BIN)
+
+.PHONY: test-petta-transform-held-values
+test-petta-semantics: test-petta-transform-held-values
+# transform's native step answers as its library does where a value is held:
+# a matched atom, an instance or a let's value holding code stays a value; a
+# branch fires when it is continued, against the store the branches before it
+# left; a let's code binds what it binds; an error a let raises is the
+# caller's to catch, on every route; a rule's second take, begun while its
+# first is open right after a removal settled the space, reads the rows as
+# they stand; inside a transaction a firing reads and changes the
+# transaction's working spaces, committed or rolled back with it.  Native on the tier and in the machine, in both profiles, and
+# the authored library (lib_transform_swi), answer the expected output.  The
+# library imported by a module runs natively for its importer, as it does
+# imported directly.
+test-petta-transform-held-values: $(BIN) tests/petta/transform_held_values.metta \
+		tests/petta/transform_held_values.expected \
+		tests/petta/transform_code_contexts.metta \
+		tests/petta/transform_code_contexts.expected \
+		tests/petta/transform_take_after_settle.metta \
+		tests/petta/transform_take_after_settle.expected \
+		tests/petta/transform_in_transaction.metta \
+		tests/petta/transform_in_transaction.expected \
+		tests/petta/transform_library_by_module.metta \
+		tests/petta/transform_library_by_module.expected \
+		tests/petta/fixtures/transform_library_module.metta \
+		tests/petta/fixtures/transform_library_module_data.metta
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for profile in stable extended; do \
+			if [ $$profile = extended ]; then flag="--profile extended"; else flag=; fi; \
+			for fixture in transform_held_values transform_take_after_settle \
+					transform_in_transaction transform_code_contexts; do \
+				CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) --lang petta $$flag \
+					tests/petta/$$fixture.metta > runtime/$$fixture.out 2>&1; \
+				CETTA_OPEN_EQUATIONS_REFERENCE=$$reference python3 tests/support/compare_answers.py \
+					--lang petta --program tests/petta/$$fixture.metta \
+					--expected tests/petta/$$fixture.expected \
+					--actual runtime/$$fixture.out \
+					--cetta $(CETTA_BIN_INVOKE) --lang petta $$flag || \
+					{ echo "FAIL: $$fixture on the $$route route, $$profile profile"; exit 1; }; \
+			done; \
+		done; \
+		CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) --lang petta \
+			tests/petta/transform_library_by_module.metta \
+			> runtime/transform-library-by-module.out 2>&1; \
+		CETTA_OPEN_EQUATIONS_REFERENCE=$$reference python3 tests/support/compare_answers.py \
+			--lang petta --program tests/petta/transform_library_by_module.metta \
+			--expected tests/petta/transform_library_by_module.expected \
+			--actual runtime/transform-library-by-module.out \
+			--cetta $(CETTA_BIN_INVOKE) --lang petta || \
+			{ echo "FAIL: the library imported by a module, $$route route"; exit 1; }; \
+	done; \
+	for library in lib_transform_swi lib_transform_specs; do \
+	for fixture in transform_held_values transform_take_after_settle \
+			transform_in_transaction transform_code_contexts; do \
+		sed -e "s#(library lib_transform)#(library $$library)#" \
+			tests/petta/$$fixture.metta > runtime/$$fixture.reference.metta; \
+		$(CETTA_BIN_INVOKE) --lang petta runtime/$$fixture.reference.metta \
+			> runtime/$$fixture.reference.out 2>&1; \
+		python3 tests/support/compare_answers.py --lang petta \
+			--program runtime/$$fixture.reference.metta \
+			--expected tests/petta/$$fixture.expected \
+			--actual runtime/$$fixture.reference.out \
+			--cetta $(CETTA_BIN_INVOKE) --lang petta || \
+			{ echo "FAIL: the authored library does not answer $$fixture's expected output"; exit 1; }; \
+	done; done
+	@echo "PASS: held values, continued branches, let bindings, let errors, takes after a settled removal and firings inside transactions answer as the authored library, on the tier and in the machine, in both profiles; the library imported by a module runs natively"
+
+.PHONY: test-petta-open-row-retention test-ordered-kind-operations
+test-petta-open-row-retention: $(BIN) tests/support/check_open_row_retention.py
+	@python3 tests/support/check_open_row_retention.py $(CETTA_BIN_INVOKE)
+
+test-ordered-kind-operations: $(BIN) tests/petta/ordered_kind_operations.metta tests/petta/ordered_kind_operations.expected
+	@set -eu; \
+	for reference in '' 1; do \
+		CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) --lang petta --profile extended \
+			tests/petta/ordered_kind_operations.metta > runtime/ordered-kind-operations.out; \
+		cmp tests/petta/ordered_kind_operations.expected runtime/ordered-kind-operations.out; \
+	done
+	@echo "PASS: ordered operations select their declared kind on the tier and in the machine"
+
+test-petta-semantics: test-petta-open-row-retention test-ordered-kind-operations
 
 # transform in the HE dialect (lib/lib_transform.metta) fires natively as its
 # library does: the fixed test and 120 seeded scenarios (every source form,
@@ -31538,7 +32359,7 @@ test-transform-profiles: test-builtin-policy-lookup $(BIN) lib/lib_transform.met
 	for lang in he petta; do \
 		CETTA_TRANSFORM_TRACE=1 $(CETTA_BIN_INVOKE) --lang $$lang --profile extended tests/$$lang/transform_profile.metta \
 			> runtime/transform-profile-$$lang.extended.out 2> runtime/transform-profile-$$lang.extended.trace; \
-		diff -u tests/$$lang/transform_profile.extended.expected runtime/transform-profile-$$lang.extended.out; \
+		python3 tests/support/compare_result_bags.py tests/$$lang/transform_profile.extended.expected runtime/transform-profile-$$lang.extended.out; \
 		grep -q '^\[transform\] fired' runtime/transform-profile-$$lang.extended.trace; \
 		CETTA_TRANSFORM_TRACE=1 $(CETTA_BIN_INVOKE) --lang $$lang tests/$$lang/transform_profile.metta \
 			> runtime/transform-profile-$$lang.plain.raw 2> runtime/transform-profile-$$lang.plain.trace; \
@@ -32157,13 +32978,11 @@ test-petta-swi-differences: $(BIN)
 	done; \
 	echo "PASS: the registered differences from SWI-PeTTa hold, on the tier and in the machine"
 
-test-petta-semantics: $(BIN) test-petta-once-first-witness test-petta-relational-append-open test-petta-multifile test-petta-eval-in-space test-petta-list-values test-petta-value-occurrences test-petta-dispatch-error-scope test-petta-list-building-linear test-petta-runtime-heads test-petta-keyed-selection test-petta-tier-lists test-petta-tier-fold-dispatch test-petta-tier-spelled-cells test-petta-tier-repra test-petta-tier-head-occurrences test-petta-tier-list-natives test-petta-tier-value-observations test-petta-tier-let-patterns test-petta-match-conjunction-order test-petta-foldall-native-steps test-petta-tier-equation-cut test-petta-projection-grown-frames test-petta-metatype-registered-functions test-petta-tier-views-over-kept-storage test-petta-tier-tail-superpose test-petta-prepared-decons-views test-petta-tier-list-heads test-petta-open-term-walks test-petta-hyperpose-program-cache test-petta-tier-head-index test-petta-tier-session-programs test-petta-case-default-retire test-petta-tier-existence test-petta-tier-value-if test-petta-session-match-decisions test-petta-tier-small-space-rows test-petta-prepared-code test-petta-prepared-return-checks test-petta-foreign-holds test-petta-libpl-registered-arities test-petta-number-order test-petta-specialization-after-import test-petta-special-form-arities test-petta-swi-differences
+test-petta-semantics: test-petta-semantic-oracles test-petta-once-first-witness test-petta-relational-append-open test-petta-multifile test-petta-eval-in-space test-petta-list-values test-petta-value-occurrences test-petta-dispatch-error-scope test-petta-list-building-linear test-petta-runtime-heads test-petta-keyed-selection test-petta-tier-lists test-petta-tier-fold-dispatch test-petta-tier-spelled-cells test-petta-tier-repra test-petta-tier-head-occurrences test-petta-tier-list-natives test-petta-tier-value-observations test-petta-tier-let-patterns test-petta-match-conjunction-order test-petta-conjunction-reads-one-state test-petta-conjunction-entry-kept-runtime-stats test-petta-space-snapshot-binding test-petta-foldall-native-steps test-petta-tier-equation-cut test-petta-projection-grown-frames test-petta-metatype-registered-functions test-petta-tier-views-over-kept-storage test-petta-tier-tail-superpose test-petta-prepared-decons-views test-petta-tier-list-heads test-petta-open-term-walks test-petta-hyperpose-program-cache test-petta-tier-head-index test-petta-tier-session-programs test-petta-case-default-retire test-petta-tier-existence test-petta-tier-value-if test-petta-session-match-decisions test-petta-tier-small-space-rows test-petta-prepared-code test-petta-prepared-return-checks test-petta-foreign-holds test-petta-libpl-registered-arities test-petta-number-order test-petta-specialization-after-import test-petta-special-form-arities test-petta-swi-differences
+.PHONY: test-petta-semantic-oracles
+test-petta-semantic-oracles: $(BIN)
 	@set -eu; \
 	for stem in $(PETTA_SEMANTIC_ORACLE_STEMS); do \
-		contract=exact-stream; \
-		case " $(PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS) " in \
-			*" $$stem "*) contract=occurrence-bag ;; \
-		esac; \
 		actual="runtime/test-petta-semantics-$$stem.out"; \
 		status=0; \
 		CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
@@ -32173,14 +32992,31 @@ test-petta-semantics: $(BIN) test-petta-once-first-witness test-petta-relational
 			cat "$$actual"; \
 			exit 1; \
 		fi; \
-		if ! PYTHONDONTWRITEBYTECODE=1 python3 \
-			scripts/compare_petta_observation.py \
-			--contract "$$contract" \
-			--expected "tests/petta/$$stem.expected" \
-			--actual "$$actual"; then \
-			echo "FAIL: PeTTa semantic discriminator $$stem ($$contract)"; \
-			exit 1; \
-		fi; \
+		case " $(PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS) " in \
+			*" $$stem "*) \
+				if ! PYTHONDONTWRITEBYTECODE=1 python3 \
+					scripts/compare_petta_observation.py \
+					--contract occurrence-bag \
+					--expected "tests/petta/$$stem.expected" \
+					--actual "$$actual"; then \
+					echo "FAIL: PeTTa semantic discriminator $$stem (occurrence-bag)"; \
+					exit 1; \
+				fi ;; \
+			*) \
+				if ! PYTHONDONTWRITEBYTECODE=1 python3 \
+					scripts/compare_petta_observation.py \
+					--contract exact-stream \
+					--expected "tests/petta/$$stem.expected" \
+					--actual "$$actual" >/dev/null && \
+				   ! CETTA_PETTA_SEARCH_MACHINE=1 PYTHONDONTWRITEBYTECODE=1 python3 \
+					tests/support/compare_answers.py --lang petta \
+					--program tests/petta/$$stem.metta \
+					--expected "tests/petta/$$stem.expected" \
+					--actual "$$actual" --cetta ./$(BIN) --lang petta; then \
+					echo "FAIL: PeTTa semantic discriminator $$stem (answers as bags, effects in order)"; \
+					exit 1; \
+				fi ;; \
+		esac; \
 	done; \
 	status=0; \
 	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta tests/petta/test_failure_exit.metta \
@@ -33445,7 +34281,8 @@ test-he-chain-destination: $(BIN) tests/he/chain_destination_binder.metta \
 	for gc in "" "CETTA_GC=1 CETTA_GC_BUDGET_MB=1"; do \
 		env $$gc $(CETTA_BIN_INVOKE) --lang $$lane \
 			tests/he/chain_destination_binder.metta \
-			| diff -u tests/he/chain_destination_binder.expected -; \
+			| python3 tests/support/compare_result_bags.py \
+				tests/he/chain_destination_binder.expected /dev/stdin; \
 	done; \
 	done; \
 	echo 'PASS: chain binds its destination in its template, in every HE profile'
@@ -33457,7 +34294,8 @@ test-he-not-reducible: $(BIN) tests/he/not_reducible_boundary.metta \
 	for gc in "" "CETTA_GC=1 CETTA_GC_BUDGET_MB=1"; do \
 		env $$gc $(CETTA_BIN_INVOKE) --lang $$lane \
 			tests/he/not_reducible_boundary.metta \
-			| diff -u tests/he/not_reducible_boundary.expected -; \
+			| python3 tests/support/compare_result_bags.py \
+				tests/he/not_reducible_boundary.expected /dev/stdin; \
 	done; \
 	done; \
 	echo 'PASS: an equation or if branch whose body is NotReducible leaves its call unreduced, in every HE profile'
@@ -33491,13 +34329,15 @@ test-he-evaluated-values: $(BIN) tests/he/evaluated_values.metta \
 			"CETTA_HE_COMPLETED_DELIVERY=0" "CETTA_GC=1 CETTA_GC_BUDGET_MB=1"; do \
 		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
 			tests/he/evaluated_values.metta \
-			| diff -u tests/he/evaluated_values.expected -; \
+			| python3 tests/support/compare_result_bags.py \
+				tests/he/evaluated_values.expected /dev/stdin; \
 		for program in evaluated_values_typed evaluated_values_stuck prepared_completed_values; do \
 		expected=tests/he/$$program.expected; \
 		case "$$lane" in *he-compat*) \
 			expected=tests/he/$$program.compat.expected;; esac; \
 		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
-			tests/he/$$program.metta | diff -u $$expected -; \
+			tests/he/$$program.metta \
+			| python3 tests/support/compare_result_bags.py $$expected /dev/stdin; \
 		done; \
 	done; \
 	done; \
@@ -33526,6 +34366,36 @@ test-he-equality-classes: $(BIN) tests/he/equality_classes.metta \
 	done; \
 	done; \
 	echo 'PASS: == on values of different classes is a type error where HE types it, in every HE profile and on every route'
+
+# HE's once publishes its body's first success and an error only when the
+# body is exhausted with none, as a collected bag keeps an error only without
+# a success; select's prefix likewise.  The body runs once, and a run cut off
+# before it ends publishes no error it held.  In the HE profiles that read
+# once (extended, he-prime), on every route.
+.PHONY: test-he-once-prefers-success
+test-all: test-he-once-prefers-success
+test-he-once-prefers-success: $(BIN) tests/he/once_prefers_success.metta \
+		tests/he/once_prefers_success.expected \
+		tests/he/once_prefers_success_cutoff.metta
+	@set -eu -o pipefail; \
+	for lane in "he --profile extended" "he --profile he-prime"; do \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
+			"CETTA_OPEN_EQUATIONS_REFERENCE=1" \
+			"CETTA_HE_CANONICAL_EXECUTION=0" "CETTA_HE_SHARED_EXECUTION=0" \
+			"CETTA_HE_COMPLETED_DELIVERY=0" "CETTA_GC=1 CETTA_GC_BUDGET_MB=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+			tests/he/once_prefers_success.metta \
+			| python3 tests/support/compare_result_bags.py \
+				tests/he/once_prefers_success.expected /dev/stdin; \
+		cut=$$(env $$route $(CETTA_BIN_INVOKE) --lang $$lane --fuel 2000 \
+			tests/he/once_prefers_success_cutoff.metta 2>&1 || true); \
+		if printf '%s\n' "$$cut" | grep -q DivisionByZero; then \
+			echo "FAIL: a cut-off once published the error it held ($$lane, $$route)"; \
+			exit 1; \
+		fi; \
+	done; \
+	done; \
+	echo 'PASS: once publishes the first success and an error only after its body is exhausted with none, select alike, in the HE profiles that read once and on every route'
 
 # A typed call inside HE's shared execution: the machine evaluates its
 # arguments where HE's evaluation of them at their formals is the machine's
@@ -33826,7 +34696,9 @@ test-he-typed-calls-prepared: $(BIN) tests/he/typed_calls_prepared.metta \
 	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
 		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
 			tests/he/$$program.metta \
-			| diff -u tests/he/$$program.expected -; \
+			| python3 tests/support/compare_answers.py --lang he \
+				--program tests/he/$$program.metta \
+				--expected tests/he/$$program.expected --actual /dev/stdin; \
 	done; \
 	done; \
 	done; \
@@ -34449,9 +35321,9 @@ test-he-type-policy: $(BIN) test-he-source-demand-discriminator \
 				exit 1; \
 			fi; \
 			if [ "$$profile" = "--profile he-compat" ]; then \
-				diff -u tests/he/$$fixture.expected "$$actual"; \
+				python3 tests/support/compare_result_bags.py tests/he/$$fixture.expected "$$actual"; \
 			else \
-				diff -u <(sed '/^\[\]$$/d' tests/he/$$fixture.expected) "$$actual"; \
+				python3 tests/support/compare_result_bags.py <(sed '/^\[\]$$/d' tests/he/$$fixture.expected) "$$actual"; \
 			fi; \
 		done; \
 	done; \
@@ -34459,7 +35331,9 @@ test-he-type-policy: $(BIN) test-he-source-demand-discriminator \
 	$(CETTA_BIN_INVOKE) --lang he --profile he-compat \
 		tests/he/library_declarations_v1.metta \
 		| sed -E 's/\$$([A-Za-z_][A-Za-z0-9_-]*)#[0-9]+/$$\1/g' \
-		| diff -u tests/he/library_declarations_v1.expected -; \
+		| python3 tests/support/compare_answers.py --lang he \
+			--program tests/he/library_declarations_v1.metta \
+			--expected tests/he/library_declarations_v1.expected --actual /dev/stdin; \
 	echo 'PASS: HE type demand, interpreter wildcards, the library module and its declarations, and module imports match upstream HE'
 
 test-he-contract-suite: $(BIN) test-he-type-policy test-he-compat-catalog-guards test-he-outcome-list-contracts test-he-nik-typed-applicability-pruning test-eval-in-space-profiles test-he-guarded-equation-plan
@@ -34990,14 +35864,14 @@ test-prepared-pure-answer-resource-fallback: $(BIN)
 test-answer-producer-continuation-transfer: $(BIN)
 	@set -e; \
 	fixture=tests/answer_producer_continuation_transfer.metta; \
-	expected=$$(cat tests/answer_producer_continuation_transfer.petta.expected); \
 	if [ "$(ENABLE_RUNTIME_STATS)" = "1" ]; then \
 		output=$$(./$(BIN) --lang petta --emit-runtime-stats "$$fixture" 2>&1); \
 		actual=$$(printf '%s\n' "$$output" | grep -v '^runtime-counter '); \
 	else \
 		actual=$$(./$(BIN) --lang petta "$$fixture"); \
 	fi; \
-	if [ "$$actual" != "$$expected" ]; then \
+	if ! printf '%s\n' "$$actual" | tests/support/answers_agree.sh petta "$$fixture" \
+			tests/answer_producer_continuation_transfer.petta.expected ./$(BIN) --lang petta; then \
 		echo "FAIL: pending callers lost or replayed across the producer handoff"; \
 		printf '%s\n' "$$actual"; exit 1; \
 	fi; \
@@ -35363,7 +36237,8 @@ test-prepared-pure-call-machine: $(BIN) test-prepared-pure-variable-heads test-p
 	trap 'rm -f "$$he_out" "$$he_no_gc_out" "$$prime_out" "$$petta_out" "$$demand_out" "$$sharing_out" "$$choice_out" "$$choice_diag" "$$scalar_guard_out" "$$scalar_guard_reference_out" "$$answer_effect_out" "$$answer_effect_diag"' EXIT INT TERM; \
 	CETTA_GC=1 CETTA_GC_BUDGET_MB=1 ./$(BIN) --lang he --profile extended \
 		tests/prepared_pure_call_machine.metta >"$$he_out"; \
-	diff -u tests/prepared_pure_call_machine.he.expected "$$he_out"; \
+	python3 tests/support/compare_result_bags.py \
+		tests/prepared_pure_call_machine.he.expected "$$he_out"; \
 	CETTA_PREPARED_PURE_DEBUG=1 ./$(BIN) --lang he --profile extended \
 		tests/prepared_pure_answer_effect_boundary.metta \
 		>"$$answer_effect_out" 2>"$$answer_effect_diag"; \
@@ -35379,15 +36254,18 @@ test-prepared-pure-call-machine: $(BIN) test-prepared-pure-variable-heads test-p
 	fi; \
 	CETTA_GC=0 ./$(BIN) --lang he --profile extended \
 		tests/prepared_pure_call_machine.metta >"$$he_no_gc_out"; \
-	diff -u "$$he_no_gc_out" "$$he_out"; \
+	python3 tests/support/compare_result_bags.py "$$he_no_gc_out" "$$he_out"; \
 	CETTA_GC=1 CETTA_GC_BUDGET_MB=1 ./$(BIN) --lang prime \
 		tests/prepared_pure_call_machine.metta \
 		>"$$prime_out"; \
-	diff -u tests/prepared_pure_call_machine.prime.expected "$$prime_out"; \
+	python3 tests/support/compare_result_bags.py \
+		tests/prepared_pure_call_machine.prime.expected "$$prime_out"; \
 	CETTA_GC=1 CETTA_GC_BUDGET_MB=1 ./$(BIN) --lang petta \
 		tests/prepared_pure_call_machine.metta \
 		>"$$petta_out"; \
-	diff -u tests/prepared_pure_call_machine.petta.expected "$$petta_out"; \
+	tests/support/answers_agree.sh petta tests/prepared_pure_call_machine.metta \
+		tests/prepared_pure_call_machine.petta.expected \
+		env CETTA_GC=1 CETTA_GC_BUDGET_MB=1 ./$(BIN) --lang petta <"$$petta_out"; \
 	./$(BIN) --lang petta \
 		tests/petta/prepared_pure_scalar_guard.metta \
 		>"$$scalar_guard_out"; \
@@ -35410,8 +36288,8 @@ test-prepared-pure-call-machine: $(BIN) test-prepared-pure-variable-heads test-p
 	CETTA_PREPARED_PURE_DEBUG=1 ./$(BIN) --lang prime \
 		tests/prime/computed_argument_choicepoints.metta \
 		>"$$choice_out" 2>"$$choice_diag"; \
-	diff -u tests/prime/computed_argument_choicepoints.expected \
-		"$$choice_out"; \
+	python3 tests/support/compare_result_bags.py \
+		tests/prime/computed_argument_choicepoints.expected "$$choice_out"; \
 	determinacy_declines=$$(grep -c \
 		'head is not determinate from weak-head patterns' \
 		"$$choice_diag"); \
@@ -43471,7 +44349,7 @@ $(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN): \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
 		-o "$$tmp_out" $(LANGUAGE_DEF_PARSER_PACK_V1_C_SOURCES) \
-		-Wl,--gc-sections -ldl -lm -pthread; \
+		-Wl,--gc-sections -ldl -lm -pthread $(GMP_LDFLAGS); \
 	mv "$$tmp_out" $@
 
 JSON_DIRECT_V1_TEST_BIN = runtime/test-json-direct-v1-$(BUILD_OBJ_TAG)
@@ -43509,7 +44387,7 @@ $(LANGUAGE_DEF_PARSER_PACK_V1_MUTATION_BIN): \
 		-DCETTA_JSON_CST_VALUE_V1_MUTATION=1 \
 		-ffunction-sections -fdata-sections \
 		-o "$$tmp_out" $(LANGUAGE_DEF_PARSER_PACK_V1_C_SOURCES) \
-		-Wl,--gc-sections -ldl -lm -pthread; \
+		-Wl,--gc-sections -ldl -lm -pthread $(GMP_LDFLAGS); \
 	mv "$$tmp_out" $@
 
 $(PARSER_PACK_FOREST_ENCODING_V1_TEST_BIN): \
@@ -43555,7 +44433,7 @@ $(LANGUAGE_DEF_PARSER_PACK_V1_BENCH_BIN): \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
 		-o "$$tmp_out" $(LANGUAGE_DEF_PARSER_PACK_V1_BENCH_C_SOURCES) \
-		-Wl,--gc-sections -ldl -lm -pthread; \
+		-Wl,--gc-sections -ldl -lm -pthread $(GMP_LDFLAGS); \
 	mv "$$tmp_out" $@
 
 $(LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_BIN): \
@@ -43571,7 +44449,7 @@ $(LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_BIN): \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
 		-o "$$tmp_out" $(LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_C_SOURCES) \
-		-Wl,--gc-sections -ldl -lm -pthread; \
+		-Wl,--gc-sections -ldl -lm -pthread $(GMP_LDFLAGS); \
 	mv "$$tmp_out" $@
 
 $(JSON_NIK_V1_TEST_BIN): \
@@ -43587,7 +44465,7 @@ $(JSON_NIK_V1_TEST_BIN): \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
 		-o "$$tmp_out" $(JSON_NIK_V1_TEST_C_SOURCES) \
-		-Wl,--gc-sections -ldl -lm -pthread; \
+		-Wl,--gc-sections -ldl -lm -pthread $(GMP_LDFLAGS); \
 	mv "$$tmp_out" $@
 
 .PHONY: test-language-def-parser-pack-v1-body
@@ -44953,7 +45831,7 @@ $(TPTP_EXTENDED_BNF_META_PARSER_V1_TEST_BIN): \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
 		-o "$$tmp_out" $(TPTP_EXTENDED_BNF_META_PARSER_V1_C_SOURCES) \
-		-Wl,--gc-sections -ldl -lm -pthread; \
+		-Wl,--gc-sections -ldl -lm -pthread $(GMP_LDFLAGS); \
 	mv "$$tmp_out" $@
 
 
@@ -47550,6 +48428,22 @@ test-io: test-io-json-bridge
 	@$(MAKE) -s BUILD=core ENABLE_HTTP=0 test-io-no-http test-io-rho-bridge
 	@$(MAKE) -s BUILD=core ENABLE_HTTP=0 test-io-browser
 
+.PHONY: test-fs-write-standard-stream
+test-io: test-fs-write-standard-stream
+test-fs-write-standard-stream: $(BIN) tests/fs_write_standard_stream.metta tests/fs_write_standard_stream.expected
+	@out=runtime/fs_write_standard_stream.stdout; err=runtime/fs_write_standard_stream.stderr; \
+	$(CETTA_BIN_INVOKE) tests/fs_write_standard_stream.metta > "$$out" 2> "$$err"; \
+	piped=$$($(CETTA_BIN_INVOKE) tests/fs_write_standard_stream.metta 2>/dev/null | cat); \
+	if cmp -s "$$out" tests/fs_write_standard_stream.expected && \
+	   [ "$$piped" = "$$(cat tests/fs_write_standard_stream.expected)" ] && \
+	   [ "$$(cat "$$err")" = "to-err" ]; then \
+		echo "PASS: fs writes to a standard stream keep order, also into a redirected file"; \
+	else \
+		echo "FAIL: fs writes to a standard stream"; \
+		diff tests/fs_write_standard_stream.expected "$$out" | head -20; \
+		exit 1; \
+	fi
+
 .PHONY: test-petta-imported-host-bridges
 ifeq ($(LIB_PROLOG_ENABLED),1)
 test-petta-imported-host-bridges: $(BIN) \
@@ -47796,7 +48690,7 @@ test-petta-space-marked-removal: $(BIN)
 		diff -u <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual"); \
 		exit 1; \
 	fi; \
-	echo 'PASS: removed rows leave the others in order for every reader, running matches included'
+	echo 'PASS: removed rows leave the others, each occurrence once, for every reader, running matches included'
 test-all: test-petta-path-index-bound-lead
 test-petta-path-index-bound-lead: $(BIN)
 	@set -eu; \

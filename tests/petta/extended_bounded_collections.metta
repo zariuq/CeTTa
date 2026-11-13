@@ -1,7 +1,11 @@
 ; The extended profile's collections: collect and reify are collapse; select
-; takes the first answer with its bindings, as once does, or the first k as
-; a list copied as collapse copies, asking for no answer past the k-th.  A
-; bound of zero runs nothing.  hgen is typed, so the host owns its calls.
+; takes some answer with its bindings, as once does, or some k as a list
+; copied as collapse copies, asking for no answer past the k-th.  A bound of
+; zero runs nothing.  hgen is typed, so the host owns its calls.  Which
+; answers a select takes is open and a collection is a bag: a selection is
+; read by how many it took and which of them its body cannot give, a single
+; answer by being one of them, a collection sorted, and a selected answer's
+; number by being one of the numbers it could be.
 (: hgen (-> Atom Atom))
 (= (hgen $x) (h1 $x))
 (= (hgen $x) (h2 $x))
@@ -29,35 +33,39 @@
 (= (hostpair $x) (select 2 (let* (($h (hgen $x)) ($k (hgen $h))) (got $h $k))))
 (= (bound $k $x) (select $k (gen $x)))
 (= (nested) (collapse (let $y (superpose (a b)) (select 2 (gen $y)))))
-!(two a)
-!(one a)
-!(firstof a)
+(= (within $taken $all) (selected (size-atom $taken) (subtraction-atom $taken $all)))
+(= (distinct-count $taken) (selected (size-atom $taken) (size-atom (unique-atom $taken))))
+(= (mask-pair (pair $k $x)) (pair (is-member $k (1 2 3)) $x))
+(= (taken-arg $taken) (let ($g $y) (car-atom $taken) $y))
+!(within (two a) (collect (gen a)))
+!(is-member (one a) (collect (gen a)))
+!(is-member (firstof a) (collect (gen a)))
 !(zero a)
-!(all a)
-!(materialized a)
-!(lazy2)
-!(lazy1)
-!(escapes)
-!(copied)
-!(fresh)
+!(sort-atom (all a))
+!(sort-atom (materialized a))
+!(distinct-count (lazy2))
+!(>= (lazy1) 0)
+!(let (seen $r $w) (escapes) (seen (mask-pair $r) $w))
+!(let (seen $r $w) (copied) (seen (map-atom $r $p (mask-pair $p)) $w))
+!(sort-atom (fresh))
 !(collapse (select (none a)))
 !(select 2 (none a))
 !(collect (none a))
-!(host2 a)
-!(host1 a)
-!(hostall a)
-!(hostpair a)
-!(bound 2 a)
+!(within (host2 a) (collect (let $h (hgen a) (tag $h))))
+!(is-member (host1 a) (collect (let $h (hgen a) (tag $h))))
+!(sort-atom (hostall a))
+!(within (hostpair a) (collect (let* (($h (hgen a)) ($k (hgen $h))) (got $h $k))))
+!(within (bound 2 a) (collect (gen a)))
 !(bound 0 a)
-!(bound 5 a)
-!(nested)
-!(select 2 (gen a))
-!(select (gen a))
-!(collect (gen a))
-!(reify (gen a))
-!(select 2 (nat 0))
-!(collect (superpose ((pair 1 $w) (pair 2 $w))))
-!(let $r (select 2 (superpose ((pair 1 $w) (pair 2 $w) (pair 3 $w)))) (seen $r $w))
+!(sort-atom (bound 5 a))
+!(sort-atom (map-atom (nested) $taken (within $taken (collect (gen (taken-arg $taken))))))
+!(within (select 2 (gen a)) (collect (gen a)))
+!(is-member (select (gen a)) (collect (gen a)))
+!(sort-atom (collect (gen a)))
+!(sort-atom (reify (gen a)))
+!(distinct-count (select 2 (nat 0)))
+!(sort-atom (collect (superpose ((pair 1 $w) (pair 2 $w)))))
+!(let $r (select 2 (superpose ((pair 1 $w) (pair 2 $w) (pair 3 $w)))) (seen (map-atom $r $p (mask-pair $p)) $w))
 ; A bound that is not a count is the evaluator's error.  It stays last: at
 ; directive level the evaluator's route does not report whether an Error was
 ; raised, and the directive loop then stops at any Error.

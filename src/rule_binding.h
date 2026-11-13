@@ -12,7 +12,22 @@ typedef enum {
 enum {
     CETTA_RULE_SYNTAX_ORDINARY = 1u,
     CETTA_RULE_SYNTAX_DIRECTIONAL = 2u,
+    /* A qualifier of the forms above, not a form: a rule's left side is an
+     * application of a symbol.  PeTTa defines a function only from
+     * `(= (F args...) body)` with F a symbol; any other such row is a fact
+     * of its space, read by match and never called. */
+    CETTA_RULE_SYNTAX_NAMED_HEAD = 4u,
 };
+
+#define CETTA_RULE_SYNTAX_FORMS \
+    (CETTA_RULE_SYNTAX_ORDINARY | CETTA_RULE_SYNTAX_DIRECTIONAL)
+
+/* Admitted rule syntax: at least one form, and only known bits. */
+static inline bool cetta_rule_syntax_valid(unsigned admitted_forms) {
+    return (admitted_forms & CETTA_RULE_SYNTAX_FORMS) &&
+        !(admitted_forms &
+          ~(CETTA_RULE_SYNTAX_FORMS | CETTA_RULE_SYNTAX_NAMED_HEAD));
+}
 
 /* Borrowed source view. Admission chooses the permitted declaration forms;
  * matching consumes the resulting policy, never an ambient matching mode.
@@ -40,8 +55,12 @@ static inline bool cetta_rule_view(Atom *source, unsigned admitted_forms,
         binding = CETTA_RULE_BIND_HEAD;
     else
         return false;
-    *out = (CettaRuleDescriptor){source, source->expr.elems[1],
-                                source->expr.elems[2], binding};
+    Atom *head = source->expr.elems[1];
+    if ((admitted_forms & CETTA_RULE_SYNTAX_NAMED_HEAD) &&
+        !(head && head->kind == ATOM_EXPR && head->expr.len > 0u &&
+          head->expr.elems[0]->kind == ATOM_SYMBOL))
+        return false;
+    *out = (CettaRuleDescriptor){source, head, source->expr.elems[2], binding};
     return true;
 }
 

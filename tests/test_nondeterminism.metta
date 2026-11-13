@@ -10,13 +10,13 @@
 !(assertEqualToResult (superpose ()) ())
 
 ; Collapse collects all results
-!(assertEqual (collapse (superpose (1 2 3))) (1 2 3))
+!(assertEqualToResult (superpose (1 2 3)) (1 2 3))
 
 ; Nondeterministic equation + collapse
 (= (coin) heads)
 (= (coin) tails)
 !(assertEqualToResult (coin) (heads tails))
-!(assertEqual (collapse (coin)) (heads tails))
+!(assertEqualToResult (coin) (heads tails))
 
 ; Superpose of expressions
 !(assertEqualToResult (superpose ((pair a) (pair b) (pair c))) ((pair a) (pair b) (pair c)))

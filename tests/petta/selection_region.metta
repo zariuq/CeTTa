@@ -25,12 +25,12 @@
 !(same (Pair a a))
 !(same (Pair a b))
 
-; Equations: every matching head answers, in order.
+; Equations: every matching head answers.
 (= (color red) warm)
 (= (color $any) any)
 (= (color blue) cold)
-!(collapse (color red))
-!(collapse (color blue))
+!(sort-atom (collapse (color red)))
+!(sort-atom (collapse (color blue)))
 !(collapse (color green))
 
 ; A declared function whose arguments are data: one signature, nothing evaluated.
@@ -43,6 +43,6 @@
 
 ; superpose in a tail position and under a let.
 (= (both $x) (superpose ($x (S $x))))
-!(collapse (both 1))
+!(sort-atom (collapse (both 1)))
 (= (paired $x) (let $y (superpose (a b)) (pair $x $y)))
-!(collapse (paired 1))
+!(sort-atom (collapse (paired 1)))

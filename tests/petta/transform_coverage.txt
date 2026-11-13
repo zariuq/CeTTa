@@ -1,0 +1,443 @@
+PeTTa and transform: what is covered, and by which test
+=========================================================
+
+Two directions.
+
+  transform -> PeTTa   transform written with PeTTa's own match, add-atom and
+                       remove-atom:  lib/petta/lib_transform_specs.metta (the
+                       specification), lib/petta/lib_transform_swi.metta, and
+                       the calculus's own rule form in lib/petta/lib_step_rules.metta
+  PeTTa -> transform   PeTTa's forms written with transform:
+                       lib/petta/lib_petta_by_transform.metta, and whole programs
+                       rewritten by lib/petta/transform_only.metta
+
+Gates.
+
+  make test-petta-transform                 native, lib_transform_swi, lib_transform_specs on CeTTa
+  make test-transform-swi-differential      the same programs on SWI-PeTTa as well, four ways
+  make test-petta-by-transform[-swi]        the laws of tests/petta/petta_by_transform.metta
+  make test-petta-transform-only[-swi]      the programs of tests/petta/transform_only/
+  make test-petta-transform-only-corpus     a directory of example programs, with its list of known exceptions
+  make test-petta-transform-only-corpus-full   the same with binding, branching and choice rewritten too
+  make test-petta-transform-only-corpus-swi    the same directory through the round trip on SWI-PeTTa
+  make test-petta-machine[-swi]             the checks of tests/petta/petta_machine.metta and seeded expressions
+  make test-petta-step-rules[-swi]          the checks of tests/petta/step_rules.metta
+  make test-petta-step-rules-reference      random firings against the C reference step
+
+A row names the form and the test that holds it, or says why there is none.
+
+
+1. The calculus's step in plain PeTTa (lib_step_rules.metta; checks of step_rules.metta)
+----------------------------------------------------------------------------------------
+
+  aspect                          form                                 check
+  take                            TAKES (step:use P ID)                take-read-make, take-does-not-unify,
+                                                                       occurrence-missing, occurrence-taken-twice
+  read                            READS (step:use P ID)                take-read-make, occurrence-taken-and-read,
+                                                                       read-twice-is-one-occurrence
+  make                            MAKES labels                         take-read-make
+  tell (equations with unknowns)  TELLS (step:equal L R)               tell-binds-the-store, tell-without-a-solution
+  disequations                    APART (step:apart L R)               apart-is-kept, apart-decided-is-dropped,
+                                                                       apart-violated-at-once, apart-violated-later,
+                                                                       apart-respected-later
+  guard: equal                    (step:equal A B)                     equal-not-entailed, equal-entailed-once-told
+  guard: absent                   (step:absent P)                      absent, absent-fails-when-present,
+                                                                       absent-not-entailed-beside-an-unknown
+  guard: count                    (step:count P N)                     count-copies-of-the-instance
+  guard: predicate query on a     (step:region P N)                    region-query, region-query-wrong-number,
+  pattern                                                              region-not-entailed-beside-an-unknown
+  permission as a predicate       (step:when E)                        permission-by-expression, permission-refused
+  fresh names, generative         FRESH variables, (step:name N)       fresh-names, a-name-is-not-a-code
+  names by structure              numbers and symbols as codes         a-name-is-not-a-code
+  stored schemas                  (step:schema L), (step:local i)      schema-opens-afresh, schema-keeps-its-own-equation
+  refusal changes nothing         (step:refused REASON)                a-refused-firing-changes-nothing
+  runs                            step:run                             run-stops-at-the-first-refusal
+  the step as a relation          step:choose, step:candidates         every-candidate
+  halting                         step:saturate                        saturate-to-a-halted-state
+  a rule over a PeTTa space       step:sources, step:template,         rule-as-sources, rule-fires-in-a-space,
+                                  step:fire-in                         rule-fired-store, rule-as-a-step
+
+  not written
+  frames beyond one               the state is one frame: PeTTa's variables are its unknowns.  A
+                                  morphism between frames has no form of its own here.
+  accounts (cost, receipts)       the step charges nothing and keeps no receipt.
+  occurs check                    SWI-PeTTa's unifier has none, so a told equation X = f(X) is
+                                  admitted there (5 of 150 random scripts differ from the C
+                                  reference for this reason); CeTTa agrees with the reference.
+
+
+2. transform's surface in plain PeTTa (lib_transform_specs.metta)
+-----------------------------------------------------------------
+
+  conjunct or rule                         test
+  read, take, absent, unique, collect,     tests/petta/transform_*.metta; the seeded classes
+  let, all, once, (tf:as P A)              ground, guard, spaces, route of test-transform-swi-differential
+  proposals at the call, one branch each   the same; class "consumer" (a caller acting between answers)
+  a kernel let that chooses                each answer is a branch of its own and fires the answer it stands
+                                           for; class "choice"; laws kernel-let-choice-*.  Its expression runs
+                                           at the call and again at each firing (law
+                                           kernel-let-runs-at-the-call-and-at-the-firing)
+  validation by multiplicity               the negative control of test-transform-swi-differential
+  function and space destinations          class route; class spaces
+  a value that is no atom (a partial       class values
+  application) in a pattern or template
+
+  a row that holds a variable: what a      tests/petta/transform_open_rows.metta, compared four ways
+  rule makes from it keeps the variable    (plain-made, computed-made, apart-made): also when the rule
+  where the row had it                     computes a value from the row in a let conjunct.  The
+                                           PeTTa-written libraries collect a branch's let answers,
+                                           and a collected answer is a copy; each is kept beside the
+                                           instance of the expression that gave it and met with the
+                                           expression again.
+  a let conjunct whose expression binds    the PeTTa-written libraries keep the binding, as match
+  a variable (a function run backwards)    does with the same let in its body; the native firing
+                                           keeps the answer and drops the binding (reported to the
+                                           native lane; not in the compared classes)
+
+  limits of this representation
+  stored atoms that hold variables         class open (reported): remove-atom removes everything its
+                                           argument unifies with, so a take of one occurrence is exact
+                                           only where occurrences can be told apart by their atoms.
+                                           lib_step_rules keeps an identity with each occurrence and
+                                           takes exactly one.
+  a destination named by a symbol          read as a function; lib_petta_by_transform's pt:add-atom
+                                           stores under such a name through the caller
+
+
+3. Core PeTTa forms as transform forms (lib_petta_by_transform.metta; laws of petta_by_transform.metta)
+-------------------------------------------------------------------------------------------------------
+
+  PeTTa form                 by transform                                    laws
+  match                      pt:match, pt:read (a row of bindings): one      match-one, match-join, match-none,
+                             firing at the call reads every match            match-source-word, match-anything,
+                                                                             read-binds, read-held-position,
+                                                                             read-quoted-position, read-then-write
+  match, while its consumer  the answers are those of the store at the call  match-answers-a-row-removed-meanwhile,
+  writes                                                                     read-answers-a-row-removed-meanwhile,
+                                                                             match-does-not-answer-a-row-added-meanwhile
+  match on a conjunction,    PeTTa reads it part by part, each part when it  conjunction-written-is-read-part-by-part,
+  while its consumer writes  is reached; pt:read does (it is what            conjunction-read-is-part-by-part,
+                             transform_only writes); one transform over the  conjunction-by-one-transform-is-in-one-state
+                             conjunction (pt:match) reads the joint matches
+                             in the one state at the call
+  get-atoms                  pt:get-atoms: one firing reads every atom       get-atoms,
+                                                                             get-atoms-answers-a-row-removed-meanwhile
+  add-atom                   pt:add-atom: an empty row that makes the atom   add-answer, add-unevaluated, add-comma,
+                                                                             add-duplicate, add-store, add-under-a-name
+  remove-atom                pt:remove-atom: one firing takes every match    remove-one, remove-none, remove-every-copy,
+                                                                             remove-by-pattern, remove-store
+  superpose, empty           pt:superpose, pt:empty                          superpose, superpose-none, empty,
+                                                                             ordered-superpose
+  once                       pt:once                                         once, once-none, ordered-once-equation,
+                                                                             ordered-once-superpose
+  collapse                   pt:collapse                                     collapse, collapse-none, collapse-match
+  let, let*                  pt:let, pt:let*                                 let, let-no-match, let-every-answer,
+                                                                             let-body-runs, let-star, let-star-product,
+                                                                             ordered-let-nesting
+  if (2 and 3 branches)      pt:if, pt:when                                  if-then, if-else, if-each-answer,
+                                                                             when-true, when-false
+  case                       pt:case                                         case-first, case-earlier-wins, case-binds,
+                                                                             case-no-row, case-each-answer,
+                                                                             ordered-case-first-row
+  case with an Empty row     pt:case: the answers collected by one firing,   case-empty-row-taken, case-empty-row-not-taken,
+                             the Empty row taken when there is none          case-empty-row-and-no-match, case-empty-row-binds
+  an equation, a call        pt:rule!, pt:apply: a read of the rule heads    apply-one, apply-every-head,
+                             that meet the arguments, each body an           apply-binds-the-caller,
+                             equation of pt:body                             apply-list-view-in-the-head,
+                                                                             apply-function-in-the-head,
+                                                                             apply-partial-application, apply-lambda,
+                                                                             ordered-equations, ordered-effects
+  code held as data          rows of bindings, never substitution            stored-code-read, stored-code-read-join,
+                                                                             stored-code-apply, stored-code-add-under-a-name
+  cut                        pt:apply-cut: a mark per call; the later rule   tests/petta/transform_only/cut.metta
+                             heads fire only while the mark is absent
+  quote                      left as written                                 read-quoted-position
+  eval                       to:eval rewrites its argument when it runs      examples corpus: eval, eval_lambda
+  states (new-state,         left to the host: a state is no space           tests/petta/transform_only/control_and_choice.metta
+  get-state, change-state!)
+  grounded operations        left to the host                                every law that computes
+  (arithmetic, comparison,
+  lists, strings, I/O)
+
+  differences that are pinned
+  once over effects          one transform enumerates its candidates before the first fires, so
+                             pt:once runs every alternative; the host's once runs one.  Laws
+                             once-written-runs-one-alternative, once-by-transform-runs-every-alternative.
+                             transform_only therefore leaves once to the host in every mode.  On the
+                             machine of transform rules once is small steps and runs one
+                             alternative (check once-runs-one-alternative of
+                             tests/petta/petta_machine.metta).
+  held code                  a form written with one transform holds its expression and its body as
+                             data, so a value inside the expression is evaluated again and a pattern
+                             the host would evaluate (a list read by head and tail) is matched as
+                             written.  Laws let-written-hands-a-value-over,
+                             let-by-transform-evaluates-a-held-value-again,
+                             let-written-reads-a-list-by-head-and-tail,
+                             let-by-transform-takes-the-pattern-as-data.  These are laws of the
+                             forms taken one at a time, with code handed to them as data.
+  control in a whole         transform_only does not hand code over as data.  Asked to rewrite binding,
+  program                    branching and choice (--also binding branching choice), it makes each
+                             part of let, let*, if, case and superpose that is code an equation of a
+                             generated function (to:k SITE V ... ARGUMENT) and the form a call of it,
+                             and a call is a firing: a let is the read of one rule head met with the
+                             value, an if two heads True and False, a case one head for each row with
+                             every row but the last cutting, a superpose one head for each element; a
+                             case with an Empty row is a mark and two alternatives; collapse runs a
+                             thunk with quoted arguments.  A value reaches a generated function as an
+                             argument and is never evaluated again.  Fixtures held_values,
+                             streamed_case, nested_control (tests/petta/transform_only); of the 150
+                             example programs 134 pass that way (518 of 553 tests), 136 with those
+                             forms left to the host (523).
+  a part entered after a     a generated function is entered when it is reached.  A body that defines
+  definition                 a function and then mentions it as data has the mention in a part entered
+                             after the definition, where it is a call; as written the mention stays
+                             data for that invocation.  Fixture defined_then_mentioned, listed in
+                             tests/support/petta_transform_only_full_known.txt; examples
+                             callquoteevalreduce and definition_order, one test each.
+  the evaluator itself       lib/petta/petta_machine.metta: PeTTa's evaluation as a table of transform
+                             rules (pm:rule KEY SOURCES TEMPLATE).  The machine's state is one stored
+                             atom; a let binds by a take, clause choice is a read of the clause row, a
+                             choice point is a row of its own, backtracking takes the newest.  once
+                             keeps the depth it was entered at and its first answer takes the choice
+                             points above it; collapse keeps its answers in a row of its own, which
+                             outlives backtracking; case offers its value to the rows in order; cut
+                             takes the choice points made since the clause was entered.  Checks of
+                             tests/petta/petta_machine.metta and seeded expressions answer as the
+                             host, in order (make test-petta-machine, test-petta-machine-swi).  It
+                             covers literals, if (with or without an else), let, let*, chain,
+                             superpose and hyperpose (of a written list, or of a variable), empty,
+                             quote, eval, data, calls of the program's equations, patterns with
+                             PeTTa's list view (cons H T) in heads, lets and case rows, applied
+                             values, lambdas, partial and over-application of the program's names,
+                             declarations that hold an argument or the answer as written, equations
+                             added or removed while the program runs, foldall, maplist, prog1, the
+                             stream forms, add-atom, remove-atom, match, once, collapse, case (with
+                             or without an Empty row), progn and cut.  A head that is no equation of
+                             the program is the host's: the machine evaluates its arguments and the
+                             host applies it to the values (a request between rules; every answer an
+                             alternative; data comes back as it went).  A value may hold a variable:
+                             what a later let, a match or an application by the host binds reaches
+                             the value made earlier and the code after it, for that alternative
+                             alone (each answer of a request is kept beside the instance of the
+                             request that gave it, and the rule that takes the answer meets that
+                             instance with the request the state holds).  A call of a function of
+                             the program written as a let's pattern runs toward the let's value, as
+                             on the hosts: a constructor in a body meets the value before its items
+                             run, so the search of a function run backwards ends where the value
+                             does.  The machine knows as constructors the symbols the program takes
+                             apart in an equation's head; the host's metatype does not tell (it is
+                             Symbol for a library's native operations too).  A pattern is read as an
+                             expression, as on the hosts: a call of a function of the program or of
+                             an operation of the host in an equation's head, a let's pattern or a
+                             case's row says that what stands there is an answer of the call, which
+                             runs toward that value (in a case's row: before the rows are offered);
+                             an operation of the host toward a value is handed the value with the
+                             application, so (append ($x) $y) toward (1 2 3) has one answer; in a
+                             let's pattern (quote P) stands for P and a form is evaluated.  A case
+                             row with a list view is taken only if the view opens.  Declared types
+                             (conformance spec 4.7): each declaration that describes a call is an
+                             alternative with arguments of its own, held as written (Atom),
+                             evaluated (%Undefined%, _) or evaluated and checked (any other type, a
+                             type variable too; what a type asks is fixed by the declaration as
+                             written), the result checked, an equation's body answered as written
+                             when the declaration with its number of inputs answers Atom; whether a
+                             value has a type is asked of the host, whose relation get-type a
+                             program can extend.  map-atom, filter-atom and foldl-atom with a
+                             variable and a body run their body on the host.  Definition timing
+                             (conformance spec 3, P-DEF-4): a name's equations are kept as written;
+                             when a name gains its first equation or loses its last, the stored
+                             bodies that mention it are compiled again, and a body that is running
+                             keeps the term it holds.  A space written as an expression is
+                             evaluated first.  Errors: an operation a rule computes that raises,
+                             raises on the machine; the nearest catch answers the error as a value
+                             and the choices made inside it are dropped; an operation with no
+                             answer is no answer; an error a request to the host raises is raised
+                             on the machine.  A written application of a host operation is asked
+                             of the host once, as code in which each value is given by a variable
+                             of its own: a value that is code or a quotation is handed over as it
+                             is, and what the operation raises is raised.  A head that came as a
+                             value is applied with reduce, as the hosts apply it, where an
+                             operation that raises has no answer.  call and reduce make their
+                             application when it is reached (a head with equations by then is
+                             called, also in a running body); forall; a lambda applied to fewer or
+                             more values than it has parameters.  A goal of the host's Prolog,
+                             (translatePredicate (G A1 ... An)) (conformance spec, P-PL-2): the
+                             arguments are evaluated on the machine, the host calls the goal with
+                             the values as they are, and each way it holds is an alternative with
+                             what it bound.  Not covered: a
+                             declaration given after the equations that call its name; an argument
+                             of type Atom of a call made through a value; the checks of a partial
+                             application before it is completed; a constraint of the host's solver
+                             across a request; a form in a variable-headed let pattern, which the
+                             hosts evaluate before the pattern meets the value; a lambda
+                             handed to an operation of the host.  How much of
+                             a directory of example programs it evaluates as the host does is
+                             measured by tests/support/check_petta_machine_corpus.py (nothing is
+                             required); the programs are given to the machine as text.
+  the program's own space    a rewritten program's own space is the store &pt-own: its facts,
+                             equations and declarations in order.  &self written in the program
+                             names it; get-atoms and match see the atoms as written; an equation
+                             added or removed is defined or undefined; emptied, its functions are
+                             gone.  Fixtures own_space, own_space_whole, own_space_later_code (code
+                             held as data and run later; definitions in parallel branches).  An
+                             equation or a
+                             declaration is kept as (pt:own ATOM): SWI-PeTTa takes an equation row
+                             added to any space for a definition (CeTTa takes it for data), so a
+                             bare row would define the function a second time.
+  a function whose body is   SWI-PeTTa widens (= (add-to $x) (+ $x)) into a function of two arguments
+  a partial application      when it is defined, and it widens the stored equation of the function's
+                             key in the same way.  A call with more arguments than every arity the
+                             function is defined with gets a dispatch equation at the call's arity:
+                             it reads the rule heads at each smaller arity and calls the equation of
+                             the key with the further arguments after its own (pt:apply-further).  A
+                             declaration with as many inputs as the call has arguments describes the
+                             wider call.  Fixtures partial_bodies, returned_operator; examples
+                             partialdef, typed_extra_arguments.
+  such a function called     on SWI-PeTTa the widened equation of the key is no longer at the arity
+  with exactly its written   its rule is read at, so the rewritten function answers nothing there (as
+  arguments                  written: a partial application of the function).  Fixture
+                             partial_body_values, listed for SWI-PeTTa; it passes on CeTTa.  A body
+                             is not wrapped to prevent it: a wrapper delays the unification of the
+                             answer, and a function run backwards (example invertpeanoplus) would
+                             search without it.
+  an unbound atom in the     handed to the host's add-atom or remove-atom on the own store, which
+  own space                  refuses it as it does in the program as written (example
+                             unbound_atom_not_equation on SWI-PeTTa; CeTTa does not refuse it as
+                             written, so the example is not counted on that lane).
+  parallel branches          SWI-PeTTa's hyperpose runs its branches in threads.  With (to:also
+                             parallel), which the checks pass on that host, the commit of a firing,
+                             the taking of a fresh name and a definition made while the program runs
+                             are critical sections of the host.  Fixtures parallel_claims (of eight
+                             branches removing one row exactly one is told True) and
+                             own_space_later_code (definitions in parallel branches); the check of
+                             eight parallel firings in make test-transform-swi-differential, for
+                             both libraries.  In lib_transform_specs the conditions of a firing
+                             (absence, counts, collections, lets) are as of its walk, before the
+                             critical section; in lib_transform_swi a firing without a let is a
+                             critical section as a whole.  A let that starts parallel branches
+                             which fire would wait for itself.
+  reads while the consumer   fixture reads_at_the_call: a match whose consumer removes or adds rows, a
+  writes                     conjunction whose consumer adds the row that gives the next answer, and
+                             the same on the program's own space.
+  an equation removed while  as written a running call still tries an equation that an earlier
+  its call runs              equation's body removed (both hosts); rewritten, the removal takes the
+                             rule head and the stored equation at once and the call skips it.  The
+                             repair is to retire them and collect them later (versions of rows).
+                             Not written.
+  not written
+  a library as written       a library imported as written is loaded into the host's &self and sees
+  and the own space          that; handed the program's store, a function as written sees the kept
+                             rows.  Its own atoms are no atoms of the program's store, though PeTTa
+                             lists them in &self (examples corpus: spaces_removeallatoms).
+  imported libraries         transform_only rewrites the program it is given; a library the program
+                             imports runs as written.  With --imports the check rewrites the libraries
+                             and files it can find with the program; libraries that reprogram the host
+                             (memoising, tabling, importing) do not survive that.
+
+the machine of transform rules, measured on a ledger of HE and PeTTa differences
+  (71 short programs, each run as written and with every query asked of the machine,
+  on CeTTa's PeTTa lane and on SWI-PeTTa)
+  if                         the first branch for true, the other for every other value (a symbol, a
+                             number); no answer without another branch.  Checks an-if-on-a-symbol-*,
+                             an-if-on-a-number-*, an-if-on-true-*.
+  an error nothing catches   the machine's answers end with (pm:uncaught ERROR), the error the host
+                             names when it stops the run.
+  with_mutex, transaction    the first answer.  A transaction whose expression has no answer or
+                             raises leaves the spaces as they were (a journal of the machine's own
+                             add-atom and remove-atom requests, undone the newest first); one that
+                             answers hands its changes to the transaction around it.  Checks
+                             with-mutex-*, a-transaction-*, an-inner-transaction-*.
+                             A removal inside a transaction and an undone addition read the whole
+                             space.  What a host operation changes is not undone.
+  cut                        stays inside once, collapse, catch and a transaction.  Checks
+                             a-cut-inside-*.  (CeTTa's PeTTa lane lets a cut inside catch reach the
+                             clause; SWI-PeTTa does not; no check.)
+  more values than any       an equation whose answer is a partial application takes the other
+  equation takes             values; with no such answer the call raises the hosts' error
+                             (domain_error (function_input_arities NAME ARITIES) COUNT).  Checks
+                             more-values-*, a-partial-*, only-a-partial-*, a-data-body-*.
+                             The hosts decide when the equation is defined, from the body as written
+                             and the arities of its head; the machine has no table of the host's
+                             arities and decides from the answer.  So a body that is a whole call of
+                             a host operation runs before the error, and the error after a partial
+                             application names the operation.  The hosts differ among themselves
+                             on the partial value's name, on a base with several larger arities and
+                             on the arities the error lists.
+  equations that define      an equation headed by a variable, an expression or a lone symbol is
+  no function                no clause of the machine (pm:names-a-function), as on SWI-PeTTa.
+                             CeTTa's PeTTa lane makes every application of that many arguments a
+                             call of it, and the machine, a PeTTa program in the same space, stops.
+  a list view                the equation of the value with the cell of its first item and its rest:
+                             an unknown becomes a cell, a cell whose rest is no list opens.  Checks
+                             a-view-of-a-cell-*, two-views-of-one-unknown, a-symbol-has-no-view,
+                             the-empty-list-has-no-view.
+  the program's view of      the machine's equations are atoms of the host's &self; recorded when the
+  &self                      machine has loaded (pm:hide-loaded!), they are left out of what the
+                             program matches in &self, of (get-atoms &self) and of a removal as wide
+                             as an equation.  Checks the-machine's-equations-*, the-program-counts-*,
+                             a-wide-removal-*, an-equation-is-an-atom-*.  A program and its
+                             libraries share &self, so the program has no space apart from the
+                             host's (a design that gave it one was measured and withdrawn).
+  declared rows              each distinct row is an alternative, in the order declared, and delivers
+                             each argument by its own parameter.  Checks each-distinct-row-answers,
+                             each-row-delivers-*, rows-answer-in-the-order-declared,
+                             an-argument-of-another-type-*.
+  host answers in turn       an application by the host is asked once and its answers are taken one at
+                             a time, the host's enumeration the alternative; the operand of once is
+                             asked for its first answer.  Checks once-asks-the-host-*,
+                             an-endless-host-relation-*, host-answers-come-in-order,
+                             host-enumerations-nest, a-failed-alternative-*, the-host's-error-*,
+                             once-inside-an-enumeration, a-cut-drops-*.
+  the arity of a call        an equation of exactly this many arguments is a row (pm:arity NAME
+                             COUNT).  The two rules that call read it; the two rules for any other
+                             number of values (a partial application, a call with more values than
+                             any equation takes) state its absence.  "No equation takes this many"
+                             is so a condition of those two rules only, and an equation added later
+                             overturns it.  The hosts differ after such an addition: CeTTa calls the
+                             exact arity alone, SWI-PeTTa also the widened equation; the machine
+                             reads the row and follows CeTTa.
+  the driver's step limit    none by default.  (pm:limit! STEPS) sets one and (pm:limit! none)
+                             removes it; a run that reaches it stops with pm:out-of-fuel, which is a
+                             stop and never an answer or the lack of one.  Checks
+                             a-set-limit-stops-the-run, a-removed-limit-lets-the-run-finish.
+  clause selection           a call reads the head rows (pm:heads F INDEX HEAD) that meet its
+                             arguments.  Exactly one (a `unique` source): its body is entered by
+                             that one rule and no choice point is made.  None, or several (a
+                             `collect` source): no answer, or each in its order with the later ones
+                             behind one choice point and the last with none.  Checks: a call one
+                             clause meets leaves no choice point; a call three clauses meet leaves
+                             one; clauses that meet are taken in order; an unknown meets every
+                             clause.
+  a choice                   its items in turn, the later ones behind one choice point, the last
+                             with none (checked on a stopped run, with the negative check while
+                             the first item runs).
+  arguments                  a literal item is its value with no step of its own; the values are
+                             put in order by one rule with a computed condition ((pm:ready VALUES
+                             TARGET)).
+  a call in its caller's     when the caller's clause frame is on top of the continuation the call
+  place                      is the last thing its caller does, and the new frame takes that
+                             frame's place: a loop written as a call runs in one frame (checked on a
+                             stopped run), a call with work after it keeps its frames (the negative
+                             check), and a cut in a clause called that way stays in that clause.
+  the continuation in parts  the state keeps the newest frames; when twelve are there the others
+                             move to a row (pm:below ID LINK FRAMES) and the kept ones end in
+                             (pm:top ID LINK), LINK the variables the two parts share.  A value
+                             returning there reads the row with the same LINK.  Checks: the state
+                             keeps fewer than 19 frames of a recursion 60 deep and rows below
+                             exist; a loop moves none out; a binding made above reaches the frames
+                             below; each alternative reads them afresh; a cut and a caught error
+                             find their frame among them.
+  the answers so far         a row of their own, (pm:given ANSWERS), taken only by the rule that
+                             adds an answer and by the rule that ends the run; the state does not
+                             carry them (both checked on a stopped run).
+  how a rule is fired        by (transform &pm SOURCES TEMPLATE &pm), or after (pm:lane! direct) by
+                             the host's own match, remove-atom and add-atom: the first match of
+                             the sources in order, the takes removed, the instances added.  The
+                             gate runs every check both ways on CeTTa and on SWI-PeTTa and fails
+                             when the answers or the number of rules fired differ in any check.
+  not covered                a library function that itself enumerates &self runs on the host and
+                             sees the machine's atoms; a program atom general enough for a machine
+                             equation to unify with it is not removed by a wide removal, and what
+                             SWI-PeTTa raises for a removal whose function name is unknown is not
+                             raised; the host is one answer ahead of the machine, so a host relation
+                             whose next answer never comes holds up the answer before it.

@@ -1,0 +1,109 @@
+Declared tables
+===============
+
+A checked table keeps explicit IDs, row order and references in one data
+declaration. Ordered views generate ordinary C. A project's checked-in
+generated headers compile without Cesta; regeneration needs Cesta.
+
+Commands
+--------
+
+  cesta tables check registry.data
+  cesta tables rows registry.data Profiles id name
+  cesta tables header registry.data -o registry_rows.h
+
+check validates the complete bundle and prints it in normalized form. rows
+prints a column projection without sorting, renumbering or deduplicating.
+header writes one CESTA_TABLE_NAME_ROWS(row) X-macro per table. The supplied
+row macro chooses how to use the fields.
+
+Declaration
+-----------
+
+  (cesta-tables/1
+    (Table Languages
+      (Columns (Column code Identifier) (Column id Nat))
+      (Key code) (Unique id)
+      (Rows (Row he 0) (Row petta 2)))
+    (Table Profiles
+      (Columns (Column id Nat) (Column code Identifier)
+               (Column language (Ref Languages code))
+               (Column name Text) (Column enabled Bool)
+               (Column feature (Enum always typing)))
+      (Key id) (Unique code) (Unique language name)
+      (Rows (Row 7 he_extended he "extended" true always)
+            (Row 19 petta_extended petta "extended" false typing))))
+
+Nat is a canonical decimal uint64 value. Identifier is an ASCII C identifier
+spelling. Text is quoted. Bool is true or false. Enum admits only its listed
+distinct identifier spellings. Ref carries the referenced scalar value; its
+target must have a singleton primary key of a scalar type. Forward references
+are allowed. Reference chains through key columns are refused.
+
+Each table needs at least one column and a nonempty primary key. Keys may be
+composite. Unique declarations add alternate keys. Rows must have exactly
+the declared number of typed cells, keys must distinguish rows, and every
+reference must find a target. (Dense id), when requested, requires a singleton
+Nat primary key with IDs 0 through n-1 in the written row order. Sparse tables
+do not acquire a dense profile. Unknown types, repeated schema sections,
+duplicate keys and dangling references are refused with a reason.
+
+C export
+--------
+
+A cesta-export/1 manifest can include:
+
+  (table-enum "registry.data" Profiles
+    (enum ProfileId) (prefix PROFILE_) (id id) (name code))
+  (table-rows "registry.data" Profiles
+    (macro TYPING_PROFILE_ROWS) (columns id code name)
+    (where feature typing))
+  (table-names "counters.data" Counters
+    (array counter_names) (id id) (text spelling) (count COUNTER_COUNT))
+
+table-enum needs Nat IDs representable by C11 int and C identifier suffixes.
+Logical Identifier cells may spell keywords, but final exported declaration
+names must avoid the shared C11/GNU keyword vocabulary. Thus a logical `if`
+is allowed and exports as SAFE_if with a prefix; bare `if` is refused.
+An optional count is the number of selected rows, not a bound on sparse IDs.
+table-names needs a nonempty unfiltered Dense ID column, a Text column and the name
+of the array bound. table-rows supports uint64 IDs without an int restriction.
+An empty enum view requires a count enumerator; a bare empty enum and a
+zero-length name array are refused. C declaration names must remain distinct
+across the header, including enum constants, typedefs and its include guard.
+Repeated where clauses are conjunctive. Filters preserve source order and
+never renumber rows. Every requested column and filter type is checked even
+when no rows match. A missing column is an error; a well-typed value absent
+from a reference target may legitimately select an empty view.
+
+All projection options are explicit. An option for a different projection
+is refused. --plan records the normalized source bundle and each ordered
+selected view. Identifier cells remain tokens; Nat cells use UINT64_C; Bool
+cells use 0/1; string bytes use C escapes that cannot absorb following digits
+or become trigraphs. The row macro's formal is fresh against emitted cells.
+Callers remain responsible for declaring any identifier tokens they use.
+
+Existing declarations
+---------------------
+
+The cesta-counters/1 format remains readable. Its dense-ID and uniqueness
+checks use the shared table validator. Its fixed Counters embedding uses Nat,
+Text and Text columns and preserves the original accepted suffix domain.
+Operation contracts use the same validator for identities and resource,
+charge and profile references. Their effect-specific laws remain separate.
+Neither adapter imports another project's IDs or changes table order.
+
+Evidence and boundaries
+-----------------------
+
+DeclaredTables proves check soundness/completeness for its typed data model,
+unique keyed lookup, reference witnesses, and ordered filtered projections.
+DeclaredCounterTables derives shared admission from ExportCounterTables.Dense
+with the explicit uint64 row-count bound. Actual normalized source, views and
+mutated records are checked by the Lean kernel in test-table-admission.
+Large counter checks reuse chunked injective numeric-code evidence.
+
+These are table and view laws. Native text parsing, C printing and compiler
+behavior are tested boundaries. They do not prove arbitrary C handler effects
+or the semantics of a project's registry lookup functions. Positive and
+negative native fixtures run in test-tables; Lean checks stay in qualify.

@@ -55,21 +55,15 @@
 
 ; Equation-match witness: a user equation steps at the root, relationally
 ; (both matching equations contribute successors).
-!(assertEqualToResult
-  (collapse (lts:he:transitions (f 5)))
-  (((quote (g 5)) (quote (h 5)))))
+!(assertEqualToResult (lts:he:transitions (f 5)) ((quote (g 5)) (quote (h 5))))
 
 ; Branching congruence: a nondeterministic inner step fans the outer
 ; successor set out to every inner successor.
-!(assertEqualToResult
-  (collapse (lts:he:transitions (g (f 1))))
-  (((quote (g (g 1))) (quote (g (h 1))))))
+!(assertEqualToResult (lts:he:transitions (g (f 1))) ((quote (g (g 1))) (quote (g (h 1)))))
 
 ; Multiplicity: duplicate inner results yield duplicate outer successors
 ; (the one-step successor set is a bag, not a set).
-!(assertEqualToResult
-  (collapse (lts:he:transitions (pair (k BB))))
-  (((quote (pair AA)) (quote (pair AA)))))
+!(assertEqualToResult (lts:he:transitions (pair (k BB))) ((quote (pair AA)) (quote (pair AA))))
 
 !(assertEqual (lts:he:is-can-step (pair (k BB))) True)
 

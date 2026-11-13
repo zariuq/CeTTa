@@ -9,5 +9,5 @@
 (= (count-down $n) (if (> $n 0) (superpose ($n (count-down (- $n 1)))) (empty)))
 !(size-atom (wrap-all (range 0 100000)))
 !(let $l (collapse (count-down 3000)) (size-atom (wrap-all $l)))
-!(let $l (collapse (count-down 3000)) (car-atom (wrap-all $l)))
+!(let $l (sort-atom (collapse (count-down 3000))) (car-atom (wrap-all $l)))
 !(wrap-all (1 (2 3) "four"))

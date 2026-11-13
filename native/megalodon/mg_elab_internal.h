@@ -58,12 +58,39 @@ struct Cx {
     const Cx *next;
 };
 
+typedef struct PfCx PfCx;   /* the hypotheses' propositions, de Bruijn 0 first */
+struct PfCx {
+    MgTm *prop;
+    const PfCx *next;
+};
+
 typedef struct Hy Hy;          /* the hypotheses, newest first */
 struct Hy {
     const char *name;
     MgTm *prop;
     const Hy *next;
+    /* Kept with the node, so that a proof with many hypotheses does not
+     * walk or copy them at every step: the same list as the double check
+     * reads it (the proposition, then the next node's view), and a key of
+     * the name, compared before the name itself.  Set by mge_hy_set. */
+    PfCx view;
+    uint32_t name_key;
 };
+
+static inline uint32_t mge_name_key(const char *name) {
+    uint32_t h = 2166136261u;
+    for (const unsigned char *p = (const unsigned char *)name; p && *p; ++p)
+        h = (h ^ *p) * 16777619u;
+    return h;
+}
+
+static inline void mge_hy_set(Hy *h, const char *name, MgTm *prop, const Hy *next) {
+    h->name = name;
+    h->prop = prop;
+    h->next = next;
+    h->view = (PfCx){prop, next ? &next->view : NULL};
+    h->name_key = mge_name_key(name);
+}
 
 /* Section closures (tparclos, tmallclos, tmlamclos, pflamclos), newest
  * first: a group of variables of one type, or a hypothesis. */
@@ -258,6 +285,19 @@ struct MgElab {
     uint32_t aby_nruns, aby_cruns;
     uint64_t unchecked;
     const struct Dl *deltaset;          /* the definitions the proof unfolds */
+    /* What the tactic engine's conversion has refuted (mg_proof.c): pairs of
+     * beta-eta normal terms that are not convertible under the definitions
+     * in force.  The pairs stamped conv_epoch are the valid ones;
+     * mge_conv_forget moves it at every item and whenever a definition or
+     * its opacity changes.  conv_memory_off is set once a definition with
+     * six type variables exists: Megalodon cannot unfold one (delta_exp),
+     * and a remembered answer would not reach that failure. */
+    struct ConvRefuted *refuted;
+    size_t refuted_cap, refuted_len;
+    uint64_t conv_epoch;
+    bool conv_memory_off;
+    uint64_t conv_steps;                /* conversions the engine was asked for */
+    uint64_t thm_conv_start;            /* conv_steps when the theorem's proof began */
     const struct PfFrame *prooffun;     /* the proof function, newest first */
     const Clo *thm_clos;                /* the section closures of the theorem */
     uint32_t mvarcnt;                   /* megaauto's metavariable counter */
@@ -280,12 +320,6 @@ typedef struct TpCx TpCx;
 struct TpCx {
     MgTp *tp;
     const TpCx *next;
-};
-
-typedef struct PfCx PfCx;   /* the hypotheses' propositions, de Bruijn 0 first */
-struct PfCx {
-    MgTm *prop;
-    const PfCx *next;
 };
 
 typedef struct Dl Dl;
@@ -394,6 +428,8 @@ MgTp *mge_kernel_tp(MgElab *e, MgTp *a, uint32_t levels);
 MgTm *mge_kernel_tm(MgElab *e, MgTm *m, uint32_t levels);
 void mge_check_init(MgElab *e, MgCheck *c);
 MgTm *mge_beta_eta_norm(MgElab *e, MgTm *m);
+/* Drop what conversion has refuted: the definitions in force may differ. */
+void mge_conv_forget(MgElab *e);
 __attribute__((noreturn)) void mge_kernel_refused(MgElab *e);
 MgTp *mge_poly_type(MgElab *e, MgTp *a, uint32_t levels);
 MgTm *mge_poly_term(MgElab *e, MgTm *m, uint32_t levels, bool lam);

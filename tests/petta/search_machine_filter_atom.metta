@@ -55,5 +55,5 @@
         (let $written (add-atom &filter-log (seen $item)) (> $item 1)))
     (2 3))
 !(test
-    (collapse (match &filter-log (seen $item) $item))
-    (1 2 3))
+    (sort-atom (collapse (match &filter-log (seen $item) $item)))
+    (sort-atom (1 2 3)))

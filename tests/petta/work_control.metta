@@ -2,7 +2,9 @@
 ; and keep the rest, a budget pauses a take at an answer boundary, effects
 ; happen once, when their answers are produced, and a handle kept in the
 ; space keeps its computation across queries.  The record names the route:
-; the general machine for a root the PeTTa machine admits.
+; the general machine for a root the PeTTa machine admits.  Which answers a
+; prefix holds is open (the answers are a bag), so a take is read by its size
+; and state, and the takes of one computation together as a sorted list.
 
 (parent p1 p0)
 (parent p2 p1)
@@ -25,12 +27,13 @@
 
 ; Two prefixes, then the record.
 !(let $h (work-new (ancestors p0))
-   (let $a (work-take $h 2)
-     (let $b (work-take $h 10)
-       ($a $b (record-summary (work-record $h))))))
+   (let (taken $a $sa) (work-take $h 2)
+     (let (taken $b $sb) (work-take $h 10)
+       ((size-atom $a) $sa (size-atom $b) $sb (sort-atom (union-atom $a $b))
+        (record-summary (work-record $h))))))
 
 ; A budget of four transitions per take: takes pause, and draining the
-; work with them gives every answer once, in order.
+; work with them gives every answer once.
 (= (drain $h $acc $paused)
    (let $t (work-take $h 10)
      (case $t
@@ -50,27 +53,41 @@
          (let $t (cdr-atom $l)
            (let $r (snoc $t $x) (cons-atom $h $r))))))
 !(let $h (work-new (ancestors p0))
-   (let $u (work-budget $h 4) (drain $h () False)))
+   (let $u (work-budget $h 4)
+     (let ($all $paused) (drain $h () False) ((sort-atom $all) $paused))))
 
 ; A take of zero answers advances nothing.
 !(let $h (work-new (ancestors p0))
    (let $a (work-take $h 0)
-     (let $b (work-take $h 1) ($a $b))))
+     (let (taken $b $sb) (work-take $h 1)
+       ($a (size-atom $b) $sb (subtraction-atom $b (p1 p2 p3 p4 p5))))))
 
-; A handle kept in the space keeps its computation across queries.
+; A handle kept in the space keeps its computation across queries: each
+; take is noted in the space, and the notes hold every answer once.
+(= (note-taken $xs)
+   (if (== $xs ())
+       ()
+       (let $x (car-atom $xs)
+         (let $u (add-atom &self (took $x)) (note-taken (cdr-atom $xs))))))
+(= (take-kept $h $k)
+   (let (taken $xs $state) (work-take $h $k)
+     (let $u (note-taken $xs) ((size-atom $xs) $state))))
 !(let $h (work-new (ancestors p0)) (add-atom &self (kept $h)))
-!(match &self (kept $h) (work-take $h 2))
-!(match &self (kept $h) (work-take $h 2))
-!(match &self (kept $h) (work-take $h 2))
+!(match &self (kept $h) (take-kept $h 2))
+!(match &self (kept $h) (take-kept $h 2))
+!(match &self (kept $h) (take-kept $h 2))
+!(sort-atom (collapse (match &self (took $x) $x)))
 
 ; Effects happen once, when their answers are produced: the first take
-; makes one mark, the later take the rest.
+; makes the mark of the answer it took, the later take the rest.
 (= (mark $x) (let $u (add-atom &self (seen $x)) $x))
 !(let $h (work-new (mark (superpose (1 2 3))))
-   (let $a (work-take $h 1)
+   (let (taken $a $sa) (work-take $h 1)
      (let $b (collapse (match &self (seen $s) $s))
-       (let $c (work-take $h 5) ($a $b $c)))))
-!(collapse (match &self (seen $s) $s))
+       (let (taken $c $sc) (work-take $h 5)
+         ((size-atom $a) $sa (== (sort-atom $b) (sort-atom $a))
+          (size-atom $c) $sc (sort-atom (union-atom $a $c)))))))
+!(sort-atom (collapse (match &self (seen $s) $s)))
 
 ; Every source here runs on the general machine in PeTTa, the recursion
 ; through a match binding included.
@@ -80,8 +97,10 @@
 (= (path $x $z) (match &self (edge $x $y) (path $y $z)))
 (= (reach $x) (path $x $y))
 !(let $h (work-new (reach a))
-   (let $a (work-take $h 1)
-     (let $b (work-take $h 5) ($a $b (record-summary (work-record $h))))))
+   (let (taken $a $sa) (work-take $h 1)
+     (let (taken $b $sb) (work-take $h 5)
+       ((size-atom $a) $sa (size-atom $b) $sb (sort-atom (union-atom $a $b))
+        (record-summary (work-record $h))))))
 
 ; Cancel releases the computation: its handle names none afterwards.
 !(let $h (work-new (ancestors p0))

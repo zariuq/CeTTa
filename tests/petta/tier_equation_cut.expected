@@ -8,8 +8,8 @@
 true
 (pair true done)
 (chose-a)
-(other fallback)
-((found 20) never)
+(fallback other)
+(never (found 20))
 ((found 40))
 (x)
 true

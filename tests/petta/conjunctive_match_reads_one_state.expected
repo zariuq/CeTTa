@@ -1,0 +1,103 @@
+is ((a b) (a c) (b c) (b d) (c d)), should ((a b) (a c) (b c) (b d) (c d)). ✅ 
+is ((a b) (a c) (b c) (b d) (c d)), should ((a b) (a c) (b c) (b d) (c d)). ✅ 
+is (a), should (a). ✅ 
+is (a b), should (a b). ✅ 
+is (), should (). ✅ 
+is (a b), should (a b). ✅ 
+is (a b), should (a b). ✅ 
+is 4, should 4. ✅ 
+is (), should (). ✅ 
+is (a b), should (a b). ✅ 
+is (), should (). ✅ 
+is (a b), should (a b). ✅ 
+is (a a), should (a a). ✅ 
+is (a), should (a). ✅ 
+is (1 2), should (1 2). ✅ 
+is ((a b)), should ((a b)). ✅ 
+is ((1 one) (1 one) (2 two)), should ((1 one) (1 one) (2 two)). ✅ 
+is (one one two), should (one one two). ✅ 
+is (), should (). ✅ 
+is (a b), should (a b). ✅ 
+is ((a a) (a b) (b a) (b b)), should ((a a) (a b) (b a) (b b)). ✅ 
+is (a b), should (a b). ✅ 
+true
+true
+true
+(true true)
+true
+true
+true
+true
+(true true)
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true

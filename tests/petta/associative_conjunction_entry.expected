@@ -1,0 +1,7 @@
+true
+true
+true
+true
+(nested (a))
+(grouped (a b))
+(flat (a b))
