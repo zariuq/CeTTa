@@ -1,15 +1,15 @@
 !(import! &self langdef)
 
-(= (mm0:math:name:x) (cons (cp 120) nil))
-(= (mm0:math:name:y) (cons (cp 121) nil))
+(= (mm0:math:name:x) (cons-atom cons (cons-atom (cp 120) (cons-atom nil ()))))
+(= (mm0:math:name:y) (cons-atom cons (cons-atom (cp 121) (cons-atom nil ()))))
 (= (mm0:math:name:neg)
-   (cons (cp 110) (cons (cp 101) (cons (cp 103) nil))))
+   (cons-atom cons (cons-atom (cp 110) (cons-atom (cons-atom cons (cons-atom (cp 101) (cons-atom (cons-atom cons (cons-atom (cp 103) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:math:name:imp)
-   (cons (cp 105) (cons (cp 109) (cons (cp 112) nil))))
+   (cons-atom cons (cons-atom (cp 105) (cons-atom (cons-atom cons (cons-atom (cp 109) (cons-atom (cons-atom cons (cons-atom (cp 112) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:math:name:app)
-   (cons (cp 97) (cons (cp 112) (cons (cp 112) nil))))
+   (cons-atom cons (cons-atom (cp 97) (cons-atom (cons-atom cons (cons-atom (cp 112) (cons-atom (cons-atom cons (cons-atom (cp 112) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:math:name:and)
-   (cons (cp 97) (cons (cp 110) (cons (cp 100) nil))))
+   (cons-atom cons (cons-atom (cp 97) (cons-atom (cons-atom cons (cons-atom (cp 110) (cons-atom (cons-atom cons (cons-atom (cp 100) (cons-atom nil ()))) ()))) ()))))
 
 (= (mm0:math:scalars:right-associative)
    (MM0MathScalarsConsV1 (cp 126)
@@ -88,9 +88,7 @@
        (LangDef:ParseAccepted MM0TextualV1 $digest ($ast))
        (langdef:parse-file $mm0-langdef
          "tests/langdef/mm0/notation_environment_positive.mm0")
-       (eval
-         (quote
-           (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 $ast)))))
+       (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 $ast)))
    (let*
      (($x (mm0:math:name:x))
       ($y (mm0:math:name:y))
@@ -203,9 +201,7 @@
        (LangDef:ParseAccepted MM0TextualV1 $digest ($ast))
        (langdef:parse-file $mm0-langdef
          "tests/langdef/mm0/math_parser_left_associative.mm0")
-       (eval
-         (quote
-           (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 $ast)))))
+       (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 $ast)))
    (let*
      (($x (mm0:math:name:x))
       ($y (mm0:math:name:y))

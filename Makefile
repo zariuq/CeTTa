@@ -12503,8 +12503,8 @@ test-gslt-petta-direct-v1: \
 		--closed-entry-mode DirectAncestorV1:10 \
 		--epilogue $(GSLT_DIRECT_PETTA_CLOSED_QUERY_V1) \
 		--out "$$work/closed-entry-mode.metta" >/dev/null; \
-	! rg -F -q '(= (gslt:DirectAncestorV1 ' \
-		"$$work/closed-entry-mode.metta"; \
+	if rg -F -q '(= (gslt:DirectAncestorV1 ' \
+		"$$work/closed-entry-mode.metta"; then echo 'unexpected success in direct compiler negative control' >&2; exit 1; fi; \
 	closed_output=$$(timeout 30 $(CETTA_PETTA_DIRECT_RUN_V1) \
 		"$$work/closed-entry-mode.metta" 2>&1); \
 	printf '%s\n' "$$closed_output" | rg -F -q \
@@ -12514,42 +12514,52 @@ test-gslt-petta-direct-v1: \
 	printf '%s\n' "$$closed_output" | rg -F -q \
 		'(gslt:result:DirectAncestorV1:10 DirectDaraV1)'; \
 	test "$$(printf '%s\n' "$$closed_output" | rg -c '^[(][)]$$')" -eq 1; \
-	! $(LANGDEF_COMPILER_V1_BIN) petta-direct \
+	if $(LANGDEF_COMPILER_V1_BIN) petta-direct \
 		--source $(GSLT_DIRECT_PETTA_PARENT_V1) \
 		--source $(GSLT_DIRECT_PETTA_ANCESTOR_V1) \
 		--entry-mode DirectAncestorV1:10 \
 		--closed-entry-mode DirectAncestorV1:10 \
-		--out "$$work/mixed-entry-mode.metta" >/dev/null 2>&1; \
-	! $(LANGDEF_COMPILER_V1_BIN) petta-direct \
+		--out "$$work/mixed-entry-mode.metta" >/dev/null 2>&1; then echo 'unexpected success in direct compiler negative control' >&2; exit 1; fi; \
+	if $(LANGDEF_COMPILER_V1_BIN) petta-direct \
 		--source $(GSLT_DIRECT_PETTA_PARENT_V1) \
 		--entry-mode DirectParentV1:1x \
-		--out "$$work/invalid-entry-mode.metta" >/dev/null 2>&1; \
-	! $(LANGDEF_COMPILER_V1_BIN) petta-direct \
+		--out "$$work/invalid-entry-mode.metta" >/dev/null 2>&1; then echo 'unexpected success in direct compiler negative control' >&2; exit 1; fi; \
+	if $(LANGDEF_COMPILER_V1_BIN) petta-direct \
 		--source $(GSLT_DIRECT_PETTA_PARENT_V1) \
 		--entry-mode MissingRelationV1:10 \
-		--out "$$work/missing-entry-mode.metta" >/dev/null 2>&1; \
-	! $(LANGDEF_COMPILER_V1_BIN) petta-direct \
+		--out "$$work/missing-entry-mode.metta" >/dev/null 2>&1; then echo 'unexpected success in direct compiler negative control' >&2; exit 1; fi; \
+	if $(LANGDEF_COMPILER_V1_BIN) petta-direct \
 		--source $(GSLT_DIRECT_IDENTITY_TARGET_EQUATION_V1) \
 		--out "$$work/identity-target-equation.metta" \
-		>/dev/null 2>"$$work/identity-target-equation.err"; \
+		>/dev/null 2>"$$work/identity-target-equation.err"; then echo 'unexpected success in direct compiler negative control' >&2; exit 1; fi; \
 	rg -F -q \
 		'direct PeTTa rejects a structurally identical target equation' \
 		"$$work/identity-target-equation.err"; \
 	$(LANGDEF_COMPILER_V1_BIN) petta-direct \
 		--source $(GSLT_DIRECT_PETTA_SOURCE_CONSTRUCTOR_V1) \
 		--entry-mode DirectSourceConsHeadV1:10 \
+		--entry-mode DirectSourceConsSameV1:10 \
+		--entry-mode DirectSourceConsScopeV1:10 \
 		--out "$$work/source-constructor.metta" >/dev/null; \
 	rg -F -q \
-		'(let (cons $$head $$tail) $$__gslt_input_v1_0' \
+		'(let (cons-atom cons (cons-atom $$head (cons-atom $$tail ()))) $$__gslt_input_v1_0_0' \
 		"$$work/source-constructor.metta"; \
 	awk '1; END { \
-		print "!(gslt:fn:DirectSourceConsHeadV1:10 (cons DirectFirstV1 (cons DirectSecondV1 ())))"; \
+		print "!(gslt:fn:DirectSourceConsHeadV1:10 (quote (cons DirectFirstV1 (DirectSecondV1 DirectThirdV1))))"; \
+		print "!(if (== (collapse (gslt:fn:DirectSourceConsHeadV1:10 (DirectFirstV1 DirectSecondV1 DirectThirdV1))) ()) SourceConstructorDistinctV1 SourceConstructorMergedV1)"; \
+		print "!(gslt:fn:DirectSourceConsSameV1:10 (quote (cons (cons A B) (cons A B))))"; \
+		print "!(if (== (collapse (gslt:fn:DirectSourceConsSameV1:10 (quote (cons A B)))) ()) SourceConstructorRepeatedRefusedV1 SourceConstructorRepeatedMismatchV1)"; \
+		print "!(gslt:fn:DirectSourceConsScopeV1:10 (quote (cons Scoped Tail)))"; \
 	}' "$$work/source-constructor.metta" \
 		>"$$work/source-constructor-run.metta"; \
 	source_constructor_output=$$(timeout 30 $(CETTA_PETTA_DIRECT_RUN_V1) \
 		"$$work/source-constructor-run.metta" 2>&1); \
 	printf '%s\n' "$$source_constructor_output" | rg -F -q \
 		'(gslt:result:DirectSourceConsHeadV1:10 DirectFirstV1)'; \
+	printf '%s\n' "$$source_constructor_output" | rg -F -x -q 'SourceConstructorDistinctV1'; \
+	printf '%s\n' "$$source_constructor_output" | rg -F -x -q '(gslt:result:DirectSourceConsSameV1:10 (cons A B))'; \
+	printf '%s\n' "$$source_constructor_output" | rg -F -x -q 'SourceConstructorRepeatedRefusedV1'; \
+	printf '%s\n' "$$source_constructor_output" | rg -F -x -q '(gslt:result:DirectSourceConsScopeV1:10 Scoped)'; \
 	$(LANGDEF_COMPILER_V1_BIN) petta-direct \
 		--source $(GSLT_DIRECT_PETTA_BINDING_MODES_V1) \
 		--out "$$work/binding-modes.metta" >/dev/null; \
@@ -12680,20 +12690,20 @@ test-gslt-petta-direct-v1: \
 	rg -F -q \
 		'; gslt-binding-mode ModeRelationalCompoundSourceV1/1 input=0 success=1 functional=relational specialized=yes' \
 		"$$work/binding-modes.metta"; \
-	! rg -F -q \
+	if rg -F -q \
 		'; gslt-binding-mode ModeBadOrderV1/1 input=0 success=1' \
-		"$$work/binding-modes.metta"; \
+		"$$work/binding-modes.metta"; then echo 'unexpected success in direct compiler negative control' >&2; exit 1; fi; \
 	rg -F -q '(gslt:fn:ModeListMapV1:10 ' \
 		"$$work/binding-modes.metta"; \
 	rg -F -q \
 		'(gslt:result:ModeListMapV1:10 ModeNilV1)' \
 		"$$work/binding-modes.metta"; \
-	! rg -F -q '(quote (gslt:result:' \
+	rg -F -q '(quote (gslt:result:' \
 		"$$work/binding-modes.metta"; \
 	rg -F -q \
 		'(gslt:fn:ModeListMapV1:10 $$source)' \
 		"$$work/binding-modes.metta"; \
-	! rg -F -q \
+	rg -F -q \
 		'(once (gslt:fn:ModeListMapV1:10 $$source))' \
 		"$$work/binding-modes.metta"; \
 	rg -F -q \
@@ -12702,7 +12712,7 @@ test-gslt-petta-direct-v1: \
 	rg -F -q \
 		'(gslt:fn:ModeComposedLookupV1:10 ModeLookupZeroV1)' \
 		"$$work/binding-modes.metta"; \
-	! rg -F -q \
+	rg -F -q \
 		'(once (gslt:fn:ModeComposedLookupV1:10 ModeLookupZeroV1))' \
 		"$$work/binding-modes.metta"; \
 	rg -F -q \
@@ -12712,31 +12722,31 @@ test-gslt-petta-direct-v1: \
 		'(once (gslt:fn:ModeGuardSequenceV1:10 ModeLookupZeroV1))' \
 		"$$work/binding-modes.metta"; \
 	rg -F -q \
-		'(once (gslt:fn:ModeGroundResultGuardV1:11 ModeLookupZeroV1 (ModeGroundResultZeroV1 ModeLookupValueZeroV1)))' \
+		'(once (gslt:fn:ModeGroundResultGuardV1:11 ModeLookupZeroV1 (quote (ModeGroundResultZeroV1 ModeLookupValueZeroV1))))' \
 		"$$work/binding-modes.metta"; \
 	rg -F -q \
-		'(gslt:fn:ModeRecursiveCompareV1:110 (ModeRecursiveListConsV1 ModeZeroV1 ModeRecursiveListNilV1) (ModeRecursiveListConsV1 ModeZeroV1 ModeRecursiveListNilV1))' \
-		"$$work/binding-modes.metta"; \
-	! rg -F -q \
-		'(once (gslt:fn:ModeRecursiveCompareV1:110 (ModeRecursiveListConsV1 ModeZeroV1 ModeRecursiveListNilV1) (ModeRecursiveListConsV1 ModeZeroV1 ModeRecursiveListNilV1)))' \
+		'(gslt:fn:ModeRecursiveCompareV1:110 (quote (ModeRecursiveListConsV1 ModeZeroV1 ModeRecursiveListNilV1)) (quote (ModeRecursiveListConsV1 ModeZeroV1 ModeRecursiveListNilV1)))' \
 		"$$work/binding-modes.metta"; \
 	rg -F -q \
-		'(once (gslt:fn:ModeRecursiveFoldV1:10 (ModeRecursiveListConsV1 ModeZeroV1 ModeRecursiveListNilV1)))' \
+		'(once (gslt:fn:ModeRecursiveCompareV1:110 (quote (ModeRecursiveListConsV1 ModeZeroV1 ModeRecursiveListNilV1)) (quote (ModeRecursiveListConsV1 ModeZeroV1 ModeRecursiveListNilV1))))' \
 		"$$work/binding-modes.metta"; \
-	! rg -F -q '(gslt:fn:ModeOpaqueCompareV1:110 ' \
+	rg -F -q \
+		'(once (gslt:fn:ModeRecursiveFoldV1:10 (quote (ModeRecursiveListConsV1 ModeZeroV1 ModeRecursiveListNilV1))))' \
 		"$$work/binding-modes.metta"; \
-	! rg -F -q '(gslt:fn:ModeOverlappingLookupV1:10 ' \
-		"$$work/binding-modes.metta"; \
-	! rg -F -q '(gslt:fn:ModeOverlappingDomainViewV1:10 ' \
-		"$$work/binding-modes.metta"; \
+	if rg -F -q '(gslt:fn:ModeOpaqueCompareV1:110 ' \
+		"$$work/binding-modes.metta"; then echo 'unexpected success in direct compiler negative control' >&2; exit 1; fi; \
+	if rg -F -q '(gslt:fn:ModeOverlappingLookupV1:10 ' \
+		"$$work/binding-modes.metta"; then echo 'unexpected success in direct compiler negative control' >&2; exit 1; fi; \
+	if rg -F -q '(gslt:fn:ModeOverlappingDomainViewV1:10 ' \
+		"$$work/binding-modes.metta"; then echo 'unexpected success in direct compiler negative control' >&2; exit 1; fi; \
 	rg -F -q '(gslt:mode:ModeChooseV1:10 ModeChoiceKeyV1)' \
 		"$$work/binding-modes.metta"; \
 	rg -F -q '(gslt:mode:ModeOpenPairV1:10 $$known)' \
 		"$$work/binding-modes.metta"; \
 	rg -F -q '(gslt:mode:ModePartialSourceV1:00)' \
 		"$$work/binding-modes.metta"; \
-	! rg -F -q '(once (gslt:mode:ModeChooseV1:10 ModeChoiceKeyV1))' \
-		"$$work/binding-modes.metta"; \
+	if rg -F -q '(once (gslt:mode:ModeChooseV1:10 ModeChoiceKeyV1))' \
+		"$$work/binding-modes.metta"; then echo 'unexpected success in direct compiler negative control' >&2; exit 1; fi; \
 	awk '1; END { \
 		print "!(gslt:fn:ModeListMapV1:10 (ModeConsV1 ModeAtomV1 ModeNilV1))"; \
 		print "!(collapse (gslt:ModeGoodOrderV1 (ModeGoodOrderV1 \044mapped)))"; \
@@ -12834,10 +12844,10 @@ test-gslt-petta-direct-v1: \
 		--source $(GSLT_DIRECT_PETTA_PARENT_V1) \
 		--source "$$work/severed-source.metta" \
 		--out "$$work/severed-program.metta" >/dev/null; \
-	! cmp -s "$$work/severed-program.metta" \
-		$(GSLT_DIRECT_PETTA_PROGRAM_V1); \
-	! rg -F -q 'source-rule=direct-ancestor-step-v1' \
-		"$$work/severed-program.metta"; \
+	if cmp -s "$$work/severed-program.metta" \
+		$(GSLT_DIRECT_PETTA_PROGRAM_V1); then echo 'unexpected success in direct compiler negative control' >&2; exit 1; fi; \
+	if rg -F -q 'source-rule=direct-ancestor-step-v1' \
+		"$$work/severed-program.metta"; then echo 'unexpected success in direct compiler negative control' >&2; exit 1; fi; \
 	awk -v expected=4 ' \
 		/^; gslt-source-rewrite-v1 / { \
 			split($$3, field, "="); \
@@ -18598,6 +18608,10 @@ NORMAL_TEST_TARGETS := \
 	test-petta-closure-specialization \
 	test-petta-transform \
 	test-petta-transform-step-paths \
+	test-petta-by-transform \
+	test-petta-transform-only \
+	test-petta-machine \
+	test-petta-step-rules \
 	test-transform-he \
 	test-transform-profiles \
 	test-language-versions \
@@ -31434,6 +31448,56 @@ test-petta-semantics: test-petta-transform-step-paths
 # with reads only joins at match's speed.
 test-petta-transform-step-paths: $(BIN) tests/support/check_transform_step_paths.py
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_transform_step_paths.py ./$(BIN)
+
+.PHONY: test-petta-by-transform
+test-petta-semantics: test-petta-by-transform
+# PeTTa's own forms written with transform (lib/petta/lib_petta_by_transform.metta:
+# match, add-atom, remove-atom, superpose, once, collapse, let, let*, if, case,
+# equations and calls) answer as the forms do and leave the same store: the
+# fixed laws of tests/petta/petta_by_transform.metta and seeded law programs,
+# with transform native and with transform written in PeTTa.
+test-petta-by-transform: $(BIN) lib/petta/lib_petta_by_transform.metta \
+		tests/petta/petta_by_transform.metta tests/support/check_petta_by_transform.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_petta_by_transform.py ./$(BIN)
+
+# Whole PeTTa programs rewritten by lib/petta/transform_only.metta: every space
+# operation and every call of an equation is a transform.  Each fixture must
+# pass, rewritten, every test it passes as written, test for test, with transform
+# written in PeTTa (specs) and with the native firing; and, with transform
+# written in PeTTa, also when let, if, case and superpose are rewritten into
+# calls of generated functions.
+.PHONY: test-petta-transform-only
+test-petta-transform-only: $(BIN) lib/petta/transform_only.metta lib/petta/lib_petta_by_transform.metta \
+		lib/petta/lib_transform_specs.metta tests/support/check_petta_transform_only.py \
+		tests/support/petta_transform_only_full_known.txt \
+		$(wildcard tests/petta/transform_only/*.metta)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_petta_transform_only.py ./$(BIN) \
+		--corpus tests/petta/transform_only --lane specs --timeout 120 --require-all
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_petta_transform_only.py ./$(BIN) \
+		--corpus tests/petta/transform_only --lane native --timeout 120 --require-all \
+		--excuse-native-defects
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_petta_transform_only.py ./$(BIN) \
+		--corpus tests/petta/transform_only --lane specs --timeout 120 --require-all \
+		--also binding branching choice \
+		--known tests/support/petta_transform_only_full_known.txt
+
+# A PeTTa evaluator whose every step is a transform rule (lib/petta/petta_machine.metta):
+# its checks and seeded expressions answer as the host, with the native firing and
+# with transform written in PeTTa.
+.PHONY: test-petta-machine
+test-petta-machine: $(BIN) lib/petta/petta_machine.metta tests/petta/petta_machine.metta \
+		tests/support/check_petta_machine.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_petta_machine.py ./$(BIN)
+
+.PHONY: test-petta-step-rules
+test-petta-semantics: test-petta-step-rules
+# One step of the transform calculus written in PeTTa (lib/petta/lib_step_rules.metta):
+# a state as a value with PeTTa's variables as its unknowns; takes, reads, makes,
+# told equations and disequations, guards that hold at every solution, stored
+# schemas, minted names, runs and halting; and a rule fired as one transform.
+test-petta-step-rules: $(BIN) lib/petta/lib_step_rules.metta tests/petta/step_rules.metta \
+		tests/support/check_step_rules.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_step_rules.py ./$(BIN)
 
 # transform in the HE dialect (lib/lib_transform.metta) fires natively as its
 # library does: the fixed test and 120 seeded scenarios (every source form,

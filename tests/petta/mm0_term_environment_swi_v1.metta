@@ -1,16 +1,16 @@
 !(import! &self ../../langdef/petta/generated/mm0_term_environment_v1)
 
-(= (mm0:term-swi:name:s) (cons (cp 115) nil))
-(= (mm0:term-swi:name:a) (cons (cp 97) nil))
+(= (mm0:term-swi:name:s) (cons-atom cons (cons-atom (cp 115) (cons-atom nil ()))))
+(= (mm0:term-swi:name:a) (cons-atom cons (cons-atom (cp 97) (cons-atom nil ()))))
 (= (mm0:term-swi:name:set)
-   (cons (cp 115) (cons (cp 101) (cons (cp 116) nil))))
+   (cons-atom cons (cons-atom (cp 115) (cons-atom (cons-atom cons (cons-atom (cp 101) (cons-atom (cons-atom cons (cons-atom (cp 116) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:term-swi:name:wff)
-   (cons (cp 119) (cons (cp 102) (cons (cp 102) nil))))
+   (cons-atom cons (cons-atom (cp 119) (cons-atom (cons-atom cons (cons-atom (cp 102) (cons-atom (cons-atom cons (cons-atom (cp 102) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:term-swi:name:all)
-   (cons (cp 97) (cons (cp 108) (cons (cp 108) nil))))
-(= (mm0:term-swi:name:x) (cons (cp 120) nil))
-(= (mm0:term-swi:name:ph) (cons (cp 112) (cons (cp 104) nil)))
-(= (mm0:term-swi:identifier (cons $first $rest))
+   (cons-atom cons (cons-atom (cp 97) (cons-atom (cons-atom cons (cons-atom (cp 108) (cons-atom (cons-atom cons (cons-atom (cp 108) (cons-atom nil ()))) ()))) ()))))
+(= (mm0:term-swi:name:x) (cons-atom cons (cons-atom (cp 120) (cons-atom nil ()))))
+(= (mm0:term-swi:name:ph) (cons-atom cons (cons-atom (cp 112) (cons-atom (cons-atom cons (cons-atom (cp 104) (cons-atom nil ()))) ()))))
+(= (mm0:term-swi:identifier (cons-atom cons (cons-atom $first (cons-atom $rest ()))))
    (node mm0-identifier (pair $first $rest)))
 (= (mm0:term-swi:plain-sort $name)
    (node mm0-sort-statement
@@ -37,22 +37,15 @@
    (node mm0-type
      (pair (mm0:term-swi:identifier $sort) $dependencies)))
 (= (mm0:term-swi:dependent-binders)
-   (cons
-     (node mm0-type-binder-bound
+   (cons-atom cons (cons-atom (node mm0-type-binder-bound
        (pair
-         (cons
-           (mm0:term-swi:identifier (mm0:term-swi:name:x)) nil)
-         (mm0:term-swi:type (mm0:term-swi:name:set) nil)))
-     (cons
-       (node mm0-type-binder-regular
+         (cons-atom cons (cons-atom (mm0:term-swi:identifier (mm0:term-swi:name:x)) (cons-atom nil ())))
+         (mm0:term-swi:type (mm0:term-swi:name:set) nil))) (cons-atom (cons-atom cons (cons-atom (node mm0-type-binder-regular
          (pair
-           (cons
-             (mm0:term-swi:identifier (mm0:term-swi:name:ph)) nil)
+           (cons-atom cons (cons-atom (mm0:term-swi:identifier (mm0:term-swi:name:ph)) (cons-atom nil ())))
            (mm0:term-swi:type
              (mm0:term-swi:name:wff)
-             (cons
-               (mm0:term-swi:identifier (mm0:term-swi:name:x)) nil))))
-       nil)))
+             (cons-atom cons (cons-atom (mm0:term-swi:identifier (mm0:term-swi:name:x)) (cons-atom nil ())))))) (cons-atom nil ()))) ()))))
 (= (mm0:term-swi:wff-return)
    (node mm0-arrow-type
      (pair (mm0:term-swi:type (mm0:term-swi:name:wff) nil) none)))
@@ -77,8 +70,7 @@
          ($a (mm0:term-swi:name:a))
          ($ast
            (node mm0-file
-             (cons (mm0:term-swi:plain-sort $s)
-               (cons (mm0:term-swi:constant $a $s) nil)))))
+             (cons-atom cons (cons-atom (mm0:term-swi:plain-sort $s) (cons-atom (cons-atom cons (cons-atom (mm0:term-swi:constant $a $s) (cons-atom nil ()))) ()))))))
    (let
      (gslt:result:MM0TextualEnvironmentFromAstV1:1000
        MM0AcceptedV1 $environment $history)
@@ -87,17 +79,10 @@
 
 !(let* (($set (mm0:term-swi:name:set))
          ($constant
-           (cons (cp 99)
-             (cons (cp 111)
-               (cons (cp 110)
-                 (cons (cp 115)
-                   (cons (cp 116)
-                     (cons (cp 97)
-                       (cons (cp 110) (cons (cp 116) nil)))))))))
+           (cons-atom cons (cons-atom (cp 99) (cons-atom (cons-atom cons (cons-atom (cp 111) (cons-atom (cons-atom cons (cons-atom (cp 110) (cons-atom (cons-atom cons (cons-atom (cp 115) (cons-atom (cons-atom cons (cons-atom (cp 116) (cons-atom (cons-atom cons (cons-atom (cp 97) (cons-atom (cons-atom cons (cons-atom (cp 110) (cons-atom (cons-atom cons (cons-atom (cp 116) (cons-atom nil ()))) ()))) ()))) ()))) ()))) ()))) ()))) ()))))
          ($ast
            (node mm0-file
-             (cons (mm0:term-swi:pure-sort $set)
-               (cons (mm0:term-swi:constant $constant $set) nil)))))
+             (cons-atom cons (cons-atom (mm0:term-swi:pure-sort $set) (cons-atom (cons-atom cons (cons-atom (mm0:term-swi:constant $constant $set) (cons-atom nil ()))) ()))))))
    (let
      (gslt:result:MM0TextualEnvironmentFromAstV1:1000
        (MM0RefusedPureTermTargetV1

@@ -1,7 +1,7 @@
 (= (mm0:test:wff-name)
-   (cons (cp 119) (cons (cp 102) (cons (cp 102) nil))))
+   (cons-atom cons (cons-atom (cp 119) (cons-atom (cons-atom cons (cons-atom (cp 102) (cons-atom (cons-atom cons (cons-atom (cp 102) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:test:set-name)
-   (cons (cp 115) (cons (cp 101) (cons (cp 116) nil))))
+   (cons-atom cons (cons-atom (cp 115) (cons-atom (cons-atom cons (cons-atom (cp 101) (cons-atom (cons-atom cons (cons-atom (cp 116) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:test:provable-modifiers)
    (MM0SortModifiersV1
      MM0ModifierAbsentV1 MM0ModifierAbsentV1
@@ -10,7 +10,7 @@
    (MM0SortModifiersV1
      MM0ModifierAbsentV1 MM0ModifierPresentV1
      MM0ModifierAbsentV1 MM0ModifierAbsentV1))
-(= (mm0:test:identifier (cons $first $rest))
+(= (mm0:test:identifier (cons-atom cons (cons-atom $first (cons-atom $rest ()))))
    (node mm0-identifier
      (pair $first $rest)))
 
@@ -20,45 +20,28 @@
    (node mm0-sort-statement
      (pair none
        (pair none
-         (pair (some (cons (cp 112)
-                       (cons (cp 114)
-                         (cons (cp 111)
-                           (cons (cp 118)
-                             (cons (cp 97)
-                               (cons (cp 98)
-                                 (cons (cp 108)
-                                   (cons (cp 101) nil)))))))))
+         (pair (some (cons-atom cons (cons-atom (cp 112) (cons-atom (cons-atom cons (cons-atom (cp 114) (cons-atom (cons-atom cons (cons-atom (cp 111) (cons-atom (cons-atom cons (cons-atom (cp 118) (cons-atom (cons-atom cons (cons-atom (cp 97) (cons-atom (cons-atom cons (cons-atom (cp 98) (cons-atom (cons-atom cons (cons-atom (cp 108) (cons-atom (cons-atom cons (cons-atom (cp 101) (cons-atom nil ()))) ()))) ()))) ()))) ()))) ()))) ()))) ()))))
            (pair none (mm0:test:identifier $name)))))))
 (= (mm0:test:strict-sort $name)
    (node mm0-sort-statement
      (pair none
-       (pair (some (cons (cp 115)
-                     (cons (cp 116)
-                       (cons (cp 114)
-                         (cons (cp 105)
-                           (cons (cp 99)
-                             (cons (cp 116) nil)))))))
+       (pair (some (cons-atom cons (cons-atom (cp 115) (cons-atom (cons-atom cons (cons-atom (cp 116) (cons-atom (cons-atom cons (cons-atom (cp 114) (cons-atom (cons-atom cons (cons-atom (cp 105) (cons-atom (cons-atom cons (cons-atom (cp 99) (cons-atom (cons-atom cons (cons-atom (cp 116) (cons-atom nil ()))) ()))) ()))) ()))) ()))) ()))))
          (pair none (pair none (mm0:test:identifier $name)))))))
 
 (= (mm0:test:positive-ast)
    (node mm0-file
-     (cons (mm0:test:provable-sort (mm0:test:wff-name))
-       (cons (mm0:test:provable-sort (mm0:test:wff-name))
-         (cons (mm0:test:strict-sort (mm0:test:set-name)) nil)))))
+     (cons-atom cons (cons-atom (mm0:test:provable-sort (mm0:test:wff-name)) (cons-atom (cons-atom cons (cons-atom (mm0:test:provable-sort (mm0:test:wff-name)) (cons-atom (cons-atom cons (cons-atom (mm0:test:strict-sort (mm0:test:set-name)) (cons-atom nil ()))) ()))) ())))))
 (= (mm0:test:conflict-ast)
    (node mm0-file
-     (cons (mm0:test:provable-sort (mm0:test:wff-name))
-       (cons (mm0:test:strict-sort (mm0:test:wff-name)) nil))))
+     (cons-atom cons (cons-atom (mm0:test:provable-sort (mm0:test:wff-name)) (cons-atom (cons-atom cons (cons-atom (mm0:test:strict-sort (mm0:test:wff-name)) (cons-atom nil ()))) ())))))
 
-!(let* (($ast (eval (quote (mm0:test:positive-ast))))
+!(let* (($ast (mm0:test:positive-ast))
          ($wff (mm0:test:wff-name))
          ($set (mm0:test:set-name))
          ($provable (mm0:test:provable-modifiers))
          ($strict (mm0:test:strict-modifiers)))
    (let $actual
-     (eval
-       (quote
-         (gslt:fn:MM0SortEnvironmentFromAstV1:1000 $ast)))
+     (gslt:fn:MM0SortEnvironmentFromAstV1:1000 $ast)
      (if
        (== $actual
          (gslt:result:MM0SortEnvironmentFromAstV1:1000
@@ -81,14 +64,12 @@
        MM0SortEnvironmentPositiveAcceptedV1
        MM0SortEnvironmentPositiveMismatchV1)))
 
-!(let* (($ast (eval (quote (mm0:test:conflict-ast))))
+!(let* (($ast (mm0:test:conflict-ast))
          ($wff (mm0:test:wff-name))
          ($provable (mm0:test:provable-modifiers))
          ($strict (mm0:test:strict-modifiers)))
    (let $actual
-     (eval
-       (quote
-         (gslt:fn:MM0SortEnvironmentFromAstV1:1000 $ast)))
+     (gslt:fn:MM0SortEnvironmentFromAstV1:1000 $ast)
      (if
        (== $actual
          (gslt:result:MM0SortEnvironmentFromAstV1:1000
@@ -107,12 +88,10 @@
        MM0SortEnvironmentConflictMismatchV1)))
 
 ; A conflicting redeclaration must not also have an accepted execution.
-!(let $ast (eval (quote (mm0:test:conflict-ast)))
+!(let $ast (mm0:test:conflict-ast)
    (collapse
      (let
        (gslt:result:MM0SortEnvironmentFromAstV1:1000
          MM0AcceptedV1 $environment $history)
-       (eval
-         (quote
-           (gslt:fn:MM0SortEnvironmentFromAstV1:1000 $ast)))
+       (gslt:fn:MM0SortEnvironmentFromAstV1:1000 $ast)
        MM0SortEnvironmentConflictAcceptedV1)))
