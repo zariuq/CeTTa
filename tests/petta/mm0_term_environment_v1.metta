@@ -1,14 +1,14 @@
-(= (mm0:term-direct:name:s) (cons (cp 115) nil))
-(= (mm0:term-direct:name:a) (cons (cp 97) nil))
+(= (mm0:term-direct:name:s) (cons-atom cons (cons-atom (cp 115) (cons-atom nil ()))))
+(= (mm0:term-direct:name:a) (cons-atom cons (cons-atom (cp 97) (cons-atom nil ()))))
 (= (mm0:term-direct:name:set)
-   (cons (cp 115) (cons (cp 101) (cons (cp 116) nil))))
+   (cons-atom cons (cons-atom (cp 115) (cons-atom (cons-atom cons (cons-atom (cp 101) (cons-atom (cons-atom cons (cons-atom (cp 116) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:term-direct:name:wff)
-   (cons (cp 119) (cons (cp 102) (cons (cp 102) nil))))
+   (cons-atom cons (cons-atom (cp 119) (cons-atom (cons-atom cons (cons-atom (cp 102) (cons-atom (cons-atom cons (cons-atom (cp 102) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:term-direct:name:all)
-   (cons (cp 97) (cons (cp 108) (cons (cp 108) nil))))
-(= (mm0:term-direct:name:x) (cons (cp 120) nil))
-(= (mm0:term-direct:name:ph) (cons (cp 112) (cons (cp 104) nil)))
-(= (mm0:term-direct:identifier (cons $first $rest))
+   (cons-atom cons (cons-atom (cp 97) (cons-atom (cons-atom cons (cons-atom (cp 108) (cons-atom (cons-atom cons (cons-atom (cp 108) (cons-atom nil ()))) ()))) ()))))
+(= (mm0:term-direct:name:x) (cons-atom cons (cons-atom (cp 120) (cons-atom nil ()))))
+(= (mm0:term-direct:name:ph) (cons-atom cons (cons-atom (cp 112) (cons-atom (cons-atom cons (cons-atom (cp 104) (cons-atom nil ()))) ()))))
+(= (mm0:term-direct:identifier (cons-atom cons (cons-atom $first (cons-atom $rest ()))))
    (node mm0-identifier (pair $first $rest)))
 (= (mm0:term-direct:plain-sort $name)
    (node mm0-sort-statement
@@ -19,8 +19,7 @@
 (= (mm0:term-direct:pure-sort $name)
    (node mm0-sort-statement
      (pair
-       (some (cons (cp 112)
-               (cons (cp 117) (cons (cp 114) (cons (cp 101) nil)))))
+       (some (cons-atom cons (cons-atom (cp 112) (cons-atom (cons-atom cons (cons-atom (cp 117) (cons-atom (cons-atom cons (cons-atom (cp 114) (cons-atom (cons-atom cons (cons-atom (cp 101) (cons-atom nil ()))) ()))) ()))) ()))))
        (pair none
          (pair none
            (pair none (mm0:term-direct:identifier $name)))))))
@@ -37,22 +36,15 @@
    (node mm0-type
      (pair (mm0:term-direct:identifier $sort) $dependencies)))
 (= (mm0:term-direct:dependent-binders)
-   (cons
-     (node mm0-type-binder-bound
+   (cons-atom cons (cons-atom (node mm0-type-binder-bound
        (pair
-         (cons
-           (mm0:term-direct:identifier (mm0:term-direct:name:x)) nil)
-         (mm0:term-direct:type (mm0:term-direct:name:set) nil)))
-     (cons
-       (node mm0-type-binder-regular
+         (cons-atom cons (cons-atom (mm0:term-direct:identifier (mm0:term-direct:name:x)) (cons-atom nil ())))
+         (mm0:term-direct:type (mm0:term-direct:name:set) nil))) (cons-atom (cons-atom cons (cons-atom (node mm0-type-binder-regular
          (pair
-           (cons
-             (mm0:term-direct:identifier (mm0:term-direct:name:ph)) nil)
+           (cons-atom cons (cons-atom (mm0:term-direct:identifier (mm0:term-direct:name:ph)) (cons-atom nil ())))
            (mm0:term-direct:type
              (mm0:term-direct:name:wff)
-             (cons
-               (mm0:term-direct:identifier (mm0:term-direct:name:x)) nil))))
-       nil)))
+             (cons-atom cons (cons-atom (mm0:term-direct:identifier (mm0:term-direct:name:x)) (cons-atom nil ())))))) (cons-atom nil ()))) ()))))
 (= (mm0:term-direct:wff-return)
    (node mm0-arrow-type
      (pair (mm0:term-direct:type (mm0:term-direct:name:wff) nil) none)))
@@ -75,18 +67,12 @@
 
 (= (mm0:term-direct:positive-ast)
    (node mm0-file
-     (cons (mm0:term-direct:plain-sort (mm0:term-direct:name:s))
-       (cons
-         (mm0:term-direct:constant
-           (mm0:term-direct:name:a) (mm0:term-direct:name:s))
-         nil))))
+     (cons-atom cons (cons-atom (mm0:term-direct:plain-sort (mm0:term-direct:name:s)) (cons-atom (cons-atom cons (cons-atom (mm0:term-direct:constant
+           (mm0:term-direct:name:a) (mm0:term-direct:name:s)) (cons-atom nil ()))) ())))))
 (= (mm0:term-direct:pure-target-ast)
    (node mm0-file
-     (cons (mm0:term-direct:pure-sort (mm0:term-direct:name:s))
-       (cons
-         (mm0:term-direct:constant
-           (mm0:term-direct:name:a) (mm0:term-direct:name:s))
-         nil))))
+     (cons-atom cons (cons-atom (mm0:term-direct:pure-sort (mm0:term-direct:name:s)) (cons-atom (cons-atom cons (cons-atom (mm0:term-direct:constant
+           (mm0:term-direct:name:a) (mm0:term-direct:name:s)) (cons-atom nil ()))) ())))))
 
 !(let* (($ast (mm0:term-direct:positive-ast))
          ($s (mm0:term-direct:name:s))
@@ -134,15 +120,11 @@
          (gslt:result:MM0ValidateTermSignatureV1:111110
            (MM0CheckAcceptedV1
              (MM0TermSignatureV1
-               (cons
-                 (MM0BinderV1
+               (cons-atom cons (cons-atom (MM0BinderV1
                    MM0BoundBinderKindV1 (MM0NamedBinderV1 $x)
-                   (MM0TypeV1 $set nil))
-                 (cons
-                   (MM0BinderV1
+                   (MM0TypeV1 $set nil)) (cons-atom (cons-atom cons (cons-atom (MM0BinderV1
                      MM0RegularBinderKindV1 (MM0NamedBinderV1 $ph)
-                     (MM0TypeV1 $wff (cons $x nil)))
-                   nil))
+                     (MM0TypeV1 $wff (cons-atom cons (cons-atom $x (cons-atom nil ()))))) (cons-atom nil ()))) ())))
                (MM0TypeV1 $wff nil)))))
        MM0TermEnvironmentDependentSignatureAcceptedV1
        MM0TermEnvironmentDependentSignatureMismatchV1)))

@@ -1,0 +1,13 @@
+# Example programs that do not pass, rewritten by transform_only, on SWI-PeTTa
+# (stable-fixed c3adb86) with transform written in PeTTa, within 120 seconds of
+# processor time.  Name, a tab, the reason.
+fib	cost: every call is a firing of the PeTTa-written transform
+fibadd	cost
+holbenchmark	cost
+hyperpose_primes	cost
+matespace	cost
+matespace2	cost
+matespacefast	cost
+permutations	cost
+scale	cost
+spaces_removeallatoms	the libraries' equations live in the program's &self, which this program empties

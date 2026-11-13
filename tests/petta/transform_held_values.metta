@@ -115,3 +115,13 @@
 ; control: code that catches its own error answers it as a value, and fires
 !(let-error-caught-inside (collapse (transform &t (, (take (s $x)) (let $v (catch (+ 1 2 3)))) (made $v))))
 !(let-error-row-taken (collapse (get-atoms &t)))
+
+; Computed list values unify through their private carrier. An authored
+; constructor spelled cons remains data; it does not acquire list meaning.
+(= (list-cell $head $tail) (cons-atom $head $tail))
+!(bind! &lists (new-space))
+!(add-atom &lists (items (1 2 3)))
+!(list-value-open (collapse (transform &lists (, (items $list) (let $list (list-cell $h $t))) (parts $h $t))))
+!(list-value-decompose (collapse (transform &lists (, (items $list) (let ($h $t) (decons-atom $list))) (parts $h $t))))
+!(list-value-wrong-head (collapse (transform &lists (, (items $list) (let $list (list-cell 9 $t))) (parts 9 $t))))
+!(list-value-raw-cons (collapse (transform &lists (, (items $list) (let $list (quote (cons 1 (2 3))))) matched)))

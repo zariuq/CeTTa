@@ -1,0 +1,21 @@
+# Example programs that do not pass, rewritten by transform_only with binding,
+# branching and choice rewritten too (the control forms as calls of generated
+# functions), the tests they pass as written, on the lane where transform is
+# written in PeTTa (specs), at 120 seconds each.  One program a line: its name,
+# a tab, the reason.  The first rows are the ones of the default mode.
+fib	cost: every call is a firing of the PeTTa-written transform; the program as written is tabled by the engine
+fibadd	cost
+holbenchmark	cost
+hyperpose_primes	cost
+matespace	cost
+matespace2	cost
+matespacefast	cost
+patrick_iterate_quad	cost
+peano	cost
+peanofast	cost
+permutations	cost
+scale	cost
+forall	engine: on CeTTa a forall generator that runs the PeTTa-written transform yields nothing; SWI-PeTTa answers correctly
+spaces_removeallatoms	the libraries' equations live in the program's &self, which this program empties
+callquoteevalreduce	a part of a control form is a function of its own, entered when it is reached: compilefib defines fib and then mentions (fib 5) as data in the same body; the part entered after the definition calls it (1 of 4 tests)
+definition_order	the same: define-and-use adds an equation and then mentions the function in the same body (1 of 15 tests)

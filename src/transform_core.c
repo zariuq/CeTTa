@@ -181,7 +181,10 @@ typedef struct {
     bool exact;        /* a branch's read or take of the atom its proposal
                         * matched: it meets the stored atoms that are that
                         * atom, not those the atom unifies with */
-    Atom *collection;  /* collect: the collection pattern */
+    union {
+        Atom *collection; /* collect: the collection pattern */
+        Atom *preferred;  /* guided let: proposal answer tried first */
+    };
     Atom *expression;  /* let: the code */
 } TfConjunct;
 
@@ -207,6 +210,7 @@ typedef enum {
     TF_MODE_ONCE,
     TF_MODE_AS,
     TF_MODE_LET,
+    TF_MODE_LET_FIRST,
 } TfMode;
 
 /* tf:mode: an expression headed by a mode word; anything else is a pattern. */
@@ -220,7 +224,8 @@ static TfMode tf_mode(Atom *c) {
         {"read", TF_MODE_READ}, {"take", TF_MODE_TAKE},
         {"absent", TF_MODE_ABSENT}, {"unique", TF_MODE_UNIQUE},
         {"collect", TF_MODE_COLLECT}, {"all", TF_MODE_ALL}, {"once", TF_MODE_ONCE},
-        {"let", TF_MODE_LET}, {"tf:as", TF_MODE_AS},
+        {"let", TF_MODE_LET}, {"tf:let-first", TF_MODE_LET_FIRST},
+        {"tf:as", TF_MODE_AS},
     };
     for (size_t i = 0u; i < sizeof(words) / sizeof(words[0]); i++)
         if (atom_is_symbol(head, words[i].name))
@@ -370,13 +375,17 @@ static bool tf_plan_list(const TfPlanner *planner, TfPlan *plan,
             }
             break;
         case TF_MODE_LET:
-            if (c->expr.len != 3u)
+        case TF_MODE_LET_FIRST: {
+            bool guided = tf_mode(c) == TF_MODE_LET_FIRST;
+            if (c->expr.len != (guided ? 4u : 3u))
                 return false;
             conjunct.kind = TF_LET;
-            conjunct.pattern = c->expr.elems[1];
-            conjunct.expression = c->expr.elems[2];
+            conjunct.preferred = guided ? c->expr.elems[1] : NULL;
+            conjunct.pattern = c->expr.elems[guided ? 2u : 1u];
+            conjunct.expression = c->expr.elems[guided ? 3u : 2u];
             plan->has_let = true;
             break;
+        }
         case TF_MODE_UNIQUE:
         case TF_MODE_COLLECT: {
             bool collect = tf_mode(c) == TF_MODE_COLLECT;
@@ -1250,8 +1259,9 @@ static Atom *tf_proposal_atom(TfFire *f) {
         } else {
             space_ref = atom_deep_copy(a, e->space_ref);
         }
-        Atom *triple[3] = {e->access == TF_TAKE ? take : read, space_ref,
-                           atom_deep_copy(a, e->atom)};
+        Atom *mode = e->access == TF_LET ? atom_symbol(a, "let")
+            : e->access == TF_TAKE ? take : read;
+        Atom *triple[3] = {mode, space_ref, atom_deep_copy(a, e->atom)};
         guide[i] = atom_expr(a, triple, 3u);
         if (!guide[i])
             return NULL;
@@ -1262,9 +1272,9 @@ static Atom *tf_proposal_atom(TfFire *f) {
 }
 
 /* A kernel match in the propose phase: (tf:cand GUIDE), GUIDE the atoms its
- * reads, takes and uniques matched as (MODE SPACE ATOM), in conjunct order,
- * SPACE being `tf:here` for the transform's own space in the PeTTa
- * dialect. */
+ * reads, takes and uniques matched as (MODE SPACE ATOM), in conjunct order.
+ * PeTTa also records (let none VALUE) for each computed condition; SPACE is
+ * `tf:here` for its transform's own space. */
 static TfStatus tf_propose(TfFire *f) {
     return tf_record_proposal(f, tf_proposal_atom(f));
 }
@@ -1968,20 +1978,49 @@ static TfStatus tf_walk(TfFire *f, size_t at) {
         bool has_value = false;
         for (size_t i = 0u; he && i < result_len; i++)
             has_value = has_value || !atom_is_error(results[i]);
-        for (size_t i = 0u; i < result_len && status == TF_CONTINUE; i++) {
-            if (he && atom_is_error(results[i])) {
-                if (!has_value)
-                    status = tf_semantic_error(f, results[i]);
-                continue;
+        Atom *preferred = c->preferred ? tf_apply(f, c->preferred) : NULL;
+        if (c->preferred && !preferred) {
+            free(results);
+            free(givens);
+            return TF_ERROR;
+        }
+        /* Recheck the code at firing time, preserving its order within the
+         * preferred and remaining answers, as the authored guided let does. */
+        for (unsigned pass = 0u; pass < (preferred ? 2u : 1u); pass++) {
+            for (size_t i = 0u; i < result_len && status == TF_CONTINUE; i++) {
+                if (preferred && atom_alpha_eq(preferred, results[i]) != (pass == 0u))
+                    continue;
+                if (he && atom_is_error(results[i])) {
+                    if (!has_value)
+                        status = tf_semantic_error(f, results[i]);
+                    continue;
+                }
+                uint32_t mark = bindings_builder_save(&f->builder);
+                /* Evaluated PeTTa values can hold private open-list carriers.
+                 * Unify those as lists, while authored constructor names remain
+                 * ordinary data. HE keeps its structural atom matching. */
+                bool matched = he
+                    ? match_atoms_builder(c->pattern, results[i], &f->builder,
+                                          f->scratch)
+                    : petta_semantics_match_lowered_head(
+                          f->scratch, c->pattern, results[i], &f->builder);
+                if (matched &&
+                    (!unbound || !givens || !givens[i] ||
+                     petta_semantics_match_lowered_head(
+                         f->scratch, unbound, givens[i], &f->builder))) {
+                    size_t before = f->entries.len;
+                    bool kept = true;
+                    if (f->propose && !he) {
+                        Atom *answer = tf_apply(f, results[i]);
+                        Atom *none = atom_symbol(f->scratch, "none");
+                        kept = answer && none && tf_entries_push(&f->entries,
+                            (TfEntry){.access = TF_LET, .space_ref = none, .atom = answer});
+                    }
+                    status = kept ? tf_walk(f, at + 1u) : TF_ERROR;
+                    f->entries.len = before;
+                }
+                bindings_builder_rollback(&f->builder, mark);
             }
-            uint32_t mark = bindings_builder_save(&f->builder);
-            if (match_atoms_builder(c->pattern, results[i], &f->builder,
-                                    f->scratch) &&
-                (!unbound || !givens || !givens[i] ||
-                 match_atoms_builder(unbound, givens[i], &f->builder,
-                                     f->scratch)))
-                status = tf_walk(f, at + 1u);
-            bindings_builder_rollback(&f->builder, mark);
         }
         free(results);
         free(givens);
@@ -2706,8 +2745,25 @@ bool cetta_transform_inst(Arena *a, Atom *call, Atom **answer_out) {
                 out[n++] = cs->expr.elems[k];
             break;
         }
+        if (mode == TF_MODE_LET && !wrapped) {
+            if (c->expr.len != 3u || g >= guide->expr.len) {
+                ok = false;
+                break;
+            }
+            Atom *entry = guide->expr.elems[g++];
+            if (entry->kind != ATOM_EXPR || entry->expr.len != 3u ||
+                !atom_is_symbol_id(entry->expr.elems[0], g_builtin_syms.let)) {
+                ok = false;
+                break;
+            }
+            Atom *parts[4] = {atom_symbol(a, "tf:let-first"),
+                             entry->expr.elems[2], c->expr.elems[1], c->expr.elems[2]};
+            out[n++] = atom_expr(a, parts, 4u);
+            ok = out[n - 1u] != NULL;
+            continue;
+        }
         if (mode == TF_MODE_ABSENT || mode == TF_MODE_COLLECT ||
-            mode == TF_MODE_LET) {
+            mode == TF_MODE_LET || mode == TF_MODE_LET_FIRST) {
             out[n++] = c;
             continue;
         }
@@ -2816,7 +2872,8 @@ static bool tf_normal_conjunct(Arena *a, Atom *c, TfAtoms *out) {
         ((mode == TF_MODE_READ || mode == TF_MODE_TAKE || mode == TF_MODE_ABSENT)
             ? c->expr.len == 2u || c->expr.len == 3u
             : (mode == TF_MODE_ALL || mode == TF_MODE_ONCE || mode == TF_MODE_UNIQUE)
-                ? c->expr.len == 2u : c->expr.len == 3u);
+                ? c->expr.len == 2u
+                : c->expr.len == (mode == TF_MODE_LET_FIRST ? 4u : 3u));
     if (!valid_arity) {
         out->invalid_source = c;
         return false;
@@ -2902,8 +2959,10 @@ static bool tf_source_vars(Atom **cs, size_t len, TfAtoms *vars) {
     for (size_t i = 0u; i < len; i++) {
         Atom *c = cs[i];
         TfMode mode = tf_mode(c);
-        if (mode == TF_MODE_LET) {
-            if (c->expr.len != 3u || !tf_vars(c->expr.elems[1], vars))
+        if (mode == TF_MODE_LET || mode == TF_MODE_LET_FIRST) {
+            bool guided = mode == TF_MODE_LET_FIRST;
+            if (c->expr.len != (guided ? 4u : 3u) ||
+                !tf_vars(c->expr.elems[guided ? 2u : 1u], vars))
                 return false;
         } else if (mode == TF_MODE_ALL || mode == TF_MODE_ONCE) {
             Atom **inner;
@@ -2976,10 +3035,12 @@ static bool tf_protect_lets(Arena *a, const TfAtoms *vars, Atom **cs, size_t len
     for (size_t i = 0u; i < len; i++) {
         Atom *c = cs[i];
         TfMode mode = tf_mode(c);
-        if (mode == TF_MODE_LET) {
-            Atom *expression = tf_protect(a, vars, c->expr.elems[2]);
-            Atom *parts[3] = {c->expr.elems[0], c->expr.elems[1], expression};
-            if (!expression || !tf_atoms_push(out, atom_expr(a, parts, 3u)))
+        if (mode == TF_MODE_LET || mode == TF_MODE_LET_FIRST) {
+            CettaExprLen count = mode == TF_MODE_LET_FIRST ? 4u : 3u;
+            Atom *parts[4];
+            memcpy(parts, c->expr.elems, sizeof(Atom *) * (size_t)count);
+            parts[count - 1u] = tf_protect(a, vars, parts[count - 1u]);
+            if (!parts[count - 1u] || !tf_atoms_push(out, atom_expr(a, parts, count)))
                 return false;
         } else if (mode == TF_MODE_ALL || mode == TF_MODE_ONCE) {
             Atom **inner;
@@ -3011,12 +3072,13 @@ static bool tf_has_let(Atom *cs) {
     for (CettaExprLen i = 0u; cs->kind == ATOM_EXPR && i < cs->expr.len; i++) {
         Atom *c = cs->expr.elems[i];
         TfMode mode = tf_mode(c);
-        if (mode == TF_MODE_LET)
+        if (mode == TF_MODE_LET || mode == TF_MODE_LET_FIRST)
             return true;
         if ((mode == TF_MODE_ALL || mode == TF_MODE_ONCE) && c->expr.len >= 2u) {
             Atom *inner = c->expr.elems[1];
             if (tf_is_comma(inner) ? tf_has_let(inner)
-                                   : tf_mode(inner) == TF_MODE_LET)
+                                   : (tf_mode(inner) == TF_MODE_LET ||
+                                      tf_mode(inner) == TF_MODE_LET_FIRST))
                 return true;
         }
     }

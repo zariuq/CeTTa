@@ -1,19 +1,19 @@
 !(import! &self langdef)
 
 (= (mm0:expr:name:set)
-   (cons (cp 115) (cons (cp 101) (cons (cp 116) nil))))
+   (cons-atom cons (cons-atom (cp 115) (cons-atom (cons-atom cons (cons-atom (cp 101) (cons-atom (cons-atom cons (cons-atom (cp 116) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:expr:name:wff)
-   (cons (cp 119) (cons (cp 102) (cons (cp 102) nil))))
+   (cons-atom cons (cons-atom (cp 119) (cons-atom (cons-atom cons (cons-atom (cp 102) (cons-atom (cons-atom cons (cons-atom (cp 102) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:expr:name:raw)
-   (cons (cp 114) (cons (cp 97) (cons (cp 119) nil))))
+   (cons-atom cons (cons-atom (cp 114) (cons-atom (cons-atom cons (cons-atom (cp 97) (cons-atom (cons-atom cons (cons-atom (cp 119) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:expr:name:imp)
-   (cons (cp 105) (cons (cp 109) (cons (cp 112) nil))))
+   (cons-atom cons (cons-atom (cp 105) (cons-atom (cons-atom cons (cons-atom (cp 109) (cons-atom (cons-atom cons (cons-atom (cp 112) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:expr:name:all)
-   (cons (cp 97) (cons (cp 108) (cons (cp 108) nil))))
+   (cons-atom cons (cons-atom (cp 97) (cons-atom (cons-atom cons (cons-atom (cp 108) (cons-atom (cons-atom cons (cons-atom (cp 108) (cons-atom nil ()))) ()))) ()))))
 (= (mm0:expr:name:rawc)
-   (cons (cp 114) (cons (cp 97) (cons (cp 119) (cons (cp 99) nil)))))
-(= (mm0:expr:name:x) (cons (cp 120) nil))
-(= (mm0:expr:name:ph) (cons (cp 112) (cons (cp 104) nil)))
+   (cons-atom cons (cons-atom (cp 114) (cons-atom (cons-atom cons (cons-atom (cp 97) (cons-atom (cons-atom cons (cons-atom (cp 119) (cons-atom (cons-atom cons (cons-atom (cp 99) (cons-atom nil ()))) ()))) ()))) ()))))
+(= (mm0:expr:name:x) (cons-atom cons (cons-atom (cp 120) (cons-atom nil ()))))
+(= (mm0:expr:name:ph) (cons-atom cons (cons-atom (cp 112) (cons-atom (cons-atom cons (cons-atom (cp 104) (cons-atom nil ()))) ()))))
 
 (= (mm0:expr:scalars:imp-ph-ph)
    (MM0MathScalarsConsV1 (cp 105)
@@ -65,18 +65,14 @@
            (cp 99) MM0MathScalarsNilV1)))))
 
 (= (mm0:expr:context)
-   (cons
-     (MM0BinderV1
+   (cons-atom cons (cons-atom (MM0BinderV1
        MM0BoundBinderKindV1
        (MM0NamedBinderV1 (mm0:expr:name:x))
-       (MM0TypeV1 (mm0:expr:name:set) nil))
-     (cons
-       (MM0BinderV1
+       (MM0TypeV1 (mm0:expr:name:set) nil)) (cons-atom (cons-atom cons (cons-atom (MM0BinderV1
          MM0RegularBinderKindV1
          (MM0NamedBinderV1 (mm0:expr:name:ph))
          (MM0TypeV1
-           (mm0:expr:name:wff) (cons (mm0:expr:name:x) nil)))
-       nil)))
+           (mm0:expr:name:wff) (cons-atom cons (cons-atom (mm0:expr:name:x) (cons-atom nil ()))))) (cons-atom nil ()))) ()))))
 
 (= (mm0:expr:source-state)
    (let $mm0-langdef (langdef:load "langdef/mm0/langdef.metta")
@@ -87,9 +83,7 @@
        (let
          (gslt:result:MM0SourceEnvironmentFromAstV1:1000
            MM0AcceptedV1 $state $history)
-         (eval
-           (quote
-             (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 $ast)))
+         (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 $ast)
          (quote $state)))))
 
 ; Each canary reports independently: one mismatch cannot hide later evidence.

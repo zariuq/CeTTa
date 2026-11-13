@@ -1,0 +1,26 @@
+; A program that changes its own equations and names spaces by symbols.
+(= (answer) first)
+!(test (answer) first)
+!(remove-atom &self (= (answer) first))
+!(test (repr (answer)) "(answer)")
+!(add-atom &self (= (answer) (second)))
+!(test (repr (answer)) "(second)")
+
+!(add-atom &self (= (plus-of $x $y) (+ $x $y)))
+!(add-atom &self (= (also $x $y) (+ $x $y)))
+!(remove-atom &self (= (plus-of $x $y) (+ $x $y)))
+!(test (plus-of 3 4) (plus-of 3 4))
+!(test (also 3 4) 7)
+
+(= (count-up) 1)
+!(add-atom &self (= (count-up) 2))
+!(test (collapse (count-up)) (1 2))
+!(remove-atom &self (= (count-up) 1))
+!(test (collapse (count-up)) (2))
+
+(= (where) shelf)
+!(add-atom (where) (book one))
+!(add-atom shelf (book two))
+!(test (collapse (match (where) (book $b) $b)) (one two))
+!(remove-atom shelf (book one))
+!(test (collapse (get-atoms shelf)) ((book two)))

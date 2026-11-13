@@ -1243,8 +1243,8 @@ static const CettaNativeBuiltinModule g_native_modules[] = {
     {"work", CETTA_NATIVE_IMPORT_WORK, NULL, "work:", cetta_work_module_call,
      "work-new work-take work-budget work-cancel work-record work-route work-count work-exists"},
     {"gparse", CETTA_NATIVE_IMPORT_GPARSE, gparse_dispatch, NULL, NULL, NULL},
-    {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, NULL, NULL, langdef_module_call, NULL,
-     true},
+    /* Language definitions and parser trees retain their authored constructors. */
+    {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, NULL, NULL, langdef_module_call, NULL},
     {"pat", CETTA_NATIVE_IMPORT_PAT, NULL, "pat:", cetta_pattern_module_call, NULL},
     {"lib_transform", CETTA_NATIVE_IMPORT_TRANSFORM, NULL, "tf:", cetta_eval_transform_module_call,
      "tf:run tf:split tf:propose tf:inst tf:fire tf:fire-into"},
