@@ -2014,6 +2014,8 @@ static bool petta_machine_type_pure_call_ready(
         PettaMachineImpl *machine, SymbolId head, CettaExprLen nargs, const PettaPlanNode *plan);
 static Atom *petta_machine_boolean_value(
         PettaMachineImpl *machine, bool value);
+static Atom *petta_machine_resolve_root(
+    const Bindings *environment, Atom *atom);
 
 /* A ground type-pure tree has no caller-visible substitution, so it reduces
  * on the heap without a contextual frame.  A nested call that is not
@@ -2021,8 +2023,15 @@ static Atom *petta_machine_boolean_value(
 static Atom *petta_machine_reduce_closed_scalar(
         PettaMachineImpl *machine, Atom *term, const PettaPlanNode *plan,
         unsigned depth, bool *nested) {
-    if (!machine || !term || depth > 32u || atom_has_vars(term))
+    if (!machine || !term || depth > 32u)
         return NULL;
+    /* Resolve a source variable only as a scalar leaf. An expression held
+     * there is a value, never another arithmetic subtree to execute. */
+    if (term->kind == ATOM_VAR) {
+        Atom *value = petta_machine_resolve_root(
+            search_context_bindings(&machine->search), term);
+        return value && value->kind == ATOM_GROUNDED ? value : NULL;
+    }
     if (term->kind != ATOM_EXPR)
         return term;
     /* Substitution can put callable-looking data in a source variable's
@@ -28958,7 +28967,7 @@ static bool petta_machine_dispatch_counted_collection(
 }
 
 /* Answer `template` for each solution of the Prolog goal `goal_body`, an
- * application naming its predicate: (let $_ (callPredicate $g) template)
+ * application naming its predicate: (let True (callPredicate $g) template)
  * with $g bound to the goal's compound.  A value a variable holds is not
  * evaluated again, so the goal is called as it stands. */
 static bool petta_machine_start_predicate_template(
@@ -28967,7 +28976,8 @@ static bool petta_machine_start_predicate_template(
     PettaMachineStep *failure) {
     Atom *call_symbol = atom_symbol(
         &machine->heap, "callPredicate");
-    Atom *ignored = petta_fresh_variable(machine);
+    /* An uninterpreted callPredicate value is data, not predicate success. */
+    Atom *success = petta_semantics_success_value(&machine->heap);
     Atom *holder = petta_fresh_variable(machine);
     Atom *goal_value = goal_body
         ? atom_petta_prolog_compound(&machine->heap, goal_body)
@@ -28982,11 +28992,11 @@ static bool petta_machine_start_predicate_template(
         : NULL;
     Atom *let_symbol = atom_symbol_id(
         &machine->heap, g_builtin_syms.let);
-    Atom *lowered = call && let_symbol && ignored
+    Atom *lowered = call && let_symbol && success
         ? atom_expr(
               &machine->heap,
               (Atom *[]){
-                  let_symbol, ignored, call, template,
+                  let_symbol, success, call, template,
               },
               4u)
         : NULL;
@@ -37084,8 +37094,7 @@ static bool petta_machine_dispatch_solve(
 
     /* A closed nested type-pure tree reduces without a contextual frame.
      * One dispatch covers the whole tree; a decline leaves ordinary search. */
-    if (goal->kind == PETTA_GOAL_SOLVE && goal->first && goal->second &&
-        !atom_has_vars(goal->first)) {
+    if (goal->kind == PETTA_GOAL_SOLVE && goal->first && goal->second) {
         bool nested = false;
         Atom *reduced = petta_machine_reduce_closed_scalar(
             machine, goal->first, plan, 0u, &nested);
@@ -39662,15 +39671,15 @@ static bool petta_machine_dispatch_solve(
     }
 
     /*
-     * A compiled pure-grounded occurrence carries enough authority to run
-     * without an evaluator adapter.  The immediate case above remains
+     * A pure-grounded occurrence carries enough authority to run without
+     * an evaluator adapter, including an unplanned equation body. The
+     * immediate case above remains
      * allocation-free; this case evaluates only the operands that are not
      * ready yet and rejoins the same pure dispatcher.  Effects and live
      * state reads remain owned by the host, while unknown heads remain data.
      */
     if (head_id != SYMBOL_ID_NONE &&
-        grounded_op_is_type_pure(head_id) && plan &&
-        plan->execution == PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS) {
+        petta_machine_type_pure_call_ready(machine, head_id, nargs, plan)) {
         if (!petta_push_evaluated_expression_planned(
                 machine, expression, expected,
                 PETTA_GOAL_HOST_STRICT_READY, 1u,

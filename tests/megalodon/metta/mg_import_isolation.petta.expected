@@ -1,0 +1,14 @@
+(__cetta_lib_mgm_call (nat.eq (nat.z) (nat.z)))
+(__cetta_lib_holm_check "/nonexistent.holr" standard)
+(heap:empty)
+true
+(__cetta_lib_mgm_call (nat.eq (nat.z) (nat.z)))
+(__cetta_lib_holm_check "/nonexistent.holr" standard)
+true
+(__cetta_lib_asp_solve ())
+true
+(model ())
+true
+(__cetta_lib_mgm_call (nat.eq (nat.z) (nat.z)))
+true
+(mgm:value (bool.t))

@@ -1,0 +1,35 @@
+; Bindings of the HOLR stream reader (module HOLRStream, theory Format, compiled by rulec): how its
+; sorts are represented and which judgments a generic component answers.  The judgments' rules stay
+; the contract; every block is compared with its rules in check mode.  The theorems named below are in
+; Mettapedia's Mettapedia/Languages/HOLLight/RuleModuleReader.lean.
+
+; bytes as words of eight bits, naturals of any size, byte strings as slices of the input
+(rep "Byte" word "Byte8" "Bit0" "Bit1")
+(rep "Word16" word "Word16Bits" "Bit0" "Bit1")
+(rep "Nat" binary "NatZero" "NatBit" "Bit0" "Bit1")
+(rep "Bytes" slices "BNil" "BCons")
+; the record schema, interned (the schema lookup is kept per opcode)
+(rep "FieldLayout" intern)
+(rep "Schema" intern)
+(rep "Schemas" intern)
+(rep "FoundLayout" intern)
+
+; arithmetic on binary naturals
+(block "canonical bit" "MakeNatBit" (nat-push-bit) "proved" "cMakeNatBit_binding, makeNatBit_iff (rules CanonZero, CanonOne, CanonMore: 2n + b); trusted: rc_bignat computes the stated functions of the magnitudes")
+(block "predecessor" "NatPred" (nat-pred) "proved" "natPred_binding, natPred_eq_none_iff (rules PredOdd, PredEven: n - 1, no rule for zero); trusted: rc_bignat")
+(block "numeral order" "NatCompare" (nat-order "Less" "Equal" "Greater") "proved" "natCompare_binding, natCompare_canonical (rules CompareZero ... CompareLowGreater); trusted: rc_bignat, one word per number")
+(block "increment" "NatInc" (nat-succ) "proved" "natInc_binding (rules IncZero, IncEven, IncOdd); trusted: rc_bignat")
+(block "sum" "NatAdd" (nat-add) "proved" "natAdd_binding (rules AddZero ... AddOddOdd); trusted: rc_bignat")
+(block "exclusive or" "NatXor" (nat-xor) "proved" "natXor_binding (rules XorZero ... XorMore); trusted: rc_bignat")
+(block "product" "NatMultiply" (nat-multiply) "proved" "natMultiply_binding, bnMul_eq_none_iff (rules MultiplyZero, MultiplyEven, MultiplyOdd); trusted: rc_bignat")
+(block "low bits" "NatTrim" (nat-trim) "proved" "natTrim_binding, natTrim_val (rules TrimEnd, TrimZero, TrimMore: n mod 2^w); trusted: rc_bignat")
+(block "difference" "NatSubtract" (nat-subtract) "proved" "natSubtract_binding (rules SubtractZero, SubtractRightZero, SubtractMore); trusted: rc_bignat")
+(block "byte packing" "PackByte" (word-pack) "proved" "packByte_binding (rule Pack: 256 high + byte); trusted: rc_bignat")
+; byte strings
+(block "length" "ByteLength" (bytes-length) "proved" "byteLength_binding (rules LengthEmpty, LengthCons); trusted: a slice is used only while its input is the run's")
+(block "take" "TakeBytes" (bytes-take "Taken" "NeedInput") "proved" "takeBytes_binding (rules TakeEmpty, TakeShort, TakeMore, TakeCons, TakePropagate); trusted: rc_slices keeps contents")
+(block "byte string equality" "BytesEqual" (bytes-equal "Bit1" "Bit0") "proved" "bytesEqual_binding (rules BytesEqualEmpty ... BytesGreaterMismatch); trusted: rc_slices keeps contents")
+(block "unsigned LEB128" "ReadULEB62" (uleb "DecodedWord" "NeedInput" "BadInteger" 9 6) "proved" "readULEB62_binding, ulebLoop_eq (rules StartLEB, LebEmpty, LebEnd, LebContinue, LebNinth, LebOverflow, LebTooLong, LebNonminimal, LebCombine, LebJoinShort, LebJoinBad)")
+(block "checksum" "FNV" (fnv-hash 0xcbf29ce484222325 0x100000001b3 64) "proved" "fnv_binding, fnvBasis_eq, fnvPrime_eq, fnvWidth_eq (rules FnvInit, FnvDone, FnvNext, FnvByte: FNV-1a, 64 bits)")
+; the schema lookup: a function of an opcode and an interned schema list
+(memo "schema lookup" "LookupSchema" "proved" "lookupSchema_memo_sound, lookupSchema_eq (rules LookupEmpty ... LookupGreater); memo2_sound of RuleModuleComponents; trusted: rc_memo.c is the model")

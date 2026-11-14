@@ -18,7 +18,7 @@ for kind in single multiple; do
         --closed-entry-mode EntryLookupV1:10 \
         --out "$evidence/$kind.metta" > "$evidence/$kind-generation.txt"
     test "$(rg -c '^\(= \(gslt:entry:EntryLookupV1:10 ' "$evidence/$kind.metta")" -eq 1
-    CETTA_PETTA_SEARCH_MACHINE=1 "$runtime" --lang petta \
+    CETTA_PETTA_SEARCH_MACHINE=1 python3 tests/support/run_gslt_program.py "$runtime" --lang petta \
         "$evidence/$kind.metta" tests/petta/gslt_entry_query_v1.metta \
         > "$evidence/$kind-actual.txt"
     test "$(wc -l < "$evidence/$kind-actual.txt")" -eq 2

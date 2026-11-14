@@ -8,6 +8,12 @@
 
 (gslt-presentation-v1 PlainBnfSemanticAdmissionV1
   (signature
+    (operator bnf-v1:alternatives-nil 0)
+    (operator bnf-v1:elements-nil 0)
+    (operator bnf-v1:entries-nil 0)
+    (operator bnf-v1:lexical-declarations-nil 0)
+    (operator bnf-v1:scalars-nil 0)
+    (operator bnf-v1:text-nil 0)
     (operator different 2)
     (operator ground-integer-less 2)
     (operator ground-integer-not-less 2)
@@ -172,7 +178,7 @@
     (rule bnf-collect-definitions-nil-v1
       (head
         (BNFCollectDefinitionsV1
-          (metta-nullary bnf-v1:entries-nil)
+          (bnf-v1:entries-nil)
           ?definitions ?definitions BNFDiagnosticsNilV1))
       (body))
     (rule bnf-collect-definitions-comment-v1
@@ -215,7 +221,7 @@
     ; origins rather than collapsing duplicate declarations.
     (rule bnf-lexical-reference-lookup-missing-v1
       (head (BNFLexicalReferenceLookupV1
-        ?name (metta-nullary bnf-v1:lexical-declarations-nil)
+        ?name (bnf-v1:lexical-declarations-nil)
         BNFLexicalMissingV1))
       (body))
     (rule bnf-lexical-reference-lookup-found-v1
@@ -243,7 +249,7 @@
 
     (rule bnf-lexical-class-lookup-missing-v1
       (head (BNFLexicalClassLookupV1
-        ?class (metta-nullary bnf-v1:lexical-declarations-nil)
+        ?class (bnf-v1:lexical-declarations-nil)
         BNFLexicalMissingV1))
       (body))
     (rule bnf-lexical-class-lookup-found-v1
@@ -271,7 +277,7 @@
 
     (rule bnf-lexical-label-lookup-missing-v1
       (head (BNFLexicalLabelLookupV1
-        ?label (metta-nullary bnf-v1:lexical-declarations-nil)
+        ?label (bnf-v1:lexical-declarations-nil)
         BNFLexicalMissingV1))
       (body))
     (rule bnf-lexical-label-lookup-found-v1
@@ -299,7 +305,7 @@
 
     (rule bnf-lexical-reference-name-empty-v1
       (head (BNFLexicalReferenceNameDiagnosticV1
-        (metta-nullary bnf-v1:text-nil) ?origin
+        (bnf-v1:text-nil) ?origin
         (BNFDiagnosticsConsV1
           (BNFEmptyLexicalReferenceV1 ?origin) BNFDiagnosticsNilV1)))
       (body))
@@ -323,7 +329,7 @@
     (rule bnf-lexical-matcher-empty-points-v1
       (head (BNFLexicalMatcherDiagnosticV1
         ?class (bnf-v1:lexical-points
-          (metta-nullary bnf-v1:scalars-nil)) ?origin
+          (bnf-v1:scalars-nil)) ?origin
         (BNFDiagnosticsConsV1
           (BNFEmptyLexicalClassV1 ?class ?origin)
           BNFDiagnosticsNilV1)))
@@ -331,7 +337,7 @@
     (rule bnf-lexical-matcher-empty-except-v1
       (head (BNFLexicalMatcherDiagnosticV1
         ?class (bnf-v1:lexical-except
-          (metta-nullary bnf-v1:scalars-nil)) ?origin
+          (bnf-v1:scalars-nil)) ?origin
         BNFDiagnosticsNilV1))
       (body))
     (rule bnf-lexical-matcher-points-v1
@@ -381,7 +387,7 @@
     (rule bnf-validate-scalar-list-singleton-v1
       (head (BNFValidateScalarListV1
         (bnf-v1:scalars-cons
-          ?scalar (metta-nullary bnf-v1:scalars-nil))
+          ?scalar (bnf-v1:scalars-nil))
         ?origin ?diagnostics))
       (body
         (BNFScalarDiagnosticV1 ?scalar ?origin ?diagnostics)))
@@ -459,7 +465,7 @@
 
     (rule bnf-validate-lexicals-nil-v1
       (head (BNFValidateLexicalsV1
-        (metta-nullary bnf-v1:lexical-declarations-nil)
+        (bnf-v1:lexical-declarations-nil)
         ?definitions BNFDiagnosticsNilV1))
       (body))
     (rule bnf-validate-lexicals-cons-v1
@@ -507,7 +513,7 @@
     (rule bnf-scan-entry-references-nil-v1
       (head
         (BNFScanEntryReferencesV1
-          (metta-nullary bnf-v1:entries-nil)
+          (bnf-v1:entries-nil)
           ?definitions ?lexicals BNFDiagnosticsNilV1))
       (body))
     (rule bnf-scan-entry-references-comment-v1
@@ -553,7 +559,7 @@
     (rule bnf-scan-alternatives-references-nil-v1
       (head
         (BNFScanAlternativesReferencesV1
-          ?owner (metta-nullary bnf-v1:alternatives-nil)
+          ?owner (bnf-v1:alternatives-nil)
           ?definitions ?lexicals BNFDiagnosticsNilV1))
       (body))
     (rule bnf-scan-alternatives-references-cons-v1
@@ -573,7 +579,7 @@
     (rule bnf-scan-elements-references-nil-v1
       (head
         (BNFScanElementsReferencesV1
-          ?owner (metta-nullary bnf-v1:elements-nil)
+          ?owner (bnf-v1:elements-nil)
           ?definitions ?lexicals BNFDiagnosticsNilV1))
       (body))
     (rule bnf-scan-elements-references-cons-v1

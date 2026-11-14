@@ -3381,7 +3381,7 @@ static unsigned source_admission_refusal_controls(void) {
     checks++;
 
     /* The existing authority guard applies before either kind of hit. */
-    uint32_t mask = library->active_mask;
+    uint64_t mask = library->active_mask;
     library->active_mask ^= 1u;
     assert(!source_refusal_hit(&cache, &space, refusal_effect_head,
         PREPARED_PURE_ENTRY_INQUIRY) && !cache.entries);
@@ -3807,7 +3807,7 @@ static unsigned shared_compilation_refusals(void) {
         assert(prepared_pure_program_cache_prepare_revision(&cache, &space,
             petta_libpl_capability_revision(library->lib_prolog)));
         generation = cache.entry_generation;
-        uint32_t mask = library->active_mask;
+        uint64_t mask = library->active_mask;
         library->active_mask ^= 1u;
         prepared_pure_program_cache_publish_report(&cache, &space, call, NULL,
             CETTA_LANGUAGE_PETTA, CETTA_GSLT_PURE_CALL_EAGER, true, true, &report, generation);

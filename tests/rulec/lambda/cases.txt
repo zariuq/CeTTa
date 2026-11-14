@@ -1,0 +1,28 @@
+# the untyped lambda calculus: normal-order reduction with a step bound, alpha-equivalence, free names
+norm 10 (\x. x) y
+norm 10 (\x. \y. x) a b
+# substituting y under \y renames the binder: \y'. y
+norm 10 (\x. \y. x) y
+# both y and y' are taken: the binder becomes y''
+norm 10 (\x. \y. \y'. x y y') y
+# a binder equal to the substituted name stops the substitution
+norm 10 (\x. \x. x) a
+# normal order: K I Omega reduces to I; Omega alone runs out of steps
+norm 20 (\x. \y. x) (\z. z) ((\w. w w) (\w. w w))
+norm 5 (\w. w w) (\w. w w)
+# Church numerals: 2 + 2, 2 * 3, and S K K = I
+norm 50 (\m. \n. \f. \x. m f (n f x)) (\f. \x. f (f x)) (\f. \x. f (f x))
+norm 100 (\m. \n. \f. m (n f)) (\f. \x. f (f x)) (\f. \x. f (f (f x)))
+norm 20 (\x. \y. \z. x z (y z)) (\x. \y. x) (\x. \y. x)
+# reduction under a binder that captures the argument's free name
+norm 20 \y. (\x. \y. x y) y
+alpha \x. x ; \y. y
+alpha \x. \y. x ; \y. \x. y
+alpha \x. \y. x ; \x. \y. y
+alpha \x. y ; \z. y
+alpha \x. y ; \y. y
+alpha x ; y
+alpha (\x. x) z ; (\y. y) z
+fv \x. x y z
+fv (\x. x) (\y. x y)
+fv a (b c) (\a. a d)

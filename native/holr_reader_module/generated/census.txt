@@ -1,0 +1,83 @@
+rule census of HOLRStream, theory Format
+
+sorts 23; constructors 162 (data 70, judgments 92); rules 262; premises 197
+mode: every judgment (in, ..., in) -> out; every premise source has its inputs bound (checked)
+judgments det 27 (68 rules), semidet 65 (194 rules); groups covering every input 59 of 92
+share of rules in det judgments: 26.0%; judgments whose determinism is not established (an overlap not shown exclusive): 0 (0 rules)
+premises with a refutable target (a constructor pattern or a bound variable that can fail): 0 of 197
+premise targets that test a variable already bound (an equality test): 0
+overlapping left sides in one judgment: 0 pairs; shown exclusive by their premises: 0 (by lockstep targets 0, by evaluated guards 0); not shown: 0
+relation premises (queries of the module's relations): 0, of which 0 bind a variable; judgments with one that binds (possibly several answers): 0
+rules whose last premise is a tail call: 75; recursive judgments (self or mutual): 27
+rules in functional form (calls nested in a right side or a premise's arguments, read call by value): 88, their calls made premises: 197
+
+dispatch-group sizes (rules per judgment): 1:20 2:16 3:23 4-5:30 6-9:3 10-16:0 17-32:0 >32:0
+
+largest dispatch groups:
+  judgment                         rules arity    class  nodes  tests max-test argument sorts
+  NatAdd                               7     2      det     13      6        4 Nat,Nat
+  CompareBits                          6     3      det     10      4        3 Bit,Bit,Ordering
+  LebRead                              6     2  semidet     13      7        5 LebFuel,Bytes
+  RecordCarry                          5     4  semidet      7      1        1 Bytes,HOLRHeader,Nat,CodecState
+  ValidateHOLRPrefix                   5     1  semidet      8      2        2 CodecState
+  BitXor                               4     2      det      7      3        2 Bit,Bit
+  BytesEqual                           4     2      det      7      3        2 Bytes,Bytes
+  CountValues                          4     3  semidet      6      1        1 Nat,FieldKind,CodecState
+  EndChecksum                          4     6  semidet      6      1        1 Bytes,HOLRHeader,Nat,Nat,Bytes,CodecState
+  EndCount                             4     5  semidet      6      1        1 Bytes,HOLRHeader,Nat,Bytes,CodecState
+  EndHash                              4     4  semidet      6      1        1 HOLRHeader,Nat,Bytes,CodecState
+  FieldCarry                           4     3  semidet      6      1        1 Nat,FieldLayout,CodecState
+  FieldPush                            4     2  semidet      6      1        1 Operand,CodecState
+  HeaderFlags                          4     3  semidet      6      1        1 Bytes,Nat,CodecState
+  HeaderKernel                         4     2  semidet      6      1        1 Bytes,CodecState
+  HeaderPolicy                         4     2  semidet      6      1        1 Bytes,CodecState
+  HeaderProfile                        4     2  semidet      6      1        1 Bytes,CodecState
+  HeaderSplit                          4     2  semidet      6      1        1 Bytes,CodecState
+  HeaderVersion                        4     2  semidet      6      1        1 Bytes,CodecState
+  LebJoin                              4     8  semidet      7      2        2 Bit,Bit,Bit,Bit,Bit,Bit,Bit,CodecState
+  NatCompare                           4     2      det      7      3        2 Nat,Nat
+  NatXor                               4     2      det      7      3        2 Nat,Nat
+  OperandBytes                         4     1  semidet      6      1        1 CodecState
+  OperandPairs                         4     1  semidet      6      1        1 CodecState
+  OperandWord                          4     1  semidet      6      1        1 CodecState
+
+premise data flow: 102 later premises read an earlier premise's output, 7 read only the left side; at most 8 premises in a rule
+
+judgments whose arguments are names or numerals only (candidates for native primitives):
+  NatAdd                       numerals    7 rules  (det)
+  NatXor                       numerals    4 rules  (det)
+  NatInc                       numerals    3 rules  (det)
+  NatMultiply                  numerals    3 rules  (det)
+  NatSubtract                  numerals    3 rules  (semidet)
+  NatTrim                      numerals    3 rules  (semidet)
+  NatPred                      numerals    2 rules  (semidet)
+  FNVByte                      names+nums   1 rules  (semidet)
+  PackByte                     names+nums   1 rules  (det)
+
+justified blocks (the judgment's rules are the contract):
+  block                  judgment                   rules  label    implementation                 justification
+  canonical bit          MakeNatBit                     3  proved   (nat-push-bit)                 cMakeNatBit_binding, makeNatBit_iff (rules CanonZero, CanonOne, CanonMore: 2n + b); trusted: rc_bignat computes the stated functions of the magnitudes
+  predecessor            NatPred                        2  proved   (nat-pred)                     natPred_binding, natPred_eq_none_iff (rules PredOdd, PredEven: n - 1, no rule for zero); trusted: rc_bignat
+  numeral order          NatCompare                     4  proved   (nat-order Less Equal Greater) natCompare_binding, natCompare_canonical (rules CompareZero ... CompareLowGreater); trusted: rc_bignat, one word per number
+  increment              NatInc                         3  proved   (nat-succ)                     natInc_binding (rules IncZero, IncEven, IncOdd); trusted: rc_bignat
+  sum                    NatAdd                         7  proved   (nat-add)                      natAdd_binding (rules AddZero ... AddOddOdd); trusted: rc_bignat
+  exclusive or           NatXor                         4  proved   (nat-xor)                      natXor_binding (rules XorZero ... XorMore); trusted: rc_bignat
+  product                NatMultiply                    3  proved   (nat-multiply)                 natMultiply_binding, bnMul_eq_none_iff (rules MultiplyZero, MultiplyEven, MultiplyOdd); trusted: rc_bignat
+  low bits               NatTrim                        3  proved   (nat-trim)                     natTrim_binding, natTrim_val (rules TrimEnd, TrimZero, TrimMore: n mod 2^w); trusted: rc_bignat
+  difference             NatSubtract                    3  proved   (nat-subtract)                 natSubtract_binding (rules SubtractZero, SubtractRightZero, SubtractMore); trusted: rc_bignat
+  byte packing           PackByte                       1  proved   (word-pack)                    packByte_binding (rule Pack: 256 high + byte); trusted: rc_bignat
+  length                 ByteLength                     2  proved   (bytes-length)                 byteLength_binding (rules LengthEmpty, LengthCons); trusted: a slice is used only while its input is the run's
+  take                   TakeBytes                      3  proved   (bytes-take Taken NeedInput)   takeBytes_binding (rules TakeEmpty, TakeShort, TakeMore, TakeCons, TakePropagate); trusted: rc_slices keeps contents
+  byte string equality   BytesEqual                     4  proved   (bytes-equal Bit1 Bit0)        bytesEqual_binding (rules BytesEqualEmpty ... BytesGreaterMismatch); trusted: rc_slices keeps contents
+  unsigned LEB128        ReadULEB62                     1  proved   (uleb DecodedWord NeedInput BadInteger 9 6) readULEB62_binding, ulebLoop_eq (rules StartLEB, LebEmpty, LebEnd, LebContinue, LebNinth, LebOverflow, LebTooLong, LebNonminimal, LebCombine, LebJoinShort, LebJoinBad)
+  checksum               FNV                            1  proved   (fnv-hash 0xcbf29ce484222325 0x100000001b3 64) fnv_binding, fnvBasis_eq, fnvPrime_eq, fnvWidth_eq (rules FnvInit, FnvDone, FnvNext, FnvByte: FNV-1a, 64 bits)
+  schema lookup          LookupSchema                   2  proved   (memo)                         lookupSchema_memo_sound, lookupSchema_eq (rules LookupEmpty ... LookupGreater); memo2_sound of RuleModuleComponents; trusted: rc_memo.c is the model
+sorts with a native representation: 8
+  Byte       word_1
+  Word16     word_2
+  Bytes      slices_3
+  Nat        binary_5
+  FieldLayout intern
+  Schema     intern
+  Schemas    intern
+  FoundLayout intern

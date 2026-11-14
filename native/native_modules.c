@@ -21,14 +21,46 @@
 #include "native/langdef_module.h"
 #include "native/hol_light/hol_cetta_module.h"
 #include "native/tcalc/tcalc_cetta_module.h"
+#include "native/hol_light_module/holm_cetta_module.h"
+#include "native/rule_module/rcm_cetta.h"
 #include "native/mm0/mm0_cetta_module.h"
 #include "native/seal_module.h"
 #include "native/megalodon/mg_cetta_module.h"
 
-#define CETTA_NATIVE_IMPORT_GPARSE (1u << 24)
-#define CETTA_NATIVE_IMPORT_LANGDEF (1u << 25)
-#define CETTA_NATIVE_IMPORT_HOL (1u << 28)
-#define CETTA_NATIVE_IMPORT_MM0 (1u << 29)
+/* Import bits of the native modules: the upper half of the session's import
+ * mask (the libraries of src/library.c hold the lower half), each module its
+ * own bit, so importing one library or module never enables another's words.
+ * The modules defined elsewhere: binary 32, work 33, heap 34, dag 35,
+ * syntax 36, pat 39, seal 42, lib_transform 43, megalodon 44. */
+#define CETTA_NATIVE_IMPORT_GPARSE (1ull << 37)
+#define CETTA_NATIVE_IMPORT_LANGDEF (1ull << 38)
+#define CETTA_NATIVE_IMPORT_HOL (1ull << 40)
+#define CETTA_NATIVE_IMPORT_MM0 (1ull << 41)
+#define CETTA_NATIVE_IMPORT_SUPERVISE (1ull << 45)
+/* the kernel modules compiled by rulec: HOL Light (native/hol_light_module)
+ * and Megalodon (native/megalodon_module) */
+#define CETTA_NATIVE_IMPORT_HOLM (1ull << 46)
+#define CETTA_NATIVE_IMPORT_MGM (1ull << 47)
+
+#define CETTA_NATIVE_IMPORT_LIST(X) \
+    X(CETTA_NATIVE_IMPORT_BINARY) X(CETTA_NATIVE_IMPORT_WORK) \
+    X(CETTA_NATIVE_IMPORT_HEAP) X(CETTA_NATIVE_IMPORT_DAG) \
+    X(CETTA_NATIVE_IMPORT_SYNTAX) X(CETTA_NATIVE_IMPORT_GPARSE) \
+    X(CETTA_NATIVE_IMPORT_LANGDEF) X(CETTA_NATIVE_IMPORT_PAT) \
+    X(CETTA_NATIVE_IMPORT_HOL) X(CETTA_NATIVE_IMPORT_MM0) \
+    X(CETTA_NATIVE_IMPORT_SEAL) X(CETTA_NATIVE_IMPORT_TRANSFORM) \
+    X(CETTA_NATIVE_IMPORT_MEGALODON) X(CETTA_NATIVE_IMPORT_SUPERVISE) \
+    X(CETTA_NATIVE_IMPORT_HOLM) X(CETTA_NATIVE_IMPORT_MGM)
+#define CETTA_NATIVE_IMPORT_OR(bit) | (bit)
+#define CETTA_NATIVE_IMPORT_SUM(bit) + (bit)
+/* Distinct single bits: their sum equals their union exactly when no two are
+ * equal (a repeated bit adds to the sum and not to the union). */
+_Static_assert((0ull CETTA_NATIVE_IMPORT_LIST(CETTA_NATIVE_IMPORT_OR)) ==
+               (0ull CETTA_NATIVE_IMPORT_LIST(CETTA_NATIVE_IMPORT_SUM)),
+               "each native module has its own import bit");
+_Static_assert(((0ull CETTA_NATIVE_IMPORT_LIST(CETTA_NATIVE_IMPORT_OR)) &
+                0xffffffffull) == 0ull,
+               "native import bits are the upper half of the import mask");
 
 static Atom *native_module_error(Arena *a, Atom *source, const char *message) {
     return atom_error(a, source, atom_string(a, message));
@@ -1227,6 +1259,24 @@ static bool hol_module_call(CettaLibraryContext *ctx, Space *space,
     return true;
 }
 
+static bool holm_module_call(CettaLibraryContext *ctx, Space *space,
+                             Arena *arena, Atom *head, Atom **args,
+                             uint32_t nargs, CettaCallOutcome *out) {
+    Atom *result = cetta_holm_dispatch(ctx, space, arena, head, args, nargs);
+    if (!result) return false;
+    *out = cetta_call_completed_value(result);
+    return true;
+}
+
+static bool mgm_module_call(CettaLibraryContext *ctx, Space *space,
+                            Arena *arena, Atom *head, Atom **args,
+                            uint32_t nargs, CettaCallOutcome *out) {
+    Atom *result = cetta_mgm_dispatch(ctx, space, arena, head, args, nargs);
+    if (!result) return false;
+    *out = cetta_call_completed_value(result);
+    return true;
+}
+
 static bool mm0_module_call(CettaLibraryContext *ctx, Space *space,
                             Arena *arena, Atom *head, Atom **args,
                             uint32_t nargs, CettaCallOutcome *out) {
@@ -1250,6 +1300,8 @@ static const CettaNativeBuiltinModule g_native_modules[] = {
     {"lib_transform", CETTA_NATIVE_IMPORT_TRANSFORM, NULL, "tf:", cetta_eval_transform_module_call,
      "tf:run tf:split tf:propose tf:inst tf:fire tf:fire-into"},
     {"holkernel", CETTA_NATIVE_IMPORT_HOL, NULL, "__cetta_lib_hol_", hol_module_call, NULL},
+    {"holmodule", CETTA_NATIVE_IMPORT_HOLM, NULL, "__cetta_lib_holm_", holm_module_call, NULL},
+    {"mgmodule", CETTA_NATIVE_IMPORT_MGM, NULL, "__cetta_lib_mgm_", mgm_module_call, NULL},
     {"mm0kernel", CETTA_NATIVE_IMPORT_MM0, NULL, "__cetta_lib_mm0_", mm0_module_call, NULL},
     {"seal", CETTA_NATIVE_IMPORT_SEAL, NULL, "__cetta_lib_seal_", cetta_seal_module_call, NULL},
     {"megalodon", CETTA_NATIVE_IMPORT_MEGALODON, NULL, "__cetta_lib_megalodon_",
@@ -1258,14 +1310,14 @@ static const CettaNativeBuiltinModule g_native_modules[] = {
      * module answers once lib/tcalc.metta is imported (native_module_loaded). */
     {"tcalc", 0u, NULL, "__cetta_lib_tcalc_", cetta_tcalc_module_call, NULL},
 #if CETTA_BUILD_WITH_DURABLE
-    {"supervise", 1u << 26, cetta_supervise_dispatch, "__cetta_lib_supervise_", NULL, NULL},
+    {"supervise", CETTA_NATIVE_IMPORT_SUPERVISE, cetta_supervise_dispatch, "__cetta_lib_supervise_", NULL, NULL},
 #endif
 };
 
-uint32_t cetta_native_module_available_mask(const CettaLibraryContext *ctx,
-    uint32_t active_mask, uint32_t requested_mask) {
+uint64_t cetta_native_module_available_mask(const CettaLibraryContext *ctx,
+    uint64_t active_mask, uint64_t requested_mask) {
     if (!ctx) return 0u;
-    uint32_t available = 0u;
+    uint64_t available = 0u;
     for (size_t i = 0; i < sizeof(g_native_modules) / sizeof(*g_native_modules); i++) {
         const CettaNativeBuiltinModule *module = &g_native_modules[i];
         if ((requested_mask & module->import_bit) &&
@@ -1276,7 +1328,7 @@ uint32_t cetta_native_module_available_mask(const CettaLibraryContext *ctx,
 }
 
 bool cetta_native_module_builtin_enabled(CettaLibraryContext *ctx,
-    uint32_t active_mask, const char *name) {
+    uint64_t active_mask, const char *name) {
     if (!ctx || !name) return false;
     size_t length = strlen(name);
     for (size_t i = 0; i < sizeof(g_native_modules) / sizeof(g_native_modules[0]); i++) {
@@ -1373,7 +1425,7 @@ static void native_module_petta_outcome(Arena *a, CettaCallOutcome *out) {
 bool cetta_native_module_call_active(struct CettaLibraryContext *ctx,
                                           Space *space, Arena *a,
                                           Atom *head, Atom **args, uint32_t nargs,
-                                     uint32_t active_mask, CettaCallOutcome *out) {
+                                     uint64_t active_mask, CettaCallOutcome *out) {
     uint32_t i;
 
     for (i = 0; i < sizeof(g_native_modules) / sizeof(g_native_modules[0]); i++) {

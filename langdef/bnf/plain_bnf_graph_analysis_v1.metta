@@ -7,6 +7,10 @@
 
 (gslt-presentation-v1 PlainBnfGraphAnalysisV1
   (signature
+    (operator bnf-v1:alternatives-nil 0)
+    (operator bnf-v1:elements-nil 0)
+    (operator bnf-v1:scalars-nil 0)
+    (operator bnf-v1:text-nil 0)
     (operator different 2)
     (operator ground-integer-less 2)
     (operator ground-integer-not-less 2)
@@ -140,7 +144,7 @@
           ?alternatives ?lexicals ?references)))
     (rule bnf-collect-alternatives-references-nil-v1
       (head (BNFCollectAlternativesReferencesV1
-        (metta-nullary bnf-v1:alternatives-nil)
+        (bnf-v1:alternatives-nil)
         ?lexicals BNFNamesNilV1))
       (body))
     (rule bnf-collect-alternatives-references-cons-v1
@@ -156,7 +160,7 @@
         (BNFAppendNamesV1 ?current ?following ?references)))
     (rule bnf-collect-elements-references-nil-v1
       (head (BNFCollectElementsReferencesV1
-        (metta-nullary bnf-v1:elements-nil)
+        (bnf-v1:elements-nil)
         ?lexicals BNFNamesNilV1))
       (body))
     (rule bnf-collect-elements-references-cons-v1
@@ -262,7 +266,7 @@
           ?alternatives ?productive ?lexicals ?result)))
     (rule bnf-alternatives-productive-nil-v1
       (head (BNFAlternativesProductiveV1
-        (metta-nullary bnf-v1:alternatives-nil)
+        (bnf-v1:alternatives-nil)
         ?productive ?lexicals BNFNoV1))
       (body))
     (rule bnf-alternatives-productive-cons-v1
@@ -293,7 +297,7 @@
           ?elements ?productive ?lexicals ?result)))
     (rule bnf-elements-productive-nil-v1
       (head (BNFElementsProductiveV1
-        (metta-nullary bnf-v1:elements-nil)
+        (bnf-v1:elements-nil)
         ?productive ?lexicals BNFYesV1))
       (body))
     (rule bnf-elements-productive-cons-v1
@@ -355,7 +359,7 @@
     ; largest scalar, and have no gaps except the surrogate interval.
     (rule bnf-points-empty-uninhabited-v1
       (head (BNFLexicalMatcherInhabitedV1
-        (bnf-v1:lexical-points (metta-nullary bnf-v1:scalars-nil)) BNFNoV1))
+        (bnf-v1:lexical-points (bnf-v1:scalars-nil)) BNFNoV1))
       (body))
     (rule bnf-points-cons-inhabited-v1
       (head (BNFLexicalMatcherInhabitedV1
@@ -363,7 +367,7 @@
       (body))
     (rule bnf-exclusion-empty-inhabited-v1
       (head (BNFLexicalMatcherInhabitedV1
-        (bnf-v1:lexical-except (metta-nullary bnf-v1:scalars-nil)) BNFYesV1))
+        (bnf-v1:lexical-except (bnf-v1:scalars-nil)) BNFYesV1))
       (body))
     (rule bnf-exclusion-zero-inhabited-v1
       (head (BNFLexicalMatcherInhabitedV1
@@ -375,11 +379,11 @@
       (body (different ?first 0)))
     (rule bnf-exclusion-tail-missing-last-v1
       (head (BNFExclusionTailInhabitedV1
-        ?last (metta-nullary bnf-v1:scalars-nil) BNFYesV1))
+        ?last (bnf-v1:scalars-nil) BNFYesV1))
       (body (ground-integer-less ?last 1114111)))
     (rule bnf-exclusion-tail-complete-v1
       (head (BNFExclusionTailInhabitedV1
-        ?last (metta-nullary bnf-v1:scalars-nil) BNFNoV1))
+        ?last (bnf-v1:scalars-nil) BNFNoV1))
       (body (ground-integer-not-less ?last 1114111)))
     (rule bnf-exclusion-tail-cons-v1
       (head (BNFExclusionTailInhabitedV1
@@ -504,7 +508,7 @@
           ?alternatives ?nullable ?lexicals ?result)))
     (rule bnf-alternatives-nullable-nil-v1
       (head (BNFAlternativesNullableV1
-        (metta-nullary bnf-v1:alternatives-nil)
+        (bnf-v1:alternatives-nil)
         ?nullable ?lexicals BNFNoV1))
       (body))
     (rule bnf-alternatives-nullable-cons-v1
@@ -534,7 +538,7 @@
         ?elements ?nullable ?lexicals ?result)))
     (rule bnf-elements-nullable-nil-v1
       (head (BNFElementsNullableV1
-        (metta-nullary bnf-v1:elements-nil)
+        (bnf-v1:elements-nil)
         ?nullable ?lexicals BNFYesV1))
       (body))
     (rule bnf-elements-nullable-cons-v1
@@ -557,7 +561,7 @@
         ?tail ?nullable ?lexicals ?result)))
     (rule bnf-empty-literal-nullable-v1
       (head (BNFElementNullableV1
-        (bnf-v1:literal (metta-nullary bnf-v1:text-nil) ?span)
+        (bnf-v1:literal (bnf-v1:text-nil) ?span)
         ?nullable ?lexicals BNFYesV1))
       (body))
     (rule bnf-nonempty-literal-not-nullable-v1

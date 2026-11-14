@@ -10,9 +10,9 @@
 
 struct CettaLibraryContext;
 
-/* Bits 24-27 are taken at this base and 30 is lib_seal; 28 and 29 are left
- * to the HOL and MM0 drafts' own registrations. */
-#define CETTA_NATIVE_IMPORT_MEGALODON (1u << 31)
+/* Its import bit: native modules hold the upper half of the session's import
+ * mask, each its own bit (native/native_modules.c checks it). */
+#define CETTA_NATIVE_IMPORT_MEGALODON (1ull << 44)
 
 /* The `megalodon` library's natives, heads `__cetta_lib_megalodon_*`
  * (lib/megalodon.metta).  False when `head` is not one of them. */

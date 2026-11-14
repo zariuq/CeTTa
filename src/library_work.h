@@ -3,7 +3,7 @@
 #include "call_outcome.h"
 struct CettaLibraryContext;
 struct Space;
-#define CETTA_NATIVE_IMPORT_WORK (1u << 19)
+#define CETTA_NATIVE_IMPORT_WORK (1ull << 33)
 bool cetta_work_module_call(struct CettaLibraryContext *, struct Space *, Arena *,
     Atom *, Atom **, uint32_t, CettaCallOutcome *);
 #endif

@@ -8,9 +8,13 @@
 
 struct CettaLibraryContext;
 
+/* A session's imports are one 64-bit mask: libraries (src/library.c) hold the
+ * lower half, native modules the upper half, each module its own bit
+ * (native_modules.c checks this at compile time).  A module is enabled when
+ * its bit is set or a module of its name was loaded. */
 typedef struct {
     const char *name;
-    uint32_t import_bit;
+    uint64_t import_bit;
     Atom *(*dispatch)(struct CettaLibraryContext *ctx, Space *space, Arena *a,
                       Atom *head, Atom **args, uint32_t nargs);
     const char *head_prefix; /* NULL keeps the module's ordinary dispatch policy. */
@@ -25,13 +29,13 @@ typedef struct {
 } CettaNativeBuiltinModule;
 
 const CettaNativeBuiltinModule *cetta_native_module_lookup(const char *name);
-uint32_t cetta_native_module_available_mask(const struct CettaLibraryContext *ctx,
-    uint32_t active_mask, uint32_t requested_mask);
+uint64_t cetta_native_module_available_mask(const struct CettaLibraryContext *ctx,
+    uint64_t active_mask, uint64_t requested_mask);
 bool cetta_native_module_builtin_enabled(struct CettaLibraryContext *ctx,
-    uint32_t active_mask, const char *name);
+    uint64_t active_mask, const char *name);
 bool cetta_native_module_call_active(struct CettaLibraryContext *ctx,
                                           Space *space, Arena *a,
                                           Atom *head, Atom **args, uint32_t nargs,
-                                     uint32_t active_mask, CettaCallOutcome *out);
+                                     uint64_t active_mask, CettaCallOutcome *out);
 
 #endif /* CETTA_NATIVE_MODULES_H */

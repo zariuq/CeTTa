@@ -1,0 +1,53 @@
+; The binding table of the HOL Light kernel module: representations of its sorts and the
+; judgments a back end may answer by a generic component instead of running their rules.  The
+; judgments' rules in the module are the contract; check mode runs them beside every component.
+;   (rep SORT KIND PARAM...)
+;   (block NAME JUDGMENT COMPONENT LABEL JUSTIFICATION)
+;   (memo NAME JUDGMENT LABEL JUSTIFICATION)
+;   (law NAME JUDGMENT RESULT LABEL JUSTIFICATION)
+; Every component is generic (the component library states its contract); nothing here calls the
+; native HOL Light kernel.
+
+; representations
+(rep "Records" records "hl:rnil" "hl:rcons")
+(rep "Nat" nat "hl:nz" "hl:nb0" "hl:nb1")
+(rep "Str" bytes "hl:nnil" "hl:ncons" "hl:byte" "hl:x")
+(rep "Type" intern)
+(rep "Tys" intern)
+(rep "Term" intern)
+(rep "Tms" intern)
+(rep "TyPairs" intern)
+(rep "TmPairs" intern)
+(rep "Table" array-table "hl:table" "hl:tleaf" "hl:tnode" "hl:c-none")
+
+; names: interned byte strings
+(block "name equality" "hl:str-eq" (equal "hl:yes" "hl:no") "proved" "strEq_binding, names_eq_iff: interned byte strings have equal bytes exactly when they are one node; strEq_refines")
+(block "name order" "hl:cmp-str" (bytes-order "hl:lt" "hl:eq" "hl:gt") "proved" "cmpStr_refines, nativeCmp_eq_memcmp: the rules' order is the unsigned byte order, a proper prefix first; trusted: C memcmp compares unsigned")
+(block "name prime" "hl:str-prime" (bytes-snoc "27") "proved" "strPrime_refines: the rules append the byte 0x27")
+; numerals: immediates
+(block "numeral order" "hl:cmp-nat" (nat-order "hl:lt" "hl:eq" "hl:gt") "proved" "cmpNat_refines; trusted: the comparison of uint64_t")
+(block "numeral successor" "hl:nat-inc" (nat-succ) "proved" "natInc_refines; checked at run time: the immediate range")
+; types and terms: interned nodes
+(block "type equality" "hl:ty-eq" (equal "hl:yes" "hl:no") "proved" "tyEq_binding: in an interning store ty-eq of two read-backs answers yes exactly when they are one node (interning_eq_iff, cmpType_eq_iff)")
+(block "term equality" "hl:tm-eq" (equal "hl:yes" "hl:no") "proved" "tmEq_binding: in an interning store tm-eq of two read-backs answers yes exactly when they are one node (interning_eq_iff, cmpTerm_eq_iff)")
+(block "type order" "hl:cmp-type" (structural-order "hl:lt" "hl:eq" "hl:gt") "proved" "structuralOrder_cmpType, rcOrderCmp_cmpType: the structural order on interned types is cmp-type; trusted: rc_order.c is the model")
+(block "term order" "hl:cmp-term" (structural-order "hl:lt" "hl:eq" "hl:gt") "proved" "structuralOrder_cmpTerm, rcOrderCmp_cmpTerm: the structural order on interned terms is cmp-term; trusted: rc_order.c is the model")
+; hypothesis lists: ordered sets over alphaorder (compiled from the module's rules)
+(block "term_union" "hl:term-union" (set-union "hl:alphaorder" "hl:lt" "hl:eq" "hl:gt") "proved" "setUnion_eq_termUnion, for every comparator (here the module's alphaorder, compiled); trusted: rc_set.c is the model")
+(block "term_remove" "hl:term-remove" (set-remove "hl:alphaorder" "hl:lt" "hl:eq" "hl:gt") "proved" "setRemove_eq_termRemove, for every comparator; trusted: rc_set.c is the model")
+; id tables: arrays updated in place
+(block "table lookup" "hl:table-get" (table-get) "proved" "tableGet_readback; trusted: the array code is the model NTable; checked at run time: no table value is used after its update")
+(block "table append" "hl:table-put" (table-put) "proved" "tablePut_readback; trusted: the array code is the model NTable; checked at run time: no table value is used after its update")
+(block "table update" "hl:table-set" (table-set) "proved" "tableSet_readback; trusted: the array code is the model NTable; checked at run time: no table value is used after its update")
+(block "table size" "hl:table-next" (table-next) "proved" "tableNext_readback; trusted: the array code is the model NTable")
+(block "empty table" "hl:empty-table" (table-empty) "proved" "emptyTable_readback; trusted: the array code is the model NTable")
+
+; memoised judgments: compiled from the module's rules, results kept per interned arguments
+(memo "type_of" "hl:type-of" "proved" "type-of is a function of an interned term: memo_sound, memo2_sound; trusted: rc_memo.c is the model, cleared before every collection")
+(memo "alphaorder" "hl:alphaorder" "proved" "alphaorder is a function of two interned terms: memo_sound, memo2_sound; trusted: rc_memo.c is the model, cleared before every collection")
+(memo "inst" "hl:inst" "proved" "inst is a function of an interned instantiation and an interned term: memo_sound, memo2_sound; trusted: rc_memo.c is the model, cleared before every collection")
+(memo "vsubst recursion" "hl:vsubst-rec" "proved" "vsubst-rec is a function of an interned substitution and an interned term: memo_sound, memo2_sound; trusted: rc_memo.c is the model, cleared before every collection")
+(memo "type_subst" "hl:type-subst" "proved" "type_subst is a function of an interned instantiation and an interned type: memo_sound, memo2_sound; trusted: rc_memo.c is the model, cleared before every collection")
+
+; laws
+(law "term list equality, reflexive" "hl:tms-eq" "hl:yes" "proved" "tmsEq_refl, fastPath_sound")

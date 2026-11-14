@@ -1,0 +1,128 @@
+rule census of Kernel, theory Kernel
+
+sorts 60; constructors 530 (data 212, judgments 318); rules 792; premises 865
+mode: every judgment (in, ..., in) -> out; every premise source has its inputs bound (checked)
+judgments det 209 (519 rules), semidet 109 (273 rules); groups covering every input 309 of 318
+share of rules in det judgments: 65.5%; judgments whose determinism is not established (an overlap not shown exclusive): 0 (0 rules)
+premises with a refutable target (a constructor pattern or a bound variable that can fail): 24 of 865
+premise targets that test a variable already bound (an equality test): 0
+overlapping left sides in one judgment: 0 pairs; shown exclusive by their premises: 0 (by lockstep targets 0, by evaluated guards 0); not shown: 0
+relation premises (queries of the module's relations): 0, of which 0 bind a variable; judgments with one that binds (possibly several answers): 0
+rules whose last premise is a tail call: 264; recursive judgments (self or mutual): 117
+rules in functional form (calls nested in a right side or a premise's arguments, read call by value): 0, their calls made premises: 0
+
+layer        rules  judgments  det-judgments
+data           102         50             50
+syntax         106         43             43
+kernel         192         73             36
+rules           48         22              1
+theory          54         28             14
+replay         290        102             65
+
+dispatch-group sizes (rules per judgment): 1:106 2:134 3:36 4-5:32 6-9:3 10-16:4 17-32:3 >32:0
+
+largest dispatch groups:
+  judgment                         rules arity    class  nodes  tests max-test argument sorts
+  hl:exec                             32     2  semidet     78     46        3 Replay,Record
+  hl:rec-out                          32     1      det     33      1        1 Record
+  hl:validate                         32     2      det     62     30        2 Tables,Record
+  hl:cmp-term                         16     2      det     21      5        2 Term,Term
+  hl:nib-bits                         16     1      det     17      1        1 Nib
+  hl:orda                             16     3  semidet     24      7        4 TmPairs,Term,Term
+  hl:split-eq                         10     1      det     13      3        3 Term
+  hl:cmp-nat                           9     2      det     13      4        2 Nat,Nat
+  hl:BETA                              7     1  semidet      9      2        2 Term
+  hl:trie-set                          6     3      det      9      3        2 Trie,Nat,Cell
+  hl:dest-fun-ty                       5     1      det      9      4        4 Type
+  hl:new-def-k                         5     2  semidet      7      2        2 SplitEq,Thy
+  hl:policy-max                        5     2      det      7      2        2 Policy,Policy
+  hl:put-failed                        5     2      det     10      5        2 Tables,Out
+  hl:std-def-check                     5     2  semidet      7      2        2 SplitEq,Std
+  hl:v-seq                             5     2      det      7      2        2 Validity,Validity
+  hl:ABS                               4     2  semidet      6      2        2 Term,Thm
+  hl:cmp-flag                          4     2      det      7      3        2 Flag,Flag
+  hl:cmp-str                           4     2      det      7      3        2 Str,Str
+  hl:cmp-type                          4     2      det      7      3        2 Type,Type
+  hl:cmp-types                         4     2      det      7      3        2 Tys,Tys
+  hl:frees                             4     1      det      5      1        1 Term
+  hl:freesin                           4     2      det      5      1        1 Tms,Term
+  hl:ids-eq                            4     2      det      7      3        2 Ids,Ids
+  hl:inst-rec                          4     3  semidet      7      2        2 TmPairs,TyPairs,Term
+
+premise data flow: 326 later premises read an earlier premise's output, 171 read only the left side; at most 17 premises in a rule
+
+judgments whose arguments are names or numerals only (candidates for native primitives):
+  hl:nib-bits                  names      16 rules  (det)
+  hl:cmp-nat                   numerals    9 rules  (det)
+  hl:cmp-str                   names       4 rules  (det)
+  hl:cmp-str-k                 names       3 rules  (det)
+  hl:nat-inc                   numerals    3 rules  (det)
+  hl:str-prime                 names       2 rules  (det)
+  hl:cmp-byte                  names       1 rules  (det)
+  hl:cmp-nib                   names       1 rules  (det)
+  hl:nm-A                      names       1 rules  (det)
+  hl:nm-B                      names       1 rules  (det)
+  hl:nm-F                      names       1 rules  (det)
+  hl:nm-P                      names       1 rules  (det)
+  hl:nm-T                      names       1 rules  (det)
+  hl:nm-a                      names       1 rules  (det)
+  hl:nm-all                    names       1 rules  (det)
+  hl:nm-and                    names       1 rules  (det)
+  hl:nm-at                     names       1 rules  (det)
+  hl:nm-bool                   names       1 rules  (det)
+  hl:nm-eq                     names       1 rules  (det)
+  hl:nm-ex                     names       1 rules  (det)
+  hl:nm-f                      names       1 rules  (det)
+  hl:nm-fun                    names       1 rules  (det)
+  hl:nm-g2064                  names       1 rules  (det)
+  hl:nm-g2069                  names       1 rules  (det)
+  hl:nm-imp                    names       1 rules  (det)
+  hl:nm-ind                    names       1 rules  (det)
+  hl:nm-neg                    names       1 rules  (det)
+  hl:nm-one-one                names       1 rules  (det)
+  hl:nm-onto                   names       1 rules  (det)
+  hl:nm-p                      names       1 rules  (det)
+  hl:nm-q                      names       1 rules  (det)
+  hl:nm-r                      names       1 rules  (det)
+  hl:nm-t                      names       1 rules  (det)
+  hl:nm-x                      names       1 rules  (det)
+  hl:nm-x1                     names       1 rules  (det)
+  hl:nm-x2                     names       1 rules  (det)
+  hl:nm-y                      names       1 rules  (det)
+  hl:str-eq                    names       1 rules  (det)
+
+justified blocks (the judgment's rules are the contract):
+  block                  judgment                   rules  label    implementation                 justification
+  name equality          hl:str-eq                      1  proved   (equal hl:yes hl:no)           strEq_binding, names_eq_iff: interned byte strings have equal bytes exactly when they are one node; strEq_refines
+  name order             hl:cmp-str                     4  proved   (bytes-order hl:lt hl:eq hl:gt) cmpStr_refines, nativeCmp_eq_memcmp: the rules' order is the unsigned byte order, a proper prefix first; trusted: C memcmp compares unsigned
+  name prime             hl:str-prime                   2  proved   (bytes-snoc 27)                strPrime_refines: the rules append the byte 0x27
+  numeral order          hl:cmp-nat                     9  proved   (nat-order hl:lt hl:eq hl:gt)  cmpNat_refines; trusted: the comparison of uint64_t
+  numeral successor      hl:nat-inc                     3  proved   (nat-succ)                     natInc_refines; checked at run time: the immediate range
+  type equality          hl:ty-eq                       1  proved   (equal hl:yes hl:no)           tyEq_binding: in an interning store ty-eq of two read-backs answers yes exactly when they are one node (interning_eq_iff, cmpType_eq_iff)
+  term equality          hl:tm-eq                       1  proved   (equal hl:yes hl:no)           tmEq_binding: in an interning store tm-eq of two read-backs answers yes exactly when they are one node (interning_eq_iff, cmpTerm_eq_iff)
+  type order             hl:cmp-type                    4  proved   (structural-order hl:lt hl:eq hl:gt) structuralOrder_cmpType, rcOrderCmp_cmpType: the structural order on interned types is cmp-type; trusted: rc_order.c is the model
+  term order             hl:cmp-term                   16  proved   (structural-order hl:lt hl:eq hl:gt) structuralOrder_cmpTerm, rcOrderCmp_cmpTerm: the structural order on interned terms is cmp-term; trusted: rc_order.c is the model
+  term_union             hl:term-union                  3  proved   (set-union hl:alphaorder hl:lt hl:eq hl:gt) setUnion_eq_termUnion, for every comparator (here the module's alphaorder, compiled); trusted: rc_set.c is the model
+  term_remove            hl:term-remove                 2  proved   (set-remove hl:alphaorder hl:lt hl:eq hl:gt) setRemove_eq_termRemove, for every comparator; trusted: rc_set.c is the model
+  table lookup           hl:table-get                   1  proved   (table-get)                    tableGet_readback; trusted: the array code is the model NTable; checked at run time: no table value is used after its update
+  table append           hl:table-put                   1  proved   (table-put)                    tablePut_readback; trusted: the array code is the model NTable; checked at run time: no table value is used after its update
+  table update           hl:table-set                   1  proved   (table-set)                    tableSet_readback; trusted: the array code is the model NTable; checked at run time: no table value is used after its update
+  table size             hl:table-next                  1  proved   (table-next)                   tableNext_readback; trusted: the array code is the model NTable
+  empty table            hl:empty-table                 1  proved   (table-empty)                  emptyTable_readback; trusted: the array code is the model NTable
+  type_of                hl:type-of                     4  proved   (memo)                         type-of is a function of an interned term: memo_sound, memo2_sound; trusted: rc_memo.c is the model, cleared before every collection
+  alphaorder             hl:alphaorder                  1  proved   (memo)                         alphaorder is a function of two interned terms: memo_sound, memo2_sound; trusted: rc_memo.c is the model, cleared before every collection
+  inst                   hl:inst                        2  proved   (memo)                         inst is a function of an interned instantiation and an interned term: memo_sound, memo2_sound; trusted: rc_memo.c is the model, cleared before every collection
+  vsubst recursion       hl:vsubst-rec                  4  proved   (memo)                         vsubst-rec is a function of an interned substitution and an interned term: memo_sound, memo2_sound; trusted: rc_memo.c is the model, cleared before every collection
+  type_subst             hl:type-subst                  2  proved   (memo)                         type_subst is a function of an interned instantiation and an interned type: memo_sound, memo2_sound; trusted: rc_memo.c is the model, cleared before every collection
+  term list equality, reflexive hl:tms-eq                      4  proved   law hl:tms-eq(x, x) = hl:yes; tmsEq_refl, fastPath_sound
+sorts with a native representation: 10
+  Str        bytes
+  Nat        nat
+  Type       intern
+  Tys        intern
+  Term       intern
+  Tms        intern
+  TyPairs    intern
+  TmPairs    intern
+  Table      table
+  Records    records
