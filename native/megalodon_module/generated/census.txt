@@ -1,0 +1,136 @@
+rule census of Kernel, theory Kernel
+
+sorts 22; constructors 144 (data 65, judgments 79); rules 414; premises 454
+mode: every judgment (in, ..., in) -> out; every premise source has its inputs bound (checked)
+judgments det 14 (64 rules), semidet 65 (350 rules); groups covering every input 74 of 79
+share of rules in det judgments: 15.5%; judgments whose determinism is not established (an overlap not shown exclusive): 0 (0 rules)
+premises with a refutable target (a constructor pattern or a bound variable that can fail): 111 of 454
+premise targets that test a variable already bound (an equality test): 13
+overlapping left sides in one judgment: 51 pairs; shown exclusive by their premises: 51 (by lockstep targets 36, by evaluated guards 15); not shown: 0
+relation premises (queries of the module's relations): 1, of which 0 bind a variable; judgments with one that binds (possibly several answers): 0
+rules whose last premise is a tail call: 130; recursive judgments (self or mutual): 48
+rules in functional form (calls nested in a right side or a premise's arguments, read call by value): 0, their calls made premises: 0
+
+dispatch-group sizes (rules per judgment): 1:16 2:18 3:4 4-5:6 6-9:14 10-16:21 17-32:0 >32:0
+
+largest dispatch groups:
+  judgment                         rules arity    class  nodes  tests max-test argument sorts
+  nf.eta                              12     3  semidet     13      2        2 Tp,Tm,Tm
+  tm.closed                           12     2  semidet     11      1        1 Nat,Tm
+  tm.inst                             12     3  semidet     13      2        2 Nat,Tm,Tm
+  tm.shift                            12     3  semidet     11      1        1 Nat,Nat,Tm
+  tm.down                             11     2  semidet     13      2        2 Nat,Tm
+  tm.eq                               11     2  semidet     22     11        2 Tm,Tm
+  nf.app                              10     2  semidet     11      1        1 Tm,Tm
+  nf.lam                              10     2  semidet     11      1        1 Tp,Tm
+  nf.tapp                             10     2  semidet     11      1        1 Tm,Tp
+  nf.tlam                             10     1  semidet     11      1        1 Tm
+  tm.delta                            10     2  semidet     11      1        1 Thy,Tm
+  tm.free                             10     2  semidet     11      1        1 Nat,Tm
+  tm.isprop                           10     4  semidet     11      1        1 Thy,Nat,TpList,Tm
+  tm.mentions                         10     2      det     11      1        1 Name,Tm
+  tm.nf                               10     1  semidet     11      1        1 Tm
+  tm.prot                             10     1  semidet     11      1        1 Tm
+  tm.tag                              10     1      det     11      1        1 Tm
+  tm.tdown                            10     2  semidet     11      1        1 Nat,Tm
+  tm.tfree                            10     2  semidet     11      1        1 Nat,Tm
+  tm.tinst                            10     3  semidet     11      1        1 Nat,Tp,Tm
+  tm.tshift                           10     3  semidet     11      1        1 Nat,Nat,Tm
+  ds.term                              9     2  semidet      8      2        2 Decls,Name
+  name.eq                              9     2      det     13      4        2 Name,Name
+  tm.infer                             9     4  semidet     11      1        1 Thy,Nat,TpList,Tm
+  ds.known                             8     2  semidet      8      2        2 Decls,Name
+
+premise data flow: 68 later premises read an earlier premise's output, 126 read only the left side; at most 8 premises in a rule
+
+judgments whose arguments are names or numerals only (candidates for native primitives):
+  nat.add                      numerals    2 rules  (det)
+
+overlapping pairs (left sides that unify) and their class:
+  nat.eq                   NAT-EQ-EQ                  NAT-EQ-LT                  exclusive-by-targets
+  nat.eq                   NAT-EQ-EQ                  NAT-EQ-GT                  exclusive-by-targets
+  nat.eq                   NAT-EQ-LT                  NAT-EQ-GT                  exclusive-by-targets
+  names.has                NAMES-HAS-HIT              NAMES-HAS-NEXT             exclusive-by-targets
+  tp.shift                 TP-SHIFT-VAR-LT            TP-SHIFT-VAR-EQ            exclusive-by-targets
+  tp.shift                 TP-SHIFT-VAR-LT            TP-SHIFT-VAR-GT            exclusive-by-targets
+  tp.shift                 TP-SHIFT-VAR-EQ            TP-SHIFT-VAR-GT            exclusive-by-targets
+  tp.down                  TP-DOWN-VAR-LT             TP-DOWN-VAR-GT             exclusive-by-targets
+  tp.inst                  TP-INST-VAR-LT             TP-INST-VAR-EQ             exclusive-by-targets
+  tp.inst                  TP-INST-VAR-LT             TP-INST-VAR-GT             exclusive-by-targets
+  tp.inst                  TP-INST-VAR-EQ             TP-INST-VAR-GT             exclusive-by-targets
+  tp.plain                 TP-PLAIN-VAR-LT            TP-PLAIN-VAR-EQ            exclusive-by-targets
+  tp.plain                 TP-PLAIN-VAR-LT            TP-PLAIN-VAR-GT            exclusive-by-targets
+  tp.plain                 TP-PLAIN-VAR-EQ            TP-PLAIN-VAR-GT            exclusive-by-targets
+  tp.eq                    TP-EQ-HEADS                TP-EQ-VAR                  exclusive-by-evaluated-guards
+  tp.eq                    TP-EQ-HEADS                TP-EQ-PROP                 exclusive-by-evaluated-guards
+  tp.eq                    TP-EQ-HEADS                TP-EQ-BASE                 exclusive-by-evaluated-guards
+  tp.eq                    TP-EQ-HEADS                TP-EQ-ARR                  exclusive-by-evaluated-guards
+  tp.eq                    TP-EQ-HEADS                TP-EQ-ALL                  exclusive-by-evaluated-guards
+  tm.shift                 TM-SHIFT-DB-LT             TM-SHIFT-DB-EQ             exclusive-by-targets
+  tm.shift                 TM-SHIFT-DB-LT             TM-SHIFT-DB-GT             exclusive-by-targets
+  tm.shift                 TM-SHIFT-DB-EQ             TM-SHIFT-DB-GT             exclusive-by-targets
+  tm.down                  TM-DOWN-DB-LT              TM-DOWN-DB-GT              exclusive-by-targets
+  tm.inst                  TM-INST-DB-LT              TM-INST-DB-EQ              exclusive-by-targets
+  tm.inst                  TM-INST-DB-LT              TM-INST-DB-GT              exclusive-by-targets
+  tm.inst                  TM-INST-DB-EQ              TM-INST-DB-GT              exclusive-by-targets
+  tm.closed                TM-CLOSED-DB-LT            TM-CLOSED-DB-EQ            exclusive-by-targets
+  tm.closed                TM-CLOSED-DB-LT            TM-CLOSED-DB-GT            exclusive-by-targets
+  tm.closed                TM-CLOSED-DB-EQ            TM-CLOSED-DB-GT            exclusive-by-targets
+  tm.eq                    TM-EQ-HEADS                TM-EQ-DB                   exclusive-by-evaluated-guards
+  tm.eq                    TM-EQ-HEADS                TM-EQ-NAMED                exclusive-by-evaluated-guards
+  tm.eq                    TM-EQ-HEADS                TM-EQ-PRIM                 exclusive-by-evaluated-guards
+  tm.eq                    TM-EQ-HEADS                TM-EQ-APP                  exclusive-by-evaluated-guards
+  tm.eq                    TM-EQ-HEADS                TM-EQ-LAM                  exclusive-by-evaluated-guards
+  tm.eq                    TM-EQ-HEADS                TM-EQ-IMP                  exclusive-by-evaluated-guards
+  tm.eq                    TM-EQ-HEADS                TM-EQ-ALL                  exclusive-by-evaluated-guards
+  tm.eq                    TM-EQ-HEADS                TM-EQ-TAPP                 exclusive-by-evaluated-guards
+  tm.eq                    TM-EQ-HEADS                TM-EQ-TLAM                 exclusive-by-evaluated-guards
+  tm.eq                    TM-EQ-HEADS                TM-EQ-TALL                 exclusive-by-evaluated-guards
+  nf.eta                   ETA                        ETA-FREE                   exclusive-by-targets
+  nf.teta                  TETA                       TETA-FREE                  exclusive-by-targets
+  ds.term                  TERM-PARAM-HIT             TERM-PARAM-NEXT            exclusive-by-targets
+  ds.term                  TERM-DEF-HIT               TERM-DEF-NEXT              exclusive-by-targets
+  ds.term                  TERM-REAL-HIT              TERM-REAL-NEXT             exclusive-by-targets
+  ds.known                 KNOWN-AXIOM-HIT            KNOWN-AXIOM-NEXT           exclusive-by-targets
+  ds.known                 KNOWN-THM-HIT              KNOWN-THM-NEXT             exclusive-by-targets
+  ss.param                 SEL-PARAM-HIT              SEL-PARAM-NEXT             exclusive-by-targets
+  ss.known                 SEL-KNOWN-HIT              SEL-KNOWN-NEXT             exclusive-by-targets
+  thy.select-param         SELECT-PARAM-NEW           SELECT-PARAM-SAME          exclusive-by-targets
+  thy.select-known         SELECT-KNOWN-NEW           SELECT-KNOWN-SAME          exclusive-by-targets
+  thy.admit-def            ADMIT-DEF                  ADMIT-DEF-REALIZE          exclusive-by-targets
+
+justified blocks (the judgment's rules are the contract):
+  block                  judgment                   rules  label    implementation                 justification
+  natural order          nat.cmp                        4  proved   (nat-order cmp.lt cmp.eq cmp.gt) natCmp_iff, natCmp_binding (Megalodon/RuleModuleBindings.lean): nat.cmp's rules are the numeric order of unary numerals, which rc_nat_cmp computes on immediates (the unary view: UNat.toNat_ofNat, Unary.tag_eq_s_iff); trusted: the comparison of uint64_t
+  natural equality       nat.eq                         3  proved   (equal bool.t bool.f)          natEq_iff, natEq_binding: nat.eq's rules answer bool.t exactly on equal numerals; trusted: two immediates are the same word exactly when they hold the same number
+  natural addition       nat.add                        2  proved   (nat-add)                      natAdd_iff, cNatAdd_refines, cNatAdd_binding: nat.add's rules are addition, which rc_nat_add computes wherever it gives a value; checked at run time: the immediate range
+  name equality          name.eq                        9  proved   (equal bool.t bool.f)          nameEq_iff, nameEq_binding (through interning_eq_iff): name.eq's rules decide equality of bit strings, and two interned names are equal exactly when they are one node; trusted: a node's id stands for its pointer
+  type equality          tp.eq                          6  proved   (equal bool.t bool.f)          tpEq_iff, tpEq_binding: tp.eq's rules (TP-EQ-HEADS for different heads, a rule per head) decide syntactic equality of types; trusted: a node's id stands for its pointer
+  term equality          tm.eq                         11  proved   (equal bool.t bool.f)          tmEq_iff, tmEq_binding: tm.eq's rules (TM-EQ-HEADS for different heads, a rule per head) decide syntactic equality of terms; trusted: a node's id stands for its pointer
+  normal form            tm.nf                         10  proved   (memo)                         tm.nf is a function of an interned term: memo_sound, memo2_sound; trusted: rc_memo.c is the model
+  delta                  tm.delta                      10  proved   (memo)                         tm.delta is a function of an interned theory and term: memo_sound, memo2_sound; trusted: rc_memo.c is the model
+  term lookup            ds.term                        9  proved   (memo)                         ds.term is a function of interned declarations and a name: memo_sound, memo2_sound; trusted: rc_memo.c is the model
+  known lookup           ds.known                       8  proved   (memo)                         ds.known is a function of interned declarations and a name: memo_sound, memo2_sound; trusted: rc_memo.c is the model
+  type inference         tm.infer                       9  proved   (memo)                         tm.infer is a function of an interned theory, depth, type list and term: memo_sound, memo2_sound; trusted: rc_memo.c is the model
+  instantiation          tm.inst                       12  proved   (memo)                         tm.inst is a function of a depth and two interned terms: memo_sound, memo2_sound; trusted: rc_memo.c is the model
+  protection             tm.prot                       10  proved   (memo)                         tm.prot is a function of an interned term: memo_sound, memo2_sound; trusted: rc_memo.c is the model
+sorts with a native representation: 19
+  Nat        unary
+  Name       intern
+  Names      intern
+  Tp         intern
+  Tm         intern
+  Pf         intern
+  TpList     intern
+  TmList     intern
+  Ctx        intern
+  PrimEntry  intern
+  Prims      intern
+  Decl       intern
+  Decls      intern
+  Sel        intern
+  Sels       intern
+  Thy        intern
+  TermEntry  intern
+  KnownEntry intern
+  SelEntry   intern

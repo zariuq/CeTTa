@@ -1,7 +1,10 @@
 /* holr_bridge.c - see holr_bridge.h. */
 #include "holr_bridge.h"
 #include "generated/hol_module_ids.h"
-#include "../hol_light/hol_internal.h"
+#include "../rule_components/rc_intern.h"
+#include "../rule_components/rc_bytes.h"
+#include "../rule_components/rc_table.h"
+#include "../rule_module/rc_instance_api.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,183 +12,91 @@
 
 #define NUL(c) ((T *)&rc_nul[(c)])
 
-static bool rep_nat, rep_str, rep_holname, rep_holterm;
+/* the representations rulec gave the module's numerals and names (rc_sort_rep: 2 binary naturals as
+ * immediates, 3 heap byte strings, 6 interned byte strings; otherwise symbolic) */
+static bool rep_nat, rep_str, rep_bytes;
 
-/* ------------------------------------------------------------ native store */
-HolKernel *holr_k;
-HolName holr_empty_name;
-static HolDecl *holr_tip;            /* the private lineage of one declaration per name */
-static int holr_gc_nroots;
-static uint64_t holr_gc_runs;
-_Noreturn void holr_refused(const char *what) {
-    if (rc_fail_hook) rc_fail_hook(what);
-    fprintf(stderr, "holr: the native kernel refused %s (%s): the module built a value its representation cannot hold\n",
-            what, holr_k ? hol_reason_name(holr_k->reason) : "no kernel");
-    exit(5);
-}
-static void holr_mark_child(T *c, void *ctx) {
-    (void)ctx;
-    if (!RC_IS_FOREIGN(c)) return;
-    switch (RC_FOREIGN_TAG(c)) {
-    case 2: hk_mark_term(holr_k, (HolTerm *)RC_FOREIGN_PTR(c)); break;
-    case 4: hk_mark_type(holr_k, (HolType *)RC_FOREIGN_PTR(c)); break;
-    case 6: hk_mark_thm(holr_k, (HolThm *)RC_FOREIGN_PTR(c)); break;
-    default: break;
-    }
-}
-static void holr_roots(HolKernel *k, void *ctx) {
-    (void)ctx;
-    hk_mark_decl(k, holr_tip);
-    rc_walk_live(holr_gc_nroots, holr_mark_child, NULL);
-}
-/* At a safepoint the live module state is rc_roots; when the native store has grown, the module's
- * old space is copied (so it holds exactly the live terms) and the native store is collected from
- * the native values that state holds. */
-static void holr_safepoint(int nroots) {
-    HolKernel *k = holr_k;
-    if (!k) return;
-    size_t limit = (size_t)64 << 20;
-    if (k->bytes_live > limit) limit = k->bytes_live;
-    if (k->bytes_since_gc <= limit) return;
-    rc_major_now(nroots);
-    holr_gc_nroots = nroots;
-    hol_gc(k);
-    holr_gc_runs++;
-}
-bool holr_store_active(void) { return holr_k != NULL; }
-void holr_tables_reset(void);
-void holr_tables_roots(int major, T *(*evac)(T *x));
-static bool holr_foreign_equal(const T *a, const T *b);
-/* The store is kept from run to run unless holr_store_fresh(true): it is a cache of interned values
- * and of one declaration per name, while the module's theory is module data, so a run does not see
- * what an earlier run declared.  A run's garbage is collected with the next collection at a
- * safepoint (any run's); at the end of a run, a store above HOLR_STORE_KEEP_BYTES is collected from
- * the constants (made static) and the declarations alone, and freed if it is still above.
- * holr_store_free frees it in any case. */
-#define HOLR_STORE_KEEP_BYTES ((size_t)64 << 20)
-static bool holr_fresh;
-void holr_store_fresh(bool fresh) { holr_fresh = fresh; }
-void holr_store_free(void) {
-    holr_tables_reset();
-    rc_extra_roots_hook = NULL;
-    if (!holr_k) return;
-    hk_root_remove(holr_k, holr_roots, NULL);
-    hol_kernel_free(holr_k);
-    holr_k = NULL;
-    rc_foreign_hook = NULL;
-    rc_foreign_equal_hook = NULL;
-    rc_free_statics();
-    rc_reset_constants();
+/* ------------------------------------------------------------ the store */
+void holr_store_fresh(bool fresh) { rc_intern_fresh(fresh); }
+bool holr_store_active(void) { return rc_intern_active(); }
+void holr_store_begin(void) {
+    rc_table_reset();
+    rc_intern_begin();
+    rc_foreign_hook = rc_intern_safepoint;        /* the store's collections at the module's safepoints */
+    rc_extra_roots_hook = rc_table_roots;         /* the cells of the id tables' arrays */
 }
 void holr_store_end(void) {
-    holr_tables_reset();
-    if (!holr_k) return;
-    if (holr_fresh) { holr_store_free(); return; }
-    if (holr_k->bytes_live <= HOLR_STORE_KEEP_BYTES) return;
-    rc_runtime_reset();
-    holr_gc_nroots = 0;
-    hol_gc(holr_k);
-    holr_gc_runs++;
-    if (holr_k->bytes_live > HOLR_STORE_KEEP_BYTES) holr_store_free();
+    rc_table_reset();
+    rc_intern_end();
 }
-void holr_store_begin(void) {
-    holr_tables_reset();
-    if (holr_k && !holr_fresh) return;
-    holr_store_free();
-    holr_k = hol_kernel_new(NULL);
-    if (!holr_k) holr_refused("a new kernel");
-    holr_tip = holr_k->d_eq;
-    holr_empty_name = hk_name_intern(holr_k, "", 0);
-    if (!holr_empty_name) holr_refused("the empty name");
-    if (hk_root_add(holr_k, holr_roots, NULL) < 0) holr_refused("a root");
-    holr_k->gc_threshold = SIZE_MAX;   /* collections only at the module's safepoints */
-    rc_foreign_hook = holr_safepoint;
-    rc_extra_roots_hook = holr_tables_roots;   /* the cells of the id tables' arrays */
-    rc_foreign_equal_hook = holr_foreign_equal;
+void holr_store_free(void) {
+    rc_table_reset();
+    rc_intern_free();
 }
-/* one declaration per type operator / constant name, made at its first use */
-HolType *holr_ty_app(HolName n, T *args) {
-    HolKernel *k = holr_k;
-    HolType *small[16], **a = small;
-    uint32_t na = 0;
-    for (T *l = args; l->tag == C_hl_tycons; l = l->k[1]) na++;
-    if (na > 16) { a = malloc(na * sizeof(HolType *)); if (!a) holr_refused("memory"); }
-    uint32_t i = 0;
-    for (T *l = args; l->tag == C_hl_tycons; l = l->k[1]) a[i++] = (HolType *)RC_FOREIGN_PTR(l->k[0]);
-    HolDecl *d = hk_lookup_type(k, holr_tip, n);
-    if (!d) {
-        hk_clear(k);
-        d = hk_env_new_type(k, holr_tip, n, na);
-        if (!d) holr_refused("a type declaration");
-        holr_tip = d;
-    }
-    hk_clear(k);
-    HolType *t = hk_ty_app(k, d, a, na);
-    if (a != small) free(a);
-    return t;
+
+/* ------------------------------------------------------------ the reader
+ * Streams are read by the HOLR reader compiled from its GSLT modules (HOLRStream, theory Format), its
+ * own instance in this binary; its values are read through its table only. */
+extern const RcInstanceApi cetta_holr_reader;
+static const RcInstanceApi *R = &cetta_holr_reader;
+static int RK_read, RK_decoded, RK_malformed, RK_need, RK_header, RK_rcons, RK_rnil, RK_record, RK_ocons, RK_onil, RK_word, RK_bytes,
+    RK_words, RK_pairs, RK_wcons, RK_wnil, RK_pcons, RK_pnil, RK_pair, RK_ok, RK_error, RK_incomplete;
+static int RS_state, RS_header, RS_records, RS_nat, RS_terminal, RS_reason;
+/* the reader's refusal reasons, by name, as the module's terminal constructors */
+static const struct { const char *reason; int terminal; } reason_map[] = {
+    {"BadMagic", C_hl_bad_magic}, {"BadHeader", C_hl_bad_header}, {"BadVersion", C_hl_bad_version},
+    {"Truncated", C_hl_truncated}, {"IntegerEncoding", C_hl_bad_integer}, {"BadOpcode", C_hl_bad_opcode},
+    {"TrailingBytes", C_hl_trailing_bytes}, {"BadChecksum", C_hl_checksum_mismatch}, {"BadCount", C_hl_count_mismatch},
+    {"FieldLimit", C_hl_limit_exceeded}, {"MissingEnd", C_hl_missing_end},
+};
+#define NREASONS ((int)(sizeof reason_map / sizeof reason_map[0]))
+static int reason_ctor[NREASONS];
+static int reader_ctor(const char *name) {
+    int c = R->ctor_named(name);
+    if (c < 0) { fprintf(stderr, "holr_bridge: the stream reader has no constructor %s\n", name); exit(3); }
+    return c;
 }
-HolTerm *holr_const(HolName n, HolType *ty) {
-    HolKernel *k = holr_k;
-    HolDecl *d = hk_lookup_const(k, holr_tip, n);
-    if (!d) {
-        hk_clear(k);
-        d = hk_env_new_constant(k, holr_tip, n, ty);
-        if (!d) holr_refused("a constant declaration");
-        holr_tip = d;
-    }
-    hk_clear(k);
-    return hk_tm_const(k, d, ty);
+static int reader_sort(const char *name) {
+    int s = R->sort_named(name);
+    if (s < 0) { fprintf(stderr, "holr_bridge: the stream reader has no sort %s\n", name); exit(3); }
+    return s;
 }
-/* theorems as module data: equal when their hypotheses and conclusions are (terms are interned) */
-static bool holr_foreign_equal(const T *a, const T *b) {
-    if (RC_FOREIGN_TAG(a) != 6) return false;
-    const HolThm *x = (const HolThm *)RC_FOREIGN_PTR(a), *y = (const HolThm *)RC_FOREIGN_PTR(b);
-    if (x->concl != y->concl || x->nhyps != y->nhyps) return false;
-    for (uint32_t i = 0; i < x->nhyps; i++) if (x->hyps[i] != y->hyps[i]) return false;
-    return true;
+/* the reader allocates its records and their steps without collecting (about 350 bytes a record):
+ * its young memory is kept from stream to stream up to 1 GiB, so a stream no larger than an earlier
+ * one reads into memory already mapped */
+#define READER_RETAIN ((size_t)1 << 30)
+static void reader_init(void) {
+    R->init();
+    R->retain(READER_RETAIN);
+    RK_read = reader_ctor("ReadHOLRPrefix"); RK_decoded = reader_ctor("HOLRDecoded"); RK_malformed = reader_ctor("HOLRMalformed");
+    RK_need = reader_ctor("NeedInput"); RK_header = reader_ctor("HOLRHeaderBytes"); RK_rcons = reader_ctor("RecordsCons");
+    RK_rnil = reader_ctor("RecordsNil"); RK_record = reader_ctor("BRecord"); RK_ocons = reader_ctor("OperandsCons");
+    RK_onil = reader_ctor("OperandsNil"); RK_word = reader_ctor("BWord"); RK_bytes = reader_ctor("BBytes");
+    RK_words = reader_ctor("BWords"); RK_pairs = reader_ctor("BPairs"); RK_wcons = reader_ctor("WordsCons");
+    RK_wnil = reader_ctor("WordsNil"); RK_pcons = reader_ctor("PairsCons"); RK_pnil = reader_ctor("PairsNil");
+    RK_pair = reader_ctor("BPair");
+    RK_ok = reader_ctor("HOLRPrefixOK"); RK_error = reader_ctor("HOLRPrefixError"); RK_incomplete = reader_ctor("HOLRPrefixIncomplete");
+    RS_state = reader_sort("CodecState"); RS_header = reader_sort("HOLRHeader"); RS_records = reader_sort("Records");
+    RS_nat = reader_sort("Nat"); RS_terminal = reader_sort("HOLRTerminal"); RS_reason = reader_sort("HOLRReason");
+    for (int i = 0; i < NREASONS; i++) reason_ctor[i] = reader_ctor(reason_map[i].reason);
 }
-T *holr_tys_of(const HolType *t) {
-    T *l = (T *)&rc_nul[C_hl_tynil];
-    for (uint32_t i = t->nargs; i-- > 0;) l = rc_mk2(C_hl_tycons, RC_FOREIGN(t->args[i], 4), l);
-    return l;
-}
-HolName holr_name_cons(T *byte, HolName rest) {
-    static const uint16_t nibs[16] = {C_hl_x0, C_hl_x1, C_hl_x2, C_hl_x3, C_hl_x4, C_hl_x5, C_hl_x6, C_hl_x7,
-                                      C_hl_x8, C_hl_x9, C_hl_xa, C_hl_xb, C_hl_xc, C_hl_xd, C_hl_xe, C_hl_xf};
-    unsigned hi = 16, lo = 16;
-    for (unsigned i = 0; i < 16; i++) { if (byte->k[0]->tag == nibs[i]) hi = i; if (byte->k[1]->tag == nibs[i]) lo = i; }
-    if (byte->tag != C_hl_byte || hi > 15 || lo > 15) holr_refused("a byte");
-    const HolNameRec *r = &holr_k->names[rest];
-    size_t len = r->len;
-    char small[256], *buf = len + 1 <= sizeof small ? small : malloc(len + 1);
-    if (!buf) holr_refused("memory");
-    buf[0] = (char)(16 * hi + lo);
-    memcpy(buf + 1, r->bytes, len);
-    HolName n = hk_name_intern(holr_k, buf, len + 1);
-    if (buf != small) free(buf);
-    if (!n) holr_refused("a name");
-    return n;
-}
-static T *byte_terms[256];
-static const uint16_t nib_ctor[16] = {C_hl_x0, C_hl_x1, C_hl_x2, C_hl_x3, C_hl_x4, C_hl_x5, C_hl_x6, C_hl_x7,
-                                      C_hl_x8, C_hl_x9, C_hl_xa, C_hl_xb, C_hl_xc, C_hl_xd, C_hl_xe, C_hl_xf};
 
 void holr_bridge_init(void) {
-    if (byte_terms[0]) return;
+    static bool done;
+    if (done) return;
+    done = true;
+    reader_init();
     rep_nat = rc_sort_rep[S_Nat] == 2;
     rep_str = rc_sort_rep[S_Str] == 3;
-    rep_holname = rc_sort_rep[S_Str] == 4;
-    rep_holterm = rc_sort_rep[S_Term] == 4;
-    for (unsigned v = 0; v < 256; v++) {
-        T *t = malloc(sizeof(TH) + 2 * sizeof(T *));
-        if (!t) { fputs("holr_bridge: out of memory\n", stderr); exit(3); }
-        t->tag = C_hl_byte; t->space = RC_SPACE_STATIC; t->flags = 0; t->n = 2;
-        t->k[0] = NUL(nib_ctor[v >> 4]); t->k[1] = NUL(nib_ctor[v & 15]);
-        byte_terms[v] = t;
+    rep_bytes = rc_sort_rep[S_Str] == 6;
+    rc_components_init();
+    if (!rep_bytes) {
+        /* byte terms for the symbolic and heap representations of names */
+        static const uint16_t nib[16] = {C_hl_x0, C_hl_x1, C_hl_x2, C_hl_x3, C_hl_x4, C_hl_x5, C_hl_x6, C_hl_x7,
+                                         C_hl_x8, C_hl_x9, C_hl_xa, C_hl_xb, C_hl_xc, C_hl_xd, C_hl_xe, C_hl_xf};
+        rc_bytes_init(C_hl_nnil, C_hl_ncons, C_hl_byte, nib);
     }
 }
-
-T *rc_byte_term(unsigned v) { return byte_terms[v & 255]; }
 
 static T *nat_term(uint64_t v) {
     if (rep_nat) return RC_IMM(v);
@@ -196,14 +107,10 @@ static T *nat_term(uint64_t v) {
     return t;
 }
 static T *str_term(const uint8_t *b, size_t n) {
-    if (rep_holname) {
-        HolName id = hk_name_intern(holr_k, (const char *)b, n);
-        if (!id) holr_refused("a name");
-        return RC_IMM(id);
-    }
+    if (rep_bytes) return rc_intern_bytes(b, n);
     if (rep_str) return rc_bytes_new(b, n);
     T *t = NUL(C_hl_nnil);
-    while (n--) t = rc_mk2(C_hl_ncons, byte_terms[b[n]], t);
+    while (n--) t = rc_mk2(C_hl_ncons, rc_byte_term(b[n]), t);
     return t;
 }
 static T *ids_term(const uint64_t *v, uint32_t n) {
@@ -239,17 +146,104 @@ static size_t pool_add(const void *p, size_t n) {
     return at;
 }
 
-static bool scan_keep(void *ctx, const HolScanRecord *r) {
-    (void)ctx;
+/* The records are read in bulk: the items of whole records (rc_list_items, in pre-order), each record
+ * BRecord OPCODE OPERANDS, an operand BWord N | BBytes S | BWords (WordsCons N ...) | BPairs (PairsCons
+ * (BPair N M) ...), in the order of the record's schema. */
+static RcItem *items;
+static size_t items_cap;
+/* a list of numbers (words) or of pairs, flattened, appended to the pool */
+static uint64_t *lst;
+static size_t lst_cap;
+static void lst_put(size_t i, uint64_t v) {
+    if (i == lst_cap) { lst_cap = lst_cap ? 2 * lst_cap : 64; lst = realloc(lst, lst_cap * sizeof *lst); if (!lst) exit(3); }
+    lst[i] = v;
+}
+/* one record from the items at *pi; false if they are not a record of this shape */
+static bool keep_record(const RcItem *it, size_t n, size_t *pi) {
+    size_t i = *pi;
+    #define ITEM(c) (i < n && it[i].ctor == (c))
+    if (!ITEM(RK_record)) return false;
+    i++;
+    if (!ITEM(-1) || it[i].v > 0xff) return false;
     if (nrecs == reccap) { reccap = reccap ? 2 * reccap : 1024; recs = realloc(recs, reccap * sizeof(Rec)); if (!recs) exit(3); }
-    Rec *x = &recs[nrecs++];
-    x->op = r->opcode;
-    for (int i = 0; i < 4; i++) x->f[i] = r->fixed[i];
-    x->nl = (uint32_t)r->nlist;
-    x->list = pool_add(r->list, r->nlist * sizeof(uint64_t));
-    x->nb = (uint32_t)r->nbytes;
-    x->bytes = pool_add(r->bytes, r->nbytes);
+    Rec *x = &recs[nrecs];
+    memset(x, 0, sizeof *x);
+    x->op = (uint8_t)it[i++].v;
+    unsigned nf = 0;
+    while (!ITEM(RK_onil)) {
+        if (!ITEM(RK_ocons)) return false;
+        i++;
+        if (ITEM(RK_word)) {
+            i++;
+            if (!ITEM(-1) || nf == 4) return false;
+            x->f[nf++] = it[i++].v;
+        } else if (ITEM(RK_bytes)) {
+            i++;
+            if (!ITEM(-2)) return false;
+            x->nb = it[i].n;
+            x->bytes = pool_add(it[i].p, it[i].n);
+            i++;
+        } else if (ITEM(RK_words)) {
+            i++;
+            size_t m = 0;
+            while (ITEM(RK_wcons)) {
+                i++;
+                if (!ITEM(-1)) return false;
+                lst_put(m++, it[i++].v);
+            }
+            if (!ITEM(RK_wnil)) return false;
+            i++;
+            x->nl = (uint32_t)m;
+            x->list = pool_add(lst, m * sizeof(uint64_t));
+        } else if (ITEM(RK_pairs)) {
+            i++;
+            size_t m = 0;
+            while (ITEM(RK_pcons)) {
+                i++;
+                if (!ITEM(RK_pair)) return false;
+                i++;
+                if (!ITEM(-1)) return false;
+                lst_put(m++, it[i++].v);
+                if (!ITEM(-1)) return false;
+                lst_put(m++, it[i++].v);
+            }
+            if (!ITEM(RK_pnil)) return false;
+            i++;
+            x->nl = (uint32_t)m;
+            x->list = pool_add(lst, m * sizeof(uint64_t));
+        } else return false;
+    }
+    i++;
+    #undef ITEM
+    nrecs++;
+    *pi = i;
     return true;
+}
+/* every record of a list of records; false if one is not a record */
+static bool keep_records(T *list) {
+    if (!items) { items_cap = 4096; items = malloc(items_cap * sizeof *items); if (!items) exit(3); }
+    T *cursor = list;
+    for (;;) {
+        size_t n = R->list_items(RS_records, &cursor, items, items_cap);
+        if (!n) {
+            T *k[2];
+            int c = R->view(RS_records, cursor, k);
+            if (c == RK_rnil) return true;
+            if (c != RK_rcons) return false;
+            /* the next record does not fit: a larger buffer */
+            items_cap *= 2;
+            items = realloc(items, items_cap * sizeof *items);
+            if (!items) exit(3);
+            continue;
+        }
+        for (size_t i = 0; i < n;) if (!keep_record(items, n, &i)) return false;
+    }
+}
+/* the reader's numbers: a header field is below 2^62 (the reader refuses longer integers) */
+static uint64_t reader_u64(int sort, T *x) {
+    uint64_t v;
+    if (!R->value_u64(sort, x, &v)) { fputs("holr_bridge: a number of the stream reader above 2^64\n", stderr); exit(3); }
+    return v;
 }
 
 size_t holr_bridge_records(void) { return nrecs; }
@@ -295,39 +289,49 @@ T *rc_record_term(uint64_t i) {
     }
 }
 
-static int terminal_ctor(HolReason why) {
-    switch (why) {
-    case HOL_R_STREAM_MAGIC: return C_hl_bad_magic;
-    case HOL_R_STREAM_VERSION: return C_hl_bad_version;
-    case HOL_R_STREAM_HEADER: return C_hl_bad_header;
-    case HOL_R_STREAM_TRUNCATED: return C_hl_truncated;
-    case HOL_R_STREAM_INTEGER: return C_hl_bad_integer;
-    case HOL_R_STREAM_OPCODE: return C_hl_bad_opcode;
-    case HOL_R_STREAM_TRAILING: return C_hl_trailing_bytes;
-    case HOL_R_STREAM_CHECKSUM: return C_hl_checksum_mismatch;
-    case HOL_R_STREAM_COUNT: return C_hl_count_mismatch;
-    case HOL_R_STREAM_LIMIT: return C_hl_limit_exceeded;
-    case HOL_R_STREAM_MISSING_END: return C_hl_missing_end;
-    case HOL_R_NOMEM: return C_hl_decoder_out_of_memory;
-    default: return C_hl_decoder_other;
-    }
+/* a refusal reason of the reader as the module's terminal constructor */
+static int reason_terminal(T *reason) {
+    int c = R->view(RS_reason, reason, NULL);
+    for (int i = 0; i < NREASONS; i++) if (reason_ctor[i] == c) return reason_map[i].terminal;
+    return C_hl_decoder_other;
 }
 
+/* The reader's value for the stream (ReadHOLRPrefix): HOLRDecoded HEADER RECORDS TERMINAL, the records
+ * decoded before the end or the first fault and how the stream ended; HOLRMalformed REASON when the
+ * header is refused; NeedInput when the stream ends inside the header. */
 T *holr_bridge_decode(const uint8_t *bytes, size_t len) {
-    if (rep_holname || rep_holterm) holr_store_begin();
+    holr_store_begin();
     nrecs = 0;
     pool_len = 0;
-    HolScanHeader hdr;
-    memset(&hdr, 0, sizeof hdr);
-    HolReason why = HOL_R_NONE;
-    HolReplayState st = hol_stream_scan(bytes, len, &hdr, scan_keep, NULL, &why);
+    bool decoded = false;
+    uint64_t policy = 0, flags = 0;
+    int terminal = C_hl_decoder_other;   /* a value the reader does not give: no end of its own */
+    bool end_ok = false;
+    R->run_begin();
+    T *in = R->bytes_input(bytes, len);
+    T *v = in ? R->call(RK_read, &in) : NULL;
+    T *k[4], *h[5], *t[1];
+    int c = v ? R->view(RS_state, v, k) : -1;
+    if (c == RK_decoded && R->view(RS_header, k[0], h) == RK_header) {
+        decoded = true;
+        policy = reader_u64(RS_nat, h[3]);
+        flags = reader_u64(RS_nat, h[4]);
+        bool records_ok = keep_records(k[1]);
+        int e = R->view(RS_terminal, k[2], t);
+        if (!records_ok) terminal = C_hl_decoder_other;
+        else if (e == RK_ok) end_ok = true;
+        else if (e == RK_error) terminal = reason_terminal(t[0]);
+        else if (e == RK_incomplete) terminal = C_hl_truncated;
+    } else if (c == RK_malformed) terminal = reason_terminal(k[0]);
+    else if (c == RK_need) terminal = C_hl_truncated;
+    R->run_end();
     rc_record_count = nrecs;
-    T *header = hdr.header_len == 0 && st != HOL_REPLAY_ACCEPTED
+    T *header = !decoded
         ? NUL(C_hl_header_malformed)
-        : rc_mk2(C_hl_header, NUL(hdr.policy == HOL_AXIOMS_OPEN ? C_hl_open : hdr.policy == HOL_AXIOMS_STANDARD ? C_hl_standard : C_hl_sealed),
-                 NUL((hdr.flags & HOLR_FLAG_PROBE) ? C_hl_probe : C_hl_strict));
-    T *terminal = st == HOL_REPLAY_ACCEPTED ? NUL(C_hl_end_ok) : rc_mk1(C_hl_end_malformed, NUL(terminal_ctor(why)));
-    return rc_mk3(C_hl_decoded, RC_IMM(0), header, terminal);
+        : rc_mk2(C_hl_header, NUL(policy == HOL_AXIOMS_OPEN ? C_hl_open : policy == HOL_AXIOMS_STANDARD ? C_hl_standard : C_hl_sealed),
+                 NUL((flags & HOLR_FLAG_PROBE) ? C_hl_probe : C_hl_strict));
+    T *term = end_ok ? NUL(C_hl_end_ok) : rc_mk1(C_hl_end_malformed, NUL(terminal));
+    return rc_mk3(C_hl_decoded, RC_IMM(0), header, term);
 }
 
 T *holr_bridge_policy(HolAxiomPolicy p) {
@@ -337,89 +341,4 @@ T *holr_bridge_policy(HolAxiomPolicy p) {
 T *holr_bridge_check(T *host, T *decoded) {
     T *args[2] = {host, decoded};
     return rc_call(C_hl_check, args);
-}
-
-/* ---------------------------------------------------------------------- text */
-void hb_put(HbText *b, const char *s, size_t n) {
-    if (b->n + n + 1 > b->cap) {
-        b->cap = (b->n + n + 1) * 2;
-        b->s = realloc(b->s, b->cap);
-        if (!b->s) { fputs("holr_bridge: out of memory\n", stderr); exit(3); }
-    }
-    memcpy(b->s + b->n, s, n);
-    b->n += n;
-    b->s[b->n] = 0;
-}
-void hb_puts(HbText *b, const char *s) { hb_put(b, s, strlen(s)); }
-void hb_nat_text(HbText *b, uint64_t v) {
-    int bits[64], n = 0;
-    while (v) { bits[n++] = (int)(v & 1); v >>= 1; }
-    for (int i = 0; i < n; i++) hb_puts(b, bits[i] ? "(hl:nb1 " : "(hl:nb0 ");
-    hb_puts(b, "(hl:nz)");
-    for (int i = 0; i < n; i++) hb_puts(b, ")");
-}
-void hb_str_text(HbText *b, const uint8_t *p, size_t n) {
-    static const char hexd[] = "0123456789abcdef";
-    char tmp[64];
-    for (size_t i = 0; i < n; i++) {
-        snprintf(tmp, sizeof tmp, "(hl:ncons (hl:byte (hl:x%c) (hl:x%c)) ", hexd[p[i] >> 4], hexd[p[i] & 15]);
-        hb_puts(b, tmp);
-    }
-    hb_puts(b, "(hl:nnil)");
-    for (size_t i = 0; i < n; i++) hb_puts(b, ")");
-}
-static void hb_name_text(HbText *b, HolName n) {
-    const HolNameRec *r = &holr_k->names[n];
-    hb_str_text(b, (const uint8_t *)r->bytes, r->len);
-}
-static void hb_native_type(HbText *b, const HolType *t) {
-    if (t->kind == HOL_TY_VAR) { hb_puts(b, "(hl:Tyvar "); hb_name_text(b, t->name); hb_puts(b, ")"); return; }
-    hb_puts(b, "(hl:Tyapp "); hb_name_text(b, t->name); hb_puts(b, " ");
-    for (uint32_t i = 0; i < t->nargs; i++) { hb_puts(b, "(hl:tycons "); hb_native_type(b, t->args[i]); hb_puts(b, " "); }
-    hb_puts(b, "(hl:tynil)");
-    for (uint32_t i = 0; i < t->nargs; i++) hb_puts(b, ")");
-    hb_puts(b, ")");
-}
-static void hb_native_term(HbText *b, const HolTerm *t) {
-    switch (t->kind) {
-    case HOL_TM_VAR: case HOL_TM_CONST:
-        hb_puts(b, t->kind == HOL_TM_VAR ? "(hl:Var " : "(hl:Const "); hb_name_text(b, t->u.leaf.name);
-        hb_puts(b, " "); hb_native_type(b, t->type); hb_puts(b, ")");
-        return;
-    default:
-        hb_puts(b, t->kind == HOL_TM_COMB ? "(hl:Comb " : "(hl:Abs ");
-        hb_native_term(b, t->u.node.l); hb_puts(b, " "); hb_native_term(b, t->u.node.r); hb_puts(b, ")");
-        return;
-    }
-}
-static void hb_native_thm(HbText *b, const HolThm *th) {
-    hb_puts(b, "(hl:Sequent ");
-    for (uint32_t i = 0; i < th->nhyps; i++) { hb_puts(b, "(hl:tmcons "); hb_native_term(b, th->hyps[i]); hb_puts(b, " "); }
-    hb_puts(b, "(hl:tmnil)");
-    for (uint32_t i = 0; i < th->nhyps; i++) hb_puts(b, ")");
-    hb_puts(b, " "); hb_native_term(b, th->concl); hb_puts(b, ")");
-}
-void hb_term_text(HbText *b, const T *t, int sort) {
-    if (RC_IS_FOREIGN(t)) {
-        unsigned tag = RC_FOREIGN_TAG(t);
-        if (tag == 2) hb_native_term(b, (const HolTerm *)RC_FOREIGN_PTR(t));
-        else if (tag == 4) hb_native_type(b, (const HolType *)RC_FOREIGN_PTR(t));
-        else if (tag == 6) hb_native_thm(b, (const HolThm *)RC_FOREIGN_PTR(t));
-        else hb_puts(b, "(holr-bridge:foreign)");
-        return;
-    }
-    if (RC_IS_IMM(t)) {
-        if (sort == S_Nat) { hb_nat_text(b, RC_IMM_VAL(t)); return; }
-        if (sort == S_Str && rep_holname) { hb_name_text(b, (HolName)RC_IMM_VAL(t)); return; }
-        hb_puts(b, "(holr-bridge:immediate)");
-        return;
-    }
-    if (t->flags & RC_FLAG_BYTES) { hb_str_text(b, rc_bytes(t), t->n); return; }
-    hb_puts(b, "(");
-    hb_puts(b, rc_ctor_name[t->tag]);
-    for (uint32_t i = 0; i < t->n; i++) {
-        hb_puts(b, " ");
-        hb_term_text(b, t->k[i], rc_ctor_asort[rc_ctor_asort_off[t->tag] + i]);
-    }
-    hb_puts(b, ")");
 }

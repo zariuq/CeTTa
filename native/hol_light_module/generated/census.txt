@@ -6,9 +6,10 @@ judgments det 209 (519 rules), semidet 109 (273 rules); groups covering every in
 share of rules in det judgments: 65.5%; judgments whose determinism is not established (an overlap not shown exclusive): 0 (0 rules)
 premises with a refutable target (a constructor pattern or a bound variable that can fail): 24 of 865
 premise targets that test a variable already bound (an equality test): 0
-overlapping left sides in one judgment: 0 pairs; shown exclusive by their premises: 0; not shown: 0
+overlapping left sides in one judgment: 0 pairs; shown exclusive by their premises: 0 (by lockstep targets 0, by evaluated guards 0); not shown: 0
 relation premises (queries of the module's relations): 0, of which 0 bind a variable; judgments with one that binds (possibly several answers): 0
 rules whose last premise is a tail call: 264; recursive judgments (self or mutual): 117
+rules in functional form (calls nested in a right side or a premise's arguments, read call by value): 0, their calls made premises: 0
 
 layer        rules  judgments  det-judgments
 data           102         50             50
@@ -91,46 +92,37 @@ judgments whose arguments are names or numerals only (candidates for native prim
   hl:str-eq                    names       1 rules  (det)
 
 justified blocks (the judgment's rules are the contract):
-  block                  judgment                   rules  label    justification
-  name equality          hl:str-eq                      1  proved   strEq_binding, names_eq_iff: interned names have equal bytes exactly when they are the same id; strEq_refines
-  name order             hl:cmp-str                     4  proved   cmpStr_refines, nativeCmp_eq_memcmp; names_eq_iff (id to bytes); trusted: hk_name_cmp is memcmp of the common prefix then the lengths, and C memcmp compares unsigned
-  name prime             hl:str-prime                   2  proved   strPrime_refines; names_eq_iff (id to bytes); trusted: hk_name_prime interns the bytes followed by 0x27
-  numeral order          hl:cmp-nat                     9  proved   cmpNat_refines; trusted: the comparison of uint64_t
-  numeral successor      hl:nat-inc                     3  proved   natInc_refines; checked at run time: the immediate range
-  type equality          hl:ty-eq                       1  proved   tyEq_binding: in an interning store ty-eq of two read-backs answers yes exactly when they are one node (interning_eq_iff, cmpType_eq_iff)
-  term equality          hl:tm-eq                       1  proved   tmEq_binding: in an interning store tm-eq of two read-backs answers yes exactly when they are one node (interning_eq_iff, cmpTerm_eq_iff)
-  type order             hl:cmp-type                    4  checked  hk_ty_compare: OCaml compare on hol_type
-  term order             hl:cmp-term                   16  checked  hk_tm_compare: OCaml compare on term
-  alphaorder             hl:alphaorder                  1  checked  hk_alphaorder: fusion.ml orda/ordav
-  type_of                hl:type-of                     4  checked  the type each native term records at construction
-  mk_comb                hl:mk-comb                     1  checked  hk_tm_comb; refusal mapped to tm-fail(mk_comb: types do not agree)
-  mk_abs                 hl:mk-abs                      4  checked  hk_tm_abs; refusal mapped to tm-fail(mk_abs: not a variable)
-  safe_mk_eq             hl:safe-mk-eq                  1  checked  hk_tm_eq
-  frees                  hl:frees                       4  checked  hk_frees_exact (fusion.ml's order)
-  freesin                hl:freesin                     4  checked  hk_freesin
-  vfree_in               hl:vfree-in                    4  checked  hk_vfree_in
-  type_vars_in_term      hl:type-vars-in-term           4  checked  hk_type_vars_in_term_exact (fusion.ml's order)
-  tyvars                 hl:tyvars                      2  checked  hk_tyvars_exact (fusion.ml's order)
-  variant                hl:variant                     1  checked  hk_variant
-  vsubst                 hl:vsubst                      2  checked  hk_vsubst; Bad substitution list mapped to vs-bad
-  vsubst recursion       hl:vsubst-rec                  4  checked  hk_vsubst on a list that passes vsubst's check, which the rules make first; a list that fails it stops the run
-  inst                   hl:inst                        2  checked  hk_inst
-  type_subst             hl:type-subst                  2  checked  hk_type_subst
-  term_union             hl:term-union                  3  checked  fusion.ml's term_union over hk_alphaorder
-  term_remove            hl:term-remove                 2  checked  fusion.ml's term_remove over hk_alphaorder
-  term_image vsubst      hl:term-image-vsubst           2  checked  fusion.ml's term_image over hk_vsubst and term_union
-  term_image inst        hl:term-image-inst             2  checked  fusion.ml's term_image over hk_inst and term_union
-  table lookup           hl:table-get                   1  proved   tableGet_readback: table-get on the read-back gives the stored cell, c-none where none; trusted: the array code is the model NTable; checked at run time: no table value is used after its update
-  table append           hl:table-put                   1  proved   tablePut_readback: table-put on the read-back is the read-back of the store at next and next + 1; trusted: the array code is the model NTable; checked at run time: no table value is used after its update
-  table update           hl:table-set                   1  proved   tableSet_readback: table-set on the read-back is the read-back of the store at the id; trusted: the array code is the model NTable; checked at run time: no table value is used after its update
-  table size             hl:table-next                  1  proved   tableNext_readback; trusted: the array code is the model NTable; checked at run time: no table value is used after its update
-  empty table            hl:empty-table                 1  proved   emptyTable_readback; trusted: the array code is the model NTable; checked at run time: no table value is used after its update
-  type list order, reflexive hl:cmp-types                   4  proved   law hl:cmp-types(x, x) = hl:eq; cmpTypes_refl, fastPath_sound
+  block                  judgment                   rules  label    implementation                 justification
+  name equality          hl:str-eq                      1  proved   (equal hl:yes hl:no)           strEq_binding, names_eq_iff: interned byte strings have equal bytes exactly when they are one node; strEq_refines
+  name order             hl:cmp-str                     4  proved   (bytes-order hl:lt hl:eq hl:gt) cmpStr_refines, nativeCmp_eq_memcmp: the rules' order is the unsigned byte order, a proper prefix first; trusted: C memcmp compares unsigned
+  name prime             hl:str-prime                   2  proved   (bytes-snoc 27)                strPrime_refines: the rules append the byte 0x27
+  numeral order          hl:cmp-nat                     9  proved   (nat-order hl:lt hl:eq hl:gt)  cmpNat_refines; trusted: the comparison of uint64_t
+  numeral successor      hl:nat-inc                     3  proved   (nat-succ)                     natInc_refines; checked at run time: the immediate range
+  type equality          hl:ty-eq                       1  proved   (equal hl:yes hl:no)           tyEq_binding: in an interning store ty-eq of two read-backs answers yes exactly when they are one node (interning_eq_iff, cmpType_eq_iff)
+  term equality          hl:tm-eq                       1  proved   (equal hl:yes hl:no)           tmEq_binding: in an interning store tm-eq of two read-backs answers yes exactly when they are one node (interning_eq_iff, cmpTerm_eq_iff)
+  type order             hl:cmp-type                    4  proved   (structural-order hl:lt hl:eq hl:gt) structuralOrder_cmpType, rcOrderCmp_cmpType: the structural order on interned types is cmp-type; trusted: rc_order.c is the model
+  term order             hl:cmp-term                   16  proved   (structural-order hl:lt hl:eq hl:gt) structuralOrder_cmpTerm, rcOrderCmp_cmpTerm: the structural order on interned terms is cmp-term; trusted: rc_order.c is the model
+  term_union             hl:term-union                  3  proved   (set-union hl:alphaorder hl:lt hl:eq hl:gt) setUnion_eq_termUnion, for every comparator (here the module's alphaorder, compiled); trusted: rc_set.c is the model
+  term_remove            hl:term-remove                 2  proved   (set-remove hl:alphaorder hl:lt hl:eq hl:gt) setRemove_eq_termRemove, for every comparator; trusted: rc_set.c is the model
+  table lookup           hl:table-get                   1  proved   (table-get)                    tableGet_readback; trusted: the array code is the model NTable; checked at run time: no table value is used after its update
+  table append           hl:table-put                   1  proved   (table-put)                    tablePut_readback; trusted: the array code is the model NTable; checked at run time: no table value is used after its update
+  table update           hl:table-set                   1  proved   (table-set)                    tableSet_readback; trusted: the array code is the model NTable; checked at run time: no table value is used after its update
+  table size             hl:table-next                  1  proved   (table-next)                   tableNext_readback; trusted: the array code is the model NTable
+  empty table            hl:empty-table                 1  proved   (table-empty)                  emptyTable_readback; trusted: the array code is the model NTable
+  type_of                hl:type-of                     4  proved   (memo)                         type-of is a function of an interned term: memo_sound, memo2_sound; trusted: rc_memo.c is the model, cleared before every collection
+  alphaorder             hl:alphaorder                  1  proved   (memo)                         alphaorder is a function of two interned terms: memo_sound, memo2_sound; trusted: rc_memo.c is the model, cleared before every collection
+  inst                   hl:inst                        2  proved   (memo)                         inst is a function of an interned instantiation and an interned term: memo_sound, memo2_sound; trusted: rc_memo.c is the model, cleared before every collection
+  vsubst recursion       hl:vsubst-rec                  4  proved   (memo)                         vsubst-rec is a function of an interned substitution and an interned term: memo_sound, memo2_sound; trusted: rc_memo.c is the model, cleared before every collection
+  type_subst             hl:type-subst                  2  proved   (memo)                         type_subst is a function of an interned instantiation and an interned type: memo_sound, memo2_sound; trusted: rc_memo.c is the model, cleared before every collection
   term list equality, reflexive hl:tms-eq                      4  proved   law hl:tms-eq(x, x) = hl:yes; tmsEq_refl, fastPath_sound
-sorts with a native representation: 6
-  Str        holname
+sorts with a native representation: 10
+  Str        bytes
   Nat        nat
-  Type       holtype
-  Term       holterm
-  Table      holtable
+  Type       intern
+  Tys        intern
+  Term       intern
+  Tms        intern
+  TyPairs    intern
+  TmPairs    intern
+  Table      table
   Records    records

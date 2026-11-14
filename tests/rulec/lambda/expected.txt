@@ -1,0 +1,42 @@
+norm 10 (\x. x) y
+  => 1 steps: y
+norm 10 (\x. \y. x) a b
+  => 2 steps: a
+norm 10 (\x. \y. x) y
+  => 1 steps: (\y'. y)
+norm 10 (\x. \y. \y'. x y y') y
+  => 1 steps: (\y'. (\y''. ((y y') y'')))
+norm 10 (\x. \x. x) a
+  => 1 steps: (\x. x)
+norm 20 (\x. \y. x) (\z. z) ((\w. w w) (\w. w w))
+  => 2 steps: (\z. z)
+norm 5 (\w. w w) (\w. w w)
+  => out of steps: ((\w. (w w)) (\w. (w w)))
+norm 50 (\m. \n. \f. \x. m f (n f x)) (\f. \x. f (f x)) (\f. \x. f (f x))
+  => 6 steps: (\f. (\x. (f (f (f (f x))))))
+norm 100 (\m. \n. \f. m (n f)) (\f. \x. f (f x)) (\f. \x. f (f (f x)))
+  => 7 steps: (\f. (\x. (f (f (f (f (f (f x))))))))
+norm 20 (\x. \y. \z. x z (y z)) (\x. \y. x) (\x. \y. x)
+  => 4 steps: (\z. z)
+norm 20 \y. (\x. \y. x y) y
+  => 1 steps: (\y. (\y'. (y y')))
+alpha \x. x ; \y. y
+  => yes
+alpha \x. \y. x ; \y. \x. y
+  => yes
+alpha \x. \y. x ; \x. \y. y
+  => no
+alpha \x. y ; \z. y
+  => yes
+alpha \x. y ; \y. y
+  => no
+alpha x ; y
+  => no
+alpha (\x. x) z ; (\y. y) z
+  => yes
+fv \x. x y z
+  => y z
+fv (\x. x) (\y. x y)
+  => x
+fv a (b c) (\a. a d)
+  => a b c d

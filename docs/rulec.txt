@@ -1,0 +1,317 @@
+rulec: compiling rule modules to C through generic components
+===========================================================
+
+rulec reads a rule module (the core rows that CeTTa's module reader prints: TypeDecl,
+GrammarRuleV2, ScopedRewriteRuleV1) and compiles every judgment of the module into a C procedure.
+The module stays the specification.  A binding table may give sorts a native representation and
+may answer judgments by generic components; the rules of every bound judgment stay compiled, as
+the contract, the check, and what another back end can compile instead.
+
+This file describes the IR, the checks, modes, decision DAGs, the C back end, representations,
+the component library and the binding table.  Sources: tools/rulec/compiler (the compiler, one file
+per stage), tools/rulec (the validator, the trace checker, the front end), native/rule_runtime (the
+runtime), native/rule_components (the component library).
+
+
+1. Input and the rule IR
+------------------------
+
+The wire is the module's core rows, printed by tools/rulec/dump_wire.metta with CeTTa's own module
+reader.  rulec builds two layers:
+
+  signature   sorts; constructors with argument sorts and a result sort.
+  procedures  every symbol that heads a left side is a judgment; its rules are its dispatch group.
+              A rule is   "label". vars | premises |- J(patterns) ~> right side ;
+              a premise is a call  K(arguments) ~> target, or a query  R(arguments)  of a
+              relation whose rows the host supplies.
+
+Functional form.  A right side (or a premise's argument) may contain calls: (J (K x) y) ~> (L (M z)).
+rulec reads them call by value, as premises in A-normal form: every nested call becomes a premise
+with a fresh variable as its target, innermost first, left to right, a premise's arguments before
+the premise, the right side's calls after all written premises (census: "rules in functional
+form").  A row repeated identically (as joined theories give) is read once; a different repeat stops.
+
+Checks (any failure stops the build): constructors declared, arities, variables declared, sides
+and premises well sorted, no judgment inside a pattern, linear left sides, premise sources and
+right sides bound, premise targets fresh or equality tests, every overlap resolved (below).
+
+Overlaps.  Two rules of one judgment overlap when their left sides unify.  Rule order and priority
+are never used; each overlapping pair gets a class, listed in the census:
+  exclusive-by-targets   walked in lockstep under the unifier of the left sides, the premises call
+                         one single-valued judgment on the same arguments and the targets clash
+                         (single-valued: every judgment, by induction on derivations, once every
+                         overlap is resolved and no relation query binds a variable);
+  exclusive-by-evaluated-guards
+                         the premises of both rules, evaluated under the unifier, cannot all hold:
+                         a call has no result, or its value clashes with its target.  A call's
+                         value is what every rule that may apply to it gives (its premises
+                         evaluated the same way); unknown when they differ, when a rule's result
+                         keeps a variable of its own, or at a bound on depth and work;
+  unresolved             neither: the build stops.
+Relations (several answers) are a rule with a relation query that binds a variable; such a query is
+not compiled yet (a query with every argument bound is a test, compiled).
+
+Modes and determinism.  Every judgment is used in the mode (in, ..., in) -> out.  A judgment is
+det when its group covers every input and every premise calls a det judgment with a target that
+cannot fail (greatest fixpoint); otherwise semidet (at most one result: every overlap resolved).
+The census (--census) lists each judgment's rules, class, coverage, DAG size and layer.
+
+
+2. Decision DAGs and the validator
+----------------------------------
+
+A dispatch group is compiled as a pattern matrix, column by column: specialise by constructor,
+keep the default matrix, share identical nodes (hash-consing).  At a leaf that several overlapping
+rules reach, a rule whose premises cannot hold for any input on the path (evaluated on the
+constructors the path tested) is excluded there, "(excluded ...)" in the DAG; the rules left are
+pairwise exclusive.  The DAG is written as data (--dag).  rulec_validate is separate code: it
+enumerates every path of every DAG and checks that each switch is exhaustive, that a leaf's rules
+match every input reaching it, that every other rule's left side is contradicted by the path or
+its premises are excluded on the path, that the rules of a shared leaf are pairwise exclusive, and
+that every rule is reached; its evaluation of premises is its own.  It also parses the generated C
+and checks every switch line, rule block and trial block against the DAG.
+
+
+3. The C back end
+-----------------
+
+One procedure per judgment: the DAG as switches on constructor tags, then the chosen rule's
+premises in written order, each target matched, the right side built.  A last premise whose target
+is the right side is a tail call, guaranteed (musttail) where it may recur (the callee in the
+caller's component of the call graph) or enters or leaves the safepoint; elsewhere the C compiler may
+inline the callee.  A call with no rule, or a target that does
+not match, fails (no result): the relational reading of the rules.  A leaf with several (pairwise
+exclusive) rules tries them in turn, a failure moving on to the next; a first premise that is the
+same call in all of them is made once; only the last may tail call.  A relation query with every
+argument bound calls the host (rc_relation_hook; no host, no rows).
+
+Runtime (rc_rt.h).  A heap term is a header and its children; a nullary constructor one static
+header.  Allocation bumps a pointer.  At the safepoint judgment (--safepoint J: the entry of a fold,
+reached by tail calls only, which rulec checks) the young terms reachable from J's arguments are
+copied to an old space, and the old space is copied when it has doubled.  The young space's chunks
+are kept from run to run up to a bound (rc_runtime_retain; 256 MiB unless the host sets another), so
+a run that fills as much as an earlier one writes memory already mapped.  Values outside the heap
+are immediates (low bit set) and foreign pointers (tagged 2, 4, 6) of a native store, which the
+copying collector neither moves nor scans.
+
+Constants (--cache-constants): a judgment of no arguments is evaluated once, made static, and so
+is a ground term of a right side or of a call's arguments (no variable, at least one child; only
+sorts whose values never change); both are kept until the interning store is freed.  A constant
+that is itself an interned node is a root of the store.
+
+Values already held are not built again: a subterm of a right side (or of a call's arguments) equal
+to a subpattern of the left side, or of an earlier premise's target, is that matched value (not for
+tables and external representations).  A judgment answered by a block is inlined where it is called
+(outside check mode).
+
+Trace (rc_trace_*): one 16-bit event per rule application in pre-order of the derivation, plus
+  0xE000+j  constant judgment j            0xE800+j  memoised judgment j answered from its table
+  0xF000+k  block k (in table order)       0xF800+k  law k
+  0xFFFC    a relation query found no row  0xFFFD    no rule
+  0xFFFE    a target did not match         0xFFFF    a safepoint (a record)
+A block, a law, a constant and a kept result are one event each (their own derivations, if any,
+are not recorded there).  At a leaf with several rules, the rule event is reserved when the trial
+starts and filled with the rule that applied; a failed candidate's events are dropped (the buffer
+grows instead of flushing while a trial is open), so a trace stays a derivation.  rulec_tracecheck reads the module's rows and the block and law lists and
+checks that a trace is a derivation.
+
+
+4. Representations
+------------------
+
+A sort is symbolic (heap terms) unless the binding table gives it a representation.  The generated
+code reads and builds a represented sort only through its views: RC_TAG_<rep>(x) (the constructor
+id), RC_KID_<rep>(x, i), RC_NUL_<rep>(c), RC_MK<n>_<rep>(c, ...).  Kinds:
+
+  records NIL CONS          the record cursor: an index into records a host decoded, read as a
+                            list; a record's term is built when the module reaches it
+  nat ZERO B0 B1            binary numerals (ZERO; B0 m = 2m, m > 0; B1 m = 2m + 1) as immediates
+  unary ZERO SUCC           unary numerals (ZERO; SUCC m = m + 1) as immediates
+  str NIL CONS BYTE NIB     strings spelled as byte lists, as heap byte strings
+  bytes NIL CONS BYTE NIB   the same, interned (rc_bytes.h)
+  intern                    hash-consed constructor nodes (rc_intern.h); every child sort must be
+                            interned, immediate or nullary-only, which rulec checks
+  array-table TABLE LEAF NODE NONE
+                            id tables TABLE next trie (a binary trie of cells keyed by the id's
+                            digits) as arrays updated in place (rc_table.h)
+  ext NAME CTOR...          views from a header given with --rep-header
+  word CTOR BIT0 BIT1       words of bits as immediates: the sort's one constructor CTOR of w
+                            children (1 <= w <= 62) of a bit sort whose only constructors are the
+                            nullary BIT0, BIT1; the first child is the most significant bit
+  binary ZERO BIT BIT0 BIT1 binary numerals least significant bit first (ZERO; BIT b m = 2m + b)
+                            as naturals of any size (rc_bignat.h); BIT BIT0 ZERO is not canonical
+                            and stops the run
+  slices NIL CONS           byte strings whose bytes are a word sort of eight bits: a slice of the
+                            run's input (an immediate start << 31 | end) or an interned string
+                            (rc_slices.h); the input is given with rc_bytes_input; one such sort per
+                            module; never compared by identity, never held across calls
+
+The per-sort kinds (word, binary, slices) name their views after the sort (RC_TAG_word_<sort id>...).
+
+Hosts build and read module data through the generated
+  T *rc_construct(int ctor, T *const *kids);   int rc_view(int sort, T *x, T **kids);
+  bool rc_value_equal(int sort, T *a, T *b);   (equality as module data, through the views)
+  bool rc_value_u64(int sort, T *x, uint64_t *v);   (a number of a word or natural sort)
+  bool rc_value_bytes(int sort, T *x, const uint8_t **p, size_t *n);   (a byte string's content)
+  size_t rc_value_items(int sort, T *x, RcItem *buf, size_t cap);   (a value's items in pre-order)
+  size_t rc_list_items(int sort, T **cursor, RcItem *buf, size_t cap);   (whole list elements' items)
+which use each sort's representation, so one host works with every build of a module.  An item is
+a constructor (followed by its children's items), a number or a byte string; one walker per sort,
+through the sort's own views, reads values in bulk without a call per node.
+
+
+5. The component library
+------------------------
+
+Generic C, one header per component stating its contract and label; parameterised by tables rulec
+generates from the signature (constructor ranks, argument sorts, order kinds) and by the
+parameters of a binding row (constructor ids).  Nothing in it depends on a particular module.
+
+  rc_intern   the interning store: nodes (constructor + children) and byte strings, equal contents
+              give one node; non-moving; collected (mark from the module's live values, sweep) at
+              the safepoint when it has grown by its live size (at least 64 MiB); kept from run to
+              run, collected at a run's end when above 64 MiB.
+  rc_bytes    byte strings: the nibble-pair view, unsigned byte order (a prefix first), append.
+  rc_nat      naturals as immediates: order, successor (a value past the immediate range stops
+              the run).
+  rc_order    the structural order of interned values: constructor rank, then the children in
+              order, each by its sort's order (structural, bytes, numeric).
+  rc_memo     memo tables for judgments of interned/immediate arguments: two generations, cleared
+              before every collection of the store; in front of them, per memoised judgment, a
+              direct-mapped cache of 256 entries of the current generation (rc_memo_gen).
+  rc_set      ordered sets as interned lists over a comparator judgment: union (keep the first of
+              two equal heads, share the rest) and remove.
+  rc_table    id tables as arrays: get, put, set, next, empty; a table value names an array and
+              its version, only the current version is accepted (a use after an update stops the
+              run); cells are roots of the copying collector.
+  rc_bignat   naturals of any size: immediates below 2^62, interned little-endian magnitudes above
+              (one value per number, so equal numbers are one word); order, successor, predecessor,
+              sum, difference (0 below 0), product, exclusive or, low bits, packing; a number above
+              2^20 bits stops the run.
+  rc_slices   byte strings as slices of the run's input or interned strings: the view moves a slice
+              (no copy), cons extends a slice backward when the input's previous byte is the one
+              added, take and drop cut slices; equality by content.
+
+A refinement violation (a value a representation cannot hold, a table used after its update, a
+store out of memory) goes to rc_fail_hook when a host sets one (CeTTa answers an error value), and
+otherwise stops the process with status 5.  It is never a silent difference.
+
+
+6. The binding table
+--------------------
+
+rulec --bindings FILE.  One row per line, S-expressions:
+
+  (rep SORT KIND PARAM...)
+  (block NAME JUDGMENT COMPONENT LABEL JUSTIFICATION)
+  (memo NAME JUDGMENT LABEL JUSTIFICATION)
+  (law NAME JUDGMENT RESULT LABEL JUSTIFICATION)
+
+COMPONENT is one of
+  (equal YES NO)               J(a, b): YES exactly when a and b are the same value (interned,
+                               immediate)
+  (bytes-order LT EQ GT)       rc_bytes_cmp          (bytes-snoc HEX)   append the bytes HEX
+  (nat-order LT EQ GT)         rc_nat_cmp            (nat-succ)         rc_nat_succ
+  (nat-add)                    rc_nat_add (binary or unary naturals as immediates)
+  (structural-order LT EQ GT)  rc_order_cmp on the arguments' sort
+  (set-union CMP LT EQ GT)     rc_set_union over the comparator judgment CMP
+  (set-remove CMP LT EQ GT)    rc_set_remove
+  (table-get) (table-put) (table-set) (table-next) (table-empty)
+and, over a binary natural sort, a word sort and a slices sort:
+  (nat-push-bit)               J(b, n) = 2n + b      (nat-pred)          J(n) = n - 1, none for 0
+  (nat-xor) (nat-multiply)     exclusive or; product
+  (nat-subtract)               J(a, b) = a - b, 0 when b > a
+  (nat-trim)                   J(w, n) = n mod 2^w   (word-pack)         J(word, n) = n 2^w + word
+  (bytes-length)               the number of bytes   (bytes-equal YES NO) equal contents
+  (bytes-take TAKEN NEED)      TAKEN (first n bytes) (the rest), NEED when n > length
+  (fnv-hash BASIS PRIME BITS)  BASIS, then h' = ((h xor byte) * PRIME) mod 2^BITS per byte
+  (uleb DECODED NEED BAD MAXBYTES LASTBITS)
+                               a minimal unsigned LEB128 number of at most MAXBYTES bytes whose byte
+                               number MAXBYTES has at most LASTBITS bits: DECODED n rest; NEED when
+                               the bytes end inside it; BAD when it is not minimal (two or more bytes,
+                               the last 0), too long or too large
+or a string naming a C function a back end binds by hand.  rulec checks each component's shape
+against the judgment (arities, sorts, representations, constructor parameters) and generates its
+glue (rc_bind_<k>).
+
+memo: the judgment's results are kept per arguments (all arguments and the result of interned,
+immediate or nullary-only sorts; the judgment must not reach the safepoint).  law: J(x, x) gives the
+nullary constructor RESULT without running J's rules; rulec requires J to cover every input.
+
+The contract of a block is the judgment's rules.  LABEL:
+  proved   JUSTIFICATION names the theorems (the Lean files of Mettapedia: the HOLLight directory's
+           RuleModule*.lean, Megalodon/RuleModuleBindings.lean);
+  checked  every call compared with the rules in check mode, on the gates' corpora;
+  trusted  JUSTIFICATION gives the reason.
+
+The rows are part of the IR: rulec writes them, with the labels of the rules each binding
+replaces, into the DAG artifact and the census.  Another back end (a PeTTa or transform back end)
+can read the same rows and bind the same names to its own implementations, or compile the rules.
+
+Check mode (-DRC_CHECK_NATIVE, the host enables it): each call of a block first runs the
+judgment's compiled rules on the same inputs (a block may update a representation in place), then
+the block, and compares the results as module data (a representation with a read-back gives it); a
+hit in a memo table is compared with the rules' result on the same arguments; a law's use with the
+rules'.  Calls made while check mode runs some rules are counted apart (nested).
+
+
+7. Using it
+-----------
+
+  rulec WIRE --bindings B --safepoint J --cache-constants --dag D --census C --emit F.c --emit-h F.h
+  rulec_validate WIRE D F.c
+
+Generated code includes rc_rt.h and the component headers (--include-rt, --component-prefix set
+their paths).  A host calls rc_runtime_init, rc_components_init once, rc_call(judgment, args), and
+reads results with rc_view.
+
+Instances.  In CeTTa a compiled module is one translation unit (native/<module>/..._instance.c)
+that includes the runtime, the components, the generated code and the host glue; every global
+name it defines except its dispatch function gets the instance's prefix (a generated names header,
+written and checked by tools/rulec/instance_names.sh), so modules link side by side, each with its
+own store.  The generic host glue native/rule_module/rcm_cetta.c calls any judgment on atoms
+(PREFIX call TERM: module data read against the judgment's argument sorts, the value written back
+as atoms), supplies relation rows (PREFIX set-relation NAME ROWS), counts the boundary's costs
+(PREFIX stats) and, with RCM_CAPTURE=DIR, writes every call and its result to DIR for replay outside
+CeTTa (a differential between builds, profiles, check mode, traces).
+
+Instance tables.  An instance may export one table of entry points instead of a dispatch function
+(native/rule_module/rc_instance_api.h, included last as rc_instance_api.c with RC_INSTANCE_API set
+to the table's name): other native code of the binary calls its judgments and reads their values
+only through the table (run_begin / run_end, retain, call, view, value_u64, value_bytes, list_items,
+bytes_input), so values of different instances never meet.
+
+The handles of the host glue (PREFIX hold TERM, PREFIX call-hold TERM, PREFIX view HANDLE, PREFIX
+release HANDLE, PREFIX reset): a handle (TAG:handle N) stands for module data kept in the
+instance's interning store, accepted wherever module data is expected in a later call; N is never
+reused; a handle answers while it is not released and the store has not been freed since it was
+made (the store's epoch), so a changed or extended value always gets a new handle and an old handle
+never answers for it.  Kept values are roots of the store; values of a slices sort are never kept.
+
+Four clients use the same components.  The HOL Light kernel module (native/hol_light_module:
+hol.bindings): names as interned byte strings, types, terms and their lists as interned nodes, id
+tables as arrays; name, type and term equality, the orders, the hypothesis-set operations, the
+table operations as components; type_of, alphaorder, inst, vsubst's recursion and type_subst
+memoised; everything else compiled from the module's rules.  The untyped lambda calculus
+(tests/rulec/lambda): names interned, terms, name sets and renaming environments interned; the
+same components for names, numerals, the term order, the name sets; substitution, free names and
+alpha-equivalence memoised.  Its gate (tests/rulec/lambda/gate.sh) runs the module compiled with
+no binding table and through the components on the same cases, and in check mode.  The Megalodon
+kernel module (native/megalodon_module: mgk.bindings, lib/mgmodule.metta): unary naturals as
+immediates, names, types, terms, proofs, contexts and the theory interned; natural order, equality
+and addition, name, type and term equality as components; normal form, delta, the two lookups, type
+inference, instantiation and protection memoised; its overlapping rules (guard dispatch, and the
+equality rules for terms with different heads) compiled as trial leaves, the HEADS rules excluded
+where the heads are equal; its relation "identity" a host query.  The HOLR stream reader
+(native/holr_reader_module: holr_reader.bindings), compiled from its GSLT reader modules (theory
+HOLRStream Format, rules in functional form): bytes as words, naturals binary of any size, byte
+strings slices of the stream; the arithmetic, byte-string length, take and equality, the LEB128
+integers and the FNV-1a checksum as components; the schema lookup memoised; the header, the record
+loop, the fields, the lists, the trailer and every refusal compiled from the rules.  Its instance
+exports the table cetta_holr_reader, through which the HOL Light module's bridge reads every
+stream.
+
+To add a component: a header in native/rule_components with the contract and the label, the C file,
+a COMPONENT kind in rulec's bindings.c (the shape check) and emit_c.c (the glue), a line in this
+file.  Keep it generic: parameters come from the signature and the row, never from a module's
+names.

@@ -171,7 +171,9 @@ typedef struct CettaLibraryContext {
     bool parser_cache_mutex_ready;
     struct CettaAuthoredParserV1 *parser_cache;
     TermUniverse term_universe;
-    uint32_t active_mask;
+    /* The session's imports: libraries in the lower half, native modules in
+     * the upper half (native/native_modules.h). */
+    uint64_t active_mask;
     SpaceProgramToken transform_program;
     SpaceProgramToken *transform_views;
     size_t transform_view_count;

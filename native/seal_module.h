@@ -10,7 +10,7 @@
 
 struct CettaLibraryContext;
 
-#define CETTA_NATIVE_IMPORT_SEAL (1u << 30)
+#define CETTA_NATIVE_IMPORT_SEAL (1ull << 42)
 
 /* The `seal` library's natives, heads `__cetta_lib_seal_*` (lib/seal.metta).
  * False when `head` is not one of them. */

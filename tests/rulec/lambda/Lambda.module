@@ -1,0 +1,262 @@
+-- The untyped lambda calculus as a rule module: terms over names, capture-avoiding substitution
+-- (a bound name that would capture is primed until it is fresh), normal-order reduction with a step
+-- bound, alpha-equivalence, free variables as an ordered set of names.  A small second client of the
+-- rule compiler's generic components (interned terms and names, ordered sets, memoised judgments).
+--
+-- Reading: every judgment is a function written as big-step rules "J"(arguments) ~> result; rules of
+-- one judgment do not overlap.  A name is its list of bytes, a byte two hexadecimal digits; step
+-- counts are binary numerals, least significant digit first.
+Module Lambda {
+  Theory Calc() {
+    Empty
+    Types {
+      Flag; Ord; Nib; Bits4; Byte; Str; Nat; Term; Names; Pairs; StepR; Result;
+    }
+    Terms {
+      "lc:yes". |- "yes" : Flag;
+      "lc:no". |- "no" : Flag;
+      "lc:lt". |- "lt" : Ord;
+      "lc:eq". |- "eq" : Ord;
+      "lc:gt". |- "gt" : Ord;
+      "lc:x0". |- "x0" : Nib;  "lc:x1". |- "x1" : Nib;  "lc:x2". |- "x2" : Nib;  "lc:x3". |- "x3" : Nib;
+      "lc:x4". |- "x4" : Nib;  "lc:x5". |- "x5" : Nib;  "lc:x6". |- "x6" : Nib;  "lc:x7". |- "x7" : Nib;
+      "lc:x8". |- "x8" : Nib;  "lc:x9". |- "x9" : Nib;  "lc:xa". |- "xa" : Nib;  "lc:xb". |- "xb" : Nib;
+      "lc:xc". |- "xc" : Nib;  "lc:xd". |- "xd" : Nib;  "lc:xe". |- "xe" : Nib;  "lc:xf". |- "xf" : Nib;
+      "lc:bits4". a:Flag, b:Flag, c:Flag, d:Flag |- "bits4" a b c d : Bits4;
+      "lc:byte". hi:Nib, lo:Nib |- "byte" hi lo : Byte;
+      "lc:nnil". |- "nnil" : Str;
+      "lc:ncons". x:Byte, xs:Str |- "ncons" x xs : Str;
+      "lc:nz". |- "nz" : Nat;
+      "lc:nb0". n:Nat |- "nb0" n : Nat;
+      "lc:nb1". n:Nat |- "nb1" n : Nat;
+      "lc:Var". n:Str |- "Var" n : Term;
+      "lc:App". f:Term, a:Term |- "App" f a : Term;
+      "lc:Lam". n:Str, b:Term |- "Lam" n b : Term;
+      "lc:names-nil". |- "names-nil" : Names;
+      "lc:names-cons". n:Str, ns:Names |- "names-cons" n ns : Names;
+      "lc:pairs-nil". |- "pairs-nil" : Pairs;
+      "lc:pairs-cons". a:Str, b:Str, ps:Pairs |- "pairs-cons" a b ps : Pairs;
+      "lc:normal". t:Term |- "normal" t : StepR;
+      "lc:stepped". t:Term |- "stepped" t : StepR;
+      "lc:done". t:Term, steps:Nat |- "done" t steps : Result;
+      "lc:out-of-steps". t:Term |- "out-of-steps" t : Result;
+      -- data
+      "lc:then". o:Ord, p:Ord |- "then" o p : Ord;
+      "lc:ord-is-eq". o:Ord |- "ord-is-eq" o : Flag;
+      "lc:cmp-flag". a:Flag, b:Flag |- "cmp-flag" a b : Ord;
+      "lc:nib-bits". a:Nib |- "nib-bits" a : Bits4;
+      "lc:cmp-nib". a:Nib, b:Nib |- "cmp-nib" a b : Ord;
+      "lc:cmp-byte". a:Byte, b:Byte |- "cmp-byte" a b : Ord;
+      "lc:cmp-str". a:Str, b:Str |- "cmp-str" a b : Ord;
+      "lc:cmp-str-k". o:Ord, a:Str, b:Str |- "cmp-str-k" o a b : Ord;
+      "lc:str-eq". a:Str, b:Str |- "str-eq" a b : Flag;
+      "lc:str-prime". a:Str |- "str-prime" a : Str;
+      "lc:nat-inc". n:Nat |- "nat-inc" n : Nat;
+      "lc:cmp-nat". a:Nat, b:Nat |- "cmp-nat" a b : Ord;
+      -- names as ordered sets
+      "lc:names-union". a:Names, b:Names |- "names-union" a b : Names;
+      "lc:names-union-k". o:Ord, x:Str, xs:Names, y:Str, ys:Names |- "names-union-k" o x xs y ys : Names;
+      "lc:names-remove". n:Str, s:Names |- "names-remove" n s : Names;
+      "lc:names-remove-k". o:Ord, n:Str, s:Str, ss:Names |- "names-remove-k" o n s ss : Names;
+      "lc:names-mem". n:Str, s:Names |- "names-mem" n s : Flag;
+      "lc:names-mem-k". o:Ord, n:Str, ss:Names |- "names-mem-k" o n ss : Flag;
+      -- the calculus
+      "lc:cmp-term". a:Term, b:Term |- "cmp-term" a b : Ord;
+      "lc:cmp-term-k". o:Ord, a:Term, b:Term |- "cmp-term-k" o a b : Ord;
+      "lc:term-eq". a:Term, b:Term |- "term-eq" a b : Flag;
+      "lc:fv". t:Term |- "fv" t : Names;
+      "lc:fresh". n:Str, avoid:Names |- "fresh" n avoid : Str;
+      "lc:fresh-k". e:Flag, n:Str, avoid:Names |- "fresh-k" e n avoid : Str;
+      "lc:subst". x:Str, s:Term, t:Term |- "subst" x s t : Term;
+      "lc:subst-var-k". e:Flag, n:Str, s:Term |- "subst-var-k" e n s : Term;
+      "lc:subst-lam-k". e:Flag, x:Str, s:Term, n:Str, b:Term |- "subst-lam-k" e x s n b : Term;
+      "lc:subst-lam-k2". e:Flag, x:Str, s:Term, n:Str, b:Term |- "subst-lam-k2" e x s n b : Term;
+      "lc:step". t:Term |- "step" t : StepR;
+      "lc:step-app-k". r:StepR, f:Term, a:Term |- "step-app-k" r f a : StepR;
+      "lc:step-app-k2". r:StepR, f:Term |- "step-app-k2" r f : StepR;
+      "lc:step-lam-k". r:StepR, n:Str |- "step-lam-k" r n : StepR;
+      "lc:normalize". limit:Nat, steps:Nat, t:Term |- "normalize" limit steps t : Result;
+      "lc:normalize-k". o:Ord, limit:Nat, steps:Nat, t:Term |- "normalize-k" o limit steps t : Result;
+      "lc:normalize-k2". r:StepR, limit:Nat, steps:Nat, t:Term |- "normalize-k2" r limit steps t : Result;
+      "lc:aeq". env:Pairs, a:Term, b:Term |- "aeq" env a b : Flag;
+      "lc:aeq-k". e:Flag, env:Pairs, a:Term, b:Term |- "aeq-k" e env a b : Flag;
+      "lc:aeqv". env:Pairs, x:Str, y:Str |- "aeqv" env x y : Flag;
+      "lc:aeqv-k". e1:Flag, e2:Flag, env:Pairs, x:Str, y:Str |- "aeqv-k" e1 e2 env x y : Flag;
+      "lc:alpha-eq". a:Term, b:Term |- "alpha-eq" a b : Flag;
+    }
+    Rewrites {
+      -- ===================================================================== data
+      "then-lt". o:Ord |- "lc:then"("lc:lt"(), o) ~> "lc:lt"();
+      "then-eq". o:Ord |- "lc:then"("lc:eq"(), o) ~> o;
+      "then-gt". o:Ord |- "lc:then"("lc:gt"(), o) ~> "lc:gt"();
+      "ord-is-eq-lt". |- "lc:ord-is-eq"("lc:lt"()) ~> "lc:no"();
+      "ord-is-eq-eq". |- "lc:ord-is-eq"("lc:eq"()) ~> "lc:yes"();
+      "ord-is-eq-gt". |- "lc:ord-is-eq"("lc:gt"()) ~> "lc:no"();
+      "cmp-flag-nn". |- "lc:cmp-flag"("lc:no"(), "lc:no"()) ~> "lc:eq"();
+      "cmp-flag-ny". |- "lc:cmp-flag"("lc:no"(), "lc:yes"()) ~> "lc:lt"();
+      "cmp-flag-yn". |- "lc:cmp-flag"("lc:yes"(), "lc:no"()) ~> "lc:gt"();
+      "cmp-flag-yy". |- "lc:cmp-flag"("lc:yes"(), "lc:yes"()) ~> "lc:eq"();
+      -- a hexadecimal digit as four bits, most significant first
+      "nib-0". |- "lc:nib-bits"("lc:x0"()) ~> "lc:bits4"("lc:no"(), "lc:no"(), "lc:no"(), "lc:no"());
+      "nib-1". |- "lc:nib-bits"("lc:x1"()) ~> "lc:bits4"("lc:no"(), "lc:no"(), "lc:no"(), "lc:yes"());
+      "nib-2". |- "lc:nib-bits"("lc:x2"()) ~> "lc:bits4"("lc:no"(), "lc:no"(), "lc:yes"(), "lc:no"());
+      "nib-3". |- "lc:nib-bits"("lc:x3"()) ~> "lc:bits4"("lc:no"(), "lc:no"(), "lc:yes"(), "lc:yes"());
+      "nib-4". |- "lc:nib-bits"("lc:x4"()) ~> "lc:bits4"("lc:no"(), "lc:yes"(), "lc:no"(), "lc:no"());
+      "nib-5". |- "lc:nib-bits"("lc:x5"()) ~> "lc:bits4"("lc:no"(), "lc:yes"(), "lc:no"(), "lc:yes"());
+      "nib-6". |- "lc:nib-bits"("lc:x6"()) ~> "lc:bits4"("lc:no"(), "lc:yes"(), "lc:yes"(), "lc:no"());
+      "nib-7". |- "lc:nib-bits"("lc:x7"()) ~> "lc:bits4"("lc:no"(), "lc:yes"(), "lc:yes"(), "lc:yes"());
+      "nib-8". |- "lc:nib-bits"("lc:x8"()) ~> "lc:bits4"("lc:yes"(), "lc:no"(), "lc:no"(), "lc:no"());
+      "nib-9". |- "lc:nib-bits"("lc:x9"()) ~> "lc:bits4"("lc:yes"(), "lc:no"(), "lc:no"(), "lc:yes"());
+      "nib-a". |- "lc:nib-bits"("lc:xa"()) ~> "lc:bits4"("lc:yes"(), "lc:no"(), "lc:yes"(), "lc:no"());
+      "nib-b". |- "lc:nib-bits"("lc:xb"()) ~> "lc:bits4"("lc:yes"(), "lc:no"(), "lc:yes"(), "lc:yes"());
+      "nib-c". |- "lc:nib-bits"("lc:xc"()) ~> "lc:bits4"("lc:yes"(), "lc:yes"(), "lc:no"(), "lc:no"());
+      "nib-d". |- "lc:nib-bits"("lc:xd"()) ~> "lc:bits4"("lc:yes"(), "lc:yes"(), "lc:no"(), "lc:yes"());
+      "nib-e". |- "lc:nib-bits"("lc:xe"()) ~> "lc:bits4"("lc:yes"(), "lc:yes"(), "lc:yes"(), "lc:no"());
+      "nib-f". |- "lc:nib-bits"("lc:xf"()) ~> "lc:bits4"("lc:yes"(), "lc:yes"(), "lc:yes"(), "lc:yes"());
+      "cmp-nib". a:Nib, b:Nib, a3:Flag, a2:Flag, a1:Flag, a0:Flag, b3:Flag, b2:Flag, b1:Flag, b0:Flag, o3:Ord, o2:Ord, o1:Ord, o0:Ord, r1:Ord, r2:Ord, r3:Ord |
+          "lc:nib-bits"(a) ~> "lc:bits4"(a3, a2, a1, a0), "lc:nib-bits"(b) ~> "lc:bits4"(b3, b2, b1, b0),
+          "lc:cmp-flag"(a3, b3) ~> o3, "lc:cmp-flag"(a2, b2) ~> o2, "lc:cmp-flag"(a1, b1) ~> o1, "lc:cmp-flag"(a0, b0) ~> o0,
+          "lc:then"(o1, o0) ~> r1, "lc:then"(o2, r1) ~> r2, "lc:then"(o3, r2) ~> r3
+        |- "lc:cmp-nib"(a, b) ~> r3;
+      "cmp-byte". h1:Nib, l1:Nib, h2:Nib, l2:Nib, oh:Ord, ol:Ord, r:Ord |
+          "lc:cmp-nib"(h1, h2) ~> oh, "lc:cmp-nib"(l1, l2) ~> ol, "lc:then"(oh, ol) ~> r
+        |- "lc:cmp-byte"("lc:byte"(h1, l1), "lc:byte"(h2, l2)) ~> r;
+      -- OCaml's compare on strings: bytes from the first, unsigned; a proper prefix first
+      "cmp-str-nn". |- "lc:cmp-str"("lc:nnil"(), "lc:nnil"()) ~> "lc:eq"();
+      "cmp-str-nc". y:Byte, ys:Str |- "lc:cmp-str"("lc:nnil"(), "lc:ncons"(y, ys)) ~> "lc:lt"();
+      "cmp-str-cn". x:Byte, xs:Str |- "lc:cmp-str"("lc:ncons"(x, xs), "lc:nnil"()) ~> "lc:gt"();
+      "cmp-str-cc". x:Byte, xs:Str, y:Byte, ys:Str, o:Ord, r:Ord | "lc:cmp-byte"(x, y) ~> o, "lc:cmp-str-k"(o, xs, ys) ~> r
+        |- "lc:cmp-str"("lc:ncons"(x, xs), "lc:ncons"(y, ys)) ~> r;
+      "cmp-str-k-lt". xs:Str, ys:Str |- "lc:cmp-str-k"("lc:lt"(), xs, ys) ~> "lc:lt"();
+      "cmp-str-k-gt". xs:Str, ys:Str |- "lc:cmp-str-k"("lc:gt"(), xs, ys) ~> "lc:gt"();
+      "cmp-str-k-eq". xs:Str, ys:Str, r:Ord | "lc:cmp-str"(xs, ys) ~> r |- "lc:cmp-str-k"("lc:eq"(), xs, ys) ~> r;
+      "str-eq". a:Str, b:Str, o:Ord, e:Flag | "lc:cmp-str"(a, b) ~> o, "lc:ord-is-eq"(o) ~> e |- "lc:str-eq"(a, b) ~> e;
+      "str-prime-nil". |- "lc:str-prime"("lc:nnil"()) ~> "lc:ncons"("lc:byte"("lc:x2"(), "lc:x7"()), "lc:nnil"());
+      "str-prime-cons". x:Byte, xs:Str, ys:Str | "lc:str-prime"(xs) ~> ys |- "lc:str-prime"("lc:ncons"(x, xs)) ~> "lc:ncons"(x, ys);
+      "inc-z". |- "lc:nat-inc"("lc:nz"()) ~> "lc:nb1"("lc:nz"());
+      "inc-0". n:Nat |- "lc:nat-inc"("lc:nb0"(n)) ~> "lc:nb1"(n);
+      "inc-1". n:Nat, m:Nat | "lc:nat-inc"(n) ~> m |- "lc:nat-inc"("lc:nb1"(n)) ~> "lc:nb0"(m);
+      "cmp-nat-zz". |- "lc:cmp-nat"("lc:nz"(), "lc:nz"()) ~> "lc:eq"();
+      "cmp-nat-z0". m:Nat |- "lc:cmp-nat"("lc:nz"(), "lc:nb0"(m)) ~> "lc:lt"();
+      "cmp-nat-z1". m:Nat |- "lc:cmp-nat"("lc:nz"(), "lc:nb1"(m)) ~> "lc:lt"();
+      "cmp-nat-0z". n:Nat |- "lc:cmp-nat"("lc:nb0"(n), "lc:nz"()) ~> "lc:gt"();
+      "cmp-nat-1z". n:Nat |- "lc:cmp-nat"("lc:nb1"(n), "lc:nz"()) ~> "lc:gt"();
+      "cmp-nat-00". n:Nat, m:Nat, o:Ord | "lc:cmp-nat"(n, m) ~> o |- "lc:cmp-nat"("lc:nb0"(n), "lc:nb0"(m)) ~> o;
+      "cmp-nat-11". n:Nat, m:Nat, o:Ord | "lc:cmp-nat"(n, m) ~> o |- "lc:cmp-nat"("lc:nb1"(n), "lc:nb1"(m)) ~> o;
+      "cmp-nat-01". n:Nat, m:Nat, o:Ord, r:Ord | "lc:cmp-nat"(n, m) ~> o, "lc:then"(o, "lc:lt"()) ~> r |- "lc:cmp-nat"("lc:nb0"(n), "lc:nb1"(m)) ~> r;
+      "cmp-nat-10". n:Nat, m:Nat, o:Ord, r:Ord | "lc:cmp-nat"(n, m) ~> o, "lc:then"(o, "lc:gt"()) ~> r |- "lc:cmp-nat"("lc:nb1"(n), "lc:nb0"(m)) ~> r;
+      -- ======================================================= ordered sets of names
+      "union-nil". b:Names |- "lc:names-union"("lc:names-nil"(), b) ~> b;
+      "union-cons-nil". x:Str, xs:Names |- "lc:names-union"("lc:names-cons"(x, xs), "lc:names-nil"()) ~> "lc:names-cons"(x, xs);
+      "union-cons-cons". x:Str, xs:Names, y:Str, ys:Names, o:Ord, r:Names | "lc:cmp-str"(x, y) ~> o, "lc:names-union-k"(o, x, xs, y, ys) ~> r
+        |- "lc:names-union"("lc:names-cons"(x, xs), "lc:names-cons"(y, ys)) ~> r;
+      "union-k-eq". x:Str, xs:Names, y:Str, ys:Names, r:Names | "lc:names-union"(xs, ys) ~> r
+        |- "lc:names-union-k"("lc:eq"(), x, xs, y, ys) ~> "lc:names-cons"(x, r);
+      "union-k-lt". x:Str, xs:Names, y:Str, ys:Names, r:Names | "lc:names-union"(xs, "lc:names-cons"(y, ys)) ~> r
+        |- "lc:names-union-k"("lc:lt"(), x, xs, y, ys) ~> "lc:names-cons"(x, r);
+      "union-k-gt". x:Str, xs:Names, y:Str, ys:Names, r:Names | "lc:names-union"("lc:names-cons"(x, xs), ys) ~> r
+        |- "lc:names-union-k"("lc:gt"(), x, xs, y, ys) ~> "lc:names-cons"(y, r);
+      "remove-nil". n:Str |- "lc:names-remove"(n, "lc:names-nil"()) ~> "lc:names-nil"();
+      "remove-cons". n:Str, s:Str, ss:Names, o:Ord, r:Names | "lc:cmp-str"(n, s) ~> o, "lc:names-remove-k"(o, n, s, ss) ~> r
+        |- "lc:names-remove"(n, "lc:names-cons"(s, ss)) ~> r;
+      "remove-k-gt". n:Str, s:Str, ss:Names, r:Names | "lc:names-remove"(n, ss) ~> r |- "lc:names-remove-k"("lc:gt"(), n, s, ss) ~> "lc:names-cons"(s, r);
+      "remove-k-eq". n:Str, s:Str, ss:Names |- "lc:names-remove-k"("lc:eq"(), n, s, ss) ~> ss;
+      "remove-k-lt". n:Str, s:Str, ss:Names |- "lc:names-remove-k"("lc:lt"(), n, s, ss) ~> "lc:names-cons"(s, ss);
+      "mem-nil". n:Str |- "lc:names-mem"(n, "lc:names-nil"()) ~> "lc:no"();
+      "mem-cons". n:Str, s:Str, ss:Names, o:Ord, r:Flag | "lc:cmp-str"(n, s) ~> o, "lc:names-mem-k"(o, n, ss) ~> r
+        |- "lc:names-mem"(n, "lc:names-cons"(s, ss)) ~> r;
+      "mem-k-eq". n:Str, ss:Names |- "lc:names-mem-k"("lc:eq"(), n, ss) ~> "lc:yes"();
+      "mem-k-lt". n:Str, ss:Names |- "lc:names-mem-k"("lc:lt"(), n, ss) ~> "lc:no"();
+      "mem-k-gt". n:Str, ss:Names, r:Flag | "lc:names-mem"(n, ss) ~> r |- "lc:names-mem-k"("lc:gt"(), n, ss) ~> r;
+      -- ================================================================ the calculus
+      -- the order of terms: Var < App < Lam, then the children in order
+      "cmp-vv". a:Str, b:Str, o:Ord | "lc:cmp-str"(a, b) ~> o |- "lc:cmp-term"("lc:Var"(a), "lc:Var"(b)) ~> o;
+      "cmp-va". a:Str, f:Term, x:Term |- "lc:cmp-term"("lc:Var"(a), "lc:App"(f, x)) ~> "lc:lt"();
+      "cmp-vl". a:Str, n:Str, b:Term |- "lc:cmp-term"("lc:Var"(a), "lc:Lam"(n, b)) ~> "lc:lt"();
+      "cmp-av". a:Str, f:Term, x:Term |- "lc:cmp-term"("lc:App"(f, x), "lc:Var"(a)) ~> "lc:gt"();
+      "cmp-aa". f1:Term, x1:Term, f2:Term, x2:Term, o:Ord, r:Ord | "lc:cmp-term"(f1, f2) ~> o, "lc:cmp-term-k"(o, x1, x2) ~> r
+        |- "lc:cmp-term"("lc:App"(f1, x1), "lc:App"(f2, x2)) ~> r;
+      "cmp-al". f:Term, x:Term, n:Str, b:Term |- "lc:cmp-term"("lc:App"(f, x), "lc:Lam"(n, b)) ~> "lc:lt"();
+      "cmp-lv". a:Str, n:Str, b:Term |- "lc:cmp-term"("lc:Lam"(n, b), "lc:Var"(a)) ~> "lc:gt"();
+      "cmp-la". f:Term, x:Term, n:Str, b:Term |- "lc:cmp-term"("lc:Lam"(n, b), "lc:App"(f, x)) ~> "lc:gt"();
+      "cmp-ll". n1:Str, b1:Term, n2:Str, b2:Term, o:Ord, r:Ord | "lc:cmp-str"(n1, n2) ~> o, "lc:cmp-term-k"(o, b1, b2) ~> r
+        |- "lc:cmp-term"("lc:Lam"(n1, b1), "lc:Lam"(n2, b2)) ~> r;
+      "cmp-k-lt". a:Term, b:Term |- "lc:cmp-term-k"("lc:lt"(), a, b) ~> "lc:lt"();
+      "cmp-k-gt". a:Term, b:Term |- "lc:cmp-term-k"("lc:gt"(), a, b) ~> "lc:gt"();
+      "cmp-k-eq". a:Term, b:Term, r:Ord | "lc:cmp-term"(a, b) ~> r |- "lc:cmp-term-k"("lc:eq"(), a, b) ~> r;
+      "term-eq". a:Term, b:Term, o:Ord, e:Flag | "lc:cmp-term"(a, b) ~> o, "lc:ord-is-eq"(o) ~> e |- "lc:term-eq"(a, b) ~> e;
+      -- free variables
+      "fv-var". n:Str |- "lc:fv"("lc:Var"(n)) ~> "lc:names-cons"(n, "lc:names-nil"());
+      "fv-app". f:Term, a:Term, s1:Names, s2:Names, r:Names | "lc:fv"(f) ~> s1, "lc:fv"(a) ~> s2, "lc:names-union"(s1, s2) ~> r
+        |- "lc:fv"("lc:App"(f, a)) ~> r;
+      "fv-lam". n:Str, b:Term, s:Names, r:Names | "lc:fv"(b) ~> s, "lc:names-remove"(n, s) ~> r |- "lc:fv"("lc:Lam"(n, b)) ~> r;
+      -- a name not in avoid: n, n', n'', ...
+      "fresh". n:Str, avoid:Names, e:Flag, r:Str | "lc:names-mem"(n, avoid) ~> e, "lc:fresh-k"(e, n, avoid) ~> r |- "lc:fresh"(n, avoid) ~> r;
+      "fresh-k-no". n:Str, avoid:Names |- "lc:fresh-k"("lc:no"(), n, avoid) ~> n;
+      "fresh-k-yes". n:Str, avoid:Names, m:Str, r:Str | "lc:str-prime"(n) ~> m, "lc:fresh"(m, avoid) ~> r |- "lc:fresh-k"("lc:yes"(), n, avoid) ~> r;
+      -- t[x := s], capture-avoiding
+      "subst-var". x:Str, s:Term, n:Str, e:Flag, r:Term | "lc:str-eq"(n, x) ~> e, "lc:subst-var-k"(e, n, s) ~> r |- "lc:subst"(x, s, "lc:Var"(n)) ~> r;
+      "subst-var-k-yes". n:Str, s:Term |- "lc:subst-var-k"("lc:yes"(), n, s) ~> s;
+      "subst-var-k-no". n:Str, s:Term |- "lc:subst-var-k"("lc:no"(), n, s) ~> "lc:Var"(n);
+      "subst-app". x:Str, s:Term, f:Term, a:Term, f1:Term, a1:Term | "lc:subst"(x, s, f) ~> f1, "lc:subst"(x, s, a) ~> a1
+        |- "lc:subst"(x, s, "lc:App"(f, a)) ~> "lc:App"(f1, a1);
+      "subst-lam". x:Str, s:Term, n:Str, b:Term, e:Flag, r:Term | "lc:str-eq"(n, x) ~> e, "lc:subst-lam-k"(e, x, s, n, b) ~> r
+        |- "lc:subst"(x, s, "lc:Lam"(n, b)) ~> r;
+      "subst-lam-k-bound". x:Str, s:Term, n:Str, b:Term |- "lc:subst-lam-k"("lc:yes"(), x, s, n, b) ~> "lc:Lam"(n, b);
+      "subst-lam-k-free". x:Str, s:Term, n:Str, b:Term, fs:Names, e:Flag, r:Term | "lc:fv"(s) ~> fs, "lc:names-mem"(n, fs) ~> e, "lc:subst-lam-k2"(e, x, s, n, b) ~> r
+        |- "lc:subst-lam-k"("lc:no"(), x, s, n, b) ~> r;
+      "subst-lam-k2-safe". x:Str, s:Term, n:Str, b:Term, b1:Term | "lc:subst"(x, s, b) ~> b1 |- "lc:subst-lam-k2"("lc:no"(), x, s, n, b) ~> "lc:Lam"(n, b1);
+      "subst-lam-k2-rename". x:Str, s:Term, n:Str, b:Term, fs:Names, fb:Names, a1:Names, a2:Names, m:Str, b1:Term, b2:Term |
+          "lc:fv"(s) ~> fs, "lc:fv"(b) ~> fb, "lc:names-union"(fs, fb) ~> a1, "lc:names-union"(a1, "lc:names-cons"(x, "lc:names-nil"())) ~> a2,
+          "lc:fresh"(n, a2) ~> m, "lc:subst"(n, "lc:Var"(m), b) ~> b1, "lc:subst"(x, s, b1) ~> b2
+        |- "lc:subst-lam-k2"("lc:yes"(), x, s, n, b) ~> "lc:Lam"(m, b2);
+      -- one normal-order step: the leftmost outermost redex
+      "step-var". n:Str |- "lc:step"("lc:Var"(n)) ~> "lc:normal"("lc:Var"(n));
+      "step-beta". n:Str, b:Term, a:Term, r:Term | "lc:subst"(n, a, b) ~> r |- "lc:step"("lc:App"("lc:Lam"(n, b), a)) ~> "lc:stepped"(r);
+      "step-app-var". n:Str, a:Term, s:StepR, r:StepR | "lc:step"("lc:Var"(n)) ~> s, "lc:step-app-k"(s, "lc:Var"(n), a) ~> r
+        |- "lc:step"("lc:App"("lc:Var"(n), a)) ~> r;
+      "step-app-app". f:Term, g:Term, a:Term, s:StepR, r:StepR | "lc:step"("lc:App"(f, g)) ~> s, "lc:step-app-k"(s, "lc:App"(f, g), a) ~> r
+        |- "lc:step"("lc:App"("lc:App"(f, g), a)) ~> r;
+      "step-app-k-stepped". f1:Term, f:Term, a:Term |- "lc:step-app-k"("lc:stepped"(f1), f, a) ~> "lc:stepped"("lc:App"(f1, a));
+      "step-app-k-normal". f1:Term, f:Term, a:Term, s:StepR, r:StepR | "lc:step"(a) ~> s, "lc:step-app-k2"(s, f) ~> r
+        |- "lc:step-app-k"("lc:normal"(f1), f, a) ~> r;
+      "step-app-k2-stepped". a1:Term, f:Term |- "lc:step-app-k2"("lc:stepped"(a1), f) ~> "lc:stepped"("lc:App"(f, a1));
+      "step-app-k2-normal". a1:Term, f:Term |- "lc:step-app-k2"("lc:normal"(a1), f) ~> "lc:normal"("lc:App"(f, a1));
+      "step-lam". n:Str, b:Term, s:StepR, r:StepR | "lc:step"(b) ~> s, "lc:step-lam-k"(s, n) ~> r |- "lc:step"("lc:Lam"(n, b)) ~> r;
+      "step-lam-k-stepped". b1:Term, n:Str |- "lc:step-lam-k"("lc:stepped"(b1), n) ~> "lc:stepped"("lc:Lam"(n, b1));
+      "step-lam-k-normal". b1:Term, n:Str |- "lc:step-lam-k"("lc:normal"(b1), n) ~> "lc:normal"("lc:Lam"(n, b1));
+      -- reduce to normal form within a step bound
+      "normalize". limit:Nat, steps:Nat, t:Term, o:Ord, r:Result | "lc:cmp-nat"(steps, limit) ~> o, "lc:normalize-k"(o, limit, steps, t) ~> r
+        |- "lc:normalize"(limit, steps, t) ~> r;
+      "normalize-k-lt". limit:Nat, steps:Nat, t:Term, s:StepR, r:Result | "lc:step"(t) ~> s, "lc:normalize-k2"(s, limit, steps, t) ~> r
+        |- "lc:normalize-k"("lc:lt"(), limit, steps, t) ~> r;
+      "normalize-k-eq". limit:Nat, steps:Nat, t:Term |- "lc:normalize-k"("lc:eq"(), limit, steps, t) ~> "lc:out-of-steps"(t);
+      "normalize-k-gt". limit:Nat, steps:Nat, t:Term |- "lc:normalize-k"("lc:gt"(), limit, steps, t) ~> "lc:out-of-steps"(t);
+      "normalize-k2-stepped". t1:Term, limit:Nat, steps:Nat, t:Term, n:Nat, r:Result | "lc:nat-inc"(steps) ~> n, "lc:normalize"(limit, n, t1) ~> r
+        |- "lc:normalize-k2"("lc:stepped"(t1), limit, steps, t) ~> r;
+      "normalize-k2-normal". t1:Term, limit:Nat, steps:Nat, t:Term |- "lc:normalize-k2"("lc:normal"(t1), limit, steps, t) ~> "lc:done"(t1, steps);
+      -- alpha-equivalence: bound names related pairwise, innermost first
+      "alpha-eq". a:Term, b:Term, r:Flag | "lc:aeq"("lc:pairs-nil"(), a, b) ~> r |- "lc:alpha-eq"(a, b) ~> r;
+      "aeq-vv". env:Pairs, x:Str, y:Str, r:Flag | "lc:aeqv"(env, x, y) ~> r |- "lc:aeq"(env, "lc:Var"(x), "lc:Var"(y)) ~> r;
+      "aeq-aa". env:Pairs, f1:Term, a1:Term, f2:Term, a2:Term, e:Flag, r:Flag | "lc:aeq"(env, f1, f2) ~> e, "lc:aeq-k"(e, env, a1, a2) ~> r
+        |- "lc:aeq"(env, "lc:App"(f1, a1), "lc:App"(f2, a2)) ~> r;
+      "aeq-ll". env:Pairs, x:Str, b1:Term, y:Str, b2:Term, r:Flag | "lc:aeq"("lc:pairs-cons"(x, y, env), b1, b2) ~> r
+        |- "lc:aeq"(env, "lc:Lam"(x, b1), "lc:Lam"(y, b2)) ~> r;
+      "aeq-va". env:Pairs, x:Str, f:Term, a:Term |- "lc:aeq"(env, "lc:Var"(x), "lc:App"(f, a)) ~> "lc:no"();
+      "aeq-vl". env:Pairs, x:Str, y:Str, b:Term |- "lc:aeq"(env, "lc:Var"(x), "lc:Lam"(y, b)) ~> "lc:no"();
+      "aeq-av". env:Pairs, x:Str, f:Term, a:Term |- "lc:aeq"(env, "lc:App"(f, a), "lc:Var"(x)) ~> "lc:no"();
+      "aeq-al". env:Pairs, f:Term, a:Term, y:Str, b:Term |- "lc:aeq"(env, "lc:App"(f, a), "lc:Lam"(y, b)) ~> "lc:no"();
+      "aeq-lv". env:Pairs, x:Str, y:Str, b:Term |- "lc:aeq"(env, "lc:Lam"(y, b), "lc:Var"(x)) ~> "lc:no"();
+      "aeq-la". env:Pairs, f:Term, a:Term, y:Str, b:Term |- "lc:aeq"(env, "lc:Lam"(y, b), "lc:App"(f, a)) ~> "lc:no"();
+      "aeq-k-yes". env:Pairs, a:Term, b:Term, r:Flag | "lc:aeq"(env, a, b) ~> r |- "lc:aeq-k"("lc:yes"(), env, a, b) ~> r;
+      "aeq-k-no". env:Pairs, a:Term, b:Term |- "lc:aeq-k"("lc:no"(), env, a, b) ~> "lc:no"();
+      "aeqv-nil". x:Str, y:Str, r:Flag | "lc:str-eq"(x, y) ~> r |- "lc:aeqv"("lc:pairs-nil"(), x, y) ~> r;
+      "aeqv-cons". p:Str, q:Str, ps:Pairs, x:Str, y:Str, e1:Flag, e2:Flag, r:Flag | "lc:str-eq"(x, p) ~> e1, "lc:str-eq"(y, q) ~> e2, "lc:aeqv-k"(e1, e2, ps, x, y) ~> r
+        |- "lc:aeqv"("lc:pairs-cons"(p, q, ps), x, y) ~> r;
+      "aeqv-k-yy". ps:Pairs, x:Str, y:Str |- "lc:aeqv-k"("lc:yes"(), "lc:yes"(), ps, x, y) ~> "lc:yes"();
+      "aeqv-k-yn". ps:Pairs, x:Str, y:Str |- "lc:aeqv-k"("lc:yes"(), "lc:no"(), ps, x, y) ~> "lc:no"();
+      "aeqv-k-ny". ps:Pairs, x:Str, y:Str |- "lc:aeqv-k"("lc:no"(), "lc:yes"(), ps, x, y) ~> "lc:no"();
+      "aeqv-k-nn". ps:Pairs, x:Str, y:Str, r:Flag | "lc:aeqv"(ps, x, y) ~> r |- "lc:aeqv-k"("lc:no"(), "lc:no"(), ps, x, y) ~> r;
+    }
+  }
+}

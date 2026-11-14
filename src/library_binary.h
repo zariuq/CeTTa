@@ -5,7 +5,7 @@
 struct CettaLibraryContext;
 struct Space;
 
-#define CETTA_NATIVE_IMPORT_BINARY (1u << 18)
+#define CETTA_NATIVE_IMPORT_BINARY (1ull << 32)
 
 /* The exact integer test is total and stable across owned atom copies.
  * Physical profile classification is not granted this permission. Other codec

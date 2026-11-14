@@ -8,7 +8,7 @@
  *   __cetta_lib_holm_check PATH POLICY      the module's verdict for the stream, as module data:
  *       (hl:accepted RECORDS THEOREMS) | (hl:refused STATUS REASON RECORDS) | (hl:malformed REASON
  *       RECORDS) | (hl:probe-refused FAILED); numerals as binary numerals, names as byte lists, types
- *       and terms in the module's constructors (inside the run they are the native kernel's objects)
+ *       and terms in the module's constructors (inside the run they are interned nodes)
  *   __cetta_lib_holm_measure PATH POLICY    (holm:measure RECORDS DECODE-NS MODULE-NS YOUNG-BYTES
  *       PROMOTED-BYTES OLD-PEAK-BYTES) for the same run
  * POLICY: open | standard | sealed (the host's axiom policy).  A call that cannot run (an unreadable
@@ -24,7 +24,6 @@
 
 #include "holr_bridge.h"
 #include "generated/hol_module_ids.h"
-#include "../hol_light/hol_internal.h"
 
 #include <pthread.h>
 #include <setjmp.h>
@@ -56,79 +55,18 @@ static bool holm_text(Atom *x, const char **out) {
 }
 
 /* module data as CeTTa atoms, in the shape CeTTa prints them: (ctor kid ...), a nullary
- * constructor as (ctor); numerals and names in the module's symbolic form */
-static Atom *holm_nat_atom(Arena *a, uint64_t v) {
-    int bits[64], n = 0;
-    while (v) { bits[n++] = (int)(v & 1u); v >>= 1; }
-    Atom *z[1] = {atom_symbol(a, "hl:nz")};
-    Atom *t = atom_expr(a, z, 1);
-    while (n--) { Atom *e[2] = {atom_symbol(a, bits[n] ? "hl:nb1" : "hl:nb0"), t}; t = atom_expr(a, e, 2); }
-    return t;
-}
-static Atom *holm_str_atom(Arena *a, const uint8_t *p, size_t n) {
-    static const char hexd[] = "0123456789abcdef";
-    Atom *nil[1] = {atom_symbol(a, "hl:nnil")};
-    Atom *t = atom_expr(a, nil, 1);
-    while (n--) {
-        char hi[8] = "hl:x?", lo[8] = "hl:x?";
-        hi[4] = hexd[p[n] >> 4]; lo[4] = hexd[p[n] & 15];
-        Atom *h[1] = {atom_symbol(a, hi)}, *l[1] = {atom_symbol(a, lo)};
-        Atom *b[3] = {atom_symbol(a, "hl:byte"), atom_expr(a, h, 1), atom_expr(a, l, 1)};
-        Atom *c[3] = {atom_symbol(a, "hl:ncons"), atom_expr(a, b, 3), t};
-        t = atom_expr(a, c, 3);
-    }
-    return t;
-}
-/* names, types, terms and tables of the native representations (the run's kernel is still alive) */
-extern HolKernel *holr_k;
-T *holr_table_readback(T *x);
-static Atom *holm_e1(Arena *a, const char *h) { Atom *e[1] = {atom_symbol(a, h)}; return atom_expr(a, e, 1); }
-static Atom *holm_e3(Arena *a, const char *h, Atom *x, Atom *y) { Atom *e[3] = {atom_symbol(a, h), x, y}; return atom_expr(a, e, 3); }
-static Atom *holm_name_atom(Arena *a, HolName n) {
-    const HolNameRec *r = &holr_k->names[n];
-    return holm_str_atom(a, (const uint8_t *)r->bytes, r->len);
-}
-static Atom *holm_type_atom(Arena *a, const HolType *t) {
-    if (t->kind == HOL_TY_VAR) { Atom *e[2] = {atom_symbol(a, "hl:Tyvar"), holm_name_atom(a, t->name)}; return atom_expr(a, e, 2); }
-    Atom *l = holm_e1(a, "hl:tynil");
-    for (uint32_t i = t->nargs; i-- > 0;) l = holm_e3(a, "hl:tycons", holm_type_atom(a, t->args[i]), l);
-    return holm_e3(a, "hl:Tyapp", holm_name_atom(a, t->name), l);
-}
-static Atom *holm_term_atom(Arena *a, const HolTerm *t) {
-    switch (t->kind) {
-    case HOL_TM_VAR: return holm_e3(a, "hl:Var", holm_name_atom(a, t->u.leaf.name), holm_type_atom(a, t->type));
-    case HOL_TM_CONST: return holm_e3(a, "hl:Const", holm_name_atom(a, t->u.leaf.name), holm_type_atom(a, t->type));
-    case HOL_TM_COMB: return holm_e3(a, "hl:Comb", holm_term_atom(a, t->u.node.l), holm_term_atom(a, t->u.node.r));
-    default: return holm_e3(a, "hl:Abs", holm_term_atom(a, t->u.node.l), holm_term_atom(a, t->u.node.r));
-    }
-}
-static Atom *holm_thm_atom(Arena *a, const HolThm *th) {
-    Atom *l = holm_e1(a, "hl:tmnil");
-    for (uint32_t i = th->nhyps; i-- > 0;) l = holm_e3(a, "hl:tmcons", holm_term_atom(a, th->hyps[i]), l);
-    return holm_e3(a, "hl:Sequent", l, holm_term_atom(a, th->concl));
-}
-static Atom *holm_atom(Arena *a, const T *t, int sort) {
-    if (RC_IS_FOREIGN(t)) {
-        switch (RC_FOREIGN_TAG(t)) {
-        case 2: return holm_term_atom(a, (const HolTerm *)RC_FOREIGN_PTR(t));
-        case 4: return holm_type_atom(a, (const HolType *)RC_FOREIGN_PTR(t));
-        default: return holm_thm_atom(a, (const HolThm *)RC_FOREIGN_PTR(t));
-        }
-    }
-    if (RC_IS_IMM(t)) {
-        if (sort == S_Nat) return holm_nat_atom(a, RC_IMM_VAL(t));
-        if (sort == S_Str && rc_sort_rep[S_Str] == 4) return holm_name_atom(a, (HolName)RC_IMM_VAL(t));
-        if (sort == S_Table && rc_sort_rep[S_Table] == 4) return holm_atom(a, holr_table_readback((T *)t), sort);
-        return atom_symbol(a, "holm:immediate");
-    }
-    if (t->flags & RC_FLAG_BYTES) return holm_str_atom(a, rc_bytes(t), t->n);
-    Atom **e = malloc(((size_t)t->n + 1) * sizeof(Atom *));
-    if (!e) return atom_symbol(a, "holm:out-of-memory");
-    e[0] = atom_symbol(a, rc_ctor_name[t->tag]);
-    for (uint32_t i = 0; i < t->n; i++) e[i + 1] = holm_atom(a, t->k[i], rc_ctor_asort[rc_ctor_asort_off[t->tag] + i]);
-    Atom *r = atom_expr(a, e, (CettaExprLen)(t->n + 1));
-    free(e);
-    return r;
+ * constructor as (ctor); read through rc_view, which uses each sort's representation (interned
+ * names, types and terms, immediate numerals, heap terms), so numerals come out as binary numerals
+ * and names as byte lists, as the module writes them */
+static Atom *holm_atom(Arena *a, T *t, int sort) {
+    T *kids[8];
+    int c = rc_view(sort, t, kids);
+    if (c < 0) return atom_symbol(a, "holm:unreadable");
+    uint32_t n = rc_ctor_arity[c];
+    Atom *e[9];
+    e[0] = atom_symbol(a, rc_ctor_name[c]);
+    for (uint32_t i = 0; i < n && i < 8; i++) e[i + 1] = holm_atom(a, kids[i], rc_ctor_asort[rc_ctor_asort_off[c] + i]);
+    return atom_expr(a, e, (CettaExprLen)(n + 1));
 }
 
 typedef struct {
@@ -228,7 +166,7 @@ Atom *cetta_holm_dispatch(struct CettaLibraryContext *ctx, Space *space, Arena *
         } else if (!run.verdict) {
             result = holm_error(a, head, "the module gives no verdict (a judgment failed)");
         } else {
-            result = holm_atom(a, run.verdict, -1);
+            result = holm_atom(a, run.verdict, S_Verdict);
         }
     }
     pthread_attr_destroy(&at);

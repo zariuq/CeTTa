@@ -152,6 +152,8 @@ void cetta_library_he_run_end(CettaHEModuleRunScope *scope) {
     *scope = (CettaHEModuleRunScope){0};
 }
 
+/* Library bits: the lower half of the session's import mask (native modules
+ * hold the upper half, native/native_modules.h). */
 enum {
     CETTA_LIBRARY_SYSTEM = 1u << 0,
     CETTA_LIBRARY_FS = 1u << 1,
@@ -11743,7 +11745,7 @@ static bool library_import_native(CettaLibraryContext *ctx, const char *name,
     const CettaNativeBuiltinModule *native_spec = spec ? NULL : cetta_native_module_lookup(name);
     CettaModuleSpec parsed_spec;
     CettaImportPlan plan;
-    uint32_t import_bit;
+    uint64_t import_bit;
     const char *import_name;
 
     if (!spec && !native_spec) {

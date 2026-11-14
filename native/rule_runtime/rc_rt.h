@@ -74,6 +74,8 @@ static inline T *rc_mk5(uint16_t c, T *a, T *b, T *d, T *e, T *f) { T *t = rc_mk
 static inline T *rc_mk6(uint16_t c, T *a, T *b, T *d, T *e, T *f, T *g) { T *t = rc_mk(c, 6); t->k[0] = a; t->k[1] = b; t->k[2] = d; t->k[3] = e; t->k[4] = f; t->k[5] = g; return t; }
 static inline T *rc_mk7(uint16_t c, T *a, T *b, T *d, T *e, T *f, T *g, T *h) { T *t = rc_mk(c, 7); t->k[0] = a; t->k[1] = b; t->k[2] = d; t->k[3] = e; t->k[4] = f; t->k[5] = g; t->k[6] = h; return t; }
 static inline T *rc_mk8(uint16_t c, T *a, T *b, T *d, T *e, T *f, T *g, T *h, T *i) { T *t = rc_mk(c, 8); t->k[0] = a; t->k[1] = b; t->k[2] = d; t->k[3] = e; t->k[4] = f; t->k[5] = g; t->k[6] = h; t->k[7] = i; return t; }
+/* any arity, the children in an array */
+static inline T *rc_mkv(uint16_t c, uint32_t n, T *const *k) { T *t = rc_mk(c, n); memcpy(t->k, k, (size_t)n * sizeof(T *)); return t; }
 
 /* symbolic representation (the default for every sort) */
 extern TH rc_nul[];
@@ -88,6 +90,7 @@ extern TH rc_nul[];
 #define RC_MK6_symbolic(c, a, b, d, e, f, g) rc_mk6((c), (a), (b), (d), (e), (f), (g))
 #define RC_MK7_symbolic(c, a, b, d, e, f, g, h) rc_mk7((c), (a), (b), (d), (e), (f), (g), (h))
 #define RC_MK8_symbolic(c, a, b, d, e, f, g, h, i) rc_mk8((c), (a), (b), (d), (e), (f), (g), (h), (i))
+#define RC_MKV_symbolic(c, n, k) rc_mkv((c), (n), (k))
 
 /* native byte strings: flags RC_FLAG_BYTES, n = length, payload = bytes */
 T *rc_bytes_new(const uint8_t *b, size_t n);
@@ -103,7 +106,7 @@ extern uint64_t *rc_fail_count;
 #endif
 
 /* ---------------------------------------------------------------------- trace */
-enum { RC_EV_CONST = 0xE000u, RC_EV_NATIVE = 0xF000u, RC_EV_LAW = 0xF800u, RC_EV_NO_RULE = 0xFFFDu, RC_EV_TARGET = 0xFFFEu, RC_EV_RECORD = 0xFFFFu };
+enum { RC_EV_CONST = 0xE000u, RC_EV_MEMO = 0xE800u, RC_EV_NATIVE = 0xF000u, RC_EV_LAW = 0xF800u, RC_EV_NO_ROW = 0xFFFCu, RC_EV_NO_RULE = 0xFFFDu, RC_EV_TARGET = 0xFFFEu, RC_EV_RECORD = 0xFFFFu };
 extern int rc_trace_on;
 extern uint16_t *rc_trace_buf;
 extern size_t rc_trace_len, rc_trace_cap;
@@ -121,6 +124,19 @@ extern uint64_t *rc_rule_count;
 #define RC_RULE(r) do { RC_COUNT_RULE(r); if (rc_trace_on) rc_trace_push((uint16_t)(r)); } while (0)
 static inline T *rc_no_rule(int j) { (void)j; RC_COUNT_FAIL(j); if (rc_trace_on) rc_trace_push(RC_EV_NO_RULE); return (T *)0; }
 static inline T *rc_fail_target(int j) { (void)j; RC_COUNT_FAIL(j); if (rc_trace_on) rc_trace_push(RC_EV_TARGET); return (T *)0; }
+static inline T *rc_no_row(int j) { (void)j; RC_COUNT_FAIL(j); if (rc_trace_on) rc_trace_push(RC_EV_NO_ROW); return (T *)0; }
+/* a trial leaf (several pairwise exclusive candidate rules): the rule event is reserved at the start
+ * and filled with the rule that applied; while a trial is open the buffer is not flushed (it grows),
+ * so the events of a candidate that failed can be dropped */
+extern int rc_trace_hold;
+static inline size_t rc_trial_begin(void) { rc_trace_hold++; size_t m = rc_trace_len; rc_trace_push(0); return m; }
+static inline void rc_trial_end(size_t m, int rule) { rc_trace_buf[m] = (uint16_t)rule; rc_trace_hold--; }
+/* relations the rules query: their rows are host data; a query with every argument bound holds when
+ * the host has the row (no host: no rows) */
+extern const int rc_nrelations;
+extern const char *const rc_relation_names[];
+extern bool (*rc_relation_hook)(int rel, int n, T *const *args);
+static inline bool rc_relation_holds(int rel, int n, T *const *args) { return rc_relation_hook && rc_relation_hook(rel, n, args); }
 
 /* Tail calls are guaranteed where GCC's musttail is available (GCC 15; clang's needs identical
  * prototypes, which these calls do not have).  Without it a tail call is an ordinary call in tail
@@ -140,8 +156,8 @@ void rc_safepoint(int nroots);
 /* Called at the end of every safepoint, after the young space was collected (so the young space is
  * empty and rc_roots hold the live state): a native store can collect here.  rc_major_now copies
  * the old space at once (it then holds exactly the live terms); rc_walk_live calls fn on every
- * child slot of every term in the old space, of every constant made by rc_make_static, and on the
- * roots. */
+ * child slot of every term in the old space, of every constant made by rc_make_static, on every
+ * constant that is itself a foreign value, and on the roots. */
 extern void (*rc_foreign_hook)(int nroots);
 /* Equality, as module data, of two different foreign values with the same tag (rc_term_equal); unset,
  * or false, where the native store interns them (different objects are different values). */
@@ -174,6 +190,9 @@ typedef struct {
 extern RcStats rc_stats;
 void rc_runtime_init(size_t young_chunk);
 void rc_runtime_reset(void);       /* frees every term; statics stay */
+/* the young space's chunks are kept from run to run up to BYTES in all (default 256 MiB): a run that
+ * fills as much as an earlier one writes memory already mapped */
+void rc_runtime_retain(size_t bytes);
 uint64_t rc_young_in_use(void);
 uint64_t rc_old_in_use(void);
 uint64_t rc_alloc_total(void);
@@ -186,8 +205,18 @@ void rc_trace_stop(void);
 
 /* term utilities */
 bool rc_term_equal(const T *a, const T *b);
-/* a deep copy outside the collected spaces (constants); rc_free_statics frees every such copy (when
- * the constants are recomputed, for example because the native store they point into was replaced) */
+/* a deep copy outside the collected spaces (constants); a foreign value (an interned node) is kept as
+ * it is and becomes a root of its store; rc_free_statics frees every such copy and forgets those roots
+ * (when the constants are recomputed, for example because the native store they point into was
+ * replaced) */
 T *rc_make_static(T *x);
 void rc_free_statics(void);
+/* defined by the generated code: forget the cached constants (they are recomputed at their next
+ * use), for example when the store their values point into is freed */
+void rc_reset_constants(void);
+/* defined by the generated code: equality of two values of a sort as module data, through the views */
+bool rc_value_equal(int sort, T *a, T *b);
+/* one item of a value read in bulk by a host (rc_value_items, rc_list_items of the generated code):
+ * ctor >= 0 a constructor with n children, whose items follow; -1 the number v; -2 the n bytes at p */
+typedef struct RcItem { const uint8_t *p; uint64_t v; uint32_t n; int32_t ctor; } RcItem;
 #endif

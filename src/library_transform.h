@@ -4,7 +4,7 @@
 #include "call_outcome.h"
 #include "library.h"
 
-#define CETTA_NATIVE_IMPORT_TRANSFORM (1u << 30)
+#define CETTA_NATIVE_IMPORT_TRANSFORM (1ull << 43)
 
 bool cetta_eval_transform_module_call(
     CettaLibraryContext *ctx, Space *space, Arena *a,

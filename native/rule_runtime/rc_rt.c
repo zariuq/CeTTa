@@ -31,6 +31,24 @@ static void chunks_free(Chunk *c) { while (c) { Chunk *n = c->next; free(c->star
 
 static size_t young_chunk_bytes = (size_t)8 << 20;
 static Chunk *young_first, *young_cur;
+/* the young chunks after the first are kept for the next run (or the next fill after a minor
+ * collection) up to this many bytes in all, so that a run that fills as much as an earlier one
+ * writes memory already mapped instead of faulting in fresh pages; the rest is freed */
+static size_t young_retain_bytes = (size_t)256 << 20;
+void rc_runtime_retain(size_t bytes) { young_retain_bytes = bytes; }
+static void young_rewind(void) {
+    size_t kept = (size_t)(young_first->end - young_first->start);
+    Chunk *c = young_first;
+    while (c->next && kept + (size_t)(c->next->end - c->next->start) <= young_retain_bytes) {
+        c = c->next;
+        kept += (size_t)(c->end - c->start);
+    }
+    chunks_free(c->next);
+    c->next = NULL;
+    young_cur = young_first;
+    rc_hp = young_first->start;
+    rc_hlim = young_first->end;
+}
 static Chunk *old_first, *old_cur;
 static char *old_hp;
 static uint8_t cur_old = RC_SPACE_OLD0;
@@ -175,12 +193,8 @@ static void minor(int nroots) {
     old_bytes_in_use += copied_bytes;
     rc_stats.promoted_bytes += copied_bytes;
     rc_stats.minor_gcs++;
-    /* reset the young space (keep the first chunk) */
-    chunks_free(young_first->next);
-    young_first->next = NULL;
-    young_cur = young_first;
-    rc_hp = young_first->start;
-    rc_hlim = young_first->end;
+    /* reset the young space (its chunks kept up to the retention bound) */
+    young_rewind();
 }
 
 static void major(int nroots) {
@@ -231,11 +245,14 @@ void rc_major_now(int nroots) {
     rc_stats.gc_ns += now_ns() - t0;
 }
 
-/* constants made by rc_make_static: their children are roots of a native store too */
+/* constants made by rc_make_static: their children are roots of a native store too, and so is a
+ * constant that is itself a value of a native store (a foreign value: an interned node) */
 static T **statics; static size_t nstatics, capstatics;
+static T **static_vals; static size_t nstatic_vals, capstatic_vals;
 void rc_free_statics(void) {
     for (size_t s = 0; s < nstatics; s++) free(statics[s]);
     nstatics = 0;
+    nstatic_vals = 0;
 }
 
 void rc_walk_live(int nroots, void (*fn)(T *child, void *ctx), void *ctx) {
@@ -254,19 +271,14 @@ void rc_walk_live(int nroots, void (*fn)(T *child, void *ctx), void *ctx) {
         if (!(y->flags & RC_FLAG_BYTES))
             for (uint32_t i = 0; i < y->n; i++) fn(y->k[i], ctx);
     }
+    for (size_t s = 0; s < nstatic_vals; s++) fn(static_vals[s], ctx);
 }
 
 void rc_runtime_reset(void) {
     uint64_t used = rc_young_in_use();
     rc_stats.young_bytes += used;
     if (used > rc_stats.young_peak) rc_stats.young_peak = used;
-    if (young_first) {
-        chunks_free(young_first->next);
-        young_first->next = NULL;
-        young_cur = young_first;
-        rc_hp = young_first->start;
-        rc_hlim = young_first->end;
-    }
+    if (young_first) young_rewind();
     chunks_free(old_first);
     old_first = old_cur = NULL;
     old_hp = NULL;
@@ -283,7 +295,17 @@ static RcTraceSink trace_sink;
 static void *trace_ctx;
 
 void rc_trace_set_sink(RcTraceSink sink, void *ctx) { trace_sink = sink; trace_ctx = ctx; }
+int rc_trace_hold;
+bool (*rc_relation_hook)(int rel, int n, T *const *args);
 void rc_trace_flush(void) {
+    if (rc_trace_hold) {
+        /* a trial is open: its events may still be dropped, so the buffer grows instead */
+        size_t cap = 2 * rc_trace_cap;
+        uint16_t *b = realloc(rc_trace_buf, cap * sizeof(uint16_t));
+        if (!b) { fputs("rc: out of memory (trace)\n", stderr); exit(3); }
+        rc_trace_buf = b; rc_trace_cap = cap;
+        return;
+    }
     if (trace_sink) trace_sink(rc_trace_buf, rc_trace_len, trace_ctx);
     rc_stats.trace_events += rc_trace_len;
     rc_stats.trace_flushes++;
@@ -297,6 +319,7 @@ void rc_trace_start(size_t buffer_events) {
         rc_trace_cap = buffer_events;
     }
     rc_trace_len = 0;
+    rc_trace_hold = 0;
     rc_trace_on = 1;
 }
 void rc_trace_stop(void) {
@@ -336,6 +359,15 @@ bool rc_term_equal(const T *a, const T *b) {
 
 /* ------------------------------------------------------------------ constants */
 T *rc_make_static(T *x) {
+    if (RC_IS_FOREIGN(x)) {
+        if (nstatic_vals == capstatic_vals) {
+            capstatic_vals = capstatic_vals ? 2 * capstatic_vals : 64;
+            static_vals = realloc(static_vals, capstatic_vals * sizeof(T *));
+            if (!static_vals) { fputs("rc: out of memory (constant)\n", stderr); exit(3); }
+        }
+        static_vals[nstatic_vals++] = x;
+        return x;
+    }
     if (!RC_IS_HEAP(x) || x->space == RC_SPACE_STATIC) return x;
     size_t sz = obj_size(x);
     T *y = malloc(sz);

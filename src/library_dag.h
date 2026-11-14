@@ -3,7 +3,7 @@
 #include "call_outcome.h"
 struct CettaLibraryContext;
 struct Space;
-#define CETTA_NATIVE_IMPORT_DAG (1u << 21)
+#define CETTA_NATIVE_IMPORT_DAG (1ull << 35)
 bool cetta_dag_module_call(struct CettaLibraryContext *, struct Space *, Arena *,
     Atom *, Atom **, uint32_t, CettaCallOutcome *);
 #endif

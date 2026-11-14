@@ -614,5 +614,15 @@ extern const char *const rc_native_op_block[];
 extern const char *const rc_native_op_label[];
 extern const char *const rc_law_label[];
 void rc_reset_constants(void);
+void rc_components_init(void);
+extern const int rc_nmemo;
+extern const char *const rc_memo_name[];
+T *rc_construct(int ctor, T *const *kids);
+int rc_view(int sort, T *x, T **kids);
+bool rc_value_equal(int sort, T *a, T *b);
+bool rc_value_u64(int sort, T *x, uint64_t *v);
+bool rc_value_bytes(int sort, T *x, const uint8_t **p, size_t *n);
+size_t rc_value_items(int sort, T *x, RcItem *buf, size_t cap);
+size_t rc_list_items(int sort, T **cursor, RcItem *buf, size_t cap);
 T *rc_call(int judgment, T **a);
 #endif

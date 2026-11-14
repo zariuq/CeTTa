@@ -1,0 +1,48 @@
+; The binding table of the Megalodon kernel module (see docs/rulec.txt): representations of its sorts
+; and the judgments a back end may answer by a generic component instead of running their rules.  The
+; judgments' rules in the module are the contract; check mode runs them beside every component.
+;   (rep SORT KIND PARAM...)
+;   (block NAME JUDGMENT COMPONENT LABEL JUSTIFICATION)
+;   (memo NAME JUDGMENT LABEL JUSTIFICATION)
+; Every component is generic; nothing here calls the native Megalodon kernel.
+
+; representations: unary naturals as immediates; every sort with a non-nullary constructor interned
+(rep "Nat" unary "nat.z" "nat.s")
+(rep "Name" intern)
+(rep "Names" intern)
+(rep "Tp" intern)
+(rep "Tm" intern)
+(rep "Pf" intern)
+(rep "TpList" intern)
+(rep "TmList" intern)
+(rep "Ctx" intern)
+(rep "PrimEntry" intern)
+(rep "Prims" intern)
+(rep "Decl" intern)
+(rep "Decls" intern)
+(rep "Sel" intern)
+(rep "Sels" intern)
+(rep "Thy" intern)
+(rep "TermEntry" intern)
+(rep "KnownEntry" intern)
+(rep "SelEntry" intern)
+
+; naturals: immediates (the unary view: UNat.toNat_ofNat, UNat.ofNat_toNat, Unary.tag_eq_z_iff,
+; Unary.tag_eq_s_iff, Unary.succ_refines)
+(block "natural order" "nat.cmp" (nat-order "cmp.lt" "cmp.eq" "cmp.gt") "proved" "natCmp_iff, natCmp_binding (Megalodon/RuleModuleBindings.lean): nat.cmp's rules are the numeric order of unary numerals, which rc_nat_cmp computes on immediates (the unary view: UNat.toNat_ofNat, Unary.tag_eq_s_iff); trusted: the comparison of uint64_t")
+(block "natural equality" "nat.eq" (equal "bool.t" "bool.f") "proved" "natEq_iff, natEq_binding: nat.eq's rules answer bool.t exactly on equal numerals; trusted: two immediates are the same word exactly when they hold the same number")
+(block "natural addition" "nat.add" (nat-add) "proved" "natAdd_iff, cNatAdd_refines, cNatAdd_binding: nat.add's rules are addition, which rc_nat_add computes wherever it gives a value; checked at run time: the immediate range")
+; names, types and terms: interned nodes
+(block "name equality" "name.eq" (equal "bool.t" "bool.f") "proved" "nameEq_iff, nameEq_binding (through interning_eq_iff): name.eq's rules decide equality of bit strings, and two interned names are equal exactly when they are one node; trusted: a node's id stands for its pointer")
+(block "type equality" "tp.eq" (equal "bool.t" "bool.f") "proved" "tpEq_iff, tpEq_binding: tp.eq's rules (TP-EQ-HEADS for different heads, a rule per head) decide syntactic equality of types; trusted: a node's id stands for its pointer")
+(block "term equality" "tm.eq" (equal "bool.t" "bool.f") "proved" "tmEq_iff, tmEq_binding: tm.eq's rules (TM-EQ-HEADS for different heads, a rule per head) decide syntactic equality of terms; trusted: a node's id stands for its pointer")
+
+; memoised judgments: compiled from the module's rules, results kept per interned arguments (each a
+; function of its arguments: every overlap of the module resolved, no relation query binds)
+(memo "normal form" "tm.nf" "proved" "tm.nf is a function of an interned term: memo_sound, memo2_sound; trusted: rc_memo.c is the model")
+(memo "delta" "tm.delta" "proved" "tm.delta is a function of an interned theory and term: memo_sound, memo2_sound; trusted: rc_memo.c is the model")
+(memo "term lookup" "ds.term" "proved" "ds.term is a function of interned declarations and a name: memo_sound, memo2_sound; trusted: rc_memo.c is the model")
+(memo "known lookup" "ds.known" "proved" "ds.known is a function of interned declarations and a name: memo_sound, memo2_sound; trusted: rc_memo.c is the model")
+(memo "type inference" "tm.infer" "proved" "tm.infer is a function of an interned theory, depth, type list and term: memo_sound, memo2_sound; trusted: rc_memo.c is the model")
+(memo "instantiation" "tm.inst" "proved" "tm.inst is a function of a depth and two interned terms: memo_sound, memo2_sound; trusted: rc_memo.c is the model")
+(memo "protection" "tm.prot" "proved" "tm.prot is a function of an interned term: memo_sound, memo2_sound; trusted: rc_memo.c is the model")

@@ -5,7 +5,7 @@
 #include "library.h"
 #include "term_graph.h"
 
-#define CETTA_NATIVE_IMPORT_PAT (1u << 27)
+#define CETTA_NATIVE_IMPORT_PAT (1ull << 39)
 
 bool cetta_pattern_module_enabled(const CettaLibraryContext *context);
 SymbolId cetta_pattern_resolve_head(const CettaLibraryContext *context, SymbolId head);

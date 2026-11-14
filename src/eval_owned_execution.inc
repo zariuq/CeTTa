@@ -204,7 +204,7 @@ typedef struct {
     CettaLibPrologReadToken foreign;
     uint64_t admission_revision;
     uint64_t foreign_capability_revision;
-    uint32_t active_mask;
+    uint64_t active_mask;
     uint64_t transition_refill;
     EvalOwnedDemandAdapter adapter;
     bool captures_ready;

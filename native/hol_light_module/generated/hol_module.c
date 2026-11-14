@@ -147,58 +147,31 @@ TH rc_nul[530] = {
 extern int rc_check_native, rc_check_depth;
 void rc_native_checked(int op, T *native_result, T *rule_result);
 void rc_law_checked(int law, T *law_result, T *rule_result);
+void rc_memo_checked(int memo, T *kept_result, T *rule_result);
 #endif
-T *holb_str_eq(T *a0, T *a1);
-T *holb_cmp_str(T *a0, T *a1);
-T *holb_str_prime(T *a0);
-T *rc_native_cmp_nat(T *a0, T *a1);
-T *rc_native_nat_inc(T *a0);
-T *holb_ty_eq(T *a0, T *a1);
-T *holb_tm_eq(T *a0, T *a1);
-T *holb_cmp_type(T *a0, T *a1);
-T *holb_cmp_term(T *a0, T *a1);
-T *holb_alphaorder(T *a0, T *a1);
-T *holb_type_of(T *a0);
-T *holb_mk_comb(T *a0, T *a1);
-T *holb_mk_abs(T *a0, T *a1);
-T *holb_safe_mk_eq(T *a0, T *a1);
-T *holb_frees(T *a0);
-T *holb_freesin(T *a0, T *a1);
-T *holb_vfree_in(T *a0, T *a1);
-T *holb_type_vars_in_term(T *a0);
-T *holb_tyvars(T *a0);
-T *holb_variant(T *a0, T *a1);
-T *holb_vsubst(T *a0, T *a1);
-T *holb_vsubst_rec(T *a0, T *a1);
-T *holb_inst(T *a0, T *a1);
-T *holb_type_subst(T *a0, T *a1);
-T *holb_term_union(T *a0, T *a1);
-T *holb_term_remove(T *a0, T *a1);
-T *holb_term_image_vsubst(T *a0, T *a1);
-T *holb_term_image_inst(T *a0, T *a1);
-T *holb_table_get(T *a0, T *a1);
-T *holb_table_put(T *a0, T *a1);
-T *holb_table_set(T *a0, T *a1, T *a2);
-T *holb_table_next(T *a0);
-T *holb_empty_table(void);
-/* Str: represented by holname (constructors in this order) */
-#define RC_EXT_holname_SORT 4
-#define RC_EXT_holname_C0 23 /* hl:nnil */
-#define RC_EXT_holname_C1 24 /* hl:ncons */
-/* Type: represented by holtype (constructors in this order) */
-#define RC_EXT_holtype_SORT 10
-#define RC_EXT_holtype_C0 86 /* hl:Tyvar */
-#define RC_EXT_holtype_C1 87 /* hl:Tyapp */
-/* Term: represented by holterm (constructors in this order) */
-#define RC_EXT_holterm_SORT 12
-#define RC_EXT_holterm_C0 90 /* hl:Var */
-#define RC_EXT_holterm_C1 91 /* hl:Const */
-#define RC_EXT_holterm_C2 92 /* hl:Comb */
-#define RC_EXT_holterm_C3 93 /* hl:Abs */
-/* Table: represented by holtable (constructors in this order) */
-#define RC_EXT_holtable_SORT 44
-#define RC_EXT_holtable_C0 402 /* hl:table */
-#include "../holr_views.h"
+static T *rc_bind_0(T *a0, T *a1);
+static T *rc_bind_1(T *a0, T *a1);
+static T *rc_bind_2(T *a0);
+static T *rc_bind_3(T *a0, T *a1);
+static T *rc_bind_4(T *a0);
+static T *rc_bind_5(T *a0, T *a1);
+static T *rc_bind_6(T *a0, T *a1);
+static T *rc_bind_7(T *a0, T *a1);
+static T *rc_bind_8(T *a0, T *a1);
+static T *rc_bind_9(T *a0, T *a1);
+static T *rc_bind_10(T *a0, T *a1);
+static T *rc_bind_11(T *a0, T *a1);
+static T *rc_bind_12(T *a0, T *a1);
+static T *rc_bind_13(T *a0, T *a1, T *a2);
+static T *rc_bind_14(T *a0);
+static T *rc_bind_15(void);
+#include "../../rule_components/rc_intern.h"
+#include "../../rule_components/rc_bytes.h"
+#include "../../rule_components/rc_nat.h"
+#include "../../rule_components/rc_order.h"
+#include "../../rule_components/rc_memo.h"
+#include "../../rule_components/rc_set.h"
+#include "../../rule_components/rc_table.h"
 /* Nat: native naturals (immediates), viewed as hl:nz / hl:nb0 n (2n, n > 0) / hl:nb1 n (2n+1) */
 static inline uint16_t RC_TAG_nat(T *x) { uint64_t v = RC_IMM_VAL(x); return v == 0 ? 27 : (v & 1u) ? 29 : 28; }
 static inline T *RC_KID_nat(T *x, int i) { (void)i; return RC_IMM(RC_IMM_VAL(x) >> 1); }
@@ -215,6 +188,13 @@ T *rc_record_term(uint64_t i);
 static inline uint16_t RC_TAG_records(T *x) { return RC_IMM_VAL(x) >= rc_record_count ? 447 : 448; }
 static inline T *RC_KID_records(T *x, int i) { uint64_t v = RC_IMM_VAL(x); return i == 0 ? rc_record_term(v) : RC_IMM(v + 1); }
 
+/* ground terms of the rules, kept per native store */
+static T *rc_ground[110];
+#ifdef RC_CHECK_NATIVE
+#define RC_BLOCK_INLINE
+#else
+#define RC_BLOCK_INLINE inline __attribute__((always_inline))
+#endif
 static T *p34(T *a0);
 static T *p35(T *a0, T *a1);
 static T *p36(T *a0, T *a1);
@@ -224,14 +204,14 @@ static T *p39(T *a0, T *a1);
 static T *p40(T *a0);
 static T *p41(T *a0, T *a1);
 static T *p42(T *a0, T *a1);
-static T *p43(T *a0, T *a1);
+static RC_BLOCK_INLINE T *p43(T *a0, T *a1);
 static T *p44(T *a0, T *a1, T *a2);
-static T *p45(T *a0, T *a1);
-static T *p46(T *a0);
+static RC_BLOCK_INLINE T *p45(T *a0, T *a1);
+static RC_BLOCK_INLINE T *p46(T *a0);
 static T *p47(T *a0, T *a1);
 static T *p48(T *a0, T *a1, T *a2);
-static T *p49(T *a0);
-static T *p50(T *a0, T *a1);
+static RC_BLOCK_INLINE T *p49(T *a0);
+static RC_BLOCK_INLINE T *p50(T *a0, T *a1);
 static T *p51(T *a0, T *a1);
 static T *p52(T *a0, T *a1, T *a2, T *a3, T *a4);
 static T *p53(T *a0);
@@ -272,16 +252,16 @@ static T *p112(void);
 static T *p113(T *a0, T *a1);
 static T *p114(T *a0);
 static T *p115(T *a0, T *a1, T *a2);
-static T *p116(T *a0, T *a1);
+static RC_BLOCK_INLINE T *p116(T *a0, T *a1);
 static T *p117(T *a0, T *a1, T *a2);
 static T *p118(T *a0, T *a1);
 static T *p119(T *a0, T *a1, T *a2);
-static T *p120(T *a0, T *a1);
+static RC_BLOCK_INLINE T *p120(T *a0, T *a1);
 static T *p121(T *a0, T *a1, T *a2, T *a3);
 static T *p122(T *a0, T *a1, T *a2);
-static T *p123(T *a0, T *a1);
+static RC_BLOCK_INLINE T *p123(T *a0, T *a1);
 static T *p124(T *a0, T *a1, T *a2);
-static T *p125(T *a0, T *a1);
+static RC_BLOCK_INLINE T *p125(T *a0, T *a1);
 static T *p126(T *a0, T *a1);
 static T *p127(T *a0, T *a1, T *a2);
 static T *p128(T *a0, T *a1);
@@ -354,9 +334,9 @@ static T *p198(T *a0, T *a1, T *a2, T *a3);
 static T *p199(T *a0, T *a1, T *a2, T *a3);
 static T *p200(T *a0, T *a1, T *a2);
 static T *p201(T *a0, T *a1, T *a2, T *a3, T *a4);
-static T *p202(T *a0, T *a1);
+static RC_BLOCK_INLINE T *p202(T *a0, T *a1);
 static T *p203(T *a0, T *a1, T *a2, T *a3, T *a4);
-static T *p204(T *a0, T *a1);
+static RC_BLOCK_INLINE T *p204(T *a0, T *a1);
 static T *p205(T *a0, T *a1, T *a2, T *a3);
 static T *p206(T *a0, T *a1);
 static T *p207(T *a0, T *a1);
@@ -469,11 +449,11 @@ static T *p388(T *a0, T *a1, T *a2);
 static T *p389(T *a0, T *a1, T *a2, T *a3);
 static T *p400(T *a0, T *a1);
 static T *p401(T *a0, T *a1, T *a2);
-static T *p403(T *a0, T *a1);
-static T *p404(T *a0, T *a1);
-static T *p405(T *a0, T *a1, T *a2);
-static T *p406(T *a0);
-static T *p407(void);
+static RC_BLOCK_INLINE T *p403(T *a0, T *a1);
+static RC_BLOCK_INLINE T *p404(T *a0, T *a1);
+static RC_BLOCK_INLINE T *p405(T *a0, T *a1, T *a2);
+static RC_BLOCK_INLINE T *p406(T *a0);
+static RC_BLOCK_INLINE T *p407(void);
 static T *p414(T *a0, T *a1);
 static T *p472(T *a0, T *a1);
 static T *p473(T *a0, T *a1, T *a2);
@@ -533,6 +513,99 @@ static T *p526(T *a0, T *a1, T *a2);
 static T *p527(T *a0, T *a1, T *a2);
 static T *p528(T *a0, T *a1);
 static T *p529(T *a0, T *a1, T *a2);
+
+/* block name equality: hl:str-eq answered by equal */
+static T *rc_bind_0(T *a0, T *a1) {
+    return a0 == a1 ? RC_NUL_symbolic(0) : RC_NUL_symbolic(1);
+}
+
+/* block name order: hl:cmp-str answered by bytes-order */
+static T *rc_bind_1(T *a0, T *a1) {
+    int c_ = rc_bytes_cmp(a0, a1);
+    return c_ < 0 ? RC_NUL_symbolic(2) : c_ > 0 ? RC_NUL_symbolic(4) : RC_NUL_symbolic(3);
+}
+
+/* block name prime: hl:str-prime answered by bytes-snoc */
+static T *rc_bind_2(T *a0) {
+    static const uint8_t s_[] = {0x27};
+    return rc_bytes_snoc(a0, s_, 1);
+}
+
+/* block numeral order: hl:cmp-nat answered by nat-order */
+static T *rc_bind_3(T *a0, T *a1) {
+    int c_ = rc_nat_cmp(a0, a1);
+    return c_ < 0 ? RC_NUL_symbolic(2) : c_ > 0 ? RC_NUL_symbolic(4) : RC_NUL_symbolic(3);
+}
+
+/* block numeral successor: hl:nat-inc answered by nat-succ */
+static T *rc_bind_4(T *a0) {
+    return rc_nat_succ(a0);
+}
+
+/* block type equality: hl:ty-eq answered by equal */
+static T *rc_bind_5(T *a0, T *a1) {
+    return a0 == a1 ? RC_NUL_symbolic(0) : RC_NUL_symbolic(1);
+}
+
+/* block term equality: hl:tm-eq answered by equal */
+static T *rc_bind_6(T *a0, T *a1) {
+    return a0 == a1 ? RC_NUL_symbolic(0) : RC_NUL_symbolic(1);
+}
+
+/* block type order: hl:cmp-type answered by structural-order */
+static T *rc_bind_7(T *a0, T *a1) {
+    int c_ = rc_order_cmp(10, a0, a1);
+    return c_ < 0 ? RC_NUL_symbolic(2) : c_ > 0 ? RC_NUL_symbolic(4) : RC_NUL_symbolic(3);
+}
+
+/* block term order: hl:cmp-term answered by structural-order */
+static T *rc_bind_8(T *a0, T *a1) {
+    int c_ = rc_order_cmp(12, a0, a1);
+    return c_ < 0 ? RC_NUL_symbolic(2) : c_ > 0 ? RC_NUL_symbolic(4) : RC_NUL_symbolic(3);
+}
+
+/* block term_union: hl:term-union answered by set-union */
+static T *rc_bind_9(T *a0, T *a1) {
+    static const RcSetDesc d_ = {94, 95, 2, 3, 4};
+    int tr_ = rc_trace_on; rc_trace_on = 0;
+    T *r_ = rc_set_union(&d_, p196, a0, a1);
+    rc_trace_on = tr_;
+    return r_;
+}
+
+/* block term_remove: hl:term-remove answered by set-remove */
+static T *rc_bind_10(T *a0, T *a1) {
+    static const RcSetDesc d_ = {94, 95, 2, 3, 4};
+    int tr_ = rc_trace_on; rc_trace_on = 0;
+    T *r_ = rc_set_remove(&d_, p196, a0, a1);
+    rc_trace_on = tr_;
+    return r_;
+}
+
+/* block table lookup: hl:table-get answered by table-get */
+static T *rc_bind_11(T *a0, T *a1) {
+    return rc_table_get(a0, a1);
+}
+
+/* block table append: hl:table-put answered by table-put */
+static T *rc_bind_12(T *a0, T *a1) {
+    return rc_table_put(a0, a1);
+}
+
+/* block table update: hl:table-set answered by table-set */
+static T *rc_bind_13(T *a0, T *a1, T *a2) {
+    return rc_table_set(a0, a1, a2);
+}
+
+/* block table size: hl:table-next answered by table-next */
+static T *rc_bind_14(T *a0) {
+    return rc_table_next(a0);
+}
+
+/* block empty table: hl:empty-table answered by table-empty */
+static T *rc_bind_15(void) {
+    return rc_table_empty();
+}
 
 /* hl:not: 2 rules, det */
 static T *p34(T *a0) {
@@ -651,67 +724,67 @@ static T *p40(T *a0) {
 n40: switch (RC_TAG_symbolic(a0)) { case 5: goto r12; case 6: goto r13; case 7: goto r14; case 8: goto r15; case 9: goto r16; case 10: goto r17; case 11: goto r18; case 12: goto r19; case 13: goto r20; case 14: goto r21; case 15: goto r22; case 16: goto r23; case 17: goto r24; case 18: goto r25; case 19: goto r26; case 20: goto r27; default: goto f; }
 r12: { /* nib-0 */
         RC_RULE(12);
-        return RC_MK4_symbolic(21, RC_NUL_symbolic(1), RC_NUL_symbolic(1), RC_NUL_symbolic(1), RC_NUL_symbolic(1));
+        return (rc_ground[0] ? rc_ground[0] : (rc_ground[0] = rc_make_static(RC_MK4_symbolic(21, RC_NUL_symbolic(1), RC_NUL_symbolic(1), RC_NUL_symbolic(1), RC_NUL_symbolic(1)))));
     }
 r13: { /* nib-1 */
         RC_RULE(13);
-        return RC_MK4_symbolic(21, RC_NUL_symbolic(1), RC_NUL_symbolic(1), RC_NUL_symbolic(1), RC_NUL_symbolic(0));
+        return (rc_ground[1] ? rc_ground[1] : (rc_ground[1] = rc_make_static(RC_MK4_symbolic(21, RC_NUL_symbolic(1), RC_NUL_symbolic(1), RC_NUL_symbolic(1), RC_NUL_symbolic(0)))));
     }
 r14: { /* nib-2 */
         RC_RULE(14);
-        return RC_MK4_symbolic(21, RC_NUL_symbolic(1), RC_NUL_symbolic(1), RC_NUL_symbolic(0), RC_NUL_symbolic(1));
+        return (rc_ground[2] ? rc_ground[2] : (rc_ground[2] = rc_make_static(RC_MK4_symbolic(21, RC_NUL_symbolic(1), RC_NUL_symbolic(1), RC_NUL_symbolic(0), RC_NUL_symbolic(1)))));
     }
 r15: { /* nib-3 */
         RC_RULE(15);
-        return RC_MK4_symbolic(21, RC_NUL_symbolic(1), RC_NUL_symbolic(1), RC_NUL_symbolic(0), RC_NUL_symbolic(0));
+        return (rc_ground[3] ? rc_ground[3] : (rc_ground[3] = rc_make_static(RC_MK4_symbolic(21, RC_NUL_symbolic(1), RC_NUL_symbolic(1), RC_NUL_symbolic(0), RC_NUL_symbolic(0)))));
     }
 r16: { /* nib-4 */
         RC_RULE(16);
-        return RC_MK4_symbolic(21, RC_NUL_symbolic(1), RC_NUL_symbolic(0), RC_NUL_symbolic(1), RC_NUL_symbolic(1));
+        return (rc_ground[4] ? rc_ground[4] : (rc_ground[4] = rc_make_static(RC_MK4_symbolic(21, RC_NUL_symbolic(1), RC_NUL_symbolic(0), RC_NUL_symbolic(1), RC_NUL_symbolic(1)))));
     }
 r17: { /* nib-5 */
         RC_RULE(17);
-        return RC_MK4_symbolic(21, RC_NUL_symbolic(1), RC_NUL_symbolic(0), RC_NUL_symbolic(1), RC_NUL_symbolic(0));
+        return (rc_ground[5] ? rc_ground[5] : (rc_ground[5] = rc_make_static(RC_MK4_symbolic(21, RC_NUL_symbolic(1), RC_NUL_symbolic(0), RC_NUL_symbolic(1), RC_NUL_symbolic(0)))));
     }
 r18: { /* nib-6 */
         RC_RULE(18);
-        return RC_MK4_symbolic(21, RC_NUL_symbolic(1), RC_NUL_symbolic(0), RC_NUL_symbolic(0), RC_NUL_symbolic(1));
+        return (rc_ground[6] ? rc_ground[6] : (rc_ground[6] = rc_make_static(RC_MK4_symbolic(21, RC_NUL_symbolic(1), RC_NUL_symbolic(0), RC_NUL_symbolic(0), RC_NUL_symbolic(1)))));
     }
 r19: { /* nib-7 */
         RC_RULE(19);
-        return RC_MK4_symbolic(21, RC_NUL_symbolic(1), RC_NUL_symbolic(0), RC_NUL_symbolic(0), RC_NUL_symbolic(0));
+        return (rc_ground[7] ? rc_ground[7] : (rc_ground[7] = rc_make_static(RC_MK4_symbolic(21, RC_NUL_symbolic(1), RC_NUL_symbolic(0), RC_NUL_symbolic(0), RC_NUL_symbolic(0)))));
     }
 r20: { /* nib-8 */
         RC_RULE(20);
-        return RC_MK4_symbolic(21, RC_NUL_symbolic(0), RC_NUL_symbolic(1), RC_NUL_symbolic(1), RC_NUL_symbolic(1));
+        return (rc_ground[8] ? rc_ground[8] : (rc_ground[8] = rc_make_static(RC_MK4_symbolic(21, RC_NUL_symbolic(0), RC_NUL_symbolic(1), RC_NUL_symbolic(1), RC_NUL_symbolic(1)))));
     }
 r21: { /* nib-9 */
         RC_RULE(21);
-        return RC_MK4_symbolic(21, RC_NUL_symbolic(0), RC_NUL_symbolic(1), RC_NUL_symbolic(1), RC_NUL_symbolic(0));
+        return (rc_ground[9] ? rc_ground[9] : (rc_ground[9] = rc_make_static(RC_MK4_symbolic(21, RC_NUL_symbolic(0), RC_NUL_symbolic(1), RC_NUL_symbolic(1), RC_NUL_symbolic(0)))));
     }
 r22: { /* nib-a */
         RC_RULE(22);
-        return RC_MK4_symbolic(21, RC_NUL_symbolic(0), RC_NUL_symbolic(1), RC_NUL_symbolic(0), RC_NUL_symbolic(1));
+        return (rc_ground[10] ? rc_ground[10] : (rc_ground[10] = rc_make_static(RC_MK4_symbolic(21, RC_NUL_symbolic(0), RC_NUL_symbolic(1), RC_NUL_symbolic(0), RC_NUL_symbolic(1)))));
     }
 r23: { /* nib-b */
         RC_RULE(23);
-        return RC_MK4_symbolic(21, RC_NUL_symbolic(0), RC_NUL_symbolic(1), RC_NUL_symbolic(0), RC_NUL_symbolic(0));
+        return (rc_ground[11] ? rc_ground[11] : (rc_ground[11] = rc_make_static(RC_MK4_symbolic(21, RC_NUL_symbolic(0), RC_NUL_symbolic(1), RC_NUL_symbolic(0), RC_NUL_symbolic(0)))));
     }
 r24: { /* nib-c */
         RC_RULE(24);
-        return RC_MK4_symbolic(21, RC_NUL_symbolic(0), RC_NUL_symbolic(0), RC_NUL_symbolic(1), RC_NUL_symbolic(1));
+        return (rc_ground[12] ? rc_ground[12] : (rc_ground[12] = rc_make_static(RC_MK4_symbolic(21, RC_NUL_symbolic(0), RC_NUL_symbolic(0), RC_NUL_symbolic(1), RC_NUL_symbolic(1)))));
     }
 r25: { /* nib-d */
         RC_RULE(25);
-        return RC_MK4_symbolic(21, RC_NUL_symbolic(0), RC_NUL_symbolic(0), RC_NUL_symbolic(1), RC_NUL_symbolic(0));
+        return (rc_ground[13] ? rc_ground[13] : (rc_ground[13] = rc_make_static(RC_MK4_symbolic(21, RC_NUL_symbolic(0), RC_NUL_symbolic(0), RC_NUL_symbolic(1), RC_NUL_symbolic(0)))));
     }
 r26: { /* nib-e */
         RC_RULE(26);
-        return RC_MK4_symbolic(21, RC_NUL_symbolic(0), RC_NUL_symbolic(0), RC_NUL_symbolic(0), RC_NUL_symbolic(1));
+        return (rc_ground[14] ? rc_ground[14] : (rc_ground[14] = rc_make_static(RC_MK4_symbolic(21, RC_NUL_symbolic(0), RC_NUL_symbolic(0), RC_NUL_symbolic(0), RC_NUL_symbolic(1)))));
     }
 r27: { /* nib-f */
         RC_RULE(27);
-        return RC_MK4_symbolic(21, RC_NUL_symbolic(0), RC_NUL_symbolic(0), RC_NUL_symbolic(0), RC_NUL_symbolic(0));
+        return (rc_ground[15] ? rc_ground[15] : (rc_ground[15] = rc_make_static(RC_MK4_symbolic(21, RC_NUL_symbolic(0), RC_NUL_symbolic(0), RC_NUL_symbolic(0), RC_NUL_symbolic(0)))));
     }
 f:  return rc_no_rule(40);
 }
@@ -761,7 +834,7 @@ r28: { /* cmp-nib */
         T *t7 = p37(v11, v14);
         if (!t7) return (T *)0;
         T *v15 = t7;
-        RC_TAIL return p37(v10, v15);
+        return p37(v10, v15);
     }
 }
 
@@ -782,7 +855,7 @@ r29: { /* cmp-byte */
         T *t1 = p41(v1, v3);
         if (!t1) return (T *)0;
         T *v5 = t1;
-        RC_TAIL return p37(v4, v5);
+        return p37(v4, v5);
     }
 f:  return rc_no_rule(42);
 }
@@ -791,9 +864,9 @@ f:  return rc_no_rule(42);
 #ifdef RC_CHECK_NATIVE
 static T *p43_rules(T *a0, T *a1) {
     goto n51;
-n51: switch (RC_TAG_holname(a0)) { case 23: goto n47; case 24: goto n50; default: goto f; }
-n47: switch (RC_TAG_holname(a1)) { case 23: goto r30; case 24: goto r31; default: goto f; }
-n50: switch (RC_TAG_holname(a1)) { case 23: goto r32; case 24: goto r33; default: goto f; }
+n51: switch (RC_TAG_bytes(a0)) { case 23: goto n47; case 24: goto n50; default: goto f; }
+n47: switch (RC_TAG_bytes(a1)) { case 23: goto r30; case 24: goto r31; default: goto f; }
+n50: switch (RC_TAG_bytes(a1)) { case 23: goto r32; case 24: goto r33; default: goto f; }
 r30: { /* cmp-str-nn */
         RC_RULE(30);
         return RC_NUL_symbolic(3);
@@ -807,10 +880,10 @@ r32: { /* cmp-str-cn */
         return RC_NUL_symbolic(4);
     }
 r33: { /* cmp-str-cc */
-        T *v0 = RC_KID_holname(a0, 0);
-        T *v1 = RC_KID_holname(a0, 1);
-        T *v2 = RC_KID_holname(a1, 0);
-        T *v3 = RC_KID_holname(a1, 1);
+        T *v0 = RC_KID_bytes(a0, 0);
+        T *v1 = RC_KID_bytes(a0, 1);
+        T *v2 = RC_KID_bytes(a1, 0);
+        T *v3 = RC_KID_bytes(a1, 1);
         RC_RULE(33);
         T *t0 = p42(v0, v2);
         if (!t0) return (T *)0;
@@ -820,7 +893,7 @@ r33: { /* cmp-str-cc */
 f:  return rc_no_rule(43);
 }
 #endif
-static T *p43(T *a0, T *a1) {
+static RC_BLOCK_INLINE T *p43(T *a0, T *a1) {
     if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 1));
 #ifdef RC_CHECK_NATIVE
     if (rc_check_native) {
@@ -829,12 +902,12 @@ static T *p43(T *a0, T *a1) {
         T *s_ = p43_rules(a0, a1);
         rc_check_depth--;
         rc_trace_on = tr_;
-        T *n_ = holb_cmp_str(a0, a1);
+        T *n_ = rc_bind_1(a0, a1);
         rc_native_checked(1, n_, s_);
         return n_;
     }
 #endif
-    return holb_cmp_str(a0, a1);
+    return rc_bind_1(a0, a1);
 }
 
 /* hl:cmp-str-k: 3 rules, det */
@@ -869,11 +942,11 @@ r37: { /* str-eq */
         T *t0 = p43(v0, v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p38(v2);
+        return p38(v2);
     }
 }
 #endif
-static T *p45(T *a0, T *a1) {
+static RC_BLOCK_INLINE T *p45(T *a0, T *a1) {
     if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 0));
 #ifdef RC_CHECK_NATIVE
     if (rc_check_native) {
@@ -882,36 +955,36 @@ static T *p45(T *a0, T *a1) {
         T *s_ = p45_rules(a0, a1);
         rc_check_depth--;
         rc_trace_on = tr_;
-        T *n_ = holb_str_eq(a0, a1);
+        T *n_ = rc_bind_0(a0, a1);
         rc_native_checked(0, n_, s_);
         return n_;
     }
 #endif
-    return holb_str_eq(a0, a1);
+    return rc_bind_0(a0, a1);
 }
 
 /* hl:str-prime: 2 rules, det; native operation */
 #ifdef RC_CHECK_NATIVE
 static T *p46_rules(T *a0) {
     goto n59;
-n59: switch (RC_TAG_holname(a0)) { case 23: goto r38; case 24: goto r39; default: goto f; }
+n59: switch (RC_TAG_bytes(a0)) { case 23: goto r38; case 24: goto r39; default: goto f; }
 r38: { /* str-prime-nil */
         RC_RULE(38);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(7), RC_NUL_symbolic(12)), RC_NUL_holname(23));
+        return (rc_ground[16] ? rc_ground[16] : (rc_ground[16] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(7), RC_NUL_symbolic(12)), RC_NUL_bytes(23)))));
     }
 r39: { /* str-prime-cons */
-        T *v0 = RC_KID_holname(a0, 0);
-        T *v1 = RC_KID_holname(a0, 1);
+        T *v0 = RC_KID_bytes(a0, 0);
+        T *v1 = RC_KID_bytes(a0, 1);
         RC_RULE(39);
         T *t0 = p46(v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        return RC_MK2_holname(24, v0, v2);
+        return RC_MK2_bytes(24, v0, v2);
     }
 f:  return rc_no_rule(46);
 }
 #endif
-static T *p46(T *a0) {
+static RC_BLOCK_INLINE T *p46(T *a0) {
     if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 2));
 #ifdef RC_CHECK_NATIVE
     if (rc_check_native) {
@@ -920,16 +993,12 @@ static T *p46(T *a0) {
         T *s_ = p46_rules(a0);
         rc_check_depth--;
         rc_trace_on = tr_;
-        T *n_ = holb_str_prime(a0);
-#ifdef RC_READBACK_holname
-        rc_native_checked(2, n_ ? RC_READBACK_holname(n_) : n_, s_ ? RC_READBACK_holname(s_) : s_);
-#else
+        T *n_ = rc_bind_2(a0);
         rc_native_checked(2, n_, s_);
-#endif
         return n_;
     }
 #endif
-    return holb_str_prime(a0);
+    return rc_bind_2(a0);
 }
 
 /* hl:ss-mem: 2 rules, det */
@@ -977,7 +1046,7 @@ static T *p49_rules(T *a0) {
 n69: switch (RC_TAG_nat(a0)) { case 27: goto r44; case 28: goto r45; case 29: goto r46; default: goto f; }
 r44: { /* inc-z */
         RC_RULE(44);
-        return RC_MK1_nat(29, RC_NUL_nat(27));
+        return (rc_ground[17] ? rc_ground[17] : (rc_ground[17] = rc_make_static(RC_MK1_nat(29, RC_NUL_nat(27)))));
     }
 r45: { /* inc-0 */
         T *v0 = RC_KID_nat(a0, 0);
@@ -995,7 +1064,7 @@ r46: { /* inc-1 */
 f:  return rc_no_rule(49);
 }
 #endif
-static T *p49(T *a0) {
+static RC_BLOCK_INLINE T *p49(T *a0) {
     if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 4));
 #ifdef RC_CHECK_NATIVE
     if (rc_check_native) {
@@ -1004,12 +1073,12 @@ static T *p49(T *a0) {
         T *s_ = p49_rules(a0);
         rc_check_depth--;
         rc_trace_on = tr_;
-        T *n_ = rc_native_nat_inc(a0);
+        T *n_ = rc_bind_4(a0);
         rc_native_checked(4, n_, s_);
         return n_;
     }
 #endif
-    return rc_native_nat_inc(a0);
+    return rc_bind_4(a0);
 }
 
 /* hl:cmp-nat: 9 rules, det; native operation */
@@ -1059,7 +1128,7 @@ r54: { /* cmp-nat-01 */
         T *t0 = p50(v0, v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p37(v2, RC_NUL_symbolic(2));
+        return p37(v2, RC_NUL_symbolic(2));
     }
 r55: { /* cmp-nat-10 */
         T *v0 = RC_KID_nat(a0, 0);
@@ -1068,12 +1137,12 @@ r55: { /* cmp-nat-10 */
         T *t0 = p50(v0, v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p37(v2, RC_NUL_symbolic(4));
+        return p37(v2, RC_NUL_symbolic(4));
     }
 f:  return rc_no_rule(50);
 }
 #endif
-static T *p50(T *a0, T *a1) {
+static RC_BLOCK_INLINE T *p50(T *a0, T *a1) {
     if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 3));
 #ifdef RC_CHECK_NATIVE
     if (rc_check_native) {
@@ -1082,12 +1151,12 @@ static T *p50(T *a0, T *a1) {
         T *s_ = p50_rules(a0, a1);
         rc_check_depth--;
         rc_trace_on = tr_;
-        T *n_ = rc_native_cmp_nat(a0, a1);
+        T *n_ = rc_bind_3(a0, a1);
         rc_native_checked(3, n_, s_);
         return n_;
     }
 #endif
-    return rc_native_cmp_nat(a0, a1);
+    return rc_bind_3(a0, a1);
 }
 
 /* hl:ids-merge: 3 rules, det */
@@ -1101,10 +1170,8 @@ r56: { /* ids-merge-nil */
         return v0;
     }
 r57: { /* ids-merge-cons-nil */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
         RC_RULE(57);
-        return RC_MK2_symbolic(31, v0, v1);
+        return a0;
     }
 r58: { /* ids-merge-cons-cons */
         T *v0 = RC_KID_symbolic(a0, 0);
@@ -1174,7 +1241,7 @@ r63: { /* ids-set-cons */
         T *t0 = p53(v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p51(RC_MK2_symbolic(31, v0, RC_NUL_symbolic(30)), v2);
+        return p51(RC_MK2_symbolic(31, v0, RC_NUL_symbolic(30)), v2);
     }
 f:  return rc_no_rule(53);
 }
@@ -1193,7 +1260,7 @@ r65: { /* ids-count-cons */
         T *t0 = p54(v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p49(v2);
+        return p49(v2);
     }
 f:  return rc_no_rule(54);
 }
@@ -1256,7 +1323,7 @@ static T *p57_rules(void) {
     goto r73;
 r73: { /* nm-bool */
         RC_RULE(73);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(7)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(20)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(20)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(17)), RC_NUL_holname(23)))));
+        return (rc_ground[18] ? rc_ground[18] : (rc_ground[18] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(7)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(20)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(20)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(17)), RC_NUL_bytes(23))))))));
     }
 }
 static T *p57_value; static int p57_done;
@@ -1271,7 +1338,7 @@ static T *p58_rules(void) {
     goto r74;
 r74: { /* nm-fun */
         RC_RULE(74);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(11)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(10)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(19)), RC_NUL_holname(23))));
+        return (rc_ground[19] ? rc_ground[19] : (rc_ground[19] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(11)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(10)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(19)), RC_NUL_bytes(23)))))));
     }
 }
 static T *p58_value; static int p58_done;
@@ -1286,7 +1353,7 @@ static T *p59_rules(void) {
     goto r75;
 r75: { /* nm-eq */
         RC_RULE(75);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(18)), RC_NUL_holname(23));
+        return (rc_ground[20] ? rc_ground[20] : (rc_ground[20] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(18)), RC_NUL_bytes(23)))));
     }
 }
 static T *p59_value; static int p59_done;
@@ -1301,7 +1368,7 @@ static T *p60_rules(void) {
     goto r76;
 r76: { /* nm-A */
         RC_RULE(76);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(6)), RC_NUL_holname(23));
+        return (rc_ground[21] ? rc_ground[21] : (rc_ground[21] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(6)), RC_NUL_bytes(23)))));
     }
 }
 static T *p60_value; static int p60_done;
@@ -1316,7 +1383,7 @@ static T *p61_rules(void) {
     goto r77;
 r77: { /* nm-B */
         RC_RULE(77);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(7)), RC_NUL_holname(23));
+        return (rc_ground[22] ? rc_ground[22] : (rc_ground[22] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(7)), RC_NUL_bytes(23)))));
     }
 }
 static T *p61_value; static int p61_done;
@@ -1331,7 +1398,7 @@ static T *p62_rules(void) {
     goto r78;
 r78: { /* nm-a */
         RC_RULE(78);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(6)), RC_NUL_holname(23));
+        return (rc_ground[23] ? rc_ground[23] : (rc_ground[23] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(6)), RC_NUL_bytes(23)))));
     }
 }
 static T *p62_value; static int p62_done;
@@ -1346,7 +1413,7 @@ static T *p63_rules(void) {
     goto r79;
 r79: { /* nm-r */
         RC_RULE(79);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(7)), RC_NUL_holname(23));
+        return (rc_ground[24] ? rc_ground[24] : (rc_ground[24] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(7)), RC_NUL_bytes(23)))));
     }
 }
 static T *p63_value; static int p63_done;
@@ -1361,7 +1428,7 @@ static T *p64_rules(void) {
     goto r80;
 r80: { /* nm-ind */
         RC_RULE(80);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(14)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(19)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(9)), RC_NUL_holname(23))));
+        return (rc_ground[25] ? rc_ground[25] : (rc_ground[25] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(14)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(19)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(9)), RC_NUL_bytes(23)))))));
     }
 }
 static T *p64_value; static int p64_done;
@@ -1376,7 +1443,7 @@ static T *p65_rules(void) {
     goto r81;
 r81: { /* nm-at */
         RC_RULE(81);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(5)), RC_NUL_holname(23));
+        return (rc_ground[26] ? rc_ground[26] : (rc_ground[26] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(5)), RC_NUL_bytes(23)))));
     }
 }
 static T *p65_value; static int p65_done;
@@ -1391,7 +1458,7 @@ static T *p66_rules(void) {
     goto r82;
 r82: { /* nm-T */
         RC_RULE(82);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(10), RC_NUL_symbolic(9)), RC_NUL_holname(23));
+        return (rc_ground[27] ? rc_ground[27] : (rc_ground[27] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(10), RC_NUL_symbolic(9)), RC_NUL_bytes(23)))));
     }
 }
 static T *p66_value; static int p66_done;
@@ -1406,7 +1473,7 @@ static T *p67_rules(void) {
     goto r83;
 r83: { /* nm-and */
         RC_RULE(83);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(7), RC_NUL_symbolic(20)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(10), RC_NUL_symbolic(17)), RC_NUL_holname(23)));
+        return (rc_ground[28] ? rc_ground[28] : (rc_ground[28] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(7), RC_NUL_symbolic(20)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(10), RC_NUL_symbolic(17)), RC_NUL_bytes(23))))));
     }
 }
 static T *p67_value; static int p67_done;
@@ -1421,7 +1488,7 @@ static T *p68_rules(void) {
     goto r84;
 r84: { /* nm-imp */
         RC_RULE(84);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(18)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(18)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(19)), RC_NUL_holname(23))));
+        return (rc_ground[29] ? rc_ground[29] : (rc_ground[29] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(18)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(18)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(19)), RC_NUL_bytes(23)))))));
     }
 }
 static T *p68_value; static int p68_done;
@@ -1436,7 +1503,7 @@ static T *p69_rules(void) {
     goto r85;
 r85: { /* nm-all */
         RC_RULE(85);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(7), RC_NUL_symbolic(6)), RC_NUL_holname(23));
+        return (rc_ground[30] ? rc_ground[30] : (rc_ground[30] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(7), RC_NUL_symbolic(6)), RC_NUL_bytes(23)))));
     }
 }
 static T *p69_value; static int p69_done;
@@ -1451,7 +1518,7 @@ static T *p70_rules(void) {
     goto r86;
 r86: { /* nm-ex */
         RC_RULE(86);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(20)), RC_NUL_holname(23));
+        return (rc_ground[31] ? rc_ground[31] : (rc_ground[31] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(20)), RC_NUL_bytes(23)))));
     }
 }
 static T *p70_value; static int p70_done;
@@ -1466,7 +1533,7 @@ static T *p71_rules(void) {
     goto r87;
 r87: { /* nm-F */
         RC_RULE(87);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(11)), RC_NUL_holname(23));
+        return (rc_ground[32] ? rc_ground[32] : (rc_ground[32] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(11)), RC_NUL_bytes(23)))));
     }
 }
 static T *p71_value; static int p71_done;
@@ -1481,7 +1548,7 @@ static T *p72_rules(void) {
     goto r88;
 r88: { /* nm-neg */
         RC_RULE(88);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(19)), RC_NUL_holname(23));
+        return (rc_ground[33] ? rc_ground[33] : (rc_ground[33] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(19)), RC_NUL_bytes(23)))));
     }
 }
 static T *p72_value; static int p72_done;
@@ -1496,7 +1563,7 @@ static T *p73_rules(void) {
     goto r89;
 r89: { /* nm-one-one */
         RC_RULE(89);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(20)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(19)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(10)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(10), RC_NUL_symbolic(20)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(20)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(19)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(10)), RC_NUL_holname(23))))))));
+        return (rc_ground[34] ? rc_ground[34] : (rc_ground[34] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(20)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(19)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(10)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(10), RC_NUL_symbolic(20)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(20)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(19)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(10)), RC_NUL_bytes(23)))))))))));
     }
 }
 static T *p73_value; static int p73_done;
@@ -1511,7 +1578,7 @@ static T *p74_rules(void) {
     goto r90;
 r90: { /* nm-onto */
         RC_RULE(90);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(20)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(19)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(10), RC_NUL_symbolic(9)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(20)), RC_NUL_holname(23)))));
+        return (rc_ground[35] ? rc_ground[35] : (rc_ground[35] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(20)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(19)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(10), RC_NUL_symbolic(9)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(9), RC_NUL_symbolic(20)), RC_NUL_bytes(23))))))));
     }
 }
 static T *p74_value; static int p74_done;
@@ -1526,7 +1593,7 @@ static T *p75_rules(void) {
     goto r91;
 r91: { /* nm-p */
         RC_RULE(91);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(5)), RC_NUL_holname(23));
+        return (rc_ground[36] ? rc_ground[36] : (rc_ground[36] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(5)), RC_NUL_bytes(23)))));
     }
 }
 static T *p75_value; static int p75_done;
@@ -1541,7 +1608,7 @@ static T *p76_rules(void) {
     goto r92;
 r92: { /* nm-q */
         RC_RULE(92);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(6)), RC_NUL_holname(23));
+        return (rc_ground[37] ? rc_ground[37] : (rc_ground[37] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(6)), RC_NUL_bytes(23)))));
     }
 }
 static T *p76_value; static int p76_done;
@@ -1556,7 +1623,7 @@ static T *p77_rules(void) {
     goto r93;
 r93: { /* nm-f */
         RC_RULE(93);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(11)), RC_NUL_holname(23));
+        return (rc_ground[38] ? rc_ground[38] : (rc_ground[38] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(11), RC_NUL_symbolic(11)), RC_NUL_bytes(23)))));
     }
 }
 static T *p77_value; static int p77_done;
@@ -1571,7 +1638,7 @@ static T *p78_rules(void) {
     goto r94;
 r94: { /* nm-P */
         RC_RULE(94);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(10), RC_NUL_symbolic(5)), RC_NUL_holname(23));
+        return (rc_ground[39] ? rc_ground[39] : (rc_ground[39] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(10), RC_NUL_symbolic(5)), RC_NUL_bytes(23)))));
     }
 }
 static T *p78_value; static int p78_done;
@@ -1586,7 +1653,7 @@ static T *p79_rules(void) {
     goto r95;
 r95: { /* nm-x */
         RC_RULE(95);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(13)), RC_NUL_holname(23));
+        return (rc_ground[40] ? rc_ground[40] : (rc_ground[40] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(13)), RC_NUL_bytes(23)))));
     }
 }
 static T *p79_value; static int p79_done;
@@ -1601,7 +1668,7 @@ static T *p80_rules(void) {
     goto r96;
 r96: { /* nm-t */
         RC_RULE(96);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(9)), RC_NUL_holname(23));
+        return (rc_ground[41] ? rc_ground[41] : (rc_ground[41] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(9)), RC_NUL_bytes(23)))));
     }
 }
 static T *p80_value; static int p80_done;
@@ -1616,7 +1683,7 @@ static T *p81_rules(void) {
     goto r97;
 r97: { /* nm-x1 */
         RC_RULE(97);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(13)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(6)), RC_NUL_holname(23)));
+        return (rc_ground[42] ? rc_ground[42] : (rc_ground[42] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(13)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(6)), RC_NUL_bytes(23))))));
     }
 }
 static T *p81_value; static int p81_done;
@@ -1631,7 +1698,7 @@ static T *p82_rules(void) {
     goto r98;
 r98: { /* nm-x2 */
         RC_RULE(98);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(13)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(7)), RC_NUL_holname(23)));
+        return (rc_ground[43] ? rc_ground[43] : (rc_ground[43] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(13)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(7)), RC_NUL_bytes(23))))));
     }
 }
 static T *p82_value; static int p82_done;
@@ -1646,7 +1713,7 @@ static T *p83_rules(void) {
     goto r99;
 r99: { /* nm-y */
         RC_RULE(99);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(14)), RC_NUL_holname(23));
+        return (rc_ground[44] ? rc_ground[44] : (rc_ground[44] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(12), RC_NUL_symbolic(14)), RC_NUL_bytes(23)))));
     }
 }
 static T *p83_value; static int p83_done;
@@ -1661,7 +1728,7 @@ static T *p84_rules(void) {
     goto r100;
 r100: { /* nm-g2064 */
         RC_RULE(100);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(10), RC_NUL_symbolic(20)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(7)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(5)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(11)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(9)), RC_NUL_holname(23))))));
+        return (rc_ground[45] ? rc_ground[45] : (rc_ground[45] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(10), RC_NUL_symbolic(20)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(7)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(5)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(11)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(9)), RC_NUL_bytes(23)))))))));
     }
 }
 static T *p84_value; static int p84_done;
@@ -1676,7 +1743,7 @@ static T *p85_rules(void) {
     goto r101;
 r101: { /* nm-g2069 */
         RC_RULE(101);
-        return RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(10), RC_NUL_symbolic(20)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(7)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(5)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(11)), RC_MK2_holname(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(14)), RC_NUL_holname(23))))));
+        return (rc_ground[46] ? rc_ground[46] : (rc_ground[46] = rc_make_static(RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(10), RC_NUL_symbolic(20)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(7)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(5)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(11)), RC_MK2_bytes(24, RC_MK2_symbolic(22, RC_NUL_symbolic(8), RC_NUL_symbolic(14)), RC_NUL_bytes(23)))))))));
     }
 }
 static T *p85_value; static int p85_done;
@@ -1694,7 +1761,7 @@ r102: { /* bool-ty */
         T *t0 = p57();
         if (!t0) return (T *)0;
         T *v0 = t0;
-        return RC_MK2_holtype(87, v0, RC_NUL_symbolic(88));
+        return RC_MK2_intern(87, v0, RC_NUL_intern(88));
     }
 }
 static T *p111_value; static int p111_done;
@@ -1712,7 +1779,7 @@ r103: { /* aty */
         T *t0 = p60();
         if (!t0) return (T *)0;
         T *v0 = t0;
-        return RC_MK1_holtype(86, v0);
+        return RC_MK1_intern(86, v0);
     }
 }
 static T *p112_value; static int p112_done;
@@ -1732,17 +1799,17 @@ r104: { /* mk-fun-ty */
         T *t0 = p58();
         if (!t0) return (T *)0;
         T *v2 = t0;
-        return RC_MK2_holtype(87, v2, RC_MK2_symbolic(89, v0, RC_MK2_symbolic(89, v1, RC_NUL_symbolic(88))));
+        return RC_MK2_intern(87, v2, RC_MK2_intern(89, v0, RC_MK2_intern(89, v1, RC_NUL_intern(88))));
     }
 }
 
 /* hl:dest-fun-ty: 5 rules, det */
 static T *p114(T *a0) {
     goto n149;
-n149: switch (RC_TAG_holtype(a0)) { case 86: goto r105; case 87: goto n148; default: goto f; }
-n148: switch (RC_TAG_symbolic(RC_KID_holtype(a0, 1))) { case 88: goto r106; case 89: goto n147; default: goto f; }
-n147: switch (RC_TAG_symbolic(RC_KID_symbolic(RC_KID_holtype(a0, 1), 1))) { case 88: goto r107; case 89: goto n146; default: goto f; }
-n146: switch (RC_TAG_symbolic(RC_KID_symbolic(RC_KID_symbolic(RC_KID_holtype(a0, 1), 1), 1))) { case 88: goto r108; case 89: goto r109; default: goto f; }
+n149: switch (RC_TAG_intern(a0)) { case 86: goto r105; case 87: goto n148; default: goto f; }
+n148: switch (RC_TAG_intern(RC_KID_intern(a0, 1))) { case 88: goto r106; case 89: goto n147; default: goto f; }
+n147: switch (RC_TAG_intern(RC_KID_intern(RC_KID_intern(a0, 1), 1))) { case 88: goto r107; case 89: goto n146; default: goto f; }
+n146: switch (RC_TAG_intern(RC_KID_intern(RC_KID_intern(RC_KID_intern(a0, 1), 1), 1))) { case 88: goto r108; case 89: goto r109; default: goto f; }
 r105: { /* dest-fun-var */
         RC_RULE(105);
         return RC_NUL_symbolic(104);
@@ -1756,9 +1823,9 @@ r107: { /* dest-fun-1 */
         return RC_NUL_symbolic(104);
     }
 r108: { /* dest-fun-2 */
-        T *v0 = RC_KID_holtype(a0, 0);
-        T *v1 = RC_KID_symbolic(RC_KID_holtype(a0, 1), 0);
-        T *v2 = RC_KID_symbolic(RC_KID_symbolic(RC_KID_holtype(a0, 1), 1), 0);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(RC_KID_intern(a0, 1), 0);
+        T *v2 = RC_KID_intern(RC_KID_intern(RC_KID_intern(a0, 1), 1), 0);
         RC_RULE(108);
         T *t0 = p58();
         if (!t0) return (T *)0;
@@ -1766,7 +1833,7 @@ r108: { /* dest-fun-2 */
         T *t1 = p45(v0, v3);
         if (!t1) return (T *)0;
         T *v4 = t1;
-        RC_TAIL return p115(v4, v1, v2);
+        return p115(v4, v1, v2);
     }
 r109: { /* dest-fun-3 */
         RC_RULE(109);
@@ -1796,14 +1863,14 @@ f:  return rc_no_rule(115);
 #ifdef RC_CHECK_NATIVE
 static T *p116_rules(T *a0, T *a1) {
     goto n159;
-n159: switch (RC_TAG_holtype(a0)) { case 86: goto n155; case 87: goto n158; default: goto f; }
-n155: switch (RC_TAG_holtype(a1)) { case 86: goto r112; case 87: goto r113; default: goto f; }
-n158: switch (RC_TAG_holtype(a1)) { case 86: goto r114; case 87: goto r115; default: goto f; }
+n159: switch (RC_TAG_intern(a0)) { case 86: goto n155; case 87: goto n158; default: goto f; }
+n155: switch (RC_TAG_intern(a1)) { case 86: goto r112; case 87: goto r113; default: goto f; }
+n158: switch (RC_TAG_intern(a1)) { case 86: goto r114; case 87: goto r115; default: goto f; }
 r112: { /* cmp-type-vv */
-        T *v0 = RC_KID_holtype(a0, 0);
-        T *v1 = RC_KID_holtype(a1, 0);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a1, 0);
         RC_RULE(112);
-        RC_TAIL return p43(v0, v1);
+        return p43(v0, v1);
     }
 r113: { /* cmp-type-va */
         RC_RULE(113);
@@ -1814,10 +1881,10 @@ r114: { /* cmp-type-av */
         return RC_NUL_symbolic(4);
     }
 r115: { /* cmp-type-aa */
-        T *v0 = RC_KID_holtype(a0, 0);
-        T *v1 = RC_KID_holtype(a0, 1);
-        T *v2 = RC_KID_holtype(a1, 0);
-        T *v3 = RC_KID_holtype(a1, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
+        T *v2 = RC_KID_intern(a1, 0);
+        T *v3 = RC_KID_intern(a1, 1);
         RC_RULE(115);
         T *t0 = p43(v0, v2);
         if (!t0) return (T *)0;
@@ -1827,7 +1894,7 @@ r115: { /* cmp-type-aa */
 f:  return rc_no_rule(116);
 }
 #endif
-static T *p116(T *a0, T *a1) {
+static RC_BLOCK_INLINE T *p116(T *a0, T *a1) {
     if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 7));
 #ifdef RC_CHECK_NATIVE
     if (rc_check_native) {
@@ -1836,12 +1903,12 @@ static T *p116(T *a0, T *a1) {
         T *s_ = p116_rules(a0, a1);
         rc_check_depth--;
         rc_trace_on = tr_;
-        T *n_ = holb_cmp_type(a0, a1);
+        T *n_ = rc_bind_7(a0, a1);
         rc_native_checked(7, n_, s_);
         return n_;
     }
 #endif
-    return holb_cmp_type(a0, a1);
+    return rc_bind_7(a0, a1);
 }
 
 /* hl:cmp-type-k: 3 rules, det */
@@ -1866,11 +1933,11 @@ f:  return rc_no_rule(117);
 }
 
 /* hl:cmp-types: 4 rules, det */
-static T *p118_rules(T *a0, T *a1) {
+static T *p118(T *a0, T *a1) {
     goto n170;
-n170: switch (RC_TAG_symbolic(a0)) { case 88: goto n166; case 89: goto n169; default: goto f; }
-n166: switch (RC_TAG_symbolic(a1)) { case 88: goto r119; case 89: goto r120; default: goto f; }
-n169: switch (RC_TAG_symbolic(a1)) { case 88: goto r121; case 89: goto r122; default: goto f; }
+n170: switch (RC_TAG_intern(a0)) { case 88: goto n166; case 89: goto n169; default: goto f; }
+n166: switch (RC_TAG_intern(a1)) { case 88: goto r119; case 89: goto r120; default: goto f; }
+n169: switch (RC_TAG_intern(a1)) { case 88: goto r121; case 89: goto r122; default: goto f; }
 r119: { /* cmp-types-nn */
         RC_RULE(119);
         return RC_NUL_symbolic(3);
@@ -1884,10 +1951,10 @@ r121: { /* cmp-types-cn */
         return RC_NUL_symbolic(4);
     }
 r122: { /* cmp-types-cc */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a1, 0);
-        T *v3 = RC_KID_symbolic(a1, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
+        T *v2 = RC_KID_intern(a1, 0);
+        T *v3 = RC_KID_intern(a1, 1);
         RC_RULE(122);
         T *t0 = p116(v0, v2);
         if (!t0) return (T *)0;
@@ -1895,16 +1962,6 @@ r122: { /* cmp-types-cc */
         RC_TAIL return p119(v4, v1, v3);
     }
 f:  return rc_no_rule(118);
-}
-static T *p118(T *a0, T *a1) {
-    if (a0 == a1) {
-        if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_LAW + 0));
-#ifdef RC_CHECK_NATIVE
-        if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *s_ = p118_rules(a0, a1); rc_check_depth--; rc_trace_on = tr_; rc_law_checked(0, RC_NUL_symbolic(3), s_); }
-#endif
-        return RC_NUL_symbolic(3);
-    }
-    RC_TAIL return p118_rules(a0, a1);
 }
 
 /* hl:cmp-types-k: 3 rules, det */
@@ -1939,11 +1996,11 @@ r126: { /* ty-eq */
         T *t0 = p116(v0, v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p38(v2);
+        return p38(v2);
     }
 }
 #endif
-static T *p120(T *a0, T *a1) {
+static RC_BLOCK_INLINE T *p120(T *a0, T *a1) {
     if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 5));
 #ifdef RC_CHECK_NATIVE
     if (rc_check_native) {
@@ -1952,12 +2009,12 @@ static T *p120(T *a0, T *a1) {
         T *s_ = p120_rules(a0, a1);
         rc_check_depth--;
         rc_trace_on = tr_;
-        T *n_ = holb_ty_eq(a0, a1);
+        T *n_ = rc_bind_5(a0, a1);
         rc_native_checked(5, n_, s_);
         return n_;
     }
 #endif
-    return holb_ty_eq(a0, a1);
+    return rc_bind_5(a0, a1);
 }
 
 /* hl:cmp-leaf: 1 rule, det */
@@ -1972,7 +2029,7 @@ r127: { /* cmp-leaf */
         T *t0 = p43(v0, v2);
         if (!t0) return (T *)0;
         T *v4 = t0;
-        RC_TAIL return p122(v4, v1, v3);
+        return p122(v4, v1, v3);
     }
 }
 
@@ -1992,7 +2049,7 @@ r130: { /* cmp-leaf-k-eq */
         T *v0 = a1;
         T *v1 = a2;
         RC_RULE(130);
-        RC_TAIL return p116(v0, v1);
+        return p116(v0, v1);
     }
 f:  return rc_no_rule(122);
 }
@@ -2001,18 +2058,18 @@ f:  return rc_no_rule(122);
 #ifdef RC_CHECK_NATIVE
 static T *p123_rules(T *a0, T *a1) {
     goto n201;
-n201: switch (RC_TAG_holterm(a0)) { case 90: goto n185; case 91: goto n190; case 92: goto n195; case 93: goto n200; default: goto f; }
-n185: switch (RC_TAG_holterm(a1)) { case 90: goto r131; case 91: goto r132; case 92: goto r133; case 93: goto r134; default: goto f; }
-n190: switch (RC_TAG_holterm(a1)) { case 90: goto r135; case 91: goto r136; case 92: goto r137; case 93: goto r138; default: goto f; }
-n195: switch (RC_TAG_holterm(a1)) { case 90: goto r139; case 91: goto r140; case 92: goto r141; case 93: goto r142; default: goto f; }
-n200: switch (RC_TAG_holterm(a1)) { case 90: goto r143; case 91: goto r144; case 92: goto r145; case 93: goto r146; default: goto f; }
+n201: switch (RC_TAG_intern(a0)) { case 90: goto n185; case 91: goto n190; case 92: goto n195; case 93: goto n200; default: goto f; }
+n185: switch (RC_TAG_intern(a1)) { case 90: goto r131; case 91: goto r132; case 92: goto r133; case 93: goto r134; default: goto f; }
+n190: switch (RC_TAG_intern(a1)) { case 90: goto r135; case 91: goto r136; case 92: goto r137; case 93: goto r138; default: goto f; }
+n195: switch (RC_TAG_intern(a1)) { case 90: goto r139; case 91: goto r140; case 92: goto r141; case 93: goto r142; default: goto f; }
+n200: switch (RC_TAG_intern(a1)) { case 90: goto r143; case 91: goto r144; case 92: goto r145; case 93: goto r146; default: goto f; }
 r131: { /* cmp-term-vv */
-        T *v0 = RC_KID_holterm(a0, 0);
-        T *v1 = RC_KID_holterm(a0, 1);
-        T *v2 = RC_KID_holterm(a1, 0);
-        T *v3 = RC_KID_holterm(a1, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
+        T *v2 = RC_KID_intern(a1, 0);
+        T *v3 = RC_KID_intern(a1, 1);
         RC_RULE(131);
-        RC_TAIL return p121(v0, v1, v2, v3);
+        return p121(v0, v1, v2, v3);
     }
 r132: { /* cmp-term-vc */
         RC_RULE(132);
@@ -2031,12 +2088,12 @@ r135: { /* cmp-term-cv */
         return RC_NUL_symbolic(4);
     }
 r136: { /* cmp-term-cc */
-        T *v0 = RC_KID_holterm(a0, 0);
-        T *v1 = RC_KID_holterm(a0, 1);
-        T *v2 = RC_KID_holterm(a1, 0);
-        T *v3 = RC_KID_holterm(a1, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
+        T *v2 = RC_KID_intern(a1, 0);
+        T *v3 = RC_KID_intern(a1, 1);
         RC_RULE(136);
-        RC_TAIL return p121(v0, v1, v2, v3);
+        return p121(v0, v1, v2, v3);
     }
 r137: { /* cmp-term-cm */
         RC_RULE(137);
@@ -2055,10 +2112,10 @@ r140: { /* cmp-term-mc */
         return RC_NUL_symbolic(4);
     }
 r141: { /* cmp-term-mm */
-        T *v0 = RC_KID_holterm(a0, 0);
-        T *v1 = RC_KID_holterm(a0, 1);
-        T *v2 = RC_KID_holterm(a1, 0);
-        T *v3 = RC_KID_holterm(a1, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
+        T *v2 = RC_KID_intern(a1, 0);
+        T *v3 = RC_KID_intern(a1, 1);
         RC_RULE(141);
         T *t0 = p123(v0, v2);
         if (!t0) return (T *)0;
@@ -2082,10 +2139,10 @@ r145: { /* cmp-term-am */
         return RC_NUL_symbolic(4);
     }
 r146: { /* cmp-term-aa */
-        T *v0 = RC_KID_holterm(a0, 0);
-        T *v1 = RC_KID_holterm(a0, 1);
-        T *v2 = RC_KID_holterm(a1, 0);
-        T *v3 = RC_KID_holterm(a1, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
+        T *v2 = RC_KID_intern(a1, 0);
+        T *v3 = RC_KID_intern(a1, 1);
         RC_RULE(146);
         T *t0 = p123(v0, v2);
         if (!t0) return (T *)0;
@@ -2095,7 +2152,7 @@ r146: { /* cmp-term-aa */
 f:  return rc_no_rule(123);
 }
 #endif
-static T *p123(T *a0, T *a1) {
+static RC_BLOCK_INLINE T *p123(T *a0, T *a1) {
     if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 8));
 #ifdef RC_CHECK_NATIVE
     if (rc_check_native) {
@@ -2104,12 +2161,12 @@ static T *p123(T *a0, T *a1) {
         T *s_ = p123_rules(a0, a1);
         rc_check_depth--;
         rc_trace_on = tr_;
-        T *n_ = holb_cmp_term(a0, a1);
+        T *n_ = rc_bind_8(a0, a1);
         rc_native_checked(8, n_, s_);
         return n_;
     }
 #endif
-    return holb_cmp_term(a0, a1);
+    return rc_bind_8(a0, a1);
 }
 
 /* hl:cmp-term-k: 3 rules, det */
@@ -2144,11 +2201,11 @@ r150: { /* tm-eq */
         T *t0 = p123(v0, v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p38(v2);
+        return p38(v2);
     }
 }
 #endif
-static T *p125(T *a0, T *a1) {
+static RC_BLOCK_INLINE T *p125(T *a0, T *a1) {
     if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 6));
 #ifdef RC_CHECK_NATIVE
     if (rc_check_native) {
@@ -2157,20 +2214,20 @@ static T *p125(T *a0, T *a1) {
         T *s_ = p125_rules(a0, a1);
         rc_check_depth--;
         rc_trace_on = tr_;
-        T *n_ = holb_tm_eq(a0, a1);
+        T *n_ = rc_bind_6(a0, a1);
         rc_native_checked(6, n_, s_);
         return n_;
     }
 #endif
-    return holb_tm_eq(a0, a1);
+    return rc_bind_6(a0, a1);
 }
 
 /* hl:tms-eq: 4 rules, det */
 static T *p126_rules(T *a0, T *a1) {
     goto n213;
-n213: switch (RC_TAG_symbolic(a0)) { case 94: goto n209; case 95: goto n212; default: goto f; }
-n209: switch (RC_TAG_symbolic(a1)) { case 94: goto r151; case 95: goto r152; default: goto f; }
-n212: switch (RC_TAG_symbolic(a1)) { case 94: goto r153; case 95: goto r154; default: goto f; }
+n213: switch (RC_TAG_intern(a0)) { case 94: goto n209; case 95: goto n212; default: goto f; }
+n209: switch (RC_TAG_intern(a1)) { case 94: goto r151; case 95: goto r152; default: goto f; }
+n212: switch (RC_TAG_intern(a1)) { case 94: goto r153; case 95: goto r154; default: goto f; }
 r151: { /* tms-eq-nn */
         RC_RULE(151);
         return RC_NUL_symbolic(0);
@@ -2184,10 +2241,10 @@ r153: { /* tms-eq-cn */
         return RC_NUL_symbolic(1);
     }
 r154: { /* tms-eq-cc */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a1, 0);
-        T *v3 = RC_KID_symbolic(a1, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
+        T *v2 = RC_KID_intern(a1, 0);
+        T *v3 = RC_KID_intern(a1, 1);
         RC_RULE(154);
         T *t0 = p125(v0, v2);
         if (!t0) return (T *)0;
@@ -2198,9 +2255,9 @@ f:  return rc_no_rule(126);
 }
 static T *p126(T *a0, T *a1) {
     if (a0 == a1) {
-        if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_LAW + 1));
+        if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_LAW + 0));
 #ifdef RC_CHECK_NATIVE
-        if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *s_ = p126_rules(a0, a1); rc_check_depth--; rc_trace_on = tr_; rc_law_checked(1, RC_NUL_symbolic(0), s_); }
+        if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *s_ = p126_rules(a0, a1); rc_check_depth--; rc_trace_on = tr_; rc_law_checked(0, RC_NUL_symbolic(0), s_); }
 #endif
         return RC_NUL_symbolic(0);
     }
@@ -2227,15 +2284,15 @@ f:  return rc_no_rule(127);
 /* hl:ty-mem: 2 rules, det */
 static T *p128(T *a0, T *a1) {
     goto n219;
-n219: switch (RC_TAG_symbolic(a1)) { case 88: goto r157; case 89: goto r158; default: goto f; }
+n219: switch (RC_TAG_intern(a1)) { case 88: goto r157; case 89: goto r158; default: goto f; }
 r157: { /* ty-mem-nil */
         RC_RULE(157);
         return RC_NUL_symbolic(1);
     }
 r158: { /* ty-mem-cons */
         T *v0 = a0;
-        T *v1 = RC_KID_symbolic(a1, 0);
-        T *v2 = RC_KID_symbolic(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(158);
         T *t0 = p120(v0, v1);
         if (!t0) return (T *)0;
@@ -2272,7 +2329,7 @@ r161: { /* ty-insert */
         T *t0 = p128(v0, v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p131(v2, v0, v1);
+        return p131(v2, v0, v1);
     }
 }
 
@@ -2289,7 +2346,7 @@ r163: { /* ty-insert-k-no */
         T *v0 = a1;
         T *v1 = a2;
         RC_RULE(163);
-        return RC_MK2_symbolic(89, v0, v1);
+        return RC_MK2_intern(89, v0, v1);
     }
 f:  return rc_no_rule(131);
 }
@@ -2297,21 +2354,21 @@ f:  return rc_no_rule(131);
 /* hl:ty-union: 2 rules, det */
 static T *p132(T *a0, T *a1) {
     goto n229;
-n229: switch (RC_TAG_symbolic(a0)) { case 88: goto r164; case 89: goto r165; default: goto f; }
+n229: switch (RC_TAG_intern(a0)) { case 88: goto r164; case 89: goto r165; default: goto f; }
 r164: { /* ty-union-nil */
         T *v0 = a1;
         RC_RULE(164);
         return v0;
     }
 r165: { /* ty-union-cons */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
         T *v2 = a1;
         RC_RULE(165);
         T *t0 = p132(v1, v2);
         if (!t0) return (T *)0;
         T *v3 = t0;
-        RC_TAIL return p130(v0, v3);
+        return p130(v0, v3);
     }
 f:  return rc_no_rule(132);
 }
@@ -2319,14 +2376,14 @@ f:  return rc_no_rule(132);
 /* hl:ty-subset: 2 rules, det */
 static T *p133(T *a0, T *a1) {
     goto n232;
-n232: switch (RC_TAG_symbolic(a0)) { case 88: goto r166; case 89: goto r167; default: goto f; }
+n232: switch (RC_TAG_intern(a0)) { case 88: goto r166; case 89: goto r167; default: goto f; }
 r166: { /* ty-subset-nil */
         RC_RULE(166);
         return RC_NUL_symbolic(0);
     }
 r167: { /* ty-subset-cons */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
         T *v2 = a1;
         RC_RULE(167);
         T *t0 = p128(v0, v2);
@@ -2357,19 +2414,19 @@ f:  return rc_no_rule(134);
 /* hl:ty-sort: 2 rules, det */
 static T *p135(T *a0) {
     goto n238;
-n238: switch (RC_TAG_symbolic(a0)) { case 88: goto r170; case 89: goto r171; default: goto f; }
+n238: switch (RC_TAG_intern(a0)) { case 88: goto r170; case 89: goto r171; default: goto f; }
 r170: { /* ty-sort-nil */
         RC_RULE(170);
-        return RC_NUL_symbolic(88);
+        return RC_NUL_intern(88);
     }
 r171: { /* ty-sort-cons */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(171);
         T *t0 = p135(v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p136(v0, v2);
+        return p136(v0, v2);
     }
 f:  return rc_no_rule(135);
 }
@@ -2377,16 +2434,16 @@ f:  return rc_no_rule(135);
 /* hl:ty-sort-insert: 2 rules, det */
 static T *p136(T *a0, T *a1) {
     goto n241;
-n241: switch (RC_TAG_symbolic(a1)) { case 88: goto r172; case 89: goto r173; default: goto f; }
+n241: switch (RC_TAG_intern(a1)) { case 88: goto r172; case 89: goto r173; default: goto f; }
 r172: { /* ty-sort-insert-nil */
         T *v0 = a0;
         RC_RULE(172);
-        return RC_MK2_symbolic(89, v0, RC_NUL_symbolic(88));
+        return RC_MK2_intern(89, v0, RC_NUL_intern(88));
     }
 r173: { /* ty-sort-insert-cons */
         T *v0 = a0;
-        T *v1 = RC_KID_symbolic(a1, 0);
-        T *v2 = RC_KID_symbolic(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(173);
         T *t0 = p116(v0, v1);
         if (!t0) return (T *)0;
@@ -2405,14 +2462,14 @@ r174: { /* ty-sort-insert-k-lt */
         T *v1 = a2;
         T *v2 = a3;
         RC_RULE(174);
-        return RC_MK2_symbolic(89, v0, RC_MK2_symbolic(89, v1, v2));
+        return RC_MK2_intern(89, v0, RC_MK2_intern(89, v1, v2));
     }
 r175: { /* ty-sort-insert-k-eq */
         T *v0 = a1;
         T *v1 = a2;
         T *v2 = a3;
         RC_RULE(175);
-        return RC_MK2_symbolic(89, v0, RC_MK2_symbolic(89, v1, v2));
+        return RC_MK2_intern(89, v0, RC_MK2_intern(89, v1, v2));
     }
 r176: { /* ty-sort-insert-k-gt */
         T *v0 = a1;
@@ -2422,7 +2479,7 @@ r176: { /* ty-sort-insert-k-gt */
         T *t0 = p136(v0, v2);
         if (!t0) return (T *)0;
         T *v3 = t0;
-        return RC_MK2_symbolic(89, v1, v3);
+        return RC_MK2_intern(89, v1, v3);
     }
 f:  return rc_no_rule(137);
 }
@@ -2430,68 +2487,49 @@ f:  return rc_no_rule(137);
 /* hl:ty-length: 2 rules, det */
 static T *p138(T *a0) {
     goto n248;
-n248: switch (RC_TAG_symbolic(a0)) { case 88: goto r177; case 89: goto r178; default: goto f; }
+n248: switch (RC_TAG_intern(a0)) { case 88: goto r177; case 89: goto r178; default: goto f; }
 r177: { /* ty-length-nil */
         RC_RULE(177);
         return RC_NUL_nat(27);
     }
 r178: { /* ty-length-cons */
-        T *v1 = RC_KID_symbolic(a0, 1);
+        T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(178);
         T *t0 = p138(v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p49(v2);
+        return p49(v2);
     }
 f:  return rc_no_rule(138);
 }
 
-/* hl:tyvars: 2 rules, det; native operation */
-#ifdef RC_CHECK_NATIVE
-static T *p139_rules(T *a0) {
+/* hl:tyvars: 2 rules, det */
+static T *p139(T *a0) {
     goto n251;
-n251: switch (RC_TAG_holtype(a0)) { case 86: goto r179; case 87: goto r180; default: goto f; }
+n251: switch (RC_TAG_intern(a0)) { case 86: goto r179; case 87: goto r180; default: goto f; }
 r179: { /* tyvars-var */
-        T *v0 = RC_KID_holtype(a0, 0);
         RC_RULE(179);
-        return RC_MK2_symbolic(89, RC_MK1_holtype(86, v0), RC_NUL_symbolic(88));
+        return RC_MK2_intern(89, a0, RC_NUL_intern(88));
     }
 r180: { /* tyvars-app */
-        T *v1 = RC_KID_holtype(a0, 1);
+        T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(180);
         RC_TAIL return p140(v1);
     }
 f:  return rc_no_rule(139);
 }
-#endif
-static T *p139(T *a0) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 18));
-#ifdef RC_CHECK_NATIVE
-    if (rc_check_native) {
-        int tr_ = rc_trace_on; rc_trace_on = 0;
-        rc_check_depth++;
-        T *s_ = p139_rules(a0);
-        rc_check_depth--;
-        rc_trace_on = tr_;
-        T *n_ = holb_tyvars(a0);
-        rc_native_checked(18, n_, s_);
-        return n_;
-    }
-#endif
-    return holb_tyvars(a0);
-}
 
 /* hl:tyvars-list: 2 rules, det */
 static T *p140(T *a0) {
     goto n254;
-n254: switch (RC_TAG_symbolic(a0)) { case 88: goto r181; case 89: goto r182; default: goto f; }
+n254: switch (RC_TAG_intern(a0)) { case 88: goto r181; case 89: goto r182; default: goto f; }
 r181: { /* tyvars-list-nil */
         RC_RULE(181);
-        return RC_NUL_symbolic(88);
+        return RC_NUL_intern(88);
     }
 r182: { /* tyvars-list-cons */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(182);
         T *t0 = p139(v0);
         if (!t0) return (T *)0;
@@ -2499,7 +2537,7 @@ r182: { /* tyvars-list-cons */
         T *t1 = p140(v1);
         if (!t1) return (T *)0;
         T *v3 = t1;
-        RC_TAIL return p132(v2, v3);
+        return p132(v2, v3);
     }
 f:  return rc_no_rule(140);
 }
@@ -2507,7 +2545,7 @@ f:  return rc_no_rule(140);
 /* hl:typ-rev-assocd: 2 rules, det */
 static T *p141(T *a0, T *a1, T *a2) {
     goto n257;
-n257: switch (RC_TAG_symbolic(a1)) { case 99: goto r183; case 100: goto r184; default: goto f; }
+n257: switch (RC_TAG_intern(a1)) { case 99: goto r183; case 100: goto r184; default: goto f; }
 r183: { /* typ-rev-assocd-nil */
         T *v1 = a2;
         RC_RULE(183);
@@ -2515,9 +2553,9 @@ r183: { /* typ-rev-assocd-nil */
     }
 r184: { /* typ-rev-assocd-cons */
         T *v0 = a0;
-        T *v1 = RC_KID_symbolic(a1, 0);
-        T *v2 = RC_KID_symbolic(a1, 1);
-        T *v3 = RC_KID_symbolic(a1, 2);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
+        T *v3 = RC_KID_intern(a1, 2);
         T *v4 = a2;
         RC_RULE(184);
         T *t0 = p120(v2, v0);
@@ -2547,63 +2585,59 @@ r186: { /* typ-rev-assocd-k-no */
 f:  return rc_no_rule(142);
 }
 
-/* hl:type-subst: 2 rules, det; native operation */
-#ifdef RC_CHECK_NATIVE
+/* hl:type-subst: 2 rules, det */
 static T *p143_rules(T *a0, T *a1) {
     goto n263;
-n263: switch (RC_TAG_holtype(a1)) { case 86: goto r187; case 87: goto r188; default: goto f; }
+n263: switch (RC_TAG_intern(a1)) { case 86: goto r187; case 87: goto r188; default: goto f; }
 r187: { /* type-subst-var */
         T *v0 = a0;
-        T *v1 = RC_KID_holtype(a1, 0);
         RC_RULE(187);
-        RC_TAIL return p141(RC_MK1_holtype(86, v1), v0, RC_MK1_holtype(86, v1));
+        return p141(a1, v0, a1);
     }
 r188: { /* type-subst-app */
         T *v0 = a0;
-        T *v1 = RC_KID_holtype(a1, 0);
-        T *v2 = RC_KID_holtype(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(188);
         T *t0 = p144(v0, v2);
         if (!t0) return (T *)0;
         T *v3 = t0;
-        return RC_MK2_holtype(87, v1, v3);
+        return RC_MK2_intern(87, v1, v3);
     }
 f:  return rc_no_rule(143);
 }
-#endif
+static struct { T *k[2]; T *r; uint64_t gen; } p143_front[RC_MEMO_FRONT];
 static T *p143(T *a0, T *a1) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 23));
-#ifdef RC_CHECK_NATIVE
-    if (rc_check_native) {
-        int tr_ = rc_trace_on; rc_trace_on = 0;
-        rc_check_depth++;
-        T *s_ = p143_rules(a0, a1);
-        rc_check_depth--;
-        rc_trace_on = tr_;
-        T *n_ = holb_type_subst(a0, a1);
-#ifdef RC_READBACK_holtype
-        rc_native_checked(23, n_ ? RC_READBACK_holtype(n_) : n_, s_ ? RC_READBACK_holtype(s_) : s_);
-#else
-        rc_native_checked(23, n_, s_);
-#endif
-        return n_;
+    T *k_[] = {a0, a1}, *r_;
+    size_t f_ = rc_memo_front_slot(2, k_);
+    if (p143_front[f_].gen == rc_memo_gen && p143_front[f_].k[0] == a0 && p143_front[f_].k[1] == a1) r_ = p143_front[f_].r;
+    else if (rc_memo_get(143, 2, k_, &r_)) {
+        p143_front[f_].gen = rc_memo_gen; p143_front[f_].k[0] = a0; p143_front[f_].k[1] = a1; p143_front[f_].r = r_;
+    } else {
+        r_ = p143_rules(a0, a1);
+        rc_memo_put(143, 2, k_, r_);
+        p143_front[f_].gen = rc_memo_gen; p143_front[f_].k[0] = a0; p143_front[f_].k[1] = a1; p143_front[f_].r = r_;
+        return r_;
     }
+    if (rc_trace_on) { rc_trace_push((uint16_t)(RC_EV_MEMO + 143)); if (!r_) rc_trace_push(RC_EV_NO_RULE); }
+#ifdef RC_CHECK_NATIVE
+    if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *s_ = p143_rules(a0, a1); rc_check_depth--; rc_trace_on = tr_; rc_memo_checked(4, r_, s_); }
 #endif
-    return holb_type_subst(a0, a1);
+    return r_;
 }
 
 /* hl:type-subst-list: 2 rules, det */
 static T *p144(T *a0, T *a1) {
     goto n266;
-n266: switch (RC_TAG_symbolic(a1)) { case 88: goto r189; case 89: goto r190; default: goto f; }
+n266: switch (RC_TAG_intern(a1)) { case 88: goto r189; case 89: goto r190; default: goto f; }
 r189: { /* type-subst-list-nil */
         RC_RULE(189);
-        return RC_NUL_symbolic(88);
+        return RC_NUL_intern(88);
     }
 r190: { /* type-subst-list-cons */
         T *v0 = a0;
-        T *v1 = RC_KID_symbolic(a1, 0);
-        T *v2 = RC_KID_symbolic(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(190);
         T *t0 = p143(v0, v1);
         if (!t0) return (T *)0;
@@ -2611,7 +2645,7 @@ r190: { /* type-subst-list-cons */
         T *t1 = p144(v0, v2);
         if (!t1) return (T *)0;
         T *v4 = t1;
-        return RC_MK2_symbolic(89, v3, v4);
+        return RC_MK2_intern(89, v3, v4);
     }
 f:  return rc_no_rule(144);
 }
@@ -2619,15 +2653,15 @@ f:  return rc_no_rule(144);
 /* hl:tm-mem: 2 rules, det */
 static T *p145(T *a0, T *a1) {
     goto n269;
-n269: switch (RC_TAG_symbolic(a1)) { case 94: goto r191; case 95: goto r192; default: goto f; }
+n269: switch (RC_TAG_intern(a1)) { case 94: goto r191; case 95: goto r192; default: goto f; }
 r191: { /* tm-mem-nil */
         RC_RULE(191);
         return RC_NUL_symbolic(1);
     }
 r192: { /* tm-mem-cons */
         T *v0 = a0;
-        T *v1 = RC_KID_symbolic(a1, 0);
-        T *v2 = RC_KID_symbolic(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(192);
         T *t0 = p125(v0, v1);
         if (!t0) return (T *)0;
@@ -2664,7 +2698,7 @@ r195: { /* tm-insert */
         T *t0 = p145(v0, v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p148(v2, v0, v1);
+        return p148(v2, v0, v1);
     }
 }
 
@@ -2681,7 +2715,7 @@ r197: { /* tm-insert-k-no */
         T *v0 = a1;
         T *v1 = a2;
         RC_RULE(197);
-        return RC_MK2_symbolic(95, v0, v1);
+        return RC_MK2_intern(95, v0, v1);
     }
 f:  return rc_no_rule(148);
 }
@@ -2689,21 +2723,21 @@ f:  return rc_no_rule(148);
 /* hl:tm-union: 2 rules, det */
 static T *p149(T *a0, T *a1) {
     goto n279;
-n279: switch (RC_TAG_symbolic(a0)) { case 94: goto r198; case 95: goto r199; default: goto f; }
+n279: switch (RC_TAG_intern(a0)) { case 94: goto r198; case 95: goto r199; default: goto f; }
 r198: { /* tm-union-nil */
         T *v0 = a1;
         RC_RULE(198);
         return v0;
     }
 r199: { /* tm-union-cons */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
         T *v2 = a1;
         RC_RULE(199);
         T *t0 = p149(v1, v2);
         if (!t0) return (T *)0;
         T *v3 = t0;
-        RC_TAIL return p147(v0, v3);
+        return p147(v0, v3);
     }
 f:  return rc_no_rule(149);
 }
@@ -2711,14 +2745,14 @@ f:  return rc_no_rule(149);
 /* hl:tm-subtract: 2 rules, det */
 static T *p150(T *a0, T *a1) {
     goto n282;
-n282: switch (RC_TAG_symbolic(a0)) { case 94: goto r200; case 95: goto r201; default: goto f; }
+n282: switch (RC_TAG_intern(a0)) { case 94: goto r200; case 95: goto r201; default: goto f; }
 r200: { /* tm-subtract-nil */
         RC_RULE(200);
-        return RC_NUL_symbolic(94);
+        return RC_NUL_intern(94);
     }
 r201: { /* tm-subtract-cons */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
         T *v2 = a1;
         RC_RULE(201);
         T *t0 = p145(v0, v2);
@@ -2727,7 +2761,7 @@ r201: { /* tm-subtract-cons */
         T *t1 = p150(v1, v2);
         if (!t1) return (T *)0;
         T *v4 = t1;
-        RC_TAIL return p151(v3, v0, v4);
+        return p151(v3, v0, v4);
     }
 f:  return rc_no_rule(150);
 }
@@ -2745,7 +2779,7 @@ r203: { /* tm-subtract-k-no */
         T *v0 = a1;
         T *v1 = a2;
         RC_RULE(203);
-        return RC_MK2_symbolic(95, v0, v1);
+        return RC_MK2_intern(95, v0, v1);
     }
 f:  return rc_no_rule(151);
 }
@@ -2753,7 +2787,7 @@ f:  return rc_no_rule(151);
 /* hl:tmp-rev-assocd: 2 rules, det */
 static T *p152(T *a0, T *a1, T *a2) {
     goto n288;
-n288: switch (RC_TAG_symbolic(a1)) { case 101: goto r204; case 102: goto r205; default: goto f; }
+n288: switch (RC_TAG_intern(a1)) { case 101: goto r204; case 102: goto r205; default: goto f; }
 r204: { /* tmp-rev-assocd-nil */
         T *v1 = a2;
         RC_RULE(204);
@@ -2761,9 +2795,9 @@ r204: { /* tmp-rev-assocd-nil */
     }
 r205: { /* tmp-rev-assocd-cons */
         T *v0 = a0;
-        T *v1 = RC_KID_symbolic(a1, 0);
-        T *v2 = RC_KID_symbolic(a1, 1);
-        T *v3 = RC_KID_symbolic(a1, 2);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
+        T *v3 = RC_KID_intern(a1, 2);
         T *v4 = a2;
         RC_RULE(205);
         T *t0 = p125(v2, v0);
@@ -2793,24 +2827,23 @@ r207: { /* tmp-rev-assocd-k-no */
 f:  return rc_no_rule(153);
 }
 
-/* hl:type-of: 4 rules, semidet; native operation */
-#ifdef RC_CHECK_NATIVE
+/* hl:type-of: 4 rules, semidet */
 static T *p154_rules(T *a0) {
     goto n298;
-n298: switch (RC_TAG_holterm(a0)) { case 90: goto r208; case 91: goto r209; case 92: goto r210; case 93: goto n297; default: goto f; }
-n297: switch (RC_TAG_holterm(RC_KID_holterm(a0, 0))) { case 90: goto r211; default: goto f; }
+n298: switch (RC_TAG_intern(a0)) { case 90: goto r208; case 91: goto r209; case 92: goto r210; case 93: goto n297; default: goto f; }
+n297: switch (RC_TAG_intern(RC_KID_intern(a0, 0))) { case 90: goto r211; default: goto f; }
 r208: { /* type-of-var */
-        T *v1 = RC_KID_holterm(a0, 1);
+        T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(208);
         return v1;
     }
 r209: { /* type-of-const */
-        T *v1 = RC_KID_holterm(a0, 1);
+        T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(209);
         return v1;
     }
 r210: { /* type-of-comb */
-        T *v0 = RC_KID_holterm(a0, 0);
+        T *v0 = RC_KID_intern(a0, 0);
         RC_RULE(210);
         T *t0 = p154(v0);
         if (!t0) return (T *)0;
@@ -2823,65 +2856,55 @@ r210: { /* type-of-comb */
         return v4;
     }
 r211: { /* type-of-abs */
-        T *v1 = RC_KID_holterm(RC_KID_holterm(a0, 0), 1);
-        T *v2 = RC_KID_holterm(a0, 1);
+        T *v1 = RC_KID_intern(RC_KID_intern(a0, 0), 1);
+        T *v2 = RC_KID_intern(a0, 1);
         RC_RULE(211);
         T *t0 = p154(v2);
         if (!t0) return (T *)0;
         T *v3 = t0;
-        RC_TAIL return p113(v1, v3);
+        return p113(v1, v3);
     }
 f:  return rc_no_rule(154);
 }
-#endif
 static T *p154(T *a0) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 10));
+    T **s_ = rc_intern_slot(a0, 0), *r_ = *s_;
+    if (r_) {
+        if (r_ == RC_SLOT_NONE) r_ = NULL;
+        if (rc_trace_on) { rc_trace_push((uint16_t)(RC_EV_MEMO + 154)); if (!r_) rc_trace_push(RC_EV_NO_RULE); }
 #ifdef RC_CHECK_NATIVE
-    if (rc_check_native) {
-        int tr_ = rc_trace_on; rc_trace_on = 0;
-        rc_check_depth++;
-        T *s_ = p154_rules(a0);
-        rc_check_depth--;
-        rc_trace_on = tr_;
-        T *n_ = holb_type_of(a0);
-#ifdef RC_READBACK_holtype
-        rc_native_checked(10, n_ ? RC_READBACK_holtype(n_) : n_, s_ ? RC_READBACK_holtype(s_) : s_);
-#else
-        rc_native_checked(10, n_, s_);
+        if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *t_ = p154_rules(a0); rc_check_depth--; rc_trace_on = tr_; rc_memo_checked(0, r_, t_); }
 #endif
-        return n_;
+        return r_;
     }
-#endif
-    return holb_type_of(a0);
+    r_ = p154_rules(a0);
+    *rc_intern_slot(a0, 0) = r_ ? r_ : RC_SLOT_NONE;
+    return r_;
 }
 
-/* hl:frees: 4 rules, det; native operation */
-#ifdef RC_CHECK_NATIVE
-static T *p155_rules(T *a0) {
+/* hl:frees: 4 rules, det */
+static T *p155(T *a0) {
     goto n303;
-n303: switch (RC_TAG_holterm(a0)) { case 90: goto r212; case 91: goto r213; case 93: goto r214; case 92: goto r215; default: goto f; }
+n303: switch (RC_TAG_intern(a0)) { case 90: goto r212; case 91: goto r213; case 93: goto r214; case 92: goto r215; default: goto f; }
 r212: { /* frees-var */
-        T *v0 = RC_KID_holterm(a0, 0);
-        T *v1 = RC_KID_holterm(a0, 1);
         RC_RULE(212);
-        return RC_MK2_symbolic(95, RC_MK2_holterm(90, v0, v1), RC_NUL_symbolic(94));
+        return RC_MK2_intern(95, a0, RC_NUL_intern(94));
     }
 r213: { /* frees-const */
         RC_RULE(213);
-        return RC_NUL_symbolic(94);
+        return RC_NUL_intern(94);
     }
 r214: { /* frees-abs */
-        T *v0 = RC_KID_holterm(a0, 0);
-        T *v1 = RC_KID_holterm(a0, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(214);
         T *t0 = p155(v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p150(v2, RC_MK2_symbolic(95, v0, RC_NUL_symbolic(94)));
+        return p150(v2, RC_MK2_intern(95, v0, RC_NUL_intern(94)));
     }
 r215: { /* frees-comb */
-        T *v0 = RC_KID_holterm(a0, 0);
-        T *v1 = RC_KID_holterm(a0, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(215);
         T *t0 = p155(v0);
         if (!t0) return (T *)0;
@@ -2889,39 +2912,22 @@ r215: { /* frees-comb */
         T *t1 = p155(v1);
         if (!t1) return (T *)0;
         T *v3 = t1;
-        RC_TAIL return p149(v2, v3);
+        return p149(v2, v3);
     }
 f:  return rc_no_rule(155);
-}
-#endif
-static T *p155(T *a0) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 14));
-#ifdef RC_CHECK_NATIVE
-    if (rc_check_native) {
-        int tr_ = rc_trace_on; rc_trace_on = 0;
-        rc_check_depth++;
-        T *s_ = p155_rules(a0);
-        rc_check_depth--;
-        rc_trace_on = tr_;
-        T *n_ = holb_frees(a0);
-        rc_native_checked(14, n_, s_);
-        return n_;
-    }
-#endif
-    return holb_frees(a0);
 }
 
 /* hl:freesl: 2 rules, det */
 static T *p156(T *a0) {
     goto n306;
-n306: switch (RC_TAG_symbolic(a0)) { case 94: goto r216; case 95: goto r217; default: goto f; }
+n306: switch (RC_TAG_intern(a0)) { case 94: goto r216; case 95: goto r217; default: goto f; }
 r216: { /* freesl-nil */
         RC_RULE(216);
-        return RC_NUL_symbolic(94);
+        return RC_NUL_intern(94);
     }
 r217: { /* freesl-cons */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(217);
         T *t0 = p155(v0);
         if (!t0) return (T *)0;
@@ -2929,22 +2935,19 @@ r217: { /* freesl-cons */
         T *t1 = p156(v1);
         if (!t1) return (T *)0;
         T *v3 = t1;
-        RC_TAIL return p149(v2, v3);
+        return p149(v2, v3);
     }
 f:  return rc_no_rule(156);
 }
 
-/* hl:freesin: 4 rules, det; native operation */
-#ifdef RC_CHECK_NATIVE
-static T *p157_rules(T *a0, T *a1) {
+/* hl:freesin: 4 rules, det */
+static T *p157(T *a0, T *a1) {
     goto n311;
-n311: switch (RC_TAG_holterm(a1)) { case 90: goto r218; case 91: goto r219; case 93: goto r220; case 92: goto r221; default: goto f; }
+n311: switch (RC_TAG_intern(a1)) { case 90: goto r218; case 91: goto r219; case 93: goto r220; case 92: goto r221; default: goto f; }
 r218: { /* freesin-var */
         T *v0 = a0;
-        T *v1 = RC_KID_holterm(a1, 0);
-        T *v2 = RC_KID_holterm(a1, 1);
         RC_RULE(218);
-        RC_TAIL return p145(RC_MK2_holterm(90, v1, v2), v0);
+        return p145(a1, v0);
     }
 r219: { /* freesin-const */
         RC_RULE(219);
@@ -2952,15 +2955,15 @@ r219: { /* freesin-const */
     }
 r220: { /* freesin-abs */
         T *v0 = a0;
-        T *v1 = RC_KID_holterm(a1, 0);
-        T *v2 = RC_KID_holterm(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(220);
-        RC_TAIL return p157(RC_MK2_symbolic(95, v1, v0), v2);
+        RC_TAIL return p157(RC_MK2_intern(95, v1, v0), v2);
     }
 r221: { /* freesin-comb */
         T *v0 = a0;
-        T *v1 = RC_KID_holterm(a1, 0);
-        T *v2 = RC_KID_holterm(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(221);
         T *t0 = p157(v0, v1);
         if (!t0) return (T *)0;
@@ -2968,23 +2971,6 @@ r221: { /* freesin-comb */
         RC_TAIL return p158(v3, v0, v2);
     }
 f:  return rc_no_rule(157);
-}
-#endif
-static T *p157(T *a0, T *a1) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 15));
-#ifdef RC_CHECK_NATIVE
-    if (rc_check_native) {
-        int tr_ = rc_trace_on; rc_trace_on = 0;
-        rc_check_depth++;
-        T *s_ = p157_rules(a0, a1);
-        rc_check_depth--;
-        rc_trace_on = tr_;
-        T *n_ = holb_freesin(a0, a1);
-        rc_native_checked(15, n_, s_);
-        return n_;
-    }
-#endif
-    return holb_freesin(a0, a1);
 }
 
 /* hl:freesin-k: 2 rules, det */
@@ -3004,29 +2990,24 @@ r223: { /* freesin-k-yes */
 f:  return rc_no_rule(158);
 }
 
-/* hl:vfree-in: 4 rules, det; native operation */
-#ifdef RC_CHECK_NATIVE
-static T *p159_rules(T *a0, T *a1) {
+/* hl:vfree-in: 4 rules, det */
+static T *p159(T *a0, T *a1) {
     goto n319;
-n319: switch (RC_TAG_holterm(a1)) { case 90: goto r224; case 91: goto r225; case 93: goto r226; case 92: goto r229; default: goto f; }
+n319: switch (RC_TAG_intern(a1)) { case 90: goto r224; case 91: goto r225; case 93: goto r226; case 92: goto r229; default: goto f; }
 r224: { /* vfree-in-var */
         T *v0 = a0;
-        T *v1 = RC_KID_holterm(a1, 0);
-        T *v2 = RC_KID_holterm(a1, 1);
         RC_RULE(224);
-        RC_TAIL return p125(RC_MK2_holterm(90, v1, v2), v0);
+        return p125(a1, v0);
     }
 r225: { /* vfree-in-const */
         T *v0 = a0;
-        T *v1 = RC_KID_holterm(a1, 0);
-        T *v2 = RC_KID_holterm(a1, 1);
         RC_RULE(225);
-        RC_TAIL return p125(RC_MK2_holterm(91, v1, v2), v0);
+        return p125(a1, v0);
     }
 r226: { /* vfree-in-abs */
         T *v0 = a0;
-        T *v1 = RC_KID_holterm(a1, 0);
-        T *v2 = RC_KID_holterm(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(226);
         T *t0 = p125(v0, v1);
         if (!t0) return (T *)0;
@@ -3035,8 +3016,8 @@ r226: { /* vfree-in-abs */
     }
 r229: { /* vfree-in-comb */
         T *v0 = a0;
-        T *v1 = RC_KID_holterm(a1, 0);
-        T *v2 = RC_KID_holterm(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(229);
         T *t0 = p159(v0, v1);
         if (!t0) return (T *)0;
@@ -3044,23 +3025,6 @@ r229: { /* vfree-in-comb */
         RC_TAIL return p161(v3, v0, v2);
     }
 f:  return rc_no_rule(159);
-}
-#endif
-static T *p159(T *a0, T *a1) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 16));
-#ifdef RC_CHECK_NATIVE
-    if (rc_check_native) {
-        int tr_ = rc_trace_on; rc_trace_on = 0;
-        rc_check_depth++;
-        T *s_ = p159_rules(a0, a1);
-        rc_check_depth--;
-        rc_trace_on = tr_;
-        T *n_ = holb_vfree_in(a0, a1);
-        rc_native_checked(16, n_, s_);
-        return n_;
-    }
-#endif
-    return holb_vfree_in(a0, a1);
 }
 
 /* hl:vfree-in-abs-k: 2 rules, det */
@@ -3100,15 +3064,15 @@ f:  return rc_no_rule(161);
 /* hl:exists-vfree-in: 2 rules, det */
 static T *p162(T *a0, T *a1) {
     goto n328;
-n328: switch (RC_TAG_symbolic(a1)) { case 94: goto r232; case 95: goto r233; default: goto f; }
+n328: switch (RC_TAG_intern(a1)) { case 94: goto r232; case 95: goto r233; default: goto f; }
 r232: { /* exists-vfree-in-nil */
         RC_RULE(232);
         return RC_NUL_symbolic(1);
     }
 r233: { /* exists-vfree-in-cons */
         T *v0 = a0;
-        T *v1 = RC_KID_symbolic(a1, 0);
-        T *v2 = RC_KID_symbolic(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(233);
         T *t0 = p159(v0, v1);
         if (!t0) return (T *)0;
@@ -3135,25 +3099,24 @@ r235: { /* exists-vfree-in-k-no */
 f:  return rc_no_rule(163);
 }
 
-/* hl:type-vars-in-term: 4 rules, semidet; native operation */
-#ifdef RC_CHECK_NATIVE
-static T *p164_rules(T *a0) {
+/* hl:type-vars-in-term: 4 rules, semidet */
+static T *p164(T *a0) {
     goto n337;
-n337: switch (RC_TAG_holterm(a0)) { case 90: goto r236; case 91: goto r237; case 92: goto r238; case 93: goto n336; default: goto f; }
-n336: switch (RC_TAG_holterm(RC_KID_holterm(a0, 0))) { case 90: goto r239; default: goto f; }
+n337: switch (RC_TAG_intern(a0)) { case 90: goto r236; case 91: goto r237; case 92: goto r238; case 93: goto n336; default: goto f; }
+n336: switch (RC_TAG_intern(RC_KID_intern(a0, 0))) { case 90: goto r239; default: goto f; }
 r236: { /* tvs-var */
-        T *v1 = RC_KID_holterm(a0, 1);
+        T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(236);
-        RC_TAIL return p139(v1);
+        return p139(v1);
     }
 r237: { /* tvs-const */
-        T *v1 = RC_KID_holterm(a0, 1);
+        T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(237);
-        RC_TAIL return p139(v1);
+        return p139(v1);
     }
 r238: { /* tvs-comb */
-        T *v0 = RC_KID_holterm(a0, 0);
-        T *v1 = RC_KID_holterm(a0, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(238);
         T *t0 = p164(v0);
         if (!t0) return (T *)0;
@@ -3161,11 +3124,11 @@ r238: { /* tvs-comb */
         T *t1 = p164(v1);
         if (!t1) return (T *)0;
         T *v3 = t1;
-        RC_TAIL return p132(v2, v3);
+        return p132(v2, v3);
     }
 r239: { /* tvs-abs */
-        T *v1 = RC_KID_holterm(RC_KID_holterm(a0, 0), 1);
-        T *v2 = RC_KID_holterm(a0, 1);
+        T *v1 = RC_KID_intern(RC_KID_intern(a0, 0), 1);
+        T *v2 = RC_KID_intern(a0, 1);
         RC_RULE(239);
         T *t0 = p139(v1);
         if (!t0) return (T *)0;
@@ -3173,65 +3136,26 @@ r239: { /* tvs-abs */
         T *t1 = p164(v2);
         if (!t1) return (T *)0;
         T *v4 = t1;
-        RC_TAIL return p132(v3, v4);
+        return p132(v3, v4);
     }
 f:  return rc_no_rule(164);
 }
-#endif
-static T *p164(T *a0) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 17));
-#ifdef RC_CHECK_NATIVE
-    if (rc_check_native) {
-        int tr_ = rc_trace_on; rc_trace_on = 0;
-        rc_check_depth++;
-        T *s_ = p164_rules(a0);
-        rc_check_depth--;
-        rc_trace_on = tr_;
-        T *n_ = holb_type_vars_in_term(a0);
-        rc_native_checked(17, n_, s_);
-        return n_;
-    }
-#endif
-    return holb_type_vars_in_term(a0);
-}
 
-/* hl:variant: 1 rule, semidet; native operation */
-#ifdef RC_CHECK_NATIVE
-static T *p165_rules(T *a0, T *a1) {
+/* hl:variant: 1 rule, semidet */
+static T *p165(T *a0, T *a1) {
     goto n339;
-n339: switch (RC_TAG_holterm(a1)) { case 90: goto r240; default: goto f; }
+n339: switch (RC_TAG_intern(a1)) { case 90: goto r240; default: goto f; }
 r240: { /* variant */
         T *v0 = a0;
-        T *v1 = RC_KID_holterm(a1, 0);
-        T *v2 = RC_KID_holterm(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(240);
-        T *t0 = p162(RC_MK2_holterm(90, v1, v2), v0);
+        T *t0 = p162(a1, v0);
         if (!t0) return (T *)0;
         T *v3 = t0;
         RC_TAIL return p166(v3, v0, v1, v2);
     }
 f:  return rc_no_rule(165);
-}
-#endif
-static T *p165(T *a0, T *a1) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 19));
-#ifdef RC_CHECK_NATIVE
-    if (rc_check_native) {
-        int tr_ = rc_trace_on; rc_trace_on = 0;
-        rc_check_depth++;
-        T *s_ = p165_rules(a0, a1);
-        rc_check_depth--;
-        rc_trace_on = tr_;
-        T *n_ = holb_variant(a0, a1);
-#ifdef RC_READBACK_holterm
-        rc_native_checked(19, n_ ? RC_READBACK_holterm(n_) : n_, s_ ? RC_READBACK_holterm(s_) : s_);
-#else
-        rc_native_checked(19, n_, s_);
-#endif
-        return n_;
-    }
-#endif
-    return holb_variant(a0, a1);
 }
 
 /* hl:variant-k: 2 rules, semidet */
@@ -3242,7 +3166,7 @@ r241: { /* variant-k-no */
         T *v1 = a2;
         T *v2 = a3;
         RC_RULE(241);
-        return RC_MK2_holterm(90, v1, v2);
+        return RC_MK2_intern(90, v1, v2);
     }
 r242: { /* variant-k-yes */
         T *v0 = a1;
@@ -3252,50 +3176,29 @@ r242: { /* variant-k-yes */
         T *t0 = p46(v1);
         if (!t0) return (T *)0;
         T *v3 = t0;
-        RC_TAIL return p165(v0, RC_MK2_holterm(90, v3, v2));
+        RC_TAIL return p165(v0, RC_MK2_intern(90, v3, v2));
     }
 f:  return rc_no_rule(166);
 }
 
-/* hl:vsubst: 2 rules, semidet; native operation */
-#ifdef RC_CHECK_NATIVE
-static T *p169_rules(T *a0, T *a1) {
+/* hl:vsubst: 2 rules, semidet */
+static T *p169(T *a0, T *a1) {
     goto n345;
-n345: switch (RC_TAG_symbolic(a0)) { case 101: goto r243; case 102: goto r244; default: goto f; }
+n345: switch (RC_TAG_intern(a0)) { case 101: goto r243; case 102: goto r244; default: goto f; }
 r243: { /* vsubst-nil */
         T *v0 = a1;
         RC_RULE(243);
         return RC_MK1_symbolic(167, v0);
     }
 r244: { /* vsubst-cons */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = a1;
         RC_RULE(244);
-        T *t0 = p171(RC_MK3_symbolic(102, v0, v1, v2));
+        T *t0 = p171(a0);
         if (!t0) return (T *)0;
         T *v4 = t0;
-        RC_TAIL return p170(v4, RC_MK3_symbolic(102, v0, v1, v2), v3);
+        return p170(v4, a0, v3);
     }
 f:  return rc_no_rule(169);
-}
-#endif
-static T *p169(T *a0, T *a1) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 20));
-#ifdef RC_CHECK_NATIVE
-    if (rc_check_native) {
-        int tr_ = rc_trace_on; rc_trace_on = 0;
-        rc_check_depth++;
-        T *s_ = p169_rules(a0, a1);
-        rc_check_depth--;
-        rc_trace_on = tr_;
-        T *n_ = holb_vsubst(a0, a1);
-        rc_native_checked(20, n_, s_);
-        return n_;
-    }
-#endif
-    return holb_vsubst(a0, a1);
 }
 
 /* hl:vsubst-k: 2 rules, semidet */
@@ -3321,15 +3224,15 @@ f:  return rc_no_rule(170);
 /* hl:vsubst-good: 2 rules, semidet */
 static T *p171(T *a0) {
     goto n351;
-n351: switch (RC_TAG_symbolic(a0)) { case 101: goto r247; case 102: goto r248; default: goto f; }
+n351: switch (RC_TAG_intern(a0)) { case 101: goto r247; case 102: goto r248; default: goto f; }
 r247: { /* vsubst-good-nil */
         RC_RULE(247);
         return RC_NUL_symbolic(0);
     }
 r248: { /* vsubst-good-cons */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
+        T *v2 = RC_KID_intern(a0, 2);
         RC_RULE(248);
         T *t0 = p173(v0, v1);
         if (!t0) return (T *)0;
@@ -3358,15 +3261,15 @@ f:  return rc_no_rule(172);
 /* hl:vsubst-pair-good: 4 rules, semidet */
 static T *p173(T *a0, T *a1) {
     goto n359;
-n359: switch (RC_TAG_holterm(a1)) { case 90: goto r251; case 91: goto r252; case 92: goto r253; case 93: goto r254; default: goto f; }
+n359: switch (RC_TAG_intern(a1)) { case 90: goto r251; case 91: goto r252; case 92: goto r253; case 93: goto r254; default: goto f; }
 r251: { /* vsubst-pair-var */
         T *v0 = a0;
-        T *v2 = RC_KID_holterm(a1, 1);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(251);
         T *t0 = p154(v0);
         if (!t0) return (T *)0;
         T *v3 = t0;
-        RC_TAIL return p120(v3, v2);
+        return p120(v3, v2);
     }
 r252: { /* vsubst-pair-const */
         RC_RULE(252);
@@ -3383,28 +3286,23 @@ r254: { /* vsubst-pair-abs */
 f:  return rc_no_rule(173);
 }
 
-/* hl:vsubst-rec: 4 rules, semidet; native operation */
-#ifdef RC_CHECK_NATIVE
+/* hl:vsubst-rec: 4 rules, semidet */
 static T *p174_rules(T *a0, T *a1) {
     goto n364;
-n364: switch (RC_TAG_holterm(a1)) { case 90: goto r255; case 91: goto r256; case 92: goto r257; case 93: goto r258; default: goto f; }
+n364: switch (RC_TAG_intern(a1)) { case 90: goto r255; case 91: goto r256; case 92: goto r257; case 93: goto r258; default: goto f; }
 r255: { /* vs-var */
         T *v0 = a0;
-        T *v1 = RC_KID_holterm(a1, 0);
-        T *v2 = RC_KID_holterm(a1, 1);
         RC_RULE(255);
-        RC_TAIL return p152(RC_MK2_holterm(90, v1, v2), v0, RC_MK2_holterm(90, v1, v2));
+        return p152(a1, v0, a1);
     }
 r256: { /* vs-const */
-        T *v1 = RC_KID_holterm(a1, 0);
-        T *v2 = RC_KID_holterm(a1, 1);
         RC_RULE(256);
-        return RC_MK2_holterm(91, v1, v2);
+        return a1;
     }
 r257: { /* vs-comb */
         T *v0 = a0;
-        T *v1 = RC_KID_holterm(a1, 0);
-        T *v2 = RC_KID_holterm(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(257);
         T *t0 = p174(v0, v1);
         if (!t0) return (T *)0;
@@ -3412,12 +3310,12 @@ r257: { /* vs-comb */
         T *t1 = p174(v0, v2);
         if (!t1) return (T *)0;
         T *v4 = t1;
-        return RC_MK2_holterm(92, v3, v4);
+        return RC_MK2_intern(92, v3, v4);
     }
 r258: { /* vs-abs */
         T *v0 = a0;
-        T *v1 = RC_KID_holterm(a1, 0);
-        T *v2 = RC_KID_holterm(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(258);
         T *t0 = p175(v0, v1);
         if (!t0) return (T *)0;
@@ -3426,40 +3324,38 @@ r258: { /* vs-abs */
     }
 f:  return rc_no_rule(174);
 }
-#endif
+static struct { T *k[2]; T *r; uint64_t gen; } p174_front[RC_MEMO_FRONT];
 static T *p174(T *a0, T *a1) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 21));
-#ifdef RC_CHECK_NATIVE
-    if (rc_check_native) {
-        int tr_ = rc_trace_on; rc_trace_on = 0;
-        rc_check_depth++;
-        T *s_ = p174_rules(a0, a1);
-        rc_check_depth--;
-        rc_trace_on = tr_;
-        T *n_ = holb_vsubst_rec(a0, a1);
-#ifdef RC_READBACK_holterm
-        rc_native_checked(21, n_ ? RC_READBACK_holterm(n_) : n_, s_ ? RC_READBACK_holterm(s_) : s_);
-#else
-        rc_native_checked(21, n_, s_);
-#endif
-        return n_;
+    T *k_[] = {a0, a1}, *r_;
+    size_t f_ = rc_memo_front_slot(2, k_);
+    if (p174_front[f_].gen == rc_memo_gen && p174_front[f_].k[0] == a0 && p174_front[f_].k[1] == a1) r_ = p174_front[f_].r;
+    else if (rc_memo_get(174, 2, k_, &r_)) {
+        p174_front[f_].gen = rc_memo_gen; p174_front[f_].k[0] = a0; p174_front[f_].k[1] = a1; p174_front[f_].r = r_;
+    } else {
+        r_ = p174_rules(a0, a1);
+        rc_memo_put(174, 2, k_, r_);
+        p174_front[f_].gen = rc_memo_gen; p174_front[f_].k[0] = a0; p174_front[f_].k[1] = a1; p174_front[f_].r = r_;
+        return r_;
     }
+    if (rc_trace_on) { rc_trace_push((uint16_t)(RC_EV_MEMO + 174)); if (!r_) rc_trace_push(RC_EV_NO_RULE); }
+#ifdef RC_CHECK_NATIVE
+    if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *s_ = p174_rules(a0, a1); rc_check_depth--; rc_trace_on = tr_; rc_memo_checked(3, r_, s_); }
 #endif
-    return holb_vsubst_rec(a0, a1);
+    return r_;
 }
 
 /* hl:vs-filter: 2 rules, det */
 static T *p175(T *a0, T *a1) {
     goto n367;
-n367: switch (RC_TAG_symbolic(a0)) { case 101: goto r265; case 102: goto r266; default: goto f; }
+n367: switch (RC_TAG_intern(a0)) { case 101: goto r265; case 102: goto r266; default: goto f; }
 r265: { /* vs-filter-nil */
         RC_RULE(265);
-        return RC_NUL_symbolic(101);
+        return RC_NUL_intern(101);
     }
 r266: { /* vs-filter-cons */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
+        T *v2 = RC_KID_intern(a0, 2);
         T *v3 = a1;
         RC_RULE(266);
         T *t0 = p125(v1, v3);
@@ -3489,7 +3385,7 @@ r268: { /* vs-filter-k-no */
         T *t0 = p175(v2, v3);
         if (!t0) return (T *)0;
         T *v4 = t0;
-        return RC_MK3_symbolic(102, v0, v1, v4);
+        return RC_MK3_intern(102, v0, v1, v4);
     }
 f:  return rc_no_rule(176);
 }
@@ -3497,27 +3393,24 @@ f:  return rc_no_rule(176);
 /* hl:vs-abs-1: 2 rules, semidet */
 static T *p177(T *a0, T *a1, T *a2) {
     goto n373;
-n373: switch (RC_TAG_symbolic(a0)) { case 101: goto r259; case 102: goto r260; default: goto f; }
+n373: switch (RC_TAG_intern(a0)) { case 101: goto r259; case 102: goto r260; default: goto f; }
 r259: { /* vs-abs-1-nil */
         T *v0 = a1;
         T *v1 = a2;
         RC_RULE(259);
-        return RC_MK2_holterm(93, v0, v1);
+        return RC_MK2_intern(93, v0, v1);
     }
 r260: { /* vs-abs-1-cons */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = a1;
         T *v4 = a2;
         RC_RULE(260);
-        T *t0 = p174(RC_MK3_symbolic(102, v0, v1, v2), v4);
+        T *t0 = p174(a0, v4);
         if (!t0) return (T *)0;
         T *v5 = t0;
         T *t1 = p125(v5, v4);
         if (!t1) return (T *)0;
         T *v6 = t1;
-        RC_TAIL return p178(v6, RC_MK3_symbolic(102, v0, v1, v2), v3, v4, v5);
+        RC_TAIL return p178(v6, a0, v3, v4, v5);
     }
 f:  return rc_no_rule(177);
 }
@@ -3530,7 +3423,7 @@ r261: { /* vs-abs-2-same */
         T *v1 = a2;
         T *v2 = a3;
         RC_RULE(261);
-        return RC_MK2_holterm(93, v1, v2);
+        return RC_MK2_intern(93, v1, v2);
     }
 r262: { /* vs-abs-2-changed */
         T *v0 = a1;
@@ -3554,7 +3447,7 @@ r263: { /* vs-abs-3-no */
         T *v1 = a2;
         T *v3 = a4;
         RC_RULE(263);
-        return RC_MK2_holterm(93, v1, v3);
+        return RC_MK2_intern(93, v1, v3);
     }
 r264: { /* vs-abs-3-yes */
         T *v0 = a1;
@@ -3562,13 +3455,13 @@ r264: { /* vs-abs-3-yes */
         T *v2 = a3;
         T *v3 = a4;
         RC_RULE(264);
-        T *t0 = p165(RC_MK2_symbolic(95, v3, RC_NUL_symbolic(94)), v1);
+        T *t0 = p165(RC_MK2_intern(95, v3, RC_NUL_intern(94)), v1);
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p174(RC_MK3_symbolic(102, v4, v1, v0), v2);
+        T *t1 = p174(RC_MK3_intern(102, v4, v1, v0), v2);
         if (!t1) return (T *)0;
         T *v5 = t1;
-        return RC_MK2_holterm(93, v4, v5);
+        return RC_MK2_intern(93, v4, v5);
     }
 f:  return rc_no_rule(179);
 }
@@ -3576,15 +3469,15 @@ f:  return rc_no_rule(179);
 /* hl:vs-capture: 2 rules, det */
 static T *p180(T *a0, T *a1, T *a2) {
     goto n382;
-n382: switch (RC_TAG_symbolic(a0)) { case 101: goto r269; case 102: goto r270; default: goto f; }
+n382: switch (RC_TAG_intern(a0)) { case 101: goto r269; case 102: goto r270; default: goto f; }
 r269: { /* vs-capture-nil */
         RC_RULE(269);
         return RC_NUL_symbolic(1);
     }
 r270: { /* vs-capture-cons */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
+        T *v2 = RC_KID_intern(a0, 2);
         T *v3 = a1;
         T *v4 = a2;
         RC_RULE(270);
@@ -3639,23 +3532,19 @@ r274: { /* vs-capture-k2-no */
 f:  return rc_no_rule(182);
 }
 
-/* hl:inst: 2 rules, semidet; native operation */
-#ifdef RC_CHECK_NATIVE
+/* hl:inst: 2 rules, semidet */
 static T *p183_rules(T *a0, T *a1) {
     goto n391;
-n391: switch (RC_TAG_symbolic(a0)) { case 99: goto r275; case 100: goto r276; default: goto f; }
+n391: switch (RC_TAG_intern(a0)) { case 99: goto r275; case 100: goto r276; default: goto f; }
 r275: { /* inst-nil */
         T *v0 = a1;
         RC_RULE(275);
         return v0;
     }
 r276: { /* inst-cons */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = a1;
         RC_RULE(276);
-        T *t0 = p186(RC_NUL_symbolic(101), RC_MK3_symbolic(100, v0, v1, v2), v3);
+        T *t0 = p186(RC_NUL_intern(101), a0, v3);
         if (!t0) return (T *)0;
         if (RC_TAG_symbolic(t0) != 184) return rc_fail_target(183);
         T *m0 = RC_KID_symbolic(t0, 0);
@@ -3664,65 +3553,63 @@ r276: { /* inst-cons */
     }
 f:  return rc_no_rule(183);
 }
-#endif
+static struct { T *k[2]; T *r; uint64_t gen; } p183_front[RC_MEMO_FRONT];
 static T *p183(T *a0, T *a1) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 22));
-#ifdef RC_CHECK_NATIVE
-    if (rc_check_native) {
-        int tr_ = rc_trace_on; rc_trace_on = 0;
-        rc_check_depth++;
-        T *s_ = p183_rules(a0, a1);
-        rc_check_depth--;
-        rc_trace_on = tr_;
-        T *n_ = holb_inst(a0, a1);
-#ifdef RC_READBACK_holterm
-        rc_native_checked(22, n_ ? RC_READBACK_holterm(n_) : n_, s_ ? RC_READBACK_holterm(s_) : s_);
-#else
-        rc_native_checked(22, n_, s_);
-#endif
-        return n_;
+    T *k_[] = {a0, a1}, *r_;
+    size_t f_ = rc_memo_front_slot(2, k_);
+    if (p183_front[f_].gen == rc_memo_gen && p183_front[f_].k[0] == a0 && p183_front[f_].k[1] == a1) r_ = p183_front[f_].r;
+    else if (rc_memo_get(183, 2, k_, &r_)) {
+        p183_front[f_].gen = rc_memo_gen; p183_front[f_].k[0] = a0; p183_front[f_].k[1] = a1; p183_front[f_].r = r_;
+    } else {
+        r_ = p183_rules(a0, a1);
+        rc_memo_put(183, 2, k_, r_);
+        p183_front[f_].gen = rc_memo_gen; p183_front[f_].k[0] = a0; p183_front[f_].k[1] = a1; p183_front[f_].r = r_;
+        return r_;
     }
+    if (rc_trace_on) { rc_trace_push((uint16_t)(RC_EV_MEMO + 183)); if (!r_) rc_trace_push(RC_EV_NO_RULE); }
+#ifdef RC_CHECK_NATIVE
+    if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *s_ = p183_rules(a0, a1); rc_check_depth--; rc_trace_on = tr_; rc_memo_checked(2, r_, s_); }
 #endif
-    return holb_inst(a0, a1);
+    return r_;
 }
 
 /* hl:inst-rec: 4 rules, semidet */
 static T *p186(T *a0, T *a1, T *a2) {
     goto n397;
-n397: switch (RC_TAG_holterm(a2)) { case 90: goto r277; case 91: goto r280; case 92: goto r281; case 93: goto n396; default: goto f; }
-n396: switch (RC_TAG_holterm(RC_KID_holterm(a2, 0))) { case 90: goto r286; default: goto f; }
+n397: switch (RC_TAG_intern(a2)) { case 90: goto r277; case 91: goto r280; case 92: goto r281; case 93: goto n396; default: goto f; }
+n396: switch (RC_TAG_intern(RC_KID_intern(a2, 0))) { case 90: goto r286; default: goto f; }
 r277: { /* inst-var */
         T *v0 = a0;
         T *v1 = a1;
-        T *v2 = RC_KID_holterm(a2, 0);
-        T *v3 = RC_KID_holterm(a2, 1);
+        T *v2 = RC_KID_intern(a2, 0);
+        T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(277);
         T *t0 = p143(v1, v3);
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p152(RC_MK2_holterm(90, v2, v4), v0, RC_MK2_holterm(90, v2, v3));
+        T *t1 = p152(RC_MK2_intern(90, v2, v4), v0, a2);
         if (!t1) return (T *)0;
         T *v5 = t1;
-        T *t2 = p125(v5, RC_MK2_holterm(90, v2, v3));
+        T *t2 = p125(v5, a2);
         if (!t2) return (T *)0;
         T *v6 = t2;
-        RC_TAIL return p187(v6, RC_MK2_holterm(90, v2, v4));
+        return p187(v6, RC_MK2_intern(90, v2, v4));
     }
 r280: { /* inst-const */
         T *v1 = a1;
-        T *v2 = RC_KID_holterm(a2, 0);
-        T *v3 = RC_KID_holterm(a2, 1);
+        T *v2 = RC_KID_intern(a2, 0);
+        T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(280);
         T *t0 = p143(v1, v3);
         if (!t0) return (T *)0;
         T *v4 = t0;
-        return RC_MK1_symbolic(184, RC_MK2_holterm(91, v2, v4));
+        return RC_MK1_symbolic(184, RC_MK2_intern(91, v2, v4));
     }
 r281: { /* inst-comb */
         T *v0 = a0;
         T *v1 = a1;
-        T *v2 = RC_KID_holterm(a2, 0);
-        T *v3 = RC_KID_holterm(a2, 1);
+        T *v2 = RC_KID_intern(a2, 0);
+        T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(281);
         T *t0 = p186(v0, v1, v2);
         if (!t0) return (T *)0;
@@ -3732,17 +3619,17 @@ r281: { /* inst-comb */
 r286: { /* inst-abs */
         T *v0 = a0;
         T *v1 = a1;
-        T *v2 = RC_KID_holterm(RC_KID_holterm(a2, 0), 0);
-        T *v3 = RC_KID_holterm(RC_KID_holterm(a2, 0), 1);
-        T *v4 = RC_KID_holterm(a2, 1);
+        T *v2 = RC_KID_intern(RC_KID_intern(a2, 0), 0);
+        T *v3 = RC_KID_intern(RC_KID_intern(a2, 0), 1);
+        T *v4 = RC_KID_intern(a2, 1);
         RC_RULE(286);
         T *t0 = p143(v1, v3);
         if (!t0) return (T *)0;
         T *v5 = t0;
-        T *t1 = p186(RC_MK3_symbolic(102, RC_MK2_holterm(90, v2, v3), RC_MK2_holterm(90, v2, v5), v0), v1, v4);
+        T *t1 = p186(RC_MK3_intern(102, RC_KID_intern(a2, 0), RC_MK2_intern(90, v2, v5), v0), v1, v4);
         if (!t1) return (T *)0;
         T *v6 = t1;
-        RC_TAIL return p190(v6, v0, v1, RC_MK2_holterm(90, v2, v3), RC_MK2_holterm(90, v2, v5), v4);
+        RC_TAIL return p190(v6, v0, v1, RC_KID_intern(a2, 0), RC_MK2_intern(90, v2, v5), v4);
     }
 f:  return rc_no_rule(186);
 }
@@ -3769,9 +3656,8 @@ static T *p188(T *a0, T *a1, T *a2, T *a3) {
     goto n403;
 n403: switch (RC_TAG_symbolic(a0)) { case 185: goto r282; case 184: goto r283; default: goto f; }
 r282: { /* inst-comb-1-clash */
-        T *v0 = RC_KID_symbolic(a0, 0);
         RC_RULE(282);
-        return RC_MK1_symbolic(185, v0);
+        return a0;
     }
 r283: { /* inst-comb-1-ok */
         T *v0 = RC_KID_symbolic(a0, 0);
@@ -3782,7 +3668,7 @@ r283: { /* inst-comb-1-ok */
         T *t0 = p186(v1, v2, v3);
         if (!t0) return (T *)0;
         T *v4 = t0;
-        RC_TAIL return p189(v0, v4);
+        return p189(v0, v4);
     }
 f:  return rc_no_rule(188);
 }
@@ -3792,15 +3678,14 @@ static T *p189(T *a0, T *a1) {
     goto n406;
 n406: switch (RC_TAG_symbolic(a1)) { case 185: goto r284; case 184: goto r285; default: goto f; }
 r284: { /* inst-comb-2-clash */
-        T *v1 = RC_KID_symbolic(a1, 0);
         RC_RULE(284);
-        return RC_MK1_symbolic(185, v1);
+        return a1;
     }
 r285: { /* inst-comb-2-ok */
         T *v0 = a0;
         T *v1 = RC_KID_symbolic(a1, 0);
         RC_RULE(285);
-        return RC_MK1_symbolic(184, RC_MK2_holterm(92, v0, v1));
+        return RC_MK1_symbolic(184, RC_MK2_intern(92, v0, v1));
     }
 f:  return rc_no_rule(189);
 }
@@ -3813,7 +3698,7 @@ r287: { /* inst-abs-1-ok */
         T *v0 = RC_KID_symbolic(a0, 0);
         T *v4 = a4;
         RC_RULE(287);
-        return RC_MK1_symbolic(184, RC_MK2_holterm(93, v4, v0));
+        return RC_MK1_symbolic(184, RC_MK2_intern(93, v4, v0));
     }
 r288: { /* inst-abs-1-clash */
         T *v0 = RC_KID_symbolic(a0, 0);
@@ -3835,7 +3720,7 @@ f:  return rc_no_rule(190);
 static T *p191(T *a0, T *a1, T *a2, T *a3, T *a4, T *a5, T *a6) {
     goto n413;
 n413: switch (RC_TAG_symbolic(a0)) { case 1: goto r289; case 0: goto n412; default: goto f; }
-n412: switch (RC_TAG_holterm(a4)) { case 90: goto r290; default: goto f; }
+n412: switch (RC_TAG_intern(a4)) { case 90: goto r290; default: goto f; }
 r289: { /* inst-abs-2-other */
         T *v0 = a1;
         RC_RULE(289);
@@ -3844,8 +3729,7 @@ r289: { /* inst-abs-2-other */
 r290: { /* inst-abs-2-rename */
         T *v1 = a2;
         T *v2 = a3;
-        T *v3 = RC_KID_holterm(a4, 0);
-        T *v4 = RC_KID_holterm(a4, 1);
+        T *v4 = RC_KID_intern(a4, 1);
         T *v5 = a5;
         T *v6 = a6;
         RC_RULE(290);
@@ -3857,15 +3741,15 @@ r290: { /* inst-abs-2-rename */
         T *v8 = t1;
         T *t2 = p165(v8, v5);
         if (!t2) return (T *)0;
-        if (RC_TAG_holterm(t2) != 90) return rc_fail_target(191);
-        T *m0 = RC_KID_holterm(t2, 0);
+        if (RC_TAG_intern(t2) != 90) return rc_fail_target(191);
+        T *m0 = RC_KID_intern(t2, 0);
         T *v9 = m0;
-        T *t3 = p169(RC_MK3_symbolic(102, RC_MK2_holterm(90, v9, v4), RC_MK2_holterm(90, v3, v4), RC_NUL_symbolic(101)), v6);
+        T *t3 = p169(RC_MK3_intern(102, RC_MK2_intern(90, v9, v4), a4, RC_NUL_intern(101)), v6);
         if (!t3) return (T *)0;
         if (RC_TAG_symbolic(t3) != 167) return rc_fail_target(191);
         T *m1 = RC_KID_symbolic(t3, 0);
         T *v11 = m1;
-        RC_TAIL return p186(v1, v2, RC_MK2_holterm(93, RC_MK2_holterm(90, v9, v4), v11));
+        RC_TAIL return p186(v1, v2, RC_MK2_intern(93, RC_MK2_intern(90, v9, v4), v11));
     }
 f:  return rc_no_rule(191);
 }
@@ -3873,17 +3757,17 @@ f:  return rc_no_rule(191);
 /* hl:inst-frees: 2 rules, semidet */
 static T *p192(T *a0, T *a1) {
     goto n417;
-n417: switch (RC_TAG_symbolic(a1)) { case 94: goto r291; case 95: goto n416; default: goto f; }
-n416: switch (RC_TAG_holterm(RC_KID_symbolic(a1, 0))) { case 90: goto r292; default: goto f; }
+n417: switch (RC_TAG_intern(a1)) { case 94: goto r291; case 95: goto n416; default: goto f; }
+n416: switch (RC_TAG_intern(RC_KID_intern(a1, 0))) { case 90: goto r292; default: goto f; }
 r291: { /* inst-frees-nil */
         RC_RULE(291);
-        return RC_NUL_symbolic(94);
+        return RC_NUL_intern(94);
     }
 r292: { /* inst-frees-cons */
         T *v0 = a0;
-        T *v1 = RC_KID_holterm(RC_KID_symbolic(a1, 0), 0);
-        T *v2 = RC_KID_holterm(RC_KID_symbolic(a1, 0), 1);
-        T *v3 = RC_KID_symbolic(a1, 1);
+        T *v1 = RC_KID_intern(RC_KID_intern(a1, 0), 0);
+        T *v2 = RC_KID_intern(RC_KID_intern(a1, 0), 1);
+        T *v3 = RC_KID_intern(a1, 1);
         RC_RULE(292);
         T *t0 = p143(v0, v2);
         if (!t0) return (T *)0;
@@ -3891,14 +3775,13 @@ r292: { /* inst-frees-cons */
         T *t1 = p192(v0, v3);
         if (!t1) return (T *)0;
         T *v5 = t1;
-        return RC_MK2_symbolic(95, RC_MK2_holterm(90, v1, v4), v5);
+        return RC_MK2_intern(95, RC_MK2_intern(90, v1, v4), v5);
     }
 f:  return rc_no_rule(192);
 }
 
-/* hl:safe-mk-eq: 1 rule, semidet; native operation */
-#ifdef RC_CHECK_NATIVE
-static T *p193_rules(T *a0, T *a1) {
+/* hl:safe-mk-eq: 1 rule, semidet */
+static T *p193(T *a0, T *a1) {
     goto r293;
 r293: { /* safe-mk-eq */
         T *v0 = a0;
@@ -3919,42 +3802,21 @@ r293: { /* safe-mk-eq */
         T *t4 = p59();
         if (!t4) return (T *)0;
         T *v6 = t4;
-        return RC_MK2_holterm(92, RC_MK2_holterm(92, RC_MK2_holterm(91, v6, v5), v0), v1);
+        return RC_MK2_intern(92, RC_MK2_intern(92, RC_MK2_intern(91, v6, v5), v0), v1);
     }
-}
-#endif
-static T *p193(T *a0, T *a1) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 13));
-#ifdef RC_CHECK_NATIVE
-    if (rc_check_native) {
-        int tr_ = rc_trace_on; rc_trace_on = 0;
-        rc_check_depth++;
-        T *s_ = p193_rules(a0, a1);
-        rc_check_depth--;
-        rc_trace_on = tr_;
-        T *n_ = holb_safe_mk_eq(a0, a1);
-#ifdef RC_READBACK_holterm
-        rc_native_checked(13, n_ ? RC_READBACK_holterm(n_) : n_, s_ ? RC_READBACK_holterm(s_) : s_);
-#else
-        rc_native_checked(13, n_, s_);
-#endif
-        return n_;
-    }
-#endif
-    return holb_safe_mk_eq(a0, a1);
 }
 
 /* hl:split-eq: 10 rules, det */
 static T *p194(T *a0) {
     goto n431;
-n431: switch (RC_TAG_holterm(a0)) { case 92: goto n427; case 90: goto r297; case 91: goto r298; case 93: goto r299; default: goto f; }
-n427: switch (RC_TAG_holterm(RC_KID_holterm(a0, 0))) { case 92: goto n423; case 90: goto r300; case 91: goto r301; case 93: goto r302; default: goto f; }
-n423: switch (RC_TAG_holterm(RC_KID_holterm(RC_KID_holterm(a0, 0), 0))) { case 91: goto r294; case 90: goto r303; case 92: goto r304; case 93: goto r305; default: goto f; }
+n431: switch (RC_TAG_intern(a0)) { case 92: goto n427; case 90: goto r297; case 91: goto r298; case 93: goto r299; default: goto f; }
+n427: switch (RC_TAG_intern(RC_KID_intern(a0, 0))) { case 92: goto n423; case 90: goto r300; case 91: goto r301; case 93: goto r302; default: goto f; }
+n423: switch (RC_TAG_intern(RC_KID_intern(RC_KID_intern(a0, 0), 0))) { case 91: goto r294; case 90: goto r303; case 92: goto r304; case 93: goto r305; default: goto f; }
 r294: { /* split-eq */
-        T *v0 = RC_KID_holterm(RC_KID_holterm(RC_KID_holterm(a0, 0), 0), 0);
-        T *v1 = RC_KID_holterm(RC_KID_holterm(RC_KID_holterm(a0, 0), 0), 1);
-        T *v2 = RC_KID_holterm(RC_KID_holterm(a0, 0), 1);
-        T *v3 = RC_KID_holterm(a0, 1);
+        T *v0 = RC_KID_intern(RC_KID_intern(RC_KID_intern(a0, 0), 0), 0);
+        T *v1 = RC_KID_intern(RC_KID_intern(RC_KID_intern(a0, 0), 0), 1);
+        T *v2 = RC_KID_intern(RC_KID_intern(a0, 0), 1);
+        T *v3 = RC_KID_intern(a0, 1);
         RC_RULE(294);
         T *t0 = p59();
         if (!t0) return (T *)0;
@@ -3962,7 +3824,7 @@ r294: { /* split-eq */
         T *t1 = p45(v0, v4);
         if (!t1) return (T *)0;
         T *v5 = t1;
-        RC_TAIL return p195(v5, v0, v1, v2, v3);
+        return p195(v5, v0, v1, v2, v3);
     }
 r297: { /* split-eq-var */
         RC_RULE(297);
@@ -4013,7 +3875,7 @@ r295: { /* split-eq-k-yes */
         T *v2 = a3;
         T *v3 = a4;
         RC_RULE(295);
-        return RC_MK3_symbolic(105, RC_MK2_holterm(91, v0, v1), v2, v3);
+        return RC_MK3_symbolic(105, RC_MK2_intern(91, v0, v1), v2, v3);
     }
 r296: { /* split-eq-k-no */
         RC_RULE(296);
@@ -4022,68 +3884,65 @@ r296: { /* split-eq-k-no */
 f:  return rc_no_rule(195);
 }
 
-/* hl:alphaorder: 1 rule, semidet; native operation */
-#ifdef RC_CHECK_NATIVE
+/* hl:alphaorder: 1 rule, semidet */
 static T *p196_rules(T *a0, T *a1) {
     goto r306;
 r306: { /* alphaorder */
         T *v0 = a0;
         T *v1 = a1;
         RC_RULE(306);
-        RC_TAIL return p197(RC_NUL_symbolic(101), v0, v1);
+        return p197(RC_NUL_intern(101), v0, v1);
     }
 }
-#endif
+static struct { T *k[2]; T *r; uint64_t gen; } p196_front[RC_MEMO_FRONT];
 static T *p196(T *a0, T *a1) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 9));
-#ifdef RC_CHECK_NATIVE
-    if (rc_check_native) {
-        int tr_ = rc_trace_on; rc_trace_on = 0;
-        rc_check_depth++;
-        T *s_ = p196_rules(a0, a1);
-        rc_check_depth--;
-        rc_trace_on = tr_;
-        T *n_ = holb_alphaorder(a0, a1);
-        rc_native_checked(9, n_, s_);
-        return n_;
+    T *k_[] = {a0, a1}, *r_;
+    size_t f_ = rc_memo_front_slot(2, k_);
+    if (p196_front[f_].gen == rc_memo_gen && p196_front[f_].k[0] == a0 && p196_front[f_].k[1] == a1) r_ = p196_front[f_].r;
+    else if (rc_memo_get(196, 2, k_, &r_)) {
+        p196_front[f_].gen = rc_memo_gen; p196_front[f_].k[0] = a0; p196_front[f_].k[1] = a1; p196_front[f_].r = r_;
+    } else {
+        r_ = p196_rules(a0, a1);
+        rc_memo_put(196, 2, k_, r_);
+        p196_front[f_].gen = rc_memo_gen; p196_front[f_].k[0] = a0; p196_front[f_].k[1] = a1; p196_front[f_].r = r_;
+        return r_;
     }
+    if (rc_trace_on) { rc_trace_push((uint16_t)(RC_EV_MEMO + 196)); if (!r_) rc_trace_push(RC_EV_NO_RULE); }
+#ifdef RC_CHECK_NATIVE
+    if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *s_ = p196_rules(a0, a1); rc_check_depth--; rc_trace_on = tr_; rc_memo_checked(1, r_, s_); }
 #endif
-    return holb_alphaorder(a0, a1);
+    return r_;
 }
 
 /* hl:orda: 16 rules, semidet */
 static T *p197(T *a0, T *a1, T *a2) {
     goto n458;
-n458: switch (RC_TAG_holterm(a1)) { case 90: goto n440; case 91: goto n445; case 92: goto n450; case 93: goto n457; default: goto f; }
-n440: switch (RC_TAG_holterm(a2)) { case 90: goto r307; case 91: goto r320; case 92: goto r323; case 93: goto r324; default: goto f; }
-n445: switch (RC_TAG_holterm(a2)) { case 91: goto r308; case 90: goto r317; case 92: goto r318; case 93: goto r319; default: goto f; }
-n450: switch (RC_TAG_holterm(a2)) { case 92: goto r309; case 91: goto r321; case 90: goto r325; case 93: goto r327; default: goto f; }
-n457: switch (RC_TAG_holterm(a2)) { case 93: goto n453; case 91: goto r322; case 90: goto r326; case 92: goto r328; default: goto f; }
-n453: switch (RC_TAG_holterm(RC_KID_holterm(a1, 0))) { case 90: goto n452; default: goto f; }
-n452: switch (RC_TAG_holterm(RC_KID_holterm(a2, 0))) { case 90: goto r313; default: goto f; }
+n458: switch (RC_TAG_intern(a1)) { case 90: goto n440; case 91: goto n445; case 92: goto n450; case 93: goto n457; default: goto f; }
+n440: switch (RC_TAG_intern(a2)) { case 90: goto r307; case 91: goto r320; case 92: goto r323; case 93: goto r324; default: goto f; }
+n445: switch (RC_TAG_intern(a2)) { case 91: goto r308; case 90: goto r317; case 92: goto r318; case 93: goto r319; default: goto f; }
+n450: switch (RC_TAG_intern(a2)) { case 92: goto r309; case 91: goto r321; case 90: goto r325; case 93: goto r327; default: goto f; }
+n457: switch (RC_TAG_intern(a2)) { case 93: goto n453; case 91: goto r322; case 90: goto r326; case 92: goto r328; default: goto f; }
+n453: switch (RC_TAG_intern(RC_KID_intern(a1, 0))) { case 90: goto n452; default: goto f; }
+n452: switch (RC_TAG_intern(RC_KID_intern(a2, 0))) { case 90: goto r313; default: goto f; }
 r307: { /* orda-vv */
         T *v0 = a0;
-        T *v1 = RC_KID_holterm(a1, 0);
-        T *v2 = RC_KID_holterm(a1, 1);
-        T *v3 = RC_KID_holterm(a2, 0);
-        T *v4 = RC_KID_holterm(a2, 1);
         RC_RULE(307);
-        RC_TAIL return p200(v0, RC_MK2_holterm(90, v1, v2), RC_MK2_holterm(90, v3, v4));
+        return p200(v0, a1, a2);
     }
 r308: { /* orda-cc */
-        T *v1 = RC_KID_holterm(a1, 0);
-        T *v2 = RC_KID_holterm(a1, 1);
-        T *v3 = RC_KID_holterm(a2, 0);
-        T *v4 = RC_KID_holterm(a2, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
+        T *v3 = RC_KID_intern(a2, 0);
+        T *v4 = RC_KID_intern(a2, 1);
         RC_RULE(308);
-        RC_TAIL return p121(v1, v2, v3, v4);
+        return p121(v1, v2, v3, v4);
     }
 r309: { /* orda-mm */
         T *v0 = a0;
-        T *v1 = RC_KID_holterm(a1, 0);
-        T *v2 = RC_KID_holterm(a1, 1);
-        T *v3 = RC_KID_holterm(a2, 0);
-        T *v4 = RC_KID_holterm(a2, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
+        T *v3 = RC_KID_intern(a2, 0);
+        T *v4 = RC_KID_intern(a2, 1);
         RC_RULE(309);
         T *t0 = p197(v0, v1, v3);
         if (!t0) return (T *)0;
@@ -4092,17 +3951,15 @@ r309: { /* orda-mm */
     }
 r313: { /* orda-aa */
         T *v0 = a0;
-        T *v1 = RC_KID_holterm(RC_KID_holterm(a1, 0), 0);
-        T *v2 = RC_KID_holterm(RC_KID_holterm(a1, 0), 1);
-        T *v3 = RC_KID_holterm(a1, 1);
-        T *v4 = RC_KID_holterm(RC_KID_holterm(a2, 0), 0);
-        T *v5 = RC_KID_holterm(RC_KID_holterm(a2, 0), 1);
-        T *v6 = RC_KID_holterm(a2, 1);
+        T *v2 = RC_KID_intern(RC_KID_intern(a1, 0), 1);
+        T *v3 = RC_KID_intern(a1, 1);
+        T *v5 = RC_KID_intern(RC_KID_intern(a2, 0), 1);
+        T *v6 = RC_KID_intern(a2, 1);
         RC_RULE(313);
         T *t0 = p116(v2, v5);
         if (!t0) return (T *)0;
         T *v7 = t0;
-        RC_TAIL return p199(v7, RC_MK3_symbolic(102, RC_MK2_holterm(90, v1, v2), RC_MK2_holterm(90, v4, v5), v0), v3, v6);
+        RC_TAIL return p199(v7, RC_MK3_intern(102, RC_KID_intern(a1, 0), RC_KID_intern(a2, 0), v0), v3, v6);
     }
 r317: { /* orda-cv */
         RC_RULE(317);
@@ -4202,17 +4059,17 @@ f:  return rc_no_rule(199);
 /* hl:ordav: 2 rules, det */
 static T *p200(T *a0, T *a1, T *a2) {
     goto n469;
-n469: switch (RC_TAG_symbolic(a0)) { case 101: goto r329; case 102: goto r330; default: goto f; }
+n469: switch (RC_TAG_intern(a0)) { case 101: goto r329; case 102: goto r330; default: goto f; }
 r329: { /* ordav-nil */
         T *v0 = a1;
         T *v1 = a2;
         RC_RULE(329);
-        RC_TAIL return p123(v0, v1);
+        return p123(v0, v1);
     }
 r330: { /* ordav-cons */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
+        T *v2 = RC_KID_intern(a0, 2);
         T *v3 = a1;
         T *v4 = a2;
         RC_RULE(330);
@@ -4259,24 +4116,22 @@ f:  return rc_no_rule(201);
 #ifdef RC_CHECK_NATIVE
 static T *p202_rules(T *a0, T *a1) {
     goto n481;
-n481: switch (RC_TAG_symbolic(a0)) { case 94: goto r335; case 95: goto n480; default: goto f; }
-n480: switch (RC_TAG_symbolic(a1)) { case 94: goto r336; case 95: goto r337; default: goto f; }
+n481: switch (RC_TAG_intern(a0)) { case 94: goto r335; case 95: goto n480; default: goto f; }
+n480: switch (RC_TAG_intern(a1)) { case 94: goto r336; case 95: goto r337; default: goto f; }
 r335: { /* term-union-nil */
         T *v0 = a1;
         RC_RULE(335);
         return v0;
     }
 r336: { /* term-union-cons-nil */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
         RC_RULE(336);
-        return RC_MK2_symbolic(95, v0, v1);
+        return a0;
     }
 r337: { /* term-union-cons-cons */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a1, 0);
-        T *v3 = RC_KID_symbolic(a1, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
+        T *v2 = RC_KID_intern(a1, 0);
+        T *v3 = RC_KID_intern(a1, 1);
         RC_RULE(337);
         T *t0 = p196(v0, v2);
         if (!t0) return (T *)0;
@@ -4286,8 +4141,8 @@ r337: { /* term-union-cons-cons */
 f:  return rc_no_rule(202);
 }
 #endif
-static T *p202(T *a0, T *a1) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 24));
+static RC_BLOCK_INLINE T *p202(T *a0, T *a1) {
+    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 9));
 #ifdef RC_CHECK_NATIVE
     if (rc_check_native) {
         int tr_ = rc_trace_on; rc_trace_on = 0;
@@ -4295,12 +4150,12 @@ static T *p202(T *a0, T *a1) {
         T *s_ = p202_rules(a0, a1);
         rc_check_depth--;
         rc_trace_on = tr_;
-        T *n_ = holb_term_union(a0, a1);
-        rc_native_checked(24, n_, s_);
+        T *n_ = rc_bind_9(a0, a1);
+        rc_native_checked(9, n_, s_);
         return n_;
     }
 #endif
-    return holb_term_union(a0, a1);
+    return rc_bind_9(a0, a1);
 }
 
 /* hl:term-union-k: 3 rules, semidet */
@@ -4315,7 +4170,7 @@ r338: { /* term-union-k-eq */
         T *t0 = p202(v1, v3);
         if (!t0) return (T *)0;
         T *v4 = t0;
-        return RC_MK2_symbolic(95, v0, v4);
+        return RC_MK2_intern(95, v0, v4);
     }
 r339: { /* term-union-k-lt */
         T *v0 = a1;
@@ -4323,10 +4178,10 @@ r339: { /* term-union-k-lt */
         T *v2 = a3;
         T *v3 = a4;
         RC_RULE(339);
-        T *t0 = p202(v1, RC_MK2_symbolic(95, v2, v3));
+        T *t0 = p202(v1, RC_MK2_intern(95, v2, v3));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        return RC_MK2_symbolic(95, v0, v4);
+        return RC_MK2_intern(95, v0, v4);
     }
 r340: { /* term-union-k-gt */
         T *v0 = a1;
@@ -4334,10 +4189,10 @@ r340: { /* term-union-k-gt */
         T *v2 = a3;
         T *v3 = a4;
         RC_RULE(340);
-        T *t0 = p202(RC_MK2_symbolic(95, v0, v1), v3);
+        T *t0 = p202(RC_MK2_intern(95, v0, v1), v3);
         if (!t0) return (T *)0;
         T *v4 = t0;
-        return RC_MK2_symbolic(95, v2, v4);
+        return RC_MK2_intern(95, v2, v4);
     }
 f:  return rc_no_rule(203);
 }
@@ -4346,15 +4201,15 @@ f:  return rc_no_rule(203);
 #ifdef RC_CHECK_NATIVE
 static T *p204_rules(T *a0, T *a1) {
     goto n488;
-n488: switch (RC_TAG_symbolic(a1)) { case 94: goto r341; case 95: goto r342; default: goto f; }
+n488: switch (RC_TAG_intern(a1)) { case 94: goto r341; case 95: goto r342; default: goto f; }
 r341: { /* term-remove-nil */
         RC_RULE(341);
-        return RC_NUL_symbolic(94);
+        return RC_NUL_intern(94);
     }
 r342: { /* term-remove-cons */
         T *v0 = a0;
-        T *v1 = RC_KID_symbolic(a1, 0);
-        T *v2 = RC_KID_symbolic(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(342);
         T *t0 = p196(v0, v1);
         if (!t0) return (T *)0;
@@ -4364,8 +4219,8 @@ r342: { /* term-remove-cons */
 f:  return rc_no_rule(204);
 }
 #endif
-static T *p204(T *a0, T *a1) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 25));
+static RC_BLOCK_INLINE T *p204(T *a0, T *a1) {
+    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 10));
 #ifdef RC_CHECK_NATIVE
     if (rc_check_native) {
         int tr_ = rc_trace_on; rc_trace_on = 0;
@@ -4373,12 +4228,12 @@ static T *p204(T *a0, T *a1) {
         T *s_ = p204_rules(a0, a1);
         rc_check_depth--;
         rc_trace_on = tr_;
-        T *n_ = holb_term_remove(a0, a1);
-        rc_native_checked(25, n_, s_);
+        T *n_ = rc_bind_10(a0, a1);
+        rc_native_checked(10, n_, s_);
         return n_;
     }
 #endif
-    return holb_term_remove(a0, a1);
+    return rc_bind_10(a0, a1);
 }
 
 /* hl:term-remove-k: 3 rules, semidet */
@@ -4393,7 +4248,7 @@ r343: { /* term-remove-k-gt */
         T *t0 = p204(v0, v2);
         if (!t0) return (T *)0;
         T *v3 = t0;
-        return RC_MK2_symbolic(95, v1, v3);
+        return RC_MK2_intern(95, v1, v3);
     }
 r344: { /* term-remove-k-eq */
         T *v2 = a3;
@@ -4404,24 +4259,23 @@ r345: { /* term-remove-k-lt */
         T *v1 = a2;
         T *v2 = a3;
         RC_RULE(345);
-        return RC_MK2_symbolic(95, v1, v2);
+        return RC_MK2_intern(95, v1, v2);
     }
 f:  return rc_no_rule(205);
 }
 
-/* hl:term-image-inst: 2 rules, semidet; native operation */
-#ifdef RC_CHECK_NATIVE
-static T *p206_rules(T *a0, T *a1) {
+/* hl:term-image-inst: 2 rules, semidet */
+static T *p206(T *a0, T *a1) {
     goto n495;
-n495: switch (RC_TAG_symbolic(a1)) { case 94: goto r346; case 95: goto r347; default: goto f; }
+n495: switch (RC_TAG_intern(a1)) { case 94: goto r346; case 95: goto r347; default: goto f; }
 r346: { /* term-image-inst-nil */
         RC_RULE(346);
-        return RC_NUL_symbolic(94);
+        return RC_NUL_intern(94);
     }
 r347: { /* term-image-inst-cons */
         T *v0 = a0;
-        T *v1 = RC_KID_symbolic(a1, 0);
-        T *v2 = RC_KID_symbolic(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(347);
         T *t0 = p183(v0, v1);
         if (!t0) return (T *)0;
@@ -4429,44 +4283,26 @@ r347: { /* term-image-inst-cons */
         T *t1 = p206(v0, v2);
         if (!t1) return (T *)0;
         T *v4 = t1;
-        T *t2 = p126(RC_MK2_symbolic(95, v3, v4), RC_MK2_symbolic(95, v1, v2));
+        T *t2 = p126(RC_MK2_intern(95, v3, v4), a1);
         if (!t2) return (T *)0;
         T *v7 = t2;
-        RC_TAIL return p208(v7, RC_MK2_symbolic(95, v1, v2), v3, v4);
+        return p208(v7, a1, v3, v4);
     }
 f:  return rc_no_rule(206);
 }
-#endif
-static T *p206(T *a0, T *a1) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 27));
-#ifdef RC_CHECK_NATIVE
-    if (rc_check_native) {
-        int tr_ = rc_trace_on; rc_trace_on = 0;
-        rc_check_depth++;
-        T *s_ = p206_rules(a0, a1);
-        rc_check_depth--;
-        rc_trace_on = tr_;
-        T *n_ = holb_term_image_inst(a0, a1);
-        rc_native_checked(27, n_, s_);
-        return n_;
-    }
-#endif
-    return holb_term_image_inst(a0, a1);
-}
 
-/* hl:term-image-vsubst: 2 rules, semidet; native operation */
-#ifdef RC_CHECK_NATIVE
-static T *p207_rules(T *a0, T *a1) {
+/* hl:term-image-vsubst: 2 rules, semidet */
+static T *p207(T *a0, T *a1) {
     goto n498;
-n498: switch (RC_TAG_symbolic(a1)) { case 94: goto r348; case 95: goto r349; default: goto f; }
+n498: switch (RC_TAG_intern(a1)) { case 94: goto r348; case 95: goto r349; default: goto f; }
 r348: { /* term-image-vsubst-nil */
         RC_RULE(348);
-        return RC_NUL_symbolic(94);
+        return RC_NUL_intern(94);
     }
 r349: { /* term-image-vsubst-cons */
         T *v0 = a0;
-        T *v1 = RC_KID_symbolic(a1, 0);
-        T *v2 = RC_KID_symbolic(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(349);
         T *t0 = p174(v0, v1);
         if (!t0) return (T *)0;
@@ -4474,29 +4310,12 @@ r349: { /* term-image-vsubst-cons */
         T *t1 = p207(v0, v2);
         if (!t1) return (T *)0;
         T *v4 = t1;
-        T *t2 = p126(RC_MK2_symbolic(95, v3, v4), RC_MK2_symbolic(95, v1, v2));
+        T *t2 = p126(RC_MK2_intern(95, v3, v4), a1);
         if (!t2) return (T *)0;
         T *v5 = t2;
-        RC_TAIL return p208(v5, RC_MK2_symbolic(95, v1, v2), v3, v4);
+        return p208(v5, a1, v3, v4);
     }
 f:  return rc_no_rule(207);
-}
-#endif
-static T *p207(T *a0, T *a1) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 26));
-#ifdef RC_CHECK_NATIVE
-    if (rc_check_native) {
-        int tr_ = rc_trace_on; rc_trace_on = 0;
-        rc_check_depth++;
-        T *s_ = p207_rules(a0, a1);
-        rc_check_depth--;
-        rc_trace_on = tr_;
-        T *n_ = holb_term_image_vsubst(a0, a1);
-        rc_native_checked(26, n_, s_);
-        return n_;
-    }
-#endif
-    return holb_term_image_vsubst(a0, a1);
 }
 
 /* hl:term-image-k: 2 rules, semidet */
@@ -4512,7 +4331,7 @@ r351: { /* term-image-k-no */
         T *v1 = a2;
         T *v2 = a3;
         RC_RULE(351);
-        RC_TAIL return p202(RC_MK2_symbolic(95, v1, RC_NUL_symbolic(94)), v2);
+        return p202(RC_MK2_intern(95, v1, RC_NUL_intern(94)), v2);
     }
 f:  return rc_no_rule(208);
 }
@@ -4520,15 +4339,15 @@ f:  return rc_no_rule(208);
 /* hl:exists-aconv: 2 rules, semidet */
 static T *p209(T *a0, T *a1) {
     goto n504;
-n504: switch (RC_TAG_symbolic(a1)) { case 94: goto r352; case 95: goto r353; default: goto f; }
+n504: switch (RC_TAG_intern(a1)) { case 94: goto r352; case 95: goto r353; default: goto f; }
 r352: { /* exists-aconv-nil */
         RC_RULE(352);
         return RC_NUL_symbolic(1);
     }
 r353: { /* exists-aconv-cons */
         T *v0 = a0;
-        T *v1 = RC_KID_symbolic(a1, 0);
-        T *v2 = RC_KID_symbolic(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(353);
         T *t0 = p196(v0, v1);
         if (!t0) return (T *)0;
@@ -4564,14 +4383,14 @@ f:  return rc_no_rule(210);
 /* hl:forall-exists-aconv: 2 rules, semidet */
 static T *p211(T *a0, T *a1) {
     goto n511;
-n511: switch (RC_TAG_symbolic(a0)) { case 94: goto r357; case 95: goto r358; default: goto f; }
+n511: switch (RC_TAG_intern(a0)) { case 94: goto r357; case 95: goto r358; default: goto f; }
 r357: { /* forall-exists-aconv-nil */
         RC_RULE(357);
         return RC_NUL_symbolic(0);
     }
 r358: { /* forall-exists-aconv-cons */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
         T *v2 = a1;
         RC_RULE(358);
         T *t0 = p209(v0, v2);
@@ -4611,7 +4430,7 @@ r361: { /* mk-type */
         T *t0 = p274(v1, v5);
         if (!t0) return (T *)0;
         T *v7 = t0;
-        RC_TAIL return p222(v7, v5, v6);
+        return p222(v7, v5, v6);
     }
 f:  return rc_no_rule(221);
 }
@@ -4622,7 +4441,7 @@ static T *p222(T *a0, T *a1, T *a2) {
 n519: switch (RC_TAG_symbolic(a0)) { case 110: goto r362; case 109: goto r363; default: goto f; }
 r362: { /* mk-type-k-none */
         RC_RULE(362);
-        return RC_MK1_symbolic(218, RC_NUL_symbolic(299));
+        return (rc_ground[47] ? rc_ground[47] : (rc_ground[47] = rc_make_static(RC_MK1_symbolic(218, RC_NUL_symbolic(299)))));
     }
 r363: { /* mk-type-k-some */
         T *v0 = RC_KID_symbolic(a0, 0);
@@ -4635,7 +4454,7 @@ r363: { /* mk-type-k-some */
         T *t1 = p50(v0, v3);
         if (!t1) return (T *)0;
         T *v4 = t1;
-        RC_TAIL return p223(v4, v1, v2);
+        return p223(v4, v1, v2);
     }
 f:  return rc_no_rule(222);
 }
@@ -4648,15 +4467,15 @@ r364: { /* mk-type-k2-eq */
         T *v0 = a1;
         T *v1 = a2;
         RC_RULE(364);
-        return RC_MK1_symbolic(217, RC_MK2_holtype(87, v0, v1));
+        return RC_MK1_symbolic(217, RC_MK2_intern(87, v0, v1));
     }
 r365: { /* mk-type-k2-lt */
         RC_RULE(365);
-        return RC_MK1_symbolic(218, RC_NUL_symbolic(300));
+        return (rc_ground[48] ? rc_ground[48] : (rc_ground[48] = rc_make_static(RC_MK1_symbolic(218, RC_NUL_symbolic(300)))));
     }
 r366: { /* mk-type-k2-gt */
         RC_RULE(366);
-        return RC_MK1_symbolic(218, RC_NUL_symbolic(300));
+        return (rc_ground[49] ? rc_ground[49] : (rc_ground[49] = rc_make_static(RC_MK1_symbolic(218, RC_NUL_symbolic(300)))));
     }
 f:  return rc_no_rule(223);
 }
@@ -4673,7 +4492,7 @@ r367: { /* mk-const-at */
         T *t0 = p276(v1, v4);
         if (!t0) return (T *)0;
         T *v6 = t0;
-        RC_TAIL return p225(v6, v4, v5);
+        return p225(v6, v4, v5);
     }
 f:  return rc_no_rule(224);
 }
@@ -4684,17 +4503,17 @@ static T *p225(T *a0, T *a1, T *a2) {
 n528: switch (RC_TAG_symbolic(a0)) { case 108: goto r368; case 107: goto r369; default: goto f; }
 r368: { /* mk-const-k-none */
         RC_RULE(368);
-        return RC_MK1_symbolic(216, RC_NUL_symbolic(301));
+        return (rc_ground[50] ? rc_ground[50] : (rc_ground[50] = rc_make_static(RC_MK1_symbolic(216, RC_NUL_symbolic(301)))));
     }
 r369: { /* mk-const-k-some */
         T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = a1;
         T *v2 = a2;
         RC_RULE(369);
-        T *t0 = p227(v0, v2, RC_NUL_symbolic(99));
+        T *t0 = p227(v0, v2, RC_NUL_intern(99));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        RC_TAIL return p226(v3, v1, v2);
+        return p226(v3, v1, v2);
     }
 f:  return rc_no_rule(225);
 }
@@ -4707,11 +4526,11 @@ r370: { /* mk-const-k2-ok */
         T *v1 = a1;
         T *v2 = a2;
         RC_RULE(370);
-        return RC_MK1_symbolic(215, RC_MK2_holterm(91, v1, v2));
+        return RC_MK1_symbolic(215, RC_MK2_intern(91, v1, v2));
     }
 r371: { /* mk-const-k2-fail */
         RC_RULE(371);
-        return RC_MK1_symbolic(216, RC_NUL_symbolic(302));
+        return (rc_ground[51] ? rc_ground[51] : (rc_ground[51] = rc_make_static(RC_MK1_symbolic(216, RC_NUL_symbolic(302)))));
     }
 f:  return rc_no_rule(226);
 }
@@ -4719,27 +4538,26 @@ f:  return rc_no_rule(226);
 /* hl:ty-match: 3 rules, det */
 static T *p227(T *a0, T *a1, T *a2) {
     goto n536;
-n536: switch (RC_TAG_holtype(a0)) { case 86: goto r372; case 87: goto n535; default: goto f; }
-n535: switch (RC_TAG_holtype(a1)) { case 86: goto r377; case 87: goto r378; default: goto f; }
+n536: switch (RC_TAG_intern(a0)) { case 86: goto r372; case 87: goto n535; default: goto f; }
+n535: switch (RC_TAG_intern(a1)) { case 86: goto r377; case 87: goto r378; default: goto f; }
 r372: { /* ty-match-var */
-        T *v0 = RC_KID_holtype(a0, 0);
         T *v1 = a1;
         T *v2 = a2;
         RC_RULE(372);
-        T *t0 = p233(RC_MK1_holtype(86, v0), v2);
+        T *t0 = p233(a0, v2);
         if (!t0) return (T *)0;
         T *v3 = t0;
-        RC_TAIL return p228(v3, RC_MK1_holtype(86, v0), v1, v2);
+        return p228(v3, a0, v1, v2);
     }
 r377: { /* ty-match-app-var */
         RC_RULE(377);
         return RC_NUL_symbolic(220);
     }
 r378: { /* ty-match-app-app */
-        T *v0 = RC_KID_holtype(a0, 0);
-        T *v1 = RC_KID_holtype(a0, 1);
-        T *v2 = RC_KID_holtype(a1, 0);
-        T *v3 = RC_KID_holtype(a1, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
+        T *v2 = RC_KID_intern(a1, 0);
+        T *v3 = RC_KID_intern(a1, 1);
         T *v4 = a2;
         RC_RULE(378);
         T *t0 = p45(v0, v2);
@@ -4759,7 +4577,7 @@ r373: { /* ty-match-var-new */
         T *v1 = a2;
         T *v2 = a3;
         RC_RULE(373);
-        return RC_MK1_symbolic(219, RC_MK3_symbolic(100, v1, v0, v2));
+        return RC_MK1_symbolic(219, RC_MK3_intern(100, v1, v0, v2));
     }
 r374: { /* ty-match-var-old */
         T *v0 = RC_KID_symbolic(a0, 0);
@@ -4769,7 +4587,7 @@ r374: { /* ty-match-var-old */
         T *t0 = p120(v0, v2);
         if (!t0) return (T *)0;
         T *v4 = t0;
-        RC_TAIL return p229(v4, v3);
+        return p229(v4, v3);
     }
 f:  return rc_no_rule(228);
 }
@@ -4811,9 +4629,9 @@ f:  return rc_no_rule(230);
 /* hl:ty-match-list: 4 rules, det */
 static T *p231(T *a0, T *a1, T *a2) {
     goto n552;
-n552: switch (RC_TAG_symbolic(a0)) { case 88: goto n548; case 89: goto n551; default: goto f; }
-n548: switch (RC_TAG_symbolic(a1)) { case 88: goto r381; case 89: goto r382; default: goto f; }
-n551: switch (RC_TAG_symbolic(a1)) { case 88: goto r383; case 89: goto r384; default: goto f; }
+n552: switch (RC_TAG_intern(a0)) { case 88: goto n548; case 89: goto n551; default: goto f; }
+n548: switch (RC_TAG_intern(a1)) { case 88: goto r381; case 89: goto r382; default: goto f; }
+n551: switch (RC_TAG_intern(a1)) { case 88: goto r383; case 89: goto r384; default: goto f; }
 r381: { /* ty-match-list-nn */
         T *v0 = a2;
         RC_RULE(381);
@@ -4828,10 +4646,10 @@ r383: { /* ty-match-list-cn */
         return RC_NUL_symbolic(220);
     }
 r384: { /* ty-match-list-cc */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a1, 0);
-        T *v3 = RC_KID_symbolic(a1, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
+        T *v2 = RC_KID_intern(a1, 0);
+        T *v3 = RC_KID_intern(a1, 1);
         T *v4 = a2;
         RC_RULE(384);
         T *t0 = p227(v0, v2, v4);
@@ -4863,16 +4681,16 @@ f:  return rc_no_rule(232);
 /* hl:typ-lookup: 2 rules, det */
 static T *p233(T *a0, T *a1) {
     goto n558;
-n558: switch (RC_TAG_symbolic(a1)) { case 99: goto r387; case 100: goto r388; default: goto f; }
+n558: switch (RC_TAG_intern(a1)) { case 99: goto r387; case 100: goto r388; default: goto f; }
 r387: { /* typ-lookup-nil */
         RC_RULE(387);
         return RC_NUL_symbolic(108);
     }
 r388: { /* typ-lookup-cons */
         T *v0 = a0;
-        T *v1 = RC_KID_symbolic(a1, 0);
-        T *v2 = RC_KID_symbolic(a1, 1);
-        T *v3 = RC_KID_symbolic(a1, 2);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
+        T *v3 = RC_KID_intern(a1, 2);
         RC_RULE(388);
         T *t0 = p120(v2, v0);
         if (!t0) return (T *)0;
@@ -4900,9 +4718,8 @@ r390: { /* typ-lookup-k-no */
 f:  return rc_no_rule(234);
 }
 
-/* hl:mk-comb: 1 rule, semidet; native operation */
-#ifdef RC_CHECK_NATIVE
-static T *p235_rules(T *a0, T *a1) {
+/* hl:mk-comb: 1 rule, semidet */
+static T *p235(T *a0, T *a1) {
     goto r391;
 r391: { /* mk-comb */
         T *v0 = a0;
@@ -4914,25 +4731,8 @@ r391: { /* mk-comb */
         T *t1 = p114(v2);
         if (!t1) return (T *)0;
         T *v3 = t1;
-        RC_TAIL return p236(v3, v0, v1);
+        return p236(v3, v0, v1);
     }
-}
-#endif
-static T *p235(T *a0, T *a1) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 11));
-#ifdef RC_CHECK_NATIVE
-    if (rc_check_native) {
-        int tr_ = rc_trace_on; rc_trace_on = 0;
-        rc_check_depth++;
-        T *s_ = p235_rules(a0, a1);
-        rc_check_depth--;
-        rc_trace_on = tr_;
-        T *n_ = holb_mk_comb(a0, a1);
-        rc_native_checked(11, n_, s_);
-        return n_;
-    }
-#endif
-    return holb_mk_comb(a0, a1);
 }
 
 /* hl:mk-comb-k: 2 rules, semidet */
@@ -4941,7 +4741,7 @@ static T *p236(T *a0, T *a1, T *a2) {
 n565: switch (RC_TAG_symbolic(a0)) { case 104: goto r392; case 103: goto r393; default: goto f; }
 r392: { /* mk-comb-k-no */
         RC_RULE(392);
-        return RC_MK1_symbolic(216, RC_NUL_symbolic(304));
+        return (rc_ground[52] ? rc_ground[52] : (rc_ground[52] = rc_make_static(RC_MK1_symbolic(216, RC_NUL_symbolic(304)))));
     }
 r393: { /* mk-comb-k-fun */
         T *v0 = RC_KID_symbolic(a0, 0);
@@ -4954,7 +4754,7 @@ r393: { /* mk-comb-k-fun */
         T *t1 = p120(v0, v4);
         if (!t1) return (T *)0;
         T *v5 = t1;
-        RC_TAIL return p237(v5, v2, v3);
+        return p237(v5, v2, v3);
     }
 f:  return rc_no_rule(236);
 }
@@ -4967,57 +4767,37 @@ r394: { /* mk-comb-k2-yes */
         T *v0 = a1;
         T *v1 = a2;
         RC_RULE(394);
-        return RC_MK1_symbolic(215, RC_MK2_holterm(92, v0, v1));
+        return RC_MK1_symbolic(215, RC_MK2_intern(92, v0, v1));
     }
 r395: { /* mk-comb-k2-no */
         RC_RULE(395);
-        return RC_MK1_symbolic(216, RC_NUL_symbolic(304));
+        return (rc_ground[53] ? rc_ground[53] : (rc_ground[53] = rc_make_static(RC_MK1_symbolic(216, RC_NUL_symbolic(304)))));
     }
 f:  return rc_no_rule(237);
 }
 
-/* hl:mk-abs: 4 rules, det; native operation */
-#ifdef RC_CHECK_NATIVE
-static T *p238_rules(T *a0, T *a1) {
+/* hl:mk-abs: 4 rules, det */
+static T *p238(T *a0, T *a1) {
     goto n573;
-n573: switch (RC_TAG_holterm(a0)) { case 90: goto r396; case 91: goto r397; case 92: goto r398; case 93: goto r399; default: goto f; }
+n573: switch (RC_TAG_intern(a0)) { case 90: goto r396; case 91: goto r397; case 92: goto r398; case 93: goto r399; default: goto f; }
 r396: { /* mk-abs-var */
-        T *v0 = RC_KID_holterm(a0, 0);
-        T *v1 = RC_KID_holterm(a0, 1);
         T *v2 = a1;
         RC_RULE(396);
-        return RC_MK1_symbolic(215, RC_MK2_holterm(93, RC_MK2_holterm(90, v0, v1), v2));
+        return RC_MK1_symbolic(215, RC_MK2_intern(93, a0, v2));
     }
 r397: { /* mk-abs-const */
         RC_RULE(397);
-        return RC_MK1_symbolic(216, RC_NUL_symbolic(303));
+        return (rc_ground[54] ? rc_ground[54] : (rc_ground[54] = rc_make_static(RC_MK1_symbolic(216, RC_NUL_symbolic(303)))));
     }
 r398: { /* mk-abs-comb */
         RC_RULE(398);
-        return RC_MK1_symbolic(216, RC_NUL_symbolic(303));
+        return (rc_ground[55] ? rc_ground[55] : (rc_ground[55] = rc_make_static(RC_MK1_symbolic(216, RC_NUL_symbolic(303)))));
     }
 r399: { /* mk-abs-abs */
         RC_RULE(399);
-        return RC_MK1_symbolic(216, RC_NUL_symbolic(303));
+        return (rc_ground[56] ? rc_ground[56] : (rc_ground[56] = rc_make_static(RC_MK1_symbolic(216, RC_NUL_symbolic(303)))));
     }
 f:  return rc_no_rule(238);
-}
-#endif
-static T *p238(T *a0, T *a1) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 12));
-#ifdef RC_CHECK_NATIVE
-    if (rc_check_native) {
-        int tr_ = rc_trace_on; rc_trace_on = 0;
-        rc_check_depth++;
-        T *s_ = p238_rules(a0, a1);
-        rc_check_depth--;
-        rc_trace_on = tr_;
-        T *n_ = holb_mk_abs(a0, a1);
-        rc_native_checked(12, n_, s_);
-        return n_;
-    }
-#endif
-    return holb_mk_abs(a0, a1);
 }
 
 /* hl:REFL: 1 rule, semidet */
@@ -5029,7 +4809,7 @@ r400: { /* REFL */
         T *t0 = p193(v0, v0);
         if (!t0) return (T *)0;
         T *v1 = t0;
-        return RC_MK2_symbolic(96, RC_NUL_symbolic(94), v1);
+        return RC_MK2_symbolic(96, RC_NUL_intern(94), v1);
     }
 }
 
@@ -5050,7 +4830,7 @@ r401: { /* TRANS */
         T *t1 = p194(v3);
         if (!t1) return (T *)0;
         T *v5 = t1;
-        RC_TAIL return p241(v0, v4, v2, v5);
+        return p241(v0, v4, v2, v5);
     }
 f:  return rc_no_rule(240);
 }
@@ -5062,11 +4842,11 @@ n582: switch (RC_TAG_symbolic(a1)) { case 106: goto r402; case 105: goto n581; d
 n581: switch (RC_TAG_symbolic(a3)) { case 106: goto r403; case 105: goto r404; default: goto f; }
 r402: { /* trans-k-no-1 */
         RC_RULE(402);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(306));
+        return (rc_ground[57] ? rc_ground[57] : (rc_ground[57] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(306)))));
     }
 r403: { /* trans-k-no-2 */
         RC_RULE(403);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(306));
+        return (rc_ground[58] ? rc_ground[58] : (rc_ground[58] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(306)))));
     }
 r404: { /* trans-k-eqs */
         T *v0 = a0;
@@ -5080,7 +4860,7 @@ r404: { /* trans-k-eqs */
         T *t0 = p196(v4, v6);
         if (!t0) return (T *)0;
         T *v8 = t0;
-        RC_TAIL return p242(v8, v0, v1, v2, v3, v7);
+        return p242(v8, v0, v1, v2, v3, v7);
     }
 f:  return rc_no_rule(241);
 }
@@ -5099,15 +4879,15 @@ r405: { /* trans-k2-eq */
         T *t0 = p202(v0, v1);
         if (!t0) return (T *)0;
         T *v5 = t0;
-        return RC_MK1_symbolic(213, RC_MK2_symbolic(96, v5, RC_MK2_holterm(92, RC_MK2_holterm(92, v2, v3), v4)));
+        return RC_MK1_symbolic(213, RC_MK2_symbolic(96, v5, RC_MK2_intern(92, RC_MK2_intern(92, v2, v3), v4)));
     }
 r406: { /* trans-k2-lt */
         RC_RULE(406);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(306));
+        return (rc_ground[59] ? rc_ground[59] : (rc_ground[59] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(306)))));
     }
 r407: { /* trans-k2-gt */
         RC_RULE(407);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(306));
+        return (rc_ground[60] ? rc_ground[60] : (rc_ground[60] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(306)))));
     }
 f:  return rc_no_rule(242);
 }
@@ -5129,7 +4909,7 @@ r408: { /* MK_COMB */
         T *t1 = p194(v3);
         if (!t1) return (T *)0;
         T *v5 = t1;
-        RC_TAIL return p244(v0, v4, v2, v5);
+        return p244(v0, v4, v2, v5);
     }
 f:  return rc_no_rule(243);
 }
@@ -5141,11 +4921,11 @@ n594: switch (RC_TAG_symbolic(a1)) { case 106: goto r409; case 105: goto n593; d
 n593: switch (RC_TAG_symbolic(a3)) { case 106: goto r410; case 105: goto r411; default: goto f; }
 r409: { /* mk-comb-rule-k-no-1 */
         RC_RULE(409);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(307));
+        return (rc_ground[61] ? rc_ground[61] : (rc_ground[61] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(307)))));
     }
 r410: { /* mk-comb-rule-k-no-2 */
         RC_RULE(410);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(307));
+        return (rc_ground[62] ? rc_ground[62] : (rc_ground[62] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(307)))));
     }
 r411: { /* mk-comb-rule-k-eqs */
         T *v0 = a0;
@@ -5172,7 +4952,7 @@ static T *p245(T *a0, T *a1, T *a2, T *a3, T *a4, T *a5, T *a6) {
 n597: switch (RC_TAG_symbolic(a0)) { case 104: goto r412; case 103: goto r413; default: goto f; }
 r412: { /* mk-comb-rule-k2-no */
         RC_RULE(412);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(308));
+        return (rc_ground[63] ? rc_ground[63] : (rc_ground[63] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(308)))));
     }
 r413: { /* mk-comb-rule-k2-fun */
         T *v0 = RC_KID_symbolic(a0, 0);
@@ -5189,7 +4969,7 @@ r413: { /* mk-comb-rule-k2-fun */
         T *t1 = p120(v0, v8);
         if (!t1) return (T *)0;
         T *v9 = t1;
-        RC_TAIL return p246(v9, v2, v3, v4, v5, v6, v7);
+        return p246(v9, v2, v3, v4, v5, v6, v7);
     }
 f:  return rc_no_rule(245);
 }
@@ -5200,7 +4980,7 @@ static T *p246(T *a0, T *a1, T *a2, T *a3, T *a4, T *a5, T *a6) {
 n600: switch (RC_TAG_symbolic(a0)) { case 1: goto r414; case 0: goto r415; default: goto f; }
 r414: { /* mk-comb-rule-k3-no */
         RC_RULE(414);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(308));
+        return (rc_ground[64] ? rc_ground[64] : (rc_ground[64] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(308)))));
     }
 r415: { /* mk-comb-rule-k3-yes */
         T *v0 = a1;
@@ -5213,7 +4993,7 @@ r415: { /* mk-comb-rule-k3-yes */
         T *t0 = p202(v0, v1);
         if (!t0) return (T *)0;
         T *v6 = t0;
-        T *t1 = p193(RC_MK2_holterm(92, v2, v4), RC_MK2_holterm(92, v3, v5));
+        T *t1 = p193(RC_MK2_intern(92, v2, v4), RC_MK2_intern(92, v3, v5));
         if (!t1) return (T *)0;
         T *v7 = t1;
         return RC_MK1_symbolic(213, RC_MK2_symbolic(96, v6, v7));
@@ -5224,30 +5004,28 @@ f:  return rc_no_rule(246);
 /* hl:ABS: 4 rules, semidet */
 static T *p247(T *a0, T *a1) {
     goto n606;
-n606: switch (RC_TAG_holterm(a0)) { case 90: goto n602; case 91: goto r417; case 92: goto r418; case 93: goto r419; default: goto f; }
+n606: switch (RC_TAG_intern(a0)) { case 90: goto n602; case 91: goto r417; case 92: goto r418; case 93: goto r419; default: goto f; }
 n602: switch (RC_TAG_symbolic(a1)) { case 96: goto r416; default: goto f; }
 r416: { /* ABS-var */
-        T *v0 = RC_KID_holterm(a0, 0);
-        T *v1 = RC_KID_holterm(a0, 1);
         T *v2 = RC_KID_symbolic(a1, 0);
         T *v3 = RC_KID_symbolic(a1, 1);
         RC_RULE(416);
         T *t0 = p194(v3);
         if (!t0) return (T *)0;
         T *v4 = t0;
-        RC_TAIL return p248(v4, RC_MK2_holterm(90, v0, v1), v2);
+        return p248(v4, a0, v2);
     }
 r417: { /* ABS-const */
         RC_RULE(417);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(309));
+        return (rc_ground[65] ? rc_ground[65] : (rc_ground[65] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(309)))));
     }
 r418: { /* ABS-comb */
         RC_RULE(418);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(309));
+        return (rc_ground[66] ? rc_ground[66] : (rc_ground[66] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(309)))));
     }
 r419: { /* ABS-abs */
         RC_RULE(419);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(309));
+        return (rc_ground[67] ? rc_ground[67] : (rc_ground[67] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(309)))));
     }
 f:  return rc_no_rule(247);
 }
@@ -5258,7 +5036,7 @@ static T *p248(T *a0, T *a1, T *a2) {
 n609: switch (RC_TAG_symbolic(a0)) { case 106: goto r420; case 105: goto r421; default: goto f; }
 r420: { /* abs-k-no */
         RC_RULE(420);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(309));
+        return (rc_ground[68] ? rc_ground[68] : (rc_ground[68] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(309)))));
     }
 r421: { /* abs-k-eqn */
         T *v1 = RC_KID_symbolic(a0, 1);
@@ -5269,7 +5047,7 @@ r421: { /* abs-k-eqn */
         T *t0 = p162(v3, v4);
         if (!t0) return (T *)0;
         T *v5 = t0;
-        RC_TAIL return p249(v5, v3, v4, v1, v2);
+        return p249(v5, v3, v4, v1, v2);
     }
 f:  return rc_no_rule(248);
 }
@@ -5280,7 +5058,7 @@ static T *p249(T *a0, T *a1, T *a2, T *a3, T *a4) {
 n612: switch (RC_TAG_symbolic(a0)) { case 0: goto r422; case 1: goto r423; default: goto f; }
 r422: { /* abs-k2-yes */
         RC_RULE(422);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(309));
+        return (rc_ground[69] ? rc_ground[69] : (rc_ground[69] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(309)))));
     }
 r423: { /* abs-k2-no */
         T *v0 = a1;
@@ -5288,7 +5066,7 @@ r423: { /* abs-k2-no */
         T *v2 = a3;
         T *v3 = a4;
         RC_RULE(423);
-        T *t0 = p193(RC_MK2_holterm(93, v0, v2), RC_MK2_holterm(93, v0, v3));
+        T *t0 = p193(RC_MK2_intern(93, v0, v2), RC_MK2_intern(93, v0, v3));
         if (!t0) return (T *)0;
         T *v4 = t0;
         return RC_MK1_symbolic(213, RC_MK2_symbolic(96, v1, v4));
@@ -5299,41 +5077,41 @@ f:  return rc_no_rule(249);
 /* hl:BETA: 7 rules, semidet */
 static T *p250(T *a0) {
     goto n621;
-n621: switch (RC_TAG_holterm(a0)) { case 92: goto n617; case 90: goto r427; case 91: goto r428; case 93: goto r429; default: goto f; }
-n617: switch (RC_TAG_holterm(RC_KID_holterm(a0, 0))) { case 93: goto r424; case 90: goto r430; case 91: goto r431; case 92: goto r432; default: goto f; }
+n621: switch (RC_TAG_intern(a0)) { case 92: goto n617; case 90: goto r427; case 91: goto r428; case 93: goto r429; default: goto f; }
+n617: switch (RC_TAG_intern(RC_KID_intern(a0, 0))) { case 93: goto r424; case 90: goto r430; case 91: goto r431; case 92: goto r432; default: goto f; }
 r424: { /* BETA-redex */
-        T *v0 = RC_KID_holterm(RC_KID_holterm(a0, 0), 0);
-        T *v1 = RC_KID_holterm(RC_KID_holterm(a0, 0), 1);
-        T *v2 = RC_KID_holterm(a0, 1);
+        T *v0 = RC_KID_intern(RC_KID_intern(a0, 0), 0);
+        T *v1 = RC_KID_intern(RC_KID_intern(a0, 0), 1);
+        T *v2 = RC_KID_intern(a0, 1);
         RC_RULE(424);
         T *t0 = p125(v2, v0);
         if (!t0) return (T *)0;
         T *v3 = t0;
-        RC_TAIL return p251(v3, RC_MK2_holterm(92, RC_MK2_holterm(93, v0, v1), v2), v1);
+        return p251(v3, a0, v1);
     }
 r427: { /* BETA-var */
         RC_RULE(427);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(310));
+        return (rc_ground[71] ? rc_ground[71] : (rc_ground[71] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(310)))));
     }
 r428: { /* BETA-const */
         RC_RULE(428);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(310));
+        return (rc_ground[72] ? rc_ground[72] : (rc_ground[72] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(310)))));
     }
 r429: { /* BETA-abs */
         RC_RULE(429);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(310));
+        return (rc_ground[73] ? rc_ground[73] : (rc_ground[73] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(310)))));
     }
 r430: { /* BETA-c-var */
         RC_RULE(430);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(310));
+        return (rc_ground[74] ? rc_ground[74] : (rc_ground[74] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(310)))));
     }
 r431: { /* BETA-c-const */
         RC_RULE(431);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(310));
+        return (rc_ground[75] ? rc_ground[75] : (rc_ground[75] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(310)))));
     }
 r432: { /* BETA-c-comb */
         RC_RULE(432);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(310));
+        return (rc_ground[76] ? rc_ground[76] : (rc_ground[76] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(310)))));
     }
 f:  return rc_no_rule(250);
 }
@@ -5349,11 +5127,11 @@ r425: { /* beta-k-yes */
         T *t0 = p193(v0, v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        return RC_MK1_symbolic(213, RC_MK2_symbolic(96, RC_NUL_symbolic(94), v2));
+        return RC_MK1_symbolic(213, RC_MK2_symbolic(96, RC_NUL_intern(94), v2));
     }
 r426: { /* beta-k-no */
         RC_RULE(426);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(310));
+        return (rc_ground[70] ? rc_ground[70] : (rc_ground[70] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(310)))));
     }
 f:  return rc_no_rule(251);
 }
@@ -5373,7 +5151,7 @@ r433: { /* ASSUME */
         T *t2 = p120(v1, v2);
         if (!t2) return (T *)0;
         T *v3 = t2;
-        RC_TAIL return p253(v3, v0);
+        return p253(v3, v0);
     }
 }
 
@@ -5384,11 +5162,11 @@ n628: switch (RC_TAG_symbolic(a0)) { case 0: goto r434; case 1: goto r435; defau
 r434: { /* assume-k-yes */
         T *v0 = a1;
         RC_RULE(434);
-        return RC_MK1_symbolic(213, RC_MK2_symbolic(96, RC_MK2_symbolic(95, v0, RC_NUL_symbolic(94)), v0));
+        return RC_MK1_symbolic(213, RC_MK2_symbolic(96, RC_MK2_intern(95, v0, RC_NUL_intern(94)), v0));
     }
 r435: { /* assume-k-no */
         RC_RULE(435);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(311));
+        return (rc_ground[77] ? rc_ground[77] : (rc_ground[77] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(311)))));
     }
 f:  return rc_no_rule(253);
 }
@@ -5407,7 +5185,7 @@ r436: { /* EQ_MP */
         T *t0 = p194(v1);
         if (!t0) return (T *)0;
         T *v4 = t0;
-        RC_TAIL return p255(v4, v0, v2, v3);
+        return p255(v4, v0, v2, v3);
     }
 f:  return rc_no_rule(254);
 }
@@ -5418,7 +5196,7 @@ static T *p255(T *a0, T *a1, T *a2, T *a3) {
 n634: switch (RC_TAG_symbolic(a0)) { case 106: goto r437; case 105: goto r438; default: goto f; }
 r437: { /* eq-mp-k-no */
         RC_RULE(437);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(312));
+        return (rc_ground[78] ? rc_ground[78] : (rc_ground[78] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(312)))));
     }
 r438: { /* eq-mp-k-eqn */
         T *v1 = RC_KID_symbolic(a0, 1);
@@ -5430,7 +5208,7 @@ r438: { /* eq-mp-k-eqn */
         T *t0 = p196(v1, v5);
         if (!t0) return (T *)0;
         T *v6 = t0;
-        RC_TAIL return p256(v6, v3, v4, v2);
+        return p256(v6, v3, v4, v2);
     }
 f:  return rc_no_rule(255);
 }
@@ -5451,11 +5229,11 @@ r439: { /* eq-mp-k2-eq */
     }
 r440: { /* eq-mp-k2-lt */
         RC_RULE(440);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(312));
+        return (rc_ground[79] ? rc_ground[79] : (rc_ground[79] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(312)))));
     }
 r441: { /* eq-mp-k2-gt */
         RC_RULE(441);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(312));
+        return (rc_ground[80] ? rc_ground[80] : (rc_ground[80] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(312)))));
     }
 f:  return rc_no_rule(256);
 }
@@ -5511,26 +5289,21 @@ f:  return rc_no_rule(258);
 /* hl:INST: 2 rules, semidet */
 static T *p259(T *a0, T *a1) {
     goto n648;
-n648: switch (RC_TAG_symbolic(a0)) { case 101: goto n645; case 102: goto n647; default: goto f; }
+n648: switch (RC_TAG_intern(a0)) { case 101: goto n645; case 102: goto n647; default: goto f; }
 n645: switch (RC_TAG_symbolic(a1)) { case 96: goto r444; default: goto f; }
 n647: switch (RC_TAG_symbolic(a1)) { case 96: goto r445; default: goto f; }
 r444: { /* INST-nil */
-        T *v0 = RC_KID_symbolic(a1, 0);
-        T *v1 = RC_KID_symbolic(a1, 1);
         RC_RULE(444);
-        return RC_MK1_symbolic(213, RC_MK2_symbolic(96, v0, v1));
+        return RC_MK1_symbolic(213, a1);
     }
 r445: { /* INST-cons */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = RC_KID_symbolic(a1, 0);
         T *v4 = RC_KID_symbolic(a1, 1);
         RC_RULE(445);
-        T *t0 = p171(RC_MK3_symbolic(102, v0, v1, v2));
+        T *t0 = p171(a0);
         if (!t0) return (T *)0;
         T *v5 = t0;
-        RC_TAIL return p260(v5, RC_MK3_symbolic(102, v0, v1, v2), v3, v4);
+        return p260(v5, a0, v3, v4);
     }
 f:  return rc_no_rule(259);
 }
@@ -5541,7 +5314,7 @@ static T *p260(T *a0, T *a1, T *a2, T *a3) {
 n651: switch (RC_TAG_symbolic(a0)) { case 1: goto r446; case 0: goto r447; default: goto f; }
 r446: { /* inst-rule-k-no */
         RC_RULE(446);
-        return RC_MK1_symbolic(214, RC_NUL_symbolic(305));
+        return (rc_ground[81] ? rc_ground[81] : (rc_ground[81] = rc_make_static(RC_MK1_symbolic(214, RC_NUL_symbolic(305)))));
     }
 r447: { /* inst-rule-k-yes */
         T *v0 = a1;
@@ -5585,7 +5358,7 @@ r448: { /* initial-theory */
         T *t6 = p113(v3, v5);
         if (!t6) return (T *)0;
         T *v6 = t6;
-        return RC_MK4_symbolic(265, RC_MK3_symbolic(262, v0, RC_NUL_nat(27), RC_MK3_symbolic(262, v1, RC_MK1_nat(28, RC_MK1_nat(29, RC_NUL_nat(27))), RC_NUL_symbolic(261))), RC_MK3_symbolic(264, v2, v6, RC_NUL_symbolic(263)), RC_NUL_symbolic(97), RC_NUL_symbolic(97));
+        return RC_MK4_symbolic(265, RC_MK3_symbolic(262, v0, RC_NUL_nat(27), RC_MK3_symbolic(262, v1, (rc_ground[82] ? rc_ground[82] : (rc_ground[82] = rc_make_static(RC_MK1_nat(28, RC_MK1_nat(29, RC_NUL_nat(27)))))), RC_NUL_symbolic(261))), RC_MK3_symbolic(264, v2, v6, RC_NUL_symbolic(263)), RC_NUL_symbolic(97), RC_NUL_symbolic(97));
     }
 }
 static T *p273_value; static int p273_done;
@@ -5681,16 +5454,13 @@ static T *p278(T *a0, T *a1, T *a2) {
 n666: switch (RC_TAG_symbolic(a0)) { case 265: goto r460; default: goto f; }
 r460: { /* new-type */
         T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
-        T *v3 = RC_KID_symbolic(a0, 3);
         T *v4 = a1;
         T *v5 = a2;
         RC_RULE(460);
         T *t0 = p274(v0, v4);
         if (!t0) return (T *)0;
         T *v6 = t0;
-        RC_TAIL return p279(v6, RC_MK4_symbolic(265, v0, v1, v2, v3), v4, v5);
+        return p279(v6, a0, v4, v5);
     }
 f:  return rc_no_rule(278);
 }
@@ -5702,7 +5472,7 @@ n670: switch (RC_TAG_symbolic(a0)) { case 109: goto r461; case 110: goto n669; d
 n669: switch (RC_TAG_symbolic(a1)) { case 265: goto r462; default: goto f; }
 r461: { /* new-type-k-some */
         RC_RULE(461);
-        return RC_MK1_symbolic(267, RC_NUL_symbolic(313));
+        return (rc_ground[83] ? rc_ground[83] : (rc_ground[83] = rc_make_static(RC_MK1_symbolic(267, RC_NUL_symbolic(313)))));
     }
 r462: { /* new-type-k-none */
         T *v0 = RC_KID_symbolic(a1, 0);
@@ -5722,17 +5492,14 @@ static T *p280(T *a0, T *a1, T *a2) {
     goto n672;
 n672: switch (RC_TAG_symbolic(a0)) { case 265: goto r463; default: goto f; }
 r463: { /* new-constant */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
-        T *v3 = RC_KID_symbolic(a0, 3);
         T *v4 = a1;
         T *v5 = a2;
         RC_RULE(463);
         T *t0 = p276(v1, v4);
         if (!t0) return (T *)0;
         T *v6 = t0;
-        RC_TAIL return p281(v6, RC_MK4_symbolic(265, v0, v1, v2, v3), v4, v5);
+        return p281(v6, a0, v4, v5);
     }
 f:  return rc_no_rule(280);
 }
@@ -5744,7 +5511,7 @@ n676: switch (RC_TAG_symbolic(a0)) { case 107: goto r464; case 108: goto n675; d
 n675: switch (RC_TAG_symbolic(a1)) { case 265: goto r465; default: goto f; }
 r464: { /* new-constant-k-some */
         RC_RULE(464);
-        return RC_MK1_symbolic(267, RC_NUL_symbolic(314));
+        return (rc_ground[84] ? rc_ground[84] : (rc_ground[84] = rc_make_static(RC_MK1_symbolic(267, RC_NUL_symbolic(314)))));
     }
 r465: { /* new-constant-k-none */
         T *v0 = RC_KID_symbolic(a1, 0);
@@ -5775,7 +5542,7 @@ r466: { /* new-axiom */
         T *t2 = p120(v2, v3);
         if (!t2) return (T *)0;
         T *v4 = t2;
-        RC_TAIL return p283(v4, v0, v1);
+        return p283(v4, v0, v1);
     }
 }
 
@@ -5786,7 +5553,7 @@ n681: switch (RC_TAG_symbolic(a0)) { case 1: goto r467; case 0: goto n680; defau
 n680: switch (RC_TAG_symbolic(a1)) { case 265: goto r468; default: goto f; }
 r467: { /* new-axiom-k-no */
         RC_RULE(467);
-        return RC_MK1_symbolic(269, RC_NUL_symbolic(315));
+        return (rc_ground[85] ? rc_ground[85] : (rc_ground[85] = rc_make_static(RC_MK1_symbolic(269, RC_NUL_symbolic(315)))));
     }
 r468: { /* new-axiom-k-yes */
         T *v0 = RC_KID_symbolic(a1, 0);
@@ -5795,7 +5562,7 @@ r468: { /* new-axiom-k-yes */
         T *v3 = RC_KID_symbolic(a1, 3);
         T *v4 = a2;
         RC_RULE(468);
-        return RC_MK2_symbolic(268, RC_MK4_symbolic(265, v0, v1, RC_MK2_symbolic(98, RC_MK2_symbolic(96, RC_NUL_symbolic(94), v4), v2), v3), RC_MK2_symbolic(96, RC_NUL_symbolic(94), v4));
+        return RC_MK2_symbolic(268, RC_MK4_symbolic(265, v0, v1, RC_MK2_symbolic(98, RC_MK2_symbolic(96, RC_NUL_intern(94), v4), v2), v3), RC_MK2_symbolic(96, RC_NUL_intern(94), v4));
     }
 f:  return rc_no_rule(283);
 }
@@ -5810,7 +5577,7 @@ r469: { /* new-basic-definition */
         T *t0 = p194(v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p285(v2, v0);
+        return p285(v2, v0);
     }
 }
 
@@ -5818,33 +5585,33 @@ r469: { /* new-basic-definition */
 static T *p285(T *a0, T *a1) {
     goto n689;
 n689: switch (RC_TAG_symbolic(a0)) { case 106: goto r470; case 105: goto n688; default: goto f; }
-n688: switch (RC_TAG_holterm(RC_KID_symbolic(a0, 1))) { case 91: goto r471; case 92: goto r472; case 93: goto r473; case 90: goto r474; default: goto f; }
+n688: switch (RC_TAG_intern(RC_KID_symbolic(a0, 1))) { case 91: goto r471; case 92: goto r472; case 93: goto r473; case 90: goto r474; default: goto f; }
 r470: { /* new-def-k-no */
         RC_RULE(470);
-        return RC_MK1_symbolic(269, RC_NUL_symbolic(316));
+        return (rc_ground[86] ? rc_ground[86] : (rc_ground[86] = rc_make_static(RC_MK1_symbolic(269, RC_NUL_symbolic(316)))));
     }
 r471: { /* new-def-k-const */
         RC_RULE(471);
-        return RC_MK1_symbolic(269, RC_NUL_symbolic(317));
+        return (rc_ground[87] ? rc_ground[87] : (rc_ground[87] = rc_make_static(RC_MK1_symbolic(269, RC_NUL_symbolic(317)))));
     }
 r472: { /* new-def-k-comb */
         RC_RULE(472);
-        return RC_MK1_symbolic(269, RC_NUL_symbolic(316));
+        return (rc_ground[88] ? rc_ground[88] : (rc_ground[88] = rc_make_static(RC_MK1_symbolic(269, RC_NUL_symbolic(316)))));
     }
 r473: { /* new-def-k-abs */
         RC_RULE(473);
-        return RC_MK1_symbolic(269, RC_NUL_symbolic(316));
+        return (rc_ground[89] ? rc_ground[89] : (rc_ground[89] = rc_make_static(RC_MK1_symbolic(269, RC_NUL_symbolic(316)))));
     }
 r474: { /* new-def-k-var */
-        T *v1 = RC_KID_holterm(RC_KID_symbolic(a0, 1), 0);
-        T *v2 = RC_KID_holterm(RC_KID_symbolic(a0, 1), 1);
+        T *v1 = RC_KID_intern(RC_KID_symbolic(a0, 1), 0);
+        T *v2 = RC_KID_intern(RC_KID_symbolic(a0, 1), 1);
         T *v3 = RC_KID_symbolic(a0, 2);
         T *v4 = a1;
         RC_RULE(474);
-        T *t0 = p157(RC_NUL_symbolic(94), v3);
+        T *t0 = p157(RC_NUL_intern(94), v3);
         if (!t0) return (T *)0;
         T *v5 = t0;
-        RC_TAIL return p286(v5, v4, v1, v2, v3);
+        return p286(v5, v4, v1, v2, v3);
     }
 f:  return rc_no_rule(285);
 }
@@ -5855,7 +5622,7 @@ static T *p286(T *a0, T *a1, T *a2, T *a3, T *a4) {
 n692: switch (RC_TAG_symbolic(a0)) { case 1: goto r475; case 0: goto r476; default: goto f; }
 r475: { /* new-def-k2-no */
         RC_RULE(475);
-        return RC_MK1_symbolic(269, RC_NUL_symbolic(318));
+        return (rc_ground[90] ? rc_ground[90] : (rc_ground[90] = rc_make_static(RC_MK1_symbolic(269, RC_NUL_symbolic(318)))));
     }
 r476: { /* new-def-k2-yes */
         T *v0 = a1;
@@ -5872,7 +5639,7 @@ r476: { /* new-def-k2-yes */
         T *t2 = p133(v4, v5);
         if (!t2) return (T *)0;
         T *v6 = t2;
-        RC_TAIL return p287(v6, v0, v1, v2, v3);
+        return p287(v6, v0, v1, v2, v3);
     }
 f:  return rc_no_rule(286);
 }
@@ -5883,7 +5650,7 @@ static T *p287(T *a0, T *a1, T *a2, T *a3, T *a4) {
 n695: switch (RC_TAG_symbolic(a0)) { case 1: goto r477; case 0: goto r478; default: goto f; }
 r477: { /* new-def-k3-no */
         RC_RULE(477);
-        return RC_MK1_symbolic(269, RC_NUL_symbolic(319));
+        return (rc_ground[91] ? rc_ground[91] : (rc_ground[91] = rc_make_static(RC_MK1_symbolic(269, RC_NUL_symbolic(319)))));
     }
 r478: { /* new-def-k3-yes */
         T *v0 = a1;
@@ -5894,7 +5661,7 @@ r478: { /* new-def-k3-yes */
         T *t0 = p280(v0, v1, v2);
         if (!t0) return (T *)0;
         T *v4 = t0;
-        RC_TAIL return p288(v4, v1, v2, v3);
+        return p288(v4, v1, v2, v3);
     }
 f:  return rc_no_rule(287);
 }
@@ -5918,10 +5685,10 @@ r480: { /* new-def-k4-ok */
         T *v5 = a2;
         T *v6 = a3;
         RC_RULE(480);
-        T *t0 = p193(RC_MK2_holterm(91, v4, v5), v6);
+        T *t0 = p193(RC_MK2_intern(91, v4, v5), v6);
         if (!t0) return (T *)0;
         T *v7 = t0;
-        return RC_MK2_symbolic(268, RC_MK4_symbolic(265, v0, v1, v2, RC_MK2_symbolic(98, RC_MK2_symbolic(96, RC_NUL_symbolic(94), v7), v3)), RC_MK2_symbolic(96, RC_NUL_symbolic(94), v7));
+        return RC_MK2_symbolic(268, RC_MK4_symbolic(265, v0, v1, v2, RC_MK2_symbolic(98, RC_MK2_symbolic(96, RC_NUL_intern(94), v7), v3)), RC_MK2_symbolic(96, RC_NUL_intern(94), v7));
     }
 f:  return rc_no_rule(288);
 }
@@ -5932,10 +5699,7 @@ static T *p289(T *a0, T *a1, T *a2, T *a3, T *a4) {
 n702: switch (RC_TAG_symbolic(a0)) { case 265: goto n701; default: goto f; }
 n701: switch (RC_TAG_symbolic(a4)) { case 96: goto r481; default: goto f; }
 r481: { /* new-basic-type-definition */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
-        T *v3 = RC_KID_symbolic(a0, 3);
         T *v4 = a1;
         T *v5 = a2;
         T *v6 = a3;
@@ -5951,7 +5715,7 @@ r481: { /* new-basic-type-definition */
         T *t2 = p36(v9, v10);
         if (!t2) return (T *)0;
         T *v11 = t2;
-        return p290(v11, RC_MK4_symbolic(265, v0, v1, v2, v3), v4, v5, v6, v7, v8);
+        return p290(v11, a0, v4, v5, v6, v7, v8);
     }
 f:  return rc_no_rule(289);
 }
@@ -5960,14 +5724,14 @@ f:  return rc_no_rule(289);
 static T *p290(T *a0, T *a1, T *a2, T *a3, T *a4, T *a5, T *a6) {
     goto n707;
 n707: switch (RC_TAG_symbolic(a0)) { case 0: goto r482; case 1: goto n706; default: goto f; }
-n706: switch (RC_TAG_symbolic(a5)) { case 95: goto r483; case 94: goto r484; default: goto f; }
+n706: switch (RC_TAG_intern(a5)) { case 95: goto r483; case 94: goto r484; default: goto f; }
 r482: { /* tydef-1-in-use */
         RC_RULE(482);
-        return RC_MK1_symbolic(271, RC_NUL_symbolic(320));
+        return (rc_ground[92] ? rc_ground[92] : (rc_ground[92] = rc_make_static(RC_MK1_symbolic(271, RC_NUL_symbolic(320)))));
     }
 r483: { /* tydef-1-hyps */
         RC_RULE(483);
-        return RC_MK1_symbolic(271, RC_NUL_symbolic(321));
+        return (rc_ground[93] ? rc_ground[93] : (rc_ground[93] = rc_make_static(RC_MK1_symbolic(271, RC_NUL_symbolic(321)))));
     }
 r484: { /* tydef-1-ok */
         T *v0 = a1;
@@ -5976,7 +5740,7 @@ r484: { /* tydef-1-ok */
         T *v3 = a4;
         T *v4 = a6;
         RC_RULE(484);
-        RC_TAIL return p291(v0, v1, v2, v3, v4);
+        return p291(v0, v1, v2, v3, v4);
     }
 f:  return rc_no_rule(290);
 }
@@ -5984,28 +5748,28 @@ f:  return rc_no_rule(290);
 /* hl:tydef-2: 4 rules, semidet */
 static T *p291(T *a0, T *a1, T *a2, T *a3, T *a4) {
     goto n712;
-n712: switch (RC_TAG_holterm(a4)) { case 90: goto r485; case 91: goto r486; case 93: goto r487; case 92: goto r488; default: goto f; }
+n712: switch (RC_TAG_intern(a4)) { case 90: goto r485; case 91: goto r486; case 93: goto r487; case 92: goto r488; default: goto f; }
 r485: { /* tydef-2-var */
         RC_RULE(485);
-        return RC_MK1_symbolic(271, RC_NUL_symbolic(322));
+        return (rc_ground[94] ? rc_ground[94] : (rc_ground[94] = rc_make_static(RC_MK1_symbolic(271, RC_NUL_symbolic(322)))));
     }
 r486: { /* tydef-2-const */
         RC_RULE(486);
-        return RC_MK1_symbolic(271, RC_NUL_symbolic(322));
+        return (rc_ground[95] ? rc_ground[95] : (rc_ground[95] = rc_make_static(RC_MK1_symbolic(271, RC_NUL_symbolic(322)))));
     }
 r487: { /* tydef-2-abs */
         RC_RULE(487);
-        return RC_MK1_symbolic(271, RC_NUL_symbolic(322));
+        return (rc_ground[96] ? rc_ground[96] : (rc_ground[96] = rc_make_static(RC_MK1_symbolic(271, RC_NUL_symbolic(322)))));
     }
 r488: { /* tydef-2-comb */
         T *v0 = a0;
         T *v1 = a1;
         T *v2 = a2;
         T *v3 = a3;
-        T *v4 = RC_KID_holterm(a4, 0);
-        T *v5 = RC_KID_holterm(a4, 1);
+        T *v4 = RC_KID_intern(a4, 0);
+        T *v5 = RC_KID_intern(a4, 1);
         RC_RULE(488);
-        T *t0 = p157(RC_NUL_symbolic(94), v4);
+        T *t0 = p157(RC_NUL_intern(94), v4);
         if (!t0) return (T *)0;
         T *v6 = t0;
         return p292(v6, v0, v1, v2, v3, v4, v5);
@@ -6019,7 +5783,7 @@ static T *p292(T *a0, T *a1, T *a2, T *a3, T *a4, T *a5, T *a6) {
 n715: switch (RC_TAG_symbolic(a0)) { case 1: goto r489; case 0: goto r490; default: goto f; }
 r489: { /* tydef-3-open */
         RC_RULE(489);
-        return RC_MK1_symbolic(271, RC_NUL_symbolic(323));
+        return (rc_ground[97] ? rc_ground[97] : (rc_ground[97] = rc_make_static(RC_MK1_symbolic(271, RC_NUL_symbolic(323)))));
     }
 r490: { /* tydef-3-closed */
         T *v0 = a1;
@@ -6041,7 +5805,7 @@ r490: { /* tydef-3-closed */
         T *t3 = p278(v0, v1, v8);
         if (!t3) return (T *)0;
         T *v9 = t3;
-        RC_TAIL return p293(v9, v1, v2, v3, v4, v5, v7);
+        return p293(v9, v1, v2, v3, v4, v5, v7);
     }
 f:  return rc_no_rule(292);
 }
@@ -6052,7 +5816,7 @@ static T *p293(T *a0, T *a1, T *a2, T *a3, T *a4, T *a5, T *a6) {
 n718: switch (RC_TAG_symbolic(a0)) { case 267: goto r491; case 266: goto r492; default: goto f; }
 r491: { /* tydef-4-fail */
         RC_RULE(491);
-        return RC_MK1_symbolic(271, RC_NUL_symbolic(324));
+        return (rc_ground[98] ? rc_ground[98] : (rc_ground[98] = rc_make_static(RC_MK1_symbolic(271, RC_NUL_symbolic(324)))));
     }
 r492: { /* tydef-4-ok */
         T *v0 = RC_KID_symbolic(a0, 0);
@@ -6066,13 +5830,13 @@ r492: { /* tydef-4-ok */
         T *t0 = p154(v5);
         if (!t0) return (T *)0;
         T *v7 = t0;
-        T *t1 = p113(v7, RC_MK2_holtype(87, v1, v6));
+        T *t1 = p113(v7, RC_MK2_intern(87, v1, v6));
         if (!t1) return (T *)0;
         T *v8 = t1;
         T *t2 = p280(v0, v2, v8);
         if (!t2) return (T *)0;
         T *v9 = t2;
-        return p294(v9, v0, v2, v8, v3, v4, RC_MK2_holtype(87, v1, v6), v7);
+        return p294(v9, v0, v2, v8, v3, v4, RC_MK2_intern(87, v1, v6), v7);
     }
 f:  return rc_no_rule(293);
 }
@@ -6127,7 +5891,7 @@ r496: { /* tydef-5b-ok */
         T *v7 = a7;
         T *v8 = a8;
         RC_RULE(496);
-        RC_TAIL return p296(v0, v6, RC_MK2_holterm(91, v2, v3), RC_MK2_holterm(91, v4, v5), v7, v8);
+        return p296(v0, v6, RC_MK2_intern(91, v2, v3), RC_MK2_intern(91, v4, v5), v7, v8);
     }
 f:  return rc_no_rule(295);
 }
@@ -6149,16 +5913,16 @@ r497: { /* tydef-6 */
         T *t1 = p63();
         if (!t1) return (T *)0;
         T *v7 = t1;
-        T *t2 = p193(RC_MK2_holterm(92, v2, RC_MK2_holterm(92, v3, RC_MK2_holterm(90, v6, v4))), RC_MK2_holterm(90, v6, v4));
+        T *t2 = p193(RC_MK2_intern(92, v2, RC_MK2_intern(92, v3, RC_MK2_intern(90, v6, v4))), RC_MK2_intern(90, v6, v4));
         if (!t2) return (T *)0;
         T *v8 = t2;
-        T *t3 = p193(RC_MK2_holterm(92, v3, RC_MK2_holterm(92, v2, RC_MK2_holterm(90, v7, v5))), RC_MK2_holterm(90, v7, v5));
+        T *t3 = p193(RC_MK2_intern(92, v3, RC_MK2_intern(92, v2, RC_MK2_intern(90, v7, v5))), RC_MK2_intern(90, v7, v5));
         if (!t3) return (T *)0;
         T *v9 = t3;
-        T *t4 = p193(RC_MK2_holterm(92, v1, RC_MK2_holterm(90, v7, v5)), v9);
+        T *t4 = p193(RC_MK2_intern(92, v1, RC_MK2_intern(90, v7, v5)), v9);
         if (!t4) return (T *)0;
         T *v10 = t4;
-        return RC_MK3_symbolic(270, v0, RC_MK2_symbolic(96, RC_NUL_symbolic(94), v8), RC_MK2_symbolic(96, RC_NUL_symbolic(94), v10));
+        return RC_MK3_symbolic(270, v0, RC_MK2_symbolic(96, RC_NUL_intern(94), v8), RC_MK2_symbolic(96, RC_NUL_intern(94), v10));
     }
 }
 
@@ -6172,7 +5936,7 @@ r457: { /* can-get-const */
         T *t0 = p276(v0, v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p298(v2);
+        return p298(v2);
     }
 }
 
@@ -6322,7 +6086,7 @@ r515: { /* std-def-T */
         T *t2 = p111();
         if (!t2) return (T *)0;
         T *v2 = t2;
-        T *t3 = p193(RC_MK2_holterm(93, RC_MK2_holterm(90, v1, v2), RC_MK2_holterm(90, v1, v2)), RC_MK2_holterm(93, RC_MK2_holterm(90, v1, v2), RC_MK2_holterm(90, v1, v2)));
+        T *t3 = p193(RC_MK2_intern(93, RC_MK2_intern(90, v1, v2), RC_MK2_intern(90, v1, v2)), RC_MK2_intern(93, RC_MK2_intern(90, v1, v2), RC_MK2_intern(90, v1, v2)));
         if (!t3) return (T *)0;
         T *v3 = t3;
         return RC_MK3_symbolic(353, v0, v2, v3);
@@ -6364,10 +6128,10 @@ r516: { /* std-def-and */
         T *t7 = p113(v5, v6);
         if (!t7) return (T *)0;
         T *v7 = t7;
-        T *t8 = p193(RC_MK2_holterm(93, RC_MK2_holterm(90, v4, v7), RC_MK2_holterm(92, RC_MK2_holterm(92, RC_MK2_holterm(90, v4, v7), RC_MK2_holterm(90, v2, v5)), RC_MK2_holterm(90, v3, v5))), RC_MK2_holterm(93, RC_MK2_holterm(90, v4, v7), RC_MK2_holterm(92, RC_MK2_holterm(92, RC_MK2_holterm(90, v4, v7), RC_MK2_holterm(91, v1, v5)), RC_MK2_holterm(91, v1, v5))));
+        T *t8 = p193(RC_MK2_intern(93, RC_MK2_intern(90, v4, v7), RC_MK2_intern(92, RC_MK2_intern(92, RC_MK2_intern(90, v4, v7), RC_MK2_intern(90, v2, v5)), RC_MK2_intern(90, v3, v5))), RC_MK2_intern(93, RC_MK2_intern(90, v4, v7), RC_MK2_intern(92, RC_MK2_intern(92, RC_MK2_intern(90, v4, v7), RC_MK2_intern(91, v1, v5)), RC_MK2_intern(91, v1, v5))));
         if (!t8) return (T *)0;
         T *v8 = t8;
-        return RC_MK3_symbolic(353, v0, v7, RC_MK2_holterm(93, RC_MK2_holterm(90, v2, v5), RC_MK2_holterm(93, RC_MK2_holterm(90, v3, v5), v8)));
+        return RC_MK3_symbolic(353, v0, v7, RC_MK2_intern(93, RC_MK2_intern(90, v2, v5), RC_MK2_intern(93, RC_MK2_intern(90, v3, v5), v8)));
     }
 }
 static T *p359_value; static int p359_done;
@@ -6403,10 +6167,10 @@ r517: { /* std-def-imp */
         T *t6 = p113(v4, v5);
         if (!t6) return (T *)0;
         T *v6 = t6;
-        T *t7 = p193(RC_MK2_holterm(92, RC_MK2_holterm(92, RC_MK2_holterm(91, v1, v6), RC_MK2_holterm(90, v2, v4)), RC_MK2_holterm(90, v3, v4)), RC_MK2_holterm(90, v2, v4));
+        T *t7 = p193(RC_MK2_intern(92, RC_MK2_intern(92, RC_MK2_intern(91, v1, v6), RC_MK2_intern(90, v2, v4)), RC_MK2_intern(90, v3, v4)), RC_MK2_intern(90, v2, v4));
         if (!t7) return (T *)0;
         T *v7 = t7;
-        return RC_MK3_symbolic(353, v0, v6, RC_MK2_holterm(93, RC_MK2_holterm(90, v2, v4), RC_MK2_holterm(93, RC_MK2_holterm(90, v3, v4), v7)));
+        return RC_MK3_symbolic(353, v0, v6, RC_MK2_intern(93, RC_MK2_intern(90, v2, v4), RC_MK2_intern(93, RC_MK2_intern(90, v3, v4), v7)));
     }
 }
 static T *p360_value; static int p360_done;
@@ -6445,10 +6209,10 @@ r518: { /* std-def-all */
         T *t7 = p113(v6, v5);
         if (!t7) return (T *)0;
         T *v7 = t7;
-        T *t8 = p193(RC_MK2_holterm(90, v1, v6), RC_MK2_holterm(93, RC_MK2_holterm(90, v2, v4), RC_MK2_holterm(91, v3, v5)));
+        T *t8 = p193(RC_MK2_intern(90, v1, v6), RC_MK2_intern(93, RC_MK2_intern(90, v2, v4), RC_MK2_intern(91, v3, v5)));
         if (!t8) return (T *)0;
         T *v8 = t8;
-        return RC_MK3_symbolic(353, v0, v7, RC_MK2_holterm(93, RC_MK2_holterm(90, v1, v6), v8));
+        return RC_MK3_symbolic(353, v0, v7, RC_MK2_intern(93, RC_MK2_intern(90, v1, v6), v8));
     }
 }
 static T *p361_value; static int p361_done;
@@ -6502,7 +6266,7 @@ r519: { /* std-def-ex */
         T *t12 = p113(v8, v7);
         if (!t12) return (T *)0;
         T *v12 = t12;
-        return RC_MK3_symbolic(353, v0, v11, RC_MK2_holterm(93, RC_MK2_holterm(90, v3, v10), RC_MK2_holterm(92, RC_MK2_holterm(91, v1, v12), RC_MK2_holterm(93, RC_MK2_holterm(90, v4, v7), RC_MK2_holterm(92, RC_MK2_holterm(92, RC_MK2_holterm(91, v2, v9), RC_MK2_holterm(92, RC_MK2_holterm(91, v1, v11), RC_MK2_holterm(93, RC_MK2_holterm(90, v5, v6), RC_MK2_holterm(92, RC_MK2_holterm(92, RC_MK2_holterm(91, v2, v9), RC_MK2_holterm(92, RC_MK2_holterm(90, v3, v10), RC_MK2_holterm(90, v5, v6))), RC_MK2_holterm(90, v4, v7))))), RC_MK2_holterm(90, v4, v7))))));
+        return RC_MK3_symbolic(353, v0, v11, RC_MK2_intern(93, RC_MK2_intern(90, v3, v10), RC_MK2_intern(92, RC_MK2_intern(91, v1, v12), RC_MK2_intern(93, RC_MK2_intern(90, v4, v7), RC_MK2_intern(92, RC_MK2_intern(92, RC_MK2_intern(91, v2, v9), RC_MK2_intern(92, RC_MK2_intern(91, v1, v11), RC_MK2_intern(93, RC_MK2_intern(90, v5, v6), RC_MK2_intern(92, RC_MK2_intern(92, RC_MK2_intern(91, v2, v9), RC_MK2_intern(92, RC_MK2_intern(90, v3, v10), RC_MK2_intern(90, v5, v6))), RC_MK2_intern(90, v4, v7))))), RC_MK2_intern(90, v4, v7))))));
     }
 }
 static T *p362_value; static int p362_done;
@@ -6535,7 +6299,7 @@ r520: { /* std-def-F */
         T *t5 = p113(v4, v3);
         if (!t5) return (T *)0;
         T *v5 = t5;
-        return RC_MK3_symbolic(353, v0, v3, RC_MK2_holterm(92, RC_MK2_holterm(91, v1, v5), RC_MK2_holterm(93, RC_MK2_holterm(90, v2, v3), RC_MK2_holterm(90, v2, v3))));
+        return RC_MK3_symbolic(353, v0, v3, RC_MK2_intern(92, RC_MK2_intern(91, v1, v5), RC_MK2_intern(93, RC_MK2_intern(90, v2, v3), RC_MK2_intern(90, v2, v3))));
     }
 }
 static T *p363_value; static int p363_done;
@@ -6571,7 +6335,7 @@ r521: { /* std-def-neg */
         T *t6 = p113(v4, v5);
         if (!t6) return (T *)0;
         T *v6 = t6;
-        return RC_MK3_symbolic(353, v0, v5, RC_MK2_holterm(93, RC_MK2_holterm(90, v3, v4), RC_MK2_holterm(92, RC_MK2_holterm(92, RC_MK2_holterm(91, v1, v6), RC_MK2_holterm(90, v3, v4)), RC_MK2_holterm(91, v2, v4))));
+        return RC_MK3_symbolic(353, v0, v5, RC_MK2_intern(93, RC_MK2_intern(90, v3, v4), RC_MK2_intern(92, RC_MK2_intern(92, RC_MK2_intern(91, v1, v6), RC_MK2_intern(90, v3, v4)), RC_MK2_intern(91, v2, v4))));
     }
 }
 static T *p364_value; static int p364_done;
@@ -6625,19 +6389,19 @@ r522: { /* std-def-one-one */
         T *t12 = p113(v11, v8);
         if (!t12) return (T *)0;
         T *v12 = t12;
-        T *t13 = p113(v6, RC_MK1_holtype(86, v7));
+        T *t13 = p113(v6, RC_MK1_intern(86, v7));
         if (!t13) return (T *)0;
         T *v13 = t13;
         T *t14 = p113(v13, v8);
         if (!t14) return (T *)0;
         T *v14 = t14;
-        T *t15 = p193(RC_MK2_holterm(92, RC_MK2_holterm(90, v3, v13), RC_MK2_holterm(90, v4, v6)), RC_MK2_holterm(92, RC_MK2_holterm(90, v3, v13), RC_MK2_holterm(90, v5, v6)));
+        T *t15 = p193(RC_MK2_intern(92, RC_MK2_intern(90, v3, v13), RC_MK2_intern(90, v4, v6)), RC_MK2_intern(92, RC_MK2_intern(90, v3, v13), RC_MK2_intern(90, v5, v6)));
         if (!t15) return (T *)0;
         T *v15 = t15;
-        T *t16 = p193(RC_MK2_holterm(90, v4, v6), RC_MK2_holterm(90, v5, v6));
+        T *t16 = p193(RC_MK2_intern(90, v4, v6), RC_MK2_intern(90, v5, v6));
         if (!t16) return (T *)0;
         T *v16 = t16;
-        return RC_MK3_symbolic(353, v0, v14, RC_MK2_holterm(93, RC_MK2_holterm(90, v3, v13), RC_MK2_holterm(92, RC_MK2_holterm(91, v1, v12), RC_MK2_holterm(93, RC_MK2_holterm(90, v4, v6), RC_MK2_holterm(92, RC_MK2_holterm(91, v1, v12), RC_MK2_holterm(93, RC_MK2_holterm(90, v5, v6), RC_MK2_holterm(92, RC_MK2_holterm(92, RC_MK2_holterm(91, v2, v10), v15), v16)))))));
+        return RC_MK3_symbolic(353, v0, v14, RC_MK2_intern(93, RC_MK2_intern(90, v3, v13), RC_MK2_intern(92, RC_MK2_intern(91, v1, v12), RC_MK2_intern(93, RC_MK2_intern(90, v4, v6), RC_MK2_intern(92, RC_MK2_intern(91, v1, v12), RC_MK2_intern(93, RC_MK2_intern(90, v5, v6), RC_MK2_intern(92, RC_MK2_intern(92, RC_MK2_intern(91, v2, v10), v15), v16)))))));
     }
 }
 static T *p365_value; static int p365_done;
@@ -6682,7 +6446,7 @@ r523: { /* std-def-onto */
         T *t9 = p113(v7, v8);
         if (!t9) return (T *)0;
         T *v10 = t9;
-        T *t10 = p113(RC_MK1_holtype(86, v6), v8);
+        T *t10 = p113(RC_MK1_intern(86, v6), v8);
         if (!t10) return (T *)0;
         T *v11 = t10;
         T *t11 = p113(v11, v8);
@@ -6691,16 +6455,16 @@ r523: { /* std-def-onto */
         T *t12 = p113(v10, v8);
         if (!t12) return (T *)0;
         T *v13 = t12;
-        T *t13 = p113(v7, RC_MK1_holtype(86, v6));
+        T *t13 = p113(v7, RC_MK1_intern(86, v6));
         if (!t13) return (T *)0;
         T *v14 = t13;
         T *t14 = p113(v14, v8);
         if (!t14) return (T *)0;
         T *v15 = t14;
-        T *t15 = p193(RC_MK2_holterm(90, v4, RC_MK1_holtype(86, v6)), RC_MK2_holterm(92, RC_MK2_holterm(90, v3, v14), RC_MK2_holterm(90, v5, v7)));
+        T *t15 = p193(RC_MK2_intern(90, v4, RC_MK1_intern(86, v6)), RC_MK2_intern(92, RC_MK2_intern(90, v3, v14), RC_MK2_intern(90, v5, v7)));
         if (!t15) return (T *)0;
         T *v16 = t15;
-        return RC_MK3_symbolic(353, v0, v15, RC_MK2_holterm(93, RC_MK2_holterm(90, v3, v14), RC_MK2_holterm(92, RC_MK2_holterm(91, v1, v12), RC_MK2_holterm(93, RC_MK2_holterm(90, v4, RC_MK1_holtype(86, v6)), RC_MK2_holterm(92, RC_MK2_holterm(91, v2, v13), RC_MK2_holterm(93, RC_MK2_holterm(90, v5, v7), v16))))));
+        return RC_MK3_symbolic(353, v0, v15, RC_MK2_intern(93, RC_MK2_intern(90, v3, v14), RC_MK2_intern(92, RC_MK2_intern(91, v1, v12), RC_MK2_intern(93, RC_MK2_intern(90, v4, RC_MK1_intern(86, v6)), RC_MK2_intern(92, RC_MK2_intern(91, v2, v13), RC_MK2_intern(93, RC_MK2_intern(90, v5, v7), v16))))));
     }
 }
 static T *p366_value; static int p366_done;
@@ -6724,7 +6488,7 @@ r524: { /* std-axioms */
         T *t2 = p370();
         if (!t2) return (T *)0;
         T *v2 = t2;
-        return RC_MK2_symbolic(95, v0, RC_MK2_symbolic(95, v1, RC_MK2_symbolic(95, v2, RC_NUL_symbolic(94))));
+        return RC_MK2_intern(95, v0, RC_MK2_intern(95, v1, RC_MK2_intern(95, v2, RC_NUL_intern(94))));
     }
 }
 static T *p367_value; static int p367_done;
@@ -6757,7 +6521,7 @@ r525: { /* std-eta */
         T *t5 = p111();
         if (!t5) return (T *)0;
         T *v5 = t5;
-        T *t6 = p113(v4, RC_MK1_holtype(86, v3));
+        T *t6 = p113(v4, RC_MK1_intern(86, v3));
         if (!t6) return (T *)0;
         T *v6 = t6;
         T *t7 = p113(v6, v5);
@@ -6766,10 +6530,10 @@ r525: { /* std-eta */
         T *t8 = p113(v7, v5);
         if (!t8) return (T *)0;
         T *v8 = t8;
-        T *t9 = p193(RC_MK2_holterm(93, RC_MK2_holterm(90, v2, v4), RC_MK2_holterm(92, RC_MK2_holterm(90, v1, v6), RC_MK2_holterm(90, v2, v4))), RC_MK2_holterm(90, v1, v6));
+        T *t9 = p193(RC_MK2_intern(93, RC_MK2_intern(90, v2, v4), RC_MK2_intern(92, RC_MK2_intern(90, v1, v6), RC_MK2_intern(90, v2, v4))), RC_MK2_intern(90, v1, v6));
         if (!t9) return (T *)0;
         T *v9 = t9;
-        return RC_MK2_holterm(92, RC_MK2_holterm(91, v0, v8), RC_MK2_holterm(93, RC_MK2_holterm(90, v1, v6), v9));
+        return RC_MK2_intern(92, RC_MK2_intern(91, v0, v8), RC_MK2_intern(93, RC_MK2_intern(90, v1, v6), v9));
     }
 }
 static T *p368_value; static int p368_done;
@@ -6823,7 +6587,7 @@ r526: { /* std-select */
         T *t12 = p113(v9, v5);
         if (!t12) return (T *)0;
         T *v13 = t12;
-        return RC_MK2_holterm(92, RC_MK2_holterm(91, v0, v12), RC_MK2_holterm(93, RC_MK2_holterm(90, v3, v9), RC_MK2_holterm(92, RC_MK2_holterm(91, v0, v10), RC_MK2_holterm(93, RC_MK2_holterm(90, v4, v5), RC_MK2_holterm(92, RC_MK2_holterm(92, RC_MK2_holterm(91, v1, v8), RC_MK2_holterm(92, RC_MK2_holterm(90, v3, v9), RC_MK2_holterm(90, v4, v5))), RC_MK2_holterm(92, RC_MK2_holterm(90, v3, v9), RC_MK2_holterm(92, RC_MK2_holterm(91, v2, v13), RC_MK2_holterm(90, v3, v9))))))));
+        return RC_MK2_intern(92, RC_MK2_intern(91, v0, v12), RC_MK2_intern(93, RC_MK2_intern(90, v3, v9), RC_MK2_intern(92, RC_MK2_intern(91, v0, v10), RC_MK2_intern(93, RC_MK2_intern(90, v4, v5), RC_MK2_intern(92, RC_MK2_intern(92, RC_MK2_intern(91, v1, v8), RC_MK2_intern(92, RC_MK2_intern(90, v3, v9), RC_MK2_intern(90, v4, v5))), RC_MK2_intern(92, RC_MK2_intern(90, v3, v9), RC_MK2_intern(92, RC_MK2_intern(91, v2, v13), RC_MK2_intern(90, v3, v9))))))));
     }
 }
 static T *p369_value; static int p369_done;
@@ -6868,7 +6632,7 @@ r527: { /* std-infinity */
         T *t9 = p113(v8, v9);
         if (!t9) return (T *)0;
         T *v10 = t9;
-        T *t10 = p113(RC_MK2_holtype(87, v6, RC_NUL_symbolic(88)), RC_MK2_holtype(87, v6, RC_NUL_symbolic(88)));
+        T *t10 = p113(RC_MK2_intern(87, v6, RC_NUL_intern(88)), RC_MK2_intern(87, v6, RC_NUL_intern(88)));
         if (!t10) return (T *)0;
         T *v11 = t10;
         T *t11 = p113(v11, v8);
@@ -6877,7 +6641,7 @@ r527: { /* std-infinity */
         T *t12 = p113(v12, v8);
         if (!t12) return (T *)0;
         T *v13 = t12;
-        return RC_MK2_holterm(92, RC_MK2_holterm(91, v0, v13), RC_MK2_holterm(93, RC_MK2_holterm(90, v5, v11), RC_MK2_holterm(92, RC_MK2_holterm(92, RC_MK2_holterm(91, v1, v10), RC_MK2_holterm(92, RC_MK2_holterm(91, v2, v12), RC_MK2_holterm(90, v5, v11))), RC_MK2_holterm(92, RC_MK2_holterm(91, v3, v9), RC_MK2_holterm(92, RC_MK2_holterm(91, v4, v12), RC_MK2_holterm(90, v5, v11))))));
+        return RC_MK2_intern(92, RC_MK2_intern(91, v0, v13), RC_MK2_intern(93, RC_MK2_intern(90, v5, v11), RC_MK2_intern(92, RC_MK2_intern(92, RC_MK2_intern(91, v1, v10), RC_MK2_intern(92, RC_MK2_intern(91, v2, v12), RC_MK2_intern(90, v5, v11))), RC_MK2_intern(92, RC_MK2_intern(91, v3, v9), RC_MK2_intern(92, RC_MK2_intern(91, v4, v12), RC_MK2_intern(90, v5, v11))))));
     }
 }
 static T *p370_value; static int p370_done;
@@ -6901,7 +6665,7 @@ r528: { /* std-choice-type */
         T *t2 = p113(v0, v1);
         if (!t2) return (T *)0;
         T *v2 = t2;
-        RC_TAIL return p113(v2, v0);
+        return p113(v2, v0);
     }
 }
 static T *p371_value; static int p371_done;
@@ -6914,7 +6678,7 @@ static T *p371(void) {
 /* hl:type-std: 2 rules, det */
 static T *p372(T *a0, T *a1) {
     goto n763;
-n763: switch (RC_TAG_holtype(a1)) { case 86: goto r529; case 87: goto n762; default: goto f; }
+n763: switch (RC_TAG_intern(a1)) { case 86: goto r529; case 87: goto n762; default: goto f; }
 n762: switch (RC_TAG_symbolic(a0)) { case 352: goto r530; default: goto f; }
 r529: { /* type-std-var */
         RC_RULE(529);
@@ -6922,14 +6686,13 @@ r529: { /* type-std-var */
     }
 r530: { /* type-std-app */
         T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_holtype(a1, 0);
-        T *v3 = RC_KID_holtype(a1, 1);
+        T *v2 = RC_KID_intern(a1, 0);
+        T *v3 = RC_KID_intern(a1, 1);
         RC_RULE(530);
         T *t0 = p47(v2, v0);
         if (!t0) return (T *)0;
         T *v4 = t0;
-        RC_TAIL return p375(v4, RC_MK2_symbolic(352, v0, v1), v3);
+        RC_TAIL return p375(v4, a0, v3);
     }
 f:  return rc_no_rule(372);
 }
@@ -6937,15 +6700,15 @@ f:  return rc_no_rule(372);
 /* hl:types-std: 2 rules, det */
 static T *p373(T *a0, T *a1) {
     goto n766;
-n766: switch (RC_TAG_symbolic(a1)) { case 88: goto r533; case 89: goto r534; default: goto f; }
+n766: switch (RC_TAG_intern(a1)) { case 88: goto r533; case 89: goto r534; default: goto f; }
 r533: { /* types-std-nil */
         RC_RULE(533);
         return RC_NUL_symbolic(0);
     }
 r534: { /* types-std-cons */
         T *v0 = a0;
-        T *v1 = RC_KID_symbolic(a1, 0);
-        T *v2 = RC_KID_symbolic(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(534);
         T *t0 = p372(v0, v1);
         if (!t0) return (T *)0;
@@ -6992,29 +6755,28 @@ f:  return rc_no_rule(375);
 /* hl:term-std: 4 rules, det */
 static T *p376(T *a0, T *a1) {
     goto n778;
-n778: switch (RC_TAG_holterm(a1)) { case 90: goto r537; case 91: goto n775; case 92: goto r539; case 93: goto r540; default: goto f; }
+n778: switch (RC_TAG_intern(a1)) { case 90: goto r537; case 91: goto n775; case 92: goto r539; case 93: goto r540; default: goto f; }
 n775: switch (RC_TAG_symbolic(a0)) { case 352: goto r538; default: goto f; }
 r537: { /* term-std-var */
         T *v0 = a0;
-        T *v2 = RC_KID_holterm(a1, 1);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(537);
-        RC_TAIL return p372(v0, v2);
+        return p372(v0, v2);
     }
 r538: { /* term-std-const */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_holterm(a1, 0);
-        T *v3 = RC_KID_holterm(a1, 1);
+        T *v2 = RC_KID_intern(a1, 0);
+        T *v3 = RC_KID_intern(a1, 1);
         RC_RULE(538);
         T *t0 = p47(v2, v1);
         if (!t0) return (T *)0;
         T *v4 = t0;
-        RC_TAIL return p375(v4, RC_MK2_symbolic(352, v0, v1), RC_MK2_symbolic(89, v3, RC_NUL_symbolic(88)));
+        return p375(v4, a0, RC_MK2_intern(89, v3, RC_NUL_intern(88)));
     }
 r539: { /* term-std-comb */
         T *v0 = a0;
-        T *v1 = RC_KID_holterm(a1, 0);
-        T *v2 = RC_KID_holterm(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(539);
         T *t0 = p376(v0, v1);
         if (!t0) return (T *)0;
@@ -7023,8 +6785,8 @@ r539: { /* term-std-comb */
     }
 r540: { /* term-std-abs */
         T *v0 = a0;
-        T *v1 = RC_KID_holterm(a1, 0);
-        T *v2 = RC_KID_holterm(a1, 1);
+        T *v1 = RC_KID_intern(a1, 0);
+        T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(540);
         T *t0 = p376(v0, v1);
         if (!t0) return (T *)0;
@@ -7074,7 +6836,7 @@ r543: { /* std-after-new-type */
         T *t4 = p35(v4, v6);
         if (!t4) return (T *)0;
         T *v7 = t4;
-        RC_TAIL return p379(v7, v0, v1);
+        return p379(v7, v0, v1);
     }
 }
 
@@ -7121,7 +6883,7 @@ r546: { /* std-after-new-constant */
         T *t4 = p35(v4, v6);
         if (!t4) return (T *)0;
         T *v7 = t4;
-        RC_TAIL return p381(v7, v0, v1);
+        return p381(v7, v0, v1);
     }
 }
 
@@ -7155,7 +6917,7 @@ r549: { /* std-after-new-definition */
         T *t0 = p194(v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p383(v2, v0);
+        return p383(v2, v0);
     }
 }
 
@@ -7163,17 +6925,17 @@ r549: { /* std-after-new-definition */
 static T *p383(T *a0, T *a1) {
     goto n799;
 n799: switch (RC_TAG_symbolic(a0)) { case 105: goto n797; case 106: goto r554; default: goto f; }
-n797: switch (RC_TAG_holterm(RC_KID_symbolic(a0, 1))) { case 90: goto r550; case 91: goto r551; case 92: goto r552; case 93: goto r553; default: goto f; }
+n797: switch (RC_TAG_intern(RC_KID_symbolic(a0, 1))) { case 90: goto r550; case 91: goto r551; case 92: goto r552; case 93: goto r553; default: goto f; }
 r550: { /* std-def-check-var */
-        T *v1 = RC_KID_holterm(RC_KID_symbolic(a0, 1), 0);
-        T *v2 = RC_KID_holterm(RC_KID_symbolic(a0, 1), 1);
+        T *v1 = RC_KID_intern(RC_KID_symbolic(a0, 1), 0);
+        T *v2 = RC_KID_intern(RC_KID_symbolic(a0, 1), 1);
         T *v3 = RC_KID_symbolic(a0, 2);
         T *v4 = a1;
         RC_RULE(550);
         T *t0 = p357();
         if (!t0) return (T *)0;
         T *v5 = t0;
-        RC_TAIL return p384(v5, v1, v2, v3, v4);
+        return p384(v5, v1, v2, v3, v4);
     }
 r551: { /* std-def-check-const */
         T *v4 = a1;
@@ -7253,7 +7015,7 @@ r558: { /* std-def-lookup-k-yes */
         T *t1 = p196(v1, v5);
         if (!t1) return (T *)0;
         T *v8 = t1;
-        RC_TAIL return p386(v7, v8, v3, v5, v6);
+        return p386(v7, v8, v3, v5, v6);
     }
 f:  return rc_no_rule(385);
 }
@@ -7271,7 +7033,7 @@ r559: { /* std-def-match-k-hit */
         T *t0 = p376(v2, v1);
         if (!t0) return (T *)0;
         T *v3 = t0;
-        RC_TAIL return p381(v3, v2, v0);
+        return p381(v3, v2, v0);
     }
 r560: { /* std-def-match-k-lt */
         T *v2 = a4;
@@ -7301,21 +7063,21 @@ r563: { /* std-axiom */
         T *t0 = p367();
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p388(v2, v0, v1);
+        return p388(v2, v0, v1);
     }
 }
 
 /* hl:std-axiom-k: 2 rules, semidet */
 static T *p388(T *a0, T *a1, T *a2) {
     goto n816;
-n816: switch (RC_TAG_symbolic(a0)) { case 94: goto r564; case 95: goto r565; default: goto f; }
+n816: switch (RC_TAG_intern(a0)) { case 94: goto r564; case 95: goto r565; default: goto f; }
 r564: { /* std-axiom-k-nil */
         RC_RULE(564);
         return RC_NUL_symbolic(1);
     }
 r565: { /* std-axiom-k-cons */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
+        T *v0 = RC_KID_intern(a0, 0);
+        T *v1 = RC_KID_intern(a0, 1);
         T *v2 = a1;
         T *v3 = a2;
         RC_RULE(565);
@@ -7335,7 +7097,7 @@ r566: { /* std-axiom-k2-eq */
         T *v1 = a2;
         T *v2 = a3;
         RC_RULE(566);
-        RC_TAIL return p376(v1, v2);
+        return p376(v1, v2);
     }
 r567: { /* std-axiom-k2-lt */
         T *v0 = a1;
@@ -7450,18 +7212,18 @@ f:  return rc_no_rule(401);
 #ifdef RC_CHECK_NATIVE
 static T *p403_rules(T *a0, T *a1) {
     goto n837;
-n837: switch (RC_TAG_holtable(a0)) { case 402: goto r579; default: goto f; }
+n837: switch (RC_TAG_table(a0)) { case 402: goto r579; default: goto f; }
 r579: { /* table-get */
-        T *v1 = RC_KID_holtable(a0, 1);
+        T *v1 = RC_KID_table(a0, 1);
         T *v2 = a1;
         RC_RULE(579);
-        RC_TAIL return p400(v1, v2);
+        return p400(v1, v2);
     }
 f:  return rc_no_rule(403);
 }
 #endif
-static T *p403(T *a0, T *a1) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 28));
+static RC_BLOCK_INLINE T *p403(T *a0, T *a1) {
+    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 11));
 #ifdef RC_CHECK_NATIVE
     if (rc_check_native) {
         int tr_ = rc_trace_on; rc_trace_on = 0;
@@ -7469,22 +7231,22 @@ static T *p403(T *a0, T *a1) {
         T *s_ = p403_rules(a0, a1);
         rc_check_depth--;
         rc_trace_on = tr_;
-        T *n_ = holb_table_get(a0, a1);
-        rc_native_checked(28, n_, s_);
+        T *n_ = rc_bind_11(a0, a1);
+        rc_native_checked(11, n_, s_);
         return n_;
     }
 #endif
-    return holb_table_get(a0, a1);
+    return rc_bind_11(a0, a1);
 }
 
 /* hl:table-put: 1 rule, det; native operation */
 #ifdef RC_CHECK_NATIVE
 static T *p404_rules(T *a0, T *a1) {
     goto n839;
-n839: switch (RC_TAG_holtable(a0)) { case 402: goto r580; default: goto f; }
+n839: switch (RC_TAG_table(a0)) { case 402: goto r580; default: goto f; }
 r580: { /* table-put */
-        T *v0 = RC_KID_holtable(a0, 0);
-        T *v1 = RC_KID_holtable(a0, 1);
+        T *v0 = RC_KID_table(a0, 0);
+        T *v1 = RC_KID_table(a0, 1);
         T *v2 = a1;
         RC_RULE(580);
         T *t0 = p401(v1, v0, v2);
@@ -7493,13 +7255,13 @@ r580: { /* table-put */
         T *t1 = p49(v0);
         if (!t1) return (T *)0;
         T *v4 = t1;
-        return RC_MK2_holtable(402, v4, v3);
+        return RC_MK2_table(402, v4, v3);
     }
 f:  return rc_no_rule(404);
 }
 #endif
-static T *p404(T *a0, T *a1) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 29));
+static RC_BLOCK_INLINE T *p404(T *a0, T *a1) {
+    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 12));
 #ifdef RC_CHECK_NATIVE
     if (rc_check_native) {
         int tr_ = rc_trace_on; rc_trace_on = 0;
@@ -7507,39 +7269,39 @@ static T *p404(T *a0, T *a1) {
         T *s_ = p404_rules(a0, a1);
         rc_check_depth--;
         rc_trace_on = tr_;
-        T *n_ = holb_table_put(a0, a1);
-#ifdef RC_READBACK_holtable
-        rc_native_checked(29, n_ ? RC_READBACK_holtable(n_) : n_, s_ ? RC_READBACK_holtable(s_) : s_);
+        T *n_ = rc_bind_12(a0, a1);
+#ifdef RC_READBACK_table
+        rc_native_checked(12, n_ ? RC_READBACK_table(n_) : n_, s_ ? RC_READBACK_table(s_) : s_);
 #else
-        rc_native_checked(29, n_, s_);
+        rc_native_checked(12, n_, s_);
 #endif
         return n_;
     }
 #endif
-    return holb_table_put(a0, a1);
+    return rc_bind_12(a0, a1);
 }
 
 /* hl:table-set: 1 rule, det; native operation */
 #ifdef RC_CHECK_NATIVE
 static T *p405_rules(T *a0, T *a1, T *a2) {
     goto n841;
-n841: switch (RC_TAG_holtable(a0)) { case 402: goto r581; default: goto f; }
+n841: switch (RC_TAG_table(a0)) { case 402: goto r581; default: goto f; }
 r581: { /* table-set */
-        T *v0 = RC_KID_holtable(a0, 0);
-        T *v1 = RC_KID_holtable(a0, 1);
+        T *v0 = RC_KID_table(a0, 0);
+        T *v1 = RC_KID_table(a0, 1);
         T *v2 = a1;
         T *v3 = a2;
         RC_RULE(581);
         T *t0 = p401(v1, v2, v3);
         if (!t0) return (T *)0;
         T *v4 = t0;
-        return RC_MK2_holtable(402, v0, v4);
+        return RC_MK2_table(402, v0, v4);
     }
 f:  return rc_no_rule(405);
 }
 #endif
-static T *p405(T *a0, T *a1, T *a2) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 30));
+static RC_BLOCK_INLINE T *p405(T *a0, T *a1, T *a2) {
+    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 13));
 #ifdef RC_CHECK_NATIVE
     if (rc_check_native) {
         int tr_ = rc_trace_on; rc_trace_on = 0;
@@ -7547,33 +7309,33 @@ static T *p405(T *a0, T *a1, T *a2) {
         T *s_ = p405_rules(a0, a1, a2);
         rc_check_depth--;
         rc_trace_on = tr_;
-        T *n_ = holb_table_set(a0, a1, a2);
-#ifdef RC_READBACK_holtable
-        rc_native_checked(30, n_ ? RC_READBACK_holtable(n_) : n_, s_ ? RC_READBACK_holtable(s_) : s_);
+        T *n_ = rc_bind_13(a0, a1, a2);
+#ifdef RC_READBACK_table
+        rc_native_checked(13, n_ ? RC_READBACK_table(n_) : n_, s_ ? RC_READBACK_table(s_) : s_);
 #else
-        rc_native_checked(30, n_, s_);
+        rc_native_checked(13, n_, s_);
 #endif
         return n_;
     }
 #endif
-    return holb_table_set(a0, a1, a2);
+    return rc_bind_13(a0, a1, a2);
 }
 
 /* hl:table-next: 1 rule, det; native operation */
 #ifdef RC_CHECK_NATIVE
 static T *p406_rules(T *a0) {
     goto n843;
-n843: switch (RC_TAG_holtable(a0)) { case 402: goto r582; default: goto f; }
+n843: switch (RC_TAG_table(a0)) { case 402: goto r582; default: goto f; }
 r582: { /* table-next */
-        T *v0 = RC_KID_holtable(a0, 0);
+        T *v0 = RC_KID_table(a0, 0);
         RC_RULE(582);
         return v0;
     }
 f:  return rc_no_rule(406);
 }
 #endif
-static T *p406(T *a0) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 31));
+static RC_BLOCK_INLINE T *p406(T *a0) {
+    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 14));
 #ifdef RC_CHECK_NATIVE
     if (rc_check_native) {
         int tr_ = rc_trace_on; rc_trace_on = 0;
@@ -7581,12 +7343,12 @@ static T *p406(T *a0) {
         T *s_ = p406_rules(a0);
         rc_check_depth--;
         rc_trace_on = tr_;
-        T *n_ = holb_table_next(a0);
-        rc_native_checked(31, n_, s_);
+        T *n_ = rc_bind_14(a0);
+        rc_native_checked(14, n_, s_);
         return n_;
     }
 #endif
-    return holb_table_next(a0);
+    return rc_bind_14(a0);
 }
 
 /* hl:empty-table: 1 rule, det; native operation */
@@ -7595,12 +7357,12 @@ static T *p407_rules(void) {
     goto r583;
 r583: { /* empty-table */
         RC_RULE(583);
-        return RC_MK2_holtable(402, RC_NUL_nat(27), RC_NUL_symbolic(398));
+        return RC_MK2_table(402, RC_NUL_nat(27), RC_NUL_symbolic(398));
     }
 }
 #endif
-static T *p407(void) {
-    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 32));
+static RC_BLOCK_INLINE T *p407(void) {
+    if (rc_trace_on) rc_trace_push((uint16_t)(RC_EV_NATIVE + 15));
 #ifdef RC_CHECK_NATIVE
     if (rc_check_native) {
         int tr_ = rc_trace_on; rc_trace_on = 0;
@@ -7608,16 +7370,16 @@ static T *p407(void) {
         T *s_ = p407_rules();
         rc_check_depth--;
         rc_trace_on = tr_;
-        T *n_ = holb_empty_table();
-#ifdef RC_READBACK_holtable
-        rc_native_checked(32, n_ ? RC_READBACK_holtable(n_) : n_, s_ ? RC_READBACK_holtable(s_) : s_);
+        T *n_ = rc_bind_15();
+#ifdef RC_READBACK_table
+        rc_native_checked(15, n_ ? RC_READBACK_table(n_) : n_, s_ ? RC_READBACK_table(s_) : s_);
 #else
-        rc_native_checked(32, n_, s_);
+        rc_native_checked(15, n_, s_);
 #endif
         return n_;
     }
 #endif
-    return holb_empty_table();
+    return rc_bind_15();
 }
 
 /* hl:initial-replay: 1 rule, det */
@@ -7744,7 +7506,7 @@ r785: { /* finish */
         T *t1 = p38(v8);
         if (!t1) return (T *)0;
         T *v9 = t1;
-        RC_TAIL return p476(v9, v6, v7, v4);
+        return p476(v9, v6, v7, v4);
     }
 f:  return rc_no_rule(475);
 }
@@ -7794,15 +7556,13 @@ static T *p478(T *a0, T *a1) {
     goto n869;
 n869: switch (RC_TAG_symbolic(a0)) { case 413: goto r768; default: goto f; }
 r768: { /* step */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = a1;
         RC_RULE(768);
         T *t0 = p488(v1, v3);
         if (!t0) return (T *)0;
         T *v4 = t0;
-        RC_TAIL return p479(v4, RC_MK3_symbolic(413, v0, v1, v2), v3);
+        return p479(v4, a0, v3);
     }
 f:  return rc_no_rule(478);
 }
@@ -7839,7 +7599,7 @@ r771: { /* step-v-valid */
         T *t0 = p509(v0, v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p480(v2, v0, v1);
+        return p480(v2, v0, v1);
     }
 f:  return rc_no_rule(479);
 }
@@ -7863,29 +7623,15 @@ r772: { /* step-x-ok */
 r773: { /* step-x-refused */
         T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a1, 0);
-        T *v3 = RC_KID_symbolic(a1, 1);
         T *v4 = RC_KID_symbolic(RC_KID_symbolic(a1, 2), 0);
-        T *v5 = RC_KID_symbolic(RC_KID_symbolic(a1, 2), 1);
-        T *v6 = RC_KID_symbolic(RC_KID_symbolic(a1, 2), 2);
-        T *v7 = RC_KID_symbolic(RC_KID_symbolic(a1, 2), 3);
-        T *v8 = RC_KID_symbolic(RC_KID_symbolic(a1, 2), 4);
-        T *v9 = RC_KID_symbolic(RC_KID_symbolic(a1, 2), 5);
         T *v10 = a2;
         RC_RULE(773);
-        RC_TAIL return p481(v4, v0, v1, RC_MK3_symbolic(413, v2, v3, RC_MK6_symbolic(411, v4, v5, v6, v7, v8, v9)), v10);
+        return p481(v4, v0, v1, a1, v10);
     }
 r776: { /* step-x-check-failed */
-        T *v0 = RC_KID_symbolic(a1, 0);
-        T *v1 = RC_KID_symbolic(a1, 1);
         T *v2 = RC_KID_symbolic(RC_KID_symbolic(a1, 2), 0);
-        T *v3 = RC_KID_symbolic(RC_KID_symbolic(a1, 2), 1);
-        T *v4 = RC_KID_symbolic(RC_KID_symbolic(a1, 2), 2);
-        T *v5 = RC_KID_symbolic(RC_KID_symbolic(a1, 2), 3);
-        T *v6 = RC_KID_symbolic(RC_KID_symbolic(a1, 2), 4);
-        T *v7 = RC_KID_symbolic(RC_KID_symbolic(a1, 2), 5);
         RC_RULE(776);
-        RC_TAIL return p482(v2, RC_MK3_symbolic(413, v0, v1, RC_MK6_symbolic(411, v2, v3, v4, v5, v6, v7)));
+        return p482(v2, a1);
     }
 r779: { /* step-x-malformed */
         T *v0 = RC_KID_symbolic(a0, 0);
@@ -8255,7 +8001,7 @@ r610: { /* validate-TYVAR */
         T *v0 = RC_KID_symbolic(a0, 0);
         T *v4 = RC_KID_symbolic(a1, 0);
         RC_RULE(610);
-        RC_TAIL return p490(v0, v4);
+        return p490(v0, v4);
     }
 r611: { /* validate-TYAPP */
         T *v0 = RC_KID_symbolic(a0, 0);
@@ -8269,7 +8015,7 @@ r611: { /* validate-TYAPP */
         T *t1 = p496(v1, v5);
         if (!t1) return (T *)0;
         T *v7 = t1;
-        RC_TAIL return p489(v6, v7);
+        return p489(v6, v7);
     }
 r612: { /* validate-VAR */
         T *v0 = RC_KID_symbolic(a0, 0);
@@ -8283,7 +8029,7 @@ r612: { /* validate-VAR */
         T *t1 = p492(v1, v5);
         if (!t1) return (T *)0;
         T *v7 = t1;
-        RC_TAIL return p489(v6, v7);
+        return p489(v6, v7);
     }
 r613: { /* validate-CONST */
         T *v0 = RC_KID_symbolic(a0, 0);
@@ -8297,7 +8043,7 @@ r613: { /* validate-CONST */
         T *t1 = p492(v1, v5);
         if (!t1) return (T *)0;
         T *v7 = t1;
-        RC_TAIL return p489(v6, v7);
+        return p489(v6, v7);
     }
 r614: { /* validate-COMB */
         T *v2 = RC_KID_symbolic(a0, 2);
@@ -8310,7 +8056,7 @@ r614: { /* validate-COMB */
         T *t1 = p492(v2, v5);
         if (!t1) return (T *)0;
         T *v7 = t1;
-        RC_TAIL return p489(v6, v7);
+        return p489(v6, v7);
     }
 r615: { /* validate-ABS */
         T *v2 = RC_KID_symbolic(a0, 2);
@@ -8323,37 +8069,37 @@ r615: { /* validate-ABS */
         T *t1 = p492(v2, v5);
         if (!t1) return (T *)0;
         T *v7 = t1;
-        RC_TAIL return p489(v6, v7);
+        return p489(v6, v7);
     }
 r616: { /* validate-REFL */
         T *v2 = RC_KID_symbolic(a0, 2);
         T *v4 = RC_KID_symbolic(a1, 0);
         RC_RULE(616);
-        RC_TAIL return p492(v2, v4);
+        return p492(v2, v4);
     }
 r617: { /* validate-BETA */
         T *v2 = RC_KID_symbolic(a0, 2);
         T *v4 = RC_KID_symbolic(a1, 0);
         RC_RULE(617);
-        RC_TAIL return p492(v2, v4);
+        return p492(v2, v4);
     }
 r618: { /* validate-ASSUME */
         T *v2 = RC_KID_symbolic(a0, 2);
         T *v4 = RC_KID_symbolic(a1, 0);
         RC_RULE(618);
-        RC_TAIL return p492(v2, v4);
+        return p492(v2, v4);
     }
 r619: { /* validate-NEW_AXIOM */
         T *v2 = RC_KID_symbolic(a0, 2);
         T *v4 = RC_KID_symbolic(a1, 0);
         RC_RULE(619);
-        RC_TAIL return p492(v2, v4);
+        return p492(v2, v4);
     }
 r620: { /* validate-NEW_DEFINITION */
         T *v2 = RC_KID_symbolic(a0, 2);
         T *v4 = RC_KID_symbolic(a1, 0);
         RC_RULE(620);
-        RC_TAIL return p492(v2, v4);
+        return p492(v2, v4);
     }
 r621: { /* validate-TRANS */
         T *v3 = RC_KID_symbolic(a0, 3);
@@ -8366,7 +8112,7 @@ r621: { /* validate-TRANS */
         T *t1 = p492(v3, v5);
         if (!t1) return (T *)0;
         T *v7 = t1;
-        RC_TAIL return p489(v6, v7);
+        return p489(v6, v7);
     }
 r622: { /* validate-MK_COMB */
         T *v3 = RC_KID_symbolic(a0, 3);
@@ -8379,7 +8125,7 @@ r622: { /* validate-MK_COMB */
         T *t1 = p492(v3, v5);
         if (!t1) return (T *)0;
         T *v7 = t1;
-        RC_TAIL return p489(v6, v7);
+        return p489(v6, v7);
     }
 r623: { /* validate-EQ_MP */
         T *v3 = RC_KID_symbolic(a0, 3);
@@ -8392,7 +8138,7 @@ r623: { /* validate-EQ_MP */
         T *t1 = p492(v3, v5);
         if (!t1) return (T *)0;
         T *v7 = t1;
-        RC_TAIL return p489(v6, v7);
+        return p489(v6, v7);
     }
 r624: { /* validate-DEDUCT */
         T *v3 = RC_KID_symbolic(a0, 3);
@@ -8405,7 +8151,7 @@ r624: { /* validate-DEDUCT */
         T *t1 = p492(v3, v5);
         if (!t1) return (T *)0;
         T *v7 = t1;
-        RC_TAIL return p489(v6, v7);
+        return p489(v6, v7);
     }
 r625: { /* validate-ABS_RULE */
         T *v2 = RC_KID_symbolic(a0, 2);
@@ -8419,7 +8165,7 @@ r625: { /* validate-ABS_RULE */
         T *t1 = p492(v3, v5);
         if (!t1) return (T *)0;
         T *v7 = t1;
-        RC_TAIL return p489(v6, v7);
+        return p489(v6, v7);
     }
 r626: { /* validate-INST_TYPE */
         T *v1 = RC_KID_symbolic(a0, 1);
@@ -8433,7 +8179,7 @@ r626: { /* validate-INST_TYPE */
         T *t1 = p492(v3, v5);
         if (!t1) return (T *)0;
         T *v7 = t1;
-        RC_TAIL return p489(v6, v7);
+        return p489(v6, v7);
     }
 r627: { /* validate-INST */
         T *v2 = RC_KID_symbolic(a0, 2);
@@ -8447,13 +8193,13 @@ r627: { /* validate-INST */
         T *t1 = p492(v3, v5);
         if (!t1) return (T *)0;
         T *v7 = t1;
-        RC_TAIL return p489(v6, v7);
+        return p489(v6, v7);
     }
 r628: { /* validate-NEW_TYPE */
         T *v0 = RC_KID_symbolic(a0, 0);
         T *v4 = RC_KID_symbolic(a1, 0);
         RC_RULE(628);
-        RC_TAIL return p490(v0, v4);
+        return p490(v0, v4);
     }
 r629: { /* validate-NEW_CONSTANT */
         T *v0 = RC_KID_symbolic(a0, 0);
@@ -8467,7 +8213,7 @@ r629: { /* validate-NEW_CONSTANT */
         T *t1 = p492(v1, v5);
         if (!t1) return (T *)0;
         T *v7 = t1;
-        RC_TAIL return p489(v6, v7);
+        return p489(v6, v7);
     }
 r630: { /* validate-NEW_TYPEDEF */
         T *v0 = RC_KID_symbolic(a0, 0);
@@ -8495,7 +8241,7 @@ r630: { /* validate-NEW_TYPEDEF */
         T *t5 = p489(v9, v12);
         if (!t5) return (T *)0;
         T *v13 = t5;
-        RC_TAIL return p489(v8, v13);
+        return p489(v8, v13);
     }
 r631: { /* validate-POLICY */
         RC_RULE(631);
@@ -8520,7 +8266,7 @@ r632: { /* validate-EXPECT */
         T *t3 = p489(v8, v9);
         if (!t3) return (T *)0;
         T *v10 = t3;
-        RC_TAIL return p489(v7, v10);
+        return p489(v7, v10);
     }
 r633: { /* validate-EXPECT_ALPHA */
         T *v2 = RC_KID_symbolic(a0, 2);
@@ -8541,7 +8287,7 @@ r633: { /* validate-EXPECT_ALPHA */
         T *t3 = p489(v8, v9);
         if (!t3) return (T *)0;
         T *v10 = t3;
-        RC_TAIL return p489(v7, v10);
+        return p489(v7, v10);
     }
 r634: { /* validate-EXPECT_AXIOMS */
         T *v3 = RC_KID_symbolic(a0, 3);
@@ -8554,7 +8300,7 @@ r634: { /* validate-EXPECT_AXIOMS */
         T *t1 = p496(v3, v5);
         if (!t1) return (T *)0;
         T *v7 = t1;
-        RC_TAIL return p489(v6, v7);
+        return p489(v6, v7);
     }
 r635: { /* validate-EXPECT_REFUSED */
         RC_RULE(635);
@@ -8572,31 +8318,31 @@ r636: { /* validate-LABEL */
         T *t1 = p490(v0, v5);
         if (!t1) return (T *)0;
         T *v7 = t1;
-        RC_TAIL return p489(v6, v7);
+        return p489(v6, v7);
     }
 r637: { /* validate-EMIT */
         T *v3 = RC_KID_symbolic(a0, 3);
         T *v4 = RC_KID_symbolic(a1, 0);
         RC_RULE(637);
-        RC_TAIL return p492(v3, v4);
+        return p492(v3, v4);
     }
 r638: { /* validate-DROP_TYPE */
         T *v1 = RC_KID_symbolic(a0, 1);
         T *v4 = RC_KID_symbolic(a1, 0);
         RC_RULE(638);
-        RC_TAIL return p494(v1, v4);
+        return p494(v1, v4);
     }
 r639: { /* validate-DROP_TERM */
         T *v2 = RC_KID_symbolic(a0, 2);
         T *v4 = RC_KID_symbolic(a1, 0);
         RC_RULE(639);
-        RC_TAIL return p494(v2, v4);
+        return p494(v2, v4);
     }
 r640: { /* validate-DROP_THM */
         T *v3 = RC_KID_symbolic(a0, 3);
         T *v4 = RC_KID_symbolic(a1, 0);
         RC_RULE(640);
-        RC_TAIL return p494(v3, v4);
+        return p494(v3, v4);
     }
 f:  return rc_no_rule(488);
 }
@@ -8612,9 +8358,8 @@ r585: { /* v-seq-valid */
         return v0;
     }
 r586: { /* v-seq-invalid */
-        T *v0 = RC_KID_symbolic(a0, 0);
         RC_RULE(586);
-        return RC_MK1_symbolic(462, v0);
+        return a0;
     }
 r587: { /* v-seq-depfail-valid */
         RC_RULE(587);
@@ -8625,9 +8370,8 @@ r588: { /* v-seq-depfail-depfail */
         return RC_NUL_symbolic(461);
     }
 r589: { /* v-seq-depfail-invalid */
-        T *v0 = RC_KID_symbolic(a1, 0);
         RC_RULE(589);
-        return RC_MK1_symbolic(462, v0);
+        return a1;
     }
 f:  return rc_no_rule(489);
 }
@@ -8642,7 +8386,7 @@ r590: { /* v-name */
         T *t0 = p403(v0, v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p491(v2);
+        return p491(v2);
     }
 }
 
@@ -8652,7 +8396,7 @@ static T *p491(T *a0) {
 n1015: switch (RC_TAG_symbolic(a0)) { case 394: goto r591; case 395: goto r592; case 396: goto r593; case 397: goto r594; default: goto f; }
 r591: { /* v-name-k-none */
         RC_RULE(591);
-        return RC_MK1_symbolic(462, RC_NUL_symbolic(326));
+        return (rc_ground[101] ? rc_ground[101] : (rc_ground[101] = rc_make_static(RC_MK1_symbolic(462, RC_NUL_symbolic(326)))));
     }
 r592: { /* v-name-k-ok */
         RC_RULE(592);
@@ -8679,7 +8423,7 @@ r595: { /* v-use */
         T *t0 = p403(v0, v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p493(v2);
+        return p493(v2);
     }
 }
 
@@ -8689,11 +8433,11 @@ static T *p493(T *a0) {
 n1021: switch (RC_TAG_symbolic(a0)) { case 394: goto r596; case 397: goto r597; case 396: goto r598; case 395: goto r599; default: goto f; }
 r596: { /* v-use-k-none */
         RC_RULE(596);
-        return RC_MK1_symbolic(462, RC_NUL_symbolic(326));
+        return (rc_ground[102] ? rc_ground[102] : (rc_ground[102] = rc_make_static(RC_MK1_symbolic(462, RC_NUL_symbolic(326)))));
     }
 r597: { /* v-use-k-dropped */
         RC_RULE(597);
-        return RC_MK1_symbolic(462, RC_NUL_symbolic(327));
+        return (rc_ground[103] ? rc_ground[103] : (rc_ground[103] = rc_make_static(RC_MK1_symbolic(462, RC_NUL_symbolic(327)))));
     }
 r598: { /* v-use-k-failed */
         RC_RULE(598);
@@ -8716,7 +8460,7 @@ r600: { /* v-drop */
         T *t0 = p403(v0, v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p495(v2);
+        return p495(v2);
     }
 }
 
@@ -8726,11 +8470,11 @@ static T *p495(T *a0) {
 n1027: switch (RC_TAG_symbolic(a0)) { case 394: goto r601; case 397: goto r602; case 396: goto r603; case 395: goto r604; default: goto f; }
 r601: { /* v-drop-k-none */
         RC_RULE(601);
-        return RC_MK1_symbolic(462, RC_NUL_symbolic(326));
+        return (rc_ground[104] ? rc_ground[104] : (rc_ground[104] = rc_make_static(RC_MK1_symbolic(462, RC_NUL_symbolic(326)))));
     }
 r602: { /* v-drop-k-dropped */
         RC_RULE(602);
-        return RC_MK1_symbolic(462, RC_NUL_symbolic(327));
+        return (rc_ground[105] ? rc_ground[105] : (rc_ground[105] = rc_make_static(RC_MK1_symbolic(462, RC_NUL_symbolic(327)))));
     }
 r603: { /* v-drop-k-failed */
         RC_RULE(603);
@@ -8762,7 +8506,7 @@ r606: { /* v-uses-cons */
         T *t1 = p496(v0, v2);
         if (!t1) return (T *)0;
         T *v4 = t1;
-        RC_TAIL return p489(v3, v4);
+        return p489(v3, v4);
     }
 f:  return rc_no_rule(496);
 }
@@ -8793,7 +8537,7 @@ r608: { /* v-pairs-cons */
         T *t3 = p489(v5, v6);
         if (!t3) return (T *)0;
         T *v7 = t3;
-        RC_TAIL return p489(v4, v7);
+        return p489(v4, v7);
     }
 f:  return rc_no_rule(497);
 }
@@ -8871,11 +8615,7 @@ r644: { /* get-thm */
         if (RC_TAG_symbolic(t0) != 395) return rc_fail_target(501);
         T *m0 = RC_KID_symbolic(t0, 0);
         if (RC_TAG_symbolic(m0) != 393) return rc_fail_target(501);
-        T *m1 = RC_KID_symbolic(m0, 0);
-        T *v5 = m1;
-        T *m2 = RC_KID_symbolic(m0, 1);
-        T *v6 = m2;
-        return RC_MK2_symbolic(393, v5, v6);
+        return RC_KID_symbolic(t0, 0);
     }
 f:  return rc_no_rule(501);
 }
@@ -8886,7 +8626,7 @@ static T *p502(T *a0, T *a1) {
 n1044: switch (RC_TAG_symbolic(a1)) { case 30: goto r645; case 31: goto r646; default: goto f; }
 r645: { /* get-types-nil */
         RC_RULE(645);
-        return RC_NUL_symbolic(88);
+        return RC_NUL_intern(88);
     }
 r646: { /* get-types-cons */
         T *v0 = a0;
@@ -8899,7 +8639,7 @@ r646: { /* get-types-cons */
         T *t1 = p502(v0, v2);
         if (!t1) return (T *)0;
         T *v4 = t1;
-        return RC_MK2_symbolic(89, v3, v4);
+        return RC_MK2_intern(89, v3, v4);
     }
 f:  return rc_no_rule(502);
 }
@@ -8910,7 +8650,7 @@ static T *p503(T *a0, T *a1) {
 n1047: switch (RC_TAG_symbolic(a1)) { case 30: goto r647; case 31: goto r648; default: goto f; }
 r647: { /* get-terms-nil */
         RC_RULE(647);
-        return RC_NUL_symbolic(94);
+        return RC_NUL_intern(94);
     }
 r648: { /* get-terms-cons */
         T *v0 = a0;
@@ -8923,7 +8663,7 @@ r648: { /* get-terms-cons */
         T *t1 = p503(v0, v2);
         if (!t1) return (T *)0;
         T *v4 = t1;
-        return RC_MK2_symbolic(95, v3, v4);
+        return RC_MK2_intern(95, v3, v4);
     }
 f:  return rc_no_rule(503);
 }
@@ -8934,7 +8674,7 @@ static T *p504(T *a0, T *a1) {
 n1050: switch (RC_TAG_symbolic(a1)) { case 32: goto r649; case 33: goto r650; default: goto f; }
 r649: { /* get-ty-pairs-nil */
         RC_RULE(649);
-        return RC_NUL_symbolic(99);
+        return RC_NUL_intern(99);
     }
 r650: { /* get-ty-pairs-cons */
         T *v0 = a0;
@@ -8951,7 +8691,7 @@ r650: { /* get-ty-pairs-cons */
         T *t2 = p504(v0, v3);
         if (!t2) return (T *)0;
         T *v6 = t2;
-        return RC_MK3_symbolic(100, v4, v5, v6);
+        return RC_MK3_intern(100, v4, v5, v6);
     }
 f:  return rc_no_rule(504);
 }
@@ -8962,7 +8702,7 @@ static T *p505(T *a0, T *a1) {
 n1053: switch (RC_TAG_symbolic(a1)) { case 32: goto r651; case 33: goto r652; default: goto f; }
 r651: { /* get-tm-pairs-nil */
         RC_RULE(651);
-        return RC_NUL_symbolic(101);
+        return RC_NUL_intern(101);
     }
 r652: { /* get-tm-pairs-cons */
         T *v0 = a0;
@@ -8979,7 +8719,7 @@ r652: { /* get-tm-pairs-cons */
         T *t2 = p505(v0, v3);
         if (!t2) return (T *)0;
         T *v6 = t2;
-        return RC_MK3_symbolic(102, v4, v5, v6);
+        return RC_MK3_intern(102, v4, v5, v6);
     }
 f:  return rc_no_rule(505);
 }
@@ -9115,25 +8855,20 @@ r656: { /* exec-NAME */
         return RC_MK1_symbolic(463, RC_MK3_symbolic(413, v0, RC_MK4_symbolic(408, v7, v2, v3, v4), v5));
     }
 r657: { /* exec-TYVAR */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = RC_KID_symbolic(a1, 0);
         RC_RULE(657);
         T *t0 = p498(v1, v3);
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p506(RC_MK3_symbolic(413, v0, v1, v2), RC_MK1_holtype(86, v4));
+        T *t1 = p506(a0, RC_MK1_intern(86, v4));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return RC_MK1_symbolic(463, v5);
     }
 r658: { /* exec-TYAPP */
         T *v0 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 0);
-        T *v1 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 1);
-        T *v2 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 2);
         T *v3 = RC_KID_symbolic(a0, 1);
-        T *v4 = RC_KID_symbolic(a0, 2);
         T *v5 = RC_KID_symbolic(a1, 0);
         T *v6 = RC_KID_symbolic(a1, 1);
         RC_RULE(658);
@@ -9146,12 +8881,10 @@ r658: { /* exec-TYAPP */
         T *t2 = p221(v0, v7, v8);
         if (!t2) return (T *)0;
         T *v9 = t2;
-        RC_TAIL return p510(v9, RC_MK3_symbolic(413, RC_MK3_symbolic(412, v0, v1, v2), v3, v4));
+        return p510(v9, a0);
     }
 r661: { /* exec-VAR */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = RC_KID_symbolic(a1, 0);
         T *v4 = RC_KID_symbolic(a1, 1);
         RC_RULE(661);
@@ -9161,17 +8894,14 @@ r661: { /* exec-VAR */
         T *t1 = p499(v1, v4);
         if (!t1) return (T *)0;
         T *v6 = t1;
-        T *t2 = p507(RC_MK3_symbolic(413, v0, v1, v2), RC_MK2_holterm(90, v5, v6));
+        T *t2 = p507(a0, RC_MK2_intern(90, v5, v6));
         if (!t2) return (T *)0;
         T *v7 = t2;
         return RC_MK1_symbolic(463, v7);
     }
 r662: { /* exec-CONST */
         T *v0 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 0);
-        T *v1 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 1);
-        T *v2 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 2);
         T *v3 = RC_KID_symbolic(a0, 1);
-        T *v4 = RC_KID_symbolic(a0, 2);
         T *v5 = RC_KID_symbolic(a1, 0);
         T *v6 = RC_KID_symbolic(a1, 1);
         RC_RULE(662);
@@ -9184,12 +8914,10 @@ r662: { /* exec-CONST */
         T *t2 = p224(v0, v7, v8);
         if (!t2) return (T *)0;
         T *v9 = t2;
-        RC_TAIL return p511(v9, RC_MK3_symbolic(413, RC_MK3_symbolic(412, v0, v1, v2), v3, v4));
+        return p511(v9, a0);
     }
 r665: { /* exec-COMB */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = RC_KID_symbolic(a1, 0);
         T *v4 = RC_KID_symbolic(a1, 1);
         RC_RULE(665);
@@ -9202,12 +8930,10 @@ r665: { /* exec-COMB */
         T *t2 = p235(v5, v6);
         if (!t2) return (T *)0;
         T *v7 = t2;
-        RC_TAIL return p511(v7, RC_MK3_symbolic(413, v0, v1, v2));
+        return p511(v7, a0);
     }
 r666: { /* exec-ABS */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = RC_KID_symbolic(a1, 0);
         T *v4 = RC_KID_symbolic(a1, 1);
         RC_RULE(666);
@@ -9220,12 +8946,10 @@ r666: { /* exec-ABS */
         T *t2 = p238(v5, v6);
         if (!t2) return (T *)0;
         T *v7 = t2;
-        RC_TAIL return p511(v7, RC_MK3_symbolic(413, v0, v1, v2));
+        return p511(v7, a0);
     }
 r669: { /* exec-REFL */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = RC_KID_symbolic(a1, 0);
         RC_RULE(669);
         T *t0 = p500(v1, v3);
@@ -9234,15 +8958,13 @@ r669: { /* exec-REFL */
         T *t1 = p239(v4);
         if (!t1) return (T *)0;
         T *v5 = t1;
-        T *t2 = p508(RC_MK3_symbolic(413, v0, v1, v2), v5, RC_NUL_symbolic(30));
+        T *t2 = p508(a0, v5, RC_NUL_symbolic(30));
         if (!t2) return (T *)0;
         T *v6 = t2;
         return RC_MK1_symbolic(463, v6);
     }
 r670: { /* exec-TRANS */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = RC_KID_symbolic(a1, 0);
         T *v4 = RC_KID_symbolic(a1, 1);
         RC_RULE(670);
@@ -9266,12 +8988,10 @@ r670: { /* exec-TRANS */
         T *t3 = p51(v6, v8);
         if (!t3) return (T *)0;
         T *v10 = t3;
-        RC_TAIL return p512(v9, v10, RC_MK3_symbolic(413, v0, v1, v2));
+        return p512(v9, v10, a0);
     }
 r671: { /* exec-MK_COMB */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = RC_KID_symbolic(a1, 0);
         T *v4 = RC_KID_symbolic(a1, 1);
         RC_RULE(671);
@@ -9295,12 +9015,10 @@ r671: { /* exec-MK_COMB */
         T *t3 = p51(v6, v8);
         if (!t3) return (T *)0;
         T *v10 = t3;
-        RC_TAIL return p512(v9, v10, RC_MK3_symbolic(413, v0, v1, v2));
+        return p512(v9, v10, a0);
     }
 r672: { /* exec-EQ_MP */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = RC_KID_symbolic(a1, 0);
         T *v4 = RC_KID_symbolic(a1, 1);
         RC_RULE(672);
@@ -9324,12 +9042,10 @@ r672: { /* exec-EQ_MP */
         T *t3 = p51(v6, v8);
         if (!t3) return (T *)0;
         T *v10 = t3;
-        RC_TAIL return p512(v9, v10, RC_MK3_symbolic(413, v0, v1, v2));
+        return p512(v9, v10, a0);
     }
 r673: { /* exec-DEDUCT */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = RC_KID_symbolic(a1, 0);
         T *v4 = RC_KID_symbolic(a1, 1);
         RC_RULE(673);
@@ -9353,15 +9069,13 @@ r673: { /* exec-DEDUCT */
         T *t3 = p51(v6, v8);
         if (!t3) return (T *)0;
         T *v10 = t3;
-        T *t4 = p508(RC_MK3_symbolic(413, v0, v1, v2), v9, v10);
+        T *t4 = p508(a0, v9, v10);
         if (!t4) return (T *)0;
         T *v11 = t4;
         return RC_MK1_symbolic(463, v11);
     }
 r674: { /* exec-ABS_RULE */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = RC_KID_symbolic(a1, 0);
         T *v4 = RC_KID_symbolic(a1, 1);
         RC_RULE(674);
@@ -9378,12 +9092,10 @@ r674: { /* exec-ABS_RULE */
         T *t2 = p247(v5, v6);
         if (!t2) return (T *)0;
         T *v8 = t2;
-        RC_TAIL return p512(v8, v7, RC_MK3_symbolic(413, v0, v1, v2));
+        return p512(v8, v7, a0);
     }
 r675: { /* exec-BETA */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = RC_KID_symbolic(a1, 0);
         RC_RULE(675);
         T *t0 = p500(v1, v3);
@@ -9392,12 +9104,10 @@ r675: { /* exec-BETA */
         T *t1 = p250(v4);
         if (!t1) return (T *)0;
         T *v5 = t1;
-        RC_TAIL return p512(v5, RC_NUL_symbolic(30), RC_MK3_symbolic(413, v0, v1, v2));
+        return p512(v5, RC_NUL_symbolic(30), a0);
     }
 r676: { /* exec-ASSUME */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = RC_KID_symbolic(a1, 0);
         RC_RULE(676);
         T *t0 = p500(v1, v3);
@@ -9406,12 +9116,10 @@ r676: { /* exec-ASSUME */
         T *t1 = p252(v4);
         if (!t1) return (T *)0;
         T *v5 = t1;
-        RC_TAIL return p512(v5, RC_NUL_symbolic(30), RC_MK3_symbolic(413, v0, v1, v2));
+        return p512(v5, RC_NUL_symbolic(30), a0);
     }
 r677: { /* exec-INST_TYPE */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = RC_KID_symbolic(a1, 0);
         T *v4 = RC_KID_symbolic(a1, 1);
         RC_RULE(677);
@@ -9428,15 +9136,13 @@ r677: { /* exec-INST_TYPE */
         T *t2 = p258(v5, v6);
         if (!t2) return (T *)0;
         T *v8 = t2;
-        T *t3 = p508(RC_MK3_symbolic(413, v0, v1, v2), v8, v7);
+        T *t3 = p508(a0, v8, v7);
         if (!t3) return (T *)0;
         T *v9 = t3;
         return RC_MK1_symbolic(463, v9);
     }
 r678: { /* exec-INST */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = RC_KID_symbolic(a1, 0);
         T *v4 = RC_KID_symbolic(a1, 1);
         RC_RULE(678);
@@ -9453,14 +9159,11 @@ r678: { /* exec-INST */
         T *t2 = p259(v5, v6);
         if (!t2) return (T *)0;
         T *v8 = t2;
-        RC_TAIL return p512(v8, v7, RC_MK3_symbolic(413, v0, v1, v2));
+        return p512(v8, v7, a0);
     }
 r679: { /* exec-NEW_TYPE */
         T *v0 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 0);
-        T *v1 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 1);
-        T *v2 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 2);
         T *v3 = RC_KID_symbolic(a0, 1);
-        T *v4 = RC_KID_symbolic(a0, 2);
         T *v5 = RC_KID_symbolic(a1, 0);
         T *v6 = RC_KID_symbolic(a1, 1);
         RC_RULE(679);
@@ -9470,14 +9173,11 @@ r679: { /* exec-NEW_TYPE */
         T *t1 = p278(v0, v7, v6);
         if (!t1) return (T *)0;
         T *v8 = t1;
-        RC_TAIL return p513(v8, RC_MK3_symbolic(413, RC_MK3_symbolic(412, v0, v1, v2), v3, v4), v7, v6);
+        return p513(v8, a0, v7, v6);
     }
 r682: { /* exec-NEW_CONSTANT */
         T *v0 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 0);
-        T *v1 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 1);
-        T *v2 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 2);
         T *v3 = RC_KID_symbolic(a0, 1);
-        T *v4 = RC_KID_symbolic(a0, 2);
         T *v5 = RC_KID_symbolic(a1, 0);
         T *v6 = RC_KID_symbolic(a1, 1);
         RC_RULE(682);
@@ -9490,14 +9190,11 @@ r682: { /* exec-NEW_CONSTANT */
         T *t2 = p280(v0, v7, v8);
         if (!t2) return (T *)0;
         T *v9 = t2;
-        RC_TAIL return p514(v9, RC_MK3_symbolic(413, RC_MK3_symbolic(412, v0, v1, v2), v3, v4), v7, v8);
+        return p514(v9, a0, v7, v8);
     }
 r685: { /* exec-NEW_AXIOM */
         T *v0 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 0);
-        T *v1 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 1);
-        T *v2 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 2);
         T *v3 = RC_KID_symbolic(a0, 1);
-        T *v4 = RC_KID_symbolic(a0, 2);
         T *v5 = RC_KID_symbolic(a1, 0);
         RC_RULE(685);
         T *t0 = p500(v3, v5);
@@ -9506,14 +9203,11 @@ r685: { /* exec-NEW_AXIOM */
         T *t1 = p282(v0, v6);
         if (!t1) return (T *)0;
         T *v7 = t1;
-        RC_TAIL return p515(v7, RC_MK3_symbolic(413, RC_MK3_symbolic(412, v0, v1, v2), v3, v4), v6);
+        return p515(v7, a0, v6);
     }
 r694: { /* exec-NEW_DEFINITION */
         T *v0 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 0);
-        T *v1 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 1);
-        T *v2 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 2);
         T *v3 = RC_KID_symbolic(a0, 1);
-        T *v4 = RC_KID_symbolic(a0, 2);
         T *v5 = RC_KID_symbolic(a1, 0);
         RC_RULE(694);
         T *t0 = p500(v3, v5);
@@ -9522,14 +9216,11 @@ r694: { /* exec-NEW_DEFINITION */
         T *t1 = p284(v0, v6);
         if (!t1) return (T *)0;
         T *v7 = t1;
-        RC_TAIL return p519(v7, RC_MK3_symbolic(413, RC_MK3_symbolic(412, v0, v1, v2), v3, v4), v6);
+        return p519(v7, a0, v6);
     }
 r697: { /* exec-NEW_TYPEDEF */
         T *v0 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 0);
-        T *v1 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 1);
-        T *v2 = RC_KID_symbolic(RC_KID_symbolic(a0, 0), 2);
         T *v3 = RC_KID_symbolic(a0, 1);
-        T *v4 = RC_KID_symbolic(a0, 2);
         T *v5 = RC_KID_symbolic(a1, 0);
         T *v6 = RC_KID_symbolic(a1, 1);
         T *v7 = RC_KID_symbolic(a1, 2);
@@ -9554,21 +9245,19 @@ r697: { /* exec-NEW_TYPEDEF */
         T *t4 = p289(v0, v9, v10, v11, v12);
         if (!t4) return (T *)0;
         T *v14 = t4;
-        RC_TAIL return p520(v14, RC_MK3_symbolic(413, RC_MK3_symbolic(412, v0, v1, v2), v3, v4), v13);
+        return p520(v14, a0, v13);
     }
 r701: { /* exec-POLICY */
         T *v0 = a0;
         T *v1 = RC_KID_symbolic(a1, 0);
         RC_RULE(701);
-        T *t0 = p50(v1, RC_MK1_nat(28, RC_MK1_nat(29, RC_NUL_nat(27))));
+        T *t0 = p50(v1, (rc_ground[108] ? rc_ground[108] : (rc_ground[108] = rc_make_static(RC_MK1_nat(28, RC_MK1_nat(29, RC_NUL_nat(27)))))));
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p521(v2, v0, v1);
+        return p521(v2, v0, v1);
     }
 r711: { /* exec-EXPECT */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = RC_KID_symbolic(a1, 0);
         T *v4 = RC_KID_symbolic(a1, 1);
         T *v5 = RC_KID_symbolic(a1, 2);
@@ -9596,12 +9285,10 @@ r711: { /* exec-EXPECT */
         T *t5 = p35(v11, v12);
         if (!t5) return (T *)0;
         T *v13 = t5;
-        RC_TAIL return p525(v13, RC_MK3_symbolic(413, v0, v1, v2));
+        return p525(v13, a0);
     }
 r712: { /* exec-EXPECT_ALPHA */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = RC_KID_symbolic(a1, 0);
         T *v4 = RC_KID_symbolic(a1, 1);
         T *v5 = RC_KID_symbolic(a1, 2);
@@ -9620,12 +9307,10 @@ r712: { /* exec-EXPECT_ALPHA */
         T *t3 = p526(v6, v8, v9);
         if (!t3) return (T *)0;
         T *v10 = t3;
-        RC_TAIL return p525(v10, RC_MK3_symbolic(413, v0, v1, v2));
+        return p525(v10, a0);
     }
 r717: { /* exec-EXPECT_AXIOMS */
-        T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(a0, 2);
         T *v3 = RC_KID_symbolic(a1, 0);
         T *v4 = RC_KID_symbolic(a1, 1);
         RC_RULE(717);
@@ -9637,19 +9322,12 @@ r717: { /* exec-EXPECT_AXIOMS */
         T *t1 = p528(v6, v4);
         if (!t1) return (T *)0;
         T *v7 = t1;
-        RC_TAIL return p525(v7, RC_MK3_symbolic(413, v0, v1, v2));
+        return p525(v7, a0);
     }
 r722: { /* exec-EXPECT_REFUSED */
-        T *v0 = RC_KID_symbolic(a0, 0);
-        T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(RC_KID_symbolic(a0, 2), 0);
         T *v3 = RC_KID_symbolic(RC_KID_symbolic(a0, 2), 1);
-        T *v4 = RC_KID_symbolic(RC_KID_symbolic(a0, 2), 2);
-        T *v5 = RC_KID_symbolic(RC_KID_symbolic(a0, 2), 3);
-        T *v6 = RC_KID_symbolic(RC_KID_symbolic(a0, 2), 4);
-        T *v7 = RC_KID_symbolic(RC_KID_symbolic(a0, 2), 5);
         RC_RULE(722);
-        RC_TAIL return p525(v3, RC_MK3_symbolic(413, v0, v1, RC_MK6_symbolic(411, v2, v3, v4, v5, v6, v7)));
+        return p525(v3, a0);
     }
 r723: { /* exec-LABEL */
         T *v0 = RC_KID_symbolic(a0, 0);
@@ -9865,14 +9543,10 @@ r686: { /* exec-new-axiom-fail */
 r687: { /* exec-new-axiom-ok */
         T *v0 = RC_KID_symbolic(a0, 0);
         T *v1 = RC_KID_symbolic(a0, 1);
-        T *v2 = RC_KID_symbolic(RC_KID_symbolic(a1, 0), 0);
         T *v3 = RC_KID_symbolic(RC_KID_symbolic(a1, 0), 1);
-        T *v4 = RC_KID_symbolic(RC_KID_symbolic(a1, 0), 2);
-        T *v5 = RC_KID_symbolic(a1, 1);
-        T *v6 = RC_KID_symbolic(a1, 2);
         T *v7 = a2;
         RC_RULE(687);
-        RC_TAIL return p516(v3, RC_MK3_symbolic(413, RC_MK3_symbolic(412, v2, v3, v4), v5, v6), v0, v1, v7);
+        return p516(v3, a1, v0, v1, v7);
     }
 f:  return rc_no_rule(515);
 }
@@ -9885,21 +9559,17 @@ n1169: switch (RC_TAG_symbolic(a1)) { case 413: goto n1168; default: goto f; }
 n1168: switch (RC_TAG_symbolic(RC_KID_symbolic(a1, 0))) { case 412: goto r690; default: goto f; }
 r688: { /* exec-new-axiom-2-sealed */
         RC_RULE(688);
-        return RC_MK2_symbolic(464, RC_NUL_symbolic(344), RC_NUL_symbolic(325));
+        return (rc_ground[106] ? rc_ground[106] : (rc_ground[106] = rc_make_static(RC_MK2_symbolic(464, RC_NUL_symbolic(344), RC_NUL_symbolic(325)))));
     }
 r689: { /* exec-new-axiom-2-open */
         T *v0 = a1;
         T *v1 = a2;
         T *v2 = a3;
         RC_RULE(689);
-        RC_TAIL return p518(v0, v1, v2);
+        return p518(v0, v1, v2);
     }
 r690: { /* exec-new-axiom-2-standard */
-        T *v0 = RC_KID_symbolic(RC_KID_symbolic(a1, 0), 0);
-        T *v1 = RC_KID_symbolic(RC_KID_symbolic(a1, 0), 1);
         T *v2 = RC_KID_symbolic(RC_KID_symbolic(a1, 0), 2);
-        T *v3 = RC_KID_symbolic(a1, 1);
-        T *v4 = RC_KID_symbolic(a1, 2);
         T *v5 = a2;
         T *v6 = a3;
         T *v7 = a4;
@@ -9907,7 +9577,7 @@ r690: { /* exec-new-axiom-2-standard */
         T *t0 = p387(v2, v7);
         if (!t0) return (T *)0;
         T *v8 = t0;
-        RC_TAIL return p517(v8, RC_MK3_symbolic(413, RC_MK3_symbolic(412, v0, v1, v2), v3, v4), v5, v6);
+        return p517(v8, a1, v5, v6);
     }
 f:  return rc_no_rule(516);
 }
@@ -9918,14 +9588,14 @@ static T *p517(T *a0, T *a1, T *a2, T *a3) {
 n1173: switch (RC_TAG_symbolic(a0)) { case 1: goto r691; case 0: goto r692; default: goto f; }
 r691: { /* exec-new-axiom-std-no */
         RC_RULE(691);
-        return RC_MK2_symbolic(464, RC_NUL_symbolic(344), RC_NUL_symbolic(325));
+        return (rc_ground[107] ? rc_ground[107] : (rc_ground[107] = rc_make_static(RC_MK2_symbolic(464, RC_NUL_symbolic(344), RC_NUL_symbolic(325)))));
     }
 r692: { /* exec-new-axiom-std-yes */
         T *v0 = a1;
         T *v1 = a2;
         T *v2 = a3;
         RC_RULE(692);
-        RC_TAIL return p518(v0, v1, v2);
+        return p518(v0, v1, v2);
     }
 f:  return rc_no_rule(517);
 }
@@ -10032,7 +9702,7 @@ static T *p521(T *a0, T *a1, T *a2) {
 n1192: switch (RC_TAG_symbolic(a0)) { case 4: goto r702; case 2: goto r703; case 3: goto r704; default: goto f; }
 r702: { /* exec-policy-gt */
         RC_RULE(702);
-        return RC_MK1_symbolic(466, RC_NUL_symbolic(329));
+        return (rc_ground[109] ? rc_ground[109] : (rc_ground[109] = rc_make_static(RC_MK1_symbolic(466, RC_NUL_symbolic(329)))));
     }
 r703: { /* exec-policy-lt */
         T *v0 = a1;
@@ -10041,7 +9711,7 @@ r703: { /* exec-policy-lt */
         T *t0 = p351(v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p522(v2, v0);
+        return p522(v2, v0);
     }
 r704: { /* exec-policy-eq */
         T *v0 = a1;
@@ -10050,7 +9720,7 @@ r704: { /* exec-policy-eq */
         T *t0 = p351(v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p522(v2, v0);
+        return p522(v2, v0);
     }
 f:  return rc_no_rule(521);
 }
@@ -10062,11 +9732,7 @@ n1195: switch (RC_TAG_symbolic(a1)) { case 413: goto n1194; default: goto f; }
 n1194: switch (RC_TAG_symbolic(RC_KID_symbolic(a1, 0))) { case 412: goto r705; default: goto f; }
 r705: { /* exec-policy-k */
         T *v0 = a0;
-        T *v1 = RC_KID_symbolic(RC_KID_symbolic(a1, 0), 0);
         T *v2 = RC_KID_symbolic(RC_KID_symbolic(a1, 0), 1);
-        T *v3 = RC_KID_symbolic(RC_KID_symbolic(a1, 0), 2);
-        T *v4 = RC_KID_symbolic(a1, 1);
-        T *v5 = RC_KID_symbolic(a1, 2);
         RC_RULE(705);
         T *t0 = p524(v0);
         if (!t0) return (T *)0;
@@ -10077,7 +9743,7 @@ r705: { /* exec-policy-k */
         T *t2 = p50(v6, v7);
         if (!t2) return (T *)0;
         T *v8 = t2;
-        RC_TAIL return p523(v8, v0, RC_MK3_symbolic(413, RC_MK3_symbolic(412, v1, v2, v3), v4, v5));
+        return p523(v8, v0, a1);
     }
 f:  return rc_no_rule(522);
 }
@@ -10120,11 +9786,11 @@ r507: { /* policy-rank-open */
     }
 r508: { /* policy-rank-standard */
         RC_RULE(508);
-        return RC_MK1_nat(29, RC_NUL_nat(27));
+        return (rc_ground[99] ? rc_ground[99] : (rc_ground[99] = rc_make_static(RC_MK1_nat(29, RC_NUL_nat(27)))));
     }
 r509: { /* policy-rank-sealed */
         RC_RULE(509);
-        return RC_MK1_nat(28, RC_MK1_nat(29, RC_NUL_nat(27)));
+        return (rc_ground[100] ? rc_ground[100] : (rc_ground[100] = rc_make_static(RC_MK1_nat(28, RC_MK1_nat(29, RC_NUL_nat(27))))));
     }
 f:  return rc_no_rule(524);
 }
@@ -10158,7 +9824,7 @@ r713: { /* expect-alpha */
         T *t0 = p196(v1, v3);
         if (!t0) return (T *)0;
         T *v4 = t0;
-        RC_TAIL return p527(v4, v0, v2);
+        return p527(v4, v0, v2);
     }
 f:  return rc_no_rule(526);
 }
@@ -10177,7 +9843,7 @@ r714: { /* expect-alpha-k-eq */
         T *t1 = p211(v1, v0);
         if (!t1) return (T *)0;
         T *v3 = t1;
-        RC_TAIL return p35(v2, v3);
+        return p35(v2, v3);
     }
 r715: { /* expect-alpha-k-lt */
         RC_RULE(715);
@@ -10206,7 +9872,7 @@ r718: { /* expect-axioms */
         T *t2 = p50(v2, v3);
         if (!t2) return (T *)0;
         T *v4 = t2;
-        RC_TAIL return p529(v4, v0, v1);
+        return p529(v4, v0, v1);
     }
 }
 
@@ -10221,7 +9887,7 @@ r719: { /* expect-axioms-k-eq */
         T *t0 = p53(v1);
         if (!t0) return (T *)0;
         T *v2 = t0;
-        RC_TAIL return p55(v2, v0);
+        return p55(v2, v0);
     }
 r720: { /* expect-axioms-k-lt */
         RC_RULE(720);
@@ -10234,7 +9900,1991 @@ r721: { /* expect-axioms-k-gt */
 f:  return rc_no_rule(529);
 }
 
-const int rc_nctors = 530, rc_nrules = 792, rc_nsorts = 60, rc_nnative_ops = 33;
+/* relations the rules query (rows supplied by the host through rc_relation_hook) */
+const int rc_nrelations = 0;
+const char *const rc_relation_names[] = {0};
+const uint8_t rc_sort_order[] = {4,4,4,0,2,0,3,0,0,0,1,1,1,1,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,4,4,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4};
+const uint8_t rc_ctor_slots[] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+const uint16_t rc_ctor_rank[] = {0,1,0,1,2,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,0,0,0,1,0,1,0,1,2,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,1,2,3,0,1,0,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,1,0,1,0,1,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,0,1,0,1,2,0,1,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,2,3,0,1,2,3,0,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,0,1,0,1,0,1,0,0,1,2,3,0,1,0,1,2,0,1,2,3,0,1,2,3,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+const int rc_nmemo = 5;
+const char *const rc_memo_name[] = {"hl:type-of", "hl:alphaorder", "hl:inst", "hl:vsubst-rec", "hl:type-subst"};
+T *rc_construct(int ctor, T *const *k) {
+    (void)k;
+    switch (ctor) {
+    case 0: return RC_NUL_symbolic(0);
+    case 1: return RC_NUL_symbolic(1);
+    case 2: return RC_NUL_symbolic(2);
+    case 3: return RC_NUL_symbolic(3);
+    case 4: return RC_NUL_symbolic(4);
+    case 5: return RC_NUL_symbolic(5);
+    case 6: return RC_NUL_symbolic(6);
+    case 7: return RC_NUL_symbolic(7);
+    case 8: return RC_NUL_symbolic(8);
+    case 9: return RC_NUL_symbolic(9);
+    case 10: return RC_NUL_symbolic(10);
+    case 11: return RC_NUL_symbolic(11);
+    case 12: return RC_NUL_symbolic(12);
+    case 13: return RC_NUL_symbolic(13);
+    case 14: return RC_NUL_symbolic(14);
+    case 15: return RC_NUL_symbolic(15);
+    case 16: return RC_NUL_symbolic(16);
+    case 17: return RC_NUL_symbolic(17);
+    case 18: return RC_NUL_symbolic(18);
+    case 19: return RC_NUL_symbolic(19);
+    case 20: return RC_NUL_symbolic(20);
+    case 21: return RC_MK4_symbolic(21, k[0], k[1], k[2], k[3]);
+    case 22: return RC_MK2_symbolic(22, k[0], k[1]);
+    case 23: return RC_NUL_bytes(23);
+    case 24: return RC_MK2_bytes(24, k[0], k[1]);
+    case 25: return RC_NUL_symbolic(25);
+    case 26: return RC_MK2_symbolic(26, k[0], k[1]);
+    case 27: return RC_NUL_nat(27);
+    case 28: return RC_MK1_nat(28, k[0]);
+    case 29: return RC_MK1_nat(29, k[0]);
+    case 30: return RC_NUL_symbolic(30);
+    case 31: return RC_MK2_symbolic(31, k[0], k[1]);
+    case 32: return RC_NUL_symbolic(32);
+    case 33: return RC_MK3_symbolic(33, k[0], k[1], k[2]);
+    case 86: return RC_MK1_intern(86, k[0]);
+    case 87: return RC_MK2_intern(87, k[0], k[1]);
+    case 88: return RC_NUL_intern(88);
+    case 89: return RC_MK2_intern(89, k[0], k[1]);
+    case 90: return RC_MK2_intern(90, k[0], k[1]);
+    case 91: return RC_MK2_intern(91, k[0], k[1]);
+    case 92: return RC_MK2_intern(92, k[0], k[1]);
+    case 93: return RC_MK2_intern(93, k[0], k[1]);
+    case 94: return RC_NUL_intern(94);
+    case 95: return RC_MK2_intern(95, k[0], k[1]);
+    case 96: return RC_MK2_symbolic(96, k[0], k[1]);
+    case 97: return RC_NUL_symbolic(97);
+    case 98: return RC_MK2_symbolic(98, k[0], k[1]);
+    case 99: return RC_NUL_intern(99);
+    case 100: return RC_MK3_intern(100, k[0], k[1], k[2]);
+    case 101: return RC_NUL_intern(101);
+    case 102: return RC_MK3_intern(102, k[0], k[1], k[2]);
+    case 103: return RC_MK2_symbolic(103, k[0], k[1]);
+    case 104: return RC_NUL_symbolic(104);
+    case 105: return RC_MK3_symbolic(105, k[0], k[1], k[2]);
+    case 106: return RC_NUL_symbolic(106);
+    case 107: return RC_MK1_symbolic(107, k[0]);
+    case 108: return RC_NUL_symbolic(108);
+    case 109: return RC_MK1_symbolic(109, k[0]);
+    case 110: return RC_NUL_symbolic(110);
+    case 167: return RC_MK1_symbolic(167, k[0]);
+    case 168: return RC_NUL_symbolic(168);
+    case 184: return RC_MK1_symbolic(184, k[0]);
+    case 185: return RC_MK1_symbolic(185, k[0]);
+    case 213: return RC_MK1_symbolic(213, k[0]);
+    case 214: return RC_MK1_symbolic(214, k[0]);
+    case 215: return RC_MK1_symbolic(215, k[0]);
+    case 216: return RC_MK1_symbolic(216, k[0]);
+    case 217: return RC_MK1_symbolic(217, k[0]);
+    case 218: return RC_MK1_symbolic(218, k[0]);
+    case 219: return RC_MK1_symbolic(219, k[0]);
+    case 220: return RC_NUL_symbolic(220);
+    case 261: return RC_NUL_symbolic(261);
+    case 262: return RC_MK3_symbolic(262, k[0], k[1], k[2]);
+    case 263: return RC_NUL_symbolic(263);
+    case 264: return RC_MK3_symbolic(264, k[0], k[1], k[2]);
+    case 265: return RC_MK4_symbolic(265, k[0], k[1], k[2], k[3]);
+    case 266: return RC_MK1_symbolic(266, k[0]);
+    case 267: return RC_MK1_symbolic(267, k[0]);
+    case 268: return RC_MK2_symbolic(268, k[0], k[1]);
+    case 269: return RC_MK1_symbolic(269, k[0]);
+    case 270: return RC_MK3_symbolic(270, k[0], k[1], k[2]);
+    case 271: return RC_MK1_symbolic(271, k[0]);
+    case 272: return RC_MK2_symbolic(272, k[0], k[1]);
+    case 299: return RC_NUL_symbolic(299);
+    case 300: return RC_NUL_symbolic(300);
+    case 301: return RC_NUL_symbolic(301);
+    case 302: return RC_NUL_symbolic(302);
+    case 303: return RC_NUL_symbolic(303);
+    case 304: return RC_NUL_symbolic(304);
+    case 305: return RC_NUL_symbolic(305);
+    case 306: return RC_NUL_symbolic(306);
+    case 307: return RC_NUL_symbolic(307);
+    case 308: return RC_NUL_symbolic(308);
+    case 309: return RC_NUL_symbolic(309);
+    case 310: return RC_NUL_symbolic(310);
+    case 311: return RC_NUL_symbolic(311);
+    case 312: return RC_NUL_symbolic(312);
+    case 313: return RC_NUL_symbolic(313);
+    case 314: return RC_NUL_symbolic(314);
+    case 315: return RC_NUL_symbolic(315);
+    case 316: return RC_NUL_symbolic(316);
+    case 317: return RC_NUL_symbolic(317);
+    case 318: return RC_NUL_symbolic(318);
+    case 319: return RC_NUL_symbolic(319);
+    case 320: return RC_NUL_symbolic(320);
+    case 321: return RC_NUL_symbolic(321);
+    case 322: return RC_NUL_symbolic(322);
+    case 323: return RC_NUL_symbolic(323);
+    case 324: return RC_NUL_symbolic(324);
+    case 325: return RC_NUL_symbolic(325);
+    case 326: return RC_NUL_symbolic(326);
+    case 327: return RC_NUL_symbolic(327);
+    case 328: return RC_NUL_symbolic(328);
+    case 329: return RC_NUL_symbolic(329);
+    case 330: return RC_NUL_symbolic(330);
+    case 331: return RC_NUL_symbolic(331);
+    case 332: return RC_NUL_symbolic(332);
+    case 333: return RC_NUL_symbolic(333);
+    case 334: return RC_NUL_symbolic(334);
+    case 335: return RC_NUL_symbolic(335);
+    case 336: return RC_NUL_symbolic(336);
+    case 337: return RC_NUL_symbolic(337);
+    case 338: return RC_NUL_symbolic(338);
+    case 339: return RC_NUL_symbolic(339);
+    case 340: return RC_NUL_symbolic(340);
+    case 341: return RC_NUL_symbolic(341);
+    case 342: return RC_NUL_symbolic(342);
+    case 343: return RC_NUL_symbolic(343);
+    case 344: return RC_NUL_symbolic(344);
+    case 345: return RC_NUL_symbolic(345);
+    case 346: return RC_NUL_symbolic(346);
+    case 347: return RC_NUL_symbolic(347);
+    case 348: return RC_NUL_symbolic(348);
+    case 349: return RC_NUL_symbolic(349);
+    case 352: return RC_MK2_symbolic(352, k[0], k[1]);
+    case 353: return RC_MK3_symbolic(353, k[0], k[1], k[2]);
+    case 354: return RC_NUL_symbolic(354);
+    case 355: return RC_MK2_symbolic(355, k[0], k[1]);
+    case 390: return RC_MK1_symbolic(390, k[0]);
+    case 391: return RC_MK1_symbolic(391, k[0]);
+    case 392: return RC_MK1_symbolic(392, k[0]);
+    case 393: return RC_MK2_symbolic(393, k[0], k[1]);
+    case 394: return RC_NUL_symbolic(394);
+    case 395: return RC_MK1_symbolic(395, k[0]);
+    case 396: return RC_NUL_symbolic(396);
+    case 397: return RC_NUL_symbolic(397);
+    case 398: return RC_NUL_symbolic(398);
+    case 399: return RC_MK3_symbolic(399, k[0], k[1], k[2]);
+    case 402: return RC_MK2_table(402, k[0], k[1]);
+    case 408: return RC_MK4_symbolic(408, k[0], k[1], k[2], k[3]);
+    case 409: return RC_NUL_symbolic(409);
+    case 410: return RC_MK3_symbolic(410, k[0], k[1], k[2]);
+    case 411: return RC_MK6_symbolic(411, k[0], k[1], k[2], k[3], k[4], k[5]);
+    case 412: return RC_MK3_symbolic(412, k[0], k[1], k[2]);
+    case 413: return RC_MK3_symbolic(413, k[0], k[1], k[2]);
+    case 415: return RC_MK1_symbolic(415, k[0]);
+    case 416: return RC_MK1_symbolic(416, k[0]);
+    case 417: return RC_MK2_symbolic(417, k[0], k[1]);
+    case 418: return RC_MK2_symbolic(418, k[0], k[1]);
+    case 419: return RC_MK2_symbolic(419, k[0], k[1]);
+    case 420: return RC_MK2_symbolic(420, k[0], k[1]);
+    case 421: return RC_MK2_symbolic(421, k[0], k[1]);
+    case 422: return RC_MK1_symbolic(422, k[0]);
+    case 423: return RC_MK2_symbolic(423, k[0], k[1]);
+    case 424: return RC_MK2_symbolic(424, k[0], k[1]);
+    case 425: return RC_MK2_symbolic(425, k[0], k[1]);
+    case 426: return RC_MK1_symbolic(426, k[0]);
+    case 427: return RC_MK1_symbolic(427, k[0]);
+    case 428: return RC_MK2_symbolic(428, k[0], k[1]);
+    case 429: return RC_MK2_symbolic(429, k[0], k[1]);
+    case 430: return RC_MK2_symbolic(430, k[0], k[1]);
+    case 431: return RC_MK2_symbolic(431, k[0], k[1]);
+    case 432: return RC_MK2_symbolic(432, k[0], k[1]);
+    case 433: return RC_MK2_symbolic(433, k[0], k[1]);
+    case 434: return RC_MK1_symbolic(434, k[0]);
+    case 435: return RC_MK1_symbolic(435, k[0]);
+    case 436: return RC_MK4_symbolic(436, k[0], k[1], k[2], k[3]);
+    case 437: return RC_MK1_symbolic(437, k[0]);
+    case 438: return RC_MK3_symbolic(438, k[0], k[1], k[2]);
+    case 439: return RC_MK3_symbolic(439, k[0], k[1], k[2]);
+    case 440: return RC_MK2_symbolic(440, k[0], k[1]);
+    case 441: return RC_NUL_symbolic(441);
+    case 442: return RC_MK2_symbolic(442, k[0], k[1]);
+    case 443: return RC_MK1_symbolic(443, k[0]);
+    case 444: return RC_MK1_symbolic(444, k[0]);
+    case 445: return RC_MK1_symbolic(445, k[0]);
+    case 446: return RC_MK1_symbolic(446, k[0]);
+    case 449: return RC_MK2_symbolic(449, k[0], k[1]);
+    case 450: return RC_NUL_symbolic(450);
+    case 451: return RC_NUL_symbolic(451);
+    case 452: return RC_MK1_symbolic(452, k[0]);
+    case 453: return RC_MK3_symbolic(453, k[0], k[1], k[2]);
+    case 454: return RC_MK2_symbolic(454, k[0], k[1]);
+    case 455: return RC_MK3_symbolic(455, k[0], k[1], k[2]);
+    case 456: return RC_MK2_symbolic(456, k[0], k[1]);
+    case 457: return RC_MK1_symbolic(457, k[0]);
+    case 458: return RC_MK1_symbolic(458, k[0]);
+    case 459: return RC_MK1_symbolic(459, k[0]);
+    case 460: return RC_NUL_symbolic(460);
+    case 461: return RC_NUL_symbolic(461);
+    case 462: return RC_MK1_symbolic(462, k[0]);
+    case 463: return RC_MK1_symbolic(463, k[0]);
+    case 464: return RC_MK2_symbolic(464, k[0], k[1]);
+    case 465: return RC_NUL_symbolic(465);
+    case 466: return RC_MK1_symbolic(466, k[0]);
+    case 467: return RC_NUL_symbolic(467);
+    case 468: return RC_NUL_symbolic(468);
+    case 469: return RC_NUL_symbolic(469);
+    case 470: return RC_NUL_symbolic(470);
+    case 471: return RC_NUL_symbolic(471);
+    default: return (T *)0;
+    }
+}
+int rc_view(int sort, T *x, T **kids) {
+    int c;
+    switch (sort) {
+    case 0: c = RC_TAG_symbolic(x);
+        switch (c) {
+        default: break;
+        }
+        return c;
+    case 1: c = RC_TAG_symbolic(x);
+        switch (c) {
+        default: break;
+        }
+        return c;
+    case 2: c = RC_TAG_symbolic(x);
+        switch (c) {
+        default: break;
+        }
+        return c;
+    case 3: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 22: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        default: break;
+        }
+        return c;
+    case 4: c = RC_TAG_bytes(x);
+        switch (c) {
+        case 24: kids[0] = RC_KID_bytes(x, 0); kids[1] = RC_KID_bytes(x, 1); break;
+        default: break;
+        }
+        return c;
+    case 5: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 26: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        default: break;
+        }
+        return c;
+    case 6: c = RC_TAG_nat(x);
+        switch (c) {
+        case 28: kids[0] = RC_KID_nat(x, 0); break;
+        case 29: kids[0] = RC_KID_nat(x, 0); break;
+        default: break;
+        }
+        return c;
+    case 7: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 31: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        default: break;
+        }
+        return c;
+    case 8: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 33: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); kids[2] = RC_KID_symbolic(x, 2); break;
+        default: break;
+        }
+        return c;
+    case 9: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 21: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); kids[2] = RC_KID_symbolic(x, 2); kids[3] = RC_KID_symbolic(x, 3); break;
+        default: break;
+        }
+        return c;
+    case 10: c = RC_TAG_intern(x);
+        switch (c) {
+        case 86: kids[0] = RC_KID_intern(x, 0); break;
+        case 87: kids[0] = RC_KID_intern(x, 0); kids[1] = RC_KID_intern(x, 1); break;
+        default: break;
+        }
+        return c;
+    case 11: c = RC_TAG_intern(x);
+        switch (c) {
+        case 89: kids[0] = RC_KID_intern(x, 0); kids[1] = RC_KID_intern(x, 1); break;
+        default: break;
+        }
+        return c;
+    case 12: c = RC_TAG_intern(x);
+        switch (c) {
+        case 90: kids[0] = RC_KID_intern(x, 0); kids[1] = RC_KID_intern(x, 1); break;
+        case 91: kids[0] = RC_KID_intern(x, 0); kids[1] = RC_KID_intern(x, 1); break;
+        case 92: kids[0] = RC_KID_intern(x, 0); kids[1] = RC_KID_intern(x, 1); break;
+        case 93: kids[0] = RC_KID_intern(x, 0); kids[1] = RC_KID_intern(x, 1); break;
+        default: break;
+        }
+        return c;
+    case 13: c = RC_TAG_intern(x);
+        switch (c) {
+        case 95: kids[0] = RC_KID_intern(x, 0); kids[1] = RC_KID_intern(x, 1); break;
+        default: break;
+        }
+        return c;
+    case 14: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 96: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        default: break;
+        }
+        return c;
+    case 15: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 98: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        default: break;
+        }
+        return c;
+    case 16: c = RC_TAG_intern(x);
+        switch (c) {
+        case 100: kids[0] = RC_KID_intern(x, 0); kids[1] = RC_KID_intern(x, 1); kids[2] = RC_KID_intern(x, 2); break;
+        default: break;
+        }
+        return c;
+    case 17: c = RC_TAG_intern(x);
+        switch (c) {
+        case 102: kids[0] = RC_KID_intern(x, 0); kids[1] = RC_KID_intern(x, 1); kids[2] = RC_KID_intern(x, 2); break;
+        default: break;
+        }
+        return c;
+    case 18: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 103: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        default: break;
+        }
+        return c;
+    case 19: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 105: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); kids[2] = RC_KID_symbolic(x, 2); break;
+        default: break;
+        }
+        return c;
+    case 20: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 184: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 185: kids[0] = RC_KID_symbolic(x, 0); break;
+        default: break;
+        }
+        return c;
+    case 21: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 167: kids[0] = RC_KID_symbolic(x, 0); break;
+        default: break;
+        }
+        return c;
+    case 22: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 213: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 214: kids[0] = RC_KID_symbolic(x, 0); break;
+        default: break;
+        }
+        return c;
+    case 23: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 215: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 216: kids[0] = RC_KID_symbolic(x, 0); break;
+        default: break;
+        }
+        return c;
+    case 24: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 217: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 218: kids[0] = RC_KID_symbolic(x, 0); break;
+        default: break;
+        }
+        return c;
+    case 25: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 219: kids[0] = RC_KID_symbolic(x, 0); break;
+        default: break;
+        }
+        return c;
+    case 26: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 107: kids[0] = RC_KID_symbolic(x, 0); break;
+        default: break;
+        }
+        return c;
+    case 27: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 109: kids[0] = RC_KID_symbolic(x, 0); break;
+        default: break;
+        }
+        return c;
+    case 28: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 262: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); kids[2] = RC_KID_symbolic(x, 2); break;
+        default: break;
+        }
+        return c;
+    case 29: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 264: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); kids[2] = RC_KID_symbolic(x, 2); break;
+        default: break;
+        }
+        return c;
+    case 30: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 265: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); kids[2] = RC_KID_symbolic(x, 2); kids[3] = RC_KID_symbolic(x, 3); break;
+        default: break;
+        }
+        return c;
+    case 31: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 266: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 267: kids[0] = RC_KID_symbolic(x, 0); break;
+        default: break;
+        }
+        return c;
+    case 32: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 268: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 269: kids[0] = RC_KID_symbolic(x, 0); break;
+        default: break;
+        }
+        return c;
+    case 33: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 270: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); kids[2] = RC_KID_symbolic(x, 2); break;
+        case 271: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 272: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        default: break;
+        }
+        return c;
+    case 34: c = RC_TAG_symbolic(x);
+        switch (c) {
+        default: break;
+        }
+        return c;
+    case 35: c = RC_TAG_symbolic(x);
+        switch (c) {
+        default: break;
+        }
+        return c;
+    case 36: c = RC_TAG_symbolic(x);
+        switch (c) {
+        default: break;
+        }
+        return c;
+    case 37: c = RC_TAG_symbolic(x);
+        switch (c) {
+        default: break;
+        }
+        return c;
+    case 38: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 352: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        default: break;
+        }
+        return c;
+    case 39: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 353: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); kids[2] = RC_KID_symbolic(x, 2); break;
+        default: break;
+        }
+        return c;
+    case 40: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 355: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        default: break;
+        }
+        return c;
+    case 41: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 390: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 391: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 392: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 393: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        default: break;
+        }
+        return c;
+    case 42: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 395: kids[0] = RC_KID_symbolic(x, 0); break;
+        default: break;
+        }
+        return c;
+    case 43: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 399: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); kids[2] = RC_KID_symbolic(x, 2); break;
+        default: break;
+        }
+        return c;
+    case 44: c = RC_TAG_table(x);
+        switch (c) {
+        case 402: kids[0] = RC_KID_table(x, 0); kids[1] = RC_KID_table(x, 1); break;
+        default: break;
+        }
+        return c;
+    case 45: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 408: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); kids[2] = RC_KID_symbolic(x, 2); kids[3] = RC_KID_symbolic(x, 3); break;
+        default: break;
+        }
+        return c;
+    case 46: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 410: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); kids[2] = RC_KID_symbolic(x, 2); break;
+        default: break;
+        }
+        return c;
+    case 47: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 411: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); kids[2] = RC_KID_symbolic(x, 2); kids[3] = RC_KID_symbolic(x, 3); kids[4] = RC_KID_symbolic(x, 4); kids[5] = RC_KID_symbolic(x, 5); break;
+        default: break;
+        }
+        return c;
+    case 48: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 412: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); kids[2] = RC_KID_symbolic(x, 2); break;
+        default: break;
+        }
+        return c;
+    case 49: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 413: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); kids[2] = RC_KID_symbolic(x, 2); break;
+        default: break;
+        }
+        return c;
+    case 50: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 415: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 416: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 417: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 418: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 419: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 420: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 421: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 422: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 423: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 424: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 425: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 426: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 427: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 428: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 429: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 430: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 431: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 432: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 433: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 434: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 435: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 436: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); kids[2] = RC_KID_symbolic(x, 2); kids[3] = RC_KID_symbolic(x, 3); break;
+        case 437: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 438: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); kids[2] = RC_KID_symbolic(x, 2); break;
+        case 439: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); kids[2] = RC_KID_symbolic(x, 2); break;
+        case 440: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 442: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 443: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 444: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 445: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 446: kids[0] = RC_KID_symbolic(x, 0); break;
+        default: break;
+        }
+        return c;
+    case 51: c = RC_TAG_records(x);
+        switch (c) {
+        case 448: kids[0] = RC_KID_records(x, 0); kids[1] = RC_KID_records(x, 1); break;
+        default: break;
+        }
+        return c;
+    case 52: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 449: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        default: break;
+        }
+        return c;
+    case 53: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 452: kids[0] = RC_KID_symbolic(x, 0); break;
+        default: break;
+        }
+        return c;
+    case 54: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 453: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); kids[2] = RC_KID_symbolic(x, 2); break;
+        default: break;
+        }
+        return c;
+    case 55: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 454: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 455: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); kids[2] = RC_KID_symbolic(x, 2); break;
+        case 456: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 457: kids[0] = RC_KID_symbolic(x, 0); break;
+        default: break;
+        }
+        return c;
+    case 56: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 458: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 459: kids[0] = RC_KID_symbolic(x, 0); break;
+        default: break;
+        }
+        return c;
+    case 57: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 462: kids[0] = RC_KID_symbolic(x, 0); break;
+        default: break;
+        }
+        return c;
+    case 58: c = RC_TAG_symbolic(x);
+        switch (c) {
+        case 463: kids[0] = RC_KID_symbolic(x, 0); break;
+        case 464: kids[0] = RC_KID_symbolic(x, 0); kids[1] = RC_KID_symbolic(x, 1); break;
+        case 466: kids[0] = RC_KID_symbolic(x, 0); break;
+        default: break;
+        }
+        return c;
+    case 59: c = RC_TAG_symbolic(x);
+        switch (c) {
+        default: break;
+        }
+        return c;
+    default: return -1;
+    }
+}
+bool rc_value_u64(int sort, T *x, uint64_t *v) {
+    switch (sort) {
+    case 6: *v = RC_IMM_VAL(x); return true;
+    default: (void)x; (void)v; return false;
+    }
+}
+bool rc_value_bytes(int sort, T *x, const uint8_t **p, size_t *n) {
+    switch (sort) {
+    case 4: *p = rc_ibytes(x); *n = rc_ibytes_len(x); return true;
+    default: (void)x; (void)p; (void)n; return false;
+    }
+}
+static size_t rcw_0(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_1(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_2(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_3(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_4(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_5(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_6(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_7(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_8(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_9(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_10(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_11(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_12(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_13(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_14(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_15(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_16(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_17(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_18(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_19(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_20(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_21(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_22(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_23(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_24(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_25(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_26(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_27(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_28(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_29(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_30(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_31(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_32(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_33(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_34(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_35(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_36(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_37(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_38(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_39(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_40(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_41(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_42(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_43(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_44(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_45(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_46(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_47(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_48(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_49(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_50(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_51(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_52(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_53(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_54(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_55(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_56(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_57(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_58(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_59(T *x, RcItem *b, size_t at, size_t cap);
+static size_t rcw_0(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 0: return at;
+        case 1: return at;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_1(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 2: return at;
+        case 3: return at;
+        case 4: return at;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_2(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 5: return at;
+        case 6: return at;
+        case 7: return at;
+        case 8: return at;
+        case 9: return at;
+        case 10: return at;
+        case 11: return at;
+        case 12: return at;
+        case 13: return at;
+        case 14: return at;
+        case 15: return at;
+        case 16: return at;
+        case 17: return at;
+        case 18: return at;
+        case 19: return at;
+        case 20: return at;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_3(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 22: b[at - 1].n = 2;
+            at = rcw_2(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_2(RC_KID_symbolic(x, 1), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_4(T *x, RcItem *b, size_t at, size_t cap) {
+    if (at == cap) return (size_t)-1;
+    b[at].ctor = -2; b[at].v = 0; b[at].p = rc_ibytes(x); b[at].n = (uint32_t)rc_ibytes_len(x);
+    return at + 1;
+}
+static size_t rcw_5(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 25: return at;
+        case 26: b[at - 1].n = 2;
+            at = rcw_4(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            x = RC_KID_symbolic(x, 1);
+            continue;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_6(T *x, RcItem *b, size_t at, size_t cap) {
+    if (at == cap) return (size_t)-1;
+    b[at].ctor = -1; b[at].v = RC_IMM_VAL(x); b[at].p = 0; b[at].n = 0;
+    return at + 1;
+}
+static size_t rcw_7(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 30: return at;
+        case 31: b[at - 1].n = 2;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            x = RC_KID_symbolic(x, 1);
+            continue;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_8(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 32: return at;
+        case 33: b[at - 1].n = 3;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_6(RC_KID_symbolic(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            x = RC_KID_symbolic(x, 2);
+            continue;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_9(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 21: b[at - 1].n = 4;
+            at = rcw_0(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_0(RC_KID_symbolic(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_0(RC_KID_symbolic(x, 2), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_0(RC_KID_symbolic(x, 3), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_10(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_intern(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 86: b[at - 1].n = 1;
+            return rcw_4(RC_KID_intern(x, 0), b, at, cap);
+        case 87: b[at - 1].n = 2;
+            at = rcw_4(RC_KID_intern(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_11(RC_KID_intern(x, 1), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_11(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_intern(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 88: return at;
+        case 89: b[at - 1].n = 2;
+            at = rcw_10(RC_KID_intern(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            x = RC_KID_intern(x, 1);
+            continue;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_12(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_intern(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 90: b[at - 1].n = 2;
+            at = rcw_4(RC_KID_intern(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_10(RC_KID_intern(x, 1), b, at, cap);
+        case 91: b[at - 1].n = 2;
+            at = rcw_4(RC_KID_intern(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_10(RC_KID_intern(x, 1), b, at, cap);
+        case 92: b[at - 1].n = 2;
+            at = rcw_12(RC_KID_intern(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            x = RC_KID_intern(x, 1);
+            continue;
+        case 93: b[at - 1].n = 2;
+            at = rcw_12(RC_KID_intern(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            x = RC_KID_intern(x, 1);
+            continue;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_13(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_intern(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 94: return at;
+        case 95: b[at - 1].n = 2;
+            at = rcw_12(RC_KID_intern(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            x = RC_KID_intern(x, 1);
+            continue;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_14(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 96: b[at - 1].n = 2;
+            at = rcw_13(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_12(RC_KID_symbolic(x, 1), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_15(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 97: return at;
+        case 98: b[at - 1].n = 2;
+            at = rcw_14(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            x = RC_KID_symbolic(x, 1);
+            continue;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_16(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_intern(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 99: return at;
+        case 100: b[at - 1].n = 3;
+            at = rcw_10(RC_KID_intern(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_10(RC_KID_intern(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            x = RC_KID_intern(x, 2);
+            continue;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_17(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_intern(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 101: return at;
+        case 102: b[at - 1].n = 3;
+            at = rcw_12(RC_KID_intern(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_12(RC_KID_intern(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            x = RC_KID_intern(x, 2);
+            continue;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_18(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 103: b[at - 1].n = 2;
+            at = rcw_10(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_10(RC_KID_symbolic(x, 1), b, at, cap);
+        case 104: return at;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_19(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 105: b[at - 1].n = 3;
+            at = rcw_12(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_12(RC_KID_symbolic(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_12(RC_KID_symbolic(x, 2), b, at, cap);
+        case 106: return at;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_20(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 184: b[at - 1].n = 1;
+            return rcw_12(RC_KID_symbolic(x, 0), b, at, cap);
+        case 185: b[at - 1].n = 1;
+            return rcw_12(RC_KID_symbolic(x, 0), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_21(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 167: b[at - 1].n = 1;
+            return rcw_12(RC_KID_symbolic(x, 0), b, at, cap);
+        case 168: return at;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_22(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 213: b[at - 1].n = 1;
+            return rcw_14(RC_KID_symbolic(x, 0), b, at, cap);
+        case 214: b[at - 1].n = 1;
+            return rcw_34(RC_KID_symbolic(x, 0), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_23(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 215: b[at - 1].n = 1;
+            return rcw_12(RC_KID_symbolic(x, 0), b, at, cap);
+        case 216: b[at - 1].n = 1;
+            return rcw_34(RC_KID_symbolic(x, 0), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_24(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 217: b[at - 1].n = 1;
+            return rcw_10(RC_KID_symbolic(x, 0), b, at, cap);
+        case 218: b[at - 1].n = 1;
+            return rcw_34(RC_KID_symbolic(x, 0), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_25(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 219: b[at - 1].n = 1;
+            return rcw_16(RC_KID_symbolic(x, 0), b, at, cap);
+        case 220: return at;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_26(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 107: b[at - 1].n = 1;
+            return rcw_10(RC_KID_symbolic(x, 0), b, at, cap);
+        case 108: return at;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_27(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 109: b[at - 1].n = 1;
+            return rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+        case 110: return at;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_28(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 261: return at;
+        case 262: b[at - 1].n = 3;
+            at = rcw_4(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_6(RC_KID_symbolic(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            x = RC_KID_symbolic(x, 2);
+            continue;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_29(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 263: return at;
+        case 264: b[at - 1].n = 3;
+            at = rcw_4(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_10(RC_KID_symbolic(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            x = RC_KID_symbolic(x, 2);
+            continue;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_30(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 265: b[at - 1].n = 4;
+            at = rcw_28(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_29(RC_KID_symbolic(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_15(RC_KID_symbolic(x, 2), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_15(RC_KID_symbolic(x, 3), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_31(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 266: b[at - 1].n = 1;
+            return rcw_30(RC_KID_symbolic(x, 0), b, at, cap);
+        case 267: b[at - 1].n = 1;
+            return rcw_34(RC_KID_symbolic(x, 0), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_32(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 268: b[at - 1].n = 2;
+            at = rcw_30(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_14(RC_KID_symbolic(x, 1), b, at, cap);
+        case 269: b[at - 1].n = 1;
+            return rcw_34(RC_KID_symbolic(x, 0), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_33(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 270: b[at - 1].n = 3;
+            at = rcw_30(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_14(RC_KID_symbolic(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_14(RC_KID_symbolic(x, 2), b, at, cap);
+        case 271: b[at - 1].n = 1;
+            return rcw_34(RC_KID_symbolic(x, 0), b, at, cap);
+        case 272: b[at - 1].n = 2;
+            at = rcw_30(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_34(RC_KID_symbolic(x, 1), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_34(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 299: return at;
+        case 300: return at;
+        case 301: return at;
+        case 302: return at;
+        case 303: return at;
+        case 304: return at;
+        case 305: return at;
+        case 306: return at;
+        case 307: return at;
+        case 308: return at;
+        case 309: return at;
+        case 310: return at;
+        case 311: return at;
+        case 312: return at;
+        case 313: return at;
+        case 314: return at;
+        case 315: return at;
+        case 316: return at;
+        case 317: return at;
+        case 318: return at;
+        case 319: return at;
+        case 320: return at;
+        case 321: return at;
+        case 322: return at;
+        case 323: return at;
+        case 324: return at;
+        case 325: return at;
+        case 326: return at;
+        case 327: return at;
+        case 328: return at;
+        case 329: return at;
+        case 330: return at;
+        case 331: return at;
+        case 332: return at;
+        case 333: return at;
+        case 334: return at;
+        case 335: return at;
+        case 336: return at;
+        case 337: return at;
+        case 338: return at;
+        case 339: return at;
+        case 340: return at;
+        case 341: return at;
+        case 342: return at;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_35(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 343: return at;
+        case 344: return at;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_36(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 345: return at;
+        case 346: return at;
+        case 347: return at;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_37(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 348: return at;
+        case 349: return at;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_38(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 352: b[at - 1].n = 2;
+            at = rcw_5(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_5(RC_KID_symbolic(x, 1), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_39(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 353: b[at - 1].n = 3;
+            at = rcw_4(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_10(RC_KID_symbolic(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_12(RC_KID_symbolic(x, 2), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_40(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 354: return at;
+        case 355: b[at - 1].n = 2;
+            at = rcw_39(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            x = RC_KID_symbolic(x, 1);
+            continue;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_41(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 390: b[at - 1].n = 1;
+            return rcw_4(RC_KID_symbolic(x, 0), b, at, cap);
+        case 391: b[at - 1].n = 1;
+            return rcw_10(RC_KID_symbolic(x, 0), b, at, cap);
+        case 392: b[at - 1].n = 1;
+            return rcw_12(RC_KID_symbolic(x, 0), b, at, cap);
+        case 393: b[at - 1].n = 2;
+            at = rcw_14(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_7(RC_KID_symbolic(x, 1), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_42(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 394: return at;
+        case 395: b[at - 1].n = 1;
+            return rcw_41(RC_KID_symbolic(x, 0), b, at, cap);
+        case 396: return at;
+        case 397: return at;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_43(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 398: return at;
+        case 399: b[at - 1].n = 3;
+            at = rcw_42(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_43(RC_KID_symbolic(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            x = RC_KID_symbolic(x, 2);
+            continue;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_44(T *x, RcItem *b, size_t at, size_t cap) {
+    (void)x; (void)b; (void)at; (void)cap;
+    return (size_t)-1;
+}
+static size_t rcw_45(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 408: b[at - 1].n = 4;
+            at = rcw_44(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_44(RC_KID_symbolic(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_44(RC_KID_symbolic(x, 2), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_44(RC_KID_symbolic(x, 3), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_46(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 409: return at;
+        case 410: b[at - 1].n = 3;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_4(RC_KID_symbolic(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            x = RC_KID_symbolic(x, 2);
+            continue;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_47(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 411: b[at - 1].n = 6;
+            at = rcw_37(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_0(RC_KID_symbolic(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_15(RC_KID_symbolic(x, 2), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_46(RC_KID_symbolic(x, 3), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_6(RC_KID_symbolic(x, 4), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 5), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_48(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 412: b[at - 1].n = 3;
+            at = rcw_30(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_36(RC_KID_symbolic(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_38(RC_KID_symbolic(x, 2), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_49(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 413: b[at - 1].n = 3;
+            at = rcw_48(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_45(RC_KID_symbolic(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_47(RC_KID_symbolic(x, 2), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_50(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 415: b[at - 1].n = 1;
+            return rcw_4(RC_KID_symbolic(x, 0), b, at, cap);
+        case 416: b[at - 1].n = 1;
+            return rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+        case 417: b[at - 1].n = 2;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_7(RC_KID_symbolic(x, 1), b, at, cap);
+        case 418: b[at - 1].n = 2;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 1), b, at, cap);
+        case 419: b[at - 1].n = 2;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 1), b, at, cap);
+        case 420: b[at - 1].n = 2;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 1), b, at, cap);
+        case 421: b[at - 1].n = 2;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 1), b, at, cap);
+        case 422: b[at - 1].n = 1;
+            return rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+        case 423: b[at - 1].n = 2;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 1), b, at, cap);
+        case 424: b[at - 1].n = 2;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 1), b, at, cap);
+        case 425: b[at - 1].n = 2;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 1), b, at, cap);
+        case 426: b[at - 1].n = 1;
+            return rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+        case 427: b[at - 1].n = 1;
+            return rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+        case 428: b[at - 1].n = 2;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 1), b, at, cap);
+        case 429: b[at - 1].n = 2;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 1), b, at, cap);
+        case 430: b[at - 1].n = 2;
+            at = rcw_8(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 1), b, at, cap);
+        case 431: b[at - 1].n = 2;
+            at = rcw_8(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 1), b, at, cap);
+        case 432: b[at - 1].n = 2;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 1), b, at, cap);
+        case 433: b[at - 1].n = 2;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 1), b, at, cap);
+        case 434: b[at - 1].n = 1;
+            return rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+        case 435: b[at - 1].n = 1;
+            return rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+        case 436: b[at - 1].n = 4;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_6(RC_KID_symbolic(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_6(RC_KID_symbolic(x, 2), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 3), b, at, cap);
+        case 437: b[at - 1].n = 1;
+            return rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+        case 438: b[at - 1].n = 3;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_7(RC_KID_symbolic(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 2), b, at, cap);
+        case 439: b[at - 1].n = 3;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_7(RC_KID_symbolic(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 2), b, at, cap);
+        case 440: b[at - 1].n = 2;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_7(RC_KID_symbolic(x, 1), b, at, cap);
+        case 441: return at;
+        case 442: b[at - 1].n = 2;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 1), b, at, cap);
+        case 443: b[at - 1].n = 1;
+            return rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+        case 444: b[at - 1].n = 1;
+            return rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+        case 445: b[at - 1].n = 1;
+            return rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+        case 446: b[at - 1].n = 1;
+            return rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_51(T *x, RcItem *b, size_t at, size_t cap) {
+    (void)x; (void)b; (void)at; (void)cap;
+    return (size_t)-1;
+}
+static size_t rcw_52(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 449: b[at - 1].n = 2;
+            at = rcw_36(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_37(RC_KID_symbolic(x, 1), b, at, cap);
+        case 450: return at;
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_53(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 451: return at;
+        case 452: b[at - 1].n = 1;
+            return rcw_34(RC_KID_symbolic(x, 0), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_54(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 453: b[at - 1].n = 3;
+            at = rcw_51(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_52(RC_KID_symbolic(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_53(RC_KID_symbolic(x, 2), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_55(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 454: b[at - 1].n = 2;
+            at = rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_15(RC_KID_symbolic(x, 1), b, at, cap);
+        case 455: b[at - 1].n = 3;
+            at = rcw_35(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            at = rcw_34(RC_KID_symbolic(x, 1), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 2), b, at, cap);
+        case 456: b[at - 1].n = 2;
+            at = rcw_34(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_6(RC_KID_symbolic(x, 1), b, at, cap);
+        case 457: b[at - 1].n = 1;
+            return rcw_6(RC_KID_symbolic(x, 0), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_56(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 458: b[at - 1].n = 1;
+            return rcw_49(RC_KID_symbolic(x, 0), b, at, cap);
+        case 459: b[at - 1].n = 1;
+            return rcw_55(RC_KID_symbolic(x, 0), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_57(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 460: return at;
+        case 461: return at;
+        case 462: b[at - 1].n = 1;
+            return rcw_34(RC_KID_symbolic(x, 0), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_58(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 463: b[at - 1].n = 1;
+            return rcw_49(RC_KID_symbolic(x, 0), b, at, cap);
+        case 464: b[at - 1].n = 2;
+            at = rcw_35(RC_KID_symbolic(x, 0), b, at, cap);
+            if (at == (size_t)-1) return at;
+            return rcw_34(RC_KID_symbolic(x, 1), b, at, cap);
+        case 465: return at;
+        case 466: b[at - 1].n = 1;
+            return rcw_34(RC_KID_symbolic(x, 0), b, at, cap);
+        default: return (size_t)-1;
+        }
+    }
+}
+static size_t rcw_59(T *x, RcItem *b, size_t at, size_t cap) {
+    for (;;) {
+        if (at == cap) return (size_t)-1;
+        uint16_t c = RC_TAG_symbolic(x);
+        b[at].ctor = c; b[at].v = 0; b[at].p = 0; b[at].n = 0;
+        at++;
+        switch (c) {
+        case 467: return at;
+        case 468: return at;
+        case 469: return at;
+        case 470: return at;
+        case 471: return at;
+        default: return (size_t)-1;
+        }
+    }
+}
+size_t rc_value_items(int sort, T *x, RcItem *buf, size_t cap) {
+    switch (sort) {
+    case 0: return rcw_0(x, buf, 0, cap);
+    case 1: return rcw_1(x, buf, 0, cap);
+    case 2: return rcw_2(x, buf, 0, cap);
+    case 3: return rcw_3(x, buf, 0, cap);
+    case 4: return rcw_4(x, buf, 0, cap);
+    case 5: return rcw_5(x, buf, 0, cap);
+    case 6: return rcw_6(x, buf, 0, cap);
+    case 7: return rcw_7(x, buf, 0, cap);
+    case 8: return rcw_8(x, buf, 0, cap);
+    case 9: return rcw_9(x, buf, 0, cap);
+    case 10: return rcw_10(x, buf, 0, cap);
+    case 11: return rcw_11(x, buf, 0, cap);
+    case 12: return rcw_12(x, buf, 0, cap);
+    case 13: return rcw_13(x, buf, 0, cap);
+    case 14: return rcw_14(x, buf, 0, cap);
+    case 15: return rcw_15(x, buf, 0, cap);
+    case 16: return rcw_16(x, buf, 0, cap);
+    case 17: return rcw_17(x, buf, 0, cap);
+    case 18: return rcw_18(x, buf, 0, cap);
+    case 19: return rcw_19(x, buf, 0, cap);
+    case 20: return rcw_20(x, buf, 0, cap);
+    case 21: return rcw_21(x, buf, 0, cap);
+    case 22: return rcw_22(x, buf, 0, cap);
+    case 23: return rcw_23(x, buf, 0, cap);
+    case 24: return rcw_24(x, buf, 0, cap);
+    case 25: return rcw_25(x, buf, 0, cap);
+    case 26: return rcw_26(x, buf, 0, cap);
+    case 27: return rcw_27(x, buf, 0, cap);
+    case 28: return rcw_28(x, buf, 0, cap);
+    case 29: return rcw_29(x, buf, 0, cap);
+    case 30: return rcw_30(x, buf, 0, cap);
+    case 31: return rcw_31(x, buf, 0, cap);
+    case 32: return rcw_32(x, buf, 0, cap);
+    case 33: return rcw_33(x, buf, 0, cap);
+    case 34: return rcw_34(x, buf, 0, cap);
+    case 35: return rcw_35(x, buf, 0, cap);
+    case 36: return rcw_36(x, buf, 0, cap);
+    case 37: return rcw_37(x, buf, 0, cap);
+    case 38: return rcw_38(x, buf, 0, cap);
+    case 39: return rcw_39(x, buf, 0, cap);
+    case 40: return rcw_40(x, buf, 0, cap);
+    case 41: return rcw_41(x, buf, 0, cap);
+    case 42: return rcw_42(x, buf, 0, cap);
+    case 43: return rcw_43(x, buf, 0, cap);
+    case 44: return rcw_44(x, buf, 0, cap);
+    case 45: return rcw_45(x, buf, 0, cap);
+    case 46: return rcw_46(x, buf, 0, cap);
+    case 47: return rcw_47(x, buf, 0, cap);
+    case 48: return rcw_48(x, buf, 0, cap);
+    case 49: return rcw_49(x, buf, 0, cap);
+    case 50: return rcw_50(x, buf, 0, cap);
+    case 51: return rcw_51(x, buf, 0, cap);
+    case 52: return rcw_52(x, buf, 0, cap);
+    case 53: return rcw_53(x, buf, 0, cap);
+    case 54: return rcw_54(x, buf, 0, cap);
+    case 55: return rcw_55(x, buf, 0, cap);
+    case 56: return rcw_56(x, buf, 0, cap);
+    case 57: return rcw_57(x, buf, 0, cap);
+    case 58: return rcw_58(x, buf, 0, cap);
+    case 59: return rcw_59(x, buf, 0, cap);
+    default: return (size_t)-1;
+    }
+}
+size_t rc_list_items(int sort, T **cursor, RcItem *buf, size_t cap) {
+    switch (sort) {
+    case 5: {
+        size_t at = 0;
+        for (T *x = *cursor; RC_TAG_symbolic(x) == 26; x = RC_KID_symbolic(x, 1)) {
+            size_t m = rcw_4(RC_KID_symbolic(x, 0), buf, at, cap);
+            if (m == (size_t)-1) break;
+            at = m;
+            *cursor = RC_KID_symbolic(x, 1);
+        }
+        return at;
+    }
+    case 7: {
+        size_t at = 0;
+        for (T *x = *cursor; RC_TAG_symbolic(x) == 31; x = RC_KID_symbolic(x, 1)) {
+            size_t m = rcw_6(RC_KID_symbolic(x, 0), buf, at, cap);
+            if (m == (size_t)-1) break;
+            at = m;
+            *cursor = RC_KID_symbolic(x, 1);
+        }
+        return at;
+    }
+    case 11: {
+        size_t at = 0;
+        for (T *x = *cursor; RC_TAG_intern(x) == 89; x = RC_KID_intern(x, 1)) {
+            size_t m = rcw_10(RC_KID_intern(x, 0), buf, at, cap);
+            if (m == (size_t)-1) break;
+            at = m;
+            *cursor = RC_KID_intern(x, 1);
+        }
+        return at;
+    }
+    case 13: {
+        size_t at = 0;
+        for (T *x = *cursor; RC_TAG_intern(x) == 95; x = RC_KID_intern(x, 1)) {
+            size_t m = rcw_12(RC_KID_intern(x, 0), buf, at, cap);
+            if (m == (size_t)-1) break;
+            at = m;
+            *cursor = RC_KID_intern(x, 1);
+        }
+        return at;
+    }
+    case 15: {
+        size_t at = 0;
+        for (T *x = *cursor; RC_TAG_symbolic(x) == 98; x = RC_KID_symbolic(x, 1)) {
+            size_t m = rcw_14(RC_KID_symbolic(x, 0), buf, at, cap);
+            if (m == (size_t)-1) break;
+            at = m;
+            *cursor = RC_KID_symbolic(x, 1);
+        }
+        return at;
+    }
+    case 40: {
+        size_t at = 0;
+        for (T *x = *cursor; RC_TAG_symbolic(x) == 355; x = RC_KID_symbolic(x, 1)) {
+            size_t m = rcw_39(RC_KID_symbolic(x, 0), buf, at, cap);
+            if (m == (size_t)-1) break;
+            at = m;
+            *cursor = RC_KID_symbolic(x, 1);
+        }
+        return at;
+    }
+    default: (void)cursor; (void)buf; (void)cap; return 0;
+    }
+}
+extern const uint8_t rc_ctor_arity[];
+extern const uint16_t rc_ctor_asort_off[], rc_ctor_asort[];
+bool rc_value_equal(int sort, T *a, T *b) {
+    T *ka[6], *kb[6];
+    for (;;) {
+        if (a == b) return true;
+        if (!a || !b) return false;
+        int ca = rc_view(sort, a, ka), cb = rc_view(sort, b, kb);
+        if (ca != cb || ca < 0) return false;
+        int n = rc_ctor_arity[ca];
+        if (!n) return true;
+        const uint16_t *as = &rc_ctor_asort[rc_ctor_asort_off[ca]];
+        for (int i = 0; i + 1 < n; i++) if (!rc_value_equal(as[i], ka[i], kb[i])) return false;
+        sort = as[n - 1]; a = ka[n - 1]; b = kb[n - 1];
+    }
+}
+void rc_components_init(void) {
+    static const uint16_t nib[16] = {5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20};
+    rc_bytes_init(23, 24, 22, nib);
+    rc_table_init(402, 398, 399, 394);
+}
+
+const int rc_nctors = 530, rc_nrules = 792, rc_nsorts = 60, rc_nnative_ops = 16;
 const char *const rc_sort_name[] = {"Flag", "Ord", "Nib", "Byte", "Str", "Strs", "Nat", "Ids", "IdPairs", "Bits4", "Type", "Tys", "Term", "Tms", "Thm", "Thms", "TyPairs", "TmPairs", "FunTy", "SplitEq", "InstR", "VsR", "KR", "TR", "YR", "MatchR", "OptTy", "OptNat", "TyCons", "Cons", "Thy", "ThyR", "ThyThmR", "TydefR", "Reason", "Status", "Policy", "Mode", "Std", "StdDef", "StdDefs", "Obj", "Cell", "Trie", "Table", "Tables", "Labels", "Book", "Kern", "Replay", "Record", "Records", "Header", "Terminal", "Decoded", "Verdict", "Step", "Validity", "Exec", "Out"};
 const char *const rc_ctor_name[] = {
     "hl:yes",
@@ -10773,7 +12423,7 @@ const uint16_t rc_ctor_sort[] = {0,0,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,9,3,4
 const uint8_t rc_ctor_judgment[] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1,2,2,2,2,2,2,2,2,2,1,1,1,0,0,1,1,1,1,1,1,2,2,1,1,1,2,2,2,1,0,0,1,2,1,2,1,1,1,1,2,2,1,1,1,1,2,2,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1,1,2,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2,2,1,2,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,1,0,0,0,0,2,1,1,1,1,1,2,2,2,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,1,1,1,1,2,1,1,1,0,0,0,0,0,0,0,0,0,0,2,2,0,2,2,2,2,2,0,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,2,2,2,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1,1,1,1,1,1,1,1,2,2,2,1,2,2,2,2,2,1,1,2,2,1,2,1,2,2,2,2,1,1,2,2};
 const uint16_t rc_ctor_asort_off[] = {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,5,7,7,9,9,11,11,12,13,13,15,15,18,19,21,23,25,26,28,29,31,33,35,38,40,41,43,46,47,49,51,56,57,58,60,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,64,66,66,68,70,72,74,76,76,78,80,80,82,82,85,85,88,90,90,93,93,94,94,95,95,95,95,97,98,101,103,106,108,111,113,117,120,122,125,127,129,132,134,137,139,142,144,146,149,150,152,156,157,158,159,162,167,169,171,173,176,178,181,183,185,188,191,196,197,198,199,201,204,206,209,212,214,217,218,220,224,225,225,227,230,231,233,235,237,239,244,247,252,257,260,265,269,271,272,273,276,278,282,284,290,297,299,301,302,307,309,312,316,320,323,328,330,335,337,341,343,345,349,351,354,356,359,360,361,362,363,364,365,366,366,369,372,375,378,381,384,387,391,393,397,400,403,405,409,411,414,417,419,420,422,426,432,434,438,445,452,454,457,462,463,466,467,469,471,475,479,481,483,485,489,489,492,492,495,499,500,501,503,504,507,508,510,510,512,516,518,522,525,529,532,536,538,541,543,545,550,555,559,564,571,576,583,590,598,607,613,615,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,616,618,619,621,624,624,626,626,626,626,626,626,626,626,626,626,626,626,626,626,626,626,626,628,630,633,636,638,641,644,647,650,653,655,657,662,670,675,677,680,684,685,686,687,689,689,690,690,690,690,693,695,698,700,702,704,707,708,708,712,712,715,721,724,727,729,730,731,733,735,737,739,741,742,744,746,748,749,750,752,754,756,758,760,762,763,764,768,769,772,775,777,777,779,780,781,782,783,783,785,787,787,787,788,791,793,796,798,799,800,801,801,801,802,803,805,805,806,806,806,806,806,806,808,811,814,815,819,821,823,826,829,834,836,837,840,842,843,844,846,848,850,851,853,854,856,857,859,861,863,865,867,869,871,873,875,877,879,881,884,886,888,890,893,897,901,904,909,913,916,919,922,925,927,930,931,933,936,939,941};
 const uint16_t rc_ctor_asort[] = {0,0,0,0,0,2,2,3,4,4,5,6,6,6,7,6,6,8,0,0,0,0,0,1,1,1,0,0,2,2,2,3,3,4,4,1,4,4,4,4,4,4,5,0,4,5,6,6,6,7,7,1,6,7,6,7,7,7,7,7,1,7,7,4,4,11,10,11,4,10,4,10,12,12,12,12,12,13,13,12,14,15,10,10,16,12,12,17,10,10,12,12,12,10,6,10,10,10,0,10,10,10,10,1,11,11,11,11,1,11,11,10,10,4,10,4,10,1,10,10,12,12,1,12,12,12,12,13,13,0,13,13,10,11,0,10,11,10,11,0,10,11,11,11,11,11,0,11,11,11,10,11,1,10,10,11,11,10,11,10,16,10,0,10,10,16,10,16,10,16,11,12,13,0,12,13,12,13,0,12,13,13,13,13,13,0,12,13,12,17,12,0,12,12,17,12,12,12,13,13,12,0,13,12,12,12,0,12,12,0,12,12,12,13,0,12,13,12,13,12,0,13,4,10,12,17,12,0,17,12,17,0,17,12,12,17,12,17,12,0,12,12,17,12,17,12,12,0,17,12,12,12,0,17,12,12,12,17,12,12,0,12,17,12,12,0,17,12,12,16,12,12,12,17,16,12,0,12,20,17,16,12,12,20,20,17,16,12,12,12,0,12,17,16,12,12,12,16,13,12,12,12,0,4,10,12,12,12,12,17,12,12,1,17,12,12,1,17,12,12,17,12,12,0,0,17,12,12,13,13,1,12,13,12,13,12,13,1,12,12,13,16,13,17,13,0,13,12,13,12,13,1,12,13,13,13,0,13,13,14,34,12,34,10,34,16,30,4,11,27,4,11,1,4,11,30,4,10,26,4,10,25,4,10,10,10,16,26,10,10,16,0,16,0,11,11,16,11,11,16,25,11,11,10,16,0,10,10,16,12,12,18,12,12,0,12,12,12,12,12,14,14,13,19,13,19,1,13,13,12,12,12,14,14,13,19,13,19,18,13,13,12,12,12,12,0,13,13,12,12,12,12,12,14,19,12,13,0,12,13,12,12,12,0,12,12,12,0,12,14,14,19,13,13,12,1,13,13,12,14,14,16,14,17,14,0,17,13,12,4,6,28,4,10,29,28,29,15,15,30,34,30,14,34,30,14,14,34,30,34,28,4,0,6,28,4,29,4,0,10,29,4,30,4,6,27,30,4,6,30,4,10,26,30,4,10,30,12,0,30,12,30,12,19,30,0,30,4,10,12,0,30,4,10,12,31,4,10,12,30,4,4,4,14,0,30,4,4,4,13,12,30,4,4,4,12,0,30,4,4,4,12,12,31,4,4,4,12,12,11,31,30,4,10,4,12,10,10,31,30,4,10,4,10,12,10,10,30,12,12,12,10,10,29,4,26,36,36,6,5,5,4,10,12,39,40,38,10,38,11,0,38,11,0,38,11,38,12,0,38,12,38,4,6,0,38,4,38,4,10,0,38,4,38,12,19,38,40,4,10,12,38,0,10,12,40,4,10,12,38,0,1,4,12,38,38,12,13,38,12,1,13,38,12,4,10,12,14,7,41,42,43,43,43,6,43,6,42,6,43,44,6,44,42,44,6,42,44,44,44,44,44,6,4,46,37,0,15,46,6,6,30,36,38,48,45,47,36,37,4,6,6,7,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,8,6,8,6,6,6,6,6,6,6,6,6,6,6,6,6,7,6,6,7,6,6,7,6,6,6,6,6,6,50,51,36,37,34,51,52,53,6,15,35,34,6,34,6,6,49,55,34,49,35,34,34,36,54,49,51,53,56,51,53,49,0,6,6,15,15,15,49,50,57,49,50,58,49,50,37,35,34,49,50,37,49,49,49,59,0,45,59,50,49,45,50,57,57,44,6,42,44,6,42,44,6,42,44,7,44,8,45,6,45,6,45,6,45,6,45,7,45,7,45,8,45,8,49,10,49,12,49,14,7,49,50,24,49,23,49,22,7,49,31,49,4,6,31,49,4,10,32,49,12,36,49,30,14,12,0,49,30,14,49,30,14,32,49,12,33,49,7,1,49,6,36,49,1,36,49,36,0,49,14,13,12,1,13,13,7,7,1,7,7};
-const uint8_t rc_sort_rep[] = {0,0,0,0,4,0,2,0,0,0,4,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0};
+const uint8_t rc_sort_rep[] = {0,0,0,0,6,0,2,0,0,0,5,5,5,5,0,0,5,5,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,7,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0};
 const char *const rc_rule_label[] = {
     "not-yes",
     "not-no",
@@ -11572,10 +13222,11 @@ const uint16_t rc_rule_head[] = {34,34,37,37,37,38,38,38,39,39,39,39,40,40,40,40
 const int8_t rc_rule_layer[] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5};
 const int rc_nlayers = 6;
 const char *const rc_layer_name[] = {"data", "syntax", "kernel", "rules", "theory", "replay"};
-const char *const rc_native_op_block[] = {"name equality", "name order", "name prime", "numeral order", "numeral successor", "type equality", "term equality", "type order", "term order", "alphaorder", "type_of", "mk_comb", "mk_abs", "safe_mk_eq", "frees", "freesin", "vfree_in", "type_vars_in_term", "tyvars", "variant", "vsubst", "vsubst recursion", "inst", "type_subst", "term_union", "term_remove", "term_image vsubst", "term_image inst", "table lookup", "table append", "table update", "table size", "empty table"};
-const char *const rc_native_op_label[] = {"proved", "proved", "proved", "proved", "proved", "proved", "proved", "checked", "checked", "checked", "checked", "checked", "checked", "checked", "checked", "checked", "checked", "checked", "checked", "checked", "checked", "checked", "checked", "checked", "checked", "checked", "checked", "checked", "proved", "proved", "proved", "proved", "proved"};
-const char *const rc_law_label[] = {"proved", "proved"};
+const char *const rc_native_op_block[] = {"name equality", "name order", "name prime", "numeral order", "numeral successor", "type equality", "term equality", "type order", "term order", "term_union", "term_remove", "table lookup", "table append", "table update", "table size", "empty table"};
+const char *const rc_native_op_label[] = {"proved", "proved", "proved", "proved", "proved", "proved", "proved", "proved", "proved", "proved", "proved", "proved", "proved", "proved", "proved", "proved"};
+const char *const rc_law_label[] = {"proved"};
 void rc_reset_constants(void) {
+    memset(rc_ground, 0, sizeof rc_ground);
     p57_done = 0;
     p58_done = 0;
     p59_done = 0;
@@ -11625,11 +13276,11 @@ void rc_reset_constants(void) {
     p370_done = 0;
     p371_done = 0;
 }
-const char *const rc_native_op_name[] = {"hl:str-eq", "hl:cmp-str", "hl:str-prime", "hl:cmp-nat", "hl:nat-inc", "hl:ty-eq", "hl:tm-eq", "hl:cmp-type", "hl:cmp-term", "hl:alphaorder", "hl:type-of", "hl:mk-comb", "hl:mk-abs", "hl:safe-mk-eq", "hl:frees", "hl:freesin", "hl:vfree-in", "hl:type-vars-in-term", "hl:tyvars", "hl:variant", "hl:vsubst", "hl:vsubst-rec", "hl:inst", "hl:type-subst", "hl:term-union", "hl:term-remove", "hl:term-image-vsubst", "hl:term-image-inst", "hl:table-get", "hl:table-put", "hl:table-set", "hl:table-next", "hl:empty-table"};
-const char *const rc_law_name[] = {"hl:cmp-types", "hl:tms-eq"};
-const char *const rc_law_justification[] = {"cmpTypes_refl, fastPath_sound", "tmsEq_refl, fastPath_sound"};
-const int rc_nlaws = 2;
-const char *const rc_native_op_justification[] = {"strEq_binding, names_eq_iff: interned names have equal bytes exactly when they are the same id; strEq_refines", "cmpStr_refines, nativeCmp_eq_memcmp; names_eq_iff (id to bytes); trusted: hk_name_cmp is memcmp of the common prefix then the lengths, and C memcmp compares unsigned", "strPrime_refines; names_eq_iff (id to bytes); trusted: hk_name_prime interns the bytes followed by 0x27", "cmpNat_refines; trusted: the comparison of uint64_t", "natInc_refines; checked at run time: the immediate range", "tyEq_binding: in an interning store ty-eq of two read-backs answers yes exactly when they are one node (interning_eq_iff, cmpType_eq_iff)", "tmEq_binding: in an interning store tm-eq of two read-backs answers yes exactly when they are one node (interning_eq_iff, cmpTerm_eq_iff)", "hk_ty_compare: OCaml compare on hol_type", "hk_tm_compare: OCaml compare on term", "hk_alphaorder: fusion.ml orda/ordav", "the type each native term records at construction", "hk_tm_comb; refusal mapped to tm-fail(mk_comb: types do not agree)", "hk_tm_abs; refusal mapped to tm-fail(mk_abs: not a variable)", "hk_tm_eq", "hk_frees_exact (fusion.ml's order)", "hk_freesin", "hk_vfree_in", "hk_type_vars_in_term_exact (fusion.ml's order)", "hk_tyvars_exact (fusion.ml's order)", "hk_variant", "hk_vsubst; Bad substitution list mapped to vs-bad", "hk_vsubst on a list that passes vsubst's check, which the rules make first; a list that fails it stops the run", "hk_inst", "hk_type_subst", "fusion.ml's term_union over hk_alphaorder", "fusion.ml's term_remove over hk_alphaorder", "fusion.ml's term_image over hk_vsubst and term_union", "fusion.ml's term_image over hk_inst and term_union", "tableGet_readback: table-get on the read-back gives the stored cell, c-none where none; trusted: the array code is the model NTable; checked at run time: no table value is used after its update", "tablePut_readback: table-put on the read-back is the read-back of the store at next and next + 1; trusted: the array code is the model NTable; checked at run time: no table value is used after its update", "tableSet_readback: table-set on the read-back is the read-back of the store at the id; trusted: the array code is the model NTable; checked at run time: no table value is used after its update", "tableNext_readback; trusted: the array code is the model NTable; checked at run time: no table value is used after its update", "emptyTable_readback; trusted: the array code is the model NTable; checked at run time: no table value is used after its update"};
+const char *const rc_native_op_name[] = {"hl:str-eq", "hl:cmp-str", "hl:str-prime", "hl:cmp-nat", "hl:nat-inc", "hl:ty-eq", "hl:tm-eq", "hl:cmp-type", "hl:cmp-term", "hl:term-union", "hl:term-remove", "hl:table-get", "hl:table-put", "hl:table-set", "hl:table-next", "hl:empty-table"};
+const char *const rc_law_name[] = {"hl:tms-eq"};
+const char *const rc_law_justification[] = {"tmsEq_refl, fastPath_sound"};
+const int rc_nlaws = 1;
+const char *const rc_native_op_justification[] = {"strEq_binding, names_eq_iff: interned byte strings have equal bytes exactly when they are one node; strEq_refines", "cmpStr_refines, nativeCmp_eq_memcmp: the rules' order is the unsigned byte order, a proper prefix first; trusted: C memcmp compares unsigned", "strPrime_refines: the rules append the byte 0x27", "cmpNat_refines; trusted: the comparison of uint64_t", "natInc_refines; checked at run time: the immediate range", "tyEq_binding: in an interning store ty-eq of two read-backs answers yes exactly when they are one node (interning_eq_iff, cmpType_eq_iff)", "tmEq_binding: in an interning store tm-eq of two read-backs answers yes exactly when they are one node (interning_eq_iff, cmpTerm_eq_iff)", "structuralOrder_cmpType, rcOrderCmp_cmpType: the structural order on interned types is cmp-type; trusted: rc_order.c is the model", "structuralOrder_cmpTerm, rcOrderCmp_cmpTerm: the structural order on interned terms is cmp-term; trusted: rc_order.c is the model", "setUnion_eq_termUnion, for every comparator (here the module's alphaorder, compiled); trusted: rc_set.c is the model", "setRemove_eq_termRemove, for every comparator; trusted: rc_set.c is the model", "tableGet_readback; trusted: the array code is the model NTable; checked at run time: no table value is used after its update", "tablePut_readback; trusted: the array code is the model NTable; checked at run time: no table value is used after its update", "tableSet_readback; trusted: the array code is the model NTable; checked at run time: no table value is used after its update", "tableNext_readback; trusted: the array code is the model NTable", "emptyTable_readback; trusted: the array code is the model NTable"};
 
 T *rc_call(int judgment, T **a) {
     switch (judgment) {
