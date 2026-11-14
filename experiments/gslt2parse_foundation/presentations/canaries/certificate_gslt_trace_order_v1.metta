@@ -14,27 +14,27 @@
     (rule proof-trace-order-canary-compare-wff-v1
       (head
         (ProofTokenCompareV1
-          trace-wff trace-wff ProofTokenEqualV1))
+          trace-wff trace-wff (ProofTokenEqualV1)))
       (body))
     (rule proof-trace-order-canary-compare-a-v1
       (head
         (ProofTokenCompareV1
-          trace-a trace-a ProofTokenEqualV1))
+          trace-a trace-a (ProofTokenEqualV1)))
       (body))
     (rule proof-trace-order-canary-compare-x-v1
       (head
         (ProofTokenCompareV1
-          trace-x trace-x ProofTokenEqualV1))
+          trace-x trace-x (ProofTokenEqualV1)))
       (body))
     (rule proof-trace-order-canary-compare-turnstile-v1
       (head
         (ProofTokenCompareV1
-          trace-turnstile trace-turnstile ProofTokenEqualV1))
+          trace-turnstile trace-turnstile (ProofTokenEqualV1)))
       (body))
     (rule proof-trace-order-canary-compare-wff-turnstile-v1
       (head
         (ProofTokenCompareV1
-          trace-wff trace-turnstile ProofTokenUnequalV1))
+          trace-wff trace-turnstile (ProofTokenUnequalV1)))
       (body))
     (rule proof-trace-order-canary-assertion-v1
       (head

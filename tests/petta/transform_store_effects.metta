@@ -28,5 +28,6 @@
 !(read-take-accepted-left (show &accepted))
 
 !(bind! &empty (new-space))
+!(empty-head-match (collapse (match &empty (item $x) $x)))
 !(empty-result (collapse (transform &empty (take (item $x)) (got $x))))
 !(empty-left (show &empty))

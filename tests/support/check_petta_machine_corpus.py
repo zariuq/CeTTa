@@ -52,7 +52,11 @@ ASK = """(= (pm:of-text $text)
 (= (pm:begin-text $text) (let $expression (parse $text) (pm:begin $expression)))
 (= (pm:advance-quietly $steps) (let $_outcome (pm:advance $steps) (empty)))
 (= (pm:begin-quietly $text) (let $_begun (pm:begin-text $text) (empty)))
-(= (pm:end-answers) (let $answers (pm:end) (superpose $answers)))"""
+(= (pm:end-answers)
+   (let $outcome (pm:advance 0)
+     (let $answers (pm:end)
+       (if (== $outcome pm:halted) (superpose $answers)
+           (pm:list3 pm:no-end $outcome $answers)))))"""
 
 
 def is_test(form):

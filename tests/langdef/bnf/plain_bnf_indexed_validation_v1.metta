@@ -1,4 +1,8 @@
-!(import! &self ../../../lib/lib_bnf.metta)
+; The reader imports its own generated grammar relations. Keep that module
+; in a separate Space so this comparison has exactly one definition of each
+; relation from the composition under test.
+!(bind! &indexed-reader (new-space))
+!(import! &indexed-reader ../../../lib/lib_bnf.metta)
 
 ; Both entries run from ONE generated source composition. Compare complete
 ; ordered answer occurrences, including diagnostic payloads and source spans.
@@ -10,7 +14,7 @@
         (gslt:entry:BNFValidateGrammarIndexedV1:10 $input) $result))
 (= (indexed-validation:compare $marker $document $authority)
    (let $input (bnf-v1:grammar-input $document $authority)
-     (case (bnf:admit-grammar-input $input)
+     (case (evalc (bnf:admit-grammar-input $input) &indexed-reader)
        (((BNF:GrammarInputAdmitted $checked)
           (let $actual (collapse (indexed-validation:new $checked))
             (let $reference (collapse (indexed-validation:old $checked))
@@ -25,8 +29,8 @@
         (indexed-validation:compare $marker $document $authority))
       ($other (IndexedValidationReadRejected $marker $other)))))
 (= (indexed-validation:text $marker $source $start)
-   (indexed-validation:read $marker (bnf:read-text $source)
-     (bnf:grammar-authority (bnf:text $start) (bnf:empty-lexical-environment))))
+   (indexed-validation:read $marker (evalc (bnf:read-text $source) &indexed-reader)
+     (evalc (bnf:grammar-authority (bnf:text $start) (bnf:empty-lexical-environment)) &indexed-reader)))
 
 !(indexed-validation:text IndexedValidationLiteralV1 "<s> ::= \"x\"\n" "s")
 !(indexed-validation:text IndexedValidationRecursiveV1 "<s> ::= \"(\" <s> \")\" <s> |\n" "s")
@@ -38,4 +42,4 @@
 !(indexed-validation:text IndexedValidationAmbiguousV1
    "<s> ::= <s> <s> | \"a\" | \"a\"\n" "s")
 !(indexed-validation:read IndexedValidationSelfV1
-   (bnf:read-file "langdef/bnf/plain_bnf_self_v1.bnf") (bnf:self-authority-v1))
+   (evalc (bnf:read-file "langdef/bnf/plain_bnf_self_v1.bnf") &indexed-reader) (evalc (bnf:self-authority-v1) &indexed-reader))

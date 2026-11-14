@@ -11313,11 +11313,11 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 	if rg -q 'ProofTokenApartV1|ProofAssertionDisjointV1' \
 		$(CERTIFICATE_GSLT_TRACE_ORDER_CANARY_V1) \
 		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1); then exit 1; fi; \
-		test "$$(wc -l <$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 1176; \
+		test "$$(wc -l <$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 1189; \
 		test "$$(rg -c '^\(compile-oslf-native-type-v1 \(oslf-head-signature-v1 ' \
-			$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 335; \
+			$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 340; \
 		test "$$(rg -c '^\(compile-oslf-native-type-v1 \(oslf-step-schema-v1 ' \
-			$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 809; \
+			$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 817; \
 		test "$$(rg -c '^\(compile-oslf-native-type-v1 \(oslf-external-relation-v1 ' \
 			$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 20; \
 	rg -F -q \
@@ -12665,18 +12665,32 @@ test-gslt-petta-direct-v1: \
 	$(LANGDEF_COMPILER_V1_BIN) petta-direct \
 		--source $(GSLT_DIRECT_PETTA_SOURCE_CONSTRUCTOR_V1) \
 		--entry-mode DirectSourceConsHeadV1:10 \
+		--entry-mode DirectSourceHostNameV1:10 \
 		--entry-mode DirectSourceConsSameV1:10 \
 		--entry-mode DirectSourceConsScopeV1:10 \
+		--entry-mode DirectSourceNullaryNameV1:10 \
+		--entry-mode DirectSourceNullaryV1:10 \
 		--out "$$work/source-constructor.metta" >/dev/null; \
 	rg -F -q \
 		'(let (cons-atom cons (cons-atom $$head (cons-atom $$tail ()))) $$__gslt_input_v1_0_0' \
 		"$$work/source-constructor.metta"; \
-	awk '1; END { \
+	awk 'BEGIN { print "(= (DirectHostConstructorV1 $$x) (HostChangedV1 $$x))" } 1; END { \
+		print "!(gslt:fn:DirectSourceHostNameV1:10 (quote (DirectHostConstructorV1 KeptV1)))"; \
+		print "!(gslt:DirectSourceHostNameV1 (DirectSourceHostNameV1 (DirectHostConstructorV1 KeptV1) $$out))"; \
+		print "!(if (== (collapse (gslt:DirectSourceHostNameV1 (DirectSourceHostNameV1 (HostChangedV1 KeptV1) $$out))) ()) HostConstructorGenericDistinctV1 HostConstructorGenericMergedV1)"; \
+		print "!(if (== (collapse (gslt:fn:DirectSourceHostNameV1:10 (quote (HostChangedV1 KeptV1)))) ()) HostConstructorDistinctV1 HostConstructorMergedV1)"; \
 		print "!(gslt:fn:DirectSourceConsHeadV1:10 (quote (cons DirectFirstV1 (DirectSecondV1 DirectThirdV1))))"; \
 		print "!(if (== (collapse (gslt:fn:DirectSourceConsHeadV1:10 (DirectFirstV1 DirectSecondV1 DirectThirdV1))) ()) SourceConstructorDistinctV1 SourceConstructorMergedV1)"; \
 		print "!(gslt:fn:DirectSourceConsSameV1:10 (quote (cons (cons A B) (cons A B))))"; \
 		print "!(if (== (collapse (gslt:fn:DirectSourceConsSameV1:10 (quote (cons A B)))) ()) SourceConstructorRepeatedRefusedV1 SourceConstructorRepeatedMismatchV1)"; \
 		print "!(gslt:fn:DirectSourceConsScopeV1:10 (quote (cons Scoped Tail)))"; \
+		print "!(gslt:fn:DirectSourceNullaryNameV1:10 (quote (metta-nullary DirectZeroV1)))"; \
+		print "!(gslt:fn:DirectSourceNullaryNameV1:10 (quote (metta-nullary (cons A (DirectZeroV1)))))"; \
+		print "!(gslt:fn:DirectSourceNullaryV1:10 (quote (DirectZeroV1)))"; \
+		print "!(if (== (collapse (gslt:fn:DirectSourceNullaryNameV1:10 (quote (DirectZeroV1)))) ()) NullaryNameDistinctV1 NullaryNameMergedV1)"; \
+		print "!(if (== (collapse (gslt:fn:DirectSourceNullaryV1:10 DirectZeroV1)) ()) NullarySymbolDistinctV1 NullarySymbolMergedV1)"; \
+		print "!(gslt:DirectSourceNullaryNameV1 (DirectSourceNullaryNameV1 (metta-nullary DirectZeroV1) $$result))"; \
+		print "!(if (== (collapse (gslt:DirectSourceNullaryNameV1 (DirectSourceNullaryNameV1 (DirectZeroV1) $$result))) ()) NullaryGenericDistinctV1 NullaryGenericMergedV1)"; \
 	}' "$$work/source-constructor.metta" \
 		>"$$work/source-constructor-run.metta"; \
 	source_constructor_output=$$(timeout 30 $(CETTA_PETTA_DIRECT_RUN_V1) \
@@ -12687,6 +12701,17 @@ test-gslt-petta-direct-v1: \
 	printf '%s\n' "$$source_constructor_output" | rg -F -x -q '(gslt:result:DirectSourceConsSameV1:10 (cons A B))'; \
 	printf '%s\n' "$$source_constructor_output" | rg -F -x -q 'SourceConstructorRepeatedRefusedV1'; \
 	printf '%s\n' "$$source_constructor_output" | rg -F -x -q '(gslt:result:DirectSourceConsScopeV1:10 Scoped)'; \
+	printf '%s\n' "$$source_constructor_output" | rg -F -x -q '(gslt:result:DirectSourceNullaryNameV1:10 DirectZeroV1)'; \
+	printf '%s\n' "$$source_constructor_output" | rg -F -x -q '(gslt:result:DirectSourceNullaryNameV1:10 (cons A (DirectZeroV1)))'; \
+	printf '%s\n' "$$source_constructor_output" | rg -F -x -q '(gslt:result:DirectSourceNullaryV1:10 ActualZeroV1)'; \
+	printf '%s\n' "$$source_constructor_output" | rg -F -x -q 'NullaryNameDistinctV1'; \
+	printf '%s\n' "$$source_constructor_output" | rg -F -x -q 'NullarySymbolDistinctV1'; \
+	printf '%s\n' "$$source_constructor_output" | rg -F -x -q '(DirectSourceNullaryNameV1 (metta-nullary DirectZeroV1) DirectZeroV1)'; \
+	printf '%s\n' "$$source_constructor_output" | rg -F -x -q 'NullaryGenericDistinctV1'; \
+	printf '%s\n' "$$source_constructor_output" | rg -F -x -q '(gslt:result:DirectSourceHostNameV1:10 KeptV1)'; \
+	printf '%s\n' "$$source_constructor_output" | rg -F -x -q 'HostConstructorDistinctV1'; \
+	printf '%s\n' "$$source_constructor_output" | rg -F -x -q '(DirectSourceHostNameV1 (DirectHostConstructorV1 KeptV1) KeptV1)'; \
+	printf '%s\n' "$$source_constructor_output" | rg -F -x -q 'HostConstructorGenericDistinctV1'; \
 	$(LANGDEF_COMPILER_V1_BIN) petta-direct \
 		--source $(GSLT_DIRECT_PETTA_BINDING_MODES_V1) \
 		--out "$$work/binding-modes.metta" >/dev/null; \
@@ -15646,6 +15671,26 @@ test-metamath-cogslt-petta-proof-trace-direct-v1: \
 	printf '%s\n' "$$output" | rg -F -q \
 		'((MetamathProofTraceDirectCompressedEvidenceV1 AcceptedV1))'; \
 	test "$$(printf '%s\n' "$$output" | rg -c '^[(][)]$$')" -eq 1; \
+	cp $(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) "$$work/canonical-input.metta"; \
+	for item in \
+		'proof-trace-input-canary-variable-class-v1|(source-proof-trace-input-token-class-v1 input-x-v1 (ProofTokenVariableClassV1))' \
+		'proof-trace-input-canary-token-equal-x-v1|(source-proof-trace-input-token-compare-v1 input-x-v1 input-x-v1 (ProofTokenEqualV1))' \
+		'proof-trace-input-canary-token-equal-wff-v1|(source-proof-trace-input-token-compare-v1 input-wff-v1 input-wff-v1 (ProofTokenEqualV1))' \
+		'proof-trace-input-canary-token-equal-a-v1|(source-proof-trace-input-token-compare-v1 input-a-v1 input-a-v1 (ProofTokenEqualV1))' \
+		'proof-trace-input-canary-token-equal-dummy-v1|(source-proof-trace-input-token-compare-v1 input-dummy-v1 input-dummy-v1 (ProofTokenEqualV1))' \
+		'proof-trace-input-canary-token-unequal-a-dummy-v1|(source-proof-trace-input-token-compare-v1 input-a-v1 input-dummy-v1 (ProofTokenUnequalV1))' \
+		'proof-trace-input-canary-token-unequal-dummy-a-v1|(source-proof-trace-input-token-compare-v1 input-dummy-v1 input-a-v1 (ProofTokenUnequalV1))'; do \
+		$(GSLT_RULE_MUTATOR_V1_BIN) mutate --source "$$work/canonical-input.metta" \
+			--out "$$work/canonical-next.metta" --rule "$${item%%|*}" \
+			--mode falsify --replacement "$${item#*|}"; \
+		mv "$$work/canonical-next.metta" "$$work/canonical-input.metta"; \
+	done; \
+	$(LANGDEF_COMPILER_V1_BIN) petta-direct \
+		$(foreach source,$(filter-out $(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1),$(METAMATH_PROOF_TRACE_DIRECT_SOURCES_V1)),--source $(source)) \
+		--source "$$work/canonical-input.metta" --out "$$work/canonical-program.metta" >/dev/null; \
+	canonical=$$(timeout 60 $(CETTA_PETTA_DIRECT_RUN_V1) \
+		"$$work/canonical-program.metta" $(METAMATH_PROOF_TRACE_DIRECT_QUERY_V1) 2>&1); \
+	test "$$canonical" = "$$output"; \
 	awk '1' $(METAMATH_PROOF_TRACE_DIRECT_PROGRAM_V1) \
 		$(METAMATH_PROOF_TRACE_ESSENTIAL_RESULT_QUERY_V1) \
 		> "$$work/essential-result-run.metta"; \
@@ -15655,7 +15700,7 @@ test-metamath-cogslt-petta-proof-trace-direct-v1: \
 	printf '%s\n' "$$essential" | rg -F -q \
 		'ProofTraceEssentialsSucceededV1'; \
 	printf '%s\n' "$$essential" | rg -F -q \
-		'(ProofTraceRefusedEssentialMismatchV1 (ProofSequenceConsV1 input-x-v1 ProofSequenceNilV1) (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1) (ProofSequenceConsV1 input-dummy-v1 ProofSequenceNilV1))'; \
+		'(ProofTraceRefusedEssentialMismatchV1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1)) (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)) (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1)))'; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
 		--source $(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
 		--out "$$work/severed-semantics.metta" \
@@ -15684,7 +15729,8 @@ test-metamath-cogslt-petta-proof-trace-direct-v1: \
 		rg -q 'MetamathProofTraceDirect(Normal|Compressed)(Evidence)?V1'; then \
 		exit 1; \
 	fi; \
-	printf '%s\n' '(MetamathProofTraceDirectV1Summary 230 6 1 1 0)'
+	printf '(MetamathProofTraceDirectV1Summary %s 10 2 1 0)\n' \
+		"$$(rg -c '^; gslt-source-rewrite-v1 ' $(METAMATH_PROOF_TRACE_DIRECT_PROGRAM_V1))"
 
 .PHONY: test-metamath-cogslt-petta-direct-v1
 test-metamath-cogslt-petta-direct-v1: \
@@ -18713,6 +18759,8 @@ NORMAL_TEST_TARGETS := \
 	test-frame-support-inventory \
 	test-pattern-queries \
 	test-gparse-gslt-core \
+	test-gslt-petta-direct-v1 \
+	test-gslt-invocation \
 	test-atom-deep-copy-iterative \
 	test-frame-identity \
 	test-owned-return-image \
@@ -18780,6 +18828,19 @@ test-test-target-scope:
 # Configuration probes recursively build shared generated sources and objects.
 # Serialize aggregate gates; each individual build may still use its jobserver.
 .NOTPARALLEL: test test-all test-mettazero
+
+.PHONY: test-gslt-invocation
+.PHONY: test-gslt-composition-width-v1
+test-gslt-composition-width-v1: $(BIN) $(LANGDEF_COMPILER_V1_BIN) \
+		tests/support/check_gslt_composition_width.py tests/support/run_gslt_program.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_gslt_composition_width.py \
+		$(LANGDEF_COMPILER_V1_BIN) ./$(BIN)
+
+test-gslt-petta-direct-v1: test-gslt-composition-width-v1
+
+test-gslt-invocation: $(BIN) tests/support/gslt_invocation.py \
+        tests/support/check_gslt_invocation.py tests/support/record_petta_direct_run.sh
+	@python3 tests/support/check_gslt_invocation.py ./$(BIN)
 
 .PHONY: test-builtin-policy-lookup
 test-builtin-policy-lookup:
@@ -41423,6 +41484,8 @@ $(MM0_SECONDARY_LEXER_RHOMETTA_PROGRAM_V1): \
 		--entry-rule mm0-secondary-lex-v1 \
 		--out $@
 
+GSLT_OUTPUT_ASSERTIONS_V1 = assert_absent() { local gslt_status=0; "$$@" || gslt_status=$$?; test "$$gslt_status" -eq 1; }
+
 test-mm0-cogslt-secondary-lexer-v1: \
 		$(MM0_SECONDARY_LEXER_PETTA_PROGRAM_V1) \
 		$(MM0_SECONDARY_LEXER_RHOMETTA_PROGRAM_V1) \
@@ -41430,7 +41493,7 @@ test-mm0-cogslt-secondary-lexer-v1: \
 		$(MM0_SECONDARY_LEXER_RHOMETTA_QUERY_V1) \
 		$(GSLT_RULE_MUTATOR_V1_BIN) \
 		$(BIN)
-	@set -euo pipefail; \
+	@set -euo pipefail; $(GSLT_OUTPUT_ASSERTIONS_V1); \
 	work=$$(mktemp -d runtime/mm0-secondary-lexer.XXXXXX); \
 	trap 'rm -rf "$$work"' EXIT INT TERM; \
 	petta_summary=$$($(LANGDEF_COMPILER_V1_BIN) petta-direct \
@@ -41439,8 +41502,8 @@ test-mm0-cogslt-secondary-lexer-v1: \
 		--source $(MM0_SECONDARY_LEXER_V1) \
 		--closed-entry-mode MM0SecondaryLexV1:110 \
 		--out "$$work/petta.metta"); \
-	printf '%s\n' "$$petta_summary" | rg -q \
-		'^[(]GSLTDirectPeTTaV1Summary 35 [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
+	rg -q \
+		'^[(]GSLTDirectPeTTaV1Summary 35 [0-9a-f]{64} [0-9a-f]{64}[)]$$' <<< "$$petta_summary"; \
 	cmp -s "$$work/petta.metta" \
 		$(MM0_SECONDARY_LEXER_PETTA_PROGRAM_V1); \
 	rho_summary=$$($(RHOMETTA_DIRECT_COMPILER_V1) \
@@ -41449,8 +41512,8 @@ test-mm0-cogslt-secondary-lexer-v1: \
 		--source $(MM0_SECONDARY_LEXER_V1) \
 		--entry-rule mm0-secondary-lex-v1 \
 		--out "$$work/rho.metta"); \
-	printf '%s\n' "$$rho_summary" | rg -q \
-		'^[(]GSLTDirectRhoMettaV1Summary 33 15 [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
+	rg -q \
+		'^[(]GSLTDirectRhoMettaV1Summary 33 15 [0-9a-f]{64} [0-9a-f]{64}[)]$$' <<< "$$rho_summary"; \
 	cmp -s "$$work/rho.metta" \
 		$(MM0_SECONDARY_LEXER_RHOMETTA_PROGRAM_V1); \
 	test "$$(rg -c \
@@ -41464,7 +41527,7 @@ test-mm0-cogslt-secondary-lexer-v1: \
 		echo 'MM0 secondary lexer contains an interpreter representation' >&2; \
 		exit 1; \
 	fi; \
-	! rg -q 'QueryMM0SecondaryLex|[(]cp 97[)]' \
+	assert_absent rg -q 'QueryMM0SecondaryLex|[(]cp 97[)]' \
 		$(MM0_SECONDARY_LEXER_PETTA_PROGRAM_V1) \
 		$(MM0_SECONDARY_LEXER_RHOMETTA_PROGRAM_V1); \
 	awk '1' $(MM0_SECONDARY_LEXER_PETTA_PROGRAM_V1) \
@@ -41476,7 +41539,7 @@ test-mm0-cogslt-secondary-lexer-v1: \
 		rg -c '^MM0SecondaryLex.*AcceptedV1$$')" -eq 5; \
 	test "$$(printf '%s\n' "$$petta_output" | \
 		rg -c '^[(][)]$$')" -eq 3; \
-	! printf '%s\n' "$$petta_output" | rg -q 'partial|Error'; \
+	assert_absent rg -q 'partial|Error' <<< "$$petta_output"; \
 	awk '1' $(MM0_SECONDARY_LEXER_RHOMETTA_PROGRAM_V1) \
 		$(MM0_SECONDARY_LEXER_RHOMETTA_QUERY_V1) \
 		> "$$work/rho-run.metta"; \
@@ -41486,16 +41549,16 @@ test-mm0-cogslt-secondary-lexer-v1: \
 		"$$work/rho-run.metta" 2>&1); \
 	test "$$(printf '%s\n' "$$rho_output" | \
 		rg -o -F '(gslt-rho:observed-v1' | wc -l)" -eq 2; \
-	printf '%s\n' "$$rho_output" | rg -F -q \
-		'QueryMM0SecondaryLexSpecExampleV1'; \
-	printf '%s\n' "$$rho_output" | rg -F -q \
-		'QueryMM0SecondaryLexEmptyV1'; \
-	! printf '%s\n' "$$rho_output" | rg -q \
-		'QueryMM0SecondaryLex(DuplicateClass|MissingNewline|ForeignWhitespace)V1'; \
-	printf '%s\n' "$$rho_output" | rg -F -q \
-		'(MM0MathScalarsConsV1 (cp 98) (MM0MathScalarsConsV1 (cp 40) MM0MathScalarsNilV1))'; \
-	printf '%s\n' "$$rho_output" | rg -F -q \
-		'(MM0MathScalarsConsV1 (cp 123) (MM0MathScalarsConsV1 (cp 125) MM0MathScalarsNilV1))'; \
+	rg -F -q \
+		'QueryMM0SecondaryLexSpecExampleV1' <<< "$$rho_output"; \
+	rg -F -q \
+		'QueryMM0SecondaryLexEmptyV1' <<< "$$rho_output"; \
+	assert_absent rg -q \
+		'QueryMM0SecondaryLex(DuplicateClass|MissingNewline|ForeignWhitespace)V1' <<< "$$rho_output"; \
+	rg -F -q \
+		'(MM0MathScalarsConsV1 (cp 98) (MM0MathScalarsConsV1 (cp 40) MM0MathScalarsNilV1))' <<< "$$rho_output"; \
+	rg -F -q \
+		'(MM0MathScalarsConsV1 (cp 123) (MM0MathScalarsConsV1 (cp 125) MM0MathScalarsNilV1))' <<< "$$rho_output"; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
 		--source $(MM0_SECONDARY_LEXER_V1) \
 		--out "$$work/severed-source.metta" \
@@ -41506,17 +41569,17 @@ test-mm0-cogslt-secondary-lexer-v1: \
 		--source "$$work/severed-source.metta" \
 		--closed-entry-mode MM0SecondaryLexV1:110 \
 		--out "$$work/severed-petta.metta" >/dev/null; \
-	! cmp -s "$$work/severed-petta.metta" \
+	assert_absent cmp -s "$$work/severed-petta.metta" \
 		$(MM0_SECONDARY_LEXER_PETTA_PROGRAM_V1); \
-	! rg -F -q 'source-rule=mm0-math-lexer-step-both-v1' \
+	assert_absent rg -F -q 'source-rule=mm0-math-lexer-step-both-v1' \
 		"$$work/severed-petta.metta"; \
 	awk '1' "$$work/severed-petta.metta" \
 		$(MM0_SECONDARY_LEXER_PETTA_QUERY_V1) \
 		> "$$work/severed-petta-run.metta"; \
 	severed_output=$$(timeout 30 $(CETTA_PETTA_DIRECT_RUN_V1) \
 		"$$work/severed-petta-run.metta" 2>&1); \
-	! printf '%s\n' "$$severed_output" | rg -F -q \
-		'MM0SecondaryLexSpecExampleAcceptedV1'; \
+	assert_absent rg -F -q \
+		'MM0SecondaryLexSpecExampleAcceptedV1' <<< "$$severed_output"; \
 	test "$$(printf '%s\n' "$$severed_output" | \
 		rg -c '^MM0SecondaryLex.*AcceptedV1$$')" -eq 4; \
 	$(RHOMETTA_DIRECT_COMPILER_V1) \
@@ -41525,9 +41588,9 @@ test-mm0-cogslt-secondary-lexer-v1: \
 		--source "$$work/severed-source.metta" \
 		--entry-rule mm0-secondary-lex-v1 \
 		--out "$$work/severed-rho.metta" >/dev/null; \
-	! cmp -s "$$work/severed-rho.metta" \
+	assert_absent cmp -s "$$work/severed-rho.metta" \
 		$(MM0_SECONDARY_LEXER_RHOMETTA_PROGRAM_V1); \
-	! rg -F -q 'mm0-math-lexer-step-both-v1' \
+	assert_absent rg -F -q 'mm0-math-lexer-step-both-v1' \
 		"$$work/severed-rho.metta"; \
 	printf '%s\n' \
 		'(MM0SecondaryLexerDirectTargetsV1Summary 33 5 3 2 1 0)'
@@ -41571,7 +41634,7 @@ test-mm0-cogslt-live-syntax-fold-v1: \
 		$(MM0_LIVE_SYNTAX_RHOMETTA_QUERY_V1) \
 		$(GSLT_RULE_MUTATOR_V1_BIN) \
 		$(BIN)
-	@set -euo pipefail; \
+	@set -euo pipefail; $(GSLT_OUTPUT_ASSERTIONS_V1); \
 	work=$$(mktemp -d runtime/mm0-live-syntax-fold.XXXXXX); \
 	trap 'rm -rf "$$work"' EXIT INT TERM; \
 	petta_summary=$$($(LANGDEF_COMPILER_V1_BIN) petta-direct \
@@ -41582,8 +41645,8 @@ test-mm0-cogslt-live-syntax-fold-v1: \
 		--closed-entry-mode MM0DelimiterEnvironmentFromAstV1:10 \
 		--closed-entry-mode MM0LiveDelimiterLexV1:110 \
 		--out "$$work/petta.metta"); \
-	printf '%s\n' "$$petta_summary" | rg -q \
-		'^[(]GSLTDirectPeTTaV1Summary [0-9]+ [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
+	rg -q \
+		'^[(]GSLTDirectPeTTaV1Summary [0-9]+ [0-9a-f]{64} [0-9a-f]{64}[)]$$' <<< "$$petta_summary"; \
 	cmp -s "$$work/petta.metta" \
 		$(MM0_LIVE_SYNTAX_PETTA_PROGRAM_V1); \
 	rho_summary=$$($(RHOMETTA_DIRECT_COMPILER_V1) \
@@ -41594,8 +41657,8 @@ test-mm0-cogslt-live-syntax-fold-v1: \
 		--entry-rule mm0-delimiter-environment-from-ast-v1 \
 		--entry-rule mm0-live-delimiter-lex-v1 \
 		--out "$$work/rho.metta"); \
-	printf '%s\n' "$$rho_summary" | rg -q \
-		'^[(]GSLTDirectRhoMettaV1Summary [0-9]+ [0-9]+ [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
+	rg -q \
+		'^[(]GSLTDirectRhoMettaV1Summary [0-9]+ [0-9]+ [0-9a-f]{64} [0-9a-f]{64}[)]$$' <<< "$$rho_summary"; \
 	cmp -s "$$work/rho.metta" \
 		$(MM0_LIVE_SYNTAX_RHOMETTA_PROGRAM_V1); \
 	if rg -qi 'HornClause|horn:prove|horn_prove|worklist|Datalog|SLD' \
@@ -41604,7 +41667,7 @@ test-mm0-cogslt-live-syntax-fold-v1: \
 		echo 'MM0 live syntax fold contains an interpreter representation' >&2; \
 		exit 1; \
 	fi; \
-	! rg -q 'MM0IgnoredSortPayloadV1|MM0LiveSyntaxAcceptedV1|[(]cp 97[)]' \
+	assert_absent rg -q 'MM0IgnoredSortPayloadV1|MM0LiveSyntaxAcceptedV1|[(]cp 97[)]' \
 		$(MM0_LIVE_SYNTAX_PETTA_PROGRAM_V1) \
 		$(MM0_LIVE_SYNTAX_RHOMETTA_PROGRAM_V1); \
 	awk '1' $(MM0_LIVE_SYNTAX_PETTA_PROGRAM_V1) \
@@ -41614,8 +41677,8 @@ test-mm0-cogslt-live-syntax-fold-v1: \
 		"$$work/petta-run.metta" 2>&1); \
 	test "$$(printf '%s\n' "$$petta_output" | \
 		rg -c '^MM0LiveSyntax.*AcceptedV1$$')" -eq 3; \
-	test "$$(printf '%s\n' "$$petta_output" | rg -c '^[(][)]$$')" -eq 2; \
-	! printf '%s\n' "$$petta_output" | rg -q 'partial|Error'; \
+	test "$$(rg -c '^[(][)]$$' <<< "$$petta_output")" -eq 2; \
+	assert_absent rg -q 'partial|Error' <<< "$$petta_output"; \
 	awk '1' $(MM0_LIVE_SYNTAX_RHOMETTA_PROGRAM_V1) \
 		$(MM0_LIVE_SYNTAX_RHOMETTA_QUERY_V1) \
 		> "$$work/rho-run.metta"; \
@@ -41625,14 +41688,13 @@ test-mm0-cogslt-live-syntax-fold-v1: \
 		"$$work/rho-run.metta" 2>&1); \
 	test "$$(printf '%s\n' "$$rho_output" | \
 		rg -o -F '(gslt-rho:observed-v1' | wc -l)" -eq 3; \
-	printf '%s\n' "$$rho_output" | rg -F -q \
-		'QueryMM0LiveSyntaxEnvironmentV1'; \
-	printf '%s\n' "$$rho_output" | rg -F -q \
-		'QueryMM0LiveSyntaxLexV1'; \
-	printf '%s\n' "$$rho_output" | rg -F -q \
-		'QueryMM0LiveSyntaxEmptyV1'; \
-	! printf '%s\n' "$$rho_output" | rg -q \
-		'QueryMM0LiveSyntax(AdjacentScalars|ForeignRoot)V1'; \
+	printf '%s\n' "$$rho_output" > "$$work/rho.out"; \
+	rg -F -q 'QueryMM0LiveSyntaxEnvironmentV1' "$$work/rho.out"; \
+	rg -F -q 'QueryMM0LiveSyntaxLexV1' "$$work/rho.out"; \
+	rg -F -q 'QueryMM0LiveSyntaxEmptyV1' "$$work/rho.out"; \
+	if rg -q 'QueryMM0LiveSyntax(AdjacentScalars|ForeignRoot)V1' "$$work/rho.out"; then \
+		echo 'MM0 live syntax fold accepted a negative control' >&2; exit 1; \
+	fi; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
 		--source $(MM0_LIVE_SYNTAX_FOLD_V1) \
 		--out "$$work/severed-source.metta" \
@@ -41645,19 +41707,19 @@ test-mm0-cogslt-live-syntax-fold-v1: \
 		--closed-entry-mode MM0DelimiterEnvironmentFromAstV1:10 \
 		--closed-entry-mode MM0LiveDelimiterLexV1:110 \
 		--out "$$work/severed-petta.metta" >/dev/null; \
-	! cmp -s "$$work/severed-petta.metta" \
-		$(MM0_LIVE_SYNTAX_PETTA_PROGRAM_V1); \
-	! rg -F -q 'source-rule=mm0-delimiter-environment-fold-both-v1' \
-		"$$work/severed-petta.metta"; \
+	if cmp -s "$$work/severed-petta.metta" $(MM0_LIVE_SYNTAX_PETTA_PROGRAM_V1) || \
+		rg -F -q 'source-rule=mm0-delimiter-environment-fold-both-v1' "$$work/severed-petta.metta"; then \
+		echo 'MM0 live syntax fold retained the severed source rule' >&2; exit 1; \
+	fi; \
 	awk '1' "$$work/severed-petta.metta" \
 		$(MM0_LIVE_SYNTAX_PETTA_QUERY_V1) \
 		> "$$work/severed-petta-run.metta"; \
 	severed_output=$$(timeout 30 $(CETTA_PETTA_DIRECT_RUN_V1) \
 		"$$work/severed-petta-run.metta" 2>&1); \
-	! printf '%s\n' "$$severed_output" | rg -F -q \
-		'MM0LiveSyntaxEnvironmentAcceptedV1'; \
-	! printf '%s\n' "$$severed_output" | rg -F -q \
-		'MM0LiveSyntaxLexAcceptedV1'; \
+	printf '%s\n' "$$severed_output" > "$$work/severed.out"; \
+	if rg -q 'MM0LiveSyntax(Environment|Lex)AcceptedV1' "$$work/severed.out"; then \
+		echo 'MM0 live syntax fold ignored the severed source rule' >&2; exit 1; \
+	fi; \
 	printf '%s\n' \
 		'(MM0LiveSyntaxFoldDirectTargetsV1Summary 3 2 3 2 1 0)'
 
@@ -41671,7 +41733,7 @@ test-mm0-cogslt-runtime-live-syntax-v1: \
 		$(MM0_RUNTIME_LIVE_SYNTAX_PETTA_QUERY_V1) \
 		$(MM0_RUNTIME_LIVE_SYNTAX_POSITIVE_V1) \
 		$(MM0_RUNTIME_LIVE_SYNTAX_NEGATIVE_V1)
-	@set -euo pipefail; \
+	@set -euo pipefail; $(GSLT_OUTPUT_ASSERTIONS_V1); \
 	work=$$(mktemp -d runtime/mm0-runtime-live-syntax.XXXXXX); \
 	trap 'rm -rf "$$work"' EXIT INT TERM; \
 	$(LANGDEF_COMPILER_V1_BIN) parser-pack \
@@ -41685,25 +41747,25 @@ test-mm0-cogslt-runtime-live-syntax-v1: \
 	cmp -s "$$work/langdef-lock.metta" $(MM0_LANGDEF_LOCK_V1); \
 	$(LANGDEF_COMPILER_V1_BIN) validate \
 		--manifest $(MM0_LANGDEF_MANIFEST_V1); \
-	! rg -F -q 'live_syntax_delimiters.mm0' \
+	assert_absent rg -F -q 'live_syntax_delimiters.mm0' \
 		$(MM0_LIVE_SYNTAX_PETTA_PROGRAM_V1); \
-	! rg -F -q 'invalid_multi_scalar_delimiter.mm0' \
+	assert_absent rg -F -q 'invalid_multi_scalar_delimiter.mm0' \
 		$(MM0_LIVE_SYNTAX_PETTA_PROGRAM_V1); \
-	! rg -q '\.mm0(["[:space:]]|$$)' \
+	assert_absent rg -q '\.mm0(["[:space:]]|$$)' \
 		$(MM0_LIVE_SYNTAX_PETTA_PROGRAM_V1); \
-	! rg -qi 'HornClause|finite[-_]horn|horn:prove|horn_prove|worklist|Datalog|SLD' \
+	assert_absent rg -qi 'HornClause|finite[-_]horn|horn:prove|horn_prove|worklist|Datalog|SLD' \
 		$(MM0_LIVE_SYNTAX_PETTA_PROGRAM_V1); \
 	awk '1' $(MM0_LIVE_SYNTAX_PETTA_PROGRAM_V1) \
 		$(MM0_RUNTIME_LIVE_SYNTAX_PETTA_QUERY_V1) \
 		> "$$work/run.metta"; \
 	output=$$(timeout 60 $(CETTA_PETTA_DIRECT_RUN_V1) \
 		"$$work/run.metta" 2>&1); \
-	printf '%s\n' "$$output" | rg -F -q \
-		'MM0RuntimeLiveSyntaxEnvironmentAcceptedV1'; \
-	printf '%s\n' "$$output" | rg -F -q \
-		'MM0RuntimeLiveSyntaxLexAcceptedV1'; \
-	test "$$(printf '%s\n' "$$output" | rg -c '^[(][)]$$')" -eq 1; \
-	! printf '%s\n' "$$output" | rg -q 'partial|Error'; \
+	rg -F -q \
+		'MM0RuntimeLiveSyntaxEnvironmentAcceptedV1' <<< "$$output"; \
+	rg -F -q \
+		'MM0RuntimeLiveSyntaxLexAcceptedV1' <<< "$$output"; \
+	test "$$(rg -c '^[(][)]$$' <<< "$$output")" -eq 1; \
+	assert_absent rg -q 'partial|Error' <<< "$$output"; \
 	printf '%s\n' \
 		'(MM0RuntimeLiveSyntaxV1Summary 2 1 1 0)'
 
@@ -41757,7 +41819,7 @@ test-mm0-cogslt-sort-environment-core-v1: \
 	fi
 	@if ldd $(BIN) $(LANGDEF_COMPILER_V1_BIN) | \
 		rg -qi 'python|libswipl|prolog'; then exit 1; fi
-	@set -euo pipefail; \
+	@set -euo pipefail; $(GSLT_OUTPUT_ASSERTIONS_V1); \
 	work=$$(mktemp -d runtime/mm0-sort-environment.XXXXXX); \
 	trap 'rm -rf "$$work"' EXIT INT TERM; \
 	petta_summary=$$($(LANGDEF_COMPILER_V1_BIN) petta-direct \
@@ -41766,8 +41828,8 @@ test-mm0-cogslt-sort-environment-core-v1: \
 		--source $(MM0_SORT_ENVIRONMENT_V1) \
 		--closed-entry-mode MM0SortEnvironmentFromAstV1:1000 \
 		--out "$$work/petta.metta"); \
-	printf '%s\n' "$$petta_summary" | rg -q \
-		'^[(]GSLTDirectPeTTaV1Summary [0-9]+ [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
+	rg -q \
+		'^[(]GSLTDirectPeTTaV1Summary [0-9]+ [0-9a-f]{64} [0-9a-f]{64}[)]$$' <<< "$$petta_summary"; \
 	cmp -s "$$work/petta.metta" \
 		$(MM0_SORT_ENVIRONMENT_PETTA_PROGRAM_V1); \
 	rho_summary=$$($(RHOMETTA_DIRECT_COMPILER_V1) \
@@ -41776,8 +41838,8 @@ test-mm0-cogslt-sort-environment-core-v1: \
 		--source $(MM0_SORT_ENVIRONMENT_V1) \
 		--entry-rule mm0-sort-environment-from-ast-v1 \
 		--out "$$work/rho.metta"); \
-	printf '%s\n' "$$rho_summary" | rg -q \
-		'^[(]GSLTDirectRhoMettaV1Summary [0-9]+ [0-9]+ [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
+	rg -q \
+		'^[(]GSLTDirectRhoMettaV1Summary [0-9]+ [0-9]+ [0-9a-f]{64} [0-9a-f]{64}[)]$$' <<< "$$rho_summary"; \
 	cmp -s "$$work/rho.metta" \
 		$(MM0_SORT_ENVIRONMENT_RHOMETTA_PROGRAM_V1); \
 	test "$$(rg -c \
@@ -41785,10 +41847,10 @@ test-mm0-cogslt-sort-environment-core-v1: \
 		$(MM0_SORT_ENVIRONMENT_PETTA_PROGRAM_V1))" -eq 18; \
 	test "$$(rg -c '^     ; rule service MM0SortEnvironmentV1 /' \
 		$(MM0_SORT_ENVIRONMENT_RHOMETTA_PROGRAM_V1))" -eq 18; \
-	! rg -q '\.mm0(["[:space:]]|$$)' \
+	assert_absent rg -q '\.mm0(["[:space:]]|$$)' \
 		$(MM0_SORT_ENVIRONMENT_PETTA_PROGRAM_V1) \
 		$(MM0_SORT_ENVIRONMENT_RHOMETTA_PROGRAM_V1); \
-	! rg -qi 'HornClause|finite[-_]horn|horn:prove|horn_prove|worklist|Datalog|SLD' \
+	assert_absent rg -qi 'HornClause|finite[-_]horn|horn:prove|horn_prove|worklist|Datalog|SLD' \
 		$(MM0_SORT_ENVIRONMENT_PETTA_PROGRAM_V1) \
 		$(MM0_SORT_ENVIRONMENT_RHOMETTA_PROGRAM_V1); \
 	awk '1' $(MM0_SORT_ENVIRONMENT_PETTA_PROGRAM_V1) \
@@ -41796,22 +41858,22 @@ test-mm0-cogslt-sort-environment-core-v1: \
 		> "$$work/petta-run.metta"; \
 	petta_output=$$(timeout 30 $(CETTA_PETTA_DIRECT_RUN_V1) \
 		"$$work/petta-run.metta" 2>&1); \
-	printf '%s\n' "$$petta_output" | rg -F -x -q \
-		'MM0SortEnvironmentPositiveAcceptedV1'; \
-	printf '%s\n' "$$petta_output" | rg -F -x -q \
-		'MM0SortEnvironmentConflictRefusedV1'; \
-	test "$$(printf '%s\n' "$$petta_output" | rg -c '^[(][)]$$')" -eq 1; \
-	! printf '%s\n' "$$petta_output" | rg -q 'Mismatch|partial|Error'; \
+	rg -F -x -q \
+		'MM0SortEnvironmentPositiveAcceptedV1' <<< "$$petta_output"; \
+	rg -F -x -q \
+		'MM0SortEnvironmentConflictRefusedV1' <<< "$$petta_output"; \
+	test "$$(rg -c '^[(][)]$$' <<< "$$petta_output")" -eq 1; \
+	assert_absent rg -q 'Mismatch|partial|Error' <<< "$$petta_output"; \
 	awk '1' $(MM0_SORT_ENVIRONMENT_PETTA_PROGRAM_V1) \
 		$(MM0_SORT_ENVIRONMENT_RUNTIME_QUERY_V1) \
 		> "$$work/runtime-run.metta"; \
 	runtime_output=$$(timeout 60 $(CETTA_PETTA_DIRECT_RUN_V1) \
 		"$$work/runtime-run.metta" 2>&1); \
-	printf '%s\n' "$$runtime_output" | rg -F -x -q \
-		'MM0RuntimeSortEnvironmentAcceptedV1'; \
-	printf '%s\n' "$$runtime_output" | rg -F -x -q \
-		'MM0RuntimeSortRedeclarationRefusedV1'; \
-	! printf '%s\n' "$$runtime_output" | rg -q 'Mismatch|partial|Error'; \
+	rg -F -x -q \
+		'MM0RuntimeSortEnvironmentAcceptedV1' <<< "$$runtime_output"; \
+	rg -F -x -q \
+		'MM0RuntimeSortRedeclarationRefusedV1' <<< "$$runtime_output"; \
+	assert_absent rg -q 'Mismatch|partial|Error' <<< "$$runtime_output"; \
 	awk '1' $(MM0_SORT_ENVIRONMENT_RHOMETTA_PROGRAM_V1) \
 		$(MM0_SORT_ENVIRONMENT_RHOMETTA_QUERY_V1) \
 		> "$$work/rho-run.metta"; \
@@ -41821,14 +41883,14 @@ test-mm0-cogslt-sort-environment-core-v1: \
 		"$$work/rho-run.metta" 2>&1); \
 	test "$$(printf '%s\n' "$$rho_output" | \
 		rg -o -F '(gslt-rho:observed-v1' | wc -l)" -eq 3; \
-	printf '%s\n' "$$rho_output" | rg -F -q \
-		'QueryMM0SortEnvironmentEmptyV1'; \
-	printf '%s\n' "$$rho_output" | rg -F -q \
-		'QueryMM0SortEnvironmentFreshV1'; \
-	printf '%s\n' "$$rho_output" | rg -F -q \
-		'QueryMM0SortEnvironmentConflictV1'; \
-	! printf '%s\n' "$$rho_output" | rg -F -q \
-		'QueryMM0SortEnvironmentConflictAcceptedV1'; \
+	rg -F -q \
+		'QueryMM0SortEnvironmentEmptyV1' <<< "$$rho_output"; \
+	rg -F -q \
+		'QueryMM0SortEnvironmentFreshV1' <<< "$$rho_output"; \
+	rg -F -q \
+		'QueryMM0SortEnvironmentConflictV1' <<< "$$rho_output"; \
+	assert_absent rg -F -q \
+		'QueryMM0SortEnvironmentConflictAcceptedV1' <<< "$$rho_output"; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
 		--source $(MM0_SORT_ENVIRONMENT_V1) \
 		--out "$$work/severed-source.metta" \
@@ -41839,19 +41901,19 @@ test-mm0-cogslt-sort-environment-core-v1: \
 		--source "$$work/severed-source.metta" \
 		--closed-entry-mode MM0SortEnvironmentFromAstV1:1000 \
 		--out "$$work/severed-petta.metta" >/dev/null; \
-	! cmp -s "$$work/severed-petta.metta" \
+	assert_absent cmp -s "$$work/severed-petta.metta" \
 		$(MM0_SORT_ENVIRONMENT_PETTA_PROGRAM_V1); \
-	! rg -F -q 'source-rule=mm0-sort-apply-existing-different-v1' \
+	assert_absent rg -F -q 'source-rule=mm0-sort-apply-existing-different-v1' \
 		"$$work/severed-petta.metta"; \
 	awk '1' "$$work/severed-petta.metta" \
 		$(MM0_SORT_ENVIRONMENT_PETTA_QUERY_V1) \
 		> "$$work/severed-petta-run.metta"; \
 	severed_petta=$$(timeout 30 $(CETTA_PETTA_DIRECT_RUN_V1) \
 		"$$work/severed-petta-run.metta" 2>&1); \
-	printf '%s\n' "$$severed_petta" | rg -F -x -q \
-		'MM0SortEnvironmentPositiveAcceptedV1'; \
-	! printf '%s\n' "$$severed_petta" | rg -F -q \
-		'MM0SortEnvironmentConflictRefusedV1'; \
+	rg -F -x -q \
+		'MM0SortEnvironmentPositiveAcceptedV1' <<< "$$severed_petta"; \
+	assert_absent rg -F -q \
+		'MM0SortEnvironmentConflictRefusedV1' <<< "$$severed_petta"; \
 	$(RHOMETTA_DIRECT_COMPILER_V1) \
 		--source $(GSLT_GROUND_RELATIONS_V1) \
 		--source $(CETTA_PETTA_GROUND_RELATIONS_V1) \
@@ -41867,8 +41929,8 @@ test-mm0-cogslt-sort-environment-core-v1: \
 		"$$work/severed-rho-run.metta" 2>&1); \
 	test "$$(printf '%s\n' "$$severed_rho" | \
 		rg -o -F '(gslt-rho:observed-v1' | wc -l)" -eq 2; \
-	! printf '%s\n' "$$severed_rho" | rg -F -q \
-		'QueryMM0SortEnvironmentConflictV1'; \
+	assert_absent rg -F -q \
+		'QueryMM0SortEnvironmentConflictV1' <<< "$$severed_rho"; \
 	printf '%s\n' \
 		'(MM0SortEnvironmentDirectTargetsV1Summary 18 2 2 3 1 0)'
 
@@ -41930,7 +41992,7 @@ test-mm0-cogslt-term-environment-core-v1: \
 	fi
 	@if ldd $(BIN) $(LANGDEF_COMPILER_V1_BIN) | \
 		rg -qi 'python|libswipl|prolog'; then exit 1; fi
-	@set -euo pipefail; \
+	@set -euo pipefail; $(GSLT_OUTPUT_ASSERTIONS_V1); \
 	work=$$(mktemp -d runtime/mm0-term-environment.XXXXXX); \
 	trap 'rm -rf "$$work"' EXIT INT TERM; \
 	petta_summary=$$($(LANGDEF_COMPILER_V1_BIN) petta-direct \
@@ -41940,8 +42002,8 @@ test-mm0-cogslt-term-environment-core-v1: \
 		--source $(MM0_TERM_ENVIRONMENT_V1) \
 		--closed-entry-mode MM0TextualEnvironmentFromAstV1:1000 \
 		--out "$$work/petta.metta"); \
-	printf '%s\n' "$$petta_summary" | rg -q \
-		'^[(]GSLTDirectPeTTaV1Summary [0-9]+ [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
+	rg -q \
+		'^[(]GSLTDirectPeTTaV1Summary [0-9]+ [0-9a-f]{64} [0-9a-f]{64}[)]$$' <<< "$$petta_summary"; \
 	cmp -s "$$work/petta.metta" \
 		$(MM0_TERM_ENVIRONMENT_PETTA_PROGRAM_V1); \
 	rho_summary=$$($(RHOMETTA_DIRECT_COMPILER_V1) \
@@ -41951,8 +42013,8 @@ test-mm0-cogslt-term-environment-core-v1: \
 		--source $(MM0_TERM_ENVIRONMENT_V1) \
 		--entry-rule mm0-textual-environment-from-ast-v1 \
 		--out "$$work/rho.metta"); \
-	printf '%s\n' "$$rho_summary" | rg -q \
-		'^[(]GSLTDirectRhoMettaV1Summary [0-9]+ [0-9]+ [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
+	rg -q \
+		'^[(]GSLTDirectRhoMettaV1Summary [0-9]+ [0-9]+ [0-9a-f]{64} [0-9a-f]{64}[)]$$' <<< "$$rho_summary"; \
 	cmp -s "$$work/rho.metta" \
 		$(MM0_TERM_ENVIRONMENT_RHOMETTA_PROGRAM_V1); \
 	test "$$(rg -c \
@@ -41960,10 +42022,10 @@ test-mm0-cogslt-term-environment-core-v1: \
 		$(MM0_TERM_ENVIRONMENT_PETTA_PROGRAM_V1))" -eq 87; \
 	test "$$(rg -c '^     ; rule service MM0TermEnvironmentV1 /' \
 		$(MM0_TERM_ENVIRONMENT_RHOMETTA_PROGRAM_V1))" -eq 87; \
-	! rg -q '\.mm0(["[:space:]]|$$)' \
+	assert_absent rg -q '\.mm0(["[:space:]]|$$)' \
 		$(MM0_TERM_ENVIRONMENT_PETTA_PROGRAM_V1) \
 		$(MM0_TERM_ENVIRONMENT_RHOMETTA_PROGRAM_V1); \
-	! rg -qi 'HornClause|finite[-_]horn|horn:prove|horn_prove|worklist|Datalog|SLD' \
+	assert_absent rg -qi 'HornClause|finite[-_]horn|horn:prove|horn_prove|worklist|Datalog|SLD' \
 		$(MM0_TERM_ENVIRONMENT_PETTA_PROGRAM_V1) \
 		$(MM0_TERM_ENVIRONMENT_RHOMETTA_PROGRAM_V1); \
 	awk '1' $(MM0_TERM_ENVIRONMENT_PETTA_PROGRAM_V1) \
@@ -41971,13 +42033,13 @@ test-mm0-cogslt-term-environment-core-v1: \
 		> "$$work/petta-run.metta"; \
 	petta_output=$$(timeout 45 $(CETTA_PETTA_DIRECT_RUN_V1) \
 		"$$work/petta-run.metta" 2>&1); \
-	printf '%s\n' "$$petta_output" | rg -F -x -q \
-		'MM0TermEnvironmentDirectAcceptedV1'; \
-	printf '%s\n' "$$petta_output" | rg -F -x -q \
-		'MM0TermEnvironmentDirectPureTargetRefusedV1'; \
-	printf '%s\n' "$$petta_output" | rg -F -x -q \
-		'MM0TermEnvironmentDependentSignatureAcceptedV1'; \
-	! printf '%s\n' "$$petta_output" | rg -q 'Mismatch|partial|Error'; \
+	rg -F -x -q \
+		'MM0TermEnvironmentDirectAcceptedV1' <<< "$$petta_output"; \
+	rg -F -x -q \
+		'MM0TermEnvironmentDirectPureTargetRefusedV1' <<< "$$petta_output"; \
+	rg -F -x -q \
+		'MM0TermEnvironmentDependentSignatureAcceptedV1' <<< "$$petta_output"; \
+	assert_absent rg -q 'Mismatch|partial|Error' <<< "$$petta_output"; \
 	awk '1' $(MM0_TERM_ENVIRONMENT_PETTA_PROGRAM_V1) \
 		$(MM0_TERM_ENVIRONMENT_RUNTIME_QUERY_V1) \
 		> "$$work/runtime-run.metta"; \
@@ -41990,9 +42052,9 @@ test-mm0-cogslt-term-environment-core-v1: \
 		MM0RuntimeUnknownSortRefusedV1 \
 		MM0RuntimeUnknownDependencyRefusedV1 \
 		MM0RuntimeTermRedeclarationRefusedV1; do \
-		printf '%s\n' "$$runtime_output" | rg -F -x -q "$$expected"; \
+		rg -F -x -q "$$expected" <<< "$$runtime_output"; \
 	done; \
-	! printf '%s\n' "$$runtime_output" | rg -q 'Mismatch|partial|Error'; \
+	assert_absent rg -q 'Mismatch|partial|Error' <<< "$$runtime_output"; \
 	awk '1' $(MM0_TERM_ENVIRONMENT_RHOMETTA_PROGRAM_V1) \
 		$(MM0_TERM_ENVIRONMENT_RHOMETTA_QUERY_V1) \
 		> "$$work/rho-run.metta"; \
@@ -42002,14 +42064,14 @@ test-mm0-cogslt-term-environment-core-v1: \
 		"$$work/rho-run.metta" 2>&1); \
 	test "$$(printf '%s\n' "$$rho_output" | \
 		rg -o -F '(gslt-rho:observed-v1' | wc -l)" -eq 3; \
-	printf '%s\n' "$$rho_output" | rg -F -q \
-		'QueryMM0TermEnvironmentSimpleV1'; \
-	printf '%s\n' "$$rho_output" | rg -F -q \
-		'QueryMM0TermEnvironmentDependentV1'; \
-	printf '%s\n' "$$rho_output" | rg -F -q \
-		'QueryMM0TermEnvironmentPureTargetV1'; \
-	! printf '%s\n' "$$rho_output" | rg -F -q \
-		'QueryMM0TermEnvironmentPureTargetAcceptedV1'; \
+	rg -F -q \
+		'QueryMM0TermEnvironmentSimpleV1' <<< "$$rho_output"; \
+	rg -F -q \
+		'QueryMM0TermEnvironmentDependentV1' <<< "$$rho_output"; \
+	rg -F -q \
+		'QueryMM0TermEnvironmentPureTargetV1' <<< "$$rho_output"; \
+	assert_absent rg -F -q \
+		'QueryMM0TermEnvironmentPureTargetAcceptedV1' <<< "$$rho_output"; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
 		--source $(MM0_TERM_ENVIRONMENT_V1) \
 		--out "$$work/severed-source.metta" \
@@ -42021,21 +42083,21 @@ test-mm0-cogslt-term-environment-core-v1: \
 		--source "$$work/severed-source.metta" \
 		--closed-entry-mode MM0TextualEnvironmentFromAstV1:1000 \
 		--out "$$work/severed-petta.metta" >/dev/null; \
-	! cmp -s "$$work/severed-petta.metta" \
+	assert_absent cmp -s "$$work/severed-petta.metta" \
 		$(MM0_TERM_ENVIRONMENT_PETTA_PROGRAM_V1); \
-	! rg -F -q 'source-rule=mm0-return-type-pure-v1' \
+	assert_absent rg -F -q 'source-rule=mm0-return-type-pure-v1' \
 		"$$work/severed-petta.metta"; \
 	awk '1' "$$work/severed-petta.metta" \
 		$(MM0_TERM_ENVIRONMENT_PETTA_QUERY_V1) \
 		> "$$work/severed-petta-run.metta"; \
 	severed_petta=$$(timeout 45 $(CETTA_PETTA_DIRECT_RUN_V1) \
 		"$$work/severed-petta-run.metta" 2>&1); \
-	printf '%s\n' "$$severed_petta" | rg -F -x -q \
-		'MM0TermEnvironmentDirectAcceptedV1'; \
-	printf '%s\n' "$$severed_petta" | rg -F -x -q \
-		'MM0TermEnvironmentDependentSignatureAcceptedV1'; \
-	! printf '%s\n' "$$severed_petta" | rg -F -q \
-		'MM0TermEnvironmentDirectPureTargetRefusedV1'; \
+	rg -F -x -q \
+		'MM0TermEnvironmentDirectAcceptedV1' <<< "$$severed_petta"; \
+	rg -F -x -q \
+		'MM0TermEnvironmentDependentSignatureAcceptedV1' <<< "$$severed_petta"; \
+	assert_absent rg -F -q \
+		'MM0TermEnvironmentDirectPureTargetRefusedV1' <<< "$$severed_petta"; \
 	$(RHOMETTA_DIRECT_COMPILER_V1) \
 		--source $(GSLT_GROUND_RELATIONS_V1) \
 		--source $(CETTA_PETTA_GROUND_RELATIONS_V1) \
@@ -42052,12 +42114,12 @@ test-mm0-cogslt-term-environment-core-v1: \
 		"$$work/severed-rho-run.metta" 2>&1); \
 	test "$$(printf '%s\n' "$$severed_rho" | \
 		rg -o -F '(gslt-rho:observed-v1' | wc -l)" -eq 2; \
-	printf '%s\n' "$$severed_rho" | rg -F -q \
-		'QueryMM0TermEnvironmentSimpleV1'; \
-	printf '%s\n' "$$severed_rho" | rg -F -q \
-		'QueryMM0TermEnvironmentDependentV1'; \
-	! printf '%s\n' "$$severed_rho" | rg -F -q \
-		'QueryMM0TermEnvironmentPureTargetV1'; \
+	rg -F -q \
+		'QueryMM0TermEnvironmentSimpleV1' <<< "$$severed_rho"; \
+	rg -F -q \
+		'QueryMM0TermEnvironmentDependentV1' <<< "$$severed_rho"; \
+	assert_absent rg -F -q \
+		'QueryMM0TermEnvironmentPureTargetV1' <<< "$$severed_rho"; \
 	printf '%s\n' \
 		'(MM0TermEnvironmentDirectTargetsV1Summary 87 3 6 3 1 0)'
 
@@ -42131,7 +42193,7 @@ test-mm0-cogslt-notation-environment-core-v1: \
 	fi
 	@if ldd $(BIN) $(LANGDEF_COMPILER_V1_BIN) | \
 		rg -qi 'python|libswipl|prolog'; then exit 1; fi
-	@set -euo pipefail; \
+	@set -euo pipefail; $(GSLT_OUTPUT_ASSERTIONS_V1); \
 	work=$$(mktemp -d runtime/mm0-notation-environment.XXXXXX); \
 	trap 'rm -rf "$$work"' EXIT INT TERM; \
 	petta_summary=$$($(LANGDEF_COMPILER_V1_BIN) petta-direct \
@@ -42144,8 +42206,8 @@ test-mm0-cogslt-notation-environment-core-v1: \
 		--source $(MM0_NOTATION_ENVIRONMENT_V1) \
 		--closed-entry-mode MM0SourceEnvironmentFromAstV1:1000 \
 		--out "$$work/petta.metta"); \
-	printf '%s\n' "$$petta_summary" | rg -q \
-		'^[(]GSLTDirectPeTTaV1Summary [0-9]+ [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
+	rg -q \
+		'^[(]GSLTDirectPeTTaV1Summary [0-9]+ [0-9a-f]{64} [0-9a-f]{64}[)]$$' <<< "$$petta_summary"; \
 	cmp -s "$$work/petta.metta" \
 		$(MM0_NOTATION_ENVIRONMENT_PETTA_PROGRAM_V1); \
 	rho_summary=$$($(RHOMETTA_DIRECT_COMPILER_V1) \
@@ -42158,8 +42220,8 @@ test-mm0-cogslt-notation-environment-core-v1: \
 		--source $(MM0_NOTATION_ENVIRONMENT_V1) \
 		--entry-rule mm0-source-environment-from-ast-v1 \
 		--out "$$work/rho.metta"); \
-	printf '%s\n' "$$rho_summary" | rg -q \
-		'^[(]GSLTDirectRhoMettaV1Summary [0-9]+ [0-9]+ [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
+	rg -q \
+		'^[(]GSLTDirectRhoMettaV1Summary [0-9]+ [0-9]+ [0-9a-f]{64} [0-9a-f]{64}[)]$$' <<< "$$rho_summary"; \
 	cmp -s "$$work/rho.metta" \
 		$(MM0_NOTATION_ENVIRONMENT_RHOMETTA_PROGRAM_V1); \
 	test "$$(rg -c \
@@ -42170,10 +42232,10 @@ test-mm0-cogslt-notation-environment-core-v1: \
 		$(MM0_NOTATION_ENVIRONMENT_PETTA_PROGRAM_V1))" -eq 78; \
 	test "$$(rg -c '^     ; rule service MM0NotationEnvironmentV1 /' \
 		$(MM0_NOTATION_ENVIRONMENT_RHOMETTA_PROGRAM_V1))" -eq 76; \
-	! rg -q '\.mm0(["[:space:]]|$$)' \
+	assert_absent rg -q '\.mm0(["[:space:]]|$$)' \
 		$(MM0_NOTATION_ENVIRONMENT_PETTA_PROGRAM_V1) \
 		$(MM0_NOTATION_ENVIRONMENT_RHOMETTA_PROGRAM_V1); \
-	! rg -qi 'HornClause|finite[-_]horn|horn:prove|horn_prove|worklist|Datalog|SLD' \
+	assert_absent rg -qi 'HornClause|finite[-_]horn|horn:prove|horn_prove|worklist|Datalog|SLD' \
 		$(MM0_NOTATION_ENVIRONMENT_PETTA_PROGRAM_V1) \
 		$(MM0_NOTATION_ENVIRONMENT_RHOMETTA_PROGRAM_V1); \
 	awk '1' $(MM0_NOTATION_ENVIRONMENT_PETTA_PROGRAM_V1) \
@@ -42188,9 +42250,9 @@ test-mm0-cogslt-notation-environment-core-v1: \
 		MM0RuntimeNotationInfixMaximumRefusedV1 \
 		MM0RuntimeNotationPrecedenceConflictRefusedV1 \
 		MM0RuntimeNotationRedeclarationRefusedV1; do \
-		printf '%s\n' "$$petta_output" | rg -F -x -q "$$expected"; \
+		rg -F -x -q "$$expected" <<< "$$petta_output"; \
 	done; \
-	! printf '%s\n' "$$petta_output" | rg -q 'Mismatch|partial|Error'; \
+	assert_absent rg -q 'Mismatch|partial|Error' <<< "$$petta_output"; \
 	awk '1' $(MM0_NOTATION_ENVIRONMENT_RHOMETTA_PROGRAM_V1) \
 		$(MM0_NOTATION_ENVIRONMENT_RHOMETTA_QUERY_V1) \
 		> "$$work/rho-run.metta"; \
@@ -42200,14 +42262,14 @@ test-mm0-cogslt-notation-environment-core-v1: \
 		"$$work/rho-run.metta" 2>&1); \
 	test "$$(printf '%s\n' "$$rho_output" | \
 		rg -o -F '(gslt-rho:observed-v1' | wc -l)" -eq 10; \
-	printf '%s\n' "$$rho_output" | rg -F -q \
-		'QueryMM0NotationEnvironmentPrefixV1'; \
-	printf '%s\n' "$$rho_output" | rg -F -q \
-		'QueryMM0NotationEnvironmentUnknownTermV1'; \
-	printf '%s\n' "$$rho_output" | rg -F -q \
-		'QueryMM0NotationPrefixStepV1'; \
-	! printf '%s\n' "$$rho_output" | rg -F -q \
-		'QueryMM0NotationEnvironmentUnknownTermAcceptedV1'; \
+	rg -F -q \
+		'QueryMM0NotationEnvironmentPrefixV1' <<< "$$rho_output"; \
+	rg -F -q \
+		'QueryMM0NotationEnvironmentUnknownTermV1' <<< "$$rho_output"; \
+	rg -F -q \
+		'QueryMM0NotationPrefixStepV1' <<< "$$rho_output"; \
+	assert_absent rg -F -q \
+		'QueryMM0NotationEnvironmentUnknownTermAcceptedV1' <<< "$$rho_output"; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
 		--source $(MM0_NOTATION_ENVIRONMENT_V1) \
 		--out "$$work/severed-source.metta" \
@@ -42222,19 +42284,19 @@ test-mm0-cogslt-notation-environment-core-v1: \
 		--source "$$work/severed-source.metta" \
 		--closed-entry-mode MM0SourceEnvironmentFromAstV1:1000 \
 		--out "$$work/severed-petta.metta" >/dev/null; \
-	! cmp -s "$$work/severed-petta.metta" \
+	assert_absent cmp -s "$$work/severed-petta.metta" \
 		$(MM0_NOTATION_ENVIRONMENT_PETTA_PROGRAM_V1); \
-	! rg -F -q 'source-rule=mm0-notation-constant-class-single-v1' \
+	assert_absent rg -F -q 'source-rule=mm0-notation-constant-class-single-v1' \
 		"$$work/severed-petta.metta"; \
 	awk '1' "$$work/severed-petta.metta" \
 		$(MM0_NOTATION_ENVIRONMENT_RUNTIME_QUERY_V1) \
 		> "$$work/severed-petta-run.metta"; \
 	severed_petta=$$(timeout 90 $(CETTA_PETTA_DIRECT_RUN_V1) \
 		"$$work/severed-petta-run.metta" 2>&1); \
-	printf '%s\n' "$$severed_petta" | rg -F -x -q \
-		'MM0RuntimeNotationUnknownTermRefusedV1'; \
-	! printf '%s\n' "$$severed_petta" | rg -F -q \
-		'MM0RuntimeNotationEnvironmentAcceptedV1'; \
+	rg -F -x -q \
+		'MM0RuntimeNotationUnknownTermRefusedV1' <<< "$$severed_petta"; \
+	assert_absent rg -F -q \
+		'MM0RuntimeNotationEnvironmentAcceptedV1' <<< "$$severed_petta"; \
 	$(RHOMETTA_DIRECT_COMPILER_V1) \
 		--source $(GSLT_GROUND_RELATIONS_V1) \
 		--source $(CETTA_PETTA_GROUND_RELATIONS_V1) \
@@ -42245,7 +42307,7 @@ test-mm0-cogslt-notation-environment-core-v1: \
 		--source "$$work/severed-source.metta" \
 		--entry-rule mm0-source-environment-from-ast-v1 \
 		--out "$$work/severed-rho.metta" >/dev/null; \
-	! cmp -s "$$work/severed-rho.metta" \
+	assert_absent cmp -s "$$work/severed-rho.metta" \
 		$(MM0_NOTATION_ENVIRONMENT_RHOMETTA_PROGRAM_V1); \
 	awk '1' "$$work/severed-rho.metta" \
 		$(MM0_NOTATION_ENVIRONMENT_RHOMETTA_QUERY_V1) \
@@ -42254,10 +42316,10 @@ test-mm0-cogslt-notation-environment-core-v1: \
 		--rho-reduction-limit 100000 \
 		--lang rhocalc --profile rhometta --syntax metta \
 		"$$work/severed-rho-run.metta" 2>&1); \
-	printf '%s\n' "$$severed_rho" | rg -F -q \
-		'QueryMM0NotationEnvironmentUnknownTermV1'; \
-	! printf '%s\n' "$$severed_rho" | rg -F -q \
-		'QueryMM0NotationEnvironmentPrefixV1'; \
+	rg -F -q \
+		'QueryMM0NotationEnvironmentUnknownTermV1' <<< "$$severed_rho"; \
+	assert_absent rg -F -q \
+		'QueryMM0NotationEnvironmentPrefixV1' <<< "$$severed_rho"; \
 	printf '%s\n' \
 		'(MM0NotationEnvironmentDirectTargetsV1Summary 76 1 5 10 1 0)'
 
@@ -42456,7 +42518,7 @@ test-mm0-cogslt-math-parser-core-v1: \
 	fi
 	@if ldd $(BIN) $(LANGDEF_COMPILER_V1_BIN) | \
 		rg -qi 'python|libswipl|prolog'; then exit 1; fi
-	@set -euo pipefail; \
+	@set -euo pipefail; $(GSLT_OUTPUT_ASSERTIONS_V1); \
 	work=$$(mktemp -d runtime/mm0-math-parser.XXXXXX); \
 	trap 'rm -rf "$$work"' EXIT INT TERM; \
 	petta_summary=$$($(LANGDEF_COMPILER_V1_BIN) petta-direct \
@@ -42472,8 +42534,8 @@ test-mm0-cogslt-math-parser-core-v1: \
 		--closed-entry-mode MM0SourceEnvironmentFromAstV1:1000 \
 		--closed-entry-mode MM0RuntimeMathParseV1:1110 \
 		--out "$$work/petta.metta"); \
-	printf '%s\n' "$$petta_summary" | rg -q \
-		'^[(]GSLTDirectPeTTaV1Summary 327 [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
+	rg -q \
+		'^[(]GSLTDirectPeTTaV1Summary 327 [0-9a-f]{64} [0-9a-f]{64}[)]$$' <<< "$$petta_summary"; \
 	cmp -s "$$work/petta.metta" $(MM0_MATH_PARSER_PETTA_PROGRAM_V1); \
 	rho_summary=$$($(RHOMETTA_DIRECT_COMPILER_V1) \
 		--source $(GSLT_GROUND_RELATIONS_V1) \
@@ -42488,26 +42550,26 @@ test-mm0-cogslt-math-parser-core-v1: \
 		--entry-rule mm0-source-environment-from-ast-v1 \
 		--entry-rule mm0-runtime-math-parse-v1 \
 		--out "$$work/rho.metta"); \
-	printf '%s\n' "$$rho_summary" | rg -q \
-		'^[(]GSLTDirectRhoMettaV1Summary 306 131 [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
+	rg -q \
+		'^[(]GSLTDirectRhoMettaV1Summary 306 131 [0-9a-f]{64} [0-9a-f]{64}[)]$$' <<< "$$rho_summary"; \
 	cmp -s "$$work/rho.metta" $(MM0_MATH_PARSER_RHOMETTA_PROGRAM_V1); \
 	test "$$(rg -c '^    [(]rule ' $(GSLT_DYNAMIC_PRATT_V1))" -eq 16; \
 	test "$$(rg -c '^    [(]rule ' $(MM0_MATH_PARSER_V1))" -eq 66; \
-	! rg -q '\.mm0(["[:space:]]|$$)' \
+	assert_absent rg -q '\.mm0(["[:space:]]|$$)' \
 		$(MM0_MATH_PARSER_PETTA_PROGRAM_V1) \
 		$(MM0_MATH_PARSER_RHOMETTA_PROGRAM_V1); \
-	! rg -qi 'HornClause|finite[-_]horn|horn:prove|horn_prove|worklist|Datalog|SLD' \
+	assert_absent rg -qi 'HornClause|finite[-_]horn|horn:prove|horn_prove|worklist|Datalog|SLD' \
 		$(MM0_MATH_PARSER_PETTA_PROGRAM_V1) \
 		$(MM0_MATH_PARSER_RHOMETTA_PROGRAM_V1); \
 	awk '1' $(MM0_MATH_PARSER_PETTA_PROGRAM_V1) \
 		$(MM0_MATH_PARSER_PETTA_QUERY_V1) > "$$work/petta-run.metta"; \
 	petta_output=$$(timeout 120 $(CETTA_PETTA_DIRECT_RUN_V1) \
 		"$$work/petta-run.metta" 2>&1); \
-	printf '%s\n' "$$petta_output" | rg -F -x -q \
-		'MM0RuntimeMathParserAcceptedV1'; \
-	printf '%s\n' "$$petta_output" | rg -F -x -q \
-		'MM0RuntimeMathParserLeftAssociativeAcceptedV1'; \
-	! printf '%s\n' "$$petta_output" | rg -q 'Unexpected|Mismatch|partial|Error'; \
+	rg -F -x -q \
+		'MM0RuntimeMathParserAcceptedV1' <<< "$$petta_output"; \
+	rg -F -x -q \
+		'MM0RuntimeMathParserLeftAssociativeAcceptedV1' <<< "$$petta_output"; \
+	assert_absent rg -q 'Unexpected|Mismatch|partial|Error' <<< "$$petta_output"; \
 	awk '1' $(MM0_MATH_PARSER_RHOMETTA_PROGRAM_V1) \
 		$(MM0_MATH_PARSER_RHOMETTA_QUERY_V1) > "$$work/rho-run.metta"; \
 	rho_output=$$(timeout 180 $(CETTA_BIN_INVOKE) \
@@ -42527,10 +42589,10 @@ test-mm0-cogslt-math-parser-core-v1: \
 	done; \
 	test "$$(printf '%s\n' "$$rho_output" | \
 		rg -o -F '(gslt-rho:observed-v1' | wc -l)" -eq 7; \
-	! printf '%s\n' "$$rho_output" | rg -F -q \
-		'(gslt-rho:answer-occurrence-v1 QueryMM0MathParserUnknownIdentifierAcceptedV1 '; \
-	! printf '%s\n' "$$rho_output" | rg -F -q \
-		'(gslt-rho:answer-occurrence-v1 QueryMM0MathParserIncompleteAcceptedV1 '; \
+	assert_absent rg -F -q \
+		'(gslt-rho:answer-occurrence-v1 QueryMM0MathParserUnknownIdentifierAcceptedV1 ' <<< "$$rho_output"; \
+	assert_absent rg -F -q \
+		'(gslt-rho:answer-occurrence-v1 QueryMM0MathParserIncompleteAcceptedV1 ' <<< "$$rho_output"; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
 		--source $(GSLT_DYNAMIC_PRATT_V1) \
 		--out "$$work/severed-pratt.metta" \
@@ -42548,16 +42610,16 @@ test-mm0-cogslt-math-parser-core-v1: \
 		--closed-entry-mode MM0SourceEnvironmentFromAstV1:1000 \
 		--closed-entry-mode MM0RuntimeMathParseV1:1110 \
 		--out "$$work/severed-petta.metta" >/dev/null; \
-	! cmp -s "$$work/severed-petta.metta" \
+	assert_absent cmp -s "$$work/severed-petta.metta" \
 		$(MM0_MATH_PARSER_PETTA_PROGRAM_V1); \
 	awk '1' "$$work/severed-petta.metta" \
 		$(MM0_MATH_PARSER_PETTA_QUERY_V1) > "$$work/severed-petta-run.metta"; \
 	severed_petta=$$(timeout 120 $(CETTA_PETTA_DIRECT_RUN_V1) \
 		"$$work/severed-petta-run.metta" 2>&1); \
-	! printf '%s\n' "$$severed_petta" | rg -F -x -q \
-		'MM0RuntimeMathParserAcceptedV1'; \
-	printf '%s\n' "$$severed_petta" | rg -F -x -q \
-		'MM0RuntimeMathParserLeftAssociativeAcceptedV1'; \
+	assert_absent rg -F -x -q \
+		'MM0RuntimeMathParserAcceptedV1' <<< "$$severed_petta"; \
+	rg -F -x -q \
+		'MM0RuntimeMathParserLeftAssociativeAcceptedV1' <<< "$$severed_petta"; \
 	$(RHOMETTA_DIRECT_COMPILER_V1) \
 		--source $(GSLT_GROUND_RELATIONS_V1) \
 		--source $(CETTA_PETTA_GROUND_RELATIONS_V1) \
@@ -42571,7 +42633,7 @@ test-mm0-cogslt-math-parser-core-v1: \
 		--entry-rule mm0-source-environment-from-ast-v1 \
 		--entry-rule mm0-runtime-math-parse-v1 \
 		--out "$$work/severed-rho.metta" >/dev/null; \
-	! cmp -s "$$work/severed-rho.metta" \
+	assert_absent cmp -s "$$work/severed-rho.metta" \
 		$(MM0_MATH_PARSER_RHOMETTA_PROGRAM_V1); \
 	awk '1' "$$work/severed-rho.metta" \
 		$(MM0_MATH_PARSER_RHOMETTA_QUERY_V1) > "$$work/severed-rho-run.metta"; \
@@ -42579,10 +42641,10 @@ test-mm0-cogslt-math-parser-core-v1: \
 		--rho-reduction-limit 1000000 \
 		--lang rhocalc --profile rhometta --syntax metta \
 		"$$work/severed-rho-run.metta" 2>&1); \
-	! rg -F -q \
+	assert_absent rg -F -q \
 		'(gslt-rho:answer-occurrence-v1 QueryMM0MathParserRightAssociativeV1 ' \
 		<<< "$$severed_rho"; \
-	! rg -F -q \
+	assert_absent rg -F -q \
 		'(gslt-rho:answer-occurrence-v1 QueryMM0PrattRightAssociativeV1 ' \
 		<<< "$$severed_rho"; \
 	rg -F -q \
@@ -42616,7 +42678,7 @@ test-mm0-cogslt-expression-environment-core-v1: \
 	fi
 	@if ldd $(BIN) $(LANGDEF_COMPILER_V1_BIN) | \
 		rg -qi 'python|libswipl|prolog'; then exit 1; fi
-	@set -euo pipefail; \
+	@set -euo pipefail; $(GSLT_OUTPUT_ASSERTIONS_V1); \
 	work=$$(mktemp -d runtime/mm0-expression-environment.XXXXXX); \
 	trap 'rm -rf "$$work"' EXIT INT TERM; \
 	petta_summary=$$($(LANGDEF_COMPILER_V1_BIN) petta-direct \
@@ -42634,8 +42696,8 @@ test-mm0-cogslt-expression-environment-core-v1: \
 		--closed-entry-mode MM0RuntimeExpressionElaborateV1:11110 \
 		--closed-entry-mode MM0RuntimeProvableExpressionElaborateV1:11110 \
 		--out "$$work/petta.metta"); \
-	printf '%s\n' "$$petta_summary" | rg -q \
-		'^[(]GSLTDirectPeTTaV1Summary 374 [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
+	rg -q \
+		'^[(]GSLTDirectPeTTaV1Summary 374 [0-9a-f]{64} [0-9a-f]{64}[)]$$' <<< "$$petta_summary"; \
 	cmp -s "$$work/petta.metta" \
 		$(MM0_EXPRESSION_ENVIRONMENT_PETTA_PROGRAM_V1); \
 	rho_summary=$$($(RHOMETTA_DIRECT_COMPILER_V1) \
@@ -42653,15 +42715,15 @@ test-mm0-cogslt-expression-environment-core-v1: \
 		--entry-rule mm0-runtime-expression-elaborate-v1 \
 		--entry-rule mm0-runtime-provable-expression-elaborate-v1 \
 		--out "$$work/rho.metta"); \
-	printf '%s\n' "$$rho_summary" | rg -q \
-		'^[(]GSLTDirectRhoMettaV1Summary 353 151 [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
+	rg -q \
+		'^[(]GSLTDirectRhoMettaV1Summary 353 151 [0-9a-f]{64} [0-9a-f]{64}[)]$$' <<< "$$rho_summary"; \
 	cmp -s "$$work/rho.metta" \
 		$(MM0_EXPRESSION_ENVIRONMENT_RHOMETTA_PROGRAM_V1); \
 	test "$$(rg -c '^    [(]rule ' $(MM0_EXPRESSION_ENVIRONMENT_V1))" -eq 47; \
-	! rg -q '\.mm0(["[:space:]]|$$)' \
+	assert_absent rg -q '\.mm0(["[:space:]]|$$)' \
 		$(MM0_EXPRESSION_ENVIRONMENT_PETTA_PROGRAM_V1) \
 		$(MM0_EXPRESSION_ENVIRONMENT_RHOMETTA_PROGRAM_V1); \
-	! rg -qi 'HornClause|finite[-_]horn|horn:prove|horn_prove|worklist|Datalog|SLD' \
+	assert_absent rg -qi 'HornClause|finite[-_]horn|horn:prove|horn_prove|worklist|Datalog|SLD' \
 		$(MM0_EXPRESSION_ENVIRONMENT_PETTA_PROGRAM_V1) \
 		$(MM0_EXPRESSION_ENVIRONMENT_RHOMETTA_PROGRAM_V1); \
 	petta_output=$$(timeout 120 $(CETTA_PETTA_DIRECT_RUN_V1) --quiet \
@@ -42674,11 +42736,11 @@ test-mm0-cogslt-expression-environment-core-v1: \
 		MM0RuntimeExpressionSortMismatchRefusedV1 \
 		MM0RuntimeProvableExpressionAcceptedV1 \
 		MM0RuntimeProvableExpressionNonProvableRefusedV1; do \
-		printf '%s\n' "$$petta_output" | rg -F -x -q "$$expected"; \
+		rg -F -x -q "$$expected" <<< "$$petta_output"; \
 	done; \
 	test "$$(printf '%s\n' "$$petta_output" | \
 		rg -c '^MM0Runtime.*V1$$')" -eq 6; \
-	! printf '%s\n' "$$petta_output" | rg -q 'Mismatch|Unexpected'; \
+	assert_absent rg -q 'MismatchV1$$|Unexpected' <<< "$$petta_output"; \
 	awk '1' $(MM0_EXPRESSION_ENVIRONMENT_RHOMETTA_PROGRAM_V1) \
 		$(MM0_EXPRESSION_ENVIRONMENT_RHOMETTA_QUERY_V1) \
 		> "$$work/rho-run.metta"; \
@@ -42713,7 +42775,7 @@ test-mm0-cogslt-expression-environment-core-v1: \
 		--closed-entry-mode MM0RuntimeExpressionElaborateV1:11110 \
 		--closed-entry-mode MM0RuntimeProvableExpressionElaborateV1:11110 \
 		--out "$$work/severed-petta.metta" >/dev/null; \
-	! cmp -s "$$work/severed-petta.metta" \
+	assert_absent cmp -s "$$work/severed-petta.metta" \
 		$(MM0_EXPRESSION_ENVIRONMENT_PETTA_PROGRAM_V1); \
 	severed_petta=$$(timeout 120 $(CETTA_PETTA_DIRECT_RUN_V1) --quiet \
 		"$$work/severed-petta.metta" \
@@ -42724,12 +42786,12 @@ test-mm0-cogslt-expression-environment-core-v1: \
 		MM0RuntimeExpressionBoundArgumentKindRefusedV1 \
 		MM0RuntimeExpressionSortMismatchRefusedV1 \
 		MM0RuntimeProvableExpressionAcceptedV1; do \
-		printf '%s\n' "$$severed_petta" | rg -F -x -q "$$expected"; \
+		rg -F -x -q "$$expected" <<< "$$severed_petta"; \
 	done; \
-	printf '%s\n' "$$severed_petta" | rg -F -x -q \
-		'MM0RuntimeProvableExpressionNonProvableMismatchV1'; \
-	! printf '%s\n' "$$severed_petta" | rg -F -x -q \
-		'MM0RuntimeProvableExpressionNonProvableRefusedV1'; \
+	rg -F -x -q \
+		'MM0RuntimeProvableExpressionNonProvableMismatchV1' <<< "$$severed_petta"; \
+	assert_absent rg -F -x -q \
+		'MM0RuntimeProvableExpressionNonProvableRefusedV1' <<< "$$severed_petta"; \
 	test "$$(printf '%s\n' "$$severed_petta" | \
 		rg -c '^MM0Runtime.*V1$$')" -eq 6; \
 	$(RHOMETTA_DIRECT_COMPILER_V1) \
@@ -42747,7 +42809,7 @@ test-mm0-cogslt-expression-environment-core-v1: \
 		--entry-rule mm0-runtime-expression-elaborate-v1 \
 		--entry-rule mm0-runtime-provable-expression-elaborate-v1 \
 		--out "$$work/severed-rho.metta" >/dev/null; \
-	! cmp -s "$$work/severed-rho.metta" \
+	assert_absent cmp -s "$$work/severed-rho.metta" \
 		$(MM0_EXPRESSION_ENVIRONMENT_RHOMETTA_PROGRAM_V1); \
 	awk '1' "$$work/severed-rho.metta" \
 		$(MM0_EXPRESSION_ENVIRONMENT_RHOMETTA_QUERY_V1) \
@@ -42759,7 +42821,7 @@ test-mm0-cogslt-expression-environment-core-v1: \
 	rg -F -q \
 		'(gslt-rho:answer-occurrence-v1 QueryMM0ExpressionEnvironmentAcceptedV1 ' \
 		<<< "$$severed_rho"; \
-	! rg -F -q \
+	assert_absent rg -F -q \
 		'(gslt-rho:answer-occurrence-v1 QueryMM0ExpressionEnvironmentNonProvableV1 ' \
 		<<< "$$severed_rho"; \
 	printf '%s\n' \
@@ -42791,7 +42853,7 @@ test-mm0-cogslt-assertion-environment-core-v1: \
 	fi
 	@if ldd $(BIN) $(LANGDEF_COMPILER_V1_BIN) | \
 		rg -qi 'python|libswipl|prolog'; then exit 1; fi
-	@set -euo pipefail; \
+	@set -euo pipefail; $(GSLT_OUTPUT_ASSERTIONS_V1); \
 	work=$$(mktemp -d runtime/mm0-assertion-environment.XXXXXX); \
 	trap 'rm -rf "$$work"' EXIT INT TERM; \
 	petta_summary=$$($(LANGDEF_COMPILER_V1_BIN) petta-direct \
@@ -42810,8 +42872,8 @@ test-mm0-cogslt-assertion-environment-core-v1: \
 		--closed-entry-mode MM0RuntimeExpressionElaborateV1:11110 \
 		--closed-entry-mode MM0RuntimeProvableExpressionElaborateV1:11110 \
 		--out "$$work/petta.metta"); \
-	printf '%s\n' "$$petta_summary" | rg -q \
-		'^[(]GSLTDirectPeTTaV1Summary 436 [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
+	rg -q \
+		'^[(]GSLTDirectPeTTaV1Summary 436 [0-9a-f]{64} [0-9a-f]{64}[)]$$' <<< "$$petta_summary"; \
 	cmp -s "$$work/petta.metta" \
 		$(MM0_ASSERTION_ENVIRONMENT_PETTA_PROGRAM_V1); \
 	rho_summary=$$($(RHOMETTA_DIRECT_COMPILER_V1) \
@@ -42830,15 +42892,15 @@ test-mm0-cogslt-assertion-environment-core-v1: \
 		--entry-rule mm0-runtime-expression-elaborate-v1 \
 		--entry-rule mm0-runtime-provable-expression-elaborate-v1 \
 		--out "$$work/rho.metta"); \
-	printf '%s\n' "$$rho_summary" | rg -q \
-		'^[(]GSLTDirectRhoMettaV1Summary 415 176 [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
+	rg -q \
+		'^[(]GSLTDirectRhoMettaV1Summary 415 176 [0-9a-f]{64} [0-9a-f]{64}[)]$$' <<< "$$rho_summary"; \
 	cmp -s "$$work/rho.metta" \
 		$(MM0_ASSERTION_ENVIRONMENT_RHOMETTA_PROGRAM_V1); \
 	test "$$(rg -c '^    [(]rule ' $(MM0_ASSERTION_ENVIRONMENT_V1))" -eq 62; \
-	! rg -q '\.mm0(["[:space:]]|$$)' \
+	assert_absent rg -q '\.mm0(["[:space:]]|$$)' \
 		$(MM0_ASSERTION_ENVIRONMENT_PETTA_PROGRAM_V1) \
 		$(MM0_ASSERTION_ENVIRONMENT_RHOMETTA_PROGRAM_V1); \
-	! rg -qi 'HornClause|finite[-_]horn|horn:prove|horn_prove|worklist|Datalog|SLD' \
+	assert_absent rg -qi 'HornClause|finite[-_]horn|horn:prove|horn_prove|worklist|Datalog|SLD' \
 		$(MM0_ASSERTION_ENVIRONMENT_PETTA_PROGRAM_V1) \
 		$(MM0_ASSERTION_ENVIRONMENT_RHOMETTA_PROGRAM_V1); \
 	petta_output=$$(timeout 120 $(CETTA_PETTA_DIRECT_RUN_V1) --quiet \
@@ -42850,7 +42912,7 @@ test-mm0-cogslt-assertion-environment-core-v1: \
 		MM0RuntimeAssertionEnvironmentRedeclarationRefusedV1 \
 		MM0RuntimeAssertionEnvironmentBinderOrderRefusedV1 \
 		MM0RuntimeAssertionEnvironmentTypedConclusionRefusedV1; do \
-		printf '%s\n' "$$petta_output" | rg -F -x -q "$$expected"; \
+		rg -F -x -q "$$expected" <<< "$$petta_output"; \
 	done; \
 	test "$$(printf '%s\n' "$$petta_output" | \
 		rg -c '^MM0RuntimeAssertionEnvironment.*V1$$')" -eq 5; \
@@ -42889,17 +42951,17 @@ test-mm0-cogslt-assertion-environment-core-v1: \
 		--closed-entry-mode MM0RuntimeExpressionElaborateV1:11110 \
 		--closed-entry-mode MM0RuntimeProvableExpressionElaborateV1:11110 \
 		--out "$$work/severed-petta.metta" >/dev/null; \
-	! cmp -s "$$work/severed-petta.metta" \
+	assert_absent cmp -s "$$work/severed-petta.metta" \
 		$(MM0_ASSERTION_ENVIRONMENT_PETTA_PROGRAM_V1); \
 	severed_petta=$$(timeout 120 $(CETTA_PETTA_DIRECT_RUN_V1) --quiet \
 		"$$work/severed-petta.metta" \
 		$(MM0_ASSERTION_ENVIRONMENT_PETTA_QUERY_V1) 2>&1); \
-	! printf '%s\n' "$$severed_petta" | rg -F -x -q \
-		MM0RuntimeAssertionEnvironmentPositiveAcceptedV1; \
-	printf '%s\n' "$$severed_petta" | rg -F -x -q \
-		MM0RuntimeAssertionEnvironmentBinderOrderRefusedV1; \
-	printf '%s\n' "$$severed_petta" | rg -F -x -q \
-		MM0RuntimeAssertionEnvironmentTypedConclusionRefusedV1; \
+	assert_absent rg -F -x -q \
+		MM0RuntimeAssertionEnvironmentPositiveAcceptedV1 <<< "$$severed_petta"; \
+	rg -F -x -q \
+		MM0RuntimeAssertionEnvironmentBinderOrderRefusedV1 <<< "$$severed_petta"; \
+	rg -F -x -q \
+		MM0RuntimeAssertionEnvironmentTypedConclusionRefusedV1 <<< "$$severed_petta"; \
 	printf '%s\n' \
 		'(MM0RuntimeAssertionEnvironmentDirectTargetsV1Summary 62 5 2 1 0)'
 
@@ -45648,7 +45710,7 @@ test-plain-bnf-denotation-v1-body: \
 		langdef/bnf/plain_bnf_cst_projection_v1.metta \
 		langdef/bnf/plain_bnf_bootstrap_cst_isomorphism_v1.metta \
 		langdef/bnf/plain_bnf_denotation_v1.metta
-	@set -eu; \
+	@set -eu; $(GSLT_OUTPUT_ASSERTIONS_V1); \
 	oracle_output=$$($(CETTA_PETTA_DIRECT_RUN_V1) \
 		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
 		tests/langdef/bnf/plain_bnf_admission_oracle_v1.metta); \
@@ -45678,6 +45740,7 @@ test-plain-bnf-denotation-v1-body: \
 		$(PLAIN_BNF_SEMANTIC_ADMISSION_PETTA_PROGRAM_V1) \
 		$(PLAIN_BNF_DENOTATION_V1_TEST)); \
 	for marker in \
+		PlainBnfForestListViewAcceptedV1 \
 		PlainBnfDenotationLanguageAcceptedV1 \
 		PlainBnfDenotationProfileAcceptedV1 \
 		PlainBnfDenotationOriginsAcceptedV1 \
@@ -45730,10 +45793,12 @@ test-plain-bnf-denotation-v1-body: \
 		PlainBnfDyckMalformedWordRejectedV1 \
 		PlainBnfSecondStageDocumentExactV1 \
 		PlainBnfSecondStageDenotationFixedPointExactV1; do \
-		test "$$(printf '%s\n' "$$output" | rg -F -x -c "$$marker")" -eq 1; \
+		count=$$(awk -v marker="$$marker" '$$0 == marker { n++ } END { print n + 0 }' <<< "$$output"); \
+		if test "$$count" -ne 1; then \
+			printf 'FAIL: expected one %s, observed %s\n%s\n' "$$marker" "$$count" "$$output"; exit 1; \
+		fi; \
 	done; \
-		! printf '%s\n' "$$output" | rg -q \
-		'^[(](Error|assertEqual|PlainBnfUnexpected)'
+	assert_absent rg -q '^[(](Error|assertEqual|PlainBnfUnexpected)' <<< "$$output"
 
 .PHONY: test-plain-bnf-denotation-v1
 test-plain-bnf-denotation-v1:
@@ -50362,3 +50427,4 @@ test-all: test-asymptotic test-examples test-comprehensive
 
 # Gates that need material outside CeTTa; make test never runs them.
 include mk/external.mk
+include mk/transform_axes.mk

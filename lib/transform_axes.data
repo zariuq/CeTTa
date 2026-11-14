@@ -1,0 +1,112 @@
+(cesta-tables/1
+  ; The choices of a transform step that a run can set, declared once for every lane that reads them:
+  ; the tcalc lane (native/tcalc) and CeTTa's transform (lib/step_settings.metta and the native operation).
+  ; transform and tcalc are moving targets: a family of transform steps that differ in these choices,
+  ; and each run is one point of that family.
+  ; The petta dialect's conjunction value (one-state) is the merged engine's behaviour, chosen as the
+  ; default and not ruled; its removal value (one) is Zar's ruling of 13 November 2026.
+  (Table Steps
+    (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
+    (Key id) (Unique code) (Unique spelling) (Dense id)
+    (Rows
+      (Row 0 ONE "one" "one match (RuleSyntax/JointFirings/Singletons)")
+      (Row 1 ROUND "round" "a joint bag whose members run in every order to its result")
+      (Row 2 SYNCHRONOUS "synchronous" "each member enabled on its own (Bags: Bag.AdmitsSnapshot)")
+      (Row 3 JOINT "joint" "the members enabled as one commit (Bags: Bag.Admits)")
+      (Row 4 EVERY "every" "every match of the region at once (Every: Bag.AdmitsEvery)")
+      (Row 5 MAXIMAL "maximal" "a joint bag no further match can join (Maximal)")
+      (Row 6 UNIQUE "unique" "the one match there is; more than one is reported")))
+  (Table Asks
+    (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
+    (Key id) (Unique code) (Unique spelling) (Dense id)
+    (Rows
+      (Row 0 AFTER_TELLS "after-tells" "checks at every solution of the information with the tells (Core.lean)")
+      (Row 1 BEFORE_TELLS "before-tells" "checks of the knowledge and the matching only (proposal P1)")))
+  (Table Stores
+    (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
+    (Key id) (Unique code) (Unique spelling) (Dense id)
+    (Rows
+      (Row 0 MULTISET "multiset" "a made row is a new occurrence (Core.lean)")
+      (Row 1 SET "set" "a made row already present adds nothing; a firing that changes nothing is no step")))
+  (Table Matches
+    (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
+    (Key id) (Unique code) (Unique spelling) (Dense id)
+    (Rows
+      (Row 0 SYMMETRIC "symmetric" "a match is its rule up to renaming and the bags of (pattern, row) pairs it takes and reads; decides every and unique only")
+      (Row 1 KEYS "keys" "a match is its rule and the rows selected for its patterns, in order (JointFirings: Member.key); decides every and unique only")))
+  ; The choices of CeTTa's transform beside the shared ones above. transform and tcalc are moving
+  ; targets: a family of transform steps that differ in these choices; each run is one point of it.
+  (Table Axes
+    (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text)
+             (Column values Text))
+    (Key id) (Unique code) (Unique spelling) (Dense id)
+    (Rows
+      (Row 0 STEP "step" "how many matches one step commits" "Steps")
+      (Row 1 ASK "ask" "whether a firing's checks are asked before or after its own tells" "Asks")
+      (Row 2 STORE "store" "whether a made row already present adds an occurrence" "Stores")
+      (Row 3 MATCHES "matches" "what identifies a match, for every and unique" "Matches")
+      (Row 4 REMOVAL "removal" "how many copies remove-atom removes" "Removals")
+      (Row 5 CONJUNCTION "conjunction" "the state the legs of a conjunction read" "Conjunctions")
+      (Row 6 BRANCH_TIMING "branch-timing" "when a transform branch fires" "BranchTimings")
+      (Row 7 COMMA "comma" "how a comma nested in a conjunction is read" "Commas")))
+  (Table Removals
+    (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
+    (Key id) (Unique code) (Unique spelling) (Dense id)
+    (Rows
+      (Row 0 ONE "one" "remove-atom of an atom held several times removes one copy (Zar's ruling, 13 November 2026; HE)")
+      (Row 1 EVERY "every" "remove-atom removes every copy (the SWI-PeTTa host)")))
+  (Table Conjunctions
+    (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
+    (Key id) (Unique code) (Unique spelling) (Dense id)
+    (Rows
+      (Row 0 ONE_STATE "one-state" "every leg of a conjunction in match reads the store as it was when the match began")
+      (Row 1 PER_LEG "per-leg" "each leg reads the store as the continuations of earlier answers left it")))
+  (Table BranchTimings
+    (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
+    (Key id) (Unique code) (Unique spelling) (Dense id)
+    (Rows
+      (Row 0 WHEN_ASKED "when-asked" "a branch fires when its answer is asked for, if the rows it read still hold")
+      (Row 1 AT_CALL "at-call" "every branch is judged at the state of the call; a branch that takes nothing answers from it")))
+  (Table Commas
+    (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
+    (Key id) (Unique code) (Unique spelling) (Dense id)
+    (Rows
+      (Row 0 ASSOCIATIVE "associative" "a nested comma is the associative conjunction, in every profile (Zar's ruling, 13 November 2026)")
+      (Row 1 LITERAL_INNER "literal-inner" "a nested comma leg is held as row data: the SWI-PeTTa host's behaviour, and no PeTTa law")))
+  (Table Dialects
+    (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
+    (Key id) (Unique code) (Unique spelling) (Dense id)
+    (Rows
+      (Row 0 PETTA "petta" "the PeTTa lane as measured; its conjunction value is the merged engine's behaviour, chosen as the default and not ruled")
+      (Row 1 PETTA_SWI "petta-swi" "the SWI-PeTTa host, for comparison with it")
+      (Row 2 HE "he" "the HE lane as measured")))
+  ; Presets give spellings of Dialects, Axes and the value tables; lib/step_settings.metta follows them; it is to be generated from this table.
+  (Table Presets
+    (Columns (Column id Nat) (Column dialect Text) (Column axis Text) (Column value Text))
+    (Key id) (Dense id)
+    (Rows
+      (Row 0 "petta" "step" "one")
+      (Row 1 "petta" "ask" "after-tells")
+      (Row 2 "petta" "store" "multiset")
+      (Row 3 "petta" "matches" "keys")
+      (Row 4 "petta" "removal" "one")
+      (Row 5 "petta" "conjunction" "one-state")
+      (Row 6 "petta" "branch-timing" "when-asked")
+      (Row 7 "petta-swi" "step" "one")
+      (Row 8 "petta-swi" "ask" "after-tells")
+      (Row 9 "petta-swi" "store" "multiset")
+      (Row 10 "petta-swi" "matches" "keys")
+      (Row 11 "petta-swi" "removal" "every")
+      (Row 12 "petta-swi" "conjunction" "per-leg")
+      (Row 13 "petta-swi" "branch-timing" "when-asked")
+      (Row 14 "he" "step" "one")
+      (Row 15 "he" "ask" "after-tells")
+      (Row 16 "he" "store" "multiset")
+      (Row 17 "he" "matches" "keys")
+      (Row 18 "he" "removal" "one")
+      (Row 19 "he" "conjunction" "one-state")
+      (Row 20 "he" "branch-timing" "when-asked")
+      (Row 21 "petta" "comma" "associative")
+      (Row 22 "petta-swi" "comma" "literal-inner")
+      (Row 23 "he" "comma" "associative")))
+)

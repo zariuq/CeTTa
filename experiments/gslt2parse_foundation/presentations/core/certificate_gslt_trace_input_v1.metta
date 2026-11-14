@@ -12,6 +12,7 @@
     (operator ProofTraceInputAcceptIncompleteNormalV1 2)
     (operator ProofTraceInputVerifyCompressedV1 4)
     (operator ProofTraceInputVerifyNormalV1 2)
+    (operator ProofTraceTokenResultValueV1 2)
     (operator ProofTokenApartDecisionV1 3)
     (operator ProofTokenClassV1 2)
     (operator ProofTokenCompareV1 3)
@@ -35,15 +36,44 @@
   )
   (equations)
   (rewrites
+    ; Primitive input tags are symbols. The reflected proof calculus uses
+    ; nullary constructor terms; translate that boundary explicitly.
+    (rule proof-trace-token-result-literal-v1
+      (head (ProofTraceTokenResultValueV1 ProofTokenLiteralClassV1 (ProofTokenLiteralClassV1)))
+      (body))
+    (rule proof-trace-token-result-variable-v1
+      (head (ProofTraceTokenResultValueV1 ProofTokenVariableClassV1 (ProofTokenVariableClassV1)))
+      (body))
+    (rule proof-trace-token-result-equal-v1
+      (head (ProofTraceTokenResultValueV1 ProofTokenEqualV1 (ProofTokenEqualV1)))
+      (body))
+    (rule proof-trace-token-result-unequal-v1
+      (head (ProofTraceTokenResultValueV1 ProofTokenUnequalV1 (ProofTokenUnequalV1)))
+      (body))
+    ; Providers may already supply the canonical constructor representation.
+    (rule proof-trace-token-result-value-literal-v1
+      (head (ProofTraceTokenResultValueV1 (ProofTokenLiteralClassV1) (ProofTokenLiteralClassV1)))
+      (body))
+    (rule proof-trace-token-result-value-variable-v1
+      (head (ProofTraceTokenResultValueV1 (ProofTokenVariableClassV1) (ProofTokenVariableClassV1)))
+      (body))
+    (rule proof-trace-token-result-value-equal-v1
+      (head (ProofTraceTokenResultValueV1 (ProofTokenEqualV1) (ProofTokenEqualV1)))
+      (body))
+    (rule proof-trace-token-result-value-unequal-v1
+      (head (ProofTraceTokenResultValueV1 (ProofTokenUnequalV1) (ProofTokenUnequalV1)))
+      (body))
     (rule proof-trace-input-token-class-v1
       (head (ProofTokenClassV1 ?token ?class))
       (body
-        (source-proof-trace-input-token-class-v1 ?token ?class)))
+        (source-proof-trace-input-token-class-v1 ?token ?raw-class)
+        (ProofTraceTokenResultValueV1 ?raw-class ?class)))
     (rule proof-trace-input-token-compare-v1
       (head (ProofTokenCompareV1 ?left ?right ?comparison))
       (body
         (source-proof-trace-input-token-compare-v1
-          ?left ?right ?comparison)))
+          ?left ?right ?raw-comparison)
+        (ProofTraceTokenResultValueV1 ?raw-comparison ?comparison)))
     (rule proof-trace-input-token-literal-v1
       (head (ProofTokenLiteralV1 ?token))
       (body
