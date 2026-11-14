@@ -1359,7 +1359,9 @@ bool cetta_transform_candidate_cursor_open(
     if (!cursor)
         return false;
     *cursor = (CettaTransformCandidateCursor){0};
-    arena_init(&cursor->scratch);
+    /* Fresh candidate terms belong to the cursor, not the process-wide
+     * interner. Escaping proposals are copied into the answer arena. */
+    arena_init_detached(&cursor->scratch);
     cursor->fire = (TfFire){
         .host = host,
         .scratch = &cursor->scratch,
@@ -2421,7 +2423,7 @@ CettaTransformOutcome cetta_transform_fire(
         !host->evaluate)
         return CETTA_TRANSFORM_DECLINED;
     Arena scratch;
-    arena_init(&scratch);
+    arena_init_detached(&scratch);
     CETTA_FRAME_IDENTITY_SCOPE(scope);
     TfFire f = {
         .host = host,
@@ -2572,7 +2574,7 @@ static CettaTransformOutcome cetta_transform_propose_impl(
         !host->remove_atom || !host->add_atom || !host->evaluate)
         return CETTA_TRANSFORM_DECLINED;
     Arena scratch;
-    arena_init(&scratch);
+    arena_init_detached(&scratch);
     CETTA_FRAME_IDENTITY_SCOPE(scope);
     TfFire f = {
         .host = host,
@@ -3102,7 +3104,7 @@ static CettaTransformOutcome tf_reads_only_collect(
     uint64_t *count_out) {
     bool bag = mode != CETTA_STEP_READS_ORDERED;
     Arena scratch;
-    arena_init(&scratch);
+    arena_init_detached(&scratch);
     CETTA_FRAME_IDENTITY_SCOPE(scope);
     TfAnswers answers = {0};
     TfFire f = {
@@ -3307,7 +3309,7 @@ Atom *cetta_transform_lower(Arena *a, Atom *call,
                            atom_symbol_literal_id("tf:run")))
         return NULL;
     Arena work;
-    arena_init(&work);
+    arena_init_detached(&work);
     Atom *space = call->expr.elems[1];
     Atom *sources = call->expr.elems[2];
     Atom *template_atom = call->expr.elems[3];
@@ -3443,7 +3445,7 @@ CettaTransformOutcome cetta_transform_collect(
     }
     /* The same preparation the streaming runner uses. */
     Arena work;
-    arena_init(&work);
+    arena_init_detached(&work);
     TfAtoms answers = {0};
     CettaTransformOutcome outcome = CETTA_TRANSFORM_DECLINED;
     Atom *answer = NULL;
