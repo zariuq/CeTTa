@@ -122,10 +122,30 @@ def read_forms(source):
             i += 1
         elif c.isspace():
             i += 1
+        elif c == "r" and i + 1 < len(source) and source[i + 1] == "#":
+            fence = i + 1
+            while fence < len(source) and source[fence] == "#":
+                fence += 1
+            if fence < len(source) and source[fence] == '"':
+                closing = '"' + "#" * (fence - i - 1)
+                end = source.find(closing, fence + 1)
+                if end < 0:
+                    raise ValueError("unterminated raw source string")
+                end += len(closing)
+                tokens.append(source[i:end])
+                i = end
+            else:
+                end = fence
+                while end < len(source) and not source[end].isspace() and source[end] not in "();":
+                    end += 1
+                tokens.append(source[i:end])
+                i = end
         elif c == '"':
             j = i + 1
             while j < len(source) and source[j] != '"':
                 j += 2 if source[j] == "\\" else 1
+            if j >= len(source):
+                raise ValueError("unterminated string")
             tokens.append(source[i:j + 1])
             i = j + 1
         elif c == "!" and i + 1 < len(source) and source[i + 1] == "(":
@@ -138,26 +158,37 @@ def read_forms(source):
             tokens.append(source[i:j])
             i = j
 
-    def form(k):
-        if tokens[k] != "(":
-            return tokens[k], k + 1
-        items, k = [], k + 1
-        while tokens[k] != ")":
-            item, k = form(k)
-            items.append(item)
-        return items, k + 1
-
-    forms, k = [], 0
-    while k < len(tokens):
-        item, k = form(k)
-        forms.append(item)
+    forms, stack = [], []
+    for token in tokens:
+        if token == "(":
+            items = []
+            (stack[-1] if stack else forms).append(items)
+            stack.append(items)
+        elif token == ")":
+            if not stack:
+                raise ValueError("unmatched closing parenthesis")
+            stack.pop()
+        else:
+            (stack[-1] if stack else forms).append(token)
+    if stack:
+        raise ValueError("unterminated expression")
     return forms
 
 
 def write_form(form):
-    if isinstance(form, list):
-        return "(" + " ".join(write_form(item) for item in form) + ")"
-    return form
+    pieces, todo = [], [form]
+    while todo:
+        item = todo.pop()
+        if isinstance(item, list):
+            pieces.append("(")
+            todo.append(")")
+            for index in range(len(item) - 1, -1, -1):
+                todo.append(item[index])
+                if index:
+                    todo.append(" ")
+        else:
+            pieces.append(item)
+    return "".join(pieces)
 
 
 def write_forms(forms):

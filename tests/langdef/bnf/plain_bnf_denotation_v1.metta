@@ -201,11 +201,11 @@
          PlainBnfDenotedSyntaxV1
          $_binding $_source $_forest-digest
          (pf-v1 $_start $_scalar-length
-           (cons $_root $_roots)
-           (cons $_node $_nodes)
-           (cons $_choice $_choices))
+           $roots $nodes $choices)
          $_values)
-       True)
+       (let ($_root $_roots) (test:source-cons $roots)
+         (let ($_node $_nodes) (test:source-cons $nodes)
+           (let ($_choice $_choices) (test:source-cons $choices) True))))
       ($_ False))))
 
 (= (test:forest-rejected $result)
@@ -221,18 +221,27 @@
       (pf-choice
         $_parent (pp-label $_state $label) $_prefix $_child $_pivot))
    $label)
-(= (test:choice-label-present nil $_label) False)
-(= (test:choice-label-present (cons $head $tail) $label)
-   (let $actual (test:choice-label $head)
-     (if (== $actual $label)
-         True
-         (test:choice-label-present $tail $label))))
-(= (test:choice-label-count nil $_label) 0)
-(= (test:choice-label-count (cons $head $tail) $label)
-   (let $actual (test:choice-label $head)
-     (if (== $actual $label)
-         (+ 1 (test:choice-label-count $tail $label))
-         (test:choice-label-count $tail $label))))
+; The forest wire's cons is a free constructor, not PeTTa's list view.
+(= (test:source-cons $value)
+   (let ($tag $fields) (decons-atom $value)
+     (let cons $tag
+       (let ($head $rest) (decons-atom $fields)
+         (let ($tail $end) (decons-atom $rest)
+           (let () $end ($head $tail)))))))
+(= (test:choice-label-present $choices $label)
+   (if (== $choices nil) False
+     (let ($head $tail) (test:source-cons $choices)
+       (let $actual (test:choice-label $head)
+         (if (== $actual $label)
+             True
+             (test:choice-label-present $tail $label))))))
+(= (test:choice-label-count $choices $label)
+   (if (== $choices nil) 0
+     (let ($head $tail) (test:source-cons $choices)
+       (let $actual (test:choice-label $head)
+         (if (== $actual $label)
+             (+ 1 (test:choice-label-count $tail $label))
+             (test:choice-label-count $tail $label))))))
 
 (= (test:pf-list-count nil) 0)
 (= (test:pf-list-count (cons $_head $tail))
@@ -361,6 +370,11 @@
 ; Every query returns its marker only after all observations in that query
 ; match.  Keeping the checks separate makes a failed semantic boundary visible
 ; without turning implementation-specific handles or counters into the API.
+!(let ((a nil)) (collapse (test:source-cons (quote (cons a nil))))
+   (let () (collapse (test:source-cons (quote (other a nil))))
+     (let () (collapse (test:source-cons (quote (cons a nil extra))))
+       PlainBnfForestListViewAcceptedV1)))
+
 !(let $candidate
      (test:admitted-candidate
        (bnf:denote

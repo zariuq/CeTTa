@@ -6,6 +6,7 @@
 ; does not replace public graph analysis; generated costs are measured separately.
 (gslt-presentation-v1 PlainBnfGraphIndexV1
   (signature
+    (operator bnf-v1:text-nil 0)
     (operator different 2)
     (operator bnf-v1:text-cons 2)
     (operator BNFGraphTrieV1 2)
@@ -38,7 +39,7 @@
       (head (BNFGraphTrieLookupV1 ?key BNFGraphTrieEmptyV1 BNFIndexMissingV1))
       (body))
     (rule bnf-graph-trie-lookup-value-v1
-      (head (BNFGraphTrieLookupV1 (metta-nullary bnf-v1:text-nil)
+      (head (BNFGraphTrieLookupV1 (bnf-v1:text-nil)
         (BNFGraphTrieV1 ?value ?edges) ?value))
       (body))
     (rule bnf-graph-trie-lookup-cons-v1
@@ -63,7 +64,7 @@
       (body (BNFGraphTrieInsertFirstV1 ?key ?value
         (BNFGraphTrieV1 BNFIndexMissingV1 BNFGraphTrieEdgesNilV1) ?result)))
     (rule bnf-graph-trie-insert-value-v1
-      (head (BNFGraphTrieInsertFirstV1 (metta-nullary bnf-v1:text-nil) ?value
+      (head (BNFGraphTrieInsertFirstV1 (bnf-v1:text-nil) ?value
         (BNFGraphTrieV1 ?old ?edges) (BNFGraphTrieV1 ?next ?edges)))
       (body (BNFGraphTrieFirstValueV1 ?old ?value ?next)))
     (rule bnf-graph-trie-insert-cons-v1

@@ -25,15 +25,15 @@
 !(test (is-member (a b c) (flat-conjunction-answers)) true)
 !(test (is-member (a d e) (flat-conjunction-answers)) true)
 
-; A nested comma is one literal child occurrence; it is not recursively
-; flattened into the outer conjunction.
+; Conjunction is associative in this profile: grouping the second leg
+; preserves the same joined occurrences as the flat query.
 (= (nested-conjunction-answers)
    (collapse
      (match &self (, (edge $source $middle)
                       (, (edge $middle $target)))
             ($source $middle $target))))
 
-!(test (length (nested-conjunction-answers)) 0)
+!(test (length (nested-conjunction-answers)) 2)
 
 ; Duplicate source occurrences remain duplicate joined answers.
 (= (duplicate-conjunction-answers)

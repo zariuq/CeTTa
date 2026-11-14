@@ -1,1 +1,1 @@
-(before ((partial arity-changing (a b))) after ((two a b)) duplicates ((two a b) (two a b)) removed ((partial arity-changing (a b))))
+(before ((partial arity-changing (a b))) after ((two a b)) duplicates ((two a b) (two a b)) removed ((two a b)) removed-last ((partial arity-changing (a b))))

@@ -1,0 +1,11 @@
+true
+one
+(interpretation (dialect petta) (choices ((step one base requested) (ask after-tells base requested) (store multiset base requested) (matches keys base requested) (removal one base requested) (conjunction one-state base requested) (branch-timing when-asked base requested) (comma associative base requested))))
+(step-setting-is removal every)
+every
+every
+(step-honours-is removal)
+(interpretation (dialect petta) (choices ((step one base requested) (ask after-tells base requested) (store multiset base requested) (matches keys base requested) (removal every override honoured) (conjunction one-state base requested) (branch-timing when-asked base requested) (comma associative base requested))))
+(step-dialect-is petta-swi)
+(interpretation (dialect petta-swi) (choices ((step one base requested) (ask after-tells base requested) (store multiset base requested) (matches keys base requested) (removal every base honoured) (conjunction per-leg base requested) (branch-timing when-asked base requested) (comma literal-inner base requested))))
+petta-swi

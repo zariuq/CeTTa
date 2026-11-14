@@ -525,8 +525,9 @@ static bool direct_validate_term_v1(const Atom *term,
     return true;
 }
 
-static bool direct_render_term_v1(DirectBufferV1 *buffer, const Atom *term,
-                                  Arena *scratch, size_t depth) {
+static bool direct_render_term_context_v1(
+    DirectBufferV1 *buffer, const Atom *term, Arena *scratch, size_t depth,
+    bool target_syntax) {
     if (term == NULL || depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
         return false;
     if (term->kind == ATOM_SYMBOL) {
@@ -544,11 +545,12 @@ static bool direct_render_term_v1(DirectBufferV1 *buffer, const Atom *term,
         const char *printed = atom_to_parseable_string(scratch, (Atom *)term);
         return printed != NULL && direct_literal_v1(buffer, printed);
     }
-    if (direct_head_v1(term, "metta-nullary", 1u)) {
+    if (target_syntax && direct_head_v1(term, "metta-nullary", 1u)) {
         const Atom *target = term->expr.elems[1];
         return target->kind == ATOM_SYMBOL &&
                direct_byte_v1(buffer, (uint8_t)'(') &&
-               direct_render_term_v1(buffer, target, scratch, depth + 1u) &&
+               direct_render_term_context_v1(buffer, target, scratch, depth + 1u,
+                                              target_syntax) &&
                direct_byte_v1(buffer, (uint8_t)')');
     }
     if (term->kind != ATOM_EXPR || term->expr.len == 0u ||
@@ -557,11 +559,16 @@ static bool direct_render_term_v1(DirectBufferV1 *buffer, const Atom *term,
     for (CettaExprIndex index = 0u; index < term->expr.len; index++) {
         if (index > 0u && !direct_byte_v1(buffer, (uint8_t)' '))
             return false;
-        if (!direct_render_term_v1(buffer, term->expr.elems[index],
-                                   scratch, depth + 1u))
+        if (!direct_render_term_context_v1(buffer, term->expr.elems[index],
+                                           scratch, depth + 1u, target_syntax))
             return false;
     }
     return direct_byte_v1(buffer, (uint8_t)')');
+}
+
+static bool direct_render_term_v1(DirectBufferV1 *buffer, const Atom *term,
+                                  Arena *scratch, size_t depth) {
+    return direct_render_term_context_v1(buffer, term, scratch, depth, false);
 }
 
 /* Source applications are data, even when their names are PeTTa operations.
@@ -573,11 +580,6 @@ static bool direct_render_data_pattern_v1(
         return direct_render_term_v1(program, term, scratch, depth);
     if (depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
         return false;
-    if (direct_head_v1(term, "metta-nullary", 1u)) {
-        return direct_literal_v1(program, "(cons-atom ") &&
-               direct_render_term_v1(program, term->expr.elems[1], scratch, depth + 1u) &&
-               direct_literal_v1(program, " ())");
-    }
     for (CettaExprIndex i = 0u; i < term->expr.len; ++i) {
         if (!direct_literal_v1(program, "(cons-atom ") ||
             !direct_render_data_pattern_v1(program, term->expr.elems[i], scratch, depth + 1u) ||
@@ -1446,14 +1448,8 @@ static bool direct_domain_bind_v1(
     return true;
 }
 
-/* The source nullary marker is syntax, not a second guest constructor. */
 static const char *direct_domain_constructor_v1(
     const Atom *term, size_t *arity) {
-    if (direct_head_v1(term, "metta-nullary", 1u) &&
-        term->expr.elems[1]->kind == ATOM_SYMBOL) {
-        *arity = 0u;
-        return atom_name_cstr(term->expr.elems[1]);
-    }
     if (term->kind != ATOM_EXPR || term->expr.len == 0u ||
         term->expr.elems[0]->kind != ATOM_SYMBOL) return NULL;
     *arity = (size_t)term->expr.len - 1u;
@@ -4506,11 +4502,11 @@ static bool direct_render_target_equations_v1(
         if (!direct_render_rule_realization_v1(
                 program, rule, "authored-target-equation", NULL) ||
             !direct_literal_v1(program, "(= ") ||
-            !direct_render_term_v1(
-                program, equation->expr.elems[1], scratch, 0u) ||
+            !direct_render_term_context_v1(
+                program, equation->expr.elems[1], scratch, 0u, true) ||
             !direct_byte_v1(program, (uint8_t)' ') ||
-            !direct_render_term_v1(
-                program, equation->expr.elems[2], scratch, 0u) ||
+            !direct_render_term_context_v1(
+                program, equation->expr.elems[2], scratch, 0u, true) ||
             !direct_literal_v1(program, ")\n"))
             return false;
     }

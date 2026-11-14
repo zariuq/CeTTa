@@ -2799,8 +2799,7 @@ done:
 
 static bool direct_sources_from_composition_v1(
     const char *composition_path, Arena *arena,
-    char resolved[CETTA_LANGDEF_MAX_SOURCES][PATH_MAX],
-    const char **sources, size_t *source_count,
+    const char ***sources, size_t *source_count,
     const char *command, char *error, size_t error_size) {
     Atom *root = cetta_langdef_read_single_form(
         composition_path, arena, error, error_size);
@@ -2809,6 +2808,12 @@ static bool direct_sources_from_composition_v1(
         !atom_is_symbol(root->expr.elems[0], "gslt-composition-v1"))
         return set_error(error, error_size,
                          "%s composition is malformed", command);
+    if (!cetta_expr_len_mul_fits_size(root->expr.len, sizeof(**sources)))
+        return set_error(error, error_size, "%s composition storage overflows", command);
+    const char **grown = realloc(*sources, (size_t)root->expr.len * sizeof(**sources));
+    if (!grown)
+        return set_error(error, error_size, "out of memory reading %s sources", command);
+    *sources = grown;
     *source_count = 0u;
     for (CettaExprIndex index = 1u; index < root->expr.len; index++) {
         Atom *field = root->expr.elems[index];
@@ -2822,20 +2827,22 @@ static bool direct_sources_from_composition_v1(
                     "%s composition has an invalid name", command);
             saw_name = true;
         } else if (cetta_langdef_expr_head(field, "source", 1u)) {
-            if (*source_count >= CETTA_LANGDEF_MAX_SOURCES ||
-                !cetta_langdef_text_arg(field->expr.elems[1], &value) ||
-                value[0] == '\0' ||
-                !output_path(composition_path, value,
-                             resolved[*source_count], error, error_size))
+            char resolved[PATH_MAX];
+            if (!cetta_langdef_text_arg(field->expr.elems[1], &value) ||
+                value[0] == '\0')
+                return set_error(error, error_size, "%s composition has an invalid source", command);
+            if (!output_path(composition_path, value, resolved, error, error_size))
                 return false;
             for (size_t prior = 0u; prior < *source_count; prior++) {
-                if (strcmp(resolved[prior], resolved[*source_count]) == 0)
+                if (strcmp((*sources)[prior], resolved) == 0)
                     return set_error(
                         error, error_size,
                         "%s composition repeats a source", command);
             }
-            sources[*source_count] = resolved[*source_count];
-            (*source_count)++;
+            const char *owned_path = arena_strdup(arena, resolved);
+            if (!owned_path)
+                return set_error(error, error_size, "out of memory retaining %s source", command);
+            (*sources)[(*source_count)++] = owned_path;
         } else {
             return set_error(
                 error, error_size,
@@ -2851,15 +2858,19 @@ static bool direct_sources_from_composition_v1(
 
 static bool compile_equations_command_v1(
     int argc, char **argv, char *error, size_t error_size) {
-    const char *sources[CETTA_LANGDEF_MAX_SOURCES];
+    const char **sources = NULL;
     size_t source_count = 0u;
     const char *composition = NULL;
     const char *output = NULL;
-    char resolved_sources[CETTA_LANGDEF_MAX_SOURCES][PATH_MAX];
     Arena arena;
     bool ok = false;
 
     arena_init(&arena);
+    sources = calloc((size_t)argc, sizeof(*sources));
+    if (!sources) {
+        set_error(error, error_size, "out of memory reading equations options");
+        goto done;
+    }
     for (int index = 2; index < argc; index++) {
         const char *option = argv[index];
         const char *value;
@@ -2870,11 +2881,6 @@ static bool compile_equations_command_v1(
         }
         value = argv[++index];
         if (strcmp(option, "--source") == 0) {
-            if (source_count >= CETTA_LANGDEF_MAX_SOURCES) {
-                set_error(error, error_size,
-                          "equations has too many sources");
-                goto done;
-            }
             sources[source_count++] = value;
         } else if (strcmp(option, "--composition") == 0 &&
                    composition == NULL) {
@@ -2895,13 +2901,14 @@ static bool compile_equations_command_v1(
     }
     if (composition != NULL &&
         !direct_sources_from_composition_v1(
-            composition, &arena, resolved_sources, sources, &source_count,
+            composition, &arena, &sources, &source_count,
             "equations", error, error_size))
         goto done;
     ok = compile_equations(
         sources, source_count, output, error, error_size);
 
 done:
+    free(sources);
     arena_free(&arena);
     return ok;
 }
@@ -2910,7 +2917,7 @@ static bool compile_petta_direct_command_v1(
     int argc, char **argv, size_t *rule_count,
     char source_digest[65], char artifact_digest[65],
     char *error, size_t error_size) {
-    const char *sources[CETTA_LANGDEF_MAX_SOURCES];
+    const char **sources = NULL;
     size_t source_count = 0u;
     const char *composition = NULL;
     const char *epilogue = NULL;
@@ -2921,11 +2928,10 @@ static bool compile_petta_direct_command_v1(
     CettaGsltDirectTargetV1 target = CETTA_GSLT_DIRECT_TARGET_PETTA_V1;
     Atom *native_type_packet = NULL;
     const char *output = NULL;
-    const char *entry_modes[CETTA_LANGDEF_MAX_SOURCES];
+    const char **entry_modes = NULL;
     size_t entry_mode_count = 0u;
     bool closed_entry_residual = false;
-    char resolved_sources[CETTA_LANGDEF_MAX_SOURCES][PATH_MAX];
-    Atom *presentations[CETTA_LANGDEF_MAX_SOURCES];
+    Atom **presentations = NULL;
     Arena arena;
     CettaOperationalLanguageDefV1 admission_wire;
     CettaLanguageDefCoreV1 admission_language;
@@ -2940,6 +2946,12 @@ static bool compile_petta_direct_command_v1(
     arena_init(&arena);
     cetta_op_lang_v1_init(&admission_wire);
     cetta_language_def_core_v1_init(&admission_language);
+    sources = calloc((size_t)argc, sizeof(*sources));
+    entry_modes = calloc((size_t)argc, sizeof(*entry_modes));
+    if (!sources || !entry_modes) {
+        set_error(error, error_size, "out of memory reading petta-direct options");
+        goto done;
+    }
     for (int index = 2; index < argc; index++) {
         const char *option = argv[index];
         const char *value;
@@ -2950,11 +2962,6 @@ static bool compile_petta_direct_command_v1(
         }
         value = argv[++index];
         if (strcmp(option, "--source") == 0) {
-            if (source_count >= CETTA_LANGDEF_MAX_SOURCES) {
-                set_error(error, error_size,
-                          "petta-direct has too many sources");
-                goto done;
-            }
             sources[source_count++] = value;
         } else if (strcmp(option, "--composition") == 0 &&
                    composition == NULL) {
@@ -2977,11 +2984,6 @@ static bool compile_petta_direct_command_v1(
                           "petta-direct cannot mix open and closed entry modes");
                 goto done;
             }
-            if (entry_mode_count >= CETTA_LANGDEF_MAX_SOURCES) {
-                set_error(error, error_size,
-                          "petta-direct has too many entry modes");
-                goto done;
-            }
             entry_modes[entry_mode_count++] = value;
         } else if (strcmp(option, "--closed-entry-mode") == 0) {
             if (entry_mode_count > 0u && !closed_entry_residual) {
@@ -2990,11 +2992,6 @@ static bool compile_petta_direct_command_v1(
                 goto done;
             }
             closed_entry_residual = true;
-            if (entry_mode_count >= CETTA_LANGDEF_MAX_SOURCES) {
-                set_error(error, error_size,
-                          "petta-direct has too many entry modes");
-                goto done;
-            }
             entry_modes[entry_mode_count++] = value;
         } else if (strcmp(option, "--target") == 0 && target_name == NULL) {
             target_name = value;
@@ -3043,9 +3040,14 @@ static bool compile_petta_direct_command_v1(
     }
     if (composition != NULL &&
         !direct_sources_from_composition_v1(
-            composition, &arena, resolved_sources, sources, &source_count,
+            composition, &arena, &sources, &source_count,
             "petta-direct", error, error_size))
         goto done;
+    presentations = calloc(source_count, sizeof(*presentations));
+    if (!presentations) {
+        set_error(error, error_size, "out of memory reading presentations");
+        goto done;
+    }
     for (size_t index = 0u; index < source_count; index++) {
         presentations[index] = cetta_langdef_read_single_form(
             sources[index], &arena, error, error_size);
@@ -3118,6 +3120,9 @@ static bool compile_petta_direct_command_v1(
     ok = write_atomic(output, program, program_len, error, error_size);
 
 done:
+    free(sources);
+    free(entry_modes);
+    free(presentations);
     free(epilogue_bytes);
     free(program);
     cetta_language_def_core_v1_free(&admission_language);
@@ -3130,17 +3135,16 @@ static bool compile_rhometta_direct_command_v1(
     int argc, char **argv, size_t *rule_count, size_t *relation_count,
     char source_digest[65], char artifact_digest[65],
     char *error, size_t error_size) {
-    const char *sources[CETTA_LANGDEF_MAX_SOURCES];
+    const char **sources = NULL;
     size_t source_count = 0u;
-    const char *targets[CETTA_LANGDEF_MAX_SOURCES];
+    const char **targets = NULL;
     size_t target_count = 0u;
     const char *composition = NULL;
     const char *epilogue = NULL;
     const char *output = NULL;
-    const char *entry_rules[CETTA_LANGDEF_MAX_SOURCES];
+    const char **entry_rules = NULL;
     size_t entry_rule_count = 0u;
-    char resolved_sources[CETTA_LANGDEF_MAX_SOURCES][PATH_MAX];
-    Atom *presentations[CETTA_LANGDEF_MAX_SOURCES];
+    Atom **presentations = NULL;
     FHGSLTPackage *target_package = NULL;
     char target_package_digest[65] = {0};
     Arena arena;
@@ -3151,6 +3155,13 @@ static bool compile_rhometta_direct_command_v1(
     bool ok = false;
 
     arena_init(&arena);
+    sources = calloc((size_t)argc, sizeof(*sources));
+    targets = calloc((size_t)argc, sizeof(*targets));
+    entry_rules = calloc((size_t)argc, sizeof(*entry_rules));
+    if (!sources || !targets || !entry_rules) {
+        set_error(error, error_size, "out of memory reading rhometta-direct options");
+        goto done;
+    }
     for (int index = 2; index < argc; index++) {
         const char *option = argv[index];
         const char *value;
@@ -3161,18 +3172,8 @@ static bool compile_rhometta_direct_command_v1(
         }
         value = argv[++index];
         if (strcmp(option, "--source") == 0) {
-            if (source_count >= CETTA_LANGDEF_MAX_SOURCES) {
-                set_error(error, error_size,
-                          "rhometta-direct has too many sources");
-                goto done;
-            }
             sources[source_count++] = value;
         } else if (strcmp(option, "--target") == 0) {
-            if (target_count >= CETTA_LANGDEF_MAX_SOURCES) {
-                set_error(error, error_size,
-                          "rhometta-direct has too many target presentations");
-                goto done;
-            }
             targets[target_count++] = value;
         } else if (strcmp(option, "--composition") == 0 &&
                    composition == NULL) {
@@ -3181,11 +3182,6 @@ static bool compile_rhometta_direct_command_v1(
                    epilogue == NULL) {
             epilogue = value;
         } else if (strcmp(option, "--entry-rule") == 0) {
-            if (entry_rule_count >= CETTA_LANGDEF_MAX_SOURCES) {
-                set_error(error, error_size,
-                          "rhometta-direct has too many entry rules");
-                goto done;
-            }
             entry_rules[entry_rule_count++] = value;
         } else if (strcmp(option, "--out") == 0 && output == NULL) {
             output = value;
@@ -3218,9 +3214,14 @@ static bool compile_rhometta_direct_command_v1(
     }
     if (composition != NULL &&
         !direct_sources_from_composition_v1(
-            composition, &arena, resolved_sources, sources, &source_count,
+            composition, &arena, &sources, &source_count,
             "rhometta-direct", error, error_size))
         goto done;
+    presentations = calloc(source_count, sizeof(*presentations));
+    if (!presentations) {
+        set_error(error, error_size, "out of memory reading presentations");
+        goto done;
+    }
     for (size_t index = 0u; index < source_count; index++) {
         presentations[index] = cetta_langdef_read_single_form(
             sources[index], &arena, error, error_size);
@@ -3263,6 +3264,10 @@ static bool compile_rhometta_direct_command_v1(
     ok = write_atomic(output, program, program_len, error, error_size);
 
 done:
+    free(sources);
+    free(targets);
+    free(entry_rules);
+    free(presentations);
     fhgslt_package_free(target_package);
     free(epilogue_bytes);
     free(program);

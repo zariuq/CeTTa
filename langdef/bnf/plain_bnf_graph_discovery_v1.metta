@@ -5,6 +5,8 @@
 ; bijective-binary positions avoid numeric provider assumptions.
 (gslt-presentation-v1 PlainBnfGraphDiscoveryV1
   (signature
+    (operator bnf-v1:entries-nil 0)
+    (operator bnf-v1:text-nil 0)
     (operator different 2)
     (operator bnf-v1:text-cons 2)
     (operator BNFDiscoveryRankOneV1 1)
@@ -207,7 +209,7 @@
       (body (BNFGraphTriePutV1 ?key ?value
         (BNFGraphTrieV1 BNFIndexMissingV1 BNFGraphTrieEdgesNilV1) ?result)))
     (rule bnf-discovery-trie-put-value-v1
-      (head (BNFGraphTriePutV1 (metta-nullary bnf-v1:text-nil) ?value
+      (head (BNFGraphTriePutV1 (bnf-v1:text-nil) ?value
         (BNFGraphTrieV1 ?old ?edges) (BNFGraphTrieV1 (BNFIndexFoundV1 ?value) ?edges))) (body))
     (rule bnf-discovery-trie-put-cons-v1
       (head (BNFGraphTriePutV1 (bnf-v1:text-cons ?head ?tail) ?value
@@ -241,7 +243,7 @@
       (body (BNFDiscoveryCollectLoopV1 ?entries BNFGraphTrieEmptyV1 BNFDefinitionsNilV1
         ?definitions ?diagnostics ?index)))
     (rule bnf-discovery-collect-nil-v1
-      (head (BNFDiscoveryCollectLoopV1 (metta-nullary bnf-v1:entries-nil)
+      (head (BNFDiscoveryCollectLoopV1 (bnf-v1:entries-nil)
         ?index ?reversed ?definitions BNFDiagnosticsNilV1 ?index))
       (body (BNFDiscoveryReverseDefinitionsV1 ?reversed BNFDefinitionsNilV1 ?definitions)))
     (rule bnf-discovery-collect-comment-v1

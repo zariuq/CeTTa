@@ -32,17 +32,17 @@
     (rule proof-trace-codec-canary-token-m-equal-v1
       (head
         (ProofTokenCompareV1
-          codec-token-m-v1 codec-token-m-v1 ProofTokenEqualV1))
+          codec-token-m-v1 codec-token-m-v1 (ProofTokenEqualV1)))
       (body))
     (rule proof-trace-codec-canary-token-e-equal-v1
       (head
         (ProofTokenCompareV1
-          codec-token-e-v1 codec-token-e-v1 ProofTokenEqualV1))
+          codec-token-e-v1 codec-token-e-v1 (ProofTokenEqualV1)))
       (body))
     (rule proof-trace-codec-canary-token-r-equal-v1
       (head
         (ProofTokenCompareV1
-          codec-token-r-v1 codec-token-r-v1 ProofTokenEqualV1))
+          codec-token-r-v1 codec-token-r-v1 (ProofTokenEqualV1)))
       (body))
     (rule proof-trace-codec-canary-label-r-different-m-v1
       (head

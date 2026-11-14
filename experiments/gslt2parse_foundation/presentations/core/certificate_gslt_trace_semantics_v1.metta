@@ -6,6 +6,10 @@
 
 (gslt-presentation-v1 CertificateGSLTTraceSemanticsV1
   (signature
+    (operator ProofTokenEqualV1 0)
+    (operator ProofTokenUnequalV1 0)
+    (operator ProofTokenLiteralClassV1 0)
+    (operator ProofTokenVariableClassV1 0)
     (operator ProofTraceAcceptedV1 3)
     (operator ProofTraceApplyDepthResultV1 8)
     (operator ProofTraceApplyExecutionResultV1 6)
@@ -253,7 +257,7 @@
     (rule proof-trace-frame-apply-variable-equal-v1
       (head
         (ProofTraceFrameApplyVariableComparedV1
-          ProofTokenEqualV1 ?expected-typecode ?actual-typecode
+          (ProofTokenEqualV1) ?expected-typecode ?actual-typecode
           ?image ?images ?actuals ?output
           (ProofTraceFrameAppliedV1
             (ProofAssertionListConsV1 ?image ?images)
@@ -262,7 +266,7 @@
     (rule proof-trace-frame-apply-variable-different-v1
       (head
         (ProofTraceFrameApplyVariableComparedV1
-          ProofTokenUnequalV1 ?expected-typecode ?actual-typecode
+          (ProofTokenUnequalV1) ?expected-typecode ?actual-typecode
           ?image ?images ?actuals ?output
           (ProofTraceRealizeRefusedV1
             (ProofTraceRefusedTypecodeMismatchV1
@@ -437,7 +441,7 @@
       (body
         (ProofTokenVariableV1 ?left)
         (ProofTokenVariableV1 ?right)
-        (ProofTokenCompareV1 ?left ?right ProofTokenEqualV1)))
+        (ProofTokenCompareV1 ?left ?right (ProofTokenEqualV1))))
     (rule proof-trace-token-pair-unequal-apart-v1
       (head
         (ProofTraceTokenPairDecisionV1
@@ -445,7 +449,7 @@
       (body
         (ProofTokenVariableV1 ?left)
         (ProofTokenVariableV1 ?right)
-        (ProofTokenCompareV1 ?left ?right ProofTokenUnequalV1)
+        (ProofTokenCompareV1 ?left ?right (ProofTokenUnequalV1))
         (ProofTokenApartDecisionV1
           ?left ?right ProofTraceApartPresentV1)))
     (rule proof-trace-token-pair-unequal-not-apart-v1
@@ -455,7 +459,7 @@
       (body
         (ProofTokenVariableV1 ?left)
         (ProofTokenVariableV1 ?right)
-        (ProofTokenCompareV1 ?left ?right ProofTokenUnequalV1)
+        (ProofTokenCompareV1 ?left ?right (ProofTokenUnequalV1))
         (ProofTokenApartDecisionV1
           ?left ?right ProofTraceApartMissingV1)))
 
@@ -902,13 +906,13 @@
     (rule proof-sequence-compare-heads-equal-v1
       (head
         (ProofSequenceCompareHeadsV1
-          ProofTokenEqualV1 ?left-rest ?right-rest ?result))
+          (ProofTokenEqualV1) ?left-rest ?right-rest ?result))
       (body
         (ProofSequenceCompareV1 ?left-rest ?right-rest ?result)))
     (rule proof-sequence-compare-heads-unequal-v1
       (head
         (ProofSequenceCompareHeadsV1
-          ProofTokenUnequalV1 ?left-rest ?right-rest
+          (ProofTokenUnequalV1) ?left-rest ?right-rest
           ProofSequenceDifferentV1))
       (body))
 

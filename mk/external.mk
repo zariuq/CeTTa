@@ -2781,17 +2781,28 @@ test-petta-machine-swi: $(BIN) lib/petta/petta_machine.metta tests/petta/petta_m
 	fi
 	@python3 tests/support/check_petta_machine.py ./$(BIN) --swi "$(PETTA_ORACLE_ROOT)"
 
-# GSLT -> PeTTa -> transform, measured by running it.  The direct GSLT compiler's
-# gates are run as they are, with a command in place of theirs that keeps every
-# program they run on the PeTTa lane (tests/support/record_petta_direct_run.sh).
-# Each kept program then runs as written and through the machine of transform
-# rules, and the answers are compared (tests/support/check_gslt_through_machine.py).
-# A gate that fails by itself is named and its programs are still compared: this
-# check is about the two runs of a program agreeing, not about the gate's own
-# expectations.  test-plain-bnf-name-index-v1 is left out while one of its runs
-# does not end.
+# Run production gates unchanged and record their invocations, not a joined
+# source file. A failed source gate is a failure even if both executions of
+# its program happen to fail alike. The comparison currently observes printed
+# term structure; native value-kind/effect qualification remains a separate
+# obligation and is reported by the checker.
+ifneq ($(strip $(CETTA_GSLT_RECORD_DIR)),)
+.PHONY: gslt-record-execution-v1
+gslt-record-execution-v1:
+
+# These artifacts are produced by executing generated PeTTa. Capture must
+# observe those executions even when the ordinary incremental build is warm.
+$(METAMATH_SOURCE_RESOLUTION_CONTROL_DIRECT_V1) \
+$(METAMATH_STATE_TRANSITION_INPUT_DIRECT_V1) \
+$(METAMATH_STATE_TRANSITION_EXEC_IR_DIRECT_V1) \
+$(METAMATH_PROOF_PLAN_DIRECT_V1) \
+$(METAMATH_PROOF_REFLECTION_DIRECT_V1): gslt-record-execution-v1
+endif
+
 GSLT_PETTA_DIRECT_GATES_V1 = \
 	test-gslt-petta-direct-v1 \
+	test-gslt-petta-entries-v1 \
+	test-gslt-petta-static-calls-v1 \
 	test-metamath-row-actions-direct-petta-v1 \
 	test-metamath-insert-each-matching-direct-petta-v1 \
 	test-metamath-copy-actions-direct-petta-v1 \
@@ -2808,23 +2819,36 @@ GSLT_PETTA_DIRECT_GATES_V1 = \
 	test-mm0-cogslt-math-parser-v1 \
 	test-mm0-cogslt-expression-environment-v1 \
 	test-mm0-cogslt-assertion-environment-v1 \
-	test-plain-bnf-denotation-v1
+	test-plain-bnf-denotation-v1 \
+	test-plain-bnf-name-index-v1
+
+GSLT_COMPOSITION_WORK_V1 ?= runtime/gslt-through-transform-$(BUILD_OBJ_TAG)
+GSLT_COMPOSITION_LANE_V1 ?= native
 
 .PHONY: test-gslt-petta-through-transform
 test-gslt-petta-through-transform: $(BIN) lib/petta/petta_machine.metta \
-		tests/support/check_gslt_through_machine.py tests/support/record_petta_direct_run.sh
-	@set -eu; \
-	work=$$(mktemp -d runtime/gslt-through-transform.XXXXXX); \
-	mkdir -p "$$work/corpus" "$$work/runs"; \
-	for gate in $(GSLT_PETTA_DIRECT_GATES_V1); do \
-		$(MAKE) --no-print-directory "$$gate" \
-			CETTA_PETTA_DIRECT_RUN_V1='sh tests/support/record_petta_direct_run.sh '"$(CURDIR)/$$work"'/corpus env CETTA_PETTA_SEARCH_MACHINE=1 $$(CETTA_BIN_INVOKE) --lang petta --' \
-			>"$$work/$$gate.log" 2>&1 \
-			|| echo "  $$gate fails by itself; the programs it ran are compared all the same"; \
-	done; \
-	python3 tests/support/check_gslt_through_machine.py ./$(BIN) \
-		--corpus "$$work/corpus" --keep "$$work/runs" --report "$$work/report.txt"; \
-	echo "  kept: $$work"
+		tests/support/check_gslt_through_machine.py tests/support/record_petta_direct_run.sh \
+		tests/support/gslt_invocation.py tests/support/check_gslt_gate_corpus.py
+	+@python3 tests/support/check_gslt_gate_corpus.py ./$(BIN) \
+		--make '$(MAKE)' --work '$(GSLT_COMPOSITION_WORK_V1)' \
+		--lane '$(GSLT_COMPOSITION_LANE_V1)' \
+		--gates $(GSLT_PETTA_DIRECT_GATES_V1)
+
+.PHONY: test-gslt-petta-through-transform-reference
+test-gslt-petta-through-transform-reference: test-gslt-petta-through-transform
+	+@$(MAKE) --no-print-directory test-gslt-petta-through-transform GSLT_COMPOSITION_LANE_V1=specs
+
+.PHONY: test-gslt-petta-direct-sanitizers-v1
+test-gslt-petta-direct-sanitizers-v1:
+	+@$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_SANITIZERS=1 \
+		test-gslt-petta-direct-v1 test-gslt-invocation
+
+.PHONY: test-gslt-petta-qualification
+test-gslt-petta-qualification:
+	+@$(MAKE) --no-print-directory test-gslt-petta-direct-sanitizers-v1
+	+@$(MAKE) --no-print-directory test-gslt-petta-through-transform-reference
+
+test-all: test-gslt-petta-qualification
 
 # PeTTa's forms written with transform, on SWI-PeTTa as well: every law of
 # test-petta-by-transform holds there with transform written in PeTTa.

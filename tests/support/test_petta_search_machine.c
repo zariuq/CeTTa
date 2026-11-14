@@ -10123,6 +10123,19 @@ static void test_equation_slot_admission_boundary(
     assert(stats.match_candidate_epoch_views == 0u);
     assert(stats.pure_grounded_slot_frame_direct_dispatches == 1u);
     petta_machine_destroy(&machine);
+
+    /* The same bare embedding must finish an intrinsic after a producer
+     * supplies several operands, without reinterpreting held arguments. */
+    add_equation(space, persistent,
+        "(= (unplanned-scalar-choice) (+ (superpose (1 2)) (* 2 3)))");
+    const char *choice_values[] = {"7", "8"};
+    expect_answers(space, answers, "(unplanned-scalar-choice)",
+                   choice_values, 2u);
+    add_equation(space, persistent,
+        "(= (unplanned-held-scalar $value) (pair $value (+ 1 2)))");
+    const char *held_values[] = {"(pair (+ 8 9) 3)"};
+    expect_answers(space, answers, "(unplanned-held-scalar (quote (+ 8 9)))",
+                   held_values, 1u);
 }
 
 static void test_ground_boolean_choice_elision(

@@ -7,6 +7,8 @@
 
 (gslt-presentation-v1 PlainBnfNameIndexV1
   (signature
+    (operator bnf-v1:entries-nil 0)
+    (operator bnf-v1:text-nil 0)
     (operator different 2)
     (operator ground-integer-less 2)
     (operator ground-integer-not-less 2)
@@ -62,18 +64,18 @@
   (rewrites
     (rule bnf-index-compare-empty-v1
       (head (BNFIndexCompareV1
-        (metta-nullary bnf-v1:text-nil)
-        (metta-nullary bnf-v1:text-nil) BNFIndexEqualV1))
+        (bnf-v1:text-nil)
+        (bnf-v1:text-nil) BNFIndexEqualV1))
       (body))
     (rule bnf-index-compare-empty-left-v1
       (head (BNFIndexCompareV1
-        (metta-nullary bnf-v1:text-nil)
+        (bnf-v1:text-nil)
         (bnf-v1:text-cons ?head ?tail) BNFIndexLessV1))
       (body))
     (rule bnf-index-compare-empty-right-v1
       (head (BNFIndexCompareV1
         (bnf-v1:text-cons ?head ?tail)
-        (metta-nullary bnf-v1:text-nil) BNFIndexGreaterV1))
+        (bnf-v1:text-nil) BNFIndexGreaterV1))
       (body))
     (rule bnf-index-compare-equal-head-v1
       (head (BNFIndexCompareV1
@@ -320,7 +322,7 @@
           ?afterIndex ?afterReversed)))
     (rule bnf-index-collect-nil-v1
       (head (BNFIndexCollectLoopV1
-        (metta-nullary bnf-v1:entries-nil) ?index ?reversed ?diagnosticsReversed ?after ?diagnostics))
+        (bnf-v1:entries-nil) ?index ?reversed ?diagnosticsReversed ?after ?diagnostics))
       (body
         (BNFIndexReverseDefinitionsV1 ?reversed BNFDefinitionsNilV1 ?after)
         (BNFIndexReverseDiagnosticsV1 ?diagnosticsReversed BNFDiagnosticsNilV1 ?diagnostics)))

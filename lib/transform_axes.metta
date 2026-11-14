@@ -1,0 +1,12 @@
+; generated from lib/transform_axes.data by make transform-axes-metta, do not edit
+(cesta-table-rows/1 Steps (Columns spelling) (Rows (Row one) (Row round) (Row synchronous) (Row joint) (Row every) (Row maximal) (Row unique)))
+(cesta-table-rows/1 Asks (Columns spelling) (Rows (Row after-tells) (Row before-tells)))
+(cesta-table-rows/1 Stores (Columns spelling) (Rows (Row multiset) (Row set)))
+(cesta-table-rows/1 Matches (Columns spelling) (Rows (Row symmetric) (Row keys)))
+(cesta-table-rows/1 Removals (Columns spelling) (Rows (Row one) (Row every)))
+(cesta-table-rows/1 Conjunctions (Columns spelling) (Rows (Row one-state) (Row per-leg)))
+(cesta-table-rows/1 BranchTimings (Columns spelling) (Rows (Row when-asked) (Row at-call)))
+(cesta-table-rows/1 Commas (Columns spelling) (Rows (Row associative) (Row literal-inner)))
+(cesta-table-rows/1 Dialects (Columns spelling) (Rows (Row petta) (Row petta-swi) (Row he)))
+(cesta-table-rows/1 Axes (Columns spelling values) (Rows (Row step Steps) (Row ask Asks) (Row store Stores) (Row matches Matches) (Row removal Removals) (Row conjunction Conjunctions) (Row branch-timing BranchTimings) (Row comma Commas)))
+(cesta-table-rows/1 Presets (Columns dialect axis value) (Rows (Row petta step one) (Row petta ask after-tells) (Row petta store multiset) (Row petta matches keys) (Row petta removal one) (Row petta conjunction one-state) (Row petta branch-timing when-asked) (Row petta-swi step one) (Row petta-swi ask after-tells) (Row petta-swi store multiset) (Row petta-swi matches keys) (Row petta-swi removal every) (Row petta-swi conjunction per-leg) (Row petta-swi branch-timing when-asked) (Row he step one) (Row he ask after-tells) (Row he store multiset) (Row he matches keys) (Row he removal one) (Row he conjunction one-state) (Row he branch-timing when-asked) (Row petta comma associative) (Row petta-swi comma literal-inner) (Row he comma associative)))

@@ -21,7 +21,7 @@ sha256sum "$compiler" "$runtime" "$source" "$query" "$expected" \
     --closed-entry-mode CopyListV1:10 \
     --closed-entry-mode ChoiceUseV1:0 \
     --out "$evidence/program.metta" > "$evidence/generation.txt"
-CETTA_PETTA_SEARCH_MACHINE=1 "$runtime" --lang petta \
+CETTA_PETTA_SEARCH_MACHINE=1 python3 tests/support/run_gslt_program.py "$runtime" --lang petta \
     "$evidence/program.metta" "$query" \
     > "$evidence/cetta.txt" 2> "$evidence/cetta.stderr"
 diff -u "$expected" "$evidence/cetta.txt"
