@@ -526,3 +526,78 @@
         ($other-context (mg:proof-binder (T) $c1 (small (suc (Tm.db 0)))))
         ($kept (conv:seal-out (E) $c2 (mg:hyp (T) $c2 0))))
    (KEPT other-context (case (conv:seal-in (E) $other-context $kept) (((Error $call $why) refused) ($opened opened)))))
+
+; 20. a rule that names one part twice applies where the two parts differ as
+; written and the kernel finds them convertible: twin x x = zero at twin unit
+; (suc zero), unit being defined as suc zero.  Where the kernel does not find
+; them convertible the term is left
+!(mg:define (T) "unit" (base) (suc (zero)))
+!(let $t (twin (Tm.named "unit") (suc (zero)))
+   (case (conv:run (E) (C0) (Cv.rules choice Prover.none None) $t)
+     (((Conv $t2 $theorem) (TWICE convertible (== $t2 (zero)) (states $theorem $t (zero))))
+      ($other (TWICE convertible $other)))))
+!(TWICE different (conv:run (E) (C0) (Cv.rules choice Prover.none None) (twin (zero) (suc (zero)))))
+
+; 21. a function passed on in a recursion is passed on as its value.  walk
+; (suc n) b = walk n (bind zero (lambda x. add b zero)): each call hands the
+; next a function built around its own argument.  With add x zero = x
+; declared for the inside of functions, each function is passed on as its
+; value: walk two c is bind zero (lambda x. bind zero (lambda y. c)), with no
+; add left inside
+!(mg:parameter (AUTH) "walk" (Tp.arr (base) (Tp.arr (base) (base))))
+(= (walk $n $b) (Tm.app (Tm.app (Tm.named "walk") $n) $b))
+!(mg:axiom (AUTH) "walk_zero" (Tm.all (base) (eq:of (E) (walk (zero) (Tm.db 0)) (Tm.db 0))))
+!(mg:axiom (AUTH) "walk_suc"
+   (Tm.all (base) (Tm.all (base)
+     (eq:of (E) (walk (suc (Tm.db 1)) (Tm.db 0)) (walk (Tm.db 1) (bind (zero) (Tm.lam (base) (add (Tm.db 1) (zero)))))))))
+!(conv:declare (E) (C0) passing "walk_zero")
+!(conv:declare (E) (C0) passing "walk_suc")
+!(conv:declare (E) (C0) passing "pick_zero")
+!(conv:declare (E) (C0) passing "pick_suc")
+!(conv:declare (E) (C0) plain "walk_zero")
+!(conv:declare (E) (C0) plain "walk_suc")
+!(conv:declare (E) (C0) inner "add_zero")
+!(conv:declare-inside passing inner (Cv.eval-needed inner (Cv.rules inner Prover.none None)))
+(= (passing) (Cv.eval-needed passing (Cv.rules passing Prover.none None)))
+(= (plain) (Cv.eval-needed plain (Cv.rules plain Prover.none None)))
+; walk passes a function on (its rule calls walk with a binder form); pick,
+; whose rules call no pick, does not
+!(PASSED-ON heads (conv:passes-on (E) (C0) passing (Tm.named "walk")) (conv:passes-on (E) (C0) passing (Tm.named "pick")))
+!(let* (($t (walk (two) (Tm.named "c")))
+        ($expected (bind (zero) (Tm.lam (base) (bind (zero) (Tm.lam (base) (Tm.named "c")))))))
+   (case (conv:run (E) (C0) (passing) $t)
+     (((Conv $t2 $theorem) (PASSED-ON value (== $t2 $expected) (states $theorem $t $expected)))
+      ($other (PASSED-ON value $other)))))
+; with no declaration for the inside, each function carries the one before
+!(let* (($t (walk (two) (Tm.named "c")))
+        ($expected (bind (zero) (Tm.lam (base) (add (bind (zero) (Tm.lam (base) (add (Tm.named "c") (zero)))) (zero))))))
+   (case (conv:run (E) (C0) (plain) $t)
+     (((Conv $t2 $theorem) (PASSED-ON as-written (== $t2 $expected) (states $theorem $t $expected)))
+      ($other (PASSED-ON as-written $other)))))
+; a call whose head passes nothing on keeps its function as written: pick
+; zero hands back its first argument, add and all
+!(let* (($f (bind (zero) (Tm.lam (base) (add (Tm.db 0) (zero)))))
+        ($t (pick (zero) $f (Tm.named "loop"))))
+   (case (conv:run (E) (C0) (passing) $t)
+     (((Conv $t2 $theorem) (PASSED-ON branch-kept (== $t2 $f) (states $theorem $t $f)))
+      ($other (PASSED-ON branch-kept $other)))))
+
+; 22. a rule's companion: twice x = add x x carries "small x gives small
+; (add x x)", over the same x.  Where the rule applies at twice zero, the
+; companion at the same x is kept as a fact of the context; at twice two its
+; premise is not proved, nothing is kept, and the step stands
+!(mg:parameter (AUTH) "twice" (Tp.arr (base) (base)))
+(= (twice $x) (Tm.app (Tm.named "twice") $x))
+!(mg:axiom (AUTH) "twice_def" (Tm.all (base) (eq:of (E) (twice (Tm.db 0)) (add (Tm.db 0) (Tm.db 0)))))
+!(mg:axiom (AUTH) "twice_small" (Tm.all (base) (Tm.imp (small (Tm.db 0)) (small (add (Tm.db 0) (Tm.db 0))))))
+!(conv:declare-companion "twice_def" "twice_small")
+!(case (conv:run (E) (C0) (Cv.rule "twice_def" (Prover.known "small_zero")) (twice (zero)))
+   (((Conv $t2 $theorem)
+     (COMPANION kept (== $t2 (add (zero) (zero)))
+       (case (conv:known-fact (E) (C0) (small (add (zero) (zero))))
+         ((None none) ($fact (proves $fact (small (add (zero) (zero)))))))))
+    ($other (COMPANION kept $other))))
+!(case (conv:run (E) (C0) (Cv.rule "twice_def" (Prover.known "small_zero")) (twice (two)))
+   (((Conv $t2 $theorem)
+     (COMPANION premise-unproved (== $t2 (add (two) (two))) (conv:known-fact (E) (C0) (small (add (two) (two))))))
+    ($other (COMPANION premise-unproved $other))))

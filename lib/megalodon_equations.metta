@@ -257,6 +257,51 @@
    (let $found (mgt:bound $k $binds)
      (if (== $found None) (cons-atom ($k $t) $binds)
          (if (== $found $t) $binds fail))))
+; The same match, where a variable met twice keeps its first part: the
+; instance it gives is then compared with the term by the kernel.
+(= (mgt:match-loose $pat $t $n $d $binds)
+   (if (== $binds fail) fail
+       (case $pat
+         (((Tm.db $j)
+           (if (< $j $d)
+               (if (== $t (Tm.db $j)) $binds fail)
+               (if (< (- $j $d) $n)
+                   (mgt:bind-first (- (- $n 1) (- $j $d)) (mgt:shift $t (- 0 $d) 0) $binds)
+                   (if (== $t $pat) $binds fail))))
+          ((Tm.app $pf $px)
+           (case $t
+             (((Tm.app $f $x) (mgt:match-loose $px $x $n $d (mgt:match-loose $pf $f $n $d $binds)))
+              ($other fail))))
+          ((Tm.lam $A $pb)
+           (case $t
+             (((Tm.lam $B $b) (if (== $A $B) (mgt:match-loose $pb $b $n (+ $d 1) $binds) fail))
+              ($other fail))))
+          ((Tm.typeApp $pm $A)
+           (case $t
+             (((Tm.typeApp $m $B) (if (== $A $B) (mgt:match-loose $pm $m $n $d $binds) fail))
+              ($other fail))))
+          ($other (if (== $pat $t) $binds fail))))))
+(= (mgt:bind-first $k $t $binds)
+   (if (== (mgt:bound $k $binds) None) (cons-atom ($k $t) $binds) $binds))
+; A pattern under N quantifiers with its variables given by BINDS (None
+; where one is not bound).
+(= (mgt:fill $pat $n $binds) (mgt:fill-at $pat $n 0 $binds))
+(= (mgt:fill-at $pat $n $d $binds)
+   (case $pat
+     (((Tm.db $j)
+       (if (< $j $d) $pat
+           (if (< (- $j $d) $n)
+               (let $v (mgt:bound (- (- $n 1) (- $j $d)) $binds) (if (== $v None) None (mgt:shift $v $d 0)))
+               $pat)))
+      ((Tm.app $f $x)
+       (let $f2 (mgt:fill-at $f $n $d $binds)
+         (if (== $f2 None) None
+             (let $x2 (mgt:fill-at $x $n $d $binds) (if (== $x2 None) None (Tm.app $f2 $x2))))))
+      ((Tm.lam $A $b)
+       (let $b2 (mgt:fill-at $b $n (+ $d 1) $binds) (if (== $b2 None) None (Tm.lam $A $b2))))
+      ((Tm.typeApp $m $A)
+       (let $m2 (mgt:fill-at $m $n $d $binds) (if (== $m2 None) None (Tm.typeApp $m2 $A))))
+      ($other $pat))))
 (= (mgt:bound $k $binds)
    (if (== $binds ()) None
        (let ($j $t) (car-atom $binds) (if (== $j $k) $t (mgt:bound $k (cdr-atom $binds))))))
@@ -873,17 +918,94 @@
          (case (eq:sides $E $conclusion)
            (((Sides $left $right)
              (let $binds (mgt:match (mgt:eta $left) $t $n 0 ())
-               (if (== $binds fail) Same
-                   (case (rule:instantiate $E $ctx $prover $default $known $statement 0 $binds)
-                     (((Instance $thm $stated)
-                       (case (eq:sides $E $stated)
-                         (((Sides $l $r)
-                           (let $t2 (mgt:head-beta $r) (if (== $t2 $t) Same (Conv $t2 $thm))))
-                          ($other Same))))
-                      ((Open $premise) (Undecided (Open $premise)))
-                      ((Unstated $quantifier) (Undecided (Unstated $quantifier)))
-                      ($other (Undecided Refused)))))))
+               (if (== $binds fail)
+                   (conv:rule-try-loose $E $ctx $name $prover $default $known $statement $n (mgt:eta $left) $t)
+                   (conv:with-companions $E $ctx $name $prover $t
+                     (conv:rule-instance $E $ctx $prover $default $known $statement $binds $t)))))
             ($other Same))))))))
+; A rule may carry companions: theorems that state what a step of the rule
+; establishes besides its equation, about the arguments of the call it
+; rewrites (a definition's equation writes a proof inside its right side as
+; 0; the proof is a lemma over the definition's arguments).
+; (conv:declare-companion NAME COMPANION): COMPANION's quantifiers are, in
+; order, the arguments of the head of NAME's left side.  Where NAME applies
+; at a call, each companion is instantiated at the call's arguments (a
+; further quantifier takes a witness, as for a rule), its premises proved by
+; the rule's prover, and the theorem is kept as a fact of the context:
+; (conv:known-fact E CTX P) is that theorem where P is what it states.  A
+; companion whose premise is not proved is not kept, and the step stands.
+(= (conv:declare-companion $name $companion) (add-atom &self (ConvCompanion $name $companion)))
+(= (conv:with-companions $E $ctx $name $prover $t $answer)
+   (case $answer
+     (((Conv $t2 $thm)
+       (let* (($companions (collapse (match &self (ConvCompanion $name $c) $c)))
+              ($kept (if (== $companions ()) done
+                         (conv:keep-companions $E $ctx $prover (conv:argument-binds (mgt:spine-args $t) 0) $companions))))
+         $answer))
+      ($other $answer))))
+(= (conv:argument-binds $args $k)
+   (if (== $args ()) () (cons-atom ($k (car-atom $args)) (conv:argument-binds (cdr-atom $args) (+ $k 1)))))
+(= (conv:keep-companions $E $ctx $prover $binds $companions)
+   (if (== $companions ()) done
+       (let* (($known (mg:known-in (eq:theory $E) $ctx (car-atom $companions)))
+              ($statement (mg:proposition $known))
+              ($kept (case (rule:instantiate $E $ctx $prover None $known $statement 0 $binds)
+                       (((Instance $thm $stated) (conv:keep-fact $E $ctx (mgt:beta $stated) $thm))
+                        ($other none)))))
+         (conv:keep-companions $E $ctx $prover $binds (cdr-atom $companions)))))
+(= (conv:keep-fact $E $ctx $p $theorem)
+   (let* (($evidence (conv:evidence-for $ctx)) ($key (eq:name $E)))
+     (if (== (collapse (match $evidence (ConvKnownFact $key $ctx $p $kept) kept)) ())
+         (let $sealed (conv:seal-out $E $ctx $theorem) (add-atom $evidence (ConvKnownFact $key $ctx $p $sealed)))
+         kept)))
+(= (conv:known-fact $E $ctx $p)
+   (let* (($evidence (conv:evidence-for $ctx)) ($key (eq:name $E))
+          ($kept (collapse (match $evidence (ConvKnownFact $key $ctx $p $theorem) $theorem))))
+     (if (== $kept ()) None (conv:seal-in $E $ctx (car-atom $kept)))))
+; Every fact kept in the context, as (Fact P THEOREM).
+(= (conv:known-facts $E $ctx)
+   (let* (($evidence (conv:evidence-for $ctx)) ($key (eq:name $E)))
+     (conv:facts-in $E $ctx (collapse (match $evidence (ConvKnownFact $key $ctx $p $kept) (Fact $p $kept))))))
+(= (conv:facts-in $E $ctx $rows)
+   (if (== $rows ()) ()
+       (let* (((Fact $p $kept) (car-atom $rows))
+              ($theorem (conv:seal-in $E $ctx $kept))
+              ($rest (conv:facts-in $E $ctx (cdr-atom $rows))))
+         (cons-atom (Fact $p $theorem) $rest))))
+(= (conv:rule-instance $E $ctx $prover $default $known $statement $binds $t)
+   (case (rule:instantiate $E $ctx $prover $default $known $statement 0 $binds)
+     (((Instance $thm $stated)
+       (case (eq:sides $E $stated)
+         (((Sides $l $r)
+           (let $t2 (mgt:head-beta $r) (if (== $t2 $t) Same (Conv $t2 $thm))))
+          ($other Same))))
+      ((Open $premise) (Undecided (Open $premise)))
+      ((Unstated $quantifier) (Undecided (Unstated $quantifier)))
+      ($other (Undecided Refused)))))
+; A left side that names one part twice compares two parts of the term.
+; Where they differ as written, the rule is instantiated with the first, and
+; it applies when the kernel finds the instance of its left side convertible
+; with the term: the equation is then an equation about the term itself.
+; (A constructor node does not depend on the parameter of its family, so a
+; recursor and its node agree in the kernel however their propositions are
+; written.)  No part of the term is computed for this.
+(= (conv:rule-try-loose $E $ctx $name $prover $default $known $statement $n $left $t)
+   (let $loose (mgt:match-loose $left $t $n 0 ())
+     (if (== $loose fail) Same
+         (let $instance (mgt:fill $left $n $loose)
+           (if (== $instance None) Same
+               (case (mg:try-convertible (eq:theory $E) $ctx $instance $t)
+                 ((True (conv:rule-at-term $E $ctx
+                          (conv:with-companions $E $ctx $name $prover $t
+                            (conv:rule-instance $E $ctx $prover $default $known $statement $loose $instance))
+                          $t))
+                  ($other Same))))))))
+(= (conv:rule-at-term $E $ctx $answer $t)
+   (case $answer
+     (((Conv $r $thm)
+       (let $restated (collapse (mg:exact (eq:theory $E) $ctx (eq:of $E $t $r) $thm))
+         (if (== $restated ()) Same (Conv $r (car-atom $restated)))))
+      ($other $answer))))
 ; A theorem stating L = R, at a term the kernel finds convertible with L.
 (= (conv:equation $E $ctx $theorem $t)
    (case (eq:sides $E (mg:proposition $theorem))
@@ -994,10 +1116,122 @@
          (cons-atom (Origin $term $theorem) $rest))))
 (= (conv:eval-fresh $E $ctx $self $t)
    (let* (($flags (conv:eval-flags $E $ctx $self (mgt:head $t)))
-          ($parts (conv:eval-parts $E $ctx $self $t $t () Same $flags True)))
+          ($needed (conv:eval-parts $E $ctx $self $t $t () Same $flags True))
+          ($inside (conv:inside-of $E $ctx $self $flags $t))
+          ($parts (if (== $inside None) $needed (conv:inside-parts $E $ctx $inside $t $t () $needed $flags))))
      (case $parts
        ((Same (conv:eval-root $E $ctx $self $t $flags))
         ((Conv $t1 $thm) (conv:join $E $ctx $t $parts (conv:eval $E $ctx $self $t1)))))))
+; A function passed on in a recursion is passed on as its value.  Where a
+; set has a conversion declared for the inside of functions,
+; (conv:declare-inside SET RULES CONVERSION), Cv.eval-needed for SET applies
+; CONVERSION under the binder of an argument of a call before a rule is
+; tried on the call, where:
+;  - the head of the call passes functions on: one of its rules in SET has,
+;    on its right side, a call of the same head with a binder form among its
+;    arguments (a recursion that hands the next call a function built
+;    around its own argument: a restriction, a composition);
+;  - the argument is a binder form that no rule needs in a particular form;
+;  - a left side of a rule of RULES matches somewhere inside it as written.
+; So the next call does not carry the first function inside the second, and
+; a recursion of depth d does not apply d functions nested in one another.
+; Other calls keep their functions as written: a branch of a recursor is
+; applied at once, and its domain stays the type of what it receives; a
+; proposition given beside the proof that states it stays the one stated.
+(= (conv:declare-inside $set $rules $conversion) (add-atom &self (ConvInside $set $rules $conversion)))
+(= (conv:inside-of $E $ctx $self $flags $t)
+   (if (== $flags all) None
+       (case $self
+         (((Cv.eval-needed $set $inner)
+           (let $kept (collapse (match &self (ConvInside $set $rules $conversion) (Inside $rules $conversion)))
+             (if (== $kept ()) None
+                 (if (conv:passes-on $E $ctx $set (mgt:head $t)) (car-atom $kept) None))))
+          ($other None)))))
+; Whether HEAD passes functions on, read once from its rules in SET.
+(= (conv:passes-on $E $ctx $set $head)
+   (let* (($key (eq:name $E))
+          ($kept (collapse (match &self (ConvPassesOn $key $set $head $answer) $answer))))
+     (if (== $kept ())
+         (let* (($answer (conv:passes-on-by $E $ctx $head (conv:declared $set $head)))
+                ($done (add-atom &self (ConvPassesOn $key $set $head $answer))))
+           $answer)
+         (car-atom $kept))))
+(= (conv:passes-on-by $E $ctx $head $names)
+   (if (== $names ()) False
+       (case (conv:sides-of $E $ctx (car-atom $names))
+         (((Sides $left $right)
+           (if (conv:calls-with-function $head $right) True (conv:passes-on-by $E $ctx $head (cdr-atom $names))))
+          ($other (conv:passes-on-by $E $ctx $head (cdr-atom $names)))))))
+(= (conv:sides-of $E $ctx $name)
+   (case (rule:conclusion (mg:proposition (mg:known-in (eq:theory $E) $ctx $name)) 0)
+     (((Concludes $n $conclusion) (eq:sides $E $conclusion))
+      ($other None))))
+; Whether TERM has a call of HEAD with a binder form among its arguments.
+(= (conv:calls-with-function $head $t)
+   (case $t
+     (((Tm.app $f $x)
+       (if (== (mgt:head $t) $head)
+           (if (conv:some-binder-argument $t) True
+               (if (conv:calls-with-function $head $f) True (conv:calls-with-function $head $x)))
+           (if (conv:calls-with-function $head $f) True (conv:calls-with-function $head $x))))
+      ((Tm.lam $A $b) (conv:calls-with-function $head $b))
+      ($other False))))
+(= (conv:some-binder-argument $t)
+   (case $t
+     (((Tm.app $f $x) (if (conv:binder-form $x) True (conv:some-binder-argument $f)))
+      ($other False))))
+(= (conv:inside-parts $E $ctx $inside $t $node $path $acc $flags)
+   (case $node
+     (((Tm.app $f $x)
+       (let $acc1 (conv:inside-parts $E $ctx $inside $t $f (mgt:snoc $path fun) $acc $flags)
+         (if (conv:eval-flag $flags (mgt:spine-length $f)) $acc1
+             (conv:inside-arg $E $ctx $inside $t $x (mgt:snoc $path arg) $acc1))))
+      ($other $acc))))
+(= (conv:inside-arg $E $ctx (Inside $rules $conversion) $t $x $path $acc)
+   (if (conv:binder-form $x)
+       (if (conv:matches-inside $E $ctx $rules $x)
+           (let $r (conv:run $E $ctx (Cv.strong $conversion) $x)
+             (case $r
+               ((Same $acc)
+                ((Conv $x2 $theorem)
+                 (conv:join $E $ctx $t $acc (conv:lift $E $ctx (conv:result $t $acc) $path $x $r))))))
+           $acc)
+       $acc))
+; Whether a left side of a rule of SET matches, as written, at some part of
+; the term (also under a binder of the logic).  The left sides are read
+; once.
+(= (conv:matches-inside $E $ctx $set $t)
+   (case $t
+     (((Tm.app $f $x)
+       (if (conv:matches-at $E $ctx (conv:declared $set (mgt:head $t)) $t) True
+           (if (conv:matches-inside $E $ctx $set $f) True (conv:matches-inside $E $ctx $set $x))))
+      ((Tm.lam $A $b) (conv:matches-inside $E $ctx $set $b))
+      ($other False))))
+(= (conv:matches-at $E $ctx $names $t)
+   (if (== $names ()) False
+       (case (conv:left-of $E $ctx (car-atom $names))
+         (((Left $n $left)
+           (if (== (mgt:match $left $t $n 0 ()) fail) (conv:matches-at $E $ctx (cdr-atom $names) $t) True))
+          ($other (conv:matches-at $E $ctx (cdr-atom $names) $t))))))
+(= (conv:left-of $E $ctx $name)
+   (let* (($key (eq:name $E)) ($kept (collapse (match &self (ConvLeft $key $name $n $left) (Left $n $left)))))
+     (if (== $kept ())
+         (let $read (conv:read-left $E $ctx $name)
+           (case $read
+             (((Left $n $left) (let $done (add-atom &self (ConvLeft $key $name $n $left)) $read))
+              ($other $read))))
+         (car-atom $kept))))
+(= (conv:read-left $E $ctx $name)
+   (case (rule:conclusion (mg:proposition (mg:known-in (eq:theory $E) $ctx $name)) 0)
+     (((Concludes $n $conclusion)
+       (case (eq:sides $E $conclusion)
+         (((Sides $left $right) (Left $n (mgt:eta $left)))
+          ($other None))))
+      ($other None))))
+(= (conv:binder-form $x)
+   (case $x
+     (((Tm.app (Tm.app $h $X) $F) (not (== (collapse (match &self (ConvBinder $h $name) $name)) ())))
+      ($other False))))
 (= (conv:eval-root $E $ctx $self $t $flags)
    (let $stepped (conv:run $E $ctx (conv:eval-step $self) $t)
      (case $stepped

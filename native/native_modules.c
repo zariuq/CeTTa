@@ -20,6 +20,7 @@
 #include "lib_parse_native_grammar.h"
 #include "native/langdef_module.h"
 #include "native/hol_light/hol_cetta_module.h"
+#include "native/hol_light_module/holm_cetta_module.h"
 #include "native/mm0/mm0_cetta_module.h"
 #include "native/seal_module.h"
 #include "native/megalodon/mg_cetta_module.h"
@@ -28,6 +29,8 @@
 #define CETTA_NATIVE_IMPORT_LANGDEF (1u << 25)
 #define CETTA_NATIVE_IMPORT_HOL (1u << 28)
 #define CETTA_NATIVE_IMPORT_MM0 (1u << 29)
+/* the HOL Light kernel module compiled by rulec (native/hol_light_module) */
+#define CETTA_NATIVE_IMPORT_HOLM (1u << 23)
 
 static Atom *native_module_error(Arena *a, Atom *source, const char *message) {
     return atom_error(a, source, atom_string(a, message));
@@ -1226,6 +1229,15 @@ static bool hol_module_call(CettaLibraryContext *ctx, Space *space,
     return true;
 }
 
+static bool holm_module_call(CettaLibraryContext *ctx, Space *space,
+                             Arena *arena, Atom *head, Atom **args,
+                             uint32_t nargs, CettaCallOutcome *out) {
+    Atom *result = cetta_holm_dispatch(ctx, space, arena, head, args, nargs);
+    if (!result) return false;
+    *out = cetta_call_completed_value(result);
+    return true;
+}
+
 static bool mm0_module_call(CettaLibraryContext *ctx, Space *space,
                             Arena *arena, Atom *head, Atom **args,
                             uint32_t nargs, CettaCallOutcome *out) {
@@ -1249,6 +1261,7 @@ static const CettaNativeBuiltinModule g_native_modules[] = {
     {"lib_transform", CETTA_NATIVE_IMPORT_TRANSFORM, NULL, "tf:", cetta_eval_transform_module_call,
      "tf:run tf:split tf:propose tf:inst tf:fire tf:fire-into"},
     {"holkernel", CETTA_NATIVE_IMPORT_HOL, NULL, "__cetta_lib_hol_", hol_module_call, NULL},
+    {"holmodule", CETTA_NATIVE_IMPORT_HOLM, NULL, "__cetta_lib_holm_", holm_module_call, NULL},
     {"mm0kernel", CETTA_NATIVE_IMPORT_MM0, NULL, "__cetta_lib_mm0_", mm0_module_call, NULL},
     {"seal", CETTA_NATIVE_IMPORT_SEAL, NULL, "__cetta_lib_seal_", cetta_seal_module_call, NULL},
     {"megalodon", CETTA_NATIVE_IMPORT_MEGALODON, NULL, "__cetta_lib_megalodon_",

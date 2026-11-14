@@ -1,0 +1,54 @@
+; Justified blocks of the HOL Light kernel module: each row binds a module judgment to an
+; implementation; the judgment's rules in the module are the block's contract.
+;   (block NAME JUDGMENT IMPLEMENTATION LABEL JUSTIFICATION)
+;   (law NAME JUDGMENT RESULT LABEL JUSTIFICATION)       J(x, x) gives RESULT
+; LABEL: proved (the theorems), checked (every call of a corpus run compared with the compiled
+; rules), trusted (the reason).  IMPLEMENTATION names a function of the C back end's binding of the
+; native HOL Light kernel; another back end may bind the same names or compile the rules.
+
+; names (interned byte strings)
+(block "name equality" "hl:str-eq" "holb_str_eq" "proved" "strEq_binding, names_eq_iff: interned names have equal bytes exactly when they are the same id; strEq_refines")
+(block "name order" "hl:cmp-str" "holb_cmp_str" "proved" "cmpStr_refines, nativeCmp_eq_memcmp; names_eq_iff (id to bytes); trusted: hk_name_cmp is memcmp of the common prefix then the lengths, and C memcmp compares unsigned")
+(block "name prime" "hl:str-prime" "holb_str_prime" "proved" "strPrime_refines; names_eq_iff (id to bytes); trusted: hk_name_prime interns the bytes followed by 0x27")
+; numerals (immediates)
+(block "numeral order" "hl:cmp-nat" "rc_native_cmp_nat" "proved" "cmpNat_refines; trusted: the comparison of uint64_t")
+(block "numeral successor" "hl:nat-inc" "rc_native_nat_inc" "proved" "natInc_refines; checked at run time: the immediate range")
+; equality of types and terms (interned)
+(block "type equality" "hl:ty-eq" "holb_ty_eq" "proved" "tyEq_binding: in an interning store ty-eq of two read-backs answers yes exactly when they are one node (interning_eq_iff, cmpType_eq_iff)")
+(block "term equality" "hl:tm-eq" "holb_tm_eq" "proved" "tmEq_binding: in an interning store tm-eq of two read-backs answers yes exactly when they are one node (interning_eq_iff, cmpTerm_eq_iff)")
+; orders
+(block "type order" "hl:cmp-type" "holb_cmp_type" "checked" "hk_ty_compare: OCaml compare on hol_type")
+(block "term order" "hl:cmp-term" "holb_cmp_term" "checked" "hk_tm_compare: OCaml compare on term")
+(block "alphaorder" "hl:alphaorder" "holb_alphaorder" "checked" "hk_alphaorder: fusion.ml orda/ordav")
+; syntax
+(block "type_of" "hl:type-of" "holb_type_of" "checked" "the type each native term records at construction")
+(block "mk_comb" "hl:mk-comb" "holb_mk_comb" "checked" "hk_tm_comb; refusal mapped to tm-fail(mk_comb: types do not agree)")
+(block "mk_abs" "hl:mk-abs" "holb_mk_abs" "checked" "hk_tm_abs; refusal mapped to tm-fail(mk_abs: not a variable)")
+(block "safe_mk_eq" "hl:safe-mk-eq" "holb_safe_mk_eq" "checked" "hk_tm_eq")
+; free variables
+(block "frees" "hl:frees" "holb_frees" "checked" "hk_frees_exact (fusion.ml's order)")
+(block "freesin" "hl:freesin" "holb_freesin" "checked" "hk_freesin")
+(block "vfree_in" "hl:vfree-in" "holb_vfree_in" "checked" "hk_vfree_in")
+(block "type_vars_in_term" "hl:type-vars-in-term" "holb_type_vars_in_term" "checked" "hk_type_vars_in_term_exact (fusion.ml's order)")
+(block "tyvars" "hl:tyvars" "holb_tyvars" "checked" "hk_tyvars_exact (fusion.ml's order)")
+; renaming and substitution
+(block "variant" "hl:variant" "holb_variant" "checked" "hk_variant")
+(block "vsubst" "hl:vsubst" "holb_vsubst" "checked" "hk_vsubst; Bad substitution list mapped to vs-bad")
+(block "vsubst recursion" "hl:vsubst-rec" "holb_vsubst_rec" "checked" "hk_vsubst on a list that passes vsubst's check, which the rules make first; a list that fails it stops the run")
+(block "inst" "hl:inst" "holb_inst" "checked" "hk_inst")
+(block "type_subst" "hl:type-subst" "holb_type_subst" "checked" "hk_type_subst")
+; hypothesis lists
+(block "term_union" "hl:term-union" "holb_term_union" "checked" "fusion.ml's term_union over hk_alphaorder")
+(block "term_remove" "hl:term-remove" "holb_term_remove" "checked" "fusion.ml's term_remove over hk_alphaorder")
+(block "term_image vsubst" "hl:term-image-vsubst" "holb_term_image_vsubst" "checked" "fusion.ml's term_image over hk_vsubst and term_union")
+(block "term_image inst" "hl:term-image-inst" "holb_term_image_inst" "checked" "fusion.ml's term_image over hk_inst and term_union")
+; id tables: arrays updated in place (an update makes the table's older values unusable; using one
+; stops the run); the read-back to the module's tries commutes with the operations (RuleModuleInterning)
+(block "table lookup" "hl:table-get" "holb_table_get" "proved" "tableGet_readback: table-get on the read-back gives the stored cell, c-none where none; trusted: the array code is the model NTable; checked at run time: no table value is used after its update")
+(block "table append" "hl:table-put" "holb_table_put" "proved" "tablePut_readback: table-put on the read-back is the read-back of the store at next and next + 1; trusted: the array code is the model NTable; checked at run time: no table value is used after its update")
+(block "table update" "hl:table-set" "holb_table_set" "proved" "tableSet_readback: table-set on the read-back is the read-back of the store at the id; trusted: the array code is the model NTable; checked at run time: no table value is used after its update")
+(block "table size" "hl:table-next" "holb_table_next" "proved" "tableNext_readback; trusted: the array code is the model NTable; checked at run time: no table value is used after its update")
+(block "empty table" "hl:empty-table" "holb_empty_table" "proved" "emptyTable_readback; trusted: the array code is the model NTable; checked at run time: no table value is used after its update")
+; reflexivity laws of the judgments still compiled from their rules
+(law "type list order, reflexive" "hl:cmp-types" "hl:eq" "proved" "cmpTypes_refl, fastPath_sound")
+(law "term list equality, reflexive" "hl:tms-eq" "hl:yes" "proved" "tmsEq_refl, fastPath_sound")

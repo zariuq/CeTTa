@@ -1026,6 +1026,7 @@ endif
 export CETTA_PARENT_BUILD_SIGNATURE := $(BUILD_OBJ_TAG):$(ENABLE_RUNTIME_STATS)
 export CETTA_PARENT_BINARY := $(abspath $(BIN))
 include native/hol_light/build.mk
+include native/hol_light_module/build.mk
 include native/mm0/build.mk
 RUNTIME_STATS_SECTIONED_OBJ = $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),runtime/bootstrap/runtime_stats_sectioned.$(BUILD_OBJ_TAG).runtime-stats.o,)
 COMPILED_READER_RUNTIME_OBJ = $(patsubst %.c,%.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o,$(COMPILED_READER_RUNTIME_SRC))
