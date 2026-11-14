@@ -38,6 +38,7 @@
 #include "term_domain.h"
 #include "native_handle.h"
 #include "native/hol_light/hol_cli.h"
+#include "native/tcalc/tcalc_cli.h"
 #include "lang.h"
 #include "compile.h"
 #include "cetta_stdlib.h"
@@ -48,6 +49,7 @@
 #include "mm2_lower.h"
 #include "mork_space_bridge_runtime.h"
 #include "rhocalc_core.h"
+#include "runner.h"
 #include "rhocalc_syntax.h"
 #include "stats.h"
 #include "native/langdef_module.h"
@@ -1535,6 +1537,10 @@ static bool endpoint_resolve(CettaCliEndpoint *endpoint, const char *role,
         fprintf(stderr, "note: %s\n", endpoint->lang->note);
         return false;
     }
+    /* tcalc reads its own profile, a tuple of axis settings (see
+     * native/tcalc/tcalc_cli.h); its versions are rows like the others. */
+    if (endpoint->lang->id == CETTA_LANGUAGE_TCALC)
+        return endpoint_resolve_version(endpoint, role);
     if (endpoint->profile_name) {
         if (!cetta_language_has_named_profiles(endpoint->lang->id)) {
             fprintf(stderr, "error: %s language '%s' has no named profiles\n",
@@ -1596,18 +1602,9 @@ rhocalc_semantic_profile_for_endpoint(const CettaCliEndpoint *endpoint) {
     }
 }
 
-static bool rho_scheduler_policy_from_name(const char *name,
-                                           RhoSchedulerPolicy *out) {
-    if (!name || !out) return false;
-    if (strcmp(name, "canonical") == 0) {
-        *out = RHO_SCHEDULER_CANONICAL;
-        return true;
-    }
-    if (strcmp(name, "rotating") == 0) {
-        *out = RHO_SCHEDULER_ROTATING;
-        return true;
-    }
-    return false;
+/* The schedules are the runner's, shared with tcalc (lib/runner_axes.data). */
+static bool rho_scheduler_policy_from_name(const char *name, RunSchedule *out) {
+    return name && out && run_schedule_from_name(name, strlen(name), out);
 }
 
 static bool main_rhometta_form_named(Atom *atom, const char *name,
@@ -1761,7 +1758,7 @@ static int run_rhocalc_cli(const char *filename,
             Atom *candidate = evaluated_process
                 ? evaluated.items[process_index] : process;
         RhoReductionResult reduction = {0};
-        if (!rhocalc_reduce_to_quiescence_with_semantic_profile_and_eval_context(
+        if (!rhocalc_reduce_to_quiescence(
                 &arena, candidate, semantic_profile, profile,
                 eval_context_ptr, &reduction)) {
             const char *detail = rhocalc_last_validation_error();
@@ -1870,8 +1867,7 @@ static int run_rhocalc_translation(const char *filename,
         goto done;
     }
     for (int i = 0; i < n; i++) {
-        if (!rhocalc_process_well_formed_with_semantic_profile(atoms[i],
-                                                               input_profile)) {
+        if (!rhocalc_process_well_formed(atoms[i], input_profile)) {
             const char *detail = rhocalc_last_validation_error();
             if (input_profile == RHOCALC_SEMANTIC_PROFILE_STRICT_CORE) {
                 fprintf(stderr, "error: invalid rhocalc core process");
@@ -1901,7 +1897,7 @@ done:
 }
 
 static void print_usage(FILE *out) {
-    fputs("usage: cetta [--lang <name>] [--syntax <metta|mrho|rho|holr>] <file>\n", out);
+    fputs("usage: cetta [--lang <name>] [--syntax <metta|mrho|rho|holr|tcalc|chr>] <file>\n", out);
     fputs("       note: without --lang, cetta runs corrected stable petta\n", out);
     fputs("       cetta [options] -- <file>           # filenames beginning with a dash\n", out);
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
@@ -1919,6 +1915,12 @@ static void print_usage(FILE *out) {
     fputs("       cetta --lang prime@0.0.1 <file.metta> # frozen Prime draft\n", out);
     fputs("       cetta --lang hol-light [--profile <standard|open|sealed>] <proof.holr>\n", out);
     fputs("       note: hol aliases hol-light; HOLR is a checked proof stream, not OCaml source\n", out);
+    fputs("       cetta --lang tcalc[@0.1] [--profile 'step=one;ask=after-tells;store=multiset;matches=symmetric;budget=N'] <file.tcalc>\n", out);
+    fputs("       cetta --lang tcalc [--syntax <tcalc|rho|chr>] <file.tcalc|file.rho|file.chr> # tcalc's own, f1r3lang or CHR notation\n", out);
+    fputs("       cetta --translate --lang tcalc [--syntax S] --lang tcalc --syntax <tcalc|rho|chr> <file> # the program in another notation\n", out);
+    fputs("       note: tcalc is a moving target, a family of transform steps that differ in a few choices; a run prints\n"
+          "             the point of the family it computed (its interpretation) before its outcomes, and with no step\n"
+          "             named runs every step\n", out);
     fputs("       cetta --lang petta <file.metta> # corrected stable PeTTa\n", out);
     fputs("       cetta --lang petta --profile ai <file.metta> # sealed sorts: declarations type answers, not held calls\n", out);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
@@ -2980,7 +2982,7 @@ static int cetta_main(int argc, char **argv) {
     bool num_threads_requested = false;
     uint32_t rho_reduction_limit = CETTA_RHOCALC_DEFAULT_REDUCTION_LIMIT;
     bool rho_reduction_limit_requested = false;
-    RhoSchedulerPolicy rho_scheduler = RHO_SCHEDULER_CANONICAL;
+    RunSchedule rho_scheduler = RUN_SCHEDULE_CANONICAL;
     bool rho_scheduler_requested = false;
     uint64_t mm2_step_limit = CETTA_MM2_DEFAULT_RUN_STEPS;
     SpaceEngine space_engine = SPACE_ENGINE_NATIVE;
@@ -3594,6 +3596,13 @@ static int cetta_main(int argc, char **argv) {
             free(inline_buf);
             return 2;
         }
+        if (source_endpoint.lang->id == CETTA_LANGUAGE_TCALC &&
+            target_endpoint.lang->id == CETTA_LANGUAGE_TCALC) {
+            int tcalc_rc = cetta_tcalc_translate_file(filename, cetta_syntax_name(syntax),
+                                                      cetta_syntax_name(output_syntax));
+            free(inline_buf);
+            return tcalc_rc;
+        }
         if (source_endpoint.lang->id != CETTA_LANGUAGE_RHOCALC ||
             target_endpoint.lang->id != CETTA_LANGUAGE_RHOCALC) {
             fprintf(stderr, "error: --translate currently supports only rhocalc endpoints\n");
@@ -3606,6 +3615,22 @@ static int cetta_main(int argc, char **argv) {
                                     syntax, output_syntax);
         free(inline_buf);
         return translate_rc;
+    }
+
+    if (lang->id == CETTA_LANGUAGE_TCALC) {
+        if (inline_text || compile_mode || compile_stdlib_mode || num_threads_requested ||
+            rho_reduction_limit_requested || rho_scheduler_requested || petta_strict || petta_strict_det ||
+            import_mode_overridden || eval_hashcons || prefer_rationals_cli || space_engine_requested ||
+            gslt_realization_requested || langdef_proof_execution_requested ||
+            mm2_step_limit != CETTA_MM2_DEFAULT_RUN_STEPS) {
+            fputs("error: tcalc reads a program file; evaluator-specific options do not apply\n", stderr);
+            free(inline_buf);
+            return 2;
+        }
+        int tcalc_rc = cetta_tcalc_run_file(filename, source_endpoint.profile_name,
+                                            source_endpoint.version_name, cetta_syntax_name(syntax));
+        free(inline_buf);
+        return tcalc_rc;
     }
 
     if (lang->id == CETTA_LANGUAGE_HOL_LIGHT) {

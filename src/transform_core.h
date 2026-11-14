@@ -5,6 +5,7 @@
 #include "space.h"
 #include "native_query.h"
 #include "symbol.h"
+#include "generated/transform_engine.generated.h"
 
 #include <stddef.h>
 
@@ -79,6 +80,52 @@ typedef enum {
     CETTA_TRANSFORM_DIALECT_HE,
 } CettaTransformDialect;
 
+typedef enum {
+    CETTA_TRANSFORM_DECLINED = 0,
+    CETTA_TRANSFORM_FIRED,
+    CETTA_TRANSFORM_NONE,
+    CETTA_TRANSFORM_ERROR,
+    CETTA_TRANSFORM_INTERRUPTED,
+} CettaTransformOutcome;
+
+CettaTransformEngine cetta_transform_engine(void);
+
+/* A finite selected interface to a Space, not a materialized store. */
+typedef struct {
+    Space *space;
+    Atom *space_ref;
+    Atom *pattern;
+    Atom *receipt;
+    bool take;
+    bool exact;
+} CettaTransformPort;
+
+typedef struct {
+    Atom *left;
+    Atom *right;
+} CettaTransformEquation;
+
+typedef struct {
+    CettaTransformEquation equation;
+    bool left_held;
+    bool right_held;
+} CettaTransformCheck;
+
+typedef struct {
+    const CettaTransformPort *ports;
+    size_t port_count;
+    const CettaTransformEquation *equations;
+    size_t equation_count;
+    const CettaTransformCheck *checks;
+    size_t check_count;
+    Atom *publication;
+    Atom *const *expected;
+    size_t expected_count;
+    void *context;
+    CettaTransformOutcome (*commit)(void *, Atom *const *, size_t);
+    bool (*spend)(void *, uint64_t);
+} CettaTransformFiring;
+
 typedef struct {
     void *context;
     CettaTransformDialect dialect;
@@ -139,16 +186,16 @@ typedef struct {
      * the host; it is never an empty answer or permission to retry elsewhere.
      * A firing reserves its commit step before any store mutation. */
     bool (*spend)(void *context, uint64_t work);
+    /* An equation guard whose operands are held data and whose operation is
+     * the unmodified equality builtin. False retains the general code path. */
+    bool (*equation_check)(void *context, Atom *pattern, Atom *expression,
+                           CettaTransformCheck *check);
+    bool (*equation_value)(void *context, Atom *value, bool held);
+    /* Optional separately linked tcalc realization. DECLINED is exclusively
+     * a pre-protocol carrier refusal; every other outcome forbids fallback. */
+    CettaTransformOutcome (*decide_firing)(void *context, Arena *arena,
+        const CettaTransformFiring *firing, Atom **error);
 } CettaTransformHost;
-
-typedef enum {
-    CETTA_TRANSFORM_DECLINED = 0, /* no native answer; never an authored fallback */
-    CETTA_TRANSFORM_FIRED,        /* *answer_out is (tf:fired INSTANCES),
-                                   * or the count tf:fire-into added */
-    CETTA_TRANSFORM_NONE,         /* no candidate validates: no answer */
-    CETTA_TRANSFORM_ERROR,        /* *answer_out is the error */
-    CETTA_TRANSFORM_INTERRUPTED,  /* host budget/cancellation; no fallback */
-} CettaTransformOutcome;
 
 /* `call` is (tf:fire SPACE CONJUNCTS TEMPLATE), or (tf:fire-into SPACE
  * CONJUNCTS TEMPLATE DESTINATION), whose instances are added to DESTINATION

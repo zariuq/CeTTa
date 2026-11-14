@@ -4970,7 +4970,7 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
             return lts_rho_transitions_error(
                 a, args, nargs, atom_symbol(a, "IncorrectNumberOfArguments"));
         }
-        if (!rhocalc_process_well_formed(args[0])) {
+        if (!rhocalc_process_well_formed(args[0], RHOCALC_SEMANTIC_PROFILE_STRICT_CORE)) {
             detail = rhocalc_last_validation_error();
             return lts_rho_transitions_error(
                 a, args, nargs,
@@ -5016,7 +5016,7 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
             return lts_rho_cost_steps_error(
                 a, args, nargs, atom_symbol(a, "IncorrectNumberOfArguments"));
         }
-        if (!rhocalc_process_well_formed_with_semantic_profile(
+        if (!rhocalc_process_well_formed(
                 args[0], RHOCALC_SEMANTIC_PROFILE_COST)) {
             detail = rhocalc_last_validation_error();
             return lts_rho_cost_steps_error(
@@ -5041,7 +5041,7 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
             return lts_rho_cost_causal_trace_error(
                 a, args, nargs, atom_symbol(a, "IncorrectNumberOfArguments"));
         }
-        if (!rhocalc_process_well_formed_with_semantic_profile(
+        if (!rhocalc_process_well_formed(
                 args[0], RHOCALC_SEMANTIC_PROFILE_COST)) {
             detail = rhocalc_last_validation_error();
             return lts_rho_cost_causal_trace_error(
@@ -5086,7 +5086,7 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
                 atom_string(
                     a, "expected a nonnegative integer search bound"));
         }
-        if (!rhocalc_process_well_formed_with_semantic_profile(
+        if (!rhocalc_process_well_formed(
                 args[2], RHOCALC_SEMANTIC_PROFILE_COST)) {
             detail = rhocalc_last_validation_error();
             return lts_rho_cost_causal_prefix_error(
@@ -5146,7 +5146,7 @@ static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
             return library_signature_error(
                 a, head, args, nargs, "expected one rhometta process");
         }
-        if (!rhocalc_process_well_formed_with_eval_payloads(args[0])) {
+        if (!rhocalc_process_well_formed(args[0], RHOCALC_SEMANTIC_PROFILE_RHOMETTA)) {
             detail = rhocalc_last_validation_error();
             return atom_error(
                 a, library_call_expr(a, head, args, nargs),
@@ -5175,7 +5175,7 @@ static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
             return library_signature_error(
                 a, head, args, nargs, "expected one rhometta process");
         }
-        if (!rhocalc_process_well_formed_with_eval_payloads(args[0])) {
+        if (!rhocalc_process_well_formed(args[0], RHOCALC_SEMANTIC_PROFILE_RHOMETTA)) {
             detail = rhocalc_last_validation_error();
             return atom_error(
                 a, library_call_expr(a, head, args, nargs),
@@ -5199,7 +5199,7 @@ static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
 
     if (head->sym_id == g_builtin_syms.lib_rhometta_run_canonical) {
         RhoRuntimeProfile profile = {
-            .scheduler_policy = RHO_SCHEDULER_CANONICAL,
+            .scheduler_policy = RUN_SCHEDULE_CANONICAL,
             .reduction_limit = 100000u,
             .thread_count = 1u,
             .threaded = false,
@@ -5209,15 +5209,16 @@ static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
             return library_signature_error(
                 a, head, args, nargs, "expected one rhometta process");
         }
-        if (!rhocalc_process_well_formed_with_eval_payloads(args[0])) {
+        if (!rhocalc_process_well_formed(args[0], RHOCALC_SEMANTIC_PROFILE_RHOMETTA)) {
             detail = rhocalc_last_validation_error();
             return atom_error(
                 a, library_call_expr(a, head, args, nargs),
                 atom_string(a, detail ? detail
                                       : "expected rhometta process"));
         }
-        if (!rhocalc_reduce_to_quiescence_with_eval_context(
-                a, args[0], &profile, &eval_context, &reduction)) {
+        if (!rhocalc_reduce_to_quiescence(
+                a, args[0], RHOCALC_SEMANTIC_PROFILE_RHOMETTA, &profile, &eval_context,
+                &reduction)) {
             if (payload_failure == RHOCALC_PAYLOAD_FAILURE_OWNED_EXPORT_ALIASED)
                 return atom_error(a, atom_symbol(a, "rhometta:eval"),
                                   atom_symbol(a, "PayloadOwnedExportAliased"));

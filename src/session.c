@@ -3,11 +3,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#define CETTA_CHECK_LANGUAGE_ID(language, ident) \
-    _Static_assert(language == ident, "profile table language ID mismatch");
-CETTA_LANGUAGE_ID_ROWS(CETTA_CHECK_LANGUAGE_ID)
-#undef CETTA_CHECK_LANGUAGE_ID
-
 #define CETTA_DEFINE_PROFILE(object, ident, lang, text, description, he, ext, dep, rust, ver) \
     static const CettaProfile object = { \
         .id = ident, .language_id = lang, .name = text, .note = description, \
@@ -176,6 +171,7 @@ static uint32_t cetta_language_base_builtin_mask(CettaLanguageId language_id) {
     case CETTA_LANGUAGE_PETTA:
         return CETTA_PROFILE_MASK_PETTA_BASE;
     case CETTA_LANGUAGE_HOL_LIGHT:
+    case CETTA_LANGUAGE_TCALC:
         return 0;
     case CETTA_LANGUAGE_MM2:
     case CETTA_LANGUAGE_AMBIENT:
@@ -283,6 +279,9 @@ static const CettaLanguageVersion CETTA_LANGUAGE_VERSIONS[] = {
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, false, .is_default = true},
     {CETTA_LANGUAGE_VERSION_PRIME_0_0_1, CETTA_LANGUAGE_PRIME, "0.0.1",
      NULL, NULL, "Frozen CeTTa Prime draft; not the evolving Prime runtime",
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, false, .is_default = true},
+    {CETTA_LANGUAGE_VERSION_TCALC_0_1, CETTA_LANGUAGE_TCALC, "0.1", NULL, NULL,
+     "RuleSyntax/Core.lean at one frame, with the JointFirings step disciplines",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, false, .is_default = true},
 };
 

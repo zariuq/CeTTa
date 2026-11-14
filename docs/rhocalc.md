@@ -52,6 +52,14 @@ Two static equivalences are kept separate and never run anything:
   commutative-monoid laws of `|` (order and grouping of parallel
   components do not matter; `P | 0 = P`).
 
+Binding follows name equivalence. A receive binds its name wherever that
+name occurs, so in `for ($y <- x) { @{*$y}!(0) }` the channel `@{*$y}` is
+`$y` itself, and so is `@{*$y | 0}`. Any other quote is a closed name that
+substitution never enters: in `@{*$y | *$y}` the `$y` is not the receive's
+binder. Both text syntaxes read names this way. The Rholang syntax also
+accepts a bound name written bare (`for (y <- x) { @{*y}!(0) }`); in the
+cost profile a bare word that no receive binds is a signature.
+
 A positive and a negative example:
 
     @{0}!(x!(0)) | for ($y <- @{0}) { *$y }     — reducible: one COMM, then the payload runs
@@ -83,7 +91,11 @@ The engine reduces the program to quiescence and prints the residual in
 the input syntax. `--rho-reduction-limit N` bounds the run (a divergent
 program reports its limit honestly); `--rho-scheduler canonical|rotating`
 picks the sequential scheduling policy (canonical = always the key-least
-successor, fully deterministic; rotating = cycle the frontier).
+successor, fully deterministic; rotating = the n-th step to the n-th
+successor in key order, counted round). The schedules, the reduction budget
+and the breadth-first search of the quiescent set are the runner this lane
+shares with tcalc (`src/runner.h`; the schedules are declared in
+`lib/runner_axes.data`).
 `--syntax mrho|rho` overrides the extension-based syntax choice, and the
 same flag set drives syntax-to-syntax translation between `.rho` and
 `.mrho`. `--emit-runtime-stats` prints engine counters (endpoint matches,
@@ -245,7 +257,8 @@ Each operation carries a full `@doc` in `lib/lts/rho/cost.metta`.
 ## 9. Correctness evidence
 
 * `make test-rhocalc` — the full lane: syntax runs (`tests/rhocalc_run/`,
-  `tests/rhocalc_cost_run/`), the `.metta` API tests
+  `tests/rhocalc_cost_run/`, run by `tests/run_fixtures.sh`, the fixture
+  harness the tcalc lane shares), the `.metta` API tests
   (`tests/test_lts_rho_cost_*.metta`), rejection tests, translation
   round-trips, the canonical-selector differential, and the examples.
 * **Lean bridges** — `tests/rhocalc_cost_lean_bridge.tsv` drives the same

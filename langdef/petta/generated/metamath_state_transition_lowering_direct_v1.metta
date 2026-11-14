@@ -704,10 +704,11 @@
    (quote (gslt:result:LowerStateRowV1:110 StateRowNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=10 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-cons-v1 target=mode relation=LowerStateRowV1 input=110 functional=semidet
-(= (gslt:fn:LowerStateRowV1:110 $package (state-row-cons-v1 $head $tail))
+(= (gslt:fn:LowerStateRowV1:110 $package $__gslt_input_v1_0_1)
+   (let (cons-atom state-row-cons-v1 (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_1
    (let (gslt:result:LowerStateRowValueV1:110 $lowerHead) (gslt:fn:LowerStateRowValueV1:110 $package $head)
    (let (gslt:result:LowerStateRowV1:110 $lowerTail) (gslt:fn:LowerStateRowV1:110 $package $tail)
-   (quote (gslt:result:LowerStateRowV1:110 (StateRowConsV1 $lowerHead $lowerTail))))))
+   (quote (gslt:result:LowerStateRowV1:110 (StateRowConsV1 $lowerHead $lowerTail)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=11 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-input-v1 target=mode relation=LowerStateRowValueV1 input=000 functional=relational
 (= (gslt:mode:LowerStateRowValueV1:000)
@@ -750,24 +751,28 @@
    (quote (gslt:result:LowerStateRowValueV1:110 StateInputV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=12 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-literal-v1 target=mode relation=LowerStateRowValueV1 input=110 functional=semidet
-(= (gslt:fn:LowerStateRowValueV1:110 $package (state-literal-v1 $literal))
+(= (gslt:fn:LowerStateRowValueV1:110 $package $__gslt_input_v1_0_1)
+   (let (cons-atom state-literal-v1 (cons-atom $literal ())) $__gslt_input_v1_0_1
    (let gslt:result:StateTransitionPackageV1:1 (gslt:fn:StateTransitionPackageV1:1 $package)
-   (quote (gslt:result:LowerStateRowValueV1:110 (StateLiteralSymbolV1 $literal)))))
+   (quote (gslt:result:LowerStateRowValueV1:110 (StateLiteralSymbolV1 $literal))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=13 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-role-at-v1 target=mode relation=LowerStateRowValueV1 input=110 functional=semidet
-(= (gslt:fn:LowerStateRowValueV1:110 $package (state-role-at-v1 $role $rawIndex))
+(= (gslt:fn:LowerStateRowValueV1:110 $package $__gslt_input_v1_0_1)
+   (let (cons-atom state-role-at-v1 (cons-atom $role (cons-atom $rawIndex ()))) $__gslt_input_v1_0_1
    (let (gslt:result:StateNatBindingV1:110 $index) (gslt:fn:StateNatBindingV1:110 $package $rawIndex)
-   (quote (gslt:result:LowerStateRowValueV1:110 (StateRoleAtV1 $role $index)))))
+   (quote (gslt:result:LowerStateRowValueV1:110 (StateRoleAtV1 $role $index))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=14 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-role-list-v1 target=mode relation=LowerStateRowValueV1 input=110 functional=semidet
-(= (gslt:fn:LowerStateRowValueV1:110 $package (state-role-list-v1 $role $rawIndex))
+(= (gslt:fn:LowerStateRowValueV1:110 $package $__gslt_input_v1_0_1)
+   (let (cons-atom state-role-list-v1 (cons-atom $role (cons-atom $rawIndex ()))) $__gslt_input_v1_0_1
    (let (gslt:result:StateNatBindingV1:110 $index) (gslt:fn:StateNatBindingV1:110 $package $rawIndex)
-   (quote (gslt:result:LowerStateRowValueV1:110 (StateRoleListV1 $role $index)))))
+   (quote (gslt:result:LowerStateRowValueV1:110 (StateRoleListV1 $role $index))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=15 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-source-column-v1 target=mode relation=LowerStateRowValueV1 input=110 functional=semidet
-(= (gslt:fn:LowerStateRowValueV1:110 $package (state-source-column-v1 $rawIndex))
+(= (gslt:fn:LowerStateRowValueV1:110 $package $__gslt_input_v1_0_1)
+   (let (cons-atom state-source-column-v1 (cons-atom $rawIndex ())) $__gslt_input_v1_0_1
    (let (gslt:result:StateNatBindingV1:110 $index) (gslt:fn:StateNatBindingV1:110 $package $rawIndex)
-   (quote (gslt:result:LowerStateRowValueV1:110 (StateSourceColumnV1 $index)))))
+   (quote (gslt:result:LowerStateRowValueV1:110 (StateSourceColumnV1 $index))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=16 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-source-index-v1 target=mode relation=LowerStateRowValueV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateRowValueV1:110 $package state-source-row-index-v1)
@@ -821,9 +826,10 @@
    (quote (gslt:result:ActionsAppendV1:110 $right)))
 
 ; gslt-lowered-equation-v1 source-rewrite=23 source-presentation=RelationalStateTransitionCompilerV1 source-rule=actions-append-cons-v1 target=mode relation=ActionsAppendV1 input=110 functional=semidet
-(= (gslt:fn:ActionsAppendV1:110 (ActionsConsV1 $head $tail) $right)
+(= (gslt:fn:ActionsAppendV1:110 $__gslt_input_v1_0_0 $right)
+   (let (cons-atom ActionsConsV1 (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_0
    (let (gslt:result:ActionsAppendV1:110 $result) (gslt:fn:ActionsAppendV1:110 $tail $right)
-   (quote (gslt:result:ActionsAppendV1:110 (ActionsConsV1 $head $result)))))
+   (quote (gslt:result:ActionsAppendV1:110 (ActionsConsV1 $head $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=24 source-presentation=RelationalStateTransitionCompilerV1 source-rule=assemble-state-actions-last-v1 target=mode relation=AssembleStateActionsV1 input=1110 functional=relational
 (= (gslt:mode:AssembleStateActionsV1:1110 $package $operation $index)
@@ -854,9 +860,10 @@
    (quote (gslt:result:AssembleStateFinalActionsV1:000 $package $index $actions)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=30 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-require-depth-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
-(= (gslt:fn:LowerStateActionV1:110 $package (state-require-depth-v1 $rawDepth))
+(= (gslt:fn:LowerStateActionV1:110 $package $__gslt_input_v1_0_1)
+   (let (cons-atom state-require-depth-v1 (cons-atom $rawDepth ())) $__gslt_input_v1_0_1
    (let (gslt:result:StateNatBindingV1:110 $depth) (gslt:fn:StateNatBindingV1:110 $package $rawDepth)
-   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateRequireDepthV1 $depth) ActionsNilV1)))))
+   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateRequireDepthV1 $depth) ActionsNilV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=31 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-push-scope-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateActionV1:110 $package state-push-scope-v1)
@@ -874,85 +881,97 @@
    (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 StateNoopV1 ActionsNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=34 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-require-each-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
-(= (gslt:fn:LowerStateActionV1:110 $package (state-require-each-v1 $role $table $row))
+(= (gslt:fn:LowerStateActionV1:110 $package $__gslt_input_v1_0_1)
+   (let (cons-atom state-require-each-v1 (cons-atom $role (cons-atom $table (cons-atom $row ())))) $__gslt_input_v1_0_1
    (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (gslt:fn:StateTableLoweringV1:110000 $package $table)
    (let (gslt:result:LowerStateRowV1:110 $lowerRow) (gslt:fn:LowerStateRowV1:110 $package $row)
-   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateRequireEachV1 $role $tableId $lowerRow) ActionsNilV1))))))
+   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateRequireEachV1 $role $tableId $lowerRow) ActionsNilV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=35 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-require-each-key-absent-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
-(= (gslt:fn:LowerStateActionV1:110 $package (state-require-each-key-absent-v1 $role $table $row))
+(= (gslt:fn:LowerStateActionV1:110 $package $__gslt_input_v1_0_1)
+   (let (cons-atom state-require-each-key-absent-v1 (cons-atom $role (cons-atom $table (cons-atom $row ())))) $__gslt_input_v1_0_1
    (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (gslt:fn:StateTableLoweringV1:110000 $package $table)
    (let (gslt:result:LowerStateRowV1:110 $lowerRow) (gslt:fn:LowerStateRowV1:110 $package $row)
-   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateRequireEachKeyAbsentV1 $role $tableId $keyArity $lowerRow) ActionsNilV1))))))
+   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateRequireEachKeyAbsentV1 $role $tableId $keyArity $lowerRow) ActionsNilV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=36 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-insert-unordered-pairs-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
-(= (gslt:fn:LowerStateActionV1:110 $package (state-insert-unordered-pairs-v1 $role $table $policy))
+(= (gslt:fn:LowerStateActionV1:110 $package $__gslt_input_v1_0_1)
+   (let (cons-atom state-insert-unordered-pairs-v1 (cons-atom $role (cons-atom $table (cons-atom $policy ())))) $__gslt_input_v1_0_1
    (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (gslt:fn:StateTableLoweringV1:110000 $package $table)
    (let (gslt:result:LowerStateWritePolicyV1:10 $lowerPolicy) (gslt:fn:LowerStateWritePolicyV1:10 $policy)
-   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateRequirePairwiseDistinctV1 $role) (ActionsConsV1 (StateInsertAllPairsV1 $role $tableId $lowerPolicy) ActionsNilV1)))))))
+   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateRequirePairwiseDistinctV1 $role) (ActionsConsV1 (StateInsertAllPairsV1 $role $tableId $lowerPolicy) ActionsNilV1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=37 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-require-row-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
-(= (gslt:fn:LowerStateActionV1:110 $package (state-require-row-v1 $table $row))
+(= (gslt:fn:LowerStateActionV1:110 $package $__gslt_input_v1_0_1)
+   (let (cons-atom state-require-row-v1 (cons-atom $table (cons-atom $row ()))) $__gslt_input_v1_0_1
    (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (gslt:fn:StateTableLoweringV1:110000 $package $table)
    (let (gslt:result:LowerStateRowV1:110 $lowerRow) (gslt:fn:LowerStateRowV1:110 $package $row)
-   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateRequireRowV1 $tableId $lowerRow) ActionsNilV1))))))
+   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateRequireRowV1 $tableId $lowerRow) ActionsNilV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=38 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-require-row-key-absent-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
-(= (gslt:fn:LowerStateActionV1:110 $package (state-require-row-key-absent-v1 $table $row))
+(= (gslt:fn:LowerStateActionV1:110 $package $__gslt_input_v1_0_1)
+   (let (cons-atom state-require-row-key-absent-v1 (cons-atom $table (cons-atom $row ()))) $__gslt_input_v1_0_1
    (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (gslt:fn:StateTableLoweringV1:110000 $package $table)
    (let (gslt:result:LowerStateRowV1:110 $lowerRow) (gslt:fn:LowerStateRowV1:110 $package $row)
-   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateRequireRowKeyAbsentV1 $tableId $keyArity $lowerRow) ActionsNilV1))))))
+   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateRequireRowKeyAbsentV1 $tableId $keyArity $lowerRow) ActionsNilV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=39 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-insert-row-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
-(= (gslt:fn:LowerStateActionV1:110 $package (state-insert-row-v1 $table $policy $row))
+(= (gslt:fn:LowerStateActionV1:110 $package $__gslt_input_v1_0_1)
+   (let (cons-atom state-insert-row-v1 (cons-atom $table (cons-atom $policy (cons-atom $row ())))) $__gslt_input_v1_0_1
    (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (gslt:fn:StateTableLoweringV1:110000 $package $table)
    (let (gslt:result:LowerStateWritePolicyV1:10 $lowerPolicy) (gslt:fn:LowerStateWritePolicyV1:10 $policy)
    (let (gslt:result:LowerStateRowV1:110 $lowerRow) (gslt:fn:LowerStateRowV1:110 $package $row)
-   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateInsertRowV1 $tableId $keyArity $lowerPolicy $lowerRow) ActionsNilV1)))))))
+   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateInsertRowV1 $tableId $keyArity $lowerPolicy $lowerRow) ActionsNilV1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=40 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-insert-each-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
-(= (gslt:fn:LowerStateActionV1:110 $package (state-insert-each-v1 $role $table $policy $row))
+(= (gslt:fn:LowerStateActionV1:110 $package $__gslt_input_v1_0_1)
+   (let (cons-atom state-insert-each-v1 (cons-atom $role (cons-atom $table (cons-atom $policy (cons-atom $row ()))))) $__gslt_input_v1_0_1
    (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (gslt:fn:StateTableLoweringV1:110000 $package $table)
    (let (gslt:result:LowerStateWritePolicyV1:10 $lowerPolicy) (gslt:fn:LowerStateWritePolicyV1:10 $policy)
    (let (gslt:result:LowerStateRowV1:110 $lowerRow) (gslt:fn:LowerStateRowV1:110 $package $row)
-   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateInsertEachV1 $role $tableId $keyArity $lowerPolicy $lowerRow) ActionsNilV1)))))))
+   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateInsertEachV1 $role $tableId $keyArity $lowerPolicy $lowerRow) ActionsNilV1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=41 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-insert-each-matching-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
-(= (gslt:fn:LowerStateActionV1:110 $package (state-insert-each-matching-v1 $role $conditionTable $conditionRow $targetTable $policy $targetRow))
+(= (gslt:fn:LowerStateActionV1:110 $package $__gslt_input_v1_0_1)
+   (let (cons-atom state-insert-each-matching-v1 (cons-atom $role (cons-atom $conditionTable (cons-atom $conditionRow (cons-atom $targetTable (cons-atom $policy (cons-atom $targetRow ()))))))) $__gslt_input_v1_0_1
    (let (gslt:result:StateTableLoweringV1:110000 $conditionTableId $conditionArity $conditionKeyArity $conditionLifetime) (gslt:fn:StateTableLoweringV1:110000 $package $conditionTable)
    (let (gslt:result:StateTableLoweringV1:110000 $targetTableId $targetArity $targetKeyArity $targetLifetime) (gslt:fn:StateTableLoweringV1:110000 $package $targetTable)
    (let (gslt:result:LowerStateWritePolicyV1:10 $lowerPolicy) (gslt:fn:LowerStateWritePolicyV1:10 $policy)
    (let (gslt:result:LowerStateRowV1:110 $lowerConditionRow) (gslt:fn:LowerStateRowV1:110 $package $conditionRow)
    (let (gslt:result:LowerStateRowV1:110 $lowerTargetRow) (gslt:fn:LowerStateRowV1:110 $package $targetRow)
-   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateInsertEachMatchingV1 $role $conditionTableId $lowerConditionRow $targetTableId $targetKeyArity $lowerPolicy $lowerTargetRow) ActionsNilV1)))))))))
+   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateInsertEachMatchingV1 $role $conditionTableId $lowerConditionRow $targetTableId $targetKeyArity $lowerPolicy $lowerTargetRow) ActionsNilV1))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=42 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-copy-each-row-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
-(= (gslt:fn:LowerStateActionV1:110 $package (state-copy-each-row-v1 $sourceTable $targetTable $policy $targetRow))
+(= (gslt:fn:LowerStateActionV1:110 $package $__gslt_input_v1_0_1)
+   (let (cons-atom state-copy-each-row-v1 (cons-atom $sourceTable (cons-atom $targetTable (cons-atom $policy (cons-atom $targetRow ()))))) $__gslt_input_v1_0_1
    (let (gslt:result:StateTableLoweringV1:110000 $sourceTableId $sourceArity $sourceKeyArity $sourceLifetime) (gslt:fn:StateTableLoweringV1:110000 $package $sourceTable)
    (let (gslt:result:StateTableLoweringV1:110000 $targetTableId $targetArity $targetKeyArity $targetLifetime) (gslt:fn:StateTableLoweringV1:110000 $package $targetTable)
    (let (gslt:result:LowerStateWritePolicyV1:10 $lowerPolicy) (gslt:fn:LowerStateWritePolicyV1:10 $policy)
    (let (gslt:result:LowerStateRowV1:110 $lowerTargetRow) (gslt:fn:LowerStateRowV1:110 $package $targetRow)
-   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateCopyEachRowV1 $sourceTableId $targetTableId $targetKeyArity $lowerPolicy $lowerTargetRow) ActionsNilV1))))))))
+   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateCopyEachRowV1 $sourceTableId $targetTableId $targetKeyArity $lowerPolicy $lowerTargetRow) ActionsNilV1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=43 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-copy-each-row-matching-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
-(= (gslt:fn:LowerStateActionV1:110 $package (state-copy-each-row-matching-v1 $sourceTable $conditionTable $conditionRow $targetTable $policy $targetRow))
+(= (gslt:fn:LowerStateActionV1:110 $package $__gslt_input_v1_0_1)
+   (let (cons-atom state-copy-each-row-matching-v1 (cons-atom $sourceTable (cons-atom $conditionTable (cons-atom $conditionRow (cons-atom $targetTable (cons-atom $policy (cons-atom $targetRow ()))))))) $__gslt_input_v1_0_1
    (let (gslt:result:StateTableLoweringV1:110000 $sourceTableId $sourceArity $sourceKeyArity $sourceLifetime) (gslt:fn:StateTableLoweringV1:110000 $package $sourceTable)
    (let (gslt:result:StateTableLoweringV1:110000 $conditionTableId $conditionArity $conditionKeyArity $conditionLifetime) (gslt:fn:StateTableLoweringV1:110000 $package $conditionTable)
    (let (gslt:result:StateTableLoweringV1:110000 $targetTableId $targetArity $targetKeyArity $targetLifetime) (gslt:fn:StateTableLoweringV1:110000 $package $targetTable)
    (let (gslt:result:LowerStateWritePolicyV1:10 $lowerPolicy) (gslt:fn:LowerStateWritePolicyV1:10 $policy)
    (let (gslt:result:LowerStateRowV1:110 $lowerConditionRow) (gslt:fn:LowerStateRowV1:110 $package $conditionRow)
    (let (gslt:result:LowerStateRowV1:110 $lowerTargetRow) (gslt:fn:LowerStateRowV1:110 $package $targetRow)
-   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateCopyEachRowMatchingV1 $sourceTableId $conditionTableId $lowerConditionRow $targetTableId $targetKeyArity $lowerPolicy $lowerTargetRow) ActionsNilV1))))))))))
+   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateCopyEachRowMatchingV1 $sourceTableId $conditionTableId $lowerConditionRow $targetTableId $targetKeyArity $lowerPolicy $lowerTargetRow) ActionsNilV1)))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=44 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-check-proof-normal-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
-(= (gslt:fn:LowerStateActionV1:110 $package (state-check-proof-normal-v1 $machine $labelRole $formulaRole $stepRole))
+(= (gslt:fn:LowerStateActionV1:110 $package $__gslt_input_v1_0_1)
+   (let (cons-atom state-check-proof-normal-v1 (cons-atom $machine (cons-atom $labelRole (cons-atom $formulaRole (cons-atom $stepRole ()))))) $__gslt_input_v1_0_1
    (let gslt:result:StateTransitionPackageV1:1 (gslt:fn:StateTransitionPackageV1:1 $package)
-   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateCheckProofNormalV1 $machine $labelRole $formulaRole $stepRole) ActionsNilV1)))))
+   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateCheckProofNormalV1 $machine $labelRole $formulaRole $stepRole) ActionsNilV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=45 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-check-proof-compressed-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
-(= (gslt:fn:LowerStateActionV1:110 $package (state-check-proof-compressed-v1 $machine $labelRole $formulaRole $stepRole $codeRole))
+(= (gslt:fn:LowerStateActionV1:110 $package $__gslt_input_v1_0_1)
+   (let (cons-atom state-check-proof-compressed-v1 (cons-atom $machine (cons-atom $labelRole (cons-atom $formulaRole (cons-atom $stepRole (cons-atom $codeRole ())))))) $__gslt_input_v1_0_1
    (let gslt:result:StateTransitionPackageV1:1 (gslt:fn:StateTransitionPackageV1:1 $package)
-   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateCheckProofCompressedV1 $machine $labelRole $formulaRole $stepRole $codeRole) ActionsNilV1)))))
+   (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateCheckProofCompressedV1 $machine $labelRole $formulaRole $stepRole $codeRole) ActionsNilV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=61 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-b8754bff4d4e22c6241bd27b4854915f6ffc72a8f607de7a26ff7f65d95deb95 target=mode relation=state-action-v1 input=000 functional=relational
 (= (gslt:mode:state-action-v1:000)
@@ -1759,55 +1778,67 @@
    (quote (gslt:result:StateActionFirstV1:000 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-resolve-include 0)))
 
 ; gslt-lowered-equation-v1 source-rewrite=178 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-aeee0fc45331eec882a2ba3213e7b76324dd74d18cb036864d498f02eba4c1de target=mode relation=StateActionLastV1 input=111 functional=semidet
-(= (gslt:fn:StateActionLastV1:111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 17)
-   (quote gslt:result:StateActionLastV1:111))
+(= (gslt:fn:StateActionLastV1:111 $__gslt_input_v1_0_0 mm-check-theorem-compressed 17)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote gslt:result:StateActionLastV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=179 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-25b054094ae850aa91781fc24bd82214b8ac4759b72e81c8c7e5d54db0fc947c target=mode relation=StateActionLastV1 input=111 functional=semidet
-(= (gslt:fn:StateActionLastV1:111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 17)
-   (quote gslt:result:StateActionLastV1:111))
+(= (gslt:fn:StateActionLastV1:111 $__gslt_input_v1_0_0 mm-check-theorem-normal 17)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote gslt:result:StateActionLastV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=180 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-2692d520ee884fe95b5a4f09a45ef80a7fab19228bf86f456fb3317f44aff16e target=mode relation=StateActionLastV1 input=111 functional=semidet
-(= (gslt:fn:StateActionLastV1:111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-close-scope 0)
-   (quote gslt:result:StateActionLastV1:111))
+(= (gslt:fn:StateActionLastV1:111 $__gslt_input_v1_0_0 mm-close-scope 0)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote gslt:result:StateActionLastV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-c93ec75a6d008d6768f94b9f20c860177e1790cb57f5de176ea08e48dd3672f0 target=mode relation=StateActionLastV1 input=111 functional=semidet
-(= (gslt:fn:StateActionLastV1:111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-complete-block 0)
-   (quote gslt:result:StateActionLastV1:111))
+(= (gslt:fn:StateActionLastV1:111 $__gslt_input_v1_0_0 mm-complete-block 0)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote gslt:result:StateActionLastV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=182 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-ce343849c70c331d20c7ee3325c75a14755feea771e03fff31b008545773af14 target=mode relation=StateActionLastV1 input=111 functional=semidet
-(= (gslt:fn:StateActionLastV1:111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 15)
-   (quote gslt:result:StateActionLastV1:111))
+(= (gslt:fn:StateActionLastV1:111 $__gslt_input_v1_0_0 mm-declare-axiom 15)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote gslt:result:StateActionLastV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=183 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-78641349993047fd8674ebd44ec17021dcd0bc7ba58a19dbdb45fbef2cb64584 target=mode relation=StateActionLastV1 input=111 functional=semidet
-(= (gslt:fn:StateActionLastV1:111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-constants 3)
-   (quote gslt:result:StateActionLastV1:111))
+(= (gslt:fn:StateActionLastV1:111 $__gslt_input_v1_0_0 mm-declare-constants 3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote gslt:result:StateActionLastV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=184 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-7cf938218d3d3c49db0e77c51db6f2b6314b80f37057d094f76903c2f38a36e6 target=mode relation=StateActionLastV1 input=111 functional=semidet
-(= (gslt:fn:StateActionLastV1:111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-disjoint 1)
-   (quote gslt:result:StateActionLastV1:111))
+(= (gslt:fn:StateActionLastV1:111 $__gslt_input_v1_0_0 mm-declare-disjoint 1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote gslt:result:StateActionLastV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=185 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-0b16a7b3310737cd89383c33ed263659b273d0543b22fd25404d3c7aeb51c60d target=mode relation=StateActionLastV1 input=111 functional=semidet
-(= (gslt:fn:StateActionLastV1:111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 8)
-   (quote gslt:result:StateActionLastV1:111))
+(= (gslt:fn:StateActionLastV1:111 $__gslt_input_v1_0_0 mm-declare-essential 8)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote gslt:result:StateActionLastV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=186 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-dc0da5469cb6ed12cfe22b9179957814389876258f936160207f295800a79ec5 target=mode relation=StateActionLastV1 input=111 functional=semidet
-(= (gslt:fn:StateActionLastV1:111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 10)
-   (quote gslt:result:StateActionLastV1:111))
+(= (gslt:fn:StateActionLastV1:111 $__gslt_input_v1_0_0 mm-declare-floating 10)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote gslt:result:StateActionLastV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=187 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-0dff0a1667217cd27c38a003fec537879befb8c37190127b81a40965981825ba target=mode relation=StateActionLastV1 input=111 functional=semidet
-(= (gslt:fn:StateActionLastV1:111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-variables 2)
-   (quote gslt:result:StateActionLastV1:111))
+(= (gslt:fn:StateActionLastV1:111 $__gslt_input_v1_0_0 mm-declare-variables 2)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote gslt:result:StateActionLastV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=188 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-93680c7cceaa75259f37dd6bf67df3fdc7d3b62f68d25330d6f4a54b8b2ac798 target=mode relation=StateActionLastV1 input=111 functional=semidet
-(= (gslt:fn:StateActionLastV1:111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-open-scope 0)
-   (quote gslt:result:StateActionLastV1:111))
+(= (gslt:fn:StateActionLastV1:111 $__gslt_input_v1_0_0 mm-open-scope 0)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote gslt:result:StateActionLastV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=189 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-eb79726c74850fd2247512ca243768a4eea6bb7856adaab11a75b0df2971d4c9 target=mode relation=StateActionLastV1 input=111 functional=semidet
-(= (gslt:fn:StateActionLastV1:111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-resolve-include 0)
-   (quote gslt:result:StateActionLastV1:111))
+(= (gslt:fn:StateActionLastV1:111 $__gslt_input_v1_0_0 mm-resolve-include 0)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote gslt:result:StateActionLastV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=190 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-9c7748b56eb8b6f67596d815f6752ffd5e4dee1e3b3fe90b7e8e1c2224866469 target=mode-factored relation=StateActionNextV1 input=1110 functional=semidet
-(= (gslt:fn:StateActionNextV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) $gfi0 $gfi1)
+(= (gslt:fn:StateActionNextV1:1110 (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $gfi0 $gfi1)
    (let (quote $gfo2) (gslt:fnix:StateActionNextV1:1110 $gfi0 $gfi1)
    (quote (gslt:result:StateActionNextV1:1110 $gfo2))))
 
@@ -1958,156 +1989,212 @@
 ; gslt-lowered-equation-v1 source-rewrite=262 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-4b177cd86f68c5741d09b900cb77e46105da35d779409c6023b8bfc855254d50 target=mode-fact relation=StateActionNextV1 input=1110 functional=semidet
 (= (gslt:fnix:StateActionNextV1:1110 mm-declare-variables 1) (quote 2))
 ; gslt-lowered-equation-v1 source-rewrite=263 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-fcc119bbb307d070ac895c1523ad0a85428537815e5aae0c7cd1b5b8f1a21520 target=mode relation=StateDenseIdentityV1 input=1111 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-essential-variable NatZeroV1)
-   (quote gslt:result:StateDenseIdentityV1:1111))
+(= (gslt:fn:StateDenseIdentityV1:1111 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-active-essential-variable NatZeroV1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote gslt:result:StateDenseIdentityV1:1111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=264 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-472ac0f7883dfc5ff8a6458b9e6434e817383d1c4628ac3ac7e2b5a1ad377478 target=mode relation=StateDenseIdentityV1 input=1111 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-floating-variable (NatSuccV1 NatZeroV1))
-   (quote gslt:result:StateDenseIdentityV1:1111))
+(= (gslt:fn:StateDenseIdentityV1:1111 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-active-floating-variable $__gslt_input_v1_0_3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) $__gslt_input_v1_0_3
+   (quote gslt:result:StateDenseIdentityV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=265 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-7556faf6420947f9d0f1cfeb971a093865c2e72b04ed32c501186fe05427b3ad target=mode relation=StateDenseIdentityV1 input=1111 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-hypothesis (NatSuccV1 (NatSuccV1 NatZeroV1)))
-   (quote gslt:result:StateDenseIdentityV1:1111))
+(= (gslt:fn:StateDenseIdentityV1:1111 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-active-hypothesis $__gslt_input_v1_0_3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) $__gslt_input_v1_0_3
+   (quote gslt:result:StateDenseIdentityV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=266 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-c2f245ae8add95ef7cf13665085448ef85d991c189a0a2b283fde6d6bf515463 target=mode relation=StateDenseIdentityV1 input=1111 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))
-   (quote gslt:result:StateDenseIdentityV1:1111))
+(= (gslt:fn:StateDenseIdentityV1:1111 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-active-variable $__gslt_input_v1_0_3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) $__gslt_input_v1_0_3
+   (quote gslt:result:StateDenseIdentityV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=267 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-991ada2dfe2ac40f98648ed26dde17f8eb2f3a3d15f1afec00c51a4a6cb55e33 target=mode relation=StateDenseIdentityV1 input=1111 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-active-hypothesis (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))
-   (quote gslt:result:StateDenseIdentityV1:1111))
+(= (gslt:fn:StateDenseIdentityV1:1111 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-assertion-active-hypothesis $__gslt_input_v1_0_3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) $__gslt_input_v1_0_3
+   (quote gslt:result:StateDenseIdentityV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=268 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-64d32daf2f4a1e12308716842732b349bca1b6d56de29d80afd117dcf6dda737 target=mode relation=StateDenseIdentityV1 input=1111 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-disjoint-left-candidate (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))
-   (quote gslt:result:StateDenseIdentityV1:1111))
+(= (gslt:fn:StateDenseIdentityV1:1111 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-assertion-disjoint-left-candidate $__gslt_input_v1_0_3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) $__gslt_input_v1_0_3
+   (quote gslt:result:StateDenseIdentityV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=269 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-00fc58d7922a102895195ff15ded4d6d54e7bc42df0d538f86c299b1e8431c06 target=mode relation=StateDenseIdentityV1 input=1111 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-disjoint-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
-   (quote gslt:result:StateDenseIdentityV1:1111))
+(= (gslt:fn:StateDenseIdentityV1:1111 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-assertion-disjoint-variable $__gslt_input_v1_0_3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_3
+   (quote gslt:result:StateDenseIdentityV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=270 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-25547a114b84ae189b472258751380db2a71775942a25f258fe4668109fb645c target=mode relation=StateDenseIdentityV1 input=1111 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-frame-hypothesis (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))
-   (quote gslt:result:StateDenseIdentityV1:1111))
+(= (gslt:fn:StateDenseIdentityV1:1111 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-assertion-frame-hypothesis $__gslt_input_v1_0_3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_3
+   (quote gslt:result:StateDenseIdentityV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=271 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-4488a9ef24c4cbaa51d3b36f0b96817d0e1ce62f7f9171284cfb5a98cc4ad890 target=mode relation=StateDenseIdentityV1 input=1111 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-mandatory-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))
-   (quote gslt:result:StateDenseIdentityV1:1111))
+(= (gslt:fn:StateDenseIdentityV1:1111 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-assertion-mandatory-variable $__gslt_input_v1_0_3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_3
+   (quote gslt:result:StateDenseIdentityV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=272 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-0882a39c1f2f2f85f39660907847e6d98161794afdf8ae471b9bc466a91b4fcd target=mode relation=StateDenseIdentityV1 input=1111 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-ordered-disjoint-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))
-   (quote gslt:result:StateDenseIdentityV1:1111))
+(= (gslt:fn:StateDenseIdentityV1:1111 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-assertion-ordered-disjoint-variable $__gslt_input_v1_0_3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_3
+   (quote gslt:result:StateDenseIdentityV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=273 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-3d14f4390eadfe007a60563266301cd299d0181fbfcf4c1a6c297b043c4a9364 target=mode relation=StateDenseIdentityV1 input=1111 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-ordered-frame-hypothesis (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))
-   (quote gslt:result:StateDenseIdentityV1:1111))
+(= (gslt:fn:StateDenseIdentityV1:1111 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-assertion-ordered-frame-hypothesis $__gslt_input_v1_0_3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_3
+   (quote gslt:result:StateDenseIdentityV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=274 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-de47aa109069b4646b052c2f1d1798f454bfa69b574a9b25b9d6d148eb53757e target=mode relation=StateDenseIdentityV1 input=1111 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-ordered-hypothesis (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))
-   (quote gslt:result:StateDenseIdentityV1:1111))
+(= (gslt:fn:StateDenseIdentityV1:1111 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-assertion-ordered-hypothesis $__gslt_input_v1_0_3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_3
+   (quote gslt:result:StateDenseIdentityV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=275 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-53bbf49cd33581a9841d3ec5d021c3bc2c7c9bd8530792486b8365ab60a4c7c5 target=mode relation=StateDenseIdentityV1 input=1111 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-disjoint-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))
-   (quote gslt:result:StateDenseIdentityV1:1111))
+(= (gslt:fn:StateDenseIdentityV1:1111 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-disjoint-variable $__gslt_input_v1_0_3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_3
+   (quote gslt:result:StateDenseIdentityV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=276 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-34ab7c734182e579cea4addd2e21dfad652ea8ea536207bf1cee7d6ef56b7381 target=mode relation=StateDenseIdentityV1 input=1111 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-expression-symbol (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))
-   (quote gslt:result:StateDenseIdentityV1:1111))
+(= (gslt:fn:StateDenseIdentityV1:1111 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-expression-symbol $__gslt_input_v1_0_3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_3
+   (quote gslt:result:StateDenseIdentityV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=277 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-cadf3cfa821bd693677c6199a022e020fb4408ea636bbf8c7b1d37845e375a88 target=mode relation=StateDenseIdentityV1 input=1111 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-floating-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))
-   (quote gslt:result:StateDenseIdentityV1:1111))
+(= (gslt:fn:StateDenseIdentityV1:1111 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-floating-variable $__gslt_input_v1_0_3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_3
+   (quote gslt:result:StateDenseIdentityV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=278 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-8ba53c2039f9214c273b54f507bcb9d447f69012d24d0d6f4f7c0c1c355b385e target=mode relation=StateDenseIdentityV1 input=1111 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-formula (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))
-   (quote gslt:result:StateDenseIdentityV1:1111))
+(= (gslt:fn:StateDenseIdentityV1:1111 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-formula $__gslt_input_v1_0_3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_3
+   (quote gslt:result:StateDenseIdentityV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=279 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-fd634490e87e4171727c367890554f4f8efff8ad95e6d1f03134eae0e484366e target=mode relation=StateDenseIdentityV1 input=1111 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-label-kind (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))
-   (quote gslt:result:StateDenseIdentityV1:1111))
+(= (gslt:fn:StateDenseIdentityV1:1111 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-label-kind $__gslt_input_v1_0_3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_3
+   (quote gslt:result:StateDenseIdentityV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=280 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-bfd7710d12c5b421feea1fe16d3ca8a16dcc72ba7b56ed74208f35b8db2c1f7d target=mode relation=StateDenseIdentityV1 input=1111 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-label-name (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))
-   (quote gslt:result:StateDenseIdentityV1:1111))
+(= (gslt:fn:StateDenseIdentityV1:1111 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-label-name $__gslt_input_v1_0_3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_3
+   (quote gslt:result:StateDenseIdentityV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=281 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-9f1248c4e2f1f99618534e04ae201526147548232d740fc0fe017cf2be57faae target=mode relation=StateDenseIdentityV1 input=1111 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1111 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-symbol-kind (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))))
-   (quote gslt:result:StateDenseIdentityV1:1111))
+(= (gslt:fn:StateDenseIdentityV1:1111 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-symbol-kind $__gslt_input_v1_0_3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_3
+   (quote gslt:result:StateDenseIdentityV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=263 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-fcc119bbb307d070ac895c1523ad0a85428537815e5aae0c7cd1b5b8f1a21520 target=mode relation=StateDenseIdentityV1 input=1110 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-essential-variable)
-   (quote (gslt:result:StateDenseIdentityV1:1110 NatZeroV1)))
+(= (gslt:fn:StateDenseIdentityV1:1110 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-active-essential-variable)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateDenseIdentityV1:1110 NatZeroV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=264 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-472ac0f7883dfc5ff8a6458b9e6434e817383d1c4628ac3ac7e2b5a1ad377478 target=mode relation=StateDenseIdentityV1 input=1110 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-floating-variable)
-   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 NatZeroV1))))
+(= (gslt:fn:StateDenseIdentityV1:1110 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-active-floating-variable)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 NatZeroV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=265 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-7556faf6420947f9d0f1cfeb971a093865c2e72b04ed32c501186fe05427b3ad target=mode relation=StateDenseIdentityV1 input=1110 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-hypothesis)
-   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 NatZeroV1)))))
+(= (gslt:fn:StateDenseIdentityV1:1110 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-active-hypothesis)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 NatZeroV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=266 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-c2f245ae8add95ef7cf13665085448ef85d991c189a0a2b283fde6d6bf515463 target=mode relation=StateDenseIdentityV1 input=1110 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-variable)
-   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))
+(= (gslt:fn:StateDenseIdentityV1:1110 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-active-variable)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=267 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-991ada2dfe2ac40f98648ed26dde17f8eb2f3a3d15f1afec00c51a4a6cb55e33 target=mode relation=StateDenseIdentityV1 input=1110 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-active-hypothesis)
-   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
+(= (gslt:fn:StateDenseIdentityV1:1110 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-assertion-active-hypothesis)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=268 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-64d32daf2f4a1e12308716842732b349bca1b6d56de29d80afd117dcf6dda737 target=mode relation=StateDenseIdentityV1 input=1110 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-disjoint-left-candidate)
-   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))
+(= (gslt:fn:StateDenseIdentityV1:1110 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-assertion-disjoint-left-candidate)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=269 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-00fc58d7922a102895195ff15ded4d6d54e7bc42df0d538f86c299b1e8431c06 target=mode relation=StateDenseIdentityV1 input=1110 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-disjoint-variable)
-   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))
+(= (gslt:fn:StateDenseIdentityV1:1110 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-assertion-disjoint-variable)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=270 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-25547a114b84ae189b472258751380db2a71775942a25f258fe4668109fb645c target=mode relation=StateDenseIdentityV1 input=1110 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-frame-hypothesis)
-   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))
+(= (gslt:fn:StateDenseIdentityV1:1110 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-assertion-frame-hypothesis)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=271 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-4488a9ef24c4cbaa51d3b36f0b96817d0e1ce62f7f9171284cfb5a98cc4ad890 target=mode relation=StateDenseIdentityV1 input=1110 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-mandatory-variable)
-   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))
+(= (gslt:fn:StateDenseIdentityV1:1110 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-assertion-mandatory-variable)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=272 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-0882a39c1f2f2f85f39660907847e6d98161794afdf8ae471b9bc466a91b4fcd target=mode relation=StateDenseIdentityV1 input=1110 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-ordered-disjoint-variable)
-   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))
+(= (gslt:fn:StateDenseIdentityV1:1110 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-assertion-ordered-disjoint-variable)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=273 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-3d14f4390eadfe007a60563266301cd299d0181fbfcf4c1a6c297b043c4a9364 target=mode relation=StateDenseIdentityV1 input=1110 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-ordered-frame-hypothesis)
-   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))
+(= (gslt:fn:StateDenseIdentityV1:1110 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-assertion-ordered-frame-hypothesis)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=274 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-de47aa109069b4646b052c2f1d1798f454bfa69b574a9b25b9d6d148eb53757e target=mode relation=StateDenseIdentityV1 input=1110 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-ordered-hypothesis)
-   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))
+(= (gslt:fn:StateDenseIdentityV1:1110 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-assertion-ordered-hypothesis)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=275 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-53bbf49cd33581a9841d3ec5d021c3bc2c7c9bd8530792486b8365ab60a4c7c5 target=mode relation=StateDenseIdentityV1 input=1110 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-disjoint-variable)
-   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))
+(= (gslt:fn:StateDenseIdentityV1:1110 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-disjoint-variable)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=276 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-34ab7c734182e579cea4addd2e21dfad652ea8ea536207bf1cee7d6ef56b7381 target=mode relation=StateDenseIdentityV1 input=1110 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-expression-symbol)
-   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))
+(= (gslt:fn:StateDenseIdentityV1:1110 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-expression-symbol)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=277 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-cadf3cfa821bd693677c6199a022e020fb4408ea636bbf8c7b1d37845e375a88 target=mode relation=StateDenseIdentityV1 input=1110 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-floating-variable)
-   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))
+(= (gslt:fn:StateDenseIdentityV1:1110 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-floating-variable)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=278 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-8ba53c2039f9214c273b54f507bcb9d447f69012d24d0d6f4f7c0c1c355b385e target=mode relation=StateDenseIdentityV1 input=1110 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-formula)
-   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))
+(= (gslt:fn:StateDenseIdentityV1:1110 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-formula)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=279 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-fd634490e87e4171727c367890554f4f8efff8ad95e6d1f03134eae0e484366e target=mode relation=StateDenseIdentityV1 input=1110 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-label-kind)
-   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))))
+(= (gslt:fn:StateDenseIdentityV1:1110 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-label-kind)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=280 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-bfd7710d12c5b421feea1fe16d3ca8a16dcc72ba7b56ed74208f35b8db2c1f7d target=mode relation=StateDenseIdentityV1 input=1110 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-label-name)
-   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))))
+(= (gslt:fn:StateDenseIdentityV1:1110 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-label-name)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=281 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-9f1248c4e2f1f99618534e04ae201526147548232d740fc0fe017cf2be57faae target=mode relation=StateDenseIdentityV1 input=1110 functional=semidet
-(= (gslt:fn:StateDenseIdentityV1:1110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-symbol-kind)
-   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))))))
+(= (gslt:fn:StateDenseIdentityV1:1110 $__gslt_input_v1_0_0 StateTableKindV1 mm-state-symbol-kind)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateDenseIdentityV1:1110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=282 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-43e3795399a04cf19a7a473648aae110b39fb50aa80cc7de525b72a053e56831 target=mode relation=StateNatBindingV1 input=000 functional=relational
 (= (gslt:mode:StateNatBindingV1:000)
@@ -2130,112 +2217,155 @@
    (quote (gslt:result:StateNatBindingV1:000 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 4 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=282 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-43e3795399a04cf19a7a473648aae110b39fb50aa80cc7de525b72a053e56831 target=mode relation=StateNatBindingV1 input=110 functional=semidet
-(= (gslt:fn:StateNatBindingV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 0)
-   (quote (gslt:result:StateNatBindingV1:110 NatZeroV1)))
+(= (gslt:fn:StateNatBindingV1:110 $__gslt_input_v1_0_0 0)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateNatBindingV1:110 NatZeroV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=283 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-9ebbfb247164b744007beb81ad32e65917e3857f099c9bbf3e2e4961364dd86f target=mode relation=StateNatBindingV1 input=110 functional=semidet
-(= (gslt:fn:StateNatBindingV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 1)
-   (quote (gslt:result:StateNatBindingV1:110 (NatSuccV1 NatZeroV1))))
+(= (gslt:fn:StateNatBindingV1:110 $__gslt_input_v1_0_0 1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateNatBindingV1:110 (NatSuccV1 NatZeroV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=284 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-5390cf7bb3d954f21e8d8450f85f6ec1090d24254f320d97d28fa40dd918a993 target=mode relation=StateNatBindingV1 input=110 functional=semidet
-(= (gslt:fn:StateNatBindingV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 2)
-   (quote (gslt:result:StateNatBindingV1:110 (NatSuccV1 (NatSuccV1 NatZeroV1)))))
+(= (gslt:fn:StateNatBindingV1:110 $__gslt_input_v1_0_0 2)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateNatBindingV1:110 (NatSuccV1 (NatSuccV1 NatZeroV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=285 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-67171eb65f5e3e782171dad15aa0eb5dd10dc6e7f88771a58bf426eb13c2ac9d target=mode relation=StateNatBindingV1 input=110 functional=semidet
-(= (gslt:fn:StateNatBindingV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 3)
-   (quote (gslt:result:StateNatBindingV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))
+(= (gslt:fn:StateNatBindingV1:110 $__gslt_input_v1_0_0 3)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateNatBindingV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=286 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-086e485bd9c7f855eb6ffdae1f4d615093a3d8036393e01e27fd9249058564e5 target=mode relation=StateNatBindingV1 input=110 functional=semidet
-(= (gslt:fn:StateNatBindingV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 4)
-   (quote (gslt:result:StateNatBindingV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
+(= (gslt:fn:StateNatBindingV1:110 $__gslt_input_v1_0_0 4)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateNatBindingV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=287 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-216560df79bcafeed828020495707b18065317990dfc706f5e05beac567c89e5 target=mode relation=StateTableFirstV1 input=00 functional=semidet
 (= (gslt:fn:StateTableFirstV1:00)
    (quote (gslt:result:StateTableFirstV1:00 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) NatZeroV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=288 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-4ada64a96fa136cb25a3ec6c4d7d66a8e26306e31b4447bcbe2b34127323b85d target=mode relation=StateTableLastV1 input=11 functional=semidet
-(= (gslt:fn:StateTableLastV1:11 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))))
-   (quote gslt:result:StateTableLastV1:11))
+(= (gslt:fn:StateTableLastV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_1
+   (quote gslt:result:StateTableLastV1:11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=289 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-2f36187b0b9fa57675304d8e865e6f0ddeb6806672e45d2d33faa03e7ef63e27 target=mode relation=StateTableNextV1 input=110 functional=semidet
-(= (gslt:fn:StateTableNextV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))
-   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))))))
+(= (gslt:fn:StateTableNextV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_1
+   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=290 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-d46f5c8576fac3e3bd60504cf23a84408cad76237c77e24f09dda895c2565ef9 target=mode relation=StateTableNextV1 input=110 functional=semidet
-(= (gslt:fn:StateTableNextV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))
-   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))))
+(= (gslt:fn:StateTableNextV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_1
+   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=291 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-2306415e1a49e7ccbcdcbd0c98afee676cfdf123dca176da34faeaf0bb3c3481 target=mode relation=StateTableNextV1 input=110 functional=semidet
-(= (gslt:fn:StateTableNextV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))
-   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))))
+(= (gslt:fn:StateTableNextV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_1
+   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=292 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-343c69a325e1e2640cdb042845016901c16f38f414570934d2859d4776b6ace5 target=mode relation=StateTableNextV1 input=110 functional=semidet
-(= (gslt:fn:StateTableNextV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))
-   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))
+(= (gslt:fn:StateTableNextV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_1
+   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=293 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-efec4b34c2f6b6b6ed6e9858d6f12344a5cd7982d97addc785da1c7587146f61 target=mode relation=StateTableNextV1 input=110 functional=semidet
-(= (gslt:fn:StateTableNextV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))
-   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))
+(= (gslt:fn:StateTableNextV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_1
+   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=294 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-e6e19be4199a3b1812f9d7c302f605a8f778c7d6df6b68d6e69095de8a32aaa5 target=mode relation=StateTableNextV1 input=110 functional=semidet
-(= (gslt:fn:StateTableNextV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))
-   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))
+(= (gslt:fn:StateTableNextV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_1
+   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=295 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-2145a5ece6273ba783e08e1f75ac1766abc59516a5e2f1e4e3f5221faa6cbf1b target=mode relation=StateTableNextV1 input=110 functional=semidet
-(= (gslt:fn:StateTableNextV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))
-   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))
+(= (gslt:fn:StateTableNextV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_1
+   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=296 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-4817e56664810055704ab0d158cd706f0865c4cfb5e8dcdad804e198f838bc05 target=mode relation=StateTableNextV1 input=110 functional=semidet
-(= (gslt:fn:StateTableNextV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))
-   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))
+(= (gslt:fn:StateTableNextV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_1
+   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=297 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-5be995f93631503b8f367080b437a1af1eced12dd5c6f472308a53012db800d4 target=mode relation=StateTableNextV1 input=110 functional=semidet
-(= (gslt:fn:StateTableNextV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))
-   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))
+(= (gslt:fn:StateTableNextV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_1
+   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=298 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-ec5d9f1e4cf7247e74ffefe4b853fea5c623dad37ee5c51fd9721a46ab12e3bc target=mode relation=StateTableNextV1 input=110 functional=semidet
-(= (gslt:fn:StateTableNextV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))
-   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))
+(= (gslt:fn:StateTableNextV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_1
+   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=299 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-6440701a5f4838183fb098a1a6f401d9b0902838f25025d06671faf5c5fa2005 target=mode relation=StateTableNextV1 input=110 functional=semidet
-(= (gslt:fn:StateTableNextV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))
-   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))
+(= (gslt:fn:StateTableNextV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_1
+   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=300 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-c92dd9aa964e5901b9adb86e61b0a36e6701e0e2f14de78d917a81a570b283b7 target=mode relation=StateTableNextV1 input=110 functional=semidet
-(= (gslt:fn:StateTableNextV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
-   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))
+(= (gslt:fn:StateTableNextV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) $__gslt_input_v1_0_1
+   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=301 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-78f7bdf674d5402539195ae17b4bc980af3e2dbe6fd21fb55d97f3f8be9241e2 target=mode relation=StateTableNextV1 input=110 functional=semidet
-(= (gslt:fn:StateTableNextV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))
-   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))
+(= (gslt:fn:StateTableNextV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) $__gslt_input_v1_0_1
+   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=302 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-15be0934aeab77fec5ca07121ae37e5eb3a5def6e8b5b66abc9ef532da13f806 target=mode relation=StateTableNextV1 input=110 functional=semidet
-(= (gslt:fn:StateTableNextV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))
-   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))
+(= (gslt:fn:StateTableNextV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) $__gslt_input_v1_0_1
+   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=303 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-277ef741838cb9c8bb8fdb6270ddc2505400121d5c089e208b965f020135c9f9 target=mode relation=StateTableNextV1 input=110 functional=semidet
-(= (gslt:fn:StateTableNextV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))
-   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
+(= (gslt:fn:StateTableNextV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) $__gslt_input_v1_0_1
+   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=304 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-6c957fd60a600ec3d6a89f140ac1b117cf1db590654906f93fbf9e6608d591c5 target=mode relation=StateTableNextV1 input=110 functional=semidet
-(= (gslt:fn:StateTableNextV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 NatZeroV1)))
-   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))
+(= (gslt:fn:StateTableNextV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) $__gslt_input_v1_0_1
+   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=305 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-cd0258511c4c9a1c469d792939c2fc68dc8c178b4f0eb2b33a1d07c9c7b072ae target=mode relation=StateTableNextV1 input=110 functional=semidet
-(= (gslt:fn:StateTableNextV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 NatZeroV1))
-   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 NatZeroV1)))))
+(= (gslt:fn:StateTableNextV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (let (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) $__gslt_input_v1_0_1
+   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=306 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-6db895e9074742d7598b5b0e8caf01c7fbb7b44b5b30c372602ca7e746abf392 target=mode relation=StateTableNextV1 input=110 functional=semidet
-(= (gslt:fn:StateTableNextV1:110 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) NatZeroV1)
-   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 NatZeroV1))))
+(= (gslt:fn:StateTableNextV1:110 $__gslt_input_v1_0_0 NatZeroV1)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateTableNextV1:110 (NatSuccV1 NatZeroV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=307 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-f1204b785c241c263e398e01f4c92b1a44d3da849f2ac3a74aaaf83191a55521 target=mode relation=StateTransitionPackageV1 input=0 functional=semidet
 (= (gslt:fn:StateTransitionPackageV1:0)
    (quote (gslt:result:StateTransitionPackageV1:0 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76))))
 
 ; gslt-lowered-equation-v1 source-rewrite=307 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-f1204b785c241c263e398e01f4c92b1a44d3da849f2ac3a74aaaf83191a55521 target=mode relation=StateTransitionPackageV1 input=1 functional=semidet
-(= (gslt:fn:StateTransitionPackageV1:1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76))
-   (quote gslt:result:StateTransitionPackageV1:1))
+(= (gslt:fn:StateTransitionPackageV1:1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote gslt:result:StateTransitionPackageV1:1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=147 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-b2abdda4c5b5b4f7dfe328013f133e310d07a2aa27cc0de8746d2641be9ece99 target=mode relation=state-table-v1 input=1000 functional=semidet
 (= (gslt:fn:state-table-v1:1000 mm-state-active-essential-variable)
@@ -2517,1339 +2647,1652 @@
    (quote (gslt:result:LowerStateRowValueV1:100 state-source-match-index-v1 StateSourceMatchIndexV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=282 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-43e3795399a04cf19a7a473648aae110b39fb50aa80cc7de525b72a053e56831 target=mode relation=StateNatBindingV1 input=100 functional=relational
-(= (gslt:mode:StateNatBindingV1:100 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76))
-   (quote (gslt:result:StateNatBindingV1:100 0 NatZeroV1)))
+(= (gslt:mode:StateNatBindingV1:100 $__gslt_input_v1_0_0)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateNatBindingV1:100 0 NatZeroV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=283 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-9ebbfb247164b744007beb81ad32e65917e3857f099c9bbf3e2e4961364dd86f target=mode relation=StateNatBindingV1 input=100 functional=relational
-(= (gslt:mode:StateNatBindingV1:100 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76))
-   (quote (gslt:result:StateNatBindingV1:100 1 (NatSuccV1 NatZeroV1))))
+(= (gslt:mode:StateNatBindingV1:100 $__gslt_input_v1_0_0)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateNatBindingV1:100 1 (NatSuccV1 NatZeroV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=284 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-5390cf7bb3d954f21e8d8450f85f6ec1090d24254f320d97d28fa40dd918a993 target=mode relation=StateNatBindingV1 input=100 functional=relational
-(= (gslt:mode:StateNatBindingV1:100 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76))
-   (quote (gslt:result:StateNatBindingV1:100 2 (NatSuccV1 (NatSuccV1 NatZeroV1)))))
+(= (gslt:mode:StateNatBindingV1:100 $__gslt_input_v1_0_0)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateNatBindingV1:100 2 (NatSuccV1 (NatSuccV1 NatZeroV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=285 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-67171eb65f5e3e782171dad15aa0eb5dd10dc6e7f88771a58bf426eb13c2ac9d target=mode relation=StateNatBindingV1 input=100 functional=relational
-(= (gslt:mode:StateNatBindingV1:100 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76))
-   (quote (gslt:result:StateNatBindingV1:100 3 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))
+(= (gslt:mode:StateNatBindingV1:100 $__gslt_input_v1_0_0)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateNatBindingV1:100 3 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=286 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-086e485bd9c7f855eb6ffdae1f4d615093a3d8036393e01e27fd9249058564e5 target=mode relation=StateNatBindingV1 input=100 functional=relational
-(= (gslt:mode:StateNatBindingV1:100 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76))
-   (quote (gslt:result:StateNatBindingV1:100 4 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
+(= (gslt:mode:StateNatBindingV1:100 $__gslt_input_v1_0_0)
+   (let (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) $__gslt_input_v1_0_0
+   (quote (gslt:result:StateNatBindingV1:100 4 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))
 
 
 ; gslt-lowered-equation-v1 source-rewrite=0 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-table-v1 target=relation
-(= (gslt:StateTableLoweringV1 (StateTableLoweringV1 $package $table $tableId $arity $keyArity $lifetime))
+(= (gslt:StateTableLoweringV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableLoweringV1 (cons-atom $package (cons-atom $table (cons-atom $tableId (cons-atom $arity (cons-atom $keyArity (cons-atom $lifetime ()))))))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTransitionPackageV1:0 $package) (once (gslt:fn:StateTransitionPackageV1:0))
    (let (gslt:result:state-table-v1:0000 $table $rawArity $rawKeyArity $rawLifetime) (superpose (collapse (gslt:mode:state-table-v1:0000)))
    (let (gslt:result:StateDenseIdentityV1:1110 $tableId) (once (gslt:fn:StateDenseIdentityV1:1110 $package StateTableKindV1 $table))
    (let (gslt:result:StateNatBindingV1:110 $arity) (once (gslt:fn:StateNatBindingV1:110 $package $rawArity))
    (let (gslt:result:StateNatBindingV1:110 $keyArity) (once (gslt:fn:StateNatBindingV1:110 $package $rawKeyArity))
    (let (gslt:result:LowerStateLifetimeV1:10 $lifetime) (once (gslt:fn:LowerStateLifetimeV1:10 $rawLifetime))
-   (StateTableLoweringV1 $package $table $tableId $arity $keyArity $lifetime))))))))
+   (quote (StateTableLoweringV1 $package $table $tableId $arity $keyArity $lifetime))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=1 source-presentation=RelationalStateTransitionCompilerV1 source-rule=project-lowered-state-table-v1 target=relation
-(= (gslt:StateLoweredTableV1 (StateLoweredTableV1 $package $tableId $arity $keyArity $lifetime))
+(= (gslt:StateLoweredTableV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateLoweredTableV1 (cons-atom $package (cons-atom $tableId (cons-atom $arity (cons-atom $keyArity (cons-atom $lifetime ())))))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTableLoweringV1:000000 $package $table $tableId $arity $keyArity $lifetime) (superpose (collapse (gslt:mode:StateTableLoweringV1:000000)))
-   (StateLoweredTableV1 $package $tableId $arity $keyArity $lifetime)))
+   (quote (StateLoweredTableV1 $package $tableId $arity $keyArity $lifetime)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=2 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-lifetime-persistent-v1 target=relation
-(= (gslt:LowerStateLifetimeV1 (LowerStateLifetimeV1 state-persistent-v1 StatePersistentV1))
-   (LowerStateLifetimeV1 state-persistent-v1 StatePersistentV1))
+(= (gslt:LowerStateLifetimeV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateLifetimeV1 (cons-atom state-persistent-v1 (cons-atom StatePersistentV1 ()))) $__gslt_input_v1_0_0
+   (quote (LowerStateLifetimeV1 state-persistent-v1 StatePersistentV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=3 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-lifetime-scoped-v1 target=relation
-(= (gslt:LowerStateLifetimeV1 (LowerStateLifetimeV1 state-scoped-v1 StateScopedV1))
-   (LowerStateLifetimeV1 state-scoped-v1 StateScopedV1))
+(= (gslt:LowerStateLifetimeV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateLifetimeV1 (cons-atom state-scoped-v1 (cons-atom StateScopedV1 ()))) $__gslt_input_v1_0_0
+   (quote (LowerStateLifetimeV1 state-scoped-v1 StateScopedV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=4 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-lifetime-transactional-v1 target=relation
-(= (gslt:LowerStateLifetimeV1 (LowerStateLifetimeV1 state-transactional-v1 StateTransactionalV1))
-   (LowerStateLifetimeV1 state-transactional-v1 StateTransactionalV1))
+(= (gslt:LowerStateLifetimeV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateLifetimeV1 (cons-atom state-transactional-v1 (cons-atom StateTransactionalV1 ()))) $__gslt_input_v1_0_0
+   (quote (LowerStateLifetimeV1 state-transactional-v1 StateTransactionalV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=5 source-presentation=RelationalStateTransitionCompilerV1 source-rule=project-state-table-lifetime-v1 target=relation
-(= (gslt:StateTableLifetimeV1 (StateTableLifetimeV1 $package $tableId $lifetime))
+(= (gslt:StateTableLifetimeV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableLifetimeV1 (cons-atom $package (cons-atom $tableId (cons-atom $lifetime ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateLoweredTableV1:00000 $package $tableId $arity $keyArity $lifetime) (superpose (collapse (gslt:mode:StateLoweredTableV1:00000)))
-   (StateTableLifetimeV1 $package $tableId $lifetime)))
+   (quote (StateTableLifetimeV1 $package $tableId $lifetime)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=6 source-presentation=RelationalStateTransitionCompilerV1 source-rule=assemble-state-tables-last-v1 target=relation
-(= (gslt:AssembleStateTablesV1 (AssembleStateTablesV1 $package $tableId (TablesConsV1 (TableV1 $tableId EntriesNilV1) TablesNilV1)))
+(= (gslt:AssembleStateTablesV1 $__gslt_input_v1_0_0)
+   (let (cons-atom AssembleStateTablesV1 (cons-atom $package (cons-atom $tableId (cons-atom (cons-atom TablesConsV1 (cons-atom (cons-atom TableV1 (cons-atom $tableId (cons-atom EntriesNilV1 ()))) (cons-atom TablesNilV1 ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateLoweredTableV1:00000 $package $tableId $arity $keyArity $lifetime) (superpose (collapse (gslt:mode:StateLoweredTableV1:00000)))
    (let gslt:result:StateTableLastV1:11 (once (gslt:fn:StateTableLastV1:11 $package $tableId))
-   (AssembleStateTablesV1 $package $tableId (TablesConsV1 (TableV1 $tableId EntriesNilV1) TablesNilV1)))))
+   (quote (AssembleStateTablesV1 $package $tableId (TablesConsV1 (TableV1 $tableId EntriesNilV1) TablesNilV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=7 source-presentation=RelationalStateTransitionCompilerV1 source-rule=assemble-state-tables-next-v1 target=relation
-(= (gslt:AssembleStateTablesV1 (AssembleStateTablesV1 $package $tableId (TablesConsV1 (TableV1 $tableId EntriesNilV1) $rest)))
+(= (gslt:AssembleStateTablesV1 $__gslt_input_v1_0_0)
+   (let (cons-atom AssembleStateTablesV1 (cons-atom $package (cons-atom $tableId (cons-atom (cons-atom TablesConsV1 (cons-atom (cons-atom TableV1 (cons-atom $tableId (cons-atom EntriesNilV1 ()))) (cons-atom $rest ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateLoweredTableV1:00000 $package $tableId $arity $keyArity $lifetime) (superpose (collapse (gslt:mode:StateLoweredTableV1:00000)))
    (let (gslt:result:StateTableNextV1:110 $nextTableId) (once (gslt:fn:StateTableNextV1:110 $package $tableId))
    (let (gslt:result:AssembleStateTablesV1:110 $rest) (superpose (collapse (gslt:mode:AssembleStateTablesV1:110 $package $nextTableId)))
-   (AssembleStateTablesV1 $package $tableId (TablesConsV1 (TableV1 $tableId EntriesNilV1) $rest))))))
+   (quote (AssembleStateTablesV1 $package $tableId (TablesConsV1 (TableV1 $tableId EntriesNilV1) $rest))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=8 source-presentation=RelationalStateTransitionCompilerV1 source-rule=project-state-initial-state-v1 target=relation
-(= (gslt:StateInitialStateV1 (StateInitialStateV1 $package (StateV1 $package NatZeroV1 NatZeroV1 $tables)))
+(= (gslt:StateInitialStateV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateInitialStateV1 (cons-atom $package (cons-atom (cons-atom StateV1 (cons-atom $package (cons-atom NatZeroV1 (cons-atom NatZeroV1 (cons-atom $tables ()))))) ()))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTableFirstV1:00 $package $firstTableId) (once (gslt:fn:StateTableFirstV1:00))
    (let (gslt:result:AssembleStateTablesV1:110 $tables) (superpose (collapse (gslt:mode:AssembleStateTablesV1:110 $package $firstTableId)))
-   (StateInitialStateV1 $package (StateV1 $package NatZeroV1 NatZeroV1 $tables)))))
+   (quote (StateInitialStateV1 $package (StateV1 $package NatZeroV1 NatZeroV1 $tables)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=9 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-nil-v1 target=relation
-(= (gslt:LowerStateRowV1 (LowerStateRowV1 $package state-row-nil-v1 StateRowNilV1))
+(= (gslt:LowerStateRowV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateRowV1 (cons-atom $package (cons-atom state-row-nil-v1 (cons-atom StateRowNilV1 ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTransitionPackageV1:0 $package) (once (gslt:fn:StateTransitionPackageV1:0))
-   (LowerStateRowV1 $package state-row-nil-v1 StateRowNilV1)))
+   (quote (LowerStateRowV1 $package state-row-nil-v1 StateRowNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=10 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-cons-v1 target=relation
-(= (gslt:LowerStateRowV1 (LowerStateRowV1 $package (state-row-cons-v1 $head $tail) (StateRowConsV1 $lowerHead $lowerTail)))
+(= (gslt:LowerStateRowV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateRowV1 (cons-atom $package (cons-atom (cons-atom state-row-cons-v1 (cons-atom $head (cons-atom $tail ()))) (cons-atom (cons-atom StateRowConsV1 (cons-atom $lowerHead (cons-atom $lowerTail ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:LowerStateRowValueV1:000 $package $head $lowerHead) (superpose (collapse (gslt:mode:LowerStateRowValueV1:000)))
    (let (gslt:result:LowerStateRowV1:100 $tail $lowerTail) (superpose (collapse (gslt:mode:LowerStateRowV1:100 $package)))
-   (LowerStateRowV1 $package (state-row-cons-v1 $head $tail) (StateRowConsV1 $lowerHead $lowerTail)))))
+   (quote (LowerStateRowV1 $package (state-row-cons-v1 $head $tail) (StateRowConsV1 $lowerHead $lowerTail)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=11 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-input-v1 target=relation
-(= (gslt:LowerStateRowValueV1 (LowerStateRowValueV1 $package state-input-v1 StateInputV1))
+(= (gslt:LowerStateRowValueV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateRowValueV1 (cons-atom $package (cons-atom state-input-v1 (cons-atom StateInputV1 ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTransitionPackageV1:0 $package) (once (gslt:fn:StateTransitionPackageV1:0))
-   (LowerStateRowValueV1 $package state-input-v1 StateInputV1)))
+   (quote (LowerStateRowValueV1 $package state-input-v1 StateInputV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=12 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-literal-v1 target=relation
-(= (gslt:LowerStateRowValueV1 (LowerStateRowValueV1 $package (state-literal-v1 $literal) (StateLiteralSymbolV1 $literal)))
+(= (gslt:LowerStateRowValueV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateRowValueV1 (cons-atom $package (cons-atom (cons-atom state-literal-v1 (cons-atom $literal ())) (cons-atom (cons-atom StateLiteralSymbolV1 (cons-atom $literal ())) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTransitionPackageV1:0 $package) (once (gslt:fn:StateTransitionPackageV1:0))
-   (LowerStateRowValueV1 $package (state-literal-v1 $literal) (StateLiteralSymbolV1 $literal))))
+   (quote (LowerStateRowValueV1 $package (state-literal-v1 $literal) (StateLiteralSymbolV1 $literal))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=13 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-role-at-v1 target=relation
-(= (gslt:LowerStateRowValueV1 (LowerStateRowValueV1 $package (state-role-at-v1 $role $rawIndex) (StateRoleAtV1 $role $index)))
+(= (gslt:LowerStateRowValueV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateRowValueV1 (cons-atom $package (cons-atom (cons-atom state-role-at-v1 (cons-atom $role (cons-atom $rawIndex ()))) (cons-atom (cons-atom StateRoleAtV1 (cons-atom $role (cons-atom $index ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateNatBindingV1:000 $package $rawIndex $index) (superpose (collapse (gslt:mode:StateNatBindingV1:000)))
-   (LowerStateRowValueV1 $package (state-role-at-v1 $role $rawIndex) (StateRoleAtV1 $role $index))))
+   (quote (LowerStateRowValueV1 $package (state-role-at-v1 $role $rawIndex) (StateRoleAtV1 $role $index))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=14 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-role-list-v1 target=relation
-(= (gslt:LowerStateRowValueV1 (LowerStateRowValueV1 $package (state-role-list-v1 $role $rawIndex) (StateRoleListV1 $role $index)))
+(= (gslt:LowerStateRowValueV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateRowValueV1 (cons-atom $package (cons-atom (cons-atom state-role-list-v1 (cons-atom $role (cons-atom $rawIndex ()))) (cons-atom (cons-atom StateRoleListV1 (cons-atom $role (cons-atom $index ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateNatBindingV1:000 $package $rawIndex $index) (superpose (collapse (gslt:mode:StateNatBindingV1:000)))
-   (LowerStateRowValueV1 $package (state-role-list-v1 $role $rawIndex) (StateRoleListV1 $role $index))))
+   (quote (LowerStateRowValueV1 $package (state-role-list-v1 $role $rawIndex) (StateRoleListV1 $role $index))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=15 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-source-column-v1 target=relation
-(= (gslt:LowerStateRowValueV1 (LowerStateRowValueV1 $package (state-source-column-v1 $rawIndex) (StateSourceColumnV1 $index)))
+(= (gslt:LowerStateRowValueV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateRowValueV1 (cons-atom $package (cons-atom (cons-atom state-source-column-v1 (cons-atom $rawIndex ())) (cons-atom (cons-atom StateSourceColumnV1 (cons-atom $index ())) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateNatBindingV1:000 $package $rawIndex $index) (superpose (collapse (gslt:mode:StateNatBindingV1:000)))
-   (LowerStateRowValueV1 $package (state-source-column-v1 $rawIndex) (StateSourceColumnV1 $index))))
+   (quote (LowerStateRowValueV1 $package (state-source-column-v1 $rawIndex) (StateSourceColumnV1 $index))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=16 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-source-index-v1 target=relation
-(= (gslt:LowerStateRowValueV1 (LowerStateRowValueV1 $package state-source-row-index-v1 StateSourceRowIndexV1))
+(= (gslt:LowerStateRowValueV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateRowValueV1 (cons-atom $package (cons-atom state-source-row-index-v1 (cons-atom StateSourceRowIndexV1 ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTransitionPackageV1:0 $package) (once (gslt:fn:StateTransitionPackageV1:0))
-   (LowerStateRowValueV1 $package state-source-row-index-v1 StateSourceRowIndexV1)))
+   (quote (LowerStateRowValueV1 $package state-source-row-index-v1 StateSourceRowIndexV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=17 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-match-index-v1 target=relation
-(= (gslt:LowerStateRowValueV1 (LowerStateRowValueV1 $package state-source-match-index-v1 StateSourceMatchIndexV1))
+(= (gslt:LowerStateRowValueV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateRowValueV1 (cons-atom $package (cons-atom state-source-match-index-v1 (cons-atom StateSourceMatchIndexV1 ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTransitionPackageV1:0 $package) (once (gslt:fn:StateTransitionPackageV1:0))
-   (LowerStateRowValueV1 $package state-source-match-index-v1 StateSourceMatchIndexV1)))
+   (quote (LowerStateRowValueV1 $package state-source-match-index-v1 StateSourceMatchIndexV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=18 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-write-require-absent-v1 target=relation
-(= (gslt:LowerStateWritePolicyV1 (LowerStateWritePolicyV1 state-require-key-absent-v1 StateRequireKeyAbsentV1))
-   (LowerStateWritePolicyV1 state-require-key-absent-v1 StateRequireKeyAbsentV1))
+(= (gslt:LowerStateWritePolicyV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateWritePolicyV1 (cons-atom state-require-key-absent-v1 (cons-atom StateRequireKeyAbsentV1 ()))) $__gslt_input_v1_0_0
+   (quote (LowerStateWritePolicyV1 state-require-key-absent-v1 StateRequireKeyAbsentV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=19 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-write-or-equal-v1 target=relation
-(= (gslt:LowerStateWritePolicyV1 (LowerStateWritePolicyV1 state-insert-or-require-equal-v1 StateInsertOrRequireEqualV1))
-   (LowerStateWritePolicyV1 state-insert-or-require-equal-v1 StateInsertOrRequireEqualV1))
+(= (gslt:LowerStateWritePolicyV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateWritePolicyV1 (cons-atom state-insert-or-require-equal-v1 (cons-atom StateInsertOrRequireEqualV1 ()))) $__gslt_input_v1_0_0
+   (quote (LowerStateWritePolicyV1 state-insert-or-require-equal-v1 StateInsertOrRequireEqualV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=20 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-action-record-v1 target=relation
-(= (gslt:StateLoweredActionV1 (StateLoweredActionV1 $package $operation $index $actions))
+(= (gslt:StateLoweredActionV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateLoweredActionV1 (cons-atom $package (cons-atom $operation (cons-atom $index (cons-atom $actions ()))))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTransitionPackageV1:0 $package) (once (gslt:fn:StateTransitionPackageV1:0))
    (let (gslt:result:state-action-v1:000 $operation $index $action) (superpose (collapse (gslt:mode:state-action-v1:000)))
    (let (gslt:result:LowerStateActionV1:110 $actions) (once (gslt:fn:LowerStateActionV1:110 $package $action))
-   (StateLoweredActionV1 $package $operation $index $actions)))))
+   (quote (StateLoweredActionV1 $package $operation $index $actions)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=21 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-final-action-record-v1 target=relation
-(= (gslt:StateLoweredFinalActionV1 (StateLoweredFinalActionV1 $package $index $actions))
+(= (gslt:StateLoweredFinalActionV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateLoweredFinalActionV1 (cons-atom $package (cons-atom $index (cons-atom $actions ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTransitionPackageV1:0 $package) (once (gslt:fn:StateTransitionPackageV1:0))
    (let $_ (gslt:state-final-action-v1 (state-final-action-v1 $index $action))
    (let (gslt:result:LowerStateActionV1:100 $action $actions) (superpose (collapse (gslt:mode:LowerStateActionV1:100 $package)))
-   (StateLoweredFinalActionV1 $package $index $actions)))))
+   (quote (StateLoweredFinalActionV1 $package $index $actions)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=22 source-presentation=RelationalStateTransitionCompilerV1 source-rule=actions-append-nil-v1 target=relation
-(= (gslt:ActionsAppendV1 (ActionsAppendV1 ActionsNilV1 $right $right))
-   (ActionsAppendV1 ActionsNilV1 $right $right))
+(= (gslt:ActionsAppendV1 $__gslt_input_v1_0_0)
+   (let (cons-atom ActionsAppendV1 (cons-atom ActionsNilV1 (cons-atom $right (cons-atom $right ())))) $__gslt_input_v1_0_0
+   (quote (ActionsAppendV1 ActionsNilV1 $right $right))))
 
 ; gslt-lowered-equation-v1 source-rewrite=23 source-presentation=RelationalStateTransitionCompilerV1 source-rule=actions-append-cons-v1 target=relation
-(= (gslt:ActionsAppendV1 (ActionsAppendV1 (ActionsConsV1 $head $tail) $right (ActionsConsV1 $head $result)))
+(= (gslt:ActionsAppendV1 $__gslt_input_v1_0_0)
+   (let (cons-atom ActionsAppendV1 (cons-atom (cons-atom ActionsConsV1 (cons-atom $head (cons-atom $tail ()))) (cons-atom $right (cons-atom (cons-atom ActionsConsV1 (cons-atom $head (cons-atom $result ()))) ())))) $__gslt_input_v1_0_0
    (let $_ (gslt:ActionsAppendV1 (ActionsAppendV1 $tail $right $result))
-   (ActionsAppendV1 (ActionsConsV1 $head $tail) $right (ActionsConsV1 $head $result))))
+   (quote (ActionsAppendV1 (ActionsConsV1 $head $tail) $right (ActionsConsV1 $head $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=24 source-presentation=RelationalStateTransitionCompilerV1 source-rule=assemble-state-actions-last-v1 target=relation
-(= (gslt:AssembleStateActionsV1 (AssembleStateActionsV1 $package $operation $index $actions))
+(= (gslt:AssembleStateActionsV1 $__gslt_input_v1_0_0)
+   (let (cons-atom AssembleStateActionsV1 (cons-atom $package (cons-atom $operation (cons-atom $index (cons-atom $actions ()))))) $__gslt_input_v1_0_0
    (let (gslt:result:StateLoweredActionV1:0000 $package $operation $index $actions) (superpose (collapse (gslt:mode:StateLoweredActionV1:0000)))
    (let gslt:result:StateActionLastV1:111 (once (gslt:fn:StateActionLastV1:111 $package $operation $index))
-   (AssembleStateActionsV1 $package $operation $index $actions))))
+   (quote (AssembleStateActionsV1 $package $operation $index $actions))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=25 source-presentation=RelationalStateTransitionCompilerV1 source-rule=assemble-state-actions-next-v1 target=relation
-(= (gslt:AssembleStateActionsV1 (AssembleStateActionsV1 $package $operation $index $actions))
+(= (gslt:AssembleStateActionsV1 $__gslt_input_v1_0_0)
+   (let (cons-atom AssembleStateActionsV1 (cons-atom $package (cons-atom $operation (cons-atom $index (cons-atom $actions ()))))) $__gslt_input_v1_0_0
    (let (gslt:result:StateLoweredActionV1:0000 $package $operation $index $current) (superpose (collapse (gslt:mode:StateLoweredActionV1:0000)))
    (let (gslt:result:StateActionNextV1:1110 $nextIndex) (once (gslt:fn:StateActionNextV1:1110 $package $operation $index))
    (let (gslt:result:AssembleStateActionsV1:1110 $remaining) (superpose (collapse (gslt:mode:AssembleStateActionsV1:1110 $package $operation $nextIndex)))
    (let (gslt:result:ActionsAppendV1:110 $actions) (once (gslt:fn:ActionsAppendV1:110 $current $remaining))
-   (AssembleStateActionsV1 $package $operation $index $actions))))))
+   (quote (AssembleStateActionsV1 $package $operation $index $actions))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=26 source-presentation=RelationalStateTransitionCompilerV1 source-rule=project-state-operation-program-v1 target=relation
-(= (gslt:StateOperationProgramV1 (StateOperationProgramV1 $package $operation $actions))
+(= (gslt:StateOperationProgramV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateOperationProgramV1 (cons-atom $package (cons-atom $operation (cons-atom $actions ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateActionFirstV1:000 $package $operation $firstIndex) (superpose (collapse (gslt:mode:StateActionFirstV1:000)))
    (let (gslt:result:AssembleStateActionsV1:1110 $actions) (superpose (collapse (gslt:mode:AssembleStateActionsV1:1110 $package $operation $firstIndex)))
-   (StateOperationProgramV1 $package $operation $actions))))
+   (quote (StateOperationProgramV1 $package $operation $actions))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=27 source-presentation=RelationalStateTransitionCompilerV1 source-rule=assemble-state-final-actions-last-v1 target=relation
-(= (gslt:AssembleStateFinalActionsV1 (AssembleStateFinalActionsV1 $package $index $actions))
+(= (gslt:AssembleStateFinalActionsV1 $__gslt_input_v1_0_0)
+   (let (cons-atom AssembleStateFinalActionsV1 (cons-atom $package (cons-atom $index (cons-atom $actions ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateLoweredFinalActionV1:000 $package $index $actions) (once (gslt:fn:StateLoweredFinalActionV1:000))
    (let $_ (gslt:StateFinalActionLastV1 (StateFinalActionLastV1 $package $index))
-   (AssembleStateFinalActionsV1 $package $index $actions))))
+   (quote (AssembleStateFinalActionsV1 $package $index $actions))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=28 source-presentation=RelationalStateTransitionCompilerV1 source-rule=assemble-state-final-actions-next-v1 target=relation
-(= (gslt:AssembleStateFinalActionsV1 (AssembleStateFinalActionsV1 $package $index $actions))
+(= (gslt:AssembleStateFinalActionsV1 $__gslt_input_v1_0_0)
+   (let (cons-atom AssembleStateFinalActionsV1 (cons-atom $package (cons-atom $index (cons-atom $actions ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateLoweredFinalActionV1:000 $package $index $current) (once (gslt:fn:StateLoweredFinalActionV1:000))
    (let $_ (gslt:StateFinalActionNextV1 (StateFinalActionNextV1 $package $index $nextIndex))
    (let (gslt:result:AssembleStateFinalActionsV1:100 $nextIndex $remaining) (superpose (collapse (gslt:mode:AssembleStateFinalActionsV1:100 $package)))
    (let (gslt:result:ActionsAppendV1:110 $actions) (once (gslt:fn:ActionsAppendV1:110 $current $remaining))
-   (AssembleStateFinalActionsV1 $package $index $actions))))))
+   (quote (AssembleStateFinalActionsV1 $package $index $actions))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=29 source-presentation=RelationalStateTransitionCompilerV1 source-rule=project-state-final-program-v1 target=relation
-(= (gslt:StateFinalProgramV1 (StateFinalProgramV1 $package $actions))
+(= (gslt:StateFinalProgramV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateFinalProgramV1 (cons-atom $package (cons-atom $actions ()))) $__gslt_input_v1_0_0
    (let $_ (gslt:StateFinalActionFirstV1 (StateFinalActionFirstV1 $package $firstIndex))
    (let (gslt:result:AssembleStateFinalActionsV1:000 $package $firstIndex $actions) (superpose (collapse (gslt:mode:AssembleStateFinalActionsV1:000)))
-   (StateFinalProgramV1 $package $actions))))
+   (quote (StateFinalProgramV1 $package $actions))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=30 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-require-depth-v1 target=relation
-(= (gslt:LowerStateActionV1 (LowerStateActionV1 $package (state-require-depth-v1 $rawDepth) (ActionsConsV1 (StateRequireDepthV1 $depth) ActionsNilV1)))
+(= (gslt:LowerStateActionV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateActionV1 (cons-atom $package (cons-atom (cons-atom state-require-depth-v1 (cons-atom $rawDepth ())) (cons-atom (cons-atom ActionsConsV1 (cons-atom (cons-atom StateRequireDepthV1 (cons-atom $depth ())) (cons-atom ActionsNilV1 ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateNatBindingV1:000 $package $rawDepth $depth) (superpose (collapse (gslt:mode:StateNatBindingV1:000)))
-   (LowerStateActionV1 $package (state-require-depth-v1 $rawDepth) (ActionsConsV1 (StateRequireDepthV1 $depth) ActionsNilV1))))
+   (quote (LowerStateActionV1 $package (state-require-depth-v1 $rawDepth) (ActionsConsV1 (StateRequireDepthV1 $depth) ActionsNilV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=31 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-push-scope-v1 target=relation
-(= (gslt:LowerStateActionV1 (LowerStateActionV1 $package state-push-scope-v1 (ActionsConsV1 StatePushScopeV1 ActionsNilV1)))
+(= (gslt:LowerStateActionV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateActionV1 (cons-atom $package (cons-atom state-push-scope-v1 (cons-atom (cons-atom ActionsConsV1 (cons-atom StatePushScopeV1 (cons-atom ActionsNilV1 ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTransitionPackageV1:0 $package) (once (gslt:fn:StateTransitionPackageV1:0))
-   (LowerStateActionV1 $package state-push-scope-v1 (ActionsConsV1 StatePushScopeV1 ActionsNilV1))))
+   (quote (LowerStateActionV1 $package state-push-scope-v1 (ActionsConsV1 StatePushScopeV1 ActionsNilV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=32 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-pop-scope-v1 target=relation
-(= (gslt:LowerStateActionV1 (LowerStateActionV1 $package state-pop-scope-v1 (ActionsConsV1 StatePopScopeV1 ActionsNilV1)))
+(= (gslt:LowerStateActionV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateActionV1 (cons-atom $package (cons-atom state-pop-scope-v1 (cons-atom (cons-atom ActionsConsV1 (cons-atom StatePopScopeV1 (cons-atom ActionsNilV1 ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTransitionPackageV1:0 $package) (once (gslt:fn:StateTransitionPackageV1:0))
-   (LowerStateActionV1 $package state-pop-scope-v1 (ActionsConsV1 StatePopScopeV1 ActionsNilV1))))
+   (quote (LowerStateActionV1 $package state-pop-scope-v1 (ActionsConsV1 StatePopScopeV1 ActionsNilV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=33 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-noop-v1 target=relation
-(= (gslt:LowerStateActionV1 (LowerStateActionV1 $package state-noop-v1 (ActionsConsV1 StateNoopV1 ActionsNilV1)))
+(= (gslt:LowerStateActionV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateActionV1 (cons-atom $package (cons-atom state-noop-v1 (cons-atom (cons-atom ActionsConsV1 (cons-atom StateNoopV1 (cons-atom ActionsNilV1 ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTransitionPackageV1:0 $package) (once (gslt:fn:StateTransitionPackageV1:0))
-   (LowerStateActionV1 $package state-noop-v1 (ActionsConsV1 StateNoopV1 ActionsNilV1))))
+   (quote (LowerStateActionV1 $package state-noop-v1 (ActionsConsV1 StateNoopV1 ActionsNilV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=34 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-require-each-v1 target=relation
-(= (gslt:LowerStateActionV1 (LowerStateActionV1 $package (state-require-each-v1 $role $table $row) (ActionsConsV1 (StateRequireEachV1 $role $tableId $lowerRow) ActionsNilV1)))
+(= (gslt:LowerStateActionV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateActionV1 (cons-atom $package (cons-atom (cons-atom state-require-each-v1 (cons-atom $role (cons-atom $table (cons-atom $row ())))) (cons-atom (cons-atom ActionsConsV1 (cons-atom (cons-atom StateRequireEachV1 (cons-atom $role (cons-atom $tableId (cons-atom $lowerRow ())))) (cons-atom ActionsNilV1 ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTableLoweringV1:000000 $package $table $tableId $arity $keyArity $lifetime) (superpose (collapse (gslt:mode:StateTableLoweringV1:000000)))
    (let (gslt:result:LowerStateRowV1:100 $row $lowerRow) (superpose (collapse (gslt:mode:LowerStateRowV1:100 $package)))
-   (LowerStateActionV1 $package (state-require-each-v1 $role $table $row) (ActionsConsV1 (StateRequireEachV1 $role $tableId $lowerRow) ActionsNilV1)))))
+   (quote (LowerStateActionV1 $package (state-require-each-v1 $role $table $row) (ActionsConsV1 (StateRequireEachV1 $role $tableId $lowerRow) ActionsNilV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=35 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-require-each-key-absent-v1 target=relation
-(= (gslt:LowerStateActionV1 (LowerStateActionV1 $package (state-require-each-key-absent-v1 $role $table $row) (ActionsConsV1 (StateRequireEachKeyAbsentV1 $role $tableId $keyArity $lowerRow) ActionsNilV1)))
+(= (gslt:LowerStateActionV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateActionV1 (cons-atom $package (cons-atom (cons-atom state-require-each-key-absent-v1 (cons-atom $role (cons-atom $table (cons-atom $row ())))) (cons-atom (cons-atom ActionsConsV1 (cons-atom (cons-atom StateRequireEachKeyAbsentV1 (cons-atom $role (cons-atom $tableId (cons-atom $keyArity (cons-atom $lowerRow ()))))) (cons-atom ActionsNilV1 ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTableLoweringV1:000000 $package $table $tableId $arity $keyArity $lifetime) (superpose (collapse (gslt:mode:StateTableLoweringV1:000000)))
    (let (gslt:result:LowerStateRowV1:100 $row $lowerRow) (superpose (collapse (gslt:mode:LowerStateRowV1:100 $package)))
-   (LowerStateActionV1 $package (state-require-each-key-absent-v1 $role $table $row) (ActionsConsV1 (StateRequireEachKeyAbsentV1 $role $tableId $keyArity $lowerRow) ActionsNilV1)))))
+   (quote (LowerStateActionV1 $package (state-require-each-key-absent-v1 $role $table $row) (ActionsConsV1 (StateRequireEachKeyAbsentV1 $role $tableId $keyArity $lowerRow) ActionsNilV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=36 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-insert-unordered-pairs-v1 target=relation
-(= (gslt:LowerStateActionV1 (LowerStateActionV1 $package (state-insert-unordered-pairs-v1 $role $table $policy) (ActionsConsV1 (StateRequirePairwiseDistinctV1 $role) (ActionsConsV1 (StateInsertAllPairsV1 $role $tableId $lowerPolicy) ActionsNilV1))))
+(= (gslt:LowerStateActionV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateActionV1 (cons-atom $package (cons-atom (cons-atom state-insert-unordered-pairs-v1 (cons-atom $role (cons-atom $table (cons-atom $policy ())))) (cons-atom (cons-atom ActionsConsV1 (cons-atom (cons-atom StateRequirePairwiseDistinctV1 (cons-atom $role ())) (cons-atom (cons-atom ActionsConsV1 (cons-atom (cons-atom StateInsertAllPairsV1 (cons-atom $role (cons-atom $tableId (cons-atom $lowerPolicy ())))) (cons-atom ActionsNilV1 ()))) ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTableLoweringV1:000000 $package $table $tableId $arity $keyArity $lifetime) (superpose (collapse (gslt:mode:StateTableLoweringV1:000000)))
    (let (gslt:result:LowerStateWritePolicyV1:00 $policy $lowerPolicy) (superpose (collapse (gslt:mode:LowerStateWritePolicyV1:00)))
-   (LowerStateActionV1 $package (state-insert-unordered-pairs-v1 $role $table $policy) (ActionsConsV1 (StateRequirePairwiseDistinctV1 $role) (ActionsConsV1 (StateInsertAllPairsV1 $role $tableId $lowerPolicy) ActionsNilV1))))))
+   (quote (LowerStateActionV1 $package (state-insert-unordered-pairs-v1 $role $table $policy) (ActionsConsV1 (StateRequirePairwiseDistinctV1 $role) (ActionsConsV1 (StateInsertAllPairsV1 $role $tableId $lowerPolicy) ActionsNilV1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=37 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-require-row-v1 target=relation
-(= (gslt:LowerStateActionV1 (LowerStateActionV1 $package (state-require-row-v1 $table $row) (ActionsConsV1 (StateRequireRowV1 $tableId $lowerRow) ActionsNilV1)))
+(= (gslt:LowerStateActionV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateActionV1 (cons-atom $package (cons-atom (cons-atom state-require-row-v1 (cons-atom $table (cons-atom $row ()))) (cons-atom (cons-atom ActionsConsV1 (cons-atom (cons-atom StateRequireRowV1 (cons-atom $tableId (cons-atom $lowerRow ()))) (cons-atom ActionsNilV1 ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTableLoweringV1:000000 $package $table $tableId $arity $keyArity $lifetime) (superpose (collapse (gslt:mode:StateTableLoweringV1:000000)))
    (let (gslt:result:LowerStateRowV1:100 $row $lowerRow) (superpose (collapse (gslt:mode:LowerStateRowV1:100 $package)))
-   (LowerStateActionV1 $package (state-require-row-v1 $table $row) (ActionsConsV1 (StateRequireRowV1 $tableId $lowerRow) ActionsNilV1)))))
+   (quote (LowerStateActionV1 $package (state-require-row-v1 $table $row) (ActionsConsV1 (StateRequireRowV1 $tableId $lowerRow) ActionsNilV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=38 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-require-row-key-absent-v1 target=relation
-(= (gslt:LowerStateActionV1 (LowerStateActionV1 $package (state-require-row-key-absent-v1 $table $row) (ActionsConsV1 (StateRequireRowKeyAbsentV1 $tableId $keyArity $lowerRow) ActionsNilV1)))
+(= (gslt:LowerStateActionV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateActionV1 (cons-atom $package (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom $table (cons-atom $row ()))) (cons-atom (cons-atom ActionsConsV1 (cons-atom (cons-atom StateRequireRowKeyAbsentV1 (cons-atom $tableId (cons-atom $keyArity (cons-atom $lowerRow ())))) (cons-atom ActionsNilV1 ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTableLoweringV1:000000 $package $table $tableId $arity $keyArity $lifetime) (superpose (collapse (gslt:mode:StateTableLoweringV1:000000)))
    (let (gslt:result:LowerStateRowV1:100 $row $lowerRow) (superpose (collapse (gslt:mode:LowerStateRowV1:100 $package)))
-   (LowerStateActionV1 $package (state-require-row-key-absent-v1 $table $row) (ActionsConsV1 (StateRequireRowKeyAbsentV1 $tableId $keyArity $lowerRow) ActionsNilV1)))))
+   (quote (LowerStateActionV1 $package (state-require-row-key-absent-v1 $table $row) (ActionsConsV1 (StateRequireRowKeyAbsentV1 $tableId $keyArity $lowerRow) ActionsNilV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=39 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-insert-row-v1 target=relation
-(= (gslt:LowerStateActionV1 (LowerStateActionV1 $package (state-insert-row-v1 $table $policy $row) (ActionsConsV1 (StateInsertRowV1 $tableId $keyArity $lowerPolicy $lowerRow) ActionsNilV1)))
+(= (gslt:LowerStateActionV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateActionV1 (cons-atom $package (cons-atom (cons-atom state-insert-row-v1 (cons-atom $table (cons-atom $policy (cons-atom $row ())))) (cons-atom (cons-atom ActionsConsV1 (cons-atom (cons-atom StateInsertRowV1 (cons-atom $tableId (cons-atom $keyArity (cons-atom $lowerPolicy (cons-atom $lowerRow ()))))) (cons-atom ActionsNilV1 ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTableLoweringV1:000000 $package $table $tableId $arity $keyArity $lifetime) (superpose (collapse (gslt:mode:StateTableLoweringV1:000000)))
    (let (gslt:result:LowerStateWritePolicyV1:00 $policy $lowerPolicy) (superpose (collapse (gslt:mode:LowerStateWritePolicyV1:00)))
    (let (gslt:result:LowerStateRowV1:100 $row $lowerRow) (superpose (collapse (gslt:mode:LowerStateRowV1:100 $package)))
-   (LowerStateActionV1 $package (state-insert-row-v1 $table $policy $row) (ActionsConsV1 (StateInsertRowV1 $tableId $keyArity $lowerPolicy $lowerRow) ActionsNilV1))))))
+   (quote (LowerStateActionV1 $package (state-insert-row-v1 $table $policy $row) (ActionsConsV1 (StateInsertRowV1 $tableId $keyArity $lowerPolicy $lowerRow) ActionsNilV1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=40 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-insert-each-v1 target=relation
-(= (gslt:LowerStateActionV1 (LowerStateActionV1 $package (state-insert-each-v1 $role $table $policy $row) (ActionsConsV1 (StateInsertEachV1 $role $tableId $keyArity $lowerPolicy $lowerRow) ActionsNilV1)))
+(= (gslt:LowerStateActionV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateActionV1 (cons-atom $package (cons-atom (cons-atom state-insert-each-v1 (cons-atom $role (cons-atom $table (cons-atom $policy (cons-atom $row ()))))) (cons-atom (cons-atom ActionsConsV1 (cons-atom (cons-atom StateInsertEachV1 (cons-atom $role (cons-atom $tableId (cons-atom $keyArity (cons-atom $lowerPolicy (cons-atom $lowerRow ())))))) (cons-atom ActionsNilV1 ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTableLoweringV1:000000 $package $table $tableId $arity $keyArity $lifetime) (superpose (collapse (gslt:mode:StateTableLoweringV1:000000)))
    (let (gslt:result:LowerStateWritePolicyV1:00 $policy $lowerPolicy) (superpose (collapse (gslt:mode:LowerStateWritePolicyV1:00)))
    (let (gslt:result:LowerStateRowV1:100 $row $lowerRow) (superpose (collapse (gslt:mode:LowerStateRowV1:100 $package)))
-   (LowerStateActionV1 $package (state-insert-each-v1 $role $table $policy $row) (ActionsConsV1 (StateInsertEachV1 $role $tableId $keyArity $lowerPolicy $lowerRow) ActionsNilV1))))))
+   (quote (LowerStateActionV1 $package (state-insert-each-v1 $role $table $policy $row) (ActionsConsV1 (StateInsertEachV1 $role $tableId $keyArity $lowerPolicy $lowerRow) ActionsNilV1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=41 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-insert-each-matching-v1 target=relation
-(= (gslt:LowerStateActionV1 (LowerStateActionV1 $package (state-insert-each-matching-v1 $role $conditionTable $conditionRow $targetTable $policy $targetRow) (ActionsConsV1 (StateInsertEachMatchingV1 $role $conditionTableId $lowerConditionRow $targetTableId $targetKeyArity $lowerPolicy $lowerTargetRow) ActionsNilV1)))
+(= (gslt:LowerStateActionV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateActionV1 (cons-atom $package (cons-atom (cons-atom state-insert-each-matching-v1 (cons-atom $role (cons-atom $conditionTable (cons-atom $conditionRow (cons-atom $targetTable (cons-atom $policy (cons-atom $targetRow ()))))))) (cons-atom (cons-atom ActionsConsV1 (cons-atom (cons-atom StateInsertEachMatchingV1 (cons-atom $role (cons-atom $conditionTableId (cons-atom $lowerConditionRow (cons-atom $targetTableId (cons-atom $targetKeyArity (cons-atom $lowerPolicy (cons-atom $lowerTargetRow ())))))))) (cons-atom ActionsNilV1 ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTableLoweringV1:000000 $package $conditionTable $conditionTableId $conditionArity $conditionKeyArity $conditionLifetime) (superpose (collapse (gslt:mode:StateTableLoweringV1:000000)))
    (let (gslt:result:StateTableLoweringV1:100000 $targetTable $targetTableId $targetArity $targetKeyArity $targetLifetime) (superpose (collapse (gslt:mode:StateTableLoweringV1:100000 $package)))
    (let (gslt:result:LowerStateWritePolicyV1:00 $policy $lowerPolicy) (superpose (collapse (gslt:mode:LowerStateWritePolicyV1:00)))
    (let (gslt:result:LowerStateRowV1:100 $conditionRow $lowerConditionRow) (superpose (collapse (gslt:mode:LowerStateRowV1:100 $package)))
    (let (gslt:result:LowerStateRowV1:100 $targetRow $lowerTargetRow) (superpose (collapse (gslt:mode:LowerStateRowV1:100 $package)))
-   (LowerStateActionV1 $package (state-insert-each-matching-v1 $role $conditionTable $conditionRow $targetTable $policy $targetRow) (ActionsConsV1 (StateInsertEachMatchingV1 $role $conditionTableId $lowerConditionRow $targetTableId $targetKeyArity $lowerPolicy $lowerTargetRow) ActionsNilV1))))))))
+   (quote (LowerStateActionV1 $package (state-insert-each-matching-v1 $role $conditionTable $conditionRow $targetTable $policy $targetRow) (ActionsConsV1 (StateInsertEachMatchingV1 $role $conditionTableId $lowerConditionRow $targetTableId $targetKeyArity $lowerPolicy $lowerTargetRow) ActionsNilV1))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=42 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-copy-each-row-v1 target=relation
-(= (gslt:LowerStateActionV1 (LowerStateActionV1 $package (state-copy-each-row-v1 $sourceTable $targetTable $policy $targetRow) (ActionsConsV1 (StateCopyEachRowV1 $sourceTableId $targetTableId $targetKeyArity $lowerPolicy $lowerTargetRow) ActionsNilV1)))
+(= (gslt:LowerStateActionV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateActionV1 (cons-atom $package (cons-atom (cons-atom state-copy-each-row-v1 (cons-atom $sourceTable (cons-atom $targetTable (cons-atom $policy (cons-atom $targetRow ()))))) (cons-atom (cons-atom ActionsConsV1 (cons-atom (cons-atom StateCopyEachRowV1 (cons-atom $sourceTableId (cons-atom $targetTableId (cons-atom $targetKeyArity (cons-atom $lowerPolicy (cons-atom $lowerTargetRow ())))))) (cons-atom ActionsNilV1 ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTableLoweringV1:000000 $package $sourceTable $sourceTableId $sourceArity $sourceKeyArity $sourceLifetime) (superpose (collapse (gslt:mode:StateTableLoweringV1:000000)))
    (let (gslt:result:StateTableLoweringV1:100000 $targetTable $targetTableId $targetArity $targetKeyArity $targetLifetime) (superpose (collapse (gslt:mode:StateTableLoweringV1:100000 $package)))
    (let (gslt:result:LowerStateWritePolicyV1:00 $policy $lowerPolicy) (superpose (collapse (gslt:mode:LowerStateWritePolicyV1:00)))
    (let (gslt:result:LowerStateRowV1:100 $targetRow $lowerTargetRow) (superpose (collapse (gslt:mode:LowerStateRowV1:100 $package)))
-   (LowerStateActionV1 $package (state-copy-each-row-v1 $sourceTable $targetTable $policy $targetRow) (ActionsConsV1 (StateCopyEachRowV1 $sourceTableId $targetTableId $targetKeyArity $lowerPolicy $lowerTargetRow) ActionsNilV1)))))))
+   (quote (LowerStateActionV1 $package (state-copy-each-row-v1 $sourceTable $targetTable $policy $targetRow) (ActionsConsV1 (StateCopyEachRowV1 $sourceTableId $targetTableId $targetKeyArity $lowerPolicy $lowerTargetRow) ActionsNilV1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=43 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-copy-each-row-matching-v1 target=relation
-(= (gslt:LowerStateActionV1 (LowerStateActionV1 $package (state-copy-each-row-matching-v1 $sourceTable $conditionTable $conditionRow $targetTable $policy $targetRow) (ActionsConsV1 (StateCopyEachRowMatchingV1 $sourceTableId $conditionTableId $lowerConditionRow $targetTableId $targetKeyArity $lowerPolicy $lowerTargetRow) ActionsNilV1)))
+(= (gslt:LowerStateActionV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateActionV1 (cons-atom $package (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom $sourceTable (cons-atom $conditionTable (cons-atom $conditionRow (cons-atom $targetTable (cons-atom $policy (cons-atom $targetRow ()))))))) (cons-atom (cons-atom ActionsConsV1 (cons-atom (cons-atom StateCopyEachRowMatchingV1 (cons-atom $sourceTableId (cons-atom $conditionTableId (cons-atom $lowerConditionRow (cons-atom $targetTableId (cons-atom $targetKeyArity (cons-atom $lowerPolicy (cons-atom $lowerTargetRow ())))))))) (cons-atom ActionsNilV1 ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTableLoweringV1:000000 $package $sourceTable $sourceTableId $sourceArity $sourceKeyArity $sourceLifetime) (superpose (collapse (gslt:mode:StateTableLoweringV1:000000)))
    (let (gslt:result:StateTableLoweringV1:100000 $conditionTable $conditionTableId $conditionArity $conditionKeyArity $conditionLifetime) (superpose (collapse (gslt:mode:StateTableLoweringV1:100000 $package)))
    (let (gslt:result:StateTableLoweringV1:100000 $targetTable $targetTableId $targetArity $targetKeyArity $targetLifetime) (superpose (collapse (gslt:mode:StateTableLoweringV1:100000 $package)))
    (let (gslt:result:LowerStateWritePolicyV1:00 $policy $lowerPolicy) (superpose (collapse (gslt:mode:LowerStateWritePolicyV1:00)))
    (let (gslt:result:LowerStateRowV1:100 $conditionRow $lowerConditionRow) (superpose (collapse (gslt:mode:LowerStateRowV1:100 $package)))
    (let (gslt:result:LowerStateRowV1:100 $targetRow $lowerTargetRow) (superpose (collapse (gslt:mode:LowerStateRowV1:100 $package)))
-   (LowerStateActionV1 $package (state-copy-each-row-matching-v1 $sourceTable $conditionTable $conditionRow $targetTable $policy $targetRow) (ActionsConsV1 (StateCopyEachRowMatchingV1 $sourceTableId $conditionTableId $lowerConditionRow $targetTableId $targetKeyArity $lowerPolicy $lowerTargetRow) ActionsNilV1)))))))))
+   (quote (LowerStateActionV1 $package (state-copy-each-row-matching-v1 $sourceTable $conditionTable $conditionRow $targetTable $policy $targetRow) (ActionsConsV1 (StateCopyEachRowMatchingV1 $sourceTableId $conditionTableId $lowerConditionRow $targetTableId $targetKeyArity $lowerPolicy $lowerTargetRow) ActionsNilV1)))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=44 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-check-proof-normal-v1 target=relation
-(= (gslt:LowerStateActionV1 (LowerStateActionV1 $package (state-check-proof-normal-v1 $machine $labelRole $formulaRole $stepRole) (ActionsConsV1 (StateCheckProofNormalV1 $machine $labelRole $formulaRole $stepRole) ActionsNilV1)))
+(= (gslt:LowerStateActionV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateActionV1 (cons-atom $package (cons-atom (cons-atom state-check-proof-normal-v1 (cons-atom $machine (cons-atom $labelRole (cons-atom $formulaRole (cons-atom $stepRole ()))))) (cons-atom (cons-atom ActionsConsV1 (cons-atom (cons-atom StateCheckProofNormalV1 (cons-atom $machine (cons-atom $labelRole (cons-atom $formulaRole (cons-atom $stepRole ()))))) (cons-atom ActionsNilV1 ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTransitionPackageV1:0 $package) (once (gslt:fn:StateTransitionPackageV1:0))
-   (LowerStateActionV1 $package (state-check-proof-normal-v1 $machine $labelRole $formulaRole $stepRole) (ActionsConsV1 (StateCheckProofNormalV1 $machine $labelRole $formulaRole $stepRole) ActionsNilV1))))
+   (quote (LowerStateActionV1 $package (state-check-proof-normal-v1 $machine $labelRole $formulaRole $stepRole) (ActionsConsV1 (StateCheckProofNormalV1 $machine $labelRole $formulaRole $stepRole) ActionsNilV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=45 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-check-proof-compressed-v1 target=relation
-(= (gslt:LowerStateActionV1 (LowerStateActionV1 $package (state-check-proof-compressed-v1 $machine $labelRole $formulaRole $stepRole $codeRole) (ActionsConsV1 (StateCheckProofCompressedV1 $machine $labelRole $formulaRole $stepRole $codeRole) ActionsNilV1)))
+(= (gslt:LowerStateActionV1 $__gslt_input_v1_0_0)
+   (let (cons-atom LowerStateActionV1 (cons-atom $package (cons-atom (cons-atom state-check-proof-compressed-v1 (cons-atom $machine (cons-atom $labelRole (cons-atom $formulaRole (cons-atom $stepRole (cons-atom $codeRole ())))))) (cons-atom (cons-atom ActionsConsV1 (cons-atom (cons-atom StateCheckProofCompressedV1 (cons-atom $machine (cons-atom $labelRole (cons-atom $formulaRole (cons-atom $stepRole (cons-atom $codeRole ())))))) (cons-atom ActionsNilV1 ()))) ())))) $__gslt_input_v1_0_0
    (let (gslt:result:StateTransitionPackageV1:0 $package) (once (gslt:fn:StateTransitionPackageV1:0))
-   (LowerStateActionV1 $package (state-check-proof-compressed-v1 $machine $labelRole $formulaRole $stepRole $codeRole) (ActionsConsV1 (StateCheckProofCompressedV1 $machine $labelRole $formulaRole $stepRole $codeRole) ActionsNilV1))))
+   (quote (LowerStateActionV1 $package (state-check-proof-compressed-v1 $machine $labelRole $formulaRole $stepRole $codeRole) (ActionsConsV1 (StateCheckProofCompressedV1 $machine $labelRole $formulaRole $stepRole $codeRole) ActionsNilV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=46 source-presentation=RelationalStateTransitionInputInterfaceV1 source-rule=state-transition-input-action-v1 target=relation
-(= (gslt:oslf-external-relation-decl-v1 (oslf-external-relation-decl-v1 state-action-v1 3))
-   (oslf-external-relation-decl-v1 state-action-v1 3))
+(= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom state-action-v1 (cons-atom 3 ()))) $__gslt_input_v1_0_0
+   (quote (oslf-external-relation-decl-v1 state-action-v1 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=47 source-presentation=RelationalStateTransitionInputInterfaceV1 source-rule=state-transition-input-final-action-v1 target=relation
-(= (gslt:oslf-external-relation-decl-v1 (oslf-external-relation-decl-v1 state-final-action-v1 2))
-   (oslf-external-relation-decl-v1 state-final-action-v1 2))
+(= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom state-final-action-v1 (cons-atom 2 ()))) $__gslt_input_v1_0_0
+   (quote (oslf-external-relation-decl-v1 state-final-action-v1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=48 source-presentation=RelationalStateTransitionInputInterfaceV1 source-rule=state-transition-input-table-v1 target=relation
-(= (gslt:oslf-external-relation-decl-v1 (oslf-external-relation-decl-v1 state-table-v1 4))
-   (oslf-external-relation-decl-v1 state-table-v1 4))
+(= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom state-table-v1 (cons-atom 4 ()))) $__gslt_input_v1_0_0
+   (quote (oslf-external-relation-decl-v1 state-table-v1 4))))
 
 ; gslt-lowered-equation-v1 source-rewrite=49 source-presentation=RelationalStateTransitionInputInterfaceV1 source-rule=state-transition-input-package-v1 target=relation
-(= (gslt:oslf-external-relation-decl-v1 (oslf-external-relation-decl-v1 StateTransitionPackageV1 1))
-   (oslf-external-relation-decl-v1 StateTransitionPackageV1 1))
+(= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom StateTransitionPackageV1 (cons-atom 1 ()))) $__gslt_input_v1_0_0
+   (quote (oslf-external-relation-decl-v1 StateTransitionPackageV1 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=50 source-presentation=RelationalStateTransitionInputInterfaceV1 source-rule=state-transition-input-identity-v1 target=relation
-(= (gslt:oslf-external-relation-decl-v1 (oslf-external-relation-decl-v1 StateDenseIdentityV1 4))
-   (oslf-external-relation-decl-v1 StateDenseIdentityV1 4))
+(= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom StateDenseIdentityV1 (cons-atom 4 ()))) $__gslt_input_v1_0_0
+   (quote (oslf-external-relation-decl-v1 StateDenseIdentityV1 4))))
 
 ; gslt-lowered-equation-v1 source-rewrite=51 source-presentation=RelationalStateTransitionInputInterfaceV1 source-rule=state-transition-input-nat-v1 target=relation
-(= (gslt:oslf-external-relation-decl-v1 (oslf-external-relation-decl-v1 StateNatBindingV1 3))
-   (oslf-external-relation-decl-v1 StateNatBindingV1 3))
+(= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom StateNatBindingV1 (cons-atom 3 ()))) $__gslt_input_v1_0_0
+   (quote (oslf-external-relation-decl-v1 StateNatBindingV1 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=52 source-presentation=RelationalStateTransitionInputInterfaceV1 source-rule=state-transition-input-action-first-v1 target=relation
-(= (gslt:oslf-external-relation-decl-v1 (oslf-external-relation-decl-v1 StateActionFirstV1 3))
-   (oslf-external-relation-decl-v1 StateActionFirstV1 3))
+(= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom StateActionFirstV1 (cons-atom 3 ()))) $__gslt_input_v1_0_0
+   (quote (oslf-external-relation-decl-v1 StateActionFirstV1 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=53 source-presentation=RelationalStateTransitionInputInterfaceV1 source-rule=state-transition-input-action-next-v1 target=relation
-(= (gslt:oslf-external-relation-decl-v1 (oslf-external-relation-decl-v1 StateActionNextV1 4))
-   (oslf-external-relation-decl-v1 StateActionNextV1 4))
+(= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom StateActionNextV1 (cons-atom 4 ()))) $__gslt_input_v1_0_0
+   (quote (oslf-external-relation-decl-v1 StateActionNextV1 4))))
 
 ; gslt-lowered-equation-v1 source-rewrite=54 source-presentation=RelationalStateTransitionInputInterfaceV1 source-rule=state-transition-input-action-last-v1 target=relation
-(= (gslt:oslf-external-relation-decl-v1 (oslf-external-relation-decl-v1 StateActionLastV1 3))
-   (oslf-external-relation-decl-v1 StateActionLastV1 3))
+(= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom StateActionLastV1 (cons-atom 3 ()))) $__gslt_input_v1_0_0
+   (quote (oslf-external-relation-decl-v1 StateActionLastV1 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=55 source-presentation=RelationalStateTransitionInputInterfaceV1 source-rule=state-transition-input-final-first-v1 target=relation
-(= (gslt:oslf-external-relation-decl-v1 (oslf-external-relation-decl-v1 StateFinalActionFirstV1 2))
-   (oslf-external-relation-decl-v1 StateFinalActionFirstV1 2))
+(= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom StateFinalActionFirstV1 (cons-atom 2 ()))) $__gslt_input_v1_0_0
+   (quote (oslf-external-relation-decl-v1 StateFinalActionFirstV1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=56 source-presentation=RelationalStateTransitionInputInterfaceV1 source-rule=state-transition-input-final-next-v1 target=relation
-(= (gslt:oslf-external-relation-decl-v1 (oslf-external-relation-decl-v1 StateFinalActionNextV1 3))
-   (oslf-external-relation-decl-v1 StateFinalActionNextV1 3))
+(= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom StateFinalActionNextV1 (cons-atom 3 ()))) $__gslt_input_v1_0_0
+   (quote (oslf-external-relation-decl-v1 StateFinalActionNextV1 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=57 source-presentation=RelationalStateTransitionInputInterfaceV1 source-rule=state-transition-input-final-last-v1 target=relation
-(= (gslt:oslf-external-relation-decl-v1 (oslf-external-relation-decl-v1 StateFinalActionLastV1 2))
-   (oslf-external-relation-decl-v1 StateFinalActionLastV1 2))
+(= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom StateFinalActionLastV1 (cons-atom 2 ()))) $__gslt_input_v1_0_0
+   (quote (oslf-external-relation-decl-v1 StateFinalActionLastV1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=58 source-presentation=RelationalStateTransitionInputInterfaceV1 source-rule=state-transition-input-table-first-v1 target=relation
-(= (gslt:oslf-external-relation-decl-v1 (oslf-external-relation-decl-v1 StateTableFirstV1 2))
-   (oslf-external-relation-decl-v1 StateTableFirstV1 2))
+(= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom StateTableFirstV1 (cons-atom 2 ()))) $__gslt_input_v1_0_0
+   (quote (oslf-external-relation-decl-v1 StateTableFirstV1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=59 source-presentation=RelationalStateTransitionInputInterfaceV1 source-rule=state-transition-input-table-next-v1 target=relation
-(= (gslt:oslf-external-relation-decl-v1 (oslf-external-relation-decl-v1 StateTableNextV1 3))
-   (oslf-external-relation-decl-v1 StateTableNextV1 3))
+(= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom StateTableNextV1 (cons-atom 3 ()))) $__gslt_input_v1_0_0
+   (quote (oslf-external-relation-decl-v1 StateTableNextV1 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=60 source-presentation=RelationalStateTransitionInputInterfaceV1 source-rule=state-transition-input-table-last-v1 target=relation
-(= (gslt:oslf-external-relation-decl-v1 (oslf-external-relation-decl-v1 StateTableLastV1 2))
-   (oslf-external-relation-decl-v1 StateTableLastV1 2))
+(= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom StateTableLastV1 (cons-atom 2 ()))) $__gslt_input_v1_0_0
+   (quote (oslf-external-relation-decl-v1 StateTableLastV1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=61 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-b8754bff4d4e22c6241bd27b4854915f6ffc72a8f607de7a26ff7f65d95deb95 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-compressed 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
-   (state-action-v1 mm-check-theorem-compressed 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-compressed (cons-atom 0 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-compressed 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=62 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-7f05f9c06636fc4c9f3afa791ad7ea2d811a2ed8c559f0ada7d3584c3da084d2 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-compressed 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
-   (state-action-v1 mm-check-theorem-compressed 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-compressed (cons-atom 1 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-label-name (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-compressed 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=63 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-6a486486610709e0fde41fc8273d3ae39457e03c8697e58bd2bd49fe89be7c66 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-compressed 10 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-frame-hypothesis (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-ordered-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))
-   (state-action-v1 mm-check-theorem-compressed 10 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-frame-hypothesis (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-ordered-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-compressed (cons-atom 10 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-frame-hypothesis (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-ordered-frame-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-source-match-index-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-compressed 10 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-frame-hypothesis (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-ordered-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=64 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-920ee4bdeb3173d5cdd89be02a60adbfd336043ba6966b589637bb6058c17fc7 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-compressed 11 (state-copy-each-row-matching-v1 mm-state-disjoint-variable mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-disjoint-left-candidate state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) state-row-nil-v1))))))
-   (state-action-v1 mm-check-theorem-compressed 11 (state-copy-each-row-matching-v1 mm-state-disjoint-variable mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-disjoint-left-candidate state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) state-row-nil-v1))))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-compressed (cons-atom 11 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-disjoint-variable (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 1 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-compressed 11 (state-copy-each-row-matching-v1 mm-state-disjoint-variable mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-disjoint-left-candidate state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=65 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-8bfc225eb87aea9c582ba13a0e5ef504316442f5fc445a5ee0f16e1492c5996e target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-compressed 12 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1))))))
-   (state-action-v1 mm-check-theorem-compressed 12 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1))))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-compressed (cons-atom 12 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-disjoint-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 1 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-compressed 12 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=66 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-0c9711791f1a7a0e4fe69ce878f89cb5ac294a789633aabe71bf690c3b3c5481 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-compressed 13 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-ordered-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)))))))
-   (state-action-v1 mm-check-theorem-compressed 13 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-ordered-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)))))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-compressed (cons-atom 13 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-ordered-disjoint-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-source-match-index-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 1 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-compressed 13 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-ordered-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=67 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-c384d77707765881dc48e222ae1d646fc24ce1cbb724069edbeedd598a173b2c target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-compressed 14 (state-check-proof-compressed-v1 mm-stack-proof-machine-v1 mm-label mm-symbol mm-proof-step mm-compressed-word)))
-   (state-action-v1 mm-check-theorem-compressed 14 (state-check-proof-compressed-v1 mm-stack-proof-machine-v1 mm-label mm-symbol mm-proof-step mm-compressed-word)))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-compressed (cons-atom 14 (cons-atom (cons-atom state-check-proof-compressed-v1 (cons-atom mm-stack-proof-machine-v1 (cons-atom mm-label (cons-atom mm-symbol (cons-atom mm-proof-step (cons-atom mm-compressed-word ())))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-compressed 14 (state-check-proof-compressed-v1 mm-stack-proof-machine-v1 mm-label mm-symbol mm-proof-step mm-compressed-word)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=68 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-a5b767dc59cdbcb508601363695c7177e1f1dbc7cd2bbaaf42eb02dd03eeaa64 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-compressed 15 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))
-   (state-action-v1 mm-check-theorem-compressed 15 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-compressed (cons-atom 15 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-formula (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-list-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-compressed 15 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=69 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-05a965ac1c07ab4185ce4bdc124c38c7f742885ec0741a75ed294c61d300d1ef target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-compressed 16 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
-   (state-action-v1 mm-check-theorem-compressed 16 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-compressed (cons-atom 16 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-name (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-compressed 16 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=70 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-1c5904e9e495841391767c52a9097c0fda0c1e9ec7e57f68cc4763a7767a9072 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-compressed 17 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-theorem) state-row-nil-v1)))))
-   (state-action-v1 mm-check-theorem-compressed 17 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-theorem) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-compressed (cons-atom 17 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-kind (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-theorem ())) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-compressed 17 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-theorem) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=71 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-8a1896049ba8cb7a63d1442121e90b83b42b5e8805c098aa3ffe90e71bcf89ad target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-compressed 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))
-   (state-action-v1 mm-check-theorem-compressed 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-compressed (cons-atom 2 (cons-atom (cons-atom state-require-row-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-constant ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-compressed 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=72 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-2ac79198ac5770fbce2e06c6c9f65f660b1370cda16690a2bd21dd8757ae7bb9 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-compressed 3 (state-require-each-v1 mm-symbol mm-state-expression-symbol (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
-   (state-action-v1 mm-check-theorem-compressed 3 (state-require-each-v1 mm-symbol mm-state-expression-symbol (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-compressed (cons-atom 3 (cons-atom (cons-atom state-require-each-v1 (cons-atom mm-symbol (cons-atom mm-state-expression-symbol (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-compressed 3 (state-require-each-v1 mm-symbol mm-state-expression-symbol (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=73 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-becad5c69d09b4d4f30e0b722e1f47e87999779ccdd0d95913dd43e2df1195d7 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-compressed 4 (state-insert-each-matching-v1 mm-symbol mm-state-symbol-kind (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)) mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-input-v1 state-row-nil-v1)))))
-   (state-action-v1 mm-check-theorem-compressed 4 (state-insert-each-matching-v1 mm-symbol mm-state-symbol-kind (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)) mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-input-v1 state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-compressed (cons-atom 4 (cons-atom (cons-atom state-insert-each-matching-v1 (cons-atom mm-symbol (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-variable ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-mandatory-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-compressed 4 (state-insert-each-matching-v1 mm-symbol mm-state-symbol-kind (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)) mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-input-v1 state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=74 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-70388eaf297e62bc6101d35b97b1a214b77eba0e69534fa82b7d1a7fc355efb9 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-compressed 5 (state-copy-each-row-v1 mm-state-active-essential-variable mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
-   (state-action-v1 mm-check-theorem-compressed 5 (state-copy-each-row-v1 mm-state-active-essential-variable mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-compressed (cons-atom 5 (cons-atom (cons-atom state-copy-each-row-v1 (cons-atom mm-state-active-essential-variable (cons-atom mm-state-assertion-mandatory-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-compressed 5 (state-copy-each-row-v1 mm-state-active-essential-variable mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=75 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-dc80f7950af4c3d2f138a0681daa921bec4571c6a0bc2dc5aeda198eb38d2fd4 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-compressed 6 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-active-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
-   (state-action-v1 mm-check-theorem-compressed 6 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-active-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-compressed (cons-atom 6 (cons-atom (cons-atom state-copy-each-row-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-active-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-compressed 6 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-active-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=76 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-a7771f7881aad2146db57210bd41c4f15f331e2a8817b03c9ce3663ce123758c target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-compressed 7 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-ordered-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-row-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))
-   (state-action-v1 mm-check-theorem-compressed 7 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-ordered-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-row-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-compressed (cons-atom 7 (cons-atom (cons-atom state-copy-each-row-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-ordered-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-source-row-index-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-compressed 7 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-ordered-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-row-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=77 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-ce06dbc68fec9e71ac491b313cec63f424e1c244a33e2ff50e31461ef4bbad30 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-compressed 8 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-label-kind (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
-   (state-action-v1 mm-check-theorem-compressed 8 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-label-kind (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-compressed (cons-atom 8 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-label-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-essential ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-frame-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-compressed 8 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-label-kind (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=78 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-03c5c18a1b38b82aca71e326345032e7f3015010583e641254182b03fb4c1cbe target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-compressed 9 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
-   (state-action-v1 mm-check-theorem-compressed 9 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-compressed (cons-atom 9 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-frame-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-compressed 9 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=79 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-204c9c4a49c5326f8b665e62b1195ebc4a80c206a501e42ccce7e1d1c6dbc4ac target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-normal 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
-   (state-action-v1 mm-check-theorem-normal 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-normal (cons-atom 0 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-normal 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=80 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-7326b92af5e093ad6a437ad0a8b1fef4ff6555fd6fd1a9f9f6b560fc920dcabd target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-normal 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
-   (state-action-v1 mm-check-theorem-normal 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-normal (cons-atom 1 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-label-name (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-normal 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=81 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-9b80d98a2a9d6feef5092e3941cde0667c1d73d7a9176dff4510499076993fbb target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-normal 10 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-frame-hypothesis (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-ordered-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))
-   (state-action-v1 mm-check-theorem-normal 10 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-frame-hypothesis (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-ordered-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-normal (cons-atom 10 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-frame-hypothesis (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-ordered-frame-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-source-match-index-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-normal 10 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-frame-hypothesis (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-ordered-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=82 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-d62a31aa45cedff3f92130269475178240eae5bdc00486540ed1a0e407d9323c target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-normal 11 (state-copy-each-row-matching-v1 mm-state-disjoint-variable mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-disjoint-left-candidate state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) state-row-nil-v1))))))
-   (state-action-v1 mm-check-theorem-normal 11 (state-copy-each-row-matching-v1 mm-state-disjoint-variable mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-disjoint-left-candidate state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) state-row-nil-v1))))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-normal (cons-atom 11 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-disjoint-variable (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 1 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-normal 11 (state-copy-each-row-matching-v1 mm-state-disjoint-variable mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-disjoint-left-candidate state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=83 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-317d21e60a9cc5f0f44c353b18fe9100aa74839819f68d4fd574cb24b0524c34 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-normal 12 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1))))))
-   (state-action-v1 mm-check-theorem-normal 12 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1))))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-normal (cons-atom 12 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-disjoint-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 1 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-normal 12 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=84 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-4c0d7c5ab8c2bfce8705a1a3df0add6d737eb74ebcb3d2aef9d305f7fcfaaac8 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-normal 13 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-ordered-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)))))))
-   (state-action-v1 mm-check-theorem-normal 13 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-ordered-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)))))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-normal (cons-atom 13 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-ordered-disjoint-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-source-match-index-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 1 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-normal 13 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-ordered-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=85 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-dbf114986f8d9855a2974107be1114dc6c134eceb9bbb76b9213ac61d6fc8a4c target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-normal 14 (state-check-proof-normal-v1 mm-stack-proof-machine-v1 mm-label mm-symbol mm-proof-step)))
-   (state-action-v1 mm-check-theorem-normal 14 (state-check-proof-normal-v1 mm-stack-proof-machine-v1 mm-label mm-symbol mm-proof-step)))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-normal (cons-atom 14 (cons-atom (cons-atom state-check-proof-normal-v1 (cons-atom mm-stack-proof-machine-v1 (cons-atom mm-label (cons-atom mm-symbol (cons-atom mm-proof-step ()))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-normal 14 (state-check-proof-normal-v1 mm-stack-proof-machine-v1 mm-label mm-symbol mm-proof-step)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=86 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-30df07bbdc445351140e7f23adc3793d65de560e74d4f77fa36d9429382da09a target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-normal 15 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))
-   (state-action-v1 mm-check-theorem-normal 15 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-normal (cons-atom 15 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-formula (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-list-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-normal 15 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=87 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-ac0dbea3276061f094018f2d4fef171a18df1906db2b602d45382a688586f61c target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-normal 16 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
-   (state-action-v1 mm-check-theorem-normal 16 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-normal (cons-atom 16 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-name (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-normal 16 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=88 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-3d3ed683b8a8f788120c2659041bffe027407bb9752b50c4b2047c4b0167d3fa target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-normal 17 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-theorem) state-row-nil-v1)))))
-   (state-action-v1 mm-check-theorem-normal 17 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-theorem) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-normal (cons-atom 17 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-kind (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-theorem ())) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-normal 17 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-theorem) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=89 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-9684b7ef154b2480031561050e28af9859dbc7033b103f3d2c1371d8db2870d8 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-normal 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))
-   (state-action-v1 mm-check-theorem-normal 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-normal (cons-atom 2 (cons-atom (cons-atom state-require-row-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-constant ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-normal 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=90 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-b41f7049ee49082e558b54ef4c4b5dce21f90749f1545b4eb9feb3fa7e9f3376 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-normal 3 (state-require-each-v1 mm-symbol mm-state-expression-symbol (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
-   (state-action-v1 mm-check-theorem-normal 3 (state-require-each-v1 mm-symbol mm-state-expression-symbol (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-normal (cons-atom 3 (cons-atom (cons-atom state-require-each-v1 (cons-atom mm-symbol (cons-atom mm-state-expression-symbol (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-normal 3 (state-require-each-v1 mm-symbol mm-state-expression-symbol (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=91 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-6ebd670f206e63ea78ef92ef629a804a58356e026346af0fbd27ac2df5caf08f target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-normal 4 (state-insert-each-matching-v1 mm-symbol mm-state-symbol-kind (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)) mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-input-v1 state-row-nil-v1)))))
-   (state-action-v1 mm-check-theorem-normal 4 (state-insert-each-matching-v1 mm-symbol mm-state-symbol-kind (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)) mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-input-v1 state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-normal (cons-atom 4 (cons-atom (cons-atom state-insert-each-matching-v1 (cons-atom mm-symbol (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-variable ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-mandatory-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-normal 4 (state-insert-each-matching-v1 mm-symbol mm-state-symbol-kind (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)) mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-input-v1 state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=92 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-dbcd2bf2d9ecdb6ff9bbac4574a6905116659d0679e4180a24cb6788b0f5892a target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-normal 5 (state-copy-each-row-v1 mm-state-active-essential-variable mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
-   (state-action-v1 mm-check-theorem-normal 5 (state-copy-each-row-v1 mm-state-active-essential-variable mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-normal (cons-atom 5 (cons-atom (cons-atom state-copy-each-row-v1 (cons-atom mm-state-active-essential-variable (cons-atom mm-state-assertion-mandatory-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-normal 5 (state-copy-each-row-v1 mm-state-active-essential-variable mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=93 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-70a6a9fcf5becafadb606681e8e6513edc627a5ca7c82eb224fa7174b68a83aa target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-normal 6 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-active-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
-   (state-action-v1 mm-check-theorem-normal 6 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-active-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-normal (cons-atom 6 (cons-atom (cons-atom state-copy-each-row-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-active-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-normal 6 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-active-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=94 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-67cf30c0ee7da0f91843024b9e78ea2f780db82b1711a791c6db4272d8330097 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-normal 7 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-ordered-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-row-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))
-   (state-action-v1 mm-check-theorem-normal 7 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-ordered-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-row-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-normal (cons-atom 7 (cons-atom (cons-atom state-copy-each-row-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-ordered-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-source-row-index-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-normal 7 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-ordered-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-row-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=95 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-441fdf4a48b5f75d008e2e40e08850ece488432df93417a7f612c591c5c48483 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-normal 8 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-label-kind (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
-   (state-action-v1 mm-check-theorem-normal 8 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-label-kind (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-normal (cons-atom 8 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-label-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-essential ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-frame-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-normal 8 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-label-kind (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=96 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-33fb65ab3832c86129117626e59cbe5e028b72978bc1e9adfce7fa3be7a405b8 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-check-theorem-normal 9 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
-   (state-action-v1 mm-check-theorem-normal 9 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-check-theorem-normal (cons-atom 9 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-frame-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-check-theorem-normal 9 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=97 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-3761c9e35365b3733636cb21eedf66adfd3e7a6fbdd54d8234ae2f6dea25df73 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-close-scope 0 state-pop-scope-v1))
-   (state-action-v1 mm-close-scope 0 state-pop-scope-v1))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-close-scope (cons-atom 0 (cons-atom state-pop-scope-v1 ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-close-scope 0 state-pop-scope-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=98 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-3507952e5c915c16772f025a4f443a7584d20d7662df2661f25ed37fa8ca316b target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-complete-block 0 state-noop-v1))
-   (state-action-v1 mm-complete-block 0 state-noop-v1))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-complete-block (cons-atom 0 (cons-atom state-noop-v1 ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-complete-block 0 state-noop-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=99 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-624168920da4ff0a7c97ecc8d0195ea995f0dbbbdfbdbe0654f0fe15efa638ae target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-axiom 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
-   (state-action-v1 mm-declare-axiom 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-axiom (cons-atom 0 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-axiom 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=100 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-c42960bb17f929f21681e6a26d0b65598f4db9560f45b44bb93fb1049ee99241 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-axiom 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
-   (state-action-v1 mm-declare-axiom 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-axiom (cons-atom 1 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-label-name (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-axiom 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=101 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-177d5797b0ddc3512bba856dbff49e45db640593ed66479712dc458255c0f816 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-axiom 10 (state-copy-each-row-matching-v1 mm-state-disjoint-variable mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-disjoint-left-candidate state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) state-row-nil-v1))))))
-   (state-action-v1 mm-declare-axiom 10 (state-copy-each-row-matching-v1 mm-state-disjoint-variable mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-disjoint-left-candidate state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) state-row-nil-v1))))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-axiom (cons-atom 10 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-disjoint-variable (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 1 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-axiom 10 (state-copy-each-row-matching-v1 mm-state-disjoint-variable mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-disjoint-left-candidate state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=102 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-bd9535499465152e8313ed3c4d74a6f024a593325f5efe6debf9a2e794ac5d65 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-axiom 11 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1))))))
-   (state-action-v1 mm-declare-axiom 11 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1))))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-axiom (cons-atom 11 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-disjoint-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 1 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-axiom 11 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=103 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-8bec7bd671d80d40060b95f306dc54b4c5fff8b4cba100dd3deae46e670e1b9e target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-axiom 12 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-ordered-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)))))))
-   (state-action-v1 mm-declare-axiom 12 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-ordered-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)))))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-axiom (cons-atom 12 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-ordered-disjoint-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-source-match-index-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 1 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-axiom 12 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-ordered-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=104 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-05c73b3c2b6e734a1a0f0e1090371560ef5f361134f6a767850e5ef864f90ff8 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-axiom 13 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))
-   (state-action-v1 mm-declare-axiom 13 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-axiom (cons-atom 13 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-formula (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-list-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-axiom 13 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=105 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-85a1a26358fc0e05ade43218589fc5de692e3ce110836b854fe1ae1e5caaff8e target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-axiom 14 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
-   (state-action-v1 mm-declare-axiom 14 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-axiom (cons-atom 14 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-name (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-axiom 14 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=106 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-be6cc7ca111389944ccd9f71b8a6171b52748ad5f8eb096ba2569872a4a082f2 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-axiom 15 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-axiom) state-row-nil-v1)))))
-   (state-action-v1 mm-declare-axiom 15 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-axiom) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-axiom (cons-atom 15 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-kind (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-axiom ())) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-axiom 15 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-axiom) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=107 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-9e56f2ea8ac2e02d5553d8c40640b5c6194ffb25e75ffc7c6d8be392e26d9a45 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-axiom 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))
-   (state-action-v1 mm-declare-axiom 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-axiom (cons-atom 2 (cons-atom (cons-atom state-require-row-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-constant ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-axiom 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=108 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-93e7ca05dacf3154b63720408a540eef29a7b76963db2bc974b6df1a6030b2b2 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-axiom 3 (state-require-each-v1 mm-symbol mm-state-expression-symbol (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
-   (state-action-v1 mm-declare-axiom 3 (state-require-each-v1 mm-symbol mm-state-expression-symbol (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-axiom (cons-atom 3 (cons-atom (cons-atom state-require-each-v1 (cons-atom mm-symbol (cons-atom mm-state-expression-symbol (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-axiom 3 (state-require-each-v1 mm-symbol mm-state-expression-symbol (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=109 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-22418fc009a59e253b76a804613556439b33ee0b3f2991ada03ff1c98c49c25b target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-axiom 4 (state-insert-each-matching-v1 mm-symbol mm-state-symbol-kind (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)) mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-input-v1 state-row-nil-v1)))))
-   (state-action-v1 mm-declare-axiom 4 (state-insert-each-matching-v1 mm-symbol mm-state-symbol-kind (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)) mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-input-v1 state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-axiom (cons-atom 4 (cons-atom (cons-atom state-insert-each-matching-v1 (cons-atom mm-symbol (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-variable ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-mandatory-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-axiom 4 (state-insert-each-matching-v1 mm-symbol mm-state-symbol-kind (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)) mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-input-v1 state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=110 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-249882003f77042023be34768f6f8d9a970afd6e9586d129a27aa6214bd2ed22 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-axiom 5 (state-copy-each-row-v1 mm-state-active-essential-variable mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
-   (state-action-v1 mm-declare-axiom 5 (state-copy-each-row-v1 mm-state-active-essential-variable mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-axiom (cons-atom 5 (cons-atom (cons-atom state-copy-each-row-v1 (cons-atom mm-state-active-essential-variable (cons-atom mm-state-assertion-mandatory-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-axiom 5 (state-copy-each-row-v1 mm-state-active-essential-variable mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=111 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-92f5463e7e7605b6f168c779a082c22b786e268a9b5e64cc308f3fb590f0802c target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-axiom 6 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-ordered-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-row-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))
-   (state-action-v1 mm-declare-axiom 6 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-ordered-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-row-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-axiom (cons-atom 6 (cons-atom (cons-atom state-copy-each-row-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-ordered-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-source-row-index-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-axiom 6 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-ordered-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-row-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=112 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-d07589e6aabfb315433185ba94a8e3519c44a94d5e04504e94ee30ab6fbe8ef2 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-axiom 7 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-label-kind (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
-   (state-action-v1 mm-declare-axiom 7 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-label-kind (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-axiom (cons-atom 7 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-label-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-essential ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-frame-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-axiom 7 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-label-kind (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=113 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-d2ceb3155ffad73ed35bf4fbac0afdbdcd82e9f308f18b740689a7c875866a2b target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-axiom 8 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
-   (state-action-v1 mm-declare-axiom 8 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-axiom (cons-atom 8 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-frame-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-axiom 8 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=114 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-d18e2378dae50060915e19146b09df94dae945813f37cac338fe9232d099e318 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-axiom 9 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-frame-hypothesis (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-ordered-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))
-   (state-action-v1 mm-declare-axiom 9 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-frame-hypothesis (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-ordered-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-axiom (cons-atom 9 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-frame-hypothesis (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-ordered-frame-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-source-match-index-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-axiom 9 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-frame-hypothesis (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-ordered-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=115 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-b8d70e9de493a0c5b7c524a93edbb0b69f14d8d4b40617d721917d3df85dd74b target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-constants 0 (state-require-depth-v1 0)))
-   (state-action-v1 mm-declare-constants 0 (state-require-depth-v1 0)))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-constants (cons-atom 0 (cons-atom (cons-atom state-require-depth-v1 (cons-atom 0 ())) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-constants 0 (state-require-depth-v1 0)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=116 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-39080659bd29af2d56b2ab5cc4e4229812461c9969b4b88c26e09e84c18f1685 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-constants 1 (state-require-each-key-absent-v1 mm-symbol mm-state-label-name (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
-   (state-action-v1 mm-declare-constants 1 (state-require-each-key-absent-v1 mm-symbol mm-state-label-name (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-constants (cons-atom 1 (cons-atom (cons-atom state-require-each-key-absent-v1 (cons-atom mm-symbol (cons-atom mm-state-label-name (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-constants 1 (state-require-each-key-absent-v1 mm-symbol mm-state-label-name (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=117 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-a0570df74acdda811bc6b97988a316295847a990f8266d5e5e2c0ed9287289f1 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-constants 2 (state-insert-each-v1 mm-symbol mm-state-symbol-kind state-require-key-absent-v1 (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))
-   (state-action-v1 mm-declare-constants 2 (state-insert-each-v1 mm-symbol mm-state-symbol-kind state-require-key-absent-v1 (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-constants (cons-atom 2 (cons-atom (cons-atom state-insert-each-v1 (cons-atom mm-symbol (cons-atom mm-state-symbol-kind (cons-atom state-require-key-absent-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-constant ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-constants 2 (state-insert-each-v1 mm-symbol mm-state-symbol-kind state-require-key-absent-v1 (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=118 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-8262c2ed17b27ec045e390589c41962a20b1f4c53fe337fb9bfe1019802e15ac target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-constants 3 (state-insert-each-v1 mm-symbol mm-state-expression-symbol state-insert-or-require-equal-v1 (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
-   (state-action-v1 mm-declare-constants 3 (state-insert-each-v1 mm-symbol mm-state-expression-symbol state-insert-or-require-equal-v1 (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-constants (cons-atom 3 (cons-atom (cons-atom state-insert-each-v1 (cons-atom mm-symbol (cons-atom mm-state-expression-symbol (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-constants 3 (state-insert-each-v1 mm-symbol mm-state-expression-symbol state-insert-or-require-equal-v1 (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=119 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-46ddefaca09476472e31559be31f7cc53c0430783107e9062451a177bd7884c2 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-disjoint 0 (state-require-each-v1 mm-symbol mm-state-active-variable (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
-   (state-action-v1 mm-declare-disjoint 0 (state-require-each-v1 mm-symbol mm-state-active-variable (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-disjoint (cons-atom 0 (cons-atom (cons-atom state-require-each-v1 (cons-atom mm-symbol (cons-atom mm-state-active-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-disjoint 0 (state-require-each-v1 mm-symbol mm-state-active-variable (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=120 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-5ad04992ad368194f2b9d90ac0b42358e98b9c2f07d2d4521ac6e57bf8a4b00b target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-disjoint 1 (state-insert-unordered-pairs-v1 mm-symbol mm-state-disjoint-variable state-insert-or-require-equal-v1)))
-   (state-action-v1 mm-declare-disjoint 1 (state-insert-unordered-pairs-v1 mm-symbol mm-state-disjoint-variable state-insert-or-require-equal-v1)))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-disjoint (cons-atom 1 (cons-atom (cons-atom state-insert-unordered-pairs-v1 (cons-atom mm-symbol (cons-atom mm-state-disjoint-variable (cons-atom state-insert-or-require-equal-v1 ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-disjoint 1 (state-insert-unordered-pairs-v1 mm-symbol mm-state-disjoint-variable state-insert-or-require-equal-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=121 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-95d6e5fccdb20999fd14c8ff1c7869699118051337a99fc5fb55bb98247c9834 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-essential 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
-   (state-action-v1 mm-declare-essential 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-essential (cons-atom 0 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-essential 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=122 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-376a3bd92ce381da911822175cc61f01602ebdcd180ab4e48410c917b35d6041 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-essential 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
-   (state-action-v1 mm-declare-essential 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-essential (cons-atom 1 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-label-name (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-essential 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=123 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-81d6897b3a40f53bcbb155a4168060bbd046b7bda4ec71a271acd5100deb202d target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-essential 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))
-   (state-action-v1 mm-declare-essential 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-essential (cons-atom 2 (cons-atom (cons-atom state-require-row-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-constant ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-essential 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=124 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-0e158db7bec66a0566d2b7dad74989f3645ecfb40e45ff41a8f8d6b22294dfdf target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-essential 3 (state-require-each-v1 mm-symbol mm-state-expression-symbol (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
-   (state-action-v1 mm-declare-essential 3 (state-require-each-v1 mm-symbol mm-state-expression-symbol (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-essential (cons-atom 3 (cons-atom (cons-atom state-require-each-v1 (cons-atom mm-symbol (cons-atom mm-state-expression-symbol (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-essential 3 (state-require-each-v1 mm-symbol mm-state-expression-symbol (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=125 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-b7ae6d16f6256029108a3b168764d3a3fb84d2e49dd5ceccb645c121f09fc51c target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-essential 4 (state-insert-row-v1 mm-state-active-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) (state-row-cons-v1 (state-literal-v1 mm-no-variable) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))))
-   (state-action-v1 mm-declare-essential 4 (state-insert-row-v1 mm-state-active-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) (state-row-cons-v1 (state-literal-v1 mm-no-variable) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-essential (cons-atom 4 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-active-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-essential ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-no-variable ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-list-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-essential 4 (state-insert-row-v1 mm-state-active-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) (state-row-cons-v1 (state-literal-v1 mm-no-variable) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=126 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-07986783ebe5506aa153804cc1cd0d9120347443ce56bd1203153d1fdb998dd2 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-essential 5 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))
-   (state-action-v1 mm-declare-essential 5 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-essential (cons-atom 5 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-formula (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-list-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-essential 5 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=127 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-a4a5f1c91c16246e81fbdc007350ea054e1b2074dc9b8a245bc87e3f8f6304c1 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-essential 6 (state-insert-each-matching-v1 mm-symbol mm-state-symbol-kind (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)) mm-state-active-essential-variable state-insert-or-require-equal-v1 (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
-   (state-action-v1 mm-declare-essential 6 (state-insert-each-matching-v1 mm-symbol mm-state-symbol-kind (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)) mm-state-active-essential-variable state-insert-or-require-equal-v1 (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-essential (cons-atom 6 (cons-atom (cons-atom state-insert-each-matching-v1 (cons-atom mm-symbol (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-variable ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-active-essential-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-essential 6 (state-insert-each-matching-v1 mm-symbol mm-state-symbol-kind (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)) mm-state-active-essential-variable state-insert-or-require-equal-v1 (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=128 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-cc8f5e8a90aa4b81a3e07a7780acab6fdde8e1bc52974fea5ec5e74c0aeb6903 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-essential 7 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
-   (state-action-v1 mm-declare-essential 7 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-essential (cons-atom 7 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-name (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-essential 7 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=129 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-0c8627531d597f8b2bfe7dd3990063ddf5403d32c4efc57a71bffba55cc99c45 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-essential 8 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) state-row-nil-v1)))))
-   (state-action-v1 mm-declare-essential 8 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-essential (cons-atom 8 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-kind (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-essential ())) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-essential 8 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=130 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-82fb772a9c067d0fc509997ad439f6a4517dc4478d67dec30c27aec9c31f168c target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-floating 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
-   (state-action-v1 mm-declare-floating 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-floating (cons-atom 0 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-floating 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=131 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-5c76751aff57e8c53447795db01c22fe96f694fde409fee23ebd60ea2fc53336 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-floating 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
-   (state-action-v1 mm-declare-floating 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-floating (cons-atom 1 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-label-name (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-floating 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=132 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-61d5b162c3048959a1ea88c76ad5aacc36cd25399078a58772e21c95bc80a06c target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-floating 10 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))
-   (state-action-v1 mm-declare-floating 10 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-floating (cons-atom 10 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-formula (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-list-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-floating 10 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=133 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-c7e0a13e8a4782f9e6da640ac1f4a7b6dcb7b217f1ebc21f9d742003f2765cda target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-floating 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))
-   (state-action-v1 mm-declare-floating 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-floating (cons-atom 2 (cons-atom (cons-atom state-require-row-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-constant ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-floating 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=134 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-407f4065f9dd8a68b0c718d328fea95618209be6a4e9503fdeb6f7f39d88e589 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-floating 3 (state-require-row-v1 mm-state-active-variable (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) state-row-nil-v1))))
-   (state-action-v1 mm-declare-floating 3 (state-require-row-v1 mm-state-active-variable (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-floating (cons-atom 3 (cons-atom (cons-atom state-require-row-v1 (cons-atom mm-state-active-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 1 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-floating 3 (state-require-row-v1 mm-state-active-variable (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=135 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-558d9e4336b3ac239dff220834b87c8c86448696ba42382a214b277ad7cefcea target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-floating 4 (state-insert-row-v1 mm-state-active-floating-variable state-require-key-absent-v1 (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) state-row-nil-v1))))
-   (state-action-v1 mm-declare-floating 4 (state-insert-row-v1 mm-state-active-floating-variable state-require-key-absent-v1 (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-floating (cons-atom 4 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-active-floating-variable (cons-atom state-require-key-absent-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 1 ()))) (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-floating 4 (state-insert-row-v1 mm-state-active-floating-variable state-require-key-absent-v1 (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=136 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-b522482c755af073b1da9c4914a11277a10499fb47203a501479eae6087a1fc9 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-floating 5 (state-insert-row-v1 mm-state-active-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-floating) (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))))
-   (state-action-v1 mm-declare-floating 5 (state-insert-row-v1 mm-state-active-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-floating) (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-floating (cons-atom 5 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-active-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-floating ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 1 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-list-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-floating 5 (state-insert-row-v1 mm-state-active-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-floating) (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=137 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-9f34bf21bafd0ef852be1f62b37baa1fa6e45bbfaf09439d40e5a50e64a6e669 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-floating 6 (state-insert-row-v1 mm-state-expression-symbol state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) state-row-nil-v1))))
-   (state-action-v1 mm-declare-floating 6 (state-insert-row-v1 mm-state-expression-symbol state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-floating (cons-atom 6 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-expression-symbol (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 1 ()))) (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-floating 6 (state-insert-row-v1 mm-state-expression-symbol state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=138 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-c65ef3c394e12f53a234b6d99a89832e4d9244a992c550da4bb2fc8856dadbd4 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-floating 7 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
-   (state-action-v1 mm-declare-floating 7 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-floating (cons-atom 7 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-name (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-floating 7 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=139 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-08fd261e8c3309ce6ef79306fdc60a559b4bc153d104d12a9bcc9696c18759a8 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-floating 8 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-floating) state-row-nil-v1)))))
-   (state-action-v1 mm-declare-floating 8 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-floating) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-floating (cons-atom 8 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-kind (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-floating ())) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-floating 8 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-floating) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=140 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-01fd8397587227bf16371f84a653ddb372ab08a5aedf63aee1782075febff089 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-floating 9 (state-insert-row-v1 mm-state-floating-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) state-row-nil-v1)))))
-   (state-action-v1 mm-declare-floating 9 (state-insert-row-v1 mm-state-floating-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-floating (cons-atom 9 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-floating-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 1 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-floating 9 (state-insert-row-v1 mm-state-floating-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=141 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-cbf67a9baabe9d1b80bf120d90a33dd77390c03c5f4c317b8930c7eebf80a178 target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-variables 0 (state-require-each-key-absent-v1 mm-symbol mm-state-label-name (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
-   (state-action-v1 mm-declare-variables 0 (state-require-each-key-absent-v1 mm-symbol mm-state-label-name (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-variables (cons-atom 0 (cons-atom (cons-atom state-require-each-key-absent-v1 (cons-atom mm-symbol (cons-atom mm-state-label-name (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-variables 0 (state-require-each-key-absent-v1 mm-symbol mm-state-label-name (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=142 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-1f8a69ebc5b4e81813b01e47fb25c0c4757e17938401e16eede160004c76ca3a target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-variables 1 (state-insert-each-v1 mm-symbol mm-state-symbol-kind state-insert-or-require-equal-v1 (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)))))
-   (state-action-v1 mm-declare-variables 1 (state-insert-each-v1 mm-symbol mm-state-symbol-kind state-insert-or-require-equal-v1 (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-variables (cons-atom 1 (cons-atom (cons-atom state-insert-each-v1 (cons-atom mm-symbol (cons-atom mm-state-symbol-kind (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-variable ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-variables 1 (state-insert-each-v1 mm-symbol mm-state-symbol-kind state-insert-or-require-equal-v1 (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=143 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-0f1f943e4b8f37743abaf4e6c334198c65c042b66b6b2f9b7e05ab7bf7cdaa6f target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-declare-variables 2 (state-insert-each-v1 mm-symbol mm-state-active-variable state-require-key-absent-v1 (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
-   (state-action-v1 mm-declare-variables 2 (state-insert-each-v1 mm-symbol mm-state-active-variable state-require-key-absent-v1 (state-row-cons-v1 state-input-v1 state-row-nil-v1))))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-declare-variables (cons-atom 2 (cons-atom (cons-atom state-insert-each-v1 (cons-atom mm-symbol (cons-atom mm-state-active-variable (cons-atom state-require-key-absent-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-declare-variables 2 (state-insert-each-v1 mm-symbol mm-state-active-variable state-require-key-absent-v1 (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=144 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-e38cff28b114e044836ae1eb144273759631e0b11b70736a29ef3a6450b22c6d target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-open-scope 0 state-push-scope-v1))
-   (state-action-v1 mm-open-scope 0 state-push-scope-v1))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-open-scope (cons-atom 0 (cons-atom state-push-scope-v1 ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-open-scope 0 state-push-scope-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=145 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-50e277d8344a223899cb589309a218842134535d4fdae0be198b610ae1c245eb target=relation
-(= (gslt:state-action-v1 (state-action-v1 mm-resolve-include 0 (state-resolve-source-v1 mm-include-path state-skip-completed-source-v1 state-skip-active-source-v1)))
-   (state-action-v1 mm-resolve-include 0 (state-resolve-source-v1 mm-include-path state-skip-completed-source-v1 state-skip-active-source-v1)))
+(= (gslt:state-action-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-action-v1 (cons-atom mm-resolve-include (cons-atom 0 (cons-atom (cons-atom state-resolve-source-v1 (cons-atom mm-include-path (cons-atom state-skip-completed-source-v1 (cons-atom state-skip-active-source-v1 ())))) ())))) $__gslt_input_v1_0_0
+   (quote (state-action-v1 mm-resolve-include 0 (state-resolve-source-v1 mm-include-path state-skip-completed-source-v1 state-skip-active-source-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=146 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-aa6a021681fb1b75dc0570038272ce88ef120e1473c5d1e6fe6a9cda5feb446b target=relation
-(= (gslt:state-proof-machine-v1 (state-proof-machine-v1 mm-stack-proof-machine-v1 (state-stack-proof-machine-v1 (state-proof-tables-v1 mm-state-label-kind mm-state-formula mm-state-floating-variable mm-state-assertion-mandatory-variable mm-state-assertion-ordered-hypothesis mm-state-assertion-disjoint-variable mm-state-active-hypothesis mm-state-disjoint-variable mm-state-symbol-kind) (state-proof-kinds-v1 (state-literal-v1 mm-label-floating) (state-literal-v1 mm-label-essential) (state-literal-v1 mm-label-axiom) (state-literal-v1 mm-label-theorem) (state-literal-v1 mm-symbol-variable) (state-byte-literal-v1 63)) (state-proof-decoder-v1 65 84 85 89 90 63 20 0 5 1 state-proof-unknown-push-claim-v1 state-proof-save-immediately-after-use-v1 state-proof-header-nonmandatory-only-v1))))
-   (state-proof-machine-v1 mm-stack-proof-machine-v1 (state-stack-proof-machine-v1 (state-proof-tables-v1 mm-state-label-kind mm-state-formula mm-state-floating-variable mm-state-assertion-mandatory-variable mm-state-assertion-ordered-hypothesis mm-state-assertion-disjoint-variable mm-state-active-hypothesis mm-state-disjoint-variable mm-state-symbol-kind) (state-proof-kinds-v1 (state-literal-v1 mm-label-floating) (state-literal-v1 mm-label-essential) (state-literal-v1 mm-label-axiom) (state-literal-v1 mm-label-theorem) (state-literal-v1 mm-symbol-variable) (state-byte-literal-v1 63)) (state-proof-decoder-v1 65 84 85 89 90 63 20 0 5 1 state-proof-unknown-push-claim-v1 state-proof-save-immediately-after-use-v1 state-proof-header-nonmandatory-only-v1))))
+(= (gslt:state-proof-machine-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-proof-machine-v1 (cons-atom mm-stack-proof-machine-v1 (cons-atom (cons-atom state-stack-proof-machine-v1 (cons-atom (cons-atom state-proof-tables-v1 (cons-atom mm-state-label-kind (cons-atom mm-state-formula (cons-atom mm-state-floating-variable (cons-atom mm-state-assertion-mandatory-variable (cons-atom mm-state-assertion-ordered-hypothesis (cons-atom mm-state-assertion-disjoint-variable (cons-atom mm-state-active-hypothesis (cons-atom mm-state-disjoint-variable (cons-atom mm-state-symbol-kind ())))))))))) (cons-atom (cons-atom state-proof-kinds-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-floating ())) (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-essential ())) (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-axiom ())) (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-theorem ())) (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-variable ())) (cons-atom (cons-atom state-byte-literal-v1 (cons-atom 63 ())) ()))))))) (cons-atom (cons-atom state-proof-decoder-v1 (cons-atom 65 (cons-atom 84 (cons-atom 85 (cons-atom 89 (cons-atom 90 (cons-atom 63 (cons-atom 20 (cons-atom 0 (cons-atom 5 (cons-atom 1 (cons-atom state-proof-unknown-push-claim-v1 (cons-atom state-proof-save-immediately-after-use-v1 (cons-atom state-proof-header-nonmandatory-only-v1 ())))))))))))))) ())))) ()))) $__gslt_input_v1_0_0
+   (quote (state-proof-machine-v1 mm-stack-proof-machine-v1 (state-stack-proof-machine-v1 (state-proof-tables-v1 mm-state-label-kind mm-state-formula mm-state-floating-variable mm-state-assertion-mandatory-variable mm-state-assertion-ordered-hypothesis mm-state-assertion-disjoint-variable mm-state-active-hypothesis mm-state-disjoint-variable mm-state-symbol-kind) (state-proof-kinds-v1 (state-literal-v1 mm-label-floating) (state-literal-v1 mm-label-essential) (state-literal-v1 mm-label-axiom) (state-literal-v1 mm-label-theorem) (state-literal-v1 mm-symbol-variable) (state-byte-literal-v1 63)) (state-proof-decoder-v1 65 84 85 89 90 63 20 0 5 1 state-proof-unknown-push-claim-v1 state-proof-save-immediately-after-use-v1 state-proof-header-nonmandatory-only-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=147 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-b2abdda4c5b5b4f7dfe328013f133e310d07a2aa27cc0de8746d2641be9ece99 target=relation
-(= (gslt:state-table-v1 (state-table-v1 mm-state-active-essential-variable 1 1 state-scoped-v1))
-   (state-table-v1 mm-state-active-essential-variable 1 1 state-scoped-v1))
+(= (gslt:state-table-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-table-v1 (cons-atom mm-state-active-essential-variable (cons-atom 1 (cons-atom 1 (cons-atom state-scoped-v1 ()))))) $__gslt_input_v1_0_0
+   (quote (state-table-v1 mm-state-active-essential-variable 1 1 state-scoped-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=148 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-5fdd1a275a86f6d8a7f79e2b1222f96dae038734c74994442ff5c42ebc72eb94 target=relation
-(= (gslt:state-table-v1 (state-table-v1 mm-state-active-floating-variable 1 1 state-scoped-v1))
-   (state-table-v1 mm-state-active-floating-variable 1 1 state-scoped-v1))
+(= (gslt:state-table-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-table-v1 (cons-atom mm-state-active-floating-variable (cons-atom 1 (cons-atom 1 (cons-atom state-scoped-v1 ()))))) $__gslt_input_v1_0_0
+   (quote (state-table-v1 mm-state-active-floating-variable 1 1 state-scoped-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=149 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-dc30ab3c238f345a4c6d4ae6499e87d5f945647b2db26a4d4b3d7718e6e0d88a target=relation
-(= (gslt:state-table-v1 (state-table-v1 mm-state-active-hypothesis 4 1 state-scoped-v1))
-   (state-table-v1 mm-state-active-hypothesis 4 1 state-scoped-v1))
+(= (gslt:state-table-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-table-v1 (cons-atom mm-state-active-hypothesis (cons-atom 4 (cons-atom 1 (cons-atom state-scoped-v1 ()))))) $__gslt_input_v1_0_0
+   (quote (state-table-v1 mm-state-active-hypothesis 4 1 state-scoped-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=150 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-81feec1bae3b651920d81013c71fac4c62b971e9d9beef63f1544e98399cc6d5 target=relation
-(= (gslt:state-table-v1 (state-table-v1 mm-state-active-variable 1 1 state-scoped-v1))
-   (state-table-v1 mm-state-active-variable 1 1 state-scoped-v1))
+(= (gslt:state-table-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-table-v1 (cons-atom mm-state-active-variable (cons-atom 1 (cons-atom 1 (cons-atom state-scoped-v1 ()))))) $__gslt_input_v1_0_0
+   (quote (state-table-v1 mm-state-active-variable 1 1 state-scoped-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=151 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-73075e866dcc083bad4b3ed217173c435b6ffab7b9f6aaae589cd5035e03856a target=relation
-(= (gslt:state-table-v1 (state-table-v1 mm-state-assertion-active-hypothesis 2 2 state-persistent-v1))
-   (state-table-v1 mm-state-assertion-active-hypothesis 2 2 state-persistent-v1))
+(= (gslt:state-table-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-table-v1 (cons-atom mm-state-assertion-active-hypothesis (cons-atom 2 (cons-atom 2 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (quote (state-table-v1 mm-state-assertion-active-hypothesis 2 2 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=152 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-11a94bb34be1f38e17dbaa93df6a8e91e3f20f4e9c0735162ff96fae3caeeef5 target=relation
-(= (gslt:state-table-v1 (state-table-v1 mm-state-assertion-disjoint-left-candidate 3 3 state-transactional-v1))
-   (state-table-v1 mm-state-assertion-disjoint-left-candidate 3 3 state-transactional-v1))
+(= (gslt:state-table-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-table-v1 (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom 3 (cons-atom 3 (cons-atom state-transactional-v1 ()))))) $__gslt_input_v1_0_0
+   (quote (state-table-v1 mm-state-assertion-disjoint-left-candidate 3 3 state-transactional-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=153 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-dd12ba76f21842abe19e768bc8ed6f40c64c99fe6dcfa31b17cb819c7c20a49c target=relation
-(= (gslt:state-table-v1 (state-table-v1 mm-state-assertion-disjoint-variable 3 3 state-persistent-v1))
-   (state-table-v1 mm-state-assertion-disjoint-variable 3 3 state-persistent-v1))
+(= (gslt:state-table-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-table-v1 (cons-atom mm-state-assertion-disjoint-variable (cons-atom 3 (cons-atom 3 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (quote (state-table-v1 mm-state-assertion-disjoint-variable 3 3 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=154 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-ad873121c775baeb73d8c8dda51f19ea155d96f3a6f4e91a052eca37631b625a target=relation
-(= (gslt:state-table-v1 (state-table-v1 mm-state-assertion-frame-hypothesis 2 2 state-persistent-v1))
-   (state-table-v1 mm-state-assertion-frame-hypothesis 2 2 state-persistent-v1))
+(= (gslt:state-table-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-table-v1 (cons-atom mm-state-assertion-frame-hypothesis (cons-atom 2 (cons-atom 2 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (quote (state-table-v1 mm-state-assertion-frame-hypothesis 2 2 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=155 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-e875281271cb199ea73fda928774eab6c69355070bf39199f26c857bd9f85616 target=relation
-(= (gslt:state-table-v1 (state-table-v1 mm-state-assertion-mandatory-variable 2 2 state-persistent-v1))
-   (state-table-v1 mm-state-assertion-mandatory-variable 2 2 state-persistent-v1))
+(= (gslt:state-table-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-table-v1 (cons-atom mm-state-assertion-mandatory-variable (cons-atom 2 (cons-atom 2 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (quote (state-table-v1 mm-state-assertion-mandatory-variable 2 2 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=156 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-63d57fa14939a52e51303e7447423bcf1c020fdb85e6a6cad6c73b657f6161f5 target=relation
-(= (gslt:state-table-v1 (state-table-v1 mm-state-assertion-ordered-disjoint-variable 4 2 state-persistent-v1))
-   (state-table-v1 mm-state-assertion-ordered-disjoint-variable 4 2 state-persistent-v1))
+(= (gslt:state-table-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-table-v1 (cons-atom mm-state-assertion-ordered-disjoint-variable (cons-atom 4 (cons-atom 2 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (quote (state-table-v1 mm-state-assertion-ordered-disjoint-variable 4 2 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=157 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-06d6f0442b9b3f33322527bcb7b2b2c40cfd8dfb3ac9382b54946fd833520f60 target=relation
-(= (gslt:state-table-v1 (state-table-v1 mm-state-assertion-ordered-frame-hypothesis 3 2 state-persistent-v1))
-   (state-table-v1 mm-state-assertion-ordered-frame-hypothesis 3 2 state-persistent-v1))
+(= (gslt:state-table-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-table-v1 (cons-atom mm-state-assertion-ordered-frame-hypothesis (cons-atom 3 (cons-atom 2 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (quote (state-table-v1 mm-state-assertion-ordered-frame-hypothesis 3 2 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=158 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-2147a564063a048c9d378335e58c7d5bb6337f0ca819bf7aec44d6493d2c6abc target=relation
-(= (gslt:state-table-v1 (state-table-v1 mm-state-assertion-ordered-hypothesis 3 2 state-persistent-v1))
-   (state-table-v1 mm-state-assertion-ordered-hypothesis 3 2 state-persistent-v1))
+(= (gslt:state-table-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-table-v1 (cons-atom mm-state-assertion-ordered-hypothesis (cons-atom 3 (cons-atom 2 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (quote (state-table-v1 mm-state-assertion-ordered-hypothesis 3 2 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=159 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-70ee42a3a19ab034126f57527c4ee9a92a5179dffb35dbfef5b6e6182a0a3f43 target=relation
-(= (gslt:state-table-v1 (state-table-v1 mm-state-disjoint-variable 2 2 state-scoped-v1))
-   (state-table-v1 mm-state-disjoint-variable 2 2 state-scoped-v1))
+(= (gslt:state-table-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-table-v1 (cons-atom mm-state-disjoint-variable (cons-atom 2 (cons-atom 2 (cons-atom state-scoped-v1 ()))))) $__gslt_input_v1_0_0
+   (quote (state-table-v1 mm-state-disjoint-variable 2 2 state-scoped-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=160 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-85f5b8e7988bf95ef34339cd2e45baf6f7e21cdc68d4b8a977afe7041d7d913d target=relation
-(= (gslt:state-table-v1 (state-table-v1 mm-state-expression-symbol 1 1 state-scoped-v1))
-   (state-table-v1 mm-state-expression-symbol 1 1 state-scoped-v1))
+(= (gslt:state-table-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-table-v1 (cons-atom mm-state-expression-symbol (cons-atom 1 (cons-atom 1 (cons-atom state-scoped-v1 ()))))) $__gslt_input_v1_0_0
+   (quote (state-table-v1 mm-state-expression-symbol 1 1 state-scoped-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=161 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-aaed0a25f6ae8f871ae86a59af3ea1dbf7912f54601559927ce04e5fa1961dc5 target=relation
-(= (gslt:state-table-v1 (state-table-v1 mm-state-floating-variable 2 1 state-persistent-v1))
-   (state-table-v1 mm-state-floating-variable 2 1 state-persistent-v1))
+(= (gslt:state-table-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-table-v1 (cons-atom mm-state-floating-variable (cons-atom 2 (cons-atom 1 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (quote (state-table-v1 mm-state-floating-variable 2 1 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=162 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-4694ca0af29a31fbe787d813ec3e51b75f4ddd43e444807e1d1f072bdadeb746 target=relation
-(= (gslt:state-table-v1 (state-table-v1 mm-state-formula 2 1 state-persistent-v1))
-   (state-table-v1 mm-state-formula 2 1 state-persistent-v1))
+(= (gslt:state-table-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-table-v1 (cons-atom mm-state-formula (cons-atom 2 (cons-atom 1 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (quote (state-table-v1 mm-state-formula 2 1 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=163 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-98be8e6eb0b22bb8361757493d05545ee87e3f21343746813f7a0a406baeca3b target=relation
-(= (gslt:state-table-v1 (state-table-v1 mm-state-label-kind 2 1 state-persistent-v1))
-   (state-table-v1 mm-state-label-kind 2 1 state-persistent-v1))
+(= (gslt:state-table-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-table-v1 (cons-atom mm-state-label-kind (cons-atom 2 (cons-atom 1 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (quote (state-table-v1 mm-state-label-kind 2 1 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=164 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-6ad5d86a4eac0722aa48bfea4c2dfd683e077892bf17e87bd92103f6819cc2d9 target=relation
-(= (gslt:state-table-v1 (state-table-v1 mm-state-label-name 1 1 state-persistent-v1))
-   (state-table-v1 mm-state-label-name 1 1 state-persistent-v1))
+(= (gslt:state-table-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-table-v1 (cons-atom mm-state-label-name (cons-atom 1 (cons-atom 1 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (quote (state-table-v1 mm-state-label-name 1 1 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=165 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-3abf3c441748a83aec78ac38cdd5ae3bd0e547fbeeec6001a6cb26482ab5aae7 target=relation
-(= (gslt:state-table-v1 (state-table-v1 mm-state-symbol-kind 2 1 state-persistent-v1))
-   (state-table-v1 mm-state-symbol-kind 2 1 state-persistent-v1))
+(= (gslt:state-table-v1 $__gslt_input_v1_0_0)
+   (let (cons-atom state-table-v1 (cons-atom mm-state-symbol-kind (cons-atom 2 (cons-atom 1 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (quote (state-table-v1 mm-state-symbol-kind 2 1 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=166 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-8e4f8a7472aa607eb193712635ad043f8355e309d5e5fe1562ca69fcf6b68cc3 target=relation
-(= (gslt:StateActionFirstV1 (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 0))
-   (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 0))
+(= (gslt:StateActionFirstV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionFirstV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-compressed (cons-atom 0 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=167 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-1255332c7a59aacd0f9f7f991e0693daa423881937b9f33d5610b0d63b26abde target=relation
-(= (gslt:StateActionFirstV1 (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 0))
-   (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 0))
+(= (gslt:StateActionFirstV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionFirstV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-normal (cons-atom 0 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=168 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-90ba955c5a66a32ace2edb6eedb3bf48a91db513ec76befdac29e6fba0f2d076 target=relation
-(= (gslt:StateActionFirstV1 (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-close-scope 0))
-   (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-close-scope 0))
+(= (gslt:StateActionFirstV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionFirstV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-close-scope (cons-atom 0 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-close-scope 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=169 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-1467ee8e220049a06b1011d7bdff80894ffc00dea66da89b1ae7623e89fb538d target=relation
-(= (gslt:StateActionFirstV1 (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-complete-block 0))
-   (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-complete-block 0))
+(= (gslt:StateActionFirstV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionFirstV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-complete-block (cons-atom 0 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-complete-block 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=170 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-278ea5c3a96c103bb3b268015d2ed9af0f601d0792e776429855490dbeedbad4 target=relation
-(= (gslt:StateActionFirstV1 (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 0))
-   (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 0))
+(= (gslt:StateActionFirstV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionFirstV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-axiom (cons-atom 0 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=171 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-f0c1d3130c29c2239e287de8b156c8dfca65b93597249c86419275cd7818a8ea target=relation
-(= (gslt:StateActionFirstV1 (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-constants 0))
-   (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-constants 0))
+(= (gslt:StateActionFirstV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionFirstV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-constants (cons-atom 0 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-constants 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=172 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-1fc1b0f8e74cf110b1361d53f1e3dbff7216ec9084cdc6b78b2196f3abba47d0 target=relation
-(= (gslt:StateActionFirstV1 (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-disjoint 0))
-   (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-disjoint 0))
+(= (gslt:StateActionFirstV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionFirstV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-disjoint (cons-atom 0 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-disjoint 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=173 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-a1980aaac2b028ca2e2f43644d8d78fc1abe3c0fabb834f3c7cbefad2ec22213 target=relation
-(= (gslt:StateActionFirstV1 (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 0))
-   (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 0))
+(= (gslt:StateActionFirstV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionFirstV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-essential (cons-atom 0 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=174 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-f5598a85afa257fa857c48c444dabebba7a327723b4c2bf16e94744effbef3f6 target=relation
-(= (gslt:StateActionFirstV1 (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 0))
-   (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 0))
+(= (gslt:StateActionFirstV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionFirstV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-floating (cons-atom 0 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=175 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-6fdac3c413835bff9e23672f5bb82425a49a2e4642f1cc1d5d72e7e3f53fc975 target=relation
-(= (gslt:StateActionFirstV1 (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-variables 0))
-   (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-variables 0))
+(= (gslt:StateActionFirstV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionFirstV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-variables (cons-atom 0 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-variables 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=176 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-b6c4e461e8bf3f812524dda29e2ba3316f9c07aec53aac6dbc24332a9ba1d5dc target=relation
-(= (gslt:StateActionFirstV1 (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-open-scope 0))
-   (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-open-scope 0))
+(= (gslt:StateActionFirstV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionFirstV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-open-scope (cons-atom 0 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-open-scope 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=177 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-bec24c4e9a5902f202431303378b1921d63a11578336fd0013e588401e6ee92b target=relation
-(= (gslt:StateActionFirstV1 (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-resolve-include 0))
-   (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-resolve-include 0))
+(= (gslt:StateActionFirstV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionFirstV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-resolve-include (cons-atom 0 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-resolve-include 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=178 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-aeee0fc45331eec882a2ba3213e7b76324dd74d18cb036864d498f02eba4c1de target=relation
-(= (gslt:StateActionLastV1 (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 17))
-   (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 17))
+(= (gslt:StateActionLastV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionLastV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-compressed (cons-atom 17 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 17))))
 
 ; gslt-lowered-equation-v1 source-rewrite=179 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-25b054094ae850aa91781fc24bd82214b8ac4759b72e81c8c7e5d54db0fc947c target=relation
-(= (gslt:StateActionLastV1 (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 17))
-   (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 17))
+(= (gslt:StateActionLastV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionLastV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-normal (cons-atom 17 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 17))))
 
 ; gslt-lowered-equation-v1 source-rewrite=180 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-2692d520ee884fe95b5a4f09a45ef80a7fab19228bf86f456fb3317f44aff16e target=relation
-(= (gslt:StateActionLastV1 (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-close-scope 0))
-   (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-close-scope 0))
+(= (gslt:StateActionLastV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionLastV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-close-scope (cons-atom 0 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-close-scope 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-c93ec75a6d008d6768f94b9f20c860177e1790cb57f5de176ea08e48dd3672f0 target=relation
-(= (gslt:StateActionLastV1 (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-complete-block 0))
-   (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-complete-block 0))
+(= (gslt:StateActionLastV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionLastV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-complete-block (cons-atom 0 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-complete-block 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=182 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-ce343849c70c331d20c7ee3325c75a14755feea771e03fff31b008545773af14 target=relation
-(= (gslt:StateActionLastV1 (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 15))
-   (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 15))
+(= (gslt:StateActionLastV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionLastV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-axiom (cons-atom 15 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 15))))
 
 ; gslt-lowered-equation-v1 source-rewrite=183 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-78641349993047fd8674ebd44ec17021dcd0bc7ba58a19dbdb45fbef2cb64584 target=relation
-(= (gslt:StateActionLastV1 (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-constants 3))
-   (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-constants 3))
+(= (gslt:StateActionLastV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionLastV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-constants (cons-atom 3 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-constants 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=184 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-7cf938218d3d3c49db0e77c51db6f2b6314b80f37057d094f76903c2f38a36e6 target=relation
-(= (gslt:StateActionLastV1 (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-disjoint 1))
-   (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-disjoint 1))
+(= (gslt:StateActionLastV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionLastV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-disjoint (cons-atom 1 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-disjoint 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=185 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-0b16a7b3310737cd89383c33ed263659b273d0543b22fd25404d3c7aeb51c60d target=relation
-(= (gslt:StateActionLastV1 (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 8))
-   (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 8))
+(= (gslt:StateActionLastV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionLastV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-essential (cons-atom 8 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 8))))
 
 ; gslt-lowered-equation-v1 source-rewrite=186 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-dc0da5469cb6ed12cfe22b9179957814389876258f936160207f295800a79ec5 target=relation
-(= (gslt:StateActionLastV1 (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 10))
-   (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 10))
+(= (gslt:StateActionLastV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionLastV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-floating (cons-atom 10 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 10))))
 
 ; gslt-lowered-equation-v1 source-rewrite=187 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-0dff0a1667217cd27c38a003fec537879befb8c37190127b81a40965981825ba target=relation
-(= (gslt:StateActionLastV1 (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-variables 2))
-   (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-variables 2))
+(= (gslt:StateActionLastV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionLastV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-variables (cons-atom 2 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-variables 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=188 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-93680c7cceaa75259f37dd6bf67df3fdc7d3b62f68d25330d6f4a54b8b2ac798 target=relation
-(= (gslt:StateActionLastV1 (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-open-scope 0))
-   (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-open-scope 0))
+(= (gslt:StateActionLastV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionLastV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-open-scope (cons-atom 0 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-open-scope 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=189 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-eb79726c74850fd2247512ca243768a4eea6bb7856adaab11a75b0df2971d4c9 target=relation
-(= (gslt:StateActionLastV1 (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-resolve-include 0))
-   (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-resolve-include 0))
+(= (gslt:StateActionLastV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionLastV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-resolve-include (cons-atom 0 ())))) $__gslt_input_v1_0_0
+   (quote (StateActionLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-resolve-include 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=190 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-9c7748b56eb8b6f67596d815f6752ffd5e4dee1e3b3fe90b7e8e1c2224866469 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 0 1))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 0 1))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-compressed (cons-atom 0 (cons-atom 1 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 0 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=191 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-0c5789c496b37e752a76f91870f0fd695ec63b5ac9e785187c7c999eb8fa5f50 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 1 2))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 1 2))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-compressed (cons-atom 1 (cons-atom 2 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=192 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-76b6d59110863eb7f3acb2771744ac3d4526e43fbcc67435a0ae64f335ed3214 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 10 11))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 10 11))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-compressed (cons-atom 10 (cons-atom 11 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 10 11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=193 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-ce7aa2d19aff04cae1b945432364f75a93ce54193b0912f914219e4d3ef1b33d target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 11 12))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 11 12))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-compressed (cons-atom 11 (cons-atom 12 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 11 12))))
 
 ; gslt-lowered-equation-v1 source-rewrite=194 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-9660bd215acaa4ddca4000c7ca1a7c470e9b52ecaede62ebda8fa975048e13d1 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 12 13))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 12 13))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-compressed (cons-atom 12 (cons-atom 13 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 12 13))))
 
 ; gslt-lowered-equation-v1 source-rewrite=195 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-07dae603ed9177e97dbfeef271a58fc2c3b9dd4f29a77d7e382ff7d8edf05bcb target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 13 14))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 13 14))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-compressed (cons-atom 13 (cons-atom 14 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 13 14))))
 
 ; gslt-lowered-equation-v1 source-rewrite=196 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-95d88556e81a4b8d4b0cc7623dc1d571a71928d961c200483b85c581e7de16c3 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 14 15))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 14 15))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-compressed (cons-atom 14 (cons-atom 15 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 14 15))))
 
 ; gslt-lowered-equation-v1 source-rewrite=197 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-6b7a6c1947ed9177d682b0d4b4c13fd7350b5efe3f13eb48d8c7c21a9e473df1 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 15 16))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 15 16))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-compressed (cons-atom 15 (cons-atom 16 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 15 16))))
 
 ; gslt-lowered-equation-v1 source-rewrite=198 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-3133b9d363a44eeabf61df07892665ba1a3e4e7dac449f9bb5aab444479742c5 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 16 17))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 16 17))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-compressed (cons-atom 16 (cons-atom 17 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 16 17))))
 
 ; gslt-lowered-equation-v1 source-rewrite=199 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-8817c5e5d8d628c27a057647fa6a002dce0d57a9ac694fb49608a6d0742a1d6e target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 2 3))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 2 3))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-compressed (cons-atom 2 (cons-atom 3 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 2 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=200 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-e3d8f6d9d305721130e439ea4fd5b5089ad34478a666a7ae4d0e142d004e0e0f target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 3 4))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 3 4))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-compressed (cons-atom 3 (cons-atom 4 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 3 4))))
 
 ; gslt-lowered-equation-v1 source-rewrite=201 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-1e47b0b9e1194384eb5274f3c661e3bae003247102f1d575a5083795577ccc47 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 4 5))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 4 5))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-compressed (cons-atom 4 (cons-atom 5 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 4 5))))
 
 ; gslt-lowered-equation-v1 source-rewrite=202 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-4a1023b8b797a79590acc9d404083b1f2259778b71f37a8b10b320fa6a69a4e5 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 5 6))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 5 6))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-compressed (cons-atom 5 (cons-atom 6 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 5 6))))
 
 ; gslt-lowered-equation-v1 source-rewrite=203 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-7fcec99072f6c8d69d4e2ca6e474ad642f38d1e9215bae0d2354a29fd7e7e613 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 6 7))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 6 7))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-compressed (cons-atom 6 (cons-atom 7 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 6 7))))
 
 ; gslt-lowered-equation-v1 source-rewrite=204 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-a089ed10529ff4321f190171bb0a8d6cdf6df5f832a0f92852761662181d6327 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 7 8))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 7 8))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-compressed (cons-atom 7 (cons-atom 8 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 7 8))))
 
 ; gslt-lowered-equation-v1 source-rewrite=205 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-aecfa721586061fa746a74c877f6761e4a58256f0fd7e6cc111ad8a32cee83c5 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 8 9))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 8 9))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-compressed (cons-atom 8 (cons-atom 9 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 8 9))))
 
 ; gslt-lowered-equation-v1 source-rewrite=206 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-5e56bd0ff1ece2047e3b0f9320f9e2b3f75ecdd71d539f0a614dc5193a17b13e target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 9 10))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 9 10))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-compressed (cons-atom 9 (cons-atom 10 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-compressed 9 10))))
 
 ; gslt-lowered-equation-v1 source-rewrite=207 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-669f3b01fd284a396300777acc265de02d2db4af38fc4c5cb094fd1f550e76a3 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 0 1))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 0 1))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-normal (cons-atom 0 (cons-atom 1 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 0 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=208 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-87ff8ff27c802166b9de534735b3b518b02fbf8010fabf75b54a23be06a4f225 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 1 2))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 1 2))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-normal (cons-atom 1 (cons-atom 2 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=209 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-08112ea17d3af1141a6c8a4e97d85b886a318300909306d1fd41a9cc461efebd target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 10 11))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 10 11))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-normal (cons-atom 10 (cons-atom 11 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 10 11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=210 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-83be13d8c8a02f04976fb8723b7ba971f25ad3e861a3970792133dca3c7a58cb target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 11 12))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 11 12))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-normal (cons-atom 11 (cons-atom 12 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 11 12))))
 
 ; gslt-lowered-equation-v1 source-rewrite=211 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-5da951862cbeca6d5732ed7f1361aee6dbb8087094fcdcc6491131c79ead17bd target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 12 13))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 12 13))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-normal (cons-atom 12 (cons-atom 13 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 12 13))))
 
 ; gslt-lowered-equation-v1 source-rewrite=212 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-d839eea1ff14345dd1871a8b8b5d7a3192f7bf73397c4cb8b0ef7ec257de7f0b target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 13 14))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 13 14))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-normal (cons-atom 13 (cons-atom 14 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 13 14))))
 
 ; gslt-lowered-equation-v1 source-rewrite=213 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-75913dd23167f6e45512d16e20a129874d1fd9d54276ef59e282f43b64c52283 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 14 15))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 14 15))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-normal (cons-atom 14 (cons-atom 15 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 14 15))))
 
 ; gslt-lowered-equation-v1 source-rewrite=214 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-46594c5a275810e14b31d81e593d032a9a96429aea361fcae08a4b4a0a9f8fde target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 15 16))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 15 16))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-normal (cons-atom 15 (cons-atom 16 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 15 16))))
 
 ; gslt-lowered-equation-v1 source-rewrite=215 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-eee0c85ab7576743a40f36db0f04b40248ce1b6415ef33dc8a49cafe1a1381c1 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 16 17))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 16 17))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-normal (cons-atom 16 (cons-atom 17 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 16 17))))
 
 ; gslt-lowered-equation-v1 source-rewrite=216 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-58ff6e97185f31df5e869c088674690186882b329468563d6f8e81f0418addc1 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 2 3))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 2 3))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-normal (cons-atom 2 (cons-atom 3 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 2 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=217 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-4e176238faef107ff8391da02b9d755699ba73837b52830468f3dd7c5b2894d6 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 3 4))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 3 4))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-normal (cons-atom 3 (cons-atom 4 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 3 4))))
 
 ; gslt-lowered-equation-v1 source-rewrite=218 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-a7d95eda5301b40abf1599663da7a5f317414dae65946276e3e49611c3c63b09 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 4 5))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 4 5))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-normal (cons-atom 4 (cons-atom 5 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 4 5))))
 
 ; gslt-lowered-equation-v1 source-rewrite=219 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-5b45397c6dba3b3019c3ce8cb3245e2fff2dcabb55c7f54683b5d65b64dc5b73 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 5 6))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 5 6))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-normal (cons-atom 5 (cons-atom 6 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 5 6))))
 
 ; gslt-lowered-equation-v1 source-rewrite=220 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-0dc3a79b7633c4cbe7175ff818cf31f3bf1bf3b18ebd182415b1e8c1d668e87d target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 6 7))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 6 7))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-normal (cons-atom 6 (cons-atom 7 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 6 7))))
 
 ; gslt-lowered-equation-v1 source-rewrite=221 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-644a4f4d894be5062050c0fe0d61c333657c471c470ee174757b2d273e848d13 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 7 8))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 7 8))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-normal (cons-atom 7 (cons-atom 8 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 7 8))))
 
 ; gslt-lowered-equation-v1 source-rewrite=222 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-e1aeb2ad0c54899a6e5a2c58f99208672aa76ff331c69a419243498149a96623 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 8 9))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 8 9))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-normal (cons-atom 8 (cons-atom 9 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 8 9))))
 
 ; gslt-lowered-equation-v1 source-rewrite=223 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-0beb3a4c8501e43c7495639f0178115e5865cd8907057c0104830feec0e37c17 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 9 10))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 9 10))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-check-theorem-normal (cons-atom 9 (cons-atom 10 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-check-theorem-normal 9 10))))
 
 ; gslt-lowered-equation-v1 source-rewrite=224 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-7f3744a4bb9e064466756d8baa9673bc6f71fcc0956bf512228f0a6577abcea6 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 0 1))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 0 1))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-axiom (cons-atom 0 (cons-atom 1 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 0 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=225 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-978e5a43be70a2aa8fc916710e6cb009273fd4a9ff50d13415d754de16f7b10c target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 1 2))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 1 2))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-axiom (cons-atom 1 (cons-atom 2 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=226 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-2eba4588f2689b2aa0e78163ba04889776f53b83107fdb14905efe719f942df0 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 10 11))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 10 11))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-axiom (cons-atom 10 (cons-atom 11 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 10 11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=227 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-3602af1bbe66bbe6351a0a09d4e960ac3a788f213f4a1df929ca4b2fd58dab8e target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 11 12))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 11 12))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-axiom (cons-atom 11 (cons-atom 12 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 11 12))))
 
 ; gslt-lowered-equation-v1 source-rewrite=228 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-8da53bcc526dce1d8e6899367a25df1bd1264d2e3239f29d1c500cd73d5cd0be target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 12 13))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 12 13))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-axiom (cons-atom 12 (cons-atom 13 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 12 13))))
 
 ; gslt-lowered-equation-v1 source-rewrite=229 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-eaa1fdaa486552ae2b26b732d66f49c29af6e3cad17ebdd999eee62e8bbe948a target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 13 14))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 13 14))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-axiom (cons-atom 13 (cons-atom 14 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 13 14))))
 
 ; gslt-lowered-equation-v1 source-rewrite=230 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-fecb92615b957ecbc1c94b565c38be3791fb512fc1636199cf9c7f64335d7dc3 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 14 15))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 14 15))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-axiom (cons-atom 14 (cons-atom 15 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 14 15))))
 
 ; gslt-lowered-equation-v1 source-rewrite=231 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-fdf5e563691ea587c42d3f6d682f1b1019f17808caf20f13bdfd10effce86356 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 2 3))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 2 3))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-axiom (cons-atom 2 (cons-atom 3 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 2 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=232 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-d81faf781dcd9f3e26fda6c377f0c7afdaa46a96f83adfe4b72b2619c6aca1b3 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 3 4))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 3 4))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-axiom (cons-atom 3 (cons-atom 4 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 3 4))))
 
 ; gslt-lowered-equation-v1 source-rewrite=233 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-b3b6705ceea4edf9b218e34286a3a5ae1ab810d8d7b30ea99ac232d5620ceca5 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 4 5))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 4 5))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-axiom (cons-atom 4 (cons-atom 5 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 4 5))))
 
 ; gslt-lowered-equation-v1 source-rewrite=234 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-0e776c7af2b7bf3aa421b74fdb61e58feaba8ad38249be279405af07ebb417ae target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 5 6))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 5 6))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-axiom (cons-atom 5 (cons-atom 6 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 5 6))))
 
 ; gslt-lowered-equation-v1 source-rewrite=235 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-51db87868ed1c392d9bc14fac11cfa566e0cf603b2a86d1336e7bf442894a46e target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 6 7))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 6 7))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-axiom (cons-atom 6 (cons-atom 7 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 6 7))))
 
 ; gslt-lowered-equation-v1 source-rewrite=236 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-5bb4277318b7bf7f261fa7a32bf42904775a7c66c89038652527f2d4ef1af1db target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 7 8))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 7 8))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-axiom (cons-atom 7 (cons-atom 8 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 7 8))))
 
 ; gslt-lowered-equation-v1 source-rewrite=237 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-8ce00c6e2c8b71837001a0950f44a6f2a5fd0997385f25654853069f3733f6b2 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 8 9))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 8 9))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-axiom (cons-atom 8 (cons-atom 9 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 8 9))))
 
 ; gslt-lowered-equation-v1 source-rewrite=238 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-a118055cda7382aeecba3063a82ce00f830c96b485e75d650b0790d4c28e38d5 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 9 10))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 9 10))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-axiom (cons-atom 9 (cons-atom 10 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-axiom 9 10))))
 
 ; gslt-lowered-equation-v1 source-rewrite=239 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-275f099bb84239dfe0cd7371a065ab01e89383489fb96ac1e0592e8ff8b8a00e target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-constants 0 1))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-constants 0 1))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-constants (cons-atom 0 (cons-atom 1 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-constants 0 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=240 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-2ebb46ef447388463e163bd142e051443e037774a12015fdcb90b622ab3a942b target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-constants 1 2))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-constants 1 2))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-constants (cons-atom 1 (cons-atom 2 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-constants 1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=241 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-55999a77c5349b5f0e3e3b6ddd1ef1a47f6e71f30d9e7f88df507c7afb1173b5 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-constants 2 3))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-constants 2 3))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-constants (cons-atom 2 (cons-atom 3 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-constants 2 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=242 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-7aee63a601aa945144b68ca2f07f7a1d1436056a5d6dc548b0abadd5994032f5 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-disjoint 0 1))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-disjoint 0 1))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-disjoint (cons-atom 0 (cons-atom 1 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-disjoint 0 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=243 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-bcb30a3bfedf73b9d60cce97193f5c97a89f781c4ebe04afef80ccecf61de21c target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 0 1))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 0 1))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-essential (cons-atom 0 (cons-atom 1 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 0 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=244 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-96f7cb0f73f884c34e13cbfa38505f66a679b25cb05726a1b3ad9f66226c345f target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 1 2))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 1 2))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-essential (cons-atom 1 (cons-atom 2 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=245 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-a40dac1bc73f55504272feadfb8d703c7586383dce0d98f09f38f5777b036f44 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 2 3))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 2 3))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-essential (cons-atom 2 (cons-atom 3 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 2 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=246 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-9e578305d497c2ceac84c09f324eb13ba9d0d9a206b1c0249a64f2899cc743a5 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 3 4))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 3 4))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-essential (cons-atom 3 (cons-atom 4 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 3 4))))
 
 ; gslt-lowered-equation-v1 source-rewrite=247 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-67e8e1482987f25994daa12aa0262ce3e239cda4dc17653bcf4dac8744b85bd1 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 4 5))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 4 5))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-essential (cons-atom 4 (cons-atom 5 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 4 5))))
 
 ; gslt-lowered-equation-v1 source-rewrite=248 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-59d7e9d833ff6193d0083229b9c7c04cdd8706eed9f66c698ba3f6f0d45b2d4f target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 5 6))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 5 6))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-essential (cons-atom 5 (cons-atom 6 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 5 6))))
 
 ; gslt-lowered-equation-v1 source-rewrite=249 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-658686a85309502acbf14643a9888cf2b2265a8a37864508670452bf148ff4b9 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 6 7))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 6 7))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-essential (cons-atom 6 (cons-atom 7 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 6 7))))
 
 ; gslt-lowered-equation-v1 source-rewrite=250 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-834e5dbfe9886f72497e190e8cad729e52a22bbe9d7094d04582d6ce557b73ad target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 7 8))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 7 8))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-essential (cons-atom 7 (cons-atom 8 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-essential 7 8))))
 
 ; gslt-lowered-equation-v1 source-rewrite=251 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-882995a471a61aa64c6b9d7e3439a6973e0bc89e711f6c60142159dbd446e977 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 0 1))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 0 1))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-floating (cons-atom 0 (cons-atom 1 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 0 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=252 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-a35225f018d8f2b0dee357208fd18e471b3b8ced63ae24762ac1ee1745384492 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 1 2))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 1 2))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-floating (cons-atom 1 (cons-atom 2 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=253 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-9dcfdd2f0f3a24991cfcc92987a861fb91cf4ad948c56f5d540ca28beae6850f target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 2 3))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 2 3))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-floating (cons-atom 2 (cons-atom 3 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 2 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=254 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-deac5d0546fab279884ebf831e4b9886069b68ad956519b9da0b1c0fa85ffbef target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 3 4))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 3 4))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-floating (cons-atom 3 (cons-atom 4 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 3 4))))
 
 ; gslt-lowered-equation-v1 source-rewrite=255 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-29c0ca7932c5e38c451f67d77ab9c105ce50cc0668bdc91cdbea377fe6c02bc9 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 4 5))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 4 5))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-floating (cons-atom 4 (cons-atom 5 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 4 5))))
 
 ; gslt-lowered-equation-v1 source-rewrite=256 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-18095735151a778a582fa71aa76c368a43ba2561bfc1e5aa01c3a42c97705205 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 5 6))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 5 6))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-floating (cons-atom 5 (cons-atom 6 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 5 6))))
 
 ; gslt-lowered-equation-v1 source-rewrite=257 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-b4bdcbd61278c9430fa596014b2ce9be1b47bbcce4ec2b78b80172c775be2475 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 6 7))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 6 7))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-floating (cons-atom 6 (cons-atom 7 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 6 7))))
 
 ; gslt-lowered-equation-v1 source-rewrite=258 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-f6e980bb4168596de294b8d757c3b4e0b531573f22293a62cd9cbf8c8adf1c62 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 7 8))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 7 8))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-floating (cons-atom 7 (cons-atom 8 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 7 8))))
 
 ; gslt-lowered-equation-v1 source-rewrite=259 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-1ed8e4737e5bf8d7cc737aa8cbfb3e353291bda852bc6fac524d2ffe282a88a2 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 8 9))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 8 9))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-floating (cons-atom 8 (cons-atom 9 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 8 9))))
 
 ; gslt-lowered-equation-v1 source-rewrite=260 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-df6deef14c38c0b0947dca7561a975b12f116e7cd66b0050529238320ad2e9f2 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 9 10))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 9 10))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-floating (cons-atom 9 (cons-atom 10 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-floating 9 10))))
 
 ; gslt-lowered-equation-v1 source-rewrite=261 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-e93eef38644d0de600a77ca07c6454f910be505afeaa3ed4ab98b9432e1c01e4 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-variables 0 1))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-variables 0 1))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-variables (cons-atom 0 (cons-atom 1 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-variables 0 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=262 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-4b177cd86f68c5741d09b900cb77e46105da35d779409c6023b8bfc855254d50 target=relation
-(= (gslt:StateActionNextV1 (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-variables 1 2))
-   (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-variables 1 2))
+(= (gslt:StateActionNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateActionNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom mm-declare-variables (cons-atom 1 (cons-atom 2 ()))))) $__gslt_input_v1_0_0
+   (quote (StateActionNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-declare-variables 1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=263 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-fcc119bbb307d070ac895c1523ad0a85428537815e5aae0c7cd1b5b8f1a21520 target=relation
-(= (gslt:StateDenseIdentityV1 (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-essential-variable NatZeroV1))
-   (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-essential-variable NatZeroV1))
+(= (gslt:StateDenseIdentityV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateDenseIdentityV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom StateTableKindV1 (cons-atom mm-state-active-essential-variable (cons-atom NatZeroV1 ()))))) $__gslt_input_v1_0_0
+   (quote (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-essential-variable NatZeroV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=264 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-472ac0f7883dfc5ff8a6458b9e6434e817383d1c4628ac3ac7e2b5a1ad377478 target=relation
-(= (gslt:StateDenseIdentityV1 (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-floating-variable (NatSuccV1 NatZeroV1)))
-   (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-floating-variable (NatSuccV1 NatZeroV1)))
+(= (gslt:StateDenseIdentityV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateDenseIdentityV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom StateTableKindV1 (cons-atom mm-state-active-floating-variable (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ()))))) $__gslt_input_v1_0_0
+   (quote (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-floating-variable (NatSuccV1 NatZeroV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=265 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-7556faf6420947f9d0f1cfeb971a093865c2e72b04ed32c501186fe05427b3ad target=relation
-(= (gslt:StateDenseIdentityV1 (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-hypothesis (NatSuccV1 (NatSuccV1 NatZeroV1))))
-   (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-hypothesis (NatSuccV1 (NatSuccV1 NatZeroV1))))
+(= (gslt:StateDenseIdentityV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateDenseIdentityV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom StateTableKindV1 (cons-atom mm-state-active-hypothesis (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ()))))) $__gslt_input_v1_0_0
+   (quote (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-hypothesis (NatSuccV1 (NatSuccV1 NatZeroV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=266 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-c2f245ae8add95ef7cf13665085448ef85d991c189a0a2b283fde6d6bf515463 target=relation
-(= (gslt:StateDenseIdentityV1 (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))
-   (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))
+(= (gslt:StateDenseIdentityV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateDenseIdentityV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom StateTableKindV1 (cons-atom mm-state-active-variable (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ()))))) $__gslt_input_v1_0_0
+   (quote (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-active-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=267 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-991ada2dfe2ac40f98648ed26dde17f8eb2f3a3d15f1afec00c51a4a6cb55e33 target=relation
-(= (gslt:StateDenseIdentityV1 (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-active-hypothesis (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))
-   (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-active-hypothesis (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))
+(= (gslt:StateDenseIdentityV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateDenseIdentityV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom StateTableKindV1 (cons-atom mm-state-assertion-active-hypothesis (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ()))))) $__gslt_input_v1_0_0
+   (quote (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-active-hypothesis (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=268 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-64d32daf2f4a1e12308716842732b349bca1b6d56de29d80afd117dcf6dda737 target=relation
-(= (gslt:StateDenseIdentityV1 (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-disjoint-left-candidate (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
-   (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-disjoint-left-candidate (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
+(= (gslt:StateDenseIdentityV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateDenseIdentityV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom StateTableKindV1 (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ()))))) $__gslt_input_v1_0_0
+   (quote (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-disjoint-left-candidate (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=269 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-00fc58d7922a102895195ff15ded4d6d54e7bc42df0d538f86c299b1e8431c06 target=relation
-(= (gslt:StateDenseIdentityV1 (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-disjoint-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))
-   (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-disjoint-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))
+(= (gslt:StateDenseIdentityV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateDenseIdentityV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom StateTableKindV1 (cons-atom mm-state-assertion-disjoint-variable (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ()))))) $__gslt_input_v1_0_0
+   (quote (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-disjoint-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=270 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-25547a114b84ae189b472258751380db2a71775942a25f258fe4668109fb645c target=relation
-(= (gslt:StateDenseIdentityV1 (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-frame-hypothesis (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))
-   (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-frame-hypothesis (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))
+(= (gslt:StateDenseIdentityV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateDenseIdentityV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom StateTableKindV1 (cons-atom mm-state-assertion-frame-hypothesis (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ()))))) $__gslt_input_v1_0_0
+   (quote (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-frame-hypothesis (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=271 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-4488a9ef24c4cbaa51d3b36f0b96817d0e1ce62f7f9171284cfb5a98cc4ad890 target=relation
-(= (gslt:StateDenseIdentityV1 (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-mandatory-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))
-   (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-mandatory-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))
+(= (gslt:StateDenseIdentityV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateDenseIdentityV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom StateTableKindV1 (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ()))))) $__gslt_input_v1_0_0
+   (quote (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-mandatory-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=272 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-0882a39c1f2f2f85f39660907847e6d98161794afdf8ae471b9bc466a91b4fcd target=relation
-(= (gslt:StateDenseIdentityV1 (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-ordered-disjoint-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))
-   (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-ordered-disjoint-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))
+(= (gslt:StateDenseIdentityV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateDenseIdentityV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom StateTableKindV1 (cons-atom mm-state-assertion-ordered-disjoint-variable (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ()))))) $__gslt_input_v1_0_0
+   (quote (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-ordered-disjoint-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=273 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-3d14f4390eadfe007a60563266301cd299d0181fbfcf4c1a6c297b043c4a9364 target=relation
-(= (gslt:StateDenseIdentityV1 (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-ordered-frame-hypothesis (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))
-   (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-ordered-frame-hypothesis (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))
+(= (gslt:StateDenseIdentityV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateDenseIdentityV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom StateTableKindV1 (cons-atom mm-state-assertion-ordered-frame-hypothesis (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ()))))) $__gslt_input_v1_0_0
+   (quote (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-ordered-frame-hypothesis (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=274 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-de47aa109069b4646b052c2f1d1798f454bfa69b574a9b25b9d6d148eb53757e target=relation
-(= (gslt:StateDenseIdentityV1 (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-ordered-hypothesis (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))
-   (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-ordered-hypothesis (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))
+(= (gslt:StateDenseIdentityV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateDenseIdentityV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom StateTableKindV1 (cons-atom mm-state-assertion-ordered-hypothesis (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ()))))) $__gslt_input_v1_0_0
+   (quote (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-assertion-ordered-hypothesis (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=275 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-53bbf49cd33581a9841d3ec5d021c3bc2c7c9bd8530792486b8365ab60a4c7c5 target=relation
-(= (gslt:StateDenseIdentityV1 (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-disjoint-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))
-   (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-disjoint-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))
+(= (gslt:StateDenseIdentityV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateDenseIdentityV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom StateTableKindV1 (cons-atom mm-state-disjoint-variable (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ()))))) $__gslt_input_v1_0_0
+   (quote (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-disjoint-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=276 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-34ab7c734182e579cea4addd2e21dfad652ea8ea536207bf1cee7d6ef56b7381 target=relation
-(= (gslt:StateDenseIdentityV1 (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-expression-symbol (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))
-   (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-expression-symbol (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))
+(= (gslt:StateDenseIdentityV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateDenseIdentityV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom StateTableKindV1 (cons-atom mm-state-expression-symbol (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ()))))) $__gslt_input_v1_0_0
+   (quote (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-expression-symbol (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=277 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-cadf3cfa821bd693677c6199a022e020fb4408ea636bbf8c7b1d37845e375a88 target=relation
-(= (gslt:StateDenseIdentityV1 (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-floating-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))
-   (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-floating-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))
+(= (gslt:StateDenseIdentityV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateDenseIdentityV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom StateTableKindV1 (cons-atom mm-state-floating-variable (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ()))))) $__gslt_input_v1_0_0
+   (quote (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-floating-variable (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=278 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-8ba53c2039f9214c273b54f507bcb9d447f69012d24d0d6f4f7c0c1c355b385e target=relation
-(= (gslt:StateDenseIdentityV1 (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-formula (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))
-   (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-formula (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))
+(= (gslt:StateDenseIdentityV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateDenseIdentityV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom StateTableKindV1 (cons-atom mm-state-formula (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ()))))) $__gslt_input_v1_0_0
+   (quote (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-formula (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=279 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-fd634490e87e4171727c367890554f4f8efff8ad95e6d1f03134eae0e484366e target=relation
-(= (gslt:StateDenseIdentityV1 (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-label-kind (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))
-   (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-label-kind (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))
+(= (gslt:StateDenseIdentityV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateDenseIdentityV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom StateTableKindV1 (cons-atom mm-state-label-kind (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ()))))) $__gslt_input_v1_0_0
+   (quote (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-label-kind (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=280 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-bfd7710d12c5b421feea1fe16d3ca8a16dcc72ba7b56ed74208f35b8db2c1f7d target=relation
-(= (gslt:StateDenseIdentityV1 (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-label-name (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))))
-   (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-label-name (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))))
+(= (gslt:StateDenseIdentityV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateDenseIdentityV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom StateTableKindV1 (cons-atom mm-state-label-name (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ()))))) $__gslt_input_v1_0_0
+   (quote (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-label-name (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=281 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-9f1248c4e2f1f99618534e04ae201526147548232d740fc0fe017cf2be57faae target=relation
-(= (gslt:StateDenseIdentityV1 (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-symbol-kind (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))))
-   (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-symbol-kind (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))))
+(= (gslt:StateDenseIdentityV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateDenseIdentityV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom StateTableKindV1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ()))))) $__gslt_input_v1_0_0
+   (quote (StateDenseIdentityV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) StateTableKindV1 mm-state-symbol-kind (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=282 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-43e3795399a04cf19a7a473648aae110b39fb50aa80cc7de525b72a053e56831 target=relation
-(= (gslt:StateNatBindingV1 (StateNatBindingV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 0 NatZeroV1))
-   (StateNatBindingV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 0 NatZeroV1))
+(= (gslt:StateNatBindingV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateNatBindingV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom 0 (cons-atom NatZeroV1 ())))) $__gslt_input_v1_0_0
+   (quote (StateNatBindingV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 0 NatZeroV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=283 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-9ebbfb247164b744007beb81ad32e65917e3857f099c9bbf3e2e4961364dd86f target=relation
-(= (gslt:StateNatBindingV1 (StateNatBindingV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 1 (NatSuccV1 NatZeroV1)))
-   (StateNatBindingV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 1 (NatSuccV1 NatZeroV1)))
+(= (gslt:StateNatBindingV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateNatBindingV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom 1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateNatBindingV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 1 (NatSuccV1 NatZeroV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=284 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-5390cf7bb3d954f21e8d8450f85f6ec1090d24254f320d97d28fa40dd918a993 target=relation
-(= (gslt:StateNatBindingV1 (StateNatBindingV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 2 (NatSuccV1 (NatSuccV1 NatZeroV1))))
-   (StateNatBindingV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 2 (NatSuccV1 (NatSuccV1 NatZeroV1))))
+(= (gslt:StateNatBindingV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateNatBindingV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom 2 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateNatBindingV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 2 (NatSuccV1 (NatSuccV1 NatZeroV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=285 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-67171eb65f5e3e782171dad15aa0eb5dd10dc6e7f88771a58bf426eb13c2ac9d target=relation
-(= (gslt:StateNatBindingV1 (StateNatBindingV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 3 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))
-   (StateNatBindingV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 3 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))
+(= (gslt:StateNatBindingV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateNatBindingV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom 3 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateNatBindingV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 3 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=286 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-086e485bd9c7f855eb6ffdae1f4d615093a3d8036393e01e27fd9249058564e5 target=relation
-(= (gslt:StateNatBindingV1 (StateNatBindingV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 4 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))
-   (StateNatBindingV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 4 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))
+(= (gslt:StateNatBindingV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateNatBindingV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom 4 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateNatBindingV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) 4 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=287 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-216560df79bcafeed828020495707b18065317990dfc706f5e05beac567c89e5 target=relation
-(= (gslt:StateTableFirstV1 (StateTableFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) NatZeroV1))
-   (StateTableFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) NatZeroV1))
+(= (gslt:StateTableFirstV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableFirstV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom NatZeroV1 ()))) $__gslt_input_v1_0_0
+   (quote (StateTableFirstV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) NatZeroV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=288 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-4ada64a96fa136cb25a3ec6c4d7d66a8e26306e31b4447bcbe2b34127323b85d target=relation
-(= (gslt:StateTableLastV1 (StateTableLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))))
-   (StateTableLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))))
+(= (gslt:StateTableLastV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableLastV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ()))) $__gslt_input_v1_0_0
+   (quote (StateTableLastV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=289 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-2f36187b0b9fa57675304d8e865e6f0ddeb6806672e45d2d33faa03e7ef63e27 target=relation
-(= (gslt:StateTableNextV1 (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))))
-   (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))))
+(= (gslt:StateTableNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=290 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-d46f5c8576fac3e3bd60504cf23a84408cad76237c77e24f09dda895c2565ef9 target=relation
-(= (gslt:StateTableNextV1 (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))))
-   (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))))
+(= (gslt:StateTableNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=291 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-2306415e1a49e7ccbcdcbd0c98afee676cfdf123dca176da34faeaf0bb3c3481 target=relation
-(= (gslt:StateTableNextV1 (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))
-   (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))
+(= (gslt:StateTableNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=292 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-343c69a325e1e2640cdb042845016901c16f38f414570934d2859d4776b6ace5 target=relation
-(= (gslt:StateTableNextV1 (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))
-   (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))
+(= (gslt:StateTableNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=293 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-efec4b34c2f6b6b6ed6e9858d6f12344a5cd7982d97addc785da1c7587146f61 target=relation
-(= (gslt:StateTableNextV1 (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))
-   (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))
+(= (gslt:StateTableNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=294 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-e6e19be4199a3b1812f9d7c302f605a8f778c7d6df6b68d6e69095de8a32aaa5 target=relation
-(= (gslt:StateTableNextV1 (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))
-   (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))
+(= (gslt:StateTableNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=295 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-2145a5ece6273ba783e08e1f75ac1766abc59516a5e2f1e4e3f5221faa6cbf1b target=relation
-(= (gslt:StateTableNextV1 (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))
-   (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))
+(= (gslt:StateTableNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=296 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-4817e56664810055704ab0d158cd706f0865c4cfb5e8dcdad804e198f838bc05 target=relation
-(= (gslt:StateTableNextV1 (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))
-   (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))
+(= (gslt:StateTableNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=297 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-5be995f93631503b8f367080b437a1af1eced12dd5c6f472308a53012db800d4 target=relation
-(= (gslt:StateTableNextV1 (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))
-   (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))
+(= (gslt:StateTableNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=298 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-ec5d9f1e4cf7247e74ffefe4b853fea5c623dad37ee5c51fd9721a46ab12e3bc target=relation
-(= (gslt:StateTableNextV1 (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))
-   (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))
+(= (gslt:StateTableNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=299 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-6440701a5f4838183fb098a1a6f401d9b0902838f25025d06671faf5c5fa2005 target=relation
-(= (gslt:StateTableNextV1 (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))
-   (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))
+(= (gslt:StateTableNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=300 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-c92dd9aa964e5901b9adb86e61b0a36e6701e0e2f14de78d917a81a570b283b7 target=relation
-(= (gslt:StateTableNextV1 (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))
-   (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))
+(= (gslt:StateTableNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=301 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-78f7bdf674d5402539195ae17b4bc980af3e2dbe6fd21fb55d97f3f8be9241e2 target=relation
-(= (gslt:StateTableNextV1 (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))
-   (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))
+(= (gslt:StateTableNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=302 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-15be0934aeab77fec5ca07121ae37e5eb3a5def6e8b5b66abc9ef532da13f806 target=relation
-(= (gslt:StateTableNextV1 (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
-   (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
+(= (gslt:StateTableNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=303 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-277ef741838cb9c8bb8fdb6270ddc2505400121d5c089e208b965f020135c9f9 target=relation
-(= (gslt:StateTableNextV1 (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))
-   (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))
+(= (gslt:StateTableNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=304 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-6c957fd60a600ec3d6a89f140ac1b117cf1db590654906f93fbf9e6608d591c5 target=relation
-(= (gslt:StateTableNextV1 (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 NatZeroV1)) (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))
-   (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 NatZeroV1)) (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))
+(= (gslt:StateTableNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 NatZeroV1)) (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=305 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-cd0258511c4c9a1c469d792939c2fc68dc8c178b4f0eb2b33a1d07c9c7b072ae target=relation
-(= (gslt:StateTableNextV1 (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 NatZeroV1) (NatSuccV1 (NatSuccV1 NatZeroV1))))
-   (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 NatZeroV1) (NatSuccV1 (NatSuccV1 NatZeroV1))))
+(= (gslt:StateTableNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) (cons-atom (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 NatZeroV1) (NatSuccV1 (NatSuccV1 NatZeroV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=306 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-6db895e9074742d7598b5b0e8caf01c7fbb7b44b5b30c372602ca7e746abf392 target=relation
-(= (gslt:StateTableNextV1 (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) NatZeroV1 (NatSuccV1 NatZeroV1)))
-   (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) NatZeroV1 (NatSuccV1 NatZeroV1)))
+(= (gslt:StateTableNextV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTableNextV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons-atom NatZeroV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())))) $__gslt_input_v1_0_0
+   (quote (StateTableNextV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) NatZeroV1 (NatSuccV1 NatZeroV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=307 source-presentation=GeneratedAnswerFactsV1_502005ba17be21672f83f808b006524b067c7f4a593b2b6f036eabec106d0935 source-rule=answer-fact-f1204b785c241c263e398e01f4c92b1a44d3da849f2ac3a74aaaf83191a55521 target=relation
-(= (gslt:StateTransitionPackageV1 (StateTransitionPackageV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)))
-   (StateTransitionPackageV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)))
+(= (gslt:StateTransitionPackageV1 $__gslt_input_v1_0_0)
+   (let (cons-atom StateTransitionPackageV1 (cons-atom (cons-atom StateProgramDigestV1 (cons-atom sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) ())) $__gslt_input_v1_0_0
+   (quote (StateTransitionPackageV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)))))

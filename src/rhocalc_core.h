@@ -7,12 +7,11 @@
 #include "atom.h"
 #include "space.h"
 
-typedef struct CettaLibraryContext CettaLibraryContext;
+/* The schedules a run may follow, shared with the tcalc lane
+ * (lib/runner_axes.data): canonical or rotating. */
+#include "generated/runner_axes.generated.h"
 
-typedef enum {
-    RHO_SCHEDULER_CANONICAL = 0,
-    RHO_SCHEDULER_ROTATING = 1
-} RhoSchedulerPolicy;
+typedef struct CettaLibraryContext CettaLibraryContext;
 
 typedef enum {
     RHOCALC_SEMANTIC_PROFILE_STRICT_CORE = 0,
@@ -21,7 +20,7 @@ typedef enum {
 } RhocalcSemanticProfileId;
 
 typedef struct {
-    RhoSchedulerPolicy scheduler_policy;
+    RunSchedule scheduler_policy;
     uint32_t reduction_limit;
     uint32_t thread_count;
     bool threaded;
@@ -54,10 +53,9 @@ typedef struct {
 } RhoReductionResult;
 
 const char *rhocalc_semantic_profile_name(RhocalcSemanticProfileId profile);
-bool rhocalc_process_well_formed_with_semantic_profile(
-    Atom *proc, RhocalcSemanticProfileId semantic_profile);
-bool rhocalc_process_well_formed(Atom *proc);
-bool rhocalc_process_well_formed_with_eval_payloads(Atom *proc);
+/* Whether proc is a process of the semantic profile's grammar; when it is
+ * not, rhocalc_last_validation_error() says why. */
+bool rhocalc_process_well_formed(Atom *proc, RhocalcSemanticProfileId semantic_profile);
 const char *rhocalc_last_validation_error(void);
 Atom *rhocalc_successor_frontier_expr_with_semantic_profile(
     Arena *arena, Atom *proc, RhocalcSemanticProfileId semantic_profile);
@@ -80,21 +78,12 @@ Atom *rhocalc_cost_causal_trace_parallel_expr(Arena *arena, Atom *proc,
 Atom *rhocalc_cost_causal_prefix_parallel_expr(
     Arena *arena, Atom *proc, uint64_t fuel,
     uint64_t search_budget, uint32_t thread_count);
-bool rhocalc_reduce_to_quiescence_with_semantic_profile(
-    Arena *arena, Atom *proc, RhocalcSemanticProfileId semantic_profile,
-    const RhoRuntimeProfile *profile, RhoReductionResult *out);
-bool rhocalc_reduce_to_quiescence_with_eval_context(
-    Arena *arena, Atom *proc, const RhoRuntimeProfile *profile,
-    const RhocalcEvalContext *eval_context, RhoReductionResult *out);
-bool rhocalc_reduce_to_quiescence_with_semantic_profile_and_eval_context(
+/* A term to quiescence under a semantic profile (strict core, cost or
+ * rhometta, which needs an evaluation context) and a runtime profile. */
+bool rhocalc_reduce_to_quiescence(
     Arena *arena, Atom *proc, RhocalcSemanticProfileId semantic_profile,
     const RhoRuntimeProfile *profile, const RhocalcEvalContext *eval_context,
     RhoReductionResult *out);
-bool rhocalc_reduce_to_quiescence_with_profile(Arena *arena, Atom *proc,
-                                               const RhoRuntimeProfile *profile,
-                                               RhoReductionResult *out);
-bool rhocalc_reduce_to_quiescence(Arena *arena, Atom *proc,
-                                  uint32_t reduction_limit, RhoReductionResult *out);
 
 /* Project the payloads of top-level inert rho:val components from a residual.
  * The returned expression preserves their occurrence order. */

@@ -19,6 +19,7 @@
 #include "native_fold.h"
 #include "exec_saturation.h"
 #include "transform_core.h"
+#include "transform_tcalc.h"
 #include "support_view.h"
 #include "fixpoint.h"
 #include "symbol_index.h"
@@ -12926,6 +12927,7 @@ static void equation_match_decision_lease_release(
 }
 
 void eval_match_decision_cache_free_for_current_thread(void) {
+    cetta_transform_tcalc_cache_free_for_current_thread();
     for (size_t index = 0u;
          index < EQUATION_MATCH_DECISION_CACHE_SLOTS; index++) {
         equation_match_decision_owner_release(
@@ -22207,12 +22209,32 @@ typedef struct {
     CettaCount len;
 } PettaSpaceAtomSnapshot;
 
-/*
- * Capture one logical occurrence view into branch-owned storage.  The
- * physical transition guard covers only the shared representation read;
- * consumers remain outside it and may evaluate in any oracle-permitted
- * interleaving.
- */
+/* HE listings open each occurrence with fresh identities while retaining
+ * the source presentation and all aliases within that occurrence. */
+static Atom *he_snapshot_new_variable(Arena *arena, Atom *source,
+                                      uint32_t ordinal, void *unused) {
+    (void)ordinal;
+    (void)unused;
+    VarId fresh;
+    return fresh_var_id_try(&fresh) ? atom_var_like(arena, source, fresh) : NULL;
+}
+
+static Atom *he_snapshot_variable(Arena *arena, Atom *source, void *inventory) {
+    return cetta_var_map_get_or_add(inventory, arena, source,
+                                    he_snapshot_new_variable, NULL);
+}
+
+static Atom *he_snapshot_open_row(Arena *arena, Atom *source) {
+    CettaVarMap inventory;
+    cetta_var_map_init(&inventory);
+    Atom *opened = cetta_atom_rewrite_vars(arena, source,
+                                           he_snapshot_variable, &inventory, true);
+    cetta_var_map_free(&inventory);
+    return opened;
+}
+
+/* Capture a logical occurrence view into branch-owned storage. The physical
+ * transition guard covers the representation read; consumers run outside it. */
 static PettaSpaceAtomSnapshotStatus petta_space_atom_snapshot_capture(
     Arena *arena, Space *space, PettaSpaceAtomSnapshot *snapshot) {
     if (!arena || !space || !snapshot)
@@ -22239,6 +22261,7 @@ static PettaSpaceAtomSnapshotStatus petta_space_atom_snapshot_capture(
         arena, sizeof(*items) * (size_t)own_len) : NULL;
     AtomDeepCopySession *session = atom_deep_copy_session_new_mapped(
         arena, payload_rebind_leaf, NULL);
+    const bool schematic_rows = eval_current_language_id() == CETTA_LANGUAGE_HE;
     PettaSpaceAtomSnapshotStatus status = PETTA_SPACE_ATOM_SNAPSHOT_OK;
     /* A listing answers a bag, in a priority space as in any other: its
      * atoms by position. */
@@ -22251,6 +22274,11 @@ static PettaSpaceAtomSnapshotStatus petta_space_atom_snapshot_capture(
             break;
         }
         items[index] = atom_deep_copy_session_copy(session, stored);
+        /* Each HE retrieval opens the full identity inventory apart, with
+         * source spellings retained. Fresh global identities need no printed
+         * activation suffix and keep different source frames distinct. */
+        if (items[index] && schematic_rows && atom_has_vars(items[index]))
+            items[index] = he_snapshot_open_row(arena, items[index]);
         if (!items[index]) {
             status = PETTA_SPACE_ATOM_SNAPSHOT_OUT_OF_MEMORY;
             break;
@@ -27913,6 +27941,68 @@ static bool eval_transform_guard_filter(void *context, Arena *a, Atom *pattern,
 /* Alpha-separated binding positions keep values out of executable body
  * syntax. The reference materializes arguments; the ordinary route reads
  * them through the supplied environment. Neither adds a function handler. */
+static bool eval_transform_equation_check(void *context, Atom *pattern,
+        Atom *expression, CettaTransformCheck *check) {
+    EvalLibraryHost *host = context;
+    if (!pattern || !expression || expression->kind != ATOM_EXPR ||
+        expression->expr.len != 3u ||
+        !atom_is_symbol_id(expression->expr.elems[0], g_builtin_syms.op_eq) ||
+        !eval_transform_guard_builtin(host, g_builtin_syms.op_eq))
+        return false;
+    bool yes = (pattern->kind == ATOM_GROUNDED && pattern->ground.gkind == GV_BOOL && pattern->ground.bval) ||
+        atom_is_symbol(pattern, "True");
+    if (!yes)
+        return false;
+    Atom *operands[2] = {expression->expr.elems[1], expression->expr.elems[2]};
+    bool held[2] = {false, false};
+    for (size_t i = 0u; i < 2u; i++) {
+        Atom *operand = operands[i];
+        if (operand->kind == ATOM_EXPR && operand->expr.len == 2u &&
+            atom_is_symbol_id(operand->expr.elems[0], g_builtin_syms.quote)) {
+            operands[i] = operand->expr.elems[1];
+            held[i] = true;
+        } else if (operand->kind == ATOM_EXPR)
+            return false;
+    }
+    *check = (CettaTransformCheck){{operands[0], operands[1]}, held[0], held[1]};
+    return true;
+}
+
+static bool eval_transform_equation_computes(const Atom *value, void *context) {
+    EvalLibraryHost *host = context;
+    if (value->kind != ATOM_EXPR || !value->expr.len)
+        return false;
+    Atom *head = value->expr.elems[0];
+    return head->kind != ATOM_SYMBOL || symbol_id_is_builtin(head->sym_id) ||
+        is_grounded_op(head->sym_id) || eval_space_has_equations(host->root, head->sym_id);
+}
+
+static bool eval_transform_equation_reads_state(const Atom *value, void *unused) {
+    (void)unused;
+    return value->kind == ATOM_GROUNDED && value->ground.gkind == GV_STATE;
+}
+
+static bool eval_transform_equation_computed(const Atom *value, void *unused) {
+    (void)unused;
+    return atom_is_he_evaluated(value);
+}
+
+static bool eval_transform_equation_value(void *context, Atom *value, bool held) {
+    bool complete = false;
+    /* Even quoted state equality reads mutable contents. This is a
+     * different observation from matching the state by identity. */
+    bool reads_state = atom_graph_any_checked(value, eval_transform_equation_reads_state,
+                                               NULL, NULL, SIZE_MAX, &complete);
+    if (!complete || reads_state)
+        return false;
+    if (held || atom_is_he_evaluated(value))
+        return true;
+    bool computes = atom_graph_any_checked(value, eval_transform_equation_computes,
+                                            eval_transform_equation_computed,
+                                            context, SIZE_MAX, &complete);
+    return complete && !computes;
+}
+
 static Atom *eval_transform_value_scope(Arena *a, Atom *expression,
                                        const Bindings *bindings,
                                        bool materialize) {
@@ -28151,6 +28241,9 @@ static Atom *eval_transform_lower_run(Space *s, Arena *a, Atom *atom, int fuel,
         .evaluate = he ? eval_transform_evaluate_he : eval_transform_evaluate,
         .evaluate_bound = he ? NULL : eval_transform_evaluate_bound,
         .guard_filter = he ? NULL : eval_transform_guard_filter,
+        .equation_check = he ? eval_transform_equation_check : NULL,
+        .equation_value = he ? eval_transform_equation_value : NULL,
+        .decide_firing = he ? cetta_transform_tcalc_decide : NULL,
         .spend = g_eval_completion_tracker && g_eval_completion_tracker->budget_limited
             ? eval_transform_spend : NULL,
     };
@@ -28344,6 +28437,9 @@ bool cetta_eval_transform_first(Space *space, Arena *a, Atom *call,
         .evaluate = he ? eval_transform_evaluate_he : eval_transform_evaluate,
         .evaluate_bound = he ? NULL : eval_transform_evaluate_bound,
         .guard_filter = he ? NULL : eval_transform_guard_filter,
+        .equation_check = he ? eval_transform_equation_check : NULL,
+        .equation_value = he ? eval_transform_equation_value : NULL,
+        .decide_firing = he ? cetta_transform_tcalc_decide : NULL,
         .spend = g_eval_completion_tracker && g_eval_completion_tracker->budget_limited
             ? eval_transform_spend : NULL,
     };
@@ -28552,6 +28648,9 @@ static bool eval_try_transform_fire(Space *s, Arena *a, Atom *atom, int fuel,
         .evaluate = he ? eval_transform_evaluate_he : eval_transform_evaluate,
         .evaluate_bound = he ? NULL : eval_transform_evaluate_bound,
         .guard_filter = he ? NULL : eval_transform_guard_filter,
+        .equation_check = he ? eval_transform_equation_check : NULL,
+        .equation_value = he ? eval_transform_equation_value : NULL,
+        .decide_firing = he ? cetta_transform_tcalc_decide : NULL,
         .spend = g_eval_completion_tracker && g_eval_completion_tracker->budget_limited
             ? eval_transform_spend : NULL,
     };

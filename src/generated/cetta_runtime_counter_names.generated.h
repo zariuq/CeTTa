@@ -1170,6 +1170,16 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
   [CETTA_RUNTIME_COUNTER_SPACE_ENTRY_JOURNAL_WRITE] = "space-entry-journal-write",
   [CETTA_RUNTIME_COUNTER_SPACE_ENTRY_CORRECTED_READ] = "space-entry-corrected-read",
   [CETTA_RUNTIME_COUNTER_SPACE_ENTRY_LOST] = "space-entry-lost",
+  [CETTA_RUNTIME_COUNTER_TRANSFORM_DIRECT_FIRING] = "transform-direct-firing",
+  [CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_DECISION] = "transform-tcalc-decision",
+  [CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_FIRING] = "transform-tcalc-firing",
+  [CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_FALLBACK] = "transform-tcalc-fallback",
+  [CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_REJECTED] = "transform-tcalc-rejected",
+  [CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_SCAN_ROW] = "transform-tcalc-scan-row",
+  [CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_IMPORT_ROW] = "transform-tcalc-import-row",
+  [CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_LOWERED_NODE] = "transform-tcalc-lowered-node",
+  [CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_CODE_HIT] = "transform-tcalc-code-hit",
+  [CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_CODE_MISS] = "transform-tcalc-code-miss",
 };
 
 #endif

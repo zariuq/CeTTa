@@ -817,6 +817,7 @@ SRC = src/symbol.c src/scalar_trie.c src/atom.c src/state_cell.c src/term_graph.
 SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presentation.c src/run_guard.c
 SRC += src/library_proc.c
 SRC += src/library_fs.c
+SRC += src/transform_tcalc.c
 SRC += src/petta_priority_heap.c
 SRC += src/library_provenance.c native/provenance/prov_kernel_v1.c
 SRC += src/native_memory.c src/host_services.c src/library_postings.c src/library_asp.c native/asp/asp_cdnl_v1.c native/asp/asp_hall_v1.c native/support/support_v1.c native/smt/euf_cc_v1.c native/smt/lra_simplex_v1.c native/asp/asp_clingo_v1.c native/asp/sat_ipasir_v1.c src/tensor.c src/tensor_bounds.c src/tensor_screening.c src/library_tensor.c src/library_group.c
@@ -1026,6 +1027,7 @@ endif
 export CETTA_PARENT_BUILD_SIGNATURE := $(BUILD_OBJ_TAG):$(ENABLE_RUNTIME_STATS)
 export CETTA_PARENT_BINARY := $(abspath $(BIN))
 include native/hol_light/build.mk
+include native/tcalc/build.mk
 include native/mm0/build.mk
 RUNTIME_STATS_SECTIONED_OBJ = $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),runtime/bootstrap/runtime_stats_sectioned.$(BUILD_OBJ_TAG).runtime-stats.o,)
 COMPILED_READER_RUNTIME_OBJ = $(patsubst %.c,%.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o,$(COMPILED_READER_RUNTIME_SRC))
@@ -19328,6 +19330,27 @@ test-rhocalc-canonical-selector-differential: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_canonical_selector_differential.py "$(CETTA_SCRIPT_BIN)"
 	@CETTA_RHO_STRUCTURAL_KEY_ORACLE=1 $(CETTA_SCRIPT_RUN_ENV) python3 scripts/rhocalc_canonical_selector_differential.py "$(CETTA_SCRIPT_BIN)"
 
+# The rho lane's growable lists are Cesta worklists declared in
+# src/rhocalc_lists.export, src/rhocalc_cost_lists.export and
+# src/rhocalc_syntax_lists.export; the runner it shares with tcalc (src/runner.h)
+# has its list in src/runner_lists.export and its schedules in
+# src/runner_axes.export, from lib/runner_axes.data.  The generated
+# headers are checked in, so building needs no Cesta tool; regenerating them,
+# and checking that the checked-in headers are current, uses it.
+RHOCALC_LIST_EXPORTS = rhocalc_lists rhocalc_cost_lists rhocalc_syntax_lists runner_lists runner_axes
+.PHONY: rhocalc-regenerate check-rhocalc-lists-generated
+rhocalc-regenerate: $(CESTA)
+	@set -eu; for n in $(RHOCALC_LIST_EXPORTS); do \
+		(cd src && $(CESTA) export-header $$n.export -o generated/$$n.generated.h); \
+	done; echo "wrote $(foreach n,$(RHOCALC_LIST_EXPORTS),src/generated/$(n).generated.h)"
+check-rhocalc-lists-generated: $(CESTA)
+	@set -eu; work=$$(mktemp -d $(CURDIR)/runtime/rhocalc-lists.XXXXXX); trap 'rm -rf "$$work"' EXIT; \
+	for n in $(RHOCALC_LIST_EXPORTS); do \
+		(cd src && $(CESTA) export-header $$n.export -o "$$work/$$n.generated.h"); \
+		cmp -s "$$work/$$n.generated.h" src/generated/$$n.generated.h || \
+			{ echo "FAIL: src/generated/$$n.generated.h is not what src/$$n.export generates"; exit 1; }; \
+	done; echo "PASS: the rho lane's and the runner's generated headers regenerate byte for byte"
+
 test-rho-examples: $(BIN)
 	@pass=0; fail=0; \
 	for f in examples/rho/pure/*.mrho examples/rho/pure/*.rho; do \
@@ -19465,35 +19488,11 @@ test-rhocalc: $(BIN) test-rhocalc-rhometta-profile test-gslt-rhometta-rhocalc-pr
 .PHONY: test-rhocalc-runtime-fixtures
 test-rhocalc: test-rhocalc-runtime-fixtures
 test-rhocalc-runtime-fixtures: $(BIN)
+	@sh tests/run_fixtures.sh "rhocalc" "$(CETTA_BIN_INVOKE) --lang rhocalc" -- \
+		tests/rhocalc_run/*.mrho tests/rhocalc_run/*.rho
+	@sh tests/run_fixtures.sh "rhocalc, cost profile" "$(CETTA_BIN_INVOKE) --lang rhocalc --profile cost" -- \
+		tests/rhocalc_cost_run/*.mrho tests/rhocalc_cost_run/*.rho
 	@pass=0; fail=0; \
-	for f in tests/rhocalc_run/*.mrho tests/rhocalc_run/*.rho; do \
-		[ -f "$$f" ] || continue; \
-		exp="$${f%.*}.expected"; \
-		if [ ! -f "$$exp" ]; then continue; fi; \
-		result=$$($(CETTA_BIN_INVOKE) --lang rhocalc "$$f" 2>&1); \
-		if [ "$$result" = "$$(cat "$$exp")" ]; then \
-			echo "PASS: $$f"; \
-			pass=$$((pass + 1)); \
-		else \
-			echo "FAIL: $$f"; \
-			diff <(cat "$$exp") <(echo "$$result") | head -20; \
-			fail=$$((fail + 1)); \
-		fi; \
-	done; \
-	for f in tests/rhocalc_cost_run/*.mrho tests/rhocalc_cost_run/*.rho; do \
-		[ -f "$$f" ] || continue; \
-		exp="$${f%.*}.expected"; \
-		if [ ! -f "$$exp" ]; then continue; fi; \
-		result=$$($(CETTA_BIN_INVOKE) --lang rhocalc --profile cost "$$f" 2>&1); \
-		if [ "$$result" = "$$(cat "$$exp")" ]; then \
-			echo "PASS: $$f"; \
-			pass=$$((pass + 1)); \
-		else \
-			echo "FAIL: $$f"; \
-			diff <(cat "$$exp") <(echo "$$result") | head -20; \
-			fail=$$((fail + 1)); \
-		fi; \
-	done; \
 	result=$$($(CETTA_BIN_INVOKE) --rho-reduction-limit 4 --lang rhocalc --syntax mrho tests/rhocalc/paper_divergence_self_recreates_h4.mrho 2>&1); \
 	status=$$?; \
 	if [ "$$status" -eq 3 ] && [ "$$result" = "$$(cat tests/rhocalc_run/paper_divergence_self_recreates_reduction_limit.expected)" ]; then \
@@ -32341,6 +32340,25 @@ test-transform-he: $(BIN) lib/lib_transform.metta tests/reference/lib_transform_
 	@test "$$(grep -c '^\[transform\] fired' runtime/test_transform_he_differential.trace)" -ge 600
 	@echo "PASS: transform fires natively in HE as its library does (fixed test, 120 seeded scenarios)"
 
+.PHONY: test-transform-tcalc
+test-transform-tcalc: $(BIN) tests/he/transform_tcalc.metta tests/he/transform_tcalc.expected \
+		tests/he/transform_tcalc_graph.metta tests/he/transform_tcalc_graph.expected
+	@set -eu; for fixture in transform_tcalc transform_tcalc_graph; do \
+	for engine in direct tcalc; do for cache in 0 1; do for reference in 0 1; do \
+		CETTA_TRANSFORM_ENGINE=$$engine CETTA_TRANSFORM_TCALC_CACHE=$$cache CETTA_TRANSFORM_TRACE=1 \
+		CETTA_TRANSFORM_CURSOR_REFERENCE=$$reference CETTA_TRANSFORM_LET_REFERENCE=$$reference \
+			$(call cetta_exec,./$(BIN)) --lang he --profile extended tests/he/$$fixture.metta \
+			> runtime/$$fixture-$$engine-$$cache-$$reference.out 2> runtime/$$fixture-$$engine-$$cache-$$reference.trace; \
+		diff -u tests/he/$$fixture.expected runtime/$$fixture-$$engine-$$cache-$$reference.out; \
+		if test "$$engine" = tcalc; then \
+			grep -q '(engine tcalc)' runtime/$$fixture-$$engine-$$cache-$$reference.trace; \
+			if test "$$fixture" = transform_tcalc; then \
+				grep -q '(engine direct) (requested-engine tcalc)' runtime/$$fixture-$$engine-$$cache-$$reference.trace; \
+			fi; \
+		fi; \
+	done; done; done; done
+	@echo "PASS: HE ports, guards, aliases, mutable cells and publications agree on both engines with code reuse enabled and disabled"
+
 # The authored HE reference runs in plain HE, where native transform is off.
 .PHONY: test-transform-he-boundaries
 test-transform-he: test-transform-he-boundaries
@@ -35336,7 +35354,23 @@ test-he-type-policy: $(BIN) test-he-source-demand-discriminator \
 			--expected tests/he/library_declarations_v1.expected --actual /dev/stdin; \
 	echo 'PASS: HE type demand, interpreter wildcards, the library module and its declarations, and module imports match upstream HE'
 
-test-he-contract-suite: $(BIN) test-he-type-policy test-he-compat-catalog-guards test-he-outcome-list-contracts test-he-nik-typed-applicability-pruning test-eval-in-space-profiles test-he-guarded-equation-plan
+.PHONY: test-he-get-atoms-freshness
+test-he-get-atoms-freshness: $(BIN) tests/he/nil_forward_chainer.metta \
+	tests/he/nil_forward_chainer.expected tests/he/get_atoms_schematic.metta \
+	tests/he/get_atoms_schematic.expected
+	@set -eu; \
+	for profile in he he-compat; do \
+		for route in "" "CETTA_HE_CANONICAL_EXECUTION=0 CETTA_HE_SHARED_EXECUTION=0"; do \
+			for stem in nil_forward_chainer get_atoms_schematic; do \
+				env $$route $(CETTA_BIN_INVOKE) --lang he --profile $$profile tests/he/$$stem.metta \
+					> runtime/$$stem.$$profile.out; \
+				diff -u tests/he/$$stem.expected runtime/$$stem.$$profile.out; \
+			done; \
+		done; \
+	done
+	@echo "PASS: HE stored rows open apart on retrieval, preserve aliases, and support recursive chaining"
+
+test-he-contract-suite: $(BIN) test-he-type-policy test-he-compat-catalog-guards test-he-outcome-list-contracts test-he-nik-typed-applicability-pruning test-eval-in-space-profiles test-he-guarded-equation-plan test-he-get-atoms-freshness
 	@pass=0; fail=0; \
 	files=($(HE_CONTRACT_GENERATED_DIR)/*.metta); \
 	if [ ! -e "$${files[0]}" ]; then \
@@ -46464,7 +46498,7 @@ PETTA_REFERENCE_VOCABULARY_V1 = tests/support/petta_reference_vocabulary_v1.txt
 # The libraries that run on real PeTTa; the remaining native libraries run
 # on the CeTTa host's PeTTa lane, over natives real PeTTa does not have.
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_module lib_tptp json str
-LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) lang list system fs io re postings postings_descriptors tensor tensor_descriptors embedding holkernel mm0kernel
+LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) lang list system fs io re postings postings_descriptors tensor tensor_descriptors embedding holkernel mm0kernel tcalc
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json re holkernel mm0kernel
 .PHONY: test-library-spellings-v1 test-list-prefix-search test-tensor-support
 test-list-prefix-search: $(BIN)

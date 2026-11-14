@@ -30,7 +30,10 @@ typedef struct {
     Reference reference;
     Reference output; bool output_initialized;
 } Variable;
-typedef struct { CeText name; CeType *type; bool write, is_static, nullable; unsigned family; Callback *callback; } FieldSpec;
+/* counted: the field is null or starts one complete buffer of plain-data
+ * elements, which (count NAME) counts (see COUNTED BUFFERS in the interface). */
+typedef struct { CeText name; CeType *type; bool write, is_static, nullable, counted; unsigned family;
+                 Callback *callback; CeText count; } FieldSpec;
 typedef struct { CeType *type; FieldSpec *fields; size_t len; } RecordSpec;
 typedef struct { CeType *type; unsigned family; } Capability;
 typedef struct StoredField {
@@ -69,8 +72,10 @@ struct Function {
     bool result_static, result_nullable; unsigned result_family;
     int *modes, *stores; unsigned *families;
     bool *nullable;
+    bool *buffers;    /* (buffer INDEX): the parameter starts a counted buffer */
     CeText obligation;
     int allocation_count; unsigned release_family;
+    unsigned reallocate_family;   /* the family's reallocation interface: (resize NAME) */
     Reference allowed_result;
     size_t *input_roots, *global_roots;
     bool *global_effects;
@@ -94,10 +99,16 @@ struct Callback {
     Function **implementations;
     size_t nimplementations;
 };
+/* A whole buffer whose storage was released (free) or moved (a reallocation)
+ * and is not yet replaced: nothing may reach it until fresh storage is stored
+ * back (the plan's replace).  LINK is the loan of the storage a reallocation
+ * returned (SIZE_MAX after free): known null, it never moved the storage. */
+typedef struct { size_t root, link; } Suspension;
 typedef struct {
     Variable *variables;
     StoredField *fields;
     Loan *loans; size_t nloans, capacity;
+    Suspension *suspensions; size_t nsuspensions;
     size_t next, scope;
     bool reachable;
 } State;
@@ -124,6 +135,7 @@ typedef struct {
     const CeTree *loop_step;
     State *loop_latch;
     bool *switch_exit;
+    size_t *heap_buffers; size_t nheap_buffers, heap_buffer_cap;   /* this function's dynamic allocations */
 } Ownership;
 typedef struct { Range range; size_t via; bool exact; CeEntity *variable; int output; } Place;
 
@@ -365,15 +377,25 @@ static bool ancestor(Ownership *o, size_t parent, const Loan *child) {
     return false;
 }
 static void range_plan(FILE *file, Range r) { fprintf(file,"%zu %llu %llu",r.root,r.first,r.count); }
-static bool access(Ownership *o, const CeTree *site, size_t via, Range range, bool writing) {
+static bool suspended(Ownership *o, size_t root);
+#define SUSPENDED "the buffer's storage was released or moved: store its fresh storage before reaching it"
+
+/* RANGE may be reached through the loan VIA now; the plan records no event. */
+static bool reachable(Ownership *o, const CeTree *site, size_t via, Range range, bool writing) {
     Loan *l = loan(o,via);
     if (!l || !within(l->range,range)) return fail(o,site,"access has no live loan covering this allocation range");
+    if (suspended(o,range.root)) return fail(o,site,SUSPENDED);
     if (writing && !l->write) return fail(o,site,"write through a shared loan");
     for (size_t i = 0; i < o->state.nloans; ++i) {
         Loan *other = &o->state.loans[i];
         if (!other->live || other->id == via || apart(range,other->range) || ancestor(o,other->id,l)) continue;
         if (writing || other->write) return fail(o,site,"overlapping loan prevents %s access",writing ? "exclusive" : "shared");
     }
+    return true;
+}
+
+static bool access(Ownership *o, const CeTree *site, size_t via, Range range, bool writing) {
+    if (!reachable(o,site,via,range,writing)) return false;
     if (o->plan) {
         fprintf(o->plan," (access %zu ",via); range_plan(o->plan,range);
         fprintf(o->plan," %s)\n",writing ? "write" : "read");
@@ -405,6 +427,60 @@ static size_t whole_root(Ownership *o, bool write) {
     if (o->plan) fprintf(o->plan," (whole-root %zu %s)\n",id,write ? "write" : "read");
     return id;
 }
+/* A counted buffer reached by this function: a (buffer INDEX) parameter, or a
+ * counted field of a record parameter that the function does not take. Its
+ * root is a whole input, as for a view; unlike a view's, its elements are
+ * reached natively, like those of an inline array: a subscript borrows the
+ * whole buffer, and the bounds stay the program's explicit guards. */
+static bool buffer_root_in(const Function *f, size_t root) {
+    if (!f || !root) return false;
+    for (size_t i = 0; i < f->nparameters; ++i)
+        if (f->buffers[i] && f->input_roots[i] == root) return true;
+    for (size_t i = 0; i < f->nfields; ++i)
+        if (f->fields[i].field->counted && !f->fields[i].owning && f->fields[i].input == root) return true;
+    return false;
+}
+/* A dynamic allocation of this function: one logical buffer, owned, whose
+ * elements are reached as a counted buffer's; its extent is the program's. */
+static bool heap_buffer(const Ownership *o, size_t root) {
+    for (size_t i = 0; root && i < o->nheap_buffers; ++i) if (o->heap_buffers[i] == root) return true;
+    return false;
+}
+static void note_heap_buffer(Ownership *o, size_t root) {
+    if (o->nheap_buffers == o->heap_buffer_cap) {
+        size_t cap = o->heap_buffer_cap ? o->heap_buffer_cap*2 : 8;
+        size_t *grown = ce_alloc(o->arena,cap*sizeof(*grown));
+        if (o->nheap_buffers) memcpy(grown,o->heap_buffers,o->nheap_buffers*sizeof(*grown));
+        o->heap_buffers = grown; o->heap_buffer_cap = cap;
+    }
+    o->heap_buffers[o->nheap_buffers++] = root;
+}
+static bool buffer_root(Ownership *o, size_t root) { return buffer_root_in(o->function,root) || heap_buffer(o,root); }
+
+/* The owning counted field whose buffer, a whole input, R reaches: the cell a
+ * replacement of its storage is stored back into.  NULL for anything else. */
+static StoredField *owning_buffer_cell(Ownership *o, Reference r) {
+    if (r.null || !buffer_root_in(o->function,r.range.root)) return NULL;
+    for (StoredField *s = o->state.fields; s; s = s->next)
+        if (s->active && s->spec->counted && s->spec->family && s->value.initialized && !s->value.moved &&
+            !s->value.reference.null && s->value.reference.range.root == r.range.root) return s;
+    return NULL;
+}
+/* Whether contract input SOURCE (a parameter, or a record field part after
+ * the parameters) is received whole: a view or a counted buffer. */
+static bool whole_source(Ownership *o, const Function *f, int source) {
+    size_t declared = f->entity->type->nparameters;
+    if (source < 0) return false;
+    if ((size_t)source < declared) return f->buffers[source] || view(o,f->entity->type->parameters[source]);
+    const FieldPart *part = &f->fields[(size_t)source-declared];
+    return view(o,part->field->type) || (part->field->counted && !part->owning);
+}
+/* A pointer field that receives a whole input must hold it whole: a view or
+ * a counted buffer, never a fixed pointee. */
+static bool whole_destination(Ownership *o, const Function *f, const FieldPost *post) {
+    return !whole_source(o,f,post->source) || view(o,post->field->type) || post->field->counted ||
+        fail(o,f->body,"a pointer field that is not counted cannot hold a whole buffer");
+}
 static bool whole_range(Ownership *o, Range range) {
     Function *f = o->function;
     if (!f || !range.root) return false;
@@ -412,7 +488,14 @@ static bool whole_range(Ownership *o, Range range) {
         if (view(o,f->parameters[i]->type) && f->input_roots[i] == range.root) return true;
     for (size_t i = 0; i < f->nfields; ++i)
         if (view(o,f->fields[i].field->type) && f->fields[i].input == range.root) return true;
-    return false;
+    return buffer_root(o,range.root);
+}
+/* The elements of a counted buffer hold no references, so reaching one
+ * borrows nothing but the buffer itself. */
+static bool plain_elements(Ownership *o, const CeType *element) {
+    return element && ce_type_complete(element) && !ce_type_void(element) &&
+        ce_type_size(o->sema,element) && !ce_type_contains_pointer(element) &&
+        !view(o,element) && !capability(o,element) && !contains_capability(o,element,0);
 }
 static bool borrow(Ownership *o, const CeTree *site, Reference source, bool write, size_t *id) {
     if (source.null) { *id = SIZE_MAX; return true; }
@@ -456,6 +539,10 @@ static State clone(Ownership *o) {
     memcpy(result.variables,o->state.variables,o->sema->nentities*sizeof(*result.variables));
     result.loans = ce_alloc(o->arena,result.capacity*sizeof(*result.loans));
     if (result.nloans) memcpy(result.loans,o->state.loans,result.nloans*sizeof(*result.loans));
+    if (result.nsuspensions) {
+        result.suspensions = ce_alloc(o->arena,result.nsuspensions*sizeof(*result.suspensions));
+        memcpy(result.suspensions,o->state.suspensions,result.nsuspensions*sizeof(*result.suspensions));
+    }
     result.fields = NULL;
     StoredField **tail = &result.fields;
     for (StoredField *f = o->state.fields; f; f = f->next) {
@@ -483,6 +570,14 @@ static bool join(Ownership *o, const CeTree *site, State a, State b) {
     if (!a.reachable || !b.reachable) { o->state = a.reachable ? a : b; o->state.next = next; return true; }
     for (size_t i = 0; i < o->sema->nentities; ++i) {
         Variable *x = &a.variables[i], *y = &b.variables[i];
+        /* An owner known null on one side and not on the other is one nullable
+           owner after the join; both sides still hold its authority. */
+        if (x->declared && y->declared && !x->moved && !y->moved && x->reference.family &&
+            x->reference.family == y->reference.family && x->reference.via == y->reference.via &&
+            x->reference.null != y->reference.null) {
+            x->reference.null = y->reference.null = false;
+            x->reference.nullable = y->reference.nullable = true;
+        }
         if (x->declared != y->declared || (x->declared &&
             (x->initialized != y->initialized || x->moved != y->moved ||
              !same_reference(x->reference,y->reference))))
@@ -521,8 +616,67 @@ static bool join(Ownership *o, const CeTree *site, State a, State b) {
             b.loans[i].id == a.loans[j].id) { found = true; break; }
         if (!found) return fail(o,site,"branches or loop backedges disagree on live loans");
     }
+    bool agree = a.nsuspensions == b.nsuspensions;
+    for (size_t i = 0; agree && i < a.nsuspensions; ++i) {
+        bool found = false;
+        for (size_t j = 0; j < b.nsuspensions; ++j)
+            found |= a.suspensions[i].root == b.suspensions[j].root && a.suspensions[i].link == b.suspensions[j].link;
+        agree = found;
+    }
+    if (!agree) return fail(o,site,"branches disagree on a buffer whose storage was released and not replaced");
     o->state = a; o->state.next = next; return true;
 }
+
+static bool suspended(Ownership *o, size_t root) {
+    for (size_t i = 0; i < o->state.nsuspensions; ++i)
+        if (o->state.suspensions[i].root == root) return true;
+    return false;
+}
+
+static void suspend(Ownership *o, size_t root, size_t link) {
+    Suspension *grown = ce_alloc(o->arena,(o->state.nsuspensions+1)*sizeof(*grown));
+    if (o->state.nsuspensions) memcpy(grown,o->state.suspensions,o->state.nsuspensions*sizeof(*grown));
+    grown[o->state.nsuspensions++] = (Suspension){root,link};
+    o->state.suspensions = grown;
+}
+
+/* The buffer ROOT is replaced, or a reallocation holding it (LINK) is known
+ * null, so it never moved: the suspension ends, and the plan restores what the
+ * reallocation held. */
+static void resume(Ownership *o, size_t root, size_t link) {
+    size_t kept = 0;
+    for (size_t i = 0; i < o->state.nsuspensions; ++i) {
+        Suspension s = o->state.suspensions[i];
+        if (root != SIZE_MAX && s.root == root) continue;
+        if (link != SIZE_MAX && s.link == link) {
+            if (o->plan) fprintf(o->plan," (restore %zu)\n",s.root);
+            continue;
+        }
+        o->state.suspensions[kept++] = s;
+    }
+    o->state.nsuspensions = kept;
+}
+/* A null owner owns nothing, at a join too: where the OTHER arm moved an owner
+ * that ARM knows to be null, ARM discharges it (its plan TEXT ends the loan and
+ * releases the authority), so that both arms agree nothing is owned. */
+static bool discharge_null_owners(Ownership *o, const CeTree *site, State *arm, const State *other,
+                                  FILE *text) {
+    State saved = o->state; FILE *plan = o->plan;
+    o->state = *arm; o->plan = text;
+    bool ok = true;
+    for (size_t i = 0; ok && i < o->sema->nentities; ++i) {
+        Variable *v = &o->state.variables[i]; const Variable *w = &other->variables[i];
+        if (!v->declared || !w->declared || v->moved || !w->moved || !v->initialized ||
+            !v->reference.null || !v->reference.family || v->reference.via == SIZE_MAX) continue;
+        size_t via = v->reference.via; unsigned family = v->reference.family;
+        if (!(ok = end(o,site,via))) break;
+        if (o->plan) fprintf(o->plan," (null-owner %zu %u)\n",via,family);
+        v->moved = true; v->reference = w->reference;
+    }
+    *arm = o->state; o->state = saved; o->plan = plan;
+    return ok;
+}
+
 static bool loop_nullability(Ownership *o, const CeTree *site, State entry, State backedge) {
     if (!backedge.reachable) return true;
     for (size_t i = 0; i < o->sema->nentities; ++i) {
@@ -684,6 +838,30 @@ static bool pointer_binding(Ownership *o, const CeTree *site, CeEntity *e, Refer
         return fail(o,site,"reference-bearing storage cannot lose its typed lifetime interface");
     StoredField *stored = stored_id(o,e->id);
     bool write = !reference_read_only(o,e->type);
+    if (stored && stored->value.initialized && !stored->value.moved && !stored->value.reference.null &&
+        suspended(o,stored->value.reference.range.root) && !source.null && source.family &&
+        source.family == stored->spec->family) {
+        /* Fresh storage for a buffer whose storage was released or moved: the
+           buffer keeps its identity (the cell keeps it), and the fresh
+           allocation's sole release authority is consumed (Lean's replace).
+           Nothing may borrow the fresh allocation, and the buffer is reached
+           exclusively, as its whole. */
+        Reference w = stored->value.reference;
+        Loan *fresh = loan(o,source.via);
+        if (!fresh || fresh->family != source.family)
+            return fail(o,site,"replacement storage needs its own release authority");
+        for (size_t i = 0; i < o->state.nloans; ++i)
+            if (o->state.loans[i].live && ancestor(o,fresh->id,&o->state.loans[i]))
+                return fail(o,site,"cannot replace a buffer's storage with storage that is borrowed");
+        /* the plan's replace checks this exclusive access itself */
+        resume(o,w.range.root,SIZE_MAX);
+        if (!reachable(o,site,w.via,w.range,true)) return false;
+        fresh->live = false;
+        if (o->plan) fprintf(o->plan," (replace %zu %zu %u)\n",w.via,source.via,source.family);
+        Variable *owner = binding_id(o,source.owner);
+        if (owner) { owner->moved = true; owner->reference.family = 0; }
+        return true;
+    }
     if (stored) {
         FieldSpec *spec = stored->spec;
         if (spec->callback && !callback_accepts(o,spec->callback,source))
@@ -813,7 +991,8 @@ static void call_argument_plan(Ownership *o, Function *f, const CeTree *argument
         (index < ft->nparameters && reference_type(o,ft->parameters[index]));
     if (!is_pointer) fputs(" (value)",o->plan);
     else if (index == 0 && f->release_family) {
-        if (reference.null) fputs(" (null)",o->plan);
+        /* an owner known null still holds its authority: released as an owner */
+        if (reference.null && !reference.family) fputs(" (null)",o->plan);
         else fprintf(o->plan," (released %zu)",reference.via);
     } else if (index < ft->nparameters && f->modes[index] == 2)
         fprintf(o->plan," (owned %zu)",reference.via);
@@ -876,6 +1055,7 @@ static bool call_with_record(Ownership *o, const CeTree *t, Reference *out, cons
 
 static bool call_target(Ownership *o, const CeTree *t, Reference *out,
                         const Place *result_place, Function *f, size_t callee_guard) {
+    size_t suspensions_before = o->state.nsuspensions;   /* a reallocation's own, linked to its result */
     const CeTree *args = t->children[1];
     const CeTree *list = kind(o,args) == CE_K_Arguments ? args->children[0] : NULL;
     size_t count = list ? list->len : 0;
@@ -909,7 +1089,7 @@ static bool call_target(Ownership *o, const CeTree *t, Reference *out,
             ((f->modes[i] == 2 && f->families[i] == opaque->family) || f->release_family == opaque->family);
         if (opaque && (!pointer(parameter) || capability(o,parameter->base) != opaque) && !consumes_opaque)
             return fail(o,arg,"opaque capability cannot bypass its typed interface");
-        if (pointer(at->type) && pointer(parameter) && parameter->base->kind == CE_T_VOID &&
+        if (pointer(at->type) && pointer(parameter) && parameter->base->kind == CE_T_VOID && !refs[i].null &&
             (reference_record(object_type,0) || reference_storage(o,refs[i].range)) && !consumes_opaque &&
             !(f->release_family && refs[i].family == f->release_family))
             return fail(o,arg,"reference-bearing storage cannot be erased through a void pointer interface");
@@ -943,15 +1123,46 @@ static bool call_target(Ownership *o, const CeTree *t, Reference *out,
         bool is_pointer = reference_type(o,at->type) || at->type->kind == CE_T_ARRAY ||
             (i < ft->nparameters && reference_type(o,ft->parameters[i]));
         if (!is_pointer) continue;
-        if (whole_range(o,refs[i].range) && (i >= ft->nparameters || !view(o,ft->parameters[i])))
+        if (whole_range(o,refs[i].range) &&
+            !(i == 0 && f->release_family && (heap_buffer(o,refs[i].range.root) || owning_buffer_cell(o,refs[i]))) &&
+            (i >= ft->nparameters || !(view(o,ft->parameters[i]) || f->buffers[i])))
             return fail(o,arg,"whole dynamic spans require a view parameter; a fixed pointee cannot establish their bounds");
+        if (i < ft->nparameters && f->stores[i] == -4) {
+            /* A growth may move the buffer: it is exclusively the callee's for
+               the call, so no pointer into it may be live across the call. */
+            StoredField *cell = NULL;
+            for (StoredField *s = o->state.fields; s && !cell; s = s->next)
+                if (s->active && s->storage.root == refs[i].range.root &&
+                    s->storage.first == refs[i].range.first && s->storage.count == refs[i].range.count) cell = s;
+            if (!cell || !cell->spec->counted)
+                return fail(o,arg,"grows requires the address of a counted buffer field");
+            Reference b = cell->value.reference;
+            if (!cell->value.initialized || cell->value.moved || b.null || !buffer_root(o,b.range.root))
+                return fail(o,arg,"growing a buffer needs its whole input root");
+            if (!access(o,arg,b.via,b.range,true)) return false;
+        }
         if (i < ft->nparameters && f->foreign && !f->release_family &&
             pointer(ft->parameters[i]) && pointer(ft->parameters[i]->base) &&
             !read_only(ft->parameters[i]) && f->stores[i] == -1)
             return fail(o,arg,"native pointer output requires a stores or preserves lifetime contract");
         if (i == 0 && f->release_family) {
             Reference r = refs[i];
-            if (r.null) continue;
+            if (r.null && !r.family) continue;   /* a plain null releases nothing */
+            StoredField *cell = owning_buffer_cell(o,r);
+            if (cell && cell->spec->family == f->release_family) {
+                /* The storage of a whole buffer held for writing, released to
+                   be replaced: no pointer into it may be live now, and nothing
+                   reaches it until fresh storage is stored back (the plan's
+                   replace) or a reallocation that moved nothing restores it.
+                   The plan vacates the input, which checks this exclusive
+                   access itself, and passes its storage to the call as
+                   released. */
+                if (!reachable(o,arg,r.via,r.range,true)) return false;
+                suspend(o,r.range.root,SIZE_MAX);
+                if (o->plan) fprintf(o->plan," (vacate %zu %u)\n",r.range.root,f->release_family);
+                refs[i] = (Reference){.via=r.range.root,.family=f->release_family};
+                continue;
+            }
             Loan *l = loan(o,r.via);
             if (r.family != f->release_family || !l || l->family != r.family)
                 return fail(o,arg,"release requires an owner from the matching allocator family");
@@ -966,7 +1177,7 @@ static bool call_target(Ownership *o, const CeTree *t, Reference *out,
             if (!checked_reference(o,arg,refs[i],!f->nullable[i])) return false;
             continue;
         }
-        if (i < ft->nparameters && pointer(ft->parameters[i]) &&
+        if (i < ft->nparameters && pointer(ft->parameters[i]) && !f->buffers[i] &&
             ce_type_size(o->sema,ft->parameters[i]->base) > refs[i].range.count)
             return fail(o,arg,"argument extent is smaller than the callee's complete pointee");
         if (i < ft->nparameters && f->modes[i] == 2) {
@@ -996,8 +1207,19 @@ static bool call_target(Ownership *o, const CeTree *t, Reference *out,
         FieldPart *part = &f->fields[i]; Reference r = field_refs[i];
         if (part->field->callback && !callback_accepts(o,part->field->callback,r))
             return fail(o,t,"callback field requires an admitted implementation");
-        if (whole_range(o,r.range) && !view(o,part->field->type))
+        if (whole_range(o,r.range) && !view(o,part->field->type) && !(part->field->counted && !part->owning))
             return fail(o,t,"whole dynamic spans cannot satisfy fixed-pointee record field contracts");
+        /* A callee that may grow an owning buffer can give it a new
+           allocation; only a caller that holds the buffer as a whole input,
+           never as its own allocation or null, keeps a model that remains
+           true across the call. Creating the buffer stays with its owner. */
+        if (part->field->counted && !part->owning && part->writing && part->field->family &&
+            (r.null || !buffer_root(o,r.range.root)))
+            return fail(o,t,"a counted buffer the callee may grow must be a whole input of the caller");
+        /* The callee receives a counted buffer as a whole input, which is a
+           loan and never null. */
+        if (part->field->counted && !part->owning && r.null)
+            return fail(o,t,"a counted buffer passed in a record must exist; it is null here");
         if (r.null) {
             if (!part->field->nullable) return fail(o,t,"null record field violates the call contract");
             if (part->owning && r.owner) binding_id(o,r.owner)->moved = true;
@@ -1116,14 +1338,33 @@ static bool call_target(Ownership *o, const CeTree *t, Reference *out,
     if (reference_type(o,ft->base)) {
         if (f->result_family) {
             unsigned long long count = ce_type_size(o->sema,ft->base->base);
+            bool dynamic = false;
             if (f->allocation_count >= 0) {
                 const CeExpr *size = typed(o,list->children[f->allocation_count]);
-                if (!size->constant) return fail(o,t,"dynamic allocation extent requires a checked byte view");
-                count = (unsigned long long)size->value;
+                if (size->constant) count = (unsigned long long)size->value; else dynamic = true;
+            } else if (f->allocation_count == -2) {   /* a count of elements of a size */
+                const CeExpr *n = typed(o,list->children[0]), *size = typed(o,list->children[1]);
+                if (n->constant && size->constant) {
+                    if (size->value && (unsigned long long)n->value > ~0ULL / (unsigned long long)size->value)
+                        return fail(o,t,"allocation extent overflows");
+                    count = (unsigned long long)n->value * (unsigned long long)size->value;
+                } else dynamic = true;
             }
-            if (!count) return fail(o,t,"owned result requires a nonempty declared extent");
-            size_t id = root(o,count,true,"heap",f->result_family);
-            *out = (Reference){{id,0,count},id,true,false,f->result_nullable,f->result_family,0,0,NULL,NULL};
+            if (dynamic) {
+                /* A dynamic extent is one logical buffer: an owned unit whose
+                   elements are reached as a counted buffer's are. */
+                size_t id = root(o,1,true,"heap",f->result_family);
+                note_heap_buffer(o,id);
+                *out = (Reference){{id,0,1},id,true,false,f->result_nullable,f->result_family,0,0,NULL,NULL};
+            } else {
+                if (!count) return fail(o,t,"owned result requires a nonempty declared extent");
+                size_t id = root(o,count,true,"heap",f->result_family);
+                *out = (Reference){{id,0,count},id,true,false,f->result_nullable,f->result_family,0,0,NULL,NULL};
+            }
+            /* a reallocation: the buffer it suspended moved into this storage,
+               unless this is known null */
+            if (f->reallocate_family && o->state.nsuspensions == suspensions_before + 1)
+                o->state.suspensions[suspensions_before].link = out->via;
         }
         else if (f->result_static) *out = static_reference(f->result_nullable);
         else if (f->result_from >= 0) {
@@ -1142,6 +1383,18 @@ static bool call_target(Ownership *o, const CeTree *t, Reference *out,
 
 static bool call(Ownership *o, const CeTree *t, Reference *out) {
     return call_with_record(o,t,out,NULL);
+}
+
+/* A null owner owns nothing. On the edge where an allocation is known to be
+ * null, the owner keeps its authority (joins with the non-null edge stay in
+ * agreement), and where it would leave scope still known null, the plan
+ * discharges that authority instead of reporting a leak (scope_exit). */
+static void null_owner(Ownership *o, Variable *v) {
+    if (v->initialized && !v->moved && v->reference.family && !v->reference.null &&
+        v->reference.nullable && v->reference.via != SIZE_MAX) {
+        v->reference.null = true;
+        resume(o,SIZE_MAX,v->reference.via);   /* a failed reallocation moved nothing */
+    }
 }
 
 static void refine(Ownership *o, const CeTree *condition, bool truth) {
@@ -1170,7 +1423,18 @@ static void refine(Ownership *o, const CeTree *condition, bool truth) {
             Variable *v = binding_id(o,p.variable->id);
             if (v && v->initialized && !v->moved) { v->reference.null = false; v->reference.nullable = false; }
         }
+    } else if (!truth && e && pointer(e->type) && o->state.variables[e->id-1].declared) {
+        null_owner(o,&o->state.variables[e->id-1]);
     }
+}
+
+/* A loop's exit edge has no plan text of its own, so a reallocation found null
+ * there cannot record the restore of the buffer it held. */
+static bool exit_refine(Ownership *o, const CeTree *site, const CeTree *condition) {
+    size_t held = o->state.nsuspensions;
+    refine(o,condition,false);
+    return o->state.nsuspensions == held ||
+        fail(o,site,"a loop condition tests a reallocation's result; test it with if, whose null edge restores the buffer");
 }
 
 /* The guard is evaluated anew each iteration. A pointer tested by that guard
@@ -1691,7 +1955,16 @@ static bool expression(Ownership *o, const CeTree *t, Reference *out) {
     if (k >= CE_K_Multiply && k <= CE_K_BitOr) {
         Reference a, b;
         if (!expression(o,t->children[0],&a) || !expression(o,t->children[1],&b)) return false;
-        if (pointer(type->type)) return fail(o,t,"pointer arithmetic requires a bounded view");
+        if (pointer(type->type)) {
+            /* An offset into a counted buffer stays a reference to the whole
+               buffer; its bounds are the program's explicit guards. */
+            const Reference *into = pointer(typed(o,t->children[0])->type) ? &a : &b;
+            if (into->null || !buffer_root(o,into->range.root))
+                return fail(o,t,"pointer arithmetic requires a bounded view");
+            if (!checked_reference(o,t,*into,false)) return false;
+            *out = *into;
+            return true;
+        }
         return true;
     }
     return fail(o,t,"unsupported expression in a checked ownership body (kind %u)",k);
@@ -1765,9 +2038,14 @@ static bool place(Ownership *o, const CeTree *t, Place *out) {
     }
     if (k == CE_K_Indirection || k == CE_K_PointerMember) {
         Reference r;
-        if (!expression(o,t->children[0],&r) || !checked_reference(o,t,r,true)) return false;
-        if (whole_range(o,r.range)) return fail(o,t,"dereferencing a dynamic span needs a checked bounded operation");
-        Place base = {r.range,r.via,r.exact,NULL,-1};
+        if (!expression(o,t->children[0],&r)) return false;
+        bool buffer = !r.null && buffer_root(o,r.range.root);
+        if (!checked_reference(o,t,r,!buffer)) return false;
+        if (whole_range(o,r.range) && !buffer) return fail(o,t,"dereferencing a dynamic span needs a checked bounded operation");
+        if (buffer && heap_buffer(o,r.range.root) && !plain_elements(o,typed(o,t->children[0])->type->base))
+            return fail(o,t,"the elements of a dynamic allocation must be plain data");
+        /* An element of a counted buffer: the place is the whole buffer. */
+        Place base = {r.range,r.via,r.exact && !buffer,NULL,-1};
         if (k == CE_K_Indirection) {
             *out = base;
             /* An output parameter's slot is an independently checked place. */
@@ -1792,13 +2070,27 @@ static bool place(Ownership *o, const CeTree *t, Place *out) {
         Place p;
         if (bt->type->kind == CE_T_ARRAY) {
             if (!place(o,base,&p)) return false;
-        } else {
-            if (!it->constant) return fail(o,t,"dynamic pointer subscript requires a checked bounded view");
+        } else if (!it->constant) {
+            /* Only a counted buffer is indexed by a dynamic subscript; as for
+               an inline array, the subscript borrows the whole buffer. */
             Reference r;
-            if (!expression(o,base,&r) || !checked_reference(o,t,r,true)) return false;
-            if (whole_range(o,r.range)) return fail(o,t,"indexing a dynamic span needs a checked bounded operation");
-            p = (Place){r.range,r.via,r.exact,NULL,-1};
-            if (!p.exact && it->value != 0)
+            if (!expression(o,base,&r)) return false;
+            if (r.null || !buffer_root(o,r.range.root))
+                return fail(o,t,"dynamic pointer subscript requires a checked bounded view");
+            /* a counted buffer is null only while its count is zero, which
+               the program's guard on the index excludes */
+            if (!checked_reference(o,t,r,false)) return false;
+            if (heap_buffer(o,r.range.root) && !plain_elements(o,typed(o,t)->type))
+                return fail(o,t,"the elements of a dynamic allocation must be plain data");
+            p = (Place){r.range,r.via,false,NULL,-1};
+        } else {
+            Reference r;
+            if (!expression(o,base,&r)) return false;
+            bool buffer = !r.null && buffer_root(o,r.range.root);
+            if (!checked_reference(o,t,r,!buffer)) return false;
+            if (whole_range(o,r.range) && !buffer) return fail(o,t,"indexing a dynamic span needs a checked bounded operation");
+            p = (Place){r.range,r.via,r.exact && !buffer,NULL,-1};
+            if (!p.exact && it->value != 0 && !buffer)
                 return fail(o,t,"interior reference has no precise remaining extent; use a bounded view");
         }
         Reference ignored;
@@ -1842,7 +2134,14 @@ static bool cleanup(Ownership *o, const CeTree *site, size_t scope) {
         Variable *v = &o->state.variables[n-1];
         if (!v->declared || v->scope < scope) continue;
         if (v->immortal) { v->declared = false; continue; }
-        if (v->reference.family && !v->moved) return fail(o,site,"owned allocation leaves scope without release or transfer");
+        if (v->reference.family && !v->moved) {
+            if (!v->reference.null) return fail(o,site,"owned allocation leaves scope without release or transfer");
+            /* known null: nothing was allocated, so its authority is discharged */
+            size_t via = v->reference.via; unsigned family = v->reference.family;
+            if (!end(o,site,via)) return false;
+            if (o->plan) fprintf(o->plan," (null-owner %zu %u)\n",via,family);
+            v->reference = (Reference){.null=true,.via=SIZE_MAX};
+        }
         if (!v->moved && v->initialized && v->reference.via != SIZE_MAX && v->reference.via != 0 &&
             !end(o,site,v->reference.via)) return false;
         if (!end(o,site,v->slot)) return false;
@@ -1985,6 +2284,8 @@ static bool return_statement(Ownership *o, const CeTree *t) {
     if (f->nresults) {
         if (!return_record(o,t,t->children[0])) return false;
     } else if (!expression(o,t->children[0],&r)) return false;
+    if (o->state.nsuspensions)
+        return fail(o,t,"a buffer's storage was released or moved and not replaced before this return");
     for (size_t i = 0; i < f->nparameters; ++i)
         if (f->stores[i] >= -2 && f->stores[i] != -1 && !o->state.variables[f->parameters[i]->id-1].output_initialized)
             return fail(o,t,"output lifetime contract must be established on every return path");
@@ -2144,9 +2445,9 @@ static bool do_statement(Ownership *o, const CeTree *t) {
         ok=expression(o,condition,&ignored);
         if (ok) {
             State tested=clone(o);
-            refine(o,condition,false); after=clone(o);
+            ok=exit_refine(o,t,condition); after=clone(o);
             o->state=tested; refine(o,condition,true);
-            if (repeats) {
+            if (ok && repeats) {
                 entry=clone(o); latch=(State){.reachable=false};
                 State repeated_breaks={.reachable=false}; o->loop_exits=&repeated_breaks;
                 if (o->plan) fputs(" (loop (iteration (first\n",o->plan);
@@ -2159,8 +2460,7 @@ static bool do_statement(Ownership *o, const CeTree *t) {
                     ok=expression(o,condition,&ignored);
                     if (ok) {
                         State back=clone(o);
-                        refine(o,condition,false);
-                        ok=join(o,t,clone_from(o,after),clone(o));
+                        ok=exit_refine(o,t,condition) && join(o,t,clone_from(o,after),clone(o));
                         if (ok) after=clone(o);
                         o->state=back; refine(o,condition,true); back=clone(o);
                         if (ok) ok=loop_nullability(o,t,entry,back) && join(o,t,clone_from(o,entry),back);
@@ -2259,16 +2559,37 @@ static bool statement(Ownership *o, const CeTree *raw) {
     if (k == CE_K_If || k == CE_K_IfElse) {
         if (!expression(o,t->children[0],&ignored)) return false;
         State start = clone(o);
-        if (o->plan) fputs(" (branch (then\n",o->plan);
+        /* each arm's plan is kept apart until the join, which may discharge a
+           null owner in one arm (discharge_null_owners) */
+        FILE *outer = o->plan, *arm[2] = {NULL, NULL};
+        char *text[2] = {NULL, NULL}; size_t length[2] = {0, 0};
+        bool ok = true;
+        for (int a = 0; outer && ok && a < 2; a++) ok = (arm[a] = open_memstream(&text[a],&length[a])) != NULL;
+        if (!ok) {
+            for (int a = 0; a < 2; a++) if (arm[a]) fclose(arm[a]);
+            free(text[0]); free(text[1]);
+            return fail(o,t,"cannot allocate ownership plan");
+        }
+        State left = {0}, right = {0};
+        o->plan = arm[0];
         refine(o,t->children[0],true);
-        if (!statement(o,t->children[1])) return false;
-        State left = clone(o); o->state = start;
-        if (o->plan) fputs(" ) (else\n",o->plan);
-        refine(o,t->children[0],false);
-        if (k == CE_K_IfElse && !statement(o,t->children[2])) return false;
-        State right = clone(o);
-        if (o->plan) fputs(" ))\n",o->plan);
-        return join(o,t,left,right);
+        if ((ok = statement(o,t->children[1]))) {
+            left = clone(o); o->state = start; o->plan = arm[1];
+            refine(o,t->children[0],false);
+            ok = k != CE_K_IfElse || statement(o,t->children[2]);
+            if (ok) right = clone(o);
+        }
+        if (ok && left.reachable && right.reachable)
+            ok = discharge_null_owners(o,t,&left,&right,arm[0]) && discharge_null_owners(o,t,&right,&left,arm[1]);
+        o->plan = outer;
+        for (int a = 0; a < 2; a++) if (arm[a]) fclose(arm[a]);
+        if (ok && outer) {
+            fputs(" (branch (then\n",outer); if (length[0]) fwrite(text[0],1,length[0],outer);
+            fputs(" ) (else\n",outer); if (length[1]) fwrite(text[1],1,length[1],outer);
+            fputs(" ))\n",outer);
+        }
+        free(text[0]); free(text[1]);
+        return ok && join(o,t,left,right);
     }
     if (k == CE_K_While || k == CE_K_For || k == CE_K_ForDeclaration) {
         size_t scope = ++o->state.scope;
@@ -2287,7 +2608,7 @@ static bool statement(Ownership *o, const CeTree *raw) {
         if (!expression(o,condition,&ignored)) return false;
         State evaluated = o->state, condition_exit = clone(o);
         o->state = condition_exit;
-        refine(o,condition,false);
+        if (!exit_refine(o,t,condition)) return false;
         condition_exit = clone(o);
         o->state = evaluated;
         refine(o,condition,true);
@@ -2442,7 +2763,7 @@ static bool resolve_post_origin(Ownership *o, Function *f, FieldPost *post) {
             return fail(o,f->body,"whole-view result has incompatible elements or access rights");
         if (post->source < 0 && view(o,post->field->type))
             return fail(o,f->body,"whole-view results require an explicit input extent");
-        return true;
+        return whole_destination(o,f,post);
     }
     FieldSpec *field; unsigned long long offset;
     if (!reference_field_path(o,f->entity->type->parameters[post->source]->base,
@@ -2455,7 +2776,7 @@ static bool resolve_post_origin(Ownership *o, Function *f, FieldPost *post) {
             if (view(o,post->field->type) && !view_origin_compatible(o,post->field->type,field->type))
                 return fail(o,f->body,"whole-view field result has incompatible elements or access rights");
             post->source = field->is_static ? -2 : (int)(f->entity->type->nparameters+k);
-            return true;
+            return whole_destination(o,f,post);
         }
     return fail(o,f->body,"stored reference origin is absent from the parameter interface");
 }
@@ -2521,6 +2842,7 @@ static bool signature(Ownership *o, Function *f, const CeAtom *spec) {
                 !reference_type(o,f->entity->type->parameters[index]) || part->items[2]->kind != CE_ATOM_SYMBOL)
                 return malformed(o,part,"owns requires a pointer parameter index and allocator family");
             if (f->families[index]) return malformed(o,part,"duplicate owner parameter contract");
+            if (f->buffers[index]) return malformed(o,part,"an owned buffer parameter needs an allocation-extent contract");
             f->modes[index] = 2; f->families[index] = family(o,part->items[2]->text);
             View *v = view(o,f->entity->type->parameters[index]);
             if (v && v->family != f->families[index]) return malformed(o,part,"owned view parameter has a different allocation family");
@@ -2558,11 +2880,34 @@ static bool signature(Ownership *o, Function *f, const CeAtom *spec) {
                 return malformed(o,part,"preserves requires a pointer-to-pointer parameter index");
             if (f->stores[index] != -1) return malformed(o,part,"duplicate or conflicting pointer lifetime effect");
             f->stores[index] = -3;
+        } else if (head(part,"grows") && part->len == 2) {
+            /* The slot holds a counted buffer field; the callee may move the
+               buffer to a larger allocation of the same family. */
+            size_t index;
+            if (!natural(part->items[1],&index) || index >= f->entity->type->nparameters ||
+                !pointer(f->entity->type->parameters[index]) || !pointer(f->entity->type->parameters[index]->base) ||
+                read_only(f->entity->type->parameters[index]))
+                return malformed(o,part,"grows requires an exclusive pointer-to-pointer parameter index");
+            if (f->stores[index] != -1) return malformed(o,part,"duplicate or conflicting pointer lifetime effect");
+            f->stores[index] = -4;
+        } else if (head(part,"buffer") && part->len == 2) {
+            size_t index;
+            /* void: a buffer of bytes, as memset and memcmp take */
+            if (!natural(part->items[1],&index) || index >= f->entity->type->nparameters ||
+                !pointer(f->entity->type->parameters[index]) || view(o,f->entity->type->parameters[index]) ||
+                !(ce_type_void(f->entity->type->parameters[index]->base) ||
+                  plain_elements(o,f->entity->type->parameters[index]->base)))
+                return malformed(o,part,"buffer requires a pointer parameter to plain-data elements");
+            /* A whole input is a loan, never null: the admitted signatures
+               have no optional whole input. */
+            if (f->buffers[index] || f->families[index] || f->callbacks[index] || f->nullable[index])
+                return malformed(o,part,"duplicate or conflicting buffer parameter contract");
+            f->buffers[index] = true;
         } else if (head(part,"nullable") && part->len == 2) {
             size_t index;
             if (!natural(part->items[1],&index) || index >= f->entity->type->nparameters ||
-                !pointer(f->entity->type->parameters[index]) || f->nullable[index])
-                return malformed(o,part,"nullable requires a distinct pointer parameter index");
+                !pointer(f->entity->type->parameters[index]) || f->nullable[index] || f->buffers[index])
+                return malformed(o,part,"nullable requires a distinct pointer parameter index that is not a buffer");
             f->nullable[index] = true;
         } else if ((head(part,"stores-record") && part->len >= 3) || (head(part,"returns-record") && part->len >= 2)) {
             bool returned = head(part,"returns-record");
@@ -2691,6 +3036,7 @@ static bool record_parts(Ownership *o, Function *f, size_t parameter, CeType *ty
 
 static bool function_body(Ownership *o, Function *f) {
     o->function = f;
+    o->nheap_buffers = 0;   /* root names are per function */
     if (record_spec(o,f->entity->type->base) && !f->nresults)
         return fail(o,f->body,"reference-record results require field result contracts");
     o->state = (State){.next=1,.reachable=true};
@@ -2717,6 +3063,10 @@ static bool function_body(Ownership *o, Function *f) {
         v->slot = root(o,ce_type_size(o->sema,e->type),!(e->type->qualifiers & CE_Q_CONST),"local",0);
         if (f->callbacks[i]) {
             v->reference = static_reference(f->nullable[i]); v->reference.callback = f->callbacks[i];
+        } else if (f->buffers[i]) {   /* a whole, possibly empty, buffer */
+            size_t id = whole_root(o,!read_only(e->type));
+            f->input_roots[i] = id;
+            v->reference = (Reference){{id,0,1},id,true,false,false,0,0,0,NULL,NULL};
         } else if (pointer(e->type)) {
             unsigned long long size = ce_type_size(o->sema,e->type->base);
             if (!size) return fail(o,e->declaration,"pointer parameter requires a complete pointee or a byte view");
@@ -2744,13 +3094,16 @@ static bool function_body(Ownership *o, Function *f) {
             cell->value.reference.callback = part->field->callback;
         }
         else {
-            bool whole = view(o,part->field->type) != NULL;
+            /* A counted buffer the function does not take is a whole input:
+               its elements are reached by the program's explicit guards. */
+            bool buffer = part->field->counted && !part->owning;
+            bool whole = view(o,part->field->type) != NULL || buffer;
             unsigned long long size = whole ? 1 : ce_type_size(o->sema,part->field->type->base);
             if (!size) return fail(o,f->body,"record field parameter needs a complete target type");
             size_t id = whole ? whole_root(o,part->writing) :
                 root(o,size,part->writing,part->owning ? "heap" : "input",part->owning ? part->field->family : 0);
             part->input = id;
-            cell->value.reference = (Reference){{id,0,size},id,true,false,part->field->nullable,
+            cell->value.reference = (Reference){{id,0,size},id,true,false,part->field->nullable && !buffer,
                 part->owning ? part->field->family : 0,part->owning ? cell->entity.id : 0,0,NULL,NULL};
         }
         cell->value.initialized = true; cell->value.parameter = !part->owning;
@@ -2773,6 +3126,8 @@ static bool function_body(Ownership *o, Function *f) {
         if (!narrow_result(o,f->body,&f->allowed_result,f->entity->type->parameters[f->result_from],f->result_path)) return false;
     }
     if (!block(o,f->body)) return false;
+    if (o->state.reachable && o->state.nsuspensions)
+        return fail(o,f->body,"a buffer's storage was released or moved and not replaced before the function ends");
     if (o->state.reachable) {
         if (!ce_type_void(f->entity->type->base)) return fail(o,f->body,"value function may reach its end without a result");
         for (size_t i = 0; i < f->nparameters; ++i)
@@ -2786,7 +3141,9 @@ static bool function_body(Ownership *o, Function *f) {
 static bool result_description(Ownership *o, Function *f, size_t *input, Range *relative) {
     CeType *parameter = f->entity->type->parameters[f->result_from];
     *input = (size_t)f->result_from;
-    if (view(o,parameter)) { *relative = (Range){0,0,1}; return true; }
+    /* A view, or a pointer into a counted buffer: the result borrows the
+       whole input, one abstract unit, not a byte range of it. */
+    if (view(o,parameter) || f->buffers[f->result_from]) { *relative = (Range){0,0,1}; return true; }
     CeType *type = parameter->base;
     *relative = (Range){0,0,ce_type_size(o->sema,type)};
     if (!f->result_path) return true;
@@ -2804,14 +3161,14 @@ static bool result_description(Ownership *o, Function *f, size_t *input, Range *
         if (reference_type(o,type)) {
             if (followed_pointer) return fail(o,f->body,"result paths through multiple pointer fields require a path contract");
             followed_pointer = true;
-            bool found = false;
+            const FieldPart *found = NULL;
             for (size_t j = 0; j < f->nfields; ++j)
                 if (f->fields[j].parameter == (size_t)f->result_from && f->fields[j].offset == relative->first) {
-                    *input = f->entity->type->nparameters + j; found = true; break;
+                    *input = f->entity->type->nparameters + j; found = &f->fields[j]; break;
                 }
             if (!found) return fail(o,f->body,"returned pointer field has no input contract");
             relative->first = 0;
-            if (view(o,type)) {
+            if (view(o,type) || (found->field->counted && !found->owning)) {
                 if (i+1 != f->result_path->len) return fail(o,f->body,"whole-view result path must stop at the view");
                 relative->count = 1; return true;
             }
@@ -2848,7 +3205,9 @@ static bool write_signature_as(Ownership *o, FILE *destination, Function *f, boo
         CeType *type = ft->parameters[i];
         unsigned long long count = pointer(type) ? ce_type_size(o->sema,type->base) : 0;
         if (i == 0 && f->release_family) {
-            fputs(" (released ",destination); family_out(o,destination,f->release_family,portable); fputc(')',destination);
+            /* a reallocation's source moves to its result unless that is null */
+            fputs(f->reallocate_family ? " (resized " : " (released ",destination);
+            family_out(o,destination,f->release_family,portable); fputc(')',destination);
         } else if (f->families[i]) {
             fprintf(destination," (%s %llu ",f->nullable[i] ? "optional-owned" : "owned",count);
             family_out(o,destination,f->families[i],portable); fputc(')',destination);
@@ -2857,7 +3216,7 @@ static bool write_signature_as(Ownership *o, FILE *destination, Function *f, boo
             fprintf(destination," %s)",f->nullable[i] ? "nullable" : "nonnull");
         }
         else if (f->callbacks[i]) fprintf(destination," (static %s)",f->nullable[i] ? "nullable" : "nonnull");
-        else if (view(o,type)) fprintf(destination," (viewed %s)",reference_read_only(o,type) ? "read" : "write");
+        else if (view(o,type) || f->buffers[i]) fprintf(destination," (viewed %s)",reference_read_only(o,type) ? "read" : "write");
         else if (!pointer(type)) fputs(" (value)",destination);
         else fprintf(destination," (%s %llu %s)",f->nullable[i] ? "optional-borrowed" : "borrowed",count,read_only(type) ? "read" : "write");
     }
@@ -2868,7 +3227,8 @@ static bool write_signature_as(Ownership *o, FILE *destination, Function *f, boo
             fprintf(destination," %s)",part->field->nullable ? "nullable" : "nonnull");
         }
         else if (part->field->is_static) fprintf(destination," (static %s)",part->field->nullable ? "nullable" : "nonnull");
-        else if (view(o,part->field->type)) fprintf(destination," (viewed %s)",part->writing ? "write" : "read");
+        else if (view(o,part->field->type) || (part->field->counted && !part->owning))
+            fprintf(destination," (viewed %s)",part->writing ? "write" : "read");
         else if (part->owning) {
             fprintf(destination," (%s %llu ",part->field->nullable ? "optional-owned" : "owned",
                 ce_type_size(o->sema,part->field->type->base));
@@ -2889,7 +3249,13 @@ static bool write_signature_as(Ownership *o, FILE *destination, Function *f, boo
     else if (f->result_from >= 0) {
         size_t input; Range result;
         if (!result_description(o,f,&input,&result)) return false;
-        if (view(o,ft->base) && view(o,contract_input_type(f,input)))
+        /* A pointer into a counted buffer borrows the whole buffer input. */
+        size_t declared = f->entity->type->nparameters;
+        bool buffer_input = input < declared ? f->buffers[input] :
+            f->fields[input-declared].field->counted && !f->fields[input-declared].owning;
+        if (!view(o,ft->base) && buffer_input && f->result_nullable)
+            return fail(o,f->body,"a pointer into a counted buffer is returned as the whole buffer, which is never null");
+        if ((view(o,ft->base) && view(o,contract_input_type(f,input))) || (!view(o,ft->base) && buffer_input))
             fprintf(destination,"whole-viewed %zu %s",input,reference_read_only(o,ft->base) ? "read" : "write");
         else if (view(o,ft->base)) fprintf(destination,"viewed %zu %llu %llu %s",input,result.first,result.count,
             reference_read_only(o,ft->base) ? "read" : "write");
@@ -2902,7 +3268,8 @@ static bool write_signature_as(Ownership *o, FILE *destination, Function *f, boo
         FieldPost *post = &f->posts[i];
         fprintf(destination," (field %zu (",f->entity->type->nparameters+post->part);
         if (post->source == -2) fprintf(destination,"static %s",post->field->nullable ? "nullable" : "nonnull");
-        else if (view(o,post->field->type)) fprintf(destination,"whole-viewed %d %s",post->source,post->field->write ? "write" : "read");
+        else if (view(o,post->field->type) || whole_source(o,f,post->source))
+            fprintf(destination,"whole-viewed %d %s",post->source,post->field->write ? "write" : "read");
         else fprintf(destination,"borrowed %d 0 %llu %s %s",post->source,
             ce_type_size(o->sema,post->source < (int)ft->nparameters ? ft->parameters[post->source]->base :
                          f->fields[post->source-ft->nparameters].field->type->base),
@@ -2920,7 +3287,8 @@ static bool write_signature_as(Ownership *o, FILE *destination, Function *f, boo
                 fprintf(destination," %s",post->field->nullable ? "nullable" : "nonnull");
             }
             else if (post->source == -2) fprintf(destination,"static %s",post->field->nullable ? "nullable" : "nonnull");
-            else if (view(o,post->field->type)) fprintf(destination,"whole-viewed %d %s",post->source,post->field->write ? "write" : "read");
+            else if (view(o,post->field->type) || whole_source(o,f,post->source))
+                fprintf(destination,"whole-viewed %d %s",post->source,post->field->write ? "write" : "read");
             else fprintf(destination,"borrowed %d 0 %llu %s %s",post->source,
                 ce_type_size(o->sema,post->source < (int)ft->nparameters ? ft->parameters[post->source]->base :
                              f->fields[post->source-ft->nparameters].field->type->base),
@@ -2972,7 +3340,7 @@ static bool check_function(Ownership *o, Function *f) {
             if (!reference_type(o,f->entity->type->base)) fputs("value",destination);
             else if (f->result_family) fprintf(destination,"own %u %s",f->result_family,f->result_nullable ? "nullable" : "nonnull");
             else if (f->result_static) fprintf(destination,"static %s",f->result_nullable ? "nullable" : "nonnull");
-            else if (view(o,f->entity->type->base)) {
+            else if (view(o,f->entity->type->base) || buffer_root_in(f,f->allowed_result.range.root)) {
                 fputs("view ",destination); range_plan(destination,f->allowed_result.range);
                 fprintf(destination," %s",reference_read_only(o,f->entity->type->base) ? "read" : "write");
             }
@@ -3153,9 +3521,11 @@ static void function_init(Ownership *o, Function *f, CeEntity *entity) {
     f->modes = ce_alloc(o->arena,(n ? n : 1)*sizeof(*f->modes));
     f->families = ce_alloc(o->arena,(n ? n : 1)*sizeof(*f->families));
     f->nullable = ce_alloc(o->arena,(n ? n : 1)*sizeof(*f->nullable));
+    f->buffers = ce_alloc(o->arena,(n ? n : 1)*sizeof(*f->buffers));
     f->callbacks = ce_alloc(o->arena,(n ? n : 1)*sizeof(*f->callbacks));
     memset(f->callbacks,0,(n ? n : 1)*sizeof(*f->callbacks));
     memset(f->nullable,0,(n ? n : 1)*sizeof(*f->nullable));
+    memset(f->buffers,0,(n ? n : 1)*sizeof(*f->buffers));
     f->input_roots = ce_alloc(o->arena,(n ? n : 1)*sizeof(*f->input_roots));
     memset(f->input_roots,0,(n ? n : 1)*sizeof(*f->input_roots));
     f->global_roots = ce_alloc(o->arena,o->sema->nentities*sizeof(*f->global_roots));
@@ -3306,8 +3676,8 @@ static bool check(Ownership *o, const CeTree *tree) {
             .fields=ce_alloc(o->arena,(spec->len-2+type->tag->record->nmembers)*sizeof(FieldSpec))};
         for (size_t j = 0; j < r->len; ++j) {
             const CeAtom *part = spec->items[j+2];
-            if (!head(part,"field") || part->len != 3 || part->items[1]->kind != CE_ATOM_SYMBOL)
-                return malformed(o,part,"expected (field NAME (borrow MODE | owns FAMILY | static))");
+            if (!head(part,"field") || (part->len != 3 && part->len != 4) || part->items[1]->kind != CE_ATOM_SYMBOL)
+                return malformed(o,part,"expected (field NAME (borrow MODE | owns FAMILY | static) [(count FIELD)])");
             FieldSpec *f = &r->fields[j]; *f = (FieldSpec){.name=part->items[1]->text};
             for (size_t k = 0; k < type->tag->record->nmembers; ++k) {
                 CeMember *m = &type->tag->record->members[k];
@@ -3336,6 +3706,22 @@ static bool check(Ownership *o, const CeTree *tree) {
             Capability *opaque = capability(o,f->type->base);
             if (opaque && f->family && opaque->family != f->family)
                 return malformed(o,mode,"owning capability field has the wrong authority family");
+            if (part->len == 4) {   /* (count FIELD): a counted buffer */
+                const CeAtom *count = part->items[3];
+                if (!head(count,"count") || count->len != 2 || count->items[1]->kind != CE_ATOM_SYMBOL)
+                    return malformed(o,count,"a buffer field names its count as (count FIELD)");
+                if (f->is_static || view(o,f->type))
+                    return malformed(o,count,"a counted buffer is a borrowed or owning pointer field");
+                if (!plain_elements(o,f->type->base))
+                    return malformed(o,count,"counted buffer elements must be plain data without references");
+                const CeMember *counter = NULL;
+                for (size_t k = 0; k < type->tag->record->nmembers; ++k)
+                    if (same(type->tag->record->members[k].name,count->items[1]->text))
+                        counter = &type->tag->record->members[k];
+                if (!counter || counter->bitfield || !ce_type_integer(counter->type) || pointer(counter->type))
+                    return malformed(o,count,"a buffer's count must be an integer member of the same record");
+                f->counted = true; f->count = count->items[1]->text;
+            }
         }
         for (size_t k = 0; k < type->tag->record->nmembers; ++k) {
             CeMember *m = &type->tag->record->members[k];
@@ -3392,22 +3778,67 @@ static bool check(Ownership *o, const CeTree *tree) {
             o->global_owners[global->id-1] = owner->name;
             continue;
         }
-        if (head(spec,"allocator") && spec->len == 5 && spec->items[1]->kind == CE_ATOM_SYMBOL &&
-            spec->items[2]->kind == CE_ATOM_SYMBOL && spec->items[3]->kind == CE_ATOM_SYMBOL &&
-            head(spec->items[4],"obligation") && spec->items[4]->len == 2 &&
-            spec->items[4]->items[1]->kind == CE_ATOM_TEXT && spec->items[4]->items[1]->text.len) {
-            Function *alloc = function_named(o,spec->items[2]->text), *free = function_named(o,spec->items[3]->text);
-            if (imported(o,i) && (!alloc || !free)) continue;
-            if (!alloc || !free || alloc == free || alloc->spec || free->spec || alloc->body || free->body ||
-                alloc->entity->type->nparameters != 1 || free->entity->type->nparameters != 1 ||
-                !pointer(alloc->entity->type->base) || !pointer(free->entity->type->parameters[0]))
+        /* (allocator FAMILY ALLOC RELEASE (obligation ...)): ALLOC is one
+           allocation interface or a list of them sharing the release. One
+           parameter is a byte extent (malloc); two are a count of elements
+           and their size (calloc).  (resize NAME), before the obligation,
+           names the family's reallocation interface (realloc). */
+        if (head(spec,"allocator") && (spec->len == 5 ||
+             (spec->len == 6 && head(spec->items[4],"resize") && spec->items[4]->len == 2 &&
+              spec->items[4]->items[1]->kind == CE_ATOM_SYMBOL)) &&
+            spec->items[1]->kind == CE_ATOM_SYMBOL &&
+            (spec->items[2]->kind == CE_ATOM_SYMBOL ||
+             (spec->items[2]->kind == CE_ATOM_LIST && spec->items[2]->len)) &&
+            spec->items[3]->kind == CE_ATOM_SYMBOL &&
+            head(spec->items[spec->len-1],"obligation") && spec->items[spec->len-1]->len == 2 &&
+            spec->items[spec->len-1]->items[1]->kind == CE_ATOM_TEXT && spec->items[spec->len-1]->items[1]->text.len) {
+            const CeAtom *obligation = spec->items[spec->len-1];
+            const CeAtom *allocs = spec->items[2];
+            size_t nallocs = allocs->kind == CE_ATOM_LIST ? allocs->len : 1;
+            Function *free = function_named(o,spec->items[3]->text);
+            bool absent = !free;
+            for (size_t a = 0; a < nallocs; ++a) {
+                const CeAtom *name = allocs->kind == CE_ATOM_LIST ? allocs->items[a] : allocs;
+                if (name->kind != CE_ATOM_SYMBOL || !function_named(o,name->text)) absent = true;
+            }
+            if (imported(o,i) && absent) continue;
+            if (absent || free->spec || free->body || free->entity->type->nparameters != 1 ||
+                !pointer(free->entity->type->parameters[0]))
                 return malformed(o,spec,"allocator requires distinct, declared allocation and release interfaces");
             unsigned brand = family(o,spec->items[1]->text);
             if (capability_family(o,brand)) return malformed(o,spec,"capability families require typed issuer contracts, not memory allocators");
-            alloc->spec = free->spec = spec; alloc->foreign = free->foreign = true;
-            alloc->obligation = free->obligation = spec->items[4]->items[1]->text;
-            alloc->result_family = free->release_family = brand;
-            alloc->allocation_count = 0; alloc->result_nullable = true;
+            for (size_t a = 0; a < nallocs; ++a) {
+                const CeAtom *name = allocs->kind == CE_ATOM_LIST ? allocs->items[a] : allocs;
+                Function *alloc = function_named(o,name->text);
+                size_t arity = alloc->entity->type->nparameters;
+                if (alloc == free || alloc->spec || alloc->body || (arity != 1 && arity != 2) ||
+                    !pointer(alloc->entity->type->base))
+                    return malformed(o,spec,"allocator requires distinct, declared allocation and release interfaces");
+                alloc->spec = spec; alloc->foreign = true;
+                alloc->obligation = obligation->items[1]->text;
+                alloc->result_family = brand;
+                alloc->allocation_count = arity == 1 ? 0 : -2; alloc->result_nullable = true;
+            }
+            free->spec = spec; free->foreign = true;
+            free->obligation = obligation->items[1]->text;
+            free->release_family = brand;
+            if (spec->len == 6) {
+                /* realloc(old, bytes): it releases the old storage (free's
+                   parameter, null admitted) and returns fresh storage of the
+                   family (an allocation's result, null on failure).  On a
+                   whole buffer held for writing, the buffer is suspended until
+                   the result is stored back (the plan's replace). */
+                Function *resize = function_named(o,spec->items[4]->items[1]->text);
+                if (!resize) { if (imported(o,i)) continue;
+                    return malformed(o,spec,"resize names an undeclared reallocation interface"); }
+                if (resize == free || resize->spec || resize->body || resize->entity->type->nparameters != 2 ||
+                    !pointer(resize->entity->type->parameters[0]) || !pointer(resize->entity->type->base))
+                    return malformed(o,spec,"resize requires a declared interface of an old pointer and a byte extent");
+                resize->spec = spec; resize->foreign = true;
+                resize->obligation = obligation->items[1]->text;
+                resize->release_family = brand; resize->result_family = brand; resize->reallocate_family = brand;
+                resize->allocation_count = 1; resize->result_nullable = true;
+            }
             continue;
         }
         /* (unchecked (NAME...) CONTRACT... (obligation "...")) names a group
@@ -3563,8 +3994,11 @@ static bool check(Ownership *o, const CeTree *tree) {
     for (size_t i = 0; i < o->nfunctions; ++i) {
         Function *f = &o->functions[i];
         for (size_t j = 0; j < f->entity->type->nparameters; ++j)
-            whole_units |= view(o,f->entity->type->parameters[j]) && (f->checked || f->result_from == (int)j);
-        for (size_t j = 0; j < f->nfields; ++j) whole_units |= view(o,f->fields[j].field->type) != NULL;
+            whole_units |= f->buffers[j] ||
+                (view(o,f->entity->type->parameters[j]) && (f->checked || f->result_from == (int)j));
+        for (size_t j = 0; j < f->nfields; ++j)
+            whole_units |= view(o,f->fields[j].field->type) != NULL ||
+                (f->fields[j].field->counted && !f->fields[j].owning);
         for (size_t j = 0; j < f->nresults; ++j) whole_units |= view(o,f->results[j].field->type) != NULL;
     }
     bool post_test=false;
@@ -3903,7 +4337,7 @@ static void interface_items(Ownership *o, const char *header, FILE *file) {
             Callback *callback = callback_named(o,spec->items[1]->text);
             if (callback && declared_in(o,callback->anchor,header)) interface_item(file,written,&count,spec);
         }
-        if (head(spec,"allocator") && spec->len == 5 && spec->items[2]->kind == CE_ATOM_SYMBOL &&
+        if (head(spec,"allocator") && (spec->len == 5 || spec->len == 6) && spec->items[2]->kind == CE_ATOM_SYMBOL &&
             spec->items[3]->kind == CE_ATOM_SYMBOL) {
             Function *alloc = function_named(o,spec->items[2]->text), *release = function_named(o,spec->items[3]->text);
             if ((alloc && declared_in(o,alloc->entity,header)) || (release && declared_in(o,release->entity,header)))

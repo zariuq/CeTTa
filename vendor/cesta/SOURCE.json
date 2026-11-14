@@ -3,7 +3,7 @@
   "files": {
     ".gitignore": "6e93a84094ba99e30b193ea9153e47052ba0b75e7fb55b706fe9dd3fa74fe90a",
     "LICENSE": "d3fb515821fd40de3f3660705de6a1694425d8ce07304755772893273182fd0a",
-    "Makefile": "924860595dfc69613588961b1102c1f61ec792ba3447a08ac84122155d8c55cf",
+    "Makefile": "d6f4569a6fd65a4aaf61bea72998d356649acc01de2781ee3849048ffd7e995c",
     "adapters/asan/INTERFACE.txt": "6ed0e19011e2da3737a9ecec3c09fa7b2017388d012f8f4d2a9b540ae606097d",
     "adapters/asan/cesta_region.h": "5dd2d6af8a7aea41659184e28de2989c9fe96ad8bcffe83c2d480fa426da39ee",
     "adapters/cetta/INTERFACE.txt": "62c7325bc4d0ccacf2f8cab2c01bce2d549c7b5d1ff972777e0e7e682c1b07c1",
@@ -73,7 +73,7 @@
     "macros/WORKLISTS.txt": "de954f5238c836c4ba7f976272a72a92c086b2153521451a13b68c5a33c30580",
     "macros/Worklists.module": "fd192f409c53d2511cb8cd47efc98ae8d3e30031938933ee344841dc09515ce1",
     "operations/INTERFACE.txt": "0dbb52f45ee8e12fe28e037ffba281d3ffc8de72d7eac08a6dde6b60c01514c2",
-    "ownership/INTERFACE.txt": "c2c2a23555cb2770c7da5dea6935105801e7db74002f38e9669031aab4fc968f",
+    "ownership/INTERFACE.txt": "2ef8a3ebee34458cacfc40137b66cb9fe08eab34f116529fd1a6304b98ddbef3",
     "presentations/CMeraStyle.module": "c4cdeab85127fddf0e1febdb5285281882c2a5d0f1e3e948161bbc07ebb085f1",
     "presentations/CompactC.module": "b35be3dee3176f05562cdb073611235b1b47f56e3d25323359b994c57bfc2cfc",
     "presentations/CompactC2.module": "e0813b210a7d1ebfb96ff3e5b600e0d88b46cce820229b17ab32ce1c340a11db",
@@ -120,7 +120,7 @@
     "src/native.h": "95c847912f26b0c3ddbb426de89ef27a7457503d19100f56e7fe98915dc9eced",
     "src/operation.c": "6a482e32f20f39f845b2146d1277e227646a542b723d470a9734388a980aae76",
     "src/operation.h": "b6b737fb8187d47567dedfb9e662c23e69033f9bc3fd6eeb16ea69295e804b6d",
-    "src/ownership.c": "8c18146e0c2d6c4444d23de412008553a5335bdfff67c67f0f6f1400cd2e26ae",
+    "src/ownership.c": "a6161e5707f7fca65014370c221c50901a05d7d3e1c557ecd1f98c77e02f9e5d",
     "src/ownership.h": "e96e62d8a9decccc587785472e92e2a9d7329dab6928e24beb57f9d9610bd5ed",
     "src/ownership_signature.c": "22d14093d0fb2479cec310dcee075bf9b790e5e7912f4e9a784512ba7b343e18",
     "src/ownership_signature.h": "126203913c629962299afa8a1ecf1ac6c720d173c94e1b7c24a432dd696e04fc",
@@ -146,6 +146,6 @@
     "tools/embed.c": "b721643718e8e04e667182ce34d131180fb668557b762fb64bc989261aa9720f"
   },
   "format": "CestaSourceV1",
-  "snapshot": "commit",
-  "source_sha256": "d0a9e0b2342f57f25b99ffef792dd2deb5def465105e6c8e84436e4eacf21da5"
+  "snapshot": "working-tree",
+  "source_sha256": "49881746daf4392cf35f5dad1afc22ad442ba8a61d0f8087858187034c0b50d2"
 }

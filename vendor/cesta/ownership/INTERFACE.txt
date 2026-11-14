@@ -163,6 +163,118 @@ Owned dynamic inputs, owning buffer results and owning nested views still
 require allocation-extent contracts and remain refused by this profile.
 Ordinary reference fields use the contracts below.
 
+COUNTED BUFFERS
+
+  (record Table (field cells (owns heap nullable) (count used)))
+  (function last (buffer 0))
+  (foreign push_u (grows 0)
+    (obligation "Appends one value, moving the buffer to a larger allocation of the heap family when full."))
+
+A counted field is a pointer member that is null or starts one complete
+allocation of plain-data elements; (count FIELD) names the integer member of
+the same record that counts the elements in use. Plain-data elements hold no
+pointer, view or capability. (buffer INDEX) says the same of a pointer
+parameter, which may be null for an empty buffer. Neither form gives
+ownership: an owning field keeps its family, and an owned buffer parameter
+or result still needs an allocation-extent contract.
+
+A function that reaches a counted field through a record it does not take,
+or that has a buffer parameter, receives the buffer as a whole input, as for
+a view. Its elements are reached natively, as those of an inline array: a
+dynamic subscript, a member of an element and an offset pointer each borrow
+the whole buffer. Native ownership does not discharge the numeric bounds: the
+program retains its explicit guards against the count. A buffer is null only
+while its count is zero, so the guard that bounds an index is also its null
+test, and an element access needs no other; a buffer known to be null is
+refused. A borrowed result that points into a counted buffer borrows the
+whole buffer (whole-viewed) and is never null.
+
+A record result, or a record field a function stores through a parameter,
+follows the same rule field by field. A pointer field that receives a whole
+input must be counted or be a view, and its shape is whole-viewed:
+
+  (record Window (field cells (borrow read nullable) (count n)))
+  (function window (returns-record ((cells) (borrow 0 cells))))
+
+An uncounted pointer field cannot hold a whole buffer, since a reader of the
+record could not tell how many elements it reaches.
+
+(grows INDEX) names a pointer-to-pointer parameter that receives the address
+of a counted field; the callee may move the buffer to a larger allocation of
+the same family. The call takes the whole buffer exclusively, so a pointer
+into the buffer that is live across the call is refused. The buffer stays one
+logical allocation: the plan records the growth as an exclusive access before
+the call and needs no other permission event. A growth is admitted for a
+buffer reached as a whole input; a buffer first allocated inside the function,
+in a local record or by a dynamic allocation, needs an allocation-extent
+contract.
+
+Plans with counted buffers use cesta-ownership/4: their roots are whole
+inputs, interpreted at every caller extent by OwnershipViewExtents.
+
+A dynamic allocation, one whose extent is not a constant (malloc(n * size),
+calloc(n, size)), is one owned logical buffer: a heap root of one unit whose
+elements are reached as a counted buffer's are. It is released, transferred
+or refused like any owner. Its elements must be plain data, which is checked
+where an element is reached. An allocator may name several allocation
+interfaces of one family:
+
+  (allocator heap (malloc calloc) free (obligation "..."))
+
+One parameter is a byte extent; two are a count of elements and their size,
+whose product is the extent. A (buffer INDEX) parameter of type void * is a
+buffer of bytes, as memset and memcmp take:
+
+  (foreign memset (buffer 0) (returns-borrow 0) (obligation "..."))
+
+A null owner owns nothing. On the edge of a test that finds an allocation
+null (if (!p), if (p == NULL)), the owner is known null: it keeps its release
+authority, so it joins with the edge that found it non-null as one nullable
+owner, and a later release accounts for it once. If it leaves scope or returns
+still known null, the plan discharges the authority there, since nothing was
+allocated, instead of reporting a leak; the plan records it as (null-owner
+HOLDER FAMILY), which ends the authority without a release:
+
+  unsigned *a = malloc(n * sizeof *a);
+  if (!a) return 0;              /* nothing to release: admitted */
+
+Only the null edge is discharged: an allocation that leaves scope on the edge
+that found it non-null is a leak, as before. An owner moved on one edge and
+known null on the other does not join; the null edge should return.
+
+A buffer held for writing can be given fresh storage: an owning counted
+field of a record the function does not take, which it reaches as a whole
+input lent for writing.  Its storage is released (free) or moved (the
+family's reallocation interface), and fresh storage of the family is stored
+back into the field:
+
+  (allocator heap (malloc calloc) free (resize realloc) (obligation "..."))
+
+  unsigned *fresh = calloc(cap, sizeof *fresh);      unsigned *moved = realloc(t->cells, bytes);
+  if (!fresh) return 0;                              if (!moved) return 0;
+  ... copy t->cells into fresh ...                   t->cells = moved;
+  free(t->cells);
+  t->cells = fresh;
+
+From the release or reallocation until the store, the buffer is suspended:
+no pointer into it may be live when its storage goes, nothing reaches it
+until fresh storage is stored back, and no return leaves it suspended.  The
+plan records the release as (vacate BUFFER FAMILY), which passes the storage
+to the call as released.  The store keeps the buffer's identity for every
+caller and consumes the fresh allocation's sole release authority; the plan
+records it as one event, (replace BUFFER FRESH FAMILY), which Lean admits
+only for a whole input lent for writing, with exclusive access, and after
+its storage was vacated to the same family.  A reallocation known null moved
+nothing (a null owner owns nothing), so the suspension ends with it, which
+the plan records as (restore BUFFER) on that edge: the failure path, whether
+it returns at once or keeps a flag, is admitted.  Lean restores only storage
+that a reallocation received; storage given to the release never comes back.
+A buffer lent only for reading cannot have its storage replaced.  (resize
+NAME) declares a reallocation interface of two parameters, an old pointer
+and a byte extent: it releases the old storage, as the family's release
+does, and returns fresh storage, as its allocations do; its contract records
+the first parameter as (resized FAMILY).
+
 REFERENCE FIELDS
 
   (record Reader (field item (borrow read)))
@@ -413,6 +525,8 @@ explicit C code; the checker does not silently insert a deallocator.
 This native profile admits constant allocation extents, including sizeof of
 a complete record. Dynamic byte storage remains in checked-c/1 modules; their
 interaction with native ownership currently needs a contracted native boundary.
+A counted buffer (COUNTED BUFFERS above) is used and grown natively; its
+allocation with a dynamic extent remains outside this profile.
 A failed nullable allocation must also follow a
 valid cleanup path; release(null) is part of the allocator contract above.
 

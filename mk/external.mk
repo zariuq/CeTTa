@@ -81,6 +81,9 @@
 #   METAMATH_SET_MM_V1         The canonical set.mm (the metamath/set.mm
 #                              repository).
 #   METAMATH_TEST_ROOT_V1      The metamath-test conformance corpus.
+#   PETTA_CORPUS_ROOT          The base of the PeTTa example corpus: a checkout
+#                              or snapshot of upstream PeTTa or of its
+#                              stable-fixed branch; by default PETTA_ORACLE_ROOT.
 #   HOPPER_TABLE1_ROOT,        The pinned Hopper, IGGP and infcontrol checkouts
 #   IGGP_ROOT, INFCONTROL_REPO the ILP benchmark gates compare against.
 #   *_MEMORY_BENCH_SOURCE      A program or Metamath source for a memory
@@ -1238,26 +1241,81 @@ qualify-prepared-scalar-lean:
 		Mettapedia.GSLT.Dynamics.PartialRegionPlan; \
 	lake env lean -DwarningAsError=true Mettapedia/Machines/ScalarTreeRegion.lean
 
-probe-petta-corpus-manifest: test-petta-corpus-manifest-unit
-	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" ]]; then \
-		echo 'set PETTA_ORACLE_ROOT to the pinned PeTTa oracle checkout'; \
-		exit 1; \
-	fi
-	@PYTHONDONTWRITEBYTECODE=1 \
-		python3 scripts/petta_corpus_manifest.py verify \
-		--petta-dir "$(PETTA_ORACLE_ROOT)" \
-		--manifest "$(PETTA_CORPUS_MANIFEST)"
+# The PeTTa example corpus (scripts/petta_corpus_manifest.py).  Every example
+# of the PeTTa base runs on CeTTa and must meet its own oracle: a self-checking
+# example passes iff its own assertions pass; any other example matches its
+# golden in tests/petta/golden.  The base (PETTA_CORPUS_ROOT, a checkout or a
+# snapshot) is never edited; corrections to it are overlays in
+# tests/petta/overlay, a .patch beside a one-line .why.
+#
+#   make test-petta-corpus-manifest   the gate
+#   make petta-corpus-accept          rerun, rewrite goldens and classification,
+#                                     print the diff for review
+#   make petta-corpus-sync            move to the checkout's commit
+#                                     (PETTA_CORPUS_BASE=upstream|stable-fixed),
+#                                     retire overlays the base now contains,
+#                                     name those that no longer apply, accept
+#   make petta-corpus-swi-report      optional: list SWI-PeTTa divergences for
+#                                     a person to classify; never a gate
+#   make petta-corpus-export-overlay PETTA_CORPUS_OVERLAY=<example>
+#                                     write one overlay as a patch for the
+#                                     stable-fixed queue
+#
+# PETTA_CORPUS_EXCLUDE names optional capabilities to skip (git, lib-prolog);
+# PETTA_CORPUS_BASE_COMMIT gives the commit of a snapshot without git files.
+PETTA_CORPUS_ROOT ?= $(PETTA_ORACLE_ROOT)
+PETTA_CORPUS_BASE ?= upstream
+PETTA_CORPUS_BASE_COMMIT ?=
+PETTA_CORPUS_EXCLUDE ?=
+PETTA_CORPUS_WORK ?= runtime/petta-corpus
+PETTA_CORPUS_OVERLAY ?=
+PETTA_CORPUS_EXPORT ?= $(PETTA_CORPUS_WORK)/export
+PETTA_CORPUS_TOOL = PYTHONDONTWRITEBYTECODE=1 CETTA_PETTA_SEARCH_MACHINE=1 \
+	python3 scripts/petta_corpus_manifest.py
+PETTA_CORPUS_RUN_FLAGS = --petta-dir "$(PETTA_CORPUS_ROOT)" \
+	--manifest "$(PETTA_CORPUS_MANIFEST)" --cetta "./$(BIN)"
+PETTA_CORPUS_EXCLUDE_FLAGS = \
+	$(foreach capability,$(PETTA_CORPUS_EXCLUDE),--exclude-capability $(capability))
 
-test-petta-corpus-manifest: test-petta-corpus-manifest-unit
-	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" ]]; then \
-		echo 'set PETTA_ORACLE_ROOT to the pinned PeTTa oracle checkout'; \
+.PHONY: petta-corpus-root petta-corpus-accept petta-corpus-sync \
+	petta-corpus-swi-report petta-corpus-export-overlay
+petta-corpus-root:
+	@if [[ -z "$(strip $(PETTA_CORPUS_ROOT))" ]]; then \
+		echo 'set PETTA_CORPUS_ROOT (or PETTA_ORACLE_ROOT) to a PeTTa checkout or snapshot'; \
 		exit 1; \
 	fi
-	@PYTHONDONTWRITEBYTECODE=1 \
-		python3 scripts/petta_corpus_manifest.py verify \
-		--petta-dir "$(PETTA_ORACLE_ROOT)" \
-		--manifest "$(PETTA_CORPUS_MANIFEST)" \
-		--require-complete
+
+probe-petta-corpus-manifest: test-petta-corpus-manifest-unit petta-corpus-root $(BIN)
+	@$(PETTA_CORPUS_TOOL) compare $(PETTA_CORPUS_RUN_FLAGS) \
+		--out "$(PETTA_CORPUS_WORK)/probe" $(PETTA_CORPUS_EXCLUDE_FLAGS)
+
+test-petta-corpus-manifest: test-petta-corpus-manifest-unit petta-corpus-root $(BIN)
+	@$(PETTA_CORPUS_TOOL) compare $(PETTA_CORPUS_RUN_FLAGS) \
+		--out "$(PETTA_CORPUS_WORK)/test" $(PETTA_CORPUS_EXCLUDE_FLAGS) \
+		--require-complete --require-match
+
+petta-corpus-accept: petta-corpus-root $(BIN)
+	@$(PETTA_CORPUS_TOOL) accept $(PETTA_CORPUS_RUN_FLAGS) \
+		--out "$(PETTA_CORPUS_WORK)/accept" $(PETTA_CORPUS_EXCLUDE_FLAGS)
+
+petta-corpus-sync: petta-corpus-root $(BIN)
+	@$(PETTA_CORPUS_TOOL) sync $(PETTA_CORPUS_RUN_FLAGS) \
+		--out "$(PETTA_CORPUS_WORK)/sync" $(PETTA_CORPUS_EXCLUDE_FLAGS) \
+		--base "$(PETTA_CORPUS_BASE)" \
+		$(if $(strip $(PETTA_CORPUS_BASE_COMMIT)),--base-commit "$(PETTA_CORPUS_BASE_COMMIT)")
+
+petta-corpus-swi-report: petta-corpus-root $(BIN)
+	@$(PETTA_CORPUS_TOOL) swi-report $(PETTA_CORPUS_RUN_FLAGS) \
+		--out "$(PETTA_CORPUS_WORK)/swi-report"
+
+petta-corpus-export-overlay: petta-corpus-root
+	@if [[ -z "$(strip $(PETTA_CORPUS_OVERLAY))" ]]; then \
+		echo 'set PETTA_CORPUS_OVERLAY to the example whose overlay to export'; \
+		exit 1; \
+	fi
+	@PYTHONDONTWRITEBYTECODE=1 python3 scripts/petta_corpus_manifest.py \
+		export-overlay --name "$(PETTA_CORPUS_OVERLAY)" \
+		--out "$(PETTA_CORPUS_EXPORT)" --petta-dir "$(PETTA_CORPUS_ROOT)"
 
 test-prime-nik-megalodon-term-v1: \
 		$(BIN) \
