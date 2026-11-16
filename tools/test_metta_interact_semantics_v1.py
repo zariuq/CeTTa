@@ -6,25 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-import subprocess
 
 import gslt2parse_schema_v1 as sx
+import gslt_relation_executor_v1 as executor
 
 
 class GateFailure(RuntimeError):
     pass
-
-
-def run(command: list[str]) -> str:
-    completed = subprocess.run(
-        command, text=True, capture_output=True, check=False
-    )
-    if completed.returncode != 0:
-        raise GateFailure(
-            f"executor failed ({' '.join(command[:2])}):\n"
-            f"{completed.stdout}{completed.stderr}"
-        )
-    return completed.stdout.strip()
 
 
 def qsym(name: str) -> str:
@@ -68,32 +56,7 @@ def source_program(*payloads: str) -> str:
 def chart_answers(
     chart: Path, sources: tuple[Path, ...], query: str
 ) -> list[tuple[sx.SExpr, ...]]:
-    raw = run(
-        [
-            str(chart),
-            *(str(source) for source in sources),
-            "--query-text",
-            query,
-            "--timeout",
-            "10",
-            "--max-rounds",
-            "100000",
-        ]
-    )
-    try:
-        receipt = json.loads(raw)
-    except json.JSONDecodeError as error:
-        raise GateFailure(f"chart emitted malformed JSON: {raw}") from error
-    terms = receipt.get("terms")
-    if not isinstance(terms, list):
-        raise GateFailure(f"chart receipt omits answer terms: {receipt}")
-    answers: list[tuple[sx.SExpr, ...]] = []
-    for rendered in terms:
-        forms = sx.parse_sexprs(rendered, source="chart answer")
-        if len(forms) != 1 or not isinstance(forms[0], tuple):
-            raise GateFailure(f"chart returned malformed answer: {rendered}")
-        answers.append(forms[0])
-    return answers
+    return executor.answers(chart, sources, query)
 
 
 def relation_answers(
@@ -161,12 +124,13 @@ def produced_bag(answers: list[tuple[sx.SExpr, ...]]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--chart", type=Path, required=True)
+    parser.add_argument("--chart", type=Path)
+    executor.add_arguments(parser)
     parser.add_argument("--quote-match", type=Path, required=True)
     parser.add_argument("--core", type=Path, required=True)
     parser.add_argument("--sequence", type=Path, required=True)
     arguments = parser.parse_args()
-    chart = arguments.chart.resolve()
+    chart = executor.select(arguments)
     sources = (
         arguments.quote_match.resolve(),
         arguments.core.resolve(),
@@ -351,6 +315,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (GateFailure, OSError) as error:
+    except (GateFailure, executor.ExecutorFailure, OSError) as error:
         print(f"FAIL: {error}")
         raise SystemExit(1)

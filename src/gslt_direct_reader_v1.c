@@ -2488,7 +2488,7 @@ static bool gslt_direct_petta_extract_form(
     GSLTDirectCursorV1 *cursor, GSLTDirectBytesV1 *form,
     const uint8_t **data, size_t *len,
     char *error_buf, size_t error_buf_size) {
-    uint32_t depth = 0u;
+    size_t depth = 0u;
     uint32_t codepoint;
     size_t width;
     size_t start = cursor->pos;
@@ -2603,7 +2603,9 @@ static bool gslt_direct_petta_extract_form(
             continue;
         }
         if (codepoint == plan->expression_open) {
-            if (depth == plan->depth_limit) {
+            if (depth == SIZE_MAX ||
+                (plan->depth_limit != GSLT_DIRECT_PETTA_DEPTH_UNBOUNDED_V1 &&
+                 depth == plan->depth_limit)) {
                 gslt_direct_reader_v1_error(
                     error_buf, error_buf_size,
                     "compiled PeTTa document exceeded its nesting limit");
@@ -2949,59 +2951,6 @@ failed:
     return CETTA_ATOM_ID_NONE;
 }
 
-static AtomId gslt_direct_petta_parse_expression(
-    GSLTDirectPeTTaStateV1 *state, uint32_t depth) {
-    GSLTDirectCursorV1 start = state->cursor;
-    AtomId *children = NULL;
-    uint32_t len = 0u;
-    uint32_t cap = 0u;
-    AtomId result = CETTA_ATOM_ID_NONE;
-    uint32_t codepoint;
-    size_t width;
-
-    if (depth == 0u ||
-        !gslt_direct_petta_peek(
-            &state->cursor, &codepoint, &width,
-            state->error_buf, state->error_buf_size) ||
-        codepoint != state->plan->expression_open)
-        goto failed;
-    gslt_direct_reader_v1_consume_width(&state->cursor, width);
-    for (;;) {
-        AtomId child;
-        if (!gslt_direct_petta_skip_form(state) ||
-            state->cursor.pos == state->cursor.input_len)
-            goto failed;
-        if (!gslt_direct_petta_peek(
-                &state->cursor, &codepoint, &width,
-                state->error_buf, state->error_buf_size))
-            goto failed;
-        if (codepoint == state->plan->expression_close) {
-            gslt_direct_reader_v1_consume_width(&state->cursor, width);
-            result = state->projection->expression(
-                state->projection->context, children, len);
-            free(children);
-            return result;
-        }
-        child = gslt_direct_petta_parse_atom(state, depth - 1u, false);
-        if (child == CETTA_ATOM_ID_NONE)
-            goto failed;
-        if (len == cap) {
-            uint32_t next = cap ? cap * 2u : 16u;
-            if (next < cap)
-                goto failed;
-            AtomId *grown = cetta_realloc(children, (size_t)next * sizeof(*children));
-            if (!grown) goto failed;
-            children = grown;
-            cap = next;
-        }
-        children[len++] = child;
-    }
-
-failed:
-    state->cursor = start;
-    free(children);
-    return CETTA_ATOM_ID_NONE;
-}
 
 /* At the bar alone: the bar followed by the end of a list token. */
 static bool gslt_direct_petta_at_list_bar(GSLTDirectPeTTaStateV1 *state) {
@@ -3019,122 +2968,141 @@ static bool gslt_direct_petta_at_list_bar(GSLTDirectPeTTaStateV1 *state) {
     return bar;
 }
 
-/* [x y ...] or [x y ... | rest]: elements separated by layout, then
- * optionally the bar alone and one rest element, then the close. */
-static AtomId gslt_direct_petta_parse_list(
-    GSLTDirectPeTTaStateV1 *state, uint32_t depth) {
-    const GSLTDirectPeTTaReaderV1Plan *plan = state->plan;
-    GSLTDirectCursorV1 start = state->cursor;
-    AtomId *elems = NULL;
-    uint32_t len = 0u;
-    uint32_t cap = 0u;
-    AtomId rest = CETTA_ATOM_ID_NONE;
-    AtomId result = CETTA_ATOM_ID_NONE;
-    uint32_t codepoint;
-    size_t width;
+typedef struct {
+    AtomId *children;
+    uint32_t len, cap, depth;
+    AtomId rest;
+    bool list, rest_pending, have_rest;
+} GSLTDirectPeTTaReadFrameV1;
 
-    if (depth == 0u || !state->projection->list ||
-        !gslt_direct_petta_peek(
-            &state->cursor, &codepoint, &width,
-            state->error_buf, state->error_buf_size) ||
-        codepoint != plan->list_open)
-        goto failed;
-    gslt_direct_reader_v1_consume_width(&state->cursor, width);
-    for (;;) {
-        if (!gslt_direct_petta_skip_form(state) ||
-            state->cursor.pos == state->cursor.input_len ||
-            !gslt_direct_petta_peek(
-                &state->cursor, &codepoint, &width,
-                state->error_buf, state->error_buf_size))
-            goto failed;
-        if (codepoint == plan->list_close) {
-            gslt_direct_reader_v1_consume_width(&state->cursor, width);
-            break;
-        }
-        if (gslt_direct_petta_at_list_bar(state)) {
-            if (len == 0u)
-                goto failed;
-            gslt_direct_reader_v1_consume_width(&state->cursor, width);
-            if (!gslt_direct_petta_skip_form(state))
-                goto failed;
-            rest = gslt_direct_petta_parse_atom(state, depth - 1u, true);
-            if (rest == CETTA_ATOM_ID_NONE || !gslt_direct_petta_skip_form(state) ||
-                state->cursor.pos == state->cursor.input_len ||
-                !gslt_direct_petta_peek(
-                    &state->cursor, &codepoint, &width,
-                    state->error_buf, state->error_buf_size) ||
-                codepoint != plan->list_close)
-                goto failed;
-            gslt_direct_reader_v1_consume_width(&state->cursor, width);
-            break;
-        }
-        AtomId element = gslt_direct_petta_parse_atom(state, depth - 1u, true);
-        if (element == CETTA_ATOM_ID_NONE)
-            goto failed;
-        if (len == cap) {
-            uint32_t next = cap ? cap * 2u : 8u;
-            if (next < cap)
-                goto failed;
-            AtomId *grown = cetta_realloc(elems, (size_t)next * sizeof(*elems));
-            if (!grown) goto failed;
-            elems = grown;
-            cap = next;
-        }
-        elems[len++] = element;
-    }
-    result = state->projection->list(state->projection->context, elems, len,
-                                     rest);
-    free(elems);
-    return result;
-
-failed:
-    state->cursor = start;
-    free(elems);
-    return CETTA_ATOM_ID_NONE;
+static uint32_t gslt_direct_petta_child_depth(uint32_t depth) {
+    if (depth == GSLT_DIRECT_PETTA_DEPTH_UNBOUNDED_V1)
+        return depth;
+    return depth ? depth - 1u : 0u;
 }
 
+/* The same authored form grammar and projection callbacks, with container
+ * continuations held in owned frames instead of the C call stack. */
 static AtomId gslt_direct_petta_parse_atom(
     GSLTDirectPeTTaStateV1 *state, uint32_t depth, bool in_list) {
     GSLTDirectCursorV1 start = state->cursor;
+    GSLTDirectPeTTaReadFrameV1 inline_frames[32], *frames = inline_frames;
+    size_t len = 0u, capacity = sizeof inline_frames / sizeof inline_frames[0];
     AtomId result = CETTA_ATOM_ID_NONE;
     uint32_t codepoint;
     size_t width;
 
-    if (depth == 0u || state->cursor.pos == state->cursor.input_len ||
-        !gslt_direct_petta_peek(
-            &state->cursor, &codepoint, &width,
+read_node:
+    result = CETTA_ATOM_ID_NONE;
+    if (!depth || state->cursor.pos == state->cursor.input_len ||
+        !gslt_direct_petta_peek(&state->cursor, &codepoint, &width,
             state->error_buf, state->error_buf_size))
-        return CETTA_ATOM_ID_NONE;
+        goto failed;
     if (gslt_direct_raw_region(state->plan->raw_source_regions, &state->cursor,
             state->projection->context, state->projection->string_bytes, &result,
             state->error_buf, state->error_buf_size)) {
-        if (result != CETTA_ATOM_ID_NONE) { state->tokens++; state->reductions++; }
-        return result;
+        if (result == CETTA_ATOM_ID_NONE) goto failed;
+        goto completed;
+    }
+    bool expression = codepoint == state->plan->expression_open;
+    bool list = !expression && state->plan->list_open && codepoint == state->plan->list_open;
+    if (expression || list) {
+        if (list && !state->projection->list) goto failed;
+        if (len == capacity) {
+            if (capacity > SIZE_MAX / 2u || capacity * 2u > SIZE_MAX / sizeof(*frames))
+                goto resource;
+            size_t next_capacity = capacity * 2u;
+            GSLTDirectPeTTaReadFrameV1 *next = frames == inline_frames
+                ? cetta_malloc(next_capacity * sizeof(*frames))
+                : cetta_realloc(frames, next_capacity * sizeof(*frames));
+            if (!next) goto resource;
+            if (frames == inline_frames) memcpy(next, inline_frames, len * sizeof(*frames));
+            frames = next; capacity = next_capacity;
+        }
+        frames[len++] = (GSLTDirectPeTTaReadFrameV1){
+            .depth = depth, .rest = CETTA_ATOM_ID_NONE, .list = list};
+        gslt_direct_reader_v1_consume_width(&state->cursor, width);
+        goto container;
     }
     if (codepoint == state->plan->string_quote) {
+        GSLTDirectCursorV1 literal_start = state->cursor;
         result = gslt_direct_petta_parse_string(state);
         if (result == CETTA_ATOM_ID_NONE && !in_list) {
-            state->cursor = start;
+            state->cursor = literal_start;
             result = gslt_direct_petta_parse_quoted_token(state);
         }
-    } else if (codepoint == state->plan->expression_open) {
-        result = gslt_direct_petta_parse_expression(state, depth);
-    } else if (state->plan->list_open != 0u &&
-               codepoint == state->plan->list_open) {
-        result = gslt_direct_petta_parse_list(state, depth);
     } else if (codepoint == state->plan->variable_marker) {
         result = gslt_direct_petta_parse_variable_or_dollar(state, in_list);
     } else if (gslt_direct_reader_v1_class_contains(
-                   in_list ? state->plan->list_token_first
-                           : state->plan->token_first, codepoint) ||
+                   in_list ? state->plan->list_token_first : state->plan->token_first, codepoint) ||
                (in_list && codepoint == state->plan->list_rest)) {
         result = gslt_direct_petta_parse_token(state, in_list);
     }
-    if (result != CETTA_ATOM_ID_NONE) {
-        state->tokens++;
-        state->reductions++;
+    if (result == CETTA_ATOM_ID_NONE) goto failed;
+
+completed:
+    state->tokens++;
+    state->reductions++;
+    if (!len) {
+        if (frames != inline_frames) free(frames);
+        return result;
     }
-    return result;
+    {
+        GSLTDirectPeTTaReadFrameV1 *frame = &frames[len - 1u];
+        if (frame->rest_pending) {
+            frame->rest = result;
+            frame->rest_pending = false;
+            frame->have_rest = true;
+        } else {
+            if (frame->len == frame->cap) {
+                uint32_t next = frame->cap ? frame->cap * 2u : frame->list ? 8u : 16u;
+                if (next < frame->cap || !cetta_expr_len_mul_fits_size(next, sizeof(*frame->children)))
+                    goto resource;
+                AtomId *children = cetta_realloc(frame->children, (size_t)next * sizeof(*children));
+                if (!children) goto resource;
+                frame->children = children; frame->cap = next;
+            }
+            frame->children[frame->len++] = result;
+        }
+    }
+
+container:
+    {
+        GSLTDirectPeTTaReadFrameV1 *frame = &frames[len - 1u];
+        if (!gslt_direct_petta_skip_form(state) || state->cursor.pos == state->cursor.input_len ||
+            !gslt_direct_petta_peek(&state->cursor, &codepoint, &width,
+                state->error_buf, state->error_buf_size))
+            goto failed;
+        uint32_t close = frame->list ? state->plan->list_close : state->plan->expression_close;
+        if (codepoint == close) {
+            gslt_direct_reader_v1_consume_width(&state->cursor, width);
+            result = frame->list
+                ? state->projection->list(state->projection->context, frame->children, frame->len, frame->rest)
+                : state->projection->expression(state->projection->context, frame->children, frame->len);
+            free(frame->children); --len;
+            if (result == CETTA_ATOM_ID_NONE) goto failed;
+            goto completed;
+        }
+        if (frame->have_rest) goto failed;
+        if (frame->list && gslt_direct_petta_at_list_bar(state)) {
+            if (!frame->len) goto failed;
+            gslt_direct_reader_v1_consume_width(&state->cursor, width);
+            if (!gslt_direct_petta_skip_form(state)) goto failed;
+            frame->rest_pending = true;
+        }
+        depth = gslt_direct_petta_child_depth(frame->depth);
+        in_list = frame->list;
+        goto read_node;
+    }
+
+resource:
+    gslt_direct_reader_v1_error(state->error_buf, state->error_buf_size,
+        "compiled PeTTa reader could not allocate its pending container frames");
+failed:
+    state->cursor = start;
+    while (len) free(frames[--len].children);
+    if (frames != inline_frames) free(frames);
+    return CETTA_ATOM_ID_NONE;
 }
 
 static AtomId gslt_direct_petta_parse_form(

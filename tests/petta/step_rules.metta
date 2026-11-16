@@ -154,3 +154,50 @@
                   (closure-rule))
      (step:labels $present))
    (((edge a b) (edge b c) (edge a c))))
+
+!(check apart-entails-absence
+ (verdict (let (step:admitted $s $f)
+   (step:fire (start) (step:firing () ((step:use (q $x) 3)) () () ((step:apart $x 7)) () ()))
+   (step:fire $s (step:firing () () () () () ((step:absent (q 7))) ()))))
+ (admitted))
+
+!(check apart-entails-zero-count
+ (verdict (let (step:admitted $s $f)
+   (step:fire (start) (step:firing () ((step:use (q $x) 3)) () () ((step:apart $x 7)) () ()))
+   (step:fire $s (step:firing () () () () () ((step:count (q 7) 0)) ()))))
+ (admitted))
+
+!(check apart-entails-zero-region
+ (verdict (let (step:admitted $s $f)
+   (step:fire (start) (step:firing () ((step:use (q $x) 3)) () () ((step:apart $x 7)) () ()))
+   (step:fire $s (step:firing () () () () () ((step:region (q 7) 0)) ()))))
+ (admitted))
+
+!(check apart-does-not-entail-other-absence
+ (verdict (let (step:admitted $s $f)
+   (step:fire (start) (step:firing () ((step:use (q $x) 3)) () () ((step:apart $x 7)) () ()))
+   (step:fire $s (step:firing () () () () () ((step:absent (q 8))) ()))))
+ ((refused (step:guard (step:absent (q 8))))))
+
+!(check apart-does-not-entail-other-count
+ (verdict (let (step:admitted $s $f)
+   (step:fire (start) (step:firing () ((step:use (q $x) 3)) () () ((step:apart $x 7)) () ()))
+   (step:fire $s (step:firing () () () () () ((step:count (q 8) 0)) ()))))
+ ((refused (step:guard (step:count (q 8) 0)))))
+
+!(check apart-does-not-entail-other-region
+ (verdict (let (step:admitted $s $f)
+   (step:fire (start) (step:firing () ((step:use (q $x) 3)) () () ((step:apart $x 7)) () ()))
+   (step:fire $s (step:firing () () () () () ((step:region (q 8) 0)) ()))))
+ ((refused (step:guard (step:region (q 8) 0)))))
+
+!(check compatibility-does-not-bind-caller
+ (let $ok (step:may-unify () $x 7)
+   (if (and $ok (== (get-metatype $x) Variable)) StillFree WrongBinding))
+ (StillFree))
+!(check compatibility-keeps-caller-aliases-separate
+ (let $ok (step:may-unify () (quote (Pair $x $x)) (quote (Pair $y 7)))
+   (if (and $ok (and (== (get-metatype $x) Variable)
+                    (and (== (get-metatype $y) Variable) (not (== $x $y)))))
+       StillSeparate WrongSharing))
+ (StillSeparate))

@@ -837,7 +837,7 @@ def generate(
         f"    .list_token = {'&' + class_ids[plan.lists[4]] if plan.lists else 'NULL'},\n"
         f"    .list_token_boundary = {'&' + class_ids[plan.lists[5]] if plan.lists else 'NULL'},\n"
         f"{raw_field}"
-        "    .depth_limit = UINT32_C(4096),\n"
+        "    .depth_limit = GSLT_DIRECT_PETTA_DEPTH_UNBOUNDED_V1,\n"
         "};\n\n"
         f"const char *{c_prefix}_program_digest(void) {{\n"
         f"    return {c_prefix}_plan.composition_digest;\n"

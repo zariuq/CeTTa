@@ -1,0 +1,284 @@
+{
+  "schema": "mm0-textual-corpus-v1",
+  "description": "The upstream groups classify integration. This registry states the separate textual syntax judgment and pins every specification in pass, fail and run.",
+  "proof_stage_control": "The blank-binder alias specification parses; its paired proof is rejected by the upstream verifier.",
+  "cases": [
+    {
+      "path": "tests/mm0_mmu/pass/blank_binder.mm0",
+      "sha256": "a0d81949793337be1056d9b5c65110c9904397f5bf006da2ee44ded0b8b12ee2",
+      "syntax": "accepted",
+      "integration": "accepted",
+      "failure_stage": null
+    },
+    {
+      "path": "tests/mm0_mmu/pass/comment.mm0",
+      "sha256": "9bc7783936afff10a0d7cf3ecdac74d298d8e76d80bbdccd0a4a0d26956768ab",
+      "syntax": "accepted",
+      "integration": "accepted",
+      "failure_stage": null
+    },
+    {
+      "path": "tests/mm0_mmu/pass/definition_bound_argument.mm0",
+      "sha256": "ad90d7b339959ba26fc330bc27a73d3ddd85a88e2005cdd5667a83a668979103",
+      "syntax": "accepted",
+      "integration": "accepted",
+      "failure_stage": null
+    },
+    {
+      "path": "tests/mm0_mmu/pass/id.mm0",
+      "sha256": "979696e085989458f4d9295e131012c6222de4ed03aa2586e5cadb349eef621c",
+      "syntax": "accepted",
+      "integration": "accepted",
+      "failure_stage": null
+    },
+    {
+      "path": "tests/mm0_mmu/pass/int.mm0",
+      "sha256": "e3b7573a3353ca0808380e5aecada0c6a9838f5b1b2c726254c214071f38937b",
+      "syntax": "accepted",
+      "integration": "accepted",
+      "failure_stage": null
+    },
+    {
+      "path": "tests/mm0_mmu/pass/sort.mm0",
+      "sha256": "3d5344911380bbe7bcca8fb12532314c46e79a19c85f34fa8b549f0022bbe8f4",
+      "syntax": "accepted",
+      "integration": "accepted",
+      "failure_stage": null
+    },
+    {
+      "path": "tests/mm0_mmu/pass/theorem_bound_declared.mm0",
+      "sha256": "ea68e0642e42e8c7a90bac99fc1d807e2bb48434a8924ab3b3edc51975484c7e",
+      "syntax": "accepted",
+      "integration": "accepted",
+      "failure_stage": null
+    },
+    {
+      "path": "tests/mm0_mmu/pass/theorem_bound_independent.mm0",
+      "sha256": "36bfbf754d90233b6339cf8b870ffd355757be1c688d8a61272a494c23e39146",
+      "syntax": "accepted",
+      "integration": "accepted",
+      "failure_stage": null
+    },
+    {
+      "path": "tests/mm0_mmu/pass/whitespace1.mm0",
+      "sha256": "a22d804adb5c6a7a28869974aa9950dc319877ab3772e5db8b0d61ea110bdce3",
+      "syntax": "accepted",
+      "integration": "accepted",
+      "failure_stage": null
+    },
+    {
+      "path": "tests/mm0_mmu/pass/whitespace2.mm0",
+      "sha256": "80882bda8893ebb5750d002ee5361888b8a61c4b41440e6b07573047c9978893",
+      "syntax": "accepted",
+      "integration": "accepted",
+      "failure_stage": null
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-id1.mm0",
+      "sha256": "77948298481088e30ef7dee8454f721cdcb35de2aa6388a2648b34b3480d996e",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-id2.mm0",
+      "sha256": "777e29bc86bae73926f4943522adc168233ecfd947ccac749db5780e9bc59378",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-id3.mm0",
+      "sha256": "d73e36142a6dea0f0b64863a81586c65c970d94d4b1b33d5a60a98d2c4dd1ba2",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-id4.mm0",
+      "sha256": "5f403bfca08c37726bf0bf55eaab9c9482362d17acaaa2799fa51ed10598d843",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-id5.mm0",
+      "sha256": "8c163312347f778f227a6c937848069dd5f787592ded3ef3d71fc45c2469e15c",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-int2.mm0",
+      "sha256": "2641c538311f7bfc2c156b2275f5ff77338a4e802b08131c60900f6f5e284045",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-int3.mm0",
+      "sha256": "d012b186f3f4d88083f721e58acc2af120a53f7a09b825966a4651f058175d3f",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-int4.mm0",
+      "sha256": "cb82460bd8eb461a6778e35e67de6f42635964ccdc8f2838abca391183921ffe",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-int5.mm0",
+      "sha256": "b386be81c3d455c14abb0fab309448f948e8175bd7cad8ccfdf7456f6b2a7f49",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-math-string1.mm0",
+      "sha256": "b73fe76d6ea3a58b1cd8c8bd10f7454ba16da3b4246fed5e02862d79506388b4",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-math-string2.mm0",
+      "sha256": "d50f26344ecf9380e840fd909be574f2f2f7bd536753ca436d226ddac8826d9c",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-math-string3.mm0",
+      "sha256": "d0f40238ddde2fc27f2eb931b1f5fd11661afe220b82ab15404427c3e31e229b",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-sort21.mm0",
+      "sha256": "a2b9b815ae53412ab5feb0bd151ebbb8696ff9c95c8de44e7ba8e56f235c9a49",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-sort31.mm0",
+      "sha256": "79dfc2a2be40995dbb4b3f2be7097be4d487ee92055ad868fa075c4dfb1e60e8",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-sort32.mm0",
+      "sha256": "7aedc94a324c5449d872038c8665ca01be38631ef1b17ba8a7d658f04e0a1ce9",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-sort41.mm0",
+      "sha256": "63f0ac50281fd26837b0d4a2541d4f1901969361ed72df165064cda1f9920679",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-sort42.mm0",
+      "sha256": "341d300f47ced0fc2ed33d343a466bde93c4302be856fcecf9c711bd2b8b0b09",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-sort43.mm0",
+      "sha256": "3cdc4bd819d9f6ca555966059c3c3aed593efb42aeb0ad75b26fa807f4f4a3b2",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-whitespace1.mm0",
+      "sha256": "899e4ad52c4a25647c470938b77304bd21b67e4a88e877e1e14bb15f736393bd",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-whitespace2.mm0",
+      "sha256": "8b8678b5228d30d1d5bd1e011c1be45a1dae602fdcc9f15a3f1c4210d7675566",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-whitespace3.mm0",
+      "sha256": "3c73183791263208ecc282f67de2b45345e521b8a080e02e30b5f54ff5d58d78",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/bad-whitespace4.mm0",
+      "sha256": "d88a7fd58680096380aac1ecd419d72061005d41dd8125cf7ef4ccf6a038b949",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/blank_binder_alias.mm0",
+      "sha256": "ecd1e86834c5f4d444bcc03fa42c272056b2d53fdbca75cafefcfc4ea97a8756",
+      "syntax": "accepted",
+      "integration": "rejected",
+      "failure_stage": "proof",
+      "proof": {
+        "path": "tests/mm0_mmu/fail/blank_binder_alias.mmu",
+        "sha256": "9a561bf5592bc41a5832ff3d33838ad004659fe80ec38b0662c18955f4805328"
+      }
+    },
+    {
+      "path": "tests/mm0_mmu/fail/non-ascii1.mm0",
+      "sha256": "40d7358ced5b35f34a68e7f319d39bf81335d394441f2e34f3857c6ea933c332",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/fail/non-ascii2.mm0",
+      "sha256": "ac6f8ad3968178318c22a265f988f8c05cdc91f34097e639bae513ae7b870a2e",
+      "syntax": "rejected",
+      "integration": "rejected",
+      "failure_stage": "syntax"
+    },
+    {
+      "path": "tests/mm0_mmu/run/bad-int1.mm0",
+      "sha256": "1ffca654b5666822d613fb9f4d7425450b13d30700cc585e00b01c27b6a820e5",
+      "syntax": "accepted",
+      "integration": "unspecified",
+      "failure_stage": null,
+      "basis": "The outer grammar admits canonical decimal numerals without a machine-integer bound.",
+      "upstream_frontend": "rejected: precedence out of range"
+    },
+    {
+      "path": "tests/mm0_mmu/run/binders_overflow_in_axiom.mm0",
+      "sha256": "5e066121150f36ea65088c92e0b4cabb5e093cf58b9160d18beedf3040836c2a",
+      "syntax": "accepted",
+      "integration": "unspecified",
+      "failure_stage": null,
+      "basis": "The declared outer formula-arrow-unit admits a type or math string; the upstream parser also builds this declaration skeleton. Logical admission is separate.",
+      "upstream_frontend": "accepted"
+    },
+    {
+      "path": "tests/mm0_mmu/run/math-string.mm0",
+      "sha256": "ac81bf4186f2b24ad441303eb72a970d349d3c3f1dc50d602ec4641ae8563eef",
+      "syntax": "accepted",
+      "integration": "unspecified",
+      "failure_stage": null,
+      "basis": "The outer math-string rule preserves every non-dollar scalar for secondary interpretation.",
+      "upstream_frontend": "rejected: delimiter must have one character"
+    }
+  ],
+  "recognition_profile": "MM0TextualSyntaxV1 outer declaration skeleton; secondary math interpretation and front-end admission remain separate."
+}

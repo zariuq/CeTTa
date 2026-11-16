@@ -814,7 +814,7 @@ ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
 PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
 SRC = src/symbol.c src/scalar_trie.c src/atom.c src/state_cell.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c src/raw_source_region.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_builtin_registry.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/fixpoint.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/term_domain.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/answer_storage.c src/fold_algebra.c src/native_fold.c src/exec_saturation.c src/transform_core.c src/library_presentation.c src/support_view.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_macro_expansion.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c src/foreign_provider.c src/runtime_prelude.c src/runtime_session.c
-SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presentation.c src/run_guard.c
+SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/run_observation.c src/error_presentation.c src/run_guard.c
 SRC += src/library_proc.c
 SRC += src/library_fs.c
 SRC += src/petta_priority_heap.c
@@ -12655,13 +12655,19 @@ test-gslt-petta-direct-v1: \
 		--source $(GSLT_DIRECT_PETTA_PARENT_V1) \
 		--entry-mode MissingRelationV1:10 \
 		--out "$$work/missing-entry-mode.metta" >/dev/null 2>&1; then echo 'unexpected success in direct compiler negative control' >&2; exit 1; fi; \
-	if $(LANGDEF_COMPILER_V1_BIN) petta-direct \
+	$(LANGDEF_COMPILER_V1_BIN) petta-direct \
 		--source $(GSLT_DIRECT_IDENTITY_TARGET_EQUATION_V1) \
 		--out "$$work/identity-target-equation.metta" \
-		>/dev/null 2>"$$work/identity-target-equation.err"; then echo 'unexpected success in direct compiler negative control' >&2; exit 1; fi; \
+		>/dev/null; \
 	rg -F -q \
-		'direct PeTTa rejects a structurally identical target equation' \
-		"$$work/identity-target-equation.err"; \
+		'(= (DirectIdentityTargetV1 $$value) (DirectIdentityTargetV1 $$value))' \
+		"$$work/identity-target-equation.metta"; \
+	printf '%s\n' \
+		'!(test (collapse (gslt:DirectIdentityWitnessV1 (DirectIdentityWitnessV1 $$value))) (quote ((DirectIdentityWitnessV1 DirectIdentityValueV1))))' \
+		>> "$$work/identity-target-equation.metta"; \
+	identity_output=$$(timeout 30 $(CETTA_PETTA_DIRECT_RUN_V1) \
+		"$$work/identity-target-equation.metta" 2>&1); \
+	printf '%s\n' "$$identity_output" | rg -F -x -q 'true'; \
 	$(LANGDEF_COMPILER_V1_BIN) petta-direct \
 		--source $(GSLT_DIRECT_PETTA_SOURCE_CONSTRUCTOR_V1) \
 		--entry-mode DirectSourceConsHeadV1:10 \
@@ -12672,7 +12678,7 @@ test-gslt-petta-direct-v1: \
 		--entry-mode DirectSourceNullaryV1:10 \
 		--out "$$work/source-constructor.metta" >/dev/null; \
 	rg -F -q \
-		'(let (cons-atom cons (cons-atom $$head (cons-atom $$tail ()))) $$__gslt_input_v1_0_0' \
+		'(let (quote (cons $$head $$tail)) $$__gslt_input_v1_0_0' \
 		"$$work/source-constructor.metta"; \
 	awk 'BEGIN { print "(= (DirectHostConstructorV1 $$x) (HostChangedV1 $$x))" } 1; END { \
 		print "!(gslt:fn:DirectSourceHostNameV1:10 (quote (DirectHostConstructorV1 KeptV1)))"; \
@@ -18761,10 +18767,26 @@ NORMAL_TEST_TARGETS := \
 	test-gparse-gslt-core \
 	test-gslt-petta-direct-v1 \
 	test-gslt-invocation \
+	test-gslt-il-petta-v1 \
+	test-metta-interact-petta-v1 \
+	test-gslt-relation-executor-v1 \
+	test-gslt-coverage-registry-v1 \
+	test-gslt-empty-relations-v1 \
+	test-gslt-proof-value-boundary-v1 \
+	test-gslt-compiler-walks-v1 \
+	test-gslt-compiler-depth-v1 \
+	test-mm0-textual-corpus-v1 \
+	test-gslt-relational-premises-v1 \
+	test-mettazero-petta-v1 \
+	test-zerouv-petta-v1 \
 	test-atom-deep-copy-iterative \
 	test-frame-identity \
 	test-owned-return-image \
 	test-query-and-space-boundaries \
+	test-atom-walk \
+	test-parser-depth \
+	test-petta-reader-depth \
+	test-embedding-query \
 	test-prepared-pure-answer-producer \
 	test-petta-native-value-boundaries \
 	test-petta-oem-single-sequence \
@@ -18785,6 +18807,9 @@ NORMAL_TEST_TARGETS := \
 	test-petta-transform-step-paths \
 	test-petta-by-transform \
 	test-petta-machine-smoke \
+	test-gslt-machine-registration-v1 \
+	test-source-document-origins \
+	test-transform-owned-handles \
 	test-petta-step-rules \
 	test-transform-he \
 	test-transform-profiles \
@@ -18838,9 +18863,9 @@ test-gslt-composition-width-v1: $(BIN) $(LANGDEF_COMPILER_V1_BIN) \
 
 test-gslt-petta-direct-v1: test-gslt-composition-width-v1
 
-test-gslt-invocation: $(BIN) tests/support/gslt_invocation.py \
+test-gslt-invocation: test-run-observation $(BIN) tests/support/gslt_invocation.py \
         tests/support/check_gslt_invocation.py tests/support/record_petta_direct_run.sh
-	@python3 tests/support/check_gslt_invocation.py ./$(BIN)
+	@python3 tests/support/check_gslt_invocation.py $(abspath $(BIN))
 
 .PHONY: test-builtin-policy-lookup
 test-builtin-policy-lookup:
@@ -32283,6 +32308,24 @@ test-petta-machine-smoke: $(BIN) lib/petta/petta_machine.metta \
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_petta_machine.py ./$(BIN) \
 		--fixture tests/petta/petta_machine_smoke.metta --programs 0
 
+.PHONY: test-gslt-machine-registration-v1
+test-gslt-machine-registration-v1: $(BIN) lib/petta/petta_machine.metta \
+        tests/support/check_gslt_registration.py tests/support/check_gslt_through_machine.py \
+        tests/support/check_petta_machine_corpus.py
+	@set -eu; \
+	mkdir -p runtime/qualification; \
+	work=$$(mktemp -d runtime/qualification/gslt-registration.XXXXXX); \
+	trap 'status=$$?; if [ $$status -eq 0 ]; then rm -rf "$$work"; else echo "kept for inspection: $$work" >&2; fi' EXIT; \
+	python3 tests/support/check_gslt_registration.py $(BIN) --work "$$work"
+
+.PHONY: test-source-document-origins
+test-source-document-origins: $(BIN) tests/support/check_source_document_origins.py \
+        tests/support/native_observation.py tests/support/check_transform_swi_differential.py
+	@mkdir -p runtime/qualification
+	@work=$$(mktemp -d runtime/qualification/source-origins.XXXXXX); \
+	trap 'status=$$?; if [ $$status -eq 0 ]; then rm -rf "$$work"; else echo "kept for inspection: $$work" >&2; fi' EXIT; \
+	python3 tests/support/check_source_document_origins.py $(BIN) --work "$$work"
+
 .PHONY: test-petta-machine
 test-petta-machine: $(BIN) lib/petta/petta_machine.metta tests/petta/petta_machine.metta \
 		tests/support/check_petta_machine.py
@@ -40438,6 +40481,35 @@ test-mettazero-realization-triangle-v1: \
 		--runner $(METTAZERO_SEMANTIC_RUNNER_V1) \
 		--ground-capability tests/fixtures/metta_zero_ground_capability_v1.metta
 
+.PHONY: test-mettazero-petta-v1
+test-mettazero-petta-v1: $(BIN) $(LANGDEF_COMPILER_V1_BIN) \
+		$(METTAZERO_QUOTE_MATCH_V1) $(METTAZERO_QUERY_KERNEL_V1) \
+		$(METTAZERO_CLOSED_BAG_OBSERVATION_V1) $(METTAZERO_SEMANTIC_RUNNER_V1) \
+		tests/fixtures/metta_zero_ground_capability_v1.metta \
+		tools/test_mettazero_realization_triangle_v1.py tools/gslt_relation_executor_v1.py
+	@python3 tools/test_mettazero_realization_triangle_v1.py \
+		--cetta "$(abspath $(BIN))" --quote-match $(METTAZERO_QUOTE_MATCH_V1) \
+		--query-kernel $(METTAZERO_QUERY_KERNEL_V1) \
+		--observation $(METTAZERO_CLOSED_BAG_OBSERVATION_V1) \
+		--runner $(METTAZERO_SEMANTIC_RUNNER_V1) \
+		--ground-capability tests/fixtures/metta_zero_ground_capability_v1.metta \
+		--petta-compiler $(LANGDEF_COMPILER_V1_BIN) --petta-runtime "$(abspath $(BIN))" \
+		--petta-work runtime/mettazero-petta-$(BUILD_OBJ_TAG)
+
+.PHONY: test-gslt-empty-relations-v1
+test-gslt-empty-relations-v1: $(BIN) $(LANGDEF_COMPILER_V1_BIN) \
+		tests/support/check_gslt_empty_relations.py tests/petta/gslt_empty_relations_v1.metta \
+		tests/petta/gslt_empty_provider_v1.metta tests/petta/gslt_empty_prefix_v1.metta
+	@python3 tests/support/check_gslt_empty_relations.py $(LANGDEF_COMPILER_V1_BIN) "$(abspath $(BIN))" \
+		--work runtime/gslt-empty-relations-$(BUILD_OBJ_TAG) --cc '$(CC)'
+
+.PHONY: test-gslt-relational-premises-v1
+test-gslt-relational-premises-v1: $(BIN) $(LANGDEF_COMPILER_V1_BIN) \
+		tests/support/check_gslt_relational_premises.py \
+		tests/petta/gslt_relational_premises_v1.metta tests/petta/gslt_relational_capability_v1.metta
+	@python3 tests/support/check_gslt_relational_premises.py $(LANGDEF_COMPILER_V1_BIN) "$(abspath $(BIN))" \
+		--work runtime/gslt-relational-premises-$(BUILD_OBJ_TAG)
+
 test-mettazero-rule-mutations-v1: \
 		test-mettazero-realization-triangle-v1 \
 		tools/test_mettazero_rule_mutations_v1.py \
@@ -40510,10 +40582,38 @@ test-gslt-il-cli-v1: $(BIN) $(GSLT_IL_CLI_TEST_V1)
 test-gslt-il-semantics-v1: \
 		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(GSLT_IL_FINITE_COMMAND_V1) \
+		tools/gslt_relation_executor_v1.py \
 		$(GSLT_IL_SEMANTICS_TEST_V1)
 	@python3 $(GSLT_IL_SEMANTICS_TEST_V1) \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		--semantics $(GSLT_IL_FINITE_COMMAND_V1)
+
+.PHONY: test-gslt-il-petta-v1
+test-gslt-il-petta-v1: $(BIN) $(LANGDEF_COMPILER_V1_BIN) \
+		$(GSLT_IL_FINITE_COMMAND_V1) $(GSLT_IL_SEMANTICS_TEST_V1) \
+		tools/gslt_relation_executor_v1.py
+	@python3 $(GSLT_IL_SEMANTICS_TEST_V1) \
+		--semantics $(GSLT_IL_FINITE_COMMAND_V1) \
+		--petta-compiler $(LANGDEF_COMPILER_V1_BIN) --petta-runtime "$(abspath $(BIN))" \
+		--petta-work runtime/gslt-il-petta-$(BUILD_OBJ_TAG)
+
+.PHONY: test-gslt-relation-executor-v1
+test-gslt-relation-executor-v1: $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(GSLT_IL_FINITE_COMMAND_V1) tools/gslt_relation_executor_v1.py \
+		tests/support/check_gslt_relation_executor.py
+	@python3 tests/support/check_gslt_relation_executor.py $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
+
+.PHONY: test-gslt-coverage-registry-v1
+test-gslt-coverage-registry-v1: tools/gslt_coverage_registry_v1.py \
+		tests/support/check_gslt_coverage_registry.py tests/langdef/gslt_coverage_v1.json
+	@python3 tests/support/check_gslt_coverage_registry.py
+
+.PHONY: test-gslt-il-petta-mutations-v1
+test-gslt-il-petta-mutations-v1: test-gslt-il-petta-v1 $(GSLT_IL_RULE_MUTATIONS_TEST_V1)
+	@python3 $(GSLT_IL_RULE_MUTATIONS_TEST_V1) \
+		--harness $(GSLT_IL_SEMANTICS_TEST_V1) --semantics $(GSLT_IL_FINITE_COMMAND_V1) \
+		--petta-compiler $(LANGDEF_COMPILER_V1_BIN) --petta-runtime "$(abspath $(BIN))" \
+		--petta-work runtime/gslt-il-petta-mutations-$(BUILD_OBJ_TAG)
 
 test-gslt-il-rule-mutations-v1: \
 		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
@@ -40564,6 +40664,16 @@ test-zerouv-semantics-v1: \
 		--query-kernel $(METTAZERO_QUERY_KERNEL_V1) \
 		--control $(ZEROUV_CONTROL_V1)
 
+.PHONY: test-zerouv-petta-v1
+test-zerouv-petta-v1: $(BIN) $(LANGDEF_COMPILER_V1_BIN) \
+		$(METTAZERO_QUOTE_MATCH_V1) $(METTAZERO_QUERY_KERNEL_V1) \
+		$(ZEROUV_CONTROL_V1) $(ZEROUV_SEMANTICS_TEST_V1) tools/gslt_relation_executor_v1.py
+	@python3 $(ZEROUV_SEMANTICS_TEST_V1) \
+		--quote-match $(METTAZERO_QUOTE_MATCH_V1) --query-kernel $(METTAZERO_QUERY_KERNEL_V1) \
+		--control $(ZEROUV_CONTROL_V1) \
+		--petta-compiler $(LANGDEF_COMPILER_V1_BIN) --petta-runtime "$(abspath $(BIN))" \
+		--petta-work runtime/zerouv-petta-$(BUILD_OBJ_TAG)
+
 test-zerouv-rule-mutations-v1: \
 		test-zerouv-semantics-v1 \
 		$(ZEROUV_RULE_MUTATIONS_TEST_V1) \
@@ -40606,12 +40716,34 @@ test-metta-interact-semantics-v1: \
 		$(METTAZERO_QUOTE_MATCH_V1) \
 		$(METTA_INTERACT_CORE_V1) \
 		$(METTA_INTERACT_SEQUENCE_V1) \
+		tools/gslt_relation_executor_v1.py \
 		$(METTA_INTERACT_SEMANTICS_TEST_V1)
 	@python3 $(METTA_INTERACT_SEMANTICS_TEST_V1) \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		--quote-match $(METTAZERO_QUOTE_MATCH_V1) \
 		--core $(METTA_INTERACT_CORE_V1) \
 		--sequence $(METTA_INTERACT_SEQUENCE_V1)
+
+.PHONY: test-metta-interact-petta-v1
+test-metta-interact-petta-v1: $(BIN) $(LANGDEF_COMPILER_V1_BIN) \
+		$(METTAZERO_QUOTE_MATCH_V1) $(METTA_INTERACT_CORE_V1) \
+		$(METTA_INTERACT_SEQUENCE_V1) $(METTA_INTERACT_SEMANTICS_TEST_V1) \
+		tools/gslt_relation_executor_v1.py
+	@python3 $(METTA_INTERACT_SEMANTICS_TEST_V1) \
+		--quote-match $(METTAZERO_QUOTE_MATCH_V1) --core $(METTA_INTERACT_CORE_V1) \
+		--sequence $(METTA_INTERACT_SEQUENCE_V1) \
+		--petta-compiler $(LANGDEF_COMPILER_V1_BIN) --petta-runtime "$(abspath $(BIN))" \
+		--petta-work runtime/metta-interact-petta-$(BUILD_OBJ_TAG)
+
+.PHONY: test-metta-interact-petta-mutations-v1
+test-metta-interact-petta-mutations-v1: test-metta-interact-petta-v1 \
+		$(METTA_INTERACT_RULE_MUTATIONS_TEST_V1)
+	@python3 $(METTA_INTERACT_RULE_MUTATIONS_TEST_V1) \
+		--harness $(METTA_INTERACT_SEMANTICS_TEST_V1) \
+		--quote-match $(METTAZERO_QUOTE_MATCH_V1) --core $(METTA_INTERACT_CORE_V1) \
+		--sequence $(METTA_INTERACT_SEQUENCE_V1) \
+		--petta-compiler $(LANGDEF_COMPILER_V1_BIN) --petta-runtime "$(abspath $(BIN))" \
+		--petta-work runtime/metta-interact-petta-mutations-$(BUILD_OBJ_TAG)
 
 test-metta-interact-rule-mutations-v1: \
 		test-metta-interact-semantics-v1 \
@@ -48657,6 +48789,8 @@ test-run-report:
 test-run-cli: $(BIN) test-run-report
 	@python3 tests/support/check_run_cli.py $(BIN) --artifacts runtime $(if $(filter 1,$(LIB_PROLOG_ENABLED)),--lib-prolog,)
 
+test-run-cli: test-run-observation
+
 test-all: test-run-cli
 
 .PHONY: test-error-presentation
@@ -48673,6 +48807,7 @@ test-all: test-error-presentation
 test-run-guard:
 	@$(CC) -O2 -std=c11 -Wall -Wextra -Werror -Isrc src/run_guard.c tests/support/check_run_guard.c -o runtime/check-run-guard
 	@runtime/check-run-guard
+	@python3 tests/support/check_run_guard_reporting.py runtime/check-run-guard
 	@printf 'PASS: process receipts reject raw successful exits, signals, catalogue changes and channel loss\n'
 test-run-cli: test-run-guard
 
@@ -49593,6 +49728,22 @@ endif
 EMBED_TAG = $(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,)
 EMBED_OBJ = runtime/bootstrap/embedding.$(EMBED_TAG).o
 EMBED_RUNTIME_OBJ = $(filter-out src/main.%,$(OBJ))
+
+TRANSFORM_OWNED_HANDLES_TEST := runtime/test-transform-owned-handles-$(EMBED_TAG)
+$(TRANSFORM_OWNED_HANDLES_TEST): tests/support/test_transform_owned_handles.c \
+        $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS)
+.PHONY: test-transform-owned-handles
+test-transform-owned-handles: $(TRANSFORM_OWNED_HANDLES_TEST)
+	@$(TRANSFORM_OWNED_HANDLES_TEST)
+RUN_OBSERVATION_TEST = runtime/test-run-observation-$(EMBED_TAG)
+$(RUN_OBSERVATION_TEST): tests/support/test_run_observation.c $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
+	@$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS)
+
+.PHONY: test-run-observation
+test-run-observation: $(BIN) $(RUN_OBSERVATION_TEST)
+	@python3 tests/support/check_run_observation.py $(abspath $(BIN)) $(RUN_OBSERVATION_TEST) --artifacts runtime
+
 EMBED_ALLOCATOR_OBJ = $(filter src/native_memory.%,$(EMBED_RUNTIME_OBJ))
 EMBED_LIB = runtime/libcetta-$(EMBED_TAG).so
 EMBED_STATIC_LIB = runtime/libcetta-$(EMBED_TAG).a
@@ -49810,6 +49961,20 @@ test-transform-read-fuel: $(TRANSFORM_READ_FUEL_TEST)
 	@$(call cetta_exec,./$(TRANSFORM_READ_FUEL_TEST))
 test-transform-fuel: test-transform-read-fuel
 
+TRANSFORM_COPY_FAULT_TEST = runtime/test_transform_copy_faults-$(EMBED_TAG)
+$(TRANSFORM_COPY_FAULT_TEST): tests/support/test_transform_copy_faults.c src/embedding.c $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
+	@set -eu; \
+	tmp_out=$$(mktemp "runtime/.cetta-transform-copy-faults.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS) \
+		-Wl,--wrap=atom_deep_copy_session_new -Wl,--wrap=atom_deep_copy_session_copy \
+		-Wl,--wrap=atom_deep_copy_session_free -Wl,--wrap=atom_expr; \
+	mv "$$tmp_out" "$@"
+.PHONY: test-transform-copy-faults
+test-transform-copy-faults: $(TRANSFORM_COPY_FAULT_TEST)
+	@$(call cetta_exec,./$(TRANSFORM_COPY_FAULT_TEST))
+test-transform-fuel: test-transform-copy-faults
+
 TRANSFORM_FUEL_TEST = runtime/test_transform_fuel-$(EMBED_TAG)
 $(TRANSFORM_FUEL_TEST): tests/support/test_transform_fuel.c $(EMBED_OBJ) $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
 	@set -eu; \
@@ -49821,6 +49986,95 @@ $(TRANSFORM_FUEL_TEST): tests/support/test_transform_fuel.c $(EMBED_OBJ) $(EMBED
 test-transform-fuel: $(TRANSFORM_FUEL_TEST)
 	@$(call cetta_exec,./$(TRANSFORM_FUEL_TEST))
 test-petta-transform test-all: test-transform-fuel
+
+.PHONY: test-mm0-textual-corpus-v1
+test-mm0-textual-corpus-v1:
+	python3 tests/support/check_mm0_textual_corpus.py
+
+.PHONY: test-gslt-proof-value-boundary-v1
+test-gslt-proof-value-boundary-v1: $(BIN) $(LANGDEF_COMPILER_V1_BIN) tests/support/check_gslt_proof_values.py
+	@set -eu; \
+	mkdir -p runtime/qualification; \
+	work=$$(mktemp -d runtime/qualification/proof-value-boundary.XXXXXX); \
+	trap 'status=$$?; if [ $$status -eq 0 ]; then rm -rf "$$work"; else echo "kept for inspection: $$work" >&2; fi' EXIT; \
+	python3 tests/support/check_gslt_proof_values.py $(LANGDEF_COMPILER_V1_BIN) $(BIN) --work "$$work"
+
+GSLT_COMPILER_WALK_SUPPORT_OBJ = $(LANGDEF_FINITE_HORN_GSLT_V1_OBJ) $(LANGDEF_METTA_EQUATION_COMPILER_V1_OBJ) $(LANGDEF_GSLT_COMPOSITION_V1_OBJ) $(LANGDEF_GSLT_NATIVE_DIRECT_V1_OBJ) $(LANGDEF_GSLT_RHOMETTA_DIRECT_V1_OBJ) $(LANGDEF_COMPILER_V1_LINK_OBJ)
+GSLT_COMPILER_WALK_TEST = runtime/test_gslt_compiler_walks-$(BUILD_OBJ_TAG)
+GSLT_COMPILER_TOOL_WALK_TEST = runtime/test_gslt_compiler_tool_walks-$(BUILD_OBJ_TAG)
+GSLT_COMPILER_FAULT_TEST = runtime/test_gslt_compiler_faults-$(BUILD_OBJ_TAG)
+$(GSLT_COMPILER_WALK_TEST): tests/support/test_gslt_compiler_walks.c native/gslt_petta_direct_v1.c $(GSLT_COMPILER_WALK_SUPPORT_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Inative -Wl,--gc-sections -o $@ $< $(GSLT_COMPILER_WALK_SUPPORT_OBJ) $(BRIDGE_DEPS) $(LDFLAGS)
+$(GSLT_COMPILER_FAULT_TEST): tests/support/test_gslt_compiler_faults.c native/gslt_petta_direct_v1.c $(GSLT_COMPILER_WALK_SUPPORT_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Inative -Wl,--gc-sections -o $@ $< $(GSLT_COMPILER_WALK_SUPPORT_OBJ) $(BRIDGE_DEPS) $(LDFLAGS)
+$(GSLT_COMPILER_TOOL_WALK_TEST): tests/support/test_gslt_compiler_tool_walks.c tools/langdef_compile_v1.c $(LANGDEF_GSLT_PETTA_DIRECT_V1_OBJ) $(GSLT_COMPILER_WALK_SUPPORT_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Inative -Wl,--gc-sections -o $@ $< $(LANGDEF_GSLT_PETTA_DIRECT_V1_OBJ) $(GSLT_COMPILER_WALK_SUPPORT_OBJ) $(BRIDGE_DEPS) $(LDFLAGS)
+.PHONY: test-gslt-compiler-walks-v1 test-gslt-compiler-depth-v1 benchmark-gslt-compiler-depth-v1
+test-gslt-compiler-walks-v1: $(GSLT_COMPILER_WALK_TEST) $(GSLT_COMPILER_TOOL_WALK_TEST) $(GSLT_COMPILER_FAULT_TEST)
+	@$(call cetta_exec,./$(GSLT_COMPILER_WALK_TEST))
+	@$(call cetta_exec,./$(GSLT_COMPILER_TOOL_WALK_TEST))
+	@$(call cetta_exec,./$(GSLT_COMPILER_FAULT_TEST))
+benchmark-gslt-compiler-depth-v1: GSLT_COMPILER_DEPTH_ARGS = --depth 12000 --factor-depth 6000 --width 5000 --timings
+test-gslt-compiler-depth-v1 benchmark-gslt-compiler-depth-v1: $(BIN) $(LANGDEF_COMPILER_V1_BIN) tests/support/check_gslt_compiler_depth.py
+	@set -eu; \
+	mkdir -p runtime/qualification; \
+	work=$$(mktemp -d runtime/qualification/compiler-depth.XXXXXX); \
+	trap 'status=$$?; if [ $$status -eq 0 ]; then rm -rf "$$work"; else echo "kept for inspection: $$work" >&2; fi' EXIT; \
+	python3 tests/support/check_gslt_compiler_depth.py $(LANGDEF_COMPILER_V1_BIN) $(BIN) --work "$$work" $(GSLT_COMPILER_DEPTH_ARGS)
+
+ATOM_WALK_TEST = runtime/test_atom_walk-$(EMBED_TAG)
+$(ATOM_WALK_TEST): tests/support/test_atom_walk.c src/atom_walk.h src/atom_walk.inc $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o $@ $< $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc
+.PHONY: test-atom-walk
+test-atom-walk: $(ATOM_WALK_TEST)
+	./$(ATOM_WALK_TEST)
+
+PARSER_DEPTH_TEST = runtime/test_parser_depth-$(EMBED_TAG)
+$(PARSER_DEPTH_TEST): tests/support/test_parser_depth.c $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o $@ $< $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS)
+.PHONY: test-parser-depth
+test-parser-depth: $(PARSER_DEPTH_TEST)
+	./$(PARSER_DEPTH_TEST)
+
+PETTA_READER_DEPTH_TEST = runtime/test_petta_reader_depth-$(EMBED_TAG)
+$(PETTA_READER_DEPTH_TEST): tests/support/test_petta_reader_depth.c $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o $@ $< $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=cetta_malloc,--wrap=cetta_realloc
+.PHONY: test-petta-reader-depth
+test-petta-reader-depth: $(PETTA_READER_DEPTH_TEST)
+	./$(PETTA_READER_DEPTH_TEST)
+
+.PHONY: test-petta-reader-depth-mutants
+test-all: test-petta-reader-depth-mutants
+test-petta-reader-depth-mutants: $(PETTA_READER_DEPTH_TEST)
+	python3 tests/support/check_petta_reader_depth_mutants.py --cc='$(CC)' \
+		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
+		--baseline='$(PETTA_READER_DEPTH_TEST)' --objects $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
+
+PARSER_BOUNDED_OBJ = runtime/bootstrap/parser-bounded.$(EMBED_TAG).o
+$(PARSER_BOUNDED_OBJ): src/parser.c $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -DCETTA_PARSE_DEPTH_LIMIT=64 -c $< -o $@
+-include $(PARSER_BOUNDED_OBJ:.o=.d)
+PARSER_BOUNDED_TEST = runtime/test_parser_bounded-$(EMBED_TAG)
+$(PARSER_BOUNDED_TEST): tests/support/test_parser_depth.c $(PARSER_BOUNDED_OBJ) $(filter-out src/parser.%,$(EMBED_RUNTIME_OBJ)) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o $@ $< $(PARSER_BOUNDED_OBJ) $(filter-out src/parser.%,$(EMBED_RUNTIME_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS)
+.PHONY: test-parser-depth-bounded
+test-all: test-parser-depth-bounded
+test-parser-depth-bounded: $(PARSER_BOUNDED_TEST)
+	./$(PARSER_BOUNDED_TEST) --bounded
+
+.PHONY: test-parser-depth-mutants
+test-all: test-parser-depth-mutants
+test-parser-depth-mutants: $(PARSER_DEPTH_TEST)
+	python3 tests/support/check_parser_depth_mutants.py --cc='$(CC)' \
+		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
+		--baseline='$(PARSER_DEPTH_TEST)' --objects $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
+
+.PHONY: test-atom-walk-mutants
+test-all: test-atom-walk-mutants
+test-atom-walk-mutants: $(ATOM_WALK_TEST)
+	python3 tests/support/check_atom_walk_mutants.py --cc='$(CC)' \
+		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
+		--baseline='$(ATOM_WALK_TEST)' --objects $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
 
 .PHONY: test-embedding-query
 test-embedding-query: $(EMBED_QUERY_TEST)
@@ -49836,6 +50090,20 @@ test-embedding-query-mutants: $(EMBED_QUERY_TEST)
 	python3 tests/support/check_embedding_query_mutants.py --cc='$(CC)' \
 		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
 		--objects $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
+
+.PHONY: test-petta-provider-mutants
+test-all: test-petta-provider-mutants
+test-petta-provider-mutants: $(EMBED_QUERY_TEST)
+	python3 tests/support/check_embedding_query_mutants.py --cc='$(CC)' \
+		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
+		--only-prefix=petta-provider- --objects $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
+
+.PHONY: test-petta-source-output-mutants
+test-all: test-petta-source-output-mutants
+test-petta-source-output-mutants: $(EMBED_QUERY_TEST)
+	python3 tests/support/check_embedding_query_mutants.py --cc='$(CC)' \
+		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
+		--only-prefix=petta-source-output- --objects $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
 
 EMBED_HE_RETENTION_TEST_OBJ = runtime/bootstrap/test_he_retained_execution.$(EMBED_TAG).o
 EMBED_HE_RETENTION_TEST = runtime/test_he_retained_execution-$(EMBED_TAG)

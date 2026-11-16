@@ -11,13 +11,18 @@ import uuid
 
 import gslt_invocation as invocation
 
+sys.path.insert(0, str(invocation.ROOT / "tools"))
+from gslt_coverage_registry_v1 import inventory, make_fragments  # noqa: E402
+
 
 def gate_identity(root):
-    paths = [root / "Makefile", *sorted((root / "mk").glob("*.mk"))]
+    paths = make_fragments(root)
     paths += [p for p in sorted((root / "tests").rglob("*"))
-              if p.is_file() and p.suffix in (".py", ".sh", ".metta", ".expected", ".json", ".c")]
-    return invocation.digest(json.dumps([(str(p.relative_to(root)), invocation.digest(p.read_bytes()))
-                                          for p in paths]).encode())
+              if p.is_file() and "__pycache__" not in p.parts]
+    authored = inventory(root, root / "tests/langdef/gslt_coverage_v1.json")
+    return invocation.digest(json.dumps(dict(
+        gates=[(str(p.relative_to(root)), invocation.digest(p.read_bytes())) for p in paths],
+        authored=authored["identity"])).encode())
 
 
 def successful_attempt(path, identity):
@@ -88,6 +93,9 @@ def main():
             else:
                 print(f"UNQUALIFIED SOURCE: {gate}; retained {attempt.relative_to(work)}", flush=True)
                 failed = True
+        if gate_identity(root) != identity:
+            print("UNQUALIFIED: authored or producer inputs changed during source qualification", flush=True)
+            return 1
         if args.capture_only:
             return int(failed)
         # Symlink only selected successful attempts. Failed and interrupted
@@ -100,6 +108,9 @@ def main():
             args.binary, "--fire", "transform", "--lane", args.lane,
             "--corpus", str(selection), "--keep", str(work / "runs" / args.lane),
             "--report", str(work / (args.lane + "-report.txt"))], cwd=root)
+        if gate_identity(root) != identity:
+            print("UNQUALIFIED: authored or producer inputs changed during composition", flush=True)
+            return 1
         return int(failed or result.returncode != 0)
 
 

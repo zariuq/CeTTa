@@ -26,6 +26,8 @@ import re
 
 import argparse
 import pathlib
+import hashlib
+import os
 import subprocess
 import sys
 import time
@@ -322,14 +324,24 @@ def read_out(mode, done, native):
 
 
 def run_cetta(cetta, program, path, mode, work, timeout, signatures):
-    driver = work / 'driver.metta'
     expression = reading(mode, lambda p: '(mg-scalars $mg "%s")' % p, path, signatures)
-    driver.write_text(program + READER_FUNCTIONS + CETTA_DRIVER % expression)
+    source = READER_FUNCTIONS + CETTA_DRIVER % expression
+    driver = work / (hashlib.sha256(source.encode()).hexdigest() + '.driver.metta')
+    driver.write_text(source)
     started = time.perf_counter()
+    env = {'CETTA_PETTA_SEARCH_MACHINE': '1', 'PATH': '/usr/bin:/bin'}
+    for name in ('CETTA_GSLT_RECORD_DIR', 'CETTA_GSLT_SOURCE_GATE'):
+        if name in os.environ:
+            env[name] = os.environ[name]
+    runner = pathlib.Path(__file__).resolve().parents[1] / 'support/run_gslt_program.py'
+    declared = []
+    for input_path in [*signatures, path]:
+        declared += ['--data-file', str(input_path)]
     try:
         done = subprocess.run(
-            [cetta, '--lang', 'petta', str(driver)], capture_output=True,
-            timeout=timeout, env={'CETTA_PETTA_SEARCH_MACHINE': '1', 'PATH': '/usr/bin:/bin'})
+            [sys.executable, str(runner), *declared, '--',
+             cetta, '--lang', 'petta', str(program), str(driver)], capture_output=True,
+            timeout=timeout, env=env)
     except subprocess.TimeoutExpired:
         return (TIMEOUT, 'after %ss' % timeout), timeout
     elapsed = time.perf_counter() - started
@@ -374,7 +386,7 @@ def main():
     parser.add_argument('--timeout', type=float, default=600.0)
     parser.add_argument('files', nargs='+')
     args = parser.parse_args()
-    program = pathlib.Path(args.program).read_text() if args.program else ''
+    program = pathlib.Path(args.program).resolve() if args.program else None
     if args.engine != 'native' and not program:
         parser.error('--program is required for the %s engine' % args.engine)
     work = pathlib.Path(args.work).resolve()

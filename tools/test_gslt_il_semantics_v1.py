@@ -6,25 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-import subprocess
 
 import gslt2parse_schema_v1 as sx
+import gslt_relation_executor_v1 as executor
 
 
 class GateFailure(RuntimeError):
     pass
-
-
-def run(command: list[str]) -> str:
-    completed = subprocess.run(
-        command, text=True, capture_output=True, check=False
-    )
-    if completed.returncode != 0:
-        raise GateFailure(
-            f"executor failed ({' '.join(command[:2])}):\n"
-            f"{completed.stdout}{completed.stderr}"
-        )
-    return completed.stdout.strip()
 
 
 def qsym(name: str) -> str:
@@ -82,34 +70,7 @@ def program(*payloads: str) -> str:
 def chart_answers(
     chart: Path, semantics: Path, query: str
 ) -> list[tuple[sx.SExpr, ...]]:
-    raw = run(
-        [
-            str(chart),
-            str(semantics),
-            "--query-text",
-            query,
-            "--timeout",
-            "10",
-            "--max-rounds",
-            "100000",
-        ]
-    )
-    try:
-        receipt = json.loads(raw)
-    except json.JSONDecodeError as error:
-        raise GateFailure(f"chart emitted malformed JSON: {raw}") from error
-    terms = receipt.get("terms")
-    if not isinstance(terms, list):
-        raise GateFailure(f"chart receipt omits answer terms: {receipt}")
-    answers: list[tuple[sx.SExpr, ...]] = []
-    for rendered in terms:
-        if not isinstance(rendered, str):
-            raise GateFailure(f"chart answer is not text: {rendered!r}")
-        forms = sx.parse_sexprs(rendered, source="chart answer")
-        if len(forms) != 1 or not isinstance(forms[0], tuple):
-            raise GateFailure(f"chart returned malformed answer: {rendered}")
-        answers.append(forms[0])
-    return answers
+    return executor.answers(chart, (semantics,), query)
 
 
 def relation_answers(
@@ -163,10 +124,11 @@ def produce(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--chart", type=Path, required=True)
+    parser.add_argument("--chart", type=Path)
+    executor.add_arguments(parser)
     parser.add_argument("--semantics", type=Path, required=True)
     arguments = parser.parse_args()
-    chart = arguments.chart.resolve()
+    chart = executor.select(arguments)
     semantics = arguments.semantics.resolve()
 
     space_0 = qsym("&stage-0")

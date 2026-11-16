@@ -1,5 +1,5 @@
 ; generated from lib/transform_axes.data by make transform-axes-metta, do not edit
-(cesta-table-rows/1 Steps (Columns spelling) (Rows (Row one) (Row round) (Row synchronous) (Row joint) (Row every) (Row maximal) (Row unique)))
+(cesta-table-rows/1 Steps (Columns spelling) (Rows (Row one) (Row round) (Row synchronous) (Row bag) (Row every) (Row maximal) (Row unique)))
 (cesta-table-rows/1 Asks (Columns spelling) (Rows (Row after-tells) (Row before-tells)))
 (cesta-table-rows/1 Stores (Columns spelling) (Rows (Row multiset) (Row set)))
 (cesta-table-rows/1 Matches (Columns spelling) (Rows (Row symmetric) (Row keys)))

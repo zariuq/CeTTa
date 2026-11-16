@@ -265,7 +265,7 @@ if threading.current_thread() is threading.main_thread():
     signal.signal(signal.SIGINT, stop_live_groups)
 
 
-def run_group(command, cwd, timeout, env=None, limit=None):
+def run_group(command, cwd, timeout, env=None, limit=None, text=True):
     """Run COMMAND: (status, output, errors), status 124 when stopped for time.
 
     The command gets a process group of its own, and stopping it stops the
@@ -276,14 +276,14 @@ def run_group(command, cwd, timeout, env=None, limit=None):
         if limit:
             limit()
     p = subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE, text=True, preexec_fn=prepare)
+                         stderr=subprocess.PIPE, text=text, preexec_fn=prepare)
     LIVE.add(p.pid)
     try:
         out, err = p.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         stop_group(p.pid)
-        p.communicate()
-        return 124, "", "timeout"
+        out, err = p.communicate()
+        return (124, "", "timeout") if text else (124, out, err + b"\ntimeout")
     finally:
         stop_group(p.pid)
         LIVE.discard(p.pid)

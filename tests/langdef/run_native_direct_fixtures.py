@@ -20,6 +20,9 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "support"))
+from check_transform_swi_differential import read_forms, write_form
+
 GROUND = ["experiments/gslt2parse_foundation/presentations/shared/ground_relations_v1.metta",
           "experiments/gslt2parse_foundation/presentations/shared/cetta_petta_ground_relations_v1.metta"]
 
@@ -114,24 +117,43 @@ def main():
             if build.returncode != 0:
                 problem = "C build failed: %s" % build.stderr[-400:]
             else:
-                native = subprocess.run([str(binary)], input=calls, capture_output=True, text=True).stdout
-                if native != expected:
+                native_run = subprocess.run([str(binary)], input=calls, capture_output=True, text=True)
+                native = native_run.stdout
+                if native_run.returncode != 0:
+                    problem = "native execution exited %d: %s" % (native_run.returncode, native_run.stderr)
+                elif native != expected:
                     problem = "native answers %r, expected %r" % (native, expected)
                 else:
                     program = work / (name + ".petta.metta")
                     done = subprocess.run(compile_args(args.compiler, source, entries, "petta", program),
                                           cwd=root, capture_output=True, text=True)
+                    if done.returncode != 0:
+                        failed += 1
+                        print("FAIL %s: PeTTa compilation exited %d: %s" %
+                              (name, done.returncode, done.stderr))
+                        continue
                     lines = [program.read_text()]
                     for call in calls.splitlines():
-                        if call.strip():
+                        call = call.strip()
+                        if call and not call.startswith(";"):
                             entry, _, inputs = call.partition(" ")
-                            lines.append("!(println! (collapse (gslt:entry:%s %s)))" % (entry, TEXT.sub(text_list, inputs)))
+                            # These are decoded GSLT values. Protect all of them
+                            # when spelling the host call, including cons/nil.
+                            values = read_forms(TEXT.sub(text_list, inputs))
+                            count = entry.rsplit(":", 1)[1].count("1")
+                            if len(values) != count:
+                                raise ValueError("wrong input count in fixture call: " + call)
+                            held = " ".join("(quote " + write_form(value) + ")" for value in values)
+                            lines.append("!(let $_printed (println! (collapse (gslt:entry:%s %s))) (empty))" % (entry, held))
                     driver = work / (name + ".driver.metta")
                     driver.write_text("\n".join(lines) + "\n")
-                    ran = subprocess.run([args.cetta, "--lang", "petta", str(driver)], cwd=root,
+                    ran = subprocess.run([sys.executable, str(root / "tests/support/run_gslt_program.py"),
+                                          args.cetta, "--lang", "petta", str(driver)], cwd=root,
                                          capture_output=True, text=True, timeout=300)
-                    petta = "".join(l + "\n" for l in ran.stdout.splitlines() if l.startswith("("))
-                    if petta != native:
+                    petta = ran.stdout
+                    if ran.returncode != 0:
+                        problem = "PeTTa execution exited %d: %s" % (ran.returncode, ran.stderr)
+                    elif petta != native:
                         problem = "PeTTa target answers %r, native %r" % (petta, native)
         if problem:
             failed += 1

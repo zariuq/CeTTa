@@ -1,12 +1,14 @@
 #include "run_cli.h"
 #include "run_guard.h"
 #include "error_presentation.h"
+#include "run_observation.h"
 #include <inttypes.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 struct RunCli {
+    RunObservation *observation;
     RunReportDoc *document;
     RunReport *query;
     uint64_t declared, opened, test_id;
@@ -17,6 +19,11 @@ struct RunCli {
     size_t errors_len;
     pthread_mutex_t mutex;
 };
+bool run_cli_open_observation(RunCli *c, const char *path) {
+    if (!c || c->observation || !path) return false;
+    c->observation = run_observation_open(path);
+    return c->observation != NULL;
+}
 RunCli *run_cli_begin(void) {
     RunCli *c=calloc(1,sizeof(*c));
     if (!c) return NULL;
@@ -28,6 +35,7 @@ RunCli *run_cli_begin(void) {
 }
 void run_cli_free(RunCli *c) {
     if (!c) return;
+    run_observation_free(c->observation);
     run_report_doc_free(c->document); pthread_mutex_destroy(&c->mutex); free(c);
 }
 bool run_cli_declare_queries(RunCli *c,uint64_t count) {
@@ -49,7 +57,9 @@ bool run_cli_query_begin(RunCli *c) {
     c->stop=RUN_REPORT_STOP_OBSERVED_COMPLETE; c->test_id=0;
     c->fault_code=CETTA_DIAGNOSTIC_EXECUTION; c->fault_detail_noted=false;
     if (!c->query) c->failed=true;
-    return c->query!=NULL;
+    bool observed = run_observation_query_begin(c->observation, c->opened);
+    c->failed |= !observed;
+    return c->query!=NULL && observed;
 }
 void run_cli_test_verdict(void *context,bool passed) {
     RunCli *c=context;
@@ -63,6 +73,9 @@ void run_cli_answers(RunCli *c,uint64_t count) {
     if (!c) return;
     if (!c->query) { c->failed=true; return; }
     for (uint64_t i=0;i<count;i++) if (!run_report_answer(c->query)) c->failed=true;
+}
+void run_cli_observe_answers(RunCli *c, Atom *const *values, size_t count) {
+    if (c) run_observation_answers(c->observation, values, count);
 }
 void run_cli_query_stop(RunCli *c,RunReportStopKind stop) {
     if (!c) return;
@@ -85,6 +98,7 @@ void run_cli_query_end(RunCli *c,bool output_ok,bool cleanup_ok) {
     c->failed |= !run_report_activity(c->query,cleanup_ok
         ? RUN_REPORT_ACTIVITY_CLEANUP_COMPLETE : RUN_REPORT_ACTIVITY_CLEANUP_FAILED,0);
     c->failed |= !run_report_terminal(c->query,c->stop,c->fault_code,c->opened,0);
+    run_observation_query_end(c->observation, c->stop, output_ok, cleanup_ok);
     c->query=NULL;
 }
 static const char *boolean(bool b) { return b ? "true" : "false"; }
@@ -159,11 +173,13 @@ int run_cli_finish(RunCli *c,int dialect_exit,bool output_ok,
     if (human_ok) human_ok=fprintf(stderr,"run: status %u; queries %"PRIu64"; unsettled %"PRIu64"\n",
         d.exit_code,d.queries_declared,d.queries_unsettled)>=0;
     if (human_ok) human_ok=fflush(stderr)==0 && !ferror(stderr);
+    bool observed=run_observation_finish(c->observation,&d,dialect_exit);
     bool sent=publish(c,path,&d,dialect_exit);
     if (!sent) {
         if (!ferror(stderr)) fputs("error: could not publish run report\n",stderr);
         return 1;
     }
     if (!human_ok) return 1;
+    if (!observed) return 1;
     return strict ? (int)d.exit_code : dialect_exit;
 }

@@ -2280,18 +2280,34 @@ static TfStatus tf_commit(TfFire *f, const TfFootprint *fp, TfGroups *g) {
                                    sizeof(Atom *) * (fp->row_len ? fp->row_len : 1u));
     if (!instances)
         return f->effects ? TF_ERROR : TF_FAIL;
-    /* Everything the commit answers is copied before any removal can
-     * release the stored syntax it borrows. */
-    for (size_t r = 0u; r < fp->row_len; r++)
-        instances[r] = atom_deep_copy(f->answer_arena, fp->rows[r].instance);
+    /* Copy the publication roots together before any removal can release
+     * their sources. One episode retains sharing between instances and takes. */
     Atom **taken = arena_alloc(f->answer_arena, sizeof(Atom *) * (g->len ? g->len : 1u));
     if (!taken)
         return f->effects ? TF_ERROR : TF_FAIL;
-    for (size_t i = 0u; i < g->len; i++) {
+    AtomDeepCopySession *copy = atom_deep_copy_session_new(f->answer_arena);
+    if (!copy)
+        return f->effects ? TF_ERROR : TF_FAIL;
+    bool copied = true;
+    for (size_t r = 0u; copied && r < fp->row_len; r++) {
+        instances[r] = atom_deep_copy_session_copy(copy, fp->rows[r].instance);
+        copied = instances[r] != NULL;
+    }
+    for (size_t i = 0u; copied && i < g->len; i++) {
         if (g->groups[i].entry->access != TF_TAKE)
             continue;
-        taken[i] = atom_deep_copy(f->answer_arena, g->groups[i].entry->atom);
+        taken[i] = atom_deep_copy_session_copy(copy, g->groups[i].entry->atom);
+        copied = taken[i] != NULL;
     }
+    atom_deep_copy_session_free(copy);
+    if (!copied)
+        return f->effects ? TF_ERROR : TF_FAIL;
+    Atom *fired = atom_expr(f->answer_arena, instances, (CettaExprLen)fp->row_len);
+    Atom *tag = fired ? atom_symbol(f->answer_arena, "tf:fired") : NULL;
+    Atom *parts[2] = {tag, fired};
+    Atom *answer = tag ? atom_expr(f->answer_arena, parts, 2u) : NULL;
+    if (!answer)
+        return TF_ERROR;
     f->effects = true;
     for (size_t i = 0u; i < g->len; i++) {
         TfGroup *take = &g->groups[i];
@@ -2323,9 +2339,7 @@ static TfStatus tf_commit(TfFire *f, const TfFootprint *fp, TfGroups *g) {
             return TF_ERROR;
         }
     }
-    Atom *fired = atom_expr(f->answer_arena, instances, (CettaExprLen)fp->row_len);
-    Atom *parts[2] = {atom_symbol(f->answer_arena, "tf:fired"), fired};
-    f->answer = atom_expr(f->answer_arena, parts, 2u);
+    f->answer = answer;
     return TF_STOP;
 }
 
@@ -2344,12 +2358,12 @@ static TfStatus tf_try_commit(TfFire *f, const TfFootprint *fp) {
     return status;
 }
 
-static bool tf_entries_copy(Arena *arena, const TfEntries *src, TfEntries *dst) {
+static bool tf_entries_copy(AtomDeepCopySession *copy, const TfEntries *src, TfEntries *dst) {
     *dst = (TfEntries){NULL, 0u, 0u};
     for (size_t i = 0u; i < src->len; i++) {
         TfEntry e = src->items[i];
-        e.atom = atom_deep_copy(arena, e.atom);
-        if (!tf_entries_push(dst, e))
+        e.atom = atom_deep_copy_session_copy(copy, e.atom);
+        if (!e.atom || !tf_entries_push(dst, e))
             return false;
     }
     return true;
@@ -2368,17 +2382,27 @@ static TfStatus tf_keep_candidate(TfFire *f, TfEntries *kernel, TfRow *rows,
         f->candidate_cap = cap;
     }
     TfCandidate kept = {0};
-    if (!tf_entries_copy(f->scratch, kernel, &kept.kernel))
+    AtomDeepCopySession *copy = atom_deep_copy_session_new(f->scratch);
+    if (!copy)
         return TF_ERROR;
-    kept.rows = cetta_malloc(sizeof(TfRow) * (row_len ? row_len : 1u));
-    if (!kept.rows)
-        return TF_ERROR;
-    for (size_t r = 0u; r < row_len; r++) {
-        kept.rows[r].instance = atom_deep_copy(f->scratch, rows[r].instance);
-        if (!tf_entries_copy(f->scratch, &rows[r].entries, &kept.rows[r].entries))
-            return TF_ERROR;
+    bool copied = tf_entries_copy(copy, kernel, &kept.kernel);
+    if (copied) {
+        kept.rows = calloc(row_len ? row_len : 1u, sizeof(TfRow));
+        copied = kept.rows != NULL;
     }
-    kept.row_len = row_len;
+    for (size_t r = 0u; copied && r < row_len; r++) {
+        kept.row_len = r + 1u;
+        kept.rows[r].instance = atom_deep_copy_session_copy(copy, rows[r].instance);
+        copied = kept.rows[r].instance &&
+            tf_entries_copy(copy, &rows[r].entries, &kept.rows[r].entries);
+    }
+    atom_deep_copy_session_free(copy);
+    if (!copied) {
+        free(kept.kernel.items);
+        tf_rows_free(kept.rows, kept.row_len);
+        free(kept.rows);
+        return TF_ERROR;
+    }
     f->candidates[f->candidate_len++] = kept;
     return TF_CONTINUE;
 }

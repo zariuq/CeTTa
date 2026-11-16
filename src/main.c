@@ -1935,6 +1935,7 @@ static void print_usage(FILE *out) {
 #endif
     fputs("       note: repeated --lang under --translate means source then target endpoint\n", out);
     fputs("       note: --lang petta consumes consecutive .metta files in order\n", out);
+    fputs("       --source-origin N PATH gives input document N its logical origin (zero based)\n", out);
     fputs("       note: other languages run one file; remaining arguments are available through system:args\n", out);
     fputs("       cetta --help | -h                    # print this usage summary\n", out);
     fputs("       cetta --version | -v                 # print binary version and build mode\n", out);
@@ -1942,6 +1943,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --compile-stdlib <file.metta>     # emit precompiled stdlib blob to stdout\n", out);
     fputs("       cetta --count-only <file.metta>        # print result counts only\n", out);
     fputs("       cetta --run-report <path> <file>      # native query report as JSON\n", out);
+    fputs("       cetta --run-observation <path> <file> # typed answers and host effects as JSONL\n", out);
     fputs("       cetta --diagnostic-details           # include bounded private exception text in run reports\n", out);
     fputs("       cetta --run-contract <file>           # require completed queries and passing tests\n", out);
     fputs("       cetta --quiet <file.metta>              # hide pure [()] success clutter\n", out);
@@ -2890,7 +2892,41 @@ static const GSLTPresentationTablesV1 *main_presentation_select(const char *spec
     return NULL;
 }
 
+
+/* A physical document can retain the origin of the source it realizes.
+ * The input ordinal names a code document, never a later script argument. */
+typedef struct { const char **paths; size_t len; } MainSourceOrigins;
+typedef enum {
+    MAIN_SOURCE_ORIGIN_ADDED, MAIN_SOURCE_ORIGIN_INVALID, MAIN_SOURCE_ORIGIN_CAPACITY
+} MainSourceOriginStatus;
+static void main_source_origins_free(MainSourceOrigins *origins) {
+    free(origins->paths);
+}
+static MainSourceOriginStatus main_source_origin_add(MainSourceOrigins *origins, int argc,
+    const char *index, const char *path) {
+    if (!index || !*index || *index == '-' || !path || !*path)
+        return MAIN_SOURCE_ORIGIN_INVALID;
+    char *end = NULL;
+    errno = 0;
+    unsigned long long ordinal = strtoull(index, &end, 10);
+    if (errno || !end || *end || ordinal >= (unsigned long long)argc)
+        return MAIN_SOURCE_ORIGIN_INVALID;
+    if (!origins->paths) {
+        origins->paths = calloc((size_t)argc, sizeof(*origins->paths));
+        if (!origins->paths) return MAIN_SOURCE_ORIGIN_CAPACITY;
+        origins->len = (size_t)argc;
+    }
+    origins->paths[(size_t)ordinal] = path;
+    return MAIN_SOURCE_ORIGIN_ADDED;
+}
+static const char *main_source_origin(const MainSourceOrigins *origins,
+    size_t ordinal, const char *physical) {
+    return ordinal < origins->len && origins->paths[ordinal]
+        ? origins->paths[ordinal] : physical;
+}
+
 static int cetta_main(int argc, char **argv) {
+    __attribute__((cleanup(main_source_origins_free))) MainSourceOrigins source_origins = {0};
     /* Frame identity diagnostics: a bound on live identities, to reach their
      * exhaustion without holding millions of them, and a refusal point, to
      * meet a refusal wherever one is minted. */
@@ -2956,6 +2992,7 @@ static int cetta_main(int argc, char **argv) {
     bool repl_mode = false;
     bool compile_stdlib_mode = false;
     const char *run_report_path = NULL;
+    const char *run_observation_path = NULL;
     bool run_contract = false;
     bool diagnostic_details = false;
     RunCli *run_cli = NULL;
@@ -2995,6 +3032,19 @@ static int cetta_main(int argc, char **argv) {
     current_endpoint = &source_endpoint;
 
     for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--source-origin") == 0) {
+            MainSourceOriginStatus added = argc - i <= 2 ? MAIN_SOURCE_ORIGIN_INVALID
+                : main_source_origin_add(&source_origins, argc, argv[i + 1], argv[i + 2]);
+            if (added != MAIN_SOURCE_ORIGIN_ADDED) {
+                fprintf(stderr, added == MAIN_SOURCE_ORIGIN_CAPACITY
+                    ? "error: could not allocate source origin metadata\n"
+                    : "error: --source-origin expects a document index and an origin\n");
+                free(inline_buf);
+                return added == MAIN_SOURCE_ORIGIN_CAPACITY ? 1 : 2;
+            }
+            i += 2;
+            continue;
+        }
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             print_usage(stdout);
             return 0;
@@ -3035,6 +3085,11 @@ static int cetta_main(int argc, char **argv) {
         if (strcmp(argv[i], "--run-report") == 0) {
             if (++i >= argc) { fputs("error: --run-report requires a path\n", stderr); return 1; }
             run_report_path = argv[i];
+            continue;
+        }
+        if (strcmp(argv[i], "--run-observation") == 0) {
+            if (++i >= argc) { fputs("error: --run-observation requires a path\n", stderr); return 1; }
+            run_observation_path = argv[i];
             continue;
         }
         if (strcmp(argv[i], "--diagnostic-details") == 0) {
@@ -3443,17 +3498,24 @@ static int cetta_main(int argc, char **argv) {
         return 2;
     }
 
-    if (diagnostic_details && !run_contract && !run_report_path) {
+    if (diagnostic_details && !run_contract && !run_report_path && !run_observation_path) {
         fputs("error: --diagnostic-details requires --run-report or --run-contract\n", stderr);
         free(inline_buf); return 1;
     }
-    if ((run_contract || run_report_path) &&
+    if ((run_contract || run_report_path || run_observation_path) &&
         (translate_mode || compile_mode || compile_stdlib_mode ||
          source_endpoint.langdef_manifest_path[0] ||
          (source_endpoint.lang && source_endpoint.lang->id != CETTA_LANGUAGE_HE &&
           source_endpoint.lang->id != CETTA_LANGUAGE_PETTA))) {
         fputs("error: run reporting requires direct document execution\n", stderr);
         free(inline_buf); return 1;
+    }
+    if (run_contract || run_report_path || run_observation_path) {
+        int parent_status = 1;
+        if (!cetta_run_guard_launch(run_report_path, &parent_status)) {
+            free(inline_buf);
+            return parent_status;
+        }
     }
     if (source_endpoint.langdef_manifest_path[0]) {
         bool unsupported_option =
@@ -3504,6 +3566,17 @@ static int cetta_main(int argc, char **argv) {
         }
         script_arg_start = petta_file_arg_end;
     }
+
+    size_t origin_documents = filename ?
+        (petta_file_arg_cursor >= 0 ? (size_t)(petta_file_arg_end - filename_arg_index) : 1u) : 0u;
+    for (size_t ordinal = origin_documents; ordinal < source_origins.len; ++ordinal) {
+        if (source_origins.paths[ordinal]) {
+            fprintf(stderr, "error: source origin index %zu has no input document\n", ordinal);
+            free(inline_buf);
+            return 2;
+        }
+    }
+    script_path = main_source_origin(&source_origins, 0u, script_path);
     if (gslt_realization_requested &&
         !cetta_language_uses_embedded_gslt(source_endpoint.lang->id)) {
         fprintf(stderr,
@@ -3734,9 +3807,13 @@ static int cetta_main(int argc, char **argv) {
     CettaGsltLanguage *gslt_language = NULL;
     CettaMainCleanup cleanup = {0};
     bool lang_is_mm2 = strcmp(lang->canonical, "mm2") == 0;
-    if (run_contract || run_report_path) {
+    if (run_contract || run_report_path || run_observation_path) {
         run_cli = run_cli_begin();
         if (!run_cli) { fputs("error: could not allocate run report\n", stderr); free(inline_buf); return 1; }
+        if (run_observation_path && !run_cli_open_observation(run_cli, run_observation_path)) {
+            fputs("error: could not open run observation\n", stderr);
+            run_cli_free(run_cli); free(inline_buf); return 1;
+        }
     }
     char document_reader_error[512] = {0};
     bool he_source_fault = false;
@@ -4821,8 +4898,10 @@ petta_next_slice:
                         petta_answer_without_text = true;
                 }
             }
-            if (!petta_uncaught_error)
+            if (!petta_uncaught_error) {
                 run_cli_answers(run_cli, results->len);
+                run_cli_observe_answers(run_cli, results->items, results->len);
+            }
             if (petta_uncaught_error) {
                 run_cli_query_stop(run_cli, RUN_REPORT_STOP_FAULT);
                 Atom *exception = NULL;
@@ -4979,9 +5058,10 @@ petta_document_complete:
         petta_file_arg_cursor + 1 < petta_file_arg_end) {
         petta_file_arg_cursor++;
         filename = argv[petta_file_arg_cursor];
-        script_path = filename;
+        script_path = main_source_origin(&source_origins,
+            (size_t)(petta_file_arg_cursor - filename_arg_index), filename);
         cetta_library_context_set_script_path(&runtime.libraries, script_path);
-        cetta_library_context_note_document_file(&runtime.libraries, &runtime.space, filename);
+        cetta_library_context_note_document_file(&runtime.libraries, &runtime.space, script_path);
 
         free(atom_ids);
         atom_ids = NULL;
@@ -5078,5 +5158,5 @@ int main(int argc,char **argv) {
     if (!getenv("MALLOC_MMAP_THRESHOLD_"))
         (void)mallopt(M_MMAP_THRESHOLD, 1 << 20);
 #endif
-    return cetta_run_guard(argc,argv,cetta_main);
+    return cetta_run_guard_finish(cetta_main(argc,argv));
 }

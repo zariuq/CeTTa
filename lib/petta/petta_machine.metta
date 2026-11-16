@@ -381,6 +381,10 @@
 
 (: pm:form (-> Atom Atom Atom %Undefined%))
 (= (pm:form $head $args $e)
+   ; Imports read their destination and module reference as syntax. Evaluating
+   ; (library NAME) first can turn it into a path and lose its native provider.
+   (if (is-member $head (quote (import! import-as!)))
+       (pm:list3 pm:host $head (pm:literals $args))
    (if (== $head if)
        (if (== (size-atom $args) 2)
            (let ($c $t) $args (pm:list4 pm:if (pm:term $c) (pm:term $t) pm:empty))
@@ -451,7 +455,7 @@
        (pm:list3 pm:prim $head (pm:terms $args))
    (if (pm:written-value $head)
        (pm:list3 pm:data pm:tuple (pm:terms $e))
-       (pm:list3 pm:host $head (pm:terms $args))))))))))))))))))))))))))))))))))))
+       (pm:list3 pm:host $head (pm:terms $args)))))))))))))))))))))))))))))))))))))
 
 ; (translatePredicate (G A1 ... An)): a goal of the host's Prolog.  The goal's
 ; arguments are evaluated, by the machine; the host then calls the goal with
@@ -524,12 +528,14 @@
 ; Of a written quotation, reduce evaluates what it holds and keeps the quote
 ; around the value, as both hosts do for written code ((reduce (quote (double
 ; 5))) is (quote 10)); call answers what the quotation holds, as CeTTa does
-; (SWI-PeTTa raises there).  A variable: its value, an application, is
-; taken apart and applied without evaluating the values again; a value that is
-; no expression has no answer.  Anything else is evaluated as it stands.
+; (SWI-PeTTa raises there). A variable operand of call is its held value,
+; as in CeTTa's captured operand plan. Reduce opens an application value and
+; dispatches it without evaluating the parts again; a scalar has no application.
+; Anything else is evaluated as it stands.
 (: pm:dispatched (-> %Undefined% Atom %Undefined%))
 (= (pm:dispatched $form $operand)
-   (if (== (get-metatype $operand) Variable) (pm:list2 pm:dispatch (pm:term $operand))
+   (if (== (get-metatype $operand) Variable)
+       (if (== $form call) (pm:term $operand) (pm:list2 pm:dispatch (pm:term $operand)))
      (let $compiled (pm:term $operand)
        (if (pm:late-head? $operand $compiled)
            (let ($h $as) (decons-atom $operand)

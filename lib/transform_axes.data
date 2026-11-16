@@ -10,11 +10,11 @@
     (Key id) (Unique code) (Unique spelling) (Dense id)
     (Rows
       (Row 0 ONE "one" "one match (RuleSyntax/JointFirings/Singletons)")
-      (Row 1 ROUND "round" "a joint bag whose members run in every order to its result")
+      (Row 1 ROUND "round" "a bag whose members run in every order to its result")
       (Row 2 SYNCHRONOUS "synchronous" "each member enabled on its own (Bags: Bag.AdmitsSnapshot)")
-      (Row 3 JOINT "joint" "the members enabled as one commit (Bags: Bag.Admits)")
+      (Row 3 BAG "bag" "the members enabled as one commit (Bags: Bag.Admits)")
       (Row 4 EVERY "every" "every match of the region at once (Every: Bag.AdmitsEvery)")
-      (Row 5 MAXIMAL "maximal" "a joint bag no further match can join (Maximal)")
+      (Row 5 MAXIMAL "maximal" "a bag no admitted bag strictly contains (Maximal)")
       (Row 6 UNIQUE "unique" "the one match there is; more than one is reported")))
   (Table Asks
     (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))

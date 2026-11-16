@@ -14,6 +14,9 @@
 #define GSLT_DIRECT_PREFIX_READER_V1_FRAGMENT \
     "deterministic-prefix-sexpr-direct-v1"
 
+/* A sentinel, not a numeric syntax bound. Zero retains its invalid-plan meaning. */
+#define GSLT_DIRECT_PETTA_DEPTH_UNBOUNDED_V1 UINT32_MAX
+
 typedef struct {
     const uint8_t *ascii;
     const uint32_t *points;
@@ -306,6 +309,7 @@ typedef struct {
     const GSLTDirectScalarClassV1 *list_token_first;
     const GSLTDirectScalarClassV1 *list_token;
     const GSLTDirectScalarClassV1 *list_token_boundary;
+    /* Explicit caller allowance, or GSLT_DIRECT_PETTA_DEPTH_UNBOUNDED_V1. */
     uint32_t depth_limit;
     bool raw_source_regions;
 } GSLTDirectPeTTaReaderV1Plan;

@@ -11,9 +11,9 @@ origins. Generated inputs removed by a gate are restored from checked bytes;
 live inputs, executables and library contexts must still have their recorded
 identities. The machine receives one transformed document per input document.
 
-Comparison parses printed terms and retains string contents, variable sharing
-and occurrence order. It is not a native value-kind/effect certificate. Pending,
-failed and stale runs never qualify by agreeing with another failure.
+Comparison uses out-of-band structural values and host-service effects, with
+original queries mapped to their retained machine turns. Pending, failed,
+unobserved and stale runs never qualify by agreeing with another failure.
 """
 import argparse
 from contextlib import ExitStack
@@ -21,9 +21,11 @@ import json
 import os
 from pathlib import Path
 import resource
+import signal
 import tempfile
 
 import gslt_invocation as invocation
+import native_observation
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -32,7 +34,7 @@ import check_petta_machine_corpus as corpus  # noqa: E402
 whole, forms, swi_lane = corpus.whole, corpus.forms, corpus.swi_lane
 ROOT = forms.ROOT
 GENERATED = os.path.join("langdef", "petta", "generated")
-QUIET = "(= (pm:quiet $done) (empty))\n(= (pm:marker) @@START)"
+QUIET = "(= (pm:quiet $done) (empty))"
 
 
 def with_compiled_programs(source, origin, imported):
@@ -73,93 +75,102 @@ def with_compiled_programs(source, origin, imported):
     return swi_lane.write_forms(result)
 
 
-def through_the_machine(source, lane_import, initialize=True):
+def through_the_machine(source, lane_import, initialize=True, plan=None):
     """SOURCE with its equations and declarations given to the machine and its
     queries asked of the machine."""
-    lines = [lane_import, corpus.MACHINE, corpus.ASK, QUIET, "!(pm:hide-loaded!)"] if initialize else []
+    if plan is None:
+        plan = dict(queries=0, guests=[])
+    lines = []
+
+    def query(text):
+        lines.append(text)
+        plan["queries"] += 1
+
+    if initialize:
+        query(lane_import)
+        query(corpus.MACHINE)
+        lines.extend([corpus.ASK, QUIET])
+        query("!(pm:hide-loaded!)")
     if initialize and corpus.FIRE == "direct":
-        lines.append("!(pm:quiet (pm:lane! direct))")
+        query("!(pm:quiet (pm:lane! direct))")
     read = swi_lane.read_forms(source)
+    initial = initialize and bool(read) and all(
+        corpus.is_equation(form) or corpus.is_arrow(form) for form in read)
+    equations = []
+    if initial:
+        query("!(== (collapse (match &pm (pm:sources $name $items) found)) ())")
+        plan.setdefault("registration_preconditions", []).append(plan["queries"])
     bang = False
     for form in read:
         if form == "!":
             bang = True
             continue
         if not bang and corpus.is_arrow(form):
-            lines.append("!(pm:quiet (pm:type-text %s))" % corpus.as_text(form))
+            query("!(pm:quiet (pm:type-text %s))" % corpus.as_text(form))
         bang = False
-    if initialize:
-        lines.append("!(pm:marker)")
     bang = False
     for form in read:
         if form == "!":
             bang = True
             continue
         if bang:
-            before, answers = corpus.asked(corpus.as_text(form))
-            lines.extend(before)
-            lines.append("!" + answers)
+            begin = plan["queries"] + 1
+            query("!(pm:begin-quietly %s)" % corpus.as_text(form))
+            steps, count = corpus.TURNS if corpus.TURNS is not None else ("none", 1)
+            for _ in range(count):
+                query("!(pm:advance-quietly %s)" % steps)
+            query("!(get-state &pm-outcome)")
+            status = plan["queries"]
+            query("!(let $answers (pm:end) (if (== (get-state &pm-outcome) pm:halted) (superpose $answers) (empty)))")
+            plan["guests"].append(dict(begin=begin, end=plan["queries"], status=status))
         else:
             lines.append(swi_lane.write_form(form))
             if corpus.is_equation(form):
-                lines.append("!(pm:quiet (pm:program-text %s))" % corpus.as_text(form))
+                if initial:
+                    equations.append(corpus.as_text(form))
+                else:
+                    query("!(pm:quiet (pm:program-text %s))" % corpus.as_text(form))
             elif corpus.is_declaration(form):
-                lines.append("!(pm:quiet (pm:type-text %s))" % corpus.as_text(form))
+                query("!(pm:quiet (pm:type-text %s))" % corpus.as_text(form))
         bang = False
+    # With no executable form in the initial document, declare its names
+    # before compiling bodies. Independent parses retain equation scopes;
+    # later files and interleaved programs use the incremental path above.
+    if initial:
+        for phase in ("declare", "define"):
+            for equation in equations:
+                query("!(pm:quiet (pm:initial-%s-text %s))" % (phase, equation))
     return "\n".join(lines) + "\n"
 
 
-def structural_text(lines):
-    """Parse displayed terms, preserving string text and variable sharing.
-
-    This is a printed-term observation, not a native value-kind certificate:
-    opaque values and effects still require an evaluator observation channel.
-    """
-    names, result = {}, []
-    for line in lines:
-        try:
-            parsed = swi_lane.read_forms(line)
-        except (ValueError, IndexError):
-            result.append((("text", line),))
-            continue
-        if len(parsed) != 1:
-            result.append((("text", line),))
-            continue
-        events, todo = [], [parsed[0]]
-        while todo:
-            item = todo.pop()
-            if item is None:
-                events.append(("close", ""))
-            elif isinstance(item, list):
-                events.append(("open", ""))
-                todo.append(None)
-                todo.extend(reversed(item))
-            elif item.startswith("$"):
-                events.append(("variable", names.setdefault(item, len(names))))
-            else:
-                events.append(("literal", item))
-        result.append(tuple(events))
-    return result
-
-
-def run_invocation(record, arguments, timeout):
+def run_invocation(record, arguments, timeout, observation=None):
     def limit():
         resource.setrlimit(resource.RLIMIT_CPU, (timeout, timeout + 5))
-    return swi_lane.run_group(record["command"] + arguments, record["cwd"], timeout * 6,
-                              env=invocation.replay_environment(record), limit=limit)
+    observed = (["--run-observation", str(observation),
+                 "--run-report", str(observation) + ".process.json"] if observation else [])
+    return swi_lane.run_group(record["command"] + observed + arguments, record["cwd"], timeout * 6,
+                              env=invocation.replay_environment(record), limit=limit, text=False)
 
 
-def answers(out, marked):
-    lines = out.splitlines()
-    if marked:
-        at = [i for i, line in enumerate(lines) if line.strip() == "@@START"]
-        lines = lines[at[0] + 1:] if at else lines
-    return [line.rstrip() for line in lines if line.strip() != ""]
+def process_signal(code, observation):
+    """Physical termination is independent of guest completion or failure.
 
-
-def uncaught(err):
-    return next((line.split("uncaught PeTTa error: ", 1)[1].strip() for line in err.splitlines()
-                 if "uncaught PeTTa error: " in line), None)
+    A guard receipt keeps the child's signal. A raw exit with the same
+    integer status is insufficient, as is an unacknowledged guest report.
+    """
+    if code < 0:
+        return -code
+    try:
+        report = json.loads(Path(str(observation) + ".process.json").read_text())
+        physical = report["process"]
+        number = physical["signal"]
+        if (report["contract_exit"] == 1 and report["document_framing_ok"] is False
+                and physical["state"] == "signalled" and type(number) is int
+                and number > 0 and code == 128 + number):
+            return number
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
 
 
 def main():
@@ -213,19 +224,21 @@ def main():
                     raise ValueError("invocation has no recorded source documents")
                 if checkpoint.exists():
                     prior = json.loads(checkpoint.read_text())
-                    if prior.get("fingerprint") == fingerprint and prior["row"][1] == "same-printed-structure":
+                    if prior.get("fingerprint") == fingerprint and prior["row"][1] == "same-native-observation":
                         rows.append(tuple(prior["row"]))
                         print(f"REUSE: {stem}", flush=True)
                         continue
-                code, out, err = run_invocation(record, record["arguments"], args.timeout)
-                written = answers(out, False)
+                written_events = Path(keep) / (stem + ".written.events.jsonl")
+                machine_events = Path(keep) / (stem + ".machine.events.jsonl")
+                code, out, err = run_invocation(record, record["arguments"], args.timeout, written_events)
                 machine_arguments = list(record["arguments"])
                 imported = set()
+                plan = dict(queries=0, guests=[])
                 for index, item in enumerate(record["sources"]):
                     source_path = item["path"]
                     with open(source_path) as stream:
                         source = with_compiled_programs(stream.read(), source_path, imported)
-                    transformed = through_the_machine(source, lane_import, initialize=index == 0)
+                    transformed = through_the_machine(source, lane_import, initialize=index == 0, plan=plan)
                     with tempfile.NamedTemporaryFile(mode="w", prefix=".gslt-machine-", suffix=".metta",
                             dir=os.path.dirname(source_path), delete=False) as stream:
                         stream.write(transformed)
@@ -234,42 +247,76 @@ def main():
                     machine_arguments[item["argument"]] = machine_path
                     with open(os.path.join(keep, f"{stem}.{index}.machine.metta"), "w") as stream:
                         stream.write(transformed)
-                mcode, mout, merr = run_invocation(record, machine_arguments, args.timeout)
-                got = answers(mout, True)
+                invocation.save_json(Path(keep) / (stem + ".query-map.json"), plan)
+                origins = []
+                for index, item in enumerate(record["sources"]):
+                    origins += ["--source-origin", str(index), record["arguments"][item["argument"]]]
+                mcode, mout, merr = run_invocation(record, origins + machine_arguments, args.timeout, machine_events)
         except (OSError, ValueError) as error:
             rows.append((stem, "unqualified-invocation", 0, str(error)))
             print(f"unqualified-invocation {stem}: {error}", flush=True)
             continue
         for suffix, text in (("written.out", out), ("written.err", err),
                              ("machine.out", mout), ("machine.err", merr)):
-            with open(os.path.join(keep, f"{stem}.{suffix}"), "w") as stream:
+            with open(os.path.join(keep, f"{stem}.{suffix}"), "wb") as stream:
                 stream.write(text)
-        a, b = structural_text(written), structural_text(got)
-        host_error = uncaught(err)
-        held = next((line[len("(pm:uncaught "):-1] for line in got
-                     if line.startswith("(pm:uncaught ")), None)
-        unended = (mcode == 124 or mcode < 0
-                   or any(line.startswith("(pm:no-end ") for line in got))
-        if code == 124 or code < 0:
+        held, unended, observation_error = False, mcode == 124, None
+        a = b = None
+        if code == 0 and mcode == 0:
+            try:
+                host = native_observation.read_observation(written_events)
+                machine = native_observation.read_observation(machine_events)
+                for number in plan.get("registration_preconditions", []):
+                    if machine["queries"][number]["answers"] != [[["symbol", "true".encode().hex()]]]:
+                        raise ValueError("initial program registration did not start empty")
+                a = native_observation.project(host, [(i, i) for i in host["queries"]])
+                b = native_observation.project(machine, plan["guests"])
+                for span in plan["guests"]:
+                    status = machine["queries"][span["status"]]["answers"]
+                    if status == [[["symbol", "pm:halted".encode().hex()]]]:
+                        continue
+                    if status in ([[["symbol", name.encode().hex()]]]
+                                  for name in ("pm:turn-over", "pm:out-of-fuel")):
+                        unended = True
+                    else:
+                        held = True
+                if host["final"]["contract_exit"] or machine["final"]["contract_exit"]:
+                    observation_error = "native query contract did not complete successfully"
+            except (OSError, ValueError, KeyError) as error:
+                observation_error = str(error)
+        host_signal = process_signal(code, written_events)
+        machine_signal = process_signal(mcode, machine_events)
+        if code == 124:
             verdict = "host-not-ended"
+        elif host_signal is not None:
+            verdict = "host-resource-pending" if host_signal == signal.SIGXCPU else "host-interrupted"
+        elif machine_signal is not None:
+            verdict = "machine-resource-pending" if machine_signal == signal.SIGXCPU else "machine-interrupted"
         elif unended:
             verdict = "not-ended"
-        elif code != 0 or host_error is not None:
+        elif code != 0:
             verdict = "host-failed"
-        elif mcode != 0 or held is not None:
+        elif mcode != 0 or held:
             verdict = "machine-failed"
+        elif observation_error is not None:
+            verdict = "unqualified-observation"
         elif a == b:
-            verdict = "same-printed-structure"
+            verdict = "same-native-observation"
         else:
             verdict = "DIFFER"
         note = ""
+        if host_signal is not None or machine_signal is not None:
+            note = f"physical signal {host_signal or machine_signal}; no completed query frontier"
+        if observation_error:
+            note = observation_error
         if verdict in ("DIFFER", "not-ended"):
-            first = lambda text: next((line for line in text.splitlines() if line.strip()), "")[:110]
-            note = (f"written exit {code}, {len(written)} lines {first(err)!r} | "
-                    f"machine exit {mcode}, {len(got)} lines {first(merr)!r}")
-        rows.append((stem, verdict, len(written), note))
+            first = lambda data: next((line for line in data.splitlines() if line.strip()), b"")[:110]
+            note = (f"written exit {code}, {len(out)} display bytes {first(err)!r} | "
+                    f"machine exit {mcode}, {len(mout)} display bytes {first(merr)!r}")
+        count = sum(len(query["answers"]) for query in a) if a is not None else 0
+        rows.append((stem, verdict, count, note))
         invocation.save_json(checkpoint, dict(fingerprint=fingerprint, row=rows[-1]))
-        print(f"{verdict:14s} {stem:62s} {len(written):4d} lines  {note}", flush=True)
+        print(f"{verdict:14s} {stem:62s} {count:4d} answers  {note}", flush=True)
     by = {}
     for row in rows:
         by[row[1]] = by.get(row[1], 0) + 1
@@ -279,14 +326,14 @@ def main():
     if args.report:
         with open(args.report, "w") as stream:
             for stem, verdict, count, note in rows:
-                stream.write(f"{verdict:14s} {stem:62s} {count:4d} lines  {note}\n")
+                stream.write(f"{verdict:14s} {stem:62s} {count:4d} answers  {note}\n")
             stream.write(summary + "\n")
-    failed = [row for row in rows if row[1] != "same-printed-structure"]
+    failed = [row for row in rows if row[1] != "same-native-observation"]
     if failed:
         print("FAIL: " + summary)
         return 1
-    print("PASS: recorded invocations agree as ordered printed structures: " + summary)
-    print("Native value kinds and separate effect observations remain unqualified by this checker.")
+    print("PASS: recorded query frontiers agree in structural values and host-service effects: " + summary)
+    print("Yield timing, uninstrumented foreign effects and values without a codec remain separate obligations.")
     return 0
 
 
