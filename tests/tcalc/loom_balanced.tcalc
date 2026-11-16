@@ -1,0 +1,17 @@
+; A network of reactions, each a rule; a bundle of reactions is the set of
+; (enabled R) rows, so one program holds every bundle. The balanced bundle
+; in the scenario ember, dew, seed, echo: both starters need the one dew, and
+; which takes it decides the outcome: star-lantern, or moon-veil left with an
+; ember. An engine that runs one fixed order reports one of the two.
+(step one)
+(essence ember) (essence dew) (essence seed) (essence echo)
+(enabled solar-starter) (enabled solar-middle) (enabled solar-terminal)
+(enabled lunar-starter) (enabled lunar-middle) (enabled lunar-terminal)
+(rule solar-starter (read (enabled solar-starter)) (take (essence ember) (essence dew)) (make (essence mist)))
+(rule solar-middle (read (enabled solar-middle)) (take (essence mist) (essence seed)) (make (artifact sun-bloom)))
+(rule solar-terminal (read (enabled solar-terminal)) (take (artifact sun-bloom) (essence echo)) (make (artifact star-lantern)))
+(rule lunar-starter (read (enabled lunar-starter)) (take (essence dew) (essence echo)) (make (essence dream-mist)))
+(rule lunar-middle (read (enabled lunar-middle)) (take (essence dream-mist) (essence seed)) (make (artifact moon-veil)))
+(rule lunar-terminal (read (enabled lunar-terminal)) (take (artifact moon-veil) (essence spark)) (make (artifact star-lantern)))
+(rule decoy-chorus (read (enabled decoy-chorus)) (take (essence seed) (essence echo)) (make (artifact chorus)))
+(rule decoy-ash (read (enabled decoy-ash)) (take (essence ember) (essence spark)) (make (artifact ash)))

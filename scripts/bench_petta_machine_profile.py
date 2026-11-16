@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Profile native PeTTa work after receipt-selected oracle validation."""
+"""Profile native PeTTa work after its corpus observation has been checked."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
-import os
 from pathlib import Path
 import statistics
 import subprocess
 import sys
-import time
 from typing import Any
 
 
@@ -73,35 +72,27 @@ def run_workload(
     candidate_environment: dict[str, str],
     emit_runtime_stats: bool,
 ) -> dict[str, Any]:
-    source = petta_dir / entry["source"]
-    if corpus.sha256_file(source) != entry["source_sha256"]:
-        raise RuntimeError(f"{entry['name']}: source differs from manifest")
-    environment = os.environ.copy()
+    fixture = corpus.CONTROLLED_CASES.get(entry["name"])
+    if entry.get("failing") is not None or entry["mode"] == corpus.MODE_NEGATIVE or \
+            (fixture or {}).get("mode") == "prefix":
+        raise RuntimeError(f"{entry['name']}: not a completed successful workload")
+    environment = corpus.fixture_environment(corpus.REPO_ROOT, fixture)
     for key in tuple(environment):
-        if key.startswith("CETTA_PETTA_") or key == (
-            "CETTA_TERM_UNIVERSE_SOURCE_ID_MEMO"
-        ):
+        if key.startswith("CETTA_PETTA_") or key == "CETTA_TERM_UNIVERSE_SOURCE_ID_MEMO":
             del environment[key]
     environment.update(candidate_environment)
-    started_ns = time.monotonic_ns()
-    command = [str(cetta)]
-    if emit_runtime_stats:
-        command.append("--emit-runtime-stats")
-    command.extend(("--lang", "petta", str(source)))
-    exit_code, stdout, stderr, timed_out, output_limit = (
-        corpus.run_bounded_process(
-            command,
-            cetta.parent,
-            environment,
-            None,
-            timeout_seconds,
-        )
+    overlay = corpus.active_overlay(petta_dir, entry["name"])
+    process_metrics: dict[str, int] = {}
+    observed = corpus.run_example(
+        "cetta", cetta, petta_dir, entry["name"], timeout_seconds,
+        fixture=fixture, overlay=overlay, scratch=cetta.parent / "runtime",
+        environment=environment,
+        arguments=("--emit-runtime-stats",) if emit_runtime_stats else (),
+        process_metrics=process_metrics,
     )
-    process_elapsed_ns = time.monotonic_ns() - started_ns
-    if timed_out:
-        raise RuntimeError(f"{entry['name']}: timed out")
-    if output_limit:
-        raise RuntimeError(f"{entry['name']}: exceeded output limit")
+    exit_code, stdout, stderr = observed.exit, observed.stdout, observed.stderr
+    source_text = observed.source_text
+    process_elapsed_ns = process_metrics.get("process_elapsed_ns", 0)
     if emit_runtime_stats:
         invocations, runtime_counters, without_runtime = (
             extract_observability(stderr)
@@ -114,42 +105,36 @@ def run_workload(
             extract_machine_and_controller_stats(stderr)
         )
         runtime_counters = {}
-    normalized_stdout = corpus.normalize_cetta_stdout(
-        stdout, petta_dir, (cetta.parent,)
-    )
-    normalized_stderr = corpus.normalize_oracle_stderr(
-        ordinary_stderr, petta_dir, (cetta.parent,)
-    )
-    oracle = entry["oracle"]
+    normalized_stdout = stdout
+    normalized_stderr = ordinary_stderr
     controller_aggregate = aggregate_controller_stats(
         controller_invocations
     )
-    stdout_contract = (
-        corpus.STDOUT_OCCURRENCE_BAG
-        if controller_aggregate["active_fifo"] > 0
-        else corpus.STDOUT_EXACT_STREAM
+    golden = None
+    stdout_contract = entry["mode"]
+    stdout_stream_equal = None
+    if entry["mode"] == corpus.MODE_GOLDEN:
+        golden = corpus.golden_file(
+            corpus.DEFAULT_GOLDEN_DIR, entry["name"]
+        ).read_text(encoding="utf-8")
+        stdout_contract = entry.get(
+            "observation", corpus.STDOUT_EXACT_STREAM
+        )
+        stdout_stream_equal = corpus.stdout_observation_equal(
+            corpus.semantic_stdout(normalized_stdout), golden,
+            corpus.STDOUT_EXACT_STREAM,
+        )
+    verdict = corpus.judge(
+        entry,
+        corpus.Run(exit_code, normalized_stdout, normalized_stderr,
+                   process_elapsed_ns / 1e9, source_text),
+        golden, timeout_seconds,
     )
-    stdout_observation_equal = corpus.stdout_observation_equal(
-        normalized_stdout, oracle["stdout"], stdout_contract
-    )
-    stdout_stream_equal = corpus.stdout_observation_equal(
-        normalized_stdout,
-        oracle["stdout"],
-        corpus.STDOUT_EXACT_STREAM,
-    )
-    qualified = (
-        exit_code == oracle["exit"]
-        and stdout_observation_equal
-        and normalized_stderr == oracle["stderr"]
-    )
+    qualified = verdict.status == "PASS" and exit_code == 0
+    stdout_observation_equal = qualified
     if not qualified:
         raise RuntimeError(
-            f"{entry['name']}: oracle mismatch "
-            f"(exit {exit_code!r} != {oracle['exit']!r}, "
-            f"stdout_contract={stdout_contract}, "
-            f"stdout_observation_equal={stdout_observation_equal}, "
-            f"stdout_stream_equal={stdout_stream_equal}, "
-            f"stderr_equal={normalized_stderr == oracle['stderr']})"
+            f"{entry['name']}: corpus observation failed: {verdict.detail}"
         )
     aggregate = aggregate_invocations(invocations)
     aggregate.update(
@@ -172,6 +157,9 @@ def run_workload(
         "stdout_observation_equal": stdout_observation_equal,
         "stdout_stream_equal": stdout_stream_equal,
         "process_elapsed_ns": process_elapsed_ns,
+        "effective_source_sha256": hashlib.sha256(source_text.encode()).hexdigest(),
+        "overlay_sha256": corpus.sha256_file(overlay.patch_file) if overlay else None,
+        "overlay_reason_sha256": corpus.sha256_file(overlay.why_file) if overlay else None,
         "invocation_stats": invocations,
         "controller_stats": controller_invocations,
         "runtime_receipts": runtime_receipts,
@@ -364,7 +352,7 @@ def main() -> int:
         "--selected-workloads-only",
         action="store_true",
         help=(
-            "validate the selected sources and their pinned oracles without "
+            "validate the selected corpus observations without "
             "requiring unrelated examples in the PeTTa checkout to match "
             "the complete corpus inventory"
         ),
@@ -468,7 +456,7 @@ def main() -> int:
                     f"  {label} {index + 1}/{args.runs}: qualified "
                     f"contract={run['stdout_contract']} "
                     f"stream="
-                    f"{'exact' if run['stdout_stream_equal'] else 'reordered'}, "
+                    f"{('n/a' if run['stdout_stream_equal'] is None else 'exact' if run['stdout_stream_equal'] else 'reordered')}, "
                     f"machine="
                     f"{run['aggregate']['active_elapsed_ns'] / 1e9:.3f}s",
                     flush=True,
@@ -490,7 +478,7 @@ def main() -> int:
         text=True,
     ).stdout.strip()
     candidate_diff = subprocess.run(
-        ["git", "-C", str(cetta.parent), "diff", "--binary"],
+        ["git", "-C", str(cetta.parent), "diff", "--binary", "HEAD"],
         check=True,
         stdout=subprocess.PIPE,
     ).stdout
@@ -503,12 +491,12 @@ def main() -> int:
         "cetta_revision": revision,
         "candidate_diff_sha256": corpus.sha256_bytes(candidate_diff),
         "cetta_binary_sha256": corpus.sha256_file(cetta),
-        "petta_revision": manifest["petta_revision"],
+        "petta_revision": manifest["base"],
         "runs_per_workload": args.runs,
         "corpus_validation": (
-            "selected-source-digests-and-pinned-oracles"
+            "selected-corpus-observations"
             if args.selected_workloads_only
-            else "complete-corpus-inventory-digests-and-pinned-oracles"
+            else "complete-corpus-inventory-selected-observations"
         ),
         "candidate_environment": candidate_environment,
         "measurement": (

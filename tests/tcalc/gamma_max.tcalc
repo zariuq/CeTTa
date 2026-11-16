@@ -1,0 +1,8 @@
+; The maximum of a bag of numbers, in the style of Gamma: any two numbers react
+; and the larger survives.  The order is given as rows.  Whatever reacts first,
+; and however many react at once, one outcome remains: the confluence of the
+; program.  every has no step: each number meets several others, and a row is
+; taken once.
+(n 3) (n 1) (n 4) (n 2)
+(less 1 2) (less 1 3) (less 1 4) (less 2 3) (less 2 4) (less 3 4)
+(rule keep-larger (take (n $a) (n $b)) (read (less $a $b)) (make (n $b)))

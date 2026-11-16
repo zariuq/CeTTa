@@ -1,0 +1,1 @@
+error: 6:28: a clause is (take ...), (read ...), (make ...), (tell ...), (check ...), (absent P), (count N P) or (census P)

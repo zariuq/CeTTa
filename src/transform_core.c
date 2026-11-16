@@ -38,6 +38,56 @@ static bool transform_cursor_reference(void) {
     return setting && strcmp(setting, "1") == 0;
 }
 
+typedef struct {
+    bool ready, receipts, checked, terms;
+} TfProcessOptions;
+
+static _Thread_local TfProcessOptions transform_options;
+extern char **environ;
+
+/* Process options are sampled together on first use. One environment walk
+ * avoids repeating three absent-key searches on a cold firing. As with the
+ * engine selector, no environment string is retained. */
+static void transform_options_init(void) {
+    if (transform_options.ready) return;
+    TfProcessOptions options = {.receipts = true};
+    unsigned seen = 0u;
+    for (char **entry = environ; entry && *entry; entry++) {
+        const char *name = *entry;
+        static const char prefix[] = "CETTA_TRANSFORM_TCALC_";
+        if (name[0] != 'C' || name[1] != 'E' ||
+            strncmp(name, prefix, sizeof(prefix) - 1u) != 0) continue;
+        name += sizeof(prefix) - 1u;
+        if (!(seen & 1u) && strncmp(name, "RECEIPTS=", 9u) == 0) {
+            options.receipts = strcmp(name + 9u, "0") != 0;
+            seen |= 1u;
+        } else if (!(seen & 2u) && strncmp(name, "CHECKED=", 8u) == 0) {
+            options.checked = strcmp(name + 8u, "0") != 0;
+            seen |= 2u;
+        } else if (!(seen & 4u) && strncmp(name, "CARRIER=", 8u) == 0) {
+            options.terms = strcmp(name + 8u, "terms") == 0;
+            seen |= 4u;
+        }
+    }
+    options.ready = true;
+    transform_options = options;
+}
+
+static bool transform_match_receipts(void) {
+    transform_options_init();
+    return transform_options.receipts;
+}
+
+bool cetta_transform_tcalc_checking(void) {
+    transform_options_init();
+    return transform_options.checked;
+}
+
+bool cetta_transform_tcalc_terms(void) {
+    transform_options_init();
+    return transform_options.terms;
+}
+
 /* ── The plan ──────────────────────────────────────────────────────────── */
 
 enum {
@@ -445,6 +495,7 @@ static bool tf_plan_list(const TfPlanner *planner, TfPlan *plan,
 
 typedef struct {
     TfKind access;
+    uint32_t receipt; /* one-based ephemeral match witness, zero when absent */
     Atom *space_ref;
     Space *space;
     Atom *atom;
@@ -503,6 +554,13 @@ typedef struct {
     bool committing;        /* the atomic transition was paid before its writes */
     bool propose;           /* the propose phase: each kernel match is kept */
     bool tcalc;             /* the final decision's realization */
+    bool used_match_receipt;
+    bool borrow_match;
+    bool used_early_checks;
+    const CettaTransformWitness *current_witness;
+    CettaTransformWitness *witnesses;
+    size_t witness_len, witness_cap;
+    struct TfReadyReceipt *ready;
     struct TfAnswers *reads_answers; /* reads only: each kernel match's instance */
     bool bag;               /* the consumer takes every answer as a bag: the
                              * order of the matches is free */
@@ -681,21 +739,21 @@ static TfStatus tf_each_match(TfFire *f, Space *space, Atom *pattern,
     for (;;) {
         if (!tf_spend(f)) { status = TF_INTERRUPTED; break; }
         Atom *candidate = NULL;
+        CettaIndex position = 0u;
         SpaceOccurrenceCursorStep step;
         if (pretest) {
             /* The row as stored first: a row the tests refuse is not lent. */
             AtomId row = CETTA_ATOM_ID_NONE;
-            CettaIndex index = 0u;
-            step = space_occurrence_cursor_next_id(&cursor, &index, &row);
+            step = space_occurrence_cursor_next_id(&cursor, &position, &row);
             if (step == SPACE_OCCURRENCE_CURSOR_ITEM) {
                 if (tf_pretest_refuses(
                         pretest, space_occurrence_cursor_universe(&cursor),
                         row))
                     continue;
-                candidate = space_occurrence_cursor_atom(&cursor, index);
+                candidate = space_occurrence_cursor_atom(&cursor, position);
             }
         } else {
-            step = space_occurrence_cursor_next(&cursor, NULL, &candidate);
+            step = space_occurrence_cursor_next(&cursor, f->borrow_match ? &position : NULL, &candidate);
         }
         if (step == SPACE_OCCURRENCE_CURSOR_END)
             break;
@@ -722,9 +780,13 @@ static TfStatus tf_each_match(TfFire *f, Space *space, Atom *pattern,
         uint32_t mark = bindings_builder_save(&f->builder);
         if (match_atoms_builder(pattern, candidate, &f->builder, f->scratch)) {
             Atom *outer = f->stored;
+            const CettaTransformWitness *outer_witness = f->current_witness;
+            CettaTransformWitness witness = {space, cursor.read, position, candidate};
             f->stored = open;
+            f->current_witness = f->borrow_match ? &witness : NULL;
             status = visit(f, data);
             f->stored = outer;
+            f->current_witness = outer_witness;
         }
         bindings_builder_rollback(&f->builder, mark);
         if (status != TF_CONTINUE)
@@ -905,10 +967,11 @@ static bool tf_native_leg_pattern(const Atom *p) {
 static bool tf_native_collect(TfFire *f, Space **spaces, Atom **patterns,
                               size_t count, Atom *template_atom,
                               const CettaNativeQueryFilter *filters,
-                              size_t filter_count,
-                              Atom **collection, bool *failed) {
+                              size_t filter_count, bool request_protocol,
+                              bool *protocol_used, Atom **collection, bool *failed) {
     *collection = NULL;
     *failed = false;
+    if (protocol_used) *protocol_used = false;
     if (f->host->spend || !cetta_native_query_enabled() ||
         count == 0u || !spaces[0] || !spaces[0]->native.universe)
         return false;
@@ -929,12 +992,19 @@ static bool tf_native_collect(TfFire *f, Space **spaces, Atom **patterns,
         .filters = filter_count ? filters : NULL,
         .filter_count = filter_count,
         .else_empty = filter_count != 0u,
+        .read_protocol = request_protocol,
     };
     CettaNativeQueryResult result = {0};
     CettaNativeQueryStatus status =
         cetta_native_query_run(&query, f->scratch, &result);
     if (status == CETTA_NATIVE_QUERY_DECLINED)
         return false;
+    if (result.protocol_mismatch) {
+        f->error = atom_error(f->scratch, template_atom,
+                              atom_symbol(f->scratch, "TransformProtocolBatchMismatch"));
+        *failed = true;
+        return true;
+    }
     if (status != CETTA_NATIVE_QUERY_DONE || !result.collection ||
         result.collection->kind != ATOM_EXPR) {
         *failed = true;
@@ -944,6 +1014,7 @@ static bool tf_native_collect(TfFire *f, Space **spaces, Atom **patterns,
         if (atom_has_vars(result.collection->expr.elems[r]))
             return false;
     *collection = result.collection;
+    if (protocol_used) *protocol_used = result.read_protocol;
     return true;
 }
 
@@ -1014,7 +1085,7 @@ static TfStatus tf_native_legs(TfFire *f, size_t at, bool *handled) {
     Atom *found = NULL;
     bool failed = false;
     if (!legs || !tf_native_collect(f, spaces, patterns, k, legs, filters,
-                                    tested, &found, &failed))
+                                    tested, false, NULL, &found, &failed))
         return TF_CONTINUE;
     *handled = true;
     if (failed)
@@ -1030,7 +1101,7 @@ static TfStatus tf_native_legs(TfFire *f, size_t at, bool *handled) {
             Atom *atom = tuple->expr.elems[i + 1u];
             bound = match_atoms_builder(c->pattern, atom, &f->builder, f->scratch) &&
                 tf_entries_push(&f->entries, (TfEntry){
-                    c->access, c->space_ref, c->space, atom});
+                    .access = c->access, .space_ref = c->space_ref, .space = c->space, .atom = atom});
         }
         /* The engine and match agree on ground rows; a disagreement is a
          * failure of the realization, which declines while nothing ran. */
@@ -1099,7 +1170,7 @@ static TfStatus tf_native_condition(TfFire *f, const TfConjunct *c,
     Atom *instances = NULL;
     bool failed = false;
     if (!tf_native_collect(f, spaces, patterns, count, resolved, NULL, 0u,
-                           &instances, &failed))
+                           false, NULL, &instances, &failed))
         return TF_CONTINUE;
     if (failed) {
         *handled = true;
@@ -1151,13 +1222,27 @@ static TfStatus tf_after_match(TfFire *f, void *data) {
     TfStep *step = data;
     Atom *matched = !step->conjunct->joint && f->stored
         ? f->stored : tf_apply(f, step->conjunct->pattern);
+    size_t witness_origin = f->witness_len;
+    uint32_t receipt = 0u;
+    if (f->borrow_match && f->current_witness && f->witness_len < UINT32_MAX) {
+        if (f->witness_len == f->witness_cap) {
+            size_t capacity = f->witness_cap ? f->witness_cap * 2u : 8u;
+            CettaTransformWitness *next = cetta_realloc(f->witnesses, capacity * sizeof(*next));
+            if (!next) return TF_FAIL;
+            f->witnesses = next; f->witness_cap = capacity;
+        }
+        f->witnesses[f->witness_len++] = *f->current_witness;
+        receipt = (uint32_t)f->witness_len;
+    }
     if (!matched ||
         !tf_entries_push(&f->entries, (TfEntry){
-            step->conjunct->access, step->conjunct->space_ref,
-            step->conjunct->space, matched}))
+            .access = step->conjunct->access, .receipt = receipt,
+            .space_ref = step->conjunct->space_ref,
+            .space = step->conjunct->space, .atom = matched}))
         return f->effects ? TF_ERROR : TF_FAIL;
     TfStatus status = tf_walk(f, step->at + 1u);
     f->entries.len--;
+    f->witness_len = witness_origin;
     return status;
 }
 
@@ -1586,7 +1671,7 @@ CettaTransformOutcome cetta_transform_candidate_cursor_next(
             continue;
         }
         if (!tf_entries_push(&f->entries, (TfEntry){
-                c->access, c->space_ref, c->space, candidate})) {
+                .access = c->access, .space_ref = c->space_ref, .space = c->space, .atom = candidate})) {
             failure = TF_FAIL;
             break;
         }
@@ -1723,7 +1808,7 @@ static TfStatus tf_extend(TfFire *f, size_t at) {
 /* How many stored atoms `match` finds for `atom` in the condition's space. */
 static TfStatus tf_stored_in(TfFire *f, const TfConjunct *c, Atom *atom,
                              size_t *out) {
-    TfEntry entry = {TF_TAKE, c->space_ref, c->space, atom};
+    TfEntry entry = {.access = TF_TAKE, .space_ref = c->space_ref, .space = c->space, .atom = atom};
     return tf_stored(f, &entry, 0u, out) ? TF_CONTINUE
                                      : (f->effects ? TF_ERROR : TF_FAIL);
 }
@@ -1777,7 +1862,7 @@ static TfStatus tf_participant_copies(TfFire *f, const TfConjunct *c,
                 return status;
             for (size_t k = 0u; k < stored; k++)
                 if (!tf_entries_push(&f->entries, (TfEntry){
-                        TF_TAKE, c->space_ref, c->space, a}))
+                        .access = TF_TAKE, .space_ref = c->space_ref, .space = c->space, .atom = a}))
                     return f->effects ? TF_ERROR : TF_FAIL;
         }
     }
@@ -1886,11 +1971,11 @@ static TfStatus tf_walk(TfFire *f, size_t at) {
                 if (c->joint) {
                     for (CettaExprLen i = 1u; pushed && i < met->expr.len; i++)
                         pushed = tf_entries_push(&f->entries, (TfEntry){
-                            c->access, c->space_ref, c->space,
-                            met->expr.elems[i]});
+                            .access = c->access, .space_ref = c->space_ref, .space = c->space,
+                            .atom = met->expr.elems[i]});
                 } else {
                     pushed = tf_entries_push(&f->entries, (TfEntry){
-                        c->access, c->space_ref, c->space, met});
+                        .access = c->access, .space_ref = c->space_ref, .space = c->space, .atom = met});
                 }
                 status = pushed ? tf_walk(f, at + 1u)
                                 : (f->effects ? TF_ERROR : TF_FAIL);
@@ -1926,8 +2011,8 @@ static TfStatus tf_walk(TfFire *f, size_t at) {
                                 !f->propose &&
                                 i < found.len && status == TF_CONTINUE; i++)
                 if (!tf_entries_push(&f->entries, (TfEntry){
-                        TF_TAKE, c->space_ref, c->space,
-                        tf_found_met(&found, i)}))
+                        .access = TF_TAKE, .space_ref = c->space_ref, .space = c->space,
+                        .atom = tf_found_met(&found, i)}))
                     status = f->effects ? TF_ERROR : TF_FAIL;
             if (status == TF_CONTINUE)
                 status = tf_walk(f, at + 1u);
@@ -2109,12 +2194,20 @@ typedef struct {
     void *prepared;       /* first take only: retained live selection */
 } TfGroup;
 
-typedef struct {
+typedef struct TfGroups {
     TfGroup *groups;
     size_t len;
     size_t *slots;        /* open addressing over group indices, +1 */
     size_t mask;
 } TfGroups;
+
+typedef struct TfReadyReceipt {
+    TfGroups groups;
+    CettaTransformWitness *witnesses;
+    size_t count;
+    CettaTransformOutcome decision;
+    bool publications_owned;
+} TfReadyReceipt;
 
 static uint64_t tf_entry_hash(TfKind access, const TfEntry *e) {
     return (tf_hash(e->space_ref) * 31u + tf_hash(e->atom)) * 2u + (uint64_t)access;
@@ -2190,6 +2283,30 @@ static void tf_groups_free(TfFire *f, TfGroups *g) {
     free(g->slots);
 }
 
+static void tf_ready_free(TfFire *f) {
+    if (!f->ready) return;
+    tf_groups_free(f, &f->ready->groups);
+    free(f->ready->witnesses);
+    free(f->ready);
+    f->ready = NULL;
+}
+
+static bool tf_ready_current(const TfReadyReceipt *ready) {
+    for (size_t i = 0u; i < ready->count; i++)
+        if (!space_read_token_matches_live_space(ready->witnesses[i].view,
+                                                  ready->witnesses[i].space)) return false;
+    return true;
+}
+
+static bool tf_footprint_takes(const TfFootprint *fp) {
+    for (size_t part = 0u; part <= fp->row_len; part++) {
+        const TfEntries *entries = part == 0u ? fp->kernel : &fp->rows[part - 1u].entries;
+        for (size_t i = 0u; i < entries->len; i++)
+            if (entries->items[i].access == TF_TAKE) return true;
+    }
+    return false;
+}
+
 static TfStatus tf_count_one(TfFire *f, void *data) {
     (void)f;
     (*(size_t *)data)++;
@@ -2262,6 +2379,10 @@ static TfStatus tf_valid(TfFire *f, TfGroups *g, bool *valid) {
             continue;
         if (first_take && f->host->prepare_take && f->host->commit_take &&
             f->host->discard_take) {
+            if (take->prepared) {
+                f->host->discard_take(f->host->context, take->prepared);
+                take->prepared = NULL;
+            }
             bool prepared = f->host->prepare_take(
                 f->host->context, take->entry->space_ref, take->entry->atom,
                 take->count, &take->prepared, &take->stored);
@@ -2284,7 +2405,7 @@ static TfStatus tf_valid(TfFire *f, TfGroups *g, bool *valid) {
  * atom, and no atom it only unifies with (the host's take_atom); the HE
  * library removes the copies it takes, one by one, and goes on from an error
  * a removal answers, which it binds as a value. */
-static TfStatus tf_commit(TfFire *f, const TfFootprint *fp, TfGroups *g) {
+static TfStatus tf_commit(TfFire *f, const TfFootprint *fp, TfGroups *g, bool publications_owned) {
     if (!tf_spend(f))
         return TF_INTERRUPTED;
     f->committing = true;
@@ -2295,15 +2416,24 @@ static TfStatus tf_commit(TfFire *f, const TfFootprint *fp, TfGroups *g) {
     /* Everything the commit answers is copied before any removal can
      * release the stored syntax it borrows. */
     for (size_t r = 0u; r < fp->row_len; r++)
-        instances[r] = atom_deep_copy(f->answer_arena, fp->rows[r].instance);
-    Atom **taken = arena_alloc(f->answer_arena, sizeof(Atom *) * (g->len ? g->len : 1u));
-    if (!taken)
+        instances[r] = publications_owned ? fp->rows[r].instance
+            : atom_deep_copy(f->answer_arena, fp->rows[r].instance);
+    Atom **taken = g->len ? arena_alloc(f->answer_arena, sizeof(Atom *) * g->len) : NULL;
+    if (g->len && !taken)
         return f->effects ? TF_ERROR : TF_FAIL;
     for (size_t i = 0u; i < g->len; i++) {
         if (g->groups[i].entry->access != TF_TAKE)
             continue;
         taken[i] = atom_deep_copy(f->answer_arena, g->groups[i].entry->atom);
     }
+    Atom *fired = atom_expr(f->answer_arena, instances, (CettaExprLen)fp->row_len);
+    if (fired && f->host->dialect == CETTA_TRANSFORM_DIALECT_PETTA && atom_has_vars(fired)) {
+        /* One namespace for the whole firing, including every all-extension;
+         * separate firings never publish the same unbound template variable. */
+        Atom *none = atom_unit(f->answer_arena);
+        fired = none ? rename_vars_except(f->answer_arena, fired, none) : NULL;
+    }
+    if (!fired) return f->effects ? TF_ERROR : TF_FAIL;
     f->effects = true;
     for (size_t i = 0u; i < g->len; i++) {
         TfGroup *take = &g->groups[i];
@@ -2335,7 +2465,6 @@ static TfStatus tf_commit(TfFire *f, const TfFootprint *fp, TfGroups *g) {
             return TF_ERROR;
         }
     }
-    Atom *fired = atom_expr(f->answer_arena, instances, (CettaExprLen)fp->row_len);
     Atom *parts[2] = {atom_symbol(f->answer_arena, "tf:fired"), fired};
     f->answer = atom_expr(f->answer_arena, parts, 2u);
     return TF_STOP;
@@ -2346,6 +2475,8 @@ typedef struct {
     TfFire *fire;
     const TfFootprint *footprint;
     TfGroups *groups;
+    bool preparing;
+    bool publish_read;
 } TfProtocolCommit;
 
 static bool tf_protocol_spend(void *context, uint64_t units) {
@@ -2372,6 +2503,8 @@ static CettaTransformOutcome tf_protocol_commit(void *context,
                               atom_symbol(f->answer_arena, "TransformProtocolResultMismatch"));
         return CETTA_TRANSFORM_ERROR;
     }
+    if (commit->preparing && !commit->publish_read)
+        return CETTA_TRANSFORM_FIRED;
     bool valid = false;
     TfStatus status = tf_valid(f, commit->groups, &valid);
     if (status == TF_INTERRUPTED)
@@ -2382,39 +2515,51 @@ static CettaTransformOutcome tf_protocol_commit(void *context,
         return CETTA_TRANSFORM_NONE;
     /* Retain complete values and their interpretation/ownership metadata;
      * the protocol has checked their value observation, not erased it. */
-    status = tf_commit(f, fp, commit->groups);
+    status = tf_commit(f, fp, commit->groups, false);
     return status == TF_STOP ? CETTA_TRANSFORM_FIRED
         : status == TF_INTERRUPTED ? CETTA_TRANSFORM_INTERRUPTED
         : status == TF_FAIL ? CETTA_TRANSFORM_DECLINED : CETTA_TRANSFORM_ERROR;
 }
 
 static bool tf_protocol_try(TfFire *f, const TfFootprint *fp, TfGroups *groups,
-                             TfStatus *status) {
+                             TfStatus *status, bool preparing, bool publish_read) {
     if (cetta_transform_engine() != CETTA_TRANSFORM_ENGINE_TCALC ||
-        f->host->dialect != CETTA_TRANSFORM_DIALECT_HE ||
-        !f->host->decide_firing || f->plan.has_all || fp->row_len != 1u)
+        !f->host->decide_firing || f->host->spend || f->plan.has_all || fp->row_len != 1u)
         return false;
     size_t capacity = f->plan.len ? f->plan.len : 1u;
-    CettaTransformPort *ports = calloc(capacity, sizeof(*ports));
-    CettaTransformEquation *equations = calloc(capacity, sizeof(*equations));
-    CettaTransformCheck *checks = calloc(capacity, sizeof(*checks));
+    CettaTransformPort small_ports[8];
+    CettaTransformEquation small_equations[8];
+    CettaTransformCheck small_checks[8];
+    bool allocated = capacity > 8u;
+    CettaTransformPort *ports = allocated ? calloc(capacity, sizeof(*ports)) : small_ports;
+    CettaTransformEquation *equations = allocated ? calloc(capacity, sizeof(*equations)) : small_equations;
+    CettaTransformCheck *checks = allocated ? calloc(capacity, sizeof(*checks)) : small_checks;
     if (!ports || !equations || !checks) {
-        free(ports); free(equations); free(checks);
+        if (allocated) { free(ports); free(equations); free(checks); }
         *status = f->effects ? TF_ERROR : TF_FAIL;
         return true;
     }
     size_t used = 0u, told = 0u, checked = 0u;
+    bool matching_tells = true;
     bool eligible = fp->rows[0].entries.len == 0u;
     for (size_t i = 0u; eligible && i < f->plan.len; i++) {
         const TfConjunct *c = &f->plan.items[i];
         if (c->kind == TF_READ || c->kind == TF_TAKE) {
             if (c->joint || used >= fp->kernel->len) { eligible = false; break; }
             const TfEntry *entry = &fp->kernel->items[used];
-            ports[used++] = (CettaTransformPort){entry->space, entry->space_ref,
-                c->pattern, entry->atom, c->kind == TF_TAKE, c->exact};
-            /* A proposal's branch equations remain part of its decision. */
-            equations[told++] = (CettaTransformEquation){c->pattern, entry->atom};
+            ports[used++] = (CettaTransformPort){.space = entry->space, .space_ref = entry->space_ref,
+                .pattern = c->pattern, .receipt = entry->atom, .take = c->kind == TF_TAKE,
+                .exact = c->exact, .witness = preparing && entry->receipt &&
+                    entry->receipt <= f->witness_len ? &f->witnesses[entry->receipt - 1u] : NULL};
+            if (preparing && !ports[used - 1u].witness) { eligible = false; break; }
+            /* The lent frame already solves these matching equations. Its
+             * current witnesses are checked before the firing protocol;
+             * only genuine additional tells belong to the tell phase. A
+             * reopened proposal retains its explicit branch equations. */
+            if (!preparing)
+                equations[told++] = (CettaTransformEquation){c->pattern, entry->atom};
         } else if (c->kind == TF_AS) {
+            matching_tells = false;
             equations[told++] = (CettaTransformEquation){c->pattern, c->expression};
         } else if (c->kind == TF_LET && f->host->equation_check) {
             eligible = f->host->equation_check(f->host->context, c->pattern,
@@ -2447,42 +2592,64 @@ static bool tf_protocol_try(TfFire *f, const TfFootprint *fp, TfGroups *groups,
     }
     CettaTransformOutcome outcome = CETTA_TRANSFORM_DECLINED;
     if (eligible) {
-        TfProtocolCommit commit = {f, fp, groups};
+        TfProtocolCommit commit = {f, fp, groups, preparing, publish_read};
         Atom *expected = fp->rows[0].instance;
-        CettaTransformFiring firing = {.ports = ports, .port_count = used,
+        CettaTransformFiring firing = {.dialect = f->host->dialect,
+            .checks_before_tells = checked != 0u && matching_tells,
+            .ports = ports, .port_count = used,
             .equations = equations, .equation_count = told, .checks = checks,
             .check_count = checked, .publication = f->template_atom,
             .expected = &expected, .expected_count = 1u, .context = &commit,
             .commit = tf_protocol_commit, .spend = tf_protocol_spend};
+        if (preparing)
+            firing.principal = bindings_builder_bindings(&f->builder);
         outcome = f->host->decide_firing(f->host->context, f->scratch, &firing, &f->error);
+        if (outcome == CETTA_TRANSFORM_FIRED && firing.checks_before_tells)
+            f->used_early_checks = true;
+        if (outcome == CETTA_TRANSFORM_NONE && cetta_transform_tcalc_checking()) {
+            bool host_valid = false;
+            TfStatus host_status = tf_valid(f, groups, &host_valid);
+            if (host_status == TF_CONTINUE && host_valid) {
+                f->error = atom_error(f->answer_arena, f->template_atom,
+                    atom_symbol(f->answer_arena, "TransformProtocolHostAdmissionMismatch"));
+                outcome = CETTA_TRANSFORM_ERROR;
+            } else if (host_status == TF_INTERRUPTED) {
+                outcome = CETTA_TRANSFORM_INTERRUPTED;
+            } else if (host_status != TF_CONTINUE) {
+                outcome = CETTA_TRANSFORM_ERROR;
+            }
+        }
     }
-    free(ports); free(equations); free(checks);
+    if (allocated) { free(ports); free(equations); free(checks); }
     if (outcome == CETTA_TRANSFORM_DECLINED)
         return false;
     f->tcalc = true;
     *status = outcome == CETTA_TRANSFORM_FIRED ? TF_STOP
         : outcome == CETTA_TRANSFORM_NONE ? TF_CONTINUE
         : outcome == CETTA_TRANSFORM_INTERRUPTED ? TF_INTERRUPTED : TF_ERROR;
-    if (outcome == CETTA_TRANSFORM_FIRED)
+    if (outcome == CETTA_TRANSFORM_FIRED && (!preparing || publish_read))
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_FIRING);
     return true;
 }
 
 static TfStatus tf_try_commit(TfFire *f, const TfFootprint *fp) {
-    TfGroups g;
-    if (!tf_groups_build(fp, &g)) {
+    bool groups_needed = cetta_transform_engine() != CETTA_TRANSFORM_ENGINE_TCALC || tf_footprint_takes(fp);
+    /* Read groups are used only by a take's multiplicity check. A read-only
+     * firing has no such obligation and publishes the same rows with none. */
+    TfGroups g = {0};
+    if (groups_needed && !tf_groups_build(fp, &g)) {
         tf_groups_free(f, &g);
         return f->effects ? TF_ERROR : TF_FAIL;
     }
     f->tcalc = false;
     TfStatus status = TF_CONTINUE;
-    if (!tf_protocol_try(f, fp, &g, &status)) {
+    if (!tf_protocol_try(f, fp, &g, &status, false, false)) {
         if (cetta_transform_engine() == CETTA_TRANSFORM_ENGINE_TCALC)
             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_FALLBACK);
         bool valid = false;
         status = tf_valid(f, &g, &valid);
         if (status == TF_CONTINUE && valid)
-            status = tf_commit(f, fp, &g);
+            status = tf_commit(f, fp, &g, false);
         if (status == TF_STOP)
             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TRANSFORM_DIRECT_FIRING);
     }
@@ -2494,6 +2661,7 @@ static bool tf_entries_copy(Arena *arena, const TfEntries *src, TfEntries *dst) 
     *dst = (TfEntries){NULL, 0u, 0u};
     for (size_t i = 0u; i < src->len; i++) {
         TfEntry e = src->items[i];
+        e.receipt = 0u; /* its synchronous witness ends when the walk unwinds */
         e.atom = atom_deep_copy(arena, e.atom);
         if (!tf_entries_push(dst, e))
             return false;
@@ -2520,7 +2688,9 @@ static TfStatus tf_keep_candidate(TfFire *f, TfEntries *kernel, TfRow *rows,
     if (!kept.rows)
         return TF_ERROR;
     for (size_t r = 0u; r < row_len; r++) {
-        kept.rows[r].instance = atom_deep_copy(f->scratch, rows[r].instance);
+        kept.rows[r].instance = atom_deep_copy(
+            f->ready && f->ready->publications_owned ? f->answer_arena : f->scratch,
+            rows[r].instance);
         if (!tf_entries_copy(f->scratch, &rows[r].entries, &kept.rows[r].entries))
             return TF_ERROR;
     }
@@ -2539,13 +2709,91 @@ static TfStatus tf_candidate(TfFire *f, TfEntries *kernel, TfRow *rows,
     /* The first candidate that validates stops the proposal; it commits
      * once the proposal has unwound, as the library commits after its
      * search, so no removal meets a reader the proposal still holds. */
-    TfGroups g;
-    if (!tf_groups_build(&fp, &g)) {
+    bool takes = tf_footprint_takes(&fp);
+    TfGroups g = {0};
+    if ((!f->borrow_match || takes) && !tf_groups_build(&fp, &g)) {
         tf_groups_free(f, &g);
         return f->effects ? TF_ERROR : TF_FAIL;
     }
     bool valid = false;
-    TfStatus status = tf_valid(f, &g, &valid);
+    /* Open-row selection also prepares the host's exact removal, which the
+     * commit reuses. Preserve that preparation rather than merely avoiding
+     * its admission recount. */
+    bool host_validated = !f->borrow_match || cetta_transform_tcalc_checking();
+    if (!host_validated)
+        for (size_t i = 0u; i < g.len; i++)
+            if (g.groups[i].entry->access == TF_TAKE && atom_has_vars(g.groups[i].entry->atom)) {
+                host_validated = true;
+                break;
+            }
+    TfStatus status = host_validated ? tf_valid(f, &g, &valid) : TF_CONTINUE;
+    /* A read-only decision may form its owned publication while the matched
+     * frame is still lent. No removal, destination write or template
+     * evaluation happens until after the readers unwind. There is no need
+     * to serialize this candidate and reopen the same frame to publish it. */
+    if (status == TF_CONTINUE && (!host_validated || valid) && f->borrow_match && !takes &&
+        row_len == 1u && rows[0].entries.len == 0u) {
+        TfStatus decided = TF_CONTINUE;
+        if (tf_protocol_try(f, &fp, &g, &decided, true, true)) {
+            if (decided == TF_STOP)
+                f->used_match_receipt = true;
+            tf_groups_free(f, &g);
+            return decided;
+        }
+    }
+    /* The protocol validates the exact current occurrence selection. Its
+     * distinct takes and disjoint reads establish resource enabling without
+     * recounting equal payloads. Checked runs retain that independent host
+     * recount; a declined protocol attempt must still take the ordinary
+     * validation path below. */
+    if (status == TF_CONTINUE && (!host_validated || valid) && f->borrow_match && row_len == 1u &&
+        rows[0].entries.len == 0u && !f->ready) {
+        bool witnessed = true;
+        for (size_t i = 0u; witnessed && i < kernel->len; i++)
+            witnessed = kernel->items[i].receipt && kernel->items[i].receipt <= f->witness_len;
+        if (witnessed) {
+            TfReadyReceipt *ready = cetta_malloc(sizeof(*ready));
+            CettaTransformWitness *witnesses = kernel->len
+                ? cetta_malloc(kernel->len * sizeof(*witnesses)) : NULL;
+            if (!ready || (kernel->len && !witnesses)) {
+                free(ready); free(witnesses); tf_groups_free(f, &g); return TF_FAIL;
+            }
+            for (size_t i = 0u; i < kernel->len; i++) {
+                witnesses[i] = f->witnesses[kernel->items[i].receipt - 1u];
+                witnesses[i].opened = NULL; /* only the view outlives the synchronous loan */
+            }
+            /* Stage complete publications in their final owner before the
+             * readers unwind, also for takes. Commit then keeps this copy
+             * rather than copying the same result through two arenas. */
+            *ready = (TfReadyReceipt){.witnesses = witnesses, .count = kernel->len,
+                .publications_owned = true};
+            TfStatus decided = TF_CONTINUE;
+            if (tf_ready_current(ready) && tf_protocol_try(f, &fp, &g, &decided, true, false)) {
+                if (decided == TF_STOP || decided == TF_CONTINUE) {
+                    ready->decision = decided == TF_STOP ? CETTA_TRANSFORM_FIRED : CETTA_TRANSFORM_NONE;
+                    f->ready = ready;
+                    status = tf_keep_candidate(f, kernel, rows, row_len);
+                    if (status == TF_CONTINUE) {
+                        TfEntries *kept = &f->candidates[f->candidate_len - 1u].kernel;
+                        for (size_t i = 0u; i < g.len; i++) {
+                            size_t entry = (size_t)(g.groups[i].entry - kernel->items);
+                            g.groups[i].entry = &kept->items[entry];
+                        }
+                        ready->groups = g;
+                        return TF_STOP;
+                    }
+                    f->ready = NULL;
+                } else {
+                    status = decided;
+                }
+                free(witnesses); free(ready); tf_groups_free(f, &g);
+                return status;
+            }
+            free(witnesses); free(ready);
+        }
+    }
+    if (!host_validated)
+        status = tf_valid(f, &g, &valid);
     tf_groups_free(f, &g);
     if (status != TF_CONTINUE || !valid)
         return status;
@@ -2599,15 +2847,32 @@ CettaTransformOutcome cetta_transform_fire(
         arena_free(&scratch);
         return outcome;
     }
+    f.borrow_match = cetta_transform_engine() == CETTA_TRANSFORM_ENGINE_TCALC &&
+        host->decide_firing &&
+        transform_match_receipts() && !host->spend && !f.plan.has_let && !f.plan.has_all;
+    for (size_t i = 0u; f.borrow_match && i < f.plan.len; i++)
+        f.borrow_match = !f.plan.items[i].joint &&
+            (f.plan.items[i].kind == TF_READ || f.plan.items[i].kind == TF_TAKE ||
+             f.plan.items[i].kind == TF_AS);
     TfStatus status = tf_walk(&f, 0u);
     /* With a let, every kept candidate in turn; without one, the candidate
      * that stopped the proposal, which validates again over the same store. */
-    if (f.plan.has_let ? status == TF_CONTINUE : status == TF_STOP) {
+    if (!f.answer && (f.plan.has_let ? status == TF_CONTINUE : status == TF_STOP)) {
         status = TF_CONTINUE;
         for (size_t i = 0u; i < f.candidate_len && status == TF_CONTINUE; i++) {
             TfFootprint fp = {&f.candidates[i].kernel, f.candidates[i].rows,
                               f.candidates[i].row_len};
-            status = tf_try_commit(&f, &fp);
+            if (i == 0u && f.ready && tf_ready_current(f.ready)) {
+                f.tcalc = true;
+                f.used_match_receipt = true;
+                status = f.ready->decision == CETTA_TRANSFORM_FIRED
+                    ? tf_commit(&f, &fp, &f.ready->groups, f.ready->publications_owned) : TF_CONTINUE;
+                if (status == TF_STOP)
+                    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_FIRING);
+            } else {
+                tf_ready_free(&f);
+                status = tf_try_commit(&f, &fp);
+            }
         }
     }
     if (status == TF_STOP && into) {
@@ -2659,11 +2924,13 @@ CettaTransformOutcome cetta_transform_fire(
         *answer_out = f.error ? atom_deep_copy(a, f.error)
             : atom_symbol(a, "TransformRealizationFailed");
     }
+    tf_ready_free(&f);
     for (size_t i = 0u; i < f.candidate_len; i++) {
         free(f.candidates[i].kernel.items);
         tf_rows_free(f.candidates[i].rows, f.candidates[i].row_len);
         free(f.candidates[i].rows);
     }
+    free(f.witnesses);
     free(f.candidates);
     free(f.entries.items);
     free(f.plan.items);
@@ -2676,9 +2943,11 @@ CettaTransformOutcome cetta_transform_fire(
                 outcome == CETTA_TRANSFORM_INTERRUPTED ? "interrupted" :
                 outcome == CETTA_TRANSFORM_ERROR ? "error" : "declined");
         atom_print(call, stderr);
-        fprintf(stderr, " (engine %s) (requested-engine %s) (knowledge per-firing)\n",
+        fprintf(stderr, " (engine %s) (requested-engine %s) (knowledge per-firing) (fast-path %s)\n",
                 cetta_transform_engine_spellings[f.tcalc ? CETTA_TRANSFORM_ENGINE_TCALC : CETTA_TRANSFORM_ENGINE_DIRECT],
-                cetta_transform_engine_spellings[cetta_transform_engine()]);
+                cetta_transform_engine_spellings[cetta_transform_engine()],
+                f.used_match_receipt ? "retained-match" :
+                f.used_early_checks ? "early-checks" : "none");
     }
     return outcome;
 }
@@ -3248,8 +3517,9 @@ static Atom *tf_call3(Arena *a, const char *head, Atom *x, Atom *y, Atom *z) {
  * DECLINED, having read nothing, otherwise. */
 static CettaTransformOutcome tf_reads_only_collect(
     const CettaTransformHost *host, Arena *a, Atom *space, Atom *conjuncts,
-    Atom *template_atom, CettaStepReads mode, Atom **collection_out,
-    uint64_t *count_out) {
+    Atom *template_atom, CettaStepReads mode, bool request_protocol,
+    bool *protocol_used, Atom **collection_out, uint64_t *count_out) {
+    if (protocol_used) *protocol_used = false;
     bool bag = mode != CETTA_STEP_READS_ORDERED;
     Arena scratch;
     arena_init_detached(&scratch);
@@ -3316,8 +3586,15 @@ static CettaTransformOutcome tf_reads_only_collect(
         f.scratch = a;
         bool collected = tf_native_collect(&f, spaces, patterns, read_len,
                                            template_atom, filters, tested,
+                                           request_protocol, protocol_used,
                                            &found, &failed);
         f.scratch = &scratch;
+        if (collected && failed && f.error) {
+            *collection_out = f.error;
+            free(f.plan.items);
+            arena_free(&scratch);
+            return CETTA_TRANSFORM_ERROR;
+        }
         if (collected && !failed) {
             *collection_out = found;
             *count_out = found->expr.len;
@@ -3383,7 +3660,7 @@ CettaTransformOutcome cetta_transform_reads(
     Atom *conjuncts = atom_expr(a, reads, (CettaExprLen)parts);
     CettaTransformOutcome outcome = conjuncts
         ? tf_reads_only_collect(host, a, space, conjuncts, template_atom, mode,
-                                collection_out, count_out)
+                                false, NULL, collection_out, count_out)
         : CETTA_TRANSFORM_DECLINED;
     if (transform_trace() && outcome == CETTA_TRANSFORM_FIRED)
         fprintf(stderr, "[step] match reads: %llu answers\n",
@@ -3607,16 +3884,20 @@ CettaTransformOutcome cetta_transform_collect(
     }
     template_atom = prepared_template;
     if (!into) {
+        bool protocol_used = false;
         CettaTransformOutcome reads =
             tf_reads_only_collect(host, a, space, listed, template_atom,
-                                  CETTA_STEP_READS_BAG, collection_out,
-                                  count_out);
+                                  CETTA_STEP_READS_BAG,
+                                  cetta_transform_engine() == CETTA_TRANSFORM_ENGINE_TCALC &&
+                                      host->decide_firing != NULL,
+                                  &protocol_used, collection_out, count_out);
         if (reads != CETTA_TRANSFORM_DECLINED) {
             outcome = reads;
             if (reads == CETTA_TRANSFORM_FIRED) {
-                cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_TRANSFORM_DIRECT_FIRING,
-                                         *count_out);
-                if (cetta_transform_engine() == CETTA_TRANSFORM_ENGINE_TCALC)
+                cetta_runtime_stats_add(protocol_used
+                        ? CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_FIRING
+                        : CETTA_RUNTIME_COUNTER_TRANSFORM_DIRECT_FIRING, *count_out);
+                if (!protocol_used && cetta_transform_engine() == CETTA_TRANSFORM_ENGINE_TCALC)
                     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_FALLBACK,
                                              *count_out);
             }
@@ -3624,8 +3905,10 @@ CettaTransformOutcome cetta_transform_collect(
                 fprintf(stderr, "[transform] fired, reads only: %zu answers ",
                         (size_t)*count_out);
                 atom_print(call, stderr);
-                fprintf(stderr, " (engine direct) (requested-engine %s) (knowledge per-firing)\n",
-                    cetta_transform_engine_spellings[cetta_transform_engine()]);
+                fprintf(stderr, " (engine %s) (requested-engine %s) (knowledge per-firing) (fast-path %s)\n",
+                    protocol_used ? "tcalc" : "direct",
+                    cetta_transform_engine_spellings[cetta_transform_engine()],
+                    protocol_used ? "ground-read-batch" : "none");
             }
             arena_free(&work);
             return outcome;

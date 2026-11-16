@@ -1,0 +1,20 @@
+; One rule, application: a proof of (-> A B) is a function from proofs of A to
+; proofs of B, and a logic's rules are data, proofs whose types are arrows.
+; The negative: in a row, $p, $q and $r are unknowns of the state, so the
+; Deduction held as a row is one instance in each outcome (A to C, B to D, or
+; C onwards), never the schema; no outcome composes twice.  Under step every
+; the three applications of Deduction tell its unknowns three values at once,
+; and there is no step at all.
+
+(: a A)
+(: ab (-> A B))
+(: bc (-> B C))
+(: cd (-> C D))
+(: Deduction (-> (-> $p $q) (-> (-> $q $r) (-> $p $r))))
+
+(rule apply
+  (read (: $f (-> $a $b)) (: $x $a))
+  (make (: ($f $x) $b)))
+
+(step one)
+(store set)

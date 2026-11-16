@@ -1,0 +1,14 @@
+% profile: step=one
+% The greatest common divisor, CHR's first example, on unary numbers:
+%   gcd(0) <=> true.   gcd(N) \ gcd(M) <=> N =< M | gcd(M - N).
+% tcalc@0.1 has no arithmetic, so the guard and the difference are computed
+% by sub(A, B, N, M), which counts N - 1 and M - 1 down together.  When the
+% first count ends, N =< M and the second count is M - N.  The gcd of 9 and
+% 6 is 3, whichever of the two is counted first.
+gcd(s(s(s(s(s(s(s(s(s(z)))))))))).
+gcd(s(s(s(s(s(s(z))))))).
+zero  @ gcd(z) <=> true.
+pair  @ gcd(s(N)), gcd(s(M)) <=> sub(N, M, s(N), s(M)).
+down  @ sub(s(A), s(B), N, M) <=> sub(A, B, N, M).
+left  @ sub(z, B, N, M) <=> gcd(N), gcd(B).
+right @ sub(s(A), z, N, M) <=> gcd(s(A)), gcd(M).

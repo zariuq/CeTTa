@@ -1,0 +1,6 @@
+; tcalc@0.1's clauses are Core.lean's: take, read, make, tell, check, absent,
+; count and census.  A census checks the rows a pattern meets; a clause that
+; would collect them into a term is refused at its place.
+(step one)
+(a 1)
+(rule gather (read (a $x)) (collect (a $y) $all) (make (all $all)))

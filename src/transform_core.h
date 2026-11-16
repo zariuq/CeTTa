@@ -89,8 +89,18 @@ typedef enum {
 } CettaTransformOutcome;
 
 CettaTransformEngine cetta_transform_engine(void);
+/* Process configuration, sampled once per thread like the engine setting. */
+bool cetta_transform_tcalc_checking(void);
+bool cetta_transform_tcalc_terms(void);
 
 /* A finite selected interface to a Space, not a materialized store. */
+typedef struct {
+    Space *space;
+    SpaceReadToken view;
+    CettaIndex position;
+    Atom *opened;
+} CettaTransformWitness;
+
 typedef struct {
     Space *space;
     Atom *space_ref;
@@ -98,6 +108,7 @@ typedef struct {
     Atom *receipt;
     bool take;
     bool exact;
+    const CettaTransformWitness *witness;
 } CettaTransformPort;
 
 typedef struct {
@@ -112,6 +123,10 @@ typedef struct {
 } CettaTransformCheck;
 
 typedef struct {
+    CettaTransformDialect dialect;
+    /* A static licence: every equation of this firing is an already solved
+     * matching equation, so no additional tell can justify a check. */
+    bool checks_before_tells;
     const CettaTransformPort *ports;
     size_t port_count;
     const CettaTransformEquation *equations;
@@ -124,6 +139,11 @@ typedef struct {
     void *context;
     CettaTransformOutcome (*commit)(void *, Atom *const *, size_t);
     bool (*spend)(void *, uint64_t);
+    /* A synchronous loan from the successful match of these exact witnessed
+     * occurrences, under their captured Space versions. It establishes the
+     * firing protocol's already-unified matching precondition. Nothing
+     * retains it after the decision; callers may unwind afterwards. */
+    const Bindings *principal;
 } CettaTransformFiring;
 
 typedef struct {

@@ -1159,19 +1159,19 @@ def main() -> int:
     require("main-readiness-rho-adaptive" in routine_targets and "bench-heavy" in exhaustive_targets,
             "consolidation replaced a historical regression gate")
     report_pass("both tiers retain historical gates and require consolidation timing")
-    petta_oracle_targets = {
-        "test-petta-corpus-differential",
+    petta_corpus_targets = {
+        "test-petta-corpus-manifest",
         "test-petta-native-core-no-libpl",
     }
     require(
-        petta_oracle_targets.isdisjoint(routine_targets),
-        "external PeTTa oracle differentials burden the routine developer tier",
+        petta_corpus_targets.isdisjoint(routine_targets),
+        "the PeTTa corpus gate burdens the routine developer tier",
     )
     require(
-        petta_oracle_targets <= exhaustive_targets,
-        "exhaustive readiness omits a PeTTa oracle differential",
+        petta_corpus_targets <= exhaustive_targets,
+        "exhaustive readiness omits a PeTTa corpus gate",
     )
-    report_pass("PeTTa oracle differentials are exhaustive-only merge gates")
+    report_pass("PeTTa corpus gates are exhaustive-only merge gates")
 
     routine_ladder = "main-readiness-space-ladders"
     stress_ladder = "main-readiness-space-ladders-exhaustive"

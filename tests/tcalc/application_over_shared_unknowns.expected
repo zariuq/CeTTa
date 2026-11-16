@@ -1,0 +1,5 @@
+(interpretation (version tcalc@0.1) (step one) (ask after-tells) (store set) (matches symmetric) (solver mgu-first-order) (observe outcomes) (budget 100000) (backend c))
+(outcome (: (((Deduction ab) bc) a) C) (: ((Deduction ab) bc) (-> A C)) (: (Deduction ab) (-> (-> B C) (-> A C))) (: (ab a) B) (: (bc (ab a)) C) (: (cd (((Deduction ab) bc) a)) D) (: (cd (bc (ab a))) D) (: Deduction (-> (-> A B) (-> (-> B C) (-> A C)))) (: a A) (: ab (-> A B)) (: bc (-> B C)) (: cd (-> C D)))
+(outcome (: (((Deduction bc) cd) (ab a)) D) (: ((Deduction bc) cd) (-> B D)) (: (Deduction bc) (-> (-> C D) (-> B D))) (: (ab a) B) (: (bc (ab a)) C) (: (cd (bc (ab a))) D) (: Deduction (-> (-> B C) (-> (-> C D) (-> B D)))) (: a A) (: ab (-> A B)) (: bc (-> B C)) (: cd (-> C D)))
+(outcome (: (Deduction cd) (-> (-> D ?0) (-> C ?0))) (: (ab a) B) (: (bc (ab a)) C) (: (cd (bc (ab a))) D) (: Deduction (-> (-> C D) (-> (-> D ?0) (-> C ?0)))) (: a A) (: ab (-> A B)) (: bc (-> B C)) (: cd (-> C D)))
+(explored (states 35) (work 35) (finished true) (cycle false))

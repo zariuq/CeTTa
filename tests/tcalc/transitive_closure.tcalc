@@ -1,0 +1,6 @@
+; Reachability by reads alone.  With a set store, re-deriving a known path
+; changes nothing, so the closure is a fixpoint, and every step agrees.
+(store set)
+(edge a b) (edge b c) (edge c d)
+(rule base (read (edge $x $y)) (make (path $x $y)))
+(rule step (read (path $x $y) (edge $y $z)) (make (path $x $z)))

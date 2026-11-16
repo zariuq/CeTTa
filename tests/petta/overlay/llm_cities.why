@@ -1,0 +1,1 @@
+lib_llm's two py-str-helper equations overlap on (): car-atom and cdr-atom of () are (), so the general equation also applies there and never reaches the base case; guard it with (== $L ())

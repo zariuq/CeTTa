@@ -1,0 +1,10 @@
+; A variable that only a make mentions is a fresh unknown, a new one for each
+; firing: the two (item ?) rows hold two unknowns.  An unknown is not a name:
+; it may still equal any term, so once an item exists, (item c) is no longer
+; known absent, and watch can fire only before the first item.  tcalc@0.1 has
+; no names that no other term equals; rho's new is refused (refused_rho_new).
+(step one)
+(seed)
+(seed)
+(rule grow (take (seed)) (make (item $n)))
+(rule watch (absent (item c)) (absent (watched)) (make (watched)))

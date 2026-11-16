@@ -1,0 +1,4 @@
+(cesta-export/1 (header CETTA_RUNNER_AXES_GENERATED_H) (profile c11)
+ (table-enum "../lib/runner_axes.data" Schedules (enum RunSchedule) (prefix RUN_SCHEDULE_) (id id) (name code) (count RUN_SCHEDULE_COUNT))
+ (table-rows "../lib/runner_axes.data" Schedules (macro RUN_SCHEDULE_ROWS)
+   (columns code spelling)))

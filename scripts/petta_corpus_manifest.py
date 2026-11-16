@@ -1183,6 +1183,8 @@ def run_example(
     clone_root: Path | None = None,
     expected_prefix: str | None = None,
     environment: dict[str, str] | None = None,
+    arguments: tuple[str, ...] = (),
+    process_metrics: dict[str, int] | None = None,
 ) -> Run:
     """Run one example of the base on CeTTa ("cetta") or SWI-PeTTa ("swi").
 
@@ -1205,7 +1207,7 @@ def run_example(
     def command_for(workspace: Path, program: str) -> list[str]:
         if engine == "cetta":
             assert executable is not None
-            return [str(executable), "--lang", "petta", program]
+            return [str(executable), *arguments, "--lang", "petta", program]
         if engine == "swi":
             run_sh = workspace / "run.sh"
             if not run_sh.is_file():
@@ -1265,9 +1267,14 @@ def run_example(
                 exit_code, stdout, stderr, time.monotonic() - started,
                 source_text,
             )
-        exit_code, stdout, stderr, timed_out, limited = run_bounded_process(
-            command, workspace, environment, stdin_text, timeout_seconds,
-        )
+        process_started = time.monotonic_ns()
+        try:
+            exit_code, stdout, stderr, timed_out, limited = run_bounded_process(
+                command, workspace, environment, stdin_text, timeout_seconds,
+            )
+        finally:
+            if process_metrics is not None:
+                process_metrics["process_elapsed_ns"] = time.monotonic_ns() - process_started
         if timed_out:
             exit_code = ABNORMAL_TIMEOUT
         elif limited:
@@ -1532,6 +1539,13 @@ def judge(
                 "now passes its own assertions (recorded failing: "
                 f"{recorded}); run make petta-corpus-accept",
             )
+        if not isinstance(run.exit, int) or run.exit < 0:
+            return Verdict("FAIL", abnormal_detail(run, timeout_seconds))
+        if detail != recorded:
+            return Verdict("FAIL", f"recorded failure changed: {detail!r}; expected {recorded!r}")
+        _, assertion_failures = assertion_verdicts(run.stdout)
+        if assertion_failures and run.exit != 1:
+            return Verdict("FAIL", f"assertion failure terminated with exit {run.exit}, expected 1")
         return Verdict("XFAIL", detail)
     if mode == MODE_NEGATIVE:
         expected_exit = entry["exit"]

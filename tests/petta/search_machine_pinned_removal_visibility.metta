@@ -3,7 +3,8 @@
 ; continuation sees only the survivors: a later removal, a listing of the
 ; Space, a relational call, and a fresh match.
 
-; Each selected copy is removed once, so both removals succeed.
+; The first removal consumes both copies; the pinned read still answers its
+; second occurrence, whose removal finds nothing.
 !(add-atom &pinned-duplicates (row same))
 !(add-atom &pinned-duplicates (row same))
 !(let $value (match &pinned-duplicates (row $_) (row $_))

@@ -1,0 +1,7 @@
+; A step reads the state it starts from, never the rows it makes.  Each step
+; adds the next number after the largest present; even every adds one number a
+; step, since the number it makes is not there to be read until the next step.
+(step every)
+(p z)
+(next z (s z)) (next (s z) (s (s z)))
+(rule grow (read (p $x) (next $x $y)) (absent (p $y)) (make (p $y)))

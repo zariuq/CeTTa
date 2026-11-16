@@ -4,7 +4,7 @@
 # table names as symbols.  Axes also names each axis's table of values.  The
 # HE lane reads lib/, the PeTTa lane lib/petta/: one content.
 TRANSFORM_AXES_METTA = lib/transform_axes.metta lib/petta/transform_axes.metta
-TRANSFORM_AXES_TABLES = Steps Asks Stores Matches Removals Conjunctions BranchTimings Commas Dialects
+TRANSFORM_AXES_TABLES = Steps Asks Stores Matches Engines Removals Conjunctions BranchTimings Commas Dialects
 TRANSFORM_AXES_SYMBOLS = sed 's/"\([A-Za-z][A-Za-z0-9-]*\)"/\1/g'
 .PHONY: transform-axes-metta
 transform-axes-metta: lib/transform_axes.data $(CESTA)

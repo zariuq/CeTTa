@@ -1,0 +1,39 @@
+(+ 10 2)
+12
+(Pair (+ 10 2) 12)
+11
+()
+99
+(Triple 7 7 8)
+(7 8)
+11
+12
+no
+(7 8 11 12)
+3
+caught
+99
+-99
+true
+true
+((Found a) (Found b))
+(Aliases (Joined (Pair 2 1) (Pair 2 1)) 2 1)
+(shared 7)
+(first second)
+(cons 5 ())
+(quote (+ 5 2))
+3
+Symbol
+same
+different
+different
+(matched missed)
+(: 99 %Undefined%)
+99
+41
+(+ 5 2)
+(+ 5 2)
+(cons 5 ())
+(cons 5 ())
+true
+(12 extra)

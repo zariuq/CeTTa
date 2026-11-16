@@ -1,0 +1,1 @@
+!(remove-atom &self $unbound)

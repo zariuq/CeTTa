@@ -1,0 +1,23 @@
+{
+  "format": "CestaTcalcOwnershipCoverageV1",
+  "scope": "implemented first-order nested-tree C tcalc core",
+  "ownership_plan_version": "cesta-ownership/7",
+  "functions": 232,
+  "unchecked_functions": 0,
+  "foreign_obligations": 19,
+  "altered_plans_refused": 1685,
+  "module_admitted": true,
+  "proof_kind": "delta-composition",
+  "changed_functions": ["run_visit"],
+  "changed_mutants_rechecked": 14,
+  "reused_function_proofs": 231,
+  "plan_sha256": "fcace2236369176efb6c0a79bee54885154d517e3807a5fa88c149db06d99aac",
+  "plan_record_sha256": "d2645491cba04fb8b3edda5ab8199a99fa9fe634b46d440becaed3cb39a418dd",
+  "admission_sha256": "8450f3badc5aaa02db87e50a920ed973aebbf84e08f670b1e9096e9ff12772ba",
+  "ordinary_c_sha256": "dbc6fdca406c23ab45a5b1e68dcffcdf771f886c1d66c15f60cf731abd2e87b4",
+  "delta_receipt_sha256": "045cc99d87f10624cfac8646ec33f6af76769df441a4fc2055af66601e683751",
+  "delta_theorem_source_sha256": "1f5ad3c0084001ba9cae68275a6a54205dac7e8d563c0e1f2759dce0ec04bf75",
+  "delta_theorem_artifact_sha256": "b15f8eef4fd02a68205768b3ab1cf6242a034c1dd40dae0350cf05b0fdc9e2f7",
+  "vendor_cesta_source_sha256": "d5fe469b7fc4f6b9d695ec3c9ecf9fd01aaabcc60073f4c7ca899036c09f8ed5",
+  "lean_is_a_development_dependency_only": true
+}

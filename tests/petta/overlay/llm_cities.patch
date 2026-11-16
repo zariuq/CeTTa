@@ -1,0 +1,21 @@
+--- a/lib/lib_llm.metta
++++ b/lib/lib_llm.metta
+@@ -2,12 +2,13 @@
+ !(import! &self (library lib_llm.py))
+
+ ;Create string by appending the list entries
+-(= (py-str-helper () $outp) $outp)
+ (= (py-str-helper $L $outp)
+-   (let* (($head (car-atom $L))
+-          ($tail (cdr-atom $L))
+-          ($outp2 (py-call (operator.add $outp (py-call (str $head))))))
+-     (py-str-helper $tail $outp2)))
++   (if (== $L ())
++       $outp
++       (let* (($head (car-atom $L))
++              ($tail (cdr-atom $L))
++              ($outp2 (py-call (operator.add $outp (py-call (str $head))))))
++         (py-str-helper $tail $outp2))))
+ (= (py-str $L) (py-str-helper $L ""))
+
+ ;Evaluate expression via py-call:

@@ -1,0 +1,8 @@
+% profile: step=one
+% A row may hold an unknown, written as a variable in a fact; rows that name
+% the same variable share it.  Here a head matches by unification: reading
+% p(a) decides U = a, in q(U) as well.  CHR's own head matching never binds a
+% constraint's variables, so in CHR this rule would wait until U is known.
+% The guard \+ fixed asks that no fixed is present.
+p(U). q(U).
+fix @ p(a) ==> \+ fixed | fixed.

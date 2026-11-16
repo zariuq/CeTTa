@@ -1,0 +1,8 @@
+; Two rows share an unknown.  While nothing determines it, (q b) is not known
+; to be absent: the row (q ?) could still be (q b).  Reading the first row as
+; (p a) determines the unknown for good; then (q b) is known absent.
+(step one)
+(p $u)
+(q $u)
+(rule fix (read (p a)) (absent (fixed)) (make (fixed)))
+(rule guard (absent (q b)) (absent (guarded)) (make (guarded)))

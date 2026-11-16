@@ -1,0 +1,28 @@
+; Build a derived rule as one scope. Context coordinates stay ground while
+; the schema is assembled; one parse introduces all of its variables together.
+!(import! &self str)
+(= (r2-context-variables $n $i)
+   (if (== $i $n) ()
+       (cons-atom (v $i) (r2-context-variables $n (+ $i 1)))))
+(= (r2-schema-text $term)
+   (case $term
+     (((v $i) (str:concat "$r2_" (repr $i)))
+      ($other (if (is-expr $other)
+                  (str:concat "(" (str:concat (r2-schema-parts $other) ")"))
+                  (repr $other))))))
+(= (r2-schema-parts $parts)
+   (if (== $parts ()) ""
+       (if (== (cdr-atom $parts) ()) (r2-schema-text (car-atom $parts))
+           (str:concat (r2-schema-text (car-atom $parts))
+                       (str:concat " " (r2-schema-parts (cdr-atom $parts)))))))
+(= (r2-install-derived $id $name $nb $space $hyps $concl)
+   (let* (($vs (r2-context-variables $nb 0))
+          ($holes (derived-holes $vs 0 $nb))
+          ($keeps (map-atom $hyps $h ($space $h)))
+          ($inputs (map-atom (minus (vars-in $concl) (vars-in $hyps)) $i (v $i)))
+          ($schema (rule $id $name (cons-atom holes $holes) (take) (cons-atom keep $keeps)
+                    (tell) (neq) (absent) (count) (op) (guard) (fresh) (inputs $inputs)
+                    (birth 0) (make ($space $concl))))
+          ($source (r2-schema-text $schema))
+          ($opened (parse $source)))
+     (rule-installed $opened)))

@@ -1,0 +1,5 @@
+(= (pick) (superpose (0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15)))
+(= (merge $a $b) (+ $a $b))
+(= (gen $k $acc) (if (== $k 0) $acc (let $p (pick) (gen (- $k 1) (+ (* $acc 3) $p)))))
+(= (main) (let $s (gen 5 0) (if (== (% $s 5) 0) 1 (empty))))
+!(foldall merge (main) 0)

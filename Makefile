@@ -2499,9 +2499,7 @@ CETTA_PETTA_DIRECT_RUN_V1 = env CETTA_PETTA_SEARCH_MACHINE=1 \
 PETTA_CORPUS_MANIFEST = tests/petta/corpus/manifest.json
 PETTA_TYPECHECK_V2_MANIFEST = tests/petta/typecheck_v2_acceptance_manifest.json
 PETTA_TYPECHECK_V2_OMISSION_BIN = runtime/cetta-$(BUILD_CANON)-no-petta-typecheck-v2
-PETTA_CORPUS_RESULTS ?= runtime/petta-corpus-differential
 PETTA_NATIVE_CORE_RESULTS ?= runtime/petta-corpus-native-core-no-libpl
-PETTA_CORPUS_TIMEOUT ?= 30
 PETTA_CHAINER_ROOT ?=
 PETTA_CHAINER_COMPAT_MANIFEST = tests/petta/chainer_compat/manifest.json
 PETTA_CHAINER_COMPAT_RESULTS ?= runtime/petta-chainer-compat
@@ -15119,7 +15117,7 @@ test-metamath-state-proof-bridge-rhometta-compile-v1: \
 		--entry-rule state-step-check-proof-compressed-v1 \
 		--out "$$work/regenerated.metta"); \
 	printf '%s\n' "$$summary" | rg -q \
-		'^\(GSLTDirectRhoMettaV1Summary 392 164 [0-9a-f]{64} [0-9a-f]{64}\)$$'; \
+		'^\(GSLTDirectRhoMettaV1Summary 400 165 [0-9a-f]{64} [0-9a-f]{64}\)$$'; \
 	cmp -s "$$work/regenerated.metta" \
 		$(METAMATH_STATE_PROOF_BRIDGE_RHOMETTA_PROGRAM_V1); \
 	rg -F -q '; selected-entry-rule state-step-check-proof-normal-v1' \
@@ -15155,7 +15153,7 @@ test-metamath-state-proof-bridge-rhometta-compile-v1: \
 		$(METAMATH_STATE_PROOF_BRIDGE_RHOMETTA_PROGRAM_V1); \
 	! rg -F -q 'state-proof-apply-owned-assertion-result-v1' \
 		"$$work/deleted-internal-program.metta"; \
-	printf '%s\n' '(MetamathStateProofBridgeRhoMettaCompileV1Summary 392 164 2 2 0)'
+	printf '%s\n' '(MetamathStateProofBridgeRhoMettaCompileV1Summary 400 165 2 2 0)'
 
 .PHONY: test-metamath-state-proof-runtime-rhometta-v1 \
 		test-metamath-state-proof-runtime-rhometta-core-v1
@@ -15187,7 +15185,7 @@ test-metamath-state-proof-runtime-rhometta-core-v1: \
 		--entry-rule state-start-occurrence-stream-v1 \
 		--out "$$work/regenerated.metta"); \
 	printf '%s\n' "$$summary" | rg -q \
-		'^[(]GSLTDirectRhoMettaV1Summary 578 236 [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
+		'^[(]GSLTDirectRhoMettaV1Summary 586 237 [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
 	cmp -s "$$work/regenerated.metta" \
 		$(METAMATH_STATE_PROOF_RUNTIME_RHOMETTA_PROGRAM_V1); \
 	rg -F -q '; selected-entry-rule state-start-occurrence-stream-v1' \
@@ -15218,7 +15216,7 @@ test-metamath-state-proof-runtime-rhometta-core-v1: \
 		$(METAMATH_STATE_PROOF_RUNTIME_RHOMETTA_PROGRAM_V1) | cut -d' ' -f1); \
 	test "$$program_digest_before" = "$$program_digest_after"; \
 	printf '%s\n' \
-		'(MetamathStateProofRuntimeRhoMettaV1Summary 578 236 1 1 0)'
+		'(MetamathStateProofRuntimeRhoMettaV1Summary 586 237 1 1 0)'
 
 .PHONY: prepare-metamath-state-proof-full-stream-rhocalc-profile-benchmark-v1
 prepare-metamath-state-proof-full-stream-rhocalc-profile-benchmark-v1: \
@@ -31450,8 +31448,9 @@ test-petta-let-reads-cells-as-lists: $(BIN)
 
 .PHONY: test-petta-remove-atom-answers
 test-petta-semantics: test-petta-remove-atom-answers
-# remove-atom answers whether it removed a row; a bare variable removes none.
-test-petta-remove-atom-answers: $(BIN)
+# remove-atom removes every matching row; unbound whole patterns raise.
+test-petta-remove-atom-answers: $(BIN) tests/petta/remove_atom_answers_what_it_removed.metta \
+		tests/petta/remove_atom_answers_what_it_removed.expected
 	@set -eu; \
 	for route in tier machine; do \
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
@@ -32147,7 +32146,22 @@ test-petta-prepared-structural-types: $(BIN)
 
 .PHONY: test-petta-prepared-code
 .PHONY: test-prepared-scalar-tree
-test-all: test-prepared-scalar-tree
+.PHONY: test-gc-survivor-budget
+runtime/test_gc_budget-$(BUILD_OBJ_TAG): tests/test_gc_budget.c src/gc_budget.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -I. -o $@ $<
+test-gc-survivor-budget: runtime/test_gc_budget-$(BUILD_OBJ_TAG) $(BIN)
+	./$<
+	@set -eu; \
+	for budget in '' 1; do \
+		actual=$$(CETTA_GC_BUDGET_MB=$$budget $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/prepared_survivor_budget.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/prepared_survivor_budget.expected)" ]; then \
+			printf '%s\n' "$$actual"; \
+			echo 'FAIL: survivor budget changed a live value or alias'; exit 1; \
+		fi; \
+	done; \
+	echo 'PASS: nursery sampling retains live structures, shared unknowns and escaping results'
+test-all: test-prepared-scalar-tree test-gc-survivor-budget
 runtime/test_prepared_scalar_tree-$(BUILD_OBJ_TAG): tests/test_prepared_scalar_tree.c src/prepared_pure_machine.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -I. -o $@ $< $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS) $(LDFLAGS)
 test-prepared-scalar-tree: runtime/test_prepared_scalar_tree-$(BUILD_OBJ_TAG) $(BIN)
@@ -32404,12 +32418,85 @@ test-transform-he: $(BIN) lib/lib_transform.metta tests/reference/lib_transform_
 	@test "$$(grep -c '^\[transform\] fired' runtime/test_transform_he_differential.trace)" -ge 600
 	@echo "PASS: transform fires natively in HE as its library does (fixed test, 120 seeded scenarios)"
 
+.PHONY: test-transform-set-frontier
+test-transform-set-frontier: $(BIN) tests/transform_set_frontier.metta tests/transform_set_frontier.expected
+	@set -eu; for language in he petta; do for engine in direct tcalc; do for reference in 0 1; do \
+		CETTA_TRANSFORM_ENGINE=$$engine CETTA_EXEC_SATURATION_REFERENCE=$$reference CETTA_TRANSFORM_TRACE=1 \
+			$(call cetta_exec,./$(BIN)) --lang $$language --profile extended --no-results tests/transform_set_frontier.metta \
+			> runtime/transform_set_frontier-$$language-$$engine-$$reference.out \
+			2> runtime/transform_set_frontier-$$language-$$engine-$$reference.trace; \
+		diff -u tests/transform_set_frontier.expected runtime/transform_set_frontier-$$language-$$engine-$$reference.out; \
+		if test "$$engine" = tcalc && test "$$reference" = 0; then \
+			test "$$(grep -c '(engine tcalc) (fast-path bulk-set semi-naive)' runtime/transform_set_frontier-$$language-$$engine-$$reference.trace)" = 2; \
+			test "$$(grep -c '(engine direct) (fast-path none)' runtime/transform_set_frontier-$$language-$$engine-$$reference.trace)" = 5; \
+			grep -q '(cold-rules 2)' runtime/transform_set_frontier-$$language-$$engine-$$reference.trace; \
+		else \
+			! grep -q '(fast-path bulk-set semi-naive)' runtime/transform_set_frontier-$$language-$$engine-$$reference.trace; \
+		fi; \
+	done; done; done
+	@echo "PASS: set frontier matches authored rounds in both dialects; empty premises retained and unsupported contracts decline"
+
+runtime/tcalc-r2-decide: tools/tcalc_r2_decide.c $(TCALC_CORE) native/tcalc/tcalc_syntax.c \
+		native/tcalc/tcalc_core.h native/tcalc/tcalc_syntax.h
+	@mkdir -p runtime
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Inative/tcalc $< $(TCALC_CORE) native/tcalc/tcalc_syntax.c -o $@
+
+.PHONY: test-tcalc-r2-scope
+test-tcalc-r2-scope: $(BIN) tools/tcalc_r2_scoped_rules.metta tools/tcalc_r2_receipts.metta \
+		tests/tcalc_r2_scope.metta tests/tcalc_r2_scope.expected \
+		tests/tcalc_r2_lookup.metta tests/tcalc_r2_lookup.expected
+	@$(call cetta_exec,./$(BIN)) --lang petta --profile extended --no-results tests/tcalc_r2_scope.metta > runtime/tcalc_r2_scope.out
+	@diff -u tests/tcalc_r2_scope.expected runtime/tcalc_r2_scope.out
+	@set -eu; for engine in direct tcalc; do \
+		CETTA_TRANSFORM_ENGINE=$$engine CETTA_TRANSFORM_TRACE=1 \
+			$(call cetta_exec,./$(BIN)) --lang petta --profile extended --no-results tests/tcalc_r2_lookup.metta \
+			> runtime/tcalc_r2_lookup-$$engine.out 2> runtime/tcalc_r2_lookup-$$engine.trace; \
+		diff -u tests/tcalc_r2_lookup.expected runtime/tcalc_r2_lookup-$$engine.out; \
+		if test "$$engine" = tcalc; then grep -q '(engine tcalc)' runtime/tcalc_r2_lookup-$$engine.trace; fi; \
+	done
+	@echo "PASS: derived-rule aliases remain in one scope; named store and proof readers execute through the selected protocol"
+
+.PHONY: test-tcalc-r2-decide
+test-tcalc-r2-decide: test-tcalc-r2-scope runtime/tcalc-r2-decide tests/tcalc_r2_decide.receipts tests/tcalc_r2_decide_broken.receipts
+	@runtime/tcalc-r2-decide tests/tcalc_r2_decide.receipts > runtime/tcalc_r2_decide.out
+	@grep -q '^(R2Protocol (calls 4) (admitted 3) (declined 1) (differ 0) (unported 0) (host-events 0))$$' runtime/tcalc_r2_decide.out
+	@set +e; runtime/tcalc-r2-decide tests/tcalc_r2_decide_broken.receipts > runtime/tcalc_r2_decide_broken.out; code=$$?; \
+		test "$$code" = 1 || { echo "FAIL: changed native conclusion was not caught"; exit 1; }; \
+		grep -q '^(R2Difference ' runtime/tcalc_r2_decide_broken.out
+	@echo "PASS: selected native-kernel firings use the public protocol; positive, refusal and changed-conclusion controls hold"
+
+.PHONY: test-transform-read-batch
+test-transform-read-batch: $(BIN) tests/petta/transform_read_batch.metta tests/petta/transform_read_batch.expected
+	@set -eu; for engine in direct tcalc; do for checked in 0 1; do \
+		CETTA_TRANSFORM_ENGINE=$$engine CETTA_TRANSFORM_TCALC_CHECKED=$$checked CETTA_TRANSFORM_TRACE=1 \
+			$(call cetta_exec,./$(BIN)) --lang petta --profile extended --no-results tests/petta/transform_read_batch.metta \
+			> runtime/transform_read_batch-$$engine-$$checked.out \
+			2> runtime/transform_read_batch-$$engine-$$checked.trace; \
+		diff -u tests/petta/transform_read_batch.expected runtime/transform_read_batch-$$engine-$$checked.out; \
+		if test "$$engine" = tcalc; then \
+			test "$$(grep -c '(engine tcalc).* (fast-path ground-read-batch)' runtime/transform_read_batch-$$engine-$$checked.trace)" = 4; \
+			grep 'constant-template\| held)' runtime/transform_read_batch-$$engine-$$checked.trace | grep -q '(engine direct)'; \
+			grep 'open-result' runtime/transform_read_batch-$$engine-$$checked.trace | grep -q '(engine direct)'; \
+			grep '(cross ' runtime/transform_read_batch-$$engine-$$checked.trace | grep -q '(engine direct)'; \
+			grep '(effect ' runtime/transform_read_batch-$$engine-$$checked.trace | grep -q '(engine direct)'; \
+		else \
+			! grep -q '(fast-path ground-read-batch)' runtime/transform_read_batch-$$engine-$$checked.trace; \
+		fi; \
+	done; done
+	@echo "PASS: read batches retain duplicate witnesses, repeated legs and the empty bag; open, cross-space and effectful contracts keep their realization"
+
 .PHONY: test-transform-tcalc
 test-transform-tcalc: $(BIN) tests/he/transform_tcalc.metta tests/he/transform_tcalc.expected \
-		tests/he/transform_tcalc_graph.metta tests/he/transform_tcalc_graph.expected
+		tests/he/transform_tcalc_graph.metta tests/he/transform_tcalc_graph.expected \
+		tests/he/transform_tcalc_receipts.metta tests/he/transform_tcalc_receipts.expected \
+		tests/he/transform_tcalc_wide.metta tests/he/transform_tcalc_wide.expected \
+		tests/he/transform_tcalc_early.metta tests/he/transform_tcalc_early.expected \
+		tests/petta/transform_tcalc_wide.expected \
+		tests/petta/transform_firing_variables.metta tests/petta/transform_firing_variables.expected
 	@set -eu; for fixture in transform_tcalc transform_tcalc_graph; do \
 	for engine in direct tcalc; do for cache in 0 1; do for reference in 0 1; do \
 		CETTA_TRANSFORM_ENGINE=$$engine CETTA_TRANSFORM_TCALC_CACHE=$$cache CETTA_TRANSFORM_TRACE=1 \
+		CETTA_TRANSFORM_TCALC_CHECKED=1 \
 		CETTA_TRANSFORM_CURSOR_REFERENCE=$$reference CETTA_TRANSFORM_LET_REFERENCE=$$reference \
 			$(call cetta_exec,./$(BIN)) --lang he --profile extended tests/he/$$fixture.metta \
 			> runtime/$$fixture-$$engine-$$cache-$$reference.out 2> runtime/$$fixture-$$engine-$$cache-$$reference.trace; \
@@ -32421,6 +32508,44 @@ test-transform-tcalc: $(BIN) tests/he/transform_tcalc.metta tests/he/transform_t
 			fi; \
 		fi; \
 	done; done; done; done
+	@set -eu; for engine in direct tcalc; do for receipts in 0 1; do \
+		CETTA_TRANSFORM_ENGINE=$$engine CETTA_TRANSFORM_TCALC_RECEIPTS=$$receipts \
+		CETTA_TRANSFORM_TCALC_CHECKED=1 CETTA_TRANSFORM_TRACE=1 \
+			$(call cetta_exec,./$(BIN)) --lang he --profile extended tests/he/transform_tcalc_receipts.metta \
+			> runtime/transform_tcalc_receipts-$$engine-$$receipts.out \
+			2> runtime/transform_tcalc_receipts-$$engine-$$receipts.trace; \
+		diff -u tests/he/transform_tcalc_receipts.expected runtime/transform_tcalc_receipts-$$engine-$$receipts.out; \
+		if test "$$engine" = tcalc && test "$$receipts" = 1; then \
+			grep -q '(fast-path retained-match)' runtime/transform_tcalc_receipts-$$engine-$$receipts.trace; \
+			grep -q '(engine direct)' runtime/transform_tcalc_receipts-$$engine-$$receipts.trace; \
+			grep -q '(engine tcalc).* (fast-path none)' runtime/transform_tcalc_receipts-$$engine-$$receipts.trace; \
+		else \
+			! grep -q '(fast-path retained-match)' runtime/transform_tcalc_receipts-$$engine-$$receipts.trace; \
+		fi; \
+	done; done
+	@set -eu; for engine in direct tcalc; do \
+		CETTA_TRANSFORM_ENGINE=$$engine CETTA_TRANSFORM_TCALC_CHECKED=1 \
+			$(call cetta_exec,./$(BIN)) --lang petta --profile extended tests/petta/transform_firing_variables.metta \
+			> runtime/transform_firing_variables-$$engine.out; \
+		diff -u tests/petta/transform_firing_variables.expected runtime/transform_firing_variables-$$engine.out; \
+	done
+	@set -eu; for language in he petta; do for engine in direct tcalc; do \
+		CETTA_TRANSFORM_ENGINE=$$engine CETTA_TRANSFORM_TCALC_CHECKED=1 \
+			$(call cetta_exec,./$(BIN)) --lang $$language --profile extended tests/he/transform_tcalc_wide.metta \
+			> runtime/transform_tcalc_wide-$$language-$$engine.out; \
+		diff -u tests/$$language/transform_tcalc_wide.expected runtime/transform_tcalc_wide-$$language-$$engine.out; \
+	done; done
+	@set -eu; for engine in direct tcalc; do \
+		CETTA_TRANSFORM_ENGINE=$$engine CETTA_TRANSFORM_TCALC_CHECKED=1 CETTA_TRANSFORM_TRACE=1 \
+			$(call cetta_exec,./$(BIN)) --lang he --profile extended tests/he/transform_tcalc_early.metta \
+			> runtime/transform_tcalc_early-$$engine.out 2> runtime/transform_tcalc_early-$$engine.trace; \
+		diff -u tests/he/transform_tcalc_early.expected runtime/transform_tcalc_early-$$engine.out; \
+		if test "$$engine" = tcalc; then \
+			grep -q '(fast-path early-checks)' runtime/transform_tcalc_early-$$engine.trace; \
+			grep 'late' runtime/transform_tcalc_early-$$engine.trace | grep -q '(fast-path none)'; \
+			grep 'effectful' runtime/transform_tcalc_early-$$engine.trace | grep -q '(engine direct)'; \
+		fi; \
+	done
 	@echo "PASS: HE ports, guards, aliases, mutable cells and publications agree on both engines with code reuse enabled and disabled"
 
 # The authored HE reference runs in plain HE, where native transform is off.
@@ -32643,7 +32768,7 @@ test-petta-error-outcomes: $(BIN)
 				<(printf '%s\n' "$$actual") | head -20; \
 			exit 1; \
 		fi; \
-		for case in static collapse branch effect function list; do \
+		for case in static collapse branch effect function list removal; do \
 			status=0; \
 			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
 				--lang petta tests/petta/error_uncaught_$$case.metta \
@@ -33153,7 +33278,7 @@ test-petta-semantic-oracles: $(BIN)
 	fi; \
 	echo "PASS: PeTTa relational control, stream bags, list length, parse-as-data, implicit spaces, shared sequencing, named state, alpha uniqueness, metatype and typed-failure policy, uncaught-error exit, library descriptors, and stable term order"
 
-.PHONY: test-petta-corpus-manifest-unit probe-petta-corpus-manifest test-petta-corpus-manifest probe-petta-corpus-differential test-petta-corpus-differential test-petta-corpus-native-core test-petta-native-core-no-libpl
+.PHONY: test-petta-corpus-manifest-unit probe-petta-corpus-manifest test-petta-corpus-manifest test-petta-corpus-native-core test-petta-native-core-no-libpl
 .PHONY: test-petta-analysis-cardinality test-petta-analysis-verdict test-petta-analysis-boundary test-petta-analysis-arrow-mode test-petta-typecheck-v2-census-codegen refresh-petta-typecheck-v2-census-catalog test-petta-typecheck-v3-intake-v1 refresh-petta-typecheck-v3-intake-v1 test-petta-typecheck-v3-h5-matrix-v1 refresh-petta-typecheck-v3-h5-matrix-v1 test-petta-typecheck-v3-core-parity-v1 test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-core-generation-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile probe-petta-typecheck-v3-corpus-v1 test-petta-typecheck-v3-corpus-v1 test-petta-typecheck-v2 test-petta-typecheck-v2-guard-langdef-v1 test-petta-typecheck-v2-guard-langdef-mutations-v1 test-petta-typecheck-v2-fragment-generation-v1 test-petta-typecheck-v2-fragment-runtime-v1 test-petta-typecheck-v2-inferred-value-mutations test-petta-typecheck-v2-census test-petta-typecheck-v2-census-omission test-petta-typecheck-v2-manifest test-petta-typecheck-v2-isolation-stats test-petta-typecheck-v2-omission test-petta-nik-admission-boundary-controls test-petta-nik-typed-chaining test-petta-nik-typed-space-query
 test-petta-analysis-cardinality: $(PETTA_ANALYSIS_CARDINALITY_TEST_BIN)
 	@./$(PETTA_ANALYSIS_CARDINALITY_TEST_BIN)
@@ -33838,6 +33963,8 @@ test-petta-typecheck-v2-omission:
 test-petta-corpus-manifest-unit:
 	@PYTHONDONTWRITEBYTECODE=1 \
 		python3 tests/petta/test_corpus_manifest.py
+	@PYTHONDONTWRITEBYTECODE=1 \
+		python3 tests/petta/test_machine_profile.py
 
 .PHONY: test-petta-chainer-manifest-unit test-petta-chainer-compat test-petta-typecheck-v2-chainer test-petta-typecheck-v3-chainer
 test-petta-chainer-manifest-unit:
@@ -33903,37 +34030,10 @@ test-petta-typecheck-v3-chainer: $(BIN) test-petta-chainer-manifest-unit
 
 
 
-probe-petta-corpus-differential: $(BIN) probe-petta-corpus-manifest
-	@CETTA_PETTA_SEARCH_MACHINE=1 PYTHONDONTWRITEBYTECODE=1 \
-		python3 scripts/petta_corpus_manifest.py compare \
-		--petta-dir "$(PETTA_ORACLE_ROOT)" \
-		--manifest "$(PETTA_CORPUS_MANIFEST)" \
-		--cetta "./$(BIN)" \
-		--out "$(PETTA_CORPUS_RESULTS)" \
-		--timeout "$(PETTA_CORPUS_TIMEOUT)"
-
-test-petta-corpus-differential: $(BIN) test-petta-corpus-manifest
-	@CETTA_PETTA_SEARCH_MACHINE=1 PYTHONDONTWRITEBYTECODE=1 \
-		python3 scripts/petta_corpus_manifest.py compare \
-		--petta-dir "$(PETTA_ORACLE_ROOT)" \
-		--manifest "$(PETTA_CORPUS_MANIFEST)" \
-		--cetta "./$(BIN)" \
-		--out "$(PETTA_CORPUS_RESULTS)" \
-		--timeout "$(PETTA_CORPUS_TIMEOUT)" \
-		--require-complete \
-		--require-match
-
-test-petta-corpus-native-core: $(BIN) test-petta-corpus-manifest
-	@CETTA_PETTA_SEARCH_MACHINE=1 PYTHONDONTWRITEBYTECODE=1 \
-		python3 scripts/petta_corpus_manifest.py compare \
-		--petta-dir "$(PETTA_ORACLE_ROOT)" \
-		--manifest "$(PETTA_CORPUS_MANIFEST)" \
-		--cetta "./$(BIN)" \
-		--out "$(PETTA_NATIVE_CORE_RESULTS)" \
-		--timeout "$(PETTA_CORPUS_TIMEOUT)" \
-		--exclude-capability lib-prolog \
-		--require-complete \
-		--require-match
+test-petta-corpus-native-core: test-petta-corpus-manifest-unit petta-corpus-root $(BIN)
+	@$(PETTA_CORPUS_TOOL) compare $(PETTA_CORPUS_RUN_FLAGS) \
+		--out "$(PETTA_NATIVE_CORE_RESULTS)" $(PETTA_CORPUS_EXCLUDE_FLAGS) \
+		--exclude-capability lib-prolog --require-complete --require-match
 
 test-petta-native-core-no-libpl:
 	@$(MAKE) --no-print-directory BUILD=$(BUILD_CANON) \
@@ -36072,6 +36172,14 @@ test-prepared-pure-undefined-type-operands: $(BIN)
 		$(MAKE) --no-print-directory BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@; \
 	fi
 
+.PHONY: test-prepared-held-syntax
+test-prepared-held-syntax: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/test_prepared_held_syntax.py ./$(BIN) $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
+
+.PHONY: test-prepared-constructor-matching
+test-prepared-constructor-matching: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/test_prepared_constructor_matching.py ./$(BIN) $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
+
 .PHONY: test-prepared-pure-call-machine
 .PHONY: test-prepared-pure-dispatch-authority
 test-prepared-pure-dispatch-authority: $(BIN)
@@ -36318,7 +36426,7 @@ else
 	@$(MAKE) -s ENABLE_RUNTIME_STATS=1 $@
 endif
 
-test-prepared-pure-call-machine: $(BIN) test-prepared-pure-variable-heads test-prepared-pure-answer-producer test-prepared-pure-answer-resource-fallback test-answer-producer-continuations test-answer-producer-continuation-transfer test-prepared-pure-undefined-type-operands test-prepared-pure-repeated-head-variables test-prepared-pure-dispatch-authority test-prepared-pure-numeric-realizations
+test-prepared-pure-call-machine: $(BIN) test-prepared-held-syntax test-prepared-constructor-matching test-prepared-pure-variable-heads test-prepared-pure-answer-producer test-prepared-pure-answer-resource-fallback test-answer-producer-continuations test-answer-producer-continuation-transfer test-prepared-pure-undefined-type-operands test-prepared-pure-repeated-head-variables test-prepared-pure-dispatch-authority test-prepared-pure-numeric-realizations
 	@set -e; \
 	he_out=$$(mktemp runtime/prepared-pure-call-he.XXXXXX); \
 	he_no_gc_out=$$(mktemp runtime/prepared-pure-call-he-no-gc.XXXXXX); \

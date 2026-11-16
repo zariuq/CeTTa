@@ -1,0 +1,8 @@
+; profile: step=one
+; Two firings that take different rows but do not commute: first makes the
+; row whose absence second needs.  Second can follow first's sibling, never
+; first itself.
+(a)
+(b)
+(rule first (take (a)) (make (c)))
+(rule second (take (b)) (absent (c)) (make (d)))

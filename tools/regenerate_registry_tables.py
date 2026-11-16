@@ -1,4 +1,4 @@
-"""Regenerate the checked-in counter and profile headers; normal builds need only C."""
+"""Regenerate counter, profile and transform-engine headers; builds need only C."""
 import argparse
 from pathlib import Path
 import subprocess
@@ -15,7 +15,9 @@ with tempfile.TemporaryDirectory(prefix="registry-tables-", dir=destination) as 
     generated = []
     for source, header in (("runtime_counters", "cetta_runtime_counters"),
                            ("runtime_counter_names", "cetta_runtime_counter_names"),
-                           ("profiles", "cetta_profiles")):
+                           ("profiles", "cetta_profiles"),
+                           ("transform_engine", "transform_engine"),
+                           ("transform_engine_names", "transform_engine_names")):
         target = destination / (header + ".generated.h")
         staged = Path(temporary) / target.name
         subprocess.run([args.cesta, "export-header",

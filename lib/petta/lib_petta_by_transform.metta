@@ -16,7 +16,7 @@
 ;                             each leg when reached)
 ;   (pt:get-atoms S)          one firing that reads every atom
 ;   (pt:add-atom S A)         an empty row that makes A in S
-;   (pt:remove-atom S A)      remove occurrences according to pt:variant
+;   (pt:remove-atom S A)      remove every occurrence that unifies with A
 ;   (pt:superpose (a b c))    an empty row with one instance per element
 ;   (pt:empty)                an empty row with no instance
 ;   (pt:let P E B)            every answer of E met with P, then B
@@ -61,9 +61,8 @@
 ; Sequencing, argument order and running a body are the caller's: a firing
 ; hands its instances to the code around it.
 
-; The host variants differ in occurrence removal and conjunction snapshots.
-; CeTTa removes one occurrence and reads a conjunction at one snapshot;
-; SWI-PeTTa removes all matches and starts each conjunction leg when reached.
+; The host variants differ in conjunction snapshots. CeTTa reads a
+; conjunction at one snapshot; SWI-PeTTa starts each leg when reached.
 ; Select the variant before running the program. A constant equation is
 ; shared with worker threads just like the rest of the imported definitions.
 (= (pt:variant) cetta)
@@ -191,15 +190,33 @@
        (let (pt:made $value) (transform $space (let $new (quote $atom)) (pt:made $new))
          (add-atom $space $value))))
 
-; The host variant determines occurrence multiplicity. Collecting the result
-; keeps the removal pattern's bindings private in either variant.
+; An unbound atom or equation head is the host's to refuse. Other pattern
+; variables are selectors, and collecting keeps their bindings private.
+(: pt:removal-unbound? (-> Atom %Undefined%))
+(= (pt:removal-unbound? $atom)
+   (if (== (pt:kind $atom) Variable) True
+     (if (== (pt:kind $atom) Expression)
+         (if (== (size-atom $atom) 3)
+             (if (== (car-atom $atom) =)
+                 (let $left (car-atom (cdr-atom $atom))
+                   (pt:removal-head-unbound? $left))
+                 False)
+             False)
+         False)))
+
+(: pt:removal-head-unbound? (-> Atom %Undefined%))
+(= (pt:removal-head-unbound? $left)
+   (if (== (pt:kind $left) Variable) True
+     (case (collapse (catch (car-atom $left)))
+       ((($head) (== (pt:kind $head) Variable))
+        ($other False)))))
+
 (: pt:remove-atom (-> %Undefined% Atom %Undefined%))
 (= (pt:remove-atom $space $atom)
-   (let $source (pt:source $atom)
-     (let $taken (if (== (pt:variant) swi)
-                     (transform $space (collect (take $source) $all) $all)
-                     (collapse (once (transform $space (take $source) True))))
-       (not (== $taken ())))))
+   (if (pt:removal-unbound? $atom) (remove-atom $space $atom)
+     (let $source (pt:source $atom)
+       (let $taken (transform $space (collect (take $source) $all) $all)
+         (not (== $taken ()))))))
 
 ;; ---- choice -----------------------------------------------------------------------
 

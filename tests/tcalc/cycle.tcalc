@@ -1,0 +1,5 @@
+; Taking a row and making it again returns to the same state: an infinite run,
+; reported as a cycle; there is no outcome.
+(step one)
+(light)
+(rule toggle (take (light)) (make (light)))

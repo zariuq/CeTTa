@@ -1,0 +1,6 @@
+% profile: step=one
+% Simpagation: the head before \ is kept (read), the heads after it are
+% removed (taken).  The one price row prices every item.
+price(10).
+item(a). item(b).
+priced @ price(P) \ item(I) <=> cost(I, P).

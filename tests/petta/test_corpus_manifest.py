@@ -507,6 +507,18 @@ class AssertionTests(unittest.TestCase):
         )
         self.assertEqual(CORPUS.judge(entry, run, None, 5).status, "FAIL")
 
+    def test_recorded_failure_cannot_hide_a_new_failure_or_abnormal_exit(self) -> None:
+        failure = "is 2, should 1. ❌ "
+        entry = {"name": "x.metta", "mode": "self-check", "timeout": 5,
+                 "failing": failure}
+        self.assertEqual(CORPUS.judge(entry, self.run_of(failure + "\n", 1), None, 5).status,
+                         "XFAIL")
+        for run in [self.run_of("is 3, should 1. ❌ \n", 1),
+                    *(self.run_of(failure + "\n", status) for status in
+                      (0, 2, -11, CORPUS.ABNORMAL_TIMEOUT, CORPUS.ABNORMAL_OUTPUT_LIMIT))]:
+            with self.subTest(exit=run.exit, stdout=run.stdout):
+                self.assertEqual(CORPUS.judge(entry, run, None, 5).status, "FAIL")
+
     def test_a_negative_case_must_fail_as_recorded(self) -> None:
         entry = {"name": "n.metta", "mode": "negative", "timeout": 5,
                  "exit": 1, "failure": "Assertion failed: (== 1 2)"}

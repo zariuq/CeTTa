@@ -1,0 +1,6 @@
+% Two rules with one name are refused by tcalc's reader.  The fault is found
+% in the translation and reported at the line of the second rule, with the
+% form that rule became.
+p(a).
+r @ p(X) <=> q(X).
+r @ q(X) <=> s(X).

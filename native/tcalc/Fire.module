@@ -1,0 +1,47 @@
+-- The order in which tcalc decides one match (a rule and a selection of rows
+-- for its patterns, already unified): the solver's trail is marked, the tells
+-- and the checks are asked in the order of the ask axis, an admitted match
+-- records its successor, a solvable one records itself as a member that only
+-- joint, synchronous and maximal bags admit, and the trail is undone on every
+-- path.  after_tells: the checks see the match's own tells
+-- (RuleSyntax/Core.lean); otherwise they see the knowledge and the matching
+-- alone.  A match whose row terms were met before reuses that decision and
+-- does not come here.
+Module Fire {
+  Theory Protocols() {
+    Empty Equations {
+      (tc_fire) == (Protocol "cesta-protocol/1"
+        (Context Explorer)
+        (Hooks
+          (Hook after_tells tc_fire_after_tells guard (Requires) (Uses) (Proves))
+          (Hook tells tc_fire_tells prepare (Requires) (Uses trail) (Proves solvable))
+          (Hook checks tc_fire_checks guard (Requires solvable) (Uses trail) (Proves checked))
+          (Hook checks_first tc_fire_checks_first guard (Requires) (Uses trail) (Proves checked))
+          (Hook loose tc_fire_loose guard (Requires) (Uses) (Proves))
+          (Hook admit tc_fire_admit effect (Requires solvable checked) (Uses trail) (Proves))
+          (Hook admit_loose tc_fire_admit_loose effect (Requires solvable) (Uses trail) (Proves)))
+        (Resources (Resource trail tc_fire_mark tc_fire_undo tc_fire_keep))
+        (Entry (Facts) (Owns))
+        (Body
+          (Acquire trail
+            (Call after_tells
+              (Call tells
+                (Call checks
+                  (Call admit (Release trail (Return answered)) (Release trail (Return engine_failure)))
+                  (Call loose
+                    (Call admit_loose (Release trail (Return answered)) (Release trail (Return engine_failure)))
+                    (Release trail (Return declined))))
+                (Release trail (Return declined)))
+              (Call checks_first
+                (Call tells
+                  (Call admit (Release trail (Return answered)) (Release trail (Return engine_failure)))
+                  (Release trail (Return declined)))
+                (Call tells
+                  (Call loose
+                    (Call admit_loose (Release trail (Return answered)) (Release trail (Return engine_failure)))
+                    (Release trail (Return declined)))
+                  (Release trail (Return declined)))))
+            (Return resource_failure))));
+    }
+  }
+}

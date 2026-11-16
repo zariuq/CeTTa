@@ -1,0 +1,6 @@
+; One row, a reader and a taker.  A joint bag forbids a member reading what
+; another takes; a synchronous bag allows it (both see the entry state); one
+; order runs (read, then take) and the other does not, so they are no round.
+(r)
+(rule look (read (r)) (absent (seen)) (make (seen)))
+(rule grab (take (r)) (make (gone)))

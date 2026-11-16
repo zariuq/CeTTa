@@ -38,7 +38,7 @@
 !(remove-atom &left-space (item alpha))
 !(test
     (collapse (match &left-space (item $value) $value))
-    (alpha beta))
+    (beta))
 !(test (is-space &left-space) True)
 !(test (is-space (left-space)) True)
 !(test (is-space not-a-space) False)

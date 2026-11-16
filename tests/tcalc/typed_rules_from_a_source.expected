@@ -1,0 +1,7 @@
+(interpretation (version tcalc@0.1) (step one) (ask after-tells) (store multiset) (matches symmetric) (solver mgu-first-order) (observe outcomes) (budget 100000) (backend c))
+(outcome (: a A) (: ab (→ A B)) (: bc (→ B C)) (reached (: (Deduction ab bc) (→ A C))))
+(outcome (: a A) (: ab (→ A B)) (: bc (→ B C)) (reached (: (ModusPonens (Deduction ab bc) a) C)))
+(outcome (: a A) (: ab (→ A B)) (: bc (→ B C)) (reached (: (ModusPonens ab a) B)))
+(outcome (: a A) (: ab (→ A B)) (: bc (→ B C)) (reached (: (ModusPonens bc (ModusPonens ab a)) C)))
+(outcome (: a A) (: ab (→ A B)) (: bc (→ B C)) (reached (: ab (→ A B))))
+(explored (states 10) (work 10) (finished true) (cycle false))

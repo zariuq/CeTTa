@@ -1,0 +1,5 @@
+; A rule tells $x = a and checks $x = a.  Read after its own tells (Core.lean
+; today) the check always passes; read before them (proposal P1) it cannot.
+(step one)
+(start)
+(rule justify (take (start)) (tell (= $x a)) (check (= $x a)) (make (ok $x)))

@@ -1,0 +1,1 @@
+error: 6: a rule of this name is already declared, in the tcalc form this becomes: (rule r (take (q $X)) (make (s $X)))

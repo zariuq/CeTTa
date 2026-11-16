@@ -1,0 +1,8 @@
+; An atomic three-way join elects one seat from a symmetric table, which
+; rho's binary communication cannot (RhoCalculus/Weaknesses/Symmetry:
+; joinRule_not_binary, joinTable_elects, rho_no_symmetric_election).
+(step one)
+(seat 1)
+(seat 2)
+(seat 3)
+(rule elect (take (seat $x) (seat $y) (seat $z)) (make (leader $x)))

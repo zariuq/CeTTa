@@ -1,0 +1,37 @@
+; Forward chaining from a source, as the DTL chainer's fc chains
+; (trueagi-io/chaining, dtl/forward): each step applies a rule to the
+; conclusion reached and one proof of the knowledge base.  The source is the
+; focus, a row taken and made again as the chain moves on; the knowledge base
+; is only read, so it is never spent.  A rule continues the chain with the
+; focus as either of its premises.  Stopping is a step too, so every
+; conclusion along every chain is an outcome: the five fc answers from ab.
+
+(focus (: ab (→ A B)))
+
+(: a A)
+(: ab (→ A B))
+(: bc (→ B C))
+
+(rule ModusPonens
+  (take (focus (: $f (→ $p $q))))
+  (read (: $x $p))
+  (make (focus (: (ModusPonens $f $x) $q))))
+(rule ModusPonens′
+  (take (focus (: $x $p)))
+  (read (: $f (→ $p $q)))
+  (make (focus (: (ModusPonens $f $x) $q))))
+
+(rule Deduction
+  (take (focus (: $f (→ $p $q))))
+  (read (: $g (→ $q $r)))
+  (make (focus (: (Deduction $f $g) (→ $p $r)))))
+(rule Deduction′
+  (take (focus (: $g (→ $q $r))))
+  (read (: $f (→ $p $q)))
+  (make (focus (: (Deduction $f $g) (→ $p $r)))))
+
+(rule stop
+  (take (focus $proof))
+  (make (reached $proof)))
+
+(step one)

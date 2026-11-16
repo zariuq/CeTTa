@@ -1,0 +1,5 @@
+; tcalc@0.1 tells equations only: RuleSyntax/Core.lean's knowledge is a store
+; of equations, with no disequation.  A tell of one is refused at its place.
+(step one)
+(a 1)
+(rule differ (take (a $x)) (tell (/= $x 2)) (make (b $x)))

@@ -1,0 +1,5 @@
+(interpretation (version tcalc@0.1) (step every) (ask after-tells) (store set) (region all) (matches symmetric) (solver mgu-first-order) (observe run) (schedule canonical) (budget 100000) (backend c))
+(state (: a A) (: ab (→ A B)) (: bc (→ B C)))
+(state (: (Deduction ab bc) (→ A C)) (: (ModusPonens ab a) B) (: a A) (: ab (→ A B)) (: bc (→ B C)))
+(state (: (Deduction ab bc) (→ A C)) (: (ModusPonens (Deduction ab bc) a) C) (: (ModusPonens ab a) B) (: (ModusPonens bc (ModusPonens ab a)) C) (: a A) (: ab (→ A B)) (: bc (→ B C)))
+(explored (states 3) (work 3) (finished true) (cycle false))

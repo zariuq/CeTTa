@@ -1,0 +1,15 @@
+; An interpreter with an environment and a continuation, as root rewriting
+; (RuleSyntax/Machines/TermRewriting): a CEK machine for the lambda calculus
+; with de Bruijn indices.  (cek TERM ENV K) evaluates, (ret VALUE K) returns.
+; The program applies K, (lam (lam (var (s z)))), to the identity and then to
+; one more term: the value is the identity, as a closure.  cek_omega
+; diverges.
+(step one)
+(cek (app (app (lam (lam (var (s z)))) (lam (var z))) (lam (lam (var z)))) nil halt)
+(rule found (take (cek (var z) (cons $v $env) $k)) (make (ret $v $k)))
+(rule look (take (cek (var (s $n)) (cons $v $env) $k)) (make (cek (var $n) $env $k)))
+(rule close (take (cek (lam $body) $env $k)) (make (ret (closure $body $env) $k)))
+(rule apply (take (cek (app $f $a) $env $k)) (make (cek $f $env (arg $a $env $k))))
+(rule argument (take (ret $v (arg $a $env $k))) (make (cek $a $env (call $v $k))))
+(rule call (take (ret $v (call (closure $body $env) $k))) (make (cek $body (cons $v $env) $k)))
+(rule halt (take (ret $v halt)) (make (value $v)))

@@ -1,0 +1,36 @@
+cetta	fanout_3	0	0.890	12852	0	2685
+swi	fanout_3	0	0.210	14084	0	2685
+cetta	fanout_flat3	0	1.610	13172	0	2685
+swi	fanout_flat3	0	0.240	14284	0	2685
+cetta	fanout_eqs3	0	1.050	12400	0	2685
+swi	fanout_eqs3	0	0.250	14596	0	2685
+cetta	fanmod_3	0	0.330	13268	0	2593
+swi	fanmod_3	0	0.240	13936	0	2593
+cetta	queens_8	0	0.010	12320	0	92
+swi	queens_8	0	0.170	14048	0	92
+cetta	queens_9	0	0.020	11880	0	352
+swi	queens_9	0	0.230	14716	0	352
+cetta	perms_7	0	0.020	12448	0	5040
+swi	perms_7	0	0.170	17072	0	5040
+cetta	perms_8	0	0.120	12108	0	40320
+swi	perms_8	0	0.180	43612	0	40320
+cetta	magic3	0	0.000	9792	1	
+swi	magic3	0	0.160	13968	2	
+cetta	subset_18	0	0.030	11964	0	4301
+swi	subset_18	0	0.160	14132	0	4301
+cetta	subset_22	0	0.270	12312	0	64256
+swi	subset_22	0	0.330	16684	0	64256
+cetta	dag_6x6	0	0.080	12708	0	46656
+swi	dag_6x6	0	0.370	17368	0	46656
+cetta	dag_8x6	0	0.360	12768	0	262144
+swi	dag_8x6	0	1.780	26292	0	262144
+cetta	chain_10	0	0.010	12724	0	512
+swi	chain_10	0	0.170	14024	0	512
+cetta	chain_12	0	0.050	12676	0	2048
+swi	chain_12	0	0.210	14804	0	2048
+cetta	agg_5	0	4.760	12844	0	209716
+swi	agg_5	0	0.500	13840	0	209716
+cetta	pair_indep	0	0.270	13668	0	7994
+swi	pair_indep	0	0.140	14948	0	7994
+swi	fanout_4	0	3.090	21820	0	172956
+swi	fanmod_4	0	3.060	21256	0	166112

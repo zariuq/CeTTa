@@ -1,0 +1,8 @@
+; Two cells exchange their values.  Each rule takes its own cell and reads the
+; other's old value.  Only a step whose members are each enabled on their own
+; (synchronous) can do both at once, since each reads the row the other takes:
+; it alone swaps.  Fired one at a time, the first move overwrites a value the
+; second needed, and the second never fires.
+(a 1 old) (b 2 old)
+(rule move-a (take (a $x old)) (read (b $y old)) (make (a $y new)))
+(rule move-b (take (b $y old)) (read (a $x old)) (make (b $x new)))

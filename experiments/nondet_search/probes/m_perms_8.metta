@@ -1,0 +1,7 @@
+(= (sel (Cons $x $xs)) (Pair $x $xs))
+(= (sel (Cons $x $xs)) (let (Pair $y $ys) (sel $xs) (Pair $y (Cons $x $ys))))
+(= (upto $n) (if (== $n 0) Nil (Cons $n (upto (- $n 1)))))
+(= (perm Nil) Nil)
+(= (perm (Cons $x $xs)) (let (Pair $y $ys) (sel (Cons $x $xs)) (let $r (perm $ys) (Cons $y $r))))
+(= (main) (perm (upto 8)))
+!(size-atom (collapse (main)))

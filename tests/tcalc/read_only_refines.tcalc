@@ -1,0 +1,9 @@
+; Reads alone do not make a program confluent.  The row (row $x) is still
+; open: reading it as (row a) decides $x = a, and reading it as (row b)
+; decides $x = b.  Even with a set store, the two firings end in two outcomes;
+; a single fixpoint needs ground rows that no firing refines.
+(step one)
+(store set)
+(row $x)
+(rule pick-a (read (row a)) (make (chosen a)))
+(rule pick-b (read (row b)) (make (chosen b)))

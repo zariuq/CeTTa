@@ -1,0 +1,10 @@
+; The communication of the rho calculus as one rule.  A receiver is a row
+; (in CHANNEL NAME BODY) whose NAME is an unknown of the state, mentioned in
+; its BODY.  The rule takes a sender and a receiver on one channel and tells
+; that the name is the message: the knowledge carries the substitution, and
+; the body is made with the message in place.  Two senders race for the one
+; receiver: one message is printed, the other stays unsent.
+(step one)
+(out c hello) (out c world)
+(in c $name (print $name))
+(rule comm (take (out $c $m) (in $c $x $body)) (tell (= $x $m)) (make $body))

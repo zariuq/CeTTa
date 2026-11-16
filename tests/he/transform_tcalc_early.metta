@@ -1,0 +1,7 @@
+!(bind! &w (new-space))
+!(add-atom &w (p 2))
+!(tf:fire &w (tf:cs ((read (p $x)) (let True (== $x 2)))) (checked $x))
+!(collapse (tf:fire &w (tf:cs ((read (p $x)) (let True (== $x 3)))) (never $x)))
+!(tf:fire &w (tf:cs ((read (p $x)) (tf:as $y 2) (let True (== $x $y)))) (late $x))
+!(tf:fire &w (tf:cs ((read (p $x)) (let $u (add-atom &w (mark $x))))) (effectful $x))
+!(collapse (match &w (mark $x) $x))

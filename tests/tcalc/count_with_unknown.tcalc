@@ -1,0 +1,9 @@
+; A count must hold at every solution.  Two rows are (vote yes) and a third is
+; (vote $v), its value not yet known: at some solution there are three yes
+; votes, so "exactly two" does not hold and the rule cannot fire.  Once a rule
+; fixes $v as no, the count holds.
+(step one)
+(vote yes) (vote yes) (vote $v)
+(token)
+(rule exactly-two (count 2 (vote yes)) (absent (decided)) (make (decided)))
+(rule fix (take (token)) (read (vote no)) (make (fixed)))

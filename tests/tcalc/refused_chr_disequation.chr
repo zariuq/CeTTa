@@ -1,0 +1,4 @@
+% tcalc@0.1 knows equations; a disequation in a guard has no meaning there,
+% and the program is refused at it.
+p(a).
+r @ p(X) <=> X \== b | q(X).

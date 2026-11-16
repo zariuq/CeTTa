@@ -1,0 +1,10 @@
+; profile: step=one
+; A cycle through the second order of an independent pair: x becomes y and p
+; becomes q, each on its own; y and q together give x back.  The step from
+; (x q) to (y q) is the second order of the pair at (x p); a cycle is
+; reported through it.
+(x)
+(p)
+(rule a (take (x)) (make (y)))
+(rule b (take (p)) (make (q)))
+(rule c (take (y) (q)) (make (x) (q)))

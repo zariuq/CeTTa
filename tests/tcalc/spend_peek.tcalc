@@ -1,0 +1,12 @@
+; RuleSyntax/JointFirings/Absence, Between: two tokens, a rule that spends a
+; token, and a neighbour that reads a token and a spent row together.  The
+; neighbour fires neither at the start nor after both spends, only between
+; them (peek_not_at_entry, peek_not_after, peek_between_first and _second).
+; So one match at a time can reach (seen), and a step that spends both
+; tokens at once never can: an observer tells the bag from every run of its
+; members.  The set store keeps the read-only neighbour from repeating.
+(store set)
+(token a)
+(token b)
+(rule spend (take (token $t)) (make (spent $t)))
+(rule peek (read (token $x) (spent $y)) (make (seen)))

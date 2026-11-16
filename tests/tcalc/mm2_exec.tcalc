@@ -1,0 +1,16 @@
+; An exec in the style of MM2: one step adds the templates of every match of
+; its patterns, each matched against the state the step starts from, and
+; removes the exec row.  Here the rule is declared and the (exec close) row
+; starts it; in MM2 the exec row carries its rule, and tcalc@0.1 has no rules
+; held by the state.  The count is a check, not a read, so the member that
+; takes the exec row is jointly enabled with the members that ask for it.
+; Under every the step adds (edge a c) and (edge b d), and not (edge a d),
+; which only the new edges give.  One match at a time also reaches the
+; partial and the longer closures, as the exec is removed earlier or later.
+(store set)
+(edge a b)
+(edge b c)
+(edge c d)
+(exec close)
+(rule close (read (edge $x $y) (edge $y $z)) (count 1 (exec close)) (make (edge $x $z)))
+(rule done (take (exec close)))

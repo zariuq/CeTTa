@@ -590,7 +590,7 @@ def readiness_commands(tier: str) -> list[list[str]]:
         ]
     if tier == "exhaustive":
         return common + [
-            ["make", "BUILD=main", "test-petta-corpus-differential"],
+            ["make", "BUILD=main", "test-petta-corpus-manifest"],
             ["make", "BUILD=main", "test-petta-native-core-no-libpl"],
             ["make", "BUILD=main", "test-eval-gc-asan-full-differential"],
             ["make", "BUILD=main", "test-main-readiness-model"],

@@ -1,0 +1,7 @@
+; profile: store=set
+; bag_rules_take_one_of_two under the set store: one row (tok), one firing,
+; and the made rows are one row (spent).
+(step one)
+(tok)
+(tok)
+(rule spend (take (tok)) (make (spent)))

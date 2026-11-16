@@ -1,0 +1,10 @@
+true
+true
+true
+(read-transform $V0)
+(read-match $V0)
+(captured-transform $V0)
+(captured-match $V0)
+(all-transform 5)
+(take-transform $V0)
+(remaining ())

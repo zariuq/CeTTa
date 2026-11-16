@@ -1,0 +1,6 @@
+% profile: step=one
+% rho_comm.tcalc in CHR notation: the body tells X = M and makes the row the
+% variable Body stands for.  Two messages race for one receiver.
+out(c, hello). out(c, world).
+in(c, Name, print(Name)).
+comm @ out(C, M), in(C, X, Body) <=> X = M, Body.

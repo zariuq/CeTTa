@@ -1,0 +1,6 @@
+// profile: step=one
+// Receipts separated by ; nest: for (a; b) { P } is for (a) { for (b) { P } }.
+// The first datum is taken before the second is waited for, so with no second
+// datum the inner receive is left waiting with $x = 1.
+first!(1) |
+for ($x <- first; $y <- second) { both!($x, $y) }

@@ -6,6 +6,7 @@
 #include "shared_transition.h"
 #include "stats.h"
 #include "term_universe.h"
+#include "transform_core.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -1778,6 +1779,7 @@ typedef struct {
     size_t item_cap;
     /* Whether any effect has been handed to the dialect. */
     bool made;
+    bool protocol_mismatch;
     /* The slots of the template's variable heads, whose values each
      * solution asks the host about (CettaNativeQuery.inert_heads), and the
      * values last answered, by their ids' low bits. */
@@ -2194,6 +2196,108 @@ static bool native_query_visit(void *context, const AtomId *values,
         }
     }
     return native_query_answer(run, values, weight);
+}
+
+static bool native_query_read_refuses(const Atom *atom, void *unused) {
+    (void)unused;
+    if (atom->kind == ATOM_GROUNDED)
+        return atom->ground.gkind != GV_INT && atom->ground.gkind != GV_BOOL &&
+            atom->ground.gkind != GV_STRING;
+    if (atom->kind != ATOM_EXPR) return false;
+    if (atom_is_carrier(atom) || atom_petta_value_representation(atom) != PETTA_VALUE_ORDINARY)
+        return true;
+    return atom->expr.len && atom->expr.elems[0]->kind == ATOM_SYMBOL &&
+        (atom_is_symbol(atom->expr.elems[0], "cons") || atom_is_symbol(atom->expr.elems[0], "cons-atom"));
+}
+
+static bool native_query_read_data(Atom *atom) {
+    /* Small ordinary templates need no graph table. If this local walk
+     * fills, the checked graph walker handles sharing, cycles and depth. */
+    Atom *pending[16] = {atom};
+    size_t next = 0u, end = 1u;
+    bool overflow = false;
+    while (next < end) {
+        Atom *part = pending[next++];
+        if (native_query_read_refuses(part, NULL)) return false;
+        if (part->kind == ATOM_EXPR) {
+            if (part->expr.len > 16u - end) {
+                overflow = true;
+                break;
+            }
+            for (CettaExprIndex i = 0u; i < part->expr.len; i++)
+                pending[end++] = part->expr.elems[i];
+        }
+    }
+    if (!overflow && next == end) return true;
+    bool complete = false;
+    bool refused = atom_graph_any_checked(atom, native_query_read_refuses, NULL, NULL,
+                                           SIZE_MAX, &complete);
+    return complete && !refused;
+}
+
+/* LibTransform.transform_reads_eq_match preserves the full list of matches,
+ * including duplicates. The actual join supplies an already-unified frame;
+ * this rule has no additional tells, checks, takes or variable publication. */
+static bool native_query_read_admitted(const CettaNativeQuery *query) {
+    Space *source = query->source;
+    if (!query->read_protocol || query->consumer != CETTA_NATIVE_QUERY_COLLECT ||
+        query->count_only || !atom_has_vars(query->template_atom) ||
+        query->effect_count || query->guard_space || query->filter_count || query->distinct_key ||
+        query->inert_head_count || query->afresh || query->rows || query->sources ||
+        source->overlay_base || source->imported_len || source->dep_count ||
+        source->match_backend.kind != SPACE_ENGINE_NATIVE || !space_contains_only_exact_atoms(source) ||
+        !native_query_read_data(query->template_atom))
+        return false;
+    for (size_t i = 0u; i < query->pattern_count; i++)
+        if (!native_query_read_data(query->patterns[i])) return false;
+    return true;
+}
+
+typedef struct {
+    NativeQueryRun *run;
+    const AtomId *values;
+    uint64_t multiplicity;
+} Explorer;
+
+static bool tc_fire_mark(Explorer *x) { (void)x; return true; }
+static void tc_fire_undo(Explorer *x) { (void)x; }
+static bool tc_fire_after_tells(Explorer *x) { (void)x; return true; }
+static bool tc_fire_tells(Explorer *x) { (void)x; return true; }
+static bool tc_fire_checks(Explorer *x) { (void)x; return true; }
+static bool tc_fire_checks_first(Explorer *x) { return tc_fire_checks(x); }
+static bool tc_fire_loose(Explorer *x) { (void)x; return false; }
+static bool tc_fire_admit_loose(Explorer *x) { (void)x; return false; }
+static bool tc_fire_admit(Explorer *x) {
+    /* Multiplicity is the number of ordered occurrence tuples represented
+     * by this solution. Each emits one complete instance; none is deduped. */
+    return native_query_answer(x->run, x->values, x->multiplicity);
+}
+
+#include "../native/tcalc/tcalc_fire.generated.h"
+
+static bool native_query_read_visit(void *context, const AtomId *values, uint64_t weight) {
+    Explorer frame = {context, values, weight};
+    return tc_fire(&frame) == tc_fire_answered;
+}
+
+static bool native_query_read_checked(void *context, const AtomId *values, uint64_t weight) {
+    NativeQueryRun *run = context;
+    size_t before = run->item_len;
+    bool actual = native_query_read_visit(context, values, weight);
+    Arena scratch;
+    arena_init_detached(&scratch);
+    NativeQueryRun reference = *run;
+    reference.arena = &scratch;
+    reference.items = NULL;
+    reference.item_len = reference.item_cap = 0u;
+    bool expected = native_query_visit(&reference, values, weight);
+    bool same = actual == expected && run->item_len - before == reference.item_len;
+    for (size_t i = 0u; same && i < reference.item_len; i++)
+        same = atom_eq(run->items[before + i], reference.items[i]);
+    free(reference.items);
+    arena_free(&scratch);
+    if (!same) run->protocol_mismatch = true;
+    return same && actual;
 }
 
 /* Whether no instance one effect adds is an instance another removes from
@@ -2912,6 +3016,10 @@ CettaNativeQueryStatus cetta_native_query_run(
         run.inert_slots[i] = inert_slots[i];
     for (size_t i = 0u; i < 16u; i++)
         run.inert_seen[i] = CETTA_ATOM_ID_NONE;
+    bool read_protocol = native_query_read_admitted(query);
+    CettaRelationalVisit visit = read_protocol
+        ? (cetta_transform_tcalc_checking() ? native_query_read_checked : native_query_read_visit)
+        : native_query_visit;
     uint64_t answers = 0u;
     bool done = false;
     bool declined = false;
@@ -2959,14 +3067,14 @@ CettaNativeQueryStatus cetta_native_query_run(
         }
         CettaDenseWork work = {0};
         done = cetta_dense_query_run(dense_query, summed ? kept : NULL,
-                                     native_query_visit, &run, &answers,
+                                     visit, &run, &answers,
                                      &work);
         /* Effects that read no variable are made once for every solution:
          * into a set, once if there is one; the visit stands for them
          * all. */
         if (done && summed && effect_count && !any_kept && answers) {
             AtomId none[1] = {CETTA_ATOM_ID_NONE};
-            done = native_query_visit(&run, none, answers);
+            done = visit(&run, none, answers);
         }
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_DENSE_RELATION_ADMISSION);
         cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_DENSE_RELATION_WORD,
@@ -2974,7 +3082,7 @@ CettaNativeQueryStatus cetta_native_query_run(
     } else if (plan) {
         CettaRelationalWork work = {0};
         done = cetta_relational_plan_enumerate(
-            plan, query->source, native_query_visit, &run, &answers, &work);
+            plan, query->source, visit, &run, &answers, &work);
         cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_RELATIONAL_KEY_SEEKS,
                                 work.key_seeks);
         cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_RELATIONAL_PREFIXES,
@@ -2982,13 +3090,13 @@ CettaNativeQueryStatus cetta_native_query_run(
         cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_RELATIONAL_PREPARE_ROWS,
                                 cetta_relational_plan_info(plan)->scanned_rows);
     } else if (query->rows) {
-        loops->visit = native_query_visit;
+        loops->visit = visit;
         loops->context = &run;
         done = native_query_rows_leg(loops, query->rows);
         answers = loops->answers;
         declined = loops->declined;
     } else {
-        loops->visit = native_query_visit;
+        loops->visit = visit;
         loops->context = &run;
         /* Legs read afresh keep the order they were given. */
         uint64_t shape = query->afresh ? 0u : native_query_order_recall(loops);
@@ -3050,6 +3158,10 @@ CettaNativeQueryStatus cetta_native_query_run(
     free(loops);
     cetta_relational_plan_free(plan);
     cetta_dense_query_free(dense_query);
+    if (run.protocol_mismatch) {
+        result->protocol_mismatch = true;
+        return CETTA_NATIVE_QUERY_FAILED;
+    }
     /* Rows the loops could not read by ids, holding variables, are read by
      * the joins over facts holding variables, when nothing was made. */
     if (!done && declined && !made_effects && !query->rows) {
@@ -3068,6 +3180,7 @@ CettaNativeQueryStatus cetta_native_query_run(
         return made_effects ? CETTA_NATIVE_QUERY_FAILED
                                          : CETTA_NATIVE_QUERY_DECLINED;
     result->answers = answers;
+    result->read_protocol = read_protocol;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_NATIVE_QUERY_ADMISSION);
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_NATIVE_QUERY_ANSWER, answers);
     return CETTA_NATIVE_QUERY_DONE;

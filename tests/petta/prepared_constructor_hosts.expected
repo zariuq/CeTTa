@@ -1,0 +1,8 @@
+true
+(process_metta_string "(+ 1 2)")
+(tabled (constructor-host-pending 1))
+true
+()
+31
+true
+true

@@ -1,0 +1,6 @@
+; profile: store=set
+; bag_rules_reads_share under the set store: the same pairs, made once each.
+(step one)
+(p 1)
+(p 2)
+(rule both (read (p $x) (p $y)) (absent (two $x $y)) (make (two $x $y)))

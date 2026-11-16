@@ -1071,6 +1071,26 @@ Atom *petta_semantics_instantiation_error(
         petta_error_predicate_context(arena, module, name, arity));
 }
 
+Atom *petta_semantics_remove_pattern_error(Arena *arena, Atom *pattern) {
+    if (!arena || !pattern)
+        return NULL;
+    bool unbound = pattern->kind == ATOM_VAR;
+    if (pattern->kind == ATOM_EXPR && pattern->expr.len == 3u &&
+        atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.equals)) {
+        Atom *left = pattern->expr.elems[1];
+        PeTTaLogicalListCursor cursor;
+        petta_semantics_logical_list_cursor_init(&cursor, left);
+        Atom *head = NULL;
+        unbound = left->kind == ATOM_VAR ||
+            (petta_semantics_logical_list_cursor_next(&cursor, &head) ==
+                 PETTA_LOGICAL_LIST_ITEM && head->kind == ATOM_VAR);
+    }
+    return unbound
+        ? petta_error_term(arena, atom_symbol(arena, "instantiation_error"),
+                           petta_error_unbound_context(arena))
+        : NULL;
+}
+
 /* The elements of the list `value` spells, in order, whatever its form: a
  * list value, an expression, cons cells, or a list pattern with a rest, each
  * ending in the next.  `end` is where the walk stopped when the list is not

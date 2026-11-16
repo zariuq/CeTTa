@@ -1,0 +1,13 @@
+(cesta-tables/1
+  (Table Backends
+    (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
+    (Key id) (Unique code) (Unique spelling) (Dense id)
+    (Rows
+      (Row 0 C "c" "the C core decides every firing")
+      (Row 1 X86_FLAT "x86-flat" "ground flat firings decided by the linked flat_fire image (proved leaf, unproved packing adapter)")))
+  (Table Observes
+    (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
+    (Key id) (Unique code) (Unique spelling) (Dense id)
+    (Rows
+      (Row 0 OUTCOMES "outcomes" "every state reached in which no step is admitted")
+      (Row 1 RUN "run" "one run, its steps chosen by the schedule"))))

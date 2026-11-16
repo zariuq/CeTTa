@@ -131,7 +131,7 @@
     {"name": "python_import.metta", "mode": "self-check", "timeout": 60, "failing": "is \"\\\"Hello, PeTTa User from Python!\\\"\", should \"Hello, PeTTa User from Python!\". ❌ "},
     {"name": "recursive_types.metta", "mode": "self-check", "timeout": 60},
     {"name": "recursive_types2.metta", "mode": "self-check", "timeout": 60},
-    {"name": "remove_atom_result.metta", "mode": "self-check", "timeout": 60, "failing": "is (3), should (). ❌ "},
+    {"name": "remove_atom_result.metta", "mode": "self-check", "timeout": 60, "failing": "is ((answer-other 0)), should (0). ❌ "},
     {"name": "repl.metta", "mode": "golden", "timeout": 60, "fixture": "scripted-prefix-session"},
     {"name": "repr.metta", "mode": "self-check", "timeout": 60},
     {"name": "roman_test.metta", "mode": "self-check", "timeout": 60},

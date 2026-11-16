@@ -1,0 +1,15 @@
+; Configurations met under an old period are forgotten when it grows.  The run
+; walks (at 1) to (at 4) one successor at a time, period 1.  At (at 4), turn 3,
+; it meets two successors, the period becomes 2, and it takes successor 1, back
+; to (at 2) at turn 4.  It was at (at 2) at turn 1, an odd turn: not the same
+; configuration, though under period 1 both had phase 0.  At turn 6 (at 4)
+; takes successor 0, (at 0), and the run ends.
+(step one)
+(observe run)
+(schedule rotating)
+(at 1)
+(rule a (take (at 1)) (make (at 2)))
+(rule b (take (at 2)) (make (at 3)))
+(rule c (take (at 3)) (make (at 4)))
+(rule back (take (at 4)) (make (at 2)))
+(rule out (take (at 4)) (make (at 0)))

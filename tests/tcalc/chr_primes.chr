@@ -1,0 +1,18 @@
+% profile: step=one
+% The primes to 12, in the shape of CHR's prime sieve:
+%   candidate(1) <=> true.
+%   candidate(N) <=> prime(N), candidate(N - 1).
+%   absorb @ prime(Y) \ prime(X) <=> X mod Y =:= 0 | true.
+% tcalc@0.1 has no arithmetic, so a number is a name, N - 1 is a row pred(N, M)
+% and X mod Y = 0 is a row divides(Y, X), both kept heads of the rules.  The
+% candidates are counted down while absorb strikes, in any order; one outcome
+% remains, the primes 2, 3, 5, 7 and 11.
+candidate(n12).
+pred(n12, n11). pred(n11, n10). pred(n10, n9). pred(n9, n8). pred(n8, n7).
+pred(n7, n6). pred(n6, n5). pred(n5, n4). pred(n4, n3). pred(n3, n2). pred(n2, n1).
+divides(n2, n4). divides(n2, n6). divides(n2, n8). divides(n2, n10). divides(n2, n12).
+divides(n3, n6). divides(n3, n9). divides(n3, n12).
+divides(n4, n8). divides(n4, n12). divides(n5, n10). divides(n6, n12).
+done   @ candidate(n1) <=> true.
+count  @ pred(N, M) \ candidate(N) <=> prime(N), candidate(M).
+absorb @ prime(Y), divides(Y, X) \ prime(X) <=> true.

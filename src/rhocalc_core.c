@@ -5861,13 +5861,12 @@ static bool rhocalc_collect_quiescent_set(
 
     RhoQuiescentSearch search = {.arena = arena, .eval_context = eval_context};
     RunGraph graph = {0};                          /* no cycle is asked: no steps kept */
-    RunBudget unbounded = {.limit = UINT64_MAX};
     bool finished = false;
     Atom *start = rho_normalize_proc(arena, proc);
     char *start_key = rho_key_proc(start);
     bool ok = start_key && rho_successor_set_acc_push_keyed(&search.seen, start, start_key);
     if (!ok) free(start_key);
-    ok = ok && run_breadth_first(&graph, 0, &unbounded, rho_quiescent_expand, &search, &finished);
+    ok = ok && run_breadth_first(&graph, 0, rho_quiescent_expand, &search, &finished);
     run_graph_free(&graph);
     free(search.next);
     rho_successor_set_acc_free(&search.seen);

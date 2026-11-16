@@ -1,0 +1,12 @@
+; One run of the dining philosophers instead of every outcome.  Each step goes
+; to the least successor in the structural order of states (rows compared as
+; terms): at the first choice the state where b took fork 2 keeps (fork 1),
+; which is less than (fork 2), so this run feeds b first and never deadlocks.
+(step one)
+(observe run)
+(fork 1) (fork 2)
+(thinking a 1 2)
+(thinking b 2 1)
+(rule left (take (thinking $p $l $r) (fork $l)) (make (holding $p $l $r)))
+(rule right (take (holding $p $l $r) (fork $r)) (make (eating $p $l $r)))
+(rule done (take (eating $p $l $r)) (make (fork $l) (fork $r) (fed $p)))

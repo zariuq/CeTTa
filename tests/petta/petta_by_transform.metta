@@ -39,6 +39,14 @@
 !(law remove-occurrences (remove-atom &a (p 1)) (pt:remove-atom &b (p 1)))
 !(law remove-by-pattern (remove-atom &a (r $y)) (pt:remove-atom &b (r $y)))
 !(law remove-store (rows &a) (rows &b))
+!(law remove-bare (catch (remove-atom &a $bare)) (catch (pt:remove-atom &b $bare)))
+!(law remove-unknown-head
+      (catch (remove-atom &a (= ($head $arg) $body)))
+      (catch (pt:remove-atom &b (= ($head $arg) $body))))
+!(law remove-unknown-left
+      (catch (remove-atom &a (= $left $right)))
+      (catch (pt:remove-atom &b (= $left $right))))
+!(law remove-error-store (rows &a) (rows &b))
 
 ; choice
 !(law superpose (superpose (a b (+ 1 2))) (pt:superpose (a b (+ 1 2))))

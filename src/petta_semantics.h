@@ -440,6 +440,9 @@ Atom *petta_semantics_static_procedure_error(
 Atom *petta_semantics_state_existence_error(Arena *arena, Atom *name);
 Atom *petta_semantics_instantiation_error(
     Arena *arena, const char *module, const char *name, int64_t arity);
+/* Public removal needs a bound atom and, for an equation, a bound function
+ * name. Other variables in a removal pattern remain valid selectors. */
+Atom *petta_semantics_remove_pattern_error(Arena *arena, Atom *pattern);
 /* What (Predicate V) gives for the value V of its argument, the reference's
  * 'Predicate'([F|Args], T) :- T =.. [F|Args]: a list whose first element is
  * a symbol names that compound, and a list of one element names the element.

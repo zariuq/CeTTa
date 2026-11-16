@@ -3525,8 +3525,8 @@ static bool petta_space_remove_masked(
 }
 
 /* PeTTa selection uses unifiability, with independently freshened stored
- * variables. Public removal publishes one selected occurrence; internal bulk
- * contractions and exact takes use the same pinned-receipt machinery. */
+ * variables. Public removal removes every matching occurrence; exact takes
+ * use the same pinned-receipt machinery with an explicit copy count. */
 static bool petta_space_remove_linear_row_pattern(const Atom *pattern) {
     if (!pattern || pattern->kind != ATOM_EXPR || pattern->expr.len == 0u ||
         pattern->expr.len > 16u)
@@ -3592,7 +3592,7 @@ static int petta_take_position_compare(const void *left, const void *right) {
 static bool petta_space_remove_pattern_impl(
         Space *space, Atom *pattern, PettaProgram *program,
         PettaSpacePreparedRemoval *prepared, CettaCount *removed_out,
-        CettaCount take_copies, CettaCount *copies_out, bool remove_one) {
+        CettaCount take_copies, CettaCount *copies_out) {
     bool take = take_copies != 0u;
     if (removed_out)
         *removed_out = 0u;
@@ -3600,7 +3600,7 @@ static bool petta_space_remove_pattern_impl(
         *copies_out = 0u;
     if (prepared) {
         petta_space_prepared_removal_init(prepared, space, pattern, program);
-        prepared->take = take || remove_one;
+        prepared->take = take;
     }
     if (!space || !pattern || pattern->kind == ATOM_VAR)
         return false;
@@ -3613,20 +3613,17 @@ static bool petta_space_remove_pattern_impl(
     if (logical_len == 0u)
         return true;
     bool ground = !atom_has_vars(pattern);
-    bool exact_one = remove_one && ground && pattern->kind == ATOM_EXPR &&
-        pattern->expr.len != 0u && pattern->expr.elems[0]->kind == ATOM_SYMBOL &&
-        space_exact_head_certified(space, pattern->expr.elems[0]->sym_id);
-    AtomId take_id = (take || exact_one) && ground && space->native.universe
+    AtomId take_id = take && ground && space->native.universe
         ? term_universe_lookup_atom_id(space->native.universe, pattern)
         : CETTA_ATOM_ID_NONE;
     /* The copies of a ground atom are the rows holding its stored term,
      * which a space's exact index files. */
-    if ((take || exact_one) && !prepared && take_id != CETTA_ATOM_ID_NONE &&
+    if (take && !prepared && take_id != CETTA_ATOM_ID_NONE &&
         pattern->kind == ATOM_EXPR && pattern->expr.len != 0u &&
         pattern->expr.elems[0]->kind == ATOM_SYMBOL) {
         CettaCount removed = 0u, removed_rows = 0u;
         if (space_take_exact_id(space, pattern->expr.elems[0]->sym_id,
-                                take_id, pattern, take ? take_copies : 1u, &removed,
+                                take_id, pattern, take_copies, &removed,
                                 &removed_rows)) {
             if (removed != 0u)
                 petta_space_remove_observe(space, pattern, program, NULL,
@@ -3639,7 +3636,7 @@ static bool petta_space_remove_pattern_impl(
     /* A ground pattern unifies with exactly the rows equal to it when no
      * row of its head holds a variable.  Prepare the exact rows and any
      * relation-held fact together; neither publishes before the other. */
-    if (!take && !remove_one && ground && pattern->kind == ATOM_EXPR &&
+    if (!take && ground && pattern->kind == ATOM_EXPR &&
         pattern->expr.len != 0u && space->native.universe &&
         pattern->expr.elems[0]->kind == ATOM_SYMBOL) {
         AtomId id = term_universe_lookup_atom_id(space->native.universe,
@@ -3765,10 +3762,10 @@ static bool petta_space_remove_pattern_impl(
     CettaCount copies = 0u;
     /* The receipt: removed positions in ascending order and their atoms. */
     CettaIndex *removed_positions = cetta_malloc(
-        (size_t)(remove_one ? 1u : candidate_len ? candidate_len : 1u) *
+        (size_t)(candidate_len ? candidate_len : 1u) *
         sizeof(*removed_positions));
     Atom **removed_atoms = cetta_malloc(
-        (size_t)(remove_one ? 1u : candidate_len ? candidate_len : 1u) *
+        (size_t)(candidate_len ? candidate_len : 1u) *
         sizeof(*removed_atoms));
     for (CettaIndex position = 0u; ok && position < candidate_len; position++) {
         CettaIndex index = indexed ? candidates[position] : position;
@@ -3778,8 +3775,7 @@ static bool petta_space_remove_pattern_impl(
         }
         /* The copies it takes chosen, a take reads on only to say how many
          * the space holds, where it is asked. */
-        if ((remove_one && receipt_len != 0u) ||
-            (take && receipt_len == take_copies && !copies_out))
+        if (take && receipt_len == take_copies && !copies_out)
             break;
         CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
         AtomId atom_id = space_get_atom_id_at64(space, index);
@@ -3872,8 +3868,7 @@ static bool petta_space_remove_pattern_impl(
     }
     if (copies_out)
         *copies_out = copies;
-    Atom *dense_atom = ground && (!remove_one || receipt_len == 0u)
-        ? pattern : NULL;
+    Atom *dense_atom = ground ? pattern : NULL;
     if (take) {
         /* Rows first; a relation's fact of a ground atom is one further
          * copy.  Fewer copies than taken: nothing leaves. */
@@ -3947,7 +3942,7 @@ static bool petta_space_remove_pattern_impl(
         }
         bool ok = petta_space_remove_effect_publish(
             space, pattern, program, &positions_effect,
-            removed_atoms, receipt_len, removed_out, take || remove_one);
+            removed_atoms, receipt_len, removed_out, take);
         free(removed_atoms);
         space_store_effect_dispose(&positions_effect);
         return ok;
@@ -3975,14 +3970,14 @@ static bool petta_space_remove_pattern_impl(
     }
     return petta_space_remove_masked(
         space, remove_mask, logical_len, removed_atoms, receipt_len,
-        dense_atom, program, removed_out, take || remove_one);
+        dense_atom, program, removed_out, take);
 }
 
-static bool petta_space_remove_pattern_one(
+static bool petta_space_remove_pattern_all(
         Space *space, Atom *pattern, PettaProgram *program,
         CettaCount *removed_out) {
     return petta_space_remove_pattern_impl(
-        space, pattern, program, NULL, removed_out, 0u, NULL, true);
+        space, pattern, program, NULL, removed_out, 0u, NULL);
 }
 
 /* The rows of one length, all but the first `keep` of them, removed as
@@ -8754,6 +8749,14 @@ static EvalSpaceMutationEffect eval_apply_space_removal(
         .error = NULL,
         .emit_result = true,
     };
+    CettaLanguageId language_id = eval_current_language_id();
+    if (language_id == CETTA_LANGUAGE_PETTA && take_copies == 0u) {
+        effect.error = petta_semantics_remove_pattern_error(arena, payload);
+        if (effect.error) {
+            petta_eval_raise(effect.error);
+            return effect;
+        }
+    }
     /* A row static-import! loaded is static data. */
     Atom *static_refusal = petta_static_rows_refusal(
         arena, target, payload, "retractall");
@@ -8762,12 +8765,7 @@ static EvalSpaceMutationEffect eval_apply_space_removal(
         return effect;
     }
     Atom *comparison = space_remove_compare_atom(target, arena, payload);
-    CettaLanguageId language_id = eval_current_language_id();
     if (language_id == CETTA_LANGUAGE_PETTA) {
-        if (comparison && comparison->kind == ATOM_VAR) {
-            effect.answer = petta_semantics_boolean_value(arena, false);
-            return effect;
-        }
         comparison = petta_space_remove_request_pattern(arena, comparison);
         if (!comparison) {
             effect.emit_result = false;
@@ -8788,7 +8786,7 @@ static EvalSpaceMutationEffect eval_apply_space_removal(
         if (take_copies != 0u) {
             if (!petta_space_remove_pattern_impl(
                     target, comparison, program, NULL, &removed, take_copies,
-                    NULL, false) ||
+                    NULL) ||
                 removed != take_copies) {
                 effect.error = atom_error(
                     arena, call,
@@ -8798,7 +8796,7 @@ static EvalSpaceMutationEffect eval_apply_space_removal(
             effect.answer = petta_semantics_boolean_value(arena, true);
             return effect;
         }
-        if (!petta_space_remove_pattern_one(
+        if (!petta_space_remove_pattern_all(
                 target, comparison, program, &removed)) {
             effect.error = atom_error(
                 arena, call,
@@ -18763,6 +18761,21 @@ static bool eval_prepared_pure_head_admitted(void *context, Space *space, Symbol
         !space_directional_rules_may_match_known_head(space, head);
 }
 
+static bool eval_prepared_pure_source_call_owned(
+        Space *space, SymbolId head, CettaExprLen arity) {
+    return eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        !eval_current_petta_typed_line() &&
+        !cetta_profile_uses_petta_typing(active_eval_session()->profile) &&
+        !eval_petta_classifier_extended(space, g_builtin_syms.get_type) &&
+        !eval_petta_classifier_extended(space, g_builtin_syms.get_metatype) &&
+        space_type_annotations_have_only_symbol_subjects(space) &&
+        active_search_table_mode() == CETTA_TABLE_MODE_NONE &&
+        eval_prepared_pure_head_admitted(NULL, space, head) &&
+        !petta_eval_extension_named_arity(head, arity).exact &&
+        (!g_library_context || !cetta_library_petta_memo_contains(
+            g_library_context, head, arity));
+}
+
 /* The generated execution contract admits this native head/arity. Retain
  * its complete tagged result; the cursor owns any required completion and
  * the saved continuation. Only legacy scalar expressions are finalized here. */
@@ -18835,6 +18848,7 @@ static CettaPreparedPureSourceView prepared_pure_source_view_for_language(
     CettaPreparedPureSourceView view = {0};
     view.result_policy = cetta_language_call_result_policy(language_id);
     view.head_admitted = eval_prepared_pure_head_admitted;
+    view.source_call_owned = eval_prepared_pure_source_call_owned;
     view.native_context = g_library_context;
     view.native_call = eval_prepared_pure_native_call;
     if (language_id != CETTA_LANGUAGE_PETTA ||
@@ -27438,6 +27452,10 @@ static bool eval_try_exec_saturation(Space *s, Arena *a, Atom *atom,
     CettaExecSaturationHost host = {
         .context = &context,
         .add_nodup = eval_exec_saturation_add_nodup,
+        .set_membership_publication =
+            !(g_library_context && g_library_context->petta_static_imports) &&
+            (eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
+             !cetta_profile_uses_petta_typing(active_eval_session()->profile)),
     };
     Atom *answer = NULL;
     if (cetta_exec_saturate(s, a, call, facts, &host, &answer) ==
@@ -27614,7 +27632,7 @@ static bool eval_transform_prepare_take(void *context, Atom *space_ref,
     if (copies == 0u ||
         !petta_space_remove_pattern_impl(
             target, comparison, program, &prepared->removal, &selected,
-            (CettaCount)copies, &stored, false)) {
+            (CettaCount)copies, &stored)) {
         petta_space_prepared_removal_dispose(&prepared->removal);
         free(prepared);
         return false;
@@ -28243,7 +28261,7 @@ static Atom *eval_transform_lower_run(Space *s, Arena *a, Atom *atom, int fuel,
         .guard_filter = he ? NULL : eval_transform_guard_filter,
         .equation_check = he ? eval_transform_equation_check : NULL,
         .equation_value = he ? eval_transform_equation_value : NULL,
-        .decide_firing = he ? cetta_transform_tcalc_decide : NULL,
+        .decide_firing = cetta_transform_tcalc_decide,
         .spend = g_eval_completion_tracker && g_eval_completion_tracker->budget_limited
             ? eval_transform_spend : NULL,
     };
@@ -28439,7 +28457,7 @@ bool cetta_eval_transform_first(Space *space, Arena *a, Atom *call,
         .guard_filter = he ? NULL : eval_transform_guard_filter,
         .equation_check = he ? eval_transform_equation_check : NULL,
         .equation_value = he ? eval_transform_equation_value : NULL,
-        .decide_firing = he ? cetta_transform_tcalc_decide : NULL,
+        .decide_firing = cetta_transform_tcalc_decide,
         .spend = g_eval_completion_tracker && g_eval_completion_tracker->budget_limited
             ? eval_transform_spend : NULL,
     };
@@ -28650,7 +28668,7 @@ static bool eval_try_transform_fire(Space *s, Arena *a, Atom *atom, int fuel,
         .guard_filter = he ? NULL : eval_transform_guard_filter,
         .equation_check = he ? eval_transform_equation_check : NULL,
         .equation_value = he ? eval_transform_equation_value : NULL,
-        .decide_firing = he ? cetta_transform_tcalc_decide : NULL,
+        .decide_firing = cetta_transform_tcalc_decide,
         .spend = g_eval_completion_tracker && g_eval_completion_tracker->budget_limited
             ? eval_transform_spend : NULL,
     };
@@ -49240,8 +49258,8 @@ static bool petta_eval_machine_add_ground_instances(
     return true;
 }
 
-/* Each admitted instance removes one matching stored occurrence. Repeated
- * instances remain repeated removals rather than a set of keys to erase. */
+/* Each admitted instance removes every row that unifies with it, as a
+ * public remove-atom call does. */
 static bool petta_eval_machine_remove_ground_instances(
     void *context, Space *space, Atom *call, const AtomId *ids,
     size_t count) {
@@ -49261,7 +49279,7 @@ static bool petta_eval_machine_remove_ground_instances(
         Atom *pattern = term_universe_get_atom(space->native.universe, ids[i]);
         CettaCount removed = 0u;
         if (!pattern ||
-            !petta_space_remove_pattern_one(space, pattern, program, &removed))
+            !petta_space_remove_pattern_all(space, pattern, program, &removed))
             return false;
     }
     return true;
@@ -52765,6 +52783,7 @@ static CettaNativeQueryStatus petta_eval_transform_collect(
         .evaluate = eval_transform_evaluate,
         .evaluate_bound = eval_transform_evaluate_bound,
         .guard_filter = eval_transform_guard_filter,
+        .decide_firing = cetta_transform_tcalc_decide,
     };
     Atom *collection = NULL;
     uint64_t count = 0u;
@@ -58701,6 +58720,13 @@ static bool prepared_pure_closed_invocation_plan(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_OBSERVER,
             "active table mode", call);
     }
+    /* A per-line checking request is an observer, not a source fact that
+     * may be retained as a refusal for later unchecked calls. */
+    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        eval_current_petta_typed_line())
+        return prepared_pure_precheck_refuse(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_OBSERVER,
+            "typed line", call);
     bool defined = false;
     bool dynamic = false;
     SpaceProgramToken effect_source = space_program_token(space);
@@ -58709,7 +58735,9 @@ static bool prepared_pure_closed_invocation_plan(
      * definition pure here. */
     CettaGsltQueryEffect effect = space_query_static_effect_for_head(
         space, head->sym_id, &defined, &dynamic);
-    if (effect != CETTA_GSLT_QUERY_EFFECT_PURE || !defined) {
+    bool inspect_source = effect == CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY &&
+        eval_prepared_pure_source_call_owned(space, head->sym_id, arity);
+    if ((effect != CETTA_GSLT_QUERY_EFFECT_PURE && !inspect_source) || !defined) {
         /* A completed source classification refuses this strategy for every
          * operand. An incomplete analysis leaves defined false and stays
          * retryable, as do the input/observer refusals above this point. */

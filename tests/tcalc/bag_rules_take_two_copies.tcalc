@@ -1,0 +1,9 @@
+; Two take patterns need two distinct occurrences: a firing's taken
+; occurrences are pairwise distinct (Core.lean, Firing.Shapes). Two copies of
+; (tok) fire the rule once. bag_rules_take_two_copies_set runs it under the set
+; store, where the copies are one row and nothing fires. A conjunctive match in
+; HE or PeTTa succeeds on one copy.
+(step one)
+(tok)
+(tok)
+(rule pair (take (tok) (tok)) (make (pair)))

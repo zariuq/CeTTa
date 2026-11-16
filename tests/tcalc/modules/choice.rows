@@ -1,0 +1,2 @@
+; the call toss(coin)
+(demand (c:toss (c:coin)))

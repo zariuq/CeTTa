@@ -1,0 +1,13 @@
+; A counter machine adds counter c into counter d: while c is not zero,
+; decrement c and increment d.  A counter's value is its number of rows; the
+; zero test is an absence.  One outcome under the one-match step.  Under every,
+; the three copies of (c) are three matches that all need the one (at loop):
+; none can be told apart, so every has no step (a sequential machine is not a
+; synchronous one).
+(step one)
+(at loop)
+(c) (c) (c)
+(d)
+(rule decrement (take (at loop) (c)) (make (at add)))
+(rule finished (take (at loop)) (absent (c)) (make (halt)))
+(rule increment (take (at add)) (make (d) (at loop)))

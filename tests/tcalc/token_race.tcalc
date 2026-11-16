@@ -1,0 +1,6 @@
+; Two jobs want one token.  One match takes the token for one job; no bag can
+; hold both (their takes are not distinct); every needs both and so never steps.
+(job a)
+(job b)
+(token)
+(rule start (take (job $j) (token)) (make (done $j)))

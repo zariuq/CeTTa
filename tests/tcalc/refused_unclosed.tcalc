@@ -1,0 +1,3 @@
+; A list that is never closed is refused where it opens.
+(a)
+(rule r (take (a)) (make (b))

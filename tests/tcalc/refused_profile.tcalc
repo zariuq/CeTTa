@@ -1,0 +1,3 @@
+; profile: matches=keys;matches=symmetric
+; A profile sets each axis once.
+(a)

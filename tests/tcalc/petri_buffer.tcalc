@@ -1,0 +1,8 @@
+; A Petri net: a producer makes two items into a buffer of two free slots, and
+; a consumer uses them.  Places are rows; a transition takes and makes tokens.
+; Every run ends with both items used and the slots free again.
+(step one)
+(ready) (ready)
+(slot) (slot)
+(rule produce (take (ready) (slot)) (make (item)))
+(rule consume (take (item)) (make (used) (slot)))

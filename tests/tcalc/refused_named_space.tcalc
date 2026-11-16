@@ -1,0 +1,5 @@
+; tcalc@0.1 has one store: RuleSyntax/Core.lean's state is a bag of rows at one
+; frame, with no named spaces.  (put T) puts one row; a space and a row are
+; refused at the form.
+(step one)
+(put store (a 1))

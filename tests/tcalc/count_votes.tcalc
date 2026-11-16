@@ -1,0 +1,7 @@
+; A count holds when exactly N rows equal the pattern at every solution.
+(step one)
+(vote yes)
+(vote yes)
+(vote no)
+(rule two-yes (count 2 (vote yes)) (absent (decided $x)) (make (decided yes)))
+(rule two-no (count 2 (vote no)) (absent (decided $x)) (make (decided no)))

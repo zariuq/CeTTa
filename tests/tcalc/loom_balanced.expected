@@ -1,0 +1,4 @@
+(interpretation (version tcalc@0.1) (step one) (ask after-tells) (store multiset) (matches symmetric) (solver mgu-first-order) (observe outcomes) (budget 100000) (backend c))
+(outcome (artifact moon-veil) (enabled lunar-middle) (enabled lunar-starter) (enabled lunar-terminal) (enabled solar-middle) (enabled solar-starter) (enabled solar-terminal) (essence ember))
+(outcome (artifact star-lantern) (enabled lunar-middle) (enabled lunar-starter) (enabled lunar-terminal) (enabled solar-middle) (enabled solar-starter) (enabled solar-terminal))
+(explored (states 6) (work 6) (finished true) (cycle false))

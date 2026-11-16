@@ -27,6 +27,11 @@ typedef struct {
      * space grew, NULL when it already held it or refused it. */
     Atom *(*add_nodup)(void *context, Atom *space_ref, Atom *payload,
                        Atom **stored_out);
+    /* The host has excluded extra publication policies such as static rows
+     * and typed-space refusal. Recognized first-order data is published by
+     * ordinary set membership. The closure licence assumes successful
+     * resource operations; it does not prove allocation availability. */
+    bool set_membership_publication;
 } CettaExecSaturationHost;
 
 typedef enum {
@@ -44,7 +49,7 @@ bool cetta_exec_saturation_presentation_admitted(Space *program);
 bool cetta_exec_saturation_admitted(Space *program, Atom *call, Space *facts);
 
 /* A directive the authored rounds read as data: (exec KEY (, P ...) (, T ...))
- * with a flat query of one or more patterns, each read by the space's own
+ * with a flat query of zero or more patterns, each read by the space's own
  * conjunction query as `match` reads it, and templates whose heads are
  * constants other than `=` and `:`, so a published fact is never a
  * definition.  The parts point into the directive. */
@@ -67,6 +72,7 @@ typedef bool (*CettaExecRowVisit)(void *context,
  * otherwise every row that reads at least one atom of `delta`, each query
  * position in turn reading `delta` and the other patterns `facts`, so a row
  * reading several atoms of `delta` is visited once per such position.
+ * An empty-premise directive is visited once, including after the first round.
  * False when a visit stopped the walk or memory ran out. */
 bool cetta_exec_directive_rows(Space *facts, Space *delta, Arena *a,
                                const CettaExecDirective *directive,

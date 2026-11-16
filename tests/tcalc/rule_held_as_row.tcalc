@@ -1,0 +1,17 @@
+; The negative: a rule held as a row.  In a row, $p and $q are unknowns
+; of the state, so the first firing that reads the row decides them, and
+; the row is from then on one instance of modus ponens, not the schema.
+
+(rb (: ModusPonens (-> (→ $p $q) $p $q)))
+
+(: a A)
+(: ab (→ A B))
+(: bc (→ B C))
+
+(rule fire
+  (read (rb (: $rule (-> $major $minor $conclusion))))
+  (read (: $f $major) (: $x $minor))
+  (make (: ($rule $f $x) $conclusion)))
+
+(step one)
+(store set)

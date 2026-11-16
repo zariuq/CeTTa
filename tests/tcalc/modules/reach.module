@@ -1,0 +1,23 @@
+-- theory: Calc
+-- Reachability over a relation "edge" whose rows are given with the demand: a judgment with several
+-- values for one call, and a cycle.  rulec refuses it (the two rules overlap and their premises are
+-- not exclusive); the reading by demand gives every value and ends, since a demand is asked once.
+Module Reach {
+  Theory Calc() {
+    Empty
+    Types {
+      Node;
+    }
+    Terms {
+      "n:a". |- "a" : Node;
+      "n:b". |- "b" : Node;
+      "n:c". |- "c" : Node;
+      "n:d". |- "d" : Node;
+      "n:reach". x:Node |- "reach" x : Node;
+    }
+    Rewrites {
+      "reach-edge". x:Node, y:Node | "edge"(x, y) |- "n:reach"(x) ~> y;
+      "reach-step". x:Node, y:Node, z:Node | "edge"(x, y), "n:reach"(y) ~> z |- "n:reach"(x) ~> z;
+    }
+  }
+}

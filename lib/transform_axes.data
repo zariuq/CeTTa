@@ -4,7 +4,7 @@
   ; transform and tcalc are moving targets: a family of transform steps that differ in these choices,
   ; and each run is one point of that family.
   ; The petta dialect's conjunction value (one-state) is the merged engine's behaviour, chosen as the
-  ; default and not ruled; its removal value (one) is Zar's ruling of 13 November 2026.
+  ; default and not ruled. Public PeTTa removal selects every unifying row.
   (Table Steps
     (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
     (Key id) (Unique code) (Unique spelling) (Dense id)
@@ -60,8 +60,8 @@
     (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
     (Key id) (Unique code) (Unique spelling) (Dense id)
     (Rows
-      (Row 0 ONE "one" "remove-atom of an atom held several times removes one copy (Zar's ruling, 13 November 2026; HE)")
-      (Row 1 EVERY "every" "remove-atom removes every copy (the SWI-PeTTa host)")))
+      (Row 0 ONE "one" "remove-atom of an atom held several times removes one copy (HE)")
+      (Row 1 EVERY "every" "remove-atom removes every unifying row (PeTTa)")))
   (Table Conjunctions
     (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
     (Key id) (Unique code) (Unique spelling) (Dense id)
@@ -96,7 +96,7 @@
       (Row 1 "petta" "ask" "after-tells")
       (Row 2 "petta" "store" "multiset")
       (Row 3 "petta" "matches" "keys")
-      (Row 4 "petta" "removal" "one")
+      (Row 4 "petta" "removal" "every")
       (Row 5 "petta" "conjunction" "one-state")
       (Row 6 "petta" "branch-timing" "when-asked")
       (Row 7 "petta-swi" "step" "one")

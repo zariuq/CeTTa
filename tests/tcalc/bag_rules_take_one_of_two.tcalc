@@ -1,0 +1,7 @@
+; Taking one of two copies: the two choices are one match up to symmetry,
+; and the successor keeps the other copy, which a second firing takes.
+; bag_rules_take_one_of_two_set: under the set store the copies are one row.
+(step one)
+(tok)
+(tok)
+(rule spend (take (tok)) (make (spent)))

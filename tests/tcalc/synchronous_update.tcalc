@@ -1,0 +1,7 @@
+; RuleSyntax/JointFirings/Absence: two rules, each makes its kind unless the
+; other kind is present.  Absence read at the entry state lets a bag of both
+; fire together (both_admitted), a state no run of one match reaches
+; (no_run_reaches).  A set store keeps re-deriving a present row a no-change step.
+(store set)
+(rule add1 (absent (2)) (make (1)))
+(rule add2 (absent (1)) (make (2)))

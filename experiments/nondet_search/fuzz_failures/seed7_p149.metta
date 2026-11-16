@@ -1,0 +1,6 @@
+(= (f0 $n0 4) $n0)
+(= (f0 $n0 $n1) (C 4 a))
+(= (f1 $n0) (let (C $v65 $v65w) (C (if (< (% (+ $n0 3) 5) (% (* 2 1) 5)) (superpose ($n0 $n0 $n0)) (if (> $n0 0) (f1 (- $n0 1)) 1)) $n0) (C (% (+ 2 1) 5) $n0)))
+(= (f2 $n0 $n1) (if (== 0 $n1) (superpose ((let (C $v17 $v17w) (C b $n0) $n0) 4 (superpose ($n1 a $n1)))) (superpose (b (% (+ $n0 1) 5) (let $v6 b 2)))))
+(= (main) (f2 2 2))
+!(collapse (main))

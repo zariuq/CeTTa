@@ -802,7 +802,7 @@
 ; An unbound atom is the host's to refuse.
 (: to:remove-own (-> Atom %Undefined%))
 (= (to:remove-own $atom)
-   (if (== (get-metatype $atom) Variable) (remove-atom &pt-own $atom) (to:remove-own-bound $atom)))
+   (if (pt:removal-unbound? $atom) (remove-atom &pt-own $atom) (to:remove-own-bound $atom)))
 
 (= (to:remove-own-bound $atom)
    (let $kept (to:kept $atom)

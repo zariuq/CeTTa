@@ -1,0 +1,17 @@
+; Gamma's sort: two cells out of order exchange their values.  Indices and
+; values are the same four names, ordered by the (less A B) rows.  The cells
+; hold 3 1 4 2: three inversions, and each shares a cell with another.  Every
+; step sorts them but two: every has no step, since its matches take the same
+; cells and so are not jointly enabled, and unique sees three matches.
+(at one three)
+(at two one)
+(at three four)
+(at four two)
+(less one two)
+(less one three)
+(less one four)
+(less two three)
+(less two four)
+(less three four)
+(rule swap (take (at $i $x) (at $j $y)) (read (less $i $j) (less $y $x))
+  (make (at $i $y) (at $j $x)))

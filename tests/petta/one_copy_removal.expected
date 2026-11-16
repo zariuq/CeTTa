@@ -3,8 +3,8 @@ true
 true
 true
 (removed (done done done))
-(left 5)
+(left 0)
 true
-(program-left (yes))
-true
+(program-left ((remaining-copy)))
+false
 (program-empty ((remaining-copy)))

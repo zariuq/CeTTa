@@ -1,0 +1,16 @@
+; Two cells hold unknowns.  One rule tells that the cell it reads first holds 5
+; and checks that the other holds 6; the second rule tells the other holds 6
+; and checks the first holds 5.  Neither match is admitted on its own: each
+; check fails where the other cell is still free.  Asked at the joint
+; information, the bag of the two is admitted and fills both cells; no order of
+; the two can run, so one, round, every and unique never fire them.  A token
+; beside them is used by a third rule.  The only maximal bag holds all three
+; matches: the token's match alone is not maximal, although neither of the
+; other two can join it alone.
+(cell $x) (cell $y)
+(token)
+(rule use (take (token)) (make (used)))
+(rule tell-first (read (cell $a) (cell $b)) (tell (= $a 5)) (check (= $b 6))
+  (absent (first-done)) (make (first-done)))
+(rule tell-second (read (cell $a) (cell $b)) (tell (= $b 6)) (check (= $a 5))
+  (absent (second-done)) (make (second-done)))

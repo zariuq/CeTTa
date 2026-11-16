@@ -122,7 +122,9 @@ def acceptance(binary):
         # The cursor's own vectors, and with them what its readers' view
         # keeps: the list of the rows removed since the take froze it, not a
         # copy of the rows, so neither grows with the space.
-        expected_peaks = {200: (4216, 4344), 400: (4216, 4344)}
+        # The fixed firing record includes 40 bytes of matching-frame loan
+        # bookkeeping. Neither its vectors nor retained entries grew.
+        expected_peaks = {200: (4256, 4384), 400: (4256, 4384)}
         if (owned, peak) != expected_peaks[n]:
             raise AssertionError(
                 f"cursor-owned vector accounting changed for n={n}: "
@@ -181,9 +183,9 @@ def acceptance(binary):
             raise AssertionError(f"zero-proposal {key}: expected {expected}, got {counters.get(key)}")
     owned = counters.get("transform-cursor-owned-bytes-peak", 0)
     accounted = counters.get("transform-cursor-accounted-bytes-peak", 0)
-    if (owned, accounted) != (4216, 4216):
+    if (owned, accounted) != (4256, 4256):
         raise AssertionError(
-            f"zero-proposal high-water accounting changed: expected {(4216, 4216)}, "
+            f"zero-proposal high-water accounting changed: expected {(4256, 4256)}, "
             f"got {(owned, accounted)}")
     print(f"PASS: zero proposals retain the failed-match owned peak {owned} bytes "
           f"and entry-inclusive peak {accounted} bytes")

@@ -1,0 +1,9 @@
+// profile: step=one
+// The dining philosophers (dining_philosophers.tcalc) in f1r3lang notation:
+// each rule is a receive that persists (<=), joining a philosopher's state
+// with a fork.  A deadlock is an outcome.
+fork!(1) | fork!(2) |
+thinking!(a, 1, 2) | thinking!(b, 2, 1) |
+for ($p, $l, $r <= thinking & $l <= fork) { holding!($p, $l, $r) } |
+for ($p, $l, $r <= holding & $r <= fork) { eating!($p, $l, $r) } |
+for ($p, $l, $r <= eating) { fork!($l) | fork!($r) | fed!($p) }
