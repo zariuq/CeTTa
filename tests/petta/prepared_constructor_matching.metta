@@ -1,0 +1,122 @@
+!(import! &self ../../lib/petta/lib_he)
+
+; Captured success code sees the fields bound by a fresh match.
+(= (pc:sum $n) (unify (Pair $n 2) (Pair $left $right) (+ $left $right) -1))
+!(pc:sum 5)
+(= (pc:whole $n) (unify (Pair $n 2) $whole $whole missing))
+!(pc:whole 5)
+(= (pc:closed-constructor $n) (unify (Pair $n 2) (Pair 5 2) yes no))
+!(pc:closed-constructor 5)
+!(pc:closed-constructor 6)
+(= (pc:empty-constructor $value) (unify $value () yes no))
+!(pc:empty-constructor ())
+!(pc:empty-constructor (Other 1))
+(= (pc:nested $n)
+   (unify (Outer (Inner $n) 2) (Outer (Inner $left) $right) (+ $left $right) -1))
+!(pc:nested 5)
+(= (pc:result $n)
+   (unify (Pair $n 2) (Pair $left $right) (Result $left $right (+ $left $right)) -1))
+!(pc:result 5)
+
+; The equality source may have any owned name and several forwarding levels.
+(: pc:choose (-> Atom Atom Atom Atom %Undefined%))
+(= (pc:choose $value $pattern $yes $no) (if (= $value $pattern) (eval $yes) (eval $no)))
+(: pc:forward (-> Atom Atom Atom Atom %Undefined%))
+(= (pc:forward $value $pattern $yes $no) (pc:choose $value $pattern $yes $no))
+(: pc:relay (-> Atom Atom Atom Atom %Undefined%))
+(= (pc:relay $value $pattern $yes $no) (pc:forward $value $pattern $yes $no))
+(= (pc:forward-site $n)
+   (pc:relay (Pair $n 3) (Pair $left $right) (+ $left $right) -1))
+!(pc:forward-site 5)
+
+; Fresh callee binders with the same spelling remain outside captured code.
+(: pc:scoped (-> Atom Atom Atom Atom %Undefined%))
+(= (pc:scoped $value $pattern $yes $no)
+   (let $left 999 (if (= $value $pattern) (eval $yes) (eval $no))))
+(= (pc:scoped-site $n)
+   (pc:scoped (Pair $n 3) (Pair $left $right) (+ $left $right) -1))
+!(pc:scoped-site 5)
+
+; Distinct branches keep identical answers as separate occurrences.
+(= (pc:values $n) (Pair $n 2))
+(= (pc:values $n) (Pair $n 2))
+(= (pc:sum-value $value) (unify $value (Pair $left $right) (+ $left $right) -1))
+(= (pc:nondet $n) (let $value (pc:values $n) (pc:sum-value $value)))
+!(collapse (pc:nondet 5))
+
+; A failure branch has no tentative pattern bindings.
+(= (pc:mismatch $n)
+   (unify (Other $n) (Pair $left $right) (+ $left $right) 17))
+!(pc:mismatch 5)
+(= (pc:failure-binds $n)
+   (unify (Other $n) (Pair $left $right) (+ $left $right) (let $left 23 $left)))
+!(pc:failure-binds 5)
+(= (pc:failure-reads $n)
+   (unify (Other $n) (Pair $left $right) (+ $left $right) (get-metatype $left)))
+!(pc:failure-reads 5)
+
+; Repeated, prebound and two-sided patterns keep their unification contract.
+(= (pc:repeat $n) (unify (Pair $n $n) (Pair $x $x) $x -1))
+!(pc:repeat 7)
+(= (pc:repeat-fail $n) (unify (Pair $n 3) (Pair $x $x) $x -1))
+!(pc:repeat-fail 7)
+(= (pc:prebound $n) (unify (Pair $n 3) (Pair $n $x) $x -1))
+!(pc:prebound 7)
+(= (pc:literal $n) (unify (Pair $n False) (Pair 1 $field) $field missing))
+!(pc:literal 1)
+!(pc:literal 1.0)
+(= (pc:two-sided)
+   (let $result (unify (Pair $x 1) (Pair 2 $y) (Joined $x $y) missing)
+     (Aliases $result $x $y)))
+!(pc:two-sided)
+(= (pc:escape $n)
+   (let $result (unify (Pair $n 3) (Pair $x $y) (+ $x $y) -1)
+     (After $result $x $y)))
+!(pc:escape 7)
+
+; Equality is literal here; cons views and runtime list carriers are separate.
+(= (pc:cons-case)
+   (unify (cons 1 (cons 2 ())) (cons $head $tail) (Fields $head $tail) missing))
+!(pc:cons-case)
+(= (pc:list-field)
+   (unify (Box (cons 1 (cons 2 ()))) (Box $field) $field missing))
+!(pc:list-field)
+(= (pc:list-literal)
+   (unify (Box (cons one (cons two ()))) (Box (one $field)) $field missing))
+!(pc:list-literal)
+
+; A bound field can be data or executable code under an explicit eval.
+(= (pc:atom-field $n) (unify (Some label) (Some $field) $field missing))
+!(pc:atom-field 0)
+(= (pc:compound-field $n)
+   (unify (Some (Tree $n (Leaf 2))) (Some $field) $field missing))
+!(pc:compound-field 7)
+(= (pc:code-field $n) (unify (Some (+ $n 2)) (Some $field) $field missing))
+!(pc:code-field 7)
+
+; Unsupported effects must never be replayed after a partial compiled firing.
+(= (pc:tick $n) (let $_ (add-atom &pc-effects (mark $n)) $n))
+(= (pc:effect-site $n)
+   (unify (Pair $n 3) (Pair $x $y) (pc:tick (+ $x $y)) (pc:tick 99)))
+!(pc:effect-site 7)
+(= (pc:effect-fail $n)
+   (unify (Other $n) (Pair $x $y) (pc:tick 99) (pc:tick 11)))
+!(pc:effect-fail 7)
+(= (pc:code-effect $n)
+   (unify (Some (pc:tick $n)) (Some $field) $field missing))
+!(pc:code-effect 12)
+; A quoted executable field reaches the dynamic inertness guard.
+(= (pc:force-some $value) (unify $value (Some $field) $field missing))
+!(pc:force-some (quote (Some (pc:tick 13))))
+!(sort-atom (collapse (match &pc-effects (mark $n) $n)))
+
+; Captured constructor data can share subterms without unfolding every path.
+(= (pc:dag $n)
+   (if (== $n 0) Leaf (let $child (pc:dag (- $n 1)) (Node $child $child))))
+(= (pc:dag-read $n)
+   (let $value (pc:dag $n) (unify (Some $value) (Some $tree) $tree missing)))
+!(let $value (pc:dag-read 12) (get-metatype $value))
+
+; Mutating a constructor's callability invalidates cached interpretation facts.
+!(add-atom &self (= (Tree $n $leaf) (Changed $n $leaf)))
+!(pc:compound-field 7)

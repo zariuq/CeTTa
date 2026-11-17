@@ -31771,7 +31771,7 @@ test-petta-error-outcomes: $(BIN)
 				<(printf '%s\n' "$$actual") | head -20; \
 			exit 1; \
 		fi; \
-		for case in static collapse branch effect function list; do \
+		for case in static collapse branch effect function list removal; do \
 			status=0; \
 			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
 				--lang petta tests/petta/error_uncaught_$$case.metta \
@@ -35127,6 +35127,14 @@ test-prepared-pure-undefined-type-operands: $(BIN)
 		$(MAKE) --no-print-directory BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@; \
 	fi
 
+.PHONY: test-prepared-held-syntax
+test-prepared-held-syntax: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/test_prepared_held_syntax.py ./$(BIN) $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
+
+.PHONY: test-prepared-constructor-matching
+test-prepared-constructor-matching: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/test_prepared_constructor_matching.py ./$(BIN) $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
+
 .PHONY: test-prepared-pure-call-machine
 .PHONY: test-prepared-pure-dispatch-authority
 test-prepared-pure-dispatch-authority: $(BIN)
@@ -35349,7 +35357,7 @@ else
 	@$(MAKE) -s ENABLE_RUNTIME_STATS=1 $@
 endif
 
-test-prepared-pure-call-machine: $(BIN) test-prepared-pure-variable-heads test-prepared-pure-answer-producer test-prepared-pure-answer-resource-fallback test-answer-producer-continuations test-answer-producer-continuation-transfer test-prepared-pure-undefined-type-operands test-prepared-pure-repeated-head-variables test-prepared-pure-dispatch-authority test-prepared-pure-numeric-realizations
+test-prepared-pure-call-machine: $(BIN) test-prepared-held-syntax test-prepared-constructor-matching test-prepared-pure-variable-heads test-prepared-pure-answer-producer test-prepared-pure-answer-resource-fallback test-answer-producer-continuations test-answer-producer-continuation-transfer test-prepared-pure-undefined-type-operands test-prepared-pure-repeated-head-variables test-prepared-pure-dispatch-authority test-prepared-pure-numeric-realizations
 	@set -e; \
 	he_out=$$(mktemp runtime/prepared-pure-call-he.XXXXXX); \
 	he_no_gc_out=$$(mktemp runtime/prepared-pure-call-he-no-gc.XXXXXX); \
@@ -50457,3 +50465,56 @@ $(TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN): tests/test_term_domain_exclusive_batc
 test-term-domain-exclusive-batches: $(TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN)
 	@$(call cetta_exec,./$(TERM_DOMAIN_EXCLUSIVE_BATCHES_TEST_BIN))
 test-all: test-term-domain-exclusive-close test-term-domain-exclusive-batches
+
+.PHONY: test-petta-remove-atom-answers
+test-petta-semantics: test-petta-remove-atom-answers
+# remove-atom removes every matching row; unbound whole patterns raise.
+test-petta-remove-atom-answers: $(BIN) tests/petta/remove_atom_answers_what_it_removed.metta \
+		tests/petta/remove_atom_answers_what_it_removed.expected
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for profile in stable extended; do \
+			if [ $$profile = extended ]; then flag="--profile extended"; else flag=; fi; \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta $$flag \
+				tests/petta/remove_atom_answers_what_it_removed.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/remove_atom_answers_what_it_removed.expected)" ]; then \
+				echo "FAIL: remove-atom's answer on the $$route route, $$profile profile"; \
+				diff <(cat tests/petta/remove_atom_answers_what_it_removed.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: remove-atom answers whether it removed a row, on the tier and in the machine, in both profiles"
+
+.PHONY: test-gc-survivor-budget
+runtime/test_gc_budget-$(BUILD_OBJ_TAG): tests/test_gc_budget.c src/gc_budget.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -I. -o $@ $<
+test-gc-survivor-budget: runtime/test_gc_budget-$(BUILD_OBJ_TAG) $(BIN)
+	./$<
+	@set -eu; \
+	for budget in '' 1; do \
+		actual=$$(CETTA_GC_BUDGET_MB=$$budget $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/prepared_survivor_budget.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/prepared_survivor_budget.expected)" ]; then \
+			printf '%s\n' "$$actual"; \
+			echo 'FAIL: survivor budget changed a live value or alias'; exit 1; \
+		fi; \
+	done; \
+	echo 'PASS: nursery sampling retains live structures, shared unknowns and escaping results'
+test-all: test-gc-survivor-budget
+
+.PHONY: test-prepared-indirect-iteration
+test-all: test-prepared-indirect-iteration
+test-prepared-indirect-iteration: $(BIN) tests/petta/prepared_indirect_iteration.metta \
+		tests/petta/prepared_indirect_iteration.expected
+	@set -eu -o pipefail; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
+		"CETTA_PREPARED_PURE_REFERENCE=1 CETTA_OPEN_EQUATIONS_REFERENCE=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang petta \
+			tests/petta/prepared_indirect_iteration.metta \
+			| diff -u tests/petta/prepared_indirect_iteration.expected -; \
+	done; \
+	echo "PASS: indirect iterations preserve data, choice and exactly-once effects"

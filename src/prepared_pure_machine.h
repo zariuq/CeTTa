@@ -265,6 +265,10 @@ typedef struct {
      * this compiler cannot realize. Checked during compilation, including
      * callees, and at runtime-created application boundaries. */
     bool (*head_admitted)(void *context, Space *space, SymbolId head);
+    /* Positive source ownership at this arity: no imported host override,
+     * memo/table protocol or checked-language boundary is being bypassed.
+     * This grants no effect or value fact. */
+    bool (*source_call_owned)(Space *space, SymbolId head, CettaExprLen arity);
     /* Execute a native whose head/arity was positively admitted by the
      * generated intrinsic contract. False with complete invocation status
      * declines before entry and transfers no packet. True with complete

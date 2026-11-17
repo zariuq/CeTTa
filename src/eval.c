@@ -8238,6 +8238,14 @@ static EvalSpaceMutationEffect eval_apply_space_removal(
         .error = NULL,
         .emit_result = true,
     };
+    CettaLanguageId language_id = eval_current_language_id();
+    if (language_id == CETTA_LANGUAGE_PETTA) {
+        effect.error = petta_semantics_remove_pattern_error(arena, payload);
+        if (effect.error) {
+            petta_eval_raise(effect.error);
+            return effect;
+        }
+    }
     /* A row static-import! loaded is static data. */
     Atom *static_refusal = petta_static_rows_refusal(
         arena, target, payload, "retractall");
@@ -8246,10 +8254,7 @@ static EvalSpaceMutationEffect eval_apply_space_removal(
         return effect;
     }
     Atom *comparison = space_remove_compare_atom(target, arena, payload);
-    CettaLanguageId language_id = eval_current_language_id();
     if (language_id == CETTA_LANGUAGE_PETTA) {
-        if (comparison && comparison->kind == ATOM_VAR)
-            return effect;
         comparison = petta_space_remove_request_pattern(arena, comparison);
         if (!comparison) {
             effect.emit_result = false;
@@ -18198,6 +18203,21 @@ static bool eval_prepared_pure_head_admitted(void *context, Space *space, Symbol
         !space_directional_rules_may_match_known_head(space, head);
 }
 
+static bool eval_prepared_pure_source_call_owned(
+        Space *space, SymbolId head, CettaExprLen arity) {
+    return eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        !eval_current_petta_typed_line() &&
+        !cetta_profile_uses_petta_typing(active_eval_session()->profile) &&
+        !eval_petta_classifier_extended(space, g_builtin_syms.get_type) &&
+        !eval_petta_classifier_extended(space, g_builtin_syms.get_metatype) &&
+        space_type_annotations_have_only_symbol_subjects(space) &&
+        active_search_table_mode() == CETTA_TABLE_MODE_NONE &&
+        eval_prepared_pure_head_admitted(NULL, space, head) &&
+        !petta_eval_extension_named_arity(head, arity).exact &&
+        (!g_library_context || !cetta_library_petta_memo_contains(
+            g_library_context, head, arity));
+}
+
 /* The generated execution contract admits this native head/arity. Retain
  * its complete tagged result; the cursor owns any required completion and
  * the saved continuation. Only legacy scalar expressions are finalized here. */
@@ -18270,6 +18290,7 @@ static CettaPreparedPureSourceView prepared_pure_source_view_for_language(
     CettaPreparedPureSourceView view = {0};
     view.result_policy = cetta_language_call_result_policy(language_id);
     view.head_admitted = eval_prepared_pure_head_admitted;
+    view.source_call_owned = eval_prepared_pure_source_call_owned;
     view.native_context = g_library_context;
     view.native_call = eval_prepared_pure_native_call;
     if (language_id != CETTA_LANGUAGE_PETTA ||
@@ -56265,11 +56286,23 @@ static bool prepared_pure_closed_invocation_plan(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_OBSERVER,
             "active table mode", call);
     }
+    /* A per-line checking request is an observer, not a source fact that
+     * may be retained as a refusal for later unchecked calls. */
+    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        eval_current_petta_typed_line())
+        return prepared_pure_precheck_refuse(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_OBSERVER,
+            "typed line", call);
     bool defined = false;
+    bool dynamic = false;
     SpaceProgramToken effect_source = space_program_token(space);
-    CettaGsltQueryEffect effect = space_query_effect_for_head(
-        space, head->sym_id, &defined);
-    if (effect != CETTA_GSLT_QUERY_EFFECT_PURE || !defined) {
+    /* The prepared executor admits variable-headed calls by their resolved
+     * head. Check named dependencies here and each dynamic target there. */
+    CettaGsltQueryEffect effect = space_query_static_effect_for_head(
+        space, head->sym_id, &defined, &dynamic);
+    bool inspect_source = effect == CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY &&
+        eval_prepared_pure_source_call_owned(space, head->sym_id, arity);
+    if ((effect != CETTA_GSLT_QUERY_EFFECT_PURE && !inspect_source) || !defined) {
         /* A completed source classification refuses this strategy for every
          * operand. An incomplete analysis leaves defined false and stays
          * retryable, as do the input/observer refusals above this point. */
