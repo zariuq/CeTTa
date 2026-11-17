@@ -36,10 +36,20 @@ fi
 work=$(mktemp -d "$runtime_root/runtime/direct-petta-outcome.XXXXXX")
 trap 'rm -rf "$work"' EXIT INT TERM
 
+runtime_arguments=(--lang petta "$program" "$query")
+source_argument=${#runtime_arguments[@]}
+runtime_arguments+=("$source_file")
+manifest_argument=${#runtime_arguments[@]}
+runtime_arguments+=("$manifest")
+recorder=()
+if [[ -n "${CETTA_GSLT_RECORD_DIR:-}" ]]; then
+    recorder=(python3 "$runtime_root/tests/support/run_gslt_program.py"
+        --data-argument "$source_argument" --data-argument "$manifest_argument" --)
+fi
+
 set +e
 timeout "$timeout_seconds" env CETTA_PETTA_SEARCH_MACHINE=1 \
-    "$runtime_bin" --lang petta \
-    "$program" "$query" "$source_file" "$manifest" \
+    "${recorder[@]}" "$runtime_bin" "${runtime_arguments[@]}" \
     >"$work/runtime.stdout" 2>"$work/runtime.stderr"
 runtime_status=$?
 set -e

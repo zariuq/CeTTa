@@ -143,20 +143,23 @@ run_semantic_discriminants() {
     done
 }
 
+# The upstream groups classify full verification, not the parser alone.
+mkdir -p "$root/runtime/qualification"
+corpus=$(mktemp "$root/runtime/qualification/mm0-syntax-cases.XXXXXX")
+trap 'rm -f "$corpus"' EXIT
+python3 "$root/tools/mm0_textual_corpus_v1.py" --mm0-root "$mm0_root" >"$corpus"
 positive=0
 negative=0
-for input in "$mm0_root"/tests/mm0_mmu/pass/*.mm0; do
-    run_case "$input" accepted
-    ((positive += 1))
-done
-for input in "$mm0_root"/tests/mm0_mmu/fail/*.mm0; do
-    run_case "$input" rejected
-    ((negative += 1))
-done
-
-[[ $positive -eq 6 && $negative -eq 24 ]] || {
-    printf 'unexpected MM0 upstream syntax corpus size: %s positive, %s negative\n' \
-        "$positive" "$negative" >&2
+while IFS= read -r -d '' input && IFS= read -r -d '' expected; do
+    run_case "$input" "$expected"
+    if [[ "$expected" == accepted ]]; then
+        ((positive += 1))
+    else
+        ((negative += 1))
+    fi
+done <"$corpus"
+((positive + negative > 0)) || {
+    printf 'MM0 syntax corpus is empty\n' >&2
     exit 1
 }
 

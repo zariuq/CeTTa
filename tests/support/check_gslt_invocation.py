@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Production invocation capture/replay and stale-evidence controls."""
 import argparse
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -9,7 +10,7 @@ import tempfile
 
 import gslt_invocation as invocation
 from check_transform_swi_differential import read_forms, write_form
-from check_gslt_through_machine import structural_text
+from check_gslt_through_machine import corpus as machine_corpus
 
 
 def main():
@@ -20,6 +21,62 @@ def main():
     root = invocation.ROOT
     with tempfile.TemporaryDirectory(prefix="invocation-controls-", dir=root / "runtime") as directory:
         work = Path(directory)
+
+        # A replay creates files beside the original documents to preserve
+        # relative imports. Another snapshot must wait for their removal,
+        # without ignoring any potentially authored library filename.
+        context_root = work / "context-root"
+        library = context_root / "lib"
+        library.mkdir(parents=True)
+        authored = library / "authored.metta"
+        authored.write_text('(= (authored) stable)\n')
+        context_source = context_root / "runtime/source.metta"
+        context_source.parent.mkdir()
+        context_source.write_text('!(quote stable)\n')
+        context_manifest, context_record = invocation.make_record(work / "context-corpus",
+            [binary], [str(context_source)], root=context_root)
+        context_probe = (
+            'import fcntl,json,sys;from pathlib import Path;import gslt_invocation as i;'
+            'root=Path(sys.argv[1]);mode=sys.argv[2];'
+            'stream=(root/"runtime/gslt-invocation-context.lock").open("a+b");'
+            '\nif mode=="nonblocking":\n'
+            ' try: fcntl.flock(stream,fcntl.LOCK_EX|fcntl.LOCK_NB)\n'
+            ' except BlockingIOError: sys.exit(73)\n'
+            'else:\n'
+            ' print("ready",flush=True)\n'
+            ' print(json.dumps(i.context_identity(root)),flush=True)\n')
+        probe_environment = dict(os.environ, PYTHONPATH=str(root / "tests/support"))
+        with invocation.restored_inputs(context_manifest):
+            transient = library / ".gslt-machine-control.metta"
+            transient.write_text('!(quote administrative)\n')
+            blocked = subprocess.run([sys.executable, "-c", context_probe,
+                str(context_root), "nonblocking"], env=probe_environment, timeout=30)
+            assert blocked.returncode == 73, "replay must own the context lock"
+            observer = subprocess.Popen([sys.executable, "-c", context_probe,
+                str(context_root), "snapshot"], env=probe_environment, text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                assert observer.stdout.readline().strip() == "ready"
+                assert observer.poll() is None, "snapshot bypassed active replay"
+            finally:
+                transient.unlink()
+        observed, errors = observer.communicate(timeout=30)
+        assert observer.returncode == 0, errors
+        assert json.loads(observed) == json.loads(json.dumps(context_record["import_context"]))
+        authored.write_text('(= (authored) changed)\n')
+        try:
+            with invocation.restored_inputs(context_manifest):
+                raise AssertionError("changed library was accepted after serialization")
+        except ValueError as error:
+            assert "context is stale" in str(error)
+
+        def complete_corpus(captured, name, steps=1000):
+            result = subprocess.run([sys.executable, "tests/support/check_gslt_through_machine.py",
+                binary, "--corpus", str(captured), "--keep", str(work / (name + "-runs")),
+                "--timeout", "20", "--turns", str(steps), "2"], cwd=root,
+                capture_output=True, text=True, timeout=80)
+            assert result.returncode == 0, result.stdout + result.stderr
+
         inputs = []
         for label in ("first", "second"):
             place = work / label
@@ -59,6 +116,7 @@ def main():
                 text=True, capture_output=True, timeout=30)
             assert replay.returncode == run.returncode and replay.stdout == run.stdout
         assert all(not Path(item["path"]).exists() for item in captured)
+        complete_corpus(corpus, "multi-file", 2000)
 
         changed = Path(inputs[0])
         changed.write_text("!(changed)\n")
@@ -108,12 +166,8 @@ def main():
         for _ in range(5000):
             deep = deep[0]
         assert deep == ["leaf"]
-        assert structural_text(['("literal $x" $a $a)']) == structural_text(['("literal $x" $b $b)'])
-        assert structural_text(['("literal $x" $a $a)']) != structural_text(['("literal $y" $b $b)'])
-        assert structural_text(['(pair $a $a)']) != structural_text(['(pair $b $c)'])
-        assert structural_text(['(pair 1 1.0)']) != structural_text(['(pair 1.0 1)'])
         # A completed source can outlive the machine allowance. The pending
-        # marker must stay one protocol value, never two ordinary answers.
+        # status stays outside the guest's answer values.
         short = work / "short.metta"
         short.write_text('!(+ 1 2)\n')
         short_corpus = work / "short-corpus"
@@ -139,7 +193,155 @@ def main():
                 raise AssertionError("unrecorded import context was accepted")
         except ValueError as error:
             assert "imports" in str(error)
+
+        # A runtime file input is opaque data, even when named on the guest's
+        # argv. Its bytes must be restored and checked without parsing it as
+        # another MeTTa document.
+        data_file = work / "opaque input.data"
+        payload = b'opaque input ) ( { " \\q\n\x00\xff'
+        data_file.write_bytes(payload)
+        data_program = work / "read-data.metta"
+        data_program.write_text('!(import-as! &self input (library fs))\n'
+            f'!(input:read-text {machine_corpus.as_text(str(data_file))})\n'
+            '!(import! &self (library fs))\n'
+            f'!(fs:read-text {machine_corpus.as_text(str(data_file))})\n'
+            f'!(let $text (fs:read-text {machine_corpus.as_text(str(data_file))}) '
+            '(let $_ (println! $text) (empty)))\n')
+        data_corpus = work / "data-corpus"
+        data_arguments = ["--lang", "petta", str(data_program), "--", str(data_file)]
+        recorded = subprocess.run([sys.executable, "tests/support/run_gslt_program.py",
+            "--data-file", str(data_file), "--", binary, *data_arguments], cwd=root,
+            env=dict(os.environ, CETTA_GSLT_RECORD_DIR=str(data_corpus)),
+            capture_output=True, timeout=30)
+        assert recorded.returncode == 0 and b"opaque input" in recorded.stdout, recorded.stderr
+        data_manifest, = data_corpus.glob("*.invocation.json")
+        data_record = invocation.read_record(data_manifest)
+        assert data_record["arguments"] == data_arguments
+        assert len(data_record["sources"]) == 1 and len(data_record["data_inputs"]) == 1
+        assert data_record["data_inputs"][0]["kind"] == "file"
+        # CeTTa also accepts -- before the source filename. That separator
+        # must not hide the source or turn subsequent guest values into code.
+        _, leading_record = invocation.make_record(work / "leading-corpus", [binary],
+            ["--lang", "petta", "--", str(data_program), str(data_file)], data_inputs=[data_file])
+        assert len(leading_record["sources"]) == 1
+        assert leading_record["sources"][0]["argument"] == 3
+
+        # Data roles belong to argument occurrences. An opaque file need not
+        # follow a separator, and a file can be both code and a later value.
+        positional_corpus = work / "positional-data-corpus"
+        positional_args = ["--lang", "petta", str(data_program), str(data_file)]
+        positional = subprocess.run([sys.executable, "tests/support/run_gslt_program.py",
+            "--data-argument", "3", "--", binary, *positional_args], cwd=root,
+            env=dict(os.environ, CETTA_GSLT_RECORD_DIR=str(positional_corpus)),
+            capture_output=True, timeout=30)
+        assert positional.returncode == 0 and positional.stdout == recorded.stdout, positional.stderr
+        positional_manifest, = positional_corpus.glob("*.invocation.json")
+        positioned = invocation.read_record(positional_manifest)
+        assert positioned["arguments"] == positional_args and positioned["data_arguments"] == [3]
+        assert [item["argument"] for item in positioned["sources"]] == [2]
+        assert positioned["data_inputs"][0]["argument"] == 3
+        assert not positioned["unresolved_imports"], "opaque data must not be parsed for imports"
+        complete_corpus(positional_corpus, "positional-data", 5000)
+        _, declared = invocation.make_record(work / "declared-data-corpus", [binary], positional_args,
+                                             data_inputs=[data_file])
+        assert [item["argument"] for item in declared["sources"]] == [2]
+        assert not declared["unresolved_imports"]
+        self_data = work / "self as data.metta"
+        self_data.write_text('!(import! &self system)\n!(system:arg 1)\n')
+        self_corpus = work / "self-data-corpus"
+        self_args = ["--lang", "petta", str(self_data), "--", str(self_data)]
+        self_run = subprocess.run([sys.executable, "tests/support/run_gslt_program.py",
+            "--data-argument", "4", "--", binary, *self_args], cwd=root,
+            env=dict(os.environ, CETTA_GSLT_RECORD_DIR=str(self_corpus)),
+            capture_output=True, timeout=30)
+        assert self_run.returncode == 0 and str(self_data).encode() in self_run.stdout, self_run.stderr
+        self_manifest, = self_corpus.glob("*.invocation.json")
+        self_record = invocation.read_record(self_manifest)
+        assert [item["argument"] for item in self_record["sources"]] == [2]
+        assert self_record["data_inputs"][0]["argument"] == 4
+        assert self_record["sources"][0]["path"] == self_record["data_inputs"][0]["path"]
+        complete_corpus(self_corpus, "self-data", 5000)
+        for invalid in (-1, len(self_args)):
+            try:
+                invocation.make_record(work / "bad-position", [binary], self_args, data_arguments=[invalid])
+                raise AssertionError("invalid file-argument position was accepted")
+            except ValueError as error:
+                assert "index" in str(error)
+        data_file.unlink()
+        with invocation.restored_inputs(data_manifest) as restored:
+            assert data_file.read_bytes() == payload
+            replay = subprocess.run(restored["command"] + restored["arguments"],
+                cwd=restored["cwd"], env=invocation.replay_environment(restored),
+                capture_output=True, timeout=30)
+            assert replay.returncode == 0 and replay.stdout == recorded.stdout
+        assert not data_file.exists()
+        complete_corpus(data_corpus, "data", 5000)
+        values = work / "values.metta"
+        values.write_text('!(quote ("literal $name" 1 1.0 True False (cons a (b c)) (nullary) ()))\n'
+                          '!(quote (pair $a $a $b))\n!(quote $a)\n!(quote $a)\n'
+                          '!(quote (pm:no-end ordinary-data))\n'
+                          '!(quote (pm:uncaught ordinary-data))\n'
+                          '!(quote (Error ordinary-data context))\n')
+        value_corpus = work / "value-corpus"
+        original = subprocess.run([sys.executable, "tests/support/run_gslt_program.py", "--",
+            binary, "--lang", "petta", str(values)], cwd=root,
+            env=dict(os.environ, CETTA_GSLT_RECORD_DIR=str(value_corpus)),
+            capture_output=True, text=True, timeout=30)
+        assert original.returncode == 0, original.stderr
+        complete_corpus(value_corpus, "value")
+        data_file.write_bytes(b"changed input")
+        try:
+            with invocation.restored_inputs(data_manifest):
+                raise AssertionError("changed runtime data was accepted")
+        except ValueError as error:
+            assert "stale" in str(error)
+        assert data_file.read_bytes() == b"changed input"
+
+        # Equal bytes do not make retargeted path resolution the same input.
+        first, second, alias = work / "data-first", work / "data-second", work / "data-link"
+        first.write_bytes(payload)
+        second.write_bytes(payload)
+        alias.symlink_to(first)
+        link_manifest, _ = invocation.make_record(work / "link-corpus", [binary],
+            [str(data_program)], data_inputs=[alias])
+        alias.unlink()
+        alias.symlink_to(second)
+        try:
+            with invocation.restored_inputs(link_manifest):
+                raise AssertionError("retargeted data input was accepted")
+        except ValueError as error:
+            assert "resolution is stale" in str(error)
+
+        absent = work / "absent-data"
+        absent_manifest, absent_record = invocation.make_record(work / "absent-corpus", [binary],
+            [str(data_program)], data_inputs=[absent])
+        assert absent_record["data_inputs"][0]["kind"] == "absent"
+        with invocation.restored_inputs(absent_manifest):
+            assert not absent.exists()
+        absent.write_bytes(payload)
+        try:
+            with invocation.restored_inputs(absent_manifest):
+                raise AssertionError("snapshot-relative absence was promoted after file creation")
+        except ValueError as error:
+            assert "absent input is now present" in str(error)
+
+        # Effects precede buffered CLI answers. Keep every guest line, even
+        # a line whose text happens to equal the administrative marker.
+        effects = work / "effects.metta"
+        effects.write_text('!(let $_ (println! @@START) first-value)\n'
+                           '!(let $_ (println! second-effect) second-value)\n')
+        effect_corpus = work / "effect-corpus"
+        original = subprocess.run(["sh", "tests/support/record_petta_direct_run.sh",
+            str(effect_corpus), str(len(command)), *command, str(effects)], cwd=root,
+            capture_output=True, text=True, timeout=30)
+        assert original.returncode == 0
+        assert original.stdout.splitlines() == ["@@START", "second-effect", "first-value", "second-value"]
+        complete_corpus(effect_corpus, "effect")
     print("PASS: exact argv and file boundaries, import origins, replay, stale/corrupt controls and deep/raw source")
+    print("PASS: replay source neighbours serialize context snapshots; authored changes still invalidate them")
+    print("PASS: opaque file data, byte restoration, changed data, path resolution and recorded absence")
+    print("PASS: immediate effects, buffered answers and guest marker text remain observable")
+    print("PASS: multi-file composition, scalar kinds, free constructors, aliasing and fresh query scopes")
 
 
 if __name__ == "__main__":

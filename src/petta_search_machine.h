@@ -899,6 +899,10 @@ typedef struct {
         void *context, Space *space, Arena *arena, Atom *head,
         CettaExprLen supplied, PettaTypeCall **calls, uint32_t *count,
         bool *hold_body);
+    /* An entered provider stopped with an incomplete cause. This records
+     * metadata in the enclosing host episode; it never evaluates a term.
+     * A physical allowance pause does not call this service. */
+    void (*record_completion)(void *context, CettaEvalCompletion completion);
 } PettaMachineHost;
 
 /* Whole native collections share this admission at machine and directive
@@ -967,6 +971,16 @@ bool petta_machine_init_with_plan(
     const Bindings *base_environment,
     const PettaMachineHost *host);
 
+/* Project an occurrence's output without entering its computation, using this
+ * machine's source host and authored-builtin policy. The caller supplies its
+ * captured occurrence plan, whose source and owners must still be live.
+ * A successful NULL result is opaque, not a failed or empty computation.
+ * The independent result preserves source variable identities and gives each
+ * opaque descendant its own fresh hole. No bindings or effects are published. */
+bool petta_machine_project_output(
+    PettaMachine *machine, Atom *source, const PettaPlanNode *plan,
+    Arena *arena, Atom **pattern);
+
 /* Deliver an entered packet to one retained caller-DAG root. The graph's
  * immutable syntax and plans stay live through the machine; its temporary
  * arrays and binding vectors may be freed after successful initialization.
@@ -979,6 +993,10 @@ bool petta_machine_init_with_caller_return(
 
 PettaMachineStep petta_machine_next(
     PettaMachine *machine, Atom **answer, Bindings *environment);
+
+/* The first incomplete cause reported by an entered provider. COMPLETE
+ * here is neutral metadata, not a certificate that the machine exhausted. */
+CettaEvalCompletion petta_machine_entered_completion(const PettaMachine *machine);
 
 /* A native typecheck-v2 refutation is semantic, not ordinary search
  * exhaustion.  The evaluator reads this diagnostic only after the machine

@@ -51,40 +51,40 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=3 source-presentation=DirectPeTTaAncestorV1 source-rule=direct-ancestor-base-v1 target=mode relation=DirectAncestorV1 input=10 functional=relational
 (= (gslt:mode:DirectAncestorV1:10 $first)
-   (let (gslt:result:DirectParentV1:10 $last) (superpose (collapse (gslt:mode:DirectParentV1:10 $first)))
+   (let (quote (DirectParentV1 $first $last)) (gslt:DirectParentV1 (DirectParentV1 $first $last))
    (quote (gslt:result:DirectAncestorV1:10 $last))))
 
 ; gslt-lowered-equation-v1 source-rewrite=4 source-presentation=DirectPeTTaAncestorV1 source-rule=direct-ancestor-step-v1 target=mode relation=DirectAncestorV1 input=10 functional=relational
 (= (gslt:mode:DirectAncestorV1:10 $first)
-   (let (gslt:result:DirectParentV1:10 $middle) (superpose (collapse (gslt:mode:DirectParentV1:10 $first)))
-   (let (gslt:result:DirectAncestorV1:10 $last) (superpose (collapse (gslt:mode:DirectAncestorV1:10 $middle)))
+   (let (quote (DirectParentV1 $first $middle)) (gslt:DirectParentV1 (DirectParentV1 $first $middle))
+   (let (quote (DirectAncestorV1 $middle $last)) (gslt:DirectAncestorV1 (DirectAncestorV1 $middle $last))
    (quote (gslt:result:DirectAncestorV1:10 $last)))))
 
 
 ; gslt-lowered-equation-v1 source-rewrite=0 source-presentation=DirectPeTTaParentV1 source-rule=direct-parent-alice-bob-v1 target=relation
 (= (gslt:DirectParentV1 $__gslt_input_v1_0_0)
-   (let (cons-atom DirectParentV1 (cons-atom DirectAliceV1 (cons-atom DirectBobV1 ()))) $__gslt_input_v1_0_0
+   (let (quote (DirectParentV1 DirectAliceV1 DirectBobV1)) $__gslt_input_v1_0_0
    (quote (DirectParentV1 DirectAliceV1 DirectBobV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=1 source-presentation=DirectPeTTaParentV1 source-rule=direct-parent-bob-cara-v1 target=relation
 (= (gslt:DirectParentV1 $__gslt_input_v1_0_0)
-   (let (cons-atom DirectParentV1 (cons-atom DirectBobV1 (cons-atom DirectCaraV1 ()))) $__gslt_input_v1_0_0
+   (let (quote (DirectParentV1 DirectBobV1 DirectCaraV1)) $__gslt_input_v1_0_0
    (quote (DirectParentV1 DirectBobV1 DirectCaraV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=2 source-presentation=DirectPeTTaParentV1 source-rule=direct-parent-bob-dara-v1 target=relation
 (= (gslt:DirectParentV1 $__gslt_input_v1_0_0)
-   (let (cons-atom DirectParentV1 (cons-atom DirectBobV1 (cons-atom DirectDaraV1 ()))) $__gslt_input_v1_0_0
+   (let (quote (DirectParentV1 DirectBobV1 DirectDaraV1)) $__gslt_input_v1_0_0
    (quote (DirectParentV1 DirectBobV1 DirectDaraV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=3 source-presentation=DirectPeTTaAncestorV1 source-rule=direct-ancestor-base-v1 target=relation
 (= (gslt:DirectAncestorV1 $__gslt_input_v1_0_0)
-   (let (cons-atom DirectAncestorV1 (cons-atom $first (cons-atom $last ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:DirectParentV1:00 $first $last) (superpose (collapse (gslt:mode:DirectParentV1:00)))
+   (let (quote (DirectAncestorV1 $first $last)) $__gslt_input_v1_0_0
+   (let (quote (DirectParentV1 $first $last)) (gslt:DirectParentV1 (DirectParentV1 $first $last))
    (quote (DirectAncestorV1 $first $last)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=4 source-presentation=DirectPeTTaAncestorV1 source-rule=direct-ancestor-step-v1 target=relation
 (= (gslt:DirectAncestorV1 $__gslt_input_v1_0_0)
-   (let (cons-atom DirectAncestorV1 (cons-atom $first (cons-atom $last ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:DirectParentV1:00 $first $middle) (superpose (collapse (gslt:mode:DirectParentV1:00)))
-   (let (gslt:result:DirectAncestorV1:10 $last) (superpose (collapse (gslt:mode:DirectAncestorV1:10 $middle)))
+   (let (quote (DirectAncestorV1 $first $last)) $__gslt_input_v1_0_0
+   (let (quote (DirectParentV1 $first $middle)) (gslt:DirectParentV1 (DirectParentV1 $first $middle))
+   (let (quote (DirectAncestorV1 $middle $last)) (gslt:DirectAncestorV1 (DirectAncestorV1 $middle $last))
    (quote (DirectAncestorV1 $first $last))))))

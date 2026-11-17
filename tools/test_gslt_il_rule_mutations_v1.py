@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 
 from test_gslt_language_rule_mutations_v1 import rule_names, without_rule
+import gslt_relation_executor_v1 as executor
 
 
 class GateFailure(RuntimeError):
@@ -16,14 +17,13 @@ class GateFailure(RuntimeError):
 
 
 def run_harness(
-    harness: Path, chart: Path, semantics: Path
+    harness: Path, execution: list[str], semantics: Path
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
             "python3",
             str(harness),
-            "--chart",
-            str(chart),
+            *execution,
             "--semantics",
             str(semantics),
         ],
@@ -36,14 +36,15 @@ def run_harness(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--harness", type=Path, required=True)
-    parser.add_argument("--chart", type=Path, required=True)
+    parser.add_argument("--chart", type=Path)
+    executor.add_arguments(parser)
     parser.add_argument("--semantics", type=Path, required=True)
     arguments = parser.parse_args()
 
     harness = arguments.harness.resolve()
-    chart = arguments.chart.resolve()
+    execution = executor.command_arguments(arguments)
     semantics = arguments.semantics.resolve()
-    baseline = run_harness(harness, chart, semantics)
+    baseline = run_harness(harness, execution, semantics)
     if baseline.returncode != 0:
         raise GateFailure(
             "baseline conformance failed before mutation:\n"
@@ -59,7 +60,7 @@ def main() -> int:
             mutation.write_text(
                 without_rule(semantics, rule_name), encoding="utf-8"
             )
-            result = run_harness(harness, chart, mutation)
+            result = run_harness(harness, execution, mutation)
             if result.returncode == 0:
                 survivors.append(rule_name)
             else:
@@ -75,6 +76,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (GateFailure, OSError) as error:
+    except (GateFailure, executor.ExecutorFailure, OSError) as error:
         print(f"FAIL: {error}")
         raise SystemExit(1)

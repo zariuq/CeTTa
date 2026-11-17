@@ -2841,9 +2841,9 @@ test-petta-machine-swi: $(BIN) lib/petta/petta_machine.metta tests/petta/petta_m
 
 # Run production gates unchanged and record their invocations, not a joined
 # source file. A failed source gate is a failure even if both executions of
-# its program happen to fail alike. The comparison currently observes printed
-# term structure; native value-kind/effect qualification remains a separate
-# obligation and is reported by the checker.
+# its program happen to fail alike. Compare native query frontiers and scoped
+# host-service effects; unobserved values or foreign effects stay unqualified.
+# Yield timing and the semantic correspondence remain separate obligations.
 ifneq ($(strip $(CETTA_GSLT_RECORD_DIR)),)
 .PHONY: gslt-record-execution-v1
 gslt-record-execution-v1:
@@ -2858,6 +2858,10 @@ $(METAMATH_PROOF_REFLECTION_DIRECT_V1): gslt-record-execution-v1
 endif
 
 GSLT_PETTA_DIRECT_GATES_V1 = \
+	test-gslt-machine-registration-v1 \
+	test-gslt-relational-premises-v1 \
+	test-gslt-proof-value-boundary-v1 \
+	test-gslt-compiler-depth-v1 \
 	test-gslt-petta-direct-v1 \
 	test-gslt-petta-entries-v1 \
 	test-gslt-petta-static-calls-v1 \
@@ -2868,6 +2872,7 @@ GSLT_PETTA_DIRECT_GATES_V1 = \
 	test-metamath-cogslt-petta-state-transition-direct-v1 \
 	test-metamath-cogslt-petta-proof-bootstrap-direct-v1 \
 	test-metamath-cogslt-petta-proof-trace-direct-v1 \
+	test-metamath-cogslt-petta-direct-outcome-driver-v1 \
 	test-mm0-cogslt-secondary-lexer-v1 \
 	test-mm0-cogslt-live-syntax-fold-v1 \
 	test-mm0-cogslt-runtime-live-syntax-v1 \
@@ -2878,18 +2883,25 @@ GSLT_PETTA_DIRECT_GATES_V1 = \
 	test-mm0-cogslt-expression-environment-v1 \
 	test-mm0-cogslt-assertion-environment-v1 \
 	test-plain-bnf-denotation-v1 \
-	test-plain-bnf-name-index-v1
+	test-plain-bnf-name-index-v1 \
+	test-gslt-il-petta-v1 \
+	test-metta-interact-petta-v1 \
+	test-mettazero-petta-v1 \
+	test-zerouv-petta-v1 \
+	test-gslt-native-direct \
+	test-megalodon-gslt
 
 GSLT_COMPOSITION_WORK_V1 ?= runtime/gslt-through-transform-$(BUILD_OBJ_TAG)
 GSLT_COMPOSITION_LANE_V1 ?= native
 
-.PHONY: test-gslt-petta-through-transform
-test-gslt-petta-through-transform: $(BIN) lib/petta/petta_machine.metta \
+.PHONY: test-gslt-petta-through-transform test-gslt-petta-source-corpus
+test-gslt-petta-through-transform test-gslt-petta-source-corpus: $(BIN) lib/petta/petta_machine.metta \
 		tests/support/check_gslt_through_machine.py tests/support/record_petta_direct_run.sh \
 		tests/support/gslt_invocation.py tests/support/check_gslt_gate_corpus.py
 	+@python3 tests/support/check_gslt_gate_corpus.py ./$(BIN) \
 		--make '$(MAKE)' --work '$(GSLT_COMPOSITION_WORK_V1)' \
 		--lane '$(GSLT_COMPOSITION_LANE_V1)' \
+		$(if $(filter test-gslt-petta-source-corpus,$@),--capture-only) \
 		--gates $(GSLT_PETTA_DIRECT_GATES_V1)
 
 .PHONY: test-gslt-petta-through-transform-reference
@@ -2902,7 +2914,8 @@ test-gslt-petta-direct-sanitizers-v1:
 		test-gslt-petta-direct-v1 test-gslt-invocation
 
 .PHONY: test-gslt-petta-qualification
-test-gslt-petta-qualification:
+test-gslt-petta-qualification: test-gslt-il-petta-mutations-v1 \
+		test-metta-interact-petta-mutations-v1
 	+@$(MAKE) --no-print-directory test-gslt-petta-direct-sanitizers-v1
 	+@$(MAKE) --no-print-directory test-gslt-petta-through-transform-reference
 

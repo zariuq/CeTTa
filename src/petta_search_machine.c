@@ -869,6 +869,7 @@ typedef struct {
         struct {
             CettaOwnedExecution *execution;
             Atom *expected;
+            Atom *call; /* Inputs may be bound without appearing in the return. */
             bool awaiting_accept;
         } provider;
         struct {
@@ -1641,6 +1642,7 @@ struct PettaMachineImpl {
     uint64_t last_answer_weight;
     bool last_answer_is_control_error;
     PettaMachineStep terminal_step;
+    CettaEvalCompletion entered_completion;
     /* Frame identity refusals seen when the machine began: a refusal since
      * failed some operation of this query, possibly as an ordinary
      * failure, so nothing further observed is exact. */
@@ -1791,6 +1793,7 @@ typedef struct {
     uint64_t last_answer_weight;
     bool last_answer_is_control_error;
     PettaMachineStep terminal_step;
+    CettaEvalCompletion entered_completion;
 } PettaContinuationReadoutComponent;
 
 typedef struct PettaOwnedContinuationImpl {
@@ -7945,7 +7948,8 @@ static bool petta_binding_roots_add_choice(
         return roots != NULL;
     switch (choice->kind) {
     case PETTA_CHOICE_FOREIGN_PROVIDER:
-        return petta_binding_roots_add(roots, choice->as.provider.expected);
+        return petta_binding_roots_add(roots, choice->as.provider.expected) &&
+            petta_binding_roots_add(roots, choice->as.provider.call);
     case PETTA_CHOICE_EQUATION:
         if (!petta_binding_roots_add(
                 roots, choice->as.equation.query) ||
@@ -8496,6 +8500,8 @@ static bool petta_copy_supported_choice_atoms(
     case PETTA_CHOICE_FOREIGN_PROVIDER:
         choice->as.provider.expected = petta_copy_optional_atom(
             session, choice->as.provider.expected, &ok);
+        choice->as.provider.call = petta_copy_optional_atom(
+            session, choice->as.provider.call, &ok);
         return ok;
     case PETTA_CHOICE_SUPERPOSE:
         choice->as.superpose.items = petta_copy_optional_atom(
@@ -10129,6 +10135,7 @@ static CettaContinuationStatus petta_continuation_capture(
     owned->readout.last_answer_is_control_error =
         source->last_answer_is_control_error;
     owned->readout.terminal_step = source->terminal_step;
+    owned->readout.entered_completion = source->entered_completion;
     owned->control.next_goal_instance = source->next_goal_instance;
     owned->control.current_source_root = source->current_source_root;
     owned->control.query_source_root = source->query_source_root;
@@ -10395,6 +10402,7 @@ static CettaContinuationStatus petta_continuation_restore(
     destination->last_answer_is_control_error =
         saved->readout.last_answer_is_control_error;
     destination->terminal_step = saved->readout.terminal_step;
+    destination->entered_completion = saved->readout.entered_completion;
     destination->next_goal_instance = next_goal_instance >
             saved->control.next_goal_instance
         ? next_goal_instance : saved->control.next_goal_instance;
@@ -15911,6 +15919,23 @@ fail:
     return false;
 }
 
+bool petta_machine_project_output(
+    PettaMachine *machine, Atom *source, const PettaPlanNode *plan,
+    Arena *arena, Atom **pattern) {
+    if (pattern)
+        *pattern = NULL;
+    if (!machine || !machine->impl || !source || !arena || !pattern)
+        return false;
+    Atom *projected = NULL;
+    if (!petta_machine_output_pattern(machine->impl, source, plan,
+            CETTA_FRAME_IDENTITY_NONE, &projected, NULL))
+        return false;
+    if (!projected)
+        return true;
+    *pattern = atom_deep_copy(arena, projected);
+    return *pattern != NULL;
+}
+
 static bool petta_plan_output_is_quoted_value(const PettaPlanNode *plan) {
     while (plan && plan->output == PETTA_PLAN_OUTPUT_CHILD)
         plan = petta_plan_child(plan, plan->output_child);
@@ -19888,6 +19913,20 @@ static void petta_source_context_restore(PettaSourceContextScope *scope) {
     scope->machine->current_source_root = scope->source_root;
 }
 
+static bool petta_machine_stage_return_with_call(PettaMachineImpl *,
+    const CettaOwnedReturn *, Atom *, Atom *, uint32_t, PettaMachineStep *);
+
+static void petta_machine_stop_entered(PettaMachineImpl *machine,
+        CettaEvalCompletion completion, PettaMachineStep *failure) {
+    cetta_eval_completion_record(&machine->entered_completion,
+        completion != CETTA_EVAL_COMPLETE ? completion : CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+    (void)petta_machine_completion_failure(machine->entered_completion, failure);
+    machine->terminal = true;
+    machine->terminal_step = *failure;
+    if (machine->host.record_completion)
+        machine->host.record_completion(machine->host.context, machine->entered_completion);
+}
+
 static bool petta_machine_advance_choice(
     PettaMachineImpl *machine, PettaChoice *choice,
     PettaMachineStep *failure, bool restore_choice_state,
@@ -20698,35 +20737,19 @@ static bool petta_machine_advance_choice(
         if (step != CETTA_OWNED_EXECUTION_RETURN) {
             if (step != CETTA_OWNED_EXECUTION_COMPLETE ||
                 execution->completion != CETTA_EVAL_COMPLETE)
-                (void)petta_machine_completion_failure(execution->completion, failure);
+                petta_machine_stop_entered(machine, execution->completion, failure);
             return false;
         }
-        CettaCallOutcome outcome = returned->outcome;
+        if (returned->outcome.kind == CETTA_CALL_INTERRUPTED) {
+            petta_machine_stop_entered(machine, CETTA_EVAL_INCOMPLETE_CANCELLED, failure);
+            return false;
+        }
         bool final = returned->final;
-        if (!cetta_call_outcome_shape_valid(outcome) || returned->environment ||
-            (outcome.kind != CETTA_CALL_RAISED &&
-             (outcome.kind != CETTA_CALL_VALUE ||
-              outcome.result_form != CETTA_CALL_RESULT_COMPLETED_VALUE))) {
-            *failure = PETTA_MACHINE_STEP_HOST_ERROR;
-            return false;
-        }
-        Atom *value = atom_deep_copy(&machine->heap, outcome.term);
-        if (!value) {
-            *failure = PETTA_MACHINE_STEP_CAPACITY;
-            return false;
-        }
         choice->as.provider.awaiting_accept = true;
-        if (outcome.kind == CETTA_CALL_RAISED)
-            return petta_machine_raise_error(machine, value);
-        bool truth = false;
-        if (petta_semantics_truth_value(value, &truth))
-            value = petta_machine_boolean_value(machine, truth);
-        /* A queued delivery gives even a rejected generator answer its own
-         * bounded transition. No returned term is interpreted. */
-        if (!petta_push_unify(machine, value, choice->as.provider.expected, choice->barrier)) {
-            *failure = PETTA_MACHINE_STEP_CAPACITY;
+        if (!petta_machine_stage_return_with_call(machine, returned,
+                choice->as.provider.call, choice->as.provider.expected,
+                choice->barrier, failure))
             return false;
-        }
         /* Delivery owns the copied value before acceptance can release host
          * captures. A current final certificate leaves no alternative; the
          * ordinary last-choice retirement preserves older search choices. */
@@ -23984,7 +24007,7 @@ static bool petta_machine_start_foreign_provider(PettaMachineImpl *machine,
         .manufacture_epoch = machine->manufacture_epoch,
         .binding_mark = bindings_builder_save(search_context_builder(&machine->search)),
         .goal_height = machine->goal_len, .barrier = barrier,
-        .as.provider = {.execution = execution, .expected = expected}};
+        .as.provider = {.execution = execution, .expected = expected, .call = call}};
     if (!petta_choice_push(machine, choice)) {
         *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
@@ -23996,7 +24019,7 @@ static bool petta_machine_start_foreign_provider(PettaMachineImpl *machine,
     CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
     if (!cetta_foreign_provider_open(machine->space, &invocation, execution, &completion) ||
         completion != CETTA_EVAL_COMPLETE) {
-        (void)petta_machine_completion_failure(completion, failure);
+        petta_machine_stop_entered(machine, completion, failure);
         return false;
     }
     return petta_machine_advance_choice(machine, &machine->choices[machine->choice_len - 1u],
@@ -34652,9 +34675,9 @@ static bool petta_machine_prepared_quantum_pending(
 }
 
 /* Import a loan's data and reachable logical world before its owner can
- * advance. Term, environment and conditional roots share one copy episode. */
+ * advance. Return, input and conditional roots share one copy episode. */
 static bool petta_machine_copy_return(PettaMachineImpl *machine,
-        const CettaOwnedReturn *returned, CettaCallOutcome *packet,
+        const CettaOwnedReturn *returned, Atom *call, CettaCallOutcome *packet,
         PettaMachineStep *failure) {
     if (!cetta_call_outcome_shape_valid(returned->outcome)) {
         *failure = PETTA_MACHINE_STEP_HOST_ERROR;
@@ -34675,10 +34698,10 @@ static bool petta_machine_copy_return(PettaMachineImpl *machine,
     }
     Bindings captured;
     bindings_init(&captured);
-    Atom *roots[] = {returned->outcome.term, returned->outcome.delayed};
+    Atom *roots[] = {returned->outcome.term, returned->outcome.delayed, call};
     AtomDeepCopySession *copy = atom_deep_copy_session_new(&machine->heap);
     bool ok = copy && bindings_project_reachable(returned->environment,
-        roots, 2u, &captured) && petta_copy_binding_atoms(&captured, &machine->heap, copy);
+        roots, 3u, &captured) && petta_copy_binding_atoms(&captured, &machine->heap, copy);
     CettaCallOutcome image = returned->outcome;
     image.term = ok && roots[0] ? atom_deep_copy_session_copy(copy, roots[0]) : NULL;
     image.delayed = ok && roots[1] ? atom_deep_copy_session_copy(copy, roots[1]) : NULL;
@@ -34697,11 +34720,11 @@ static bool petta_machine_copy_return(PettaMachineImpl *machine,
 
 /* The same typed stage serves a new machine and a continuation spliced into
  * its parent. Completed data never enters a source interpretation goal. */
-static bool petta_machine_stage_return(PettaMachineImpl *machine,
-        const CettaOwnedReturn *returned, Atom *destination, uint32_t barrier,
+static bool petta_machine_stage_return_with_call(PettaMachineImpl *machine,
+        const CettaOwnedReturn *returned, Atom *call, Atom *destination, uint32_t barrier,
         PettaMachineStep *failure) {
     CettaCallOutcome packet;
-    if (!petta_machine_copy_return(machine, returned, &packet, failure))
+    if (!petta_machine_copy_return(machine, returned, call, &packet, failure))
         return false;
     Atom *target = atom_deep_copy(&machine->heap, destination);
     if (!target || !petta_goal_push(machine, &(PettaGoal){
@@ -34716,6 +34739,13 @@ static bool petta_machine_stage_return(PettaMachineImpl *machine,
         return false;
     }
     return true;
+}
+
+static bool petta_machine_stage_return(PettaMachineImpl *machine,
+        const CettaOwnedReturn *returned, Atom *destination, uint32_t barrier,
+        PettaMachineStep *failure) {
+    return petta_machine_stage_return_with_call(machine, returned, NULL,
+        destination, barrier, failure);
 }
 
 /* Captures must reach the branch before the packet can wake constraints.
@@ -34739,7 +34769,7 @@ static __attribute__((cold, noinline)) bool petta_machine_import_prepared_return
         PettaMachineImpl *machine, const CettaOwnedReturn *returned,
         Atom *expected, uint32_t barrier, PettaMachineStep *failure) {
     CettaCallOutcome packet;
-    if (!petta_machine_copy_return(machine, returned, &packet, failure))
+    if (!petta_machine_copy_return(machine, returned, NULL, &packet, failure))
         return false;
     if (packet.delayed && !petta_machine_delay_install(machine, packet.delayed, failure))
         return false;
@@ -40682,6 +40712,21 @@ static bool petta_machine_dispatch_goal(
      * Prolog client, a call of its residual goals, whose answers are the
      * branch's choices and whose refusal fails the binding that woke it. */
     if (goal.kind == PETTA_GOAL_DELAY_WAKE) {
+        /* An opaque callable owns its constraint interpretation. Other
+         * client goals retain the Prolog predicate protocol below. */
+        if (first && first->kind == ATOM_EXPR && first->expr.len) {
+            Atom *callee = bindings_apply_if_vars(search_context_bindings(&machine->search),
+                &machine->heap, first->expr.elems[0]);
+            if (!callee) { *failure = PETTA_MACHINE_STEP_CAPACITY; return false; }
+            if (cetta_foreign_provider_callable_at(machine->space, callee)) {
+                Atom *ready = petta_machine_apply_bindings(machine,
+                    search_context_bindings(&machine->search), &machine->heap, first);
+                Atom *destination = petta_fresh_variable(machine);
+                if (!ready || !destination) { *failure = PETTA_MACHINE_STEP_CAPACITY; return false; }
+                return petta_machine_start_foreign_provider(machine, ready, destination,
+                    goal.barrier, failure);
+            }
+        }
         Atom *head = atom_symbol(&machine->heap, "callPredicate");
         Atom *wrap = atom_symbol(&machine->heap, "Predicate");
         Atom *wrapped = wrap && first
@@ -43271,6 +43316,11 @@ static inline __attribute__((always_inline)) void petta_machine_offer_collection
         else
             petta_machine_collect_offered(universe);
     }
+}
+
+CettaEvalCompletion petta_machine_entered_completion(const PettaMachine *machine) {
+    return machine && machine->impl ? machine->impl->entered_completion
+        : CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
 }
 
 static PettaMachineStep petta_machine_next_local(

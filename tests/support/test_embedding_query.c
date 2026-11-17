@@ -1,5 +1,6 @@
 #include "../../src/embedding.c"
 #include "eval_query.h"
+#include "petta_search_machine.h"
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
@@ -16,19 +17,32 @@ typedef struct {
     void *entry_context;
 } Query;
 
-static Query query_new(cetta_engine_t *engine, const char *source, int fuel) {
-    cetta_atom_t *parsed = NULL;
-    assert(cetta_embed_parse(engine, source, strlen(source), &parsed) == CETTA_OK);
+static Query query_new_term_with_plan(cetta_engine_t *engine, Atom *source,
+    const PettaPlanNode *plan, int fuel) {
     EmbeddingScope scope;
     assert(engine_enter(engine, &scope) == CETTA_OK);
-    CettaEvalQuery *query = eval_query_open(&engine->session.space, &engine->persistent,
-        &engine->session.registry, parsed->value, fuel);
+    CettaEvalQuery *query = plan
+        ? eval_query_open_with_plan(&engine->session.space, &engine->persistent,
+            &engine->session.registry, source, plan, fuel)
+        : eval_query_open(&engine->session.space, &engine->persistent,
+            &engine->session.registry, source, fuel);
     assert(query);
     cetta_embed_engine_retain(engine);
     engine_leave(engine, &scope);
-    cetta_embed_atom_release(parsed);
     Query result = {.engine = engine, .core = query};
     atomic_init(&result.cancelled, false);
+    return result;
+}
+
+static Query query_new_term(cetta_engine_t *engine, Atom *source, int fuel) {
+    return query_new_term_with_plan(engine, source, NULL, fuel);
+}
+
+static Query query_new(cetta_engine_t *engine, const char *source, int fuel) {
+    cetta_atom_t *parsed = NULL;
+    assert(cetta_embed_parse(engine, source, strlen(source), &parsed) == CETTA_OK);
+    Query result = query_new_term(engine, parsed->value, fuel);
+    cetta_embed_atom_release(parsed);
     return result;
 }
 
@@ -191,6 +205,132 @@ static cetta_result_t *document(cetta_engine_t *engine, const char *source) {
     cetta_result_t *result = NULL;
     assert(cetta_embed_run(engine, source, strlen(source), NULL, &result) == CETTA_OK);
     return result;
+}
+
+static PettaCandidateSnapshotLease query_source_candidate(cetta_engine_t *engine,
+    const char *name) {
+    EmbeddingScope scope;
+    assert(engine_enter(engine, &scope) == CETTA_OK);
+    PettaCandidateSnapshotLease lease = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(
+        engine->session.libraries.petta_program, &engine->session.space,
+        symbol_intern_cstr(g_symbols, name), &lease, NULL));
+    assert(lease.len == 1u && lease.items[0].rhs_plan);
+    assert(petta_program_candidate_snapshot_lease_pin(&lease));
+    engine_leave(engine, &scope);
+    return lease;
+}
+
+static Query query_new_candidate(cetta_engine_t *engine,
+    const PettaCandidateSnapshotLease *lease) {
+    Atom *equation = lease->items[0].equation;
+    assert(equation && equation->kind == ATOM_EXPR && equation->expr.len == 3u);
+    return query_new_term_with_plan(engine, equation->expr.elems[2],
+        lease->items[0].rhs_plan, -1);
+}
+
+static cetta_atom_t *query_project_output(Query *query, CettaEvalQueryOutput expected) {
+    EmbeddingScope scope;
+    assert(engine_enter(query->engine, &scope) == CETTA_OK);
+    cetta_result_t *result = result_new(query->engine);
+    assert(result);
+    Atom *pattern = NULL;
+    CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+    CettaEvalQueryOutput state = eval_query_project_output(query->core,
+        &result->owner->arena, &pattern, &completion);
+    assert(state == expected && completion == CETTA_EVAL_COMPLETE);
+    assert((state == CETTA_QUERY_OUTPUT_PATTERN) == (pattern != NULL));
+    cetta_atom_t *owned = NULL;
+    if (pattern) assert(atom_wrap(result->owner, pattern, &owned) == CETTA_OK);
+    engine_leave(query->engine, &scope);
+    cetta_embed_result_release(result);
+    return owned;
+}
+
+static void captured_source_outputs(void) {
+    cetta_engine_t *engine = NULL;
+    assert(cetta_embed_engine_new(NULL, &engine) == CETTA_OK);
+    cetta_embed_result_release(document(engine,
+        "(= (shape-value) 7) "
+        "(= (shape-effect $x) (let $_ignored (add-atom &self (Observed)) (Box $x $x (shape-value)))) "
+        "(= (shape-quote) (quote (cons a (b c)))) "
+        "(= (shape-frozen) (late-shape-call)) "
+        "(= (shape-opaque) (shape-value))"));
+    PettaCandidateSnapshotLease shared = query_source_candidate(engine, "shape-effect");
+    PettaCandidateSnapshotLease quoted = query_source_candidate(engine, "shape-quote");
+    PettaCandidateSnapshotLease frozen = query_source_candidate(engine, "shape-frozen");
+    PettaCandidateSnapshotLease opaque = query_source_candidate(engine, "shape-opaque");
+    size_t before = space_length64(&engine->session.space);
+    Query query = query_new_candidate(engine, &shared);
+    cetta_atom_t *shape = query_project_output(&query, CETTA_QUERY_OUTPUT_PATTERN);
+    Atom *pattern = shape->value;
+    assert(pattern->kind == ATOM_EXPR && pattern->expr.len == 4u);
+    assert(pattern->expr.elems[1]->kind == ATOM_VAR && atom_eq(pattern->expr.elems[1], pattern->expr.elems[2]));
+    assert(atom_eq(pattern->expr.elems[1], shared.items[0].equation->expr.elems[1]->expr.elems[1]));
+    assert(pattern->expr.elems[3]->kind == ATOM_VAR && !atom_eq(pattern->expr.elems[1], pattern->expr.elems[3]));
+    cetta_atom_t *again = query_project_output(&query, CETTA_QUERY_OUTPUT_PATTERN);
+    assert(!atom_eq(pattern->expr.elems[3], again->value->expr.elems[3]));
+    cetta_embed_atom_release(again);
+    assert(space_length64(&engine->session.space) == before);
+    cetta_result_t *paused;
+    uint64_t physical = UINT64_MAX, spent = UINT64_MAX;
+    assert(query_step(&query, 0u, &paused, &physical, &spent) == CETTA_QUERY_PAUSED);
+    assert(!physical && !spent);
+    cetta_embed_result_release(paused);
+    cetta_atom_t *answer = next(&query, 1u);
+    assert(answer && answer->value->kind == ATOM_EXPR && answer->value->expr.len == 4u);
+    assert(answer->value->expr.elems[3]->ground.ival == 7);
+    assert(space_length64(&engine->session.space) == before + 1u);
+    assert(!query_project_output(&query, CETTA_QUERY_OUTPUT_UNAVAILABLE));
+    cetta_embed_atom_release(answer);
+    query_close(&query);
+    assert(atom_eq(pattern->expr.elems[1], pattern->expr.elems[2]));
+    cetta_embed_atom_release(shape);
+
+    query = query_new_candidate(engine, &quoted);
+    shape = query_project_output(&query, CETTA_QUERY_OUTPUT_PATTERN);
+    cetta_atom_t *raw = NULL;
+    const char *cons = "(cons a (b c))";
+    assert(cetta_embed_parse(engine, cons, strlen(cons), &raw) == CETTA_OK);
+    query_close(&query);
+    assert(atom_eq(shape->value, raw->value));
+    cetta_embed_atom_release(shape); cetta_embed_atom_release(raw);
+
+    cetta_embed_result_release(document(engine, "(= (late-shape-call) 99)"));
+    query = query_new_candidate(engine, &frozen);
+    shape = query_project_output(&query, CETTA_QUERY_OUTPUT_PATTERN);
+    answer = next(&query, 1u);
+    assert(answer && atom_eq(answer->value, shape->value));
+    cetta_embed_atom_release(answer); cetta_embed_atom_release(shape);
+    query_close(&query);
+    query = query_new(engine, "(late-shape-call)", -1);
+    assert(integer(next(&query, 1u)) == 99);
+    query_close(&query);
+
+    query = query_new_candidate(engine, &opaque);
+    assert(!query_project_output(&query, CETTA_QUERY_OUTPUT_OPAQUE));
+    assert(integer(next(&query, 1u)) == 7);
+    query_close(&query);
+    petta_program_candidate_snapshot_lease_release(&shared);
+    petta_program_candidate_snapshot_lease_release(&quoted);
+    petta_program_candidate_snapshot_lease_release(&frozen);
+    petta_program_candidate_snapshot_lease_release(&opaque);
+    cetta_embed_engine_release(engine);
+
+    cetta_engine_config_t extended = {sizeof(extended), CETTA_EMBED_ABI_VERSION,
+        "petta", "extended", NULL};
+    assert(cetta_embed_engine_new(&extended, &engine) == CETTA_OK);
+    cetta_embed_result_release(document(engine, "(= (open-shape) (once (Box fixed)))"));
+    PettaCandidateSnapshotLease open = query_source_candidate(engine, "open-shape");
+    assert(open.items[0].rhs_plan->output == PETTA_PLAN_OUTPUT_CHILD);
+    query = query_new_candidate(engine, &open);
+    assert(!query_project_output(&query, CETTA_QUERY_OUTPUT_OPAQUE));
+    answer = next(&query, 1u);
+    assert(answer && answer->value->kind == ATOM_EXPR && answer->value->expr.len == 2u);
+    cetta_embed_atom_release(answer);
+    query_close(&query);
+    petta_program_candidate_snapshot_lease_release(&open);
+    cetta_embed_engine_release(engine);
 }
 
 static void effects_and_cancel(cetta_engine_t *engine) {
@@ -514,27 +654,105 @@ static void canonical_captured_options(cetta_engine_t *engine) {
     assert(engine->session.libraries.session.options.max_stack_depth == outside);
 }
 
-typedef struct { unsigned mode, closed; bool wrap_return; } ConditionalContext;
-typedef struct { Arena storage; ConditionalContext *context; } ConditionalCursor;
+typedef struct {
+    unsigned mode, opened, closed, pulls;
+    bool wrap_return, petta, ready;
+    Atom *guard;
+} ConditionalContext;
+typedef struct {
+    Arena storage;
+    ConditionalContext *context;
+    Atom *input;
+    Bindings environment;
+    unsigned position;
+} ConditionalCursor;
+
+typedef struct { Arena storage; Atom *argument; } GuardCursor;
+static CettaOwnedExecutionStep guard_next(void *pointer,
+    CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
+    (void)completion;
+    GuardCursor *cursor = pointer;
+    *returned = (CettaOwnedReturn){.outcome = atom_is_symbol(cursor->argument, "allowed")
+        ? cetta_call_completed_value(atom_symbol(&cursor->storage, "true"))
+        : cetta_call_failure(), .final = true};
+    return CETTA_OWNED_EXECUTION_RETURN;
+}
+static void guard_close(void *pointer) {
+    GuardCursor *cursor = pointer;
+    arena_free(&cursor->storage);
+    free(cursor);
+}
+static bool guard_open(void *context, const CettaInvocation *invocation,
+    CettaOwnedExecution *execution, CettaEvalCompletion *completion) {
+    (void)context; (void)completion;
+    CettaExprLen arity;
+    assert(cetta_invocation_arity(invocation, &arity) && arity == 1u);
+    GuardCursor *cursor = calloc(1u, sizeof(*cursor));
+    assert(cursor);
+    arena_init_detached(&cursor->storage);
+    cursor->argument = binding_value_materialize(&cursor->storage, cetta_invocation_argument(invocation, 0u));
+    assert(cursor->argument);
+    cetta_owned_execution_init(execution, cursor, guard_next, guard_close);
+    return true;
+}
 
 static void conditional_close(void *pointer) {
     ConditionalCursor *cursor = pointer;
     cursor->context->closed++;
+    bindings_free(&cursor->environment);
     arena_free(&cursor->storage);
     free(cursor);
 }
 static CettaOwnedExecutionStep conditional_next(void *pointer,
         CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
-    (void)completion;
     ConditionalCursor *cursor = pointer;
     Arena *arena = &cursor->storage;
+    cursor->context->pulls++;
     CettaCallOutcome outcome;
     if (cursor->context->mode == 1u) outcome = cetta_call_failure();
     else if (cursor->context->mode == 2u) outcome = cetta_call_interrupted();
+    else if (cursor->context->mode == 8u) {
+        *returned = (CettaOwnedReturn){.outcome = cetta_call_completed_value(NULL), .final = true};
+        return CETTA_OWNED_EXECUTION_RETURN;
+    } else if (cursor->context->mode == 9u) {
+        cetta_eval_completion_record(completion, CETTA_EVAL_INCOMPLETE_FUEL);
+        return CETTA_OWNED_EXECUTION_INTERRUPTED;
+    } else if (cursor->context->mode == 10u && !cursor->context->ready)
+        return CETTA_OWNED_EXECUTION_PAUSED;
+    else if (cursor->context->mode == 11u) {
+        assert(cursor->input && cursor->input->kind == ATOM_VAR);
+        assert(cursor->position < 2u);
+        bindings_free(&cursor->environment);
+        bindings_init(&cursor->environment);
+        assert(bindings_add_var(&cursor->environment, cursor->input,
+            atom_symbol(arena, cursor->position ? "b" : "a")));
+        outcome = cetta_call_completed_value(atom_int(arena, cursor->position ? 22 : 11));
+        cursor->position++;
+        *returned = (CettaOwnedReturn){.outcome = outcome, .environment = &cursor->environment,
+            .final = cursor->position == 2u};
+        return CETTA_OWNED_EXECUTION_RETURN;
+    } else if (cursor->context->mode == 3u || cursor->context->mode == 4u ||
+               cursor->context->mode == 10u) {
+        Atom *head = atom_symbol(arena, "provider-function");
+        Atom *term = atom_expr(arena, &head, 1u);
+        outcome = cursor->context->mode == 4u ? cetta_call_value(term) : cetta_call_completed_value(term);
+    } else if (cursor->context->mode == 5u) {
+        Atom *items[] = {atom_int(arena, 1), atom_int(arena, 2), atom_int(arena, 2), atom_int(arena, 3)};
+        outcome = cetta_call_completed_frontier(atom_expr(arena, items, 4u));
+    } else if (cursor->context->mode == 6u || cursor->context->mode == 7u) {
+        Atom *error = atom_expr3(arena, atom_symbol(arena, "Error"),
+            atom_symbol(arena, "provider"), atom_string(arena, "detail"));
+        outcome = cursor->context->mode == 6u ? cetta_call_raised(error) : cetta_call_completed_value(error);
+    }
     else {
         Atom *variable = atom_var_with_id(arena, "witness", fresh_var_id());
         Atom *payload = atom_expr3(arena, atom_symbol(arena, "payload"), variable, variable);
         Atom *delayed = atom_expr2(arena, atom_symbol(arena, "need"), variable);
+        if (cursor->context->petta) {
+            Atom *goal = atom_expr2(arena, cursor->context->guard, variable);
+            Atom *component = atom_expr2(arena, goal, variable);
+            delayed = atom_expr2(arena, atom_expr(arena, NULL, 0u), atom_expr(arena, &component, 1u));
+        }
         if (cursor->context->wrap_return)
             payload = atom_expr2(arena, atom_symbol(arena, "return"), payload);
         outcome = cetta_call_suspended(payload, delayed);
@@ -544,12 +762,17 @@ static CettaOwnedExecutionStep conditional_next(void *pointer,
 }
 static bool conditional_open(void *context, const CettaInvocation *invocation,
         CettaOwnedExecution *execution, CettaEvalCompletion *completion) {
-    (void)invocation;
     (void)completion;
     ConditionalCursor *cursor = calloc(1u, sizeof(*cursor));
     assert(cursor);
     arena_init_detached(&cursor->storage);
+    bindings_init(&cursor->environment);
     cursor->context = context;
+    cursor->context->opened++;
+    CettaExprLen arity;
+    assert(cetta_invocation_arity(invocation, &arity));
+    if (arity) cursor->input = binding_value_materialize(&cursor->storage,
+        cetta_invocation_argument(invocation, 0u));
     cetta_owned_execution_init(execution, cursor, conditional_next, conditional_close);
     return true;
 }
@@ -609,6 +832,163 @@ static void canonical_conditional_packet(cetta_engine_t *engine) {
     canonical_conditional_packet_on(engine, true);
 }
 
+static Query provider_query(cetta_engine_t *engine, Atom *provider, Atom *input) {
+    EmbeddingScope scope;
+    assert(engine_enter(engine, &scope) == CETTA_OK);
+    Atom *args[] = {provider, input};
+    Atom *source = atom_expr(&engine->persistent, args, input ? 2u : 1u);
+    engine_leave(engine, &scope);
+    return query_new_term(engine, source, -1);
+}
+
+static CettaEvalQueryStep first_packet(Query *query, cetta_result_t **result,
+    CettaEvalQueryAnswer *packet) {
+    for (unsigned visits = 0u; visits < 10000u; ++visits) {
+        CettaEvalQueryStep step = query_step_packet(query, 1u, result, NULL, NULL, packet);
+        if (step != CETTA_QUERY_PAUSED) return step;
+        cetta_embed_result_release(*result);
+    }
+    assert(!"provider query did not advance");
+    return CETTA_QUERY_STOPPED;
+}
+
+static PettaMachineHostMode provider_classify(void *context, Space *space, Atom *call) {
+    (void)context;
+    return call && call->kind == ATOM_EXPR && call->expr.len &&
+        cetta_foreign_provider_callable_at(space, call->expr.elems[0])
+        ? PETTA_MACHINE_HOST_STRICT_APPLICATION : PETTA_MACHINE_HOST_NONE;
+}
+
+static void provider_machine_completion(cetta_engine_t *engine, Atom *provider,
+    ConditionalContext *context) {
+    EmbeddingScope scope;
+    assert(engine_enter(engine, &scope) == CETTA_OK);
+    const unsigned modes[] = {2u, 9u, 10u};
+    for (unsigned i = 0u; i < 3u; ++i) {
+        context->mode = modes[i]; context->ready = false;
+        PettaMachine machine;
+        PettaMachineHost host = {.classify = provider_classify};
+        Atom *call = atom_expr(&engine->persistent, &provider, 1u);
+        assert(petta_machine_init(&machine, &engine->session.space,
+            &engine->persistent, call, NULL, &host));
+        assert(petta_machine_entered_completion(&machine) == CETTA_EVAL_COMPLETE);
+        Atom *answer = NULL;
+        Bindings environment;
+        assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_SUSPENDED);
+        bindings_free(&environment);
+        CettaEvalCompletion expected = modes[i] == 2u ? CETTA_EVAL_INCOMPLETE_CANCELLED
+            : modes[i] == 9u ? CETTA_EVAL_INCOMPLETE_FUEL : CETTA_EVAL_COMPLETE;
+        assert(petta_machine_entered_completion(&machine) == expected);
+        unsigned pulls = context->pulls;
+        context->ready = true;
+        assert(petta_machine_next(&machine, &answer, &environment) ==
+            (modes[i] == 10u ? PETTA_MACHINE_STEP_ANSWER : PETTA_MACHINE_STEP_SUSPENDED));
+        bindings_free(&environment);
+        assert(context->pulls == pulls + (modes[i] == 10u ? 1u : 0u));
+        petta_machine_destroy(&machine);
+    }
+    engine_leave(engine, &scope);
+}
+
+static void petta_provider_packets(cetta_engine_t *engine) {
+    assert(engine->language == CETTA_LANGUAGE_PETTA);
+    cetta_result_t *setup = document(engine, "(= (provider-function) 999)");
+    cetta_embed_result_release(setup);
+    ConditionalContext context = {.petta = true};
+    EmbeddingScope scope;
+    assert(engine_enter(engine, &scope) == CETTA_OK);
+    CettaForeignProviderSpec guard_spec = {.owner_thread = true, .open = guard_open};
+    context.guard = cetta_foreign_provider_atom(&engine->persistent, &guard_spec);
+    assert(context.guard);
+    CettaForeignProviderSpec spec = {.context = &context, .owner_thread = true, .open = conditional_open};
+    Atom *provider = cetta_foreign_provider_atom(&engine->persistent, &spec);
+    Atom *input = atom_var_with_id(&engine->persistent, "provider-input", fresh_var_id());
+    assert(provider && input);
+    engine_leave(engine, &scope);
+    for (unsigned mode = 0u; mode <= 11u; ++mode) {
+        context.mode = mode;
+        context.ready = false;
+        unsigned opened = context.opened, closed = context.closed;
+        Query query = provider_query(engine, provider, mode == 11u ? input : NULL);
+        cetta_result_t *result;
+        CettaEvalQueryAnswer packet;
+        if (mode == 10u) {
+            for (unsigned turn = 0; turn < 20; ++turn) {
+                assert(query_step_packet(&query, 1u, &result, NULL, NULL, &packet) == CETTA_QUERY_PAUSED);
+                assert(!result->count && result->status == CETTA_OK);
+                cetta_embed_result_release(result);
+            }
+            assert(context.opened == opened + 1u && context.closed == closed);
+            context.ready = true;
+        }
+        CettaEvalQueryStep step = first_packet(&query, &result, &packet);
+        if (mode == 1u) assert(step == CETTA_QUERY_EXHAUSTED && !result->count && result->status == CETTA_OK);
+        else if (mode == 2u || mode == 8u || mode == 9u) {
+            assert(step == CETTA_QUERY_STOPPED && !result->count);
+            assert(result->status == (mode == 2u ? CETTA_CANCELLED : mode == 9u ? CETTA_FUEL_EXHAUSTED : CETTA_ENGINE_ERROR));
+        } else {
+            assert(step == CETTA_QUERY_ANSWER && result->count == 1u);
+            if (mode == 0u) {
+                assert(packet.kind == CETTA_CALL_SUSPENDED && packet.delayed);
+                Atom *payload = result->values[0];
+                assert(payload->kind == ATOM_EXPR && payload->expr.len == 3u &&
+                    var_id_eq(payload->expr.elems[1]->var_id, payload->expr.elems[2]->var_id));
+            } else if (mode == 4u || mode == 5u || mode == 11u) {
+                cetta_atom_t *answer;
+                assert(cetta_embed_result_get(result, 0u, &answer) == CETTA_OK);
+                assert(integer(answer) == (mode == 4u ? 999 : mode == 5u ? 1 : 11));
+            } else if (mode == 6u || mode == 7u) {
+                assert(packet.kind == (mode == 6u ? CETTA_CALL_RAISED : CETTA_CALL_VALUE));
+            } else {
+                Atom *term = result->values[0];
+                assert(term->kind == ATOM_EXPR && term->expr.len == 1u);
+            }
+            if (mode == 11u) {
+                assert(engine_enter(engine, &scope) == CETTA_OK);
+                Bindings restored;
+                assert(bindings_restore_captured_value(packet.bindings, &restored));
+                Atom *bound = bindings_apply(&restored, &result->owner->arena, input);
+                assert(bound && atom_is_symbol(bound, "a"));
+                bindings_free(&restored);
+                engine_leave(engine, &scope);
+            }
+        }
+        cetta_embed_result_release(result);
+        if (mode == 5u) {
+            assert(integer(next(&query, 1u)) == 2);
+            assert(integer(next(&query, 1u)) == 2);
+            assert(integer(next(&query, 1u)) == 3);
+            assert(!next(&query, 1u));
+        } else if (mode == 11u) {
+            assert(integer(next(&query, 1u)) == 22);
+            assert(!next(&query, 1u));
+        }
+        query_close(&query);
+        assert(context.opened == opened + 1u && context.closed == closed + 1u);
+    }
+    context.mode = 0u;
+    for (unsigned allowed = 0u; allowed < 2u; ++allowed) {
+        assert(engine_enter(engine, &scope) == CETTA_OK);
+        Arena *arena = &engine->persistent;
+        Atom *word = atom_symbol(arena, allowed ? "allowed" : "denied");
+        Atom *pattern = atom_expr2(arena, atom_symbol(arena, "quote"),
+            atom_expr3(arena, atom_symbol(arena, "payload"), word, word));
+        Atom *call = atom_expr(arena, &provider, 1u);
+        Atom *parts[] = {atom_symbol(arena, "let"), pattern, call, atom_int(arena, 42)};
+        Atom *source = atom_expr(arena, parts, 4u);
+        engine_leave(engine, &scope);
+        Query query = query_new_term(engine, source, -1);
+        Atom *answer = NULL;
+        cetta_atom_t *observed = next(&query, 1u);
+        if (observed) answer = observed->value;
+        assert(allowed ? answer && answer->kind == ATOM_GROUNDED &&
+            answer->ground.gkind == GV_INT && answer->ground.ival == 42 : !answer);
+        cetta_embed_atom_release(observed);
+        query_close(&query);
+    }
+    provider_machine_completion(engine, provider, &context);
+}
+
 int main(int argc, char **argv) {
     bool require_canonical = argc > 1 && !strcmp(argv[1], "--require-canonical");
     bool require_streaming = argc > 1 && !strcmp(argv[1], "--require-streaming");
@@ -617,6 +997,8 @@ int main(int argc, char **argv) {
     ordered_streams(engine);
     source_budgets(engine);
     cancellation_scopes();
+    captured_source_outputs();
+    petta_provider_packets(engine);
     effects_and_cancel(engine);
     compare_ordinary(engine);
     retained_binding_packets(engine);

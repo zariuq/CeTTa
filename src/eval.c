@@ -53455,6 +53455,11 @@ static void petta_ready_add_answer(void *context, Arena *arena,
         outcome_set_add(outcomes, result, environment);
 }
 
+static void petta_eval_machine_record_completion(void *context, CettaEvalCompletion completion) {
+    (void)context;
+    eval_mark_interrupted(completion);
+}
+
 /* Complete an invocation which already ran. Entry admission and native
  * execution belong to its producer; this boundary only delivers the tagged
  * result under PeTTa's ready-value policy. */
@@ -55843,6 +55848,7 @@ static PettaMachineHost petta_eval_machine_host(
             ? petta_eval_machine_result_long_lived : NULL,
         .optional_services = &petta_eval_optional_services,
         .deliver_native_return = petta_eval_machine_deliver_native_return,
+        .record_completion = petta_eval_machine_record_completion,
         .translate_source = !prime_machine && !portable_machine
             ? petta_eval_machine_translate_source : NULL,
         .get_type = petta_eval_machine_get_type,

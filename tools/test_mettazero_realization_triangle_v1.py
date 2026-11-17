@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 
 import gslt2parse_schema_v1 as sx
+import gslt_relation_executor_v1 as executor
 
 
 class GateFailure(RuntimeError):
@@ -59,34 +60,7 @@ def source_program(*payloads: str) -> str:
 def chart_answers(
     chart: Path, sources: tuple[Path, ...], query: str
 ) -> list[tuple[sx.SExpr, ...]]:
-    raw = run(
-        [
-            str(chart),
-            *(str(source) for source in sources),
-            "--query-text",
-            query,
-            "--timeout",
-            "10",
-            "--max-rounds",
-            "100000",
-        ]
-    )
-    try:
-        receipt = json.loads(raw)
-    except json.JSONDecodeError as error:
-        raise GateFailure(f"chart emitted malformed JSON: {raw}") from error
-    terms = receipt.get("terms")
-    if not isinstance(terms, list):
-        raise GateFailure(f"chart receipt omits answer terms: {receipt}")
-    answers: list[tuple[sx.SExpr, ...]] = []
-    for rendered in terms:
-        if not isinstance(rendered, str):
-            raise GateFailure(f"chart answer is not text: {rendered!r}")
-        forms = sx.parse_sexprs(rendered, source="chart answer")
-        if len(forms) != 1 or not isinstance(forms[0], tuple):
-            raise GateFailure(f"chart returned a malformed answer: {rendered}")
-        answers.append(forms[0])
-    return answers
+    return executor.answers(chart, sources, query)
 
 
 def relation_answers(
@@ -195,7 +169,8 @@ def require_cli_pair(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cetta", type=Path, required=True)
-    parser.add_argument("--chart", type=Path, required=True)
+    parser.add_argument("--chart", type=Path)
+    executor.add_arguments(parser)
     parser.add_argument("--quote-match", type=Path, required=True)
     parser.add_argument("--query-kernel", type=Path, required=True)
     parser.add_argument("--observation", type=Path, required=True)
@@ -203,7 +178,7 @@ def main() -> int:
     parser.add_argument("--ground-capability", type=Path, required=True)
     arguments = parser.parse_args()
     cetta = arguments.cetta.resolve()
-    chart = arguments.chart.resolve()
+    chart = executor.select(arguments)
     sources = (
         arguments.quote_match.resolve(),
         arguments.query_kernel.resolve(),
@@ -586,9 +561,10 @@ def main() -> int:
         "[]",
     )
 
+    realization = "generated-petta" if isinstance(chart, executor.PeTTaExecutor) else "native-chart"
     print(
         "(MettaZeroRealizationTriangleV1Summary "
-        "native-chart=1 horn-reference=1 compiled-worklist=1 "
+        f"{realization}=1 horn-reference=1 compiled-worklist=1 "
         "classification=4 query-multiplicity=2 reflection=3 "
         "query-derived-evaluation=1 inert-completion=1 empty-query=1 "
         "reify=4 collapse-not-zero=1 ground-capability=1 "
@@ -600,6 +576,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (GateFailure, OSError, sx.SchemaError) as error:
+    except (GateFailure, executor.ExecutorFailure, OSError, sx.SchemaError) as error:
         print(f"FAIL: {error}")
         raise SystemExit(1)

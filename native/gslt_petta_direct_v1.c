@@ -1,4 +1,5 @@
 #include "gslt_petta_direct_v1.h"
+#include "atom_walk.h"
 
 #include "gslt_composition_v1.h"
 #include "gslt_direct_internal_v1.h"
@@ -9,7 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1 4096u
 
 typedef struct {
     uint8_t *bytes;
@@ -17,6 +17,9 @@ typedef struct {
     size_t cap;
     CettaGsltDirectTargetV1 target; /* the dialect this program is spelled in */
     size_t input_scope; /* fresh against the source rule variables */
+    const DirectOperatorsV1 *closed_horn_relations;
+    DirectOperatorsV1 required_generic_relations;
+    bool retain_generic_dependencies;
 } DirectBufferV1;
 
 static bool direct_target_is_he_v1(const DirectBufferV1 *program) {
@@ -73,11 +76,13 @@ typedef struct {
 typedef struct {
     const Atom *term;
     uint32_t type; /* one plus an actual LanguageDef type occurrence */
+    size_t height, next;
 } DirectDomainFactV1;
 
 typedef struct {
     DirectDomainFactV1 *items;
-    size_t len;
+    size_t len, cap;
+    size_t *buckets, bucket_len;
     bool inconsistent;
 } DirectDomainEnvironmentV1;
 
@@ -332,6 +337,79 @@ static bool direct_has_operator_v1(const DirectOperatorsV1 *operators,
     return false;
 }
 
+/* Closed Horn components cannot reach an external primitive. Target
+ * equations need their own effect contract before they enter this analysis. */
+static bool direct_closed_horn_relations_v1(
+    const DirectRulesV1 *rules, const DirectRuleIndexV1 *rule_index,
+    const DirectOperatorsV1 *relations, const DirectOperatorsV1 *capabilities,
+    const DirectRulesV1 *target_equations, DirectOperatorsV1 *closed,
+    char *error, size_t error_size) {
+    if (target_equations->len != 0u || relations->len == 0u)
+        return true;
+    closed->items = calloc(relations->len, sizeof(*closed->items));
+    if (closed->items == NULL)
+        return direct_error_v1(error, error_size,
+                               "out of memory analyzing Horn premise dependencies");
+    closed->cap = relations->len;
+    for (size_t i = 0u; i < relations->len; i++) {
+        const DirectOperatorV1 relation = relations->items[i];
+        if (!direct_has_operator_v1(capabilities, relation.name, relation.arity))
+            closed->items[closed->len++] = relation;
+    }
+    bool changed;
+    do {
+        changed = false;
+        for (size_t i = 0u; i < closed->len;) {
+            const DirectOperatorV1 relation = closed->items[i];
+            size_t begin, end;
+            bool pure = true;
+            direct_rule_index_range_v1(rule_index, relation.name, relation.arity,
+                                       &begin, &end);
+            for (size_t r = begin; pure && r < end; r++) {
+                const DirectRuleV1 *rule = &rules->items[rule_index->items[r].source_index];
+                for (CettaExprIndex g = 1u; g < rule->body->expr.len; g++) {
+                    const Atom *goal = rule->body->expr.elems[g];
+                    if (!direct_has_operator_v1(closed,
+                            atom_name_cstr(goal->expr.elems[0]),
+                            (size_t)goal->expr.len - 1u)) {
+                        pure = false;
+                        break;
+                    }
+                }
+            }
+            if (pure) {
+                i++;
+            } else {
+                memmove(&closed->items[i], &closed->items[i + 1u],
+                        (closed->len - i - 1u) * sizeof(*closed->items));
+                closed->len--;
+                changed = true;
+            }
+        }
+    } while (changed);
+    return true;
+}
+
+/* A pure relational premise keeps its complete runtime goal, so constraints
+ * are available before its recursive clauses run. Semidet projections and
+ * premises with an unknown effect contract retain their existing path. */
+static bool direct_project_premise_v1(
+    const DirectBufferV1 *program, const DirectBindingModeV1 *mode) {
+    return mode != NULL && mode->selected &&
+        (direct_target_is_he_v1(program) || mode->functional ||
+         program->closed_horn_relations == NULL ||
+         !direct_has_operator_v1(program->closed_horn_relations,
+                                 mode->relation, mode->arity));
+}
+
+static const char *direct_generic_relation_prefix_v1(
+    const DirectBufferV1 *program, const char *relation, size_t arity) {
+    return program->retain_generic_dependencies &&
+           program->closed_horn_relations != NULL &&
+           direct_has_operator_v1(program->closed_horn_relations, relation, arity)
+        ? "gslt:residual:" : "gslt:";
+}
+
 static bool direct_is_source_variable_v1(const Atom *atom) {
     return cetta_gslt_source_variable_v1(atom);
 }
@@ -383,40 +461,43 @@ static bool direct_variables_add_v1(DirectVariablesV1 *variables,
 }
 
 static bool direct_variables_add_term_v1(
-    DirectVariablesV1 *variables, const Atom *term, size_t depth,
+    DirectVariablesV1 *variables, const Atom *term,
     char *error, size_t error_size) {
-    if (term == NULL || depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
-        return direct_error_v1(
-            error, error_size,
-            "GSLT term exceeds the binding-mode analysis depth limit");
-    if (direct_is_source_variable_v1(term))
-        return direct_variables_add_v1(
-            variables, term, error, error_size);
-    if (term->kind != ATOM_EXPR)
-        return true;
-    for (CettaExprIndex index = 0u; index < term->expr.len; index++) {
-        if (!direct_variables_add_term_v1(
-                variables, term->expr.elems[index], depth + 1u,
-                error, error_size))
-            return false;
+    AtomWalk *walk = atom_walk_new(term, true);
+    if (!walk) return direct_error_v1(error, error_size, "out of memory deriving direct PeTTa binding modes");
+    bool ok = false;
+    for (;;) {
+        AtomWalkEvent event;
+        AtomWalkStep step = atom_walk_next(walk, &event);
+        if (step == ATOM_WALK_DONE) { ok = true; break; }
+        if (step == ATOM_WALK_RESOURCE) {
+            direct_error_v1(error, error_size, "out of memory deriving direct PeTTa binding modes"); break;
+        }
+        if (step != ATOM_WALK_ENTER && step != ATOM_WALK_LEAVE && step != ATOM_WALK_SHARED) {
+            direct_error_v1(error, error_size, "GSLT binding-mode source is not a finite syntax tree"); break;
+        }
+        if (step == ATOM_WALK_ENTER && direct_is_source_variable_v1(event.node) &&
+            !direct_variables_add_v1(variables, event.node, error, error_size)) break;
     }
-    return true;
+    atom_walk_free(walk);
+    return ok;
 }
 
 static bool direct_term_is_ground_v1(const DirectVariablesV1 *variables,
-                                     const Atom *term, size_t depth) {
-    if (term == NULL || depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
-        return false;
-    if (direct_is_source_variable_v1(term))
-        return direct_variables_contains_v1(variables, term);
-    if (term->kind != ATOM_EXPR)
-        return true;
-    for (CettaExprIndex index = 0u; index < term->expr.len; index++) {
-        if (!direct_term_is_ground_v1(
-                variables, term->expr.elems[index], depth + 1u))
-            return false;
+                                     const Atom *term) {
+    AtomWalk *walk = atom_walk_new(term, true);
+    if (!walk) return false;
+    bool ground = false;
+    for (;;) {
+        AtomWalkEvent event;
+        AtomWalkStep step = atom_walk_next(walk, &event);
+        if (step == ATOM_WALK_DONE) { ground = true; break; }
+        if (step != ATOM_WALK_ENTER && step != ATOM_WALK_LEAVE && step != ATOM_WALK_SHARED) break;
+        if (step == ATOM_WALK_ENTER && direct_is_source_variable_v1(event.node) &&
+            !direct_variables_contains_v1(variables, event.node)) break;
     }
-    return true;
+    atom_walk_free(walk);
+    return ground;
 }
 
 static bool direct_binding_mode_input_equal_v1(
@@ -425,6 +506,12 @@ static bool direct_binding_mode_input_equal_v1(
     return mode->arity == arity &&
            strcmp(mode->relation, relation) == 0 &&
            memcmp(mode->input_ground, input_ground, arity) == 0;
+}
+
+/* A zero-arity relation has a valid empty mode, independently of whether
+ * the platform allocator returns a pointer for a zero-byte allocation. */
+static uint8_t *direct_mode_bits_v1(size_t arity) {
+    return (uint8_t *)calloc(arity ? arity : 1u, 1u);
 }
 
 static bool direct_require_binding_mode_v1(
@@ -455,8 +542,8 @@ static bool direct_require_binding_mode_v1(
         modes->items = grown;
         modes->cap = next;
     }
-    uint8_t *input = (uint8_t *)malloc(arity);
-    uint8_t *success = (uint8_t *)malloc(arity);
+    uint8_t *input = direct_mode_bits_v1(arity);
+    uint8_t *success = direct_mode_bits_v1(arity);
     if (input == NULL || success == NULL) {
         free(input);
         free(success);
@@ -491,107 +578,134 @@ static void direct_free_binding_modes_v1(DirectBindingModesV1 *modes) {
 
 static bool direct_validate_term_v1(const Atom *term,
                                     const DirectOperatorsV1 *operators,
-                                    size_t depth,
+
                                     char *error, size_t error_size) {
-    if (term == NULL || depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
-        return direct_error_v1(error, error_size,
-                               "GSLT term exceeds the direct lowering depth limit");
-    if (term->kind == ATOM_SYMBOL) {
-        const char *name = atom_name_cstr((Atom *)term);
-        if (name[0] == '?' && (name[1] == '\0' ||
-            (name[1] == '_' && name[2] == '\0')))
-            return direct_error_v1(error, error_size,
-                                   "GSLT rule contains an anonymous variable");
-        return true;
+    AtomWalk *walk = atom_walk_new(term, false);
+    if (!walk) return direct_error_v1(error, error_size, "out of memory validating GSLT syntax");
+    bool ok = false;
+    for (;;) {
+        AtomWalkEvent event;
+        AtomWalkStep step = atom_walk_next(walk, &event);
+        if (step == ATOM_WALK_DONE) { ok = true; break; }
+        if (step == ATOM_WALK_RESOURCE) {
+            direct_error_v1(error, error_size, "out of memory validating GSLT syntax"); break;
+        }
+        if (step != ATOM_WALK_ENTER && step != ATOM_WALK_LEAVE) {
+            direct_error_v1(error, error_size, "GSLT rule is not a finite syntax tree"); break;
+        }
+        if (step != ATOM_WALK_ENTER || (event.parent && event.child_index == 0u)) continue;
+        term = event.node;
+        if (term->kind == ATOM_SYMBOL) {
+            const char *name = atom_name_cstr((Atom *)term);
+            if (name[0] == '?' && (name[1] == '\0' || (name[1] == '_' && name[2] == '\0'))) {
+                direct_error_v1(error, error_size, "GSLT rule contains an anonymous variable"); break;
+            }
+        } else if (term->kind == ATOM_EXPR) {
+            if (!term->expr.len || term->expr.elems[0]->kind != ATOM_SYMBOL) {
+                direct_error_v1(error, error_size, "GSLT rule contains a malformed application"); break;
+            }
+            const char *name = atom_name_cstr(term->expr.elems[0]);
+            size_t arity = (size_t)term->expr.len - 1u;
+            if (!direct_has_operator_v1(operators, name, arity)) {
+                direct_error_v1(error, error_size, "GSLT application %s/%zu lacks a signature declaration", name, arity); break;
+            }
+        }
     }
-    if (term->kind == ATOM_VAR || term->kind == ATOM_GROUNDED)
-        return true;
-    if (term->kind != ATOM_EXPR || term->expr.len == 0u ||
-        term->expr.elems[0]->kind != ATOM_SYMBOL)
-        return direct_error_v1(error, error_size,
-                               "GSLT rule contains a malformed application");
-    const char *name = atom_name_cstr(term->expr.elems[0]);
-    size_t arity = (size_t)term->expr.len - 1u;
-    if (!direct_has_operator_v1(operators, name, arity))
-        return direct_error_v1(
-            error, error_size,
-            "GSLT application %s/%zu lacks a signature declaration",
-            name, arity);
-    for (CettaExprIndex index = 1u; index < term->expr.len; index++) {
-        if (!direct_validate_term_v1(term->expr.elems[index], operators,
-                                     depth + 1u, error, error_size))
-            return false;
-    }
-    return true;
+    atom_walk_free(walk);
+    return ok;
 }
 
-static bool direct_render_term_context_v1(
-    DirectBufferV1 *buffer, const Atom *term, Arena *scratch, size_t depth,
-    bool target_syntax) {
-    if (term == NULL || depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
-        return false;
+
+static bool direct_render_leaf_v1(DirectBufferV1 *buffer, const Atom *term, Arena *scratch) {
     if (term->kind == ATOM_SYMBOL) {
         const char *name = atom_name_cstr((Atom *)term);
         if (name[0] == '?' && name[1] != '\0')
-            return direct_byte_v1(buffer, (uint8_t)'$') &&
-                   direct_literal_v1(buffer, name + 1u);
+            return direct_byte_v1(buffer, (uint8_t)'$') && direct_literal_v1(buffer, name + 1u);
         return direct_literal_v1(buffer, name);
     }
-    if (term->kind == ATOM_VAR) {
-        const char *printed = atom_to_parseable_string(scratch, (Atom *)term);
-        return printed != NULL && direct_literal_v1(buffer, printed);
+    if (term->kind != ATOM_VAR && term->kind != ATOM_GROUNDED) return false;
+    const char *printed = atom_to_parseable_string(scratch, (Atom *)term);
+    return printed && direct_literal_v1(buffer, printed);
+}
+
+static bool direct_render_term_context_v1(
+    DirectBufferV1 *buffer, const Atom *term, Arena *scratch,
+    bool target_syntax) {
+    AtomWalk *walk = atom_walk_new(term, false);
+    if (!walk) return false;
+    bool ok = false;
+    for (;;) {
+        AtomWalkEvent event;
+        AtomWalkStep step = atom_walk_next(walk, &event);
+        if (step == ATOM_WALK_DONE) { ok = true; break; }
+        if (step != ATOM_WALK_ENTER && step != ATOM_WALK_LEAVE) break;
+        term = event.node;
+        bool nullary = target_syntax && direct_head_v1(term, "metta-nullary", 1u);
+        if (step == ATOM_WALK_ENTER) {
+            if (event.parent && event.child_index && !direct_byte_v1(buffer, (uint8_t)' ')) break;
+            if (nullary) {
+                const Atom *target = term->expr.elems[1];
+                if (target->kind != ATOM_SYMBOL || !direct_byte_v1(buffer, (uint8_t)'(') ||
+                    !direct_render_leaf_v1(buffer, target, scratch) || !direct_byte_v1(buffer, (uint8_t)')') ||
+                    !atom_walk_prune(walk)) break;
+            } else if (term->kind == ATOM_EXPR) {
+                if (!term->expr.len || !direct_byte_v1(buffer, (uint8_t)'(')) break;
+            } else if (!direct_render_leaf_v1(buffer, term, scratch)) break;
+        } else if (term->kind == ATOM_EXPR && !nullary && !direct_byte_v1(buffer, (uint8_t)')')) break;
     }
-    if (term->kind == ATOM_GROUNDED) {
-        const char *printed = atom_to_parseable_string(scratch, (Atom *)term);
-        return printed != NULL && direct_literal_v1(buffer, printed);
-    }
-    if (target_syntax && direct_head_v1(term, "metta-nullary", 1u)) {
-        const Atom *target = term->expr.elems[1];
-        return target->kind == ATOM_SYMBOL &&
-               direct_byte_v1(buffer, (uint8_t)'(') &&
-               direct_render_term_context_v1(buffer, target, scratch, depth + 1u,
-                                              target_syntax) &&
-               direct_byte_v1(buffer, (uint8_t)')');
-    }
-    if (term->kind != ATOM_EXPR || term->expr.len == 0u ||
-        !direct_byte_v1(buffer, (uint8_t)'('))
-        return false;
-    for (CettaExprIndex index = 0u; index < term->expr.len; index++) {
-        if (index > 0u && !direct_byte_v1(buffer, (uint8_t)' '))
-            return false;
-        if (!direct_render_term_context_v1(buffer, term->expr.elems[index],
-                                           scratch, depth + 1u, target_syntax))
-            return false;
-    }
-    return direct_byte_v1(buffer, (uint8_t)')');
+    atom_walk_free(walk);
+    return ok;
 }
 
 static bool direct_render_term_v1(DirectBufferV1 *buffer, const Atom *term,
-                                  Arena *scratch, size_t depth) {
-    return direct_render_term_context_v1(buffer, term, scratch, depth, false);
+                                  Arena *scratch) {
+    return direct_render_term_context_v1(buffer, term, scratch, false);
 }
 
 /* Source applications are data, even when their names are PeTTa operations.
  * cons-atom patterns expose the physical expression spine without invoking a
  * source constructor's target-language meaning. HE keeps its own pattern syntax. */
 static bool direct_render_data_pattern_v1(
-    DirectBufferV1 *program, const Atom *term, Arena *scratch, size_t depth) {
+    DirectBufferV1 *program, const Atom *term, Arena *scratch) {
     if (direct_target_is_he_v1(program) || !term || term->kind != ATOM_EXPR)
-        return direct_render_term_v1(program, term, scratch, depth);
-    if (depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
-        return false;
-    for (CettaExprIndex i = 0u; i < term->expr.len; ++i) {
-        if (!direct_literal_v1(program, "(cons-atom ") ||
-            !direct_render_data_pattern_v1(program, term->expr.elems[i], scratch, depth + 1u) ||
-            !direct_byte_v1(program, (uint8_t)' '))
-            return false;
+        return direct_render_term_v1(program, term, scratch);
+    AtomWalk *walk = atom_walk_new(term, false);
+    if (!walk) return false;
+    bool ok = false;
+    for (;;) {
+        AtomWalkEvent event;
+        AtomWalkStep step = atom_walk_next(walk, &event);
+        if (step == ATOM_WALK_DONE) { ok = true; break; }
+        if (step != ATOM_WALK_ENTER && step != ATOM_WALK_LEAVE) break;
+        term = event.node;
+        if (step == ATOM_WALK_ENTER) {
+            if (event.parent && !direct_literal_v1(program, "(cons-atom ")) break;
+            if (term->kind != ATOM_EXPR && !direct_render_leaf_v1(program, term, scratch)) break;
+        } else {
+            if (term->kind == ATOM_EXPR) {
+                if (!direct_literal_v1(program, "()")) break;
+                CettaExprIndex i;
+                for (i = 0u; i < term->expr.len; ++i)
+                    if (!direct_byte_v1(program, (uint8_t)')')) break;
+                if (i != term->expr.len) break;
+            }
+            if (event.parent && !direct_byte_v1(program, (uint8_t)' ')) break;
+        }
     }
-    if (!direct_literal_v1(program, "()"))
-        return false;
-    for (CettaExprIndex i = 0u; i < term->expr.len; ++i)
-        if (!direct_byte_v1(program, (uint8_t)')'))
-            return false;
-    return true;
+    atom_walk_free(walk);
+    return ok;
+}
+
+
+/* A binding pattern is literal data. Head patterns use their own encoding,
+ * because quotation in an equation head has a different source meaning. */
+static bool direct_render_binding_pattern_v1(
+    DirectBufferV1 *program, const Atom *term, Arena *scratch) {
+    if (direct_target_is_he_v1(program) || !term || term->kind != ATOM_EXPR)
+        return direct_render_term_v1(program, term, scratch);
+    return direct_literal_v1(program, "(quote ") &&
+           direct_render_term_v1(program, term, scratch) &&
+           direct_byte_v1(program, (uint8_t)')');
 }
 
 static bool direct_validate_target_equations_v1(
@@ -608,14 +722,10 @@ static bool direct_validate_target_equations_v1(
                 "direct PeTTa target equation is malformed");
         left = equation->expr.elems[1];
         right = equation->expr.elems[2];
-        if (atom_eq((Atom *)left, (Atom *)right))
-            return direct_error_v1(
-                error, error_size,
-                "direct PeTTa rejects a structurally identical target equation");
         if (!direct_validate_term_v1(
-                left, operators, 0u, error, error_size) ||
+                left, operators, error, error_size) ||
             !direct_validate_term_v1(
-                right, operators, 0u, error, error_size))
+                right, operators, error, error_size))
             return false;
     }
     return true;
@@ -634,7 +744,7 @@ static bool direct_validate_rules_v1(
                                    "GSLT rule head must be an application");
         const char *relation = atom_name_cstr(head->expr.elems[0]);
         size_t arity = (size_t)head->expr.len - 1u;
-        if (!direct_validate_term_v1(head, operators, 0u,
+        if (!direct_validate_term_v1(head, operators,
                                      error, error_size) ||
             !direct_push_operator_v1(relations, relation, arity,
                                      error, error_size))
@@ -660,7 +770,7 @@ static bool direct_validate_rules_v1(
                 goal->expr.elems[0]->kind != ATOM_SYMBOL)
                 return direct_error_v1(error, error_size,
                                        "GSLT rule body must contain applications");
-            if (!direct_validate_term_v1(goal, operators, 0u,
+            if (!direct_validate_term_v1(goal, operators,
                                          error, error_size))
                 return false;
         }
@@ -672,12 +782,13 @@ static bool direct_validate_rules_v1(
             Atom *goal = body->expr.elems[body_index];
             const char *relation = atom_name_cstr(goal->expr.elems[0]);
             size_t arity = (size_t)goal->expr.len - 1u;
+            /* An ordinary declared goal may have no clauses in this finite
+             * composition. Its branch has no answers; explicit capabilities
+             * retain their separate backend interpretation. */
             if (!direct_has_operator_v1(relations, relation, arity) &&
-                !direct_has_operator_v1(capabilities, relation, arity))
-                return direct_error_v1(
-                    error, error_size,
-                    "direct PeTTa v1 requires an authored definition or declared backend capability for %s/%zu",
-                    relation, arity);
+                !direct_has_operator_v1(capabilities, relation, arity) &&
+                !direct_push_operator_v1(relations, relation, arity, error, error_size))
+                return false;
         }
     }
     return true;
@@ -693,7 +804,7 @@ static bool direct_analyze_binding_mode_v1(
     const char *relation = modes->items[mode_index].relation;
     size_t arity = modes->items[mode_index].arity;
     const uint8_t *input_ground = modes->items[mode_index].input_ground;
-    uint8_t *candidate = (uint8_t *)malloc(arity);
+    uint8_t *candidate = direct_mode_bits_v1(arity);
     size_t rule_begin = 0u;
     size_t rule_end = 0u;
     const char *trace_relation = getenv("CETTA_GSLT_DIRECT_MODE_TRACE");
@@ -721,7 +832,7 @@ static bool direct_analyze_binding_mode_v1(
         for (size_t argument = 0u; argument < arity; argument++) {
             if (input_ground[argument] &&
                 !direct_variables_add_term_v1(
-                    &known, head->expr.elems[argument + 1u], 0u,
+                    &known, head->expr.elems[argument + 1u],
                     error, error_size)) {
                 rule_ok = false;
                 break;
@@ -733,7 +844,7 @@ static bool direct_analyze_binding_mode_v1(
             const char *callee_relation =
                 atom_name_cstr(goal->expr.elems[0]);
             size_t callee_arity = (size_t)goal->expr.len - 1u;
-            uint8_t *callee_input = (uint8_t *)malloc(callee_arity);
+            uint8_t *callee_input = direct_mode_bits_v1(callee_arity);
             size_t callee_mode_index = 0u;
             bool added = false;
 
@@ -747,7 +858,7 @@ static bool direct_analyze_binding_mode_v1(
             for (size_t argument = 0u;
                  argument < callee_arity; argument++) {
                 callee_input[argument] = direct_term_is_ground_v1(
-                    &known, goal->expr.elems[argument + 1u], 0u);
+                    &known, goal->expr.elems[argument + 1u]);
             }
             if (direct_has_operator_v1(
                     relations, callee_relation, callee_arity)) {
@@ -765,7 +876,7 @@ static bool direct_analyze_binding_mode_v1(
                     if (modes->items[callee_mode_index]
                             .success_ground[argument] &&
                         !direct_variables_add_term_v1(
-                            &known, goal->expr.elems[argument + 1u], 0u,
+                            &known, goal->expr.elems[argument + 1u],
                             error, error_size)) {
                         rule_ok = false;
                         break;
@@ -808,14 +919,14 @@ static bool direct_analyze_binding_mode_v1(
                     rule_reachable ? 1u : 0u);
             for (size_t argument = 0u; argument < arity; argument++)
                 fprintf(stderr, "%u", (unsigned)direct_term_is_ground_v1(
-                    &known, head->expr.elems[argument + 1u], 0u));
+                    &known, head->expr.elems[argument + 1u]));
             fputc('\n', stderr);
         }
         if (rule_ok && rule_reachable) {
             for (size_t argument = 0u; argument < arity; argument++) {
                 bool ground = input_ground[argument] ||
                     direct_term_is_ground_v1(
-                        &known, head->expr.elems[argument + 1u], 0u);
+                        &known, head->expr.elems[argument + 1u]);
                 candidate[argument] =
                     (uint8_t)(candidate[argument] && ground);
             }
@@ -826,13 +937,9 @@ static bool direct_analyze_binding_mode_v1(
             return false;
         }
     }
-    if (rule_begin == rule_end) {
-        free(candidate);
-        return direct_error_v1(
-            error, error_size,
-            "binding-mode analysis found relation %s/%zu without rules",
-            relation, arity);
-    }
+    /* With no clauses in this composition there are no successful executions.
+     * Groundness on success is vacuous; it asserts neither existence of an
+     * answer nor absence of clauses in a later composition. */
     for (size_t argument = 0u; argument < arity; argument++) {
         if (modes->items[mode_index].success_ground[argument] &&
             !candidate[argument]) {
@@ -855,7 +962,7 @@ static bool direct_analyze_binding_modes_v1(
     for (size_t relation_index = 0u;
          relation_index < relations->len; relation_index++) {
         const DirectOperatorV1 *relation = &relations->items[relation_index];
-        uint8_t *seed = (uint8_t *)calloc(relation->arity, 1u);
+        uint8_t *seed = direct_mode_bits_v1(relation->arity);
         size_t ignored_index;
         bool ignored_added;
         if (seed == NULL)
@@ -898,8 +1005,9 @@ static bool direct_analyze_binding_modes_v1(
         bool added = false;
         size_t relation_len;
         size_t bit_len;
+        bool named_relation = false;
 
-        if (separator == NULL || separator == entry || separator[1] == '\0')
+        if (separator == NULL || separator == entry)
             return direct_error_v1(
                 error, error_size,
                 "direct PeTTa entry mode must be RELATION:BITS");
@@ -911,19 +1019,19 @@ static bool direct_analyze_binding_modes_v1(
                 &relations->items[relation_index];
             if (strlen(candidate->name) == relation_len &&
                 strncmp(candidate->name, entry, relation_len) == 0) {
-                relation = candidate;
-                break;
+                named_relation = true;
+                if (candidate->arity == bit_len) {
+                    relation = candidate;
+                    break;
+                }
             }
         }
         if (relation == NULL)
             return direct_error_v1(
                 error, error_size,
-                "direct PeTTa entry mode names an undefined relation");
-        if (bit_len != relation->arity)
-            return direct_error_v1(
-                error, error_size,
-                "direct PeTTa entry mode arity does not match its relation");
-        input_ground = (uint8_t *)malloc(relation->arity);
+                named_relation ? "direct PeTTa entry mode arity does not match its relation"
+                               : "direct PeTTa entry mode names an undefined relation");
+        input_ground = direct_mode_bits_v1(relation->arity);
         if (input_ground == NULL)
             return direct_error_v1(
                 error, error_size,
@@ -974,38 +1082,133 @@ static const DirectBindingModeV1 *direct_find_binding_mode_v1(
     return NULL;
 }
 
-static bool direct_patterns_may_unify_v1(const Atom *left,
-                                         const Atom *right,
-                                         size_t depth) {
-    if (left == NULL || right == NULL ||
-        depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
-        return true;
-    if (direct_is_source_variable_v1(left) ||
-        direct_is_source_variable_v1(right))
-        return true;
-    if (left->kind != right->kind)
-        return false;
+
+/* Structural comparison policies share an occurrence walk. Unknown traversal
+ * is distinct from a proved mismatch; conservative overlap callers retain it. */
+typedef enum {
+    DIRECT_COMPARE_OVERLAP, DIRECT_COMPARE_ALIGN, DIRECT_COMPARE_ALIGN_OVERLAP,
+    DIRECT_COMPARE_CORRESPOND, DIRECT_COMPARE_EQUAL, DIRECT_COMPARE_SOURCE,
+    DIRECT_COMPARE_NONLINEAR, DIRECT_COMPARE_SUBSUMES,
+} DirectCompareKindV1;
+typedef struct {
+    DirectCompareKindV1 kind;
+    DirectVariablePairsV1 *pairs, *equalities;
+    const DirectVariablePairsV1 *known;
+    Arena *scratch;
+    char *error;
+    size_t error_size;
+} DirectCompareV1;
+typedef enum { DIRECT_PAIR_REJECT, DIRECT_PAIR_ACCEPT, DIRECT_PAIR_DESCEND } DirectPairActionV1;
+typedef enum { DIRECT_PAIR_DIFFERENT, DIRECT_PAIR_EQUAL, DIRECT_PAIR_UNKNOWN } DirectPairResultV1;
+
+static bool direct_variable_pairs_add_v1(DirectVariablePairsV1 *, const Atom *, const Atom *, char *, size_t);
+static bool direct_variable_pairs_push_v1(DirectVariablePairsV1 *, const Atom *, const Atom *, char *, size_t);
+static bool direct_guard_binding_push_v1(DirectVariablePairsV1 *, const Atom *, const Atom *, char *, size_t);
+
+static DirectPairActionV1 direct_compare_node_v1(
+    const Atom *left, const Atom *right, DirectCompareV1 *context) {
+    if (context->kind == DIRECT_COMPARE_EQUAL && left == right && !atom_structural_may_have_nan(left)) return DIRECT_PAIR_ACCEPT;
+    if (context->kind == DIRECT_COMPARE_SOURCE) {
+        if (left->kind != right->kind) return DIRECT_PAIR_REJECT;
+        if (left->kind == ATOM_EXPR)
+            return left->expr.len == right->expr.len ? DIRECT_PAIR_DESCEND : DIRECT_PAIR_REJECT;
+        if (left->kind == ATOM_GROUNDED && left->ground.gkind != right->ground.gkind)
+            return DIRECT_PAIR_REJECT;
+        const char *a = atom_to_parseable_string(context->scratch, (Atom *)left);
+        const char *b = atom_to_parseable_string(context->scratch, (Atom *)right);
+        return a && b && !strcmp(a, b) ? DIRECT_PAIR_ACCEPT : DIRECT_PAIR_REJECT;
+    }
+    bool lv = direct_is_source_variable_v1(left);
+    bool rv = direct_is_source_variable_v1(right);
+    if (lv || rv) {
+        bool matches = false;
+        switch (context->kind) {
+        case DIRECT_COMPARE_OVERLAP: matches = true; break;
+        case DIRECT_COMPARE_ALIGN:
+            matches = lv && rv && direct_variable_pairs_add_v1(
+                context->pairs, left, right, context->error, context->error_size);
+            break;
+        case DIRECT_COMPARE_ALIGN_OVERLAP:
+            matches = !lv || !rv || direct_variable_pairs_add_v1(
+                context->pairs, left, right, context->error, context->error_size);
+            break;
+        case DIRECT_COMPARE_CORRESPOND:
+            for (size_t i = 0u; lv && rv && i < context->known->len; ++i)
+                if (direct_same_variable_v1(context->known->items[i].left, left) &&
+                    direct_same_variable_v1(context->known->items[i].right, right)) matches = true;
+            break;
+        case DIRECT_COMPARE_EQUAL: matches = lv && rv && direct_same_variable_v1(left, right); break;
+        case DIRECT_COMPARE_NONLINEAR:
+            if (!lv || !rv) break;
+            for (size_t i = 0u;; ++i) {
+                if (i == context->pairs->len) {
+                    matches = direct_variable_pairs_push_v1(context->pairs, left, right,
+                        context->error, context->error_size);
+                    break;
+                }
+                if (!direct_same_variable_v1(context->pairs->items[i].left, left)) continue;
+                matches = direct_same_variable_v1(context->pairs->items[i].right, right) ||
+                    direct_variable_pairs_push_v1(context->equalities,
+                        context->pairs->items[i].right, right, context->error, context->error_size);
+                break;
+            }
+            break;
+        case DIRECT_COMPARE_SUBSUMES:
+            matches = lv && direct_guard_binding_push_v1(context->pairs, left, right,
+                context->error, context->error_size);
+            break;
+        case DIRECT_COMPARE_SOURCE: break;
+        }
+        return matches ? DIRECT_PAIR_ACCEPT : DIRECT_PAIR_REJECT;
+    }
+    if (left->kind != right->kind) return DIRECT_PAIR_REJECT;
     switch (left->kind) {
     case ATOM_SYMBOL:
-        return strcmp(atom_name_cstr((Atom *)left),
-                      atom_name_cstr((Atom *)right)) == 0;
-    case ATOM_VAR:
-        return true;
+        return !strcmp(atom_name_cstr((Atom *)left), atom_name_cstr((Atom *)right))
+            ? DIRECT_PAIR_ACCEPT : DIRECT_PAIR_REJECT;
     case ATOM_GROUNDED:
-        return atom_eq((Atom *)left, (Atom *)right);
+        return atom_eq((Atom *)left, (Atom *)right) ? DIRECT_PAIR_ACCEPT : DIRECT_PAIR_REJECT;
+    case ATOM_VAR:
+        return context->kind == DIRECT_COMPARE_OVERLAP ? DIRECT_PAIR_ACCEPT : DIRECT_PAIR_REJECT;
     case ATOM_EXPR:
-        if (left->expr.len != right->expr.len)
-            return false;
-        for (CettaExprIndex index = 0u;
-             index < left->expr.len; index++) {
-            if (!direct_patterns_may_unify_v1(
-                    left->expr.elems[index], right->expr.elems[index],
-                    depth + 1u))
-                return false;
-        }
-        return true;
+        return left->expr.len == right->expr.len ? DIRECT_PAIR_DESCEND : DIRECT_PAIR_REJECT;
     }
-    return true;
+    return DIRECT_PAIR_REJECT;
+}
+
+static DirectPairResultV1 direct_compare_terms_v1(
+    const Atom *left, const Atom *right, DirectCompareV1 context) {
+    if (!left || !right) return DIRECT_PAIR_UNKNOWN;
+    DirectPairActionV1 action = direct_compare_node_v1(left, right, &context);
+    if (action == DIRECT_PAIR_REJECT) return DIRECT_PAIR_DIFFERENT;
+    if (action == DIRECT_PAIR_ACCEPT) return DIRECT_PAIR_EQUAL;
+    AtomWalk *a = atom_walk_new(left, false), *b = atom_walk_new(right, false);
+    DirectPairResultV1 result = DIRECT_PAIR_UNKNOWN;
+    if (!a || !b) goto done;
+    for (;;) {
+        AtomWalkEvent ae, be;
+        AtomWalkStep as = atom_walk_next(a, &ae), bs = atom_walk_next(b, &be);
+        if (as == ATOM_WALK_DONE && bs == ATOM_WALK_DONE) { result = DIRECT_PAIR_EQUAL; break; }
+        if ((as != ATOM_WALK_ENTER && as != ATOM_WALK_LEAVE) ||
+            (bs != ATOM_WALK_ENTER && bs != ATOM_WALK_LEAVE)) break;
+        if (as != bs) { result = DIRECT_PAIR_DIFFERENT; break; }
+        if (as == ATOM_WALK_LEAVE) continue;
+        action = direct_compare_node_v1(ae.node, be.node, &context);
+        if (action == DIRECT_PAIR_REJECT) { result = DIRECT_PAIR_DIFFERENT; break; }
+        if (action == DIRECT_PAIR_ACCEPT && (!atom_walk_prune(a) || !atom_walk_prune(b))) break;
+    }
+done:
+    atom_walk_free(a); atom_walk_free(b);
+    if (result == DIRECT_PAIR_UNKNOWN)
+        direct_error_v1(context.error, context.error_size,
+            "could not finish structural comparison of GSLT source terms");
+    return result;
+}
+
+static bool direct_patterns_may_unify_v1(const Atom *left,
+                                         const Atom *right) {
+    return direct_compare_terms_v1(left, right,
+        (DirectCompareV1){.kind = DIRECT_COMPARE_OVERLAP}) != DIRECT_PAIR_DIFFERENT;
 }
 
 static bool direct_variable_pairs_add_v1(
@@ -1045,108 +1248,25 @@ static bool direct_variable_pairs_add_v1(
 
 static bool direct_align_input_patterns_v1(
     const Atom *left, const Atom *right, DirectVariablePairsV1 *pairs,
-    size_t depth, char *error, size_t error_size) {
-    bool left_variable = direct_is_source_variable_v1(left);
-    bool right_variable = direct_is_source_variable_v1(right);
-    if (left == NULL || right == NULL ||
-        depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
-        return false;
-    if (left_variable || right_variable) {
-        return left_variable && right_variable &&
-               direct_variable_pairs_add_v1(
-                   pairs, left, right, error, error_size);
-    }
-    if (left->kind != right->kind)
-        return false;
-    if (left->kind == ATOM_SYMBOL)
-        return strcmp(atom_name_cstr((Atom *)left),
-                      atom_name_cstr((Atom *)right)) == 0;
-    if (left->kind == ATOM_GROUNDED)
-        return atom_eq((Atom *)left, (Atom *)right);
-    if (left->kind != ATOM_EXPR ||
-        left->expr.len != right->expr.len)
-        return false;
-    for (CettaExprIndex index = 0u;
-         index < left->expr.len; index++) {
-        if (!direct_align_input_patterns_v1(
-                left->expr.elems[index], right->expr.elems[index], pairs,
-                depth + 1u, error, error_size))
-            return false;
-    }
-    return true;
+     char *error, size_t error_size) {
+    return direct_compare_terms_v1(left, right, (DirectCompareV1){
+        .kind = DIRECT_COMPARE_ALIGN, .pairs = pairs,
+        .error = error, .error_size = error_size}) == DIRECT_PAIR_EQUAL;
 }
 
 static bool direct_align_overlapping_input_patterns_v1(
     const Atom *left, const Atom *right, DirectVariablePairsV1 *pairs,
-    size_t depth, char *error, size_t error_size) {
-    bool left_variable = direct_is_source_variable_v1(left);
-    bool right_variable = direct_is_source_variable_v1(right);
-    if (left == NULL || right == NULL ||
-        depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
-        return false;
-    if (left_variable || right_variable) {
-        if (left_variable && right_variable) {
-            return direct_variable_pairs_add_v1(
-                pairs, left, right, error, error_size);
-        }
-        return true;
-    }
-    if (left->kind != right->kind)
-        return false;
-    if (left->kind == ATOM_SYMBOL)
-        return strcmp(atom_name_cstr((Atom *)left),
-                      atom_name_cstr((Atom *)right)) == 0;
-    if (left->kind == ATOM_GROUNDED)
-        return atom_eq((Atom *)left, (Atom *)right);
-    if (left->kind != ATOM_EXPR ||
-        left->expr.len != right->expr.len)
-        return false;
-    for (CettaExprIndex index = 0u;
-         index < left->expr.len; index++) {
-        if (!direct_align_overlapping_input_patterns_v1(
-                left->expr.elems[index], right->expr.elems[index], pairs,
-                depth + 1u, error, error_size))
-            return false;
-    }
-    return true;
+     char *error, size_t error_size) {
+    return direct_compare_terms_v1(left, right, (DirectCompareV1){
+        .kind = DIRECT_COMPARE_ALIGN_OVERLAP, .pairs = pairs,
+        .error = error, .error_size = error_size}) == DIRECT_PAIR_EQUAL;
 }
 
 static bool direct_terms_correspond_v1(
     const Atom *left, const Atom *right,
-    const DirectVariablePairsV1 *pairs, size_t depth) {
-    bool left_variable = direct_is_source_variable_v1(left);
-    bool right_variable = direct_is_source_variable_v1(right);
-    if (left == NULL || right == NULL ||
-        depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
-        return false;
-    if (left_variable || right_variable) {
-        if (!left_variable || !right_variable)
-            return false;
-        for (size_t index = 0u; index < pairs->len; index++) {
-            if (direct_same_variable_v1(pairs->items[index].left, left) &&
-                direct_same_variable_v1(pairs->items[index].right, right))
-                return true;
-        }
-        return false;
-    }
-    if (left->kind != right->kind)
-        return false;
-    if (left->kind == ATOM_SYMBOL)
-        return strcmp(atom_name_cstr((Atom *)left),
-                      atom_name_cstr((Atom *)right)) == 0;
-    if (left->kind == ATOM_GROUNDED)
-        return atom_eq((Atom *)left, (Atom *)right);
-    if (left->kind != ATOM_EXPR ||
-        left->expr.len != right->expr.len)
-        return false;
-    for (CettaExprIndex index = 0u;
-         index < left->expr.len; index++) {
-        if (!direct_terms_correspond_v1(
-                left->expr.elems[index], right->expr.elems[index], pairs,
-                depth + 1u))
-            return false;
-    }
-    return true;
+    const DirectVariablePairsV1 *pairs) {
+    return direct_compare_terms_v1(left, right,
+        (DirectCompareV1){.kind = DIRECT_COMPARE_CORRESPOND, .known = pairs}) == DIRECT_PAIR_EQUAL;
 }
 
 typedef struct {
@@ -1155,62 +1275,18 @@ typedef struct {
     bool equality_arguments_quoted;
 } DirectGroundDisequalityCapabilityV1;
 
-static bool direct_terms_equal_v1(const Atom *left, const Atom *right,
-                                  size_t depth) {
-    bool left_variable = direct_is_source_variable_v1(left);
-    bool right_variable = direct_is_source_variable_v1(right);
-    if (left == NULL || right == NULL ||
-        depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
-        return false;
-    if (left_variable || right_variable)
-        return left_variable && right_variable &&
-               direct_same_variable_v1(left, right);
-    if (left->kind != right->kind)
-        return false;
-    if (left->kind == ATOM_SYMBOL)
-        return strcmp(atom_name_cstr((Atom *)left),
-                      atom_name_cstr((Atom *)right)) == 0;
-    if (left->kind == ATOM_VAR)
-        return direct_same_variable_v1(left, right);
-    if (left->kind == ATOM_GROUNDED)
-        return atom_eq((Atom *)left, (Atom *)right);
-    if (left->kind != ATOM_EXPR ||
-        left->expr.len != right->expr.len)
-        return false;
-    for (CettaExprIndex index = 0u; index < left->expr.len; index++) {
-        if (!direct_terms_equal_v1(
-                left->expr.elems[index], right->expr.elems[index],
-                depth + 1u))
-            return false;
-    }
-    return true;
+static bool direct_terms_equal_v1(const Atom *left, const Atom *right) {
+    return direct_compare_terms_v1(left, right,
+        (DirectCompareV1){.kind = DIRECT_COMPARE_EQUAL}) == DIRECT_PAIR_EQUAL;
 }
 
 /* Source authentication uses source identity, not numeric equivalence.
  * This compares the parsed constructors, including the grounded value tag.
  * It does not claim identity of original whitespace or comments. */
 static bool direct_source_equal_v1(
-    const Atom *left, const Atom *right, Arena *scratch, size_t depth) {
-    if (left == NULL || right == NULL || left->kind != right->kind ||
-        depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
-        return false;
-    if (left->kind == ATOM_EXPR) {
-        if (left->expr.len != right->expr.len)
-            return false;
-        for (CettaExprIndex i = 0u; i < left->expr.len; i++) {
-            if (!direct_source_equal_v1(left->expr.elems[i],
-                                        right->expr.elems[i], scratch,
-                                        depth + 1u))
-                return false;
-        }
-        return true;
-    }
-    if (left->kind == ATOM_GROUNDED &&
-        left->ground.gkind != right->ground.gkind)
-        return false;
-    const char *a = atom_to_parseable_string(scratch, (Atom *)left);
-    const char *b = atom_to_parseable_string(scratch, (Atom *)right);
-    return a != NULL && b != NULL && strcmp(a, b) == 0;
+    const Atom *left, const Atom *right, Arena *scratch) {
+    return direct_compare_terms_v1(left, right,
+        (DirectCompareV1){.kind = DIRECT_COMPARE_SOURCE, .scratch = scratch}) == DIRECT_PAIR_EQUAL;
 }
 
 static bool direct_literal_integer_v1(const Atom *term, int64_t *value) {
@@ -1224,30 +1300,9 @@ static bool direct_literal_integer_v1(const Atom *term, int64_t *value) {
 /* A conservative overlap test: repeated pattern variables can only make
  * this test reject more optimizations, never establish false uniqueness. */
 static bool direct_patterns_overlap_v1(
-    const Atom *left, const Atom *right, size_t depth) {
-    if (left == NULL || right == NULL ||
-        depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
-        return true;
-    if (direct_is_source_variable_v1(left) ||
-        direct_is_source_variable_v1(right))
-        return true;
-    if (left->kind != right->kind)
-        return false;
-    if (left->kind == ATOM_SYMBOL)
-        return strcmp(atom_name_cstr((Atom *)left),
-                      atom_name_cstr((Atom *)right)) == 0;
-    if (left->kind == ATOM_GROUNDED)
-        return atom_eq((Atom *)left, (Atom *)right);
-    if (left->kind != ATOM_EXPR)
-        return true;
-    if (left->expr.len != right->expr.len)
-        return false;
-    for (CettaExprIndex i = 0u; i < left->expr.len; i++) {
-        if (!direct_patterns_overlap_v1(left->expr.elems[i],
-                                        right->expr.elems[i], depth + 1u))
-            return false;
-    }
-    return true;
+    const Atom *left, const Atom *right) {
+    return direct_compare_terms_v1(left, right,
+        (DirectCompareV1){.kind = DIRECT_COMPARE_OVERLAP}) != DIRECT_PAIR_DIFFERENT;
 }
 
 /* The finite decoder is the selected binary completion-type inference's
@@ -1281,7 +1336,7 @@ static bool direct_infer_integer_native_type_v1(
     bool not_less = direct_head_v1(condition, ">=", 2u);
     if ((!not_less && !direct_head_v1(condition, "<", 2u)) ||
         !direct_head_v1(success, "quote", 1u) ||
-        !direct_terms_equal_v1(success->expr.elems[1], query, 0u) ||
+        !direct_terms_equal_v1(success->expr.elems[1], query) ||
         !direct_head_v1(failure, "metta-nullary", 1u) ||
         !direct_symbol_v1(failure->expr.elems[1], "empty") ||
         !direct_same_variable_v1(condition->expr.elems[2],
@@ -1325,7 +1380,7 @@ static bool direct_authenticate_integer_native_types_v1(
                                "malformed integer native-type source binding");
     for (size_t i = 0u; i < presentation_count; i++) {
         if (!direct_source_equal_v1(presentations[i],
-                                    sources->expr.elems[i + 1u], scratch, 0u))
+                                    sources->expr.elems[i + 1u], scratch))
             return direct_error_v1(error, error_size,
                                    "integer native-type source composition differs");
     }
@@ -1362,7 +1417,7 @@ static bool direct_authenticate_integer_native_types_v1(
         bool primitive_override = false;
         for (size_t j = 0u; j < target_equations->len; j++) {
             const Atom *lhs = target_equations->items[j].head->expr.elems[1];
-            if (direct_patterns_overlap_v1(lhs, inferred.left, 0u))
+            if (direct_patterns_overlap_v1(lhs, inferred.left))
                 matching++;
             if (direct_is_source_variable_v1(lhs))
                 primitive_override = true;
@@ -1430,21 +1485,58 @@ static uint32_t direct_domain_type_v1(
     return found;
 }
 
+
+/* Equal source terms have the same structural height. This index is only
+ * a candidate filter: complete source-term equality still decides a hit. */
+static bool direct_term_height_v1(const Atom *term, size_t *height) {
+    AtomWalk *walk = atom_walk_new(term, false);
+    if (!walk) return false;
+    size_t maximum = 0u;
+    bool ok = false;
+    for (;;) {
+        AtomWalkEvent event;
+        AtomWalkStep step = atom_walk_next(walk, &event);
+        if (step == ATOM_WALK_DONE) { ok = true; break; }
+        if (step == ATOM_WALK_LEAVE) continue;
+        if (step != ATOM_WALK_ENTER) break;
+        if (event.depth > maximum) maximum = event.depth;
+    }
+    atom_walk_free(walk);
+    if (ok) *height = maximum;
+    return ok;
+}
+
 static bool direct_domain_bind_v1(
-    DirectDomainEnvironmentV1 *env, const Atom *term, uint32_t type) {
-    if (type == 0u) return true;
-    for (size_t i = 0u; i < env->len; i++) {
-        if (direct_terms_equal_v1(env->items[i].term, term, 0u)) {
-            if (env->items[i].type != type) env->inconsistent = true;
+    DirectDomainEnvironmentV1 *env, const Atom *term, uint32_t type, size_t height) {
+    if (!type) return true;
+    if (height >= env->bucket_len) {
+        size_t capacity = env->bucket_len ? env->bucket_len : 16u;
+        while (capacity <= height) {
+            if (capacity > SIZE_MAX / 2u) return false;
+            capacity *= 2u;
+        }
+        if (capacity > SIZE_MAX / sizeof(*env->buckets)) return false;
+        size_t *buckets = realloc(env->buckets, capacity * sizeof(*buckets));
+        if (!buckets) return false;
+        memset(buckets + env->bucket_len, 0, (capacity - env->bucket_len) * sizeof(*buckets));
+        env->buckets = buckets; env->bucket_len = capacity;
+    }
+    for (size_t index = env->buckets[height]; index; index = env->items[index - 1u].next) {
+        DirectDomainFactV1 *fact = &env->items[index - 1u];
+        if (direct_terms_equal_v1(fact->term, term)) {
+            if (fact->type != type) env->inconsistent = true;
             return true;
         }
     }
-    if (env->len == SIZE_MAX / sizeof(*env->items)) return false;
-    DirectDomainFactV1 *grown = realloc(
-        env->items, (env->len + 1u) * sizeof(*env->items));
-    if (grown == NULL) return false;
-    env->items = grown;
-    env->items[env->len++] = (DirectDomainFactV1){term, type};
+    if (env->len == env->cap) {
+        size_t capacity = env->cap ? env->cap * 2u : 16u;
+        if (capacity < env->cap || capacity > SIZE_MAX / sizeof(*env->items)) return false;
+        DirectDomainFactV1 *items = realloc(env->items, capacity * sizeof(*items));
+        if (!items) return false;
+        env->items = items; env->cap = capacity;
+    }
+    env->items[env->len++] = (DirectDomainFactV1){term, type, height, env->buckets[height]};
+    env->buckets[height] = env->len;
     return true;
 }
 
@@ -1477,54 +1569,84 @@ static const CettaLdGrammarRuleV1 *direct_domain_rule_v1(
 
 static bool direct_domain_pattern_v1(
     const CettaLanguageDefCoreV1 *language, const Atom *pattern,
-    uint32_t type, DirectDomainEnvironmentV1 *env, size_t depth) {
-    if (type == 0u || type > language->type_len ||
-        depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1) return true;
-    if (direct_is_source_variable_v1(pattern))
-        return direct_domain_bind_v1(env, pattern, type);
-    if (language->types[type - 1u].carrier != CETTA_LD_CARRIER_AST_V1)
-        return true;
-    const CettaLdGrammarRuleV1 *rule =
-        direct_domain_rule_v1(language, pattern, type);
-    if (rule == NULL) return true;
-    /* Reusing this exact matched pattern reconstructs an admitted subterm.
-     * This is not a license to build arbitrary new constructor expressions. */
-    if (!direct_domain_bind_v1(env, pattern, type)) return false;
-    for (uint32_t i = 0u; i < rule->param_len; i++) {
-        const CettaLdTermParamV1 *param = &rule->params[i];
-        if (param->kind != CETTA_LD_PARAM_SIMPLE_V1 ||
-            param->type.kind != CETTA_LD_TYPE_BASE_V1) continue;
-        if (!direct_domain_pattern_v1(language, pattern->expr.elems[i + 1u],
-                direct_domain_type_v1(language, &param->type.as.base),
-                env, depth + 1u)) return false;
+    uint32_t type, DirectDomainEnvironmentV1 *env) {
+    typedef struct {
+        const CettaLdGrammarRuleV1 *rule;
+        uint32_t binding;
+        size_t maximum_depth;
+    } Frame;
+    Frame inline_frames[32], *frames = inline_frames;
+    size_t capacity = sizeof inline_frames / sizeof inline_frames[0];
+    AtomWalk *walk = atom_walk_new(pattern, false);
+    bool ok = false;
+    if (!walk) return false;
+    for (;;) {
+        AtomWalkEvent event;
+        AtomWalkStep step = atom_walk_next(walk, &event);
+        if (step == ATOM_WALK_DONE) { ok = true; break; }
+        if (step == ATOM_WALK_LEAVE) {
+            Frame *frame = &frames[event.depth];
+            if (frame->binding && !direct_domain_bind_v1(env, event.node, frame->binding,
+                    frame->maximum_depth - event.depth)) break;
+            if (event.depth && frame->maximum_depth > frames[event.depth - 1u].maximum_depth)
+                frames[event.depth - 1u].maximum_depth = frame->maximum_depth;
+            continue;
+        }
+        if (step != ATOM_WALK_ENTER) break;
+        if (event.depth == capacity) {
+            if (capacity > SIZE_MAX / 2u || capacity * 2u > SIZE_MAX / sizeof(*frames)) break;
+            size_t next_capacity = capacity * 2u;
+            Frame *next = frames == inline_frames ? malloc(next_capacity * sizeof(*frames))
+                : realloc(frames, next_capacity * sizeof(*frames));
+            if (!next) break;
+            if (frames == inline_frames) memcpy(next, inline_frames, capacity * sizeof(*frames));
+            frames = next; capacity = next_capacity;
+        }
+        Frame *frame = &frames[event.depth];
+        *frame = (Frame){.maximum_depth = event.depth};
+        uint32_t expected = type;
+        if (event.parent) {
+            expected = 0u;
+            const CettaLdGrammarRuleV1 *parent = frames[event.depth - 1u].rule;
+            if (parent && event.child_index) {
+                const CettaLdTermParamV1 *param = &parent->params[event.child_index - 1u];
+                if (param->kind == CETTA_LD_PARAM_SIMPLE_V1 && param->type.kind == CETTA_LD_TYPE_BASE_V1)
+                    expected = direct_domain_type_v1(language, &param->type.as.base);
+            }
+        }
+        if (!expected || expected > language->type_len) continue;
+        if (direct_is_source_variable_v1(event.node)) frame->binding = expected;
+        else if (language->types[expected - 1u].carrier == CETTA_LD_CARRIER_AST_V1) {
+            frame->rule = direct_domain_rule_v1(language, event.node, expected);
+            if (frame->rule) frame->binding = expected;
+        }
     }
-    return true;
+    atom_walk_free(walk);
+    if (frames != inline_frames) free(frames);
+    return ok;
 }
 
 static uint32_t direct_domain_term_v1(
     const CettaLanguageDefCoreV1 *language,
-    const DirectDomainEnvironmentV1 *env, const Atom *term, size_t depth) {
-    if (env->inconsistent || depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1) return 0u;
-    for (size_t i = 0u; i < env->len; i++)
-        if (direct_terms_equal_v1(env->items[i].term, term, 0u))
-            return env->items[i].type;
-    if (term->kind == ATOM_GROUNDED) {
-        CettaLdCarrierKindV1 carrier;
-        if (term->ground.gkind == GV_INT) carrier = CETTA_LD_CARRIER_BUILTIN_INT_V1;
-        else if (term->ground.gkind == GV_STRING) carrier = CETTA_LD_CARRIER_BUILTIN_STRING_V1;
-        else return 0u;
-        uint32_t found = 0u;
-        for (uint32_t i = 0u; i < language->type_len; i++) {
-            if (language->types[i].carrier != carrier) continue;
-            if (found != 0u) return 0u;
-            found = i + 1u;
-        }
-        return found;
+    const DirectDomainEnvironmentV1 *env, const Atom *term) {
+    if (env->inconsistent) return 0u;
+    size_t height;
+    if (!direct_term_height_v1(term, &height)) return 0u;
+    if (height < env->bucket_len)
+        for (size_t i = env->buckets[height]; i; i = env->items[i - 1u].next)
+            if (direct_terms_equal_v1(env->items[i - 1u].term, term)) return env->items[i - 1u].type;
+    if (term->kind != ATOM_GROUNDED) return 0u;
+    CettaLdCarrierKindV1 carrier;
+    if (term->ground.gkind == GV_INT) carrier = CETTA_LD_CARRIER_BUILTIN_INT_V1;
+    else if (term->ground.gkind == GV_STRING) carrier = CETTA_LD_CARRIER_BUILTIN_STRING_V1;
+    else return 0u;
+    uint32_t found = 0u;
+    for (uint32_t i = 0u; i < language->type_len; i++) {
+        if (language->types[i].carrier != carrier) continue;
+        if (found != 0u) return 0u;
+        found = i + 1u;
     }
-    /* Reconstructed expressions may be evaluated at the guest call boundary.
-     * Their constructor shape alone does not establish the returned carrier.
-     * Only exact matched-subterm reuse and literals acquire a carrier here. */
-    return 0u;
+    return found;
 }
 
 static size_t direct_domain_relation_v1(
@@ -1537,8 +1659,10 @@ static size_t direct_domain_relation_v1(
 
 static void direct_domains_free_v1(DirectAdmissionDomainsV1 *domains) {
     if (domains->environments != NULL)
-        for (size_t i = 0u; i < domains->rules->len; i++)
+        for (size_t i = 0u; i < domains->rules->len; i++) {
             free(domains->environments[i].items);
+            free(domains->environments[i].buckets);
+        }
     free(domains->environments);
     *domains = (DirectAdmissionDomainsV1){0};
 }
@@ -1582,11 +1706,11 @@ static bool direct_domains_build_v1(
             if (relation == relations->len || !reached[relation])
                 continue;
             DirectDomainEnvironmentV1 *env = &domains->environments[i];
-            free(env->items);
+            free(env->items); free(env->buckets);
             *env = (DirectDomainEnvironmentV1){0};
             for (size_t j = 0u; j < arity; j++)
                 if (!direct_domain_pattern_v1(language, rule->head->expr.elems[j + 1u],
-                        inputs[relation][j], env, 0u)) goto done;
+                        inputs[relation][j], env)) goto done;
             for (CettaExprIndex b = 1u; b < rule->body->expr.len; b++) {
                 const Atom *call = rule->body->expr.elems[b];
                 size_t width = (size_t)call->expr.len - 1u;
@@ -1596,7 +1720,7 @@ static bool direct_domains_build_v1(
                 if (!reached[callee]) { reached[callee] = true; changed = true; }
                 for (size_t j = 0u; j < width; j++) {
                     uint32_t type = direct_domain_term_v1(language, env,
-                        call->expr.elems[j + 1u], 0u);
+                        call->expr.elems[j + 1u]);
                     uint32_t before = inputs[callee][j];
                     uint32_t after = before == UINT32_MAX ? type :
                         before == type ? before : 0u;
@@ -1625,7 +1749,7 @@ static bool direct_domain_integer_v1(
     for (size_t i = 0u; i < domains->rules->len; i++) {
         if (&domains->rules->items[i] != rule) continue;
         uint32_t type = direct_domain_term_v1(domains->language,
-            &domains->environments[i], term, 0u);
+            &domains->environments[i], term);
         return type != 0u && domains->language->types[type - 1u].carrier ==
             CETTA_LD_CARRIER_BUILTIN_INT_V1;
     }
@@ -1680,8 +1804,8 @@ static bool direct_integer_guards_exclusive_v1(
             if (tb != NULL && ta->not_less != tb->not_less &&
                 ta->successor == tb->successor &&
                 aligned &&
-                direct_terms_correspond_v1(a->expr.elems[1], b->expr.elems[1], pairs, 0u) &&
-                direct_terms_correspond_v1(a->expr.elems[2], b->expr.elems[2], pairs, 0u))
+                direct_terms_correspond_v1(a->expr.elems[1], b->expr.elems[1], pairs) &&
+                direct_terms_correspond_v1(a->expr.elems[2], b->expr.elems[2], pairs))
                 return true;
         }
     }
@@ -1742,7 +1866,7 @@ static bool direct_target_ground_disequality_capability_v1(
         return false;
     if (direct_head_v1(success_branch, "quote", 1u))
         success_branch = success_branch->expr.elems[1];
-    if (!direct_terms_equal_v1(success_branch, relation, 0u))
+    if (!direct_terms_equal_v1(success_branch, relation))
         return false;
 
     const Atom *left_condition = condition->expr.elems[1];
@@ -1761,10 +1885,10 @@ static bool direct_target_ground_disequality_capability_v1(
     for (size_t argument = 0u; argument < arity; argument++) {
         const Atom *parameter = relation->expr.elems[argument + 1u];
         if (direct_terms_equal_v1(
-                left_condition, parameter, 0u))
+                left_condition, parameter))
             left_argument = argument;
         if (direct_terms_equal_v1(
-                right_condition, parameter, 0u))
+                right_condition, parameter))
             right_argument = argument;
     }
     if (left_argument == SIZE_MAX || right_argument == SIZE_MAX ||
@@ -1838,49 +1962,11 @@ static bool direct_variable_pairs_push_v1(
 static bool direct_collect_nonlinear_equalities_v1(
     const Atom *equality_pattern, const Atom *guarded_pattern,
     DirectVariablePairsV1 *mapping,
-    DirectVariablePairsV1 *equalities, size_t depth,
+    DirectVariablePairsV1 *equalities,
     char *error, size_t error_size) {
-    bool equality_variable = direct_is_source_variable_v1(equality_pattern);
-    bool guarded_variable = direct_is_source_variable_v1(guarded_pattern);
-    if (equality_pattern == NULL || guarded_pattern == NULL ||
-        depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
-        return false;
-    if (equality_variable || guarded_variable) {
-        if (!equality_variable || !guarded_variable)
-            return false;
-        for (size_t index = 0u; index < mapping->len; index++) {
-            if (!direct_same_variable_v1(
-                    mapping->items[index].left, equality_pattern))
-                continue;
-            if (direct_same_variable_v1(
-                    mapping->items[index].right, guarded_pattern))
-                return true;
-            return direct_variable_pairs_push_v1(
-                equalities, mapping->items[index].right, guarded_pattern,
-                error, error_size);
-        }
-        return direct_variable_pairs_push_v1(
-            mapping, equality_pattern, guarded_pattern, error, error_size);
-    }
-    if (equality_pattern->kind != guarded_pattern->kind)
-        return false;
-    if (equality_pattern->kind == ATOM_SYMBOL)
-        return strcmp(atom_name_cstr((Atom *)equality_pattern),
-                      atom_name_cstr((Atom *)guarded_pattern)) == 0;
-    if (equality_pattern->kind == ATOM_GROUNDED)
-        return atom_eq((Atom *)equality_pattern, (Atom *)guarded_pattern);
-    if (equality_pattern->kind != ATOM_EXPR ||
-        equality_pattern->expr.len != guarded_pattern->expr.len)
-        return false;
-    for (CettaExprIndex index = 0u;
-         index < equality_pattern->expr.len; index++) {
-        if (!direct_collect_nonlinear_equalities_v1(
-                equality_pattern->expr.elems[index],
-                guarded_pattern->expr.elems[index], mapping, equalities,
-                depth + 1u, error, error_size))
-            return false;
-    }
-    return true;
+    return direct_compare_terms_v1(equality_pattern, guarded_pattern, (DirectCompareV1){
+        .kind = DIRECT_COMPARE_NONLINEAR, .pairs = mapping, .equalities = equalities,
+        .error = error, .error_size = error_size}) == DIRECT_PAIR_EQUAL;
 }
 
 static bool direct_rules_have_nonlinear_guard_complement_v1(
@@ -1901,10 +1987,10 @@ static bool direct_rules_have_nonlinear_guard_complement_v1(
         if (!direct_collect_nonlinear_equalities_v1(
                 equality_rule->head->expr.elems[argument + 1u],
                 guarded_rule->head->expr.elems[argument + 1u],
-                &mapping, &equalities, 0u, error, error_size) ||
+                &mapping, &equalities, error, error_size) ||
             !direct_variables_add_term_v1(
                 &known, guarded_rule->head->expr.elems[argument + 1u],
-                0u, error, error_size))
+                 error, error_size))
             goto done;
     }
     if (equalities.len == 0u)
@@ -1924,7 +2010,7 @@ static bool direct_rules_have_nonlinear_guard_complement_v1(
         bool ground = true;
         for (size_t argument = 0u; argument < arity; argument++) {
             if (!direct_term_is_ground_v1(
-                    &known, goal->expr.elems[argument + 1u], 0u)) {
+                    &known, goal->expr.elems[argument + 1u])) {
                 ground = false;
                 break;
             }
@@ -1963,7 +2049,7 @@ static bool direct_guard_binding_push_v1(
                 bindings->items[index].left, variable))
             continue;
         return direct_terms_equal_v1(
-            bindings->items[index].right, term, 0u);
+            bindings->items[index].right, term);
     }
     if (bindings->len == bindings->cap) {
         size_t next = bindings->cap == 0u ? 8u : bindings->cap * 2u;
@@ -1993,32 +2079,11 @@ static bool direct_guard_binding_push_v1(
  * recording the value forced for each variable of `general`. */
 static bool direct_pattern_subsumes_v1(
     const Atom *general, const Atom *specific,
-    DirectVariablePairsV1 *bindings, size_t depth,
+    DirectVariablePairsV1 *bindings,
     char *error, size_t error_size) {
-    if (general == NULL || specific == NULL ||
-        depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
-        return false;
-    if (direct_is_source_variable_v1(general))
-        return direct_guard_binding_push_v1(
-            bindings, general, specific, error, error_size);
-    if (direct_is_source_variable_v1(specific) ||
-        general->kind != specific->kind)
-        return false;
-    if (general->kind == ATOM_SYMBOL)
-        return strcmp(atom_name_cstr((Atom *)general),
-                      atom_name_cstr((Atom *)specific)) == 0;
-    if (general->kind == ATOM_GROUNDED)
-        return atom_eq((Atom *)general, (Atom *)specific);
-    if (general->kind != ATOM_EXPR ||
-        general->expr.len != specific->expr.len)
-        return false;
-    for (CettaExprIndex index = 0u; index < general->expr.len; index++) {
-        if (!direct_pattern_subsumes_v1(
-                general->expr.elems[index], specific->expr.elems[index],
-                bindings, depth + 1u, error, error_size))
-            return false;
-    }
-    return true;
+    return direct_compare_terms_v1(general, specific, (DirectCompareV1){
+        .kind = DIRECT_COMPARE_SUBSUMES, .pairs = bindings,
+        .error = error, .error_size = error_size}) == DIRECT_PAIR_EQUAL;
 }
 
 static const Atom *direct_guard_binding_value_v1(
@@ -2034,29 +2099,56 @@ static const Atom *direct_guard_binding_value_v1(
 
 static bool direct_guard_terms_equal_after_binding_v1(
     const Atom *left, const Atom *right,
-    const DirectVariablePairsV1 *bindings, size_t depth) {
-    left = direct_guard_binding_value_v1(bindings, left);
-    right = direct_guard_binding_value_v1(bindings, right);
-    if (left == NULL || right == NULL ||
-        depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1 ||
-        left->kind != right->kind)
-        return false;
-    if (left->kind == ATOM_VAR)
-        return direct_same_variable_v1(left, right);
-    if (left->kind == ATOM_SYMBOL)
-        return strcmp(atom_name_cstr((Atom *)left),
-                      atom_name_cstr((Atom *)right)) == 0;
-    if (left->kind == ATOM_GROUNDED)
-        return atom_eq((Atom *)left, (Atom *)right);
-    if (left->kind != ATOM_EXPR || left->expr.len != right->expr.len)
-        return false;
-    for (CettaExprIndex index = 0u; index < left->expr.len; index++) {
-        if (!direct_guard_terms_equal_after_binding_v1(
-                left->expr.elems[index], right->expr.elems[index],
-                bindings, depth + 1u))
-            return false;
+    const DirectVariablePairsV1 *bindings) {
+    if (!bindings->len) return direct_terms_equal_v1(left, right);
+    /* Bindings open one source term at a time, just as the recursive policy
+     * did. A cyclic opening is unknown to this optimization, never equality. */
+    typedef struct {
+        const Atom *raw_left, *raw_right, *left, *right;
+        CettaExprIndex next;
+        bool opened;
+    } Frame;
+    Frame inline_frames[32], *frames = inline_frames;
+    size_t len = 0u, capacity = sizeof inline_frames / sizeof inline_frames[0];
+    bool equal = false;
+    for (;;) {
+        const Atom *a = direct_guard_binding_value_v1(bindings, left);
+        const Atom *b = direct_guard_binding_value_v1(bindings, right);
+        if (!a || !b) break;
+        bool opened = a != left || b != right;
+        if (opened) {
+            bool cycle = false;
+            for (size_t i = 0u; i < len; ++i)
+                if (frames[i].opened && frames[i].raw_left == left && frames[i].raw_right == right)
+                    cycle = true;
+            if (cycle) break;
+        }
+        DirectCompareV1 policy = {.kind = DIRECT_COMPARE_EQUAL};
+        DirectPairActionV1 action = a->kind == ATOM_EXPR && b->kind == ATOM_EXPR &&
+            a->expr.len == b->expr.len ? DIRECT_PAIR_DESCEND : direct_compare_node_v1(a, b, &policy);
+        if (action == DIRECT_PAIR_REJECT) break;
+        if (action == DIRECT_PAIR_DESCEND && a->expr.len) {
+            if (len == capacity) {
+                if (capacity > SIZE_MAX / 2u || capacity * 2u > SIZE_MAX / sizeof(*frames)) break;
+                size_t next_capacity = capacity * 2u;
+                Frame *next = frames == inline_frames ? malloc(next_capacity * sizeof(*frames))
+                    : realloc(frames, next_capacity * sizeof(*frames));
+                if (!next) break;
+                if (frames == inline_frames) memcpy(next, inline_frames, len * sizeof(*frames));
+                frames = next; capacity = next_capacity;
+            }
+            frames[len++] = (Frame){left, right, a, b, 1u, opened};
+            left = a->expr.elems[0]; right = b->expr.elems[0];
+            continue;
+        }
+        while (len && frames[len - 1u].next == frames[len - 1u].left->expr.len) --len;
+        if (!len) { equal = true; break; }
+        Frame *parent = &frames[len - 1u];
+        left = parent->left->expr.elems[parent->next];
+        right = parent->right->expr.elems[parent->next++];
     }
-    return true;
+    if (frames != inline_frames) free(frames);
+    return equal;
 }
 
 /* A general rule guarded by `different x K` is disjoint from a rule whose
@@ -2078,7 +2170,7 @@ static bool direct_rules_have_pattern_guard_complement_v1(
         if (!direct_pattern_subsumes_v1(
                 guarded_rule->head->expr.elems[argument + 1u],
                 specific_rule->head->expr.elems[argument + 1u],
-                &bindings, 0u, error, error_size))
+                &bindings, error, error_size))
             goto done;
     }
     for (CettaExprIndex body_index = 1u;
@@ -2094,7 +2186,7 @@ static bool direct_rules_have_pattern_guard_complement_v1(
         if (direct_guard_terms_equal_after_binding_v1(
                 goal->expr.elems[guard.unequal_left_argument + 1u],
                 goal->expr.elems[guard.unequal_right_argument + 1u],
-                &bindings, 0u)) {
+                &bindings)) {
             exclusive = true;
             break;
         }
@@ -2119,10 +2211,10 @@ static bool direct_rules_have_exclusive_functional_guards_v1(
          argument < parent_mode->arity; argument++) {
         if (parent_mode->input_ground[argument] &&
             (!direct_variables_add_term_v1(
-                 &left_ground, left->head->expr.elems[argument + 1u], 0u,
+                 &left_ground, left->head->expr.elems[argument + 1u],
                  error, error_size) ||
              !direct_variables_add_term_v1(
-                 &right_ground, right->head->expr.elems[argument + 1u], 0u,
+                 &right_ground, right->head->expr.elems[argument + 1u],
                  error, error_size)))
             goto done;
     }
@@ -2141,7 +2233,7 @@ static bool direct_rules_have_exclusive_functional_guards_v1(
                 strcmp(atom_name_cstr(right_goal->expr.elems[0]),
                        relation) != 0)
                 continue;
-            input_ground = (uint8_t *)calloc(arity, 1u);
+            input_ground = direct_mode_bits_v1(arity);
             if (input_ground == NULL) {
                 (void)direct_error_v1(
                     error, error_size,
@@ -2152,15 +2244,15 @@ static bool direct_rules_have_exclusive_functional_guards_v1(
                 Atom *left_term = left_goal->expr.elems[argument + 1u];
                 Atom *right_term = right_goal->expr.elems[argument + 1u];
                 bool correspond = direct_terms_correspond_v1(
-                    left_term, right_term, pairs, 0u);
+                    left_term, right_term, pairs);
                 bool ground = direct_term_is_ground_v1(
-                                  &left_ground, left_term, 0u) &&
+                                  &left_ground, left_term) &&
                               direct_term_is_ground_v1(
-                                  &right_ground, right_term, 0u);
+                                  &right_ground, right_term);
                 input_ground[argument] = correspond && ground;
                 if (!input_ground[argument] &&
                     !direct_patterns_may_unify_v1(
-                        left_term, right_term, 0u))
+                        left_term, right_term))
                     disjoint_result = true;
             }
             guard_mode = direct_find_binding_mode_v1(
@@ -2197,10 +2289,10 @@ static bool direct_rules_have_exclusive_functional_guard_sequence_v1(
          argument < parent_mode->arity; argument++) {
         if (parent_mode->input_ground[argument] &&
             (!direct_variables_add_term_v1(
-                 &left_ground, left->head->expr.elems[argument + 1u], 0u,
+                 &left_ground, left->head->expr.elems[argument + 1u],
                  error, error_size) ||
              !direct_variables_add_term_v1(
-                 &right_ground, right->head->expr.elems[argument + 1u], 0u,
+                 &right_ground, right->head->expr.elems[argument + 1u],
                  error, error_size)))
             goto done;
     }
@@ -2219,7 +2311,7 @@ static bool direct_rules_have_exclusive_functional_guard_sequence_v1(
             strcmp(atom_name_cstr(right_goal->expr.elems[0]),
                    relation) != 0)
             goto done;
-        input_ground = (uint8_t *)calloc(arity, 1u);
+        input_ground = direct_mode_bits_v1(arity);
         if (input_ground == NULL) {
             (void)direct_error_v1(
                 error, error_size,
@@ -2230,14 +2322,14 @@ static bool direct_rules_have_exclusive_functional_guard_sequence_v1(
             Atom *left_term = left_goal->expr.elems[argument + 1u];
             Atom *right_term = right_goal->expr.elems[argument + 1u];
             bool correspond = direct_terms_correspond_v1(
-                left_term, right_term, pairs, 0u);
+                left_term, right_term, pairs);
             bool ground = direct_term_is_ground_v1(
-                              &left_ground, left_term, 0u) &&
+                              &left_ground, left_term) &&
                           direct_term_is_ground_v1(
-                              &right_ground, right_term, 0u);
+                              &right_ground, right_term);
             input_ground[argument] = correspond && ground;
             if (!correspond && !direct_patterns_may_unify_v1(
-                    left_term, right_term, 0u))
+                    left_term, right_term))
                 disjoint_result = true;
         }
         guard_mode = direct_find_binding_mode_v1(
@@ -2269,13 +2361,13 @@ static bool direct_rules_have_exclusive_functional_guard_sequence_v1(
             Atom *left_term = left_goal->expr.elems[argument + 1u];
             Atom *right_term = right_goal->expr.elems[argument + 1u];
             if (!direct_align_input_patterns_v1(
-                    left_term, right_term, pairs, 0u,
+                    left_term, right_term, pairs,
                     error, error_size) ||
                 !direct_variables_add_term_v1(
-                    &left_ground, left_term, 0u,
+                    &left_ground, left_term,
                     error, error_size) ||
                 !direct_variables_add_term_v1(
-                    &right_ground, right_term, 0u,
+                    &right_ground, right_term,
                     error, error_size)) {
                 if (trace)
                     fprintf(stderr,
@@ -2299,7 +2391,7 @@ static bool direct_rule_inputs_may_overlap_v1(
         if (input_ground[argument] &&
             !direct_patterns_may_unify_v1(
                 left->head->expr.elems[argument + 1u],
-                right->head->expr.elems[argument + 1u], 0u))
+                right->head->expr.elems[argument + 1u]))
             return false;
     }
     return true;
@@ -2311,7 +2403,7 @@ static bool direct_mode_input_tuple_is_ground_v1(
     for (size_t argument = 0u; argument < mode->arity; argument++) {
         if (mode->input_ground[argument] &&
             !direct_term_is_ground_v1(
-                &no_variables, rule->head->expr.elems[argument + 1u], 0u))
+                &no_variables, rule->head->expr.elems[argument + 1u]))
             return false;
     }
     return true;
@@ -2457,7 +2549,7 @@ static bool direct_relation_input_excludes_pattern_v1(
             rule_index->items[offset].source_index];
         if (direct_patterns_may_unify_v1(
                 rule->head->expr.elems[input_argument + 1u],
-                excluded_pattern, 0u))
+                excluded_pattern))
             return false;
     }
     return begin != end;
@@ -2477,7 +2569,7 @@ static bool direct_rules_have_functional_domain_complement_v1(
         if (parent_mode->input_ground[argument] &&
             !direct_variables_add_term_v1(
                 &known, guarded_rule->head->expr.elems[argument + 1u],
-                0u, error, error_size))
+                 error, error_size))
             goto done;
     }
     for (CettaExprIndex body_index = 1u;
@@ -2486,7 +2578,7 @@ static bool direct_rules_have_functional_domain_complement_v1(
         const Atom *goal = guarded_rule->body->expr.elems[body_index];
         const char *relation = atom_name_cstr(goal->expr.elems[0]);
         size_t arity = (size_t)goal->expr.len - 1u;
-        uint8_t *input_ground = (uint8_t *)malloc(arity);
+        uint8_t *input_ground = direct_mode_bits_v1(arity);
         const DirectBindingModeV1 *callee_mode;
         if (input_ground == NULL) {
             (void)direct_error_v1(
@@ -2496,7 +2588,7 @@ static bool direct_rules_have_functional_domain_complement_v1(
         }
         for (size_t argument = 0u; argument < arity; argument++) {
             input_ground[argument] = direct_term_is_ground_v1(
-                &known, goal->expr.elems[argument + 1u], 0u);
+                &known, goal->expr.elems[argument + 1u]);
         }
         callee_mode = direct_find_binding_mode_v1(
             modes, relation, arity, input_ground);
@@ -2513,8 +2605,7 @@ static bool direct_rules_have_functional_domain_complement_v1(
                         !direct_terms_equal_v1(
                             goal->expr.elems[callee_argument + 1u],
                             guarded_rule->head->expr.elems[
-                                parent_argument + 1u],
-                            0u))
+                                parent_argument + 1u]))
                         continue;
                     if (direct_relation_input_excludes_pattern_v1(
                             rules, rule_index, relation, arity,
@@ -2531,7 +2622,7 @@ static bool direct_rules_have_functional_domain_complement_v1(
             for (size_t argument = 0u; argument < arity; argument++) {
                 if (callee_mode->success_ground[argument] &&
                     !direct_variables_add_term_v1(
-                        &known, goal->expr.elems[argument + 1u], 0u,
+                        &known, goal->expr.elems[argument + 1u],
                         error, error_size)) {
                     free(input_ground);
                     goto done;
@@ -2576,7 +2667,7 @@ static bool direct_mode_rules_are_guard_exclusive_v1(
                     !direct_align_overlapping_input_patterns_v1(
                         left->head->expr.elems[argument + 1u],
                         right->head->expr.elems[argument + 1u],
-                        &pairs, 0u, error, error_size)) {
+                        &pairs, error, error_size)) {
                     aligned = false;
                     break;
                 }
@@ -2655,7 +2746,7 @@ static bool direct_rule_has_functional_body_v1(
     for (size_t argument = 0u; argument < mode->arity; argument++) {
         if (mode->input_ground[argument] &&
             !direct_variables_add_term_v1(
-                &known, rule->head->expr.elems[argument + 1u], 0u,
+                &known, rule->head->expr.elems[argument + 1u],
                 error, error_size)) {
             functional = false;
             goto done;
@@ -2666,7 +2757,7 @@ static bool direct_rule_has_functional_body_v1(
         Atom *goal = rule->body->expr.elems[body_index];
         const char *relation = atom_name_cstr(goal->expr.elems[0]);
         size_t arity = (size_t)goal->expr.len - 1u;
-        uint8_t *input_ground = (uint8_t *)malloc(arity);
+        uint8_t *input_ground = direct_mode_bits_v1(arity);
         const DirectBindingModeV1 *callee_mode;
         if (input_ground == NULL) {
             (void)direct_error_v1(
@@ -2677,7 +2768,7 @@ static bool direct_rule_has_functional_body_v1(
         }
         for (size_t argument = 0u; argument < arity; argument++) {
             input_ground[argument] = direct_term_is_ground_v1(
-                &known, goal->expr.elems[argument + 1u], 0u);
+                &known, goal->expr.elems[argument + 1u]);
         }
         if (!direct_has_operator_v1(relations, relation, arity)) {
             DirectOperatorV1 capability = {
@@ -2746,7 +2837,7 @@ static bool direct_rule_has_functional_body_v1(
         for (size_t argument = 0u; argument < arity; argument++) {
             if (callee_mode->success_ground[argument] &&
                 !direct_variables_add_term_v1(
-                    &known, goal->expr.elems[argument + 1u], 0u,
+                    &known, goal->expr.elems[argument + 1u],
                     error, error_size)) {
                 functional = false;
                 goto done;
@@ -2882,7 +2973,7 @@ static bool direct_select_rule_mode_calls_v1(
     for (size_t argument = 0u; argument < head_arity; argument++) {
         if (head_input_ground != NULL && head_input_ground[argument] &&
             !direct_variables_add_term_v1(
-                &known, rule->head->expr.elems[argument + 1u], 0u,
+                &known, rule->head->expr.elems[argument + 1u],
                 error, error_size)) {
             ok = false;
             goto done;
@@ -2893,7 +2984,7 @@ static bool direct_select_rule_mode_calls_v1(
         Atom *goal = rule->body->expr.elems[body_index];
         const char *relation = atom_name_cstr(goal->expr.elems[0]);
         size_t arity = (size_t)goal->expr.len - 1u;
-        uint8_t *input_ground = (uint8_t *)malloc(arity);
+        uint8_t *input_ground = direct_mode_bits_v1(arity);
         DirectBindingModeV1 *callee_mode;
         bool has_ground_input = false;
         if (input_ground == NULL) {
@@ -2905,7 +2996,7 @@ static bool direct_select_rule_mode_calls_v1(
         }
         for (size_t argument = 0u; argument < arity; argument++) {
             input_ground[argument] = direct_term_is_ground_v1(
-                &known, goal->expr.elems[argument + 1u], 0u);
+                &known, goal->expr.elems[argument + 1u]);
             has_ground_input = has_ground_input || input_ground[argument];
         }
         callee_mode = direct_find_binding_mode_mutable_v1(
@@ -2931,7 +3022,7 @@ static bool direct_select_rule_mode_calls_v1(
         for (size_t argument = 0u; argument < arity; argument++) {
             if (callee_mode->success_ground[argument] &&
                 !direct_variables_add_term_v1(
-                    &known, goal->expr.elems[argument + 1u], 0u,
+                    &known, goal->expr.elems[argument + 1u],
                     error, error_size)) {
                 ok = false;
                 goto done;
@@ -3114,23 +3205,31 @@ static bool direct_render_rule_realization_v1(
     return direct_byte_v1(program, (uint8_t)'\n');
 }
 
-static bool direct_render_type_v1(DirectBufferV1 *program,
-                                  const DirectOperatorV1 *relation) {
-    if (!direct_literal_v1(program, "(: gslt:") ||
+static bool direct_render_type_prefix_v1(DirectBufferV1 *program,
+    const DirectOperatorV1 *relation, const char *prefix) {
+    if (!direct_literal_v1(program, "(: ") ||
+        !direct_literal_v1(program, prefix) ||
         !direct_literal_v1(program, relation->name) ||
         !direct_literal_v1(program, " (-> Atom %Undefined%))\n"))
         return false;
     return true;
 }
 
+static bool direct_render_type_v1(DirectBufferV1 *program,
+                                  const DirectOperatorV1 *relation) {
+    return direct_render_type_prefix_v1(program, relation, "gslt:");
+}
+
 static bool direct_render_call_v1(DirectBufferV1 *program,
                                   const Atom *relation,
                                   Arena *scratch, bool pattern) {
-    return direct_literal_v1(program, "(gslt:") &&
+    return direct_byte_v1(program, (uint8_t)'(') &&
+           direct_literal_v1(program, direct_generic_relation_prefix_v1(program,
+               atom_name_cstr(relation->expr.elems[0]), (size_t)relation->expr.len - 1u)) &&
            direct_literal_v1(
                program, atom_name_cstr(relation->expr.elems[0])) &&
            direct_byte_v1(program, (uint8_t)' ') &&
-           (pattern ? direct_render_data_pattern_v1 : direct_render_term_v1)(program, relation, scratch, 0u) &&
+           (pattern ? direct_render_data_pattern_v1 : direct_render_term_v1)(program, relation, scratch) &&
            direct_byte_v1(program, (uint8_t)')');
 }
 
@@ -3300,8 +3399,8 @@ static bool direct_render_entries_v1(
 
 static bool direct_choose_input_scope_v1(DirectBufferV1 *program, const DirectRuleV1 *rule) {
     DirectVariablesV1 variables = {0};
-    bool ok = direct_variables_add_term_v1(&variables, rule->head, 0u, NULL, 0u) &&
-              direct_variables_add_term_v1(&variables, rule->body, 0u, NULL, 0u);
+    bool ok = direct_variables_add_term_v1(&variables, rule->head, NULL, 0u) &&
+              direct_variables_add_term_v1(&variables, rule->body, NULL, 0u);
     if (ok) {
         for (size_t scope = 0u;; ++scope) {
             char prefix[64];
@@ -3319,13 +3418,7 @@ static bool direct_choose_input_scope_v1(DirectBufferV1 *program, const DirectRu
 }
 
 static bool direct_petta_pattern_requires_body_match_v1(
-    const Atom *term, size_t depth) {
-    if (!term || depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1 ||
-        term->kind != ATOM_EXPR || term->expr.len == 0u)
-        return false;
-    const Atom *head = term->expr.elems[0];
-    if (head && head->kind == ATOM_SYMBOL) {
-        const char *name = atom_name_cstr((Atom *)head);
+    const Atom *term) {
         static const char *const effectful_heads[] = {
             "test", "if", "progn", "prog1", "foldall", "forall",
             "maplist", "map-atom", "foldl", "id", "append", "cons",
@@ -3345,25 +3438,34 @@ static bool direct_petta_pattern_requires_body_match_v1(
             "//", "%", "<", ">", "<=", ">=", "=", "==", "=alpha",
             "not",
         };
-        for (size_t index = 0u;
-             index < sizeof(effectful_heads) / sizeof(effectful_heads[0]);
-             index++) {
-            if (strcmp(name, effectful_heads[index]) == 0)
-                return true;
-        }
+
+    AtomWalk *walk = atom_walk_new(term, false);
+    bool requires = true;
+    if (!walk) return true;
+    for (;;) {
+        AtomWalkEvent event;
+        AtomWalkStep step = atom_walk_next(walk, &event);
+        if (step == ATOM_WALK_DONE) { requires = false; break; }
+        if (step == ATOM_WALK_LEAVE) continue;
+        if (step != ATOM_WALK_ENTER) break;
+        if (event.parent && event.child_index == 0u) { atom_walk_prune(walk); continue; }
+        const Atom *node = event.node;
+        if (node->kind != ATOM_EXPR || !node->expr.len) continue;
+        const Atom *head = node->expr.elems[0];
+        if (!head || head->kind != ATOM_SYMBOL) continue;
+        const char *name = atom_name_cstr((Atom *)head);
+        bool found = false;
+        for (size_t i = 0u; i < sizeof effectful_heads / sizeof effectful_heads[0]; ++i)
+            if (!strcmp(name, effectful_heads[i])) { found = true; break; }
+        if (found) break;
     }
-    for (CettaExprIndex index = 1u;
-         index < term->expr.len; index++) {
-        if (direct_petta_pattern_requires_body_match_v1(
-                term->expr.elems[index], depth + 1u))
-            return true;
-    }
-    return false;
+    atom_walk_free(walk);
+    return requires;
 }
 
 static bool direct_pattern_in_body_v1(const DirectBufferV1 *program, const Atom *term) {
     return direct_target_is_he_v1(program)
-        ? direct_petta_pattern_requires_body_match_v1(term, 0u)
+        ? direct_petta_pattern_requires_body_match_v1(term)
         : term && term->kind == ATOM_EXPR;
 }
 
@@ -3390,7 +3492,7 @@ static bool direct_render_function_rule_head_v1(
             if (!direct_render_input_slot_v1(program, argument))
                 return false;
         } else if (!direct_render_data_pattern_v1(
-                       program, pattern, scratch, 0u)) {
+                       program, pattern, scratch)) {
             return false;
         }
     }
@@ -3413,7 +3515,7 @@ static bool direct_render_function_call_v1(
              (held && !direct_literal_v1(program, "(quote ")) ||
              !direct_render_term_v1(
                  program, application->expr.elems[argument + 1u],
-                 scratch, 0u) ||
+                 scratch) ||
              (held && !direct_byte_v1(program, (uint8_t)')'))))
             return false;
     }
@@ -3433,6 +3535,26 @@ static bool direct_render_guard_binder_v1(
     length = snprintf(name, sizeof(name), "$__gslt_guard_v1_%zu ", goal_index);
     return length > 0 && (size_t)length < sizeof(name) &&
            direct_literal_v1(program, name);
+}
+
+/* Ordinary Horn calls return their complete instantiated goal. Re-match it
+ * explicitly: a target's call boundary may keep its branch bindings local. */
+static bool direct_render_relational_binder_v1(
+    DirectBufferV1 *program, const Atom *goal, size_t goal_index,
+    Arena *scratch) {
+    if (program->closed_horn_relations != NULL &&
+        direct_has_operator_v1(program->closed_horn_relations,
+                                atom_name_cstr(goal->expr.elems[0]),
+                                (size_t)goal->expr.len - 1u)) {
+        if (program->retain_generic_dependencies &&
+            !direct_push_operator_v1(&program->required_generic_relations,
+                atom_name_cstr(goal->expr.elems[0]),
+                (size_t)goal->expr.len - 1u, NULL, 0u))
+            return false;
+        return direct_render_binding_pattern_v1(program, goal, scratch) &&
+               direct_byte_v1(program, (uint8_t)' ');
+    }
+    return direct_render_guard_binder_v1(program, goal_index);
 }
 
 static bool direct_render_selected_mode_call_v1(
@@ -3469,6 +3591,8 @@ static bool direct_render_selected_mode_call_v1(
 static bool direct_render_function_result_v1(
     DirectBufferV1 *program, const Atom *application,
     const DirectBindingModeV1 *mode, Arena *scratch, bool pattern) {
+    bool quoted = pattern && !direct_target_is_he_v1(program);
+    if (quoted && !direct_literal_v1(program, "(quote ")) return false;
     size_t output_count = 0u;
     for (size_t argument = 0u; argument < mode->arity; argument++) {
         if (!mode->input_ground[argument])
@@ -3482,13 +3606,13 @@ static bool direct_render_function_result_v1(
     for (size_t argument = 0u; argument < mode->arity; argument++) {
         if (!mode->input_ground[argument] &&
             (!direct_byte_v1(program, (uint8_t)' ') ||
-             !(pattern ? direct_render_data_pattern_v1 : direct_render_term_v1)(
+             !direct_render_term_v1(
                  program, application->expr.elems[argument + 1u],
-                 scratch, 0u)))
+                 scratch)))
             return false;
     }
-    return output_count == 0u ||
-           direct_byte_v1(program, (uint8_t)')');
+    return (output_count == 0u || direct_byte_v1(program, (uint8_t)')')) &&
+           (!quoted || direct_byte_v1(program, (uint8_t)')'));
 }
 
 static bool direct_render_function_value_v1(
@@ -3517,7 +3641,7 @@ static bool direct_render_function_rule_v1(
     for (size_t argument = 0u; argument < mode->arity; argument++) {
         if (mode->input_ground[argument] &&
             !direct_variables_add_term_v1(
-                &known, rule->head->expr.elems[argument + 1u], 0u,
+                &known, rule->head->expr.elems[argument + 1u],
                 NULL, 0u))
             goto done;
     }
@@ -3535,8 +3659,8 @@ static bool direct_render_function_rule_v1(
             !direct_pattern_in_body_v1(program, pattern))
             continue;
         if (!direct_literal_v1(program, "   (let ") ||
-            !direct_render_data_pattern_v1(
-                program, pattern, scratch, 0u) ||
+            !direct_render_binding_pattern_v1(
+                program, pattern, scratch) ||
             !direct_byte_v1(program, (uint8_t)' ') ||
             !direct_render_input_slot_v1(program, argument) ||
             !direct_byte_v1(program, (uint8_t)'\n'))
@@ -3547,27 +3671,27 @@ static bool direct_render_function_rule_v1(
         Atom *goal = rule->body->expr.elems[index + 1u];
         const char *relation = atom_name_cstr(goal->expr.elems[0]);
         size_t arity = (size_t)goal->expr.len - 1u;
-        uint8_t *input_ground = (uint8_t *)malloc(arity);
+        uint8_t *input_ground = direct_mode_bits_v1(arity);
         const DirectBindingModeV1 *callee_mode;
         if (input_ground == NULL)
             goto done;
         for (size_t argument = 0u; argument < arity; argument++) {
             input_ground[argument] = direct_term_is_ground_v1(
-                &known, goal->expr.elems[argument + 1u], 0u);
+                &known, goal->expr.elems[argument + 1u]);
         }
         callee_mode = direct_find_binding_mode_v1(
             modes, relation, arity, input_ground);
         free(input_ground);
         if (!direct_literal_v1(program, "   (let "))
             goto done;
-        if (callee_mode != NULL && callee_mode->selected) {
+        if (direct_project_premise_v1(program, callee_mode)) {
             if (!direct_render_function_result_v1(
                     program, goal, callee_mode, scratch, true) ||
                 !direct_byte_v1(program, (uint8_t)' ') ||
                 !direct_render_selected_mode_call_v1(
                     program, goal, callee_mode, mode, scratch))
                 goto done;
-        } else if (!direct_render_guard_binder_v1(program, index) ||
+        } else if (!direct_render_relational_binder_v1(program, goal, index, scratch) ||
                    !direct_render_call_v1(program, goal, scratch, false)) {
             goto done;
         }
@@ -3577,7 +3701,7 @@ static bool direct_render_function_rule_v1(
             for (size_t argument = 0u; argument < arity; argument++) {
                 if (callee_mode->success_ground[argument] &&
                     !direct_variables_add_term_v1(
-                        &known, goal->expr.elems[argument + 1u], 0u,
+                        &known, goal->expr.elems[argument + 1u],
                         NULL, 0u))
                     goto done;
             }
@@ -3625,31 +3749,27 @@ typedef struct DirectFactorNodeV1 {
     const Atom *constant;             /* all facts agree here */
     struct DirectFactorNodeV1 **children; /* congruent expression */
     size_t child_count;
+    struct DirectFactorNodeV1 *parent;
+    size_t parent_index;
 } DirectFactorNodeV1;
 
 static void direct_factor_node_free_v1(DirectFactorNodeV1 *node) {
-    if (node == NULL)
-        return;
-    for (size_t index = 0u; index < node->child_count; index++)
-        direct_factor_node_free_v1(node->children[index]);
-    free(node->children);
-    free(node);
+    if (node) node->parent = NULL;
+    while (node) {
+        if (node->child_count) {
+            DirectFactorNodeV1 *child = node->children[--node->child_count];
+            if (child) { child->parent = node; node = child; }
+            continue;
+        }
+        DirectFactorNodeV1 *parent = node->parent;
+        free(node->children); free(node);
+        node = parent;
+    }
 }
 
-static bool direct_factor_term_ground_v1(const Atom *term,
-                                         size_t depth) {
-    if (term == NULL || depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
-        return false;
-    if (term->kind == ATOM_VAR || direct_is_source_variable_v1(term))
-        return false;
-    if (term->kind != ATOM_EXPR)
-        return true;
-    for (CettaExprIndex index = 0u; index < term->expr.len; index++) {
-        if (!direct_factor_term_ground_v1(
-                term->expr.elems[index], depth + 1u))
-            return false;
-    }
-    return true;
+static bool direct_factor_term_ground_v1(const Atom *term) {
+    DirectVariablesV1 none = {0};
+    return direct_term_is_ground_v1(&none, term);
 }
 
 /* Builds the least general generalization of the group's subterms at
@@ -3659,66 +3779,68 @@ static bool direct_factor_term_ground_v1(const Atom *term,
 static DirectFactorNodeV1 *direct_factor_scan_v1(
     const Atom *const *subs, size_t count, bool output,
     size_t *slot_count, bool *aborted) {
-    DirectFactorNodeV1 *node;
-    bool all_equal = true;
-    for (size_t index = 1u; index < count; index++) {
-        if (!direct_terms_equal_v1(subs[0], subs[index], 0u)) {
-            all_equal = false;
-            break;
-        }
-    }
-    node = (DirectFactorNodeV1 *)calloc(1u, sizeof(*node));
-    if (node == NULL)
-        return NULL;
-    if (all_equal) {
-        node->constant = subs[0];
-        return node;
-    }
+    typedef struct Frame {
+        struct Frame *parent;
+        DirectFactorNodeV1 *node;
+        const Atom *const *group;
+        const Atom **child_subs;
+        size_t child;
+    } Frame;
+    Frame *frames = NULL;
+    DirectFactorNodeV1 *root = NULL, **place = &root;
+    const Atom *const *group = subs;
+    if (!count || count > SIZE_MAX / sizeof(*subs)) return NULL;
+build:
     {
-        bool congruent = subs[0]->kind == ATOM_EXPR &&
-                         subs[0]->expr.len > 0u;
-        for (size_t index = 1u; congruent && index < count; index++) {
-            congruent = subs[index]->kind == ATOM_EXPR &&
-                        subs[index]->expr.len == subs[0]->expr.len;
-        }
+        DirectFactorNodeV1 *node = calloc(1u, sizeof(*node));
+        if (!node) goto failed;
+        *place = node;
+        if (frames) { node->parent = frames->node; node->parent_index = frames->child; }
+        bool all_equal = true;
+        for (size_t i = 1u; i < count; ++i)
+            if (!direct_terms_equal_v1(group[0], group[i])) { all_equal = false; break; }
+        if (all_equal) { node->constant = group[0]; goto completed; }
+        bool congruent = group[0]->kind == ATOM_EXPR && group[0]->expr.len;
+        for (size_t i = 1u; congruent && i < count; ++i)
+            congruent = group[i]->kind == ATOM_EXPR && group[i]->expr.len == group[0]->expr.len;
         if (congruent) {
-            size_t width = (size_t)subs[0]->expr.len;
-            const Atom **child_subs =
-                (const Atom **)malloc(sizeof(*child_subs) * count);
-            node->children = (DirectFactorNodeV1 **)calloc(
-                width, sizeof(*node->children));
-            if (child_subs == NULL || node->children == NULL) {
-                free(child_subs);
-                direct_factor_node_free_v1(node);
-                return NULL;
-            }
+            if (group[0]->expr.len > SIZE_MAX / sizeof(*node->children)) goto failed;
+            size_t width = (size_t)group[0]->expr.len;
+            node->children = calloc(width, sizeof(*node->children));
+            if (!node->children) goto failed;
             node->child_count = width;
-            for (size_t child = 0u; child < width; child++) {
-                for (size_t index = 0u; index < count; index++) {
-                    child_subs[index] =
-                        subs[index]->expr.elems[child];
-                }
-                node->children[child] = direct_factor_scan_v1(
-                    child_subs, count, output, slot_count, aborted);
-                if (node->children[child] == NULL || *aborted) {
-                    free(child_subs);
-                    direct_factor_node_free_v1(node);
-                    return NULL;
-                }
-            }
-            free(child_subs);
-            return node;
+            Frame *frame = calloc(1u, sizeof(*frame));
+            if (!frame) goto failed;
+            frame->child_subs = malloc(count * sizeof(*frame->child_subs));
+            if (!frame->child_subs) { free(frame); goto failed; }
+            frame->parent = frames; frame->node = node; frame->group = group;
+            frames = frame;
+            goto child;
         }
+        if (*slot_count >= DIRECT_FACTOR_MAX_SLOTS_V1) { *aborted = true; goto failed; }
+        node->slot = true; node->slot_output = output; node->slot_index = (*slot_count)++;
     }
-    if (*slot_count >= DIRECT_FACTOR_MAX_SLOTS_V1) {
-        *aborted = true;
-        direct_factor_node_free_v1(node);
-        return NULL;
+completed:
+    while (frames && ++frames->child == frames->node->child_count) {
+        Frame *parent = frames->parent;
+        free(frames->child_subs); free(frames);
+        frames = parent;
     }
-    node->slot = true;
-    node->slot_output = output;
-    node->slot_index = (*slot_count)++;
-    return node;
+    if (!frames) return root;
+child:
+    for (size_t i = 0u; i < count; ++i)
+        frames->child_subs[i] = frames->group[i]->expr.elems[frames->child];
+    group = frames->child_subs;
+    place = &frames->node->children[frames->child];
+    goto build;
+failed:
+    while (frames) {
+        Frame *parent = frames->parent;
+        free(frames->child_subs); free(frames);
+        frames = parent;
+    }
+    direct_factor_node_free_v1(root);
+    return NULL;
 }
 
 static bool direct_factor_render_slot_var_v1(
@@ -3732,30 +3854,40 @@ static bool direct_factor_render_slot_var_v1(
 static bool direct_factor_render_template_v1(
     DirectBufferV1 *program, const DirectFactorNodeV1 *node,
     Arena *scratch, bool pattern) {
-    if (node->slot)
-        return direct_factor_render_slot_var_v1(program, node);
-    if (node->constant != NULL)
-        return (pattern ? direct_render_data_pattern_v1 : direct_render_term_v1)(
-            program, node->constant, scratch, 0u);
+    const DirectFactorNodeV1 *root = node;
     bool spine = pattern && !direct_target_is_he_v1(program);
-    if (!spine && !direct_byte_v1(program, (uint8_t)'('))
-        return false;
-    for (size_t child = 0u; child < node->child_count; child++) {
-        if ((spine && !direct_literal_v1(program, "(cons-atom ")) ||
-            (!spine && child > 0u && !direct_byte_v1(program, (uint8_t)' ')) ||
-            !direct_factor_render_template_v1(
-                program, node->children[child], scratch, pattern) ||
-            (spine && !direct_byte_v1(program, (uint8_t)' ')))
-            return false;
+enter:
+    if (node->slot) {
+        if (!direct_factor_render_slot_var_v1(program, node)) return false;
+        goto completed;
     }
-    if (!spine)
-        return direct_byte_v1(program, (uint8_t)')');
-    if (!direct_literal_v1(program, "()"))
-        return false;
-    for (size_t child = 0u; child < node->child_count; child++)
-        if (!direct_byte_v1(program, (uint8_t)')'))
-            return false;
-    return true;
+    if (node->constant) {
+        if (!(pattern ? direct_render_data_pattern_v1 : direct_render_term_v1)(
+                program, node->constant, scratch)) return false;
+        goto completed;
+    }
+    if (!spine && !direct_byte_v1(program, (uint8_t)'(')) return false;
+    if (!node->child_count) goto close;
+    if (spine && !direct_literal_v1(program, "(cons-atom ")) return false;
+    node = node->children[0];
+    goto enter;
+close:
+    if (spine) {
+        if (!direct_literal_v1(program, "()")) return false;
+        for (size_t child = 0u; child < node->child_count; ++child)
+            if (!direct_byte_v1(program, (uint8_t)')')) return false;
+    } else if (!direct_byte_v1(program, (uint8_t)')')) return false;
+completed:
+    if (node == root) return true;
+    size_t next = node->parent_index + 1u;
+    node = node->parent;
+    if (!node) return false;
+    if (spine && !direct_byte_v1(program, (uint8_t)' ')) return false;
+    if (next == node->child_count) goto close;
+    if (spine ? !direct_literal_v1(program, "(cons-atom ")
+              : !direct_byte_v1(program, (uint8_t)' ')) return false;
+    node = node->children[next];
+    goto enter;
 }
 
 /* Walks a fact alongside the template, emitting each slot residue.
@@ -3765,25 +3897,48 @@ static bool direct_factor_render_residues_v1(
     DirectBufferV1 *program, const DirectFactorNodeV1 *node,
     const Atom *fact_term, bool want_output, bool *first,
     Arena *scratch) {
-    if (node->slot) {
-        if (node->slot_output != want_output)
-            return true;
-        if (!*first && !direct_byte_v1(program, (uint8_t)' '))
-            return false;
-        *first = false;
-        return (want_output ? direct_render_term_v1 : direct_render_data_pattern_v1)(
-            program, fact_term, scratch, 0u);
+    const DirectFactorNodeV1 *root = node;
+    AtomWalk *walk = atom_walk_new(fact_term, false);
+    bool ok = false;
+    if (!walk) return false;
+    for (;;) {
+        AtomWalkEvent event;
+        AtomWalkStep step = atom_walk_next(walk, &event);
+        if (step == ATOM_WALK_DONE) { ok = true; break; }
+        if (step == ATOM_WALK_LEAVE) { node = node == root ? NULL : node->parent; continue; }
+        if (step != ATOM_WALK_ENTER) break;
+        if (event.parent) {
+            if (!node || event.child_index >= node->child_count) break;
+            node = node->children[event.child_index];
+        }
+        if (!node) break;
+        if (node->slot) {
+            if (node->slot_output == want_output) {
+                if (!*first && !direct_byte_v1(program, (uint8_t)' ')) break;
+                *first = false;
+                if (!(want_output ? direct_render_term_v1 : direct_render_data_pattern_v1)(
+                        program, event.node, scratch)) break;
+            }
+            atom_walk_prune(walk);
+        } else if (node->constant) {
+            atom_walk_prune(walk);
+        } else if (event.node->kind != ATOM_EXPR || event.node->expr.len != node->child_count) break;
     }
-    if (node->constant != NULL)
-        return true;
-    for (size_t child = 0u; child < node->child_count; child++) {
-        if (!direct_factor_render_residues_v1(
-                program, node->children[child],
-                fact_term->expr.elems[child], want_output, first,
-                scratch))
-            return false;
+    atom_walk_free(walk);
+    return ok;
+}
+
+/* Visit the completed factor tree without a second work stack. */
+static const DirectFactorNodeV1 *direct_factor_next_v1(
+    const DirectFactorNodeV1 *root, const DirectFactorNodeV1 *node) {
+    if (node->child_count) return node->children[0];
+    while (node != root) {
+        size_t next = node->parent_index + 1u;
+        node = node->parent;
+        if (!node) return NULL;
+        if (next < node->child_count) return node->children[next];
     }
-    return true;
+    return NULL;
 }
 
 static bool direct_factor_render_index_head_v1(
@@ -3812,7 +3967,7 @@ static bool direct_render_factored_group_v1(
         const DirectRuleV1 *rule = group[index];
         if ((size_t)rule->body->expr.len != 1u ||
             (size_t)rule->head->expr.len != mode->arity + 1u ||
-            !direct_factor_term_ground_v1(rule->head, 0u))
+            !direct_factor_term_ground_v1(rule->head))
             return true;
     }
     arg_nodes = (DirectFactorNodeV1 **)calloc(
@@ -3846,7 +4001,7 @@ static bool direct_render_factored_group_v1(
              argument++) {
             if (!direct_render_term_v1(
                     &probe, group[0]->head->expr.elems[argument + 1u],
-                    scratch, 0u)) {
+                    scratch)) {
                 free(probe.bytes);
                 goto done;
             }
@@ -3875,26 +4030,19 @@ static bool direct_render_factored_group_v1(
         }
         free(probe.bytes);
     }
-    for (size_t argument = 0u; argument < mode->arity; argument++) {
-        /* Count slots per family. */
-        DirectFactorNodeV1 *pending[DIRECT_FACTOR_MAX_SLOTS_V1 * 4u];
-        size_t top = 0u;
-        pending[top++] = arg_nodes[argument];
-        while (top > 0u) {
-            DirectFactorNodeV1 *node = pending[--top];
-            if (node->slot) {
-                if (node->slot_output)
-                    output_slots++;
-                continue;
-            }
-            for (size_t child = 0u; child < node->child_count;
-                 child++) {
-                if (node->children[child]->constant == NULL &&
-                    top < DIRECT_FACTOR_MAX_SLOTS_V1 * 4u)
-                    pending[top++] = node->children[child];
-            }
+    const DirectFactorNodeV1 *slots[DIRECT_FACTOR_MAX_SLOTS_V1] = {0};
+    for (size_t argument = 0u; argument < mode->arity; ++argument) {
+        const DirectFactorNodeV1 *root = arg_nodes[argument];
+        for (const DirectFactorNodeV1 *node = root; node;
+             node = direct_factor_next_v1(root, node)) {
+            if (!node->slot) continue;
+            if (node->slot_index >= slot_count || slots[node->slot_index]) goto done;
+            slots[node->slot_index] = node;
+            if (node->slot_output) ++output_slots;
         }
     }
+    for (size_t slot = 0u; slot < slot_count; ++slot)
+        if (!slots[slot]) goto done;
 
     /* Wrapper equation: shared context once, residues bound by the
      * private index relation. */
@@ -3929,35 +4077,7 @@ static bool direct_render_factored_group_v1(
             bool first_out = true;
             for (size_t slot = 0u; slot < slot_count; slot++) {
                 char name[32];
-                bool is_output = false;
-                /* Determine family by lookup over the trees. */
-                for (size_t argument = 0u;
-                     argument < mode->arity && !is_output;
-                     argument++) {
-                    DirectFactorNodeV1 *pending[
-                        DIRECT_FACTOR_MAX_SLOTS_V1 * 4u];
-                    size_t top = 0u;
-                    pending[top++] = arg_nodes[argument];
-                    while (top > 0u) {
-                        DirectFactorNodeV1 *node = pending[--top];
-                        if (node->slot) {
-                            if (node->slot_index == slot &&
-                                node->slot_output)
-                                is_output = true;
-                            continue;
-                        }
-                        for (size_t child = 0u;
-                             child < node->child_count; child++) {
-                            if (node->children[child]->constant ==
-                                    NULL &&
-                                top < DIRECT_FACTOR_MAX_SLOTS_V1 * 4u)
-                                pending[top++] =
-                                    node->children[child];
-                        }
-                    }
-                }
-                if (!is_output)
-                    continue;
+                if (!slots[slot]->slot_output) continue;
                 (void)snprintf(name, sizeof(name), "$gfo%zu", slot);
                 if ((!first_out &&
                      !direct_byte_v1(program, (uint8_t)' ')) ||
@@ -3975,31 +4095,7 @@ static bool direct_render_factored_group_v1(
         goto done;
     for (size_t slot = 0u; slot < slot_count; slot++) {
         char name[32];
-        bool is_input = false;
-        for (size_t argument = 0u;
-             argument < mode->arity && !is_input; argument++) {
-            DirectFactorNodeV1 *pending[
-                DIRECT_FACTOR_MAX_SLOTS_V1 * 4u];
-            size_t top = 0u;
-            pending[top++] = arg_nodes[argument];
-            while (top > 0u) {
-                DirectFactorNodeV1 *node = pending[--top];
-                if (node->slot) {
-                    if (node->slot_index == slot &&
-                        !node->slot_output)
-                        is_input = true;
-                    continue;
-                }
-                for (size_t child = 0u;
-                     child < node->child_count; child++) {
-                    if (node->children[child]->constant == NULL &&
-                        top < DIRECT_FACTOR_MAX_SLOTS_V1 * 4u)
-                        pending[top++] = node->children[child];
-                }
-            }
-        }
-        if (!is_input)
-            continue;
+        if (slots[slot]->slot_output) continue;
         (void)snprintf(name, sizeof(name), " $gfi%zu", slot);
         if (!direct_literal_v1(program, name))
             goto done;
@@ -4132,7 +4228,7 @@ static bool direct_equality_partition_v1(
         const Atom *left = rule->head->expr.elems[1];
         const Atom *right = rule->head->expr.elems[2];
         const Atom *output = rule->head->expr.elems[3];
-        if (!direct_factor_term_ground_v1(output, 0u))
+        if (!direct_factor_term_ground_v1(output))
             return false;
 
         if ((size_t)rule->body->expr.len == 1u &&
@@ -4165,11 +4261,11 @@ static bool direct_equality_partition_v1(
             const Atom *apart_right = goal->expr.elems[
                 capability.unequal_right_argument + 1u];
             bool aligned =
-                direct_terms_equal_v1(apart_left, left, 0u) &&
-                direct_terms_equal_v1(apart_right, right, 0u);
+                direct_terms_equal_v1(apart_left, left) &&
+                direct_terms_equal_v1(apart_right, right);
             bool reversed =
-                direct_terms_equal_v1(apart_left, right, 0u) &&
-                direct_terms_equal_v1(apart_right, left, 0u);
+                direct_terms_equal_v1(apart_left, right) &&
+                direct_terms_equal_v1(apart_right, left);
             if ((!aligned && !reversed) || different_rule != NULL)
                 return false;
             different_rule = rule;
@@ -4219,7 +4315,7 @@ static bool direct_render_equality_partition_v1(
                program,
                different_goal->expr.elems[
                    partition->unequal_left_argument + 1u],
-               scratch, 0u) &&
+               scratch) &&
            (!partition->equality_arguments_quoted ||
             direct_byte_v1(program, (uint8_t)')')) &&
            direct_byte_v1(program, (uint8_t)' ') &&
@@ -4229,7 +4325,7 @@ static bool direct_render_equality_partition_v1(
                program,
                different_goal->expr.elems[
                    partition->unequal_right_argument + 1u],
-               scratch, 0u) &&
+               scratch) &&
            (!partition->equality_arguments_quoted ||
             direct_byte_v1(program, (uint8_t)')')) &&
            direct_literal_v1(program, ")\n      ") &&
@@ -4241,6 +4337,51 @@ static bool direct_render_equality_partition_v1(
                program, partition->different_rule->head,
                mode, scratch) &&
            direct_literal_v1(program, "))\n");
+}
+
+static bool direct_render_empty_mode_v1(
+    DirectBufferV1 *program, const DirectBindingModeV1 *mode) {
+    if (!direct_literal_v1(program, "(= (") ||
+        !direct_render_mode_name_v1(program,
+            mode->functional ? "gslt:fn:" : "gslt:mode:", mode))
+        return false;
+    for (size_t argument = 0u; argument < mode->arity; argument++) {
+        if (mode->input_ground[argument] &&
+            (!direct_byte_v1(program, (uint8_t)' ') ||
+             !direct_render_input_slot_v1(program, argument)))
+            return false;
+    }
+    return direct_literal_v1(program,
+        direct_target_is_he_v1(program) ? ") Empty)\n" : ") (empty))\n");
+}
+
+static bool direct_render_empty_relation_v1(
+    DirectBufferV1 *program, const DirectOperatorV1 *relation) {
+    if (!direct_literal_v1(program, "(= (") ||
+        !direct_literal_v1(program, direct_generic_relation_prefix_v1(
+            program, relation->name, relation->arity)) ||
+        !direct_literal_v1(program, relation->name))
+        return false;
+    if (direct_target_is_he_v1(program)) {
+        if (!direct_literal_v1(program, " (") ||
+            !direct_literal_v1(program, relation->name))
+            return false;
+        for (size_t argument = 0u; argument < relation->arity; argument++) {
+            if (!direct_byte_v1(program, (uint8_t)' ') ||
+                !direct_render_input_slot_v1(program, argument))
+                return false;
+        }
+        return direct_literal_v1(program, ")) Empty)\n");
+    }
+    if (!direct_literal_v1(program, " $__gslt_empty_goal)\n   (let (quote (") ||
+        !direct_literal_v1(program, relation->name))
+        return false;
+    for (size_t argument = 0u; argument < relation->arity; argument++) {
+        if (!direct_byte_v1(program, (uint8_t)' ') ||
+            !direct_render_input_slot_v1(program, argument))
+            return false;
+    }
+    return direct_literal_v1(program, ")) $__gslt_empty_goal (empty)))\n");
 }
 
 static bool direct_render_function_modes_v1(
@@ -4287,6 +4428,11 @@ static bool direct_render_function_modes_v1(
                     strcmp(atom_name_cstr(rule->head->expr.elems[0]),
                            mode->relation) == 0)
                     group_count++;
+            }
+            if (group_count == 0u) {
+                if (!direct_render_empty_mode_v1(program, mode))
+                    return false;
+                continue;
             }
             if (group_count >= DIRECT_FACTOR_MIN_GROUP_V1) {
                 const DirectRuleV1 **group =
@@ -4347,12 +4493,14 @@ static bool direct_render_rule_v1(DirectBufferV1 *program,
         goto done;
     bool data_entry = !direct_target_is_he_v1(program);
     if (data_entry) {
-        if (!direct_literal_v1(program, "(gslt:") ||
+        if (!direct_byte_v1(program, (uint8_t)'(') ||
+            !direct_literal_v1(program, direct_generic_relation_prefix_v1(program,
+                atom_name_cstr(rule->head->expr.elems[0]), (size_t)rule->head->expr.len - 1u)) ||
             !direct_literal_v1(program, atom_name_cstr(rule->head->expr.elems[0])) ||
             !direct_byte_v1(program, (uint8_t)' ') ||
             !direct_render_input_slot_v1(program, 0u) ||
             !direct_literal_v1(program, ")\n   (let ") ||
-            !direct_render_data_pattern_v1(program, rule->head, scratch, 0u) ||
+            !direct_render_binding_pattern_v1(program, rule->head, scratch) ||
             !direct_byte_v1(program, (uint8_t)' ') ||
             !direct_render_input_slot_v1(program, 0u) ||
             !direct_byte_v1(program, (uint8_t)'\n'))
@@ -4365,27 +4513,27 @@ static bool direct_render_rule_v1(DirectBufferV1 *program,
         Atom *goal = rule->body->expr.elems[index + 1u];
         const char *relation = atom_name_cstr(goal->expr.elems[0]);
         size_t arity = (size_t)goal->expr.len - 1u;
-        uint8_t *input_ground = (uint8_t *)malloc(arity);
+        uint8_t *input_ground = direct_mode_bits_v1(arity);
         const DirectBindingModeV1 *callee_mode = NULL;
         if (input_ground == NULL)
             goto done;
         for (size_t argument = 0u; argument < arity; argument++) {
             input_ground[argument] = direct_term_is_ground_v1(
-                &known, goal->expr.elems[argument + 1u], 0u);
+                &known, goal->expr.elems[argument + 1u]);
         }
         callee_mode = direct_find_binding_mode_v1(
             modes, relation, arity, input_ground);
         free(input_ground);
         if (!direct_literal_v1(program, "   (let "))
             goto done;
-        if (callee_mode != NULL && callee_mode->selected) {
+        if (direct_project_premise_v1(program, callee_mode)) {
             if (!direct_render_function_result_v1(
                     program, goal, callee_mode, scratch, true) ||
                 !direct_byte_v1(program, (uint8_t)' ') ||
                 !direct_render_selected_mode_call_v1(
                     program, goal, callee_mode, NULL, scratch))
                 goto done;
-        } else if (!direct_render_guard_binder_v1(program, index) ||
+        } else if (!direct_render_relational_binder_v1(program, goal, index, scratch) ||
                    !direct_render_call_v1(program, goal, scratch, false)) {
             goto done;
         }
@@ -4395,7 +4543,7 @@ static bool direct_render_rule_v1(DirectBufferV1 *program,
             for (size_t argument = 0u; argument < arity; argument++) {
                 if (callee_mode->success_ground[argument] &&
                     !direct_variables_add_term_v1(
-                        &known, goal->expr.elems[argument + 1u], 0u,
+                        &known, goal->expr.elems[argument + 1u],
                         NULL, 0u))
                     goto done;
             }
@@ -4403,7 +4551,7 @@ static bool direct_render_rule_v1(DirectBufferV1 *program,
     }
     if (!direct_literal_v1(program, "   ") ||
         (!direct_target_is_he_v1(program) && !direct_literal_v1(program, "(quote ")) ||
-        !direct_render_term_v1(program, rule->head, scratch, 0u) ||
+        !direct_render_term_v1(program, rule->head, scratch) ||
         (!direct_target_is_he_v1(program) && !direct_byte_v1(program, (uint8_t)')')))
         goto done;
     for (size_t index = 0u; index < body_count; index++) {
@@ -4503,10 +4651,10 @@ static bool direct_render_target_equations_v1(
                 program, rule, "authored-target-equation", NULL) ||
             !direct_literal_v1(program, "(= ") ||
             !direct_render_term_context_v1(
-                program, equation->expr.elems[1], scratch, 0u, true) ||
+                program, equation->expr.elems[1], scratch, true) ||
             !direct_byte_v1(program, (uint8_t)' ') ||
             !direct_render_term_context_v1(
-                program, equation->expr.elems[2], scratch, 0u, true) ||
+                program, equation->expr.elems[2], scratch, true) ||
             !direct_literal_v1(program, ")\n"))
             return false;
     }
@@ -4533,6 +4681,7 @@ static bool direct_compile_petta_v1(
     DirectOperatorsV1 operators = {0};
     DirectOperatorsV1 relations = {0};
     DirectOperatorsV1 capabilities = {0};
+    DirectOperatorsV1 closed_horn_relations = {0};
     DirectRulesV1 rules = {0};
     DirectRulesV1 target_equations = {0};
     DirectRuleIndexV1 rule_index = {0};
@@ -4544,6 +4693,8 @@ static bool direct_compile_petta_v1(
     bool ok = false;
 
     program.target = target;
+    program.retain_generic_dependencies = closed_entry_residual &&
+        target == CETTA_GSLT_DIRECT_TARGET_PETTA_V1;
     if (presentations == NULL || presentation_count == 0u ||
         (entry_mode_count > 0u && entry_modes == NULL) ||
         (closed_entry_residual && entry_mode_count == 0u) ||
@@ -4662,6 +4813,14 @@ static bool direct_compile_petta_v1(
             error, error_size))
         goto done;
 
+    if (target == CETTA_GSLT_DIRECT_TARGET_PETTA_V1) {
+        if (!direct_closed_horn_relations_v1(
+                &rules, &rule_index, &relations, &capabilities,
+                &target_equations, &closed_horn_relations, error, error_size))
+            goto done;
+        program.closed_horn_relations = &closed_horn_relations;
+    }
+
     if (target == CETTA_GSLT_DIRECT_TARGET_C_V1) {
         if (!closed_entry_residual || admitted_language != NULL ||
             native_type_packet != NULL) {
@@ -4754,7 +4913,42 @@ static bool direct_compile_petta_v1(
     if (!direct_render_entries_v1(
             &program, &binding_modes, entry_modes, entry_mode_count))
         goto allocation_failure;
+    /* A closed residual keeps the actual generic dependencies introduced by
+     * relational premise calls, including their transitive dependencies.
+     * Discovery does not change the source clause order of a relation. */
+    if (closed_entry_residual) {
+        for (size_t index = 0u; index < program.required_generic_relations.len; index++) {
+            const DirectOperatorV1 relation = program.required_generic_relations.items[index];
+            size_t begin, end;
+            bool first_name = true;
+            for (size_t earlier = 0u; earlier < index; earlier++)
+                if (strcmp(program.required_generic_relations.items[earlier].name,
+                           relation.name) == 0)
+                    first_name = false;
+            if (first_name && !direct_render_type_prefix_v1(&program, &relation,
+                    direct_generic_relation_prefix_v1(&program, relation.name, relation.arity)))
+                goto allocation_failure;
+            direct_rule_index_range_v1(&rule_index, relation.name, relation.arity, &begin, &end);
+            if (begin == end && !direct_render_empty_relation_v1(&program, &relation))
+                goto allocation_failure;
+            for (size_t r = begin; r < end; r++) {
+                if (!direct_render_rule_v1(&program,
+                        &rules.items[rule_index.items[r].source_index], &binding_modes, &scratch) ||
+                    !direct_byte_v1(&program, (uint8_t)'\n'))
+                    goto allocation_failure;
+            }
+        }
+    }
     if (!closed_entry_residual) {
+        for (size_t index = 0u; index < relations.len; index++) {
+            size_t begin;
+            size_t end;
+            const DirectOperatorV1 *relation = &relations.items[index];
+            direct_rule_index_range_v1(&rule_index, relation->name, relation->arity,
+                                      &begin, &end);
+            if (begin == end && !direct_render_empty_relation_v1(&program, relation))
+                goto allocation_failure;
+        }
         for (size_t index = 0u; index < rules.len; index++) {
             if (!direct_render_rule_v1(
                     &program, &rules.items[index], &binding_modes,
@@ -4783,12 +4977,14 @@ allocation_failure:
 
 done:
     free(program.bytes);
+    free(program.required_generic_relations.items);
     direct_domains_free_v1(&domains);
     free(native_types.items);
     direct_free_binding_modes_v1(&binding_modes);
     free(rule_index.items);
     free(target_equations.items);
     free(rules.items);
+    free(closed_horn_relations.items);
     free(relations.items);
     free(capabilities.items);
     free(operators.items);
@@ -4954,9 +5150,9 @@ bool cetta_gslt_petta_direct_admitted_v1(
             "; checked LanguageDef admission boundary\n(= (gslt:admitted-entry:") ||
         !direct_literal_v1(&combined, selected) ||
         !direct_literal_v1(&combined, " $authority $input)\n  (if (== (langdef:language-wire-sha256 $authority) (LangDef:LanguageWireSHA256 ") ||
-        !direct_render_term_v1(&combined, atom_string(&scratch, admission_wire_digest), &scratch, 0u) ||
+        !direct_render_term_v1(&combined, atom_string(&scratch, admission_wire_digest), &scratch) ||
         !direct_literal_v1(&combined, "))\n    (case (langdef:admit-term $authority ") ||
-        !direct_render_term_v1(&combined, atom_string(&scratch, separator + 1u), &scratch, 0u) ||
+        !direct_render_term_v1(&combined, atom_string(&scratch, separator + 1u), &scratch) ||
         !direct_literal_v1(&combined, " $input)\n      (((LangDef:TermAdmitted) (admitted:gslt:entry:") ||
         !direct_literal_v1(&combined, selected) ||
         !direct_literal_v1(&combined, " $input))\n       ($_ (gslt:entry:") ||

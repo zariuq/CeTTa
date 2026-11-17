@@ -57,9 +57,9 @@ bool cetta_gslt_petta_direct_selected_v1(
     char *error,
     size_t error_size);
 
-/* Specialize transitively from the requested entry modes and emit only those
- * mode projections.  Unlike selected_v1, this is a closed residual: no
- * unspecialized relation rules are retained as runtime fallbacks. */
+/* Specialize transitively from the requested entry modes. Public generic
+ * relation entries are omitted. PeTTa retains the closed Horn dependencies
+ * needed by relational premises under private residual names. */
 bool cetta_gslt_petta_direct_closed_v1(
     Atom *const *presentations,
     size_t presentation_count,

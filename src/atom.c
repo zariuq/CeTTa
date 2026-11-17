@@ -6737,6 +6737,9 @@ void atom_visit_set_free(AtomVisitSet *set) {
     *set = (AtomVisitSet){0};
 }
 
+#include "atom_walk.h"
+#include "atom_walk.inc"
+
 static inline __attribute__((always_inline)) bool atom_walk_any(
     const Atom *root, AtomTreePredicate predicate, AtomTreePredicate barrier,
     void *context, bool unique, size_t allowance, bool *complete) {

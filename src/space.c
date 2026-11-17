@@ -6614,6 +6614,10 @@ static bool atom_is_exact_indexable(const Atom *atom) {
     case ATOM_VAR:
         return false;
     case ATOM_GROUNDED:
+        /* Exact identifiers cover stable leaves. Retained runtime values
+         * use candidate matching with their ownership intact. */
+        if (!term_universe_atom_is_stable((Atom *)atom))
+            return false;
         switch (atom->ground.gkind) {
         case GV_INT:
         case GV_FLOAT:

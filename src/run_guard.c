@@ -24,50 +24,46 @@ void cetta_run_guard_declare(uint64_t queries) {
     do n=write(receipt_fd,&r,sizeof(r)); while (n<0 && errno==EINTR);
     declared_sent=n==(ssize_t)sizeof(r);
 }
-static void missing_report(const char *path,bool known,uint64_t declared,int status) {
+static void missing_report(const char *path, bool known, uint64_t declared,
+                           int waited_status, bool signalled, int signal_number) {
     if (!path) return;
     FILE *f=fopen(path,"w");
     if (!f) return;
-    fprintf(f,"{\"version\":1,\"dialect_exit\":%d,\"contract_exit\":1,"
+    fprintf(f,"{\"version\":1,\"dialect_exit\":null,\"contract_exit\":1,"
         "\"document_framing_ok\":false,\"query_catalogue_available\":%s,"
-        "\"report_publication_acknowledged\":false,\"queries_declared\":",
-        status,known ? "true" : "false");
+        "\"query_details_available\":false,\"report_publication_acknowledged\":false,"
+        "\"queries_declared\":", known ? "true" : "false");
     if (known) fprintf(f,"%"PRIu64,declared); else fputs("null",f);
     fputs(",\"queries_unsettled\":",f);
     if (known) fprintf(f,"%"PRIu64,declared); else fputs("null",f);
-    fputs(",\"queries\":[",f);
-    for (uint64_t i=0;known && i<declared;i++)
-        fprintf(f,"%s{\"id\":%"PRIu64",\"status\":1,\"observation_complete\":false,"
-            "\"tests_passed\":false,\"finalization_ready\":false,\"framing_ok\":false,"
-            "\"answers\":0,\"tests\":0,\"faults\":0,\"details_shown\":0,\"details_omitted\":0}",i ? "," : "",i+1u);
-    fputs("],\"diagnostics\":[],\"reason\":\"process terminated before finalization\"}\n",f);
+    fprintf(f,",\"queries\":[],\"diagnostics\":[],\"process\":{\"state\":\"%s\",",
+        signalled ? "signalled" : "unfinalized");
+    if (signalled) fprintf(f,"\"signal\":%d", signal_number);
+    else fprintf(f,"\"exit_status\":%d", waited_status);
+    fputs("},\"reason\":\"process terminated before finalization\"}\n",f);
     (void)fclose(f);
 }
-int cetta_run_guard(int argc,char **argv,int (*entry)(int,char **)) {
-    bool guarded=false;
-    const char *path=NULL;
-    for (int i=1;i<argc;i++) {
-        if (!strcmp(argv[i],"--")) break;
-        if (!strcmp(argv[i],"--run-contract")) guarded=true;
-        else if (!strcmp(argv[i],"--run-report")) {
-            guarded=true;
-            if (i+1<argc) path=argv[++i];
-        }
-    }
-    if (!guarded) return entry(argc,argv);
+
+int cetta_run_guard_finish(int result) {
+    if (receipt_fd < 0) return result;
+    Receipt r={FINAL_MAGIC,(uint32_t)result,declared_queries};
+    ssize_t n;
+    do n=write(receipt_fd,&r,sizeof(r)); while (n<0 && errno==EINTR);
+    close(receipt_fd); receipt_fd=-1;
+    return n==(ssize_t)sizeof(r) ? result : 1;
+}
+
+bool cetta_run_guard_launch(const char *path, int *parent_status) {
+    if (!parent_status) return false;
+    *parent_status = 1;
     int channel[2];
-    if (pipe2(channel,O_CLOEXEC)) return 1;
+    if (pipe2(channel,O_CLOEXEC)) return false;
     pid_t child=fork();
-    if (child<0) { close(channel[0]);close(channel[1]);return 1; }
+    if (child<0) { close(channel[0]);close(channel[1]);return false; }
     if (!child) {
         close(channel[0]); receipt_fd=channel[1];
         declared_sent=false; declared_queries=0;
-        int result=entry(argc,argv);
-        Receipt r={FINAL_MAGIC,(uint32_t)result,declared_queries};
-        ssize_t n;
-        do n=write(receipt_fd,&r,sizeof(r)); while (n<0 && errno==EINTR);
-        close(receipt_fd);receipt_fd=-1;
-        exit(n==(ssize_t)sizeof(r) ? result : 1);
+        return true;
     }
     close(channel[1]);
     int status=0;
@@ -94,8 +90,13 @@ int cetta_run_guard(int argc,char **argv,int (*entry)(int,char **)) {
         final.magic==FINAL_MAGIC && final.status<=255u &&
         (!known || final.declared==declared) && waited==child &&
         WIFEXITED(status) && WEXITSTATUS(status)==(int)final.status;
-    if (valid) return (int)final.status;
+    if (valid) { *parent_status = (int)final.status; return false; }
     fputs("error: process terminated without a final run receipt\n",stderr);
-    missing_report(path,known,declared,waited==child && WIFEXITED(status) ? WEXITSTATUS(status) : 1);
-    return 1;
+    bool signalled=waited==child && WIFSIGNALED(status);
+    int signal_number=signalled ? WTERMSIG(status) : 0;
+    int observed_status=signalled ? 128+signal_number :
+        (waited==child && WIFEXITED(status) ? WEXITSTATUS(status) : 1);
+    missing_report(path,known,declared,observed_status,signalled,signal_number);
+    if (signalled) *parent_status=observed_status;
+    return false;
 }

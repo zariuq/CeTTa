@@ -4063,6 +4063,9 @@ bool cetta_gslt_render_native_c_v1(
         r.memo_next = 0;
         emit_mode_rules(&r, rules, m, (long)i, &label, NULL);
         r.out = &o;
+        if (label == 0u)
+            for (size_t k = 0; k < mode_outputs(m); k++)
+                nb_printf(&o, "    (void)r%zu;\n", k);
         memo_declare(&o, 0u, r.memo_next);
         if (section.len)
             nb_put(&o, (const char *)section.bytes, section.len);

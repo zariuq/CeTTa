@@ -74,7 +74,8 @@ Atom *eval_query_pattern_variables(Arena *arena, Atom *pattern) {
 }
 
 static CettaEvalQuery *eval_query_open_internal(Space *space, Arena *persistent, Registry *registry,
-                                Atom *source, Atom *variables, int fuel, bool values) {
+                                Atom *source, Atom *variables, int fuel, bool values,
+                                const PettaPlanNode *captured_plan) {
     if (!g_library_context || !space || !source || fuel < -1)
         return NULL;
     CettaEvalQuery *query = calloc(1u, sizeof(*query));
@@ -95,7 +96,7 @@ static CettaEvalQuery *eval_query_open_internal(Space *space, Arena *persistent,
         eval_query_close(query);
         return NULL;
     }
-    const PettaPlanNode *plan = owned && query->library->petta_program &&
+    const PettaPlanNode *plan = captured_plan ? captured_plan : owned && query->library->petta_program &&
         eval_current_language_id() == CETTA_LANGUAGE_PETTA
         ? petta_program_plan_current_in(query->library->petta_program,
               &query->storage, owned) : NULL;
@@ -145,18 +146,50 @@ CettaEvalQuery *eval_query_open(Space *space, Arena *persistent, Registry *regis
 
 CettaEvalQuery *eval_query_open_exports(Space *space, Arena *persistent, Registry *registry,
         Atom *source, Atom *variables, int fuel) {
-    return eval_query_open_internal(space, persistent, registry, source, variables, fuel, false);
+    return eval_query_open_internal(space, persistent, registry, source, variables, fuel, false, NULL);
+}
+
+CettaEvalQuery *eval_query_open_with_plan(Space *space, Arena *persistent, Registry *registry,
+        Atom *source, const PettaPlanNode *plan, int fuel) {
+    if (!plan || eval_current_language_id() != CETTA_LANGUAGE_PETTA)
+        return NULL;
+    return eval_query_open_internal(space, persistent, registry, source, NULL, fuel, false, plan);
 }
 
 CettaEvalQuery *eval_query_open_values(Space *space, Arena *persistent, Registry *registry,
         Atom *source, int fuel) {
-    return eval_query_open_internal(space, persistent, registry, source, NULL, fuel, true);
+    return eval_query_open_internal(space, persistent, registry, source, NULL, fuel, true, NULL);
 }
 
 bool eval_query_has_retained_driver(const CettaEvalQuery *query) {
     if (!query || query->library != g_library_context) return false;
     EvalWork *work = eval_work_lookup(query->handle);
     return work && (query->literal || work->route == EVAL_WORK_ROUTE_GENERAL || work->canonical);
+}
+
+CettaEvalQueryOutput eval_query_project_output(CettaEvalQuery *query, Arena *arena,
+        Atom **pattern, CettaEvalCompletion *completion) {
+    if (pattern)
+        *pattern = NULL;
+    if (!query || !arena || !pattern || query->library != g_library_context) {
+        cetta_eval_completion_record(completion, CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return CETTA_QUERY_OUTPUT_STOPPED;
+    }
+    EvalWork *work = eval_work_lookup(query->handle);
+    if (query->finished || !work || work->state != EVAL_WORK_FRESH ||
+        work->transitions || work->taken || !work->machine_ready ||
+        work->language != CETTA_LANGUAGE_PETTA)
+        return CETTA_QUERY_OUTPUT_UNAVAILABLE;
+    EvalQueryScope scope;
+    eval_query_enter(query, &scope);
+    bool ok = petta_machine_project_output(&work->machine, work->source,
+        work->source_plan, arena, pattern);
+    eval_query_leave(&scope);
+    if (!ok) {
+        cetta_eval_completion_record(completion, CETTA_EVAL_INCOMPLETE_CAPACITY);
+        return CETTA_QUERY_OUTPUT_STOPPED;
+    }
+    return *pattern ? CETTA_QUERY_OUTPUT_PATTERN : CETTA_QUERY_OUTPUT_OPAQUE;
 }
 
 static void eval_query_observe_state(const CettaEvalQuery *query, EvalOutcome *outcome) {
