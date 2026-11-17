@@ -5119,7 +5119,7 @@ AspEnumeration asp_cdnl_enumerate_weighted(const AspRule *rules,
     int32_t *store = NULL;
     uint32_t cap_rules = 0u;
     size_t cap_store = 0u;
-    for (uint32_t round = 0u; ok; round++) {
+    while (ok) {
         uint32_t nb = rule_count + e.models_len;
         if (nb > cap_rules) {
             cap_rules = nb * 2u + 4u;

@@ -1868,6 +1868,7 @@ Atom *abt_parse(const AbtSignature *signature, Arena *arena, Atom *syntax) {
                 goto fail;
             Atom **elems = arena_alloc(
                 arena, sizeof(*elems) * ((size_t)arity + 1u));
+            if (!elems) goto fail;
             elems[0] = current->expr.elems[1];
             if (!abt_parse_stack_push(&stack, (AbtParseTask){
                     ABT_PARSE_BUILD_BIND, current, task.destination, elems,
@@ -1906,6 +1907,7 @@ Atom *abt_parse(const AbtSignature *signature, Arena *arena, Atom *syntax) {
         Atom **elems = current->expr.len
             ? arena_alloc(arena, sizeof(*elems) * (size_t)current->expr.len)
             : NULL;
+        if (current->expr.len && !elems) goto fail;
         if (symbolic_head) elems[0] = current->expr.elems[0];
         if (!abt_parse_stack_push(&stack, (AbtParseTask){
                 ABT_PARSE_BUILD_PLAIN, current, task.destination, elems,

@@ -104,18 +104,22 @@ static void service_release(void *resource) {
 static Atom *seal_fault(Arena *a, Atom *head, Atom **args, uint32_t nargs,
                         const char *reason) {
     Atom **elems = arena_alloc(a, sizeof(Atom *) * (nargs + 1u));
+    if (!elems)
+        return NULL;
     elems[0] = head;
     for (uint32_t i = 0; i < nargs; ++i)
         elems[i + 1u] = args[i];
     Atom *call = atom_expr(a, elems, nargs + 1u);
-    return atom_error(a, call,
-                      atom_expr2(a, atom_symbol(a, "SealFault"),
-                                 atom_symbol(a, reason)));
+    Atom *tag = atom_symbol(a, "SealFault");
+    Atom *detail = atom_symbol(a, reason);
+    Atom *fault = tag && detail ? atom_expr2(a, tag, detail) : NULL;
+    return call && fault ? atom_error(a, call, fault) : NULL;
 }
 
 static bool seal_raise(CettaCallOutcome *out, Arena *a, Atom *head,
                        Atom **args, uint32_t nargs, const char *reason) {
-    *out = cetta_call_raised(seal_fault(a, head, args, nargs, reason));
+    Atom *fault = seal_fault(a, head, args, nargs, reason);
+    *out = fault ? cetta_call_raised(fault) : cetta_call_interrupted();
     return true;
 }
 
@@ -510,7 +514,11 @@ static bool op_open(Arena *a, Atom *head, Atom **args, uint32_t nargs,
             return seal_raise(out, a, head, args, nargs, "capacity");
         }
         Atom **elems = arena_alloc(a, sizeof(Atom *) * (size_t)(length + 1u));
+        if (!elems)
+            goto snapshot_no_memory;
         elems[0] = atom_symbol(a, "seal:snapshot");
+        if (!elems[0])
+            goto snapshot_no_memory;
         CettaCount kept = 0;
         for (CettaCount i = 0; i < length; ++i) {
             Atom *atom = space_get_at64(space, i);
@@ -521,14 +529,23 @@ static bool op_open(Arena *a, Atom *head, Atom **args, uint32_t nargs,
                 pthread_mutex_unlock(&service->lock);
                 return seal_raise_status(out, a, head, args, nargs, portable);
             }
-            elems[1u + kept++] = atom_deep_copy(a, atom);
+            Atom *owned = atom_deep_copy(a, atom);
+            if (!owned)
+                goto snapshot_no_memory;
+            elems[1u + kept++] = owned;
         }
         result = atom_expr(a, elems, kept + 1u);
     }
+    if (!result)
+        goto snapshot_no_memory;
     if (grant->state == SERVICE_GRANT_ONCE)
         grant->state = SERVICE_GRANT_CONSUMED;
     pthread_mutex_unlock(&service->lock);
     return seal_value(out, result);
+
+snapshot_no_memory:
+    pthread_mutex_unlock(&service->lock);
+    return seal_raise_status(out, a, head, args, nargs, CETTA_SEAL_NOMEM);
 }
 
 static bool seal_dispatch(const char *op, Arena *a, Atom *head, Atom **args,

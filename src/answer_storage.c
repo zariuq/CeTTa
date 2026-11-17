@@ -25,12 +25,14 @@ CettaAnswerStorage *cetta_answer_storage_new(CettaAnswerStorageAccount **slot) {
         return NULL;
     if (!*slot) {
         *slot = cetta_malloc(sizeof(**slot));
+        if (!*slot) return NULL;
         **slot = (CettaAnswerStorageAccount){.shares = 1u};
     }
     CettaAnswerStorageAccount *account = *slot;
     if (account->shares == SIZE_MAX)
         return NULL;
     CettaAnswerStorage *storage = cetta_malloc(sizeof(*storage));
+    if (!storage) return NULL;
     *storage = (CettaAnswerStorage){.shares = 1u, .account = account,
         .next = account->head};
     if (account->head)

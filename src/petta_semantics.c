@@ -4337,7 +4337,41 @@ bool petta_semantics_term_compare_expression_boundary(
 }
 
 static bool petta_term_compare_leaf(
-    const Atom *left, const Atom *right, int *ordering) {
+    const Atom *left, const Atom *right, int *ordering, bool structural) {
+    if (structural) {
+        if (left->kind != right->kind) {
+            *ordering = left->kind < right->kind ? -1 : 1;
+            return true;
+        }
+        if (left->kind == ATOM_EXPR) {
+            if (left->expr.len && right->expr.len)
+                return false;
+            *ordering = petta_compare_u64(left->expr.len, right->expr.len);
+            return true;
+        }
+        if (left->kind == ATOM_GROUNDED) {
+            const GroundedKind kind = left->ground.gkind;
+            if (kind != right->ground.gkind) {
+                *ordering = kind < right->ground.gkind ? -1 : 1;
+                return true;
+            }
+            if (kind == GV_BIGINT || kind == GV_RATIONAL) {
+                const char *a = kind == GV_BIGINT ? atom_bigint_cstr(left) : atom_rational_cstr(left);
+                const char *b = kind == GV_BIGINT ? atom_bigint_cstr(right) : atom_rational_cstr(right);
+                if (!a || !b)
+                    return false;
+                *ordering = strcmp(a, b);
+                return true;
+            }
+            if (kind == GV_FLOAT && isnan(left->ground.fval) && isnan(right->ground.fval)) {
+                uint64_t a, b;
+                memcpy(&a, &left->ground.fval, sizeof a);
+                memcpy(&b, &right->ground.fval, sizeof b);
+                *ordering = petta_compare_u64(a, b);
+                return true;
+            }
+        }
+    }
     PeTTaTermClass left_class = petta_term_class(left);
     PeTTaTermClass right_class = petta_term_class(right);
     if (left_class != right_class) {
@@ -4541,7 +4575,7 @@ static bool petta_order_memo_grow(PeTTaOrderMemo *memo) {
  * The memo belongs to this comparison only: bindings and mutable resources
  * cannot change under it, and no address escapes as semantic authority. */
 static bool petta_term_compare_graph(
-        const Atom *left, const Atom *right, int *ordering) {
+        const Atom *left, const Atom *right, int *ordering, bool structural) {
     PeTTaOrderFrame local_frames[32];
     PeTTaOrderFrame *frames = local_frames;
     size_t capacity = 32u, depth = 0u;
@@ -4552,7 +4586,7 @@ static bool petta_term_compare_graph(
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_ORDER_PAIR_VISIT);
         if (left == right) {
             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_ORDER_EQUAL_REUSE);
-        } else if (petta_term_compare_leaf(left, right, ordering)) {
+        } else if (petta_term_compare_leaf(left, right, ordering, structural)) {
             if (*ordering != 0) {
                 success = true;
                 break;
@@ -4591,8 +4625,8 @@ static bool petta_term_compare_graph(
                                             .next = 1u};
                 cetta_runtime_stats_update_max(
                     CETTA_RUNTIME_COUNTER_TERM_ORDER_FRONTIER_PEAK, depth);
-                if (!petta_order_reads_as_list(left) &&
-                    !petta_order_reads_as_list(right)) {
+                if (structural || (!petta_order_reads_as_list(left) &&
+                    !petta_order_reads_as_list(right))) {
                     left = left->expr.elems[0];
                     right = right->expr.elems[0];
                     continue;
@@ -4678,7 +4712,7 @@ done:
 }
 
 static bool petta_term_compare_flat(
-    const Atom *left, const Atom *right, int *ordering) {
+    const Atom *left, const Atom *right, int *ordering, bool structural) {
     /* Flat values need neither a memo nor a heap worklist. Nested terms
      * enter the same graph traversal used by all deeper comparisons. */
     CettaExprLen shared = left->expr.len < right->expr.len
@@ -4691,8 +4725,8 @@ static bool petta_term_compare_flat(
         if (a == b)
             continue;
         int element_order = 0;
-        if (!petta_term_compare_leaf(a, b, &element_order))
-            return petta_term_compare_graph(left, right, ordering);
+        if (!petta_term_compare_leaf(a, b, &element_order, structural))
+            return petta_term_compare_graph(left, right, ordering, structural);
         if (element_order != 0) {
             *ordering = element_order;
             return true;
@@ -4715,7 +4749,7 @@ static inline bool petta_order_holds_no_tag(const Atom *atom) {
 /* The standard order of two terms.  WRITTEN: both are known to hold no
  * internal tag, so each is read as written. */
 static inline bool petta_term_compare_in(
-    const Atom *left, const Atom *right, int *ordering, bool written) {
+    const Atom *left, const Atom *right, int *ordering, bool written, bool structural) {
     if (!left || !right || !ordering)
         return false;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_ORDER_PAIR_VISIT);
@@ -4739,33 +4773,33 @@ static inline bool petta_term_compare_in(
             return true;
         }
         if (left->kind == ATOM_EXPR && left->expr.len && right->expr.len) {
-            if (written ||
+            if (structural || written ||
                 (petta_order_holds_no_tag(left) && petta_order_holds_no_tag(right)) ||
                 (!petta_order_reads_as_list(left) && !petta_order_reads_as_list(right)))
-                return petta_term_compare_flat(left, right, ordering);
+                return petta_term_compare_flat(left, right, ordering, structural);
             /* A list form is read as the list it spells (an empty list
              * value is the empty list of its kind). */
-            if (petta_term_compare_leaf(left, right, ordering))
+            if (petta_term_compare_leaf(left, right, ordering, structural))
                 return true;
-            return petta_term_compare_graph(left, right, ordering);
+            return petta_term_compare_graph(left, right, ordering, structural);
         }
     }
-    return petta_term_compare_leaf(left, right, ordering);
+    return petta_term_compare_leaf(left, right, ordering, structural);
 }
 
 bool petta_semantics_term_compare(
     const Atom *left, const Atom *right, int *ordering) {
-    return petta_term_compare_in(left, right, ordering, false);
+    return petta_term_compare_in(left, right, ordering, false, false);
 }
 
-Atom *petta_semantics_msort(Arena *arena, Atom *list) {
+static Atom *sort_terms(Arena *arena, Atom *list, bool structural) {
     if (!arena || !list || list->kind != ATOM_EXPR || atom_is_list_rest(list))
         return NULL;
     /* A list's elements sort into a list. */
     if (atom_is_list(list)) {
         Atom *elements = atom_sequence_like(
             arena, NULL, atom_list_elems(list), atom_list_len(list));
-        Atom *sorted = elements ? petta_semantics_msort(arena, elements) : NULL;
+        Atom *sorted = elements ? sort_terms(arena, elements, structural) : NULL;
         return sorted ? atom_list(arena, sorted->expr.elems, sorted->expr.len)
                       : NULL;
     }
@@ -4779,6 +4813,8 @@ Atom *petta_semantics_msort(Arena *arena, Atom *list) {
     size_t length = (size_t)list->expr.len;
     Atom **items = arena_alloc(arena, sizeof(*items) * length);
     Atom **scratch = arena_alloc(arena, sizeof(*scratch) * length);
+    if (!items || !scratch)
+        return NULL;
     memcpy(items, list->expr.elems, sizeof(*items) * length);
     /* The sequence's facts are its elements': when they show no internal
      * tag, every element is read as written, known once for every
@@ -4802,7 +4838,7 @@ Atom *petta_semantics_msort(Arena *arena, Atom *list) {
                 int ordering = 0;
                 if (!petta_term_compare_in(
                         source[left_index], source[right_index],
-                        &ordering, written)) {
+                        &ordering, written, structural)) {
                     return NULL;
                 }
                 target[output++] = ordering <= 0
@@ -4826,6 +4862,14 @@ Atom *petta_semantics_msort(Arena *arena, Atom *list) {
     if (source != items)
         memcpy(items, source, sizeof(*items) * length);
     return atom_expr(arena, items, list->expr.len);
+}
+
+Atom *petta_semantics_msort(Arena *arena, Atom *list) {
+    return sort_terms(arena, list, false);
+}
+
+Atom *cetta_term_msort_structural(Arena *arena, Atom *list) {
+    return sort_terms(arena, list, true);
 }
 
 Atom *petta_semantics_apply(

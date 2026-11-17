@@ -30174,6 +30174,7 @@ static bool petta_machine_completion_failure(CettaEvalCompletion completion,
     case CETTA_EVAL_COMPLETE: return false;
     case CETTA_EVAL_INCOMPLETE_FUEL:
     case CETTA_EVAL_INCOMPLETE_CANCELLED: *failure = PETTA_MACHINE_STEP_SUSPENDED; break;
+    case CETTA_EVAL_INCOMPLETE_SUSPENDED: *failure = PETTA_MACHINE_STEP_SUSPENDED; break;
     case CETTA_EVAL_INCOMPLETE_STACK: *failure = PETTA_MACHINE_STEP_STACK; break;
     case CETTA_EVAL_INCOMPLETE_CAPACITY: *failure = PETTA_MACHINE_STEP_CAPACITY; break;
     case CETTA_EVAL_INCOMPLETE_INVALIDATED: *failure = PETTA_MACHINE_STEP_INVALIDATED; break;

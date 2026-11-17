@@ -27,6 +27,7 @@ typedef enum {
     /* The residual goals of one connected component of SWI-Prolog's
      * delayed goals and attributes (petta_libpl). */
     CETTA_DELAY_CLIENT_PROLOG = 1,
+    CETTA_DELAY_CLIENT_TMETTA = 2,
 } CettaDelayClient;
 
 typedef struct {

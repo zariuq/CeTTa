@@ -146,9 +146,24 @@ typedef struct {
     const Bindings *principal;
 } CettaTransformFiring;
 
+/* An optional binding theory for the same occurrence/guard/commit protocol.
+ * Match results are 1 (solved), 0 (refuted), 2 (residual), -1 (interrupted).
+ * Residual and interrupted results must record their cause in the host. */
+typedef struct {
+    int (*open_row)(void *, Arena *, BindingsBuilder *, Atom *, Atom **);
+    int (*unify)(void *, Arena *, BindingsBuilder *, Atom *, Atom *);
+    Atom *(*capture)(void *, Arena *, Atom *, const Bindings *);
+    /* Resource accounting uses live space identity and exact stored rows. */
+    bool exact_occurrences;
+} CettaTransformLogic;
+
 typedef struct {
     void *context;
     CettaTransformDialect dialect;
+    /* Optional persistent caller knowledge. Candidate-local extensions are
+     * still isolated by the common trail and never mutate this loan. */
+    const Bindings *environment;
+    const CettaTransformLogic *logic;
     /* Pure lookup of the space named by a conjunct. It may be queried during
      * planning and again after earlier bindings/effects. False for an operand
      * that names no space; true with *space_out NULL for a location that
@@ -179,6 +194,8 @@ typedef struct {
     /* Results of a let's code, in order. HE Error values stay in the list
      * for its normal-value preference and error multiplicity; a PeTTa raise
      * or interrupted host evaluation returns false with *error_out set.
+     * The caller frees the returned result and givens arrays; their Atom
+     * payloads belong to the supplied arena.
      * Bound source variables arrive protected, as the dialect requires. */
     bool (*evaluate)(void *context, Arena *a, Atom *expression,
                      Atom ***results_out, size_t *len_out, Atom **error_out);
@@ -206,6 +223,9 @@ typedef struct {
      * the host; it is never an empty answer or permission to retry elsewhere.
      * A firing reserves its commit step before any store mutation. */
     bool (*spend)(void *context, uint64_t work);
+    /* With no quantitative fuel bound, the decision carrier may do its own
+     * work while the spend callback still checks for cancellation. */
+    bool spend_poll_only;
     /* An equation guard whose operands are held data and whose operation is
      * the unmodified equality builtin. False retains the general code path. */
     bool (*equation_check)(void *context, Atom *pattern, Atom *expression,

@@ -631,6 +631,10 @@ bool petta_semantics_term_compare_expression_boundary(
     bool nonempty, const Atom *leaf, int *ordering);
 Atom *petta_semantics_msort(Arena *arena, Atom *list);
 
+/* Stable sort of structural keys made from scalar leaves, variables and
+ * finite expressions. Compare node kinds before their contents. */
+Atom *cetta_term_msort_structural(Arena *arena, Atom *keys);
+
 /*
  * Stable first-occurrence deduplication modulo alpha equivalence.  Keys use
  * first-occurrence variable ordinals and collision-safe structural equality;

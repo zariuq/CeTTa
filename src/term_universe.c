@@ -6663,7 +6663,7 @@ static AtomId term_universe_store_prepared_atom_id(TermUniverse *universe,
 
 static AtomId term_universe_store_atom_id_impl(
     TermUniverse *universe, Arena *fallback, const Arena *source_arena,
-    Atom *src) {
+    Atom *src, bool preserve_scope) {
     TermUniverseSourceMemoRun source_memo = {0};
     AtomId result = CETTA_ATOM_ID_NONE;
     Arena canonical_scratch;
@@ -6680,7 +6680,7 @@ static AtomId term_universe_store_atom_id_impl(
         universe, source_arena, src);
 
     Atom *lookup = src;
-    if (term_universe_atom_contains_epoch_var(src)) {
+    if (!preserve_scope && term_universe_atom_contains_epoch_var(src)) {
         arena_init(&canonical_scratch);
         arena_set_hashcons(&canonical_scratch, NULL);
         lookup = term_universe_canonicalize_atom(&canonical_scratch, src);
@@ -6716,14 +6716,19 @@ done:
 
 AtomId term_universe_store_atom_id(TermUniverse *universe, Arena *fallback,
                                    Atom *src) {
-    return term_universe_store_atom_id_impl(universe, fallback, NULL, src);
+    return term_universe_store_atom_id_impl(universe, fallback, NULL, src, false);
 }
 
 AtomId term_universe_store_atom_id_from_source_arena(
     TermUniverse *universe, Arena *fallback, const Arena *source_arena,
     Atom *src) {
     return term_universe_store_atom_id_impl(
-        universe, fallback, source_arena, src);
+        universe, fallback, source_arena, src, false);
+}
+
+AtomId term_universe_store_scoped_atom_id(TermUniverse *universe,
+        const Arena *source_arena, Atom *src) {
+    return term_universe_store_atom_id_impl(universe, NULL, source_arena, src, true);
 }
 
 static Atom *term_universe_get_atom_at(TermUniverse *universe, AtomId id,
@@ -8749,9 +8754,9 @@ static void term_universe_counted_sweep_leave(TermUniverseCountedRoots **roots) 
 
 static bool term_universe_collect_counted(TermUniverse *universe,
                                           TermUniverseCollectionReport *report) {
+    TermUniverseCountedRoots roots = {.universe = universe};
     __attribute__((cleanup(term_universe_counted_sweep_leave)))
     TermUniverseCountedRoots *active_sweep = NULL;
-    TermUniverseCountedRoots roots = {.universe = universe};
     uint64_t candidates = (uint64_t)universe->len -
                           universe->collection_len_after + universe->zero_len;
     TU_COLLECTION_PROBE_ENTER();
