@@ -39,7 +39,8 @@
       (Row CETTA_LANGUAGE_ZEROUV 16 "zerouv" true "Experimental productive and recurrent MeTTa candidate" CETTA_SYNTAX_METTA false true false false)
       (Row CETTA_LANGUAGE_METTA_INTERACT 17 "metta-interact" true "Experimental proof-relevant interaction and cost language" CETTA_SYNTAX_METTA false true false false)
       (Row CETTA_LANGUAGE_HOL_LIGHT 18 "hol-light" true "Native HOL Light kernel; checked HOLR proof streams" CETTA_SYNTAX_HOLR false false false false)
-      (Row CETTA_LANGUAGE_TCALC 19 "tcalc" true "The transform calculus, a moving target: a program's outcomes under each stated interpretation" CETTA_SYNTAX_TCALC false false false false)))
+      (Row CETTA_LANGUAGE_TCALC 19 "tcalc" true "The transform calculus, a moving target: a program's outcomes under each stated interpretation" CETTA_SYNTAX_TCALC false false false false)
+      (Row CETTA_LANGUAGE_TMETTA 20 "tmetta" true "Transform-native MeTTa with explicit activation and constrained answer bags" CETTA_SYNTAX_METTA false false false false)))
   (Table LanguageAliases
     (Columns (Column name Text) (Column language (Ref Languages code)))
     (Key name)
@@ -70,6 +71,7 @@
       (Row CETTA_LANGUAGE_VERSION_HE_0_2_10 4)
       (Row CETTA_LANGUAGE_VERSION_PETTA_1_1_C 5)
       (Row CETTA_LANGUAGE_VERSION_TCALC_0_1 7)
+      (Row CETTA_LANGUAGE_VERSION_TMETTA_0_1 8)
     ))
   (Table Profiles
     (Columns (Column id Nat) (Column code Identifier) (Column object Identifier) (Column language (Ref Languages code)) (Column name Text) (Column note Text) (Column he Bool) (Column extensions Bool) (Column dependent Bool) (Column rust Bool) (Column version (Ref Versions code)) (Column group (Enum before typing after hol)))
@@ -86,6 +88,8 @@
       (Row 7 CETTA_PROFILE_PETTA_EXTENDED CETTA_PROFILE_PETTA_EXTENDED_VALUE CETTA_LANGUAGE_PETTA "extended" "Corrected stable PeTTa plus labeled shared CeTTa extensions." false true false false CETTA_LANGUAGE_VERSION_PETTA_STABLE before)
       (Row 15 CETTA_PROFILE_PETTA_1_1_C CETTA_PROFILE_PETTA_1_1_C_VALUE CETTA_LANGUAGE_PETTA "petta@1.1.c" "PeTTa's typed line with declarations as call contracts: a failed check raises on every route." false false false false CETTA_LANGUAGE_VERSION_PETTA_1_1_C before)
       (Row 19 CETTA_PROFILE_PETTA_AI CETTA_PROFILE_PETTA_AI_VALUE CETTA_LANGUAGE_PETTA "ai" "Corrected stable PeTTa with sealed sorts: a function's declaration types its calls' answers, never an unevaluated application of it." false false false false CETTA_LANGUAGE_VERSION_PETTA_STABLE before)
+      (Row 20 CETTA_PROFILE_TMETTA_NATIVE CETTA_PROFILE_TMETTA_NATIVE_VALUE CETTA_LANGUAGE_TMETTA "native" "Data-preserving arguments, explicit activation, constrained bag collection" false false false false CETTA_LANGUAGE_VERSION_TMETTA_0_1 before)
+      (Row 21 CETTA_PROFILE_TMETTA_EAGER CETTA_PROFILE_TMETTA_EAGER_VALUE CETTA_LANGUAGE_TMETTA "eager" "Value-first arguments computed once, with explicit holding overrides" false false false false CETTA_LANGUAGE_VERSION_TMETTA_0_1 before)
       (Row 8 CETTA_PROFILE_PETTA_TYPECHECK_V2 CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE CETTA_LANGUAGE_PETTA "typecheck-v2" "PeTTa with native Roman-compatible residual type checking." false true false false CETTA_LANGUAGE_VERSION_PETTA_1_1 typing)
       (Row 13 CETTA_PROFILE_PETTA_TYPECHECK_V3 CETTA_PROFILE_PETTA_TYPECHECK_V3_VALUE CETTA_LANGUAGE_PETTA "typecheck-v3" "PeTTa with native v3 judgments and coherent typecheck-v2 delegation." false true false false CETTA_LANGUAGE_VERSION_PETTA_1_1 typing)
       (Row 4 CETTA_PROFILE_RHOCALC_STRICT_CORE CETTA_PROFILE_RHOCALC_STRICT_CORE_VALUE CETTA_LANGUAGE_RHOCALC "strict-core" "Strict-core rho-calculus without cost-layer extensions." false false false false CETTA_LANGUAGE_VERSION_NONE after)

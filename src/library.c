@@ -8,6 +8,7 @@
 #include "native/native_modules.h"
 #include "library_transform.h"
 #include "nik_runtime.h"
+#include "tmetta.h"
 #include "parser.h"
 #include "petta_search_machine.h"
 #include "petta_runtime.h"
@@ -674,6 +675,8 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
     /* Retained computations and parser handles borrow session resources.
      * Retire them before releasing spaces, programs and matching caches. */
     cetta_native_handle_cleanup_all(ctx);
+    cetta_tmetta_runtime_free(ctx->tmetta_runtime);
+    ctx->tmetta_runtime = NULL;
     eval_named_mutex_registry_free(ctx);
     ctx->top_module_space = NULL;
     ctx->top_module_registry = NULL;

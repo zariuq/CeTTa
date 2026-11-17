@@ -3455,7 +3455,7 @@ static int cetta_main(int argc, char **argv) {
             import_mode_overridden = true;
             continue;
         }
-        if (strcmp(argv[i], "-e") == 0) {
+        if (strcmp(argv[i], "-e") == 0 || strcmp(argv[i], "--expr") == 0) {
             if (i + 1 >= argc) {
                 print_usage(stderr);
                 return 1;
@@ -4843,6 +4843,7 @@ petta_next_slice:
                         (size_t)eval_outcome_fault_count(&detailed),
                         detailed.steps_spent);
             } else if (g_count_only || run_cli ||
+                       lang->id == CETTA_LANGUAGE_TMETTA ||
                        lang->id == CETTA_LANGUAGE_PETTA ||
                        (lang->id == CETTA_LANGUAGE_HE && fuel_override_requested &&
                         fuel_override >= 0) ||

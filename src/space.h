@@ -501,6 +501,9 @@ bool space_add_alpha_keys_batch(Space *s, const AtomId *keys,
 bool space_admit_atom(Space *s, Arena *fallback, Atom *atom);
 bool space_admit_atom_from_source_arena(
     Space *s, Arena *fallback, const Arena *source_arena, Atom *atom);
+/* Admit a scoped row to native storage, keeping captured VarIds. Native
+ * sets compare scoped rows by their exact keys. */
+bool space_admit_scoped_atom(Space *s, const Arena *source_arena, Atom *atom);
 /* Store one already-evaluated occurrence sequence with one backend
  * publication where the active engine supports it.  Source order and
  * duplicate occurrences are authoritative; unsupported engines replay the
@@ -882,6 +885,13 @@ bool space_read_token_prefix_intact(SpaceReadToken token);
  * pointer retained by a stale token. */
 bool space_read_token_matches_live_space(SpaceReadToken token,
                                          const Space *live_space);
+/* Publish privately prepared native bag/set replacements as one serialized
+ * host transaction. Every token and storage precondition is checked before
+ * any transfer. The transfer allocates nothing; each private Space receives
+ * the old storage and remains independently disposable. Readers and writers
+ * of participating Spaces must share the caller's serialization boundary. */
+bool space_publish_native_replacements(Space *const *destinations,
+    Space *const *prepared, const SpaceReadToken *versions, size_t count);
 SpaceEquationToken space_equation_token(const Space *s);
 SpaceProgramToken space_program_token(const Space *s);
 static inline bool space_program_token_eq(SpaceProgramToken left,

@@ -4598,7 +4598,7 @@ bool bindings_try_merge(Bindings *dst, const Bindings *src) {
 }
 
 bool bindings_try_merge_live(Bindings *dst, const Bindings *src) {
-    if (!src || (!bindings_has_bound_values(src) && src->eq_len == 0 &&
+    if (!src || (!src->frame_index && !bindings_has_bound_values(src) && src->eq_len == 0 &&
                  !bindings_prime_present(src)))
         return true;
     bindings_assert_no_private_variant_slots(dst);
@@ -4614,7 +4614,7 @@ bool bindings_try_merge_live(Bindings *dst, const Bindings *src) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_MERGE);
         return true;
     }
-    if (dst && !bindings_has_bound_values(dst) && dst->eq_len == 0 &&
+    if (dst && !dst->frame_index && !bindings_has_bound_values(dst) && dst->eq_len == 0 &&
         !bindings_prime_present(dst)) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_MERGE);
         Bindings cloned;
@@ -6307,6 +6307,8 @@ Atom *bindings_to_atom(Arena *a, const Bindings *b) {
             assignment_count > UINT32_MAX)
             return NULL;
         assigns = arena_alloc(a, sizeof(*assigns) * assignment_count);
+        if (!assigns)
+            return NULL;
         size_t next_assignment = 0u;
         for (uint32_t i = 0; i < b->len; i++) {
             const Binding *entry = bindings_entry_at(b, i);
@@ -6316,11 +6318,16 @@ Atom *bindings_to_atom(Arena *a, const Bindings *b) {
             Atom *value = binding_value_materialize(a, entry->value);
             if (!value)
                 return NULL;
-            assigns[next_assignment++] = atom_expr2(a, key, value);
+            Atom *assignment = atom_expr2(a, key, value);
+            if (!assignment)
+                return NULL;
+            assigns[next_assignment++] = assignment;
         }
         if (frame_value_count > 0u) {
             BindingsObservedFrameSlot *observed = arena_alloc(
                 a, frame_value_count * sizeof(*observed));
+            if (!observed)
+                return NULL;
             size_t observed_len = 0u;
             for (uint32_t frame_index = 0u;
                  frame_index < b->frame_index->len; frame_index++) {
@@ -6350,7 +6357,10 @@ Atom *bindings_to_atom(Arena *a, const Bindings *b) {
                     a, bindings_frame_slot_value(frame, slot));
                 if (!key || !value)
                     return NULL;
-                assigns[next_assignment++] = atom_expr2(a, key, value);
+                Atom *assignment = atom_expr2(a, key, value);
+                if (!assignment)
+                    return NULL;
+                assigns[next_assignment++] = assignment;
             }
         }
         assert(next_assignment == assignment_count);
@@ -6358,12 +6368,16 @@ Atom *bindings_to_atom(Arena *a, const Bindings *b) {
     Atom **equalities = NULL;
     if (b->eq_len > 0) {
         equalities = arena_alloc(a, sizeof(Atom *) * b->eq_len);
+        if (!equalities)
+            return NULL;
         for (uint32_t i = 0; i < b->eq_len; i++) {
             Atom *lhs = binding_value_materialize(a, b->constraints[i].lhs);
             Atom *rhs = binding_value_materialize(a, b->constraints[i].rhs);
             if (!lhs || !rhs)
                 return NULL;
             equalities[i] = atom_expr2(a, lhs, rhs);
+            if (!equalities[i])
+                return NULL;
         }
     }
     return atom_expr3(a,
@@ -7722,7 +7736,7 @@ bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_MERGE);
     if (!bb || !src)
         return true;
-    if (!bindings_has_bound_values(src) && src->eq_len == 0 &&
+    if (!src->frame_index && !bindings_has_bound_values(src) && src->eq_len == 0 &&
         !bindings_prime_present(src))
         return true;
     bindings_assert_no_private_variant_slots(&bb->current);

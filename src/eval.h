@@ -129,6 +129,8 @@ typedef struct EvalOutcome {
        answers were raised and not caught, and whether any was. */
     bool petta_raise_known;
     bool petta_raised_error;
+    /* tmetta: an arena-owned handle to the incomplete evaluation, if retained. */
+    Atom *frontier;
 } EvalOutcome;
 
 typedef enum {
@@ -322,6 +324,9 @@ bool eval_payload_track_scratch_state(StateCell *cell);
  * frees the ones not bound in the registry (registry-bound ones are freed by
  * the registry teardown pass). */
 void eval_track_new_space(Space *space);
+/* Construct the existing arena-held ordinary Space value for language
+ * adapters. Copies retain the same managed Space lifetime. */
+Atom *eval_new_managed_space(Space *source, Arena *arena);
 typedef struct CettaEvalResources CettaEvalResources;
 typedef struct CettaEvalGc CettaEvalGc;
 CettaEvalGc *eval_resources_collector(CettaEvalResources *);

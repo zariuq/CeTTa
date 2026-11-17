@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+cetta_checkout=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec "$cetta_checkout/cetta" "$@"

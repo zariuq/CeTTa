@@ -32,7 +32,7 @@ true
 (same)
 true
 true
-(1 1)
+(0 0)
 1
 (portable (data (nested (Sealed demo))))
 (fault (SealFault not-portable))

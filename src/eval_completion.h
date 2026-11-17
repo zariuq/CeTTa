@@ -18,6 +18,8 @@ typedef enum {
     CETTA_EVAL_INCOMPLETE_INVALIDATED,
     /* A host service the machine depends on failed. */
     CETTA_EVAL_INCOMPLETE_HOST_FAILURE,
+    /* Logical applicability is unresolved; the work is not refuted. */
+    CETTA_EVAL_INCOMPLETE_SUSPENDED,
 } CettaEvalCompletion;
 
 typedef enum {

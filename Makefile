@@ -818,6 +818,7 @@ SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/run_observatio
 SRC += src/library_proc.c
 SRC += src/library_fs.c
 SRC += src/transform_tcalc.c
+SRC += src/tmetta_compile.c src/tmetta_vm.c src/tmetta_answers.c
 SRC += src/petta_priority_heap.c
 SRC += src/library_provenance.c native/provenance/prov_kernel_v1.c
 SRC += src/native_memory.c src/host_services.c src/library_postings.c src/library_asp.c native/asp/asp_cdnl_v1.c native/asp/asp_hall_v1.c native/support/support_v1.c native/smt/euf_cc_v1.c native/smt/lra_simplex_v1.c native/asp/asp_clingo_v1.c native/asp/sat_ipasir_v1.c src/tensor.c src/tensor_bounds.c src/tensor_screening.c src/library_tensor.c src/library_group.c
@@ -49874,6 +49875,23 @@ endif
 EMBED_TAG = $(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,)
 EMBED_OBJ = runtime/bootstrap/embedding.$(EMBED_TAG).o
 EMBED_RUNTIME_OBJ = $(filter-out src/main.%,$(OBJ))
+
+TMETTA_RUNTIME_TEST := runtime/test-tmetta-$(EMBED_TAG)
+$(TMETTA_RUNTIME_TEST): tests/tmetta/test_runtime.c $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS) \
+		-Wl,--wrap=cetta_native_handle_alloc -Wl,--wrap=match_atoms -Wl,--wrap=match_atoms_builder
+.PHONY: test-tmetta
+test-tmetta: all $(TMETTA_RUNTIME_TEST)
+	@$(TMETTA_RUNTIME_TEST)
+	@python3 tests/tmetta/check.py --binary ./$(BIN)
+
+SEAL_OPEN_FAULT_TEST := runtime/test-seal-open-$(EMBED_TAG)
+$(SEAL_OPEN_FAULT_TEST): tests/seal/test_prepared_open.c $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=atom_expr
+.PHONY: test-seal-open-fault
+test-seal-open-fault: $(SEAL_OPEN_FAULT_TEST)
+	@$(SEAL_OPEN_FAULT_TEST)
+test-seal: test-seal-open-fault
 
 TRANSFORM_OWNED_HANDLES_TEST := runtime/test-transform-owned-handles-$(EMBED_TAG)
 $(TRANSFORM_OWNED_HANDLES_TEST): tests/support/test_transform_owned_handles.c \

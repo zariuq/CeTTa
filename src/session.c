@@ -168,6 +168,8 @@ static uint32_t cetta_language_base_builtin_mask(CettaLanguageId language_id) {
         return CETTA_PROFILE_MASK_HE_FORMAL;
     case CETTA_LANGUAGE_PRIME:
         return CETTA_PROFILE_MASK_HE_PRIME;
+    case CETTA_LANGUAGE_TMETTA:
+        return CETTA_PROFILE_MASK_HE_EXTENDED;
     case CETTA_LANGUAGE_PETTA:
         return CETTA_PROFILE_MASK_PETTA_BASE;
     case CETTA_LANGUAGE_HOL_LIGHT:
@@ -283,6 +285,9 @@ static const CettaLanguageVersion CETTA_LANGUAGE_VERSIONS[] = {
     {CETTA_LANGUAGE_VERSION_TCALC_0_1, CETTA_LANGUAGE_TCALC, "0.1", NULL, NULL,
      "RuleSyntax/Core.lean at one frame, with the JointFirings step disciplines",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, false, .is_default = true},
+    {CETTA_LANGUAGE_VERSION_TMETTA_0_1, CETTA_LANGUAGE_TMETTA, "0.1", "native", NULL,
+     "Transform-native MeTTa, native and eager argument presets",
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, false, .is_default = true},
 };
 
 static const CettaLanguageVersion *language_version_find(
@@ -325,7 +330,7 @@ void cetta_language_print_versions(FILE *out, CettaLanguageId language_id) {
 }
 
 bool cetta_language_has_named_profiles(CettaLanguageId language_id) {
-    return language_id == CETTA_LANGUAGE_HOL_LIGHT ||
+    return language_id == CETTA_LANGUAGE_TMETTA || language_id == CETTA_LANGUAGE_HOL_LIGHT ||
            language_id == CETTA_LANGUAGE_HE ||
            language_id == CETTA_LANGUAGE_MM2 ||
            language_id == CETTA_LANGUAGE_PETTA ||
@@ -341,6 +346,11 @@ bool cetta_profile_is_valid_for_language(CettaLanguageId language_id,
 const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId language_id,
                                                          const char *name) {
     if (!name) return NULL;
+    if (language_id == CETTA_LANGUAGE_TMETTA) {
+        if (cetta_profile_name_matches(name, &CETTA_PROFILE_TMETTA_NATIVE_VALUE)) return &CETTA_PROFILE_TMETTA_NATIVE_VALUE;
+        if (cetta_profile_name_matches(name, &CETTA_PROFILE_TMETTA_EAGER_VALUE)) return &CETTA_PROFILE_TMETTA_EAGER_VALUE;
+        return NULL;
+    }
     if (language_id == CETTA_LANGUAGE_HOL_LIGHT) {
         for (size_t i = 0; i < sizeof CETTA_HOL_PROFILES / sizeof CETTA_HOL_PROFILES[0]; ++i)
             if (!strcmp(name, CETTA_HOL_PROFILES[i].name)) return &CETTA_HOL_PROFILES[i];
@@ -426,6 +436,8 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
     case CETTA_PROFILE_HE_COMPAT:
         return CETTA_PROFILE_MASK_HE_COMPAT;
     case CETTA_PROFILE_HE_EXTENDED:
+    case CETTA_PROFILE_TMETTA_NATIVE:
+    case CETTA_PROFILE_TMETTA_EAGER:
         return CETTA_PROFILE_MASK_HE_EXTENDED;
     case CETTA_PROFILE_HE_PRIME:
         return CETTA_PROFILE_MASK_HE_PRIME;

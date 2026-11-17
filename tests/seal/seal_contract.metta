@@ -48,7 +48,8 @@
 
 ; One identity relation in a space: two stored occurrences stay two answers,
 ; a repeated variable matches the same capsule only, and removal behaves for
-; capsules exactly as for ordinary atoms of the dialect.
+; capsules exactly as for ordinary atoms of the dialect. HE removes one
+; occurrence and PeTTa removes all matching occurrences.
 !(let $c (seal:seal (S) one) (bind! &c1 (new-state $c)))
 !(let $c (seal:seal (S) one) (bind! &c2 (new-state $c)))
 !(bind! &store (new-space))

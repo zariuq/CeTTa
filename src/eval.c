@@ -11,6 +11,7 @@
 #include "state_cell.h"
 #include "var_index.h"
 #include "eval.h"
+#include "tmetta.h"
 #include "host_services.h"
 #include "abt.h"
 #include "match.h"
@@ -21587,6 +21588,17 @@ static void held_space_register(Space *space, bool published_as_copy) {
         hold->pinned = true;
 }
 
+Atom *eval_new_managed_space(Space *source, Arena *arena) {
+    Space *space = calloc(1, sizeof *space);
+    if (!space) return NULL;
+    if (!space_try_init_with_universe(space, source ? source->native.universe : eval_current_term_universe())) {
+        free(space);
+        return NULL;
+    }
+    held_space_register(space, false);
+    return atom_space(arena, space);
+}
+
 /* `bind!` publishes a copy of a snapshot or an inventory. */
 static bool space_published_as_copy(Space *space) {
     return space && space->arena_hold && space->arena_hold->published_as_copy;
@@ -24573,6 +24585,8 @@ static const char *eval_get_type_failure_name(
     case CETTA_EVAL_INCOMPLETE_HOST_FAILURE:
     case CETTA_EVAL_COMPLETE:
         return "PettaSearchHostError";
+    case CETTA_EVAL_INCOMPLETE_SUSPENDED:
+        return "Suspended";
     }
     return "PettaSearchHostError";
 }
@@ -30451,6 +30465,16 @@ static void prime_need_eval_canonical_app(Space *s, Arena *a, Atom *app,
 /* ── metta_eval: full recursive evaluation (metta.md lines 240-272) ────── */
 
 void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet *rs) {
+    if (eval_current_language_id() == CETTA_LANGUAGE_TMETTA) {
+        EvalOutcome outcome;
+        eval_outcome_init(&outcome);
+        cetta_tmetta_eval(g_library_context, s, g_registry, a, atom, fuel, &outcome);
+        for (CettaIndex i = 0; i < outcome.results.len; ++i)
+            result_set_add(rs, outcome.results.items[i]);
+        if (outcome.completion != CETTA_EVAL_COMPLETE) eval_mark_incomplete(outcome.completion);
+        eval_outcome_free(&outcome);
+        return;
+    }
     __attribute__((cleanup(eval_c_stack_guard_leave)))
     EvalCStackGuard stack_guard = {0};
     __attribute__((cleanup(metta_eval_depth_guard_leave)))
@@ -67917,6 +67941,7 @@ void eval_outcome_init(EvalOutcome *outcome) {
     outcome->steps_spent = 0;
     outcome->petta_raise_known = false;
     outcome->petta_raised_error = false;
+    outcome->frontier = NULL;
 }
 
 void eval_outcome_free(EvalOutcome *outcome) {
@@ -67928,6 +67953,7 @@ void eval_outcome_free(EvalOutcome *outcome) {
     outcome->budget_initial = 0;
     outcome->budget_remaining = 0;
     outcome->steps_spent = 0;
+    outcome->frontier = NULL;
 }
 
 CettaCount eval_outcome_value_count(const EvalOutcome *outcome) {
@@ -67999,6 +68025,8 @@ const char *eval_completion_reason(CettaEvalCompletion completion) {
         return "revision-invalidated";
     case CETTA_EVAL_INCOMPLETE_HOST_FAILURE:
         return "host-failure";
+    case CETTA_EVAL_INCOMPLETE_SUSPENDED:
+        return "suspended";
     }
     return "incomplete";
 }
@@ -68007,6 +68035,10 @@ void metta_eval_outcome(Space *s, Arena *a, Atom *type, Atom *atom, int fuel,
                         EvalOutcome *outcome) {
     if (!outcome)
         return;
+    if (eval_current_language_id() == CETTA_LANGUAGE_TMETTA) {
+        cetta_tmetta_eval(g_library_context, s, g_registry, a, atom, fuel, outcome);
+        return;
+    }
     CettaEvalEpisode tracker = cetta_eval_episode_begin(g_eval_completion_tracker, fuel);
     int effective_fuel = tracker.budget_limited
         ? (tracker.budget_initial > (uint64_t)INT_MAX ? INT_MAX : (int)tracker.budget_initial)

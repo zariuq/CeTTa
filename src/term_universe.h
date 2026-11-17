@@ -705,6 +705,9 @@ AtomId term_universe_store_atom_id(TermUniverse *universe, Arena *fallback,
 AtomId term_universe_store_atom_id_from_source_arena(
     TermUniverse *universe, Arena *fallback, const Arena *source_arena,
     Atom *src);
+/* Store a scoped value with its qualified VarIds intact. */
+AtomId term_universe_store_scoped_atom_id(TermUniverse *universe,
+    const Arena *source_arena, Atom *src);
 AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src);
 /* The entry the view `atom` was read from (term_universe_view_atom), while
  * the universe's instance and epochs are those it was read under, else

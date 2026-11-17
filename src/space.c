@@ -15662,6 +15662,27 @@ bool space_admit_atom_from_source_arena(
     return admitted;
 }
 
+bool space_admit_scoped_atom(Space *s, const Arena *source_arena, Atom *atom) {
+    if (!atom_has_vars(atom))
+        return space_admit_atom_from_source_arena(s, NULL, source_arena, atom);
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    s = space_mutation_target(s);
+    if (!s || !space_tracks_atom_ids(s) ||
+        (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
+        !space_proof_prepare_storage(s))
+        return false;
+    SPACE_STORE_SCOPE();
+    AtomId id = term_universe_store_scoped_atom_id(s->native.universe, source_arena, atom);
+    if (id == CETTA_ATOM_ID_NONE) return false;
+    bool set = s->kind == SPACE_KIND_SET;
+    if (set) {
+        for (CettaIndex i = 0; i < space_length64(s); ++i)
+            if (space_get_atom_id_at64(s, i) == id) return true;
+    }
+    return space_add_stored_id_as(s, id, atom, set);
+}
+
 bool space_admit_atoms_batch_from_source_arena(
     Space *s, Arena *fallback, const Arena *source_arena,
     Atom *const *atoms, CettaCount atom_count) {
@@ -16033,6 +16054,57 @@ static void space_replace_contents_classified(
 void space_replace_contents(Space *dst, Space *src) {
     space_replace_contents_classified(
         dst, src, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE);
+}
+
+bool space_publish_native_replacements(Space *const *destinations,
+        Space *const *prepared, const SpaceReadToken *versions, size_t count) {
+    if (count && (!destinations || !prepared || !versions)) return false;
+    for (size_t i = 0; i < count; ++i) {
+        Space *dst = destinations[i], *src = prepared[i];
+        if (!dst || !src || dst == src ||
+            !space_read_token_matches_live_space(versions[i], dst) ||
+            dst->native.universe != src->native.universe ||
+            dst->kind != src->kind ||
+            (dst->kind != SPACE_KIND_ATOM && dst->kind != SPACE_KIND_SET) ||
+            dst->match_backend.kind != SPACE_ENGINE_NATIVE || src->match_backend.kind != SPACE_ENGINE_NATIVE ||
+            dst->overlay_base || src->overlay_base || dst->module_own_view || src->module_own_view ||
+            dst->journal || src->journal || dst->order || src->order ||
+            dst->importer_count || src->importer_count ||
+            dst->dep_count != src->dep_count || dst->imported_len != src->imported_len ||
+            atomic_load_explicit(&dst->native.has_proof_image, memory_order_acquire) ||
+            atomic_load_explicit(&src->native.has_proof_image, memory_order_acquire) ||
+            dst->revision == UINT64_MAX || dst->equation_revision == UINT64_MAX ||
+            dst->declaration_revision == UINT64_MAX)
+            return false;
+        for (uint32_t dependency = 0; dependency < dst->dep_count; ++dependency)
+            if (dst->deps[dependency] != src->deps[dependency]) return false;
+        for (size_t j = 0; j < count; ++j)
+            if ((i != j && (dst == destinations[j] || src == prepared[j])) || dst == prepared[j]) return false;
+    }
+    const size_t marker = offsetof(SpaceNativeStorage, has_proof_image);
+    const size_t after = marker + sizeof((SpaceNativeStorage *)0)->has_proof_image;
+    for (size_t i = 0; i < count; ++i) {
+        Space *dst = destinations[i], *src = prepared[i];
+        SpaceNativeStorage saved;
+        memcpy(&saved, &dst->native, marker);
+        memcpy((unsigned char *)&saved + after, (unsigned char *)&dst->native + after, sizeof saved - after);
+        memcpy(&dst->native, &src->native, marker);
+        memcpy((unsigned char *)&dst->native + after, (unsigned char *)&src->native + after, sizeof saved - after);
+        memcpy(&src->native, &saved, marker);
+        memcpy((unsigned char *)&src->native + after, (unsigned char *)&saved + after, sizeof saved - after);
+        /* Both markers were checked false. Their atomic objects and the
+         * universe's registered root providers remain at their addresses. */
+        term_universe_resource_owner_move(dst->native.resource_owner, dst);
+        term_universe_resource_owner_move(src->native.resource_owner, src);
+        SpaceMatchBackend backend = dst->match_backend;
+        dst->match_backend = src->match_backend;
+        src->match_backend = backend;
+        dst->declares_subtypes |= src->declares_subtypes;
+    }
+    for (size_t i = 0; i < count; ++i)
+        space_publish_mutation(destinations[i], SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE,
+            SPACE_MUTATION_PREFIX_REWRITTEN);
+    return true;
 }
 
 /* ── Query Results ──────────────────────────────────────────────────────── */
