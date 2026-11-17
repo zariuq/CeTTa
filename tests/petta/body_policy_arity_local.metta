@@ -41,3 +41,11 @@
 (: pick (-> Atom))
 (= (pick $k) (add2 $k))
 !(extension-runs (collapse (pick 1 5)))
+
+; A schematic subject remains a row that match can see. It cannot supply
+; an Atom demand or produce an extra branch for a different named function.
+(: $subject (-> Atom Atom))
+(: schematic-probe (-> %Undefined% %Undefined%))
+(= (schematic-probe $n) (if true (evaluated $n) ignored))
+!(schematic-call (collapse (let $f schematic-probe ($f (+ 1 2)))))
+!(schematic-query (collapse (match &self (: other-name (-> Atom Atom)) found)))

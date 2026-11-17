@@ -19724,6 +19724,7 @@ typedef struct {
     uint32_t count;
     uint32_t cap;
     bool stopped;
+    bool match_schematic_subjects;
 } SpaceAnnotatedTypes;
 
 /* In PeTTa, rows that declare one type, up to the names of its variables,
@@ -19746,14 +19747,13 @@ static void space_annotated_types_append(SpaceAnnotatedTypes *list,
     list->types[list->count++] = type;
 }
 
-/* The type the declaration ANNOTATION, (: subject type), gives ATOM, as
- * HE's query (: atom $t) reads it: the type of an equal subject, and of a
- * subject holding variables that unifies with the atom (a variable subject
- * declares every atom), renamed apart and instantiated by that meeting.
+/* An equal subject contributes its type. HE's query (: atom $t) also reads
+ * schematic subjects, renamed apart and instantiated by the match. PeTTa
+ * declaration lookup reads the written subject, as required for call policy.
  * 1 with *out set, 0 when the declaration says nothing of the atom, -1 when
  * allocation fails. */
 static int ty_ann_type_meeting(Arena *a, Atom *annotation, Atom *atom,
-                               Atom **out) {
+                               bool match_schematic_subjects, Atom **out) {
     Atom *subject = annotation->expr.elems[1];
     Atom *type = annotation->expr.elems[2];
     *out = NULL;
@@ -19762,7 +19762,7 @@ static int ty_ann_type_meeting(Arena *a, Atom *annotation, Atom *atom,
                                    : atom_deep_copy_shared(a, type);
         return *out ? 1 : -1;
     }
-    if (!atom_has_vars(subject))
+    if (!match_schematic_subjects || !atom_has_vars(subject))
         return 0;
     Atom *renamed = cetta_instantiate_frame_syntax(a, annotation);
     if (!renamed)
@@ -19810,7 +19810,8 @@ space_member_annotated_types(
             if (!atom_is_symbol_id(annotation->expr.elems[0], g_builtin_syms.colon))
                 continue;
             Atom *copy = NULL;
-            int met = ty_ann_type_meeting(a, annotation, atom, &copy);
+            int met = ty_ann_type_meeting(a, annotation, atom,
+                                           list->match_schematic_subjects, &copy);
             if (met < 0)
                 return false;
             if (met == 0)
@@ -19833,7 +19834,8 @@ space_member_annotated_types(
     /* Declarations under the atom's head, then those whose subject has no
      * head, a variable subject among them, which may meet any atom. */
     SymbolId heads[2] = {ty_ann_subject_head(atom), SYMBOL_ID_NONE};
-    int chains = heads[0] == SYMBOL_ID_NONE ? 1 : 2;
+    int chains = list->match_schematic_subjects && heads[0] != SYMBOL_ID_NONE
+        ? 2 : 1;
     CettaIndex imported = s->imported_len;
     int passes = own_only || imported == 0u ? 1 : 2;
     /* The space's own declarations precede imported ones. */
@@ -19887,7 +19889,8 @@ space_member_annotated_types(
         if (!atom_is_symbol_id(annotation->expr.elems[0], g_builtin_syms.colon))
             continue;
         Atom *copy = NULL;
-        int met = ty_ann_type_meeting(a, annotation, atom, &copy);
+        int met = ty_ann_type_meeting(a, annotation, atom,
+                                       list->match_schematic_subjects, &copy);
         if (met < 0)
             return false;
         if (met == 0)
@@ -19949,7 +19952,9 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
     }
     /* A module space answers its own declarations, then each imported
        module's own, in import order (HE's ModuleSpace query). */
-    SpaceAnnotatedTypes list = {0};
+    SpaceAnnotatedTypes list = {
+        .match_schematic_subjects = space_effect_language() != CETTA_LANGUAGE_PETTA,
+    };
     bool ok = space_member_annotated_types(
         s, a, atom, &list, budget, cost, false);
     if (ok && !list.stopped && space_has_dependencies(s))

@@ -6,3 +6,5 @@
 (same-arity-held ((+ 1 1)))
 (extension-plain (6))
 (extension-runs (6))
+(schematic-call ((evaluated 3)))
+(schematic-query (found))

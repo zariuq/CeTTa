@@ -3734,6 +3734,10 @@ static bool resolve_relative_module_candidate_for_language(
 
 static bool build_library_path(CettaLibraryContext *ctx, const char *name,
                                char *out, size_t out_sz);
+static bool resolve_library_member_candidate(
+    CettaLibraryContext *ctx, const char *member,
+    char *canonical_path, size_t canonical_path_size,
+    CettaModuleFormat *format, char *reason, size_t reason_size);
 
 static bool parse_module_spec(const char *spec, CettaModuleSpec *out,
                               Arena *eval_arena, Atom **error_out) {
@@ -4080,18 +4084,27 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
         }
         return true;
     }
-    case CETTA_MODULE_SPEC_STDLIB:
+    case CETTA_MODULE_SPEC_STDLIB: {
         if (!cetta_module_policy_allows(&ctx->session.module_policy,
                                           CETTA_MODULE_PROVIDER_STDLIB)) {
             *error_out = atom_symbol(eval_arena, "stdlib module imports disabled");
             return false;
         }
         plan->provider_kind = CETTA_MODULE_PROVIDER_STDLIB_FILE;
-        if (!build_library_path(ctx, spec->path_or_member, candidate, sizeof(candidate))) {
-            *error_out = atom_symbol(eval_arena, "library file not found");
+        if (!module_provider_visible(ctx, plan->provider_kind)) {
+            *error_out = atom_symbol(eval_arena, "module provider disabled");
             return false;
         }
-        break;
+        char reason[160] = {0};
+        if (!resolve_library_member_candidate(ctx, spec->path_or_member,
+                plan->canonical_path, sizeof(plan->canonical_path),
+                &plan->format, reason, sizeof(reason))) {
+            *error_out = atom_symbol(eval_arena,
+                reason[0] ? reason : "library file not found");
+            return false;
+        }
+        return true;
+    }
     }
 
     if (!module_provider_visible(ctx, plan->provider_kind)) {
@@ -12302,21 +12315,24 @@ bool cetta_library_import_error_is_missing_module(Atom *error) {
 static bool resolve_library_member_candidate(
     CettaLibraryContext *ctx, const char *member,
     char *canonical_path, size_t canonical_path_size,
-    CettaModuleFormat *format) {
+    CettaModuleFormat *format, char *reason, size_t reason_size) {
     char candidate[PATH_MAX];
-    char reason[160];
-
-    if (!ctx || !member ||
-        !cetta_module_policy_allows(
-            &ctx->session.module_policy,
-            CETTA_MODULE_PROVIDER_STDLIB) ||
-        !build_library_path(
-            ctx, member, candidate, sizeof(candidate))) {
+    if (!member)
         return false;
-    }
+    /* Both the descriptor and import plan use the same installed file.
+     * A written .py suffix selects the foreign loader. An unqualified
+     * member receives the ordinary .metta completion. */
+    bool python = path_has_suffix(member, ".py");
+    const char *suffix = python || path_has_suffix(member, ".metta")
+        ? "" : ".metta";
+    if (!build_library_resource_path(ctx, member, suffix, candidate, sizeof(candidate)))
+        return false;
+    if (python)
+        return cetta_foreign_resolve_candidate(candidate, canonical_path,
+            canonical_path_size, format, reason, reason_size);
     return resolve_module_candidate_with_format(
         ctx, candidate, canonical_path, canonical_path_size,
-        format, reason, sizeof(reason));
+        format, reason, reason_size);
 }
 
 static bool resolve_standard_library_reference(
@@ -12337,7 +12353,7 @@ static bool resolve_standard_library_reference(
     }
     if (resolve_library_member_candidate(
             ctx, member, canonical_path,
-            canonical_path_size, &format)) {
+            canonical_path_size, &format, NULL, 0u)) {
         return true;
     }
 
@@ -12425,6 +12441,7 @@ static bool import_standard_library_reference(
     /* PeTTa's import! keeps an authored .metta extension and supplies a
      * missing one, so `X` and `X.metta` name the same library member. */
     char stem[PATH_MAX];
+    const char *registered_name = member;
     size_t member_length = strlen(member);
     size_t suffix_length = strlen(".metta");
     if (member_length > suffix_length &&
@@ -12432,15 +12449,15 @@ static bool import_standard_library_reference(
         path_has_suffix(member, ".metta")) {
         memcpy(stem, member, member_length - suffix_length);
         stem[member_length - suffix_length] = '\0';
-        member = stem;
+        registered_name = stem;
     }
 
     /* Native libraries activate a capability as well as loading their source
      * presentation.  Pure source libraries use the ordinary standard-library
      * reference below and therefore need no entry in the native mask. */
-    if (cetta_library_lookup(member)) {
+    if (cetta_library_lookup(registered_name)) {
         return cetta_library_import(
-            ctx, member, space, eval_arena,
+            ctx, registered_name, space, eval_arena,
             persistent_arena, registry, fuel, error_out);
     }
 

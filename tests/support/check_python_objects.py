@@ -15,6 +15,16 @@ def main():
     env = dict(os.environ)
     env['PYTHONPATH'] = str(ROOT / 'tests/support') + os.pathsep + env.get('PYTHONPATH', '')
     fixture = ROOT / 'tests/support/python_objects.metta'
+    source = '''!(import! &self (library lib_llm.py))
+!(car-atom (catch (import! &self (library missing-python-member-for-test.py))))
+'''
+    for machine in ('0', '1'):
+        run = subprocess.run([str(args.binary.resolve()), '--lang', 'petta', '-e', source],
+                             env=dict(env, CETTA_PETTA_SEARCH_MACHINE=machine),
+                             text=True, capture_output=True, timeout=10)
+        assert (run.returncode, run.stdout, run.stderr) == (0, 'true\nError\n', ''), (
+            machine, run.returncode, run.stdout, run.stderr)
+    print('PASS: explicit Python library members load and missing ones raise on both PeTTa routes')
     for language in ('petta', 'he'):
         run = subprocess.run([str(args.binary.resolve()), '--lang', language, str(fixture)],
                              env=env, text=True, capture_output=True, timeout=60)
