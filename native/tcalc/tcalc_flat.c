@@ -228,3 +228,101 @@ static bool flat_start(Explorer *x) {
         }
     return true;
 }
+
+/* A program owns its prepared rule prefix. Appending a rule extends this
+ * cache; appended terms retain their ids. No binding-dependent value is kept.
+ * Failure to prepare an optimization leaves the ordinary solver available. */
+static void resident_prepare(TcProgram *p) {
+    if (!cetta_kernel_batch || p->prepared_count==p->rules || p->rules>SIZE_MAX/sizeof(FlatPlan)) return;
+    FlatPlan *grown=realloc(p->prepared,p->rules*sizeof *grown);
+    if (!grown) return;
+    p->prepared=grown;
+    ProgramView view={p->rule,p->rules,p->term,p->terms_len,p->check,p->checks_len,p->name,NULL,0};
+    for (size_t k=p->prepared_count;k<p->rules;++k) {
+        FlatPlan plan={0};char why[160]={0};
+        if (p->rule[k].same!=k || !flat_plan(p->terms,&view,&p->rule[k],&plan,why,sizeof why))
+            memset(&plan,0,sizeof plan),plan.guards=UINT32_MAX;
+        if (plan.guards!=UINT32_MAX) {
+            bool indexed=true;uint32_t patterns=p->rule[k].takes+p->rule[k].reads;
+            for (uint32_t i=0;indexed && i<patterns;++i) {
+                TcNode n=term_node(p->terms,pattern_at(&view,&p->rule[k],i));
+                TcNode head=term_node(p->terms,term_item(p->terms,n.start));
+                if (head.kind==TC_LOCAL) for (uint32_t g=0;g<plan.guards;++g)
+                    if ((plan.guard[g]&65535u)==i) { indexed=false;break; }
+            }
+            /* A head bound by an earlier pattern needs its dynamic index.
+             * Retain the general matcher until that index is in the batch. */
+            if (!indexed) plan.guards=UINT32_MAX;
+        }
+        p->prepared[k]=plan;
+        p->prepared_count=k+1;
+    }
+}
+
+/* Publish one private, completely checked selection. The same shortcuts and
+ * state builder as ordinary matching decide the observable successor. */
+static bool resident_record(Explorer *x,uint32_t rule,const FlatPlan *plan,const uint32_t *record) {
+    TcStoredRule r=rule_at(&x->program,rule);uint32_t total=r.takes+r.reads;
+    for (uint32_t i=0;i<total;++i) pick_put(x,i,record[i]);
+    TcMember same={0};
+    if (known_selection(x,rule,total,&same))
+        return record_member(x,rule,total,same.alone,same.successor,same.firing);
+    x->fire=r;x->fire_rule=rule;
+    uint32_t derived=derived_successor(x,total),succ=derived;
+    if (derived==UINT32_MAX || x->how.shortcuts==TC_SHORTCUTS_CHECKED) {
+        x->next_len=0;
+        for (uint32_t m=0,at=0;m<plan->made_rows;at+=plan->made_length[m],++m) {
+            TcTerm made=tc_expression(x->terms,record+total+at,plan->made_length[m]);
+            if (!made || !next_push(x,made)) return false;
+        }
+        bool *gone=calloc(x->rows ? x->rows : 1,sizeof *gone);
+        if (!gone) return false;
+        for (uint32_t i=0;i<r.takes;++i) gone[pick_at(x,i)]=true;
+        succ=successor_state(x,gone);free(gone);
+        if (derived!=UINT32_MAX && derived!=succ) x->disagreed=true;
+    }
+    if (succ==UINT32_MAX) return false;
+    uint32_t firing=remember_firing(x,total,succ);
+    if (!record_member(x,rule,total,true,succ,firing)) return false;
+    remember_selection(x,(uint32_t)x->members-1,total);return true;
+}
+
+/* One resident rule circuit over the original term buffers. The native call
+ * never allocates, calls C or publishes. Source pointers are borrowed only
+ * inside each call: host interning may relocate pools between result blocks. */
+static bool resident_collect(Explorer *x,uint32_t rule,const FlatPlan *plan) {
+    TcStoredRule r=rule_at(&x->program,rule);uint32_t total=r.takes+r.reads;
+    const FlatPlan physical=*plan;
+    uint32_t stages[TC_BATCH_PATTERNS*TC_BATCH_STAGE_WORDS]={0},guard=0;
+    for (uint32_t k=0;k<total;++k) {
+        uint32_t offset=TC_BATCH_STAGE_WORDS*k;
+        TcTerm pattern=pattern_at(&x->program,&r,k);Runs runs=candidates(x,pattern,0);
+        stages[offset+TC_BATCH_LENGTH]=term_node(x->terms,pattern).length;
+        stages[offset+TC_BATCH_LO0]=runs.lo[0];stages[offset+TC_BATCH_HI0]=runs.hi[0];
+        stages[offset+TC_BATCH_LO1]=runs.lo[1];stages[offset+TC_BATCH_HI1]=runs.hi[1];
+        stages[offset+TC_BATCH_TWIN]=identical_before(x,&r,k);stages[offset+TC_BATCH_GUARD_BEGIN]=guard;
+        while (guard<plan->guards && (plan->guard[guard]&255u)==k) ++guard;
+        stages[offset+TC_BATCH_GUARD_END]=guard;
+    }
+    size_t stride=(size_t)total+plan->makes;if (!stride) stride=1;
+    if (!reserve(&x->batch_cursor,&x->batch_cursor_cap,TC_BATCH_CURSOR_WORDS) ||
+        !reserve(&x->batch_output,&x->batch_output_cap,64*stride)) return false;
+    memset(x->batch_cursor,0,TC_BATCH_CURSOR_WORDS*sizeof *x->batch_cursor);
+    CettaKernelMode mode=cetta_kernel_requested();
+    for (;;) {
+        uint64_t status,produced;
+        {
+            TcBatchInput input={x->terms->node,x->terms->nodes,x->terms->item,x->terms->items,
+                x->row,x->rows,&physical,stages,total,r.takes,TC_BATCH_ONE|
+                (x->how.matches==TC_MATCHES_SYMMETRIC ? TC_BATCH_SYMMETRIC : 0),4096,UINT64_MAX};
+            TcBatchWork work={x->batch_cursor,x->batch_cursor_cap,x->batch_output,x->batch_output_cap,
+                0,x->batch_used,0,0};
+            status=cetta_kernel_batch(mode,&input,&work);produced=work.produced;x->batch_used=work.used;
+        }
+        if (status!=TC_BATCH_END && status!=TC_BATCH_YIELD) { x->solver.failed=true;return false; }
+        for (uint64_t i=0;i<produced;++i)
+            if (!resident_record(x,rule,plan,x->batch_output+i*stride)) return false;
+        if (status==TC_BATCH_END) return true;
+    }
+    return false;
+}

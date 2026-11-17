@@ -2,6 +2,7 @@
 
 #include "dense_relation.h"
 #include "match.h"
+#include "native/kernel/kernel.h"
 #include "relational_plan.h"
 #include "shared_transition.h"
 #include "stats.h"
@@ -2655,6 +2656,12 @@ CettaNativeQueryStatus cetta_native_query_run(
     CettaNativeQueryResult *result) {
     if (result)
         *result = (CettaNativeQueryResult){0};
+    /* These relation-specialized match/emit kernels are C implementations.
+     * Strict native selection uses the indexed general consumer, whose
+     * matching and observation operations enter the shared kernel. */
+    CettaKernelMode kernel=cetta_kernel_requested();
+    if (kernel == CETTA_KERNEL_X86)
+        return CETTA_NATIVE_QUERY_DECLINED;
     if (!query || !arena || !result || !query->source ||
         !query->patterns || query->pattern_count == 0u ||
         !query->template_atom || !cetta_native_query_enabled() ||

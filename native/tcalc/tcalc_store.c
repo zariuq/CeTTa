@@ -280,6 +280,7 @@ struct TcProgram {
     uint64_t *check;    size_t checks_len, check_cap; /* 4 words a check: kind, left, right, count */
     char *name;         size_t name_len, name_cap;    /* rule names, NUL-terminated    */
     uint32_t *row;      size_t rows, row_cap;         /* the initial state            */
+    FlatPlan *prepared; size_t prepared_count;      /* immutable rule-prefix plans  */
 };
 
 TcProgram *tc_program_new(TcTerms *terms) {
@@ -291,7 +292,7 @@ TcProgram *tc_program_new(TcTerms *terms) {
 
 /* Releases the program and its pools; its term table is the caller's. */
 static void program_release(TcProgram *p) {
-    free(p->rule); free(p->term); free(p->check); free(p->name); free(p->row); free(p);
+    free(p->rule); free(p->term); free(p->check); free(p->name); free(p->row); free(p->prepared); free(p);
 }
 
 void tc_program_free(TcProgram *p) { if (p) program_release(p); }
@@ -428,10 +429,11 @@ typedef struct {
     const TcTerm *term; size_t terms;
     const uint64_t *check; size_t checks;
     const char *name;
+    const FlatPlan *prepared; size_t prepared_count;
 } ProgramView;
 
 static ProgramView program_view(const TcProgram *p) {
-    return (ProgramView){p->rule, p->rules, p->term, p->terms_len, p->check, p->checks_len, p->name};
+    return (ProgramView){p->rule, p->rules, p->term, p->terms_len, p->check, p->checks_len, p->name, p->prepared, p->prepared_count};
 }
 
 static inline TcStoredRule rule_at(const ProgramView *v, uint32_t rule) { return v->rule[rule]; }

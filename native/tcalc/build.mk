@@ -16,10 +16,11 @@ TCALC_HEADERS = $(addprefix native/tcalc/,tcalc_core.h tcalc_flat_layout.h tcalc
 	tcalc_cli.h tcalc_x86.h x86/ordinary_flat_cesta.h \
 	tcalc_lists.generated.h tcalc_axes_enums.generated.h tcalc_axes_names.generated.h \
 	tcalc_fire.generated.h) \
-	src/runner.h src/generated/runner_axes.generated.h src/generated/runner_lists.generated.h
+	src/runner.h src/generated/runner_axes.generated.h src/generated/runner_lists.generated.h \
+	native/kernel/kernel.h native/kernel/tcalc_bridge.h native/kernel/batch.h
 # The unit's sources: the calculus, the storage it includes, and the adapter of
 # backend x86-flat.
-TCALC_UNIT = native/tcalc/tcalc_core.c native/tcalc/tcalc_store.c native/tcalc/tcalc_flat.c
+TCALC_UNIT = native/tcalc/tcalc_core.c native/tcalc/tcalc_store.c native/tcalc/tcalc_flat.c native/tcalc/tcalc_kernel.c
 
 ifeq ($(CESTA_BUILD),1)
 $(TCALC_CORE): native/tcalc/tcalc_core.cesta $(TCALC_UNIT) $(TCALC_HEADERS) | $(CESTA)

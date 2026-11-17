@@ -6,6 +6,8 @@
 #include "term_universe.h"
 #include "term_canon.h"
 #include "variant_shape.h"
+#include "native/kernel/pair.h"
+#include "native/kernel/observe.h"
 #include <inttypes.h>
 #include <assert.h>
 #include <pthread.h>
@@ -14,6 +16,19 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+
+extern void eval_mark_interrupted(CettaEvalCompletion) __attribute__((weak));
+
+static uint64_t match_native_kind(AtomKind kind) {
+    switch (kind) {
+    case ATOM_SYMBOL:return NP_K_SYMBOL;
+    case ATOM_VAR:return NP_K_VARIABLE;
+    case ATOM_GROUNDED:return NP_K_GROUNDED;
+    case ATOM_EXPR:return NP_K_EXPRESSION;
+    }
+    return UINT64_MAX;
+}
+
 
 /* ── Bindings ───────────────────────────────────────────────────────────── */
 
@@ -4979,6 +4994,7 @@ typedef struct {
     BindingApplyMemo *local_memo;
     BindingApplyMemo *outer_memo;
     uint64_t *node_visits;
+    CettaKernelObserveScope *native;
 } BindingsApplyFold;
 
 static Atom *bindings_apply_fold(BindingsApplyFold *fold, Atom *atom,
@@ -5430,7 +5446,12 @@ static inline BindingsApplyVarStep bindings_apply_rewrite_var_step(
     BindingValue value = binding_value_make(atom, scope->epoch, scope->kind);
     VarId id = binding_value_variable_id(value);
     Atom *memoized = bindings_apply_memo_lookup(fold->memo, id);
-    if (memoized) {
+    uint64_t native_action=UINT64_MAX;
+    if (fold->native && memoized) {
+        CettaKernelObserveFacts facts={0};facts.word[NO_F_PHASE]=1;facts.word[NO_F_MEMO]=1;
+        if (!cetta_kernel_observe_next(fold->native,&facts,&native_action)) return BINDINGS_APPLY_VAR_FAILED;
+    }
+    if (fold->native ? native_action==NO_A_MEMO : memoized!=NULL) {
         *image_out = memoized;
         return BINDINGS_APPLY_VAR_IMAGE;
     }
@@ -5440,7 +5461,14 @@ static inline BindingsApplyVarStep bindings_apply_rewrite_var_step(
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_APPLY);
         val = bindings_lookup_value(fold->b, value);
     }
-    if (!val.skeleton) {
+    if (fold->native) {
+        CettaKernelObserveFacts facts={0};facts.word[NO_F_PHASE]=1;
+        facts.word[NO_F_BOUND]=val.skeleton!=NULL;
+        facts.word[NO_F_SEEN]=fold->track_cycles && bindings_seen_var(fold->seen->ids,seen_len,id);
+        if (!cetta_kernel_observe_next(fold->native,&facts,&native_action) ||
+            (native_action!=NO_A_UNBOUND && native_action!=NO_A_FOLLOW)) return BINDINGS_APPLY_VAR_FAILED;
+    }
+    if (fold->native ? native_action==NO_A_UNBOUND : val.skeleton==NULL) {
         Atom *result = binding_value_materialize(fold->a, value);
         if (result && fold->rewrite_var)
             result = fold->rewrite_var(fold->a, result, fold->rewrite_ctx);
@@ -5471,7 +5499,12 @@ static BindingsApplyVarStep bindings_apply_epoch_var_step(
     VarId lookup_id = scope->original_side
         ? var_epoch_id(atom->var_id, scope->epoch) : atom->var_id;
     Atom *memoized = bindings_apply_memo_lookup(memo, lookup_id);
-    if (memoized) {
+    uint64_t native_action=UINT64_MAX;
+    if (fold->native && memoized) {
+        CettaKernelObserveFacts facts={0};facts.word[NO_F_PHASE]=1;facts.word[NO_F_MEMO]=1;
+        if (!cetta_kernel_observe_next(fold->native,&facts,&native_action)) return BINDINGS_APPLY_VAR_FAILED;
+    }
+    if (fold->native ? native_action==NO_A_MEMO : memoized!=NULL) {
         *image_out = memoized;
         return BINDINGS_APPLY_VAR_IMAGE;
     }
@@ -5497,7 +5530,14 @@ static BindingsApplyVarStep bindings_apply_epoch_var_step(
             val = bindings_lookup_value_since(
                 fold->b, lookup_id, lookup_first);
     }
-    if (!val.skeleton) {
+    if (fold->native) {
+        CettaKernelObserveFacts facts={0};facts.word[NO_F_PHASE]=1;
+        facts.word[NO_F_BOUND]=val.skeleton!=NULL;
+        facts.word[NO_F_SEEN]=fold->track_cycles && bindings_seen_var(fold->seen->ids,seen_len,lookup_id);
+        if (!cetta_kernel_observe_next(fold->native,&facts,&native_action) ||
+            (native_action!=NO_A_UNBOUND && native_action!=NO_A_FOLLOW)) return BINDINGS_APPLY_VAR_FAILED;
+    }
+    if (fold->native ? native_action==NO_A_UNBOUND : val.skeleton==NULL) {
         Atom *result = scope->original_side
             ? epoch_var_atom(fold->a, atom, scope->epoch) : atom;
         bindings_apply_memo_store(memo, lookup_id, result);
@@ -5554,6 +5594,12 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
     bool may_observe = !graph && !fold->rewrite_var && !fold->track_cycles;
     uint32_t expressions = 0u;
     Atom *result;
+    CettaKernelObserveScope *native=NULL;
+    CettaKernelMode mode=cetta_kernel_requested();
+    if (mode == CETTA_KERNEL_X86) {
+        if (!cetta_kernel_observe_begin || !(native=cetta_kernel_observe_begin(mode))) goto failed;
+        fold->native=native;
+    } else if (cetta_kernel_stats_enabled && cetta_kernel_stats_enabled()) cetta_kernel_note_c();
     for (;;) {
         /* Descend: the image of `atom`, or the frame that will receive it. */
         result = NULL;
@@ -5595,7 +5641,14 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
                 result = entry->image;
             }
         }
-        if (!result && atom->kind == ATOM_VAR) {
+        uint64_t native_action=UINT64_MAX;
+        if (native) {
+            CettaKernelObserveFacts facts={0};facts.word[NO_F_PHASE]=0;
+            facts.word[NO_F_KIND]=match_native_kind(atom->kind);facts.word[NO_F_HAS_VARS]=atom_has_vars(atom);
+            facts.word[NO_F_READY]=result!=NULL;
+            if (!cetta_kernel_observe_next(native,&facts,&native_action) || native_action>NO_A_EXPRESSION) goto failed;
+        }
+        if (native ? native_action==NO_A_VARIABLE : !result && atom->kind==ATOM_VAR) {
             BindingApplyMemo *memo = fold->memo;
             VarId id = VAR_ID_NONE;
             BindingValue bound = binding_value_from_atom(NULL);
@@ -5622,7 +5675,7 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
                 atom = bound.skeleton;
                 continue;
             }
-        } else if (!result && atom->kind == ATOM_EXPR) {
+        } else if (native ? native_action==NO_A_EXPRESSION : !result && atom->kind==ATOM_EXPR) {
             if (!bindings_apply_frames_push(
                     &frames,
                     (BindingsApplyFrame){
@@ -5638,6 +5691,42 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
         bool descend = false;
         while (frames.len > 0u) {
             BindingsApplyFrame *top = &frames.items[frames.len - 1u];
+            if (native) {
+                CettaKernelObserveFacts facts={0};facts.word[NO_F_PHASE]=2;
+                facts.word[NO_F_VARIABLE_FRAME]=top->atom==NULL;facts.word[NO_F_RESULT]=result!=NULL;
+                if (top->atom) {
+                    if (top->next>top->atom->expr.len || (result && top->next==top->atom->expr.len)) goto failed;
+                    facts.word[NO_F_NEXT]=top->next;facts.word[NO_F_LENGTH]=top->atom->expr.len;
+                    facts.word[NO_F_DRAFT]=top->draft!=NULL;
+                    facts.word[NO_F_CHANGED]=result && result!=top->atom->expr.elems[top->next];
+                }
+                if (!cetta_kernel_observe_next(native,&facts,&native_action)) goto failed;
+                switch (native_action) {
+                case NO_A_PUT_MEMO:
+                    bindings_apply_memo_store(top->memo,top->id,result);frames.len--;continue;
+                case NO_A_NEW_DRAFT:
+                    top->draft=atom_expr_builder_begin(fold->a,top->atom->expr.len);
+                    if (!top->draft) goto failed;
+                    for (CettaExprIndex j=0;j<top->next;++j) top->draft->expr.elems[j]=top->atom->expr.elems[j];
+                    continue;
+                case NO_A_WRITE_CHILD:
+                    if (top->draft) top->draft->expr.elems[top->next]=result;
+                    top->next++;result=NULL;continue;
+                case NO_A_NEXT_CHILD:
+                    atom=top->atom->expr.elems[top->next];scope=top->scope;seen_len=top->seen_len;
+                    descend=true;break;
+                case NO_A_FINISH:
+                    result=top->draft ? atom_expr_builder_finish(fold->a,top->draft) : top->atom;
+                    if (graph && graph->cap) {
+                        BindingApplyGraphEntry *entry=bindings_apply_graph_slot(graph,top->atom,top->scope);
+                        if (entry->source) entry->image=result;
+                    }
+                    frames.len--;if (!result) goto failed;continue;
+                default:goto failed;
+                }
+                if (descend) break;
+                continue;
+            }
             if (!top->atom) {
                 bindings_apply_memo_store(top->memo, top->id, result);
                 frames.len--;
@@ -5684,11 +5773,14 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
         if (!descend)
             break;
     }
+    if (native) { cetta_kernel_observe_end(native);fold->native=NULL; }
     if (frames.heap)
         free(frames.items);
     free(observed.entries);
     return result;
 failed:
+    if (native && eval_mark_interrupted) eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+    if (native) { cetta_kernel_observe_end(native);fold->native=NULL; }
     if (frames.heap)
         free(frames.items);
     free(observed.entries);
@@ -11336,6 +11428,103 @@ typedef struct {
     Atom *right_rest;
 } AtomPairFrame;
 
+/* Native decisions share the same observations and stores as the reference
+ * machine. Descriptors carry whole variable identities; library equality is
+ * requested at its original point, rather than interned as an equivalence. */
+typedef BindingValue (*MatchNativeLookup)(void *,bool,BindingValue);
+typedef struct {
+    bool wildcard,self_variable,allow_eval_heap,allow_finite,allow_closed,prefer_right,one_way;
+} MatchNativePolicy;
+typedef struct {
+    CettaKernelPairPlan plan;
+    BindingValue left_bound,right_bound;
+} MatchNativeDecision;
+static BindingValue match_native_plain_lookup(void *context,bool left,BindingValue value) {
+    (void)left;return bindings_lookup_value(context,value);
+}
+static void match_native_failure(void) {
+    if (eval_mark_interrupted) eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+}
+static bool match_native_decide(CettaKernelPairScope *scope,Bindings *current,
+        BindingValue lv,BindingValue rv,MatchNativePolicy policy,
+        MatchNativeLookup lookup,void *lookup_context,MatchNativeDecision *out) {
+    Atom *left=lv.skeleton,*right=rv.skeleton;
+    if (!scope || !left || !right) return false;
+    if (match_native_kind(left->kind)==UINT64_MAX || match_native_kind(right->kind)==UINT64_MAX) return false;
+    CettaKernelPairFacts facts={0};uint64_t *f=facts.word;
+    *out=(MatchNativeDecision){0};
+    f[NP_F_WILDCARD]=policy.wildcard &&
+        (atom_is_symbol_id(left,g_builtin_syms.undefined_type) || atom_is_symbol_id(right,g_builtin_syms.undefined_type));
+    f[NP_F_ACYCLIC]=!current || current->cycle_state==BINDINGS_CYCLE_ACYCLIC;
+    f[NP_F_SELF_VARIABLE]=policy.self_variable;f[NP_F_PREFER_RIGHT]=policy.prefer_right;f[NP_F_ONE_WAY]=policy.one_way;
+    f[NP_F_LEFT_KIND]=match_native_kind(left->kind);f[NP_F_RIGHT_KIND]=match_native_kind(right->kind);
+    f[NP_F_LEFT_ADDRESS]=(uint64_t)(uintptr_t)left;f[NP_F_RIGHT_ADDRESS]=(uint64_t)(uintptr_t)right;
+    if (left->kind==ATOM_VAR) {
+        VarId key=binding_value_variable_id(lv);f[NP_F_LEFT_VARIABLE]=key.base;f[NP_F_LEFT_SCOPE]=key.epoch.word;
+    }
+    if (right->kind==ATOM_VAR) {
+        VarId key=binding_value_variable_id(rv);f[NP_F_RIGHT_VARIABLE]=key.base;f[NP_F_RIGHT_SCOPE]=key.epoch.word;
+    }
+    f[NP_F_LEFT_SYMBOL]=left->kind==ATOM_SYMBOL ? left->sym_id : 0u;
+    f[NP_F_RIGHT_SYMBOL]=right->kind==ATOM_SYMBOL ? right->sym_id : 0u;
+    f[NP_F_LEFT_CLASS]=atom_petta_value_representation(left);f[NP_F_RIGHT_CLASS]=atom_petta_value_representation(right);
+    if (left->kind==ATOM_EXPR) {
+        f[NP_F_LEFT_LENGTH]=left->expr.len;f[NP_F_LEFT_LIST]=match_expr_is_list(left);f[NP_F_LEFT_OPEN]=atom_is_list_rest(left);
+    }
+    if (right->kind==ATOM_EXPR) {
+        f[NP_F_RIGHT_LENGTH]=right->expr.len;f[NP_F_RIGHT_LIST]=match_expr_is_list(right);f[NP_F_RIGHT_OPEN]=atom_is_list_rest(right);
+    }
+    if (!cetta_kernel_pair_next(scope,&facts,&out->plan)) return false;
+    if (out->plan.action!=NP_A_ASK_CLOSED) return true;
+    if (cetta_kernel_note_host) cetta_kernel_note_host();
+    bool equal=false,known=false;
+    if (!policy.one_way && left==right && match_shared_ground_reflexivity_try(left,right,policy.allow_eval_heap,
+            match_shared_occurrence_same_environment(binding_value_is_contextual(lv),binding_value_is_contextual(rv),
+                binding_value_epoch(lv),binding_value_epoch(rv)),current)) known=equal=true;
+    else if (policy.allow_closed && match_closed_expression_decision_try(left,right,&equal)) known=true;
+    else if (policy.allow_finite && match_finite_ground_equal_try(left,right,&equal)) known=true;
+    f[NP_F_PHASE]=1;f[NP_F_KNOWN]=known;f[NP_F_EQUAL]=equal;
+    if (!known && !policy.one_way) {
+        if (!lookup && (left->kind==ATOM_VAR || right->kind==ATOM_VAR)) return false;
+        if (left->kind==ATOM_VAR) out->left_bound=lookup(lookup_context,true,lv);
+        if (right->kind==ATOM_VAR) out->right_bound=lookup(lookup_context,false,rv);
+        f[NP_F_LEFT_BOUND]=out->left_bound.skeleton!=NULL;f[NP_F_RIGHT_BOUND]=out->right_bound.skeleton!=NULL;
+    }
+    if (!cetta_kernel_pair_next(scope,&facts,&out->plan)) return false;
+    if (out->plan.action==NP_A_ASK_GROUNDED) {
+        if (cetta_kernel_note_host) cetta_kernel_note_host();
+        f[NP_F_PHASE]=2;f[NP_F_EQUAL]=policy.one_way ? simple_match_leaf(left,right) : atom_eq(left,right);
+        if (!cetta_kernel_pair_next(scope,&facts,&out->plan)) return false;
+    }
+    return true;
+}
+static bool match_native_list(Arena *a,Atom *left,Atom *right,const CettaKernelPairPlan *plan,MatchListMeeting *m) {
+    if (left->kind!=ATOM_EXPR || right->kind!=ATOM_EXPR || !left->expr.len || !right->expr.len ||
+        plan->prefix>=left->expr.len || plan->prefix>=right->expr.len) return false;
+    *m=(MatchListMeeting){.prefix=plan->prefix};
+    switch (plan->rest) {
+    case NP_R_NONE:break;
+    case NP_R_BOTH:
+        m->left_rest=left->expr.elems[left->expr.len-1u];m->right_rest=right->expr.elems[right->expr.len-1u];break;
+    case NP_R_LEFT_EMPTY_RIGHT:
+        m->left_rest=left->expr.elems[left->expr.len-1u];m->right_rest=atom_list(a,NULL,0u);m->right_derived=true;break;
+    case NP_R_EMPTY_LEFT_RIGHT:
+        m->left_rest=atom_list(a,NULL,0u);m->right_rest=right->expr.elems[right->expr.len-1u];m->left_derived=true;break;
+    case NP_R_RIGHT_SUFFIX:
+        if (plan->from>right->expr.len || plan->count>right->expr.len-plan->from) return false;
+        m->left_rest=left->expr.elems[left->expr.len-1u];
+        m->right_rest=match_list_remainder(a,right,plan->from,plan->count,
+            atom_is_list_rest(right) ? right->expr.elems[right->expr.len-1u] : NULL);m->right_derived=true;break;
+    case NP_R_LEFT_SUFFIX:
+        if (plan->from>left->expr.len || plan->count>left->expr.len-plan->from) return false;
+        m->right_rest=right->expr.elems[right->expr.len-1u];
+        m->left_rest=match_list_remainder(a,left,plan->from,plan->count,
+            atom_is_list_rest(left) ? left->expr.elems[left->expr.len-1u] : NULL);m->left_derived=true;break;
+    default:return false;
+    }
+    return plan->rest==NP_R_NONE || (m->left_rest && m->right_rest);
+}
+
 static bool atom_pair_walk(Atom *left, Atom *right, Bindings *bindings,
                             BindingsBuilder *builder, Arena *arena, bool alpha) {
     AtomPairFrame inline_frames[16];
@@ -11346,11 +11535,47 @@ static bool atom_pair_walk(Atom *left, Atom *right, Bindings *bindings,
     AlphaPairSet pairs;
     alpha_pair_set_init(&pairs);
     bool ok = false;
+    CettaKernelPairScope *native_scope=NULL;
+    bool measure=cetta_kernel_stats_enabled && cetta_kernel_stats_enabled();
+    CettaKernelMode kernel=cetta_kernel_requested();
+    if (!alpha && (kernel == CETTA_KERNEL_X86)) {
+        if (!cetta_kernel_pair_begin || !(native_scope=cetta_kernel_pair_begin(kernel))) {
+            match_native_failure();goto done;
+        }
+    }
     if (!alpha && !bindings && !builder)
         goto done;
     for (;;) {
         if (!left || !right)
             goto done;
+        AtomPairFrame native_frame={.left=left,.right=right};
+        if (native_scope) {
+            MatchNativeDecision decision;
+            if (!match_native_decide(native_scope,builder ? &builder->current : bindings,
+                    binding_value_from_atom(left),binding_value_from_atom(right),
+                    (MatchNativePolicy){.one_way=true},NULL,NULL,&decision)) {
+                match_native_failure();goto done;
+            }
+            switch (decision.plan.action) {
+            case NP_A_SKIP:goto native_pair_children;
+            case NP_A_REJECT:goto done;
+            case NP_A_BIND_LEFT:
+                if (cetta_kernel_note_host) cetta_kernel_note_host();
+                if (!(builder ? bindings_builder_add_var_fresh(builder,left,right) : bindings_add_var(bindings,left,right))) goto done;
+                goto native_pair_children;
+            case NP_A_EXPRESSION:
+                native_frame.end=left->expr.len;goto native_pair_frame;
+            case NP_A_LIST: {
+                MatchListMeeting meet;
+                if (!match_native_list(arena,left,right,&decision.plan,&meet)) { match_native_failure();goto done; }
+                native_frame.next=1u;native_frame.end=1u+meet.prefix;
+                native_frame.left_rest=meet.left_rest;native_frame.right_rest=meet.right_rest;
+                goto native_pair_frame;
+            }
+            default:match_native_failure();goto done;
+            }
+        }
+        if (!alpha && measure && cetta_kernel_note_c) cetta_kernel_note_c();
         if (alpha && (left->kind == ATOM_VAR || right->kind == ATOM_VAR)) {
             if (left->kind != ATOM_VAR || right->kind != ATOM_VAR)
                 goto done;
@@ -11419,6 +11644,22 @@ static bool atom_pair_walk(Atom *left, Atom *right, Bindings *bindings,
                 }
             }
         }
+        goto native_pair_children;
+native_pair_frame:
+        if (native_frame.next<native_frame.end || native_frame.left_rest) {
+            MatchTerm l={.value=binding_value_from_atom(left)},r={.value=binding_value_from_atom(right)};
+            if (!match_path_enter(&path,l,r)) goto done;
+            if (len==cap) {
+                if (cap>SIZE_MAX/2u || cap*2u>SIZE_MAX/sizeof(*frames)) goto done;
+                size_t next_cap=cap*2u;
+                AtomPairFrame *next=frames==inline_frames ? malloc(sizeof(*next)*next_cap) : realloc(frames,sizeof(*next)*next_cap);
+                if (!next) goto done;
+                if (frames==inline_frames) memcpy(next,inline_frames,sizeof(*next)*len);
+                frames=next;cap=next_cap;
+            }
+            frames[len++]=native_frame;
+        }
+native_pair_children:
         while (len) {
             AtomPairFrame *frame = &frames[len - 1u];
             if (frame->next < frame->end) {
@@ -11446,6 +11687,7 @@ static bool atom_pair_walk(Atom *left, Atom *right, Bindings *bindings,
     }
 
 done:
+    if (native_scope) cetta_kernel_pair_end(native_scope);
     alpha_pair_set_free(&pairs);
     match_path_free(&path);
     if (frames != inline_frames)
@@ -11695,6 +11937,131 @@ static void match_note_unification_attempt(
     }
 }
 
+extern bool cetta_kernel_dag_test_reference(void) __attribute__((weak));
+/* A full-DAG solve pays for import only when the ordinary walk would repeat
+ * a shared binary subgraph. Rich values and undeclared or stale frames keep
+ * their policy walker. Failed private solves publish nothing; the reference walk retains
+ * its own failure-prefix behavior. */
+typedef struct { NmVariableKey key;Atom *source; } MatchKernelVariable;
+typedef struct { NmVariableKey key;BindingValue value;Atom *source; } MatchKernelDelta;
+typedef struct {
+    Bindings *bindings;
+    MatchWriteStamp stamp;
+    MatchKernelVariable *variables;
+    size_t count,capacity;
+    MatchKernelDelta *delta;
+    size_t delta_count;
+} MatchKernelDag;
+static bool match_kernel_dag_family(BindingValue lv,BindingValue rv) {
+    Atom *l=lv.skeleton,*r=rv.skeleton;
+    if (!l || !r || (!atom_has_vars(l) && !atom_has_vars(r))) return false;
+    for (unsigned depth=0;depth<12;++depth) {
+        if ((l==r && lv.context==rv.context) || l->kind!=ATOM_EXPR || r->kind!=ATOM_EXPR ||
+            l->expr.len!=3u || r->expr.len!=3u ||
+            l->expr.elems[1]!=l->expr.elems[2] || r->expr.elems[1]!=r->expr.elems[2]) return false;
+        l=l->expr.elems[1];r=r->expr.elems[1];
+        if (!l || !r) return false;
+    }
+    return true;
+}
+static bool match_kernel_dag_pin(void *raw) {
+    MatchKernelDag *source=raw;
+    return source->bindings->cycle_state==BINDINGS_CYCLE_ACYCLIC &&
+        !match_write_stamp_changed(source->stamp,match_write_stamp(source->bindings,0u));
+}
+static NmViewStatus match_kernel_dag_inspect(void *raw,NmHostValue v,NmViewNode *out) {
+    MatchKernelDag *source=raw;BindingValue value={(Atom *)(uintptr_t)v.syntax,v.context};
+    Atom *atom=value.skeleton;
+    if (!atom || binding_value_kind(value)>BINDING_VALUE_CONTEXTUAL_PERSISTENT) return NM_VIEW_DEFER;
+    if (atom->kind==ATOM_VAR) {
+        VarId id=binding_value_variable_id(value);
+        if (var_id_is_none(id)) return NM_VIEW_DEFER;
+        if (!cetta_frame_identity_is_none(var_epoch_suffix(id))) {
+            BindingValue existing=binding_value_from_atom(NULL);
+            bool known=binding_value_is_contextual(value)
+                ? bindings_frame_index_lookup_value_ref(source->bindings,value,&existing)
+                : bindings_frame_index_lookup_value(source->bindings,id,&existing);
+            if (!known) return NM_VIEW_DEFER;
+        }
+        NmVariableKey key={id.base,id.epoch.word};
+        size_t at=0;while (at<source->count && (source->variables[at].key.variable!=key.variable ||
+            source->variables[at].key.scope!=key.scope)) ++at;
+        if (at==source->count) {
+            if (source->count==source->capacity) {
+                size_t capacity=source->capacity ? 2*source->capacity : 8;
+                if (capacity<source->capacity || capacity>SIZE_MAX/sizeof *source->variables) return NM_VIEW_RESOURCE;
+                MatchKernelVariable *p=realloc(source->variables,capacity*sizeof *p);if (!p) return NM_VIEW_RESOURCE;
+                source->variables=p;source->capacity=capacity;
+            }
+            source->variables[source->count++]=(MatchKernelVariable){key,atom};
+        } else if (source->variables[at].source->sym_id!=atom->sym_id ||
+                   source->variables[at].source->name_key!=atom->name_key) return NM_VIEW_DEFER;
+        *out=(NmViewNode){.kind=NM_NODE_VARIABLE,.variable=key};
+    } else if (atom->kind==ATOM_SYMBOL) *out=(NmViewNode){.kind=NM_NODE_CONSTANT,.constant=atom->sym_id};
+    else if (atom->kind==ATOM_EXPR && !match_expr_is_list(atom) &&
+        atom_petta_value_representation(atom)==PETTA_VALUE_ORDINARY)
+        *out=(NmViewNode){.kind=NM_NODE_TUPLE,.children=atom->expr.len};
+    else return NM_VIEW_DEFER;
+    return NM_VIEW_READY;
+}
+static NmViewStatus match_kernel_dag_child(void *raw,NmHostValue v,uint64_t i,NmHostValue *out) {
+    (void)raw;Atom *atom=(Atom *)(uintptr_t)v.syntax;
+    if (!atom || atom->kind!=ATOM_EXPR || i>=atom->expr.len) return NM_VIEW_FAULT;
+    *out=(NmHostValue){(uint64_t)(uintptr_t)atom->expr.elems[i],v.context};return NM_VIEW_READY;
+}
+static NmViewStatus match_kernel_dag_binding(void *raw,NmHostValue v,bool *bound,NmHostValue *out) {
+    MatchKernelDag *source=raw;BindingValue value={(Atom *)(uintptr_t)v.syntax,v.context};
+    value=bindings_lookup_value(source->bindings,value);*bound=value.skeleton!=NULL;
+    *out=(NmHostValue){(uint64_t)(uintptr_t)value.skeleton,value.context};return NM_VIEW_READY;
+}
+static bool match_kernel_dag_delta(void *raw,NmVariableKey key,NmHostValue value) {
+    MatchKernelDag *source=raw;size_t at=0;
+    while (at<source->count && (source->variables[at].key.variable!=key.variable || source->variables[at].key.scope!=key.scope)) ++at;
+    if (at==source->count || source->delta_count>=source->count) return false;
+    source->delta[source->delta_count++]=(MatchKernelDelta){key,
+        {(Atom *)(uintptr_t)value.syntax,value.context},source->variables[at].source};return true;
+}
+static bool match_kernel_dag_try(BindingValue left,BindingValue right,Bindings *bindings,
+        BindingsBuilder *builder,CettaKernelMode mode,bool *result) {
+    Bindings *current=builder ? &builder->current : bindings;
+    if ((cetta_kernel_dag_test_reference && cetta_kernel_dag_test_reference()) ||
+        !current || current->cycle_state!=BINDINGS_CYCLE_ACYCLIC ||
+        !match_kernel_dag_family(left,right) || !cetta_kernel_session_open) return false;
+    MatchKernelDag source={.bindings=current,.stamp=match_write_stamp(current,0u)};
+    NmQueryView view={{&source,match_kernel_dag_inspect,match_kernel_dag_child,match_kernel_dag_binding},&source,match_kernel_dag_pin};
+    CettaKernelLimits limits={.import={UINT32_MAX,SIZE_MAX,UINT32_MAX-1u,SIZE_MAX},.fuel_budget=UINT64_MAX};
+    CettaKernelSession *session=NULL;char error[256];CettaKernelReceipt receipt;
+    /* The independently batched C solver is the qualified winner for this
+     * family; strict native selections continue to execute their own images. */
+    CettaKernelMode implementation=mode==CETTA_KERNEL_HYBRID ? CETTA_KERNEL_C : mode;
+    CettaKernelStatus status=cetta_kernel_session_open(implementation,view,limits,0,&session,error,sizeof error);
+    if (status==CETTA_KERNEL_SOLVED) {
+        NmHostConstraint constraint={{(uint64_t)(uintptr_t)left.skeleton,left.context},{(uint64_t)(uintptr_t)right.skeleton,right.context}};
+        status=cetta_kernel_solve(session,&constraint,1,false,&receipt,error,sizeof error);
+    }
+    if (status==CETTA_KERNEL_SOLVED) {
+        source.delta=calloc(source.count ? source.count : 1,sizeof *source.delta);
+        if (!source.delta) status=CETTA_KERNEL_RESOURCE;
+        else if (!cetta_kernel_visit_delta(session,match_kernel_dag_delta,&source)) status=CETTA_KERNEL_FAULT;
+    }
+    /* Release the borrowed graph before publishing through the checked host
+     * APIs. The delta owns by-value labels, whose syntax owners remain lent. */
+    cetta_kernel_session_free(session);free(source.variables);
+    if (status==CETTA_KERNEL_DEFER || status==CETTA_KERNEL_REFUTED) { free(source.delta);return false; }
+    *result=status==CETTA_KERNEL_SOLVED;
+    if (*result) for (size_t i=0;i<source.delta_count;++i) {
+        MatchKernelDelta d=source.delta[i];VarId id={.base=d.key.variable,.epoch={d.key.scope}};
+        if (cetta_kernel_note_host) cetta_kernel_note_host();
+        bool added=builder ? bindings_builder_add_id_internal(builder,id,d.source->sym_id,d.source->name_key,d.value) :
+            bindings_add_internal(bindings,id,d.source->sym_id,d.source->name_key,d.value,true);
+        if (!added) { *result=false;match_native_failure();break; }
+    }
+    if (status!=CETTA_KERNEL_SOLVED) match_native_failure();
+    free(source.delta);
+    match_note_unification_attempt(*result,match_write_stamp_changed(source.stamp,match_write_stamp(current,0u)),false);
+    return true;
+}
+
 /* Persistent open head against a goal skeleton whose variables are the
  * current environment (SubstitutionAlgebra closures).  Callers must not
  * force a substituted instance first; observation is bindings_apply. */
@@ -11702,9 +12069,16 @@ static bool match_decoded_atoms_worklist(BindingValue left_value, BindingValue r
                                          Bindings *bindings,
                                          BindingsBuilder *builder,
                                          Arena *a, bool undefined_is_wildcard) {
+    CettaKernelMode requested=cetta_kernel_requested();
+    if (!undefined_is_wildcard) {
+        bool result=false;
+        if (match_kernel_dag_try(left_value,right_value,bindings,builder,requested,&result)) return result;
+    }
     Atom *left, *right;
     DecodedMatchWorklist work;
     MatchPathSet path;
+    CettaKernelPairScope *native_scope=NULL;
+    bool measure=cetta_kernel_stats_enabled && cetta_kernel_stats_enabled();
     Bindings *initial = builder ? &builder->current : bindings;
     MatchWriteStamp attempt_start = match_write_stamp(initial, 0u);
     bool attempt_repeated_var = false;
@@ -11717,6 +12091,12 @@ static bool match_decoded_atoms_worklist(BindingValue left_value, BindingValue r
     uint32_t untracked_pairs = 0u;
     decoded_match_worklist_init(&work);
     match_path_init(&path);
+    CettaKernelMode kernel=cetta_kernel_requested();
+    if (kernel == CETTA_KERNEL_X86) {
+        if (!cetta_kernel_pair_begin || !(native_scope=cetta_kernel_pair_begin(kernel))) {
+            match_native_failure();goto fail;
+        }
+    }
     if (!decoded_match_push(&work, (MatchTerm){.value = left_value},
                             (MatchTerm){.value = right_value})) goto fail;
 
@@ -11739,6 +12119,46 @@ static bool match_decoded_atoms_worklist(BindingValue left_value, BindingValue r
 retry_pair:
         left = left_value.skeleton;
         right = right_value.skeleton;
+        MatchListMeeting meet={0};
+        MatchListOutcome list_outcome=MATCH_LIST_EXPRESSIONS;
+        if (native_scope) {
+            MatchNativeDecision decision;
+            if (!match_native_decide(native_scope,current,left_value,right_value,
+                    (MatchNativePolicy){.wildcard=undefined_is_wildcard,.self_variable=true,.allow_eval_heap=true,
+                        .allow_finite=!undefined_is_wildcard,.allow_closed=!undefined_is_wildcard},
+                    match_native_plain_lookup,current,&decision)) { match_native_failure();goto fail; }
+            switch (decision.plan.action) {
+            case NP_A_SKIP:continue;
+            case NP_A_REJECT:
+                if (attempt_resolving_bound && left->kind==right->kind) attempt_repeated_var=true;
+                goto fail;
+            case NP_A_DEREFERENCE_LEFT:
+            case NP_A_DEREFERENCE_RIGHT:
+                if (!bindings_dereference_step(&dereferences,&dereference_limit,current,0u)) goto fail;
+                attempt_resolving_bound=true;
+                if (decision.plan.action==NP_A_DEREFERENCE_LEFT) left_value=decision.left_bound;
+                else right_value=decision.right_bound;
+                goto retry_pair;
+            case NP_A_BIND_LEFT:
+            case NP_A_BIND_RIGHT: {
+                BindingValue variable=decision.plan.action==NP_A_BIND_LEFT ? left_value : right_value;
+                BindingValue value=decision.plan.action==NP_A_BIND_LEFT ? right_value : left_value;
+                Atom *source=variable.skeleton;
+                if (cetta_kernel_note_host) cetta_kernel_note_host();
+                bool added=builder ? bindings_builder_add_id_internal(builder,binding_value_variable_id(variable),
+                    source->sym_id,source->name_key,value) : bindings_add_internal(bindings,binding_value_variable_id(variable),
+                    source->sym_id,source->name_key,value,true);
+                if (!added) goto fail;
+                continue;
+            }
+            case NP_A_EXPRESSION:list_outcome=MATCH_LIST_EXPRESSIONS;goto native_decompose_ready;
+            case NP_A_LIST:
+                if (!match_native_list(a,left,right,&decision.plan,&meet)) { match_native_failure();goto fail; }
+                list_outcome=MATCH_LIST_ELEMENTS;goto native_decompose_ready;
+            default:match_native_failure();goto fail;
+            }
+        }
+        if (measure && cetta_kernel_note_c) cetta_kernel_note_c();
         if (undefined_is_wildcard &&
             (atom_is_symbol_id(left, g_builtin_syms.undefined_type) ||
              atom_is_symbol_id(right, g_builtin_syms.undefined_type)))
@@ -11853,8 +12273,7 @@ retry_pair:
         }
         if (!atom_petta_decomposition_compatible(left, right))
             goto fail;
-        MatchListMeeting meet;
-        MatchListOutcome list_outcome =
+        list_outcome =
             left->kind == ATOM_EXPR && right->kind == ATOM_EXPR
                 ? match_list_meet(a, left, right, &meet)
                 : MATCH_LIST_EXPRESSIONS;
@@ -11866,6 +12285,7 @@ retry_pair:
                 attempt_repeated_var = true;
             goto fail;
         }
+native_decompose_ready:
         if (!track_path &&
             ++untracked_pairs > MATCH_UNTRACKED_PAIR_LIMIT)
             track_path = true;
@@ -11926,6 +12346,7 @@ retry_pair:
             goto retry_pair;
         }
     }
+    if (native_scope) cetta_kernel_pair_end(native_scope);
     decoded_match_worklist_free(&work);
     match_path_free(&path);
     match_note_unification_attempt(
@@ -11937,6 +12358,7 @@ retry_pair:
     return true;
 
 fail:
+    if (native_scope) cetta_kernel_pair_end(native_scope);
     decoded_match_worklist_free(&work);
     match_path_free(&path);
     match_note_unification_attempt(
@@ -12297,6 +12719,14 @@ bool match_atoms_epoch_positional_linear(Atom *query, Atom *lhs, Bindings *b,
     Bindings trial;
     if (!bindings_clone(&trial, b))
         return false;
+    CettaKernelMode mode = cetta_kernel_requested();
+    if (mode == CETTA_KERNEL_X86) {
+        bool matched = match_atoms_epoch_worklist(query, lhs, &trial, NULL, a, epoch);
+        if (matched) bindings_replace(b, &trial);
+        else bindings_free(&trial);
+        return matched;
+    }
+    if (cetta_kernel_stats_enabled && cetta_kernel_stats_enabled()) cetta_kernel_note_c();
     for (CettaExprIndex i = 1; i < lhs->expr.len; i++) {
         Atom *pi = lhs->expr.elems[i];
         Atom *qi = query->expr.elems[i];
@@ -12352,6 +12782,10 @@ bool match_atoms_epoch_positional_linear_builder(
         seen[nseen++] = eid;
     }
 
+    CettaKernelMode mode = cetta_kernel_requested();
+    if (mode == CETTA_KERNEL_X86)
+        return match_atoms_epoch_worklist(query, lhs, NULL, bb, a, epoch);
+    if (cetta_kernel_stats_enabled && cetta_kernel_stats_enabled()) cetta_kernel_note_c();
     for (CettaExprIndex i = 1u; i < lhs->expr.len; i++) {
         Atom *binding_var = epoch_var_atom(a, lhs->expr.elems[i], epoch);
         if (!binding_var || !bindings_builder_add_var_fresh(
@@ -13029,6 +13463,37 @@ static bool match_plan_fails_before_bind(
     return false;
 }
 
+typedef struct {
+    Bindings *current;
+    const BindingsActivationView *left_frame;
+    uint32_t left_first_entry;
+    const CettaOpenPatternPlan *right_plan;
+    RuleFrameRegion *region;
+} MatchNativeEpochRead;
+static BindingValue match_native_epoch_lookup(void *context,bool left,BindingValue value) {
+    MatchNativeEpochRead *v=context;Bindings *current=v->current;
+    if (!left) return rule_frame_region_lookup_value(v->region,
+        binding_value_is_contextual(value) && v->right_plan ? v->right_plan->variable_mask : 0u,current,value);
+    VarId id=binding_value_variable_id(value);BindingValue existing=binding_value_from_atom(NULL);
+    if (binding_value_is_contextual(value)) {
+        bool present=false;
+        bool known=v->left_frame && bindings_activation_view_lookup(current,v->left_frame,value.skeleton->var_id,&existing,&present);
+        if (!known && v->region && v->region->exclusive) {
+            bool local=false;existing=bindings_exclusive_frame_lookup(v->region->exclusive,NULL,id,&local);
+            if (local) { known=true;present=existing.skeleton!=NULL; }
+        }
+        if (!known && bindings_frame_ref_is_valid(binding_value_frame_ref(value))) {
+            known=bindings_frame_index_lookup_value_ref(current,value,&existing);present=existing.skeleton!=NULL;
+        }
+        if (!known) { known=bindings_frame_index_lookup_value(current,id,&existing);present=existing.skeleton!=NULL; }
+        if (!known) return bindings_lookup_value_since(current,id,v->left_first_entry);
+        return present ? existing : binding_value_from_atom(NULL);
+    }
+    bool local=false;existing=bindings_exclusive_frame_lookup(v->region ? v->region->exclusive : NULL,NULL,id,&local);
+    if (local || bindings_frame_index_lookup_value(current,id,&existing)) return existing;
+    return bindings_lookup_value_id(current,id);
+}
+
 static bool match_atoms_epoch_views_worklist(
     Atom *left, BindingValueKind left_kind, CettaFrameIdentity left_epoch,
     uint32_t left_first_entry, Atom *right,
@@ -13068,6 +13533,8 @@ static bool match_atoms_epoch_views_worklist(
             return false;
     }
     AtomDeepCopySession *transport = NULL;
+    CettaKernelPairScope *native_scope=NULL;
+    bool measure=cetta_kernel_stats_enabled && cetta_kernel_stats_enabled();
     MatchWriteStamp attempt_start = match_write_stamp(
         initial, rule_frame_region_staged_len(right_frame_region));
     bool attempt_repeated_var = false;
@@ -13084,6 +13551,10 @@ static bool match_atoms_epoch_views_worklist(
     work.len = 0;
     work.cap = sizeof work.inline_items / sizeof work.inline_items[0];
     match_path_init(&path);
+    CettaKernelMode kernel=cetta_kernel_requested();
+    if (kernel == CETTA_KERNEL_X86) {
+        if (!cetta_kernel_pair_begin || !(native_scope=cetta_kernel_pair_begin(kernel))) { match_native_failure();goto fail; }
+    }
     MatchTerm left_root = match_term_at(
         left, left_kind, left_epoch, left_first_entry, left_frame);
     MatchTerm right_root = match_term_at(
@@ -13147,6 +13618,30 @@ retry_pair:
             goto fail;
         }
         AtomKind right_shape = right_plan ? right_plan->kind : right->kind;
+        MatchNativeDecision native_decision={0};
+        bool native_list=false;
+        MatchListMeeting native_meet={0};
+        if (native_scope) {
+            MatchNativeEpochRead read={current,left_frame,left_first_entry,right_plan,right_frame_region};
+            MatchNativePolicy policy={.allow_eval_heap=right_plan==NULL,.allow_finite=right_plan==NULL,.allow_closed=true,
+                .prefer_right=prefer_right_rule_slot && right_original && cetta_frame_identity_eq(right_epoch,rule_epoch)};
+            if (!match_native_decide(native_scope,current,left_value,right_value,policy,match_native_epoch_lookup,&read,&native_decision)) {
+                match_native_failure();goto fail;
+            }
+            switch (native_decision.plan.action) {
+            case NP_A_SKIP:continue;
+            case NP_A_REJECT:
+                if (attempt_resolving_bound && left->kind==right->kind) attempt_repeated_var=true;
+                goto fail;
+            case NP_A_EXPRESSION:goto native_epoch_decompose;
+            case NP_A_LIST:
+                if (!match_native_list(a,left,right,&native_decision.plan,&native_meet)) { match_native_failure();goto fail; }
+                native_list=true;goto native_epoch_decompose;
+            case NP_A_DEREFERENCE_LEFT:case NP_A_DEREFERENCE_RIGHT:case NP_A_BIND_LEFT:case NP_A_BIND_RIGHT:break;
+            default:match_native_failure();goto fail;
+            }
+        } else {
+            if (measure && cetta_kernel_note_c) cetta_kernel_note_c();
         if (left == right &&
             match_shared_ground_reflexivity_try(
                 left, right, right_plan == NULL,
@@ -13167,12 +13662,13 @@ retry_pair:
                 goto fail;
             continue;
         }
+        }
         if (left->kind == ATOM_VAR) {
             VarId left_id = left_original
                 ? var_epoch_id(left->var_id, left_epoch) : left->var_id;
-            BindingValue existing = binding_value_from_atom(NULL);
-            bool left_lookup_done = false;
-            if (left_original) {
+            BindingValue existing = native_scope ? native_decision.left_bound : binding_value_from_atom(NULL);
+            bool left_lookup_done = native_scope!=NULL;
+            if (!native_scope && left_original) {
                 bool dense_present = false;
                 bool dense_known = left_frame &&
                     bindings_activation_view_lookup(
@@ -13250,7 +13746,7 @@ retry_pair:
                     }
                 }
             }
-            if (existing.skeleton) {
+            if (native_scope ? native_decision.plan.action==NP_A_DEREFERENCE_LEFT : existing.skeleton != NULL) {
                 if (!bindings_dereference_step(
                             &dereferences, &dereference_limit, current,
                             local_dereference_allowance)) goto fail;
@@ -13271,12 +13767,12 @@ retry_pair:
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_MATCH);
                 BindingValue right_existing =
-                    rule_frame_region_lookup_value(
+                    native_scope ? native_decision.right_bound : rule_frame_region_lookup_value(
                         right_frame_region,
                         right_original && right_plan
                             ? right_plan->variable_mask : 0u,
                         current, right_value);
-                if (right_existing.skeleton) {
+                if (native_scope ? native_decision.plan.action==NP_A_DEREFERENCE_RIGHT : right_existing.skeleton != NULL) {
                     if (!bindings_dereference_step(
                             &dereferences, &dereference_limit, current,
                             local_dereference_allowance)) goto fail;
@@ -13289,9 +13785,9 @@ retry_pair:
                     right_plan = NULL;
                     goto retry_pair;
                 }
-                if (var_id_eq(left_id, right_id)) continue;
-                if (prefer_right_rule_slot && right_original &&
-                    cetta_frame_identity_eq(right_epoch, rule_epoch)) {
+                if (!native_scope && var_id_eq(left_id, right_id)) continue;
+                if (native_scope ? native_decision.plan.action==NP_A_BIND_RIGHT :
+                    (prefer_right_rule_slot && right_original && cetta_frame_identity_eq(right_epoch,rule_epoch))) {
                     BindingValue value = left_value;
                     value.skeleton = left;
                     bool added = builder && value.skeleton
@@ -13358,11 +13854,11 @@ retry_pair:
                 : right->var_id;
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_MATCH);
-            BindingValue existing = rule_frame_region_lookup_value(
+            BindingValue existing = native_scope ? native_decision.right_bound : rule_frame_region_lookup_value(
                 right_frame_region,
                 right_plan ? right_plan->variable_mask : 0u,
                 current, right_value);
-            if (existing.skeleton) {
+            if (native_scope ? native_decision.plan.action==NP_A_DEREFERENCE_RIGHT : existing.skeleton != NULL) {
                 if (!bindings_dereference_step(
                             &dereferences, &dereference_limit, current,
                             local_dereference_allowance)) goto fail;
@@ -13394,6 +13890,7 @@ retry_pair:
             if (!added) goto fail;
             continue;
         }
+        if (native_scope) { match_native_failure();goto fail; }
         if (left->kind == ATOM_SYMBOL && right_shape == ATOM_SYMBOL) {
             if (left->sym_id != right->sym_id) {
                 if (attempt_resolving_bound)
@@ -13412,10 +13909,11 @@ retry_pair:
         }
         if (!atom_petta_decomposition_compatible(left, right))
             goto fail;
-        if (left->kind == ATOM_EXPR && right_shape == ATOM_EXPR &&
-            (match_expr_is_list(left) || match_expr_is_list(right))) {
-            MatchListMeeting meet;
-            if (match_list_meet(a, left, right, &meet) != MATCH_LIST_ELEMENTS ||
+native_epoch_decompose:
+        if (native_list || (left->kind == ATOM_EXPR && right_shape == ATOM_EXPR &&
+            (match_expr_is_list(left) || match_expr_is_list(right)))) {
+            MatchListMeeting meet=native_meet;
+            if ((native_scope ? !native_list : match_list_meet(a,left,right,&meet)!=MATCH_LIST_ELEMENTS) ||
                 (right_plan &&
                  (right_plan->child_count != right->expr.len ||
                   !right_plan->children))) {
@@ -13539,6 +14037,7 @@ retry_pair:
         }
         }
     }
+    if (native_scope) cetta_kernel_pair_end(native_scope);
     if (work.items != work.inline_items) free(work.items);
     match_path_free(&path);
     atom_deep_copy_session_free(transport);
@@ -13552,6 +14051,7 @@ retry_pair:
     return true;
 
 fail:
+    if (native_scope) cetta_kernel_pair_end(native_scope);
     if (work.items != work.inline_items) free(work.items);
     match_path_free(&path);
     atom_deep_copy_session_free(transport);
@@ -13597,6 +14097,8 @@ static bool match_atoms_epoch_views_linear(
         return false;
     }
     AtomDeepCopySession *transport = NULL;
+    CettaKernelPairScope *native_scope=NULL;
+    bool measure=cetta_kernel_stats_enabled && cetta_kernel_stats_enabled();
 
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_MATCH_OPEN_LINEAR_ATTEMPT);
@@ -13612,6 +14114,10 @@ static bool match_atoms_epoch_views_linear(
     RuleFrameRegion frame_region;
     rule_frame_region_init_exclusive(
         &frame_region, right_plan, exclusive);
+    CettaKernelMode mode = cetta_kernel_requested();
+    if (mode == CETTA_KERNEL_X86) {
+        if (!cetta_kernel_pair_begin || !(native_scope=cetta_kernel_pair_begin(mode))) { match_native_failure();goto fail; }
+    }
     if (!open_pattern_program_stack_push(
             &stack,
             (OpenPatternProgramItem){
@@ -13625,6 +14131,7 @@ static bool match_atoms_epoch_views_linear(
 
     while (stack.len != 0u) {
         OpenPatternProgramItem item = stack.items[--stack.len];
+        BindingValue native_left=item.left.value;
         left = item.left.value.skeleton;
         left_kind = binding_value_kind(item.left.value);
         bool left_original = binding_value_is_contextual(item.left.value);
@@ -13652,7 +14159,40 @@ static bool match_atoms_epoch_views_linear(
             exclusive && exclusive->active
                 ? (size_t)exclusive->write_len * 2u : 0u;
 
-retry_pair:
+retry_pair: ;
+        MatchNativeDecision native_decision={0};
+        if (native_scope) {
+            CettaOpenPatternPlan current_plan=*right_plan;
+            current_plan.variable_mask=instruction->variable_mask;
+            MatchNativeEpochRead read={current,left_frame,left_first_entry,&current_plan,&frame_region};
+            BindingValue native_right=binding_value_from_context_kind(right,right_epoch,right_kind);
+            if (!match_native_decide(native_scope,current,native_left,native_right,
+                    (MatchNativePolicy){.allow_closed=true,.prefer_right=prefer_right_rule_slot},
+                    match_native_epoch_lookup,&read,&native_decision)) { match_native_failure();goto fail; }
+            switch (native_decision.plan.action) {
+            case NP_A_SKIP:continue;
+            case NP_A_REJECT:goto fail;
+            case NP_A_DEREFERENCE_LEFT:
+                if (!bindings_dereference_step(&dereferences,&dereference_limit,current,local_dereference_allowance)) goto fail;
+                native_left=native_decision.left_bound;
+                left=native_left.skeleton;left_kind=binding_value_kind(native_left);
+                left_original=binding_value_is_contextual(native_left);left_epoch=binding_value_epoch(native_left);
+                left_first_entry=0u;left_frame=NULL;goto retry_pair;
+            case NP_A_DEREFERENCE_RIGHT: {
+                BindingValue existing=native_decision.right_bound;
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_OPEN_LINEAR_DYNAMIC_FALLBACK);
+                if (!match_atoms_epoch_views_worklist(left,left_kind,left_epoch,left_first_entry,
+                        existing.skeleton,bindings,builder,a,binding_value_epoch(existing),binding_value_kind(existing),
+                        prefer_right_rule_slot,left_frame,NULL,&frame_region)) { attempt_repeated_var=true;goto fail; }
+                continue;
+            }
+            case NP_A_BIND_LEFT:case NP_A_BIND_RIGHT:break;
+            case NP_A_EXPRESSION:goto native_linear_decompose;
+            case NP_A_LIST:goto fail;
+            default:match_native_failure();goto fail;
+            }
+        } else {
+        if (measure && cetta_kernel_note_c) cetta_kernel_note_c();
         if (left == right &&
             match_shared_ground_reflexivity_try(
                 left, right, false,
@@ -13666,12 +14206,13 @@ retry_pair:
                 goto fail;
             continue;
         }
+        }
         if (left->kind == ATOM_VAR) {
             VarId left_id = left_original
                 ? var_epoch_id(left->var_id, left_epoch) : left->var_id;
             BindingValue existing = binding_value_from_atom(NULL);
-            bool left_lookup_done = false;
-            if (left_original) {
+            bool left_lookup_done = native_scope!=NULL;
+            if (!native_scope && left_original) {
                 bool dense_present = false;
                 bool dense_known = left_frame &&
                     bindings_activation_view_lookup(
@@ -13753,7 +14294,7 @@ retry_pair:
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_MATCH);
                 BindingValue right_existing =
-                    rule_frame_region_lookup(
+                    native_scope ? binding_value_from_atom(NULL) : rule_frame_region_lookup(
                         &frame_region, instruction->variable_mask,
                         current, right_id);
                 if (right_existing.skeleton) {
@@ -13771,9 +14312,9 @@ retry_pair:
                     }
                     continue;
                 }
-                if (var_id_eq(left_id, right_id))
+                if (!native_scope && var_id_eq(left_id, right_id))
                     continue;
-                if (prefer_right_rule_slot) {
+                if (native_scope ? native_decision.plan.action==NP_A_BIND_RIGHT : prefer_right_rule_slot) {
                     bool added = builder &&
                         bindings_builder_add_rule_epoch_key_fresh(
                             builder, right, right_epoch,
@@ -13843,7 +14384,7 @@ retry_pair:
                 right->var_id, right_epoch);
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_MATCH);
-            BindingValue existing = rule_frame_region_lookup(
+            BindingValue existing = native_scope ? binding_value_from_atom(NULL) : rule_frame_region_lookup(
                 &frame_region, instruction->variable_mask,
                 current, right_id);
             if (existing.skeleton) {
@@ -13880,6 +14421,7 @@ retry_pair:
                 goto fail;
             continue;
         }
+        if (native_scope) { match_native_failure();goto fail; }
         if (left->kind == ATOM_SYMBOL && right->kind == ATOM_SYMBOL) {
             if (left->sym_id != right->sym_id)
                 goto fail;
@@ -13893,6 +14435,7 @@ retry_pair:
         }
         if (!atom_petta_decomposition_compatible(left, right))
             goto fail;
+native_linear_decompose:
         /* Rule patterns holding a list compile no program (petta_program.c),
          * so here a list meets only an expression, which it never matches. */
         if (left->kind != ATOM_EXPR ||
@@ -13939,6 +14482,7 @@ retry_pair:
         }
     }
 
+    if (native_scope) cetta_kernel_pair_end(native_scope);
     if (stack.items != stack.inline_items)
         free(stack.items);
     atom_deep_copy_session_free(transport);
@@ -13954,6 +14498,7 @@ retry_pair:
     return true;
 
 fail:
+    if (native_scope) cetta_kernel_pair_end(native_scope);
     if (stack.items != stack.inline_items)
         free(stack.items);
     atom_deep_copy_session_free(transport);
@@ -14104,6 +14649,9 @@ static MatchBareVariableStep match_exclusive_bare_variable(
         const CettaOpenPatternPlan *right_plan,
         BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch,
         BindingsExclusiveFrame *exclusive) {
+    CettaKernelMode mode = cetta_kernel_requested();
+    if (mode == CETTA_KERNEL_X86)
+        return MATCH_BARE_VARIABLE_DECLINE;
     if (right->kind != ATOM_VAR || !left.skeleton ||
         left.skeleton->kind == ATOM_VAR ||
         (right_plan && right_plan->source != right))
@@ -14117,6 +14665,7 @@ static MatchBareVariableStep match_exclusive_bare_variable(
         exclusive, NULL, var_epoch_id(right->var_id, right_epoch), &local);
     if (!local || existing.skeleton)
         return MATCH_BARE_VARIABLE_DECLINE;
+    if (cetta_kernel_stats_enabled && cetta_kernel_stats_enabled()) cetta_kernel_note_c();
     AtomDeepCopySession *transport = NULL;
     MatchWriteStamp start = match_write_stamp(
         &bb->current, rule_frame_region_staged_len(&region));
@@ -14450,6 +14999,15 @@ static bool match_atoms_atom_id_epoch_worklist(
     Atom *left = left_value.skeleton;
     if (!left || !candidate_universe || right_id == CETTA_ATOM_ID_NONE)
         return false;
+    CettaKernelMode mode = cetta_kernel_requested();
+    if (mode == CETTA_KERNEL_X86) {
+        Atom *right = term_universe_scoped_atom(candidate_universe, a, right_id);
+        if (!right) { match_native_failure(); return false; }
+        return match_decoded_atoms_worklist(
+            left_value, binding_value_from_persistent_context(right, epoch),
+            b, NULL, a, false);
+    }
+    if (cetta_kernel_stats_enabled && cetta_kernel_stats_enabled()) cetta_kernel_note_c();
     /* The encoded frontier does not keep an active substitution path. A
      * cyclic environment uses the existing guarded contextual matcher so
      * only cycles reachable from this comparison can reject it. */

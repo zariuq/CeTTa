@@ -1,0 +1,7 @@
+!(import! &self (library lib_transform))
+!(case (transform &self (take) x)
+   (((Error $site MalformedTransformSource) caught-take) ($_ unexpected-take)))
+!(case (transform &self (let x) y)
+   (((Error $site MalformedTransformSource) caught-let) ($_ unexpected-let)))
+!(case (transform &self (take) x)
+   (((Error (take) $reason) caught-site) ($_ unexpected-site)))

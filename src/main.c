@@ -39,6 +39,7 @@
 #include "native_handle.h"
 #include "native/hol_light/hol_cli.h"
 #include "native/tcalc/tcalc_cli.h"
+#include "native/kernel/kernel.h"
 #include "lang.h"
 #include "compile.h"
 #include "cetta_stdlib.h"
@@ -1966,6 +1967,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --lang mm2 [--steps <n>] <file.mm2> # upstream MORK ABI\n", out);
     fputs("       cetta --lang mm2 --profile gslt [--space-engine <native|pathmap>] [--steps <n>] <file.mm2>\n", out);
     fputs("       cetta --space-engine <name> <file.metta>\n", out);
+    fputs("       cetta --kernel <c|x86|hybrid> [--kernel-stats] <file>\n", out);
     fputs("       cetta --space-match-backend <name> <file.metta>   # alias for --space-engine\n", out);
     fputs("       cetta --lang <zero|subzero|gslt-il|zerouv|metta-interact> --gslt-realization <horn-reference|compiled-worklist> <file.metta>\n", out);
     fputs("       cetta --lang zero <file.metta> # direct (eval subject) and (zero-query pattern template) requests; ! is not Zero syntax\n", out);
@@ -3010,6 +3012,9 @@ static int cetta_main(int argc, char **argv) {
     const char *prime_rewrite_frontier = NULL;
     bool eval_hashcons = false;
     bool list_profiles = false;
+    bool kernel_selected = false;
+    bool kernel_stats_requested = false;
+    CettaKernelMode explicit_kernel = CETTA_KERNEL_C;
     bool translate_mode = false;
     uint32_t lang_occurrences = 0;
     bool prefer_rationals_cli = false;
@@ -3063,6 +3068,38 @@ static int cetta_main(int argc, char **argv) {
             strcmp(argv[i], "--list-space-match-backends") == 0) {
             space_match_backend_print_inventory(stdout);
             return 0;
+        }
+        if (strcmp(argv[i], "--kernel") == 0 || strncmp(argv[i], "--kernel=", 9u) == 0) {
+            const char *name = argv[i] + 9;
+            if (strcmp(argv[i], "--kernel") == 0) {
+                if (++i >= argc) { fputs("error: --kernel needs c, x86 or hybrid\n", stderr); return 2; }
+                name = argv[i];
+            }
+            CettaKernelMode mode;
+            char why[256] = {0};
+            if (!cetta_kernel_mode(name, &mode)) {
+                fprintf(stderr, "error: kernel '%s': expected c, x86 or hybrid\n", name);
+                return 2;
+            }
+            if (kernel_selected && explicit_kernel != mode) {
+                fputs("error: conflicting explicit kernel selections\n", stderr);
+                return 2;
+            }
+            if (!cetta_kernel_select(mode, why, sizeof why)) {
+                fprintf(stderr, "error: kernel '%s': %s\n", name, why);
+                return 2;
+            }
+            kernel_selected = true;
+            explicit_kernel = mode;
+            continue;
+        }
+        if (strcmp(argv[i], "--kernel-stats") == 0) {
+            if (!kernel_stats_requested) {
+                cetta_kernel_enable_stats();
+                if (atexit(cetta_kernel_print_stats) != 0) return 1;
+                kernel_stats_requested = true;
+            }
+            continue;
         }
         if (strcmp(argv[i], "--list-profiles") == 0) {
             list_profiles = true;

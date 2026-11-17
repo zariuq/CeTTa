@@ -1,0 +1,325 @@
+Shared native matching and candidate queries
+===========================================
+
+native_unify computes a first-order unifier with occurs checking. It reads an
+immutable term graph, scoped variable table and initial environment, and writes
+a private result environment. The caller publishes that result only on FIRED.
+This component is shared machinery for the transform engine and MeTTa matching;
+list-rest policies, answer enumeration and host commit are additional components.
+
+Program and execution
+---------------------
+unify.metta authors one t-ISA p1 program. Its generated text runs through the
+independent p1 reference evaluator or the existing x86 emitter. No new t-ISA
+instruction is introduced. Native execution is functional evidence; formal
+qualification is recorded separately.
+
+The production library executes linked native images. Its admission and ABI
+checks do not interpret t-ISA instructions. Reference and comparison execution
+are development-only: make check builds a separate library with
+DEVELOPMENT_REFERENCE=1. native_match.h retains the development operation codes
+for those checks; production rejects them. nm_unify_program_default loads the embedded reference text and
+calls the prelinked image, with no file, code generation or executable mapping.
+The file-loading development entrypoint also emits comparison bytes and
+requires them to equal the linked image. Comparison mode runs isolated region
+copies, checks all bytes and boundary guards, and publishes agreed private work
+only after agreement. nm_unify_call distinguishes invalid host arguments,
+allocation failure and differential disagreement from declared machine
+outcomes. The packaged sources build as ordinary C and assembly; regenerating
+them uses export.py and the MeTTa author.
+
+native_unify.S contains a four-byte indirect-branch landing pad followed by
+the exact p1 image, a read-only byte copy and the reference program text.
+Registration checks the entry and image bytes before native execution.
+test_linked.py checks the actual linked code and embedded model, and verifies
+rejection of changed landing-pad and body bytes. This is byte qualification,
+not a formal refinement theorem for either the image or the landing pad.
+
+The public arguments are the two root node ids. Node zero is reserved as the
+unbound-environment value and cannot occur as a root or child.
+
+Region  Access  Representation
+0       RO      four-word nodes: kind, a, b, c
+1       RO      child node ids, one word each
+2       RO      initial environment: node id or zero, one word per variable
+3       RW      private result environment, at least as large as region 2
+4       RW      pending pairs, two words per entry, at least one entry
+5       RW      occurs-check worklist, one word per entry, at least one entry
+6       RO      variable keys, two words per variable: variable id, scope id
+7       RW      private controller state, 40 words
+8       RW      variable/node epoch marks, then the rigid-pair memo table
+
+All regions have eight-byte alignment. The standard p1 entry contract supplies
+their extents and separation. Only complete node/edge/worklist entries are
+used. The environment and variable-key vectors must have the stated exact
+relationship. All capacities are explicit; the component allocates no memory.
+
+Nodes
+-----
+kind 0: a is an opaque constant's semantic identity; b and c are zero.
+kind 1: a is the variable's dense slot; (b,c) equals its (variable id,scope id)
+        entry in region 6.
+kind 2: a is the first child position; b is the number of children; c is zero.
+        Every child id is positive and earlier than this node's id.
+
+Variable keys are strictly ordered by (scope id,variable id), so a key cannot
+be assigned two distinct slots. Distinct nodes may denote the same term or
+variable. Equality is semantic; node identity is only an equality shortcut.
+The host adapter supplies semantic identities for opaque constants and retains
+the original values and their owners for projecting returned node ids.
+
+Region 8 holds variables+nodes epoch-mark words followed by a positive,
+power-of-two number of memo slots. Every word is cleared before use. Occurs
+checking visits each shared node once per scan. A memo entry packs two positive
+32-bit tuple node ids into one word; zero means empty. Recording a pair means
+its child constraints have been scheduled. Binding only adds constraints, so
+another occurrence of that pair does not schedule them again. The memo is
+private to one unification attempt and never reused across calls.
+
+The component validates node shape, child bounds, variable keys and initial
+bindings. Occurs checking also rejects cyclic initial environments. Both input
+sides may contain variables. A fresh schema import receives fresh scope ids;
+shared state variables retain their scope ids.
+
+Outcomes
+--------
+FIRED (1): region 3 holds the resulting environment; payload is the number of
+new bindings written during this call.
+REFUSED (0): the terms have no unifier; payload zero. Inputs are unchanged and
+the private result is discarded.
+UNSUPPORTED (2): malformed representation, insufficient private capacity or an
+iteration cap; payload identifies the cause. Inputs are unchanged; private
+work is discarded.
+INVALID (3): the standard p1 entry/access checks reject the physical call.
+EXHAUSTED (4): a FUND point cannot be paid. The exact p1 receipt is retained.
+
+The current p1 authoring profile admits explicit RETURN codes 0,1,2 only.
+Representation faults therefore use UNSUPPORTED with a distinct reason;
+they never masquerade as no unifier. Higher-level adapters retain that cause.
+
+Reason codes
+------------
+1 bad vector layout or loop bound; 2 invalid root/node id; 3 malformed node;
+4 invalid variable key; 5 invalid/cyclic initial environment;
+6 insufficient result/mark capacity; 7 pending-pair capacity;
+8 occurs-worklist capacity; 9 iteration cap; 10 rigid-pair memo capacity.
+
+Fuel
+----
+One unit per transition of the bounded work loop. Its declared phases perform
+one variable initialization/key check, node or child validation, environment
+validation request, dereference, pair selection, pair comparison, occurs-check
+node or child push. Phase completion and continuation transitions also pay one
+unit. The fixed physical-layout checks precede the loop. The whole loop has a
+2^32-1 transition cap. Workspace writes are private to the call; the caller
+publishes the result only after FIRED.
+
+Constraint truth
+----------------
+For this finite first-order component, a successful call with zero new
+bindings means the tested constraint already holds under the initial
+substitution. Success with new bindings instead supplies a possible extension:
+it does not establish a guard under the initial context. A refused call means
+no finite unifier exists. nm_constraint_truth exposes ENTAILED, OPEN and
+REFUTED accordingly. Exhaustion, unsupported inputs, invalid physical calls
+and host failures supply no logical verdict; their original causes remain
+available. A stable equality guard accepts only ENTAILED. Matching or a tell
+may extend the context with an OPEN result after its ordinary admission.
+This is executable component semantics; its machine-code proof remains open.
+
+Native template instantiation
+-----------------------------
+emit.metta authors a second t-ISA p1 component over the same first-order graph
+and scoped key representation. native_emit.h exposes its prelinked x86 image,
+reference execution and isolated comparison through the shared private runner
+in native_component.c. Recovering the matcher through that runner leaves its
+program text and exact bytes unchanged. Exporting a component supplies no
+machine-code proof; native_emit.hol records the image for later qualification.
+
+The emitter follows transitive bindings, rejects reachable cycles, preserves
+unbound scoped keys and constructs an immutable postorder output DAG. It does
+not rename free variables or evaluate a term. One source memo and one variable
+memo span the entire bundle. This avoids repeated expansion across roots while
+retaining repeated root occurrences. Memos are private to one fixed context;
+distinct answer contexts are never merged by sharing a constructed graph.
+
+Region  Access  Representation
+0       RO      input nodes, four words each
+1       RO      input child ids
+2       RO      fixed variable bindings
+3       RW      output nodes, five words: kind, a, b, c, source-node label
+4       RW      output child ids
+5       RW      source-node and variable memo words
+6       RW      explicit DFS frames, four words each
+7       RW      controller state, 40 words
+8       RO      variable keys, two words each
+
+Arg0 is the source root. Arg1 is the declared output-node capacity. A bundle
+is represented by a synthetic tuple root. The caller supplies all workspace;
+node zero is reserved. Every output child id precedes its parent. Output nodes
+retain the source label for ownership/provenance transport; that label is not
+an already-instantiated host value. The generated state coordinates come from
+emit_layout.metta; C checks its actual node/frame layouts at compile time.
+
+The FIRED payload is the output root id. UNSUPPORTED retains a separate cause:
+1 layout, 2 root/binding id, 3 shape/key/child, 4 node capacity, 5 edge capacity,
+6 memo capacity, 7 DFS capacity, 8 binding cycle, 9 transition cap. EXHAUSTED and
+INVALID remain distinct outcomes. One fuel unit is charged per work transition;
+private prefix counts and consumed fuel are retained on supported failure exits.
+No partial output may be published.
+
+native_output.h packages import, private allocation and native construction
+for host templates. nm_output_build accepts a stable term view, including an
+immutable solution view, and returns an owned immutable materialized bundle.
+It charges one activation before import plus the component's fuel. Import
+callback limits are separate from machine fuel. Outputs include repeated root
+ids and full variable/scope identities. Source owners and the pin token remain
+borrowed; source callbacks are not invoked after construction. The callback
+context, solution snapshot and program may be released after the call.
+
+Only a completed build with a valid pin yields a graph. Incomplete work, stale
+views, unsupported source values and provider faults stay distinct. Accessors
+recheck the pin; a host still validates its commit token before publication.
+This operation does not perform a host-store commit, generative schema
+freshening, or AnswerSpace collection. A materialized bundle alone is not the
+complete answer context or evidence that a query has finished.
+
+Contextual import and projection
+--------------------------------
+native_match_view.h imports a stable host view into the native graph. Host
+values are an opaque pair (syntax, context). The adapter never evaluates them
+and never erases their lexical or ownership context. Callbacks supply node
+shape, children and initial variable bindings. Constant identities must be
+reflexive equality classes; a different matching policy must return DEFER.
+
+An iterative postorder traversal assigns owned graph ids, without assuming
+anything about host id order. Value and variable maps preserve sharing and
+scoped variable identities. The importer rejects raw source cycles as DEFER;
+cyclic initial substitutions are subsequently rejected by native validation.
+Limits count nodes, edges, variables and callback invocations. Interrupted
+reads, unsupported shape/policy, resource exhaustion and provider faults are
+distinct. Source owners and pinned views remain borrowed through projection.
+
+nm_match_prepare_constraints conjoins several equations in one private
+unification attempt, with two synthetic tuple roots. Every equation shares
+the same substitution. Empty conjunctions are supported. Synthetic roots
+count against capacity and cannot be projected as source values.
+
+After success, nm_match_project returns the original variable and its binding
+value, their contexts, their scoped key and whether the binding is new.
+Projection neither creates host syntax nor publishes a binding. Existing
+bindings cannot be rewritten through this projection.
+
+nm_solution_capture copies a successful projection into an immutable private
+read view. It can outlive the original native graph and workspace; the host
+syntax owners and external source-view context remain borrowed. A parent
+solution is retained automatically. New refinements shadow their parents,
+with iterative lookup and release. Entry count and chain depth are observable.
+Capture also checks that the number of newly bound slots agrees with the
+unifier's payload. nm_solution_visit_changes exposes only introduced bindings,
+with their full scoped keys and original value contexts, newest refinement
+first. It preserves valid zero-valued host encodings. The visitor supplies data
+for the host's grouped publication protocol; it does not implement that protocol.
+The snapshot does not publish to the host. A later guard can query this view
+without assuming an open constraint or changing the earlier branch: X=a is
+OPEN before the tell, ENTAILED after it; X=b is then REFUTED for distinct a,b.
+
+Equational admission
+--------------------
+native_admission.h composes the equational fragment after premise matching.
+Tells extend a private solution context. Equality guards accept only ENTAILED;
+OPEN guards stop without being assumed. The declared ask policy runs guards
+before all tells or after all tells. Contradictory tells, open guards, refuted
+guards and operational failures remain distinguishable.
+
+The controller is C orchestration over the shared native/reference query and
+unifier implementations. It does not introduce another solver. Each activated
+equation pays one fuel unit in addition to the unifier's exact receipt. A next
+call's quantum bounds equation activations. Failed calls retain fuel spent,
+completed tell/guard counts, snapshots, peak refinement depth and query-work
+statistics. Traces identify the clause and preserve the underlying events.
+
+Only ADMITTED exposes a final context; taking the result transfers its owned
+reference. The input context is unchanged on every path. Source syntax owners
+and view contexts remain borrowed, and the host must revalidate its own commit
+token before publication. This component has equality guards only. Region
+guards use the census component; output-row construction and host commit follow.
+
+Complete region observations
+-----------------------------
+native_census.h supplies absence, exact-count and stable-region observations
+under a fixed first-order context. It uses the same matcher to classify each
+row as certain (already equal) or possible (unifiable after an extension).
+Occurrence multiplicity is retained. It validates the pattern and reachable
+initial substitution before scanning, including for an empty region.
+
+An observation is available only after a complete scan while the pinned view
+is valid. Absence requires zero possible rows; a stable count requires exactly
+the target number of certain rows and no additional possible ones. A stable
+region likewise has certain == possible. NOT_ENTAILED is not a proof of the
+underlying proposition's negation. An unfinished or failed scan supplies no
+guard verdict, even when its partial counts are zero.
+
+Validation and scan work have separate counters and share a cumulative fuel
+receipt. Traces tag validation versus row probes and retain the last row,
+outcome and cause. The controller performs C orchestration over the native
+query/unifier; it does not add another matcher. Connecting region checks into
+an ordered full firing protocol remains integration work.
+
+Finite candidate queries
+------------------------
+native_query.h enumerates ordered selections from a pinned, finite row view.
+Rows have unique occurrence ids; equal terms at different occurrences remain
+separate candidates. The first `takes` premises require distinct occurrences.
+Reads may repeat other reads but cannot select a taken occurrence. This is a
+positive first-order query component, before symmetry quotienting, guards,
+semantic scheduling and commit.
+
+Reference mode uses C advancement/exclusivity and p1 reference unification.
+Native mode uses the two private x86 routines in native_selection.S and the
+linked unifier. Comparison mode checks advancement, exclusivity and all
+unifier results and regions against the reference implementations. The two
+selection routines use the ordinary SysV ABI and indirect-branch landing
+pads. Registration checks their bytes against read-only copies; linked-image
+tests also compare them with the object. Their machine-code proofs remain
+open independently of their executable tests.
+
+One next-call quantum bounds complete candidate proposals. YIELD retains the
+cursor for another call. END, EXHAUSTED, DEFER, RESOURCE, INTERRUPTED,
+INVALIDATED and FAULT remain distinct; none of the latter mean an empty
+answer set. Native fuel is a cumulative unifier-transition receipt, separate
+from proposals and import callbacks. It is not a bound on total CPU work.
+
+Answers borrow the selected occurrences, prepared graph and private result
+through the next call or query release. The source is never mutated. Optional
+trace callbacks observe proposals, imports and core outcomes, including exact
+receipts. Pinned-view callbacks enforce validity before dereferencing source
+storage; the query additionally checks validity before returning an answer.
+
+The current candidate search is a Cartesian baseline. Indexed joins, source
+representation reuse and pattern specialization remain performance work; no
+speedup is established. Stored rows retain the variable interpretation of
+their supplied host values. Per-use schematic-row instantiation is additional
+machinery, not an implicit change of scope.
+
+Optional tcalc term client
+-------------------------
+native_tcalc_view.h adapts CeTTa's first-order TcTerms through public accessors.
+Locals use the supplied activation context; state unknowns use the fixed state
+scope. A live high-water id and stable table are supplied by the table owner.
+The view has an empty external substitution. Publishing a state still needs
+tcalc's closing operation for unbound locals.
+
+`make check-tcalc CETTA=<checkout>` compares native/reference/compare decisions
+and ground results against the actual, unmodified tcalc C solver. It does not
+install a CeTTa runtime hook or qualify complete transform firings. The
+standalone library has no CeTTa build dependency.
+
+Remaining native coverage
+-------------------------
+This first component does not complete a general MeTTa matcher or tcalc engine.
+Remaining components include concrete runtime custody, list rests
+and grounded comparison policy, binding publication/retention, indexed joins
+and schematic-row enumeration, full ordered guard/transform admission
+and commit under every declared interpretation. The standalone and CeTTa routes
+must ultimately call the same implementations and share their conformance corpus.

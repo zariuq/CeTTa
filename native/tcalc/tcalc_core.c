@@ -48,6 +48,9 @@
 #include "tcalc_records.h"
 #include "tcalc_lists.generated.h"
 #include "tcalc_flat_layout.h"
+#include "../kernel/kernel.h"
+#include "../kernel/batch.h"
+#include "../kernel/tcalc_bridge.h"
 #include "../../src/runner.h"   /* the budget, the schedule and the exploration, shared with rho */
 
 #include <stdlib.h>
@@ -293,7 +296,7 @@ void tc_print(const TcTerms *t, TcTerm id, FILE *out) {
  * a fresh unknown of its own (the opening of Core.lean, done on demand).
  * ====================================================================== */
 
-typedef struct {
+typedef struct TcKernelSolver {
     TcTerm *local;   size_t local_cap;     /* slot -> value, 0 = unassigned   */
     TcTerm *unknown; size_t unknown_cap;   /* index -> value, 0 = unassigned  */
     uint32_t unknowns;                     /* indices in use                  */
@@ -393,7 +396,15 @@ static TcTerm resolve_from(TcTerms *terms, Solver *s, TcTerm t, uint32_t base) {
     return out;
 }
 
+static bool tc_kernel_output(TcTerms *,Solver *,const TcTerm *,size_t,uint32_t,bool,TcTerm *);
+
 static TcTerm resolve(TcTerms *terms, Solver *s, TcTerm t, uint32_t base) {
+    if (term_node(terms,t).ground) return t;
+    if (cetta_kernel_requested()==CETTA_KERNEL_X86) {
+        TcTerm result=0;
+        return tc_kernel_output(terms,s,&t,1,base,false,&result) ? result : 0;
+    }
+    if (cetta_kernel_note_c) cetta_kernel_note_c();
     walk_begin(terms);
     return resolve_from(terms, s, t, base);
 }
@@ -420,6 +431,12 @@ static TcTerm close_from(TcTerms *terms, Solver *s, TcTerm t, uint32_t base) {
 }
 
 static TcTerm close_term(TcTerms *terms, Solver *s, TcTerm t, uint32_t base) {
+    if (term_node(terms,t).ground) return t;
+    if (cetta_kernel_requested()==CETTA_KERNEL_X86) {
+        TcTerm result=0;
+        return tc_kernel_output(terms,s,&t,1,base,true,&result) ? result : 0;
+    }
+    if (cetta_kernel_note_c) cetta_kernel_note_c();
     walk_begin(terms);
     return close_from(terms, s, t, base);
 }
@@ -476,7 +493,7 @@ static bool push_pair(Solver *s, TcTerm a, uint32_t abase, TcTerm b, uint32_t bb
 
 /* Extends the assignments so that a (at abase) and b (at bbase) are equal, or
  * fails.  A failure may leave assignments behind: the caller undoes to a mark. */
-static bool unify(TcTerms *terms, Solver *s, TcTerm a, uint32_t abase, TcTerm b, uint32_t bbase) {
+static bool unify_c(TcTerms *terms, Solver *s, TcTerm a, uint32_t abase, TcTerm b, uint32_t bbase) {
     size_t floor = s->work_len;
     if (!push_pair(s, a, abase, b, bbase)) { s->work_len = floor; return false; }
     while (s->work_len > floor) {
@@ -504,6 +521,14 @@ static bool unify(TcTerms *terms, Solver *s, TcTerm a, uint32_t abase, TcTerm b,
         if (!ok) { s->work_len = floor; return false; }
     }
     return true;
+}
+
+#include "tcalc_kernel.c"
+
+static bool unify(TcTerms *terms,Solver *s,TcTerm a,uint32_t abase,TcTerm b,uint32_t bbase) {
+    if (cetta_kernel_requested()==CETTA_KERNEL_X86) return tc_kernel_unify(terms,s,a,abase,b,bbase);
+    if (cetta_kernel_note_c) cetta_kernel_note_c();
+    return unify_c(terms,s,a,abase,b,bbase);
 }
 
 static void solver_free(Solver *s) {
@@ -594,6 +619,9 @@ typedef struct {
     struct FlatPlan *plans; size_t plans_len;
     uint32_t *flat_words; size_t flat_words_cap;
     bool flat_failed;
+    uint32_t *batch_cursor; size_t batch_cursor_cap;
+    uint32_t *batch_output; size_t batch_output_cap;
+    uint64_t batch_used;
     /* tc_decide: the host's store the match is decided over (0 for the
      * explorer's own states), the selection, how the store answered (ROW
      * until a cursor or an import fails) and how the host's commit went */
@@ -728,10 +756,14 @@ static bool store_check_holds(Explorer *x, TcCheck c, uint32_t base, TcTerm patt
 }
 
 static bool check_holds(Explorer *x, TcCheck c, uint32_t base) {
-    if (c.kind == TC_CHECK_EQUAL)
-        return resolve(x->terms, &x->solver, c.left, base) ==
-               resolve(x->terms, &x->solver, c.right, base);
+    if (c.kind == TC_CHECK_EQUAL) {
+        TcTerm left=resolve(x->terms,&x->solver,c.left,base);
+        if (!left || x->solver.failed || x->terms->failed) return false;
+        TcTerm right=resolve(x->terms,&x->solver,c.right,base);
+        return right && !x->solver.failed && !x->terms->failed && left==right;
+    }
     TcTerm pattern = resolve(x->terms, &x->solver, c.left, base);
+    if (!pattern || x->solver.failed || x->terms->failed) return false;
     if (x->has_store) return store_check_holds(x, c, base, pattern);
     uint64_t equal = 0;
     Runs runs = candidates(x, c.left, base);
@@ -770,8 +802,22 @@ static bool admitted(Explorer *x, const TcStoredRule *r, uint32_t base) {
 
 /* Appends the made rows of a match (at base) to x->next, closed. */
 static bool append_made(Explorer *x, const TcStoredRule *r, uint32_t base) {
+    CettaKernelMode mode=cetta_kernel_requested();
+    if (mode==CETTA_KERNEL_X86) {
+        TcTerm *roots=calloc(r->makes ? r->makes : 1,sizeof *roots);
+        TcTerm *made=calloc(r->makes ? r->makes : 1,sizeof *made);
+        if (!roots || !made) { free(roots);free(made);x->solver.failed=true;return false; }
+        for (uint32_t i=0;i<r->makes;++i) roots[i]=make_at(&x->program,r,i);
+        bool ok=tc_kernel_output(x->terms,&x->solver,roots,r->makes,base,true,made);
+        for (uint32_t i=0;ok && i<r->makes;++i) ok=next_push(x,made[i]);
+        free(roots);free(made);return ok;
+    }
+    /* One lexical frame and one completed substitution: sharing this memo
+     * across made roots is valid. Other bag members start their own bundle. */
+    if (cetta_kernel_note_c) cetta_kernel_note_c();
+    walk_begin(x->terms);
     for (uint32_t i = 0; i < r->makes; i++) {
-        TcTerm made = close_term(x->terms, &x->solver, make_at(&x->program, r, i), base);
+        TcTerm made = close_from(x->terms, &x->solver, make_at(&x->program, r, i), base);
         if (!made || !next_push(x, made)) return false;
     }
     return true;
@@ -1186,6 +1232,7 @@ static bool tc_fire_loose(Explorer *x) { return loose_members(x->how.step); }
  * the host's effects. */
 static bool store_admit(Explorer *x, const TcStoredRule *r) {
     const TcStoreOps *ops = &x->store;
+    if (x->solver.failed || x->terms->failed) return false;
     if (!ops->commit) { x->store_status = TC_STORE_INVALIDATED; return false; }
     x->next_len = 0;
     if (!append_made(x, r, 0) ||
@@ -1306,6 +1353,8 @@ static bool match_from(Explorer *x, uint32_t rule, uint32_t k) {
  * matching below. */
 static bool flat_start(Explorer *x);
 static bool flat_collect(Explorer *x);
+static void resident_prepare(TcProgram *p);
+static bool resident_collect(Explorer *x,uint32_t rule,const FlatPlan *plan);
 
 /* The matches at the state (rows) the discipline can use, each once. */
 static bool collect_members(Explorer *x) {
@@ -1321,9 +1370,11 @@ static bool collect_members(Explorer *x) {
         TcStoredRule r = rule_at(&x->program, rule);
         if (r.same != rule) continue;   /* that rule again: its matches are met there */
         if (!ensure_pick(x, (size_t)r.takes + r.reads + 1) ||
-            !reserve_unknowns(&x->solver, state_unknowns) || !frame(x, 0, &r) ||
-            !match_from(x, rule, 0))
-            return false;
+            !reserve_unknowns(&x->solver, state_unknowns) || !frame(x, 0, &r)) return false;
+        if (x->how.step==TC_STEP_ONE && x->how.shortcuts!=TC_SHORTCUTS_NONE && x->ground && rule<x->program.prepared_count &&
+            x->program.prepared[rule].guards!=UINT32_MAX && cetta_kernel_batch) {
+            if (!resident_collect(x,rule,&x->program.prepared[rule])) return false;
+        } else if (!match_from(x,rule,0)) return false;
     }
     return true;
 }
@@ -1955,6 +2006,7 @@ static bool explorer_start(Explorer *x) {
 static void explorer_free(Explorer *x) {
     free(x->member); free(x->selection); free(x->next); free(x->known); free(x->pick);
     free(x->plans); free(x->flat_words); free(x->key);
+    free(x->batch_cursor); free(x->batch_output);
     fired_free(&x->fired);
     solver_free(&x->solver);
     states_free(&x->states);
@@ -2026,6 +2078,7 @@ TcOutcomes *tc_explore(TcProgram *program, const TcInterpretation *how) {
     if (!o) return NULL;
     *o = (TcOutcomes){0};
     o->memory_ok = true;
+    if (how->backend==TC_BACKEND_C && how->step==TC_STEP_ONE && how->shortcuts!=TC_SHORTCUTS_NONE) resident_prepare(program);
     Explorer x = {.terms = program->terms, .program = program_view(program),
                   .how = *how, .budget = {.limit = how->budget}};
     bool ok = explorer_start(&x), finished = false;
@@ -2099,6 +2152,7 @@ TcOutcomes *tc_successors(TcProgram *program, const TcInterpretation *how,
     TcOutcomes *o = calloc(1, sizeof *o);
     if (!o) return NULL;
     *o = (TcOutcomes){0};
+    if (how->backend==TC_BACKEND_C && how->step==TC_STEP_ONE && how->shortcuts!=TC_SHORTCUTS_NONE) resident_prepare(program);
     Explorer x = {.terms = program->terms, .program = program_view(program),
                   .how = *how, .budget = {.limit = how->budget}};
     Successors next = {0};

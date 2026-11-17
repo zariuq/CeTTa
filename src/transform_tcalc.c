@@ -1,4 +1,5 @@
 #include "transform_tcalc.h"
+#include "native/kernel/kernel.h"
 #include "../native/tcalc/tcalc_core.h"
 #include "petta_semantics.h"
 #include "stats.h"
@@ -1161,7 +1162,7 @@ static bool tftc_witnesses_enabled(const CettaTransformFiring *firing) {
 
 CettaTransformOutcome cetta_transform_tcalc_decide(void *unused, Arena *arena,
         const CettaTransformFiring *firing, Atom **error) {
-    if (cetta_transform_tcalc_terms())
+    if (cetta_kernel_requested() == CETTA_KERNEL_X86 || cetta_transform_tcalc_terms())
         return tftc_terms_decide(unused, arena, firing, error);
     bool compare_carriers = cetta_transform_tcalc_checking();
     *error = NULL;

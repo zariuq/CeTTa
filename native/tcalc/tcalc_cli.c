@@ -6,6 +6,7 @@
 #include "tcalc_surface.h"
 #include "tcalc_syntax.h"
 #include "tcalc_x86.h"
+#include "../kernel/kernel.h"
 #include "../../src/runner.h"
 
 #include <inttypes.h>
@@ -354,7 +355,10 @@ static int run_open(Run *run, const char *text, size_t length, const char *synta
     run->every_step = profile.all_steps || (!profile.has_step && !d->has_step);
     if (!status && run->how.backend == TC_BACKEND_X86_FLAT) {   /* a flat decider decides single firings */
         char why[200];
-        if (run->every_step || run->how.step != TC_STEP_ONE) {
+        if (cetta_kernel_requested() != CETTA_KERNEL_C) {
+            fprintf(err, "error: backend x86-flat and a non-C --kernel select different execution interfaces\n");
+            status = 2;
+        } else if (run->every_step || run->how.step != TC_STEP_ONE) {
             fprintf(err, "error: backend x86-flat decides step one; name it (step=one)\n");
             status = 2;
         } else if (!tc_program_flat(run->program, why, sizeof why)) {

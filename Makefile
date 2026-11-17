@@ -1028,6 +1028,7 @@ export CETTA_PARENT_BUILD_SIGNATURE := $(BUILD_OBJ_TAG):$(ENABLE_RUNTIME_STATS)
 export CETTA_PARENT_BINARY := $(abspath $(BIN))
 include native/hol_light/build.mk
 include native/tcalc/build.mk
+include native/kernel/build.mk
 include native/hol_light_module/build.mk
 include native/holr_reader_module/build.mk
 include native/megalodon_module/build.mk
@@ -6975,7 +6976,7 @@ test-pathmap-semi-naive-abi:
 endif
 
 # Stage 0: kernel-only binary (no precompiled stdlib)
-STAGE0_OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).stage0.o)
+STAGE0_OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).stage0.o) $(KERNEL_COMPONENT_OBJ) $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE) $(KERNEL_BATCH_IMAGE)
 CESTA_COMPILER_STAMP = $(BOOTSTRAP_TMPDIR)/compiler.$(BUILD_OBJ_TAG).stamp
 BUILD_CONFIG_INPUTS = Makefile $(VERSION_FILE) $(CESTA_COMPILER_STAMP)
 DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \

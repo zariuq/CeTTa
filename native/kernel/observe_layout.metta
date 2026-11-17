@@ -1,0 +1,11 @@
+; Observation descriptors and continuation actions.
+(= (no:f phase) 0) (= (no:f kind) 1) (= (no:f has-vars) 2)
+(= (no:f ready) 3) (= (no:f memo) 4) (= (no:f bound) 5)
+(= (no:f seen) 6) (= (no:f variable-frame) 7)
+(= (no:f result) 8) (= (no:f changed) 9) (= (no:f draft) 10)
+(= (no:f next) 11) (= (no:f length) 12)
+(= (no:k variable) 1) (= (no:k expression) 3)
+(= (no:a shared) 0) (= (no:a variable) 1) (= (no:a expression) 2)
+(= (no:a memo) 3) (= (no:a unbound) 4) (= (no:a follow) 5)
+(= (no:a put-memo) 6) (= (no:a new-draft) 7) (= (no:a write-child) 8)
+(= (no:a next-child) 9) (= (no:a finish) 10)

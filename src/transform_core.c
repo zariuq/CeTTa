@@ -1,6 +1,7 @@
 #include "transform_core.h"
 
 #include "match.h"
+#include "native/kernel/kernel.h"
 #include "native_query.h"
 #include "parser.h"
 #include "petta_semantics.h"
@@ -24,6 +25,8 @@ static bool transform_trace(void) {
 }
 
 CettaTransformEngine cetta_transform_engine(void) {
+    if (cetta_kernel_requested() == CETTA_KERNEL_X86)
+        return CETTA_TRANSFORM_ENGINE_TCALC;
     static _Thread_local int selected = -1;
     if (selected < 0) {
         const char *setting = getenv("CETTA_TRANSFORM_ENGINE");
@@ -3837,9 +3840,11 @@ Atom *cetta_transform_lower(Arena *a, Atom *call,
                         atom_expr2(&work, atom_symbol(&work, "superpose"), matches),
                         body);
     lowered = tf_lower_let(&work, matches, proposal, body);
+done:
+    /* Both lowered programs and preparation errors belong to work. Retain
+     * the complete result in its caller's owner before releasing that arena. */
     if (lowered)
         lowered = atom_deep_copy(a, lowered);
-done:
     arena_free(&work);
     return lowered;
 }

@@ -1,0 +1,33 @@
+{
+  "format": "CettaKernelComponentSourcesV1",
+  "generation": "authored p1 programs and compiled images; direct batch assembly; declared C/assembly layouts",
+  "files": {
+    "export_pair.py": "33a0aacf53d94a5ac90d2f20b2a4be52ec4f173a87137511e7af78cdf715903f",
+    "pair.metta": "fa67157af484335bcb2d0756ef695e293517b9caf0c40ec4250e9ba8328fc11c",
+    "observe.metta": "89e8372ec818edbc1f093c0c3dd7a597b04e8f23b8a52f55133018a324a5c55b",
+    "pair_layout.metta": "b605cac83de01bf3a343ec3951b84fdc13261039a246d89dad91c72a0a944950",
+    "observe_layout.metta": "b4134b79fa95024d013a4d9c0050ed1bd6250784327de078ac793d3742cf3d75",
+    "pair_layout.generated.h": "f70b8b4b04d56c5b82fd5fb150c793d716392ab402aa5373897addef9703274a",
+    "observe_layout.generated.h": "3d06fac8dc525514e6016bed678595ab739bc5a6760105c0c68a05a42bf45c3c",
+    "native_pair.S": "c627d4416bf4607449764f15bdd71d12aa94036ad07db08e3dc0f4ed0c990b7d",
+    "native_pair_prog.txt": "ea105fa7bfa3fc0fa6f96555818313e4903589b373243bf023955d8ba03caf55",
+    "native_pair.hol": "9c14a7271aeae5761b12cc498c8c6d1981cac95a40aeeff5ea06d8b8a7aa255a",
+    "native_observe.S": "da1193120b245ab251c30c08dd21d605f0fb20ce4c9b8920819f7ec22f47b261",
+    "native_observe_prog.txt": "4ee5916229a5f6daa5e4c51dd148cdd28a6716147bf672d9ff05e2780926e1ff",
+    "native_observe.hol": "b2c06f20309ba96f06193658942a1f42025f97939d6e658858dbce95b6f2ff0f",
+    "constructor.metta": "45b3eece97fff591d62048b9de0d8f2b10722ec1969a94a6f4c969b9686f9a8d",
+    "constructor_layout.metta": "64bacf03062755a6eafcea9f1bd6a4744ce5842bf97da4f60db24f22fbee3e94",
+    "constructor_layout.generated.h": "45101b34a9f26f1babc5226ae69e80d20d69dcbe56c8c9d06097a80456beced8",
+    "native_constructor.S": "6c8afb629120fc918beb21e3e89b25e6d353a7859941fb7325931bf224daa106",
+    "native_constructor_prog.txt": "d76f6629a35cf7b9bec61646254921adf829845bdafd9dbadad867c54e653fb4",
+    "native_constructor.hol": "c37137671c2ad0d3416cf84cf94ebf9a536a9da42fa26fe7713c63fc1e97511e",
+    "word.metta": "85732c32da988cbb742efc543f586dced9cc32a0dd272852740a3061aaf68d56",
+    "native_word.S": "8a506370fca3dd056873a0644679b2f3a40d42b8898329ab45065a579e25933e",
+    "native_word_prog.txt": "64bfb2b6526c4e3f17e5834d3de258774c2a94614ebc4c6fd3c33612519d42ff",
+    "native_word.hol": "a393a013543e11fb1dbadf0a5a01cf20f4bd32f7c828957ea0c7966a681f7ae9",
+    "batch.h": "6fff2c79917a53657a7d2028a49325ac133560d9a8349faa9846554fff46db06",
+    "batch.c": "b6d190b68b2e581d14bc6d636b5e8b43154c8350ac403d2669708fbdbfe7e422",
+    "native_batch.S": "37768f2385ffbb0214bc1067e26a479366de1ec7da2b389bf35c7c1ec2494a42",
+    "native_batch_expected.inc": "0bc3cba2d5c683de3c672ea859f987e397eae96c3dbcc3f9ae308bd9d153cb58"
+  }
+}
