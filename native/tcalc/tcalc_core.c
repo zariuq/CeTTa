@@ -190,19 +190,24 @@ static bool walk_seen(const TcTerms *t, TcTerm id, TcTerm *value) {
     return true;
 }
 
+/* Room for the records of the terms below count. */
+static bool walk_reserve(TcTerms *t, size_t count) {
+    if (count <= t->seen_cap) return true;
+    size_t cap = t->seen_cap ? t->seen_cap : 1024;
+    while (cap < count) cap *= 2;
+    uint32_t *seen = realloc(t->seen, cap * sizeof *seen);
+    if (!seen) return false;
+    t->seen = seen;
+    TcTerm *value_of = realloc(t->seen_value, cap * sizeof *value_of);
+    if (!value_of) return false;
+    t->seen_value = value_of;
+    memset(t->seen + t->seen_cap, 0, (cap - t->seen_cap) * sizeof *t->seen);
+    t->seen_cap = cap;
+    return true;
+}
+
 static void walk_record(TcTerms *t, TcTerm id, TcTerm value) {
-    if (id >= t->seen_cap) {
-        size_t cap = t->seen_cap ? t->seen_cap : 1024;
-        while (cap <= id) cap *= 2;
-        uint32_t *seen = realloc(t->seen, cap * sizeof *seen);
-        if (!seen) return;
-        t->seen = seen;
-        TcTerm *value_of = realloc(t->seen_value, cap * sizeof *value_of);
-        if (!value_of) return;
-        t->seen_value = value_of;
-        memset(t->seen + t->seen_cap, 0, (cap - t->seen_cap) * sizeof *t->seen);
-        t->seen_cap = cap;
-    }
+    if (!walk_reserve(t, (size_t)id + 1)) return;
     t->seen[id] = t->walk;
     t->seen_value[id] = value;
 }
@@ -303,6 +308,10 @@ typedef struct TcKernelSolver {
     uint32_t *trail; size_t trail_len, trail_cap; /* (index << 1) | is-local  */
     uint32_t *work;  size_t work_len, work_cap;   /* unification work list    */
     TcTerm *build;   size_t build_len, build_cap; /* items of the expressions being remade */
+    uint32_t *native_out;   size_t native_out_cap;   /* the native term builder's entries */
+    uint32_t *native_stack; size_t native_stack_cap; /* its roots and frames, then the entries' terms */
+    uint64_t native[TU_FACTS];             /* the native unifier's state words (tcunify.metta) */
+    uint64_t native_build[TB_FACTS];       /* the native term builder's (tcbuild.metta) */
     bool failed;
 } Solver;
 
@@ -533,6 +542,7 @@ static bool unify(TcTerms *terms,Solver *s,TcTerm a,uint32_t abase,TcTerm b,uint
 
 static void solver_free(Solver *s) {
     free(s->local); free(s->unknown); free(s->trail); free(s->work); free(s->build);
+    free(s->native_out); free(s->native_stack);
 }
 
 /* ======================================================================

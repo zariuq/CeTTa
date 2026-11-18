@@ -81,12 +81,26 @@ Constructor receipts distinguish activation, port normalization, prepared
 private storage and executor work. No output is returned on failure, even
 when the complete private graph was written before the final fuel check.
 
-The general tcalc adapter currently compiles multi-output shapes within the call.
-Single-output calls retain the generic native constructor, which wins on the
-measured small case. Automatic caching in that adapter requires a stable
-term-owner generation and retirement contract; pointer identity is not used
-as a persistent cache key. Clients with explicit custody can retain plans
-through the public interface.
+Automatic plan caching requires a stable term-owner generation and retirement
+contract; pointer identity is not used as a persistent cache key. Clients with
+explicit custody can retain plans through the public interface.
+
+tcalc's unifier and term builder
+--------------------------------
+tcalc's x86 kernel is two p1 programs over tcalc's own term store
+(tcalc_bridge.h, tcalc_native.c): native_tcunify (tcunify.metta) solves one
+equation as unify_c does, and native_tcbuild (tcbuild.metta) lists how to
+make terms with the assignments applied, as resolve_from and close_from make
+them. Each call borrows the TcNode[] nodes, items, local and unknown tables,
+trail, work stack and walk records as its regions; tcstore.metta holds their
+shared reading. Neither program makes a term. The unifier hands back a term to
+close, a table to grow or a walk epoch to renew, and resumes; the builder's
+list (fresh unknowns, expressions to make) is made by the core in list order,
+which is the core's own order, so fresh unknowns and term ids come out as in
+C. Interning can relocate the pools, so every call renews the borrowed
+pointers; the programs keep indices only, and every table stays below 2^31
+entries. tests/tcalc/tcalc_native_unify_test.c compares both with the core's
+C, assignment for assignment.
 
 Resident rule batches
 ---------------------
@@ -125,11 +139,10 @@ are separate from the language's semantic step budget.
 
 Consumers and host effects
 --------------------------
-The tcalc bridge uses closed typed callbacks over the original term and
-solver owners. Unresolved equations within one attempt are prepared and solved
-as a single conjunction, retaining scoped variables and caller rollback. Binding deltas enter the existing checked binding APIs. Make
-bundles share one memo within an activation; another activation starts a new
-observation. Native status never becomes a successful empty result.
+tcalc's unifier writes its assignments and trail entries into the core's own
+tables, so the caller's rollback undoes them as it undoes C's. A rule's made
+rows are built in one walk epoch, sharing one memo; another activation starts
+a new one. Native status never becomes a successful empty result.
 
 Transform retains occurrence cursors and its firing/store protocol. Eligible
 firings use the term carrier; other host control keeps the same selected

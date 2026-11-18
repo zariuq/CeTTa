@@ -9,15 +9,18 @@ KERNEL_CONSTRUCTOR_IMAGE = $(KERNEL_BUILD)/native_constructor_image.o
 KERNEL_BATCH_IMAGE = $(KERNEL_BUILD)/native_batch_image.o
 KERNEL_OBSERVE_IMAGE = $(KERNEL_BUILD)/native_observe_image.o
 KERNEL_PAIR_IMAGE = $(KERNEL_BUILD)/native_pair_image.o
+KERNEL_TCUNIFY_IMAGE = $(KERNEL_BUILD)/native_tcunify_image.o
+KERNEL_TCBUILD_IMAGE = $(KERNEL_BUILD)/native_tcbuild_image.o
+KERNEL_TCALC_IMAGES = $(KERNEL_TCUNIFY_IMAGE) $(KERNEL_TCBUILD_IMAGE)
 KERNEL_INPUTS = $(shell find $(KERNEL_VENDOR) -type f)
 KERNEL_CFLAGS = -O2 -std=c11 -Wall -Wextra -Werror
 KERNEL_PRIVATE_INCLUDES = -I$(KERNEL_VENDOR)/native/p1 -I$(KERNEL_VENDOR)/tisa
-native/kernel/pair.%.o native/kernel/observe.%.o native/kernel/constructor.%.o: private CFLAGS += $(KERNEL_PRIVATE_INCLUDES)
+native/kernel/pair.%.o native/kernel/observe.%.o native/kernel/constructor.%.o native/kernel/tcalc_native.%.o: private CFLAGS += $(KERNEL_PRIVATE_INCLUDES)
 ifeq ($(ENABLE_SANITIZERS),1)
 KERNEL_CFLAGS = -O1 -g -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer
 endif
-SRC += native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c native/kernel/tcalc_bridge.c
-OBJ += $(KERNEL_COMPONENT_OBJ) $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE)
+SRC += native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c native/kernel/tcalc_native.c
+OBJ += $(KERNEL_COMPONENT_OBJ) $(KERNEL_TCALC_IMAGES) $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE)
 OBJ += $(KERNEL_BATCH_IMAGE)
 
 $(KERNEL_LIBRARY): $(KERNEL_INPUTS)
@@ -28,6 +31,10 @@ $(KERNEL_LIBRARY): $(KERNEL_INPUTS)
 $(KERNEL_COMPONENT_OBJ): $(KERNEL_LIBRARY)
 	$(CESTA_NATIVE_CC) -r -nostdlib -Wl,--whole-archive $< -Wl,--no-whole-archive -o $@
 
+$(KERNEL_TCUNIFY_IMAGE): native/kernel/native_tcunify.S | $(KERNEL_BUILD)
+	$(CESTA_NATIVE_CC) -c $< -o $@
+$(KERNEL_TCBUILD_IMAGE): native/kernel/native_tcbuild.S | $(KERNEL_BUILD)
+	$(CESTA_NATIVE_CC) -c $< -o $@
 $(KERNEL_PAIR_IMAGE): native/kernel/native_pair.S | $(KERNEL_BUILD)
 	$(CESTA_NATIVE_CC) -c $< -o $@
 $(KERNEL_OBSERVE_IMAGE): native/kernel/native_observe.S | $(KERNEL_BUILD)
@@ -50,18 +57,26 @@ $(KERNEL_BUILD)/test_session: tests/test_native_kernel_session.c native/kernel/k
 test-native-kernel-session: $(KERNEL_BUILD)/test_session
 	@$<
 
-$(KERNEL_BUILD)/test_decide: tests/tcalc/tcalc_kernel_decide_test.c tests/tcalc/tcalc_decide_test.c $(TCALC_CORE) $(TCALC_UNIT) native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c native/kernel/tcalc_bridge.c native/kernel/tcalc_bridge.h $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE) $(KERNEL_BATCH_IMAGE) $(KERNEL_LIBRARY)
+$(KERNEL_BUILD)/test_decide: tests/tcalc/tcalc_kernel_decide_test.c tests/tcalc/tcalc_decide_test.c $(TCALC_CORE) $(TCALC_UNIT) native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c native/kernel/tcalc_bridge.h native/kernel/tcalc_native.c $(KERNEL_TCALC_IMAGES) $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE) $(KERNEL_BATCH_IMAGE) $(KERNEL_LIBRARY)
 	$(CC) $(CPPFLAGS) $(KERNEL_CFLAGS) $(KERNEL_PRIVATE_INCLUDES) -UNDEBUG -D_POSIX_C_SOURCE=200809L -Inative/tcalc \
 		tests/tcalc/tcalc_kernel_decide_test.c $(TCALC_CORE) native/tcalc/tcalc_syntax.c \
-		native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c native/kernel/tcalc_bridge.c $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE) $(KERNEL_BATCH_IMAGE) $(KERNEL_LIBRARY) -pthread -o $@
+		native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c native/kernel/tcalc_native.c $(KERNEL_TCALC_IMAGES) $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE) $(KERNEL_BATCH_IMAGE) $(KERNEL_LIBRARY) -pthread -o $@
 .PHONY: test-native-kernel-decide
 test-native-kernel-decide: $(KERNEL_BUILD)/test_decide
 	@set -e; for mode in c x86 hybrid; do "$<" "$$mode"; done
 
-$(KERNEL_BUILD)/test_resident_failures: tests/tcalc/tcalc_kernel_decide_test.c tests/tcalc/tcalc_decide_test.c $(TCALC_CORE) $(TCALC_UNIT) native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c native/kernel/tcalc_bridge.c native/kernel/tcalc_bridge.h $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE) $(KERNEL_BATCH_IMAGE) $(KERNEL_LIBRARY)
+$(KERNEL_BUILD)/test_tcalc_unify: tests/tcalc/tcalc_native_unify_test.c $(TCALC_CORE) $(TCALC_UNIT) native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c native/kernel/tcalc_bridge.h native/kernel/tcalc_native.c $(KERNEL_TCALC_IMAGES) $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE) $(KERNEL_BATCH_IMAGE) $(KERNEL_LIBRARY)
+	$(CC) $(CPPFLAGS) $(KERNEL_CFLAGS) $(KERNEL_PRIVATE_INCLUDES) -UNDEBUG -D_POSIX_C_SOURCE=200809L -Inative/tcalc \
+		tests/tcalc/tcalc_native_unify_test.c native/tcalc/tcalc_syntax.c \
+		native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c native/kernel/tcalc_native.c $(KERNEL_TCALC_IMAGES) $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE) $(KERNEL_BATCH_IMAGE) $(KERNEL_LIBRARY) -pthread -o $@
+.PHONY: test-native-tcalc-unify
+test-native-tcalc-unify: $(KERNEL_BUILD)/test_tcalc_unify
+	@"$<" 20000 1 && "$<" 20000 2
+
+$(KERNEL_BUILD)/test_resident_failures: tests/tcalc/tcalc_kernel_decide_test.c tests/tcalc/tcalc_decide_test.c $(TCALC_CORE) $(TCALC_UNIT) native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c native/kernel/tcalc_bridge.h native/kernel/tcalc_native.c $(KERNEL_TCALC_IMAGES) $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE) $(KERNEL_BATCH_IMAGE) $(KERNEL_LIBRARY)
 	$(CC) $(CPPFLAGS) $(KERNEL_CFLAGS) $(KERNEL_PRIVATE_INCLUDES) -UNDEBUG -D_POSIX_C_SOURCE=200809L -DCETTA_BATCH_ALLOCATION_TEST=1 -Inative/tcalc \
 		tests/tcalc/tcalc_kernel_decide_test.c $(TCALC_CORE) native/tcalc/tcalc_syntax.c \
-		native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c native/kernel/tcalc_bridge.c $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE) $(KERNEL_BATCH_IMAGE) $(KERNEL_LIBRARY) -pthread -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc -o $@
+		native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c native/kernel/tcalc_native.c $(KERNEL_TCALC_IMAGES) $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE) $(KERNEL_BATCH_IMAGE) $(KERNEL_LIBRARY) -pthread -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc -o $@
 .PHONY: test-native-kernel-resident-failures
 test-native-kernel-resident-failures: $(KERNEL_BUILD)/test_resident_failures
 	@set -e; for mode in c x86 hybrid; do "$<" "$$mode"; done
@@ -150,10 +165,10 @@ $(KERNEL_BUILD)/test_batch: tests/test_native_kernel_batch.c native/kernel/batch
 test-native-kernel-batch: $(KERNEL_BUILD)/test_batch
 	@$<
 
-$(KERNEL_BUILD)/bench_resident: tests/tcalc/tcalc_kernel_decide_test.c tests/tcalc/tcalc_decide_test.c $(TCALC_CORE) $(TCALC_UNIT) native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c native/kernel/tcalc_bridge.c native/kernel/tcalc_bridge.h $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE) $(KERNEL_BATCH_IMAGE) $(KERNEL_LIBRARY)
+$(KERNEL_BUILD)/bench_resident: tests/tcalc/tcalc_kernel_decide_test.c tests/tcalc/tcalc_decide_test.c $(TCALC_CORE) $(TCALC_UNIT) native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c native/kernel/tcalc_bridge.h native/kernel/tcalc_native.c $(KERNEL_TCALC_IMAGES) $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE) $(KERNEL_BATCH_IMAGE) $(KERNEL_LIBRARY)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(KERNEL_PRIVATE_INCLUDES) -UNDEBUG -D_POSIX_C_SOURCE=200809L -Inative/tcalc \
 		tests/tcalc/tcalc_kernel_decide_test.c $(TCALC_CORE) native/tcalc/tcalc_syntax.c \
-		native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c native/kernel/tcalc_bridge.c $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE) $(KERNEL_BATCH_IMAGE) $(KERNEL_LIBRARY) -pthread -o $@
+		native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c native/kernel/tcalc_native.c $(KERNEL_TCALC_IMAGES) $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE) $(KERNEL_BATCH_IMAGE) $(KERNEL_LIBRARY) -pthread -o $@
 .PHONY: benchmark-native-kernel-resident
 benchmark-native-kernel-resident: $(KERNEL_BUILD)/bench_resident
 	@set -e; for case in --bench --bench-product; do for mode in c x86 hybrid; do "$<" "$$mode" "$$case"; done; done

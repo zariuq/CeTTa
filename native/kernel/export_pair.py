@@ -7,10 +7,10 @@ import re
 import subprocess
 
 p=argparse.ArgumentParser(description=__doc__)
-p.add_argument("--component", choices=("pair","observe","constructor","word"), default="pair");p.add_argument("--cetta",required=True);p.add_argument("--p1run",required=True);p.add_argument("--out",type=Path,required=True)
+p.add_argument("--component", choices=("pair","observe","constructor","word","tcunify","tcbuild"), default="pair");p.add_argument("--cetta",required=True);p.add_argument("--p1run",required=True);p.add_argument("--out",type=Path,required=True)
 a=p.parse_args();here=Path(__file__).resolve().parent;out=a.out.resolve();out.mkdir(parents=True,exist_ok=True)
 component=a.component
-prefix={"pair":"np","observe":"no","constructor":"nc","word":"nw"}[component]
+prefix={"pair":"np","observe":"no","constructor":"nc","word":"nw","tcunify":"tu","tcbuild":"tb"}[component]
 program=out/("native_"+component+"_prog.txt")
 subprocess.run([a.cetta,"--no-results",str(here/(component+".metta")),str(program),str(out/("native_"+component+".notes"))],check=True)
 model=out/("native_"+component+".hol")

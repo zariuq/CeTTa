@@ -5,6 +5,7 @@
 #include "kernel_private.h"
 #include "constructor.h"
 #include "batch.h"
+#include "tcalc_native.h"
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -75,6 +76,7 @@ bool cetta_kernel_select(CettaKernelMode mode,char *error,size_t size) {
             if (error && size) snprintf(error,size,"native batch image differs from its expected bytes");
             return false;
         }
+        if (cetta_kernel_tcalc_native_ready && !cetta_kernel_tcalc_native_ready(error,size)) return false;
     }
     pthread_mutex_lock(&programs_lock);
     bool active=atomic_load(&active_sessions)!=0;

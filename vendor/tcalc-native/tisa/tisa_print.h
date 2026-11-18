@@ -18,12 +18,11 @@ typedef enum { TISA_TEXT_HOL, TISA_TEXT_SEXPR } TcIsaTextStyle;
 bool tisa_print_program(FILE *f, TcIsaTextStyle style, const TcIsaProgram *p);
 bool tisa_print_stmt(FILE *f, TcIsaTextStyle style, const TcIsaStmt *s);
 
-/* The statement each body span of the p1 image realizes, in the emitter's
- * order, as child indices joined by '.' ("" is the root): SEQ first 0,
- * second 1; IF then 1, else 2; loop body 0. IF, IF-ELSE and the loop spans
- * carry their statement's own path. Writes at most cap paths and returns how
- * many there are. */
-size_t tisa_span_paths(const TcIsaStmt *s, char (*paths)[256], size_t cap);
+/* The statement each span of the image realizes, as child indices joined by
+ * '.' ("" is the root): SEQ first 0, second 1; IF then 1, else 2; loop body 0;
+ * "-" for the wrapper and handler spans. paths holds code->nspans entries.
+ * Returns code->nspans, or 0 if a span's statement is not the program's. */
+size_t tisa_span_paths(const TcIsaProgram *p, const TcIsaX86 *code, char (*paths)[256]);
 
 /* One record for the HOL image prover (hol/tisa_x86_image.ml):
  *   tisa_image "name" `PROGRAM` "HEX" [(offset,length,"TEMPLATE","path"); ...];;
