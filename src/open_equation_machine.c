@@ -10908,9 +10908,6 @@ static bool oem_match_lazy(CettaOpenEquationCursor *cursor,
         return true;
     Atom *query = oem_pattern_resolved(pattern)
         ? pattern : oem_resolve_mode(cursor, pattern, true);
-    query = query ? petta_semantics_match_index_pattern(&cursor->region,
-                                                        query, NULL)
-                  : NULL;
     if (!query)
         return true;
     OemLazyRows *lazy = malloc(sizeof(*lazy));
@@ -10918,9 +10915,11 @@ static bool oem_match_lazy(CettaOpenEquationCursor *cursor,
         return true;
     lazy->screen = (OemKeptScreen){0};
     space_occurrence_cursor_init_empty(&lazy->occurrences);
-    if (!space_occurrence_cursor_init(space, query, &lazy->occurrences)) {
+    SpaceMatchCursorStatus opened = space_match_cursor_open(
+        space, &cursor->region, query, &lazy->occurrences, NULL);
+    if (opened != SPACE_MATCH_CURSOR_READY) {
         oem_lazy_rows_release(lazy);
-        return false;
+        return opened == SPACE_MATCH_CURSOR_FAILED;
     }
     lazy->universe = space_occurrence_cursor_universe(&lazy->occurrences);
     if (!lazy->universe || !oem_lazy_rows_fetch(cursor, lazy, pattern)) {

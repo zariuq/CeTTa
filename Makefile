@@ -50132,11 +50132,13 @@ $(TRANSFORM_COPY_FAULT_TEST): tests/support/test_transform_copy_faults.c src/emb
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS) \
 		-Wl,--wrap=atom_deep_copy_session_new -Wl,--wrap=atom_deep_copy_session_copy \
-		-Wl,--wrap=atom_deep_copy_session_free -Wl,--wrap=atom_expr; \
+		-Wl,--wrap=atom_deep_copy_session_free -Wl,--wrap=atom_expr -Wl,--wrap=atom_int; \
 	mv "$$tmp_out" "$@"
 .PHONY: test-transform-copy-faults
 test-transform-copy-faults: $(TRANSFORM_COPY_FAULT_TEST)
 	@$(call cetta_exec,./$(TRANSFORM_COPY_FAULT_TEST))
+	@CETTA_TRANSFORM_ENGINE=tcalc CETTA_TRANSFORM_TCALC_RECEIPTS=0 \
+		$(call cetta_exec,./$(TRANSFORM_COPY_FAULT_TEST)) --stale
 test-transform-fuel: test-transform-copy-faults
 
 TRANSFORM_FUEL_TEST = runtime/test_transform_fuel-$(EMBED_TAG)

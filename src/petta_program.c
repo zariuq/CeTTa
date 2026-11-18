@@ -6193,17 +6193,12 @@ static bool petta_program_candidate_snapshot_lease_from_entry(
     if (!space_rule_cursor_init(space, head, admitted_forms, &cursor))
         return false;
     for (;;) {
-        SpaceEquationOccurrenceId id;
+        SpaceEquationOccurrence occurrence;
         SpaceEquationCursorStep step =
-            space_equation_cursor_next(&cursor, &id);
+            space_rule_cursor_read(&cursor, &occurrence);
         if (step == SPACE_EQUATION_CURSOR_END)
             break;
         if (step == SPACE_EQUATION_CURSOR_INVALIDATED) {
-            free(actual);
-            return false;
-        }
-        SpaceEquationOccurrence occurrence;
-        if (!space_rule_occurrence_resolve(id, admitted_forms, &occurrence)) {
             free(actual);
             return false;
         }

@@ -416,7 +416,7 @@ static void petta_runtime_heads_build(PeTTaSymbolIds *ids) {
      * internal bit lets dispatch exempt them from its ordinary-call exit
      * without probing each library's names on every user function call. */
     static const char *const native_library[] = {
-        "transform", "tf:split", "tf:propose", "tf:inst", "tf:fire",
+        "transform", "tf:split", "tf:propose", "tf:fire",
         "tf:fire-into", "tf:run", "support:open", "support:assert",
         "support:retract", "support:why",
     };
@@ -1089,6 +1089,16 @@ Atom *petta_semantics_remove_pattern_error(Arena *arena, Atom *pattern) {
         ? petta_error_term(arena, atom_symbol(arena, "instantiation_error"),
                            petta_error_unbound_context(arena))
         : NULL;
+}
+
+Atom *petta_semantics_space_operand_error(Arena *arena, Atom *location) {
+    if (!arena || !location)
+        return NULL;
+    Atom *formal = location->kind == ATOM_VAR
+        ? atom_symbol(arena, "instantiation_error")
+        : atom_expr3(arena, atom_symbol(arena, "type_error"),
+                     atom_symbol(arena, "atom"), location);
+    return petta_error_term(arena, formal, petta_error_unbound_context(arena));
 }
 
 /* The elements of the list `value` spells, in order, whatever its form: a

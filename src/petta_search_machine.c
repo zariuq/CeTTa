@@ -731,7 +731,7 @@ typedef struct {
 typedef enum {
     PETTA_CHOICE_EQUATION = 0,
     PETTA_CHOICE_OUTCOMES,
-    PETTA_CHOICE_FOREIGN_PROVIDER,
+    PETTA_CHOICE_PROVIDER,
     PETTA_CHOICE_SUPERPOSE,
     PETTA_CHOICE_BOOLEAN,
     PETTA_CHOICE_APPEND,
@@ -5562,7 +5562,7 @@ static void petta_choice_release(
     case PETTA_CHOICE_ANSWERS:
         petta_answer_choice_release(choice);
         break;
-    case PETTA_CHOICE_FOREIGN_PROVIDER:
+    case PETTA_CHOICE_PROVIDER:
         cetta_owned_execution_cancel(choice->as.provider.execution);
         free(choice->as.provider.execution);
         choice->as.provider.execution = NULL;
@@ -5881,7 +5881,7 @@ static bool petta_choice_exhausted_after_success(
     if (!choice)
         return false;
     switch (choice->kind) {
-    case PETTA_CHOICE_FOREIGN_PROVIDER:
+    case PETTA_CHOICE_PROVIDER:
         return choice->as.provider.execution && choice->as.provider.execution->terminal;
     case PETTA_CHOICE_EQUATION:
         return choice->as.equation.next_equation >=
@@ -7947,7 +7947,7 @@ static bool petta_binding_roots_add_choice(
     if (!roots || !choice)
         return roots != NULL;
     switch (choice->kind) {
-    case PETTA_CHOICE_FOREIGN_PROVIDER:
+    case PETTA_CHOICE_PROVIDER:
         return petta_binding_roots_add(roots, choice->as.provider.expected) &&
             petta_binding_roots_add(roots, choice->as.provider.call);
     case PETTA_CHOICE_EQUATION:
@@ -8440,7 +8440,7 @@ static bool petta_choice_heap_evacuation_supported(
         if ((choice->retain_heap_across_resume && !completion) ||
             (choice->kind != PETTA_CHOICE_EQUATION &&
              choice->kind != PETTA_CHOICE_ANSWERS &&
-             choice->kind != PETTA_CHOICE_FOREIGN_PROVIDER &&
+             choice->kind != PETTA_CHOICE_PROVIDER &&
              choice->kind != PETTA_CHOICE_ONCE &&
              choice->kind != PETTA_CHOICE_SUPERPOSE &&
              choice->kind != PETTA_CHOICE_EQUAL_DEFAULT &&
@@ -8497,7 +8497,7 @@ static bool petta_copy_supported_choice_atoms(
         return false;
     bool ok = true;
     switch (choice->kind) {
-    case PETTA_CHOICE_FOREIGN_PROVIDER:
+    case PETTA_CHOICE_PROVIDER:
         choice->as.provider.expected = petta_copy_optional_atom(
             session, choice->as.provider.expected, &ok);
         choice->as.provider.call = petta_copy_optional_atom(
@@ -20719,7 +20719,7 @@ static bool petta_machine_advance_choice(
         return false;
     }
 
-    if (choice->kind == PETTA_CHOICE_FOREIGN_PROVIDER) {
+    if (choice->kind == PETTA_CHOICE_PROVIDER) {
         CettaOwnedExecution *execution = choice->as.provider.execution;
         if (choice->as.provider.awaiting_accept) {
             if (!cetta_owned_execution_accept(execution)) {
@@ -22931,22 +22931,12 @@ static bool petta_machine_start_space_query(
             return false;
         }
         for (;;) {
-            SpaceEquationOccurrenceId id;
+            SpaceEquationOccurrence occurrence;
             SpaceEquationCursorStep step =
-                space_equation_cursor_next(&cursor, &id);
+                space_rule_cursor_read(&cursor, &occurrence);
             if (step == SPACE_EQUATION_CURSOR_END)
                 break;
             if (step == SPACE_EQUATION_CURSOR_INVALIDATED) {
-                free(fallback_candidates);
-                machine->terminal = true;
-                machine->terminal_step =
-                    PETTA_MACHINE_STEP_INVALIDATED;
-                return false;
-            }
-            SpaceEquationOccurrence occurrence;
-            if (!space_rule_occurrence_resolve(
-                    id, CETTA_RULE_SYNTAX_ORDINARY | machine->host.admitted_rule_forms,
-                    &occurrence)) {
                 free(fallback_candidates);
                 machine->terminal = true;
                 machine->terminal_step =
@@ -23999,19 +23989,32 @@ static bool petta_machine_translate_predicate_dispatch(
     return petta_machine_unify_resolved(machine, call, expected);
 }
 
-static bool petta_machine_start_foreign_provider(PettaMachineImpl *machine,
+static CettaOwnedExecution *petta_machine_push_provider(PettaMachineImpl *machine,
         Atom *call, Atom *expected, uint32_t barrier, PettaMachineStep *failure) {
     CettaOwnedExecution *execution = calloc(1u, sizeof(*execution));
-    if (!execution) { *failure = PETTA_MACHINE_STEP_CAPACITY; return false; }
-    PettaChoice choice = {.kind = PETTA_CHOICE_FOREIGN_PROVIDER,
+    if (!execution) {
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return NULL;
+    }
+    PettaChoice choice = {.kind = PETTA_CHOICE_PROVIDER,
         .manufacture_epoch = machine->manufacture_epoch,
         .binding_mark = bindings_builder_save(search_context_builder(&machine->search)),
         .goal_height = machine->goal_len, .barrier = barrier,
         .as.provider = {.execution = execution, .expected = expected, .call = call}};
     if (!petta_choice_push(machine, choice)) {
         *failure = PETTA_MACHINE_STEP_CAPACITY;
-        return false;
+        free(execution);
+        return NULL;
     }
+    return execution;
+}
+
+static bool petta_machine_start_foreign_provider(PettaMachineImpl *machine,
+        Atom *call, Atom *expected, uint32_t barrier, PettaMachineStep *failure) {
+    CettaOwnedExecution *execution = petta_machine_push_provider(
+        machine, call, expected, barrier, failure);
+    if (!execution)
+        return false;
     /* Install the caller before entering foreign code. A failed owner
      * allocation must not follow an effectful callback entrance. */
     CettaInvocation invocation = {.head = binding_value_from_atom(call->expr.elems[0]),
@@ -26292,6 +26295,7 @@ static bool petta_machine_start_match_choice_policy(
     space_occurrence_cursor_init_empty(&occurrences);
     bool occurrence_cursor_mode = false;
     Atom *resolved_pattern = NULL;
+    Atom *index_pattern = NULL;
     if (!binding_snapshot_mode && !atom_snapshot_mode &&
         !terminal_count_fold) {
         /* A ground pattern is already its skeleton; force is identity
@@ -26328,14 +26332,14 @@ static bool petta_machine_start_match_choice_policy(
             break;
         }
         if (!occurrence_cursor_mode) {
-            Atom *index_pattern = petta_semantics_match_index_pattern(
-                &machine->heap, resolved_pattern, NULL);
-            if (!index_pattern) {
+            SpaceMatchCursorStatus opened = space_match_cursor_open(
+                space, &machine->heap, resolved_pattern, &occurrences,
+                &index_pattern);
+            if (opened == SPACE_MATCH_CURSOR_FAILED) {
                 binding_set_free(&binding_snapshot);
                 return false;
             }
-            occurrence_cursor_mode = space_occurrence_cursor_init(
-                space, index_pattern, &occurrences);
+            occurrence_cursor_mode = opened == SPACE_MATCH_CURSOR_READY;
         }
     }
     if (cetta_native_memory_failed && cetta_native_memory_failed()) {
@@ -26346,13 +26350,11 @@ static bool petta_machine_start_match_choice_policy(
     }
     if (!occurrence_cursor_mode &&
         !binding_snapshot_mode && !atom_snapshot_mode) {
-        Atom *index_pattern = resolved_pattern;
-        if (!index_pattern)
-            index_pattern = petta_machine_apply_bindings(
-                machine, search_context_bindings(&machine->search),
-                &machine->heap, pattern);
-        index_pattern = petta_semantics_match_index_pattern(
-            &machine->heap, index_pattern, NULL);
+        if (!index_pattern) {
+            Atom *resolved = petta_machine_apply_bindings(
+                machine, search_context_bindings(&machine->search), &machine->heap, pattern);
+            index_pattern = petta_semantics_match_index_pattern(&machine->heap, resolved, NULL);
+        }
         if (!index_pattern) {
             binding_set_free(&binding_snapshot);
             return false;
@@ -29347,6 +29349,9 @@ static bool petta_machine_start_ready_match_mode(
         machine, reference, pattern, template, expected, template_plan,
         &cursor_admitted);
     if (cursor_admitted) {
+        if (reference->kind == ATOM_VAR)
+            return petta_machine_raise_error(machine,
+                petta_semantics_space_operand_error(&machine->heap, reference));
         /* Each conjunct is a match choice.  Unification writes the leg's
          * bindings into the caller's branch image, and the next conjunct
          * snapshots occurrences when that leg begins.  A continuation can
@@ -29417,8 +29422,12 @@ static bool petta_machine_start_ready_match_mode(
                    machine, goal_body, template, expected,
                    barrier, failure);
     }
-    if (!target)
-        return false;
+    if (!target) {
+        if (reference->kind == ATOM_SYMBOL)
+            return false;
+        return petta_machine_raise_error(machine,
+            petta_semantics_space_operand_error(&machine->heap, reference));
+    }
 
     Atom *match_pattern = pattern;
     Atom *match_template = template;
@@ -36998,36 +37007,29 @@ static bool petta_machine_dispatch_solve(
         machine->host.classify(
             machine->host.context, machine->space, goal->first) ==
             PETTA_MACHINE_HOST_READY_APPLICATION) {
-        /* A transform runs as its chain on this machine when the host has
-         * one: its branches are this machine's choices, each fired when it
-         * is continued, and its values stay in its variables. */
-        const PettaMachineOptionalServices *services =
-            machine->host.optional_services;
-        if (services && services->transform_chain &&
-            machine->host.translate_source) {
+        const PettaMachineOptionalServices *services = machine->host.optional_services;
+        if (services && services->transform_open) {
             Atom *call = petta_machine_apply_bindings(
                 machine, environment, &machine->heap, goal->first);
-            /* The host reads PeTTa values, never the machine's open-cons
-             * carrier, as at every host boundary. */
             if (call && petta_semantics_value_contains_observable_open_cons(call))
                 call = petta_semantics_materialize_value(&machine->heap, call);
-            Atom *chain = call ? services->transform_chain(
-                machine->host.context, machine->space, &machine->heap,
-                call) : NULL;
             if (!call) {
                 *failure = PETTA_MACHINE_STEP_CAPACITY;
                 return false;
             }
-            if (chain) {
-                const PettaPlanNode *chain_plan =
-                    petta_machine_translate_source(machine, chain);
-                if (!chain_plan || !petta_push_solve_planned(
-                        machine, chain, goal->second, goal->barrier,
-                        chain_plan)) {
-                    *failure = PETTA_MACHINE_STEP_CAPACITY;
+            CettaOwnedExecution opened = {0};
+            if (services->transform_open(machine->host.context, machine->space,
+                                         &machine->heap, call, &opened)) {
+                CettaOwnedExecution *execution = petta_machine_push_provider(
+                    machine, call, goal->second, goal->barrier, failure);
+                if (!execution) {
+                    cetta_owned_execution_cancel(&opened);
                     return false;
                 }
-                return true;
+                *execution = opened;
+                return petta_machine_advance_choice(
+                    machine, &machine->choices[machine->choice_len - 1u],
+                    failure, false, NULL);
             }
         }
         return petta_goal_push(machine, &(PettaGoal){
@@ -38561,6 +38563,10 @@ static bool petta_machine_dispatch_solve(
         Atom *reference = petta_machine_apply_bindings(machine,
             environment, &machine->heap,
             expression->expr.elems[1]);
+        if (!reference) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
         Space *direct_target = machine->host.resolve_space
             ? machine->host.resolve_space(
                   machine->host.context, machine->space,

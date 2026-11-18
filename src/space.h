@@ -971,6 +971,10 @@ bool space_rule_cursor_init(Space *s, SymbolId head, unsigned admitted_forms,
                             SpaceEquationCursor *cursor);
 SpaceEquationCursorStep space_equation_cursor_next(
     SpaceEquationCursor *cursor, SpaceEquationOccurrenceId *out);
+/* Lend a selected equation and its operands in the cursor's captured rule
+ * syntax, in one shared read transition. An invalidated read gives no rule. */
+SpaceEquationCursorStep space_rule_cursor_read(
+    SpaceEquationCursor *cursor, SpaceEquationOccurrence *out);
 
 /*
  * Revision-qualified zipper over matching discrimination-trie leaves.
@@ -1095,6 +1099,19 @@ typedef enum {
 void space_occurrence_cursor_init_empty(SpaceOccurrenceCursor *cursor);
 bool space_occurrence_cursor_init(Space *s, Atom *pattern,
                                   SpaceOccurrenceCursor *cursor);
+typedef enum {
+    SPACE_MATCH_CURSOR_READY,
+    SPACE_MATCH_CURSOR_DECLINED,
+    SPACE_MATCH_CURSOR_FAILED,
+} SpaceMatchCursorStatus;
+
+/* Open an initialized empty cursor for a resolved match pattern. Only the
+ * index sees the projected selector. The caller matches the original in its
+ * binding frame. A decline releases partial cursor state and leaves the
+ * selector available for a fallback that cannot borrow rows. */
+SpaceMatchCursorStatus space_match_cursor_open(
+    Space *s, Arena *arena, Atom *pattern, SpaceOccurrenceCursor *cursor,
+    Atom **selector_out);
 /* New attempt over the same pin and discrimination frontier: copy the
  * borrowed trie nodes, reset the leaf cursor, and take one pin. */
 bool space_occurrence_cursor_clone_unstarted(

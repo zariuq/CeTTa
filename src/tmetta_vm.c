@@ -1101,12 +1101,11 @@ static bool transform(TmMachine *machine, TmBranch *branch, Atom *call) {
     machine->transaction = &transaction;
     Atom *publication = atom_expr3(&machine->arena,
         atom_symbol(&machine->arena, "tmetta:firing"), call, args[3]);
-    Atom *fire = publication && conjuncts ? atom_expr(&machine->arena,
-        (Atom *[]){atom_symbol(&machine->arena, "tf:fire"), args[1], conjuncts, publication}, 4) : NULL;
+    ok = ok && publication && conjuncts;
     Atom *answer = NULL;
-    CettaTransformOutcome outcome = ok && fire ? cetta_transform_fire(machine->space,
-        &machine->arena, fire, &host, &answer) : CETTA_TRANSFORM_ERROR;
-    ok = ok && fire && !transaction.failed;
+    CettaTransformOutcome outcome = ok ? cetta_transform_step(&machine->arena,
+        args[1], conjuncts, publication, NULL, &host, &answer) : CETTA_TRANSFORM_ERROR;
+    ok = ok && !transaction.failed;
     if (outcome == CETTA_TRANSFORM_ERROR) {
         if (answer) machine->error = answer;
         else if (error) machine->error = error;

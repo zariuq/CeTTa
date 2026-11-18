@@ -223,7 +223,7 @@ static const struct {
     {"transform", 3u, false}, {"transform", 4u, false},
     {"tf:cand", 1u, true}, {"tf:cs", 1u, true}, {"tf:fired", 1u, true},
     {"tf:run", 4u, false}, {"tf:split", 2u, false},
-    {"tf:propose", 3u, false}, {"tf:inst", 2u, false},
+    {"tf:propose", 3u, false},
     {"tf:fire", 3u, false}, {"tf:fire-into", 4u, false},
 };
 

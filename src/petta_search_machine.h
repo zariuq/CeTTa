@@ -239,14 +239,12 @@ typedef struct {
         void *context, SymbolId head, CettaExprLen arity);
     bool (*tabled_relation_join_set)(
         void *context, SymbolId head, CettaExprLen arity, SymbolId join);
-    /* A transform as its library's chain, which the machine translates and
-     * runs as its own continuation: the proposals, then one branch per
-     * proposal, fired and routed only when it is continued, every value of
-     * the chain held by a variable.  CALL is the transform with the caller's
-     * values in place.  NULL leaves the call to the host as one
-     * application. */
-    Atom *(*transform_chain)(
-        void *context, Space *space, Arena *arena, Atom *call);
+    /* The transform owns its prepared plan and lends each publication to the
+     * machine. Opening performs no effects. A refused request remains with
+     * the host's ordinary call dispatch. */
+    bool (*transform_open)(
+        void *context, Space *space, Arena *arena, Atom *call,
+        CettaOwnedExecution *execution);
     /* The error a failed native collection raised, taken from the host so
      * that the machine raises it under its own handlers, as it raises a
      * host application's error.  NULL when the host raised none. */

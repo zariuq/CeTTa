@@ -36,7 +36,6 @@
 (: tf:run (-> Atom Atom Atom Atom %Undefined%))
 (: tf:split (-> Atom Atom %Undefined%))
 (: tf:propose (-> Atom Atom Atom %Undefined%))
-(: tf:inst (-> Atom Atom %Undefined%))
 (: tf:fire (-> Atom Atom Atom %Undefined%))
 (: tf:fire-into (-> Atom Atom Atom Atom %Undefined%))
 
@@ -45,6 +44,5 @@
 (= (tf:run $a $b $c $d) (empty))
 (= (tf:split $a $b) (empty))
 (= (tf:propose $a $b $c) (empty))
-(= (tf:inst $a $b) (empty))
 (= (tf:fire $a $b $c) (empty))
 (= (tf:fire-into $a $b $c $d) (empty))

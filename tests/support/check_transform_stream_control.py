@@ -122,9 +122,9 @@ def acceptance(binary):
         # The cursor's own vectors, and with them what its readers' view
         # keeps: the list of the rows removed since the take froze it, not a
         # copy of the rows, so neither grows with the space.
-        # The fixed firing record includes 40 bytes of matching-frame loan
-        # bookkeeping. Neither its vectors nor retained entries grew.
-        expected_peaks = {200: (4256, 4384), 400: (4256, 4384)}
+        # The fixed firing record includes the matching-frame loan and
+        # prepared destination bookkeeping. Vectors retain the same bounds.
+        expected_peaks = {200: (3928, 4056), 400: (3928, 4056)}
         if (owned, peak) != expected_peaks[n]:
             raise AssertionError(
                 f"cursor-owned vector accounting changed for n={n}: "
@@ -183,9 +183,9 @@ def acceptance(binary):
             raise AssertionError(f"zero-proposal {key}: expected {expected}, got {counters.get(key)}")
     owned = counters.get("transform-cursor-owned-bytes-peak", 0)
     accounted = counters.get("transform-cursor-accounted-bytes-peak", 0)
-    if (owned, accounted) != (4256, 4256):
+    if (owned, accounted) != (3928, 3928):
         raise AssertionError(
-            f"zero-proposal high-water accounting changed: expected {(4256, 4256)}, "
+            f"zero-proposal high-water accounting changed: expected {(3928, 3928)}, "
             f"got {(owned, accounted)}")
     print(f"PASS: zero proposals retain the failed-match owned peak {owned} bytes "
           f"and entry-inclusive peak {accounted} bytes")
@@ -475,6 +475,26 @@ def late_cursor_decline(binary):
     if proc.stderr.count("transform-cursor-test-clone-refusal 3") != 1:
         raise AssertionError(f"the focused clone refusal did not fire exactly once: {proc.stderr!r}")
     print("PASS: a late cursor decline preserves one answerless effect prefix without fallback replay")
+
+    proc, _ = run(binary, """!(bind! &s (new-space))
+!(add-atom &s (p a))
+!(add-atom &s (p b))
+!(add-atom &s (q 1))
+!(add-atom &s (noise 0))
+!(add-atom &s (noise 1))
+!(add-atom &s (noise 2))
+!(add-atom &s (noise 3))
+!(add-atom &s (noise 4))
+!(catch (collapse (transform &s (, (take (p $x)) (read (q $y))) (,))))
+!(remaining (collapse (match &s (p $row) $row)))
+""", "zero_output_take_decline", extra_env={
+        "CETTA_TEST_TRANSFORM_CURSOR_CLONE_FAIL_AT": "3"})
+    if proc.returncode != 0 or proc.stdout.splitlines()[-1] != \
+            "(remaining (b))":
+        raise AssertionError(f"an answerless take was replayed: {proc.stdout!r}; {proc.stderr!r}")
+    if proc.stderr.count("transform-cursor-test-clone-refusal 3") != 1:
+        raise AssertionError(f"the answerless-take refusal did not fire: {proc.stderr!r}")
+    print("PASS: a failed collected continuation cannot replay a take with zero publications")
 
 
 def main():
