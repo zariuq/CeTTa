@@ -1,0 +1,11 @@
+; Not steps after the first: a made row with a local no pattern reads is a
+; fresh unknown, a new one at each firing, so a state with it is not of fixed
+; terms.  Under step every over a set store, grow's match reads (a), which is
+; there from the start, and each step makes another (item ?): two rows that
+; may differ.  Meeting only the matches that read a fresh row would stop after
+; one, so this program's steps meet every match, until the budget is spent.
+(store set)
+(step every)
+(budget 4)
+(a)
+(rule grow (read (a)) (make (item $n)))

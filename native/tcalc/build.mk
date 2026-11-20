@@ -18,9 +18,12 @@ TCALC_HEADERS = $(addprefix native/tcalc/,tcalc_core.h tcalc_flat_layout.h tcalc
 	tcalc_fire.generated.h) \
 	src/runner.h src/generated/runner_axes.generated.h src/generated/runner_lists.generated.h \
 	native/kernel/kernel.h native/kernel/tcalc_bridge.h native/kernel/batch.h
-# The unit's sources: the calculus, the storage it includes, and the adapter of
-# backend x86-flat.
-TCALC_UNIT = native/tcalc/tcalc_core.c native/tcalc/tcalc_store.c native/tcalc/tcalc_flat.c native/tcalc/tcalc_kernel.c
+# The unit's sources: the calculus, the storage (persistent maps of rows and
+# the stores built on them) and the run by delta it includes, and the adapter
+# of backend x86-flat.
+TCALC_UNIT = native/tcalc/tcalc_core.c native/tcalc/tcalc_store.c native/tcalc/tcalc_trie.c native/tcalc/tcalc_plan.c \
+	native/tcalc/tcalc_delta.c \
+	native/tcalc/tcalc_flat.c native/tcalc/tcalc_kernel.c
 
 ifeq ($(CESTA_BUILD),1)
 $(TCALC_CORE): native/tcalc/tcalc_core.cesta $(TCALC_UNIT) $(TCALC_HEADERS) | $(CESTA)
@@ -69,6 +72,7 @@ define tcalc_check
 endef
 
 .PHONY: test-tcalc-core test-tcalc
+test-all: test-tcalc-core test-tcalc
 $(TCALC_TEST_DIR)/tcalc_successors_test: tests/tcalc/tcalc_successors_test.c $(TCALC_SRC) $(TCALC_UNIT) $(TCALC_HEADERS) | $(TCALC_TEST_DIR)
 	$(CC) $(TCALC_SANITIZE_CFLAGS) -Inative/tcalc $< $(TCALC_CORE) native/tcalc/tcalc_syntax.c -o $@
 
@@ -79,11 +83,50 @@ $(TCALC_TEST_DIR)/tcalc_allocation_faults: tests/tcalc/tcalc_allocation_faults.c
 	$(CC) $(TCALC_SANITIZE_CFLAGS) -Inative/tcalc $< $(TCALC_CORE) native/tcalc/tcalc_syntax.c \
 		-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc -o $@
 
-test-tcalc-core: $(TCALC_TEST_DIR)/tcalc_main_sanitized $(TCALC_TEST_DIR)/tcalc_successors_test $(TCALC_TEST_DIR)/tcalc_decide_test $(TCALC_TEST_DIR)/tcalc_allocation_faults
+# The rules' join plans (tcalc_plan.c), as tcalc_main --plans writes them, for
+# the programs of tests/tcalc/plans: each equal to its .plans file.
+define tcalc_plans_check
+	@set -eu; failures=0; count=0; \
+	for f in tests/tcalc/plans/*.tcalc; do \
+		count=$$((count + 1)); \
+		out=$$($(1) --plans "$$f" 2>&1) || true; \
+		if [ "$$out" != "$$(cat "$${f%.tcalc}.plans")" ]; then echo "FAIL: $$f (plans)"; \
+			printf '%s\n' "$$out" | diff "$${f%.tcalc}.plans" - | head -20; failures=$$((failures + 1)); fi; \
+	done; \
+	[ $$failures -eq 0 ]; \
+	echo "PASS: the join plans of $$count programs (tests/tcalc/plans)"
+endef
+
+test-tcalc-core: $(TCALC_TEST_DIR)/tcalc_main_sanitized $(TCALC_TEST_DIR)/tcalc_successors_test $(TCALC_TEST_DIR)/tcalc_decide_test $(TCALC_TEST_DIR)/tcalc_allocation_faults \
+		$(TCALC_TEST_DIR)/tcalc_growth_test
 	$(call tcalc_check,$(TCALC_TEST_DIR)/tcalc_main_sanitized,standalone core with sanitizers)
+	$(call tcalc_plans_check,$(TCALC_TEST_DIR)/tcalc_main_sanitized)
 	@$(TCALC_TEST_DIR)/tcalc_successors_test
 	@$(TCALC_TEST_DIR)/tcalc_decide_test
 	@$(TCALC_TEST_DIR)/tcalc_allocation_faults
+	@$(TCALC_TEST_DIR)/tcalc_growth_test
+	@$(TCALC_TEST_DIR)/tcalc_growth_test step-one
+
+# Growth gates (tests/tcalc/tcalc_growth_test.c): the work the core counts
+# (unifications, rows met, rows held, identity work, indexes held) at a size n
+# and at 2n, which separates linear from quadratic growth; a gate fails only on
+# the growth class, never on a count, and counts do not depend on time or load.
+# test-tcalc-growth holds the gates of step every over a set store, and those
+# of the rules' join plans (a keyed chain, a guard decided early, searches
+# sharing an index), each beside a degraded variant;
+# test-tcalc-growth-step-one the gates of branching programs under step one:
+# unchanged rows shared between states, a branch that takes rows, a bag's
+# copies held as counts, and two orders reaching one state decided without
+# reading the store.  Each step-one gate also runs a degraded variant that
+# must show the class it rules out.  test-tcalc-core runs both.
+$(TCALC_TEST_DIR)/tcalc_growth_test: tests/tcalc/tcalc_growth_test.c $(TCALC_SRC) $(TCALC_UNIT) $(TCALC_HEADERS) | $(TCALC_TEST_DIR)
+	$(CC) $(TCALC_TEST_CFLAGS) -Inative/tcalc $< $(TCALC_CORE) native/tcalc/tcalc_syntax.c -o $@
+
+.PHONY: test-tcalc-growth test-tcalc-growth-step-one
+test-tcalc-growth: $(TCALC_TEST_DIR)/tcalc_growth_test
+	@$(TCALC_TEST_DIR)/tcalc_growth_test
+test-tcalc-growth-step-one: $(TCALC_TEST_DIR)/tcalc_growth_test
+	@$(TCALC_TEST_DIR)/tcalc_growth_test step-one
 
 TCALC_CETTA = tests/tcalc/run_cetta.sh $(abspath $(BIN))
 test-tcalc: $(BIN)

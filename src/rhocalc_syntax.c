@@ -7,8 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The surface readers build terms without scope; the elaborator below binds
- * names for every reader, so all readers share one scoping law. */
+/* The rho, rho-cost and mrho text readers build terms without scope; the
+ * elaborator below binds names for every reader, so all readers share one
+ * scoping law. */
 typedef struct {
     const char *text;
     size_t pos;
@@ -698,8 +699,8 @@ static Atom *rc_parse_term(RhoParser *parser) {
  * elaborator links a receive to its occurrences by spelling, which takes one
  * variable identity per spelling for the whole text; a caller without an
  * intern table gets one for the read. */
-static int rhocalc_parse_surface(const char *text, Arena *arena,
-                                 Atom ***out_atoms, RhoReader reader) {
+static int rhocalc_parse_rho_text(const char *text, Arena *arena,
+                                  Atom ***out_atoms, RhoReader reader) {
     RhoParser parser = {0};
     VarInternTable local;
     bool own_intern = g_var_intern == NULL;
@@ -828,7 +829,7 @@ static Atom *rho_quote_dropped_name(Atom *quote) {
                : NULL;
 }
 
-/* A name written without '$' in the surface syntax: the receive in scope
+/* A name written without '$' in rho syntax: the receive in scope
  * that binds its spelling.  Unbound, the cost reader reads the signature of
  * that spelling; the pure reader has no such name. */
 static Atom *rho_elab_bare_name(RhoElaborator *elab, Atom *bare) {
@@ -972,7 +973,7 @@ static int rhocalc_parse_source(const char *source, bool is_path,
                      "could not read %s", source ? source : "<null>");
             return -1;
         }
-        int n = rhocalc_parse_surface(
+        int n = rhocalc_parse_rho_text(
             is_path ? text : source, arena, out_atoms,
             semantic_profile == RHOCALC_SEMANTIC_PROFILE_COST
                 ? RHO_READER_RHO_COST : RHO_READER_RHO);

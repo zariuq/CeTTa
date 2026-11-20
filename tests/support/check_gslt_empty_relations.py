@@ -20,8 +20,6 @@ def compile_program(args, sources, target, output, closed=False, epilogue=None):
     command += ["--target", target]
     for entry in ("UsesMissingV1:10", "UsesNullaryV1:1", "NoFactsV1:", "NoFactsV1:1"):
         command += ["--closed-entry-mode" if closed else "--entry-mode", entry]
-    if target == "c":
-        command += ["--c-prefix", "fixture"]
     if epilogue is not None:
         command += ["--epilogue", str(epilogue)]
     completed(command + ["--out", str(output)], 30)
@@ -77,10 +75,10 @@ def main():
     compile_program(args, [base], "c", generated, closed=True)
     native = work / "empty-native"
     completed([*shlex.split(args.cc), "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I.",
-               str(generated), "native/gslt_native_runtime_v1.c",
-               "tests/langdef/native_direct/run_entry.c", "-o", str(native)], 30)
-    run = subprocess.run([str(native)], input="UsesMissingV1:10 present\nUsesNullaryV1:1 present\nNoFactsV1:\nNoFactsV1:1 present\n", capture_output=True,
-                         text=True, timeout=30, check=True)
+               f'-DGSLT_C_PROGRAM="{generated}"', "tests/support/gslt_c_answers_v1.c", "-o", str(native)], 30)
+    calls = work / "empty.calls"
+    calls.write_text("UsesMissingV1:10 present\nUsesNullaryV1:1 present\nNoFactsV1:\nNoFactsV1:1 present\n")
+    run = subprocess.run([str(native), "--calls", str(calls)], capture_output=True, text=True, timeout=30, check=True)
     assert run.stdout == "()\n()\n()\n((gslt:result:NoFactsV1:1))\n", run.stdout
 
     # An earlier nonterminating interpretation must still be pending: an

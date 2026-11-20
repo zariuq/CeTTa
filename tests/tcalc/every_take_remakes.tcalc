@@ -1,0 +1,10 @@
+; Not steps after the first: a rule that takes.  Under step every over a set
+; store, make-c reads (a) at every state, and its match, whose row was there a
+; step before, still counts: take-c takes the (c) it made, and make-c makes it
+; again in the same step.  Meeting only the matches that read a fresh row would
+; lose (c), so this program's steps meet every match.
+(store set)
+(step every)
+(a)
+(rule make-c (read (a)) (make (c)))
+(rule take-c (take (c)) (make (d)))

@@ -4162,17 +4162,9 @@ static unsigned source_invocation_plans(void) {
     unsigned checks = 0u;
     for (unsigned i = 0u; i < sizeof(cases) / sizeof(*cases); i++) {
         Atom *call = fixture_atom(&source, cases[i].call);
+        /* Every head here is a name the reference's prelude registers
+         * (decons among them), so each is a call with its body layout. */
         const PettaPlanNode *plan = petta_program_plan_current(program, call);
-        /* This extension spelling needs source registration. A known body
-         * layout must not itself establish that the source is a call. */
-        if (i == 5u) {
-            assert(plan && plan->role == PETTA_PLAN_DATA && !plan->computation.invocation.operation);
-            CettaInvocationPlan layout = petta_semantics_elaborate_invocation(
-                call->expr.elems[0]->sym_id, PETTA_FORM_NONE, cases[i].arity);
-            assert(layout.operation == cases[i].operation);
-            checks++;
-            continue;
-        }
         if (!plan || plan->role != PETTA_PLAN_STATIC_CALL)
             fprintf(stderr, "invocation authority: %s\n", cases[i].call);
         assert(plan && plan->role == PETTA_PLAN_STATIC_CALL);

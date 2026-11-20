@@ -1915,7 +1915,18 @@ static const PettaSemanticFormCase petta_semantic_form_cases[] = {
     {"id", PETTA_FORM_ID},
     {"append", PETTA_FORM_APPEND},
     {"cons", PETTA_FORM_CONS},
-    {"#+", PETTA_FORM_INT_ADD},
+    {"#+", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#-", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#*", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#div", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#//", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#mod", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#min", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#max", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#<", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#>", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#=", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#\\=", PETTA_FORM_INTEGER_CONSTRAINT},
     {"unique", PETTA_FORM_STREAM_UNIQUE},
     {"union", PETTA_FORM_STREAM_UNION},
     {"intersection", PETTA_FORM_STREAM_INTERSECTION},
@@ -16137,10 +16148,13 @@ int main(int argc, char **argv) {
         &space, &answers,
         "(let (#+ 7 35) 41 impossible)",
         NULL, 0u);
+    /* CLP(FD) integers are unbounded: a sum past the machine word is the
+     * big integer, as SWI's answers. */
+    const char *sum_wide[] = {"9223372036854775808"};
     expect_answers(
         &space, &answers,
         "(#+ 9223372036854775807 1)",
-        NULL, 0u);
+        sum_wide, 1u);
 
     const char *equal_true_false[] = {"true", "false"};
     expect_answers(

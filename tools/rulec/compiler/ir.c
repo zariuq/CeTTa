@@ -8,6 +8,7 @@ Sort *sorts; int nsorts, sortcap;
 Ctor *ctors; int nctors, ctorcap;
 Rule *rules; int nrules, rulecap;
 Map sort_map, ctor_map;
+char **declared_judgments; int ndeclared_judgments, declared_judgment_cap;
 int nerrors;
 char *module_name = "?", *theory_name = "?";
 
@@ -168,6 +169,10 @@ void load_wire(const char *path) {
                 r.rhs = pat_from(x->v[5], &r);
                 if (!sx_is_sym(x->v[6], "RuleBindingNone")) die("rule %s: unsupported binding annotation", r.label);
                 VEC_PUSH(rules, nrules, rulecap, r);
+            } else if (sx_head(x, "Judgment")) {
+                /* a constructor that is a judgment whether or not a rule's left side is headed by it
+                 * (a judgment without rules has no result) */
+                VEC_PUSH(declared_judgments, ndeclared_judgments, declared_judgment_cap, xstrdup(sx_str(x->v[1], "judgment")));
             } else if (sx_head(x, "wire-end")) {
                 ends++;
                 if (x->n != 5 || atoi(x->v[1]->s) != type_rows || atoi(x->v[2]->s) != term_rows ||

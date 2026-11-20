@@ -20,6 +20,15 @@
  *      clash, which needs that judgment to have one result: so it is by induction on derivations,
  *      over all leaves at once, and only when no rule queries a relation for unknowns);
  *   R  every rule of the judgment is reached by some leaf, or excluded wherever it is not.
+ * A judgment the DAG file marks nondet (it may give several results) tries every rule of a leaf, so X
+ * is not asked of it; a judgment not so marked must not call one that is, nor query a relation for
+ * unknowns.  Single-valued callees (those not marked) are what the target arguments of X rely on: the
+ * lockstep one, and saturation (two premises of the pair calling one single-valued judgment on
+ * arguments identical so far have unified targets; a clash makes the pair exclusive).
+ * Tests (rows (test NAME RELATION (COMPONENT) ...) of the DAG file: a relation's queries answered by a
+ * component of the atoms representation) take part in G: term-equal unifies its arguments,
+ * term-different of identical terms cannot hold, an integer test on literals is decided, and a test
+ * and its complement on identical arguments cannot both hold.
  * G evaluates premises on the path's input (the constructors its positive tests fix, unknowns
  * elsewhere): a premise whose call has no result, or whose value clashes with its target, cannot hold.
  * A call's value is what every rule that may apply to it gives (each with its own premises evaluated
@@ -74,7 +83,7 @@ static bool is(const X *x, const char *s) { return x && !x->list && !strcmp(x->s
 static bool hd(const X *x, const char *s) { return x && x->list && x->n && is(x->v[0], s); }
 
 /* signature */
-#define MAXC 4096
+#define MAXC 32768
 static char *cname[MAXC]; static int csort[MAXC], carity[MAXC], *cargs[MAXC], nc;
 static bool judgment[MAXC];
 static char *sname[1024]; static int ns;
@@ -83,10 +92,18 @@ static int ctor_of(const char *s) { for (int i = 0; i < nc; i++) if (!strcmp(cna
 
 /* rules: left side, right side, premises; variables numbered per rule */
 typedef struct P { int var; int c; int n; struct P **k; int vi; } P;   /* var: 1 variable (vi), 0 constructor */
-typedef struct { bool rel; P *src, *tgt; } Q;                             /* a premise: call src ~> tgt, or a relation query */
+typedef struct { bool rel; P *src, *tgt; char *relname; int nrel; P **args; int test; } Q;   /* a premise: call src ~> tgt, or a relation query */
 typedef struct { char *label; int head; P *lhs, *rhs; int nv; Q *prem; int np; } R;
 static R rules[MAXC]; static int nr;
-static bool binding_queries;   /* some relation query has an argument with a variable unbound before it */
+static bool *binding_query_rule;   /* the rule has a relation query with an argument unbound before it */
+static bool nondet_j[MAXC];        /* judgments the DAG file marks nondet */
+/* tests: relation name -> component kind; integer literals of the atoms sort */
+enum { T_EQUAL, T_DIFFERENT, T_LESS, T_NOT_LESS, T_GAP, T_NO_GAP, T_SCALAR, T_NON_SCALAR, T_KINDS };
+static const char *const t_name[T_KINDS] = {"term-equal", "term-different", "int-less", "int-not-less", "int-gap", "int-no-gap",
+                                            "unicode-scalar", "non-unicode-scalar"};
+static const int t_complement[T_KINDS] = {T_DIFFERENT, T_EQUAL, T_NOT_LESS, T_LESS, T_NO_GAP, T_GAP, T_NON_SCALAR, T_SCALAR};
+static char *test_rel[256]; static int test_kind[256], ntests;
+static bool clit[MAXC]; static long long clit_v[MAXC];
 static char *vnames[256]; static int nvnames;   /* the variables of the rule being read */
 
 static int list_items(X *x, X ***out) {
@@ -277,9 +294,45 @@ static int gcopy(int t, int since, bool *own) {
     return u;
 }
 static int gcall(int t, int depth);
+typedef struct { int kind, n, a[2]; } GT;   /* a test met while premises were evaluated */
+static GT *gt; static int ngt, gtcap;
+static bool glit(int t, long long *v) { t = gderef(t); if (gn[t].c < 0 || !clit[gn[t].c]) return false; *v = clit_v[gn[t].c]; return true; }
+static bool int_holds(int k, const long long *v) {
+    bool sc = (v[0] >= 0 && v[0] < 0xD800) || (v[0] > 0xDFFF && v[0] <= 0x10FFFF);
+    switch (k) {
+    case T_LESS: return v[0] < v[1];
+    case T_NOT_LESS: return v[1] <= v[0];
+    case T_GAP: return v[0] < (long long)(~0ull >> 1) && v[0] + 1 < v[1];
+    case T_NO_GAP: return v[0] == (long long)(~0ull >> 1) || v[1] <= v[0] + 1;
+    case T_SCALAR: return sc;
+    case T_NON_SCALAR: return !sc;
+    default: return true;
+    }
+}
+/* the tests met since mark cannot all hold */
+static bool gtests_fail(int mark) {
+    for (int i = mark; i < ngt; i++) {
+        if (gt[i].kind == T_DIFFERENT && gsame(gt[i].a[0], gt[i].a[1])) return true;
+        long long v[2] = {0, 0};
+        if (gt[i].kind >= T_LESS && glit(gt[i].a[0], &v[0]) && (gt[i].n < 2 || glit(gt[i].a[1], &v[1])) && !int_holds(gt[i].kind, v)) return true;
+        for (int j = mark; j < i; j++)
+            if (gt[j].kind == t_complement[gt[i].kind] && gt[j].n == gt[i].n && gsame(gt[i].a[0], gt[j].a[0]) &&
+                (gt[i].n < 2 || gsame(gt[i].a[1], gt[j].a[1])))
+                return true;
+    }
+    return false;
+}
 static bool gprems(const R *r, int *vars, int depth) {
     for (int j = 0; j < r->np; j++) {
         const Q *q = &r->prem[j];
+        if (q->rel && q->test >= 0) {
+            GT t = {q->test, q->nrel, {0, 0}};
+            for (int a = 0; a < q->nrel && a < 2; a++) t.a[a] = ginst(q->args[a], vars);
+            if (q->test == T_EQUAL) { if (!gunify(t.a[0], t.a[1])) return false; continue; }
+            if (ngt == gtcap) { gtcap = gtcap ? 2 * gtcap : 256; gt = realloc(gt, (size_t)gtcap * sizeof(GT)); if (!gt) die("out of memory"); }
+            gt[ngt++] = t;
+            continue;
+        }
         if (q->rel) continue;
         int v = gcall(ginst(q->src, vars), depth + 1);
         if (v == G_NONE) return false;
@@ -296,9 +349,11 @@ static int gcall(int t, int depth) {
     int val = G_NONE, head = gn[t].c;
     for (int r = 0; r < nr; r++) {
         if (rules[r].head != head) continue;
-        int mark = ngtrail, since = ngn, vars[256];
+        int mark = ngtrail, since = ngn, vars[256], tmark = ngt;
         for (int v = 0; v < rules[r].nv; v++) vars[v] = -1;
-        if (!gunify(ginst(rules[r].lhs, vars), t) || !gprems(&rules[r], vars, depth)) { gundo(mark); continue; }
+        bool out = !gunify(ginst(rules[r].lhs, vars), t) || !gprems(&rules[r], vars, depth) || gtests_fail(tmark);
+        ngt = tmark;
+        if (out) { gundo(mark); continue; }
         bool own = false;
         int res = gcopy(ginst(rules[r].rhs, vars), since, &own);
         gundo(mark);
@@ -330,23 +385,61 @@ static int gpath_input(void) {
 /* E by G: rule s's premises cannot hold for any input on the path */
 static bool g_excluded(int s) {
     int in = gpath_input(), vars[256];
+    ngt = 0;
     for (int v = 0; v < rules[s].nv; v++) vars[v] = -1;
-    return !gunify(ginst(rules[s].lhs, vars), in) || !gprems(&rules[s], vars, 0);
+    return !gunify(ginst(rules[s].lhs, vars), in) || !gprems(&rules[s], vars, 0) || gtests_fail(0);
 }
 /* X: no input on the path satisfies the premises of both a and b */
+static bool single_valued(int c) { return c >= 0 && judgment[c] && !nondet_j[c]; }
+static bool g_saturated_clash(int a, int b, int *va, int *vb) {
+    const R *rs[2] = {&rules[a], &rules[b]};
+    int *vs[2] = {va, vb};
+    for (int x = 0; x < 2; x++)
+        for (int j = 0; j < rs[x]->np; j++) {
+            const Q *q = &rs[x]->prem[j];
+            if (q->rel && q->test == T_EQUAL && !gunify(ginst(q->args[0], vs[x]), ginst(q->args[1], vs[x]))) return true;
+        }
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int x = 0; x < 2; x++)
+            for (int i = 0; i < rs[x]->np; i++) {
+                const Q *p = &rs[x]->prem[i];
+                if (p->rel || !single_valued(p->src->c)) continue;
+                for (int y = x; y < 2; y++)
+                    for (int j = y == x ? i + 1 : 0; j < rs[y]->np; j++) {
+                        const Q *q = &rs[y]->prem[j];
+                        if (q->rel || q->src->c != p->src->c) continue;
+                        int ta = ginst(p->tgt, vs[x]), tb = ginst(q->tgt, vs[y]);
+                        if (gsame(ta, tb) || !gsame(ginst(p->src, vs[x]), ginst(q->src, vs[y]))) continue;
+                        if (!gunify(ta, tb)) return true;
+                        changed = true;
+                    }
+            }
+    }
+    return false;
+}
 static bool g_exclusive(int a, int b) {
     int in = gpath_input(), va[256], vb[256];
+    ngt = 0;
     for (int v = 0; v < rules[a].nv; v++) va[v] = -1;
     for (int v = 0; v < rules[b].nv; v++) vb[v] = -1;
     if (!gunify(ginst(rules[a].lhs, va), in) || !gunify(ginst(rules[b].lhs, vb), in)) return true;
-    if (!binding_queries)
-        for (int j = 0; j < rules[a].np && j < rules[b].np; j++) {
-            const Q *qa = &rules[a].prem[j], *qb = &rules[b].prem[j];
-            if (qa->rel || qb->rel || qa->src->c != qb->src->c) break;
-            if (!gsame(ginst(qa->src, va), ginst(qb->src, vb))) break;
-            if (!gunify(ginst(qa->tgt, va), ginst(qb->tgt, vb))) return true;
-        }
-    return !gprems(&rules[a], va, 0) || !gprems(&rules[b], vb, 0);
+    for (int j = 0; j < rules[a].np && j < rules[b].np; j++) {
+        const Q *qa = &rules[a].prem[j], *qb = &rules[b].prem[j];
+        if (qa->rel || qb->rel || qa->src->c != qb->src->c || !single_valued(qa->src->c)) break;
+        if (!gsame(ginst(qa->src, va), ginst(qb->src, vb))) break;
+        if (!gunify(ginst(qa->tgt, va), ginst(qb->tgt, vb))) return true;
+    }
+    if (!gprems(&rules[a], va, 0) || !gprems(&rules[b], vb, 0) || gtests_fail(0)) return true;
+    /* again, saturated: the results of calls both make on the same arguments unified first */
+    in = gpath_input();
+    ngt = 0;
+    for (int v = 0; v < rules[a].nv; v++) va[v] = -1;
+    for (int v = 0; v < rules[b].nv; v++) vb[v] = -1;
+    gunify(ginst(rules[a].lhs, va), in);
+    gunify(ginst(rules[b].lhs, vb), in);
+    if (g_saturated_clash(a, b, va, vb)) return true;
+    return !gprems(&rules[a], va, 0) || !gprems(&rules[b], vb, 0) || gtests_fail(0);
 }
 static long nexcluded, nexclusive_pairs;
 
@@ -392,7 +485,9 @@ static void walk(int id) {
         if (rules[r].head != cur_j) { report("leaf names a rule of another judgment"); return; }
         rule_reached[r] = true;
         /* S: every constructor of r's left side is fixed by the path */
-        struct { const P *p; int occ[64]; int olen; } st[1024]; int sp = 0;
+        /* the work list of a leaf's check (walk recurses only above leaves, so one list serves all) */
+        static struct { const P *p; int occ[64]; int olen; } st[1024];
+        int sp = 0;
         for (int a = 0; a < rules[r].lhs->n; a++) { st[sp].p = rules[r].lhs->k[a]; st[sp].occ[0] = a; st[sp].olen = 1; sp++; }
         while (sp) {
             sp--;
@@ -403,8 +498,9 @@ static void walk(int id) {
             for (int i = 0; i < p->n; i++) { st[sp].p = p->k[i]; memcpy(st[sp].occ, occ, sizeof occ); st[sp].occ[olen] = i; st[sp].olen = olen + 1; sp++; }
         }
     }
-    /* X: the rules of a leaf with several are pairwise exclusive on the path */
-    for (int i = 0; i < ncand; i++)
+    /* X: the rules of a leaf with several are pairwise exclusive on the path (a nondet judgment tries
+     * them all) */
+    for (int i = 0; i < ncand && !nondet_j[cur_j]; i++)
         for (int j = i + 1; j < ncand; j++) {
             if (g_exclusive(x->cand[i], x->cand[j])) { nexclusive_pairs++; continue; }
             char m[256];
@@ -493,9 +589,11 @@ static long check_c(const char *cpath) {
                 trial = -1;
             }
         }
-        if (sscanf(line, "static T *p%d%63[^(]", &j, tail) >= 1 && strchr(line, '{')) {
-            bool rules_version = !strncmp(tail, "_rules", 6);
+        bool nd_proc = sscanf(line, "static int p%d%63[^(]", &j, tail) >= 1 && strchr(line, '{');
+        if (nd_proc || (sscanf(line, "static T *p%d%63[^(]", &j, tail) >= 1 && strchr(line, '{'))) {
+            bool rules_version = !nd_proc && !strncmp(tail, "_rules", 6);
             if (j < 0 || j >= nc || !judgment[j]) { BAD("procedure p%d is not a judgment", j); cur = -1; continue; }
+            if (nd_proc != nondet_j[j]) BAD("p%d (%s) is %s, its DAG says %s", j, cname[j], nd_proc ? "nondet" : "not nondet", nondet_j[j] ? "nondet" : "not");
             /* the body with the DAG: p<J>_rules when it exists, else p<J> */
             bool has_rules_version = strstr(src + (line - src) + strlen(line) + 1, "") != NULL && false;
             (void)has_rules_version;
@@ -507,6 +605,7 @@ static long check_c(const char *cpath) {
             if (rules_version) proc_seen[j] = true;
             continue;
         }
+        if (!strncmp(line, "static ", 7) || !strncmp(line, "struct ", 7)) { cur = -1; continue; }   /* another function or a continuation's object */
         if (cur < 0) continue;
         const char *p = line;
         while (*p == ' ') p++;
@@ -579,13 +678,14 @@ static long check_c(const char *cpath) {
                 trial_i++;
                 continue;
             }
+            if (nondet_j[cur] && strstr(p, "rc_trial_")) BAD("l%d of the nondet %s commits to one rule", trial, cname[cur]);
             const char *te = strstr(p, "rc_trial_end(tm_, ");
             int tr;
             if (te && sscanf(te, "rc_trial_end(tm_, %d)", &tr) == 1 && tr != trial_rule) BAD("trial block l%d: a candidate of rule %d ends its trial as rule %d", trial, trial_rule, tr);
             continue;
         }
         int rr;
-        if (blk_rule >= 0 && sscanf(p, "RC_RULE(%d);", &rr) == 1) {
+        if (blk_rule >= 0 && (sscanf(p, "RC_RULE(%d);", &rr) == 1 || (nondet_j[cur] && sscanf(p, "RC_COUNT_RULE(%d);", &rr) == 1))) {
             if (rr != blk_rule) BAD("block r%d records rule %d", blk_rule, rr);
             blk_rule = -1;
         }
@@ -620,6 +720,7 @@ static long check_c(const char *cpath) {
 int main(int argc, char **argv) {
     if (argc != 3 && argc != 4) die("usage: rulec_validate WIRE DAG [GENERATED.c]");
     char *w = slurp(argv[1]);
+    binding_query_rule = calloc(MAXC, 1);
     static char *rows_seen_name[MAXC * 2], *rows_seen_text[MAXC * 2]; static bool rows_seen_kind[MAXC * 2]; int nrows_seen = 0;
     for (char *line = strtok(w, "\n"); line; line = strtok(NULL, "\n")) {
         const char *p = line;
@@ -648,6 +749,10 @@ int main(int argc, char **argv) {
             for (int i = 0; i < carity[nc]; i++) cargs[nc][i] = sort_of(ps[i]->v[2]->v[1]->s);
             free(ps);
             nc++;
+        } else if (hd(x, "Judgment")) {
+            int c = ctor_of(x->v[1]->s);
+            if (c < 0) die("(Judgment %s): no such constructor", x->v[1]->s);
+            judgment[c] = true;
         } else if (hd(x, "ScopedRewriteRuleV1")) {
             R *r = &rules[nr];
             nvnames = 0;
@@ -665,9 +770,15 @@ int main(int argc, char **argv) {
                     r->prem[j].src = pat(ps[j]->v[1]); r->prem[j].tgt = pat(ps[j]->v[2]);
                     mark_vars(r->prem[j].tgt, bound);
                 } else if (hd(ps[j], "RelationQuery")) {
-                    r->prem[j].rel = true;
-                    X **as; int na = list_items(ps[j]->v[2], &as);
-                    for (int a = 0; a < na; a++) { P *q = pat(as[a]); if (!all_bound(q, bound)) binding_queries = true; mark_vars(q, bound); }
+                    Q *q = &r->prem[j];
+                    q->rel = true; q->test = -1; q->relname = ps[j]->v[1]->s;
+                    X **as; q->nrel = list_items(ps[j]->v[2], &as);
+                    q->args = calloc((size_t)(q->nrel ? q->nrel : 1), sizeof(P *));
+                    for (int a = 0; a < q->nrel; a++) {
+                        q->args[a] = pat(as[a]);
+                        if (!all_bound(q->args[a], bound)) binding_query_rule[nr] = true;
+                        mark_vars(q->args[a], bound);
+                    }
                     free(as);
                 } else die("unknown premise form in rule %s", r->label);
             }
@@ -739,9 +850,45 @@ int main(int argc, char **argv) {
             } else die("unknown node kind");
         } else if (hd(x, "root")) {
             int c = ctor_of(x->v[1]->s);
-            if (c < 0 || !judgment[c]) die("root for %s, which heads no rule", x->v[1]->s);
+            if (c < 0 || !judgment[c]) die("root for %s, which is no judgment", x->v[1]->s);
             root_of[c] = atoi(x->v[2]->s);
+            if (x->n == 4 && is(x->v[3], "nondet")) nondet_j[c] = true;
+        } else if (hd(x, "test")) {
+            if (x->n < 4 || !x->v[3]->list || x->v[3]->n != 1 || ntests == 256) die("bad test row");
+            int k = -1;
+            for (int i = 0; i < T_KINDS; i++) if (is(x->v[3]->v[0], t_name[i])) k = i;
+            if (k < 0) die("unknown test component %s", x->v[3]->v[0]->s);
+            test_rel[ntests] = x->v[2]->s; test_kind[ntests++] = k;
+        } else if (hd(x, "rep") && x->n == 3 && !strncmp(x->v[2]->s, "atoms_", 6)) {
+            /* the atoms sort: a nullary constructor named by a decimal integer is that integer */
+            int s = sort_of(x->v[1]->s);
+            for (int c = 0; c < nc; c++) {
+                if (csort[c] != s || judgment[c] || carity[c]) continue;
+                char *e; const char *q = cname[c];
+                long long v = strtoll(q, &e, 10);
+                if (*q && !*e && (isdigit((unsigned char)q[0]) || (q[0] == '-' && isdigit((unsigned char)q[1])))) { clit[c] = true; clit_v[c] = v; }
+            }
         }
+    }
+    /* each relation query answered by a test knows its component */
+    for (int i = 0; i < nr; i++)
+        for (int j = 0; j < rules[i].np; j++) {
+            Q *q = &rules[i].prem[j];
+            if (!q->rel) continue;
+            for (int t = 0; t < ntests; t++) if (!strcmp(test_rel[t], q->relname)) q->test = test_kind[t];
+            if (q->test >= 0 && binding_query_rule[i]) { cur_j = rules[i].head; report("a test with an argument no earlier premise binds"); }
+        }
+    /* a judgment not marked nondet has at most one result: it queries no relation for unknowns and
+     * calls no judgment marked nondet */
+    for (int i = 0; i < nr; i++) {
+        if (nondet_j[rules[i].head]) continue;
+        cur_j = rules[i].head;
+        if (binding_query_rule[i]) { char m[256]; snprintf(m, sizeof m, "rule \"%s\" queries a relation for unknowns but its judgment is not nondet", rules[i].label); report(m); }
+        for (int j = 0; j < rules[i].np; j++)
+            if (!rules[i].prem[j].rel && nondet_j[rules[i].prem[j].src->c]) {
+                char m[256]; snprintf(m, sizeof m, "rule \"%s\" calls the nondet %s but its judgment is not nondet", rules[i].label, cname[rules[i].prem[j].src->c]);
+                report(m);
+            }
     }
     rule_reached = calloc((size_t)nr, 1);
     int nj = 0;

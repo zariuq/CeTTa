@@ -1329,4 +1329,13 @@
   (1169 TRANSFORM_TCALC_IMPORT_ROW "transform-tcalc-import-row")
   (1170 TRANSFORM_TCALC_LOWERED_NODE "transform-tcalc-lowered-node")
   (1171 TRANSFORM_TCALC_CODE_HIT "transform-tcalc-code-hit")
-  (1172 TRANSFORM_TCALC_CODE_MISS "transform-tcalc-code-miss")))
+  (1172 TRANSFORM_TCALC_CODE_MISS "transform-tcalc-code-miss")
+  ; the rho lane's structural order: pairs of nodes compared, and nodes hashed.
+  (1173 RHO_ORDER_VISIT "rho-order-visit")
+  (1174 RHO_HASH_VISIT "rho-hash-visit")
+  ; a space's rows read for a pattern (space_occurrence_cursor_init, or a
+  ; read begun again from its start): the reads opened, and the rows they
+  ; offer to be unified with the pattern.  Rows per read is the work an index
+  ; leaves to unification.
+  (1175 SPACE_OCCURRENCE_CURSOR_OPEN "space-occurrence-cursor-open")
+  (1176 SPACE_OCCURRENCE_CURSOR_ROW "space-occurrence-cursor-row")))

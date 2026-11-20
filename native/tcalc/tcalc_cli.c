@@ -588,6 +588,89 @@ int cetta_tcalc_run_file(const char *path, const char *profile, const char *vers
     return status;
 }
 
+/* ---- Printing join plans ---------------------------------------------------
+ * The words of tc_program_plans (tcalc_core.h), read as any backend reads
+ * them: the indexes, then each rule's plans, an op a line. */
+static void plan_print_path(uint32_t path, FILE *out) {
+    fprintf(out, "%u", path & 1023u);
+    if (path >> 10 & 1023u) fprintf(out, ".%u", (path >> 10 & 1023u) - 1);
+    if (path >> 20) fprintf(out, ".%u", (path >> 20) - 1);
+}
+
+static void plan_print_relation(const TcTerms *t, uint32_t head, uint32_t length, FILE *out) {
+    fputs("(relation ", out);
+    if (head) tc_print(t, head, out); else fputs("()", out);
+    fprintf(out, " %u)", length);
+}
+
+static void plan_print_probe(const TcTerms *t, const uint32_t *w, uint32_t probe, FILE *out) {
+    uint32_t head = w[probe + 1], index = w[probe + 3], level = w[probe + 4];
+    if (head == TC_PLAN_OPEN) { fputs(" (open)", out); return; }
+    fputc(' ', out);
+    plan_print_relation(t, head, w[probe + 2], out);
+    if (index == TC_PLAN_NONE) { fputs(" (rows)", out); return; }
+    fprintf(out, " (index %u %u) (keys", index, level);
+    for (uint32_t l = 0; l < level; l++) { fputc(' ', out); tc_print(t, w[probe + 5 + l], out); }
+    fputc(')', out);
+}
+
+static void plans_print(TcProgram *program, const uint32_t *w, FILE *out) {
+    static const char *const names[] = {"probe", "unify", "check", "absent", "tell", "take", "make"};
+    const TcTerms *t = tc_program_terms(program);
+    uint32_t at = w[1], rules = w[0];
+    for (uint32_t c = 0; c < w[at]; c++) {
+        uint32_t index = w[at + 1 + c];
+        fprintf(out, "(index %u ", c);
+        plan_print_relation(t, w[index], w[index + 1], out);
+        fputs(" (paths", out);
+        for (uint32_t l = 0; l < w[index + 2]; l++) { fputc(' ', out); plan_print_path(w[index + 5 + l], out); }
+        fputc(')', out);
+        uint32_t domain = w[index + 3];
+        if (domain) {
+            fputs(" (domain", out);
+            for (uint32_t i = 0; i < w[domain]; i++) { fputc(' ', out); tc_print(t, w[domain + 1 + i], out); }
+            fputc(')', out);
+        }
+        fputs(")\n", out);
+    }
+    for (uint32_t r = 0; r < rules; r++) {
+        fprintf(out, "(plans %s", tc_program_rule_name(program, r));
+        uint32_t record = w[2 + r];
+        if (!record) { fputs(" (as an earlier rule))\n", out); continue; }
+        for (uint32_t e = 0; e < w[record]; e++) {
+            if (e + 1 < w[record]) fprintf(out, "\n  (enter %u", e); else fputs("\n  (every", out);
+            uint32_t plan = w[record + 1 + e];
+            for (uint32_t k = 0; k < w[plan]; k++) {
+                const uint32_t *op = w + plan + 1 + 4 * k;
+                fprintf(out, "\n    (%s %u", names[op[0]], op[1]);
+                if (op[0] == TC_PLAN_PROBE || op[0] == TC_PLAN_ABSENT) plan_print_probe(t, w, op[2], out);
+                fputc(')', out);
+            }
+            fputc(')', out);
+        }
+        fputs(")\n", out);
+    }
+}
+
+int cetta_tcalc_plans_file(const char *path, const char *syntax) {
+    size_t length;
+    int status;
+    char *text = read_file(path, &length, &status);
+    if (!text) return status;
+    if (!syntax) syntax = tc_surface_name(tc_surface_of_path(path));
+    Run run;
+    status = run_open(&run, text, length, syntax, NULL, NULL, stderr);
+    free(text);
+    if (status) return status;
+    size_t words = 0;
+    const uint32_t *plans = tc_program_plans(run.program, &words);
+    status = words ? 0 : 1;
+    if (words) plans_print(run.program, plans, stdout);
+    else fprintf(stderr, "error: out of memory\n");
+    run_close(&run);
+    return status;
+}
+
 int cetta_tcalc_translate_file(const char *path, const char *from, const char *to) {
     TcSurface source, target;
     if (!from) from = tc_surface_name(tc_surface_of_path(path));

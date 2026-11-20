@@ -3922,7 +3922,7 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
      * window. A suspended program owner alone cannot establish currency.
      * Workers retain their canonical adapter until shared program mutation
      * and compiled episodes have a separately qualified concurrent contract. */
-    CETTA_SCOPED_SHARED_TRANSITION(he_execution_observation);
+    CETTA_SCOPED_SPACE_OBSERVE(he_execution_observation, space);
     HeSharedExecutionPlan plan;
     if (!he_shared_execution_admit_environment(space, arena, source, preserve_bindings,
                                                environment, &plan))

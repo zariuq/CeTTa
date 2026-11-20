@@ -33,12 +33,12 @@ $(MEGALODON_TEST_DIR):
 
 $(addprefix $(MEGALODON_TEST_DIR)/,$(MEGALODON_UNITS) $(MEGALODON_TOOLS)): \
 		$(MEGALODON_TEST_DIR)/%: tests/megalodon/%.c $(MEGALODON_KERNEL_SRC) $(MEGALODON_HEADERS) \
-		| $(MEGALODON_TEST_DIR)
+		$(MEGALODON_GSLT_READER_DEPS) | $(MEGALODON_TEST_DIR)
 	$(CC) $(MEGALODON_TEST_CFLAGS) -I. -Inative/megalodon $< $(MEGALODON_KERNEL_SRC) -o $@
 
 $(addprefix $(MEGALODON_TEST_DIR)/,$(addsuffix _sanitized,$(MEGALODON_UNITS))): \
 		$(MEGALODON_TEST_DIR)/%_sanitized: tests/megalodon/%.c $(MEGALODON_KERNEL_SRC) $(MEGALODON_HEADERS) \
-		| $(MEGALODON_TEST_DIR)
+		$(MEGALODON_GSLT_READER_DEPS) | $(MEGALODON_TEST_DIR)
 	$(CC) $(MEGALODON_SANITIZE_CFLAGS) -I. -Inative/megalodon $< $(MEGALODON_KERNEL_SRC) -o $@
 
 .PHONY: test-megalodon test-megalodon-core test-megalodon-sanitized test-megalodon-metta \
@@ -56,7 +56,7 @@ test-megalodon-sanitized: $(addprefix $(MEGALODON_TEST_DIR)/,$(addsuffix _saniti
 MEGALODON_TSAN_CFLAGS ?= -O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -D_GNU_SOURCE -pthread \
 	-fsanitize=thread
 $(MEGALODON_TEST_DIR)/test_mg_threads_tsan: tests/megalodon/test_mg_threads.c $(MEGALODON_KERNEL_SRC) \
-		$(MEGALODON_HEADERS) | $(MEGALODON_TEST_DIR)
+		$(MEGALODON_HEADERS) $(MEGALODON_GSLT_READER_DEPS) | $(MEGALODON_TEST_DIR)
 	$(CC) $(MEGALODON_TSAN_CFLAGS) -I. -Inative/megalodon $< $(MEGALODON_KERNEL_SRC) -o $@
 
 .PHONY: test-megalodon-tsan
@@ -88,8 +88,8 @@ test-seal: $(BIN)
 # The corpus targets, which need a Megalodon checkout, are in mk/external.mk.
 MG_SOURCE_DUMP = $(MEGALODON_TEST_DIR)/mg-source-dump
 
-$(MG_SOURCE_DUMP): tests/megalodon/mg_source_dump.c $(MEGALODON_GSLT_READER_SRC) \
-		native/megalodon/mg_source.h native/megalodon/mg_gslt_reader.h | $(MEGALODON_TEST_DIR)
+$(MG_SOURCE_DUMP): tests/megalodon/mg_source_dump.c $(MEGALODON_GSLT_READER_SRC) $(MEGALODON_GSLT_READER_DEPS) \
+		native/megalodon/mg_source.h | $(MEGALODON_TEST_DIR)
 	$(CC) $(MEGALODON_TEST_CFLAGS) -I. -Inative/megalodon $< $(MEGALODON_GSLT_READER_SRC) -o $@
 
 .PHONY: test-megalodon-source test-megalodon-gslt
@@ -106,14 +106,14 @@ MG_SEXPRINFO = $(MEGALODON_TEST_DIR)/mg-sexprinfo
 MG_CHECK = $(MEGALODON_TEST_DIR)/mg-check
 
 $(MG_SEXPRINFO): tests/megalodon/mg_sexprinfo.c $(MEGALODON_KERNEL_SRC) $(MEGALODON_HEADERS) \
-		native/megalodon/mg_upstream_tables.inc | $(MEGALODON_TEST_DIR)
+		$(MEGALODON_GSLT_READER_DEPS) native/megalodon/mg_upstream_tables.inc | $(MEGALODON_TEST_DIR)
 	$(CC) $(MEGALODON_TEST_CFLAGS) -I. -Inative/megalodon $< $(MEGALODON_KERNEL_SRC) -o $@
 
 # mg-check: the verdict of the native kernel on a document (what is verified,
 # under which of the document's axioms).
-$(MG_CHECK): tests/megalodon/mg_check.c $(MEGALODON_KERNEL_SRC) $(MEGALODON_HEADERS) \
-		native/megalodon/mg_upstream_tables.inc native/gslt_native_runtime_v1.h | $(MEGALODON_TEST_DIR)
-	$(CC) $(MEGALODON_TEST_CFLAGS) -DGN_COUNT -I. -Inative -Inative/megalodon $< $(MEGALODON_KERNEL_SRC) -o $@
+$(MG_CHECK): tests/megalodon/mg_check.c $(MEGALODON_KERNEL_SRC) $(MEGALODON_HEADERS) $(MEGALODON_GSLT_READER_DEPS) \
+		native/megalodon/mg_upstream_tables.inc | $(MEGALODON_TEST_DIR)
+	$(CC) $(MEGALODON_TEST_CFLAGS) -DRC_COUNT -I. -Inative/megalodon $< $(MEGALODON_KERNEL_SRC) -o $@
 
 .PHONY: test-megalodon-elab test-megalodon-verdict
 test-megalodon-elab: $(MG_SEXPRINFO)
@@ -139,10 +139,20 @@ MEGALODON_GSLT_ENTRY_MODES = --closed-entry-mode MgNextTokenV1:10 \
 	--closed-entry-mode MgReadItemV1:10 \
 	--closed-entry-mode MgReadDocumentV1:10 \
 	--closed-entry-mode MgReadWithSignaturesV1:110
-# The same presentations compiled to C (petta-direct --target c; the
-# sources are in the Makefile's MEGALODON_GSLT_READER_SRC, linked into
-# CeTTa) and a reader around them (tests/megalodon/mg_gslt_native.c).
+# The same presentations compiled to C (petta-direct --target c: the
+# relations read as a rule module that rulec compiles; its decision DAGs and
+# code checked by rulec_validate), linked into CeTTa as one instance of the
+# rule runtime with the reader around it (MEGALODON_GSLT_READER_SRC), whose
+# global names but the reader's API get the prefix mgr_; and a reader tool
+# around them (tests/megalodon/mg_gslt_native.c).
 MG_GSLT_NATIVE = $(MEGALODON_TEST_DIR)/mg-gslt-native
+MEGALODON_GSLT_READER_API = mg_gslt_file_bytes mg_gslt_node mg_gslt_child mg_gslt_read_tokens \
+	mg_source_read_items mg_gslt_reader_work mg_gslt_reader_trace mg_source_new mg_source_free \
+	mg_source_set_input mg_source_position mg_source_error mg_source_next
+MEGALODON_GSLT_READER_DEPS = $(MEGALODON_GSLT_NATIVE_C) $(MEGALODON_GSLT_READER_NAMES) \
+	native/megalodon/mg_gslt_reader.c native/megalodon/mg_gslt_reader.h \
+	native/rule_runtime/rc_rt.c native/rule_runtime/rc_rt.h \
+	native/rule_components/rc_atoms.c native/rule_components/rc_atoms.h
 
 $(MEGALODON_GSLT_PROGRAM): $(GSLT_GROUND_RELATIONS_V1) $(CETTA_PETTA_GROUND_RELATIONS_V1) \
 		$(MEGALODON_GSLT_SOURCES) $(LANGDEF_COMPILER_V1_BIN) | $(MEGALODON_TEST_DIR)
@@ -153,48 +163,42 @@ $(MEGALODON_GSLT_PROGRAM): $(GSLT_GROUND_RELATIONS_V1) $(CETTA_PETTA_GROUND_RELA
 		$(MEGALODON_GSLT_ENTRY_MODES) --out $@ >/dev/null
 
 $(MEGALODON_GSLT_NATIVE_C): $(GSLT_GROUND_RELATIONS_V1) $(CETTA_PETTA_GROUND_RELATIONS_V1) \
-		$(MEGALODON_GSLT_SOURCES) $(LANGDEF_COMPILER_V1_BIN)
+		$(MEGALODON_GSLT_SOURCES) $(LANGDEF_COMPILER_V1_BIN) $(RULEC_VALIDATE_BIN)
 	@mkdir -p $(dir $@)
-	$(LANGDEF_COMPILER_V1_BIN) petta-direct --target c --c-prefix megalodon_reader_v1 \
+	$(LANGDEF_COMPILER_V1_BIN) petta-direct --target c \
 		--source $(GSLT_GROUND_RELATIONS_V1) \
 		--source $(CETTA_PETTA_GROUND_RELATIONS_V1) \
 		$(foreach source,$(MEGALODON_GSLT_SOURCES),--source $(source)) \
-		$(MEGALODON_GSLT_ENTRY_MODES) --out $@ >/dev/null
+		$(MEGALODON_GSLT_ENTRY_MODES) --out $@.new >/dev/null
+	$(RULEC_VALIDATE_BIN) $@.new.wire $@.new.dag $@.new >/dev/null
+	@for f in wire dag census bindings; do mv $@.new.$$f $@.$$f; done
+	@mv $@.new $@
 
-$(MG_GSLT_NATIVE): tests/megalodon/mg_gslt_native.c $(MEGALODON_GSLT_READER_SRC) \
-		native/gslt_native_runtime_v1.h native/megalodon/mg_gslt_reader.h | $(MEGALODON_TEST_DIR)
+$(MEGALODON_GSLT_READER_NAMES): native/megalodon/mg_reader_instance.c $(filter-out $(MEGALODON_GSLT_READER_NAMES),$(MEGALODON_GSLT_READER_DEPS))
+	@mkdir -p $(dir $@)
+	@sh tools/rulec/instance_names.sh native/megalodon/mg_reader_instance.c $@ mgr_ "$(MEGALODON_GSLT_READER_API)" \
+		-O0 -std=c11 -D_GNU_SOURCE -pthread -I. -Inative/megalodon >/dev/null || { rm -f $@; exit 1; }
+
+$(foreach variant,o stage0.o runtime-stats.o,native/megalodon/mg_reader_instance.$(BUILD_OBJ_TAG).$(variant)): \
+		$(MEGALODON_GSLT_READER_DEPS)
+
+$(MG_GSLT_NATIVE): tests/megalodon/mg_gslt_native.c $(MEGALODON_GSLT_READER_SRC) $(MEGALODON_GSLT_READER_DEPS) \
+		| $(MEGALODON_TEST_DIR)
 	$(CC) -O2 -std=c11 -D_GNU_SOURCE -pthread -Wall -Wextra -Werror -I. -Inative/megalodon \
 		$< $(MEGALODON_GSLT_READER_SRC) -o $@
 
-# The same reader built with its trace (GN_TRACE): mg-gslt-native-trace
-# --trace FILE writes each mode entered, each rule that answers or misses,
-# and each mode without an answer.
-MG_GSLT_NATIVE_TRACE = $(MEGALODON_TEST_DIR)/mg-gslt-native-trace
-$(MG_GSLT_NATIVE_TRACE): tests/megalodon/mg_gslt_native.c $(MEGALODON_GSLT_READER_SRC) \
-		native/gslt_native_runtime_v1.h native/megalodon/mg_gslt_reader.h | $(MEGALODON_TEST_DIR)
-	$(CC) -O2 -std=c11 -D_GNU_SOURCE -DGN_TRACE -pthread -Wall -Wextra -Werror -I. -Inative/megalodon \
-		$< $(MEGALODON_GSLT_READER_SRC) -o $@
-
-# The C target itself (langdef-compile petta-direct --target c) on small
-# presentations: refusals, class runs, and answers equal to the PeTTa
-# target's in CeTTa; then the runtime's spans on their own.
-.PHONY: test-gslt-native-direct
-test-gslt-native-direct: $(LANGDEF_COMPILER_V1_BIN) $(BIN)
-	@python3 tests/langdef/run_native_direct_fixtures.py $(LANGDEF_COMPILER_V1_BIN) ./$(BIN)
-	@mkdir -p runtime/langdef-native-direct
-	@$(CC) -O1 -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -I. tests/langdef/native_direct/test_spans.c \
-		native/gslt_native_runtime_v1.c -o runtime/langdef-native-direct/test_spans
-	@runtime/langdef-native-direct/test_spans
-
+# The reader on the fixtures, tokens and items, as Megalodon reads them; and
+# its traces (--trace): each step's derivation checked by rulec_tracecheck
+# against the module's rules, the readings equal to those of a run without.
 .PHONY: test-megalodon-gslt-native
-test-megalodon-gslt-native: $(MG_GSLT_NATIVE) $(MG_GSLT_NATIVE_TRACE) test-gslt-native-direct
+test-megalodon-gslt-native: $(MG_GSLT_NATIVE) $(RULEC_TRACECHECK_BIN)
 	@for mode in tokens items; do \
 		python3 tests/megalodon/compare_gslt_reader.py --engine native --native $(MG_GSLT_NATIVE) \
 			--mode $$mode --expected --work $(MEGALODON_TEST_DIR)/gslt-native-$$mode \
 			tests/megalodon/source_reader/*.mg || exit 1; \
 	done
-	@python3 tests/megalodon/check_gslt_trace.py $(MG_GSLT_NATIVE) $(MG_GSLT_NATIVE_TRACE) \
-		$(MEGALODON_TEST_DIR)/gslt-trace tests/megalodon/source_reader/*.mg
+	@python3 tests/megalodon/check_gslt_trace.py $(MG_GSLT_NATIVE) $(RULEC_TRACECHECK_BIN) \
+		$(MEGALODON_GSLT_NATIVE_C).wire $(MEGALODON_TEST_DIR)/gslt-trace tests/megalodon/source_reader/*.mg
 
 test-megalodon-gslt: $(BIN) $(MEGALODON_GSLT_PROGRAM)
 	@python3 tools/generate_megalodon_gslt_v1.py --check

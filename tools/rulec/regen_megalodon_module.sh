@@ -5,7 +5,8 @@
 #
 # MODULE-FILE is the Megalodon kernel module, kept in Mettapedia as
 # metta/gslt/module/MegalodonKernel.module.  As for the HOL Light module (regen_hol_light_module.sh):
-# CeTTa's own module reader prints the module's core rows, rulec compiles them, rulec_validate checks
+# CeTTa's own module reader prints the module's core rows, rulec compiles them, every judgment a function
+# (--functional), rulec_validate checks
 # every DAG against the rules (with the leaves where overlapping rules are told apart by their
 # premises) and the generated dispatch code against the DAGs.  The representations and components
 # are the rows of native/megalodon_module/mgk.bindings.  Then the instance's names
@@ -28,7 +29,7 @@ $CC -O2 -o "$WORK/rulec_validate" "$ROOT/tools/rulec/rulec_validate.c"
 printf '!(import! &self "%s")\n!(wire:dump "%s" "Kernel")\n' "$ROOT/tools/rulec/dump_wire.metta" "$MODULE" > "$WORK/dump.metta"
 "$CETTA" "$WORK/dump.metta" | grep '^(' > "$WORK/MegalodonKernel.wire"
 SHA=$(sha256sum "$MODULE" | cut -d' ' -f1)
-"$WORK/rulec" "$WORK/MegalodonKernel.wire" \
+"$WORK/rulec" "$WORK/MegalodonKernel.wire" --functional \
   --census "$SG/census.txt" --census-tsv "$WORK/census.tsv" --dag "$SG/MegalodonKernel.dag" \
   --bindings "$ROOT/native/megalodon_module/mgk.bindings" \
   --include-rt ../../rule_runtime/rc_rt.h --component-prefix ../../rule_components/ --source-digest "$SHA" \

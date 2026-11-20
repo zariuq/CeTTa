@@ -14,6 +14,7 @@
 #include "space_dense.h"
 #include "space_tuples.h"
 #include "space_skeleton.h"
+#include "shared_transition.h"
 
 /* ── Discrimination Trie (à la Vampire SubstitutionTree) ───────────────── */
 
@@ -221,7 +222,7 @@ typedef struct {
     AtomId *id_present_table;
     uint32_t id_present_table_cap, id_present_table_used;
     CettaIndex id_present_synced_len; /* logical prefix already reflected in id_present (lazy catch-up) */
-    bool id_present_dirty;    /* removal/bulk invalidated bits: clear + full resync on next membership query */
+    _Atomic bool id_present_dirty;    /* removal/bulk invalidated bits: clear + full resync on next membership query */
     /* Two synced rows share a key: a removal then marks the bits stale
      * rather than taking its row's key out, which the other row still has. */
     bool id_present_shared;
@@ -242,11 +243,11 @@ typedef struct {
     /* The head last found to keep rows, whose facts an add asks no more
      * than their header. */
     SymbolId dense_rows_head;
-    bool eq_idx_dirty;
-    bool ty_idx_dirty;
-    bool exact_idx_dirty;
-    bool has_non_exact_atoms;
-    bool has_non_exact_atoms_dirty;
+    _Atomic bool eq_idx_dirty;
+    _Atomic bool ty_idx_dirty;
+    _Atomic bool exact_idx_dirty;
+    _Atomic bool has_non_exact_atoms;
+    _Atomic bool has_non_exact_atoms_dirty;
     /* Cached representation presence; occupies existing flag padding. */
     _Atomic bool has_proof_image;
     uint32_t secondary_index_deferral_depth;
@@ -278,7 +279,7 @@ typedef struct Space {
             AtomId *id_present_table;
             uint32_t id_present_table_cap, id_present_table_used;
             CettaIndex id_present_synced_len;
-            bool id_present_dirty;
+            _Atomic bool id_present_dirty;
             bool id_present_shared;
             AtomId *id_present_keys;
             CettaIndex id_present_key_len, id_present_key_cap;
@@ -287,11 +288,11 @@ typedef struct Space {
             CettaCount dense_facts;
             uint64_t dense_epoch;
             SymbolId dense_rows_head;
-            bool eq_idx_dirty;
-            bool ty_idx_dirty;
-            bool exact_idx_dirty;
-            bool has_non_exact_atoms;
-            bool has_non_exact_atoms_dirty;
+            _Atomic bool eq_idx_dirty;
+            _Atomic bool ty_idx_dirty;
+            _Atomic bool exact_idx_dirty;
+            _Atomic bool has_non_exact_atoms;
+            _Atomic bool has_non_exact_atoms_dirty;
             _Atomic bool has_proof_image;
             uint32_t secondary_index_deferral_depth;
             uint64_t *marks;
@@ -302,6 +303,20 @@ typedef struct Space {
         };
     };
     SpaceKind kind;
+    /* The space's channel guard (shared_transition.h): readers of the space
+     * share it, a writer excludes them.  It covers every field of this
+     * struct and everything the space owns: rows, indexes, overlay chain,
+     * declarations, revisions, journals, pinned occurrences and proof
+     * images.  Its key, fixed at initialization, orders it among the
+     * guards a section takes together. */
+    CettaGuard guard;
+    /* Readers that build the space's derived state under the read guard
+     * (indexes, the match trie, cursor and journal registrations) hold this;
+     * a writer, who excludes every reader, needs it not.  A flag announcing
+     * derived state is atomic and turns clean only after the state is
+     * built: a reader that finds it clean reads what it announces, and no
+     * reader rebuilds what another reads, since only a writer dirties it. */
+    CettaLeafRwLock maintenance;
     /* Strict: the space keeps only what its kind needs, and a general match
      * reads its rows in turn; full: it keeps the general indexes too.  Both
      * answer every operation alike. */
@@ -379,6 +394,106 @@ typedef struct Space {
        stood when it began (space.c, "Entry reads"); NULL while none does. */
     struct SpaceJournal *journal;
 } Space;
+
+/* ── Space sections ─────────────────────────────────────────────────────
+ *
+ * A section takes the guards of exactly the spaces it touches: the space in
+ * the requested mode, its mutation target (a module's own view writes its
+ * module) in that mode, and, for reading, every space its composed view
+ * reads (overlay base chain, module dependencies).  The extra spaces are
+ * discovered by reading the space under its guard and taken in key order
+ * (shared_transition.h); a section that had to take its set again reads
+ * those links again before it returns.  Inside a concurrent scope only;
+ * elsewhere a section is one thread-local load and a branch. */
+void space_guard_section_enter(CettaGuardSection *section, const Space *s,
+                               CettaGuardMode mode);
+/* Several spaces at one instant: every guard is taken before anything is
+ * read, so the section observes one joint cut. */
+void space_guard_section_enter_spaces(CettaGuardSection *section,
+                                      const Space *const *spaces,
+                                      const CettaGuardMode *modes,
+                                      size_t count);
+/* Add a space found by reading (a handle read out of a held space) to a
+ * section already open.  CETTA_GUARD_REACQUIRED: the section let its guards
+ * go to take the set in key order; the caller revalidates what it read
+ * against the spaces' revisions before using it. */
+CettaGuardAcquire space_guard_section_add(CettaGuardSection *section,
+                                          const Space *s,
+                                          CettaGuardMode mode);
+/* Whether the calling thread holds `s`'s guard (any mode). */
+bool space_guard_held(const Space *s);
+/* Exclusive physical access to `s`'s derived state: nothing under the
+ * space's write guard, the space's maintenance lock under its read guard. */
+void space_maintenance_enter(CettaLeafRwSection *section, const Space *s);
+
+static inline void space_maintenance_open(CettaLeafRwSection *section,
+                                          const Space *s) {
+    section->held = false;
+    if (CETTA_COORDINATION_ACTIVE() && s)
+        space_maintenance_enter(section, s);
+}
+
+#define SPACE_MAINTAIN(name, space)                                       \
+    __attribute__((cleanup(cetta_leaf_rw_section_close)))                 \
+    CettaLeafRwSection name;                                              \
+    space_maintenance_open(&(name), (space))
+
+static inline void space_guard_section_open(CettaGuardSection *section,
+                                            const Space *s,
+                                            CettaGuardMode mode) {
+    section->held = false;
+    if (CETTA_COORDINATION_ACTIVE())
+        space_guard_section_enter(section, s, mode);
+}
+
+static inline void space_guard_section_open2(CettaGuardSection *section,
+                                             const Space *first,
+                                             CettaGuardMode first_mode,
+                                             const Space *second,
+                                             CettaGuardMode second_mode) {
+    section->held = false;
+    if (CETTA_COORDINATION_ACTIVE()) {
+        const Space *spaces[2] = {first, second};
+        CettaGuardMode modes[2] = {first_mode, second_mode};
+        space_guard_section_enter_spaces(section, spaces, modes, 2u);
+    }
+}
+
+/* Bracket one physical read (or write) of a space.  Release is part of
+ * every normal C exit path through the cleanup attribute. */
+#define CETTA_SCOPED_SPACE_READ(name, space)                              \
+    __attribute__((cleanup(cetta_guard_section_close)))                   \
+    CettaGuardSection name;                                               \
+    space_guard_section_open(&(name), (space), CETTA_GUARD_READ)
+#define CETTA_SCOPED_SPACE_WRITE(name, space)                             \
+    __attribute__((cleanup(cetta_guard_section_close)))                   \
+    CettaGuardSection name;                                               \
+    space_guard_section_open(&(name), (space), CETTA_GUARD_WRITE)
+/* A read of a space through its engine.  The native engine's readers build
+ * derived state under the space's maintenance lock and share the guard;
+ * other engines' readers build bridges and projections without it and
+ * take the guard exclusively. */
+static inline CettaGuardMode space_observation_mode(const Space *s) {
+    SpaceEngine kind = s ? __atomic_load_n(&s->match_backend.kind,
+                                           __ATOMIC_RELAXED)
+                         : SPACE_ENGINE_NATIVE;
+    return kind == SPACE_ENGINE_NATIVE ||
+           kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT
+        ? CETTA_GUARD_READ : CETTA_GUARD_WRITE;
+}
+
+#define CETTA_SCOPED_SPACE_OBSERVE(name, space)                           \
+    __attribute__((cleanup(cetta_guard_section_close)))                   \
+    CettaGuardSection name;                                               \
+    space_guard_section_open(&(name), (space),                            \
+                             space_observation_mode(space))
+
+/* Two spaces at one instant (a copy reads one and writes the other). */
+#define CETTA_SCOPED_SPACES2(name, first, first_mode, second, second_mode) \
+    __attribute__((cleanup(cetta_guard_section_close)))                   \
+    CettaGuardSection name;                                               \
+    space_guard_section_open2(&(name), (first), (first_mode), (second),  \
+                              (second_mode))
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
 /* Failure leaves no registered observer/root or owned payload. */

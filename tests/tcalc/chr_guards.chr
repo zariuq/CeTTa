@@ -1,0 +1,6 @@
+% profile: step=one
+% The guards of CHR as tcalc's: X \== Y is /=, X < Y and X =< Y order
+% integers.  On the ground constraints here they mean what they mean in CHR.
+% (CHR's X \== Y also holds while X is unbound; tcalc's asks every solution.)
+item(1). item(2). item(3). item(b).
+keep @ item(X) <=> X \== b, 1 < X, X =< 2 | kept(X).

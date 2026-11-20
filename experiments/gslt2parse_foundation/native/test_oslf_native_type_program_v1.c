@@ -4,6 +4,7 @@
 #include "symbol.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static uint32_t checks_run;
@@ -168,33 +169,120 @@ static bool validate_program_shape(const PPOSLFNativeTypePlanV1 *plan) {
     return ok;
 }
 
-static bool load_expected(const char *path,
-                          uint32_t expected_heads,
-                          uint32_t expected_steps,
-                          uint32_t expected_external,
-                          uint32_t expected_open) {
-    PPOSLFNativeTypePlanV1 plan;
-    char error[512] = {0};
+static bool starts_with(const char *text, const char *prefix) {
+    return strncmp(text, prefix, strlen(prefix)) == 0;
+}
+
+/* The facts a native program declares, counted from its text, one fact per
+   line: (compile-oslf-native-type-v1 (KIND ...)). */
+static bool count_declared_facts(const char *path,
+                                 uint32_t *heads,
+                                 uint32_t *steps,
+                                 uint32_t *externals) {
+    static const char fact[] = "(compile-oslf-native-type-v1 (";
+    FILE *file = fopen(path, "rb");
+    char *text = NULL;
+    long size = -1;
     bool ok = false;
 
-    pposlf_native_type_plan_v1_init(&plan);
-    if (!expect(pposlf_native_type_plan_v1_load(
-                    &plan, path, error, sizeof(error)),
-                error[0] ? error : "native program did not load"))
-        goto done;
-    ok = expect(plan.head_signature_len == expected_heads,
-                "native program head count changed") &&
-         expect(plan.step_schema_len == expected_steps,
-                "native program step count changed") &&
-         expect(plan.external_relation_len == expected_external,
-                "native program interface count changed") &&
-         expect(plan.open_head_len == expected_open,
-                "native program open-relation count changed") &&
-         expect(plan.term_len > 0u && plan.semantic_digest[0] != '\0',
-                "native program did not retain executable terms") &&
-         validate_program_shape(&plan);
+    *heads = *steps = *externals = 0u;
+    if (!file)
+        return false;
+    if (fseek(file, 0, SEEK_END) == 0 && (size = ftell(file)) >= 0 &&
+        fseek(file, 0, SEEK_SET) == 0 &&
+        (text = malloc((size_t)size + 1u)) != NULL &&
+        fread(text, 1u, (size_t)size, file) == (size_t)size) {
+        text[size] = '\0';
+        for (const char *line = text; *line;) {
+            const char *end = strchr(line, '\n');
 
-done:
+            if (starts_with(line, fact)) {
+                const char *kind = line + sizeof(fact) - 1u;
+
+                if (starts_with(kind, "oslf-head-signature-v1 "))
+                    (*heads)++;
+                else if (starts_with(kind, "oslf-step-schema-v1 "))
+                    (*steps)++;
+                else if (starts_with(kind, "oslf-external-relation-v1 "))
+                    (*externals)++;
+            }
+            line = end ? end + 1 : line + strlen(line);
+        }
+        ok = true;
+    }
+    free(text);
+    fclose(file);
+    return ok;
+}
+
+static bool open_head_listed(const PPOSLFNativeTypePlanV1 *plan,
+                             const PPOSLFNativeTermV1 *head) {
+    uint32_t arity = head->kind == PPOSLF_NATIVE_TERM_APPLICATION_V1
+                         ? head->edge_len
+                         : 0u;
+
+    for (uint32_t index = 0u; index < plan->open_head_len; index++) {
+        const PPOSLFNativeOpenHeadV1 *open = &plan->open_heads[index];
+
+        if (open->kind == head->kind && open->arity == arity &&
+            open->integer == head->integer &&
+            (open->text == head->text ||
+             (open->text && head->text &&
+              strcmp(open->text, head->text) == 0)))
+            return true;
+    }
+    return false;
+}
+
+/* A program is admitted whole: every head signature, step schema and
+   authored interface its text declares, every premise it leaves undefined
+   listed as an open relation, in a well-formed shape. */
+static bool load_declared(const char *path, PPOSLFNativeTypePlanV1 *plan) {
+    char error[512] = {0};
+    uint32_t heads = 0u;
+    uint32_t steps = 0u;
+    uint32_t externals = 0u;
+    uint32_t group = 0u;
+    bool defines_every_head;
+    bool ok;
+
+    pposlf_native_type_plan_v1_init(plan);
+    if (!expect(count_declared_facts(path, &heads, &steps, &externals),
+                "native program text could not be read") ||
+        !expect(pposlf_native_type_plan_v1_load(
+                    plan, path, error, sizeof(error)),
+                error[0] ? error : "native program did not load"))
+        return false;
+    ok = expect(plan->head_signature_len == heads,
+                "native program lost or invented a head signature") &&
+         expect(steps > 0u && plan->step_schema_len == steps,
+                "native program lost or invented a step schema") &&
+         expect(plan->external_relation_len == externals,
+                "native program lost or invented an authored interface") &&
+         expect(plan->term_len > 0u && plan->semantic_digest[0] != '\0',
+                "native program did not retain executable terms") &&
+         validate_program_shape(plan);
+    defines_every_head = pposlf_native_type_plan_v1_head_group(
+        plan, PPOSLF_NATIVE_TERM_VARIABLE_V1, NULL, 0, &group);
+    for (uint32_t index = 0u;
+         ok && !defines_every_head && index < plan->body_root_len;
+         index++) {
+        const PPOSLFNativeTermV1 *premise =
+            &plan->terms[plan->body_roots[index]];
+
+        if (!pposlf_native_type_plan_v1_head_group(
+                plan, premise->kind, premise->text, premise->integer,
+                &group))
+            ok = expect(open_head_listed(plan, premise),
+                        "an undefined premise is not listed as open");
+    }
+    return ok;
+}
+
+static bool program_admitted(const char *path) {
+    PPOSLFNativeTypePlanV1 plan;
+    bool ok = load_declared(path, &plan);
+
     pposlf_native_type_plan_v1_free(&plan);
     return ok;
 }
@@ -202,24 +290,16 @@ done:
 static bool validate_structural_canary(const char *path) {
     bool kinds[PPOSLF_NATIVE_TERM_APPLICATION_V1 + 1u] = {false};
     PPOSLFNativeTypePlanV1 plan;
-    char error[512] = {0};
     bool empty_body = false;
     bool two_premises = false;
     bool recursive = false;
     bool ok = false;
 
-    pposlf_native_type_plan_v1_init(&plan);
-    if (!expect(pposlf_native_type_plan_v1_load(
-                    &plan, path, error, sizeof(error)),
-                error[0] ? error : "structural native-program canary failed") ||
-        !expect(plan.head_signature_len == 25u &&
-                    plan.step_schema_len == 30u,
-                "structural native-program inventory changed") ||
+    if (!load_declared(path, &plan) ||
         !expect(plan.external_relation_len == 0u,
                 "closed structural canary acquired an interface") ||
         !expect(plan.open_head_len == 0u,
-                "closed structural canary acquired an open relation") ||
-        !validate_program_shape(&plan))
+                "closed structural canary acquired an open relation"))
         goto done;
     for (uint32_t index = 0u; index < plan.term_len; index++) {
         if ((uint32_t)plan.terms[index].kind <
@@ -363,15 +443,15 @@ int main(int argc, char **argv) {
     g_hashcons = NULL;
     g_var_intern = NULL;
 
-    ok = load_expected(argv[1], 335u, 809u, 20u, 16u) &&
-         load_expected(argv[2], 178u, 1023u, 13u, 8u) &&
+    ok = program_admitted(argv[1]) &&
+         program_admitted(argv[2]) &&
          validate_structural_canary(argv[3]) &&
          expect_rejected(argv[4]) &&
          expect_rejected(argv[5]) &&
          expect_rejected(argv[6]) &&
          transactional_rejection(argv[3], argv[4]) &&
          deletion_changes_program(argv[3], argv[7]) &&
-         load_expected(argv[8], 5u, 4u, 1u, 1u) &&
+         program_admitted(argv[8]) &&
          expect_rejected_with(
              argv[9], "lacks an authored extensional interface") &&
          expect_rejected_with(

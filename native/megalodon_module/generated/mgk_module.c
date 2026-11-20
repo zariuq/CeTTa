@@ -6168,3 +6168,88 @@ T *rc_call(int judgment, T **a) {
     default: return (T *)0;
     }
 }
+void rc_solve(int judgment, T **a, const RcK *k) {
+    (void)a; (void)k;
+    switch (judgment) {
+    case 8: { T *r_ = p8(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 9: { T *r_ = p9(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 10: { T *r_ = p10(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 11: { T *r_ = p11(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 12: { T *r_ = p12(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 13: { T *r_ = p13(a[0]); if (r_) k->fn(k, r_); return; }
+    case 17: { T *r_ = p17(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 20: { T *r_ = p20(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 26: { T *r_ = p26(a[0], a[1], a[2]); if (r_) k->fn(k, r_); return; }
+    case 27: { T *r_ = p27(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 28: { T *r_ = p28(a[0], a[1], a[2]); if (r_) k->fn(k, r_); return; }
+    case 29: { T *r_ = p29(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 30: { T *r_ = p30(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 31: { T *r_ = p31(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 32: { T *r_ = p32(a[0]); if (r_) k->fn(k, r_); return; }
+    case 33: { T *r_ = p33(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 36: { T *r_ = p36(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 37: { T *r_ = p37(a[0]); if (r_) k->fn(k, r_); return; }
+    case 38: { T *r_ = p38(a[0]); if (r_) k->fn(k, r_); return; }
+    case 49: { T *r_ = p49(a[0], a[1], a[2]); if (r_) k->fn(k, r_); return; }
+    case 50: { T *r_ = p50(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 51: { T *r_ = p51(a[0], a[1], a[2]); if (r_) k->fn(k, r_); return; }
+    case 52: { T *r_ = p52(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 53: { T *r_ = p53(a[0], a[1], a[2]); if (r_) k->fn(k, r_); return; }
+    case 54: { T *r_ = p54(a[0], a[1], a[2]); if (r_) k->fn(k, r_); return; }
+    case 55: { T *r_ = p55(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 56: { T *r_ = p56(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 57: { T *r_ = p57(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 58: { T *r_ = p58(a[0]); if (r_) k->fn(k, r_); return; }
+    case 59: { T *r_ = p59(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 60: { T *r_ = p60(a[0]); if (r_) k->fn(k, r_); return; }
+    case 61: { T *r_ = p61(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 62: { T *r_ = p62(a[0]); if (r_) k->fn(k, r_); return; }
+    case 63: { T *r_ = p63(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 64: { T *r_ = p64(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 65: { T *r_ = p65(a[0], a[1], a[2]); if (r_) k->fn(k, r_); return; }
+    case 66: { T *r_ = p66(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 67: { T *r_ = p67(a[0]); if (r_) k->fn(k, r_); return; }
+    case 68: { T *r_ = p68(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 69: { T *r_ = p69(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 70: { T *r_ = p70(a[0], a[1], a[2]); if (r_) k->fn(k, r_); return; }
+    case 71: { T *r_ = p71(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 72: { T *r_ = p72(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 73: { T *r_ = p73(a[0], a[1], a[2], a[3]); if (r_) k->fn(k, r_); return; }
+    case 74: { T *r_ = p74(a[0]); if (r_) k->fn(k, r_); return; }
+    case 75: { T *r_ = p75(a[0], a[1], a[2], a[3]); if (r_) k->fn(k, r_); return; }
+    case 76: { T *r_ = p76(a[0], a[1], a[2], a[3], a[4]); if (r_) k->fn(k, r_); return; }
+    case 77: { T *r_ = p77(a[0], a[1], a[2], a[3]); if (r_) k->fn(k, r_); return; }
+    case 80: { T *r_ = p80(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 81: { T *r_ = p81(a[0]); if (r_) k->fn(k, r_); return; }
+    case 82: { T *r_ = p82(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 83: { T *r_ = p83(a[0]); if (r_) k->fn(k, r_); return; }
+    case 84: { T *r_ = p84(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 85: { T *r_ = p85(a[0], a[1], a[2], a[3]); if (r_) k->fn(k, r_); return; }
+    case 95: { T *r_ = p95(a[0]); if (r_) k->fn(k, r_); return; }
+    case 96: { T *r_ = p96(a[0]); if (r_) k->fn(k, r_); return; }
+    case 97: { T *r_ = p97(a[0], a[1], a[2]); if (r_) k->fn(k, r_); return; }
+    case 98: { T *r_ = p98(a[0], a[1], a[2]); if (r_) k->fn(k, r_); return; }
+    case 99: { T *r_ = p99(a[0], a[1], a[2]); if (r_) k->fn(k, r_); return; }
+    case 100: { T *r_ = p100(a[0], a[1], a[2]); if (r_) k->fn(k, r_); return; }
+    case 105: { T *r_ = p105(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 126: { T *r_ = p126(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 127: { T *r_ = p127(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 128: { T *r_ = p128(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 129: { T *r_ = p129(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 130: { T *r_ = p130(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 131: { T *r_ = p131(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 132: { T *r_ = p132(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 133: { T *r_ = p133(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 134: { T *r_ = p134(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 135: { T *r_ = p135(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 136: { T *r_ = p136(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    case 137: { T *r_ = p137(a[0], a[1], a[2]); if (r_) k->fn(k, r_); return; }
+    case 138: { T *r_ = p138(a[0], a[1], a[2]); if (r_) k->fn(k, r_); return; }
+    case 139: { T *r_ = p139(a[0], a[1], a[2]); if (r_) k->fn(k, r_); return; }
+    case 140: { T *r_ = p140(a[0], a[1], a[2], a[3]); if (r_) k->fn(k, r_); return; }
+    case 141: { T *r_ = p141(a[0], a[1], a[2]); if (r_) k->fn(k, r_); return; }
+    case 142: { T *r_ = p142(a[0], a[1], a[2], a[3]); if (r_) k->fn(k, r_); return; }
+    case 143: { T *r_ = p143(a[0], a[1]); if (r_) k->fn(k, r_); return; }
+    default: return;
+    }
+}

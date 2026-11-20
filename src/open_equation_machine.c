@@ -4411,10 +4411,109 @@ static bool oem_snapshot_let(const Atom *expr) {
         oem_var_occurrences(body, binder->var_id, 0u) == 1u;
 }
 
+/* The distinct variables of a pattern, added to `vars`. */
+static bool oem_leg_vars(Atom *atom, VarId **vars, uint32_t *len,
+                         uint32_t *cap, uint32_t depth) {
+    if (depth > OEM_MAX_DEPTH)
+        return false;
+    if (atom->kind == ATOM_VAR) {
+        for (uint32_t index = 0u; index < *len; index++)
+            if (var_id_eq((*vars)[index], atom->var_id))
+                return true;
+        if (!oem_reserve((void **)vars, cap, *len + 1u, sizeof(**vars)))
+            return false;
+        (*vars)[(*len)++] = atom->var_id;
+        return true;
+    }
+    if (atom->kind != ATOM_EXPR || !atom_has_vars(atom))
+        return true;
+    for (CettaExprIndex index = 0u; index < atom->expr.len; index++)
+        if (!oem_leg_vars(atom->expr.elems[index], vars, len, cap, depth + 1u))
+            return false;
+    return true;
+}
+
+/* How many of a leg's variables are among `bound`. */
+static uint32_t oem_leg_bound(const VarId *vars, uint32_t len,
+                              const VarId *bound, uint32_t bound_len) {
+    uint32_t shared = 0u;
+    for (uint32_t var = 0u; var < len; var++)
+        for (uint32_t index = 0u; index < bound_len; index++)
+            if (var_id_eq(vars[var], bound[index])) {
+                shared++;
+                break;
+            }
+    return shared;
+}
+
+/* The legs of a conjunction in the order they are read, into `out`.  A leg
+ * whose variables the legs before it all bind only tests, and comes next,
+ * the first such keeping its place; otherwise the next leg as written, if
+ * it shares a variable with the legs before it or none remaining does;
+ * otherwise, of those that do, the one leaving the fewest unbound, the
+ * first such keeping its place.  A leg read as rows binds every variable
+ * it has (a row with variables is the host's), and the conjunction reads
+ * its space as it stood at its call ([DIFF-20]), so every order answers the
+ * same bag; only the order of its answers may differ.  A written order
+ * that joins each leg to those before it is kept but for its tests. */
+static bool oem_plan_legs(Atom *const *legs, uint32_t count, Atom **out) {
+    VarId **vars = calloc(count, sizeof(*vars));
+    uint32_t *lens = calloc(count, sizeof(*lens));
+    uint32_t *caps = calloc(count, sizeof(*caps));
+    bool *placed = calloc(count, sizeof(*placed));
+    VarId *bound = NULL;
+    uint32_t bound_len = 0u, bound_cap = 0u;
+    bool ok = vars && lens && caps && placed;
+    for (uint32_t leg = 0u; ok && leg < count; leg++)
+        ok = oem_leg_vars(legs[leg], &vars[leg], &lens[leg], &caps[leg], 0u);
+    for (uint32_t position = 0u; ok && position < count; position++) {
+        uint32_t test = count, written = count, joined = count;
+        uint32_t joined_free = UINT32_MAX;
+        for (uint32_t leg = 0u; leg < count; leg++) {
+            if (placed[leg])
+                continue;
+            uint32_t shared =
+                oem_leg_bound(vars[leg], lens[leg], bound, bound_len);
+            if (written == count)
+                written = leg;
+            if (position > 0u && shared == lens[leg] && test == count)
+                test = leg;
+            if (shared > 0u && lens[leg] - shared < joined_free) {
+                joined = leg;
+                joined_free = lens[leg] - shared;
+            }
+        }
+        uint32_t next = test;
+        if (next == count)
+            next = position == 0u || joined == count ||
+                    oem_leg_bound(vars[written], lens[written], bound,
+                                  bound_len) > 0u
+                ? written : joined;
+        placed[next] = true;
+        out[position] = legs[next];
+        for (uint32_t var = 0u; ok && var < lens[next]; var++) {
+            if (oem_leg_bound(&vars[next][var], 1u, bound, bound_len))
+                continue;
+            ok = oem_reserve((void **)&bound, &bound_cap, bound_len + 1u,
+                             sizeof(*bound));
+            if (ok)
+                bound[bound_len++] = vars[next][var];
+        }
+    }
+    for (uint32_t leg = 0u; vars && leg < count; leg++)
+        free(vars[leg]);
+    free(vars);
+    free(lens);
+    free(caps);
+    free(placed);
+    free(bound);
+    return ok;
+}
+
 /* `(match space pattern template)`: the template's code runs once per row
  * of the space that unifies with the pattern.  A conjunction `(, p1 p2 ...)`
- * matches its patterns in turn, as the nested matches equation search
- * evaluates it by. */
+ * matches its patterns in the order oem_plan_legs gives, as nested
+ * matches. */
 static bool oem_build_match(OemCompile *compile, Atom *expr,
                             const PettaPlanNode *plan, uint32_t depth,
                             bool tail, uint32_t *out) {
@@ -4465,11 +4564,27 @@ static bool oem_build_match(OemCompile *compile, Atom *expr,
         atom_is_symbol_id(pattern->expr.elems[0], g_builtin_syms.comma);
     if (connective && pattern->expr.len < 2u)
         return oem_reject(compile, "match pattern connective");
-    return oem_build_match_leg(
+    uint32_t count = connective ? (uint32_t)pattern->expr.len - 1u : 1u;
+    /* The program's own space, of a kind with no order, reads its legs in
+     * the planned order; a space of an ordered kind answers a conjunction
+     * in the order its patterns are written, as one named by a value
+     * (which may be one) does here. */
+    Space *self = compile->program ? compile->program->space : NULL;
+    bool planned = connective && count > 1u && self &&
+        !space_is_ordered(self) &&
+        atom_is_symbol_id(expr->expr.elems[1], g_builtin_syms.self);
+    Atom **legs = planned ? malloc(sizeof(*legs) * count) : NULL;
+    if (planned && (!legs ||
+                    !oem_plan_legs(pattern->expr.elems + 1u, count, legs))) {
+        free(legs);
+        return oem_reject(compile, "out of memory");
+    }
+    bool built = oem_build_match_leg(
         compile, expr->expr.elems[1], plan ? petta_plan_child(plan, 1u) : NULL,
-        connective ? pattern->expr.elems + 1u : &pattern,
-        connective ? pattern->expr.len - 1u : 1u, template,
-        template_plan, depth, tail, connective, 0u, out);
+        planned ? legs : connective ? pattern->expr.elems + 1u : &pattern,
+        count, template, template_plan, depth, tail, connective, 0u, out);
+    free(legs);
+    return built;
 }
 
 static bool oem_emit_goals(OemCompile *compile, uint32_t index);
@@ -9701,12 +9816,21 @@ static inline __attribute__((always_inline)) OemRun oem_publish(
     return OEM_RUN_ANSWER;
 }
 
+/* Whether an equation may answer a call of `head`: one read of the
+ * space's equation index. */
+static bool oem_space_has_equations(Space *space, SymbolId head) {
+    CETTA_SCOPED_SPACE_OBSERVE(equation_index_read, space);
+    return space_equations_may_match_known_head(space, head);
+}
+
 /* ---- running ------------------------------------------------------------- */
 
 /* A host can establish the same compiled reads after a disjoint append.
  * The program stays immutable, and the host owns the validation bookmark. */
 static bool oem_program_current(CettaOpenEquationCursor *cursor,
                                  const CettaOpenEquationProgram *program) {
+    /* One read of the program's token, or the host's revalidation of it. */
+    CETTA_SCOPED_SPACE_OBSERVE(program_authority, program ? (Space *)program->space : NULL);
     return space_program_token_is_current(program->token) ||
         (cursor->runtime.program_current &&
          cursor->runtime.program_current(cursor->runtime.context,
@@ -9986,8 +10110,13 @@ static bool oem_space_has_schema(CettaOpenEquationCursor *cursor, Space *root,
             return cursor->schemas[index].schema;
     }
     Atom **types = NULL;
-    uint32_t count = space_get_declared_types(root, &cursor->region,
-                                              reference, &types);
+    uint32_t count = 0u;
+    {
+        /* One read of the name's declarations. */
+        CETTA_SCOPED_SPACE_OBSERVE(schema_read, root);
+        count = space_get_declared_types(root, &cursor->region,
+                                         reference, &types);
+    }
     bool found = false;
     for (uint32_t index = 0u; index < count && !found; index++) {
         Atom *type = types[index];
@@ -10210,6 +10339,9 @@ static bool oem_space_small(const Space *space) {
 
 static bool oem_small_space_rows(CettaOpenEquationCursor *cursor,
                                  Space *space) {
+    /* The table's read token, the rows it is built from and the token it
+     * keeps are one observation of the shared space. */
+    CETTA_SCOPED_SPACE_OBSERVE(small_space_rows, space);
     if (space_read_token_matches_live_space(cursor->rows_read, space))
         return true;
     /* A root variable asks the index for every row. */
@@ -12339,7 +12471,7 @@ static bool oem_applied_pure(const CettaOpenEquationCursor *cursor,
         petta_semantics_intrinsic_partial_arity(head, &own) &&
         own == arity && cursor->runtime.builtin_allowed &&
         cursor->runtime.builtin_allowed(cursor->runtime.context, head) &&
-        !space_equations_may_match_known_head(program->space, head);
+        !oem_space_has_equations(program->space, head);
 }
 
 /* The operands of the type-pure operation `head` are values, ground
@@ -12788,6 +12920,9 @@ static const CettaOpenEquationProgram *oem_callable_program(
         !atom_petta_callable_identity(head, &identity) ||
         !petta_semantics_lambda_arity(head, &full_arity) || full_arity != arity)
         return NULL;
+    /* The token an entry is kept under, the compilation and its
+     * confirmation are one observation of the shared space. */
+    CETTA_SCOPED_SPACE_OBSERVE(callable_program_observation, space);
     SpaceProgramToken now = space_program_token(space);
     for (uint32_t index = 0u; index < cursor->callable_len; index++) {
         OemCallable *entry = &cursor->callables[index];
@@ -12917,8 +13052,7 @@ static OemRun oem_apply_step(CettaOpenEquationCursor *cursor,
         CettaPlainScalar scalar;
         if (args[0] && args[1] &&
             oem_scalar_operation(head, args, 2u, &scalar) &&
-            !space_equations_may_match_known_head(program->space,
-                                                  head->sym_id)) {
+            !oem_space_has_equations(program->space, head->sym_id)) {
             Atom *result = scalar.kind == CETTA_PLAIN_SCALAR_BOOL
                 ? oem_truth(cursor, scalar.as.boolean)
                 : grounded_plain_scalar_materialize(&cursor->region, &scalar);
@@ -13967,6 +14101,9 @@ typedef struct OemAbsentHead {
 static const CettaOpenEquationProgram *oem_enter_evaluated(
     CettaOpenEquationCursor *cursor, Space *space, SymbolId head,
     uint32_t arity) {
+    /* The relation's admission, a remembered absence and its token, and the
+     * program the host gives are one observation of the shared space. */
+    CETTA_SCOPED_SPACE_OBSERVE(evaluated_head_observation, space);
     if (cursor->runtime.relation_admitted &&
         !cursor->runtime.relation_admitted(
             cursor->runtime.context, space, head, arity)) {
@@ -14059,8 +14196,11 @@ static bool oem_template_may_be_call(const CettaOpenEquationProgram *program,
             return false;
         head = first->literal;
     }
-    if (!head || head->kind != ATOM_SYMBOL || !program->space ||
-        !space_equations_may_match_known_head(program->space, head->sym_id))
+    if (!head || head->kind != ATOM_SYMBOL || !program->space)
+        return false;
+    /* The head's equations are counted in one observation. */
+    CETTA_SCOPED_SPACE_OBSERVE(equation_count_observation, program->space);
+    if (!space_equations_may_match_known_head(program->space, head->sym_id))
         return false;
     SpaceEquationCursor cursor;
     SpaceEquationOccurrenceId id;
@@ -19443,7 +19583,7 @@ static __attribute__((noinline)) OemRun oem_try_stored(
     cursor->fresh_var_len = 0u;
     /* The row's records are read, and its parts viewed or decoded, as one
      * transition of the shared universe. */
-    CETTA_SCOPED_SHARED_TRANSITION(read);
+    /* Reads only the term universe of the stored row, whose readers take no lock. */
     OemUnify unified = oem_unify_stored(cursor, pattern, universe, row, 0u);
     if (unified != OEM_UNIFY_OK)
         return unified == OEM_UNIFY_FAIL ? OEM_RUN_FAILED : OEM_RUN_HANDOFF;
@@ -19718,7 +19858,7 @@ static bool oem_lazy_row_may_unify(const CettaOpenEquationCursor *cursor,
                                    OemKeptScreen *screen) {
     if (lazy->next_kept == SIZE_MAX)
         return true;
-    CETTA_SCOPED_SHARED_TRANSITION(read);
+    CETTA_SCOPED_SPACE_OBSERVE(read, lazy->occurrences.space);
     const CettaSkeleton *spine = NULL;
     const AtomId *holes = NULL;
     space_occurrence_cursor_kept_fact(&lazy->occurrences, lazy->next_kept,
@@ -19742,7 +19882,7 @@ static __attribute__((noinline)) OemRun oem_try_kept(
                                 const AtomId *holes) {
     cursor->stats.match_candidates++;
     cursor->fresh_var_len = 0u;
-    CETTA_SCOPED_SHARED_TRANSITION(read);
+    /* Reads only the term universe of the stored row, whose readers take no lock. */
     uint32_t i = 0u, h = 0u;
     OemUnify unified = oem_unify_skeleton(cursor, pattern, universe, skeleton,
                                           &i, holes, &h, 0u);
@@ -19760,7 +19900,7 @@ static __attribute__((noinline)) OemRun oem_try_stored_in_place(
     cursor->stats.match_candidates++;
     cursor->fresh_var_len = 0u;
     const OemStep *step = &resume->program->steps[resume->pc - 1u];
-    CETTA_SCOPED_SHARED_TRANSITION(read);
+    /* Reads only the term universe of the stored row, whose readers take no lock. */
     OemUnify unified = oem_unify_template_stored(
         cursor, resume->program, resume->locals, step->pattern, universe, row,
         0u);

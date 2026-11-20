@@ -98,7 +98,10 @@ static void realize_both_indexes(Space *space, Arena *scratch, Atom *query) {
 
     /* The substitution tree is rented: queries answer from the trie's
      * candidates until those have cost as many matches as the space has
-     * rows, and then it is built. */
+     * rows, and then it is built.  A space of an ordered kind answers every
+     * query from candidates in its order and never reads the tree, so the
+     * trie is its one index.  The bags below are hash spaces, which read
+     * the tree and keep no facts as dense relations. */
     CettaCount rows = space_length64(space);
     for (CettaCount query_count = 0u;
          query_count <= rows && !space->match_backend.native.stree;
@@ -109,6 +112,10 @@ static void realize_both_indexes(Space *space, Arena *scratch, Atom *query) {
     }
     assert(space->match_backend.native.match_trie != NULL);
     assert(!space->match_backend.native.match_trie_dirty);
+    if (space_is_ordered(space)) {
+        assert(space->match_backend.native.stree == NULL);
+        return;
+    }
     assert(space->match_backend.native.stree != NULL);
     assert(!space->match_backend.native.stree_dirty);
 }
@@ -140,7 +147,7 @@ static void test_duplicate_order_and_open_patterns(
                          atom_symbol_id(scratch, b)));
 
     space_init_with_universe(&space, universe);
-    space.kind = SPACE_KIND_STACK;
+    space.kind = SPACE_KIND_HASH;
     for (CettaIndex i = 0u; i < 24u; i++)
         space_add_atom_id(&space, source[i]);
 
@@ -219,7 +226,7 @@ static void test_remove_all_releases_small_indexes(
     SymbolId edge = symbol_intern_cstr(g_symbols, "transport-all-edge");
     Atom *query = edge_value(scratch, edge, 3);
     space_init_with_universe(&space, universe);
-    space.kind = SPACE_KIND_STACK;
+    space.kind = SPACE_KIND_HASH;
     for (CettaIndex i = 0u; i < 24u; i++)
         space_add_atom_id(
             &space, store_atom(universe, edge_value(scratch, edge, (int64_t)i)));
@@ -284,7 +291,7 @@ static void test_partial_remove_releases_small_indexes(
     Space space;
     SymbolId edge = symbol_intern_cstr(g_symbols, "partial-small-edge");
     space_init_with_universe(&space, universe);
-    space.kind = SPACE_KIND_STACK;
+    space.kind = SPACE_KIND_HASH;
     for (int64_t i = 0; i < 24; i++)
         space_add_atom_id(&space, store_atom(universe, edge_value(scratch, edge, i)));
     Atom *remaining = edge_value(scratch, edge, 23);
@@ -322,7 +329,7 @@ static void test_bounded_graph_index(TermUniverse *universe, Arena *scratch) {
     for (unsigned specimen = 0; specimen < 2u; specimen++) {
         Space space;
         space_init_with_universe(&space, universe);
-        space.kind = SPACE_KIND_STACK;
+        space.kind = SPACE_KIND_QUEUE;
         Atom *shared = shared_tree(scratch, depths[specimen], widths[specimen],
                                   atom_symbol(scratch, "bounded-index-leaf"));
         SymbolId head = symbol_intern_cstr(g_symbols, "bounded-index-row");
@@ -374,7 +381,7 @@ static void test_repeated_churn_is_amortized(
     SymbolId edge = symbol_intern_cstr(g_symbols, "transport-churn-edge");
     AtomId expected[24];
     space_init_with_universe(&space, universe);
-    space.kind = SPACE_KIND_STACK;
+    space.kind = SPACE_KIND_HASH;
     for (CettaIndex i = 0u; i < 24u; i++) {
         expected[i] = store_atom(
             universe, edge_value(scratch, edge, (int64_t)i));
@@ -510,7 +517,7 @@ static void test_occurrence_cursor_exact_clone(
         TermUniverse *universe, Arena *scratch) {
     Space space;
     space_init_with_universe(&space, universe);
-    space.kind = SPACE_KIND_STACK;
+    space.kind = SPACE_KIND_QUEUE;
     for (int64_t value = 0; value < 4; value++) {
         space_add_atom_id(
             &space, store_atom(universe, atom_int(scratch, value)));
@@ -659,7 +666,7 @@ static void test_atom_id_removal_preserves_pinned_view(
     Space space;
     AtomId rows[3];
     space_init_with_universe(&space, universe);
-    space.kind = SPACE_KIND_STACK;
+    space.kind = SPACE_KIND_QUEUE;
     for (int64_t value = 0; value < 3; value++) {
         rows[value] = store_atom(universe, atom_int(scratch, value));
         space_add_atom_id(&space, rows[value]);
@@ -819,7 +826,7 @@ static void test_reset_releases_storage_after_readers(
     for (unsigned episode = 0u; episode < EPISODES; episode++) {
         Space space;
         space_init_with_universe(&space, universe);
-        space.kind = SPACE_KIND_STACK;
+        space.kind = SPACE_KIND_QUEUE;
         for (CettaIndex row = 0u; row < ROWS; row++)
             space_add_atom_id(&space, values[row % 2u]);
         space_match_native_ensure_trie(&space);
@@ -877,7 +884,7 @@ static void test_lazy_merge_and_independent_clones(
     enum { ROWS = 257, KEYS = 7, PREFIX = 3 };
     Space space;
     space_init_with_universe(&space, universe);
-    space.kind = SPACE_KIND_STACK;
+    space.kind = SPACE_KIND_QUEUE;
     SymbolId edge = symbol_intern_cstr(g_symbols, "merge-edge");
     AtomId rows[ROWS];
     for (CettaIndex row = 0u; row < ROWS; row++) {
@@ -951,7 +958,7 @@ static void test_full_frontier_sequence(TermUniverse *universe, Arena *scratch) 
     enum { ROWS = 33, PREFIX = 3 };
     Space space;
     space_init_with_universe(&space, universe);
-    space.kind = SPACE_KIND_STACK;
+    space.kind = SPACE_KIND_QUEUE;
     SymbolId edge = symbol_intern_cstr(g_symbols, "full-frontier-edge");
     AtomId rows[ROWS];
     for (CettaIndex row = 0u; row < ROWS - 2u; row++)

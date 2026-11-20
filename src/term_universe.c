@@ -14,8 +14,67 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* ── Concurrent use ──────────────────────────────────────────────────────
+ *
+ * TU_SECTION brackets an operation that adds to the universe, decodes into
+ * it, or searches its tables: inside a concurrent scope it holds the
+ * universe's leaf lock (re-entered at no cost by the universe's own nested
+ * calls), elsewhere it is one thread-local load.  TU_LOAD and TU_PUBLISH
+ * read and write the words lock-free readers follow: a writer publishes an
+ * array's pointer after its contents and a length after the element it
+ * covers. */
+#define TU_SECTION(universe)                                              \
+    CETTA_SCOPED_LEAF_RW(tu_section,                                      \
+        (universe) ? &((TermUniverse *)(universe))->concurrent : NULL,     \
+        CETTA_GUARD_WRITE, CETTA_LEAF_RANK_UNIVERSE)
+#define TU_LOAD(word) __atomic_load_n(&(word), __ATOMIC_ACQUIRE)
+#define TU_PUBLISH(word, value) __atomic_store_n(&(word), (value), __ATOMIC_RELEASE)
+
+/* Free storage a lock-free reader may still hold, or keep it until no
+ * thread is in a concurrent scope. */
+static void term_universe_retire(TermUniverse *universe, void *old) {
+    if (!old)
+        return;
+    if (!cetta_shared_transition_any_scope_active()) {
+        for (size_t i = 0u; i < universe->retired_len; i++)
+            free(universe->retired[i]);
+        universe->retired_len = 0u;
+        free(old);
+        return;
+    }
+    if (universe->retired_len == universe->retired_cap) {
+        size_t cap = universe->retired_cap ? universe->retired_cap * 2u : 8u;
+        void **grown = realloc(universe->retired, cap * sizeof(*grown));
+        if (!grown) {
+            fputs("fatal: CeTTa term universe could not keep a retired array\n",
+                  stderr);
+            abort();
+        }
+        universe->retired = grown;
+        universe->retired_cap = cap;
+    }
+    universe->retired[universe->retired_len++] = old;
+}
+
+/* A grown copy of `old` (`old_bytes` of it kept), the old one retired:
+ * realloc outside a concurrent scope. */
+static void *term_universe_grow_published(TermUniverse *universe, void *old,
+                                          size_t old_bytes, size_t new_bytes) {
+    if (!cetta_shared_transition_scope_active())
+        return cetta_realloc(old, new_bytes);
+    void *next = cetta_malloc(new_bytes);
+    if (!next)
+        return NULL;
+    if (old && old_bytes)
+        memcpy(next, old, old_bytes < new_bytes ? old_bytes : new_bytes);
+    term_universe_retire(universe, old);
+    return next;
+}
+
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
 #include <execinfo.h>
+
 #endif
 
 typedef struct TermUniverseCountedRoots {
@@ -153,6 +212,7 @@ static TermUniverseFallbackImage *term_universe_resource_image(
 
 void term_universe_resource_hold(TermUniverse *universe, AtomId id,
         TermUniverseResourceOwner **token, void *context) {
+    TU_SECTION(universe);
     TermUniverseFallbackImage *image = term_universe_resource_image(universe, id);
     if (!image || !image->syntax.retained_owners)
         return;
@@ -207,6 +267,7 @@ void term_universe_resource_hold(TermUniverse *universe, AtomId id,
 
 void term_universe_resource_release(TermUniverse *universe, AtomId id,
                                      TermUniverseResourceOwner *owner) {
+    TU_SECTION(universe);
     if (!owner || !owner->length)
         return;
     TermUniverseFallbackImage *image = term_universe_resource_image(universe, id);
@@ -245,6 +306,7 @@ void term_universe_resource_owner_free(TermUniverseResourceOwner *owner) {
 
 void term_universe_visit_resource_images(const TermUniverse *universe,
         TermUniverseResourceImageVisit visit, void *context) {
+    TU_SECTION(universe);
     const TermUniverseFallbackSlots *slots = universe ? universe->fallbacks : NULL;
     if (!slots || !visit)
         return;
@@ -321,7 +383,8 @@ static TermUniverseFallbackImage *term_universe_fallback_at(
 static uint32_t term_universe_fallback_insert(
     TermUniverse *universe, TermUniverseFallbackImage *image) {
     if (!universe->fallbacks) {
-        universe->fallbacks = calloc(1u, sizeof(*universe->fallbacks));
+        TU_PUBLISH(universe->fallbacks,
+                   calloc(1u, sizeof(*universe->fallbacks)));
         if (!universe->fallbacks)
             return 0u;
     }
@@ -929,6 +992,7 @@ bool term_universe_add_store_format_observer(
     TermUniverse *universe,
     TermUniverseStoreFormatObserver fn,
     void *ctx) {
+    TU_SECTION(universe);
     if (!universe || !fn)
         return false;
     uintptr_t key = (uintptr_t)fn;
@@ -983,6 +1047,7 @@ void term_universe_remove_store_format_observer(
     TermUniverse *universe,
     TermUniverseStoreFormatObserver fn,
     void *ctx) {
+    TU_SECTION(universe);
     if (!universe || !fn)
         return;
     size_t i = universe->observer_len;
@@ -1118,7 +1183,7 @@ static bool term_universe_atom_id_to_physical_index(
     if (id < base)
         return false;
     uint64_t physical = id - base;
-    if (physical >= universe->len || physical > SIZE_MAX)
+    if (physical >= TU_LOAD(universe->len) || physical > SIZE_MAX)
         return false;
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
     if (g_term_universe_collection_probe_depth == 0u &&
@@ -1593,6 +1658,10 @@ bool term_universe_init_with_store_format(TermUniverse *universe,
     universe->ptr_slots = NULL;
     universe->ptr_mask = 0;
     universe->ptr_used = 0;
+    atomic_init(&universe->concurrent.word, 0u);
+    universe->retired = NULL;
+    universe->retired_len = 0u;
+    universe->retired_cap = 0u;
     universe->observers = NULL;
     universe->observer_len = 0;
     universe->observer_cap = 0;
@@ -1666,10 +1735,17 @@ void term_universe_free(TermUniverse *universe) {
     universe->root_provider_cap = 0u;
     term_universe_registry_free(&universe->root_provider_index);
     universe->persistent_arena = NULL;
+    for (size_t i = 0u; i < universe->retired_len; i++)
+        free(universe->retired[i]);
+    free(universe->retired);
+    universe->retired = NULL;
+    universe->retired_len = 0u;
+    universe->retired_cap = 0u;
 }
 
 void term_universe_set_persistent_arena(TermUniverse *universe,
                                         Arena *persistent_arena) {
+    TU_SECTION(universe);
     if (!universe)
         return;
     /* Some evaluator fallbacks are zero-initialized thread locals rather than
@@ -1692,6 +1768,7 @@ static bool term_universe_migrate_store_format_probing(
 
 bool term_universe_migrate_store_format(TermUniverse *universe,
                                         TermUniverseStoreFormat format) {
+    TU_SECTION(universe);
     TU_COLLECTION_PROBE_ENTER();
     bool migrated = term_universe_migrate_store_format_probing(universe, format);
     TU_COLLECTION_PROBE_LEAVE();
@@ -2080,6 +2157,7 @@ static __thread TermUniverseAlphaKeyMemo
     g_term_universe_alpha_key_memo[TERM_UNIVERSE_ALPHA_KEY_MEMO];
 
 AtomId term_universe_alpha_key_id(TermUniverse *universe, AtomId id) {
+    TU_SECTION(universe);
     if (!universe || id == CETTA_ATOM_ID_NONE)
         return CETTA_ATOM_ID_NONE;
     TermUniverseAlphaKeyMemo *memo = universe->instance_id != 0u
@@ -2169,17 +2247,18 @@ static bool term_universe_reserve_entries(TermUniverse *universe,
                                 TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
         return false;
     }
-    TermEntry *next =
-        cetta_realloc(universe->entries, sizeof(TermEntry) * next_cap);
+    TermEntry *next = term_universe_grow_published(
+        universe, universe->entries, sizeof(TermEntry) * universe->cap,
+        sizeof(TermEntry) * next_cap);
     if (!next) {
         free(next_blocks);
         term_universe_set_error(universe,
                                 TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
         return false;
     }
-    universe->entries = next;
-    free(universe->variable_support_blocks);
-    universe->variable_support_blocks = next_blocks;
+    TU_PUBLISH(universe->entries, next);
+    term_universe_retire(universe, universe->variable_support_blocks);
+    TU_PUBLISH(universe->variable_support_blocks, next_blocks);
     universe->variable_support_block_cap = next_block_cap;
     universe->cap = next_cap;
     return true;
@@ -2203,13 +2282,14 @@ static bool term_universe_blob_reserve(TermUniverse *universe,
                                      1024, sizeof(uint8_t), &next_cap)) {
         return false;
     }
-    uint8_t *next = cetta_realloc(universe->blob_pool, next_cap);
+    uint8_t *next = term_universe_grow_published(
+        universe, universe->blob_pool, universe->blob_len, next_cap);
     if (!next) {
         term_universe_set_error(universe,
                                 TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
         return false;
     }
-    universe->blob_pool = next;
+    TU_PUBLISH(universe->blob_pool, next);
     universe->blob_cap = next_cap;
     return true;
 }
@@ -2219,7 +2299,7 @@ static const TermEntry *term_universe_entry(const TermUniverse *universe,
     size_t physical_index = 0;
     if (!term_universe_atom_id_to_physical_index(universe, id, &physical_index))
         return NULL;
-    return &universe->entries[physical_index];
+    return &TU_LOAD(universe->entries)[physical_index];
 }
 
 enum { TERM_DECODED_PAGE_BITS = 12u };
@@ -2231,11 +2311,11 @@ enum { TERM_DECODED_PAGE_BITS = 12u };
 static inline Atom *term_universe_decoded_slot(const TermUniverse *universe,
                                                size_t index) {
     size_t page = index >> TERM_DECODED_PAGE_BITS;
-    return universe && page < universe->decoded_page_cap &&
-            universe->decoded_pages[page]
-        ? universe->decoded_pages[page]
-                                 [index & (TERM_DECODED_PAGE_ENTRIES - 1u)]
-        : NULL;
+    if (!universe || page >= TU_LOAD(universe->decoded_page_cap))
+        return NULL;
+    Atom **entries = TU_LOAD(TU_LOAD(universe->decoded_pages)[page]);
+    return entries
+        ? TU_LOAD(entries[index & (TERM_DECODED_PAGE_ENTRIES - 1u)]) : NULL;
 }
 
 static inline bool term_universe_slot_counts_views(const Atom *slot) {
@@ -2267,25 +2347,26 @@ static bool term_universe_set_decoded_at(TermUniverse *universe, size_t index,
                                                 : 16u;
         while (cap <= page)
             cap *= 2u;
-        Atom ***pages = realloc(universe->decoded_pages,
-                                cap * sizeof(*pages));
+        Atom ***pages = term_universe_grow_published(
+            universe, universe->decoded_pages,
+            universe->decoded_page_cap * sizeof(*pages), cap * sizeof(*pages));
         if (!pages)
             return false;
         memset(pages + universe->decoded_page_cap, 0,
                (cap - universe->decoded_page_cap) * sizeof(*pages));
-        universe->decoded_pages = pages;
-        universe->decoded_page_cap = cap;
+        TU_PUBLISH(universe->decoded_pages, pages);
+        TU_PUBLISH(universe->decoded_page_cap, cap);
     }
     if (!universe->decoded_pages[page]) {
         if (!atom)
             return true;
-        universe->decoded_pages[page] =
-            calloc(TERM_DECODED_PAGE_ENTRIES, sizeof(Atom *));
-        if (!universe->decoded_pages[page])
+        Atom **entries = calloc(TERM_DECODED_PAGE_ENTRIES, sizeof(Atom *));
+        if (!entries)
             return false;
+        TU_PUBLISH(universe->decoded_pages[page], entries);
     }
-    universe->decoded_pages[page][index & (TERM_DECODED_PAGE_ENTRIES - 1u)] =
-        atom;
+    TU_PUBLISH(universe->decoded_pages[page]
+                   [index & (TERM_DECODED_PAGE_ENTRIES - 1u)], atom);
     return true;
 }
 
@@ -3601,7 +3682,7 @@ static bool term_universe_append_raw_record(TermUniverse *universe,
         memset(universe->blob_pool + off + raw_len, 0, total_len - raw_len);
 
     if (!reused)
-        universe->blob_len += total_len;
+        TU_PUBLISH(universe->blob_len, universe->blob_len + total_len);
     out_entry->record = (uint32_t)(off / CETTA_TERM_ENTRY_ALIGN);
     return true;
 }
@@ -3695,9 +3776,9 @@ static AtomId term_universe_insert_new_record(TermUniverse *universe,
             universe, term_universe_entry_offset(&entry), record_bytes);
         return CETTA_ATOM_ID_NONE;
     }
-    if (!reused)
-        universe->len++;
     universe->entries[physical_index] = entry;
+    if (!reused)
+        TU_PUBLISH(universe->len, universe->len + 1u);
     bool published = false;
     size_t width = term_universe_intern_width(universe);
     if (integer) {
@@ -3736,7 +3817,7 @@ static AtomId term_universe_insert_new_record(TermUniverse *universe,
         if (reused)
             term_universe_return_free_slot(universe, physical_index);
         else
-            universe->len--;
+            TU_PUBLISH(universe->len, universe->len - 1u);
         term_universe_free_record_bytes(
             universe, term_universe_entry_offset(&entry), record_bytes);
         return CETTA_ATOM_ID_NONE;
@@ -3755,16 +3836,16 @@ static AtomId term_universe_insert_new_record(TermUniverse *universe,
 AtomKind term_universe_kind_unrecorded(const TermUniverse *universe,
                                        AtomId id) {
     const TermEntry *entry = term_universe_entry(universe, id);
-    return (entry && term_universe_entry_decoded(universe, entry)) ? term_universe_entry_decoded(universe, entry)->kind
+    return (entry && term_universe_decoded_atom_at(universe, id)) ? term_universe_decoded_atom_at(universe, id)->kind
                                            : ATOM_SYMBOL;
 }
 
 CettaExprLen term_universe_arity_unrecorded(const TermUniverse *universe,
                                             AtomId id) {
     const TermEntry *entry = term_universe_entry(universe, id);
-    return (entry && term_universe_entry_decoded(universe, entry) &&
-            term_universe_entry_decoded(universe, entry)->kind == ATOM_EXPR)
-               ? term_universe_entry_decoded(universe, entry)->expr.len
+    return (entry && term_universe_decoded_atom_at(universe, id) &&
+            term_universe_decoded_atom_at(universe, id)->kind == ATOM_EXPR)
+               ? term_universe_decoded_atom_at(universe, id)->expr.len
                : 0u;
 }
 
@@ -3773,7 +3854,7 @@ uint32_t tu_hash32(const TermUniverse *universe, AtomId id) {
     if (hdr)
         return hdr->hash32;
     const TermEntry *entry = term_universe_entry(universe, id);
-    return (entry && term_universe_entry_decoded(universe, entry)) ? atom_hash(term_universe_entry_decoded(universe, entry)) : 0u;
+    return (entry && term_universe_decoded_atom_at(universe, id)) ? atom_hash(term_universe_decoded_atom_at(universe, id)) : 0u;
 }
 
 SymbolId tu_sym(const TermUniverse *universe, AtomId id) {
@@ -3786,11 +3867,11 @@ SymbolId tu_sym(const TermUniverse *universe, AtomId id) {
         return SYMBOL_ID_NONE;
     }
     const TermEntry *entry = term_universe_entry(universe, id);
-    if (!entry || !term_universe_entry_decoded(universe, entry))
+    if (!entry || !term_universe_decoded_atom_at(universe, id))
         return SYMBOL_ID_NONE;
-    return (term_universe_entry_decoded(universe, entry)->kind == ATOM_SYMBOL ||
-            term_universe_entry_decoded(universe, entry)->kind == ATOM_VAR)
-               ? term_universe_entry_decoded(universe, entry)->sym_id
+    return (term_universe_decoded_atom_at(universe, id)->kind == ATOM_SYMBOL ||
+            term_universe_decoded_atom_at(universe, id)->kind == ATOM_VAR)
+               ? term_universe_decoded_atom_at(universe, id)->sym_id
                : SYMBOL_ID_NONE;
 }
 
@@ -3802,9 +3883,9 @@ VarId tu_var_id(const TermUniverse *universe, AtomId id) {
         return VAR_ID_NONE;
     }
     const TermEntry *entry = term_universe_entry(universe, id);
-    return (entry && term_universe_entry_decoded(universe, entry) &&
-            term_universe_entry_decoded(universe, entry)->kind == ATOM_VAR)
-               ? term_universe_entry_decoded(universe, entry)->var_id
+    return (entry && term_universe_decoded_atom_at(universe, id) &&
+            term_universe_decoded_atom_at(universe, id)->kind == ATOM_VAR)
+               ? term_universe_decoded_atom_at(universe, id)->var_id
                : VAR_ID_NONE;
 }
 
@@ -3818,11 +3899,11 @@ AtomId tu_var_name_key_id(const TermUniverse *universe, AtomId id) {
                    : CETTA_ATOM_ID_NONE;
     }
     const TermEntry *entry = term_universe_entry(universe, id);
-    if (entry && term_universe_entry_decoded(universe, entry) &&
-        term_universe_entry_decoded(universe, entry)->kind == ATOM_VAR &&
-        term_universe_entry_decoded(universe, entry)->name_key) {
+    if (entry && term_universe_decoded_atom_at(universe, id) &&
+        term_universe_decoded_atom_at(universe, id)->kind == ATOM_VAR &&
+        term_universe_decoded_atom_at(universe, id)->name_key) {
         return term_universe_lookup_stable_id(
-            universe, term_universe_entry_decoded(universe, entry)->name_key);
+            universe, term_universe_decoded_atom_at(universe, id)->name_key);
     }
     return CETTA_ATOM_ID_NONE;
 }
@@ -3830,8 +3911,8 @@ AtomId tu_var_name_key_id(const TermUniverse *universe, AtomId id) {
 SymbolId term_universe_head_sym_unrecorded(const TermUniverse *universe,
                                            AtomId id) {
     const TermEntry *entry = term_universe_entry(universe, id);
-    return (entry && term_universe_entry_decoded(universe, entry))
-               ? atom_head_symbol_id(term_universe_entry_decoded(universe, entry))
+    return (entry && term_universe_decoded_atom_at(universe, id))
+               ? atom_head_symbol_id(term_universe_decoded_atom_at(universe, id))
                : SYMBOL_ID_NONE;
 }
 
@@ -3840,9 +3921,9 @@ GroundedKind tu_ground_kind(const TermUniverse *universe, AtomId id) {
     if (hdr)
         return (GroundedKind)hdr->subtag;
     const TermEntry *entry = term_universe_entry(universe, id);
-    return (entry && term_universe_entry_decoded(universe, entry) &&
-            term_universe_entry_decoded(universe, entry)->kind == ATOM_GROUNDED)
-               ? term_universe_entry_decoded(universe, entry)->ground.gkind
+    return (entry && term_universe_decoded_atom_at(universe, id) &&
+            term_universe_decoded_atom_at(universe, id)->kind == ATOM_GROUNDED)
+               ? term_universe_decoded_atom_at(universe, id)->ground.gkind
                : GV_FOREIGN;
 }
 
@@ -3856,10 +3937,10 @@ int64_t tu_int(const TermUniverse *universe, AtomId id) {
         return 0;
     }
     const TermEntry *entry = term_universe_entry(universe, id);
-    return (entry && term_universe_entry_decoded(universe, entry) &&
-            term_universe_entry_decoded(universe, entry)->kind == ATOM_GROUNDED &&
-            term_universe_entry_decoded(universe, entry)->ground.gkind == GV_INT)
-               ? term_universe_entry_decoded(universe, entry)->ground.ival
+    return (entry && term_universe_decoded_atom_at(universe, id) &&
+            term_universe_decoded_atom_at(universe, id)->kind == ATOM_GROUNDED &&
+            term_universe_decoded_atom_at(universe, id)->ground.gkind == GV_INT)
+               ? term_universe_decoded_atom_at(universe, id)->ground.ival
                : 0;
 }
 
@@ -3873,10 +3954,10 @@ double tu_float(const TermUniverse *universe, AtomId id) {
         return 0.0;
     }
     const TermEntry *entry = term_universe_entry(universe, id);
-    return (entry && term_universe_entry_decoded(universe, entry) &&
-            term_universe_entry_decoded(universe, entry)->kind == ATOM_GROUNDED &&
-            term_universe_entry_decoded(universe, entry)->ground.gkind == GV_FLOAT)
-               ? term_universe_entry_decoded(universe, entry)->ground.fval
+    return (entry && term_universe_decoded_atom_at(universe, id) &&
+            term_universe_decoded_atom_at(universe, id)->kind == ATOM_GROUNDED &&
+            term_universe_decoded_atom_at(universe, id)->ground.gkind == GV_FLOAT)
+               ? term_universe_decoded_atom_at(universe, id)->ground.fval
                : 0.0;
 }
 
@@ -3947,10 +4028,10 @@ bool tu_bool(const TermUniverse *universe, AtomId id) {
         return false;
     }
     const TermEntry *entry = term_universe_entry(universe, id);
-    return entry && term_universe_entry_decoded(universe, entry) &&
-           term_universe_entry_decoded(universe, entry)->kind == ATOM_GROUNDED &&
-           term_universe_entry_decoded(universe, entry)->ground.gkind == GV_BOOL &&
-           term_universe_entry_decoded(universe, entry)->ground.bval;
+    return entry && term_universe_decoded_atom_at(universe, id) &&
+           term_universe_decoded_atom_at(universe, id)->kind == ATOM_GROUNDED &&
+           term_universe_decoded_atom_at(universe, id)->ground.gkind == GV_BOOL &&
+           term_universe_decoded_atom_at(universe, id)->ground.bval;
 }
 
 const char *tu_string_cstr(const TermUniverse *universe, AtomId id) {
@@ -3963,10 +4044,10 @@ const char *tu_string_cstr(const TermUniverse *universe, AtomId id) {
         return NULL;
     }
     const TermEntry *entry = term_universe_entry(universe, id);
-    return (entry && term_universe_entry_decoded(universe, entry) &&
-            term_universe_entry_decoded(universe, entry)->kind == ATOM_GROUNDED &&
-            term_universe_entry_decoded(universe, entry)->ground.gkind == GV_STRING)
-               ? term_universe_entry_decoded(universe, entry)->ground.sval
+    return (entry && term_universe_decoded_atom_at(universe, id) &&
+            term_universe_decoded_atom_at(universe, id)->kind == ATOM_GROUNDED &&
+            term_universe_decoded_atom_at(universe, id)->ground.gkind == GV_STRING)
+               ? term_universe_decoded_atom_at(universe, id)->ground.sval
                : NULL;
 }
 
@@ -3979,10 +4060,10 @@ size_t tu_string_len(const TermUniverse *universe, AtomId id) {
         return 0u;
     }
     const TermEntry *entry = term_universe_entry(universe, id);
-    return (entry && term_universe_entry_decoded(universe, entry) &&
-            term_universe_entry_decoded(universe, entry)->kind == ATOM_GROUNDED &&
-            term_universe_entry_decoded(universe, entry)->ground.gkind == GV_STRING)
-               ? term_universe_entry_decoded(universe, entry)->ground.slen
+    return (entry && term_universe_decoded_atom_at(universe, id) &&
+            term_universe_decoded_atom_at(universe, id)->kind == ATOM_GROUNDED &&
+            term_universe_decoded_atom_at(universe, id)->ground.gkind == GV_STRING)
+               ? term_universe_decoded_atom_at(universe, id)->ground.slen
                : 0u;
 }
 
@@ -3996,10 +4077,10 @@ const char *tu_bigint_cstr(const TermUniverse *universe, AtomId id) {
         return NULL;
     }
     const TermEntry *entry = term_universe_entry(universe, id);
-    return (entry && term_universe_entry_decoded(universe, entry) &&
-            term_universe_entry_decoded(universe, entry)->kind == ATOM_GROUNDED &&
-            term_universe_entry_decoded(universe, entry)->ground.gkind == GV_BIGINT)
-               ? atom_bigint_cstr(term_universe_entry_decoded(universe, entry))
+    return (entry && term_universe_decoded_atom_at(universe, id) &&
+            term_universe_decoded_atom_at(universe, id)->kind == ATOM_GROUNDED &&
+            term_universe_decoded_atom_at(universe, id)->ground.gkind == GV_BIGINT)
+               ? atom_bigint_cstr(term_universe_decoded_atom_at(universe, id))
                : NULL;
 }
 
@@ -4013,10 +4094,10 @@ const char *tu_rational_cstr(const TermUniverse *universe, AtomId id) {
         return NULL;
     }
     const TermEntry *entry = term_universe_entry(universe, id);
-    return (entry && term_universe_entry_decoded(universe, entry) &&
-            term_universe_entry_decoded(universe, entry)->kind == ATOM_GROUNDED &&
-            term_universe_entry_decoded(universe, entry)->ground.gkind == GV_RATIONAL)
-               ? atom_rational_cstr(term_universe_entry_decoded(universe, entry))
+    return (entry && term_universe_decoded_atom_at(universe, id) &&
+            term_universe_decoded_atom_at(universe, id)->kind == ATOM_GROUNDED &&
+            term_universe_decoded_atom_at(universe, id)->ground.gkind == GV_RATIONAL)
+               ? atom_rational_cstr(term_universe_decoded_atom_at(universe, id))
                : NULL;
 }
 
@@ -4025,7 +4106,7 @@ bool tu_has_vars(const TermUniverse *universe, AtomId id) {
     if (hdr)
         return term_universe_hdr_has_vars(hdr);
     const TermEntry *entry = term_universe_entry(universe, id);
-    return entry && atom_has_vars(term_universe_entry_decoded(universe, entry));
+    return entry && atom_has_vars(term_universe_decoded_atom_at(universe, id));
 }
 
 static int term_variable_base_id_compare(const void *left,
@@ -4221,6 +4302,7 @@ bool term_universe_variable_support(
 }
 
 AtomId tu_intern_symbol(TermUniverse *universe, SymbolId sym_id) {
+    TU_SECTION(universe);
     CettaTermHdr hdr = {0};
     hdr.tag = (uint8_t)ATOM_SYMBOL;
     hdr.sym_or_head = sym_id;
@@ -4231,6 +4313,7 @@ AtomId tu_intern_symbol(TermUniverse *universe, SymbolId sym_id) {
 }
 
 AtomId tu_intern_var(TermUniverse *universe, SymbolId sym_id, VarId var_id) {
+    TU_SECTION(universe);
     CettaTermHdr hdr = {0};
     uint8_t payload[TERM_UNIVERSE_VAR_ID_BYTES] = {0};
     hdr.tag = (uint8_t)ATOM_VAR;
@@ -4252,6 +4335,7 @@ AtomId tu_intern_var(TermUniverse *universe, SymbolId sym_id, VarId var_id) {
 
 AtomId tu_intern_named_var(TermUniverse *universe, AtomId name_key_id,
                            VarId var_id) {
+    TU_SECTION(universe);
     if (!universe || name_key_id == CETTA_ATOM_ID_NONE ||
         !term_universe_entry(universe, name_key_id) ||
         tu_has_vars(universe, name_key_id)) {
@@ -4279,6 +4363,7 @@ AtomId tu_intern_named_var(TermUniverse *universe, AtomId name_key_id,
 }
 
 AtomId tu_intern_int(TermUniverse *universe, int64_t value) {
+    TU_SECTION(universe);
     enum { TERM_UNIVERSE_SMALL_INT_CACHE = 256 };
     static _Thread_local struct {
         uint64_t instance_id;
@@ -4326,6 +4411,7 @@ AtomId tu_intern_int(TermUniverse *universe, int64_t value) {
  * reservation and prefetching preserve scalar constructor identity and order. */
 bool tu_intern_ints(TermUniverse *universe, const int64_t *values,
                     size_t count, AtomId *ids) {
+    TU_SECTION(universe);
     enum { WINDOW = 32 };
     if (!universe || !universe->persistent_arena ||
         (count && (!values || !ids)))
@@ -4378,6 +4464,7 @@ static AtomId term_universe_float_record(TermUniverse *universe,
 }
 
 AtomId tu_intern_float(TermUniverse *universe, double value) {
+    TU_SECTION(universe);
     return term_universe_float_record(universe, value, true);
 }
 
@@ -4392,6 +4479,7 @@ static AtomId term_universe_bool_record(TermUniverse *universe, bool value,
 }
 
 AtomId tu_intern_bool(TermUniverse *universe, bool value) {
+    TU_SECTION(universe);
     return term_universe_bool_record(universe, value, true);
 }
 
@@ -4409,6 +4497,7 @@ static AtomId term_universe_stable_tag_record(TermUniverse *universe,
 }
 
 AtomId tu_intern_stable_tag(TermUniverse *universe, int64_t tag) {
+    TU_SECTION(universe);
     return term_universe_stable_tag_record(universe, tag, true);
 }
 
@@ -4442,10 +4531,12 @@ static AtomId term_universe_string_record(TermUniverse *universe,
 
 AtomId tu_intern_string_n(TermUniverse *universe, const char *bytes,
                           size_t len_sz) {
+    TU_SECTION(universe);
     return term_universe_string_record(universe, bytes, len_sz, true);
 }
 
 AtomId tu_intern_string(TermUniverse *universe, const char *value) {
+    TU_SECTION(universe);
     if (!value)
         return CETTA_ATOM_ID_NONE;
     return tu_intern_string_n(universe, value, strlen(value));
@@ -4484,6 +4575,7 @@ static AtomId term_universe_bigint_record(TermUniverse *universe,
 }
 
 AtomId tu_intern_bigint(TermUniverse *universe, const char *value) {
+    TU_SECTION(universe);
     return term_universe_bigint_record(universe, value, true);
 }
 
@@ -4521,6 +4613,7 @@ static AtomId term_universe_rational_record(TermUniverse *universe,
 }
 
 AtomId tu_intern_rational(TermUniverse *universe, const char *value) {
+    TU_SECTION(universe);
     return term_universe_rational_record(universe, value, true);
 }
 
@@ -4529,6 +4622,7 @@ AtomId tu_intern_rational(TermUniverse *universe, const char *value) {
  * [x... | [y... | r]] is [x..., y... | r]. */
 AtomId tu_list_from_ids(TermUniverse *universe, const AtomId *elems,
                         CettaExprLen elem_len, AtomId rest) {
+    TU_SECTION(universe);
     int64_t tag = CETTA_INTERNAL_TAG_LIST;
     /* The rest's own elements, when it is a list or list pattern to splice. */
     CettaExprLen spliced = 0u;
@@ -4669,6 +4763,7 @@ static AtomId term_universe_admit_expr(TermUniverse *universe,
 
 AtomId tu_expr_from_ids(TermUniverse *universe, const AtomId *child_ids,
                         CettaExprLen arity) {
+    TU_SECTION(universe);
     uint32_t arity32 = 0u, coordinate = 0u;
     CettaTermHdr hdr;
     if (!universe ||
@@ -4682,6 +4777,7 @@ AtomId tu_expr_from_ids(TermUniverse *universe, const AtomId *child_ids,
 bool tu_exprs_from_ids(TermUniverse *universe, const AtomId *child_ids,
                        size_t count, CettaExprLen arity, const bool *present,
                        AtomId *ids) {
+    TU_SECTION(universe);
     enum { WINDOW = 32 };
     uint32_t arity32 = 0u;
     if (!universe || !universe->persistent_arena ||
@@ -4964,6 +5060,7 @@ static AtomId term_universe_expr_id_from_ids(TermUniverse *universe,
 
 AtomId tu_expr_lookup_ids(const TermUniverse *universe,
                           const AtomId *child_ids, CettaExprLen arity) {
+    TU_SECTION(universe);
     return term_universe_expr_id_from_ids((TermUniverse *)universe, child_ids,
                                           arity, false);
 }
@@ -5786,6 +5883,7 @@ done:
 
 Atom *term_universe_copy_atom(const TermUniverse *universe, Arena *dst,
                               AtomId id) {
+    TU_SECTION(universe);
     TermUniverseCopyMemo memo;
     term_universe_copy_memo_init(&memo);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COPY_CALL);
@@ -5797,6 +5895,7 @@ Atom *term_universe_copy_atom(const TermUniverse *universe, Arena *dst,
 Atom *term_universe_copy_atom_read_symbols(
     const TermUniverse *universe, Arena *dst, AtomId id,
     TermUniverseSymbolRead read, void *context) {
+    TU_SECTION(universe);
     TermUniverseCopyMemo memo;
     term_universe_copy_memo_init(&memo);
     memo.read_symbol = read;
@@ -5809,6 +5908,7 @@ Atom *term_universe_copy_atom_read_symbols(
 
 Atom *term_universe_copy_atom_epoch(const TermUniverse *universe, Arena *dst,
                                     AtomId id, CettaFrameIdentity epoch) {
+    TU_SECTION(universe);
     TermUniverseCopyMemo memo;
     term_universe_copy_memo_init(&memo);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COPY_CALL);
@@ -5819,6 +5919,7 @@ Atom *term_universe_copy_atom_epoch(const TermUniverse *universe, Arena *dst,
 
 char *term_universe_atom_to_string(Arena *a, const TermUniverse *universe,
                                    AtomId id) {
+    TU_SECTION(universe);
     const CettaTermHdr *hdr = tu_hdr(universe, id);
     if (!a || !universe || id == CETTA_ATOM_ID_NONE ||
         !term_universe_entry(universe, id))
@@ -5843,6 +5944,7 @@ char *term_universe_atom_to_string(Arena *a, const TermUniverse *universe,
 char *term_universe_atom_to_parseable_string(Arena *a,
                                              const TermUniverse *universe,
                                              AtomId id) {
+    TU_SECTION(universe);
     const CettaTermHdr *hdr = tu_hdr(universe, id);
     if (!a || !universe || id == CETTA_ATOM_ID_NONE ||
         !term_universe_entry(universe, id))
@@ -6049,6 +6151,7 @@ static AtomId term_universe_lookup_ptr_id_probing(
 
 AtomId term_universe_view_origin(const TermUniverse *universe,
                                  const Atom *atom) {
+    TU_SECTION(universe);
     const AtomStoredOrigin *origin = atom_stored_origin(atom);
     return origin && universe && origin->owner == universe &&
            origin->instance_id == universe->instance_id &&
@@ -6262,6 +6365,7 @@ static AtomId term_universe_lookup_stable_id(const TermUniverse *universe,
 }
 
 AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src) {
+    TU_SECTION(universe);
     if (!universe || !src)
         return CETTA_ATOM_ID_NONE;
     AtomId existing_ptr = term_universe_lookup_ptr_id(universe, src);
@@ -6288,6 +6392,7 @@ AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src) {
 AtomId term_universe_lookup_expression_coordinates(
         const TermUniverse *universe, Atom *const *coordinates,
         CettaExprLen coordinate_count) {
+    TU_SECTION(universe);
     enum { TERM_UNIVERSE_LOOKUP_INLINE_COORDINATES = 16u };
     if (!universe ||
         (coordinate_count > 0u && !coordinates) ||
@@ -6326,6 +6431,7 @@ done:
 AtomId term_universe_lookup_symbol_application(
         const TermUniverse *universe, SymbolId head,
         Atom *const *arguments, CettaExprLen argument_count) {
+    TU_SECTION(universe);
     enum { TERM_UNIVERSE_LOOKUP_INLINE_APPLICATION = 16u };
     if (!universe || head == SYMBOL_ID_NONE ||
         (argument_count > 0u && !arguments) ||
@@ -6378,6 +6484,7 @@ done:
 bool term_universe_root_token_capture(
         const TermUniverse *universe, AtomId root_id,
         TermUniverseRootToken *out) {
+    TU_SECTION(universe);
     if (out)
         *out = (TermUniverseRootToken){0};
     if (!universe || !out || root_id == CETTA_ATOM_ID_NONE ||
@@ -6397,6 +6504,7 @@ bool term_universe_root_token_capture(
 bool term_universe_root_token_matches_live_universe(
         TermUniverseRootToken token,
         const TermUniverse *live_universe) {
+    TU_SECTION(live_universe);
     return live_universe && token.universe == live_universe &&
         token.instance_id != 0u &&
         token.instance_id == live_universe->instance_id &&
@@ -6410,6 +6518,7 @@ bool term_universe_root_token_matches_live_universe(
 Atom *term_universe_root_token_resolve(
         TermUniverseRootToken token,
         const TermUniverse *live_universe) {
+    TU_SECTION(live_universe);
     return term_universe_root_token_matches_live_universe(
                token, live_universe)
         ? term_universe_get_atom(live_universe, token.root_id)
@@ -6418,6 +6527,7 @@ Atom *term_universe_root_token_resolve(
 
 bool term_universe_atom_id_eq(const TermUniverse *universe, AtomId id,
                               Atom *src) {
+    TU_SECTION(universe);
     if (!universe || id == CETTA_ATOM_ID_NONE || !src)
         return false;
     return term_universe_entry_eq_atom(universe, id, src);
@@ -6577,9 +6687,9 @@ static AtomId term_universe_store_prepared_atom_id(TermUniverse *universe,
             return CETTA_ATOM_ID_NONE;
         }
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_FALLBACK_ENTRY);
-        if (!reused)
-            universe->len++;
         universe->entries[physical_index] = entry;
+        if (!reused)
+            TU_PUBLISH(universe->len, universe->len + 1u);
         universe->live_entries++;
         if (universe->counting)
             term_universe_count_birth(universe, physical_index);
@@ -6716,18 +6826,21 @@ done:
 
 AtomId term_universe_store_atom_id(TermUniverse *universe, Arena *fallback,
                                    Atom *src) {
+    TU_SECTION(universe);
     return term_universe_store_atom_id_impl(universe, fallback, NULL, src, false);
 }
 
 AtomId term_universe_store_atom_id_from_source_arena(
     TermUniverse *universe, Arena *fallback, const Arena *source_arena,
     Atom *src) {
+    TU_SECTION(universe);
     return term_universe_store_atom_id_impl(
         universe, fallback, source_arena, src, false);
 }
 
 AtomId term_universe_store_scoped_atom_id(TermUniverse *universe,
         const Arena *source_arena, Atom *src) {
+    TU_SECTION(universe);
     return term_universe_store_atom_id_impl(universe, NULL, source_arena, src, true);
 }
 
@@ -6963,6 +7076,7 @@ static AtomId term_universe_store_alpha_key_at(
 }
 
 AtomId term_universe_store_alpha_key(TermUniverse *universe, Atom *atom) {
+    TU_SECTION(universe);
     if (!universe || !atom)
         return CETTA_ATOM_ID_NONE;
     TermUniverseAlphaLookupVars vars;
@@ -6987,6 +7101,7 @@ uint32_t term_universe_coordinate_of(const TermUniverse *universe, AtomId id) {
 
 AtomId term_universe_store_alpha_key_part(TermUniverse *universe, Atom *atom,
                                           TermUniverseAlphaParts *parts) {
+    TU_SECTION(universe);
     if (!universe || !atom || !parts)
         return CETTA_ATOM_ID_NONE;
     return term_universe_store_alpha_key_at(universe, atom, parts, 1u);
@@ -6996,6 +7111,7 @@ AtomId term_universe_alpha_key_lookup_part(const TermUniverse *universe,
                                            Atom *atom,
                                            TermUniverseAlphaParts *parts,
                                            bool *declined) {
+    TU_SECTION(universe);
     if (!universe || !atom || !parts || !declined) {
         if (declined)
             *declined = true;
@@ -7016,6 +7132,7 @@ bool term_universe_alpha_key_forms(Atom *atom) {
 
 AtomId term_universe_alpha_key_lookup(const TermUniverse *universe,
                                       Atom *atom, bool *declined) {
+    TU_SECTION(universe);
     *declined = false;
     if (!universe || !atom) {
         *declined = true;
@@ -7209,6 +7326,7 @@ enum { TERM_UNIVERSE_VIEW_READS = 4u };
 
 Atom *term_universe_view_atom(const TermUniverse *universe, Arena *dst,
                               AtomId id) {
+    TU_SECTION(universe);
     if (!universe || !dst || id == CETTA_ATOM_ID_NONE)
         return NULL;
     if (!term_universe_borrow_scope(universe, dst))
@@ -7380,11 +7498,22 @@ static Atom *term_universe_get_atom_at(TermUniverse *universe, AtomId id,
 }
 
 Atom *term_universe_get_atom(const TermUniverse *universe, AtomId id) {
+    /* A term decoded before is read without the lock. */
+    if (universe && !TU_LOAD(((TermUniverse *)universe)->fallbacks)) {
+        size_t index = 0u;
+        if (term_universe_atom_id_to_physical_index(universe, id, &index)) {
+            Atom *decoded = term_universe_decoded_at(universe, index);
+            if (decoded)
+                return decoded;
+        }
+    }
+    TU_SECTION(universe);
     return term_universe_get_atom_at((TermUniverse *)universe, id, 0u);
 }
 
 Atom *term_universe_scoped_atom(const TermUniverse *universe, Arena *dst,
                                 AtomId id) {
+    TU_SECTION(universe);
     if (!term_universe_borrow_scope(universe, dst))
         return NULL;
     size_t index = 0u;
@@ -7399,6 +7528,7 @@ Atom *term_universe_scoped_atom(const TermUniverse *universe, Arena *dst,
 }
 
 Atom *term_universe_peek_atom(const TermUniverse *universe, AtomId id) {
+    TU_SECTION(universe);
     size_t index = 0u;
     if (universe && universe->fallbacks &&
         term_universe_atom_id_to_physical_index(universe, id, &index)) {
@@ -7412,6 +7542,7 @@ Atom *term_universe_peek_atom(const TermUniverse *universe, AtomId id) {
 
 Atom *term_universe_store_atom(TermUniverse *universe, Arena *fallback,
                                Atom *src) {
+    TU_SECTION(universe);
     Arena *persistent = universe ? universe->persistent_arena : NULL;
     if (!src)
         return NULL;
@@ -7500,23 +7631,27 @@ static bool term_universe_add_provider(TermUniverse *universe,
 
 bool term_universe_add_root_provider(TermUniverse *universe,
                                      TermUniverseRootProvider fn, void *ctx) {
+    TU_SECTION(universe);
     return term_universe_add_provider(universe, fn, ctx, false, NULL);
 }
 
 bool term_universe_add_counted_root_provider(TermUniverse *universe,
                                              TermUniverseRootProvider fn,
                                              void *ctx) {
+    TU_SECTION(universe);
     return term_universe_add_provider(universe, fn, ctx, true, NULL);
 }
 
 bool term_universe_add_owned_root_provider(TermUniverse *universe,
         TermUniverseRootProvider fn, void *ctx, bool counted, void *owner) {
+    TU_SECTION(universe);
     return term_universe_add_provider(universe, fn, ctx, counted, owner);
 }
 
 void term_universe_remove_root_provider(TermUniverse *universe,
                                         TermUniverseRootProvider fn,
                                         void *ctx) {
+    TU_SECTION(universe);
     if (!universe || !fn)
         return;
     size_t i = universe->root_provider_len;
@@ -7554,6 +7689,7 @@ void term_universe_remove_root_provider(TermUniverse *universe,
 
 void term_universe_set_collection_mode(TermUniverse *universe,
                                        TermUniverseCollectionMode mode) {
+    TU_SECTION(universe);
     if (!universe)
         return;
     universe->collection_mode = mode;
@@ -8241,6 +8377,7 @@ static inline void term_universe_count_release_at(TermUniverse *universe,
 }
 
 void term_universe_hold_counted(TermUniverse *universe, AtomId id) {
+    TU_SECTION(universe);
     size_t index = 0u;
     if (!term_universe_count_index(universe, id, &index))
         return;
@@ -8255,6 +8392,7 @@ void term_universe_hold_counted(TermUniverse *universe, AtomId id) {
 }
 
 void term_universe_release_counted(TermUniverse *universe, AtomId id) {
+    TU_SECTION(universe);
     size_t index = 0u;
     if (term_universe_count_index(universe, id, &index)) {
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
@@ -8907,6 +9045,8 @@ static void term_universe_collection_claim_leave(TermUniverse **universe) {
 
 bool term_universe_collect(TermUniverse *universe,
                            TermUniverseCollectionReport *out) {
+    /* Collection runs where no other thread reads this universe: outside
+     * a concurrent scope, or on a branch's private universe. */
     TermUniverseCollectionReport report = {0};
     if (out)
         *out = report;
@@ -8982,6 +9122,8 @@ bool term_universe_collect(TermUniverse *universe,
 
 bool term_universe_collect_at_safe_point(TermUniverse *universe,
                                          TermUniverseCollectionReport *out) {
+    /* Collection runs where no other thread reads this universe: outside
+     * a concurrent scope, or on a branch's private universe. */
     if (out)
         *out = (TermUniverseCollectionReport){0};
     if (!universe || universe->collection_mode == TERM_UNIVERSE_COLLECTION_OFF)

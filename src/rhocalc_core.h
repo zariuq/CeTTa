@@ -92,7 +92,7 @@ Atom *rhocalc_observe_top_level_values(Arena *arena, Atom *residual);
 #ifdef CETTA_TEST_HOOKS
 bool rhocalc_payload_map_capacity_selftest(void);
 bool rhocalc_abt_substitution_correspondence_selftest(Arena *arena);
-bool rhocalc_atom_text_key_correspondence_selftest(Arena *arena);
+bool rhocalc_structural_order_selftest(Arena *arena);
 #endif
 
 #endif /* CETTA_RHOCALC_CORE_H */

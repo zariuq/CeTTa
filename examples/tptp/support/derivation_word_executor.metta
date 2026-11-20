@@ -3,7 +3,7 @@
 ; environment; it contains no TPTP calculus, proof search, or logical
 ; verification policy.
 
-!(import! &self lib_tptp)
+!(import! &self (library lib_tptp))
 
 (= (dwm-example:execute $language $rows $fuel $term)
    (dwm-example:run

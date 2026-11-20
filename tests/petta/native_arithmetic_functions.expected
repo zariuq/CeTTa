@@ -1,0 +1,50 @@
+1.0
+2.718281828459045
+1.6487212707001282
+0.0
+23.140692632779267
+(error (type_error evaluable "a"))
+(error (type_error evaluable (1)))
+(error (type_error evaluable (/ foo 0)))
+(error instantiation_error)
+(error (evaluation_error float_overflow))
+(error (evaluation_error undefined))
+4.0
+1024
+0.5
+8.0
+1267650600228229401496703205376
+3.0
+3
+3
+-3
+100000000000000000000
+-3
+3
+0.0
+(error (evaluation_error undefined))
+(error (type_error evaluable "s"))
+(error (evaluation_error undefined))
+(error (evaluation_error float_overflow))
+(error (evaluation_error zero_divisor))
+(error (evaluation_error float_overflow))
+3.141592653589793
+2.718281828459045
+3.5
+3
+1
+(error (type_error evaluable (/ foo 0)))
+(error (type_error evaluable "a"))
+(error (type_error evaluable (2)))
+(error (evaluation_error zero_divisor))
+(error (evaluation_error undefined))
+(error (evaluation_error zero_divisor))
+(error (type_error integer 7.5))
+(error (evaluation_error float_overflow))
+1
+2.0
+false
+true
+(true true)
+true
+false

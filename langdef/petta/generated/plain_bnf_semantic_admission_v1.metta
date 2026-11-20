@@ -861,104 +861,88 @@
    (quote (gslt:result:BNFDefinitionLookupV1:110 BNFDefinitionMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=15 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-definition-lookup-found-v1 target=mode relation=BNFDefinitionLookupV1 input=110 functional=semidet
-(= (gslt:fn:BNFDefinitionLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom BNFDefinitionsConsV1 (cons-atom (cons-atom BNFDefinitionV1 (cons-atom $name (cons-atom $expression (cons-atom $firstSpan ())))) (cons-atom $tail ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFDefinitionLookupV1:110 (BNFDefinitionFoundV1 $expression $firstSpan)))))
+(= (gslt:fn:BNFDefinitionLookupV1:110 $name (cons BNFDefinitionsConsV1 (cons (cons BNFDefinitionV1 (cons $name (cons $expression (cons $firstSpan ())))) (cons $tail ()))))
+   (quote (gslt:result:BNFDefinitionLookupV1:110 (BNFDefinitionFoundV1 $expression $firstSpan))))
 
 ; gslt-lowered-equation-v1 source-rewrite=16 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-definition-lookup-tail-v1 target=mode relation=BNFDefinitionLookupV1 input=110 functional=semidet
-(= (gslt:fn:BNFDefinitionLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom BNFDefinitionsConsV1 (cons-atom (cons-atom BNFDefinitionV1 (cons-atom $other (cons-atom $expression (cons-atom $firstSpan ())))) (cons-atom $tail ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:BNFDefinitionLookupV1:110 $name (cons BNFDefinitionsConsV1 (cons (cons BNFDefinitionV1 (cons $other (cons $expression (cons $firstSpan ())))) (cons $tail ()))))
    (let $_ (gslt:different (different $name $other))
-   (let (gslt:result:BNFDefinitionLookupV1:110 $result) (gslt:fn:BNFDefinitionLookupV1:110 $name $tail)
-   (quote (gslt:result:BNFDefinitionLookupV1:110 $result))))))
+   (let (cons gslt:result:BNFDefinitionLookupV1:110 (cons $result ())) (gslt:fn:BNFDefinitionLookupV1:110 $name $tail)
+   (quote (gslt:result:BNFDefinitionLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=247 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-definition-lookup-v1 target=mode relation=BNFDefinitionLookupV1 input=110 functional=semidet
-(= (gslt:fn:BNFDefinitionLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom BNFIndexedDefinitionsV1 (cons-atom $index ())) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFGraphTrieLookupV1:110 $lookup) (gslt:fn:BNFGraphTrieLookupV1:110 $name $index)
-   (let (gslt:result:BNFDiscoveryDefinitionResultV1:10 $result) (gslt:fn:BNFDiscoveryDefinitionResultV1:10 $lookup)
-   (quote (gslt:result:BNFDefinitionLookupV1:110 $result))))))
+(= (gslt:fn:BNFDefinitionLookupV1:110 $name (cons BNFIndexedDefinitionsV1 (cons $index ())))
+   (let (cons gslt:result:BNFGraphTrieLookupV1:110 (cons $lookup ())) (gslt:fn:BNFGraphTrieLookupV1:110 $name $index)
+   (let (cons gslt:result:BNFDiscoveryDefinitionResultV1:10 (cons $result ())) (gslt:fn:BNFDiscoveryDefinitionResultV1:10 $lookup)
+   (quote (gslt:result:BNFDefinitionLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=17 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-append-definition-nil-v1 target=mode relation=BNFAppendDefinitionV1 input=110 functional=semidet
 (= (gslt:fn:BNFAppendDefinitionV1:110 BNFDefinitionsNilV1 $definition)
    (quote (gslt:result:BNFAppendDefinitionV1:110 (BNFDefinitionsConsV1 $definition BNFDefinitionsNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=18 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-append-definition-cons-v1 target=mode relation=BNFAppendDefinitionV1 input=110 functional=semidet
-(= (gslt:fn:BNFAppendDefinitionV1:110 $__gslt_input_v1_0_0 $definition)
-   (let (cons-atom BNFDefinitionsConsV1 (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFAppendDefinitionV1:110 $after) (gslt:fn:BNFAppendDefinitionV1:110 $tail $definition)
-   (quote (gslt:result:BNFAppendDefinitionV1:110 (BNFDefinitionsConsV1 $head $after))))))
+(= (gslt:fn:BNFAppendDefinitionV1:110 (cons BNFDefinitionsConsV1 (cons $head (cons $tail ()))) $definition)
+   (let (cons gslt:result:BNFAppendDefinitionV1:110 (cons $after ())) (gslt:fn:BNFAppendDefinitionV1:110 $tail $definition)
+   (quote (gslt:result:BNFAppendDefinitionV1:110 (BNFDefinitionsConsV1 $head $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=19 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-append-diagnostics-nil-v1 target=mode relation=BNFAppendDiagnosticsV1 input=110 functional=semidet
 (= (gslt:fn:BNFAppendDiagnosticsV1:110 BNFDiagnosticsNilV1 $right)
    (quote (gslt:result:BNFAppendDiagnosticsV1:110 $right)))
 
 ; gslt-lowered-equation-v1 source-rewrite=20 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-append-diagnostics-cons-v1 target=mode relation=BNFAppendDiagnosticsV1 input=110 functional=semidet
-(= (gslt:fn:BNFAppendDiagnosticsV1:110 $__gslt_input_v1_0_0 $right)
-   (let (cons-atom BNFDiagnosticsConsV1 (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $after) (gslt:fn:BNFAppendDiagnosticsV1:110 $tail $right)
-   (quote (gslt:result:BNFAppendDiagnosticsV1:110 (BNFDiagnosticsConsV1 $head $after))))))
+(= (gslt:fn:BNFAppendDiagnosticsV1:110 (cons BNFDiagnosticsConsV1 (cons $head (cons $tail ()))) $right)
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $after ())) (gslt:fn:BNFAppendDiagnosticsV1:110 $tail $right)
+   (quote (gslt:result:BNFAppendDiagnosticsV1:110 (BNFDiagnosticsConsV1 $head $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=27 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-reference-lookup-missing-v1 target=mode relation=BNFLexicalReferenceLookupV1 input=110 functional=semidet
-(= (gslt:fn:BNFLexicalReferenceLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:lexical-declarations-nil ()) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFLexicalReferenceLookupV1:110 BNFLexicalMissingV1))))
+(= (gslt:fn:BNFLexicalReferenceLookupV1:110 $name (cons bnf-v1:lexical-declarations-nil ()))
+   (quote (gslt:result:BNFLexicalReferenceLookupV1:110 BNFLexicalMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=28 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-reference-lookup-found-v1 target=mode relation=BNFLexicalReferenceLookupV1 input=110 functional=semidet
-(= (gslt:fn:BNFLexicalReferenceLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:lexical-declarations-cons (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $name (cons-atom $class (cons-atom $matcher (cons-atom $label (cons-atom $origin ())))))) (cons-atom $tail ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFLexicalReferenceLookupV1:110 (BNFLexicalFoundV1 (bnf-v1:lexical-declaration $name $class $matcher $label $origin))))))
+(= (gslt:fn:BNFLexicalReferenceLookupV1:110 $name (cons bnf-v1:lexical-declarations-cons (cons (cons bnf-v1:lexical-declaration (cons $name (cons $class (cons $matcher (cons $label (cons $origin ())))))) (cons $tail ()))))
+   (quote (gslt:result:BNFLexicalReferenceLookupV1:110 (BNFLexicalFoundV1 (bnf-v1:lexical-declaration $name $class $matcher $label $origin)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=29 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-reference-lookup-tail-v1 target=mode relation=BNFLexicalReferenceLookupV1 input=110 functional=semidet
-(= (gslt:fn:BNFLexicalReferenceLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:lexical-declarations-cons (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $other (cons-atom $class (cons-atom $matcher (cons-atom $label (cons-atom $origin ())))))) (cons-atom $tail ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:BNFLexicalReferenceLookupV1:110 $name (cons bnf-v1:lexical-declarations-cons (cons (cons bnf-v1:lexical-declaration (cons $other (cons $class (cons $matcher (cons $label (cons $origin ())))))) (cons $tail ()))))
    (let $_ (gslt:different (different $name $other))
-   (let (gslt:result:BNFLexicalReferenceLookupV1:110 $result) (gslt:fn:BNFLexicalReferenceLookupV1:110 $name $tail)
-   (quote (gslt:result:BNFLexicalReferenceLookupV1:110 $result))))))
+   (let (cons gslt:result:BNFLexicalReferenceLookupV1:110 (cons $result ())) (gslt:fn:BNFLexicalReferenceLookupV1:110 $name $tail)
+   (quote (gslt:result:BNFLexicalReferenceLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=30 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-class-lookup-missing-v1 target=mode relation=BNFLexicalClassLookupV1 input=110 functional=semidet
-(= (gslt:fn:BNFLexicalClassLookupV1:110 $class $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:lexical-declarations-nil ()) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFLexicalClassLookupV1:110 BNFLexicalMissingV1))))
+(= (gslt:fn:BNFLexicalClassLookupV1:110 $class (cons bnf-v1:lexical-declarations-nil ()))
+   (quote (gslt:result:BNFLexicalClassLookupV1:110 BNFLexicalMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=31 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-class-lookup-found-v1 target=mode relation=BNFLexicalClassLookupV1 input=110 functional=semidet
-(= (gslt:fn:BNFLexicalClassLookupV1:110 $class $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:lexical-declarations-cons (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $name (cons-atom $class (cons-atom $matcher (cons-atom $label (cons-atom $origin ())))))) (cons-atom $tail ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFLexicalClassLookupV1:110 (BNFLexicalFoundV1 (bnf-v1:lexical-declaration $name $class $matcher $label $origin))))))
+(= (gslt:fn:BNFLexicalClassLookupV1:110 $class (cons bnf-v1:lexical-declarations-cons (cons (cons bnf-v1:lexical-declaration (cons $name (cons $class (cons $matcher (cons $label (cons $origin ())))))) (cons $tail ()))))
+   (quote (gslt:result:BNFLexicalClassLookupV1:110 (BNFLexicalFoundV1 (bnf-v1:lexical-declaration $name $class $matcher $label $origin)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=32 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-class-lookup-tail-v1 target=mode relation=BNFLexicalClassLookupV1 input=110 functional=semidet
-(= (gslt:fn:BNFLexicalClassLookupV1:110 $class $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:lexical-declarations-cons (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $name (cons-atom $other (cons-atom $matcher (cons-atom $label (cons-atom $origin ())))))) (cons-atom $tail ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:BNFLexicalClassLookupV1:110 $class (cons bnf-v1:lexical-declarations-cons (cons (cons bnf-v1:lexical-declaration (cons $name (cons $other (cons $matcher (cons $label (cons $origin ())))))) (cons $tail ()))))
    (let $_ (gslt:different (different $class $other))
-   (let (gslt:result:BNFLexicalClassLookupV1:110 $result) (gslt:fn:BNFLexicalClassLookupV1:110 $class $tail)
-   (quote (gslt:result:BNFLexicalClassLookupV1:110 $result))))))
+   (let (cons gslt:result:BNFLexicalClassLookupV1:110 (cons $result ())) (gslt:fn:BNFLexicalClassLookupV1:110 $class $tail)
+   (quote (gslt:result:BNFLexicalClassLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=33 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-label-lookup-missing-v1 target=mode relation=BNFLexicalLabelLookupV1 input=110 functional=semidet
-(= (gslt:fn:BNFLexicalLabelLookupV1:110 $label $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:lexical-declarations-nil ()) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFLexicalLabelLookupV1:110 BNFLexicalMissingV1))))
+(= (gslt:fn:BNFLexicalLabelLookupV1:110 $label (cons bnf-v1:lexical-declarations-nil ()))
+   (quote (gslt:result:BNFLexicalLabelLookupV1:110 BNFLexicalMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=34 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-label-lookup-found-v1 target=mode relation=BNFLexicalLabelLookupV1 input=110 functional=semidet
-(= (gslt:fn:BNFLexicalLabelLookupV1:110 $label $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:lexical-declarations-cons (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $name (cons-atom $class (cons-atom $matcher (cons-atom $label (cons-atom $origin ())))))) (cons-atom $tail ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFLexicalLabelLookupV1:110 (BNFLexicalFoundV1 (bnf-v1:lexical-declaration $name $class $matcher $label $origin))))))
+(= (gslt:fn:BNFLexicalLabelLookupV1:110 $label (cons bnf-v1:lexical-declarations-cons (cons (cons bnf-v1:lexical-declaration (cons $name (cons $class (cons $matcher (cons $label (cons $origin ())))))) (cons $tail ()))))
+   (quote (gslt:result:BNFLexicalLabelLookupV1:110 (BNFLexicalFoundV1 (bnf-v1:lexical-declaration $name $class $matcher $label $origin)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=35 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-label-lookup-tail-v1 target=mode relation=BNFLexicalLabelLookupV1 input=110 functional=semidet
-(= (gslt:fn:BNFLexicalLabelLookupV1:110 $label $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:lexical-declarations-cons (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $name (cons-atom $class (cons-atom $matcher (cons-atom $other (cons-atom $origin ())))))) (cons-atom $tail ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:BNFLexicalLabelLookupV1:110 $label (cons bnf-v1:lexical-declarations-cons (cons (cons bnf-v1:lexical-declaration (cons $name (cons $class (cons $matcher (cons $other (cons $origin ())))))) (cons $tail ()))))
    (let $_ (gslt:different (different $label $other))
-   (let (gslt:result:BNFLexicalLabelLookupV1:110 $result) (gslt:fn:BNFLexicalLabelLookupV1:110 $label $tail)
-   (quote (gslt:result:BNFLexicalLabelLookupV1:110 $result))))))
+   (let (cons gslt:result:BNFLexicalLabelLookupV1:110 (cons $result ())) (gslt:fn:BNFLexicalLabelLookupV1:110 $label $tail)
+   (quote (gslt:result:BNFLexicalLabelLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=36 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-reference-name-empty-v1 target=mode relation=BNFLexicalReferenceNameDiagnosticV1 input=110 functional=semidet
-(= (gslt:fn:BNFLexicalReferenceNameDiagnosticV1:110 $__gslt_input_v1_0_0 $origin)
-   (let (cons-atom bnf-v1:text-nil ()) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFLexicalReferenceNameDiagnosticV1:110 (BNFDiagnosticsConsV1 (BNFEmptyLexicalReferenceV1 $origin) BNFDiagnosticsNilV1)))))
+(= (gslt:fn:BNFLexicalReferenceNameDiagnosticV1:110 (cons bnf-v1:text-nil ()) $origin)
+   (quote (gslt:result:BNFLexicalReferenceNameDiagnosticV1:110 (BNFDiagnosticsConsV1 (BNFEmptyLexicalReferenceV1 $origin) BNFDiagnosticsNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=37 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-reference-name-nonempty-v1 target=mode relation=BNFLexicalReferenceNameDiagnosticV1 input=110 functional=semidet
-(= (gslt:fn:BNFLexicalReferenceNameDiagnosticV1:110 $__gslt_input_v1_0_0 $origin)
-   (let (cons-atom bnf-v1:text-cons (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFLexicalReferenceNameDiagnosticV1:110 BNFDiagnosticsNilV1))))
+(= (gslt:fn:BNFLexicalReferenceNameDiagnosticV1:110 (cons bnf-v1:text-cons (cons $head (cons $tail ()))) $origin)
+   (quote (gslt:result:BNFLexicalReferenceNameDiagnosticV1:110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=38 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-string-empty-v1 target=mode relation=BNFLexicalStringDiagnosticV1 input=1110 functional=semidet
 (= (gslt:fn:BNFLexicalStringDiagnosticV1:1110 $field "" $origin)
@@ -970,26 +954,22 @@
    (quote (gslt:result:BNFLexicalStringDiagnosticV1:1110 BNFDiagnosticsNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=40 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-matcher-empty-points-v1 target=mode relation=BNFLexicalMatcherDiagnosticV1 input=1110 functional=relational
-(= (gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class $__gslt_input_v1_0_1 $origin)
-   (let (cons-atom bnf-v1:lexical-points (cons-atom (cons-atom bnf-v1:scalars-nil ()) ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFLexicalMatcherDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFEmptyLexicalClassV1 $class $origin) BNFDiagnosticsNilV1)))))
+(= (gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class (cons bnf-v1:lexical-points (cons (cons bnf-v1:scalars-nil ()) ())) $origin)
+   (quote (gslt:result:BNFLexicalMatcherDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFEmptyLexicalClassV1 $class $origin) BNFDiagnosticsNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=41 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-matcher-empty-except-v1 target=mode relation=BNFLexicalMatcherDiagnosticV1 input=1110 functional=relational
-(= (gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class $__gslt_input_v1_0_1 $origin)
-   (let (cons-atom bnf-v1:lexical-except (cons-atom (cons-atom bnf-v1:scalars-nil ()) ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFLexicalMatcherDiagnosticV1:1110 BNFDiagnosticsNilV1))))
+(= (gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class (cons bnf-v1:lexical-except (cons (cons bnf-v1:scalars-nil ()) ())) $origin)
+   (quote (gslt:result:BNFLexicalMatcherDiagnosticV1:1110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=42 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-matcher-points-v1 target=mode relation=BNFLexicalMatcherDiagnosticV1 input=1110 functional=relational
-(= (gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class $__gslt_input_v1_0_1 $origin)
-   (let (cons-atom bnf-v1:lexical-points (cons-atom (cons-atom bnf-v1:scalars-cons (cons-atom $head (cons-atom $tail ()))) ())) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFValidateScalarListV1:110 $diagnostics) (superpose (collapse (gslt:mode:BNFValidateScalarListV1:110 (quote (bnf-v1:scalars-cons $head $tail)) $origin)))
-   (quote (gslt:result:BNFLexicalMatcherDiagnosticV1:1110 $diagnostics)))))
+(= (gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class (cons bnf-v1:lexical-points (cons (cons bnf-v1:scalars-cons (cons $head (cons $tail ()))) ())) $origin)
+   (let (cons gslt:result:BNFValidateScalarListV1:110 (cons $diagnostics ())) (superpose (collapse (gslt:mode:BNFValidateScalarListV1:110 (quote (bnf-v1:scalars-cons $head $tail)) $origin)))
+   (quote (gslt:result:BNFLexicalMatcherDiagnosticV1:1110 $diagnostics))))
 
 ; gslt-lowered-equation-v1 source-rewrite=43 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-matcher-except-v1 target=mode relation=BNFLexicalMatcherDiagnosticV1 input=1110 functional=relational
-(= (gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class $__gslt_input_v1_0_1 $origin)
-   (let (cons-atom bnf-v1:lexical-except (cons-atom (cons-atom bnf-v1:scalars-cons (cons-atom $head (cons-atom $tail ()))) ())) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFValidateScalarListV1:110 $diagnostics) (superpose (collapse (gslt:mode:BNFValidateScalarListV1:110 (quote (bnf-v1:scalars-cons $head $tail)) $origin)))
-   (quote (gslt:result:BNFLexicalMatcherDiagnosticV1:1110 $diagnostics)))))
+(= (gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class (cons bnf-v1:lexical-except (cons (cons bnf-v1:scalars-cons (cons $head (cons $tail ()))) ())) $origin)
+   (let (cons gslt:result:BNFValidateScalarListV1:110 (cons $diagnostics ())) (superpose (collapse (gslt:mode:BNFValidateScalarListV1:110 (quote (bnf-v1:scalars-cons $head $tail)) $origin)))
+   (quote (gslt:result:BNFLexicalMatcherDiagnosticV1:1110 $diagnostics))))
 
 ; gslt-lowered-equation-v1 source-rewrite=44 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-valid-unicode-scalar-v1 target=mode relation=BNFScalarDiagnosticV1 input=110 functional=relational
 (= (gslt:mode:BNFScalarDiagnosticV1:110 $scalar $origin)
@@ -1012,172 +992,151 @@
    (quote (gslt:result:BNFScalarOrderDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFNonIncreasingLexicalScalarsV1 $left $right $origin) BNFDiagnosticsNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=48 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-validate-scalar-list-singleton-v1 target=mode relation=BNFValidateScalarListV1 input=110 functional=relational
-(= (gslt:mode:BNFValidateScalarListV1:110 $__gslt_input_v1_0_0 $origin)
-   (let (cons-atom bnf-v1:scalars-cons (cons-atom $scalar (cons-atom (cons-atom bnf-v1:scalars-nil ()) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFScalarDiagnosticV1:110 $diagnostics) (superpose (collapse (gslt:mode:BNFScalarDiagnosticV1:110 $scalar $origin)))
-   (quote (gslt:result:BNFValidateScalarListV1:110 $diagnostics)))))
+(= (gslt:mode:BNFValidateScalarListV1:110 (cons bnf-v1:scalars-cons (cons $scalar (cons (cons bnf-v1:scalars-nil ()) ()))) $origin)
+   (let (cons gslt:result:BNFScalarDiagnosticV1:110 (cons $diagnostics ())) (superpose (collapse (gslt:mode:BNFScalarDiagnosticV1:110 $scalar $origin)))
+   (quote (gslt:result:BNFValidateScalarListV1:110 $diagnostics))))
 
 ; gslt-lowered-equation-v1 source-rewrite=49 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-validate-scalar-list-cons-v1 target=mode relation=BNFValidateScalarListV1 input=110 functional=relational
-(= (gslt:mode:BNFValidateScalarListV1:110 $__gslt_input_v1_0_0 $origin)
-   (let (cons-atom bnf-v1:scalars-cons (cons-atom $head (cons-atom (cons-atom bnf-v1:scalars-cons (cons-atom $next (cons-atom $tail ()))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFScalarDiagnosticV1:110 $headDiagnostics) (superpose (collapse (gslt:mode:BNFScalarDiagnosticV1:110 $head $origin)))
-   (let (gslt:result:BNFScalarOrderDiagnosticV1:1110 $orderDiagnostics) (superpose (collapse (gslt:mode:BNFScalarOrderDiagnosticV1:1110 $head $next $origin)))
-   (let (gslt:result:BNFValidateScalarListV1:110 $tailDiagnostics) (superpose (collapse (gslt:mode:BNFValidateScalarListV1:110 (quote (bnf-v1:scalars-cons $next $tail)) $origin)))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $currentDiagnostics) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $headDiagnostics $orderDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $diagnostics) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $currentDiagnostics $tailDiagnostics))
-   (quote (gslt:result:BNFValidateScalarListV1:110 $diagnostics)))))))))
+(= (gslt:mode:BNFValidateScalarListV1:110 (cons bnf-v1:scalars-cons (cons $head (cons (cons bnf-v1:scalars-cons (cons $next (cons $tail ()))) ()))) $origin)
+   (let (cons gslt:result:BNFScalarDiagnosticV1:110 (cons $headDiagnostics ())) (superpose (collapse (gslt:mode:BNFScalarDiagnosticV1:110 $head $origin)))
+   (let (cons gslt:result:BNFScalarOrderDiagnosticV1:1110 (cons $orderDiagnostics ())) (superpose (collapse (gslt:mode:BNFScalarOrderDiagnosticV1:1110 $head $next $origin)))
+   (let (cons gslt:result:BNFValidateScalarListV1:110 (cons $tailDiagnostics ())) (superpose (collapse (gslt:mode:BNFValidateScalarListV1:110 (quote (bnf-v1:scalars-cons $next $tail)) $origin)))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $currentDiagnostics ())) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $headDiagnostics $orderDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $diagnostics ())) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $currentDiagnostics $tailDiagnostics))
+   (quote (gslt:result:BNFValidateScalarListV1:110 $diagnostics))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=50 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-reference-unique-v1 target=mode relation=BNFLexicalReferenceDiagnosticV1 input=1110 functional=semidet
 (= (gslt:fn:BNFLexicalReferenceDiagnosticV1:1110 $name $origin BNFLexicalMissingV1)
    (quote (gslt:result:BNFLexicalReferenceDiagnosticV1:1110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=51 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-reference-duplicate-v1 target=mode relation=BNFLexicalReferenceDiagnosticV1 input=1110 functional=semidet
-(= (gslt:fn:BNFLexicalReferenceDiagnosticV1:1110 $name $origin $__gslt_input_v1_0_2)
-   (let (cons-atom BNFLexicalFoundV1 (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $otherName (cons-atom $otherClass (cons-atom $otherMatcher (cons-atom $otherLabel (cons-atom $firstOrigin ())))))) ())) $__gslt_input_v1_0_2
-   (quote (gslt:result:BNFLexicalReferenceDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFDuplicateLexicalReferenceV1 $name $origin $firstOrigin) BNFDiagnosticsNilV1)))))
+(= (gslt:fn:BNFLexicalReferenceDiagnosticV1:1110 $name $origin (cons BNFLexicalFoundV1 (cons (cons bnf-v1:lexical-declaration (cons $otherName (cons $otherClass (cons $otherMatcher (cons $otherLabel (cons $firstOrigin ())))))) ())))
+   (quote (gslt:result:BNFLexicalReferenceDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFDuplicateLexicalReferenceV1 $name $origin $firstOrigin) BNFDiagnosticsNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=52 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-class-unique-v1 target=mode relation=BNFLexicalClassDiagnosticV1 input=1110 functional=semidet
 (= (gslt:fn:BNFLexicalClassDiagnosticV1:1110 $class $origin BNFLexicalMissingV1)
    (quote (gslt:result:BNFLexicalClassDiagnosticV1:1110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=53 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-class-duplicate-v1 target=mode relation=BNFLexicalClassDiagnosticV1 input=1110 functional=semidet
-(= (gslt:fn:BNFLexicalClassDiagnosticV1:1110 $class $origin $__gslt_input_v1_0_2)
-   (let (cons-atom BNFLexicalFoundV1 (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $otherName (cons-atom $otherClass (cons-atom $otherMatcher (cons-atom $otherLabel (cons-atom $firstOrigin ())))))) ())) $__gslt_input_v1_0_2
-   (quote (gslt:result:BNFLexicalClassDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFDuplicateLexicalClassV1 $class $origin $firstOrigin) BNFDiagnosticsNilV1)))))
+(= (gslt:fn:BNFLexicalClassDiagnosticV1:1110 $class $origin (cons BNFLexicalFoundV1 (cons (cons bnf-v1:lexical-declaration (cons $otherName (cons $otherClass (cons $otherMatcher (cons $otherLabel (cons $firstOrigin ())))))) ())))
+   (quote (gslt:result:BNFLexicalClassDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFDuplicateLexicalClassV1 $class $origin $firstOrigin) BNFDiagnosticsNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=54 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-label-unique-v1 target=mode relation=BNFLexicalLabelDiagnosticV1 input=1110 functional=semidet
 (= (gslt:fn:BNFLexicalLabelDiagnosticV1:1110 $label $origin BNFLexicalMissingV1)
    (quote (gslt:result:BNFLexicalLabelDiagnosticV1:1110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=55 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-label-duplicate-v1 target=mode relation=BNFLexicalLabelDiagnosticV1 input=1110 functional=semidet
-(= (gslt:fn:BNFLexicalLabelDiagnosticV1:1110 $label $origin $__gslt_input_v1_0_2)
-   (let (cons-atom BNFLexicalFoundV1 (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $otherName (cons-atom $otherClass (cons-atom $otherMatcher (cons-atom $otherLabel (cons-atom $firstOrigin ())))))) ())) $__gslt_input_v1_0_2
-   (quote (gslt:result:BNFLexicalLabelDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFDuplicateLexicalLabelV1 $label $origin $firstOrigin) BNFDiagnosticsNilV1)))))
+(= (gslt:fn:BNFLexicalLabelDiagnosticV1:1110 $label $origin (cons BNFLexicalFoundV1 (cons (cons bnf-v1:lexical-declaration (cons $otherName (cons $otherClass (cons $otherMatcher (cons $otherLabel (cons $firstOrigin ())))))) ())))
+   (quote (gslt:result:BNFLexicalLabelDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFDuplicateLexicalLabelV1 $label $origin $firstOrigin) BNFDiagnosticsNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=56 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-rule-name-disjoint-v1 target=mode relation=BNFLexicalRuleConflictDiagnosticV1 input=1110 functional=semidet
 (= (gslt:fn:BNFLexicalRuleConflictDiagnosticV1:1110 $name $origin BNFDefinitionMissingV1)
    (quote (gslt:result:BNFLexicalRuleConflictDiagnosticV1:1110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=57 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-rule-name-conflict-v1 target=mode relation=BNFLexicalRuleConflictDiagnosticV1 input=1110 functional=semidet
-(= (gslt:fn:BNFLexicalRuleConflictDiagnosticV1:1110 $name $origin $__gslt_input_v1_0_2)
-   (let (cons-atom BNFDefinitionFoundV1 (cons-atom $expression (cons-atom $ruleSpan ()))) $__gslt_input_v1_0_2
-   (quote (gslt:result:BNFLexicalRuleConflictDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFLexicalRuleNameConflictV1 $name $ruleSpan $origin) BNFDiagnosticsNilV1)))))
+(= (gslt:fn:BNFLexicalRuleConflictDiagnosticV1:1110 $name $origin (cons BNFDefinitionFoundV1 (cons $expression (cons $ruleSpan ()))))
+   (quote (gslt:result:BNFLexicalRuleConflictDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFLexicalRuleNameConflictV1 $name $ruleSpan $origin) BNFDiagnosticsNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=58 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-validate-lexicals-nil-v1 target=mode relation=BNFValidateLexicalsV1 input=110 functional=relational
-(= (gslt:mode:BNFValidateLexicalsV1:110 $__gslt_input_v1_0_0 $definitions)
-   (let (cons-atom bnf-v1:lexical-declarations-nil ()) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFValidateLexicalsV1:110 BNFDiagnosticsNilV1))))
+(= (gslt:mode:BNFValidateLexicalsV1:110 (cons bnf-v1:lexical-declarations-nil ()) $definitions)
+   (quote (gslt:result:BNFValidateLexicalsV1:110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=59 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-validate-lexicals-cons-v1 target=mode relation=BNFValidateLexicalsV1 input=110 functional=relational
-(= (gslt:mode:BNFValidateLexicalsV1:110 $__gslt_input_v1_0_0 $definitions)
-   (let (cons-atom bnf-v1:lexical-declarations-cons (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $name (cons-atom $class (cons-atom $matcher (cons-atom $label (cons-atom $origin ())))))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFLexicalReferenceNameDiagnosticV1:110 $referenceNameDiagnostics) (once (gslt:fn:BNFLexicalReferenceNameDiagnosticV1:110 $name $origin))
-   (let (gslt:result:BNFLexicalStringDiagnosticV1:1110 $classNameDiagnostics) (once (gslt:fn:BNFLexicalStringDiagnosticV1:1110 class-name $class $origin))
-   (let (gslt:result:BNFLexicalStringDiagnosticV1:1110 $labelNameDiagnostics) (once (gslt:fn:BNFLexicalStringDiagnosticV1:1110 label $label $origin))
-   (let (gslt:result:BNFLexicalMatcherDiagnosticV1:1110 $matcherDiagnostics) (superpose (collapse (gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class $matcher $origin)))
-   (let (gslt:result:BNFLexicalReferenceLookupV1:110 $referenceLookup) (once (gslt:fn:BNFLexicalReferenceLookupV1:110 $name $tail))
-   (let (gslt:result:BNFLexicalReferenceDiagnosticV1:1110 $referenceDiagnostics) (once (gslt:fn:BNFLexicalReferenceDiagnosticV1:1110 $name $origin $referenceLookup))
-   (let (gslt:result:BNFLexicalClassLookupV1:110 $classLookup) (once (gslt:fn:BNFLexicalClassLookupV1:110 $class $tail))
-   (let (gslt:result:BNFLexicalClassDiagnosticV1:1110 $classDiagnostics) (once (gslt:fn:BNFLexicalClassDiagnosticV1:1110 $class $origin $classLookup))
-   (let (gslt:result:BNFLexicalLabelLookupV1:110 $labelLookup) (once (gslt:fn:BNFLexicalLabelLookupV1:110 $label $tail))
-   (let (gslt:result:BNFLexicalLabelDiagnosticV1:1110 $labelDiagnostics) (once (gslt:fn:BNFLexicalLabelDiagnosticV1:1110 $label $origin $labelLookup))
-   (let (gslt:result:BNFDefinitionLookupV1:110 $definitionLookup) (once (gslt:fn:BNFDefinitionLookupV1:110 $name $definitions))
-   (let (gslt:result:BNFLexicalRuleConflictDiagnosticV1:1110 $ruleDiagnostics) (once (gslt:fn:BNFLexicalRuleConflictDiagnosticV1:1110 $name $origin $definitionLookup))
-   (let (gslt:result:BNFValidateLexicalsV1:110 $tailDiagnostics) (superpose (collapse (gslt:mode:BNFValidateLexicalsV1:110 $tail $definitions)))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d01) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $referenceNameDiagnostics $classNameDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d02) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d01 $labelNameDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d03) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d02 $matcherDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d04) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d03 $referenceDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d05) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d04 $classDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d06) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d05 $labelDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d07) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d06 $ruleDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $diagnostics) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d07 $tailDiagnostics))
-   (quote (gslt:result:BNFValidateLexicalsV1:110 $diagnostics)))))))))))))))))))))))))
+(= (gslt:mode:BNFValidateLexicalsV1:110 (cons bnf-v1:lexical-declarations-cons (cons (cons bnf-v1:lexical-declaration (cons $name (cons $class (cons $matcher (cons $label (cons $origin ())))))) (cons $tail ()))) $definitions)
+   (let (cons gslt:result:BNFLexicalReferenceNameDiagnosticV1:110 (cons $referenceNameDiagnostics ())) (once (gslt:fn:BNFLexicalReferenceNameDiagnosticV1:110 $name $origin))
+   (let (cons gslt:result:BNFLexicalStringDiagnosticV1:1110 (cons $classNameDiagnostics ())) (once (gslt:fn:BNFLexicalStringDiagnosticV1:1110 class-name $class $origin))
+   (let (cons gslt:result:BNFLexicalStringDiagnosticV1:1110 (cons $labelNameDiagnostics ())) (once (gslt:fn:BNFLexicalStringDiagnosticV1:1110 label $label $origin))
+   (let (cons gslt:result:BNFLexicalMatcherDiagnosticV1:1110 (cons $matcherDiagnostics ())) (superpose (collapse (gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class $matcher $origin)))
+   (let (cons gslt:result:BNFLexicalReferenceLookupV1:110 (cons $referenceLookup ())) (once (gslt:fn:BNFLexicalReferenceLookupV1:110 $name $tail))
+   (let (cons gslt:result:BNFLexicalReferenceDiagnosticV1:1110 (cons $referenceDiagnostics ())) (once (gslt:fn:BNFLexicalReferenceDiagnosticV1:1110 $name $origin $referenceLookup))
+   (let (cons gslt:result:BNFLexicalClassLookupV1:110 (cons $classLookup ())) (once (gslt:fn:BNFLexicalClassLookupV1:110 $class $tail))
+   (let (cons gslt:result:BNFLexicalClassDiagnosticV1:1110 (cons $classDiagnostics ())) (once (gslt:fn:BNFLexicalClassDiagnosticV1:1110 $class $origin $classLookup))
+   (let (cons gslt:result:BNFLexicalLabelLookupV1:110 (cons $labelLookup ())) (once (gslt:fn:BNFLexicalLabelLookupV1:110 $label $tail))
+   (let (cons gslt:result:BNFLexicalLabelDiagnosticV1:1110 (cons $labelDiagnostics ())) (once (gslt:fn:BNFLexicalLabelDiagnosticV1:1110 $label $origin $labelLookup))
+   (let (cons gslt:result:BNFDefinitionLookupV1:110 (cons $definitionLookup ())) (once (gslt:fn:BNFDefinitionLookupV1:110 $name $definitions))
+   (let (cons gslt:result:BNFLexicalRuleConflictDiagnosticV1:1110 (cons $ruleDiagnostics ())) (once (gslt:fn:BNFLexicalRuleConflictDiagnosticV1:1110 $name $origin $definitionLookup))
+   (let (cons gslt:result:BNFValidateLexicalsV1:110 (cons $tailDiagnostics ())) (superpose (collapse (gslt:mode:BNFValidateLexicalsV1:110 $tail $definitions)))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d01 ())) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $referenceNameDiagnostics $classNameDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d02 ())) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d01 $labelNameDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d03 ())) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d02 $matcherDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d04 ())) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d03 $referenceDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d05 ())) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d04 $classDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d06 ())) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d05 $labelDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d07 ())) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d06 $ruleDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $diagnostics ())) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d07 $tailDiagnostics))
+   (quote (gslt:result:BNFValidateLexicalsV1:110 $diagnostics))))))))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=60 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-entry-references-nil-v1 target=mode relation=BNFScanEntryReferencesV1 input=1110 functional=semidet
-(= (gslt:fn:BNFScanEntryReferencesV1:1110 $__gslt_input_v1_0_0 $definitions $lexicals)
-   (let (cons-atom bnf-v1:entries-nil ()) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFScanEntryReferencesV1:1110 BNFDiagnosticsNilV1))))
+(= (gslt:fn:BNFScanEntryReferencesV1:1110 (cons bnf-v1:entries-nil ()) $definitions $lexicals)
+   (quote (gslt:result:BNFScanEntryReferencesV1:1110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=61 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-entry-references-comment-v1 target=mode relation=BNFScanEntryReferencesV1 input=1110 functional=semidet
-(= (gslt:fn:BNFScanEntryReferencesV1:1110 $__gslt_input_v1_0_0 $definitions $lexicals)
-   (let (cons-atom bnf-v1:entries-cons (cons-atom (cons-atom bnf-v1:comment (cons-atom $text (cons-atom $span ()))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFScanEntryReferencesV1:1110 $diagnostics) (gslt:fn:BNFScanEntryReferencesV1:1110 $tail $definitions $lexicals)
-   (quote (gslt:result:BNFScanEntryReferencesV1:1110 $diagnostics)))))
+(= (gslt:fn:BNFScanEntryReferencesV1:1110 (cons bnf-v1:entries-cons (cons (cons bnf-v1:comment (cons $text (cons $span ()))) (cons $tail ()))) $definitions $lexicals)
+   (let (cons gslt:result:BNFScanEntryReferencesV1:1110 (cons $diagnostics ())) (gslt:fn:BNFScanEntryReferencesV1:1110 $tail $definitions $lexicals)
+   (quote (gslt:result:BNFScanEntryReferencesV1:1110 $diagnostics))))
 
 ; gslt-lowered-equation-v1 source-rewrite=62 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-entry-references-blank-v1 target=mode relation=BNFScanEntryReferencesV1 input=1110 functional=semidet
-(= (gslt:fn:BNFScanEntryReferencesV1:1110 $__gslt_input_v1_0_0 $definitions $lexicals)
-   (let (cons-atom bnf-v1:entries-cons (cons-atom (cons-atom bnf-v1:blank (cons-atom $span ())) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFScanEntryReferencesV1:1110 $diagnostics) (gslt:fn:BNFScanEntryReferencesV1:1110 $tail $definitions $lexicals)
-   (quote (gslt:result:BNFScanEntryReferencesV1:1110 $diagnostics)))))
+(= (gslt:fn:BNFScanEntryReferencesV1:1110 (cons bnf-v1:entries-cons (cons (cons bnf-v1:blank (cons $span ())) (cons $tail ()))) $definitions $lexicals)
+   (let (cons gslt:result:BNFScanEntryReferencesV1:1110 (cons $diagnostics ())) (gslt:fn:BNFScanEntryReferencesV1:1110 $tail $definitions $lexicals)
+   (quote (gslt:result:BNFScanEntryReferencesV1:1110 $diagnostics))))
 
 ; gslt-lowered-equation-v1 source-rewrite=63 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-entry-references-rule-v1 target=mode relation=BNFScanEntryReferencesV1 input=1110 functional=semidet
-(= (gslt:fn:BNFScanEntryReferencesV1:1110 $__gslt_input_v1_0_0 $definitions $lexicals)
-   (let (cons-atom bnf-v1:entries-cons (cons-atom (cons-atom bnf-v1:rule (cons-atom $name (cons-atom $expression (cons-atom $span ())))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFScanExpressionReferencesV1:11110 $currentDiagnostics) (gslt:fn:BNFScanExpressionReferencesV1:11110 $name $expression $definitions $lexicals)
-   (let (gslt:result:BNFScanEntryReferencesV1:1110 $tailDiagnostics) (gslt:fn:BNFScanEntryReferencesV1:1110 $tail $definitions $lexicals)
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $diagnostics) (gslt:fn:BNFAppendDiagnosticsV1:110 $currentDiagnostics $tailDiagnostics)
-   (quote (gslt:result:BNFScanEntryReferencesV1:1110 $diagnostics)))))))
+(= (gslt:fn:BNFScanEntryReferencesV1:1110 (cons bnf-v1:entries-cons (cons (cons bnf-v1:rule (cons $name (cons $expression (cons $span ())))) (cons $tail ()))) $definitions $lexicals)
+   (let (cons gslt:result:BNFScanExpressionReferencesV1:11110 (cons $currentDiagnostics ())) (gslt:fn:BNFScanExpressionReferencesV1:11110 $name $expression $definitions $lexicals)
+   (let (cons gslt:result:BNFScanEntryReferencesV1:1110 (cons $tailDiagnostics ())) (gslt:fn:BNFScanEntryReferencesV1:1110 $tail $definitions $lexicals)
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $diagnostics ())) (gslt:fn:BNFAppendDiagnosticsV1:110 $currentDiagnostics $tailDiagnostics)
+   (quote (gslt:result:BNFScanEntryReferencesV1:1110 $diagnostics))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=64 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-expression-references-v1 target=mode relation=BNFScanExpressionReferencesV1 input=11110 functional=semidet
-(= (gslt:fn:BNFScanExpressionReferencesV1:11110 $owner $__gslt_input_v1_0_1 $definitions $lexicals)
-   (let (cons-atom bnf-v1:expression (cons-atom $alternatives (cons-atom $span ()))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFScanAlternativesReferencesV1:11110 $diagnostics) (gslt:fn:BNFScanAlternativesReferencesV1:11110 $owner $alternatives $definitions $lexicals)
-   (quote (gslt:result:BNFScanExpressionReferencesV1:11110 $diagnostics)))))
+(= (gslt:fn:BNFScanExpressionReferencesV1:11110 $owner (cons bnf-v1:expression (cons $alternatives (cons $span ()))) $definitions $lexicals)
+   (let (cons gslt:result:BNFScanAlternativesReferencesV1:11110 (cons $diagnostics ())) (gslt:fn:BNFScanAlternativesReferencesV1:11110 $owner $alternatives $definitions $lexicals)
+   (quote (gslt:result:BNFScanExpressionReferencesV1:11110 $diagnostics))))
 
 ; gslt-lowered-equation-v1 source-rewrite=65 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-alternatives-references-nil-v1 target=mode relation=BNFScanAlternativesReferencesV1 input=11110 functional=semidet
-(= (gslt:fn:BNFScanAlternativesReferencesV1:11110 $owner $__gslt_input_v1_0_1 $definitions $lexicals)
-   (let (cons-atom bnf-v1:alternatives-nil ()) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFScanAlternativesReferencesV1:11110 BNFDiagnosticsNilV1))))
+(= (gslt:fn:BNFScanAlternativesReferencesV1:11110 $owner (cons bnf-v1:alternatives-nil ()) $definitions $lexicals)
+   (quote (gslt:result:BNFScanAlternativesReferencesV1:11110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=66 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-alternatives-references-cons-v1 target=mode relation=BNFScanAlternativesReferencesV1 input=11110 functional=semidet
-(= (gslt:fn:BNFScanAlternativesReferencesV1:11110 $owner $__gslt_input_v1_0_1 $definitions $lexicals)
-   (let (cons-atom bnf-v1:alternatives-cons (cons-atom (cons-atom bnf-v1:alternative (cons-atom $elements (cons-atom $span ()))) (cons-atom $tail ()))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFScanElementsReferencesV1:11110 $currentDiagnostics) (gslt:fn:BNFScanElementsReferencesV1:11110 $owner $elements $definitions $lexicals)
-   (let (gslt:result:BNFScanAlternativesReferencesV1:11110 $tailDiagnostics) (gslt:fn:BNFScanAlternativesReferencesV1:11110 $owner $tail $definitions $lexicals)
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $diagnostics) (gslt:fn:BNFAppendDiagnosticsV1:110 $currentDiagnostics $tailDiagnostics)
-   (quote (gslt:result:BNFScanAlternativesReferencesV1:11110 $diagnostics)))))))
+(= (gslt:fn:BNFScanAlternativesReferencesV1:11110 $owner (cons bnf-v1:alternatives-cons (cons (cons bnf-v1:alternative (cons $elements (cons $span ()))) (cons $tail ()))) $definitions $lexicals)
+   (let (cons gslt:result:BNFScanElementsReferencesV1:11110 (cons $currentDiagnostics ())) (gslt:fn:BNFScanElementsReferencesV1:11110 $owner $elements $definitions $lexicals)
+   (let (cons gslt:result:BNFScanAlternativesReferencesV1:11110 (cons $tailDiagnostics ())) (gslt:fn:BNFScanAlternativesReferencesV1:11110 $owner $tail $definitions $lexicals)
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $diagnostics ())) (gslt:fn:BNFAppendDiagnosticsV1:110 $currentDiagnostics $tailDiagnostics)
+   (quote (gslt:result:BNFScanAlternativesReferencesV1:11110 $diagnostics))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=67 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-elements-references-nil-v1 target=mode relation=BNFScanElementsReferencesV1 input=11110 functional=semidet
-(= (gslt:fn:BNFScanElementsReferencesV1:11110 $owner $__gslt_input_v1_0_1 $definitions $lexicals)
-   (let (cons-atom bnf-v1:elements-nil ()) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFScanElementsReferencesV1:11110 BNFDiagnosticsNilV1))))
+(= (gslt:fn:BNFScanElementsReferencesV1:11110 $owner (cons bnf-v1:elements-nil ()) $definitions $lexicals)
+   (quote (gslt:result:BNFScanElementsReferencesV1:11110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=68 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-elements-references-cons-v1 target=mode relation=BNFScanElementsReferencesV1 input=11110 functional=semidet
-(= (gslt:fn:BNFScanElementsReferencesV1:11110 $owner $__gslt_input_v1_0_1 $definitions $lexicals)
-   (let (cons-atom bnf-v1:elements-cons (cons-atom $element (cons-atom $tail ()))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFScanElementReferencesV1:11110 $currentDiagnostics) (gslt:fn:BNFScanElementReferencesV1:11110 $owner $element $definitions $lexicals)
-   (let (gslt:result:BNFScanElementsReferencesV1:11110 $tailDiagnostics) (gslt:fn:BNFScanElementsReferencesV1:11110 $owner $tail $definitions $lexicals)
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $diagnostics) (gslt:fn:BNFAppendDiagnosticsV1:110 $currentDiagnostics $tailDiagnostics)
-   (quote (gslt:result:BNFScanElementsReferencesV1:11110 $diagnostics)))))))
+(= (gslt:fn:BNFScanElementsReferencesV1:11110 $owner (cons bnf-v1:elements-cons (cons $element (cons $tail ()))) $definitions $lexicals)
+   (let (cons gslt:result:BNFScanElementReferencesV1:11110 (cons $currentDiagnostics ())) (gslt:fn:BNFScanElementReferencesV1:11110 $owner $element $definitions $lexicals)
+   (let (cons gslt:result:BNFScanElementsReferencesV1:11110 (cons $tailDiagnostics ())) (gslt:fn:BNFScanElementsReferencesV1:11110 $owner $tail $definitions $lexicals)
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $diagnostics ())) (gslt:fn:BNFAppendDiagnosticsV1:110 $currentDiagnostics $tailDiagnostics)
+   (quote (gslt:result:BNFScanElementsReferencesV1:11110 $diagnostics))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=69 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-element-literal-v1 target=mode relation=BNFScanElementReferencesV1 input=11110 functional=semidet
-(= (gslt:fn:BNFScanElementReferencesV1:11110 $owner $__gslt_input_v1_0_1 $definitions $lexicals)
-   (let (cons-atom bnf-v1:literal (cons-atom $text (cons-atom $span ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFScanElementReferencesV1:11110 BNFDiagnosticsNilV1))))
+(= (gslt:fn:BNFScanElementReferencesV1:11110 $owner (cons bnf-v1:literal (cons $text (cons $span ()))) $definitions $lexicals)
+   (quote (gslt:result:BNFScanElementReferencesV1:11110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=70 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-element-reference-v1 target=mode relation=BNFScanElementReferencesV1 input=11110 functional=semidet
-(= (gslt:fn:BNFScanElementReferencesV1:11110 $owner $__gslt_input_v1_0_1 $definitions $lexicals)
-   (let (cons-atom bnf-v1:reference (cons-atom $name (cons-atom $span ()))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFDefinitionLookupV1:110 $lookup) (gslt:fn:BNFDefinitionLookupV1:110 $name $definitions)
-   (let (gslt:result:BNFReferenceAfterDefinitionLookupV1:111110 $diagnostics) (gslt:fn:BNFReferenceAfterDefinitionLookupV1:111110 $owner $name $span $lookup $lexicals)
-   (quote (gslt:result:BNFScanElementReferencesV1:11110 $diagnostics))))))
+(= (gslt:fn:BNFScanElementReferencesV1:11110 $owner (cons bnf-v1:reference (cons $name (cons $span ()))) $definitions $lexicals)
+   (let (cons gslt:result:BNFDefinitionLookupV1:110 (cons $lookup ())) (gslt:fn:BNFDefinitionLookupV1:110 $name $definitions)
+   (let (cons gslt:result:BNFReferenceAfterDefinitionLookupV1:111110 (cons $diagnostics ())) (gslt:fn:BNFReferenceAfterDefinitionLookupV1:111110 $owner $name $span $lookup $lexicals)
+   (quote (gslt:result:BNFScanElementReferencesV1:11110 $diagnostics)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=71 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-reference-found-v1 target=mode relation=BNFReferenceAfterDefinitionLookupV1 input=111110 functional=semidet
-(= (gslt:fn:BNFReferenceAfterDefinitionLookupV1:111110 $owner $name $span $__gslt_input_v1_0_3 $lexicals)
-   (let (cons-atom BNFDefinitionFoundV1 (cons-atom $expression (cons-atom $firstSpan ()))) $__gslt_input_v1_0_3
-   (quote (gslt:result:BNFReferenceAfterDefinitionLookupV1:111110 BNFDiagnosticsNilV1))))
+(= (gslt:fn:BNFReferenceAfterDefinitionLookupV1:111110 $owner $name $span (cons BNFDefinitionFoundV1 (cons $expression (cons $firstSpan ()))) $lexicals)
+   (quote (gslt:result:BNFReferenceAfterDefinitionLookupV1:111110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=72 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-reference-definition-missing-v1 target=mode relation=BNFReferenceAfterDefinitionLookupV1 input=111110 functional=semidet
 (= (gslt:fn:BNFReferenceAfterDefinitionLookupV1:111110 $owner $name $span BNFDefinitionMissingV1 $lexicals)
-   (let (gslt:result:BNFLexicalReferenceLookupV1:110 $lookup) (gslt:fn:BNFLexicalReferenceLookupV1:110 $name $lexicals)
-   (let (gslt:result:BNFReferenceAfterLexicalLookupV1:11110 $diagnostics) (gslt:fn:BNFReferenceAfterLexicalLookupV1:11110 $owner $name $span $lookup)
+   (let (cons gslt:result:BNFLexicalReferenceLookupV1:110 (cons $lookup ())) (gslt:fn:BNFLexicalReferenceLookupV1:110 $name $lexicals)
+   (let (cons gslt:result:BNFReferenceAfterLexicalLookupV1:11110 (cons $diagnostics ())) (gslt:fn:BNFReferenceAfterLexicalLookupV1:11110 $owner $name $span $lookup)
    (quote (gslt:result:BNFReferenceAfterDefinitionLookupV1:111110 $diagnostics)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=73 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-reference-lexical-found-v1 target=mode relation=BNFReferenceAfterLexicalLookupV1 input=11110 functional=semidet
-(= (gslt:fn:BNFReferenceAfterLexicalLookupV1:11110 $owner $name $span $__gslt_input_v1_0_3)
-   (let (cons-atom BNFLexicalFoundV1 (cons-atom $declaration ())) $__gslt_input_v1_0_3
-   (quote (gslt:result:BNFReferenceAfterLexicalLookupV1:11110 BNFDiagnosticsNilV1))))
+(= (gslt:fn:BNFReferenceAfterLexicalLookupV1:11110 $owner $name $span (cons BNFLexicalFoundV1 (cons $declaration ())))
+   (quote (gslt:result:BNFReferenceAfterLexicalLookupV1:11110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=74 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-reference-unresolved-v1 target=mode relation=BNFReferenceAfterLexicalLookupV1 input=11110 functional=semidet
 (= (gslt:fn:BNFReferenceAfterLexicalLookupV1:11110 $owner $name $span BNFLexicalMissingV1)
@@ -1188,178 +1147,154 @@
    (quote (gslt:result:BNFFinishValidationV1:111110 (BNFDeclarationValidationRefusedV1 (BNFDiagnosticsConsV1 (BNFNoDefinitionsV1 $documentSpan) $diagnostics)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=78 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-finish-accepted-v1 target=mode relation=BNFFinishValidationV1 input=111110 functional=semidet
-(= (gslt:fn:BNFFinishValidationV1:111110 $documentSpan $__gslt_input_v1_0_1 $__gslt_input_v1_0_2 $lexicals BNFDiagnosticsNilV1)
-   (let (cons-atom BNFStartSomeV1 (cons-atom $name (cons-atom $span ()))) $__gslt_input_v1_0_1
-   (let (cons-atom BNFDefinitionsConsV1 (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_2
-   (quote (gslt:result:BNFFinishValidationV1:111110 (BNFDeclarationValidationAcceptedV1 (BNFStartSomeV1 $name $span) (BNFDefinitionsConsV1 $head $tail) $lexicals))))))
+(= (gslt:fn:BNFFinishValidationV1:111110 $documentSpan (cons BNFStartSomeV1 (cons $name (cons $span ()))) (cons BNFDefinitionsConsV1 (cons $head (cons $tail ()))) $lexicals BNFDiagnosticsNilV1)
+   (quote (gslt:result:BNFFinishValidationV1:111110 (BNFDeclarationValidationAcceptedV1 (BNFStartSomeV1 $name $span) (BNFDefinitionsConsV1 $head $tail) $lexicals))))
 
 ; gslt-lowered-equation-v1 source-rewrite=79 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-finish-refused-v1 target=mode relation=BNFFinishValidationV1 input=111110 functional=semidet
-(= (gslt:fn:BNFFinishValidationV1:111110 $documentSpan $start $__gslt_input_v1_0_2 $lexicals $__gslt_input_v1_0_4)
-   (let (cons-atom BNFDefinitionsConsV1 (cons-atom $definition (cons-atom $definitions ()))) $__gslt_input_v1_0_2
-   (let (cons-atom BNFDiagnosticsConsV1 (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_4
-   (quote (gslt:result:BNFFinishValidationV1:111110 (BNFDeclarationValidationRefusedV1 (BNFDiagnosticsConsV1 $head $tail)))))))
+(= (gslt:fn:BNFFinishValidationV1:111110 $documentSpan $start (cons BNFDefinitionsConsV1 (cons $definition (cons $definitions ()))) $lexicals (cons BNFDiagnosticsConsV1 (cons $head (cons $tail ()))))
+   (quote (gslt:result:BNFFinishValidationV1:111110 (BNFDeclarationValidationRefusedV1 (BNFDiagnosticsConsV1 $head $tail)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=80 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-validate-grammar-v1 target=mode relation=BNFValidateGrammarV1 input=10 functional=relational
-(= (gslt:mode:BNFValidateGrammarV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom bnf-v1:grammar-input (cons-atom (cons-atom bnf-v1:document (cons-atom $entries (cons-atom $documentSpan ()))) (cons-atom (cons-atom bnf-v1:grammar-authority (cons-atom (cons-atom bnf-v1:start (cons-atom $startName ())) (cons-atom (cons-atom bnf-v1:lexical-environment (cons-atom $lexicals ())) ()))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFCollectDefinitionsV1:1100 $definitions $definitionDiagnostics) (once (gslt:fn:BNFCollectDefinitionsV1:1100 $entries BNFDefinitionsNilV1))
-   (let (gslt:result:BNFValidateLexicalsV1:110 $lexicalDiagnostics) (superpose (collapse (gslt:mode:BNFValidateLexicalsV1:110 $lexicals $definitions)))
-   (let (gslt:result:BNFScanEntryReferencesV1:1110 $referenceDiagnostics) (once (gslt:fn:BNFScanEntryReferencesV1:1110 $entries $definitions $lexicals))
-   (let (gslt:result:BNFDefinitionLookupV1:110 $startLookup) (once (gslt:fn:BNFDefinitionLookupV1:110 $startName $definitions))
-   (let (gslt:result:BNFStartAfterLookupV1:1100 $start $startDiagnostics) (once (gslt:fn:BNFStartAfterLookupV1:1100 $startName $startLookup))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d01) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $definitionDiagnostics $lexicalDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d02) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d01 $referenceDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $diagnostics) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d02 $startDiagnostics))
-   (let (gslt:result:BNFFinishValidationV1:111110 $result) (once (gslt:fn:BNFFinishValidationV1:111110 $documentSpan $start $definitions $lexicals $diagnostics))
-   (quote (gslt:result:BNFValidateGrammarV1:10 $result)))))))))))))
+(= (gslt:mode:BNFValidateGrammarV1:10 (cons bnf-v1:grammar-input (cons (cons bnf-v1:document (cons $entries (cons $documentSpan ()))) (cons (cons bnf-v1:grammar-authority (cons (cons bnf-v1:start (cons $startName ())) (cons (cons bnf-v1:lexical-environment (cons $lexicals ())) ()))) ()))))
+   (let (cons gslt:result:BNFCollectDefinitionsV1:1100 (cons $definitions (cons $definitionDiagnostics ()))) (once (gslt:fn:BNFCollectDefinitionsV1:1100 $entries BNFDefinitionsNilV1))
+   (let (cons gslt:result:BNFValidateLexicalsV1:110 (cons $lexicalDiagnostics ())) (superpose (collapse (gslt:mode:BNFValidateLexicalsV1:110 $lexicals $definitions)))
+   (let (cons gslt:result:BNFScanEntryReferencesV1:1110 (cons $referenceDiagnostics ())) (once (gslt:fn:BNFScanEntryReferencesV1:1110 $entries $definitions $lexicals))
+   (let (cons gslt:result:BNFDefinitionLookupV1:110 (cons $startLookup ())) (once (gslt:fn:BNFDefinitionLookupV1:110 $startName $definitions))
+   (let (cons gslt:result:BNFStartAfterLookupV1:1100 (cons $start (cons $startDiagnostics ()))) (once (gslt:fn:BNFStartAfterLookupV1:1100 $startName $startLookup))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d01 ())) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $definitionDiagnostics $lexicalDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d02 ())) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d01 $referenceDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $diagnostics ())) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d02 $startDiagnostics))
+   (let (cons gslt:result:BNFFinishValidationV1:111110 (cons $result ())) (once (gslt:fn:BNFFinishValidationV1:111110 $documentSpan $start $definitions $lexicals $diagnostics))
+   (quote (gslt:result:BNFValidateGrammarV1:10 $result))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=81 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-name-lookup-missing-v1 target=mode relation=BNFNameLookupV1 input=110 functional=semidet
 (= (gslt:fn:BNFNameLookupV1:110 $name BNFNamesNilV1)
    (quote (gslt:result:BNFNameLookupV1:110 BNFNameMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=82 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-name-lookup-found-v1 target=mode relation=BNFNameLookupV1 input=110 functional=semidet
-(= (gslt:fn:BNFNameLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom BNFNamesConsV1 (cons-atom $name (cons-atom $tail ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFNameLookupV1:110 (BNFNameFoundV1 $name)))))
+(= (gslt:fn:BNFNameLookupV1:110 $name (cons BNFNamesConsV1 (cons $name (cons $tail ()))))
+   (quote (gslt:result:BNFNameLookupV1:110 (BNFNameFoundV1 $name))))
 
 ; gslt-lowered-equation-v1 source-rewrite=83 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-name-lookup-tail-v1 target=mode relation=BNFNameLookupV1 input=110 functional=semidet
-(= (gslt:fn:BNFNameLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom BNFNamesConsV1 (cons-atom $other (cons-atom $tail ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:BNFNameLookupV1:110 $name (cons BNFNamesConsV1 (cons $other (cons $tail ()))))
    (let $_ (gslt:different (different $name $other))
-   (let (gslt:result:BNFNameLookupV1:110 $result) (gslt:fn:BNFNameLookupV1:110 $name $tail)
-   (quote (gslt:result:BNFNameLookupV1:110 $result))))))
+   (let (cons gslt:result:BNFNameLookupV1:110 (cons $result ())) (gslt:fn:BNFNameLookupV1:110 $name $tail)
+   (quote (gslt:result:BNFNameLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=192 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-name-lookup-indexed-v1 target=mode relation=BNFNameLookupV1 input=110 functional=semidet
-(= (gslt:fn:BNFNameLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom BNFIndexedNamesV1 (cons-atom $index (cons-atom $ordered ()))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFGraphTrieLookupV1:110 $indexed) (gslt:fn:BNFGraphTrieLookupV1:110 $name $index)
-   (let (gslt:result:BNFIndexedNameLookupResultV1:10 $result) (gslt:fn:BNFIndexedNameLookupResultV1:10 $indexed)
-   (quote (gslt:result:BNFNameLookupV1:110 $result))))))
+(= (gslt:fn:BNFNameLookupV1:110 $name (cons BNFIndexedNamesV1 (cons $index (cons $ordered ()))))
+   (let (cons gslt:result:BNFGraphTrieLookupV1:110 (cons $indexed ())) (gslt:fn:BNFGraphTrieLookupV1:110 $name $index)
+   (let (cons gslt:result:BNFIndexedNameLookupResultV1:10 (cons $result ())) (gslt:fn:BNFIndexedNameLookupResultV1:10 $indexed)
+   (quote (gslt:result:BNFNameLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=198 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-known-lookup-v1 target=mode relation=BNFNameLookupV1 input=110 functional=semidet
-(= (gslt:fn:BNFNameLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom BNFDiscoveryKnownV1 (cons-atom $index (cons-atom $reversed ()))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFGraphTrieLookupV1:110 $lookup) (gslt:fn:BNFGraphTrieLookupV1:110 $name $index)
-   (let (gslt:result:BNFIndexedNameLookupResultV1:10 $result) (gslt:fn:BNFIndexedNameLookupResultV1:10 $lookup)
-   (quote (gslt:result:BNFNameLookupV1:110 $result))))))
+(= (gslt:fn:BNFNameLookupV1:110 $name (cons BNFDiscoveryKnownV1 (cons $index (cons $reversed ()))))
+   (let (cons gslt:result:BNFGraphTrieLookupV1:110 (cons $lookup ())) (gslt:fn:BNFGraphTrieLookupV1:110 $name $index)
+   (let (cons gslt:result:BNFIndexedNameLookupResultV1:10 (cons $result ())) (gslt:fn:BNFIndexedNameLookupResultV1:10 $lookup)
+   (quote (gslt:result:BNFNameLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=84 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-append-name-nil-v1 target=mode relation=BNFAppendNameV1 input=110 functional=semidet
 (= (gslt:fn:BNFAppendNameV1:110 BNFNamesNilV1 $name)
    (quote (gslt:result:BNFAppendNameV1:110 (BNFNamesConsV1 $name BNFNamesNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=85 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-append-name-cons-v1 target=mode relation=BNFAppendNameV1 input=110 functional=semidet
-(= (gslt:fn:BNFAppendNameV1:110 $__gslt_input_v1_0_0 $name)
-   (let (cons-atom BNFNamesConsV1 (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFAppendNameV1:110 $after) (gslt:fn:BNFAppendNameV1:110 $tail $name)
-   (quote (gslt:result:BNFAppendNameV1:110 (BNFNamesConsV1 $head $after))))))
+(= (gslt:fn:BNFAppendNameV1:110 (cons BNFNamesConsV1 (cons $head (cons $tail ()))) $name)
+   (let (cons gslt:result:BNFAppendNameV1:110 (cons $after ())) (gslt:fn:BNFAppendNameV1:110 $tail $name)
+   (quote (gslt:result:BNFAppendNameV1:110 (BNFNamesConsV1 $head $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=195 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-append-name-indexed-v1 target=mode relation=BNFAppendNameV1 input=110 functional=semidet
-(= (gslt:fn:BNFAppendNameV1:110 $__gslt_input_v1_0_0 $name)
-   (let (cons-atom BNFIndexedNamesV1 (cons-atom $index (cons-atom $ordered ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFGraphTrieInsertFirstV1:1110 $nextIndex) (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $name $name $index)
-   (let (gslt:result:BNFAppendNameV1:110 $nextOrdered) (gslt:fn:BNFAppendNameV1:110 $ordered $name)
-   (quote (gslt:result:BNFAppendNameV1:110 (BNFIndexedNamesV1 $nextIndex $nextOrdered)))))))
+(= (gslt:fn:BNFAppendNameV1:110 (cons BNFIndexedNamesV1 (cons $index (cons $ordered ()))) $name)
+   (let (cons gslt:result:BNFGraphTrieInsertFirstV1:1110 (cons $nextIndex ())) (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $name $name $index)
+   (let (cons gslt:result:BNFAppendNameV1:110 (cons $nextOrdered ())) (gslt:fn:BNFAppendNameV1:110 $ordered $name)
+   (quote (gslt:result:BNFAppendNameV1:110 (BNFIndexedNamesV1 $nextIndex $nextOrdered))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=199 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-known-append-v1 target=mode relation=BNFAppendNameV1 input=110 functional=semidet
-(= (gslt:fn:BNFAppendNameV1:110 $__gslt_input_v1_0_0 $name)
-   (let (cons-atom BNFDiscoveryKnownV1 (cons-atom $index (cons-atom $reversed ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFGraphTrieInsertFirstV1:1110 $next) (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $name $name $index)
-   (quote (gslt:result:BNFAppendNameV1:110 (BNFDiscoveryKnownV1 $next (BNFNamesConsV1 $name $reversed)))))))
+(= (gslt:fn:BNFAppendNameV1:110 (cons BNFDiscoveryKnownV1 (cons $index (cons $reversed ()))) $name)
+   (let (cons gslt:result:BNFGraphTrieInsertFirstV1:1110 (cons $next ())) (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $name $name $index)
+   (quote (gslt:result:BNFAppendNameV1:110 (BNFDiscoveryKnownV1 $next (BNFNamesConsV1 $name $reversed))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=86 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-append-names-nil-v1 target=mode relation=BNFAppendNamesV1 input=110 functional=semidet
 (= (gslt:fn:BNFAppendNamesV1:110 BNFNamesNilV1 $right)
    (quote (gslt:result:BNFAppendNamesV1:110 $right)))
 
 ; gslt-lowered-equation-v1 source-rewrite=87 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-append-names-cons-v1 target=mode relation=BNFAppendNamesV1 input=110 functional=semidet
-(= (gslt:fn:BNFAppendNamesV1:110 $__gslt_input_v1_0_0 $right)
-   (let (cons-atom BNFNamesConsV1 (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFAppendNamesV1:110 $after) (gslt:fn:BNFAppendNamesV1:110 $tail $right)
-   (quote (gslt:result:BNFAppendNamesV1:110 (BNFNamesConsV1 $head $after))))))
+(= (gslt:fn:BNFAppendNamesV1:110 (cons BNFNamesConsV1 (cons $head (cons $tail ()))) $right)
+   (let (cons gslt:result:BNFAppendNamesV1:110 (cons $after ())) (gslt:fn:BNFAppendNamesV1:110 $tail $right)
+   (quote (gslt:result:BNFAppendNamesV1:110 (BNFNamesConsV1 $head $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=88 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-collect-expression-references-v1 target=mode relation=BNFCollectExpressionReferencesV1 input=110 functional=semidet
-(= (gslt:fn:BNFCollectExpressionReferencesV1:110 $__gslt_input_v1_0_0 $lexicals)
-   (let (cons-atom bnf-v1:expression (cons-atom $alternatives (cons-atom $span ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFCollectAlternativesReferencesV1:110 $references) (gslt:fn:BNFCollectAlternativesReferencesV1:110 $alternatives $lexicals)
-   (quote (gslt:result:BNFCollectExpressionReferencesV1:110 $references)))))
+(= (gslt:fn:BNFCollectExpressionReferencesV1:110 (cons bnf-v1:expression (cons $alternatives (cons $span ()))) $lexicals)
+   (let (cons gslt:result:BNFCollectAlternativesReferencesV1:110 (cons $references ())) (gslt:fn:BNFCollectAlternativesReferencesV1:110 $alternatives $lexicals)
+   (quote (gslt:result:BNFCollectExpressionReferencesV1:110 $references))))
 
 ; gslt-lowered-equation-v1 source-rewrite=89 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-collect-alternatives-references-nil-v1 target=mode relation=BNFCollectAlternativesReferencesV1 input=110 functional=semidet
-(= (gslt:fn:BNFCollectAlternativesReferencesV1:110 $__gslt_input_v1_0_0 $lexicals)
-   (let (cons-atom bnf-v1:alternatives-nil ()) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFCollectAlternativesReferencesV1:110 BNFNamesNilV1))))
+(= (gslt:fn:BNFCollectAlternativesReferencesV1:110 (cons bnf-v1:alternatives-nil ()) $lexicals)
+   (quote (gslt:result:BNFCollectAlternativesReferencesV1:110 BNFNamesNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=90 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-collect-alternatives-references-cons-v1 target=mode relation=BNFCollectAlternativesReferencesV1 input=110 functional=semidet
-(= (gslt:fn:BNFCollectAlternativesReferencesV1:110 $__gslt_input_v1_0_0 $lexicals)
-   (let (cons-atom bnf-v1:alternatives-cons (cons-atom (cons-atom bnf-v1:alternative (cons-atom $elements (cons-atom $span ()))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFCollectElementsReferencesV1:110 $current) (gslt:fn:BNFCollectElementsReferencesV1:110 $elements $lexicals)
-   (let (gslt:result:BNFCollectAlternativesReferencesV1:110 $following) (gslt:fn:BNFCollectAlternativesReferencesV1:110 $tail $lexicals)
-   (let (gslt:result:BNFAppendNamesV1:110 $references) (gslt:fn:BNFAppendNamesV1:110 $current $following)
-   (quote (gslt:result:BNFCollectAlternativesReferencesV1:110 $references)))))))
+(= (gslt:fn:BNFCollectAlternativesReferencesV1:110 (cons bnf-v1:alternatives-cons (cons (cons bnf-v1:alternative (cons $elements (cons $span ()))) (cons $tail ()))) $lexicals)
+   (let (cons gslt:result:BNFCollectElementsReferencesV1:110 (cons $current ())) (gslt:fn:BNFCollectElementsReferencesV1:110 $elements $lexicals)
+   (let (cons gslt:result:BNFCollectAlternativesReferencesV1:110 (cons $following ())) (gslt:fn:BNFCollectAlternativesReferencesV1:110 $tail $lexicals)
+   (let (cons gslt:result:BNFAppendNamesV1:110 (cons $references ())) (gslt:fn:BNFAppendNamesV1:110 $current $following)
+   (quote (gslt:result:BNFCollectAlternativesReferencesV1:110 $references))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=91 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-collect-elements-references-nil-v1 target=mode relation=BNFCollectElementsReferencesV1 input=110 functional=semidet
-(= (gslt:fn:BNFCollectElementsReferencesV1:110 $__gslt_input_v1_0_0 $lexicals)
-   (let (cons-atom bnf-v1:elements-nil ()) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFCollectElementsReferencesV1:110 BNFNamesNilV1))))
+(= (gslt:fn:BNFCollectElementsReferencesV1:110 (cons bnf-v1:elements-nil ()) $lexicals)
+   (quote (gslt:result:BNFCollectElementsReferencesV1:110 BNFNamesNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=92 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-collect-elements-references-cons-v1 target=mode relation=BNFCollectElementsReferencesV1 input=110 functional=semidet
-(= (gslt:fn:BNFCollectElementsReferencesV1:110 $__gslt_input_v1_0_0 $lexicals)
-   (let (cons-atom bnf-v1:elements-cons (cons-atom $element (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFCollectElementReferencesV1:110 $current) (gslt:fn:BNFCollectElementReferencesV1:110 $element $lexicals)
-   (let (gslt:result:BNFCollectElementsReferencesV1:110 $following) (gslt:fn:BNFCollectElementsReferencesV1:110 $tail $lexicals)
-   (let (gslt:result:BNFAppendNamesV1:110 $references) (gslt:fn:BNFAppendNamesV1:110 $current $following)
-   (quote (gslt:result:BNFCollectElementsReferencesV1:110 $references)))))))
+(= (gslt:fn:BNFCollectElementsReferencesV1:110 (cons bnf-v1:elements-cons (cons $element (cons $tail ()))) $lexicals)
+   (let (cons gslt:result:BNFCollectElementReferencesV1:110 (cons $current ())) (gslt:fn:BNFCollectElementReferencesV1:110 $element $lexicals)
+   (let (cons gslt:result:BNFCollectElementsReferencesV1:110 (cons $following ())) (gslt:fn:BNFCollectElementsReferencesV1:110 $tail $lexicals)
+   (let (cons gslt:result:BNFAppendNamesV1:110 (cons $references ())) (gslt:fn:BNFAppendNamesV1:110 $current $following)
+   (quote (gslt:result:BNFCollectElementsReferencesV1:110 $references))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=93 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-collect-literal-reference-v1 target=mode relation=BNFCollectElementReferencesV1 input=110 functional=semidet
-(= (gslt:fn:BNFCollectElementReferencesV1:110 $__gslt_input_v1_0_0 $lexicals)
-   (let (cons-atom bnf-v1:literal (cons-atom $text (cons-atom $span ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFCollectElementReferencesV1:110 BNFNamesNilV1))))
+(= (gslt:fn:BNFCollectElementReferencesV1:110 (cons bnf-v1:literal (cons $text (cons $span ()))) $lexicals)
+   (quote (gslt:result:BNFCollectElementReferencesV1:110 BNFNamesNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=94 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-collect-nonterminal-reference-v1 target=mode relation=BNFCollectElementReferencesV1 input=110 functional=semidet
-(= (gslt:fn:BNFCollectElementReferencesV1:110 $__gslt_input_v1_0_0 $lexicals)
-   (let (cons-atom bnf-v1:reference (cons-atom $name (cons-atom $span ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFLexicalReferenceLookupV1:110 $lookup) (gslt:fn:BNFLexicalReferenceLookupV1:110 $name $lexicals)
-   (let (gslt:result:BNFCollectReferenceAfterLexicalLookupV1:110 $references) (gslt:fn:BNFCollectReferenceAfterLexicalLookupV1:110 $name $lookup)
-   (quote (gslt:result:BNFCollectElementReferencesV1:110 $references))))))
+(= (gslt:fn:BNFCollectElementReferencesV1:110 (cons bnf-v1:reference (cons $name (cons $span ()))) $lexicals)
+   (let (cons gslt:result:BNFLexicalReferenceLookupV1:110 (cons $lookup ())) (gslt:fn:BNFLexicalReferenceLookupV1:110 $name $lexicals)
+   (let (cons gslt:result:BNFCollectReferenceAfterLexicalLookupV1:110 (cons $references ())) (gslt:fn:BNFCollectReferenceAfterLexicalLookupV1:110 $name $lookup)
+   (quote (gslt:result:BNFCollectElementReferencesV1:110 $references)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=95 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-collect-grammar-reference-v1 target=mode relation=BNFCollectReferenceAfterLexicalLookupV1 input=110 functional=semidet
 (= (gslt:fn:BNFCollectReferenceAfterLexicalLookupV1:110 $name BNFLexicalMissingV1)
    (quote (gslt:result:BNFCollectReferenceAfterLexicalLookupV1:110 (BNFNamesConsV1 $name BNFNamesNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=96 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-collect-lexical-reference-v1 target=mode relation=BNFCollectReferenceAfterLexicalLookupV1 input=110 functional=semidet
-(= (gslt:fn:BNFCollectReferenceAfterLexicalLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom BNFLexicalFoundV1 (cons-atom $declaration ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFCollectReferenceAfterLexicalLookupV1:110 BNFNamesNilV1))))
+(= (gslt:fn:BNFCollectReferenceAfterLexicalLookupV1:110 $name (cons BNFLexicalFoundV1 (cons $declaration ())))
+   (quote (gslt:result:BNFCollectReferenceAfterLexicalLookupV1:110 BNFNamesNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=97 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-reachable-queue-nil-v1 target=mode relation=BNFReachableQueueV1 input=111110 functional=semidet
 (= (gslt:fn:BNFReachableQueueV1:111110 BNFNamesNilV1 BNFNamesNilV1 $definitions $lexicals $visited)
    (quote (gslt:result:BNFReachableQueueV1:111110 $visited)))
 
 ; gslt-lowered-equation-v1 source-rewrite=98 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-reachable-queue-cons-v1 target=mode relation=BNFReachableQueueV1 input=111110 functional=semidet
-(= (gslt:fn:BNFReachableQueueV1:111110 $__gslt_input_v1_0_0 $back $definitions $lexicals $visited)
-   (let (cons-atom BNFNamesConsV1 (cons-atom $name (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFNameLookupV1:110 $lookup) (gslt:fn:BNFNameLookupV1:110 $name $visited)
-   (let (gslt:result:BNFReachableAfterVisitedV1:11111110 $reachable) (gslt:fn:BNFReachableAfterVisitedV1:11111110 $lookup $name $rest $back $definitions $lexicals $visited)
-   (quote (gslt:result:BNFReachableQueueV1:111110 $reachable))))))
+(= (gslt:fn:BNFReachableQueueV1:111110 (cons BNFNamesConsV1 (cons $name (cons $rest ()))) $back $definitions $lexicals $visited)
+   (let (cons gslt:result:BNFNameLookupV1:110 (cons $lookup ())) (gslt:fn:BNFNameLookupV1:110 $name $visited)
+   (let (cons gslt:result:BNFReachableAfterVisitedV1:11111110 (cons $reachable ())) (gslt:fn:BNFReachableAfterVisitedV1:11111110 $lookup $name $rest $back $definitions $lexicals $visited)
+   (quote (gslt:result:BNFReachableQueueV1:111110 $reachable)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=175 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-reachable-queue-rotate-v1 target=mode relation=BNFReachableQueueV1 input=111110 functional=semidet
-(= (gslt:fn:BNFReachableQueueV1:111110 BNFNamesNilV1 $__gslt_input_v1_0_1 $definitions $lexicals $visited)
-   (let (cons-atom BNFNamesConsV1 (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFReachableReverseV1:110 $front) (gslt:fn:BNFReachableReverseV1:110 (quote (BNFNamesConsV1 $head $tail)) BNFNamesNilV1)
-   (let (gslt:result:BNFReachableQueueV1:111110 $result) (gslt:fn:BNFReachableQueueV1:111110 $front BNFNamesNilV1 $definitions $lexicals $visited)
-   (quote (gslt:result:BNFReachableQueueV1:111110 $result))))))
+(= (gslt:fn:BNFReachableQueueV1:111110 BNFNamesNilV1 (cons BNFNamesConsV1 (cons $head (cons $tail ()))) $definitions $lexicals $visited)
+   (let (cons gslt:result:BNFReachableReverseV1:110 (cons $front ())) (gslt:fn:BNFReachableReverseV1:110 (quote (BNFNamesConsV1 $head $tail)) BNFNamesNilV1)
+   (let (cons gslt:result:BNFReachableQueueV1:111110 (cons $result ())) (gslt:fn:BNFReachableQueueV1:111110 $front BNFNamesNilV1 $definitions $lexicals $visited)
+   (quote (gslt:result:BNFReachableQueueV1:111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=99 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-reachable-already-visited-v1 target=mode relation=BNFReachableAfterVisitedV1 input=11111110 functional=semidet
-(= (gslt:fn:BNFReachableAfterVisitedV1:11111110 $__gslt_input_v1_0_0 $name $rest $back $definitions $lexicals $visited)
-   (let (cons-atom BNFNameFoundV1 (cons-atom $name ())) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFReachableQueueV1:111110 $reachable) (gslt:fn:BNFReachableQueueV1:111110 $rest $back $definitions $lexicals $visited)
-   (quote (gslt:result:BNFReachableAfterVisitedV1:11111110 $reachable)))))
+(= (gslt:fn:BNFReachableAfterVisitedV1:11111110 (cons BNFNameFoundV1 (cons $name ())) $name $rest $back $definitions $lexicals $visited)
+   (let (cons gslt:result:BNFReachableQueueV1:111110 (cons $reachable ())) (gslt:fn:BNFReachableQueueV1:111110 $rest $back $definitions $lexicals $visited)
+   (quote (gslt:result:BNFReachableAfterVisitedV1:11111110 $reachable))))
 
 ; gslt-lowered-equation-v1 source-rewrite=100 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-reachable-first-visit-v1 target=mode relation=BNFReachableAfterVisitedV1 input=11111110 functional=semidet
 (= (gslt:fn:BNFReachableAfterVisitedV1:11111110 BNFNameMissingV1 $name $rest $back $definitions $lexicals $visited)
-   (let (gslt:result:BNFDefinitionLookupV1:110 (cons-atom BNFDefinitionFoundV1 (cons-atom $expression (cons-atom $span ())))) (gslt:fn:BNFDefinitionLookupV1:110 $name $definitions)
-   (let (gslt:result:BNFCollectExpressionReferencesV1:110 $references) (gslt:fn:BNFCollectExpressionReferencesV1:110 $expression $lexicals)
-   (let (gslt:result:BNFReachableReverseV1:110 $nextBack) (gslt:fn:BNFReachableReverseV1:110 $references $back)
-   (let (gslt:result:BNFAppendNameV1:110 $nextVisited) (gslt:fn:BNFAppendNameV1:110 $visited $name)
-   (let (gslt:result:BNFReachableQueueV1:111110 $reachable) (gslt:fn:BNFReachableQueueV1:111110 $rest $nextBack $definitions $lexicals $nextVisited)
+   (let (cons gslt:result:BNFDefinitionLookupV1:110 (cons (cons BNFDefinitionFoundV1 (cons $expression (cons $span ()))) ())) (gslt:fn:BNFDefinitionLookupV1:110 $name $definitions)
+   (let (cons gslt:result:BNFCollectExpressionReferencesV1:110 (cons $references ())) (gslt:fn:BNFCollectExpressionReferencesV1:110 $expression $lexicals)
+   (let (cons gslt:result:BNFReachableReverseV1:110 (cons $nextBack ())) (gslt:fn:BNFReachableReverseV1:110 $references $back)
+   (let (cons gslt:result:BNFAppendNameV1:110 (cons $nextVisited ())) (gslt:fn:BNFAppendNameV1:110 $visited $name)
+   (let (cons gslt:result:BNFReachableQueueV1:111110 (cons $reachable ())) (gslt:fn:BNFReachableQueueV1:111110 $rest $nextBack $definitions $lexicals $nextVisited)
    (quote (gslt:result:BNFReachableAfterVisitedV1:11111110 $reachable))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=101 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-unreachable-diagnostics-nil-v1 target=mode relation=BNFUnreachableDiagnosticsV1 input=110 functional=semidet
@@ -1367,41 +1302,35 @@
    (quote (gslt:result:BNFUnreachableDiagnosticsV1:110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=102 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-unreachable-diagnostics-cons-v1 target=mode relation=BNFUnreachableDiagnosticsV1 input=110 functional=semidet
-(= (gslt:fn:BNFUnreachableDiagnosticsV1:110 $__gslt_input_v1_0_0 $reachable)
-   (let (cons-atom BNFDefinitionsConsV1 (cons-atom (cons-atom BNFDefinitionV1 (cons-atom $name (cons-atom $expression (cons-atom $span ())))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFNameLookupV1:110 $lookup) (gslt:fn:BNFNameLookupV1:110 $name $reachable)
-   (let (gslt:result:BNFUnreachableAfterLookupV1:11110 $diagnostics) (gslt:fn:BNFUnreachableAfterLookupV1:11110 $lookup (quote (BNFDefinitionV1 $name $expression $span)) $tail $reachable)
-   (quote (gslt:result:BNFUnreachableDiagnosticsV1:110 $diagnostics))))))
+(= (gslt:fn:BNFUnreachableDiagnosticsV1:110 (cons BNFDefinitionsConsV1 (cons (cons BNFDefinitionV1 (cons $name (cons $expression (cons $span ())))) (cons $tail ()))) $reachable)
+   (let (cons gslt:result:BNFNameLookupV1:110 (cons $lookup ())) (gslt:fn:BNFNameLookupV1:110 $name $reachable)
+   (let (cons gslt:result:BNFUnreachableAfterLookupV1:11110 (cons $diagnostics ())) (gslt:fn:BNFUnreachableAfterLookupV1:11110 $lookup (quote (BNFDefinitionV1 $name $expression $span)) $tail $reachable)
+   (quote (gslt:result:BNFUnreachableDiagnosticsV1:110 $diagnostics)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=103 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-reachable-definition-v1 target=mode relation=BNFUnreachableAfterLookupV1 input=11110 functional=semidet
-(= (gslt:fn:BNFUnreachableAfterLookupV1:11110 $__gslt_input_v1_0_0 $definition $tail $reachable)
-   (let (cons-atom BNFNameFoundV1 (cons-atom $name ())) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFUnreachableDiagnosticsV1:110 $diagnostics) (gslt:fn:BNFUnreachableDiagnosticsV1:110 $tail $reachable)
-   (quote (gslt:result:BNFUnreachableAfterLookupV1:11110 $diagnostics)))))
+(= (gslt:fn:BNFUnreachableAfterLookupV1:11110 (cons BNFNameFoundV1 (cons $name ())) $definition $tail $reachable)
+   (let (cons gslt:result:BNFUnreachableDiagnosticsV1:110 (cons $diagnostics ())) (gslt:fn:BNFUnreachableDiagnosticsV1:110 $tail $reachable)
+   (quote (gslt:result:BNFUnreachableAfterLookupV1:11110 $diagnostics))))
 
 ; gslt-lowered-equation-v1 source-rewrite=104 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-unreachable-definition-v1 target=mode relation=BNFUnreachableAfterLookupV1 input=11110 functional=semidet
-(= (gslt:fn:BNFUnreachableAfterLookupV1:11110 BNFNameMissingV1 $__gslt_input_v1_0_1 $tail $reachable)
-   (let (cons-atom BNFDefinitionV1 (cons-atom $name (cons-atom $expression (cons-atom $span ())))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFUnreachableDiagnosticsV1:110 $diagnostics) (gslt:fn:BNFUnreachableDiagnosticsV1:110 $tail $reachable)
-   (quote (gslt:result:BNFUnreachableAfterLookupV1:11110 (BNFDiagnosticsConsV1 (BNFUnreachableDefinitionV1 $name $span) $diagnostics))))))
+(= (gslt:fn:BNFUnreachableAfterLookupV1:11110 BNFNameMissingV1 (cons BNFDefinitionV1 (cons $name (cons $expression (cons $span ())))) $tail $reachable)
+   (let (cons gslt:result:BNFUnreachableDiagnosticsV1:110 (cons $diagnostics ())) (gslt:fn:BNFUnreachableDiagnosticsV1:110 $tail $reachable)
+   (quote (gslt:result:BNFUnreachableAfterLookupV1:11110 (BNFDiagnosticsConsV1 (BNFUnreachableDefinitionV1 $name $span) $diagnostics)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=105 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-expression-productive-v1 target=mode relation=BNFExpressionProductiveV1 input=1110 functional=relational
-(= (gslt:mode:BNFExpressionProductiveV1:1110 $__gslt_input_v1_0_0 $productive $lexicals)
-   (let (cons-atom bnf-v1:expression (cons-atom $alternatives (cons-atom $span ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFAlternativesProductiveV1:1110 $result) (superpose (collapse (gslt:mode:BNFAlternativesProductiveV1:1110 $alternatives $productive $lexicals)))
-   (quote (gslt:result:BNFExpressionProductiveV1:1110 $result)))))
+(= (gslt:mode:BNFExpressionProductiveV1:1110 (cons bnf-v1:expression (cons $alternatives (cons $span ()))) $productive $lexicals)
+   (let (cons gslt:result:BNFAlternativesProductiveV1:1110 (cons $result ())) (superpose (collapse (gslt:mode:BNFAlternativesProductiveV1:1110 $alternatives $productive $lexicals)))
+   (quote (gslt:result:BNFExpressionProductiveV1:1110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=106 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-alternatives-productive-nil-v1 target=mode relation=BNFAlternativesProductiveV1 input=1110 functional=relational
-(= (gslt:mode:BNFAlternativesProductiveV1:1110 $__gslt_input_v1_0_0 $productive $lexicals)
-   (let (cons-atom bnf-v1:alternatives-nil ()) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFAlternativesProductiveV1:1110 BNFNoV1))))
+(= (gslt:mode:BNFAlternativesProductiveV1:1110 (cons bnf-v1:alternatives-nil ()) $productive $lexicals)
+   (quote (gslt:result:BNFAlternativesProductiveV1:1110 BNFNoV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=107 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-alternatives-productive-cons-v1 target=mode relation=BNFAlternativesProductiveV1 input=1110 functional=relational
-(= (gslt:mode:BNFAlternativesProductiveV1:1110 $__gslt_input_v1_0_0 $productive $lexicals)
-   (let (cons-atom bnf-v1:alternatives-cons (cons-atom $alternative (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFAlternativeProductiveV1:1110 $headResult) (superpose (collapse (gslt:mode:BNFAlternativeProductiveV1:1110 $alternative $productive $lexicals)))
-   (let (gslt:result:BNFAlternativesProductiveAfterHeadV1:11110 $result) (superpose (collapse (gslt:mode:BNFAlternativesProductiveAfterHeadV1:11110 $headResult $tail $productive $lexicals)))
-   (quote (gslt:result:BNFAlternativesProductiveV1:1110 $result))))))
+(= (gslt:mode:BNFAlternativesProductiveV1:1110 (cons bnf-v1:alternatives-cons (cons $alternative (cons $tail ()))) $productive $lexicals)
+   (let (cons gslt:result:BNFAlternativeProductiveV1:1110 (cons $headResult ())) (superpose (collapse (gslt:mode:BNFAlternativeProductiveV1:1110 $alternative $productive $lexicals)))
+   (let (cons gslt:result:BNFAlternativesProductiveAfterHeadV1:11110 (cons $result ())) (superpose (collapse (gslt:mode:BNFAlternativesProductiveAfterHeadV1:11110 $headResult $tail $productive $lexicals)))
+   (quote (gslt:result:BNFAlternativesProductiveV1:1110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=108 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-alternatives-productive-head-yes-v1 target=mode relation=BNFAlternativesProductiveAfterHeadV1 input=11110 functional=relational
 (= (gslt:mode:BNFAlternativesProductiveAfterHeadV1:11110 BNFYesV1 $tail $productive $lexicals)
@@ -1409,26 +1338,23 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=109 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-alternatives-productive-head-no-v1 target=mode relation=BNFAlternativesProductiveAfterHeadV1 input=11110 functional=relational
 (= (gslt:mode:BNFAlternativesProductiveAfterHeadV1:11110 BNFNoV1 $tail $productive $lexicals)
-   (let (gslt:result:BNFAlternativesProductiveV1:1110 $result) (superpose (collapse (gslt:mode:BNFAlternativesProductiveV1:1110 $tail $productive $lexicals)))
+   (let (cons gslt:result:BNFAlternativesProductiveV1:1110 (cons $result ())) (superpose (collapse (gslt:mode:BNFAlternativesProductiveV1:1110 $tail $productive $lexicals)))
    (quote (gslt:result:BNFAlternativesProductiveAfterHeadV1:11110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=110 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-alternative-productive-v1 target=mode relation=BNFAlternativeProductiveV1 input=1110 functional=relational
-(= (gslt:mode:BNFAlternativeProductiveV1:1110 $__gslt_input_v1_0_0 $productive $lexicals)
-   (let (cons-atom bnf-v1:alternative (cons-atom $elements (cons-atom $span ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFElementsProductiveV1:1110 $result) (superpose (collapse (gslt:mode:BNFElementsProductiveV1:1110 $elements $productive $lexicals)))
-   (quote (gslt:result:BNFAlternativeProductiveV1:1110 $result)))))
+(= (gslt:mode:BNFAlternativeProductiveV1:1110 (cons bnf-v1:alternative (cons $elements (cons $span ()))) $productive $lexicals)
+   (let (cons gslt:result:BNFElementsProductiveV1:1110 (cons $result ())) (superpose (collapse (gslt:mode:BNFElementsProductiveV1:1110 $elements $productive $lexicals)))
+   (quote (gslt:result:BNFAlternativeProductiveV1:1110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=111 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-elements-productive-nil-v1 target=mode relation=BNFElementsProductiveV1 input=1110 functional=relational
-(= (gslt:mode:BNFElementsProductiveV1:1110 $__gslt_input_v1_0_0 $productive $lexicals)
-   (let (cons-atom bnf-v1:elements-nil ()) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFElementsProductiveV1:1110 BNFYesV1))))
+(= (gslt:mode:BNFElementsProductiveV1:1110 (cons bnf-v1:elements-nil ()) $productive $lexicals)
+   (quote (gslt:result:BNFElementsProductiveV1:1110 BNFYesV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=112 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-elements-productive-cons-v1 target=mode relation=BNFElementsProductiveV1 input=1110 functional=relational
-(= (gslt:mode:BNFElementsProductiveV1:1110 $__gslt_input_v1_0_0 $productive $lexicals)
-   (let (cons-atom bnf-v1:elements-cons (cons-atom $element (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFElementProductiveV1:1110 $headResult) (superpose (collapse (gslt:mode:BNFElementProductiveV1:1110 $element $productive $lexicals)))
-   (let (gslt:result:BNFElementsProductiveAfterHeadV1:11110 $result) (superpose (collapse (gslt:mode:BNFElementsProductiveAfterHeadV1:11110 $headResult $tail $productive $lexicals)))
-   (quote (gslt:result:BNFElementsProductiveV1:1110 $result))))))
+(= (gslt:mode:BNFElementsProductiveV1:1110 (cons bnf-v1:elements-cons (cons $element (cons $tail ()))) $productive $lexicals)
+   (let (cons gslt:result:BNFElementProductiveV1:1110 (cons $headResult ())) (superpose (collapse (gslt:mode:BNFElementProductiveV1:1110 $element $productive $lexicals)))
+   (let (cons gslt:result:BNFElementsProductiveAfterHeadV1:11110 (cons $result ())) (superpose (collapse (gslt:mode:BNFElementsProductiveAfterHeadV1:11110 $headResult $tail $productive $lexicals)))
+   (quote (gslt:result:BNFElementsProductiveV1:1110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=113 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-elements-productive-head-no-v1 target=mode relation=BNFElementsProductiveAfterHeadV1 input=11110 functional=relational
 (= (gslt:mode:BNFElementsProductiveAfterHeadV1:11110 BNFNoV1 $tail $productive $lexicals)
@@ -1436,90 +1362,78 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=114 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-elements-productive-head-yes-v1 target=mode relation=BNFElementsProductiveAfterHeadV1 input=11110 functional=relational
 (= (gslt:mode:BNFElementsProductiveAfterHeadV1:11110 BNFYesV1 $tail $productive $lexicals)
-   (let (gslt:result:BNFElementsProductiveV1:1110 $result) (superpose (collapse (gslt:mode:BNFElementsProductiveV1:1110 $tail $productive $lexicals)))
+   (let (cons gslt:result:BNFElementsProductiveV1:1110 (cons $result ())) (superpose (collapse (gslt:mode:BNFElementsProductiveV1:1110 $tail $productive $lexicals)))
    (quote (gslt:result:BNFElementsProductiveAfterHeadV1:11110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=115 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-literal-productive-v1 target=mode relation=BNFElementProductiveV1 input=1110 functional=relational
-(= (gslt:mode:BNFElementProductiveV1:1110 $__gslt_input_v1_0_0 $productive $lexicals)
-   (let (cons-atom bnf-v1:literal (cons-atom $text (cons-atom $span ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFElementProductiveV1:1110 BNFYesV1))))
+(= (gslt:mode:BNFElementProductiveV1:1110 (cons bnf-v1:literal (cons $text (cons $span ()))) $productive $lexicals)
+   (quote (gslt:result:BNFElementProductiveV1:1110 BNFYesV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=116 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-reference-productive-v1 target=mode relation=BNFElementProductiveV1 input=1110 functional=relational
-(= (gslt:mode:BNFElementProductiveV1:1110 $__gslt_input_v1_0_0 $productive $lexicals)
-   (let (cons-atom bnf-v1:reference (cons-atom $name (cons-atom $span ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFNameLookupV1:110 $lookup) (once (gslt:fn:BNFNameLookupV1:110 $name $productive))
-   (let (gslt:result:BNFProductiveReferenceAfterLookupV1:1110 $result) (superpose (collapse (gslt:mode:BNFProductiveReferenceAfterLookupV1:1110 $name $lookup $lexicals)))
-   (quote (gslt:result:BNFElementProductiveV1:1110 $result))))))
+(= (gslt:mode:BNFElementProductiveV1:1110 (cons bnf-v1:reference (cons $name (cons $span ()))) $productive $lexicals)
+   (let (cons gslt:result:BNFNameLookupV1:110 (cons $lookup ())) (once (gslt:fn:BNFNameLookupV1:110 $name $productive))
+   (let (cons gslt:result:BNFProductiveReferenceAfterLookupV1:1110 (cons $result ())) (superpose (collapse (gslt:mode:BNFProductiveReferenceAfterLookupV1:1110 $name $lookup $lexicals)))
+   (quote (gslt:result:BNFElementProductiveV1:1110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=117 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-productive-reference-found-v1 target=mode relation=BNFProductiveReferenceAfterLookupV1 input=1110 functional=relational
-(= (gslt:mode:BNFProductiveReferenceAfterLookupV1:1110 $name $__gslt_input_v1_0_1 $lexicals)
-   (let (cons-atom BNFNameFoundV1 (cons-atom $name ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFProductiveReferenceAfterLookupV1:1110 BNFYesV1))))
+(= (gslt:mode:BNFProductiveReferenceAfterLookupV1:1110 $name (cons BNFNameFoundV1 (cons $name ())) $lexicals)
+   (quote (gslt:result:BNFProductiveReferenceAfterLookupV1:1110 BNFYesV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=118 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-productive-reference-missing-v1 target=mode relation=BNFProductiveReferenceAfterLookupV1 input=1110 functional=relational
 (= (gslt:mode:BNFProductiveReferenceAfterLookupV1:1110 $name BNFNameMissingV1 $lexicals)
-   (let (gslt:result:BNFLexicalReferenceLookupV1:110 $lexicalLookup) (once (gslt:fn:BNFLexicalReferenceLookupV1:110 $name $lexicals))
-   (let (gslt:result:BNFProductiveReferenceAfterLexicalLookupV1:10 $result) (superpose (collapse (gslt:mode:BNFProductiveReferenceAfterLexicalLookupV1:10 $lexicalLookup)))
+   (let (cons gslt:result:BNFLexicalReferenceLookupV1:110 (cons $lexicalLookup ())) (once (gslt:fn:BNFLexicalReferenceLookupV1:110 $name $lexicals))
+   (let (cons gslt:result:BNFProductiveReferenceAfterLexicalLookupV1:10 (cons $result ())) (superpose (collapse (gslt:mode:BNFProductiveReferenceAfterLexicalLookupV1:10 $lexicalLookup)))
    (quote (gslt:result:BNFProductiveReferenceAfterLookupV1:1110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=119 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-productive-lexical-reference-v1 target=mode relation=BNFProductiveReferenceAfterLexicalLookupV1 input=10 functional=relational
-(= (gslt:mode:BNFProductiveReferenceAfterLexicalLookupV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom BNFLexicalFoundV1 (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $name (cons-atom $class (cons-atom $matcher (cons-atom $label (cons-atom $origin ())))))) ())) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFLexicalMatcherInhabitedV1:10 $result) (superpose (collapse (gslt:mode:BNFLexicalMatcherInhabitedV1:10 $matcher)))
-   (quote (gslt:result:BNFProductiveReferenceAfterLexicalLookupV1:10 $result)))))
+(= (gslt:mode:BNFProductiveReferenceAfterLexicalLookupV1:10 (cons BNFLexicalFoundV1 (cons (cons bnf-v1:lexical-declaration (cons $name (cons $class (cons $matcher (cons $label (cons $origin ())))))) ())))
+   (let (cons gslt:result:BNFLexicalMatcherInhabitedV1:10 (cons $result ())) (superpose (collapse (gslt:mode:BNFLexicalMatcherInhabitedV1:10 $matcher)))
+   (quote (gslt:result:BNFProductiveReferenceAfterLexicalLookupV1:10 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=120 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-unproductive-unknown-reference-v1 target=mode relation=BNFProductiveReferenceAfterLexicalLookupV1 input=10 functional=relational
 (= (gslt:mode:BNFProductiveReferenceAfterLexicalLookupV1:10 BNFLexicalMissingV1)
    (quote (gslt:result:BNFProductiveReferenceAfterLexicalLookupV1:10 BNFNoV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=121 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-points-empty-uninhabited-v1 target=mode relation=BNFLexicalMatcherInhabitedV1 input=10 functional=relational
-(= (gslt:mode:BNFLexicalMatcherInhabitedV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom bnf-v1:lexical-points (cons-atom (cons-atom bnf-v1:scalars-nil ()) ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFLexicalMatcherInhabitedV1:10 BNFNoV1))))
+(= (gslt:mode:BNFLexicalMatcherInhabitedV1:10 (cons bnf-v1:lexical-points (cons (cons bnf-v1:scalars-nil ()) ())))
+   (quote (gslt:result:BNFLexicalMatcherInhabitedV1:10 BNFNoV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=122 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-points-cons-inhabited-v1 target=mode relation=BNFLexicalMatcherInhabitedV1 input=10 functional=relational
-(= (gslt:mode:BNFLexicalMatcherInhabitedV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom bnf-v1:lexical-points (cons-atom (cons-atom bnf-v1:scalars-cons (cons-atom $first (cons-atom $tail ()))) ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFLexicalMatcherInhabitedV1:10 BNFYesV1))))
+(= (gslt:mode:BNFLexicalMatcherInhabitedV1:10 (cons bnf-v1:lexical-points (cons (cons bnf-v1:scalars-cons (cons $first (cons $tail ()))) ())))
+   (quote (gslt:result:BNFLexicalMatcherInhabitedV1:10 BNFYesV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=123 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-exclusion-empty-inhabited-v1 target=mode relation=BNFLexicalMatcherInhabitedV1 input=10 functional=relational
-(= (gslt:mode:BNFLexicalMatcherInhabitedV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom bnf-v1:lexical-except (cons-atom (cons-atom bnf-v1:scalars-nil ()) ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFLexicalMatcherInhabitedV1:10 BNFYesV1))))
+(= (gslt:mode:BNFLexicalMatcherInhabitedV1:10 (cons bnf-v1:lexical-except (cons (cons bnf-v1:scalars-nil ()) ())))
+   (quote (gslt:result:BNFLexicalMatcherInhabitedV1:10 BNFYesV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=124 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-exclusion-zero-inhabited-v1 target=mode relation=BNFLexicalMatcherInhabitedV1 input=10 functional=relational
-(= (gslt:mode:BNFLexicalMatcherInhabitedV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom bnf-v1:lexical-except (cons-atom (cons-atom bnf-v1:scalars-cons (cons-atom 0 (cons-atom $tail ()))) ())) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFExclusionTailInhabitedV1:110 $result) (superpose (collapse (gslt:mode:BNFExclusionTailInhabitedV1:110 0 $tail)))
-   (quote (gslt:result:BNFLexicalMatcherInhabitedV1:10 $result)))))
+(= (gslt:mode:BNFLexicalMatcherInhabitedV1:10 (cons bnf-v1:lexical-except (cons (cons bnf-v1:scalars-cons (cons 0 (cons $tail ()))) ())))
+   (let (cons gslt:result:BNFExclusionTailInhabitedV1:110 (cons $result ())) (superpose (collapse (gslt:mode:BNFExclusionTailInhabitedV1:110 0 $tail)))
+   (quote (gslt:result:BNFLexicalMatcherInhabitedV1:10 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=125 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-exclusion-missing-zero-inhabited-v1 target=mode relation=BNFLexicalMatcherInhabitedV1 input=10 functional=relational
-(= (gslt:mode:BNFLexicalMatcherInhabitedV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom bnf-v1:lexical-except (cons-atom (cons-atom bnf-v1:scalars-cons (cons-atom $first (cons-atom $tail ()))) ())) $__gslt_input_v1_0_0
+(= (gslt:mode:BNFLexicalMatcherInhabitedV1:10 (cons bnf-v1:lexical-except (cons (cons bnf-v1:scalars-cons (cons $first (cons $tail ()))) ())))
    (let $_ (gslt:different (different $first 0))
-   (quote (gslt:result:BNFLexicalMatcherInhabitedV1:10 BNFYesV1)))))
+   (quote (gslt:result:BNFLexicalMatcherInhabitedV1:10 BNFYesV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=126 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-exclusion-tail-missing-last-v1 target=mode relation=BNFExclusionTailInhabitedV1 input=110 functional=relational
-(= (gslt:mode:BNFExclusionTailInhabitedV1:110 $last $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:scalars-nil ()) $__gslt_input_v1_0_1
+(= (gslt:mode:BNFExclusionTailInhabitedV1:110 $last (cons bnf-v1:scalars-nil ()))
    (let $_ (gslt:ground-integer-less (ground-integer-less $last 1114111))
-   (quote (gslt:result:BNFExclusionTailInhabitedV1:110 BNFYesV1)))))
+   (quote (gslt:result:BNFExclusionTailInhabitedV1:110 BNFYesV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=127 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-exclusion-tail-complete-v1 target=mode relation=BNFExclusionTailInhabitedV1 input=110 functional=relational
-(= (gslt:mode:BNFExclusionTailInhabitedV1:110 $last $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:scalars-nil ()) $__gslt_input_v1_0_1
+(= (gslt:mode:BNFExclusionTailInhabitedV1:110 $last (cons bnf-v1:scalars-nil ()))
    (let $_ (gslt:ground-integer-not-less (ground-integer-not-less $last 1114111))
-   (quote (gslt:result:BNFExclusionTailInhabitedV1:110 BNFNoV1)))))
+   (quote (gslt:result:BNFExclusionTailInhabitedV1:110 BNFNoV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=128 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-exclusion-tail-cons-v1 target=mode relation=BNFExclusionTailInhabitedV1 input=110 functional=relational
-(= (gslt:mode:BNFExclusionTailInhabitedV1:110 $left $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:scalars-cons (cons-atom $right (cons-atom $tail ()))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFExclusionGapInhabitedV1:1110 $result) (superpose (collapse (gslt:mode:BNFExclusionGapInhabitedV1:1110 $left $right $tail)))
-   (quote (gslt:result:BNFExclusionTailInhabitedV1:110 $result)))))
+(= (gslt:mode:BNFExclusionTailInhabitedV1:110 $left (cons bnf-v1:scalars-cons (cons $right (cons $tail ()))))
+   (let (cons gslt:result:BNFExclusionGapInhabitedV1:1110 (cons $result ())) (superpose (collapse (gslt:mode:BNFExclusionGapInhabitedV1:1110 $left $right $tail)))
+   (quote (gslt:result:BNFExclusionTailInhabitedV1:110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=129 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-exclusion-surrogate-interval-v1 target=mode relation=BNFExclusionGapInhabitedV1 input=1110 functional=relational
 (= (gslt:mode:BNFExclusionGapInhabitedV1:1110 55295 57344 $tail)
-   (let (gslt:result:BNFExclusionTailInhabitedV1:110 $result) (superpose (collapse (gslt:mode:BNFExclusionTailInhabitedV1:110 57344 $tail)))
+   (let (cons gslt:result:BNFExclusionTailInhabitedV1:110 (cons $result ())) (superpose (collapse (gslt:mode:BNFExclusionTailInhabitedV1:110 57344 $tail)))
    (quote (gslt:result:BNFExclusionGapInhabitedV1:1110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=130 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-exclusion-gap-v1 target=mode relation=BNFExclusionGapInhabitedV1 input=1110 functional=relational
@@ -1532,13 +1446,13 @@
 (= (gslt:mode:BNFExclusionGapInhabitedV1:1110 $left $right $tail)
    (let $_ (gslt:different (different (BNFScalarPairV1 $left $right) (BNFScalarPairV1 55295 57344)))
    (let $_ (gslt:ground-integer-no-gap (ground-integer-no-gap $left $right))
-   (let (gslt:result:BNFExclusionTailInhabitedV1:110 $result) (superpose (collapse (gslt:mode:BNFExclusionTailInhabitedV1:110 $right $tail)))
+   (let (cons gslt:result:BNFExclusionTailInhabitedV1:110 (cons $result ())) (superpose (collapse (gslt:mode:BNFExclusionTailInhabitedV1:110 $right $tail)))
    (quote (gslt:result:BNFExclusionGapInhabitedV1:1110 $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=138 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-productivity-closure-v1 target=mode relation=BNFProductivityClosureV1 input=1110 functional=relational
 (= (gslt:mode:BNFProductivityClosureV1:1110 $definitions $before $lexicals)
-   (let (gslt:result:BNFProductivityPassV1:11100 $next $changed) (superpose (collapse (gslt:mode:BNFProductivityPassV1:11100 $definitions $before $lexicals)))
-   (let (gslt:result:BNFProductivityClosureAfterPassV1:11110 $productive) (superpose (collapse (gslt:mode:BNFProductivityClosureAfterPassV1:11110 $changed $definitions $next $lexicals)))
+   (let (cons gslt:result:BNFProductivityPassV1:11100 (cons $next (cons $changed ()))) (superpose (collapse (gslt:mode:BNFProductivityPassV1:11100 $definitions $before $lexicals)))
+   (let (cons gslt:result:BNFProductivityClosureAfterPassV1:11110 (cons $productive ())) (superpose (collapse (gslt:mode:BNFProductivityClosureAfterPassV1:11110 $changed $definitions $next $lexicals)))
    (quote (gslt:result:BNFProductivityClosureV1:1110 $productive)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=139 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-productivity-closure-done-v1 target=mode relation=BNFProductivityClosureAfterPassV1 input=11110 functional=relational
@@ -1547,7 +1461,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=140 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-productivity-closure-continue-v1 target=mode relation=BNFProductivityClosureAfterPassV1 input=11110 functional=relational
 (= (gslt:mode:BNFProductivityClosureAfterPassV1:11110 BNFYesV1 $definitions $next $lexicals)
-   (let (gslt:result:BNFProductivityClosureV1:1110 $productive) (superpose (collapse (gslt:mode:BNFProductivityClosureV1:1110 $definitions $next $lexicals)))
+   (let (cons gslt:result:BNFProductivityClosureV1:1110 (cons $productive ())) (superpose (collapse (gslt:mode:BNFProductivityClosureV1:1110 $definitions $next $lexicals)))
    (quote (gslt:result:BNFProductivityClosureAfterPassV1:11110 $productive))))
 
 ; gslt-lowered-equation-v1 source-rewrite=141 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-unproductive-diagnostics-nil-v1 target=mode relation=BNFUnproductiveDiagnosticsV1 input=110 functional=semidet
@@ -1555,41 +1469,35 @@
    (quote (gslt:result:BNFUnproductiveDiagnosticsV1:110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=142 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-unproductive-diagnostics-cons-v1 target=mode relation=BNFUnproductiveDiagnosticsV1 input=110 functional=semidet
-(= (gslt:fn:BNFUnproductiveDiagnosticsV1:110 $__gslt_input_v1_0_0 $productive)
-   (let (cons-atom BNFDefinitionsConsV1 (cons-atom (cons-atom BNFDefinitionV1 (cons-atom $name (cons-atom $expression (cons-atom $span ())))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFNameLookupV1:110 $lookup) (gslt:fn:BNFNameLookupV1:110 $name $productive)
-   (let (gslt:result:BNFUnproductiveAfterLookupV1:11110 $diagnostics) (gslt:fn:BNFUnproductiveAfterLookupV1:11110 $lookup (quote (BNFDefinitionV1 $name $expression $span)) $tail $productive)
-   (quote (gslt:result:BNFUnproductiveDiagnosticsV1:110 $diagnostics))))))
+(= (gslt:fn:BNFUnproductiveDiagnosticsV1:110 (cons BNFDefinitionsConsV1 (cons (cons BNFDefinitionV1 (cons $name (cons $expression (cons $span ())))) (cons $tail ()))) $productive)
+   (let (cons gslt:result:BNFNameLookupV1:110 (cons $lookup ())) (gslt:fn:BNFNameLookupV1:110 $name $productive)
+   (let (cons gslt:result:BNFUnproductiveAfterLookupV1:11110 (cons $diagnostics ())) (gslt:fn:BNFUnproductiveAfterLookupV1:11110 $lookup (quote (BNFDefinitionV1 $name $expression $span)) $tail $productive)
+   (quote (gslt:result:BNFUnproductiveDiagnosticsV1:110 $diagnostics)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=143 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-productive-definition-v1 target=mode relation=BNFUnproductiveAfterLookupV1 input=11110 functional=semidet
-(= (gslt:fn:BNFUnproductiveAfterLookupV1:11110 $__gslt_input_v1_0_0 $definition $tail $productive)
-   (let (cons-atom BNFNameFoundV1 (cons-atom $name ())) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFUnproductiveDiagnosticsV1:110 $diagnostics) (gslt:fn:BNFUnproductiveDiagnosticsV1:110 $tail $productive)
-   (quote (gslt:result:BNFUnproductiveAfterLookupV1:11110 $diagnostics)))))
+(= (gslt:fn:BNFUnproductiveAfterLookupV1:11110 (cons BNFNameFoundV1 (cons $name ())) $definition $tail $productive)
+   (let (cons gslt:result:BNFUnproductiveDiagnosticsV1:110 (cons $diagnostics ())) (gslt:fn:BNFUnproductiveDiagnosticsV1:110 $tail $productive)
+   (quote (gslt:result:BNFUnproductiveAfterLookupV1:11110 $diagnostics))))
 
 ; gslt-lowered-equation-v1 source-rewrite=144 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-unproductive-definition-v1 target=mode relation=BNFUnproductiveAfterLookupV1 input=11110 functional=semidet
-(= (gslt:fn:BNFUnproductiveAfterLookupV1:11110 BNFNameMissingV1 $__gslt_input_v1_0_1 $tail $productive)
-   (let (cons-atom BNFDefinitionV1 (cons-atom $name (cons-atom $expression (cons-atom $span ())))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFUnproductiveDiagnosticsV1:110 $diagnostics) (gslt:fn:BNFUnproductiveDiagnosticsV1:110 $tail $productive)
-   (quote (gslt:result:BNFUnproductiveAfterLookupV1:11110 (BNFDiagnosticsConsV1 (BNFUnproductiveDefinitionV1 $name $span) $diagnostics))))))
+(= (gslt:fn:BNFUnproductiveAfterLookupV1:11110 BNFNameMissingV1 (cons BNFDefinitionV1 (cons $name (cons $expression (cons $span ())))) $tail $productive)
+   (let (cons gslt:result:BNFUnproductiveDiagnosticsV1:110 (cons $diagnostics ())) (gslt:fn:BNFUnproductiveDiagnosticsV1:110 $tail $productive)
+   (quote (gslt:result:BNFUnproductiveAfterLookupV1:11110 (BNFDiagnosticsConsV1 (BNFUnproductiveDefinitionV1 $name $span) $diagnostics)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=145 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-expression-nullable-v1 target=mode relation=BNFExpressionNullableV1 input=1110 functional=semidet
-(= (gslt:fn:BNFExpressionNullableV1:1110 $__gslt_input_v1_0_0 $nullable $lexicals)
-   (let (cons-atom bnf-v1:expression (cons-atom $alternatives (cons-atom $span ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFAlternativesNullableV1:1110 $result) (gslt:fn:BNFAlternativesNullableV1:1110 $alternatives $nullable $lexicals)
-   (quote (gslt:result:BNFExpressionNullableV1:1110 $result)))))
+(= (gslt:fn:BNFExpressionNullableV1:1110 (cons bnf-v1:expression (cons $alternatives (cons $span ()))) $nullable $lexicals)
+   (let (cons gslt:result:BNFAlternativesNullableV1:1110 (cons $result ())) (gslt:fn:BNFAlternativesNullableV1:1110 $alternatives $nullable $lexicals)
+   (quote (gslt:result:BNFExpressionNullableV1:1110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=146 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-alternatives-nullable-nil-v1 target=mode relation=BNFAlternativesNullableV1 input=1110 functional=semidet
-(= (gslt:fn:BNFAlternativesNullableV1:1110 $__gslt_input_v1_0_0 $nullable $lexicals)
-   (let (cons-atom bnf-v1:alternatives-nil ()) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFAlternativesNullableV1:1110 BNFNoV1))))
+(= (gslt:fn:BNFAlternativesNullableV1:1110 (cons bnf-v1:alternatives-nil ()) $nullable $lexicals)
+   (quote (gslt:result:BNFAlternativesNullableV1:1110 BNFNoV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=147 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-alternatives-nullable-cons-v1 target=mode relation=BNFAlternativesNullableV1 input=1110 functional=semidet
-(= (gslt:fn:BNFAlternativesNullableV1:1110 $__gslt_input_v1_0_0 $nullable $lexicals)
-   (let (cons-atom bnf-v1:alternatives-cons (cons-atom $alternative (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFAlternativeNullableV1:1110 $headResult) (gslt:fn:BNFAlternativeNullableV1:1110 $alternative $nullable $lexicals)
-   (let (gslt:result:BNFAlternativesNullableAfterHeadV1:11110 $result) (gslt:fn:BNFAlternativesNullableAfterHeadV1:11110 $headResult $tail $nullable $lexicals)
-   (quote (gslt:result:BNFAlternativesNullableV1:1110 $result))))))
+(= (gslt:fn:BNFAlternativesNullableV1:1110 (cons bnf-v1:alternatives-cons (cons $alternative (cons $tail ()))) $nullable $lexicals)
+   (let (cons gslt:result:BNFAlternativeNullableV1:1110 (cons $headResult ())) (gslt:fn:BNFAlternativeNullableV1:1110 $alternative $nullable $lexicals)
+   (let (cons gslt:result:BNFAlternativesNullableAfterHeadV1:11110 (cons $result ())) (gslt:fn:BNFAlternativesNullableAfterHeadV1:11110 $headResult $tail $nullable $lexicals)
+   (quote (gslt:result:BNFAlternativesNullableV1:1110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=148 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-alternatives-nullable-head-yes-v1 target=mode relation=BNFAlternativesNullableAfterHeadV1 input=11110 functional=semidet
 (= (gslt:fn:BNFAlternativesNullableAfterHeadV1:11110 BNFYesV1 $tail $nullable $lexicals)
@@ -1597,26 +1505,23 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=149 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-alternatives-nullable-head-no-v1 target=mode relation=BNFAlternativesNullableAfterHeadV1 input=11110 functional=semidet
 (= (gslt:fn:BNFAlternativesNullableAfterHeadV1:11110 BNFNoV1 $tail $nullable $lexicals)
-   (let (gslt:result:BNFAlternativesNullableV1:1110 $result) (gslt:fn:BNFAlternativesNullableV1:1110 $tail $nullable $lexicals)
+   (let (cons gslt:result:BNFAlternativesNullableV1:1110 (cons $result ())) (gslt:fn:BNFAlternativesNullableV1:1110 $tail $nullable $lexicals)
    (quote (gslt:result:BNFAlternativesNullableAfterHeadV1:11110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=150 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-alternative-nullable-v1 target=mode relation=BNFAlternativeNullableV1 input=1110 functional=semidet
-(= (gslt:fn:BNFAlternativeNullableV1:1110 $__gslt_input_v1_0_0 $nullable $lexicals)
-   (let (cons-atom bnf-v1:alternative (cons-atom $elements (cons-atom $span ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFElementsNullableV1:1110 $result) (gslt:fn:BNFElementsNullableV1:1110 $elements $nullable $lexicals)
-   (quote (gslt:result:BNFAlternativeNullableV1:1110 $result)))))
+(= (gslt:fn:BNFAlternativeNullableV1:1110 (cons bnf-v1:alternative (cons $elements (cons $span ()))) $nullable $lexicals)
+   (let (cons gslt:result:BNFElementsNullableV1:1110 (cons $result ())) (gslt:fn:BNFElementsNullableV1:1110 $elements $nullable $lexicals)
+   (quote (gslt:result:BNFAlternativeNullableV1:1110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=151 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-elements-nullable-nil-v1 target=mode relation=BNFElementsNullableV1 input=1110 functional=semidet
-(= (gslt:fn:BNFElementsNullableV1:1110 $__gslt_input_v1_0_0 $nullable $lexicals)
-   (let (cons-atom bnf-v1:elements-nil ()) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFElementsNullableV1:1110 BNFYesV1))))
+(= (gslt:fn:BNFElementsNullableV1:1110 (cons bnf-v1:elements-nil ()) $nullable $lexicals)
+   (quote (gslt:result:BNFElementsNullableV1:1110 BNFYesV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=152 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-elements-nullable-cons-v1 target=mode relation=BNFElementsNullableV1 input=1110 functional=semidet
-(= (gslt:fn:BNFElementsNullableV1:1110 $__gslt_input_v1_0_0 $nullable $lexicals)
-   (let (cons-atom bnf-v1:elements-cons (cons-atom $element (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFElementNullableV1:1110 $headResult) (gslt:fn:BNFElementNullableV1:1110 $element $nullable $lexicals)
-   (let (gslt:result:BNFElementsNullableAfterHeadV1:11110 $result) (gslt:fn:BNFElementsNullableAfterHeadV1:11110 $headResult $tail $nullable $lexicals)
-   (quote (gslt:result:BNFElementsNullableV1:1110 $result))))))
+(= (gslt:fn:BNFElementsNullableV1:1110 (cons bnf-v1:elements-cons (cons $element (cons $tail ()))) $nullable $lexicals)
+   (let (cons gslt:result:BNFElementNullableV1:1110 (cons $headResult ())) (gslt:fn:BNFElementNullableV1:1110 $element $nullable $lexicals)
+   (let (cons gslt:result:BNFElementsNullableAfterHeadV1:11110 (cons $result ())) (gslt:fn:BNFElementsNullableAfterHeadV1:11110 $headResult $tail $nullable $lexicals)
+   (quote (gslt:result:BNFElementsNullableV1:1110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=153 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-elements-nullable-head-no-v1 target=mode relation=BNFElementsNullableAfterHeadV1 input=11110 functional=semidet
 (= (gslt:fn:BNFElementsNullableAfterHeadV1:11110 BNFNoV1 $tail $nullable $lexicals)
@@ -1624,41 +1529,36 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=154 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-elements-nullable-head-yes-v1 target=mode relation=BNFElementsNullableAfterHeadV1 input=11110 functional=semidet
 (= (gslt:fn:BNFElementsNullableAfterHeadV1:11110 BNFYesV1 $tail $nullable $lexicals)
-   (let (gslt:result:BNFElementsNullableV1:1110 $result) (gslt:fn:BNFElementsNullableV1:1110 $tail $nullable $lexicals)
+   (let (cons gslt:result:BNFElementsNullableV1:1110 (cons $result ())) (gslt:fn:BNFElementsNullableV1:1110 $tail $nullable $lexicals)
    (quote (gslt:result:BNFElementsNullableAfterHeadV1:11110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=155 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-empty-literal-nullable-v1 target=mode relation=BNFElementNullableV1 input=1110 functional=semidet
-(= (gslt:fn:BNFElementNullableV1:1110 $__gslt_input_v1_0_0 $nullable $lexicals)
-   (let (cons-atom bnf-v1:literal (cons-atom (cons-atom bnf-v1:text-nil ()) (cons-atom $span ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFElementNullableV1:1110 BNFYesV1))))
+(= (gslt:fn:BNFElementNullableV1:1110 (cons bnf-v1:literal (cons (cons bnf-v1:text-nil ()) (cons $span ()))) $nullable $lexicals)
+   (quote (gslt:result:BNFElementNullableV1:1110 BNFYesV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=156 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-nonempty-literal-not-nullable-v1 target=mode relation=BNFElementNullableV1 input=1110 functional=semidet
-(= (gslt:fn:BNFElementNullableV1:1110 $__gslt_input_v1_0_0 $nullable $lexicals)
-   (let (cons-atom bnf-v1:literal (cons-atom (cons-atom bnf-v1:text-cons (cons-atom $head (cons-atom $tail ()))) (cons-atom $span ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFElementNullableV1:1110 BNFNoV1))))
+(= (gslt:fn:BNFElementNullableV1:1110 (cons bnf-v1:literal (cons (cons bnf-v1:text-cons (cons $head (cons $tail ()))) (cons $span ()))) $nullable $lexicals)
+   (quote (gslt:result:BNFElementNullableV1:1110 BNFNoV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=157 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-reference-nullable-v1 target=mode relation=BNFElementNullableV1 input=1110 functional=semidet
-(= (gslt:fn:BNFElementNullableV1:1110 $__gslt_input_v1_0_0 $nullable $lexicals)
-   (let (cons-atom bnf-v1:reference (cons-atom $name (cons-atom $span ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFNameLookupV1:110 $lookup) (gslt:fn:BNFNameLookupV1:110 $name $nullable)
-   (let (gslt:result:BNFNullableReferenceAfterLookupV1:1110 $result) (gslt:fn:BNFNullableReferenceAfterLookupV1:1110 $name $lookup $lexicals)
-   (quote (gslt:result:BNFElementNullableV1:1110 $result))))))
+(= (gslt:fn:BNFElementNullableV1:1110 (cons bnf-v1:reference (cons $name (cons $span ()))) $nullable $lexicals)
+   (let (cons gslt:result:BNFNameLookupV1:110 (cons $lookup ())) (gslt:fn:BNFNameLookupV1:110 $name $nullable)
+   (let (cons gslt:result:BNFNullableReferenceAfterLookupV1:1110 (cons $result ())) (gslt:fn:BNFNullableReferenceAfterLookupV1:1110 $name $lookup $lexicals)
+   (quote (gslt:result:BNFElementNullableV1:1110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=158 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-nullable-reference-found-v1 target=mode relation=BNFNullableReferenceAfterLookupV1 input=1110 functional=semidet
-(= (gslt:fn:BNFNullableReferenceAfterLookupV1:1110 $name $__gslt_input_v1_0_1 $lexicals)
-   (let (cons-atom BNFNameFoundV1 (cons-atom $name ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFNullableReferenceAfterLookupV1:1110 BNFYesV1))))
+(= (gslt:fn:BNFNullableReferenceAfterLookupV1:1110 $name (cons BNFNameFoundV1 (cons $name ())) $lexicals)
+   (quote (gslt:result:BNFNullableReferenceAfterLookupV1:1110 BNFYesV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=159 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-nullable-reference-missing-v1 target=mode relation=BNFNullableReferenceAfterLookupV1 input=1110 functional=semidet
 (= (gslt:fn:BNFNullableReferenceAfterLookupV1:1110 $name BNFNameMissingV1 $lexicals)
-   (let (gslt:result:BNFLexicalReferenceLookupV1:110 $lexicalLookup) (gslt:fn:BNFLexicalReferenceLookupV1:110 $name $lexicals)
-   (let (gslt:result:BNFNullableReferenceAfterLexicalLookupV1:10 $result) (gslt:fn:BNFNullableReferenceAfterLexicalLookupV1:10 $lexicalLookup)
+   (let (cons gslt:result:BNFLexicalReferenceLookupV1:110 (cons $lexicalLookup ())) (gslt:fn:BNFLexicalReferenceLookupV1:110 $name $lexicals)
+   (let (cons gslt:result:BNFNullableReferenceAfterLexicalLookupV1:10 (cons $result ())) (gslt:fn:BNFNullableReferenceAfterLexicalLookupV1:10 $lexicalLookup)
    (quote (gslt:result:BNFNullableReferenceAfterLookupV1:1110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=160 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-lexical-reference-not-nullable-v1 target=mode relation=BNFNullableReferenceAfterLexicalLookupV1 input=10 functional=semidet
-(= (gslt:fn:BNFNullableReferenceAfterLexicalLookupV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom BNFLexicalFoundV1 (cons-atom $declaration ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFNullableReferenceAfterLexicalLookupV1:10 BNFNoV1))))
+(= (gslt:fn:BNFNullableReferenceAfterLexicalLookupV1:10 (cons BNFLexicalFoundV1 (cons $declaration ())))
+   (quote (gslt:result:BNFNullableReferenceAfterLexicalLookupV1:10 BNFNoV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=161 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-unknown-reference-not-nullable-v1 target=mode relation=BNFNullableReferenceAfterLexicalLookupV1 input=10 functional=semidet
 (= (gslt:fn:BNFNullableReferenceAfterLexicalLookupV1:10 BNFLexicalMissingV1)
@@ -1666,8 +1566,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=168 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-nullability-closure-v1 target=mode relation=BNFNullabilityClosureV1 input=1110 functional=semidet
 (= (gslt:fn:BNFNullabilityClosureV1:1110 $definitions $before $lexicals)
-   (let (gslt:result:BNFNullabilityPassV1:11100 $next $changed) (gslt:fn:BNFNullabilityPassV1:11100 $definitions $before $lexicals)
-   (let (gslt:result:BNFNullabilityClosureAfterPassV1:11110 $nullable) (gslt:fn:BNFNullabilityClosureAfterPassV1:11110 $changed $definitions $next $lexicals)
+   (let (cons gslt:result:BNFNullabilityPassV1:11100 (cons $next (cons $changed ()))) (gslt:fn:BNFNullabilityPassV1:11100 $definitions $before $lexicals)
+   (let (cons gslt:result:BNFNullabilityClosureAfterPassV1:11110 (cons $nullable ())) (gslt:fn:BNFNullabilityClosureAfterPassV1:11110 $changed $definitions $next $lexicals)
    (quote (gslt:result:BNFNullabilityClosureV1:1110 $nullable)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=169 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-nullability-closure-done-v1 target=mode relation=BNFNullabilityClosureAfterPassV1 input=11110 functional=semidet
@@ -1676,7 +1576,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=170 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-nullability-closure-continue-v1 target=mode relation=BNFNullabilityClosureAfterPassV1 input=11110 functional=semidet
 (= (gslt:fn:BNFNullabilityClosureAfterPassV1:11110 BNFYesV1 $definitions $next $lexicals)
-   (let (gslt:result:BNFNullabilityClosureV1:1110 $nullable) (gslt:fn:BNFNullabilityClosureV1:1110 $definitions $next $lexicals)
+   (let (cons gslt:result:BNFNullabilityClosureV1:1110 (cons $nullable ())) (gslt:fn:BNFNullabilityClosureV1:1110 $definitions $next $lexicals)
    (quote (gslt:result:BNFNullabilityClosureAfterPassV1:11110 $nullable))))
 
 ; gslt-lowered-equation-v1 source-rewrite=171 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-finish-analysis-accepted-v1 target=mode relation=BNFFinishGraphAnalysisV1 input=11111110 functional=semidet
@@ -1684,25 +1584,23 @@
    (quote (gslt:result:BNFFinishGraphAnalysisV1:11111110 (BNFSemanticValidationAcceptedV1 $start $definitions $lexicals (BNFGrammarAnalysisV1 $reachable $nullable $productive)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=172 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-finish-analysis-refused-v1 target=mode relation=BNFFinishGraphAnalysisV1 input=11111110 functional=semidet
-(= (gslt:fn:BNFFinishGraphAnalysisV1:11111110 $start $definitions $lexicals $reachable $nullable $productive $__gslt_input_v1_0_6)
-   (let (cons-atom BNFDiagnosticsConsV1 (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_6
-   (quote (gslt:result:BNFFinishGraphAnalysisV1:11111110 (BNFSemanticValidationRefusedV1 (BNFDiagnosticsConsV1 $head $tail))))))
+(= (gslt:fn:BNFFinishGraphAnalysisV1:11111110 $start $definitions $lexicals $reachable $nullable $productive (cons BNFDiagnosticsConsV1 (cons $head (cons $tail ()))))
+   (quote (gslt:result:BNFFinishGraphAnalysisV1:11111110 (BNFSemanticValidationRefusedV1 (BNFDiagnosticsConsV1 $head $tail)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=173 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-analyze-document-v1 target=mode relation=BNFAnalyzeDocumentV1 input=1110 functional=relational
-(= (gslt:mode:BNFAnalyzeDocumentV1:1110 $__gslt_input_v1_0_0 $definitions $lexicals)
-   (let (cons-atom BNFStartSomeV1 (cons-atom $startName (cons-atom $startSpan ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFReachableLoopV1:11110 $reachable) (once (gslt:fn:BNFReachableLoopV1:11110 (quote (BNFNamesConsV1 $startName BNFNamesNilV1)) $definitions $lexicals BNFNamesNilV1))
-   (let (gslt:result:BNFUnreachableDiagnosticsV1:110 $unreachableDiagnostics) (once (gslt:fn:BNFUnreachableDiagnosticsV1:110 $definitions $reachable))
-   (let (gslt:result:BNFProductivityClosureV1:1110 $productive) (superpose (collapse (gslt:mode:BNFProductivityClosureV1:1110 $definitions BNFNamesNilV1 $lexicals)))
-   (let (gslt:result:BNFUnproductiveDiagnosticsV1:110 $unproductiveDiagnostics) (once (gslt:fn:BNFUnproductiveDiagnosticsV1:110 $definitions $productive))
-   (let (gslt:result:BNFNullabilityClosureV1:1110 $nullable) (once (gslt:fn:BNFNullabilityClosureV1:1110 $definitions BNFNamesNilV1 $lexicals))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $diagnostics) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $unreachableDiagnostics $unproductiveDiagnostics))
-   (let (gslt:result:BNFFinishGraphAnalysisV1:11111110 $result) (once (gslt:fn:BNFFinishGraphAnalysisV1:11111110 (quote (BNFStartSomeV1 $startName $startSpan)) $definitions $lexicals $reachable $nullable $productive $diagnostics))
-   (quote (gslt:result:BNFAnalyzeDocumentV1:1110 $result)))))))))))
+(= (gslt:mode:BNFAnalyzeDocumentV1:1110 (cons BNFStartSomeV1 (cons $startName (cons $startSpan ()))) $definitions $lexicals)
+   (let (cons gslt:result:BNFReachableLoopV1:11110 (cons $reachable ())) (once (gslt:fn:BNFReachableLoopV1:11110 (quote (BNFNamesConsV1 $startName BNFNamesNilV1)) $definitions $lexicals BNFNamesNilV1))
+   (let (cons gslt:result:BNFUnreachableDiagnosticsV1:110 (cons $unreachableDiagnostics ())) (once (gslt:fn:BNFUnreachableDiagnosticsV1:110 $definitions $reachable))
+   (let (cons gslt:result:BNFProductivityClosureV1:1110 (cons $productive ())) (superpose (collapse (gslt:mode:BNFProductivityClosureV1:1110 $definitions BNFNamesNilV1 $lexicals)))
+   (let (cons gslt:result:BNFUnproductiveDiagnosticsV1:110 (cons $unproductiveDiagnostics ())) (once (gslt:fn:BNFUnproductiveDiagnosticsV1:110 $definitions $productive))
+   (let (cons gslt:result:BNFNullabilityClosureV1:1110 (cons $nullable ())) (once (gslt:fn:BNFNullabilityClosureV1:1110 $definitions BNFNamesNilV1 $lexicals))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $diagnostics ())) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $unreachableDiagnostics $unproductiveDiagnostics))
+   (let (cons gslt:result:BNFFinishGraphAnalysisV1:11111110 (cons $result ())) (once (gslt:fn:BNFFinishGraphAnalysisV1:11111110 (quote (BNFStartSomeV1 $startName $startSpan)) $definitions $lexicals $reachable $nullable $productive $diagnostics))
+   (quote (gslt:result:BNFAnalyzeDocumentV1:1110 $result))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=174 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-reachable-loop-v1 target=mode relation=BNFReachableLoopV1 input=11110 functional=semidet
 (= (gslt:fn:BNFReachableLoopV1:11110 $work $definitions $lexicals $visited)
-   (let (gslt:result:BNFReachableQueueV1:111110 $result) (gslt:fn:BNFReachableQueueV1:111110 $work BNFNamesNilV1 $definitions $lexicals $visited)
+   (let (cons gslt:result:BNFReachableQueueV1:111110 (cons $result ())) (gslt:fn:BNFReachableQueueV1:111110 $work BNFNamesNilV1 $definitions $lexicals $visited)
    (quote (gslt:result:BNFReachableLoopV1:11110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=176 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-reachable-reverse-nil-v1 target=mode relation=BNFReachableReverseV1 input=110 functional=semidet
@@ -1710,204 +1608,171 @@
    (quote (gslt:result:BNFReachableReverseV1:110 $tail)))
 
 ; gslt-lowered-equation-v1 source-rewrite=177 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-reachable-reverse-cons-v1 target=mode relation=BNFReachableReverseV1 input=110 functional=semidet
-(= (gslt:fn:BNFReachableReverseV1:110 $__gslt_input_v1_0_0 $tail)
-   (let (cons-atom BNFNamesConsV1 (cons-atom $head (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFReachableReverseV1:110 $result) (gslt:fn:BNFReachableReverseV1:110 $rest (quote (BNFNamesConsV1 $head $tail)))
-   (quote (gslt:result:BNFReachableReverseV1:110 $result)))))
+(= (gslt:fn:BNFReachableReverseV1:110 (cons BNFNamesConsV1 (cons $head (cons $rest ()))) $tail)
+   (let (cons gslt:result:BNFReachableReverseV1:110 (cons $result ())) (gslt:fn:BNFReachableReverseV1:110 $rest (quote (BNFNamesConsV1 $head $tail)))
+   (quote (gslt:result:BNFReachableReverseV1:110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=178 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-lookup-empty-v1 target=mode relation=BNFGraphTrieLookupV1 input=110 functional=semidet
 (= (gslt:fn:BNFGraphTrieLookupV1:110 $key BNFGraphTrieEmptyV1)
    (quote (gslt:result:BNFGraphTrieLookupV1:110 BNFIndexMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=179 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-lookup-value-v1 target=mode relation=BNFGraphTrieLookupV1 input=110 functional=semidet
-(= (gslt:fn:BNFGraphTrieLookupV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:text-nil ()) $__gslt_input_v1_0_0
-   (let (cons-atom BNFGraphTrieV1 (cons-atom $value (cons-atom $edges ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFGraphTrieLookupV1:110 $value)))))
+(= (gslt:fn:BNFGraphTrieLookupV1:110 (cons bnf-v1:text-nil ()) (cons BNFGraphTrieV1 (cons $value (cons $edges ()))))
+   (quote (gslt:result:BNFGraphTrieLookupV1:110 $value)))
 
 ; gslt-lowered-equation-v1 source-rewrite=180 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-lookup-cons-v1 target=mode relation=BNFGraphTrieLookupV1 input=110 functional=semidet
-(= (gslt:fn:BNFGraphTrieLookupV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:text-cons (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (cons-atom BNFGraphTrieV1 (cons-atom $value (cons-atom $edges ()))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFGraphTrieEdgeLookupV1:1110 $result) (gslt:fn:BNFGraphTrieEdgeLookupV1:1110 $head $tail $edges)
-   (quote (gslt:result:BNFGraphTrieLookupV1:110 $result))))))
+(= (gslt:fn:BNFGraphTrieLookupV1:110 (cons bnf-v1:text-cons (cons $head (cons $tail ()))) (cons BNFGraphTrieV1 (cons $value (cons $edges ()))))
+   (let (cons gslt:result:BNFGraphTrieEdgeLookupV1:1110 (cons $result ())) (gslt:fn:BNFGraphTrieEdgeLookupV1:1110 $head $tail $edges)
+   (quote (gslt:result:BNFGraphTrieLookupV1:110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-edge-lookup-nil-v1 target=mode relation=BNFGraphTrieEdgeLookupV1 input=1110 functional=semidet
 (= (gslt:fn:BNFGraphTrieEdgeLookupV1:1110 $head $tail BNFGraphTrieEdgesNilV1)
    (quote (gslt:result:BNFGraphTrieEdgeLookupV1:1110 BNFIndexMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=182 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-edge-lookup-found-v1 target=mode relation=BNFGraphTrieEdgeLookupV1 input=1110 functional=semidet
-(= (gslt:fn:BNFGraphTrieEdgeLookupV1:1110 $head $tail $__gslt_input_v1_0_2)
-   (let (cons-atom BNFGraphTrieEdgesConsV1 (cons-atom $head (cons-atom $child (cons-atom $rest ())))) $__gslt_input_v1_0_2
-   (let (gslt:result:BNFGraphTrieLookupV1:110 $result) (gslt:fn:BNFGraphTrieLookupV1:110 $tail $child)
-   (quote (gslt:result:BNFGraphTrieEdgeLookupV1:1110 $result)))))
+(= (gslt:fn:BNFGraphTrieEdgeLookupV1:1110 $head $tail (cons BNFGraphTrieEdgesConsV1 (cons $head (cons $child (cons $rest ())))))
+   (let (cons gslt:result:BNFGraphTrieLookupV1:110 (cons $result ())) (gslt:fn:BNFGraphTrieLookupV1:110 $tail $child)
+   (quote (gslt:result:BNFGraphTrieEdgeLookupV1:1110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=183 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-edge-lookup-next-v1 target=mode relation=BNFGraphTrieEdgeLookupV1 input=1110 functional=semidet
-(= (gslt:fn:BNFGraphTrieEdgeLookupV1:1110 $head $tail $__gslt_input_v1_0_2)
-   (let (cons-atom BNFGraphTrieEdgesConsV1 (cons-atom $other (cons-atom $child (cons-atom $rest ())))) $__gslt_input_v1_0_2
+(= (gslt:fn:BNFGraphTrieEdgeLookupV1:1110 $head $tail (cons BNFGraphTrieEdgesConsV1 (cons $other (cons $child (cons $rest ())))))
    (let $_ (gslt:different (different $head $other))
-   (let (gslt:result:BNFGraphTrieEdgeLookupV1:1110 $result) (gslt:fn:BNFGraphTrieEdgeLookupV1:1110 $head $tail $rest)
-   (quote (gslt:result:BNFGraphTrieEdgeLookupV1:1110 $result))))))
+   (let (cons gslt:result:BNFGraphTrieEdgeLookupV1:1110 (cons $result ())) (gslt:fn:BNFGraphTrieEdgeLookupV1:1110 $head $tail $rest)
+   (quote (gslt:result:BNFGraphTrieEdgeLookupV1:1110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=184 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-insert-empty-v1 target=mode relation=BNFGraphTrieInsertFirstV1 input=1110 functional=semidet
 (= (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $key $value BNFGraphTrieEmptyV1)
-   (let (gslt:result:BNFGraphTrieInsertFirstV1:1110 $result) (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $key $value (quote (BNFGraphTrieV1 BNFIndexMissingV1 BNFGraphTrieEdgesNilV1)))
+   (let (cons gslt:result:BNFGraphTrieInsertFirstV1:1110 (cons $result ())) (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $key $value (quote (BNFGraphTrieV1 BNFIndexMissingV1 BNFGraphTrieEdgesNilV1)))
    (quote (gslt:result:BNFGraphTrieInsertFirstV1:1110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=185 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-insert-value-v1 target=mode relation=BNFGraphTrieInsertFirstV1 input=1110 functional=semidet
-(= (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $__gslt_input_v1_0_0 $value $__gslt_input_v1_0_2)
-   (let (cons-atom bnf-v1:text-nil ()) $__gslt_input_v1_0_0
-   (let (cons-atom BNFGraphTrieV1 (cons-atom $old (cons-atom $edges ()))) $__gslt_input_v1_0_2
-   (let (gslt:result:BNFGraphTrieFirstValueV1:110 $next) (gslt:fn:BNFGraphTrieFirstValueV1:110 $old $value)
-   (quote (gslt:result:BNFGraphTrieInsertFirstV1:1110 (BNFGraphTrieV1 $next $edges)))))))
+(= (gslt:fn:BNFGraphTrieInsertFirstV1:1110 (cons bnf-v1:text-nil ()) $value (cons BNFGraphTrieV1 (cons $old (cons $edges ()))))
+   (let (cons gslt:result:BNFGraphTrieFirstValueV1:110 (cons $next ())) (gslt:fn:BNFGraphTrieFirstValueV1:110 $old $value)
+   (quote (gslt:result:BNFGraphTrieInsertFirstV1:1110 (BNFGraphTrieV1 $next $edges)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=186 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-insert-cons-v1 target=mode relation=BNFGraphTrieInsertFirstV1 input=1110 functional=semidet
-(= (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $__gslt_input_v1_0_0 $value $__gslt_input_v1_0_2)
-   (let (cons-atom bnf-v1:text-cons (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (cons-atom BNFGraphTrieV1 (cons-atom $old (cons-atom $edges ()))) $__gslt_input_v1_0_2
-   (let (gslt:result:BNFGraphTrieEdgeInsertV1:11110 $nextEdges) (gslt:fn:BNFGraphTrieEdgeInsertV1:11110 $head $tail $value $edges)
-   (quote (gslt:result:BNFGraphTrieInsertFirstV1:1110 (BNFGraphTrieV1 $old $nextEdges)))))))
+(= (gslt:fn:BNFGraphTrieInsertFirstV1:1110 (cons bnf-v1:text-cons (cons $head (cons $tail ()))) $value (cons BNFGraphTrieV1 (cons $old (cons $edges ()))))
+   (let (cons gslt:result:BNFGraphTrieEdgeInsertV1:11110 (cons $nextEdges ())) (gslt:fn:BNFGraphTrieEdgeInsertV1:11110 $head $tail $value $edges)
+   (quote (gslt:result:BNFGraphTrieInsertFirstV1:1110 (BNFGraphTrieV1 $old $nextEdges)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=187 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-first-value-empty-v1 target=mode relation=BNFGraphTrieFirstValueV1 input=110 functional=semidet
 (= (gslt:fn:BNFGraphTrieFirstValueV1:110 BNFIndexMissingV1 $value)
    (quote (gslt:result:BNFGraphTrieFirstValueV1:110 (BNFIndexFoundV1 $value))))
 
 ; gslt-lowered-equation-v1 source-rewrite=188 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-first-value-present-v1 target=mode relation=BNFGraphTrieFirstValueV1 input=110 functional=semidet
-(= (gslt:fn:BNFGraphTrieFirstValueV1:110 $__gslt_input_v1_0_0 $value)
-   (let (cons-atom BNFIndexFoundV1 (cons-atom $old ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFGraphTrieFirstValueV1:110 (BNFIndexFoundV1 $old)))))
+(= (gslt:fn:BNFGraphTrieFirstValueV1:110 (cons BNFIndexFoundV1 (cons $old ())) $value)
+   (quote (gslt:result:BNFGraphTrieFirstValueV1:110 (BNFIndexFoundV1 $old))))
 
 ; gslt-lowered-equation-v1 source-rewrite=189 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-edge-insert-nil-v1 target=mode relation=BNFGraphTrieEdgeInsertV1 input=11110 functional=semidet
 (= (gslt:fn:BNFGraphTrieEdgeInsertV1:11110 $head $tail $value BNFGraphTrieEdgesNilV1)
-   (let (gslt:result:BNFGraphTrieInsertFirstV1:1110 $child) (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $tail $value BNFGraphTrieEmptyV1)
+   (let (cons gslt:result:BNFGraphTrieInsertFirstV1:1110 (cons $child ())) (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $tail $value BNFGraphTrieEmptyV1)
    (quote (gslt:result:BNFGraphTrieEdgeInsertV1:11110 (BNFGraphTrieEdgesConsV1 $head $child BNFGraphTrieEdgesNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=190 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-edge-insert-found-v1 target=mode relation=BNFGraphTrieEdgeInsertV1 input=11110 functional=semidet
-(= (gslt:fn:BNFGraphTrieEdgeInsertV1:11110 $head $tail $value $__gslt_input_v1_0_3)
-   (let (cons-atom BNFGraphTrieEdgesConsV1 (cons-atom $head (cons-atom $child (cons-atom $rest ())))) $__gslt_input_v1_0_3
-   (let (gslt:result:BNFGraphTrieInsertFirstV1:1110 $nextChild) (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $tail $value $child)
-   (quote (gslt:result:BNFGraphTrieEdgeInsertV1:11110 (BNFGraphTrieEdgesConsV1 $head $nextChild $rest))))))
+(= (gslt:fn:BNFGraphTrieEdgeInsertV1:11110 $head $tail $value (cons BNFGraphTrieEdgesConsV1 (cons $head (cons $child (cons $rest ())))))
+   (let (cons gslt:result:BNFGraphTrieInsertFirstV1:1110 (cons $nextChild ())) (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $tail $value $child)
+   (quote (gslt:result:BNFGraphTrieEdgeInsertV1:11110 (BNFGraphTrieEdgesConsV1 $head $nextChild $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=191 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-edge-insert-next-v1 target=mode relation=BNFGraphTrieEdgeInsertV1 input=11110 functional=semidet
-(= (gslt:fn:BNFGraphTrieEdgeInsertV1:11110 $head $tail $value $__gslt_input_v1_0_3)
-   (let (cons-atom BNFGraphTrieEdgesConsV1 (cons-atom $other (cons-atom $child (cons-atom $rest ())))) $__gslt_input_v1_0_3
+(= (gslt:fn:BNFGraphTrieEdgeInsertV1:11110 $head $tail $value (cons BNFGraphTrieEdgesConsV1 (cons $other (cons $child (cons $rest ())))))
    (let $_ (gslt:different (different $head $other))
-   (let (gslt:result:BNFGraphTrieEdgeInsertV1:11110 $nextRest) (gslt:fn:BNFGraphTrieEdgeInsertV1:11110 $head $tail $value $rest)
-   (quote (gslt:result:BNFGraphTrieEdgeInsertV1:11110 (BNFGraphTrieEdgesConsV1 $other $child $nextRest)))))))
+   (let (cons gslt:result:BNFGraphTrieEdgeInsertV1:11110 (cons $nextRest ())) (gslt:fn:BNFGraphTrieEdgeInsertV1:11110 $head $tail $value $rest)
+   (quote (gslt:result:BNFGraphTrieEdgeInsertV1:11110 (BNFGraphTrieEdgesConsV1 $other $child $nextRest))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=193 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-indexed-name-lookup-missing-v1 target=mode relation=BNFIndexedNameLookupResultV1 input=10 functional=semidet
 (= (gslt:fn:BNFIndexedNameLookupResultV1:10 BNFIndexMissingV1)
    (quote (gslt:result:BNFIndexedNameLookupResultV1:10 BNFNameMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=194 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-indexed-name-lookup-found-v1 target=mode relation=BNFIndexedNameLookupResultV1 input=10 functional=semidet
-(= (gslt:fn:BNFIndexedNameLookupResultV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom BNFIndexFoundV1 (cons-atom $name ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFIndexedNameLookupResultV1:10 (BNFNameFoundV1 $name)))))
+(= (gslt:fn:BNFIndexedNameLookupResultV1:10 (cons BNFIndexFoundV1 (cons $name ())))
+   (quote (gslt:result:BNFIndexedNameLookupResultV1:10 (BNFNameFoundV1 $name))))
 
 ; gslt-lowered-equation-v1 source-rewrite=196 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-indexed-names-observe-v1 target=mode relation=BNFIndexedNamesObserveV1 input=10 functional=semidet
-(= (gslt:fn:BNFIndexedNamesObserveV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom BNFIndexedNamesV1 (cons-atom $index (cons-atom $ordered ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFIndexedNamesObserveV1:10 $ordered))))
+(= (gslt:fn:BNFIndexedNamesObserveV1:10 (cons BNFIndexedNamesV1 (cons $index (cons $ordered ()))))
+   (quote (gslt:result:BNFIndexedNamesObserveV1:10 $ordered)))
 
 ; gslt-lowered-equation-v1 source-rewrite=200 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-known-observe-v1 target=mode relation=BNFIndexedNamesObserveV1 input=10 functional=semidet
-(= (gslt:fn:BNFIndexedNamesObserveV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom BNFDiscoveryKnownV1 (cons-atom $index (cons-atom $reversed ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFDiscoveryReverseNamesV1:110 $result) (gslt:fn:BNFDiscoveryReverseNamesV1:110 $reversed BNFNamesNilV1)
-   (quote (gslt:result:BNFIndexedNamesObserveV1:10 $result)))))
+(= (gslt:fn:BNFIndexedNamesObserveV1:10 (cons BNFDiscoveryKnownV1 (cons $index (cons $reversed ()))))
+   (let (cons gslt:result:BNFDiscoveryReverseNamesV1:110 (cons $result ())) (gslt:fn:BNFDiscoveryReverseNamesV1:110 $reversed BNFNamesNilV1)
+   (quote (gslt:result:BNFIndexedNamesObserveV1:10 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=197 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-analyze-document-indexed-v1 target=mode relation=BNFAnalyzeDocumentIndexedV1 input=1110 functional=relational
-(= (gslt:mode:BNFAnalyzeDocumentIndexedV1:1110 $__gslt_input_v1_0_0 $definitions $lexicals)
-   (let (cons-atom BNFStartSomeV1 (cons-atom $startName (cons-atom $startSpan ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFReachableLoopV1:11110 $reachableIndex) (once (gslt:fn:BNFReachableLoopV1:11110 (quote (BNFNamesConsV1 $startName BNFNamesNilV1)) $definitions $lexicals (quote (BNFIndexedNamesV1 BNFGraphTrieEmptyV1 BNFNamesNilV1))))
-   (let (gslt:result:BNFUnreachableDiagnosticsV1:110 $unreachableDiagnostics) (once (gslt:fn:BNFUnreachableDiagnosticsV1:110 $definitions $reachableIndex))
-   (let (gslt:result:BNFProductivityClosureV1:1110 $productiveIndex) (superpose (collapse (gslt:mode:BNFProductivityClosureV1:1110 $definitions (quote (BNFIndexedNamesV1 BNFGraphTrieEmptyV1 BNFNamesNilV1)) $lexicals)))
-   (let (gslt:result:BNFUnproductiveDiagnosticsV1:110 $unproductiveDiagnostics) (once (gslt:fn:BNFUnproductiveDiagnosticsV1:110 $definitions $productiveIndex))
-   (let (gslt:result:BNFNullabilityClosureV1:1110 $nullableIndex) (once (gslt:fn:BNFNullabilityClosureV1:1110 $definitions (quote (BNFIndexedNamesV1 BNFGraphTrieEmptyV1 BNFNamesNilV1)) $lexicals))
-   (let (gslt:result:BNFIndexedNamesObserveV1:10 $reachable) (once (gslt:fn:BNFIndexedNamesObserveV1:10 $reachableIndex))
-   (let (gslt:result:BNFIndexedNamesObserveV1:10 $nullable) (once (gslt:fn:BNFIndexedNamesObserveV1:10 $nullableIndex))
-   (let (gslt:result:BNFIndexedNamesObserveV1:10 $productive) (once (gslt:fn:BNFIndexedNamesObserveV1:10 $productiveIndex))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $diagnostics) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $unreachableDiagnostics $unproductiveDiagnostics))
-   (let (gslt:result:BNFFinishGraphAnalysisV1:11111110 $result) (once (gslt:fn:BNFFinishGraphAnalysisV1:11111110 (quote (BNFStartSomeV1 $startName $startSpan)) $definitions $lexicals $reachable $nullable $productive $diagnostics))
-   (quote (gslt:result:BNFAnalyzeDocumentIndexedV1:1110 $result))))))))))))))
+(= (gslt:mode:BNFAnalyzeDocumentIndexedV1:1110 (cons BNFStartSomeV1 (cons $startName (cons $startSpan ()))) $definitions $lexicals)
+   (let (cons gslt:result:BNFReachableLoopV1:11110 (cons $reachableIndex ())) (once (gslt:fn:BNFReachableLoopV1:11110 (quote (BNFNamesConsV1 $startName BNFNamesNilV1)) $definitions $lexicals (quote (BNFIndexedNamesV1 BNFGraphTrieEmptyV1 BNFNamesNilV1))))
+   (let (cons gslt:result:BNFUnreachableDiagnosticsV1:110 (cons $unreachableDiagnostics ())) (once (gslt:fn:BNFUnreachableDiagnosticsV1:110 $definitions $reachableIndex))
+   (let (cons gslt:result:BNFProductivityClosureV1:1110 (cons $productiveIndex ())) (superpose (collapse (gslt:mode:BNFProductivityClosureV1:1110 $definitions (quote (BNFIndexedNamesV1 BNFGraphTrieEmptyV1 BNFNamesNilV1)) $lexicals)))
+   (let (cons gslt:result:BNFUnproductiveDiagnosticsV1:110 (cons $unproductiveDiagnostics ())) (once (gslt:fn:BNFUnproductiveDiagnosticsV1:110 $definitions $productiveIndex))
+   (let (cons gslt:result:BNFNullabilityClosureV1:1110 (cons $nullableIndex ())) (once (gslt:fn:BNFNullabilityClosureV1:1110 $definitions (quote (BNFIndexedNamesV1 BNFGraphTrieEmptyV1 BNFNamesNilV1)) $lexicals))
+   (let (cons gslt:result:BNFIndexedNamesObserveV1:10 (cons $reachable ())) (once (gslt:fn:BNFIndexedNamesObserveV1:10 $reachableIndex))
+   (let (cons gslt:result:BNFIndexedNamesObserveV1:10 (cons $nullable ())) (once (gslt:fn:BNFIndexedNamesObserveV1:10 $nullableIndex))
+   (let (cons gslt:result:BNFIndexedNamesObserveV1:10 (cons $productive ())) (once (gslt:fn:BNFIndexedNamesObserveV1:10 $productiveIndex))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $diagnostics ())) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $unreachableDiagnostics $unproductiveDiagnostics))
+   (let (cons gslt:result:BNFFinishGraphAnalysisV1:11111110 (cons $result ())) (once (gslt:fn:BNFFinishGraphAnalysisV1:11111110 (quote (BNFStartSomeV1 $startName $startSpan)) $definitions $lexicals $reachable $nullable $productive $diagnostics))
+   (quote (gslt:result:BNFAnalyzeDocumentIndexedV1:1110 $result)))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=201 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-reverse-names-nil-v1 target=mode relation=BNFDiscoveryReverseNamesV1 input=110 functional=semidet
 (= (gslt:fn:BNFDiscoveryReverseNamesV1:110 BNFNamesNilV1 $result)
    (quote (gslt:result:BNFDiscoveryReverseNamesV1:110 $result)))
 
 ; gslt-lowered-equation-v1 source-rewrite=202 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-reverse-names-cons-v1 target=mode relation=BNFDiscoveryReverseNamesV1 input=110 functional=semidet
-(= (gslt:fn:BNFDiscoveryReverseNamesV1:110 $__gslt_input_v1_0_0 $before)
-   (let (cons-atom BNFNamesConsV1 (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFDiscoveryReverseNamesV1:110 $after) (gslt:fn:BNFDiscoveryReverseNamesV1:110 $tail (quote (BNFNamesConsV1 $head $before)))
-   (quote (gslt:result:BNFDiscoveryReverseNamesV1:110 $after)))))
+(= (gslt:fn:BNFDiscoveryReverseNamesV1:110 (cons BNFNamesConsV1 (cons $head (cons $tail ()))) $before)
+   (let (cons gslt:result:BNFDiscoveryReverseNamesV1:110 (cons $after ())) (gslt:fn:BNFDiscoveryReverseNamesV1:110 $tail (quote (BNFNamesConsV1 $head $before)))
+   (quote (gslt:result:BNFDiscoveryReverseNamesV1:110 $after))))
 
 ; gslt-lowered-equation-v1 source-rewrite=203 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-rank-next-zero-v1 target=mode relation=BNFDiscoveryRankNextV1 input=10 functional=semidet
 (= (gslt:fn:BNFDiscoveryRankNextV1:10 BNFDiscoveryRankZeroV1)
    (quote (gslt:result:BNFDiscoveryRankNextV1:10 (BNFDiscoveryRankOneV1 BNFDiscoveryRankZeroV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=204 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-rank-next-one-v1 target=mode relation=BNFDiscoveryRankNextV1 input=10 functional=semidet
-(= (gslt:fn:BNFDiscoveryRankNextV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom BNFDiscoveryRankOneV1 (cons-atom $rank ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFDiscoveryRankNextV1:10 (BNFDiscoveryRankTwoV1 $rank)))))
+(= (gslt:fn:BNFDiscoveryRankNextV1:10 (cons BNFDiscoveryRankOneV1 (cons $rank ())))
+   (quote (gslt:result:BNFDiscoveryRankNextV1:10 (BNFDiscoveryRankTwoV1 $rank))))
 
 ; gslt-lowered-equation-v1 source-rewrite=205 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-rank-next-two-v1 target=mode relation=BNFDiscoveryRankNextV1 input=10 functional=semidet
-(= (gslt:fn:BNFDiscoveryRankNextV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom BNFDiscoveryRankTwoV1 (cons-atom $rank ())) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFDiscoveryRankNextV1:10 $next) (gslt:fn:BNFDiscoveryRankNextV1:10 $rank)
-   (quote (gslt:result:BNFDiscoveryRankNextV1:10 (BNFDiscoveryRankOneV1 $next))))))
+(= (gslt:fn:BNFDiscoveryRankNextV1:10 (cons BNFDiscoveryRankTwoV1 (cons $rank ())))
+   (let (cons gslt:result:BNFDiscoveryRankNextV1:10 (cons $next ())) (gslt:fn:BNFDiscoveryRankNextV1:10 $rank)
+   (quote (gslt:result:BNFDiscoveryRankNextV1:10 (BNFDiscoveryRankOneV1 $next)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=206 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-rank-compare-zero-v1 target=mode relation=BNFDiscoveryRankCompareV1 input=110 functional=semidet
 (= (gslt:fn:BNFDiscoveryRankCompareV1:110 BNFDiscoveryRankZeroV1 BNFDiscoveryRankZeroV1)
    (quote (gslt:result:BNFDiscoveryRankCompareV1:110 BNFDiscoveryEqualV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=207 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-rank-zero-one-v1 target=mode relation=BNFDiscoveryRankCompareV1 input=110 functional=semidet
-(= (gslt:fn:BNFDiscoveryRankCompareV1:110 BNFDiscoveryRankZeroV1 $__gslt_input_v1_0_1)
-   (let (cons-atom BNFDiscoveryRankOneV1 (cons-atom $rank ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFDiscoveryRankCompareV1:110 BNFDiscoveryLessV1))))
+(= (gslt:fn:BNFDiscoveryRankCompareV1:110 BNFDiscoveryRankZeroV1 (cons BNFDiscoveryRankOneV1 (cons $rank ())))
+   (quote (gslt:result:BNFDiscoveryRankCompareV1:110 BNFDiscoveryLessV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=208 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-rank-zero-two-v1 target=mode relation=BNFDiscoveryRankCompareV1 input=110 functional=semidet
-(= (gslt:fn:BNFDiscoveryRankCompareV1:110 BNFDiscoveryRankZeroV1 $__gslt_input_v1_0_1)
-   (let (cons-atom BNFDiscoveryRankTwoV1 (cons-atom $rank ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFDiscoveryRankCompareV1:110 BNFDiscoveryLessV1))))
+(= (gslt:fn:BNFDiscoveryRankCompareV1:110 BNFDiscoveryRankZeroV1 (cons BNFDiscoveryRankTwoV1 (cons $rank ())))
+   (quote (gslt:result:BNFDiscoveryRankCompareV1:110 BNFDiscoveryLessV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=209 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-rank-one-zero-v1 target=mode relation=BNFDiscoveryRankCompareV1 input=110 functional=semidet
-(= (gslt:fn:BNFDiscoveryRankCompareV1:110 $__gslt_input_v1_0_0 BNFDiscoveryRankZeroV1)
-   (let (cons-atom BNFDiscoveryRankOneV1 (cons-atom $rank ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFDiscoveryRankCompareV1:110 BNFDiscoveryGreaterV1))))
+(= (gslt:fn:BNFDiscoveryRankCompareV1:110 (cons BNFDiscoveryRankOneV1 (cons $rank ())) BNFDiscoveryRankZeroV1)
+   (quote (gslt:result:BNFDiscoveryRankCompareV1:110 BNFDiscoveryGreaterV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=210 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-rank-two-zero-v1 target=mode relation=BNFDiscoveryRankCompareV1 input=110 functional=semidet
-(= (gslt:fn:BNFDiscoveryRankCompareV1:110 $__gslt_input_v1_0_0 BNFDiscoveryRankZeroV1)
-   (let (cons-atom BNFDiscoveryRankTwoV1 (cons-atom $rank ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFDiscoveryRankCompareV1:110 BNFDiscoveryGreaterV1))))
+(= (gslt:fn:BNFDiscoveryRankCompareV1:110 (cons BNFDiscoveryRankTwoV1 (cons $rank ())) BNFDiscoveryRankZeroV1)
+   (quote (gslt:result:BNFDiscoveryRankCompareV1:110 BNFDiscoveryGreaterV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=211 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-rank-one-one-v1 target=mode relation=BNFDiscoveryRankCompareV1 input=110 functional=semidet
-(= (gslt:fn:BNFDiscoveryRankCompareV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom BNFDiscoveryRankOneV1 (cons-atom $left ())) $__gslt_input_v1_0_0
-   (let (cons-atom BNFDiscoveryRankOneV1 (cons-atom $right ())) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFDiscoveryRankCompareV1:110 $result) (gslt:fn:BNFDiscoveryRankCompareV1:110 $left $right)
-   (quote (gslt:result:BNFDiscoveryRankCompareV1:110 $result))))))
+(= (gslt:fn:BNFDiscoveryRankCompareV1:110 (cons BNFDiscoveryRankOneV1 (cons $left ())) (cons BNFDiscoveryRankOneV1 (cons $right ())))
+   (let (cons gslt:result:BNFDiscoveryRankCompareV1:110 (cons $result ())) (gslt:fn:BNFDiscoveryRankCompareV1:110 $left $right)
+   (quote (gslt:result:BNFDiscoveryRankCompareV1:110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=212 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-rank-two-two-v1 target=mode relation=BNFDiscoveryRankCompareV1 input=110 functional=semidet
-(= (gslt:fn:BNFDiscoveryRankCompareV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom BNFDiscoveryRankTwoV1 (cons-atom $left ())) $__gslt_input_v1_0_0
-   (let (cons-atom BNFDiscoveryRankTwoV1 (cons-atom $right ())) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFDiscoveryRankCompareV1:110 $result) (gslt:fn:BNFDiscoveryRankCompareV1:110 $left $right)
-   (quote (gslt:result:BNFDiscoveryRankCompareV1:110 $result))))))
+(= (gslt:fn:BNFDiscoveryRankCompareV1:110 (cons BNFDiscoveryRankTwoV1 (cons $left ())) (cons BNFDiscoveryRankTwoV1 (cons $right ())))
+   (let (cons gslt:result:BNFDiscoveryRankCompareV1:110 (cons $result ())) (gslt:fn:BNFDiscoveryRankCompareV1:110 $left $right)
+   (quote (gslt:result:BNFDiscoveryRankCompareV1:110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=213 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-rank-one-two-v1 target=mode relation=BNFDiscoveryRankCompareV1 input=110 functional=semidet
-(= (gslt:fn:BNFDiscoveryRankCompareV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom BNFDiscoveryRankOneV1 (cons-atom $left ())) $__gslt_input_v1_0_0
-   (let (cons-atom BNFDiscoveryRankTwoV1 (cons-atom $right ())) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFDiscoveryRankCompareV1:110 $high) (gslt:fn:BNFDiscoveryRankCompareV1:110 $left $right)
-   (let (gslt:result:BNFDiscoveryRankTieV1:110 $result) (gslt:fn:BNFDiscoveryRankTieV1:110 $high BNFDiscoveryLessV1)
-   (quote (gslt:result:BNFDiscoveryRankCompareV1:110 $result)))))))
+(= (gslt:fn:BNFDiscoveryRankCompareV1:110 (cons BNFDiscoveryRankOneV1 (cons $left ())) (cons BNFDiscoveryRankTwoV1 (cons $right ())))
+   (let (cons gslt:result:BNFDiscoveryRankCompareV1:110 (cons $high ())) (gslt:fn:BNFDiscoveryRankCompareV1:110 $left $right)
+   (let (cons gslt:result:BNFDiscoveryRankTieV1:110 (cons $result ())) (gslt:fn:BNFDiscoveryRankTieV1:110 $high BNFDiscoveryLessV1)
+   (quote (gslt:result:BNFDiscoveryRankCompareV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=214 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-rank-two-one-v1 target=mode relation=BNFDiscoveryRankCompareV1 input=110 functional=semidet
-(= (gslt:fn:BNFDiscoveryRankCompareV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom BNFDiscoveryRankTwoV1 (cons-atom $left ())) $__gslt_input_v1_0_0
-   (let (cons-atom BNFDiscoveryRankOneV1 (cons-atom $right ())) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFDiscoveryRankCompareV1:110 $high) (gslt:fn:BNFDiscoveryRankCompareV1:110 $left $right)
-   (let (gslt:result:BNFDiscoveryRankTieV1:110 $result) (gslt:fn:BNFDiscoveryRankTieV1:110 $high BNFDiscoveryGreaterV1)
-   (quote (gslt:result:BNFDiscoveryRankCompareV1:110 $result)))))))
+(= (gslt:fn:BNFDiscoveryRankCompareV1:110 (cons BNFDiscoveryRankTwoV1 (cons $left ())) (cons BNFDiscoveryRankOneV1 (cons $right ())))
+   (let (cons gslt:result:BNFDiscoveryRankCompareV1:110 (cons $high ())) (gslt:fn:BNFDiscoveryRankCompareV1:110 $left $right)
+   (let (cons gslt:result:BNFDiscoveryRankTieV1:110 (cons $result ())) (gslt:fn:BNFDiscoveryRankTieV1:110 $high BNFDiscoveryGreaterV1)
+   (quote (gslt:result:BNFDiscoveryRankCompareV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=215 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-rank-tie-less-v1 target=mode relation=BNFDiscoveryRankTieV1 input=110 functional=semidet
 (= (gslt:fn:BNFDiscoveryRankTieV1:110 BNFDiscoveryLessV1 $tie)
@@ -1926,359 +1791,313 @@
    (quote (gslt:result:BNFDiscoveryRankDefinitionsV1:110 BNFDiscoveryDefinitionsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=219 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-rank-definitions-cons-v1 target=mode relation=BNFDiscoveryRankDefinitionsV1 input=110 functional=semidet
-(= (gslt:fn:BNFDiscoveryRankDefinitionsV1:110 $__gslt_input_v1_0_0 $rank)
-   (let (cons-atom BNFDefinitionsConsV1 (cons-atom (cons-atom BNFDefinitionV1 (cons-atom $name (cons-atom $expression (cons-atom $span ())))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFDiscoveryRankNextV1:10 $next) (gslt:fn:BNFDiscoveryRankNextV1:10 $rank)
-   (let (gslt:result:BNFDiscoveryRankDefinitionsV1:110 $after) (gslt:fn:BNFDiscoveryRankDefinitionsV1:110 $tail $next)
-   (quote (gslt:result:BNFDiscoveryRankDefinitionsV1:110 (BNFDiscoveryDefinitionsConsV1 (BNFDiscoveryDefinitionV1 $rank $name $expression $span) $after)))))))
+(= (gslt:fn:BNFDiscoveryRankDefinitionsV1:110 (cons BNFDefinitionsConsV1 (cons (cons BNFDefinitionV1 (cons $name (cons $expression (cons $span ())))) (cons $tail ()))) $rank)
+   (let (cons gslt:result:BNFDiscoveryRankNextV1:10 (cons $next ())) (gslt:fn:BNFDiscoveryRankNextV1:10 $rank)
+   (let (cons gslt:result:BNFDiscoveryRankDefinitionsV1:110 (cons $after ())) (gslt:fn:BNFDiscoveryRankDefinitionsV1:110 $tail $next)
+   (quote (gslt:result:BNFDiscoveryRankDefinitionsV1:110 (BNFDiscoveryDefinitionsConsV1 (BNFDiscoveryDefinitionV1 $rank $name $expression $span) $after))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=220 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-heap-merge-nil-v1 target=mode relation=BNFDiscoveryHeapMergeV1 input=110 functional=semidet
 (= (gslt:fn:BNFDiscoveryHeapMergeV1:110 BNFDiscoveryHeapNilV1 BNFDiscoveryHeapNilV1)
    (quote (gslt:result:BNFDiscoveryHeapMergeV1:110 BNFDiscoveryHeapNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=221 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-heap-merge-left-nil-v1 target=mode relation=BNFDiscoveryHeapMergeV1 input=110 functional=semidet
-(= (gslt:fn:BNFDiscoveryHeapMergeV1:110 BNFDiscoveryHeapNilV1 $__gslt_input_v1_0_1)
-   (let (cons-atom BNFDiscoveryHeapV1 (cons-atom $node (cons-atom $children (cons-atom $siblings ())))) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFDiscoveryHeapMergeV1:110 (BNFDiscoveryHeapV1 $node $children BNFDiscoveryHeapNilV1)))))
+(= (gslt:fn:BNFDiscoveryHeapMergeV1:110 BNFDiscoveryHeapNilV1 (cons BNFDiscoveryHeapV1 (cons $node (cons $children (cons $siblings ())))))
+   (quote (gslt:result:BNFDiscoveryHeapMergeV1:110 (BNFDiscoveryHeapV1 $node $children BNFDiscoveryHeapNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=222 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-heap-merge-right-nil-v1 target=mode relation=BNFDiscoveryHeapMergeV1 input=110 functional=semidet
-(= (gslt:fn:BNFDiscoveryHeapMergeV1:110 $__gslt_input_v1_0_0 BNFDiscoveryHeapNilV1)
-   (let (cons-atom BNFDiscoveryHeapV1 (cons-atom $node (cons-atom $children (cons-atom $siblings ())))) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFDiscoveryHeapMergeV1:110 (BNFDiscoveryHeapV1 $node $children BNFDiscoveryHeapNilV1)))))
+(= (gslt:fn:BNFDiscoveryHeapMergeV1:110 (cons BNFDiscoveryHeapV1 (cons $node (cons $children (cons $siblings ())))) BNFDiscoveryHeapNilV1)
+   (quote (gslt:result:BNFDiscoveryHeapMergeV1:110 (BNFDiscoveryHeapV1 $node $children BNFDiscoveryHeapNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=223 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-heap-merge-nodes-v1 target=mode relation=BNFDiscoveryHeapMergeV1 input=110 functional=semidet
-(= (gslt:fn:BNFDiscoveryHeapMergeV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom BNFDiscoveryHeapV1 (cons-atom (cons-atom BNFDiscoveryDefinitionV1 (cons-atom $lr (cons-atom $ln (cons-atom $le (cons-atom $ls ()))))) (cons-atom $lc (cons-atom $lrest ())))) $__gslt_input_v1_0_0
-   (let (cons-atom BNFDiscoveryHeapV1 (cons-atom (cons-atom BNFDiscoveryDefinitionV1 (cons-atom $rr (cons-atom $rn (cons-atom $re (cons-atom $rs ()))))) (cons-atom $rc (cons-atom $rrest ())))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFDiscoveryRankCompareV1:110 $order) (gslt:fn:BNFDiscoveryRankCompareV1:110 $lr $rr)
-   (let (gslt:result:BNFDiscoveryHeapMergeAfterCompareV1:1110 $result) (gslt:fn:BNFDiscoveryHeapMergeAfterCompareV1:1110 $order (quote (BNFDiscoveryHeapV1 (BNFDiscoveryDefinitionV1 $lr $ln $le $ls) $lc $lrest)) (quote (BNFDiscoveryHeapV1 (BNFDiscoveryDefinitionV1 $rr $rn $re $rs) $rc $rrest)))
-   (quote (gslt:result:BNFDiscoveryHeapMergeV1:110 $result)))))))
+(= (gslt:fn:BNFDiscoveryHeapMergeV1:110 (cons BNFDiscoveryHeapV1 (cons (cons BNFDiscoveryDefinitionV1 (cons $lr (cons $ln (cons $le (cons $ls ()))))) (cons $lc (cons $lrest ())))) (cons BNFDiscoveryHeapV1 (cons (cons BNFDiscoveryDefinitionV1 (cons $rr (cons $rn (cons $re (cons $rs ()))))) (cons $rc (cons $rrest ())))))
+   (let (cons gslt:result:BNFDiscoveryRankCompareV1:110 (cons $order ())) (gslt:fn:BNFDiscoveryRankCompareV1:110 $lr $rr)
+   (let (cons gslt:result:BNFDiscoveryHeapMergeAfterCompareV1:1110 (cons $result ())) (gslt:fn:BNFDiscoveryHeapMergeAfterCompareV1:1110 $order (quote (BNFDiscoveryHeapV1 (BNFDiscoveryDefinitionV1 $lr $ln $le $ls) $lc $lrest)) (quote (BNFDiscoveryHeapV1 (BNFDiscoveryDefinitionV1 $rr $rn $re $rs) $rc $rrest)))
+   (quote (gslt:result:BNFDiscoveryHeapMergeV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=224 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-heap-merge-less-v1 target=mode relation=BNFDiscoveryHeapMergeAfterCompareV1 input=1110 functional=semidet
-(= (gslt:fn:BNFDiscoveryHeapMergeAfterCompareV1:1110 BNFDiscoveryLessV1 $__gslt_input_v1_0_1 $__gslt_input_v1_0_2)
-   (let (cons-atom BNFDiscoveryHeapV1 (cons-atom $left (cons-atom $lc (cons-atom $ls ())))) $__gslt_input_v1_0_1
-   (let (cons-atom BNFDiscoveryHeapV1 (cons-atom $right (cons-atom $rc (cons-atom $rs ())))) $__gslt_input_v1_0_2
-   (quote (gslt:result:BNFDiscoveryHeapMergeAfterCompareV1:1110 (BNFDiscoveryHeapV1 $left (BNFDiscoveryHeapV1 $right $rc $lc) BNFDiscoveryHeapNilV1))))))
+(= (gslt:fn:BNFDiscoveryHeapMergeAfterCompareV1:1110 BNFDiscoveryLessV1 (cons BNFDiscoveryHeapV1 (cons $left (cons $lc (cons $ls ())))) (cons BNFDiscoveryHeapV1 (cons $right (cons $rc (cons $rs ())))))
+   (quote (gslt:result:BNFDiscoveryHeapMergeAfterCompareV1:1110 (BNFDiscoveryHeapV1 $left (BNFDiscoveryHeapV1 $right $rc $lc) BNFDiscoveryHeapNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=225 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-heap-merge-equal-v1 target=mode relation=BNFDiscoveryHeapMergeAfterCompareV1 input=1110 functional=semidet
-(= (gslt:fn:BNFDiscoveryHeapMergeAfterCompareV1:1110 BNFDiscoveryEqualV1 $__gslt_input_v1_0_1 $__gslt_input_v1_0_2)
-   (let (cons-atom BNFDiscoveryHeapV1 (cons-atom $left (cons-atom $lc (cons-atom $ls ())))) $__gslt_input_v1_0_1
-   (let (cons-atom BNFDiscoveryHeapV1 (cons-atom $right (cons-atom $rc (cons-atom $rs ())))) $__gslt_input_v1_0_2
-   (quote (gslt:result:BNFDiscoveryHeapMergeAfterCompareV1:1110 (BNFDiscoveryHeapV1 $left (BNFDiscoveryHeapV1 $right $rc $lc) BNFDiscoveryHeapNilV1))))))
+(= (gslt:fn:BNFDiscoveryHeapMergeAfterCompareV1:1110 BNFDiscoveryEqualV1 (cons BNFDiscoveryHeapV1 (cons $left (cons $lc (cons $ls ())))) (cons BNFDiscoveryHeapV1 (cons $right (cons $rc (cons $rs ())))))
+   (quote (gslt:result:BNFDiscoveryHeapMergeAfterCompareV1:1110 (BNFDiscoveryHeapV1 $left (BNFDiscoveryHeapV1 $right $rc $lc) BNFDiscoveryHeapNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=226 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-heap-merge-greater-v1 target=mode relation=BNFDiscoveryHeapMergeAfterCompareV1 input=1110 functional=semidet
-(= (gslt:fn:BNFDiscoveryHeapMergeAfterCompareV1:1110 BNFDiscoveryGreaterV1 $__gslt_input_v1_0_1 $__gslt_input_v1_0_2)
-   (let (cons-atom BNFDiscoveryHeapV1 (cons-atom $left (cons-atom $lc (cons-atom $ls ())))) $__gslt_input_v1_0_1
-   (let (cons-atom BNFDiscoveryHeapV1 (cons-atom $right (cons-atom $rc (cons-atom $rs ())))) $__gslt_input_v1_0_2
-   (quote (gslt:result:BNFDiscoveryHeapMergeAfterCompareV1:1110 (BNFDiscoveryHeapV1 $right (BNFDiscoveryHeapV1 $left $lc $rc) BNFDiscoveryHeapNilV1))))))
+(= (gslt:fn:BNFDiscoveryHeapMergeAfterCompareV1:1110 BNFDiscoveryGreaterV1 (cons BNFDiscoveryHeapV1 (cons $left (cons $lc (cons $ls ())))) (cons BNFDiscoveryHeapV1 (cons $right (cons $rc (cons $rs ())))))
+   (quote (gslt:result:BNFDiscoveryHeapMergeAfterCompareV1:1110 (BNFDiscoveryHeapV1 $right (BNFDiscoveryHeapV1 $left $lc $rc) BNFDiscoveryHeapNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=227 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-heap-combine-nil-v1 target=mode relation=BNFDiscoveryHeapCombineV1 input=10 functional=semidet
 (= (gslt:fn:BNFDiscoveryHeapCombineV1:10 BNFDiscoveryHeapNilV1)
    (quote (gslt:result:BNFDiscoveryHeapCombineV1:10 BNFDiscoveryHeapNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=228 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-heap-combine-one-v1 target=mode relation=BNFDiscoveryHeapCombineV1 input=10 functional=semidet
-(= (gslt:fn:BNFDiscoveryHeapCombineV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom BNFDiscoveryHeapV1 (cons-atom $node (cons-atom $children (cons-atom BNFDiscoveryHeapNilV1 ())))) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFDiscoveryHeapCombineV1:10 (BNFDiscoveryHeapV1 $node $children BNFDiscoveryHeapNilV1)))))
+(= (gslt:fn:BNFDiscoveryHeapCombineV1:10 (cons BNFDiscoveryHeapV1 (cons $node (cons $children (cons BNFDiscoveryHeapNilV1 ())))))
+   (quote (gslt:result:BNFDiscoveryHeapCombineV1:10 (BNFDiscoveryHeapV1 $node $children BNFDiscoveryHeapNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=229 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-heap-combine-pair-v1 target=mode relation=BNFDiscoveryHeapCombineV1 input=10 functional=semidet
-(= (gslt:fn:BNFDiscoveryHeapCombineV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom BNFDiscoveryHeapV1 (cons-atom $left (cons-atom $lc (cons-atom (cons-atom BNFDiscoveryHeapV1 (cons-atom $right (cons-atom $rc (cons-atom $rest ())))) ())))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFDiscoveryHeapMergeV1:110 $pair) (gslt:fn:BNFDiscoveryHeapMergeV1:110 (quote (BNFDiscoveryHeapV1 $left $lc BNFDiscoveryHeapNilV1)) (quote (BNFDiscoveryHeapV1 $right $rc BNFDiscoveryHeapNilV1)))
-   (let (gslt:result:BNFDiscoveryHeapCombineV1:10 $following) (gslt:fn:BNFDiscoveryHeapCombineV1:10 $rest)
-   (let (gslt:result:BNFDiscoveryHeapMergeV1:110 $result) (gslt:fn:BNFDiscoveryHeapMergeV1:110 $pair $following)
-   (quote (gslt:result:BNFDiscoveryHeapCombineV1:10 $result)))))))
+(= (gslt:fn:BNFDiscoveryHeapCombineV1:10 (cons BNFDiscoveryHeapV1 (cons $left (cons $lc (cons (cons BNFDiscoveryHeapV1 (cons $right (cons $rc (cons $rest ())))) ())))))
+   (let (cons gslt:result:BNFDiscoveryHeapMergeV1:110 (cons $pair ())) (gslt:fn:BNFDiscoveryHeapMergeV1:110 (quote (BNFDiscoveryHeapV1 $left $lc BNFDiscoveryHeapNilV1)) (quote (BNFDiscoveryHeapV1 $right $rc BNFDiscoveryHeapNilV1)))
+   (let (cons gslt:result:BNFDiscoveryHeapCombineV1:10 (cons $following ())) (gslt:fn:BNFDiscoveryHeapCombineV1:10 $rest)
+   (let (cons gslt:result:BNFDiscoveryHeapMergeV1:110 (cons $result ())) (gslt:fn:BNFDiscoveryHeapMergeV1:110 $pair $following)
+   (quote (gslt:result:BNFDiscoveryHeapCombineV1:10 $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=230 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-trie-put-empty-v1 target=mode relation=BNFGraphTriePutV1 input=1110 functional=semidet
 (= (gslt:fn:BNFGraphTriePutV1:1110 $key $value BNFGraphTrieEmptyV1)
-   (let (gslt:result:BNFGraphTriePutV1:1110 $result) (gslt:fn:BNFGraphTriePutV1:1110 $key $value (quote (BNFGraphTrieV1 BNFIndexMissingV1 BNFGraphTrieEdgesNilV1)))
+   (let (cons gslt:result:BNFGraphTriePutV1:1110 (cons $result ())) (gslt:fn:BNFGraphTriePutV1:1110 $key $value (quote (BNFGraphTrieV1 BNFIndexMissingV1 BNFGraphTrieEdgesNilV1)))
    (quote (gslt:result:BNFGraphTriePutV1:1110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=231 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-trie-put-value-v1 target=mode relation=BNFGraphTriePutV1 input=1110 functional=semidet
-(= (gslt:fn:BNFGraphTriePutV1:1110 $__gslt_input_v1_0_0 $value $__gslt_input_v1_0_2)
-   (let (cons-atom bnf-v1:text-nil ()) $__gslt_input_v1_0_0
-   (let (cons-atom BNFGraphTrieV1 (cons-atom $old (cons-atom $edges ()))) $__gslt_input_v1_0_2
-   (quote (gslt:result:BNFGraphTriePutV1:1110 (BNFGraphTrieV1 (BNFIndexFoundV1 $value) $edges))))))
+(= (gslt:fn:BNFGraphTriePutV1:1110 (cons bnf-v1:text-nil ()) $value (cons BNFGraphTrieV1 (cons $old (cons $edges ()))))
+   (quote (gslt:result:BNFGraphTriePutV1:1110 (BNFGraphTrieV1 (BNFIndexFoundV1 $value) $edges))))
 
 ; gslt-lowered-equation-v1 source-rewrite=232 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-trie-put-cons-v1 target=mode relation=BNFGraphTriePutV1 input=1110 functional=semidet
-(= (gslt:fn:BNFGraphTriePutV1:1110 $__gslt_input_v1_0_0 $value $__gslt_input_v1_0_2)
-   (let (cons-atom bnf-v1:text-cons (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (cons-atom BNFGraphTrieV1 (cons-atom $old (cons-atom $edges ()))) $__gslt_input_v1_0_2
-   (let (gslt:result:BNFGraphTrieEdgePutV1:11110 $next) (gslt:fn:BNFGraphTrieEdgePutV1:11110 $head $tail $value $edges)
-   (quote (gslt:result:BNFGraphTriePutV1:1110 (BNFGraphTrieV1 $old $next)))))))
+(= (gslt:fn:BNFGraphTriePutV1:1110 (cons bnf-v1:text-cons (cons $head (cons $tail ()))) $value (cons BNFGraphTrieV1 (cons $old (cons $edges ()))))
+   (let (cons gslt:result:BNFGraphTrieEdgePutV1:11110 (cons $next ())) (gslt:fn:BNFGraphTrieEdgePutV1:11110 $head $tail $value $edges)
+   (quote (gslt:result:BNFGraphTriePutV1:1110 (BNFGraphTrieV1 $old $next)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=233 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-trie-edge-put-nil-v1 target=mode relation=BNFGraphTrieEdgePutV1 input=11110 functional=semidet
 (= (gslt:fn:BNFGraphTrieEdgePutV1:11110 $head $tail $value BNFGraphTrieEdgesNilV1)
-   (let (gslt:result:BNFGraphTriePutV1:1110 $child) (gslt:fn:BNFGraphTriePutV1:1110 $tail $value BNFGraphTrieEmptyV1)
+   (let (cons gslt:result:BNFGraphTriePutV1:1110 (cons $child ())) (gslt:fn:BNFGraphTriePutV1:1110 $tail $value BNFGraphTrieEmptyV1)
    (quote (gslt:result:BNFGraphTrieEdgePutV1:11110 (BNFGraphTrieEdgesConsV1 $head $child BNFGraphTrieEdgesNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=234 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-trie-edge-put-found-v1 target=mode relation=BNFGraphTrieEdgePutV1 input=11110 functional=semidet
-(= (gslt:fn:BNFGraphTrieEdgePutV1:11110 $head $tail $value $__gslt_input_v1_0_3)
-   (let (cons-atom BNFGraphTrieEdgesConsV1 (cons-atom $head (cons-atom $child (cons-atom $rest ())))) $__gslt_input_v1_0_3
-   (let (gslt:result:BNFGraphTriePutV1:1110 $next) (gslt:fn:BNFGraphTriePutV1:1110 $tail $value $child)
-   (quote (gslt:result:BNFGraphTrieEdgePutV1:11110 (BNFGraphTrieEdgesConsV1 $head $next $rest))))))
+(= (gslt:fn:BNFGraphTrieEdgePutV1:11110 $head $tail $value (cons BNFGraphTrieEdgesConsV1 (cons $head (cons $child (cons $rest ())))))
+   (let (cons gslt:result:BNFGraphTriePutV1:1110 (cons $next ())) (gslt:fn:BNFGraphTriePutV1:1110 $tail $value $child)
+   (quote (gslt:result:BNFGraphTrieEdgePutV1:11110 (BNFGraphTrieEdgesConsV1 $head $next $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=235 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-trie-edge-put-next-v1 target=mode relation=BNFGraphTrieEdgePutV1 input=11110 functional=semidet
-(= (gslt:fn:BNFGraphTrieEdgePutV1:11110 $head $tail $value $__gslt_input_v1_0_3)
-   (let (cons-atom BNFGraphTrieEdgesConsV1 (cons-atom $other (cons-atom $child (cons-atom $rest ())))) $__gslt_input_v1_0_3
+(= (gslt:fn:BNFGraphTrieEdgePutV1:11110 $head $tail $value (cons BNFGraphTrieEdgesConsV1 (cons $other (cons $child (cons $rest ())))))
    (let $_ (gslt:different (different $head $other))
-   (let (gslt:result:BNFGraphTrieEdgePutV1:11110 $next) (gslt:fn:BNFGraphTrieEdgePutV1:11110 $head $tail $value $rest)
-   (quote (gslt:result:BNFGraphTrieEdgePutV1:11110 (BNFGraphTrieEdgesConsV1 $other $child $next)))))))
+   (let (cons gslt:result:BNFGraphTrieEdgePutV1:11110 (cons $next ())) (gslt:fn:BNFGraphTrieEdgePutV1:11110 $head $tail $value $rest)
+   (quote (gslt:result:BNFGraphTrieEdgePutV1:11110 (BNFGraphTrieEdgesConsV1 $other $child $next))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=236 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-definition-index-nil-v1 target=mode relation=BNFDiscoveryDefinitionIndexV1 input=110 functional=semidet
 (= (gslt:fn:BNFDiscoveryDefinitionIndexV1:110 BNFDiscoveryDefinitionsNilV1 $index)
    (quote (gslt:result:BNFDiscoveryDefinitionIndexV1:110 $index)))
 
 ; gslt-lowered-equation-v1 source-rewrite=237 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-definition-index-cons-v1 target=mode relation=BNFDiscoveryDefinitionIndexV1 input=110 functional=semidet
-(= (gslt:fn:BNFDiscoveryDefinitionIndexV1:110 $__gslt_input_v1_0_0 $index)
-   (let (cons-atom BNFDiscoveryDefinitionsConsV1 (cons-atom (cons-atom BNFDiscoveryDefinitionV1 (cons-atom $rank (cons-atom $name (cons-atom $expression (cons-atom $span ()))))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFGraphTrieInsertFirstV1:1110 $next) (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $name (quote (BNFDefinitionFoundV1 $expression $span)) $index)
-   (let (gslt:result:BNFDiscoveryDefinitionIndexV1:110 $result) (gslt:fn:BNFDiscoveryDefinitionIndexV1:110 $tail $next)
-   (quote (gslt:result:BNFDiscoveryDefinitionIndexV1:110 $result))))))
+(= (gslt:fn:BNFDiscoveryDefinitionIndexV1:110 (cons BNFDiscoveryDefinitionsConsV1 (cons (cons BNFDiscoveryDefinitionV1 (cons $rank (cons $name (cons $expression (cons $span ()))))) (cons $tail ()))) $index)
+   (let (cons gslt:result:BNFGraphTrieInsertFirstV1:1110 (cons $next ())) (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $name (quote (BNFDefinitionFoundV1 $expression $span)) $index)
+   (let (cons gslt:result:BNFDiscoveryDefinitionIndexV1:110 (cons $result ())) (gslt:fn:BNFDiscoveryDefinitionIndexV1:110 $tail $next)
+   (quote (gslt:result:BNFDiscoveryDefinitionIndexV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=245 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-reverse-definitions-nil-v1 target=mode relation=BNFDiscoveryReverseDefinitionsV1 input=110 functional=semidet
 (= (gslt:fn:BNFDiscoveryReverseDefinitionsV1:110 BNFDefinitionsNilV1 $result)
    (quote (gslt:result:BNFDiscoveryReverseDefinitionsV1:110 $result)))
 
 ; gslt-lowered-equation-v1 source-rewrite=246 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-reverse-definitions-cons-v1 target=mode relation=BNFDiscoveryReverseDefinitionsV1 input=110 functional=semidet
-(= (gslt:fn:BNFDiscoveryReverseDefinitionsV1:110 $__gslt_input_v1_0_0 $before)
-   (let (cons-atom BNFDefinitionsConsV1 (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFDiscoveryReverseDefinitionsV1:110 $after) (gslt:fn:BNFDiscoveryReverseDefinitionsV1:110 $tail (quote (BNFDefinitionsConsV1 $head $before)))
-   (quote (gslt:result:BNFDiscoveryReverseDefinitionsV1:110 $after)))))
+(= (gslt:fn:BNFDiscoveryReverseDefinitionsV1:110 (cons BNFDefinitionsConsV1 (cons $head (cons $tail ()))) $before)
+   (let (cons gslt:result:BNFDiscoveryReverseDefinitionsV1:110 (cons $after ())) (gslt:fn:BNFDiscoveryReverseDefinitionsV1:110 $tail (quote (BNFDefinitionsConsV1 $head $before)))
+   (quote (gslt:result:BNFDiscoveryReverseDefinitionsV1:110 $after))))
 
 ; gslt-lowered-equation-v1 source-rewrite=248 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-definition-missing-v1 target=mode relation=BNFDiscoveryDefinitionResultV1 input=10 functional=semidet
 (= (gslt:fn:BNFDiscoveryDefinitionResultV1:10 BNFIndexMissingV1)
    (quote (gslt:result:BNFDiscoveryDefinitionResultV1:10 BNFDefinitionMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=249 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-definition-found-v1 target=mode relation=BNFDiscoveryDefinitionResultV1 input=10 functional=semidet
-(= (gslt:fn:BNFDiscoveryDefinitionResultV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom BNFIndexFoundV1 (cons-atom $definition ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFDiscoveryDefinitionResultV1:10 $definition))))
+(= (gslt:fn:BNFDiscoveryDefinitionResultV1:10 (cons BNFIndexFoundV1 (cons $definition ())))
+   (quote (gslt:result:BNFDiscoveryDefinitionResultV1:10 $definition)))
 
 ; gslt-lowered-equation-v1 source-rewrite=250 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-reverse-index-nil-v1 target=mode relation=BNFDiscoveryReverseIndexV1 input=1110 functional=semidet
 (= (gslt:fn:BNFDiscoveryReverseIndexV1:1110 BNFDiscoveryDefinitionsNilV1 $lexicals $index)
    (quote (gslt:result:BNFDiscoveryReverseIndexV1:1110 $index)))
 
 ; gslt-lowered-equation-v1 source-rewrite=251 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-reverse-index-cons-v1 target=mode relation=BNFDiscoveryReverseIndexV1 input=1110 functional=semidet
-(= (gslt:fn:BNFDiscoveryReverseIndexV1:1110 $__gslt_input_v1_0_0 $lexicals $index)
-   (let (cons-atom BNFDiscoveryDefinitionsConsV1 (cons-atom (cons-atom BNFDiscoveryDefinitionV1 (cons-atom $rank (cons-atom $name (cons-atom $expression (cons-atom $span ()))))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFCollectExpressionReferencesV1:110 $references) (gslt:fn:BNFCollectExpressionReferencesV1:110 $expression $lexicals)
-   (let (gslt:result:BNFDiscoveryAddReferencesV1:1110 $next) (gslt:fn:BNFDiscoveryAddReferencesV1:1110 $references (quote (BNFDiscoveryDefinitionV1 $rank $name $expression $span)) $index)
-   (let (gslt:result:BNFDiscoveryReverseIndexV1:1110 $result) (gslt:fn:BNFDiscoveryReverseIndexV1:1110 $tail $lexicals $next)
-   (quote (gslt:result:BNFDiscoveryReverseIndexV1:1110 $result)))))))
+(= (gslt:fn:BNFDiscoveryReverseIndexV1:1110 (cons BNFDiscoveryDefinitionsConsV1 (cons (cons BNFDiscoveryDefinitionV1 (cons $rank (cons $name (cons $expression (cons $span ()))))) (cons $tail ()))) $lexicals $index)
+   (let (cons gslt:result:BNFCollectExpressionReferencesV1:110 (cons $references ())) (gslt:fn:BNFCollectExpressionReferencesV1:110 $expression $lexicals)
+   (let (cons gslt:result:BNFDiscoveryAddReferencesV1:1110 (cons $next ())) (gslt:fn:BNFDiscoveryAddReferencesV1:1110 $references (quote (BNFDiscoveryDefinitionV1 $rank $name $expression $span)) $index)
+   (let (cons gslt:result:BNFDiscoveryReverseIndexV1:1110 (cons $result ())) (gslt:fn:BNFDiscoveryReverseIndexV1:1110 $tail $lexicals $next)
+   (quote (gslt:result:BNFDiscoveryReverseIndexV1:1110 $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=252 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-dependents-missing-v1 target=mode relation=BNFDiscoveryDependentsV1 input=10 functional=semidet
 (= (gslt:fn:BNFDiscoveryDependentsV1:10 BNFIndexMissingV1)
    (quote (gslt:result:BNFDiscoveryDependentsV1:10 BNFDiscoveryDefinitionsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=253 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-dependents-found-v1 target=mode relation=BNFDiscoveryDependentsV1 input=10 functional=semidet
-(= (gslt:fn:BNFDiscoveryDependentsV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom BNFIndexFoundV1 (cons-atom $definitions ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFDiscoveryDependentsV1:10 $definitions))))
+(= (gslt:fn:BNFDiscoveryDependentsV1:10 (cons BNFIndexFoundV1 (cons $definitions ())))
+   (quote (gslt:result:BNFDiscoveryDependentsV1:10 $definitions)))
 
 ; gslt-lowered-equation-v1 source-rewrite=254 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-add-references-nil-v1 target=mode relation=BNFDiscoveryAddReferencesV1 input=1110 functional=semidet
 (= (gslt:fn:BNFDiscoveryAddReferencesV1:1110 BNFNamesNilV1 $node $index)
    (quote (gslt:result:BNFDiscoveryAddReferencesV1:1110 $index)))
 
 ; gslt-lowered-equation-v1 source-rewrite=255 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-add-references-cons-v1 target=mode relation=BNFDiscoveryAddReferencesV1 input=1110 functional=semidet
-(= (gslt:fn:BNFDiscoveryAddReferencesV1:1110 $__gslt_input_v1_0_0 $node $index)
-   (let (cons-atom BNFNamesConsV1 (cons-atom $name (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFGraphTrieLookupV1:110 $lookup) (gslt:fn:BNFGraphTrieLookupV1:110 $name $index)
-   (let (gslt:result:BNFDiscoveryDependentsV1:10 $previous) (gslt:fn:BNFDiscoveryDependentsV1:10 $lookup)
-   (let (gslt:result:BNFGraphTriePutV1:1110 $next) (gslt:fn:BNFGraphTriePutV1:1110 $name (quote (BNFDiscoveryDefinitionsConsV1 $node $previous)) $index)
-   (let (gslt:result:BNFDiscoveryAddReferencesV1:1110 $result) (gslt:fn:BNFDiscoveryAddReferencesV1:1110 $tail $node $next)
-   (quote (gslt:result:BNFDiscoveryAddReferencesV1:1110 $result))))))))
+(= (gslt:fn:BNFDiscoveryAddReferencesV1:1110 (cons BNFNamesConsV1 (cons $name (cons $tail ()))) $node $index)
+   (let (cons gslt:result:BNFGraphTrieLookupV1:110 (cons $lookup ())) (gslt:fn:BNFGraphTrieLookupV1:110 $name $index)
+   (let (cons gslt:result:BNFDiscoveryDependentsV1:10 (cons $previous ())) (gslt:fn:BNFDiscoveryDependentsV1:10 $lookup)
+   (let (cons gslt:result:BNFGraphTriePutV1:1110 (cons $next ())) (gslt:fn:BNFGraphTriePutV1:1110 $name (quote (BNFDiscoveryDefinitionsConsV1 $node $previous)) $index)
+   (let (cons gslt:result:BNFDiscoveryAddReferencesV1:1110 (cons $result ())) (gslt:fn:BNFDiscoveryAddReferencesV1:1110 $tail $node $next)
+   (quote (gslt:result:BNFDiscoveryAddReferencesV1:1110 $result)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=256 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-ready-productive-v1 target=mode relation=BNFDiscoveryReadyV1 input=11110 functional=relational
 (= (gslt:mode:BNFDiscoveryReadyV1:11110 BNFDiscoveryProductiveV1 $expression $known $lexicals)
-   (let (gslt:result:BNFExpressionProductiveV1:1110 $result) (superpose (collapse (gslt:mode:BNFExpressionProductiveV1:1110 $expression $known $lexicals)))
+   (let (cons gslt:result:BNFExpressionProductiveV1:1110 (cons $result ())) (superpose (collapse (gslt:mode:BNFExpressionProductiveV1:1110 $expression $known $lexicals)))
    (quote (gslt:result:BNFDiscoveryReadyV1:11110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=257 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-ready-nullable-v1 target=mode relation=BNFDiscoveryReadyV1 input=11110 functional=relational
 (= (gslt:mode:BNFDiscoveryReadyV1:11110 BNFDiscoveryNullableV1 $expression $known $lexicals)
-   (let (gslt:result:BNFExpressionNullableV1:1110 $result) (once (gslt:fn:BNFExpressionNullableV1:1110 $expression $known $lexicals))
+   (let (cons gslt:result:BNFExpressionNullableV1:1110 (cons $result ())) (once (gslt:fn:BNFExpressionNullableV1:1110 $expression $known $lexicals))
    (quote (gslt:result:BNFDiscoveryReadyV1:11110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=258 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-schedule-initial-v1 target=mode relation=BNFDiscoveryScheduleV1 input=1110 functional=semidet
 (= (gslt:fn:BNFDiscoveryScheduleV1:1110 $node BNFDiscoveryInitialV1 $before)
-   (let (gslt:result:BNFDiscoveryScheduleCurrentV1:110 $after) (gslt:fn:BNFDiscoveryScheduleCurrentV1:110 $node $before)
+   (let (cons gslt:result:BNFDiscoveryScheduleCurrentV1:110 (cons $after ())) (gslt:fn:BNFDiscoveryScheduleCurrentV1:110 $node $before)
    (quote (gslt:result:BNFDiscoveryScheduleV1:1110 $after))))
 
 ; gslt-lowered-equation-v1 source-rewrite=259 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-schedule-after-position-v1 target=mode relation=BNFDiscoveryScheduleV1 input=1110 functional=semidet
-(= (gslt:fn:BNFDiscoveryScheduleV1:1110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1 $before)
-   (let (cons-atom BNFDiscoveryDefinitionV1 (cons-atom $rank (cons-atom $name (cons-atom $expression (cons-atom $span ()))))) $__gslt_input_v1_0_0
-   (let (cons-atom BNFDiscoveryAfterPositionV1 (cons-atom $origin ())) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFDiscoveryRankCompareV1:110 $order) (gslt:fn:BNFDiscoveryRankCompareV1:110 $rank $origin)
-   (let (gslt:result:BNFDiscoveryScheduleAtV1:1110 $after) (gslt:fn:BNFDiscoveryScheduleAtV1:1110 $order (quote (BNFDiscoveryDefinitionV1 $rank $name $expression $span)) $before)
-   (quote (gslt:result:BNFDiscoveryScheduleV1:1110 $after)))))))
+(= (gslt:fn:BNFDiscoveryScheduleV1:1110 (cons BNFDiscoveryDefinitionV1 (cons $rank (cons $name (cons $expression (cons $span ()))))) (cons BNFDiscoveryAfterPositionV1 (cons $origin ())) $before)
+   (let (cons gslt:result:BNFDiscoveryRankCompareV1:110 (cons $order ())) (gslt:fn:BNFDiscoveryRankCompareV1:110 $rank $origin)
+   (let (cons gslt:result:BNFDiscoveryScheduleAtV1:1110 (cons $after ())) (gslt:fn:BNFDiscoveryScheduleAtV1:1110 $order (quote (BNFDiscoveryDefinitionV1 $rank $name $expression $span)) $before)
+   (quote (gslt:result:BNFDiscoveryScheduleV1:1110 $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=260 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-schedule-later-v1 target=mode relation=BNFDiscoveryScheduleAtV1 input=1110 functional=semidet
 (= (gslt:fn:BNFDiscoveryScheduleAtV1:1110 BNFDiscoveryGreaterV1 $node $before)
-   (let (gslt:result:BNFDiscoveryScheduleCurrentV1:110 $after) (gslt:fn:BNFDiscoveryScheduleCurrentV1:110 $node $before)
+   (let (cons gslt:result:BNFDiscoveryScheduleCurrentV1:110 (cons $after ())) (gslt:fn:BNFDiscoveryScheduleCurrentV1:110 $node $before)
    (quote (gslt:result:BNFDiscoveryScheduleAtV1:1110 $after))))
 
 ; gslt-lowered-equation-v1 source-rewrite=261 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-schedule-earlier-v1 target=mode relation=BNFDiscoveryScheduleAtV1 input=1110 functional=semidet
 (= (gslt:fn:BNFDiscoveryScheduleAtV1:1110 BNFDiscoveryLessV1 $node $before)
-   (let (gslt:result:BNFDiscoveryScheduleNextV1:110 $after) (gslt:fn:BNFDiscoveryScheduleNextV1:110 $node $before)
+   (let (cons gslt:result:BNFDiscoveryScheduleNextV1:110 (cons $after ())) (gslt:fn:BNFDiscoveryScheduleNextV1:110 $node $before)
    (quote (gslt:result:BNFDiscoveryScheduleAtV1:1110 $after))))
 
 ; gslt-lowered-equation-v1 source-rewrite=262 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-schedule-equal-v1 target=mode relation=BNFDiscoveryScheduleAtV1 input=1110 functional=semidet
 (= (gslt:fn:BNFDiscoveryScheduleAtV1:1110 BNFDiscoveryEqualV1 $node $before)
-   (let (gslt:result:BNFDiscoveryScheduleNextV1:110 $after) (gslt:fn:BNFDiscoveryScheduleNextV1:110 $node $before)
+   (let (cons gslt:result:BNFDiscoveryScheduleNextV1:110 (cons $after ())) (gslt:fn:BNFDiscoveryScheduleNextV1:110 $node $before)
    (quote (gslt:result:BNFDiscoveryScheduleAtV1:1110 $after))))
 
 ; gslt-lowered-equation-v1 source-rewrite=263 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-schedule-current-v1 target=mode relation=BNFDiscoveryScheduleCurrentV1 input=110 functional=semidet
-(= (gslt:fn:BNFDiscoveryScheduleCurrentV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom BNFDiscoveryDefinitionV1 (cons-atom $rank (cons-atom $name (cons-atom $expression (cons-atom $span ()))))) $__gslt_input_v1_0_0
-   (let (cons-atom BNFDiscoveryQueuesV1 (cons-atom $current (cons-atom $following (cons-atom $scheduled ())))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFDiscoveryHeapMergeV1:110 $nextCurrent) (gslt:fn:BNFDiscoveryHeapMergeV1:110 (quote (BNFDiscoveryHeapV1 (BNFDiscoveryDefinitionV1 $rank $name $expression $span) BNFDiscoveryHeapNilV1 BNFDiscoveryHeapNilV1)) $current)
-   (let (gslt:result:BNFGraphTrieInsertFirstV1:1110 $nextScheduled) (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $name $name $scheduled)
-   (quote (gslt:result:BNFDiscoveryScheduleCurrentV1:110 (BNFDiscoveryQueuesV1 $nextCurrent $following $nextScheduled))))))))
+(= (gslt:fn:BNFDiscoveryScheduleCurrentV1:110 (cons BNFDiscoveryDefinitionV1 (cons $rank (cons $name (cons $expression (cons $span ()))))) (cons BNFDiscoveryQueuesV1 (cons $current (cons $following (cons $scheduled ())))))
+   (let (cons gslt:result:BNFDiscoveryHeapMergeV1:110 (cons $nextCurrent ())) (gslt:fn:BNFDiscoveryHeapMergeV1:110 (quote (BNFDiscoveryHeapV1 (BNFDiscoveryDefinitionV1 $rank $name $expression $span) BNFDiscoveryHeapNilV1 BNFDiscoveryHeapNilV1)) $current)
+   (let (cons gslt:result:BNFGraphTrieInsertFirstV1:1110 (cons $nextScheduled ())) (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $name $name $scheduled)
+   (quote (gslt:result:BNFDiscoveryScheduleCurrentV1:110 (BNFDiscoveryQueuesV1 $nextCurrent $following $nextScheduled))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=264 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-schedule-next-v1 target=mode relation=BNFDiscoveryScheduleNextV1 input=110 functional=semidet
-(= (gslt:fn:BNFDiscoveryScheduleNextV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom BNFDiscoveryDefinitionV1 (cons-atom $rank (cons-atom $name (cons-atom $expression (cons-atom $span ()))))) $__gslt_input_v1_0_0
-   (let (cons-atom BNFDiscoveryQueuesV1 (cons-atom $current (cons-atom $following (cons-atom $scheduled ())))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFDiscoveryHeapMergeV1:110 $nextFollowing) (gslt:fn:BNFDiscoveryHeapMergeV1:110 (quote (BNFDiscoveryHeapV1 (BNFDiscoveryDefinitionV1 $rank $name $expression $span) BNFDiscoveryHeapNilV1 BNFDiscoveryHeapNilV1)) $following)
-   (let (gslt:result:BNFGraphTrieInsertFirstV1:1110 $nextScheduled) (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $name $name $scheduled)
-   (quote (gslt:result:BNFDiscoveryScheduleNextV1:110 (BNFDiscoveryQueuesV1 $current $nextFollowing $nextScheduled))))))))
+(= (gslt:fn:BNFDiscoveryScheduleNextV1:110 (cons BNFDiscoveryDefinitionV1 (cons $rank (cons $name (cons $expression (cons $span ()))))) (cons BNFDiscoveryQueuesV1 (cons $current (cons $following (cons $scheduled ())))))
+   (let (cons gslt:result:BNFDiscoveryHeapMergeV1:110 (cons $nextFollowing ())) (gslt:fn:BNFDiscoveryHeapMergeV1:110 (quote (BNFDiscoveryHeapV1 (BNFDiscoveryDefinitionV1 $rank $name $expression $span) BNFDiscoveryHeapNilV1 BNFDiscoveryHeapNilV1)) $following)
+   (let (cons gslt:result:BNFGraphTrieInsertFirstV1:1110 (cons $nextScheduled ())) (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $name $name $scheduled)
+   (quote (gslt:result:BNFDiscoveryScheduleNextV1:110 (BNFDiscoveryQueuesV1 $current $nextFollowing $nextScheduled))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=265 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-wake-nil-v1 target=mode relation=BNFDiscoveryWakeV1 input=1111110 functional=relational
 (= (gslt:mode:BNFDiscoveryWakeV1:1111110 $mode BNFDiscoveryDefinitionsNilV1 $origin $known $lexicals $queues)
    (quote (gslt:result:BNFDiscoveryWakeV1:1111110 $queues)))
 
 ; gslt-lowered-equation-v1 source-rewrite=266 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-wake-cons-v1 target=mode relation=BNFDiscoveryWakeV1 input=1111110 functional=relational
-(= (gslt:mode:BNFDiscoveryWakeV1:1111110 $mode $__gslt_input_v1_0_1 $origin $known $lexicals $__gslt_input_v1_0_5)
-   (let (cons-atom BNFDiscoveryDefinitionsConsV1 (cons-atom (cons-atom BNFDiscoveryDefinitionV1 (cons-atom $rank (cons-atom $name (cons-atom $expression (cons-atom $span ()))))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
-   (let (cons-atom BNFDiscoveryQueuesV1 (cons-atom $current (cons-atom $following (cons-atom $scheduled ())))) $__gslt_input_v1_0_5
-   (let (gslt:result:BNFGraphTrieLookupV1:110 $lookup) (once (gslt:fn:BNFGraphTrieLookupV1:110 $name $scheduled))
-   (let (gslt:result:BNFDiscoveryAfterScheduledV1:111111110 $after) (superpose (collapse (gslt:mode:BNFDiscoveryAfterScheduledV1:111111110 $lookup $mode (quote (BNFDiscoveryDefinitionV1 $rank $name $expression $span)) $rest $origin $known $lexicals (quote (BNFDiscoveryQueuesV1 $current $following $scheduled)))))
-   (quote (gslt:result:BNFDiscoveryWakeV1:1111110 $after)))))))
+(= (gslt:mode:BNFDiscoveryWakeV1:1111110 $mode (cons BNFDiscoveryDefinitionsConsV1 (cons (cons BNFDiscoveryDefinitionV1 (cons $rank (cons $name (cons $expression (cons $span ()))))) (cons $rest ()))) $origin $known $lexicals (cons BNFDiscoveryQueuesV1 (cons $current (cons $following (cons $scheduled ())))))
+   (let (cons gslt:result:BNFGraphTrieLookupV1:110 (cons $lookup ())) (once (gslt:fn:BNFGraphTrieLookupV1:110 $name $scheduled))
+   (let (cons gslt:result:BNFDiscoveryAfterScheduledV1:111111110 (cons $after ())) (superpose (collapse (gslt:mode:BNFDiscoveryAfterScheduledV1:111111110 $lookup $mode (quote (BNFDiscoveryDefinitionV1 $rank $name $expression $span)) $rest $origin $known $lexicals (quote (BNFDiscoveryQueuesV1 $current $following $scheduled)))))
+   (quote (gslt:result:BNFDiscoveryWakeV1:1111110 $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=267 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-already-scheduled-v1 target=mode relation=BNFDiscoveryAfterScheduledV1 input=111111110 functional=relational
-(= (gslt:mode:BNFDiscoveryAfterScheduledV1:111111110 $__gslt_input_v1_0_0 $mode $node $rest $origin $known $lexicals $before)
-   (let (cons-atom BNFIndexFoundV1 (cons-atom $name ())) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFDiscoveryWakeV1:1111110 $after) (superpose (collapse (gslt:mode:BNFDiscoveryWakeV1:1111110 $mode $rest $origin $known $lexicals $before)))
-   (quote (gslt:result:BNFDiscoveryAfterScheduledV1:111111110 $after)))))
+(= (gslt:mode:BNFDiscoveryAfterScheduledV1:111111110 (cons BNFIndexFoundV1 (cons $name ())) $mode $node $rest $origin $known $lexicals $before)
+   (let (cons gslt:result:BNFDiscoveryWakeV1:1111110 (cons $after ())) (superpose (collapse (gslt:mode:BNFDiscoveryWakeV1:1111110 $mode $rest $origin $known $lexicals $before)))
+   (quote (gslt:result:BNFDiscoveryAfterScheduledV1:111111110 $after))))
 
 ; gslt-lowered-equation-v1 source-rewrite=268 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-not-scheduled-v1 target=mode relation=BNFDiscoveryAfterScheduledV1 input=111111110 functional=relational
-(= (gslt:mode:BNFDiscoveryAfterScheduledV1:111111110 BNFIndexMissingV1 $mode $__gslt_input_v1_0_2 $rest $origin $known $lexicals $before)
-   (let (cons-atom BNFDiscoveryDefinitionV1 (cons-atom $rank (cons-atom $name (cons-atom $expression (cons-atom $span ()))))) $__gslt_input_v1_0_2
-   (let (gslt:result:BNFDiscoveryReadyV1:11110 $ready) (superpose (collapse (gslt:mode:BNFDiscoveryReadyV1:11110 $mode $expression $known $lexicals)))
-   (let (gslt:result:BNFDiscoveryAfterReadyV1:111111110 $after) (superpose (collapse (gslt:mode:BNFDiscoveryAfterReadyV1:111111110 $ready $mode (quote (BNFDiscoveryDefinitionV1 $rank $name $expression $span)) $rest $origin $known $lexicals $before)))
-   (quote (gslt:result:BNFDiscoveryAfterScheduledV1:111111110 $after))))))
+(= (gslt:mode:BNFDiscoveryAfterScheduledV1:111111110 BNFIndexMissingV1 $mode (cons BNFDiscoveryDefinitionV1 (cons $rank (cons $name (cons $expression (cons $span ()))))) $rest $origin $known $lexicals $before)
+   (let (cons gslt:result:BNFDiscoveryReadyV1:11110 (cons $ready ())) (superpose (collapse (gslt:mode:BNFDiscoveryReadyV1:11110 $mode $expression $known $lexicals)))
+   (let (cons gslt:result:BNFDiscoveryAfterReadyV1:111111110 (cons $after ())) (superpose (collapse (gslt:mode:BNFDiscoveryAfterReadyV1:111111110 $ready $mode (quote (BNFDiscoveryDefinitionV1 $rank $name $expression $span)) $rest $origin $known $lexicals $before)))
+   (quote (gslt:result:BNFDiscoveryAfterScheduledV1:111111110 $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=269 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-not-ready-v1 target=mode relation=BNFDiscoveryAfterReadyV1 input=111111110 functional=relational
 (= (gslt:mode:BNFDiscoveryAfterReadyV1:111111110 BNFNoV1 $mode $node $rest $origin $known $lexicals $before)
-   (let (gslt:result:BNFDiscoveryWakeV1:1111110 $after) (superpose (collapse (gslt:mode:BNFDiscoveryWakeV1:1111110 $mode $rest $origin $known $lexicals $before)))
+   (let (cons gslt:result:BNFDiscoveryWakeV1:1111110 (cons $after ())) (superpose (collapse (gslt:mode:BNFDiscoveryWakeV1:1111110 $mode $rest $origin $known $lexicals $before)))
    (quote (gslt:result:BNFDiscoveryAfterReadyV1:111111110 $after))))
 
 ; gslt-lowered-equation-v1 source-rewrite=270 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-ready-v1 target=mode relation=BNFDiscoveryAfterReadyV1 input=111111110 functional=relational
 (= (gslt:mode:BNFDiscoveryAfterReadyV1:111111110 BNFYesV1 $mode $node $rest $origin $known $lexicals $before)
-   (let (gslt:result:BNFDiscoveryScheduleV1:1110 $next) (once (gslt:fn:BNFDiscoveryScheduleV1:1110 $node $origin $before))
-   (let (gslt:result:BNFDiscoveryWakeV1:1111110 $after) (superpose (collapse (gslt:mode:BNFDiscoveryWakeV1:1111110 $mode $rest $origin $known $lexicals $next)))
+   (let (cons gslt:result:BNFDiscoveryScheduleV1:1110 (cons $next ())) (once (gslt:fn:BNFDiscoveryScheduleV1:1110 $node $origin $before))
+   (let (cons gslt:result:BNFDiscoveryWakeV1:1111110 (cons $after ())) (superpose (collapse (gslt:mode:BNFDiscoveryWakeV1:1111110 $mode $rest $origin $known $lexicals $next)))
    (quote (gslt:result:BNFDiscoveryAfterReadyV1:111111110 $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=271 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-run-done-v1 target=mode relation=BNFDiscoveryRunV1 input=111110 functional=relational
-(= (gslt:mode:BNFDiscoveryRunV1:111110 $mode $reverse $lexicals $known $__gslt_input_v1_0_4)
-   (let (cons-atom BNFDiscoveryQueuesV1 (cons-atom BNFDiscoveryHeapNilV1 (cons-atom BNFDiscoveryHeapNilV1 (cons-atom $scheduled ())))) $__gslt_input_v1_0_4
-   (quote (gslt:result:BNFDiscoveryRunV1:111110 $known))))
+(= (gslt:mode:BNFDiscoveryRunV1:111110 $mode $reverse $lexicals $known (cons BNFDiscoveryQueuesV1 (cons BNFDiscoveryHeapNilV1 (cons BNFDiscoveryHeapNilV1 (cons $scheduled ())))))
+   (quote (gslt:result:BNFDiscoveryRunV1:111110 $known)))
 
 ; gslt-lowered-equation-v1 source-rewrite=272 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-run-next-round-v1 target=mode relation=BNFDiscoveryRunV1 input=111110 functional=relational
-(= (gslt:mode:BNFDiscoveryRunV1:111110 $mode $reverse $lexicals $known $__gslt_input_v1_0_4)
-   (let (cons-atom BNFDiscoveryQueuesV1 (cons-atom BNFDiscoveryHeapNilV1 (cons-atom (cons-atom BNFDiscoveryHeapV1 (cons-atom $node (cons-atom $children (cons-atom $siblings ())))) (cons-atom $scheduled ())))) $__gslt_input_v1_0_4
-   (let (gslt:result:BNFDiscoveryRunV1:111110 $result) (superpose (collapse (gslt:mode:BNFDiscoveryRunV1:111110 $mode $reverse $lexicals $known (quote (BNFDiscoveryQueuesV1 (BNFDiscoveryHeapV1 $node $children $siblings) BNFDiscoveryHeapNilV1 $scheduled)))))
-   (quote (gslt:result:BNFDiscoveryRunV1:111110 $result)))))
+(= (gslt:mode:BNFDiscoveryRunV1:111110 $mode $reverse $lexicals $known (cons BNFDiscoveryQueuesV1 (cons BNFDiscoveryHeapNilV1 (cons (cons BNFDiscoveryHeapV1 (cons $node (cons $children (cons $siblings ())))) (cons $scheduled ())))))
+   (let (cons gslt:result:BNFDiscoveryRunV1:111110 (cons $result ())) (superpose (collapse (gslt:mode:BNFDiscoveryRunV1:111110 $mode $reverse $lexicals $known (quote (BNFDiscoveryQueuesV1 (BNFDiscoveryHeapV1 $node $children $siblings) BNFDiscoveryHeapNilV1 $scheduled)))))
+   (quote (gslt:result:BNFDiscoveryRunV1:111110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=273 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-run-publish-v1 target=mode relation=BNFDiscoveryRunV1 input=111110 functional=relational
-(= (gslt:mode:BNFDiscoveryRunV1:111110 $mode $reverse $lexicals $known $__gslt_input_v1_0_4)
-   (let (cons-atom BNFDiscoveryQueuesV1 (cons-atom (cons-atom BNFDiscoveryHeapV1 (cons-atom (cons-atom BNFDiscoveryDefinitionV1 (cons-atom $rank (cons-atom $name (cons-atom $expression (cons-atom $span ()))))) (cons-atom $children (cons-atom BNFDiscoveryHeapNilV1 ())))) (cons-atom $following (cons-atom $scheduled ())))) $__gslt_input_v1_0_4
-   (let (gslt:result:BNFDiscoveryHeapCombineV1:10 $remaining) (once (gslt:fn:BNFDiscoveryHeapCombineV1:10 $children))
-   (let (gslt:result:BNFAppendNameV1:110 $nextKnown) (once (gslt:fn:BNFAppendNameV1:110 $known $name))
-   (let (gslt:result:BNFGraphTrieLookupV1:110 $lookup) (once (gslt:fn:BNFGraphTrieLookupV1:110 $name $reverse))
-   (let (gslt:result:BNFDiscoveryDependentsV1:10 $dependents) (once (gslt:fn:BNFDiscoveryDependentsV1:10 $lookup))
-   (let (gslt:result:BNFDiscoveryWakeV1:1111110 $nextQueues) (superpose (collapse (gslt:mode:BNFDiscoveryWakeV1:1111110 $mode $dependents (quote (BNFDiscoveryAfterPositionV1 $rank)) $nextKnown $lexicals (quote (BNFDiscoveryQueuesV1 $remaining $following $scheduled)))))
-   (let (gslt:result:BNFDiscoveryRunV1:111110 $result) (superpose (collapse (gslt:mode:BNFDiscoveryRunV1:111110 $mode $reverse $lexicals $nextKnown $nextQueues)))
-   (quote (gslt:result:BNFDiscoveryRunV1:111110 $result))))))))))
+(= (gslt:mode:BNFDiscoveryRunV1:111110 $mode $reverse $lexicals $known (cons BNFDiscoveryQueuesV1 (cons (cons BNFDiscoveryHeapV1 (cons (cons BNFDiscoveryDefinitionV1 (cons $rank (cons $name (cons $expression (cons $span ()))))) (cons $children (cons BNFDiscoveryHeapNilV1 ())))) (cons $following (cons $scheduled ())))))
+   (let (cons gslt:result:BNFDiscoveryHeapCombineV1:10 (cons $remaining ())) (once (gslt:fn:BNFDiscoveryHeapCombineV1:10 $children))
+   (let (cons gslt:result:BNFAppendNameV1:110 (cons $nextKnown ())) (once (gslt:fn:BNFAppendNameV1:110 $known $name))
+   (let (cons gslt:result:BNFGraphTrieLookupV1:110 (cons $lookup ())) (once (gslt:fn:BNFGraphTrieLookupV1:110 $name $reverse))
+   (let (cons gslt:result:BNFDiscoveryDependentsV1:10 (cons $dependents ())) (once (gslt:fn:BNFDiscoveryDependentsV1:10 $lookup))
+   (let (cons gslt:result:BNFDiscoveryWakeV1:1111110 (cons $nextQueues ())) (superpose (collapse (gslt:mode:BNFDiscoveryWakeV1:1111110 $mode $dependents (quote (BNFDiscoveryAfterPositionV1 $rank)) $nextKnown $lexicals (quote (BNFDiscoveryQueuesV1 $remaining $following $scheduled)))))
+   (let (cons gslt:result:BNFDiscoveryRunV1:111110 (cons $result ())) (superpose (collapse (gslt:mode:BNFDiscoveryRunV1:111110 $mode $reverse $lexicals $nextKnown $nextQueues)))
+   (quote (gslt:result:BNFDiscoveryRunV1:111110 $result)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=274 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-closure-v1 target=mode relation=BNFDiscoveryClosureV1 input=11110 functional=relational
 (= (gslt:mode:BNFDiscoveryClosureV1:11110 $mode $ranked $reverse $lexicals)
-   (let (gslt:result:BNFDiscoveryWakeV1:1111110 $initial) (superpose (collapse (gslt:mode:BNFDiscoveryWakeV1:1111110 $mode $ranked BNFDiscoveryInitialV1 (quote (BNFDiscoveryKnownV1 BNFGraphTrieEmptyV1 BNFNamesNilV1)) $lexicals (quote (BNFDiscoveryQueuesV1 BNFDiscoveryHeapNilV1 BNFDiscoveryHeapNilV1 BNFGraphTrieEmptyV1)))))
-   (let (gslt:result:BNFDiscoveryRunV1:111110 $result) (superpose (collapse (gslt:mode:BNFDiscoveryRunV1:111110 $mode $reverse $lexicals (quote (BNFDiscoveryKnownV1 BNFGraphTrieEmptyV1 BNFNamesNilV1)) $initial)))
+   (let (cons gslt:result:BNFDiscoveryWakeV1:1111110 (cons $initial ())) (superpose (collapse (gslt:mode:BNFDiscoveryWakeV1:1111110 $mode $ranked BNFDiscoveryInitialV1 (quote (BNFDiscoveryKnownV1 BNFGraphTrieEmptyV1 BNFNamesNilV1)) $lexicals (quote (BNFDiscoveryQueuesV1 BNFDiscoveryHeapNilV1 BNFDiscoveryHeapNilV1 BNFGraphTrieEmptyV1)))))
+   (let (cons gslt:result:BNFDiscoveryRunV1:111110 (cons $result ())) (superpose (collapse (gslt:mode:BNFDiscoveryRunV1:111110 $mode $reverse $lexicals (quote (BNFDiscoveryKnownV1 BNFGraphTrieEmptyV1 BNFNamesNilV1)) $initial)))
    (quote (gslt:result:BNFDiscoveryClosureV1:11110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=275 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-validate-grammar-discovery-v1 target=mode relation=BNFValidateGrammarDiscoveryV1 input=10 functional=relational
-(= (gslt:mode:BNFValidateGrammarDiscoveryV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom bnf-v1:grammar-input (cons-atom (cons-atom bnf-v1:document (cons-atom $entries (cons-atom $documentSpan ()))) (cons-atom (cons-atom bnf-v1:grammar-authority (cons-atom (cons-atom bnf-v1:start (cons-atom $startName ())) (cons-atom (cons-atom bnf-v1:lexical-environment (cons-atom $lexicals ())) ()))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFDiscoveryCollectDefinitionsV1:1000 $definitions $definitionDiagnostics $index) (once (gslt:fn:BNFDiscoveryCollectDefinitionsV1:1000 $entries))
-   (let (gslt:result:BNFValidateLexicalsV1:110 $lexicalDiagnostics) (superpose (collapse (gslt:mode:BNFValidateLexicalsV1:110 $lexicals (quote (BNFIndexedDefinitionsV1 $index)))))
-   (let (gslt:result:BNFScanEntryReferencesV1:1110 $referenceDiagnostics) (once (gslt:fn:BNFScanEntryReferencesV1:1110 $entries (quote (BNFIndexedDefinitionsV1 $index)) $lexicals))
-   (let (gslt:result:BNFDefinitionLookupV1:110 $startLookup) (once (gslt:fn:BNFDefinitionLookupV1:110 $startName (quote (BNFIndexedDefinitionsV1 $index))))
-   (let (gslt:result:BNFStartAfterLookupV1:1100 $start $startDiagnostics) (once (gslt:fn:BNFStartAfterLookupV1:1100 $startName $startLookup))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d01) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $definitionDiagnostics $lexicalDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d02) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d01 $referenceDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $diagnostics) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d02 $startDiagnostics))
-   (let (gslt:result:BNFFinishValidationV1:111110 $result) (once (gslt:fn:BNFFinishValidationV1:111110 $documentSpan $start $definitions $lexicals $diagnostics))
-   (quote (gslt:result:BNFValidateGrammarDiscoveryV1:10 $result)))))))))))))
+(= (gslt:mode:BNFValidateGrammarDiscoveryV1:10 (cons bnf-v1:grammar-input (cons (cons bnf-v1:document (cons $entries (cons $documentSpan ()))) (cons (cons bnf-v1:grammar-authority (cons (cons bnf-v1:start (cons $startName ())) (cons (cons bnf-v1:lexical-environment (cons $lexicals ())) ()))) ()))))
+   (let (cons gslt:result:BNFDiscoveryCollectDefinitionsV1:1000 (cons $definitions (cons $definitionDiagnostics (cons $index ())))) (once (gslt:fn:BNFDiscoveryCollectDefinitionsV1:1000 $entries))
+   (let (cons gslt:result:BNFValidateLexicalsV1:110 (cons $lexicalDiagnostics ())) (superpose (collapse (gslt:mode:BNFValidateLexicalsV1:110 $lexicals (quote (BNFIndexedDefinitionsV1 $index)))))
+   (let (cons gslt:result:BNFScanEntryReferencesV1:1110 (cons $referenceDiagnostics ())) (once (gslt:fn:BNFScanEntryReferencesV1:1110 $entries (quote (BNFIndexedDefinitionsV1 $index)) $lexicals))
+   (let (cons gslt:result:BNFDefinitionLookupV1:110 (cons $startLookup ())) (once (gslt:fn:BNFDefinitionLookupV1:110 $startName (quote (BNFIndexedDefinitionsV1 $index))))
+   (let (cons gslt:result:BNFStartAfterLookupV1:1100 (cons $start (cons $startDiagnostics ()))) (once (gslt:fn:BNFStartAfterLookupV1:1100 $startName $startLookup))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d01 ())) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $definitionDiagnostics $lexicalDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d02 ())) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d01 $referenceDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $diagnostics ())) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $d02 $startDiagnostics))
+   (let (cons gslt:result:BNFFinishValidationV1:111110 (cons $result ())) (once (gslt:fn:BNFFinishValidationV1:111110 $documentSpan $start $definitions $lexicals $diagnostics))
+   (quote (gslt:result:BNFValidateGrammarDiscoveryV1:10 $result))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=276 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-analyze-document-worklist-v1 target=mode relation=BNFAnalyzeDocumentWorklistV1 input=1110 functional=relational
-(= (gslt:mode:BNFAnalyzeDocumentWorklistV1:1110 $__gslt_input_v1_0_0 $definitions $lexicals)
-   (let (cons-atom BNFStartSomeV1 (cons-atom $startName (cons-atom $startSpan ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFDiscoveryRankDefinitionsV1:110 $ranked) (once (gslt:fn:BNFDiscoveryRankDefinitionsV1:110 $definitions BNFDiscoveryRankZeroV1))
-   (let (gslt:result:BNFDiscoveryDefinitionIndexV1:110 $definitionIndex) (once (gslt:fn:BNFDiscoveryDefinitionIndexV1:110 $ranked BNFGraphTrieEmptyV1))
-   (let (gslt:result:BNFDiscoveryReverseIndexV1:1110 $reverse) (once (gslt:fn:BNFDiscoveryReverseIndexV1:1110 $ranked $lexicals BNFGraphTrieEmptyV1))
-   (let (gslt:result:BNFReachableLoopV1:11110 $reachableIndex) (once (gslt:fn:BNFReachableLoopV1:11110 (quote (BNFNamesConsV1 $startName BNFNamesNilV1)) (quote (BNFIndexedDefinitionsV1 $definitionIndex)) $lexicals (quote (BNFDiscoveryKnownV1 BNFGraphTrieEmptyV1 BNFNamesNilV1))))
-   (let (gslt:result:BNFUnreachableDiagnosticsV1:110 $unreachableDiagnostics) (once (gslt:fn:BNFUnreachableDiagnosticsV1:110 $definitions $reachableIndex))
-   (let (gslt:result:BNFDiscoveryClosureV1:11110 $productiveIndex) (superpose (collapse (gslt:mode:BNFDiscoveryClosureV1:11110 BNFDiscoveryProductiveV1 $ranked $reverse $lexicals)))
-   (let (gslt:result:BNFUnproductiveDiagnosticsV1:110 $unproductiveDiagnostics) (once (gslt:fn:BNFUnproductiveDiagnosticsV1:110 $definitions $productiveIndex))
-   (let (gslt:result:BNFDiscoveryClosureV1:11110 $nullableIndex) (superpose (collapse (gslt:mode:BNFDiscoveryClosureV1:11110 BNFDiscoveryNullableV1 $ranked $reverse $lexicals)))
-   (let (gslt:result:BNFIndexedNamesObserveV1:10 $reachable) (once (gslt:fn:BNFIndexedNamesObserveV1:10 $reachableIndex))
-   (let (gslt:result:BNFIndexedNamesObserveV1:10 $nullable) (once (gslt:fn:BNFIndexedNamesObserveV1:10 $nullableIndex))
-   (let (gslt:result:BNFIndexedNamesObserveV1:10 $productive) (once (gslt:fn:BNFIndexedNamesObserveV1:10 $productiveIndex))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $diagnostics) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $unreachableDiagnostics $unproductiveDiagnostics))
-   (let (gslt:result:BNFFinishGraphAnalysisV1:11111110 $result) (once (gslt:fn:BNFFinishGraphAnalysisV1:11111110 (quote (BNFStartSomeV1 $startName $startSpan)) $definitions $lexicals $reachable $nullable $productive $diagnostics))
-   (quote (gslt:result:BNFAnalyzeDocumentWorklistV1:1110 $result)))))))))))))))))
+(= (gslt:mode:BNFAnalyzeDocumentWorklistV1:1110 (cons BNFStartSomeV1 (cons $startName (cons $startSpan ()))) $definitions $lexicals)
+   (let (cons gslt:result:BNFDiscoveryRankDefinitionsV1:110 (cons $ranked ())) (once (gslt:fn:BNFDiscoveryRankDefinitionsV1:110 $definitions BNFDiscoveryRankZeroV1))
+   (let (cons gslt:result:BNFDiscoveryDefinitionIndexV1:110 (cons $definitionIndex ())) (once (gslt:fn:BNFDiscoveryDefinitionIndexV1:110 $ranked BNFGraphTrieEmptyV1))
+   (let (cons gslt:result:BNFDiscoveryReverseIndexV1:1110 (cons $reverse ())) (once (gslt:fn:BNFDiscoveryReverseIndexV1:1110 $ranked $lexicals BNFGraphTrieEmptyV1))
+   (let (cons gslt:result:BNFReachableLoopV1:11110 (cons $reachableIndex ())) (once (gslt:fn:BNFReachableLoopV1:11110 (quote (BNFNamesConsV1 $startName BNFNamesNilV1)) (quote (BNFIndexedDefinitionsV1 $definitionIndex)) $lexicals (quote (BNFDiscoveryKnownV1 BNFGraphTrieEmptyV1 BNFNamesNilV1))))
+   (let (cons gslt:result:BNFUnreachableDiagnosticsV1:110 (cons $unreachableDiagnostics ())) (once (gslt:fn:BNFUnreachableDiagnosticsV1:110 $definitions $reachableIndex))
+   (let (cons gslt:result:BNFDiscoveryClosureV1:11110 (cons $productiveIndex ())) (superpose (collapse (gslt:mode:BNFDiscoveryClosureV1:11110 BNFDiscoveryProductiveV1 $ranked $reverse $lexicals)))
+   (let (cons gslt:result:BNFUnproductiveDiagnosticsV1:110 (cons $unproductiveDiagnostics ())) (once (gslt:fn:BNFUnproductiveDiagnosticsV1:110 $definitions $productiveIndex))
+   (let (cons gslt:result:BNFDiscoveryClosureV1:11110 (cons $nullableIndex ())) (superpose (collapse (gslt:mode:BNFDiscoveryClosureV1:11110 BNFDiscoveryNullableV1 $ranked $reverse $lexicals)))
+   (let (cons gslt:result:BNFIndexedNamesObserveV1:10 (cons $reachable ())) (once (gslt:fn:BNFIndexedNamesObserveV1:10 $reachableIndex))
+   (let (cons gslt:result:BNFIndexedNamesObserveV1:10 (cons $nullable ())) (once (gslt:fn:BNFIndexedNamesObserveV1:10 $nullableIndex))
+   (let (cons gslt:result:BNFIndexedNamesObserveV1:10 (cons $productive ())) (once (gslt:fn:BNFIndexedNamesObserveV1:10 $productiveIndex))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $diagnostics ())) (once (gslt:fn:BNFAppendDiagnosticsV1:110 $unreachableDiagnostics $unproductiveDiagnostics))
+   (let (cons gslt:result:BNFFinishGraphAnalysisV1:11111110 (cons $result ())) (once (gslt:fn:BNFFinishGraphAnalysisV1:11111110 (quote (BNFStartSomeV1 $startName $startSpan)) $definitions $lexicals $reachable $nullable $productive $diagnostics))
+   (quote (gslt:result:BNFAnalyzeDocumentWorklistV1:1110 $result))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=21 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-definition-step-fresh-v1 target=mode relation=BNFDefinitionStepV1 input=1111100 functional=semidet
 (= (gslt:fn:BNFDefinitionStepV1:1111100 $name $span $expression BNFDefinitionMissingV1 $before)
-   (let (gslt:result:BNFAppendDefinitionV1:110 $after) (gslt:fn:BNFAppendDefinitionV1:110 $before (quote (BNFDefinitionV1 $name $expression $span)))
+   (let (cons gslt:result:BNFAppendDefinitionV1:110 (cons $after ())) (gslt:fn:BNFAppendDefinitionV1:110 $before (quote (BNFDefinitionV1 $name $expression $span)))
    (quote (gslt:result:BNFDefinitionStepV1:1111100 $after BNFDiagnosticsNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=22 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-definition-step-duplicate-v1 target=mode relation=BNFDefinitionStepV1 input=1111100 functional=semidet
-(= (gslt:fn:BNFDefinitionStepV1:1111100 $name $duplicateSpan $expression $__gslt_input_v1_0_3 $definitions)
-   (let (cons-atom BNFDefinitionFoundV1 (cons-atom $firstExpression (cons-atom $firstSpan ()))) $__gslt_input_v1_0_3
-   (quote (gslt:result:BNFDefinitionStepV1:1111100 $definitions (BNFDiagnosticsConsV1 (BNFDuplicateDefinitionV1 $name $firstSpan $duplicateSpan) BNFDiagnosticsNilV1)))))
+(= (gslt:fn:BNFDefinitionStepV1:1111100 $name $duplicateSpan $expression (cons BNFDefinitionFoundV1 (cons $firstExpression (cons $firstSpan ()))) $definitions)
+   (quote (gslt:result:BNFDefinitionStepV1:1111100 $definitions (BNFDiagnosticsConsV1 (BNFDuplicateDefinitionV1 $name $firstSpan $duplicateSpan) BNFDiagnosticsNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=23 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-collect-definitions-nil-v1 target=mode relation=BNFCollectDefinitionsV1 input=1100 functional=semidet
-(= (gslt:fn:BNFCollectDefinitionsV1:1100 $__gslt_input_v1_0_0 $definitions)
-   (let (cons-atom bnf-v1:entries-nil ()) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFCollectDefinitionsV1:1100 $definitions BNFDiagnosticsNilV1))))
+(= (gslt:fn:BNFCollectDefinitionsV1:1100 (cons bnf-v1:entries-nil ()) $definitions)
+   (quote (gslt:result:BNFCollectDefinitionsV1:1100 $definitions BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=24 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-collect-definitions-comment-v1 target=mode relation=BNFCollectDefinitionsV1 input=1100 functional=semidet
-(= (gslt:fn:BNFCollectDefinitionsV1:1100 $__gslt_input_v1_0_0 $before)
-   (let (cons-atom bnf-v1:entries-cons (cons-atom (cons-atom bnf-v1:comment (cons-atom $text (cons-atom $span ()))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFCollectDefinitionsV1:1100 $after $diagnostics) (gslt:fn:BNFCollectDefinitionsV1:1100 $tail $before)
-   (quote (gslt:result:BNFCollectDefinitionsV1:1100 $after $diagnostics)))))
+(= (gslt:fn:BNFCollectDefinitionsV1:1100 (cons bnf-v1:entries-cons (cons (cons bnf-v1:comment (cons $text (cons $span ()))) (cons $tail ()))) $before)
+   (let (cons gslt:result:BNFCollectDefinitionsV1:1100 (cons $after (cons $diagnostics ()))) (gslt:fn:BNFCollectDefinitionsV1:1100 $tail $before)
+   (quote (gslt:result:BNFCollectDefinitionsV1:1100 $after $diagnostics))))
 
 ; gslt-lowered-equation-v1 source-rewrite=25 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-collect-definitions-blank-v1 target=mode relation=BNFCollectDefinitionsV1 input=1100 functional=semidet
-(= (gslt:fn:BNFCollectDefinitionsV1:1100 $__gslt_input_v1_0_0 $before)
-   (let (cons-atom bnf-v1:entries-cons (cons-atom (cons-atom bnf-v1:blank (cons-atom $span ())) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFCollectDefinitionsV1:1100 $after $diagnostics) (gslt:fn:BNFCollectDefinitionsV1:1100 $tail $before)
-   (quote (gslt:result:BNFCollectDefinitionsV1:1100 $after $diagnostics)))))
+(= (gslt:fn:BNFCollectDefinitionsV1:1100 (cons bnf-v1:entries-cons (cons (cons bnf-v1:blank (cons $span ())) (cons $tail ()))) $before)
+   (let (cons gslt:result:BNFCollectDefinitionsV1:1100 (cons $after (cons $diagnostics ()))) (gslt:fn:BNFCollectDefinitionsV1:1100 $tail $before)
+   (quote (gslt:result:BNFCollectDefinitionsV1:1100 $after $diagnostics))))
 
 ; gslt-lowered-equation-v1 source-rewrite=26 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-collect-definitions-rule-v1 target=mode relation=BNFCollectDefinitionsV1 input=1100 functional=semidet
-(= (gslt:fn:BNFCollectDefinitionsV1:1100 $__gslt_input_v1_0_0 $before)
-   (let (cons-atom bnf-v1:entries-cons (cons-atom (cons-atom bnf-v1:rule (cons-atom $name (cons-atom $expression (cons-atom $span ())))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFDefinitionLookupV1:110 $lookup) (gslt:fn:BNFDefinitionLookupV1:110 $name $before)
-   (let (gslt:result:BNFDefinitionStepV1:1111100 $next $currentDiagnostics) (gslt:fn:BNFDefinitionStepV1:1111100 $name $span $expression $lookup $before)
-   (let (gslt:result:BNFCollectDefinitionsV1:1100 $after $tailDiagnostics) (gslt:fn:BNFCollectDefinitionsV1:1100 $tail $next)
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $diagnostics) (gslt:fn:BNFAppendDiagnosticsV1:110 $currentDiagnostics $tailDiagnostics)
-   (quote (gslt:result:BNFCollectDefinitionsV1:1100 $after $diagnostics))))))))
+(= (gslt:fn:BNFCollectDefinitionsV1:1100 (cons bnf-v1:entries-cons (cons (cons bnf-v1:rule (cons $name (cons $expression (cons $span ())))) (cons $tail ()))) $before)
+   (let (cons gslt:result:BNFDefinitionLookupV1:110 (cons $lookup ())) (gslt:fn:BNFDefinitionLookupV1:110 $name $before)
+   (let (cons gslt:result:BNFDefinitionStepV1:1111100 (cons $next (cons $currentDiagnostics ()))) (gslt:fn:BNFDefinitionStepV1:1111100 $name $span $expression $lookup $before)
+   (let (cons gslt:result:BNFCollectDefinitionsV1:1100 (cons $after (cons $tailDiagnostics ()))) (gslt:fn:BNFCollectDefinitionsV1:1100 $tail $next)
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $diagnostics ())) (gslt:fn:BNFAppendDiagnosticsV1:110 $currentDiagnostics $tailDiagnostics)
+   (quote (gslt:result:BNFCollectDefinitionsV1:1100 $after $diagnostics)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=75 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-start-found-v1 target=mode relation=BNFStartAfterLookupV1 input=1100 functional=semidet
-(= (gslt:fn:BNFStartAfterLookupV1:1100 $name $__gslt_input_v1_0_1)
-   (let (cons-atom BNFDefinitionFoundV1 (cons-atom $expression (cons-atom $span ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFStartAfterLookupV1:1100 (BNFStartSomeV1 $name $span) BNFDiagnosticsNilV1))))
+(= (gslt:fn:BNFStartAfterLookupV1:1100 $name (cons BNFDefinitionFoundV1 (cons $expression (cons $span ()))))
+   (quote (gslt:result:BNFStartAfterLookupV1:1100 (BNFStartSomeV1 $name $span) BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=76 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-start-missing-v1 target=mode relation=BNFStartAfterLookupV1 input=1100 functional=semidet
 (= (gslt:fn:BNFStartAfterLookupV1:1100 $name BNFDefinitionMissingV1)
@@ -2289,116 +2108,101 @@
    (quote (gslt:result:BNFProductivityPassV1:11100 $before BNFNoV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=133 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-productivity-pass-definition-v1 target=mode relation=BNFProductivityPassV1 input=11100 functional=relational
-(= (gslt:mode:BNFProductivityPassV1:11100 $__gslt_input_v1_0_0 $before $lexicals)
-   (let (cons-atom BNFDefinitionsConsV1 (cons-atom (cons-atom BNFDefinitionV1 (cons-atom $name (cons-atom $expression (cons-atom $span ())))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFNameLookupV1:110 $lookup) (once (gslt:fn:BNFNameLookupV1:110 $name $before))
-   (let (gslt:result:BNFProductivityStepV1:1111100 $after $changed) (superpose (collapse (gslt:mode:BNFProductivityStepV1:1111100 $lookup (quote (BNFDefinitionV1 $name $expression $span)) $tail $before $lexicals)))
-   (quote (gslt:result:BNFProductivityPassV1:11100 $after $changed))))))
+(= (gslt:mode:BNFProductivityPassV1:11100 (cons BNFDefinitionsConsV1 (cons (cons BNFDefinitionV1 (cons $name (cons $expression (cons $span ())))) (cons $tail ()))) $before $lexicals)
+   (let (cons gslt:result:BNFNameLookupV1:110 (cons $lookup ())) (once (gslt:fn:BNFNameLookupV1:110 $name $before))
+   (let (cons gslt:result:BNFProductivityStepV1:1111100 (cons $after (cons $changed ()))) (superpose (collapse (gslt:mode:BNFProductivityStepV1:1111100 $lookup (quote (BNFDefinitionV1 $name $expression $span)) $tail $before $lexicals)))
+   (quote (gslt:result:BNFProductivityPassV1:11100 $after $changed)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=162 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-nullability-pass-nil-v1 target=mode relation=BNFNullabilityPassV1 input=11100 functional=semidet
 (= (gslt:fn:BNFNullabilityPassV1:11100 BNFDefinitionsNilV1 $before $lexicals)
    (quote (gslt:result:BNFNullabilityPassV1:11100 $before BNFNoV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=163 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-nullability-pass-definition-v1 target=mode relation=BNFNullabilityPassV1 input=11100 functional=semidet
-(= (gslt:fn:BNFNullabilityPassV1:11100 $__gslt_input_v1_0_0 $before $lexicals)
-   (let (cons-atom BNFDefinitionsConsV1 (cons-atom (cons-atom BNFDefinitionV1 (cons-atom $name (cons-atom $expression (cons-atom $span ())))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFNameLookupV1:110 $lookup) (gslt:fn:BNFNameLookupV1:110 $name $before)
-   (let (gslt:result:BNFNullabilityStepV1:1111100 $after $changed) (gslt:fn:BNFNullabilityStepV1:1111100 $lookup (quote (BNFDefinitionV1 $name $expression $span)) $tail $before $lexicals)
-   (quote (gslt:result:BNFNullabilityPassV1:11100 $after $changed))))))
+(= (gslt:fn:BNFNullabilityPassV1:11100 (cons BNFDefinitionsConsV1 (cons (cons BNFDefinitionV1 (cons $name (cons $expression (cons $span ())))) (cons $tail ()))) $before $lexicals)
+   (let (cons gslt:result:BNFNameLookupV1:110 (cons $lookup ())) (gslt:fn:BNFNameLookupV1:110 $name $before)
+   (let (cons gslt:result:BNFNullabilityStepV1:1111100 (cons $after (cons $changed ()))) (gslt:fn:BNFNullabilityStepV1:1111100 $lookup (quote (BNFDefinitionV1 $name $expression $span)) $tail $before $lexicals)
+   (quote (gslt:result:BNFNullabilityPassV1:11100 $after $changed)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=238 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-collect-definitions-v1 target=mode relation=BNFDiscoveryCollectDefinitionsV1 input=1000 functional=semidet
 (= (gslt:fn:BNFDiscoveryCollectDefinitionsV1:1000 $entries)
-   (let (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $index) (gslt:fn:BNFDiscoveryCollectLoopV1:111000 $entries BNFGraphTrieEmptyV1 BNFDefinitionsNilV1)
+   (let (cons gslt:result:BNFDiscoveryCollectLoopV1:111000 (cons $definitions (cons $diagnostics (cons $index ())))) (gslt:fn:BNFDiscoveryCollectLoopV1:111000 $entries BNFGraphTrieEmptyV1 BNFDefinitionsNilV1)
    (quote (gslt:result:BNFDiscoveryCollectDefinitionsV1:1000 $definitions $diagnostics $index))))
 
 ; gslt-lowered-equation-v1 source-rewrite=134 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-productivity-known-v1 target=mode relation=BNFProductivityStepV1 input=1111100 functional=relational
-(= (gslt:mode:BNFProductivityStepV1:1111100 $__gslt_input_v1_0_0 $definition $tail $before $lexicals)
-   (let (cons-atom BNFNameFoundV1 (cons-atom $name ())) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFProductivityPassV1:11100 $after $changed) (superpose (collapse (gslt:mode:BNFProductivityPassV1:11100 $tail $before $lexicals)))
-   (quote (gslt:result:BNFProductivityStepV1:1111100 $after $changed)))))
+(= (gslt:mode:BNFProductivityStepV1:1111100 (cons BNFNameFoundV1 (cons $name ())) $definition $tail $before $lexicals)
+   (let (cons gslt:result:BNFProductivityPassV1:11100 (cons $after (cons $changed ()))) (superpose (collapse (gslt:mode:BNFProductivityPassV1:11100 $tail $before $lexicals)))
+   (quote (gslt:result:BNFProductivityStepV1:1111100 $after $changed))))
 
 ; gslt-lowered-equation-v1 source-rewrite=135 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-productivity-unknown-v1 target=mode relation=BNFProductivityStepV1 input=1111100 functional=relational
-(= (gslt:mode:BNFProductivityStepV1:1111100 BNFNameMissingV1 $__gslt_input_v1_0_1 $tail $before $lexicals)
-   (let (cons-atom BNFDefinitionV1 (cons-atom $name (cons-atom $expression (cons-atom $span ())))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFExpressionProductiveV1:1110 $result) (superpose (collapse (gslt:mode:BNFExpressionProductiveV1:1110 $expression $before $lexicals)))
-   (let (gslt:result:BNFProductivityAfterExpressionV1:1111100 $after $changed) (superpose (collapse (gslt:mode:BNFProductivityAfterExpressionV1:1111100 $result (quote (BNFDefinitionV1 $name $expression $span)) $tail $before $lexicals)))
-   (quote (gslt:result:BNFProductivityStepV1:1111100 $after $changed))))))
+(= (gslt:mode:BNFProductivityStepV1:1111100 BNFNameMissingV1 (cons BNFDefinitionV1 (cons $name (cons $expression (cons $span ())))) $tail $before $lexicals)
+   (let (cons gslt:result:BNFExpressionProductiveV1:1110 (cons $result ())) (superpose (collapse (gslt:mode:BNFExpressionProductiveV1:1110 $expression $before $lexicals)))
+   (let (cons gslt:result:BNFProductivityAfterExpressionV1:1111100 (cons $after (cons $changed ()))) (superpose (collapse (gslt:mode:BNFProductivityAfterExpressionV1:1111100 $result (quote (BNFDefinitionV1 $name $expression $span)) $tail $before $lexicals)))
+   (quote (gslt:result:BNFProductivityStepV1:1111100 $after $changed)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=164 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-nullability-known-v1 target=mode relation=BNFNullabilityStepV1 input=1111100 functional=semidet
-(= (gslt:fn:BNFNullabilityStepV1:1111100 $__gslt_input_v1_0_0 $definition $tail $before $lexicals)
-   (let (cons-atom BNFNameFoundV1 (cons-atom $name ())) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFNullabilityPassV1:11100 $after $changed) (gslt:fn:BNFNullabilityPassV1:11100 $tail $before $lexicals)
-   (quote (gslt:result:BNFNullabilityStepV1:1111100 $after $changed)))))
+(= (gslt:fn:BNFNullabilityStepV1:1111100 (cons BNFNameFoundV1 (cons $name ())) $definition $tail $before $lexicals)
+   (let (cons gslt:result:BNFNullabilityPassV1:11100 (cons $after (cons $changed ()))) (gslt:fn:BNFNullabilityPassV1:11100 $tail $before $lexicals)
+   (quote (gslt:result:BNFNullabilityStepV1:1111100 $after $changed))))
 
 ; gslt-lowered-equation-v1 source-rewrite=165 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-nullability-unknown-v1 target=mode relation=BNFNullabilityStepV1 input=1111100 functional=semidet
-(= (gslt:fn:BNFNullabilityStepV1:1111100 BNFNameMissingV1 $__gslt_input_v1_0_1 $tail $before $lexicals)
-   (let (cons-atom BNFDefinitionV1 (cons-atom $name (cons-atom $expression (cons-atom $span ())))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFExpressionNullableV1:1110 $result) (gslt:fn:BNFExpressionNullableV1:1110 $expression $before $lexicals)
-   (let (gslt:result:BNFNullabilityAfterExpressionV1:1111100 $after $changed) (gslt:fn:BNFNullabilityAfterExpressionV1:1111100 $result (quote (BNFDefinitionV1 $name $expression $span)) $tail $before $lexicals)
-   (quote (gslt:result:BNFNullabilityStepV1:1111100 $after $changed))))))
+(= (gslt:fn:BNFNullabilityStepV1:1111100 BNFNameMissingV1 (cons BNFDefinitionV1 (cons $name (cons $expression (cons $span ())))) $tail $before $lexicals)
+   (let (cons gslt:result:BNFExpressionNullableV1:1110 (cons $result ())) (gslt:fn:BNFExpressionNullableV1:1110 $expression $before $lexicals)
+   (let (cons gslt:result:BNFNullabilityAfterExpressionV1:1111100 (cons $after (cons $changed ()))) (gslt:fn:BNFNullabilityAfterExpressionV1:1111100 $result (quote (BNFDefinitionV1 $name $expression $span)) $tail $before $lexicals)
+   (quote (gslt:result:BNFNullabilityStepV1:1111100 $after $changed)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=239 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-collect-nil-v1 target=mode relation=BNFDiscoveryCollectLoopV1 input=111000 functional=semidet
-(= (gslt:fn:BNFDiscoveryCollectLoopV1:111000 $__gslt_input_v1_0_0 $index $reversed)
-   (let (cons-atom bnf-v1:entries-nil ()) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFDiscoveryReverseDefinitionsV1:110 $definitions) (gslt:fn:BNFDiscoveryReverseDefinitionsV1:110 $reversed BNFDefinitionsNilV1)
-   (quote (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions BNFDiagnosticsNilV1 $index)))))
+(= (gslt:fn:BNFDiscoveryCollectLoopV1:111000 (cons bnf-v1:entries-nil ()) $index $reversed)
+   (let (cons gslt:result:BNFDiscoveryReverseDefinitionsV1:110 (cons $definitions ())) (gslt:fn:BNFDiscoveryReverseDefinitionsV1:110 $reversed BNFDefinitionsNilV1)
+   (quote (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions BNFDiagnosticsNilV1 $index))))
 
 ; gslt-lowered-equation-v1 source-rewrite=240 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-collect-comment-v1 target=mode relation=BNFDiscoveryCollectLoopV1 input=111000 functional=semidet
-(= (gslt:fn:BNFDiscoveryCollectLoopV1:111000 $__gslt_input_v1_0_0 $index $reversed)
-   (let (cons-atom bnf-v1:entries-cons (cons-atom (cons-atom bnf-v1:comment (cons-atom $text (cons-atom $span ()))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $finalIndex) (gslt:fn:BNFDiscoveryCollectLoopV1:111000 $tail $index $reversed)
-   (quote (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $finalIndex)))))
+(= (gslt:fn:BNFDiscoveryCollectLoopV1:111000 (cons bnf-v1:entries-cons (cons (cons bnf-v1:comment (cons $text (cons $span ()))) (cons $tail ()))) $index $reversed)
+   (let (cons gslt:result:BNFDiscoveryCollectLoopV1:111000 (cons $definitions (cons $diagnostics (cons $finalIndex ())))) (gslt:fn:BNFDiscoveryCollectLoopV1:111000 $tail $index $reversed)
+   (quote (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $finalIndex))))
 
 ; gslt-lowered-equation-v1 source-rewrite=241 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-collect-blank-v1 target=mode relation=BNFDiscoveryCollectLoopV1 input=111000 functional=semidet
-(= (gslt:fn:BNFDiscoveryCollectLoopV1:111000 $__gslt_input_v1_0_0 $index $reversed)
-   (let (cons-atom bnf-v1:entries-cons (cons-atom (cons-atom bnf-v1:blank (cons-atom $span ())) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $finalIndex) (gslt:fn:BNFDiscoveryCollectLoopV1:111000 $tail $index $reversed)
-   (quote (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $finalIndex)))))
+(= (gslt:fn:BNFDiscoveryCollectLoopV1:111000 (cons bnf-v1:entries-cons (cons (cons bnf-v1:blank (cons $span ())) (cons $tail ()))) $index $reversed)
+   (let (cons gslt:result:BNFDiscoveryCollectLoopV1:111000 (cons $definitions (cons $diagnostics (cons $finalIndex ())))) (gslt:fn:BNFDiscoveryCollectLoopV1:111000 $tail $index $reversed)
+   (quote (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $finalIndex))))
 
 ; gslt-lowered-equation-v1 source-rewrite=242 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-collect-rule-v1 target=mode relation=BNFDiscoveryCollectLoopV1 input=111000 functional=semidet
-(= (gslt:fn:BNFDiscoveryCollectLoopV1:111000 $__gslt_input_v1_0_0 $index $reversed)
-   (let (cons-atom bnf-v1:entries-cons (cons-atom (cons-atom bnf-v1:rule (cons-atom $name (cons-atom $expression (cons-atom $span ())))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFGraphTrieLookupV1:110 $lookup) (gslt:fn:BNFGraphTrieLookupV1:110 $name $index)
-   (let (gslt:result:BNFDiscoveryCollectAfterLookupV1:11111000 $definitions $diagnostics $finalIndex) (gslt:fn:BNFDiscoveryCollectAfterLookupV1:11111000 $lookup (quote (BNFDefinitionV1 $name $expression $span)) $tail $index $reversed)
-   (quote (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $finalIndex))))))
+(= (gslt:fn:BNFDiscoveryCollectLoopV1:111000 (cons bnf-v1:entries-cons (cons (cons bnf-v1:rule (cons $name (cons $expression (cons $span ())))) (cons $tail ()))) $index $reversed)
+   (let (cons gslt:result:BNFGraphTrieLookupV1:110 (cons $lookup ())) (gslt:fn:BNFGraphTrieLookupV1:110 $name $index)
+   (let (cons gslt:result:BNFDiscoveryCollectAfterLookupV1:11111000 (cons $definitions (cons $diagnostics (cons $finalIndex ())))) (gslt:fn:BNFDiscoveryCollectAfterLookupV1:11111000 $lookup (quote (BNFDefinitionV1 $name $expression $span)) $tail $index $reversed)
+   (quote (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $finalIndex)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=136 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-productivity-new-v1 target=mode relation=BNFProductivityAfterExpressionV1 input=1111100 functional=relational
-(= (gslt:mode:BNFProductivityAfterExpressionV1:1111100 BNFYesV1 $__gslt_input_v1_0_1 $tail $before $lexicals)
-   (let (cons-atom BNFDefinitionV1 (cons-atom $name (cons-atom $expression (cons-atom $span ())))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFAppendNameV1:110 $next) (once (gslt:fn:BNFAppendNameV1:110 $before $name))
-   (let (gslt:result:BNFProductivityPassV1:11100 $after $tailChanged) (superpose (collapse (gslt:mode:BNFProductivityPassV1:11100 $tail $next $lexicals)))
-   (quote (gslt:result:BNFProductivityAfterExpressionV1:1111100 $after BNFYesV1))))))
+(= (gslt:mode:BNFProductivityAfterExpressionV1:1111100 BNFYesV1 (cons BNFDefinitionV1 (cons $name (cons $expression (cons $span ())))) $tail $before $lexicals)
+   (let (cons gslt:result:BNFAppendNameV1:110 (cons $next ())) (once (gslt:fn:BNFAppendNameV1:110 $before $name))
+   (let (cons gslt:result:BNFProductivityPassV1:11100 (cons $after (cons $tailChanged ()))) (superpose (collapse (gslt:mode:BNFProductivityPassV1:11100 $tail $next $lexicals)))
+   (quote (gslt:result:BNFProductivityAfterExpressionV1:1111100 $after BNFYesV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=137 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-productivity-still-unknown-v1 target=mode relation=BNFProductivityAfterExpressionV1 input=1111100 functional=relational
 (= (gslt:mode:BNFProductivityAfterExpressionV1:1111100 BNFNoV1 $definition $tail $before $lexicals)
-   (let (gslt:result:BNFProductivityPassV1:11100 $after $changed) (superpose (collapse (gslt:mode:BNFProductivityPassV1:11100 $tail $before $lexicals)))
+   (let (cons gslt:result:BNFProductivityPassV1:11100 (cons $after (cons $changed ()))) (superpose (collapse (gslt:mode:BNFProductivityPassV1:11100 $tail $before $lexicals)))
    (quote (gslt:result:BNFProductivityAfterExpressionV1:1111100 $after $changed))))
 
 ; gslt-lowered-equation-v1 source-rewrite=166 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-nullability-new-v1 target=mode relation=BNFNullabilityAfterExpressionV1 input=1111100 functional=semidet
-(= (gslt:fn:BNFNullabilityAfterExpressionV1:1111100 BNFYesV1 $__gslt_input_v1_0_1 $tail $before $lexicals)
-   (let (cons-atom BNFDefinitionV1 (cons-atom $name (cons-atom $expression (cons-atom $span ())))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFAppendNameV1:110 $next) (gslt:fn:BNFAppendNameV1:110 $before $name)
-   (let (gslt:result:BNFNullabilityPassV1:11100 $after $tailChanged) (gslt:fn:BNFNullabilityPassV1:11100 $tail $next $lexicals)
-   (quote (gslt:result:BNFNullabilityAfterExpressionV1:1111100 $after BNFYesV1))))))
+(= (gslt:fn:BNFNullabilityAfterExpressionV1:1111100 BNFYesV1 (cons BNFDefinitionV1 (cons $name (cons $expression (cons $span ())))) $tail $before $lexicals)
+   (let (cons gslt:result:BNFAppendNameV1:110 (cons $next ())) (gslt:fn:BNFAppendNameV1:110 $before $name)
+   (let (cons gslt:result:BNFNullabilityPassV1:11100 (cons $after (cons $tailChanged ()))) (gslt:fn:BNFNullabilityPassV1:11100 $tail $next $lexicals)
+   (quote (gslt:result:BNFNullabilityAfterExpressionV1:1111100 $after BNFYesV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=167 source-presentation=PlainBnfGraphAnalysisV1 source-rule=bnf-nullability-still-unknown-v1 target=mode relation=BNFNullabilityAfterExpressionV1 input=1111100 functional=semidet
 (= (gslt:fn:BNFNullabilityAfterExpressionV1:1111100 BNFNoV1 $definition $tail $before $lexicals)
-   (let (gslt:result:BNFNullabilityPassV1:11100 $after $changed) (gslt:fn:BNFNullabilityPassV1:11100 $tail $before $lexicals)
+   (let (cons gslt:result:BNFNullabilityPassV1:11100 (cons $after (cons $changed ()))) (gslt:fn:BNFNullabilityPassV1:11100 $tail $before $lexicals)
    (quote (gslt:result:BNFNullabilityAfterExpressionV1:1111100 $after $changed))))
 
 ; gslt-lowered-equation-v1 source-rewrite=243 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-collect-fresh-v1 target=mode relation=BNFDiscoveryCollectAfterLookupV1 input=11111000 functional=semidet
-(= (gslt:fn:BNFDiscoveryCollectAfterLookupV1:11111000 BNFIndexMissingV1 $__gslt_input_v1_0_1 $tail $index $reversed)
-   (let (cons-atom BNFDefinitionV1 (cons-atom $name (cons-atom $expression (cons-atom $span ())))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFGraphTrieInsertFirstV1:1110 $next) (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $name (quote (BNFDefinitionFoundV1 $expression $span)) $index)
-   (let (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $finalIndex) (gslt:fn:BNFDiscoveryCollectLoopV1:111000 $tail $next (quote (BNFDefinitionsConsV1 (BNFDefinitionV1 $name $expression $span) $reversed)))
-   (quote (gslt:result:BNFDiscoveryCollectAfterLookupV1:11111000 $definitions $diagnostics $finalIndex))))))
+(= (gslt:fn:BNFDiscoveryCollectAfterLookupV1:11111000 BNFIndexMissingV1 (cons BNFDefinitionV1 (cons $name (cons $expression (cons $span ())))) $tail $index $reversed)
+   (let (cons gslt:result:BNFGraphTrieInsertFirstV1:1110 (cons $next ())) (gslt:fn:BNFGraphTrieInsertFirstV1:1110 $name (quote (BNFDefinitionFoundV1 $expression $span)) $index)
+   (let (cons gslt:result:BNFDiscoveryCollectLoopV1:111000 (cons $definitions (cons $diagnostics (cons $finalIndex ())))) (gslt:fn:BNFDiscoveryCollectLoopV1:111000 $tail $next (quote (BNFDefinitionsConsV1 (BNFDefinitionV1 $name $expression $span) $reversed)))
+   (quote (gslt:result:BNFDiscoveryCollectAfterLookupV1:11111000 $definitions $diagnostics $finalIndex)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=244 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-collect-duplicate-v1 target=mode relation=BNFDiscoveryCollectAfterLookupV1 input=11111000 functional=semidet
-(= (gslt:fn:BNFDiscoveryCollectAfterLookupV1:11111000 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1 $tail $index $reversed)
-   (let (cons-atom BNFIndexFoundV1 (cons-atom (cons-atom BNFDefinitionFoundV1 (cons-atom $firstExpression (cons-atom $firstSpan ()))) ())) $__gslt_input_v1_0_0
-   (let (cons-atom BNFDefinitionV1 (cons-atom $name (cons-atom $expression (cons-atom $span ())))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $following $finalIndex) (gslt:fn:BNFDiscoveryCollectLoopV1:111000 $tail $index $reversed)
-   (quote (gslt:result:BNFDiscoveryCollectAfterLookupV1:11111000 $definitions (BNFDiagnosticsConsV1 (BNFDuplicateDefinitionV1 $name $firstSpan $span) $following) $finalIndex))))))
+(= (gslt:fn:BNFDiscoveryCollectAfterLookupV1:11111000 (cons BNFIndexFoundV1 (cons (cons BNFDefinitionFoundV1 (cons $firstExpression (cons $firstSpan ()))) ())) (cons BNFDefinitionV1 (cons $name (cons $expression (cons $span ())))) $tail $index $reversed)
+   (let (cons gslt:result:BNFDiscoveryCollectLoopV1:111000 (cons $definitions (cons $following (cons $finalIndex ())))) (gslt:fn:BNFDiscoveryCollectLoopV1:111000 $tail $index $reversed)
+   (quote (gslt:result:BNFDiscoveryCollectAfterLookupV1:11111000 $definitions (BNFDiagnosticsConsV1 (BNFDuplicateDefinitionV1 $name $firstSpan $span) $following) $finalIndex))))
 
 
 ; gslt-lowered-entry-v1 gslt:entry:BNFValidateGrammarV1:10
@@ -2482,94 +2286,79 @@
    (quote (gslt:result:BNFDefinitionLookupV1:110 BNFDefinitionMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=15 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-definition-lookup-found-v1 target=mode relation=BNFDefinitionLookupV1 input=110 functional=semidet
-(= (admitted:gslt:fn:BNFDefinitionLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom BNFDefinitionsConsV1 (cons-atom (cons-atom BNFDefinitionV1 (cons-atom $name (cons-atom $expression (cons-atom $firstSpan ())))) (cons-atom $tail ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFDefinitionLookupV1:110 (BNFDefinitionFoundV1 $expression $firstSpan)))))
+(= (admitted:gslt:fn:BNFDefinitionLookupV1:110 $name (cons BNFDefinitionsConsV1 (cons (cons BNFDefinitionV1 (cons $name (cons $expression (cons $firstSpan ())))) (cons $tail ()))))
+   (quote (gslt:result:BNFDefinitionLookupV1:110 (BNFDefinitionFoundV1 $expression $firstSpan))))
 
 ; gslt-lowered-equation-v1 source-rewrite=16 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-definition-lookup-tail-v1 target=mode relation=BNFDefinitionLookupV1 input=110 functional=semidet
-(= (admitted:gslt:fn:BNFDefinitionLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom BNFDefinitionsConsV1 (cons-atom (cons-atom BNFDefinitionV1 (cons-atom $other (cons-atom $expression (cons-atom $firstSpan ())))) (cons-atom $tail ()))) $__gslt_input_v1_0_1
+(= (admitted:gslt:fn:BNFDefinitionLookupV1:110 $name (cons BNFDefinitionsConsV1 (cons (cons BNFDefinitionV1 (cons $other (cons $expression (cons $firstSpan ())))) (cons $tail ()))))
    (let $_ (gslt:different (different $name $other))
-   (let (gslt:result:BNFDefinitionLookupV1:110 $result) (admitted:gslt:fn:BNFDefinitionLookupV1:110 $name $tail)
-   (quote (gslt:result:BNFDefinitionLookupV1:110 $result))))))
+   (let (cons gslt:result:BNFDefinitionLookupV1:110 (cons $result ())) (admitted:gslt:fn:BNFDefinitionLookupV1:110 $name $tail)
+   (quote (gslt:result:BNFDefinitionLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=247 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-definition-lookup-v1 target=mode relation=BNFDefinitionLookupV1 input=110 functional=semidet
-(= (admitted:gslt:fn:BNFDefinitionLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom BNFIndexedDefinitionsV1 (cons-atom $index ())) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFGraphTrieLookupV1:110 $lookup) (admitted:gslt:fn:BNFGraphTrieLookupV1:110 $name $index)
-   (let (gslt:result:BNFDiscoveryDefinitionResultV1:10 $result) (admitted:gslt:fn:BNFDiscoveryDefinitionResultV1:10 $lookup)
-   (quote (gslt:result:BNFDefinitionLookupV1:110 $result))))))
+(= (admitted:gslt:fn:BNFDefinitionLookupV1:110 $name (cons BNFIndexedDefinitionsV1 (cons $index ())))
+   (let (cons gslt:result:BNFGraphTrieLookupV1:110 (cons $lookup ())) (admitted:gslt:fn:BNFGraphTrieLookupV1:110 $name $index)
+   (let (cons gslt:result:BNFDiscoveryDefinitionResultV1:10 (cons $result ())) (admitted:gslt:fn:BNFDiscoveryDefinitionResultV1:10 $lookup)
+   (quote (gslt:result:BNFDefinitionLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=19 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-append-diagnostics-nil-v1 target=mode relation=BNFAppendDiagnosticsV1 input=110 functional=semidet
 (= (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 BNFDiagnosticsNilV1 $right)
    (quote (gslt:result:BNFAppendDiagnosticsV1:110 $right)))
 
 ; gslt-lowered-equation-v1 source-rewrite=20 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-append-diagnostics-cons-v1 target=mode relation=BNFAppendDiagnosticsV1 input=110 functional=semidet
-(= (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $__gslt_input_v1_0_0 $right)
-   (let (cons-atom BNFDiagnosticsConsV1 (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $after) (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $tail $right)
-   (quote (gslt:result:BNFAppendDiagnosticsV1:110 (BNFDiagnosticsConsV1 $head $after))))))
+(= (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 (cons BNFDiagnosticsConsV1 (cons $head (cons $tail ()))) $right)
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $after ())) (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $tail $right)
+   (quote (gslt:result:BNFAppendDiagnosticsV1:110 (BNFDiagnosticsConsV1 $head $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=27 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-reference-lookup-missing-v1 target=mode relation=BNFLexicalReferenceLookupV1 input=110 functional=semidet
-(= (admitted:gslt:fn:BNFLexicalReferenceLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:lexical-declarations-nil ()) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFLexicalReferenceLookupV1:110 BNFLexicalMissingV1))))
+(= (admitted:gslt:fn:BNFLexicalReferenceLookupV1:110 $name (cons bnf-v1:lexical-declarations-nil ()))
+   (quote (gslt:result:BNFLexicalReferenceLookupV1:110 BNFLexicalMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=28 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-reference-lookup-found-v1 target=mode relation=BNFLexicalReferenceLookupV1 input=110 functional=semidet
-(= (admitted:gslt:fn:BNFLexicalReferenceLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:lexical-declarations-cons (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $name (cons-atom $class (cons-atom $matcher (cons-atom $label (cons-atom $origin ())))))) (cons-atom $tail ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFLexicalReferenceLookupV1:110 (BNFLexicalFoundV1 (bnf-v1:lexical-declaration $name $class $matcher $label $origin))))))
+(= (admitted:gslt:fn:BNFLexicalReferenceLookupV1:110 $name (cons bnf-v1:lexical-declarations-cons (cons (cons bnf-v1:lexical-declaration (cons $name (cons $class (cons $matcher (cons $label (cons $origin ())))))) (cons $tail ()))))
+   (quote (gslt:result:BNFLexicalReferenceLookupV1:110 (BNFLexicalFoundV1 (bnf-v1:lexical-declaration $name $class $matcher $label $origin)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=29 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-reference-lookup-tail-v1 target=mode relation=BNFLexicalReferenceLookupV1 input=110 functional=semidet
-(= (admitted:gslt:fn:BNFLexicalReferenceLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:lexical-declarations-cons (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $other (cons-atom $class (cons-atom $matcher (cons-atom $label (cons-atom $origin ())))))) (cons-atom $tail ()))) $__gslt_input_v1_0_1
+(= (admitted:gslt:fn:BNFLexicalReferenceLookupV1:110 $name (cons bnf-v1:lexical-declarations-cons (cons (cons bnf-v1:lexical-declaration (cons $other (cons $class (cons $matcher (cons $label (cons $origin ())))))) (cons $tail ()))))
    (let $_ (gslt:different (different $name $other))
-   (let (gslt:result:BNFLexicalReferenceLookupV1:110 $result) (admitted:gslt:fn:BNFLexicalReferenceLookupV1:110 $name $tail)
-   (quote (gslt:result:BNFLexicalReferenceLookupV1:110 $result))))))
+   (let (cons gslt:result:BNFLexicalReferenceLookupV1:110 (cons $result ())) (admitted:gslt:fn:BNFLexicalReferenceLookupV1:110 $name $tail)
+   (quote (gslt:result:BNFLexicalReferenceLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=30 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-class-lookup-missing-v1 target=mode relation=BNFLexicalClassLookupV1 input=110 functional=semidet
-(= (admitted:gslt:fn:BNFLexicalClassLookupV1:110 $class $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:lexical-declarations-nil ()) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFLexicalClassLookupV1:110 BNFLexicalMissingV1))))
+(= (admitted:gslt:fn:BNFLexicalClassLookupV1:110 $class (cons bnf-v1:lexical-declarations-nil ()))
+   (quote (gslt:result:BNFLexicalClassLookupV1:110 BNFLexicalMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=31 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-class-lookup-found-v1 target=mode relation=BNFLexicalClassLookupV1 input=110 functional=semidet
-(= (admitted:gslt:fn:BNFLexicalClassLookupV1:110 $class $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:lexical-declarations-cons (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $name (cons-atom $class (cons-atom $matcher (cons-atom $label (cons-atom $origin ())))))) (cons-atom $tail ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFLexicalClassLookupV1:110 (BNFLexicalFoundV1 (bnf-v1:lexical-declaration $name $class $matcher $label $origin))))))
+(= (admitted:gslt:fn:BNFLexicalClassLookupV1:110 $class (cons bnf-v1:lexical-declarations-cons (cons (cons bnf-v1:lexical-declaration (cons $name (cons $class (cons $matcher (cons $label (cons $origin ())))))) (cons $tail ()))))
+   (quote (gslt:result:BNFLexicalClassLookupV1:110 (BNFLexicalFoundV1 (bnf-v1:lexical-declaration $name $class $matcher $label $origin)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=32 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-class-lookup-tail-v1 target=mode relation=BNFLexicalClassLookupV1 input=110 functional=semidet
-(= (admitted:gslt:fn:BNFLexicalClassLookupV1:110 $class $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:lexical-declarations-cons (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $name (cons-atom $other (cons-atom $matcher (cons-atom $label (cons-atom $origin ())))))) (cons-atom $tail ()))) $__gslt_input_v1_0_1
+(= (admitted:gslt:fn:BNFLexicalClassLookupV1:110 $class (cons bnf-v1:lexical-declarations-cons (cons (cons bnf-v1:lexical-declaration (cons $name (cons $other (cons $matcher (cons $label (cons $origin ())))))) (cons $tail ()))))
    (let $_ (gslt:different (different $class $other))
-   (let (gslt:result:BNFLexicalClassLookupV1:110 $result) (admitted:gslt:fn:BNFLexicalClassLookupV1:110 $class $tail)
-   (quote (gslt:result:BNFLexicalClassLookupV1:110 $result))))))
+   (let (cons gslt:result:BNFLexicalClassLookupV1:110 (cons $result ())) (admitted:gslt:fn:BNFLexicalClassLookupV1:110 $class $tail)
+   (quote (gslt:result:BNFLexicalClassLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=33 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-label-lookup-missing-v1 target=mode relation=BNFLexicalLabelLookupV1 input=110 functional=semidet
-(= (admitted:gslt:fn:BNFLexicalLabelLookupV1:110 $label $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:lexical-declarations-nil ()) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFLexicalLabelLookupV1:110 BNFLexicalMissingV1))))
+(= (admitted:gslt:fn:BNFLexicalLabelLookupV1:110 $label (cons bnf-v1:lexical-declarations-nil ()))
+   (quote (gslt:result:BNFLexicalLabelLookupV1:110 BNFLexicalMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=34 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-label-lookup-found-v1 target=mode relation=BNFLexicalLabelLookupV1 input=110 functional=semidet
-(= (admitted:gslt:fn:BNFLexicalLabelLookupV1:110 $label $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:lexical-declarations-cons (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $name (cons-atom $class (cons-atom $matcher (cons-atom $label (cons-atom $origin ())))))) (cons-atom $tail ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFLexicalLabelLookupV1:110 (BNFLexicalFoundV1 (bnf-v1:lexical-declaration $name $class $matcher $label $origin))))))
+(= (admitted:gslt:fn:BNFLexicalLabelLookupV1:110 $label (cons bnf-v1:lexical-declarations-cons (cons (cons bnf-v1:lexical-declaration (cons $name (cons $class (cons $matcher (cons $label (cons $origin ())))))) (cons $tail ()))))
+   (quote (gslt:result:BNFLexicalLabelLookupV1:110 (BNFLexicalFoundV1 (bnf-v1:lexical-declaration $name $class $matcher $label $origin)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=35 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-label-lookup-tail-v1 target=mode relation=BNFLexicalLabelLookupV1 input=110 functional=semidet
-(= (admitted:gslt:fn:BNFLexicalLabelLookupV1:110 $label $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:lexical-declarations-cons (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $name (cons-atom $class (cons-atom $matcher (cons-atom $other (cons-atom $origin ())))))) (cons-atom $tail ()))) $__gslt_input_v1_0_1
+(= (admitted:gslt:fn:BNFLexicalLabelLookupV1:110 $label (cons bnf-v1:lexical-declarations-cons (cons (cons bnf-v1:lexical-declaration (cons $name (cons $class (cons $matcher (cons $other (cons $origin ())))))) (cons $tail ()))))
    (let $_ (gslt:different (different $label $other))
-   (let (gslt:result:BNFLexicalLabelLookupV1:110 $result) (admitted:gslt:fn:BNFLexicalLabelLookupV1:110 $label $tail)
-   (quote (gslt:result:BNFLexicalLabelLookupV1:110 $result))))))
+   (let (cons gslt:result:BNFLexicalLabelLookupV1:110 (cons $result ())) (admitted:gslt:fn:BNFLexicalLabelLookupV1:110 $label $tail)
+   (quote (gslt:result:BNFLexicalLabelLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=36 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-reference-name-empty-v1 target=mode relation=BNFLexicalReferenceNameDiagnosticV1 input=110 functional=semidet
-(= (admitted:gslt:fn:BNFLexicalReferenceNameDiagnosticV1:110 $__gslt_input_v1_0_0 $origin)
-   (let (cons-atom bnf-v1:text-nil ()) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFLexicalReferenceNameDiagnosticV1:110 (BNFDiagnosticsConsV1 (BNFEmptyLexicalReferenceV1 $origin) BNFDiagnosticsNilV1)))))
+(= (admitted:gslt:fn:BNFLexicalReferenceNameDiagnosticV1:110 (cons bnf-v1:text-nil ()) $origin)
+   (quote (gslt:result:BNFLexicalReferenceNameDiagnosticV1:110 (BNFDiagnosticsConsV1 (BNFEmptyLexicalReferenceV1 $origin) BNFDiagnosticsNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=37 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-reference-name-nonempty-v1 target=mode relation=BNFLexicalReferenceNameDiagnosticV1 input=110 functional=semidet
-(= (admitted:gslt:fn:BNFLexicalReferenceNameDiagnosticV1:110 $__gslt_input_v1_0_0 $origin)
-   (let (cons-atom bnf-v1:text-cons (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFLexicalReferenceNameDiagnosticV1:110 BNFDiagnosticsNilV1))))
+(= (admitted:gslt:fn:BNFLexicalReferenceNameDiagnosticV1:110 (cons bnf-v1:text-cons (cons $head (cons $tail ()))) $origin)
+   (quote (gslt:result:BNFLexicalReferenceNameDiagnosticV1:110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=38 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-string-empty-v1 target=mode relation=BNFLexicalStringDiagnosticV1 input=1110 functional=semidet
 (= (admitted:gslt:fn:BNFLexicalStringDiagnosticV1:1110 $field "" $origin)
@@ -2581,26 +2370,22 @@
    (quote (gslt:result:BNFLexicalStringDiagnosticV1:1110 BNFDiagnosticsNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=40 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-matcher-empty-points-v1 target=mode relation=BNFLexicalMatcherDiagnosticV1 input=1110 functional=relational
-(= (admitted:gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class $__gslt_input_v1_0_1 $origin)
-   (let (cons-atom bnf-v1:lexical-points (cons-atom (cons-atom bnf-v1:scalars-nil ()) ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFLexicalMatcherDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFEmptyLexicalClassV1 $class $origin) BNFDiagnosticsNilV1)))))
+(= (admitted:gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class (cons bnf-v1:lexical-points (cons (cons bnf-v1:scalars-nil ()) ())) $origin)
+   (quote (gslt:result:BNFLexicalMatcherDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFEmptyLexicalClassV1 $class $origin) BNFDiagnosticsNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=41 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-matcher-empty-except-v1 target=mode relation=BNFLexicalMatcherDiagnosticV1 input=1110 functional=relational
-(= (admitted:gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class $__gslt_input_v1_0_1 $origin)
-   (let (cons-atom bnf-v1:lexical-except (cons-atom (cons-atom bnf-v1:scalars-nil ()) ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFLexicalMatcherDiagnosticV1:1110 BNFDiagnosticsNilV1))))
+(= (admitted:gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class (cons bnf-v1:lexical-except (cons (cons bnf-v1:scalars-nil ()) ())) $origin)
+   (quote (gslt:result:BNFLexicalMatcherDiagnosticV1:1110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=42 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-matcher-points-v1 target=mode relation=BNFLexicalMatcherDiagnosticV1 input=1110 functional=relational
-(= (admitted:gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class $__gslt_input_v1_0_1 $origin)
-   (let (cons-atom bnf-v1:lexical-points (cons-atom (cons-atom bnf-v1:scalars-cons (cons-atom $head (cons-atom $tail ()))) ())) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFValidateScalarListV1:110 $diagnostics) (superpose (collapse (admitted:gslt:mode:BNFValidateScalarListV1:110 (quote (bnf-v1:scalars-cons $head $tail)) $origin)))
-   (quote (gslt:result:BNFLexicalMatcherDiagnosticV1:1110 $diagnostics)))))
+(= (admitted:gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class (cons bnf-v1:lexical-points (cons (cons bnf-v1:scalars-cons (cons $head (cons $tail ()))) ())) $origin)
+   (let (cons gslt:result:BNFValidateScalarListV1:110 (cons $diagnostics ())) (superpose (collapse (admitted:gslt:mode:BNFValidateScalarListV1:110 (quote (bnf-v1:scalars-cons $head $tail)) $origin)))
+   (quote (gslt:result:BNFLexicalMatcherDiagnosticV1:1110 $diagnostics))))
 
 ; gslt-lowered-equation-v1 source-rewrite=43 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-matcher-except-v1 target=mode relation=BNFLexicalMatcherDiagnosticV1 input=1110 functional=relational
-(= (admitted:gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class $__gslt_input_v1_0_1 $origin)
-   (let (cons-atom bnf-v1:lexical-except (cons-atom (cons-atom bnf-v1:scalars-cons (cons-atom $head (cons-atom $tail ()))) ())) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFValidateScalarListV1:110 $diagnostics) (superpose (collapse (admitted:gslt:mode:BNFValidateScalarListV1:110 (quote (bnf-v1:scalars-cons $head $tail)) $origin)))
-   (quote (gslt:result:BNFLexicalMatcherDiagnosticV1:1110 $diagnostics)))))
+(= (admitted:gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class (cons bnf-v1:lexical-except (cons (cons bnf-v1:scalars-cons (cons $head (cons $tail ()))) ())) $origin)
+   (let (cons gslt:result:BNFValidateScalarListV1:110 (cons $diagnostics ())) (superpose (collapse (admitted:gslt:mode:BNFValidateScalarListV1:110 (quote (bnf-v1:scalars-cons $head $tail)) $origin)))
+   (quote (gslt:result:BNFLexicalMatcherDiagnosticV1:1110 $diagnostics))))
 
 ; gslt-lowered-equation-v1 source-rewrite=44 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-valid-unicode-scalar-v1 target=mode relation=BNFScalarDiagnosticV1 input=110 functional=relational
 (= (admitted:gslt:mode:BNFScalarDiagnosticV1:110 $scalar $origin)
@@ -2623,172 +2408,151 @@
    (quote (gslt:result:BNFScalarOrderDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFNonIncreasingLexicalScalarsV1 $left $right $origin) BNFDiagnosticsNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=48 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-validate-scalar-list-singleton-v1 target=mode relation=BNFValidateScalarListV1 input=110 functional=relational
-(= (admitted:gslt:mode:BNFValidateScalarListV1:110 $__gslt_input_v1_0_0 $origin)
-   (let (cons-atom bnf-v1:scalars-cons (cons-atom $scalar (cons-atom (cons-atom bnf-v1:scalars-nil ()) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFScalarDiagnosticV1:110 $diagnostics) (superpose (collapse (admitted:gslt:mode:BNFScalarDiagnosticV1:110 $scalar $origin)))
-   (quote (gslt:result:BNFValidateScalarListV1:110 $diagnostics)))))
+(= (admitted:gslt:mode:BNFValidateScalarListV1:110 (cons bnf-v1:scalars-cons (cons $scalar (cons (cons bnf-v1:scalars-nil ()) ()))) $origin)
+   (let (cons gslt:result:BNFScalarDiagnosticV1:110 (cons $diagnostics ())) (superpose (collapse (admitted:gslt:mode:BNFScalarDiagnosticV1:110 $scalar $origin)))
+   (quote (gslt:result:BNFValidateScalarListV1:110 $diagnostics))))
 
 ; gslt-lowered-equation-v1 source-rewrite=49 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-validate-scalar-list-cons-v1 target=mode relation=BNFValidateScalarListV1 input=110 functional=relational
-(= (admitted:gslt:mode:BNFValidateScalarListV1:110 $__gslt_input_v1_0_0 $origin)
-   (let (cons-atom bnf-v1:scalars-cons (cons-atom $head (cons-atom (cons-atom bnf-v1:scalars-cons (cons-atom $next (cons-atom $tail ()))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFScalarDiagnosticV1:110 $headDiagnostics) (superpose (collapse (admitted:gslt:mode:BNFScalarDiagnosticV1:110 $head $origin)))
-   (let (gslt:result:BNFScalarOrderDiagnosticV1:1110 $orderDiagnostics) (once (admitted:gslt:fn:BNFScalarOrderDiagnosticV1:1110 $head $next $origin))
-   (let (gslt:result:BNFValidateScalarListV1:110 $tailDiagnostics) (superpose (collapse (admitted:gslt:mode:BNFValidateScalarListV1:110 (quote (bnf-v1:scalars-cons $next $tail)) $origin)))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $currentDiagnostics) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $headDiagnostics $orderDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $diagnostics) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $currentDiagnostics $tailDiagnostics))
-   (quote (gslt:result:BNFValidateScalarListV1:110 $diagnostics)))))))))
+(= (admitted:gslt:mode:BNFValidateScalarListV1:110 (cons bnf-v1:scalars-cons (cons $head (cons (cons bnf-v1:scalars-cons (cons $next (cons $tail ()))) ()))) $origin)
+   (let (cons gslt:result:BNFScalarDiagnosticV1:110 (cons $headDiagnostics ())) (superpose (collapse (admitted:gslt:mode:BNFScalarDiagnosticV1:110 $head $origin)))
+   (let (cons gslt:result:BNFScalarOrderDiagnosticV1:1110 (cons $orderDiagnostics ())) (once (admitted:gslt:fn:BNFScalarOrderDiagnosticV1:1110 $head $next $origin))
+   (let (cons gslt:result:BNFValidateScalarListV1:110 (cons $tailDiagnostics ())) (superpose (collapse (admitted:gslt:mode:BNFValidateScalarListV1:110 (quote (bnf-v1:scalars-cons $next $tail)) $origin)))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $currentDiagnostics ())) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $headDiagnostics $orderDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $diagnostics ())) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $currentDiagnostics $tailDiagnostics))
+   (quote (gslt:result:BNFValidateScalarListV1:110 $diagnostics))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=50 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-reference-unique-v1 target=mode relation=BNFLexicalReferenceDiagnosticV1 input=1110 functional=semidet
 (= (admitted:gslt:fn:BNFLexicalReferenceDiagnosticV1:1110 $name $origin BNFLexicalMissingV1)
    (quote (gslt:result:BNFLexicalReferenceDiagnosticV1:1110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=51 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-reference-duplicate-v1 target=mode relation=BNFLexicalReferenceDiagnosticV1 input=1110 functional=semidet
-(= (admitted:gslt:fn:BNFLexicalReferenceDiagnosticV1:1110 $name $origin $__gslt_input_v1_0_2)
-   (let (cons-atom BNFLexicalFoundV1 (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $otherName (cons-atom $otherClass (cons-atom $otherMatcher (cons-atom $otherLabel (cons-atom $firstOrigin ())))))) ())) $__gslt_input_v1_0_2
-   (quote (gslt:result:BNFLexicalReferenceDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFDuplicateLexicalReferenceV1 $name $origin $firstOrigin) BNFDiagnosticsNilV1)))))
+(= (admitted:gslt:fn:BNFLexicalReferenceDiagnosticV1:1110 $name $origin (cons BNFLexicalFoundV1 (cons (cons bnf-v1:lexical-declaration (cons $otherName (cons $otherClass (cons $otherMatcher (cons $otherLabel (cons $firstOrigin ())))))) ())))
+   (quote (gslt:result:BNFLexicalReferenceDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFDuplicateLexicalReferenceV1 $name $origin $firstOrigin) BNFDiagnosticsNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=52 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-class-unique-v1 target=mode relation=BNFLexicalClassDiagnosticV1 input=1110 functional=semidet
 (= (admitted:gslt:fn:BNFLexicalClassDiagnosticV1:1110 $class $origin BNFLexicalMissingV1)
    (quote (gslt:result:BNFLexicalClassDiagnosticV1:1110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=53 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-class-duplicate-v1 target=mode relation=BNFLexicalClassDiagnosticV1 input=1110 functional=semidet
-(= (admitted:gslt:fn:BNFLexicalClassDiagnosticV1:1110 $class $origin $__gslt_input_v1_0_2)
-   (let (cons-atom BNFLexicalFoundV1 (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $otherName (cons-atom $otherClass (cons-atom $otherMatcher (cons-atom $otherLabel (cons-atom $firstOrigin ())))))) ())) $__gslt_input_v1_0_2
-   (quote (gslt:result:BNFLexicalClassDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFDuplicateLexicalClassV1 $class $origin $firstOrigin) BNFDiagnosticsNilV1)))))
+(= (admitted:gslt:fn:BNFLexicalClassDiagnosticV1:1110 $class $origin (cons BNFLexicalFoundV1 (cons (cons bnf-v1:lexical-declaration (cons $otherName (cons $otherClass (cons $otherMatcher (cons $otherLabel (cons $firstOrigin ())))))) ())))
+   (quote (gslt:result:BNFLexicalClassDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFDuplicateLexicalClassV1 $class $origin $firstOrigin) BNFDiagnosticsNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=54 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-label-unique-v1 target=mode relation=BNFLexicalLabelDiagnosticV1 input=1110 functional=semidet
 (= (admitted:gslt:fn:BNFLexicalLabelDiagnosticV1:1110 $label $origin BNFLexicalMissingV1)
    (quote (gslt:result:BNFLexicalLabelDiagnosticV1:1110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=55 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-label-duplicate-v1 target=mode relation=BNFLexicalLabelDiagnosticV1 input=1110 functional=semidet
-(= (admitted:gslt:fn:BNFLexicalLabelDiagnosticV1:1110 $label $origin $__gslt_input_v1_0_2)
-   (let (cons-atom BNFLexicalFoundV1 (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $otherName (cons-atom $otherClass (cons-atom $otherMatcher (cons-atom $otherLabel (cons-atom $firstOrigin ())))))) ())) $__gslt_input_v1_0_2
-   (quote (gslt:result:BNFLexicalLabelDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFDuplicateLexicalLabelV1 $label $origin $firstOrigin) BNFDiagnosticsNilV1)))))
+(= (admitted:gslt:fn:BNFLexicalLabelDiagnosticV1:1110 $label $origin (cons BNFLexicalFoundV1 (cons (cons bnf-v1:lexical-declaration (cons $otherName (cons $otherClass (cons $otherMatcher (cons $otherLabel (cons $firstOrigin ())))))) ())))
+   (quote (gslt:result:BNFLexicalLabelDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFDuplicateLexicalLabelV1 $label $origin $firstOrigin) BNFDiagnosticsNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=56 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-rule-name-disjoint-v1 target=mode relation=BNFLexicalRuleConflictDiagnosticV1 input=1110 functional=semidet
 (= (admitted:gslt:fn:BNFLexicalRuleConflictDiagnosticV1:1110 $name $origin BNFDefinitionMissingV1)
    (quote (gslt:result:BNFLexicalRuleConflictDiagnosticV1:1110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=57 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-lexical-rule-name-conflict-v1 target=mode relation=BNFLexicalRuleConflictDiagnosticV1 input=1110 functional=semidet
-(= (admitted:gslt:fn:BNFLexicalRuleConflictDiagnosticV1:1110 $name $origin $__gslt_input_v1_0_2)
-   (let (cons-atom BNFDefinitionFoundV1 (cons-atom $expression (cons-atom $ruleSpan ()))) $__gslt_input_v1_0_2
-   (quote (gslt:result:BNFLexicalRuleConflictDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFLexicalRuleNameConflictV1 $name $ruleSpan $origin) BNFDiagnosticsNilV1)))))
+(= (admitted:gslt:fn:BNFLexicalRuleConflictDiagnosticV1:1110 $name $origin (cons BNFDefinitionFoundV1 (cons $expression (cons $ruleSpan ()))))
+   (quote (gslt:result:BNFLexicalRuleConflictDiagnosticV1:1110 (BNFDiagnosticsConsV1 (BNFLexicalRuleNameConflictV1 $name $ruleSpan $origin) BNFDiagnosticsNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=58 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-validate-lexicals-nil-v1 target=mode relation=BNFValidateLexicalsV1 input=110 functional=relational
-(= (admitted:gslt:mode:BNFValidateLexicalsV1:110 $__gslt_input_v1_0_0 $definitions)
-   (let (cons-atom bnf-v1:lexical-declarations-nil ()) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFValidateLexicalsV1:110 BNFDiagnosticsNilV1))))
+(= (admitted:gslt:mode:BNFValidateLexicalsV1:110 (cons bnf-v1:lexical-declarations-nil ()) $definitions)
+   (quote (gslt:result:BNFValidateLexicalsV1:110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=59 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-validate-lexicals-cons-v1 target=mode relation=BNFValidateLexicalsV1 input=110 functional=relational
-(= (admitted:gslt:mode:BNFValidateLexicalsV1:110 $__gslt_input_v1_0_0 $definitions)
-   (let (cons-atom bnf-v1:lexical-declarations-cons (cons-atom (cons-atom bnf-v1:lexical-declaration (cons-atom $name (cons-atom $class (cons-atom $matcher (cons-atom $label (cons-atom $origin ())))))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFLexicalReferenceNameDiagnosticV1:110 $referenceNameDiagnostics) (once (admitted:gslt:fn:BNFLexicalReferenceNameDiagnosticV1:110 $name $origin))
-   (let (gslt:result:BNFLexicalStringDiagnosticV1:1110 $classNameDiagnostics) (once (admitted:gslt:fn:BNFLexicalStringDiagnosticV1:1110 class-name $class $origin))
-   (let (gslt:result:BNFLexicalStringDiagnosticV1:1110 $labelNameDiagnostics) (once (admitted:gslt:fn:BNFLexicalStringDiagnosticV1:1110 label $label $origin))
-   (let (gslt:result:BNFLexicalMatcherDiagnosticV1:1110 $matcherDiagnostics) (superpose (collapse (admitted:gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class $matcher $origin)))
-   (let (gslt:result:BNFLexicalReferenceLookupV1:110 $referenceLookup) (once (admitted:gslt:fn:BNFLexicalReferenceLookupV1:110 $name $tail))
-   (let (gslt:result:BNFLexicalReferenceDiagnosticV1:1110 $referenceDiagnostics) (once (admitted:gslt:fn:BNFLexicalReferenceDiagnosticV1:1110 $name $origin $referenceLookup))
-   (let (gslt:result:BNFLexicalClassLookupV1:110 $classLookup) (once (admitted:gslt:fn:BNFLexicalClassLookupV1:110 $class $tail))
-   (let (gslt:result:BNFLexicalClassDiagnosticV1:1110 $classDiagnostics) (once (admitted:gslt:fn:BNFLexicalClassDiagnosticV1:1110 $class $origin $classLookup))
-   (let (gslt:result:BNFLexicalLabelLookupV1:110 $labelLookup) (once (admitted:gslt:fn:BNFLexicalLabelLookupV1:110 $label $tail))
-   (let (gslt:result:BNFLexicalLabelDiagnosticV1:1110 $labelDiagnostics) (once (admitted:gslt:fn:BNFLexicalLabelDiagnosticV1:1110 $label $origin $labelLookup))
-   (let (gslt:result:BNFDefinitionLookupV1:110 $definitionLookup) (once (admitted:gslt:fn:BNFDefinitionLookupV1:110 $name $definitions))
-   (let (gslt:result:BNFLexicalRuleConflictDiagnosticV1:1110 $ruleDiagnostics) (once (admitted:gslt:fn:BNFLexicalRuleConflictDiagnosticV1:1110 $name $origin $definitionLookup))
-   (let (gslt:result:BNFValidateLexicalsV1:110 $tailDiagnostics) (superpose (collapse (admitted:gslt:mode:BNFValidateLexicalsV1:110 $tail $definitions)))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d01) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $referenceNameDiagnostics $classNameDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d02) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $d01 $labelNameDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d03) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $d02 $matcherDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d04) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $d03 $referenceDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d05) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $d04 $classDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d06) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $d05 $labelDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d07) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $d06 $ruleDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $diagnostics) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $d07 $tailDiagnostics))
-   (quote (gslt:result:BNFValidateLexicalsV1:110 $diagnostics)))))))))))))))))))))))))
+(= (admitted:gslt:mode:BNFValidateLexicalsV1:110 (cons bnf-v1:lexical-declarations-cons (cons (cons bnf-v1:lexical-declaration (cons $name (cons $class (cons $matcher (cons $label (cons $origin ())))))) (cons $tail ()))) $definitions)
+   (let (cons gslt:result:BNFLexicalReferenceNameDiagnosticV1:110 (cons $referenceNameDiagnostics ())) (once (admitted:gslt:fn:BNFLexicalReferenceNameDiagnosticV1:110 $name $origin))
+   (let (cons gslt:result:BNFLexicalStringDiagnosticV1:1110 (cons $classNameDiagnostics ())) (once (admitted:gslt:fn:BNFLexicalStringDiagnosticV1:1110 class-name $class $origin))
+   (let (cons gslt:result:BNFLexicalStringDiagnosticV1:1110 (cons $labelNameDiagnostics ())) (once (admitted:gslt:fn:BNFLexicalStringDiagnosticV1:1110 label $label $origin))
+   (let (cons gslt:result:BNFLexicalMatcherDiagnosticV1:1110 (cons $matcherDiagnostics ())) (superpose (collapse (admitted:gslt:mode:BNFLexicalMatcherDiagnosticV1:1110 $class $matcher $origin)))
+   (let (cons gslt:result:BNFLexicalReferenceLookupV1:110 (cons $referenceLookup ())) (once (admitted:gslt:fn:BNFLexicalReferenceLookupV1:110 $name $tail))
+   (let (cons gslt:result:BNFLexicalReferenceDiagnosticV1:1110 (cons $referenceDiagnostics ())) (once (admitted:gslt:fn:BNFLexicalReferenceDiagnosticV1:1110 $name $origin $referenceLookup))
+   (let (cons gslt:result:BNFLexicalClassLookupV1:110 (cons $classLookup ())) (once (admitted:gslt:fn:BNFLexicalClassLookupV1:110 $class $tail))
+   (let (cons gslt:result:BNFLexicalClassDiagnosticV1:1110 (cons $classDiagnostics ())) (once (admitted:gslt:fn:BNFLexicalClassDiagnosticV1:1110 $class $origin $classLookup))
+   (let (cons gslt:result:BNFLexicalLabelLookupV1:110 (cons $labelLookup ())) (once (admitted:gslt:fn:BNFLexicalLabelLookupV1:110 $label $tail))
+   (let (cons gslt:result:BNFLexicalLabelDiagnosticV1:1110 (cons $labelDiagnostics ())) (once (admitted:gslt:fn:BNFLexicalLabelDiagnosticV1:1110 $label $origin $labelLookup))
+   (let (cons gslt:result:BNFDefinitionLookupV1:110 (cons $definitionLookup ())) (once (admitted:gslt:fn:BNFDefinitionLookupV1:110 $name $definitions))
+   (let (cons gslt:result:BNFLexicalRuleConflictDiagnosticV1:1110 (cons $ruleDiagnostics ())) (once (admitted:gslt:fn:BNFLexicalRuleConflictDiagnosticV1:1110 $name $origin $definitionLookup))
+   (let (cons gslt:result:BNFValidateLexicalsV1:110 (cons $tailDiagnostics ())) (superpose (collapse (admitted:gslt:mode:BNFValidateLexicalsV1:110 $tail $definitions)))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d01 ())) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $referenceNameDiagnostics $classNameDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d02 ())) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $d01 $labelNameDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d03 ())) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $d02 $matcherDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d04 ())) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $d03 $referenceDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d05 ())) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $d04 $classDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d06 ())) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $d05 $labelDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d07 ())) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $d06 $ruleDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $diagnostics ())) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $d07 $tailDiagnostics))
+   (quote (gslt:result:BNFValidateLexicalsV1:110 $diagnostics))))))))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=60 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-entry-references-nil-v1 target=mode relation=BNFScanEntryReferencesV1 input=1110 functional=semidet
-(= (admitted:gslt:fn:BNFScanEntryReferencesV1:1110 $__gslt_input_v1_0_0 $definitions $lexicals)
-   (let (cons-atom bnf-v1:entries-nil ()) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFScanEntryReferencesV1:1110 BNFDiagnosticsNilV1))))
+(= (admitted:gslt:fn:BNFScanEntryReferencesV1:1110 (cons bnf-v1:entries-nil ()) $definitions $lexicals)
+   (quote (gslt:result:BNFScanEntryReferencesV1:1110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=61 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-entry-references-comment-v1 target=mode relation=BNFScanEntryReferencesV1 input=1110 functional=semidet
-(= (admitted:gslt:fn:BNFScanEntryReferencesV1:1110 $__gslt_input_v1_0_0 $definitions $lexicals)
-   (let (cons-atom bnf-v1:entries-cons (cons-atom (cons-atom bnf-v1:comment (cons-atom $text (cons-atom $span ()))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFScanEntryReferencesV1:1110 $diagnostics) (admitted:gslt:fn:BNFScanEntryReferencesV1:1110 $tail $definitions $lexicals)
-   (quote (gslt:result:BNFScanEntryReferencesV1:1110 $diagnostics)))))
+(= (admitted:gslt:fn:BNFScanEntryReferencesV1:1110 (cons bnf-v1:entries-cons (cons (cons bnf-v1:comment (cons $text (cons $span ()))) (cons $tail ()))) $definitions $lexicals)
+   (let (cons gslt:result:BNFScanEntryReferencesV1:1110 (cons $diagnostics ())) (admitted:gslt:fn:BNFScanEntryReferencesV1:1110 $tail $definitions $lexicals)
+   (quote (gslt:result:BNFScanEntryReferencesV1:1110 $diagnostics))))
 
 ; gslt-lowered-equation-v1 source-rewrite=62 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-entry-references-blank-v1 target=mode relation=BNFScanEntryReferencesV1 input=1110 functional=semidet
-(= (admitted:gslt:fn:BNFScanEntryReferencesV1:1110 $__gslt_input_v1_0_0 $definitions $lexicals)
-   (let (cons-atom bnf-v1:entries-cons (cons-atom (cons-atom bnf-v1:blank (cons-atom $span ())) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFScanEntryReferencesV1:1110 $diagnostics) (admitted:gslt:fn:BNFScanEntryReferencesV1:1110 $tail $definitions $lexicals)
-   (quote (gslt:result:BNFScanEntryReferencesV1:1110 $diagnostics)))))
+(= (admitted:gslt:fn:BNFScanEntryReferencesV1:1110 (cons bnf-v1:entries-cons (cons (cons bnf-v1:blank (cons $span ())) (cons $tail ()))) $definitions $lexicals)
+   (let (cons gslt:result:BNFScanEntryReferencesV1:1110 (cons $diagnostics ())) (admitted:gslt:fn:BNFScanEntryReferencesV1:1110 $tail $definitions $lexicals)
+   (quote (gslt:result:BNFScanEntryReferencesV1:1110 $diagnostics))))
 
 ; gslt-lowered-equation-v1 source-rewrite=63 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-entry-references-rule-v1 target=mode relation=BNFScanEntryReferencesV1 input=1110 functional=semidet
-(= (admitted:gslt:fn:BNFScanEntryReferencesV1:1110 $__gslt_input_v1_0_0 $definitions $lexicals)
-   (let (cons-atom bnf-v1:entries-cons (cons-atom (cons-atom bnf-v1:rule (cons-atom $name (cons-atom $expression (cons-atom $span ())))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFScanExpressionReferencesV1:11110 $currentDiagnostics) (admitted:gslt:fn:BNFScanExpressionReferencesV1:11110 $name $expression $definitions $lexicals)
-   (let (gslt:result:BNFScanEntryReferencesV1:1110 $tailDiagnostics) (admitted:gslt:fn:BNFScanEntryReferencesV1:1110 $tail $definitions $lexicals)
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $diagnostics) (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $currentDiagnostics $tailDiagnostics)
-   (quote (gslt:result:BNFScanEntryReferencesV1:1110 $diagnostics)))))))
+(= (admitted:gslt:fn:BNFScanEntryReferencesV1:1110 (cons bnf-v1:entries-cons (cons (cons bnf-v1:rule (cons $name (cons $expression (cons $span ())))) (cons $tail ()))) $definitions $lexicals)
+   (let (cons gslt:result:BNFScanExpressionReferencesV1:11110 (cons $currentDiagnostics ())) (admitted:gslt:fn:BNFScanExpressionReferencesV1:11110 $name $expression $definitions $lexicals)
+   (let (cons gslt:result:BNFScanEntryReferencesV1:1110 (cons $tailDiagnostics ())) (admitted:gslt:fn:BNFScanEntryReferencesV1:1110 $tail $definitions $lexicals)
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $diagnostics ())) (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $currentDiagnostics $tailDiagnostics)
+   (quote (gslt:result:BNFScanEntryReferencesV1:1110 $diagnostics))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=64 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-expression-references-v1 target=mode relation=BNFScanExpressionReferencesV1 input=11110 functional=semidet
-(= (admitted:gslt:fn:BNFScanExpressionReferencesV1:11110 $owner $__gslt_input_v1_0_1 $definitions $lexicals)
-   (let (cons-atom bnf-v1:expression (cons-atom $alternatives (cons-atom $span ()))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFScanAlternativesReferencesV1:11110 $diagnostics) (admitted:gslt:fn:BNFScanAlternativesReferencesV1:11110 $owner $alternatives $definitions $lexicals)
-   (quote (gslt:result:BNFScanExpressionReferencesV1:11110 $diagnostics)))))
+(= (admitted:gslt:fn:BNFScanExpressionReferencesV1:11110 $owner (cons bnf-v1:expression (cons $alternatives (cons $span ()))) $definitions $lexicals)
+   (let (cons gslt:result:BNFScanAlternativesReferencesV1:11110 (cons $diagnostics ())) (admitted:gslt:fn:BNFScanAlternativesReferencesV1:11110 $owner $alternatives $definitions $lexicals)
+   (quote (gslt:result:BNFScanExpressionReferencesV1:11110 $diagnostics))))
 
 ; gslt-lowered-equation-v1 source-rewrite=65 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-alternatives-references-nil-v1 target=mode relation=BNFScanAlternativesReferencesV1 input=11110 functional=semidet
-(= (admitted:gslt:fn:BNFScanAlternativesReferencesV1:11110 $owner $__gslt_input_v1_0_1 $definitions $lexicals)
-   (let (cons-atom bnf-v1:alternatives-nil ()) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFScanAlternativesReferencesV1:11110 BNFDiagnosticsNilV1))))
+(= (admitted:gslt:fn:BNFScanAlternativesReferencesV1:11110 $owner (cons bnf-v1:alternatives-nil ()) $definitions $lexicals)
+   (quote (gslt:result:BNFScanAlternativesReferencesV1:11110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=66 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-alternatives-references-cons-v1 target=mode relation=BNFScanAlternativesReferencesV1 input=11110 functional=semidet
-(= (admitted:gslt:fn:BNFScanAlternativesReferencesV1:11110 $owner $__gslt_input_v1_0_1 $definitions $lexicals)
-   (let (cons-atom bnf-v1:alternatives-cons (cons-atom (cons-atom bnf-v1:alternative (cons-atom $elements (cons-atom $span ()))) (cons-atom $tail ()))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFScanElementsReferencesV1:11110 $currentDiagnostics) (admitted:gslt:fn:BNFScanElementsReferencesV1:11110 $owner $elements $definitions $lexicals)
-   (let (gslt:result:BNFScanAlternativesReferencesV1:11110 $tailDiagnostics) (admitted:gslt:fn:BNFScanAlternativesReferencesV1:11110 $owner $tail $definitions $lexicals)
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $diagnostics) (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $currentDiagnostics $tailDiagnostics)
-   (quote (gslt:result:BNFScanAlternativesReferencesV1:11110 $diagnostics)))))))
+(= (admitted:gslt:fn:BNFScanAlternativesReferencesV1:11110 $owner (cons bnf-v1:alternatives-cons (cons (cons bnf-v1:alternative (cons $elements (cons $span ()))) (cons $tail ()))) $definitions $lexicals)
+   (let (cons gslt:result:BNFScanElementsReferencesV1:11110 (cons $currentDiagnostics ())) (admitted:gslt:fn:BNFScanElementsReferencesV1:11110 $owner $elements $definitions $lexicals)
+   (let (cons gslt:result:BNFScanAlternativesReferencesV1:11110 (cons $tailDiagnostics ())) (admitted:gslt:fn:BNFScanAlternativesReferencesV1:11110 $owner $tail $definitions $lexicals)
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $diagnostics ())) (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $currentDiagnostics $tailDiagnostics)
+   (quote (gslt:result:BNFScanAlternativesReferencesV1:11110 $diagnostics))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=67 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-elements-references-nil-v1 target=mode relation=BNFScanElementsReferencesV1 input=11110 functional=semidet
-(= (admitted:gslt:fn:BNFScanElementsReferencesV1:11110 $owner $__gslt_input_v1_0_1 $definitions $lexicals)
-   (let (cons-atom bnf-v1:elements-nil ()) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFScanElementsReferencesV1:11110 BNFDiagnosticsNilV1))))
+(= (admitted:gslt:fn:BNFScanElementsReferencesV1:11110 $owner (cons bnf-v1:elements-nil ()) $definitions $lexicals)
+   (quote (gslt:result:BNFScanElementsReferencesV1:11110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=68 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-elements-references-cons-v1 target=mode relation=BNFScanElementsReferencesV1 input=11110 functional=semidet
-(= (admitted:gslt:fn:BNFScanElementsReferencesV1:11110 $owner $__gslt_input_v1_0_1 $definitions $lexicals)
-   (let (cons-atom bnf-v1:elements-cons (cons-atom $element (cons-atom $tail ()))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFScanElementReferencesV1:11110 $currentDiagnostics) (admitted:gslt:fn:BNFScanElementReferencesV1:11110 $owner $element $definitions $lexicals)
-   (let (gslt:result:BNFScanElementsReferencesV1:11110 $tailDiagnostics) (admitted:gslt:fn:BNFScanElementsReferencesV1:11110 $owner $tail $definitions $lexicals)
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $diagnostics) (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $currentDiagnostics $tailDiagnostics)
-   (quote (gslt:result:BNFScanElementsReferencesV1:11110 $diagnostics)))))))
+(= (admitted:gslt:fn:BNFScanElementsReferencesV1:11110 $owner (cons bnf-v1:elements-cons (cons $element (cons $tail ()))) $definitions $lexicals)
+   (let (cons gslt:result:BNFScanElementReferencesV1:11110 (cons $currentDiagnostics ())) (admitted:gslt:fn:BNFScanElementReferencesV1:11110 $owner $element $definitions $lexicals)
+   (let (cons gslt:result:BNFScanElementsReferencesV1:11110 (cons $tailDiagnostics ())) (admitted:gslt:fn:BNFScanElementsReferencesV1:11110 $owner $tail $definitions $lexicals)
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $diagnostics ())) (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $currentDiagnostics $tailDiagnostics)
+   (quote (gslt:result:BNFScanElementsReferencesV1:11110 $diagnostics))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=69 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-element-literal-v1 target=mode relation=BNFScanElementReferencesV1 input=11110 functional=semidet
-(= (admitted:gslt:fn:BNFScanElementReferencesV1:11110 $owner $__gslt_input_v1_0_1 $definitions $lexicals)
-   (let (cons-atom bnf-v1:literal (cons-atom $text (cons-atom $span ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFScanElementReferencesV1:11110 BNFDiagnosticsNilV1))))
+(= (admitted:gslt:fn:BNFScanElementReferencesV1:11110 $owner (cons bnf-v1:literal (cons $text (cons $span ()))) $definitions $lexicals)
+   (quote (gslt:result:BNFScanElementReferencesV1:11110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=70 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-scan-element-reference-v1 target=mode relation=BNFScanElementReferencesV1 input=11110 functional=semidet
-(= (admitted:gslt:fn:BNFScanElementReferencesV1:11110 $owner $__gslt_input_v1_0_1 $definitions $lexicals)
-   (let (cons-atom bnf-v1:reference (cons-atom $name (cons-atom $span ()))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFDefinitionLookupV1:110 $lookup) (admitted:gslt:fn:BNFDefinitionLookupV1:110 $name $definitions)
-   (let (gslt:result:BNFReferenceAfterDefinitionLookupV1:111110 $diagnostics) (admitted:gslt:fn:BNFReferenceAfterDefinitionLookupV1:111110 $owner $name $span $lookup $lexicals)
-   (quote (gslt:result:BNFScanElementReferencesV1:11110 $diagnostics))))))
+(= (admitted:gslt:fn:BNFScanElementReferencesV1:11110 $owner (cons bnf-v1:reference (cons $name (cons $span ()))) $definitions $lexicals)
+   (let (cons gslt:result:BNFDefinitionLookupV1:110 (cons $lookup ())) (admitted:gslt:fn:BNFDefinitionLookupV1:110 $name $definitions)
+   (let (cons gslt:result:BNFReferenceAfterDefinitionLookupV1:111110 (cons $diagnostics ())) (admitted:gslt:fn:BNFReferenceAfterDefinitionLookupV1:111110 $owner $name $span $lookup $lexicals)
+   (quote (gslt:result:BNFScanElementReferencesV1:11110 $diagnostics)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=71 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-reference-found-v1 target=mode relation=BNFReferenceAfterDefinitionLookupV1 input=111110 functional=semidet
-(= (admitted:gslt:fn:BNFReferenceAfterDefinitionLookupV1:111110 $owner $name $span $__gslt_input_v1_0_3 $lexicals)
-   (let (cons-atom BNFDefinitionFoundV1 (cons-atom $expression (cons-atom $firstSpan ()))) $__gslt_input_v1_0_3
-   (quote (gslt:result:BNFReferenceAfterDefinitionLookupV1:111110 BNFDiagnosticsNilV1))))
+(= (admitted:gslt:fn:BNFReferenceAfterDefinitionLookupV1:111110 $owner $name $span (cons BNFDefinitionFoundV1 (cons $expression (cons $firstSpan ()))) $lexicals)
+   (quote (gslt:result:BNFReferenceAfterDefinitionLookupV1:111110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=72 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-reference-definition-missing-v1 target=mode relation=BNFReferenceAfterDefinitionLookupV1 input=111110 functional=semidet
 (= (admitted:gslt:fn:BNFReferenceAfterDefinitionLookupV1:111110 $owner $name $span BNFDefinitionMissingV1 $lexicals)
-   (let (gslt:result:BNFLexicalReferenceLookupV1:110 $lookup) (admitted:gslt:fn:BNFLexicalReferenceLookupV1:110 $name $lexicals)
-   (let (gslt:result:BNFReferenceAfterLexicalLookupV1:11110 $diagnostics) (admitted:gslt:fn:BNFReferenceAfterLexicalLookupV1:11110 $owner $name $span $lookup)
+   (let (cons gslt:result:BNFLexicalReferenceLookupV1:110 (cons $lookup ())) (admitted:gslt:fn:BNFLexicalReferenceLookupV1:110 $name $lexicals)
+   (let (cons gslt:result:BNFReferenceAfterLexicalLookupV1:11110 (cons $diagnostics ())) (admitted:gslt:fn:BNFReferenceAfterLexicalLookupV1:11110 $owner $name $span $lookup)
    (quote (gslt:result:BNFReferenceAfterDefinitionLookupV1:111110 $diagnostics)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=73 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-reference-lexical-found-v1 target=mode relation=BNFReferenceAfterLexicalLookupV1 input=11110 functional=semidet
-(= (admitted:gslt:fn:BNFReferenceAfterLexicalLookupV1:11110 $owner $name $span $__gslt_input_v1_0_3)
-   (let (cons-atom BNFLexicalFoundV1 (cons-atom $declaration ())) $__gslt_input_v1_0_3
-   (quote (gslt:result:BNFReferenceAfterLexicalLookupV1:11110 BNFDiagnosticsNilV1))))
+(= (admitted:gslt:fn:BNFReferenceAfterLexicalLookupV1:11110 $owner $name $span (cons BNFLexicalFoundV1 (cons $declaration ())))
+   (quote (gslt:result:BNFReferenceAfterLexicalLookupV1:11110 BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=74 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-reference-unresolved-v1 target=mode relation=BNFReferenceAfterLexicalLookupV1 input=11110 functional=semidet
 (= (admitted:gslt:fn:BNFReferenceAfterLexicalLookupV1:11110 $owner $name $span BNFLexicalMissingV1)
@@ -2799,134 +2563,113 @@
    (quote (gslt:result:BNFFinishValidationV1:111110 (BNFDeclarationValidationRefusedV1 (BNFDiagnosticsConsV1 (BNFNoDefinitionsV1 $documentSpan) $diagnostics)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=78 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-finish-accepted-v1 target=mode relation=BNFFinishValidationV1 input=111110 functional=semidet
-(= (admitted:gslt:fn:BNFFinishValidationV1:111110 $documentSpan $__gslt_input_v1_0_1 $__gslt_input_v1_0_2 $lexicals BNFDiagnosticsNilV1)
-   (let (cons-atom BNFStartSomeV1 (cons-atom $name (cons-atom $span ()))) $__gslt_input_v1_0_1
-   (let (cons-atom BNFDefinitionsConsV1 (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_2
-   (quote (gslt:result:BNFFinishValidationV1:111110 (BNFDeclarationValidationAcceptedV1 (BNFStartSomeV1 $name $span) (BNFDefinitionsConsV1 $head $tail) $lexicals))))))
+(= (admitted:gslt:fn:BNFFinishValidationV1:111110 $documentSpan (cons BNFStartSomeV1 (cons $name (cons $span ()))) (cons BNFDefinitionsConsV1 (cons $head (cons $tail ()))) $lexicals BNFDiagnosticsNilV1)
+   (quote (gslt:result:BNFFinishValidationV1:111110 (BNFDeclarationValidationAcceptedV1 (BNFStartSomeV1 $name $span) (BNFDefinitionsConsV1 $head $tail) $lexicals))))
 
 ; gslt-lowered-equation-v1 source-rewrite=79 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-finish-refused-v1 target=mode relation=BNFFinishValidationV1 input=111110 functional=semidet
-(= (admitted:gslt:fn:BNFFinishValidationV1:111110 $documentSpan $start $__gslt_input_v1_0_2 $lexicals $__gslt_input_v1_0_4)
-   (let (cons-atom BNFDefinitionsConsV1 (cons-atom $definition (cons-atom $definitions ()))) $__gslt_input_v1_0_2
-   (let (cons-atom BNFDiagnosticsConsV1 (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_4
-   (quote (gslt:result:BNFFinishValidationV1:111110 (BNFDeclarationValidationRefusedV1 (BNFDiagnosticsConsV1 $head $tail)))))))
+(= (admitted:gslt:fn:BNFFinishValidationV1:111110 $documentSpan $start (cons BNFDefinitionsConsV1 (cons $definition (cons $definitions ()))) $lexicals (cons BNFDiagnosticsConsV1 (cons $head (cons $tail ()))))
+   (quote (gslt:result:BNFFinishValidationV1:111110 (BNFDeclarationValidationRefusedV1 (BNFDiagnosticsConsV1 $head $tail)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=178 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-lookup-empty-v1 target=mode relation=BNFGraphTrieLookupV1 input=110 functional=semidet
 (= (admitted:gslt:fn:BNFGraphTrieLookupV1:110 $key BNFGraphTrieEmptyV1)
    (quote (gslt:result:BNFGraphTrieLookupV1:110 BNFIndexMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=179 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-lookup-value-v1 target=mode relation=BNFGraphTrieLookupV1 input=110 functional=semidet
-(= (admitted:gslt:fn:BNFGraphTrieLookupV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:text-nil ()) $__gslt_input_v1_0_0
-   (let (cons-atom BNFGraphTrieV1 (cons-atom $value (cons-atom $edges ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFGraphTrieLookupV1:110 $value)))))
+(= (admitted:gslt:fn:BNFGraphTrieLookupV1:110 (cons bnf-v1:text-nil ()) (cons BNFGraphTrieV1 (cons $value (cons $edges ()))))
+   (quote (gslt:result:BNFGraphTrieLookupV1:110 $value)))
 
 ; gslt-lowered-equation-v1 source-rewrite=180 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-lookup-cons-v1 target=mode relation=BNFGraphTrieLookupV1 input=110 functional=semidet
-(= (admitted:gslt:fn:BNFGraphTrieLookupV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom bnf-v1:text-cons (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (cons-atom BNFGraphTrieV1 (cons-atom $value (cons-atom $edges ()))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFGraphTrieEdgeLookupV1:1110 $result) (admitted:gslt:fn:BNFGraphTrieEdgeLookupV1:1110 $head $tail $edges)
-   (quote (gslt:result:BNFGraphTrieLookupV1:110 $result))))))
+(= (admitted:gslt:fn:BNFGraphTrieLookupV1:110 (cons bnf-v1:text-cons (cons $head (cons $tail ()))) (cons BNFGraphTrieV1 (cons $value (cons $edges ()))))
+   (let (cons gslt:result:BNFGraphTrieEdgeLookupV1:1110 (cons $result ())) (admitted:gslt:fn:BNFGraphTrieEdgeLookupV1:1110 $head $tail $edges)
+   (quote (gslt:result:BNFGraphTrieLookupV1:110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-edge-lookup-nil-v1 target=mode relation=BNFGraphTrieEdgeLookupV1 input=1110 functional=semidet
 (= (admitted:gslt:fn:BNFGraphTrieEdgeLookupV1:1110 $head $tail BNFGraphTrieEdgesNilV1)
    (quote (gslt:result:BNFGraphTrieEdgeLookupV1:1110 BNFIndexMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=182 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-edge-lookup-found-v1 target=mode relation=BNFGraphTrieEdgeLookupV1 input=1110 functional=semidet
-(= (admitted:gslt:fn:BNFGraphTrieEdgeLookupV1:1110 $head $tail $__gslt_input_v1_0_2)
-   (let (cons-atom BNFGraphTrieEdgesConsV1 (cons-atom $head (cons-atom $child (cons-atom $rest ())))) $__gslt_input_v1_0_2
-   (let (gslt:result:BNFGraphTrieLookupV1:110 $result) (admitted:gslt:fn:BNFGraphTrieLookupV1:110 $tail $child)
-   (quote (gslt:result:BNFGraphTrieEdgeLookupV1:1110 $result)))))
+(= (admitted:gslt:fn:BNFGraphTrieEdgeLookupV1:1110 $head $tail (cons BNFGraphTrieEdgesConsV1 (cons $head (cons $child (cons $rest ())))))
+   (let (cons gslt:result:BNFGraphTrieLookupV1:110 (cons $result ())) (admitted:gslt:fn:BNFGraphTrieLookupV1:110 $tail $child)
+   (quote (gslt:result:BNFGraphTrieEdgeLookupV1:1110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=183 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-edge-lookup-next-v1 target=mode relation=BNFGraphTrieEdgeLookupV1 input=1110 functional=semidet
-(= (admitted:gslt:fn:BNFGraphTrieEdgeLookupV1:1110 $head $tail $__gslt_input_v1_0_2)
-   (let (cons-atom BNFGraphTrieEdgesConsV1 (cons-atom $other (cons-atom $child (cons-atom $rest ())))) $__gslt_input_v1_0_2
+(= (admitted:gslt:fn:BNFGraphTrieEdgeLookupV1:1110 $head $tail (cons BNFGraphTrieEdgesConsV1 (cons $other (cons $child (cons $rest ())))))
    (let $_ (gslt:different (different $head $other))
-   (let (gslt:result:BNFGraphTrieEdgeLookupV1:1110 $result) (admitted:gslt:fn:BNFGraphTrieEdgeLookupV1:1110 $head $tail $rest)
-   (quote (gslt:result:BNFGraphTrieEdgeLookupV1:1110 $result))))))
+   (let (cons gslt:result:BNFGraphTrieEdgeLookupV1:1110 (cons $result ())) (admitted:gslt:fn:BNFGraphTrieEdgeLookupV1:1110 $head $tail $rest)
+   (quote (gslt:result:BNFGraphTrieEdgeLookupV1:1110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=184 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-insert-empty-v1 target=mode relation=BNFGraphTrieInsertFirstV1 input=1110 functional=semidet
 (= (admitted:gslt:fn:BNFGraphTrieInsertFirstV1:1110 $key $value BNFGraphTrieEmptyV1)
-   (let (gslt:result:BNFGraphTrieInsertFirstV1:1110 $result) (admitted:gslt:fn:BNFGraphTrieInsertFirstV1:1110 $key $value (quote (BNFGraphTrieV1 BNFIndexMissingV1 BNFGraphTrieEdgesNilV1)))
+   (let (cons gslt:result:BNFGraphTrieInsertFirstV1:1110 (cons $result ())) (admitted:gslt:fn:BNFGraphTrieInsertFirstV1:1110 $key $value (quote (BNFGraphTrieV1 BNFIndexMissingV1 BNFGraphTrieEdgesNilV1)))
    (quote (gslt:result:BNFGraphTrieInsertFirstV1:1110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=185 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-insert-value-v1 target=mode relation=BNFGraphTrieInsertFirstV1 input=1110 functional=semidet
-(= (admitted:gslt:fn:BNFGraphTrieInsertFirstV1:1110 $__gslt_input_v1_0_0 $value $__gslt_input_v1_0_2)
-   (let (cons-atom bnf-v1:text-nil ()) $__gslt_input_v1_0_0
-   (let (cons-atom BNFGraphTrieV1 (cons-atom $old (cons-atom $edges ()))) $__gslt_input_v1_0_2
-   (let (gslt:result:BNFGraphTrieFirstValueV1:110 $next) (admitted:gslt:fn:BNFGraphTrieFirstValueV1:110 $old $value)
-   (quote (gslt:result:BNFGraphTrieInsertFirstV1:1110 (BNFGraphTrieV1 $next $edges)))))))
+(= (admitted:gslt:fn:BNFGraphTrieInsertFirstV1:1110 (cons bnf-v1:text-nil ()) $value (cons BNFGraphTrieV1 (cons $old (cons $edges ()))))
+   (let (cons gslt:result:BNFGraphTrieFirstValueV1:110 (cons $next ())) (admitted:gslt:fn:BNFGraphTrieFirstValueV1:110 $old $value)
+   (quote (gslt:result:BNFGraphTrieInsertFirstV1:1110 (BNFGraphTrieV1 $next $edges)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=186 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-insert-cons-v1 target=mode relation=BNFGraphTrieInsertFirstV1 input=1110 functional=semidet
-(= (admitted:gslt:fn:BNFGraphTrieInsertFirstV1:1110 $__gslt_input_v1_0_0 $value $__gslt_input_v1_0_2)
-   (let (cons-atom bnf-v1:text-cons (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (cons-atom BNFGraphTrieV1 (cons-atom $old (cons-atom $edges ()))) $__gslt_input_v1_0_2
-   (let (gslt:result:BNFGraphTrieEdgeInsertV1:11110 $nextEdges) (admitted:gslt:fn:BNFGraphTrieEdgeInsertV1:11110 $head $tail $value $edges)
-   (quote (gslt:result:BNFGraphTrieInsertFirstV1:1110 (BNFGraphTrieV1 $old $nextEdges)))))))
+(= (admitted:gslt:fn:BNFGraphTrieInsertFirstV1:1110 (cons bnf-v1:text-cons (cons $head (cons $tail ()))) $value (cons BNFGraphTrieV1 (cons $old (cons $edges ()))))
+   (let (cons gslt:result:BNFGraphTrieEdgeInsertV1:11110 (cons $nextEdges ())) (admitted:gslt:fn:BNFGraphTrieEdgeInsertV1:11110 $head $tail $value $edges)
+   (quote (gslt:result:BNFGraphTrieInsertFirstV1:1110 (BNFGraphTrieV1 $old $nextEdges)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=187 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-first-value-empty-v1 target=mode relation=BNFGraphTrieFirstValueV1 input=110 functional=semidet
 (= (admitted:gslt:fn:BNFGraphTrieFirstValueV1:110 BNFIndexMissingV1 $value)
    (quote (gslt:result:BNFGraphTrieFirstValueV1:110 (BNFIndexFoundV1 $value))))
 
 ; gslt-lowered-equation-v1 source-rewrite=188 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-first-value-present-v1 target=mode relation=BNFGraphTrieFirstValueV1 input=110 functional=semidet
-(= (admitted:gslt:fn:BNFGraphTrieFirstValueV1:110 $__gslt_input_v1_0_0 $value)
-   (let (cons-atom BNFIndexFoundV1 (cons-atom $old ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFGraphTrieFirstValueV1:110 (BNFIndexFoundV1 $old)))))
+(= (admitted:gslt:fn:BNFGraphTrieFirstValueV1:110 (cons BNFIndexFoundV1 (cons $old ())) $value)
+   (quote (gslt:result:BNFGraphTrieFirstValueV1:110 (BNFIndexFoundV1 $old))))
 
 ; gslt-lowered-equation-v1 source-rewrite=189 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-edge-insert-nil-v1 target=mode relation=BNFGraphTrieEdgeInsertV1 input=11110 functional=semidet
 (= (admitted:gslt:fn:BNFGraphTrieEdgeInsertV1:11110 $head $tail $value BNFGraphTrieEdgesNilV1)
-   (let (gslt:result:BNFGraphTrieInsertFirstV1:1110 $child) (admitted:gslt:fn:BNFGraphTrieInsertFirstV1:1110 $tail $value BNFGraphTrieEmptyV1)
+   (let (cons gslt:result:BNFGraphTrieInsertFirstV1:1110 (cons $child ())) (admitted:gslt:fn:BNFGraphTrieInsertFirstV1:1110 $tail $value BNFGraphTrieEmptyV1)
    (quote (gslt:result:BNFGraphTrieEdgeInsertV1:11110 (BNFGraphTrieEdgesConsV1 $head $child BNFGraphTrieEdgesNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=190 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-edge-insert-found-v1 target=mode relation=BNFGraphTrieEdgeInsertV1 input=11110 functional=semidet
-(= (admitted:gslt:fn:BNFGraphTrieEdgeInsertV1:11110 $head $tail $value $__gslt_input_v1_0_3)
-   (let (cons-atom BNFGraphTrieEdgesConsV1 (cons-atom $head (cons-atom $child (cons-atom $rest ())))) $__gslt_input_v1_0_3
-   (let (gslt:result:BNFGraphTrieInsertFirstV1:1110 $nextChild) (admitted:gslt:fn:BNFGraphTrieInsertFirstV1:1110 $tail $value $child)
-   (quote (gslt:result:BNFGraphTrieEdgeInsertV1:11110 (BNFGraphTrieEdgesConsV1 $head $nextChild $rest))))))
+(= (admitted:gslt:fn:BNFGraphTrieEdgeInsertV1:11110 $head $tail $value (cons BNFGraphTrieEdgesConsV1 (cons $head (cons $child (cons $rest ())))))
+   (let (cons gslt:result:BNFGraphTrieInsertFirstV1:1110 (cons $nextChild ())) (admitted:gslt:fn:BNFGraphTrieInsertFirstV1:1110 $tail $value $child)
+   (quote (gslt:result:BNFGraphTrieEdgeInsertV1:11110 (BNFGraphTrieEdgesConsV1 $head $nextChild $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=191 source-presentation=PlainBnfGraphIndexV1 source-rule=bnf-graph-trie-edge-insert-next-v1 target=mode relation=BNFGraphTrieEdgeInsertV1 input=11110 functional=semidet
-(= (admitted:gslt:fn:BNFGraphTrieEdgeInsertV1:11110 $head $tail $value $__gslt_input_v1_0_3)
-   (let (cons-atom BNFGraphTrieEdgesConsV1 (cons-atom $other (cons-atom $child (cons-atom $rest ())))) $__gslt_input_v1_0_3
+(= (admitted:gslt:fn:BNFGraphTrieEdgeInsertV1:11110 $head $tail $value (cons BNFGraphTrieEdgesConsV1 (cons $other (cons $child (cons $rest ())))))
    (let $_ (gslt:different (different $head $other))
-   (let (gslt:result:BNFGraphTrieEdgeInsertV1:11110 $nextRest) (admitted:gslt:fn:BNFGraphTrieEdgeInsertV1:11110 $head $tail $value $rest)
-   (quote (gslt:result:BNFGraphTrieEdgeInsertV1:11110 (BNFGraphTrieEdgesConsV1 $other $child $nextRest)))))))
+   (let (cons gslt:result:BNFGraphTrieEdgeInsertV1:11110 (cons $nextRest ())) (admitted:gslt:fn:BNFGraphTrieEdgeInsertV1:11110 $head $tail $value $rest)
+   (quote (gslt:result:BNFGraphTrieEdgeInsertV1:11110 (BNFGraphTrieEdgesConsV1 $other $child $nextRest))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=245 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-reverse-definitions-nil-v1 target=mode relation=BNFDiscoveryReverseDefinitionsV1 input=110 functional=semidet
 (= (admitted:gslt:fn:BNFDiscoveryReverseDefinitionsV1:110 BNFDefinitionsNilV1 $result)
    (quote (gslt:result:BNFDiscoveryReverseDefinitionsV1:110 $result)))
 
 ; gslt-lowered-equation-v1 source-rewrite=246 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-reverse-definitions-cons-v1 target=mode relation=BNFDiscoveryReverseDefinitionsV1 input=110 functional=semidet
-(= (admitted:gslt:fn:BNFDiscoveryReverseDefinitionsV1:110 $__gslt_input_v1_0_0 $before)
-   (let (cons-atom BNFDefinitionsConsV1 (cons-atom $head (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFDiscoveryReverseDefinitionsV1:110 $after) (admitted:gslt:fn:BNFDiscoveryReverseDefinitionsV1:110 $tail (quote (BNFDefinitionsConsV1 $head $before)))
-   (quote (gslt:result:BNFDiscoveryReverseDefinitionsV1:110 $after)))))
+(= (admitted:gslt:fn:BNFDiscoveryReverseDefinitionsV1:110 (cons BNFDefinitionsConsV1 (cons $head (cons $tail ()))) $before)
+   (let (cons gslt:result:BNFDiscoveryReverseDefinitionsV1:110 (cons $after ())) (admitted:gslt:fn:BNFDiscoveryReverseDefinitionsV1:110 $tail (quote (BNFDefinitionsConsV1 $head $before)))
+   (quote (gslt:result:BNFDiscoveryReverseDefinitionsV1:110 $after))))
 
 ; gslt-lowered-equation-v1 source-rewrite=248 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-definition-missing-v1 target=mode relation=BNFDiscoveryDefinitionResultV1 input=10 functional=semidet
 (= (admitted:gslt:fn:BNFDiscoveryDefinitionResultV1:10 BNFIndexMissingV1)
    (quote (gslt:result:BNFDiscoveryDefinitionResultV1:10 BNFDefinitionMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=249 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-definition-found-v1 target=mode relation=BNFDiscoveryDefinitionResultV1 input=10 functional=semidet
-(= (admitted:gslt:fn:BNFDiscoveryDefinitionResultV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom BNFIndexFoundV1 (cons-atom $definition ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:BNFDiscoveryDefinitionResultV1:10 $definition))))
+(= (admitted:gslt:fn:BNFDiscoveryDefinitionResultV1:10 (cons BNFIndexFoundV1 (cons $definition ())))
+   (quote (gslt:result:BNFDiscoveryDefinitionResultV1:10 $definition)))
 
 ; gslt-lowered-equation-v1 source-rewrite=275 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-validate-grammar-discovery-v1 target=mode relation=BNFValidateGrammarDiscoveryV1 input=10 functional=relational
-(= (admitted:gslt:mode:BNFValidateGrammarDiscoveryV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom bnf-v1:grammar-input (cons-atom (cons-atom bnf-v1:document (cons-atom $entries (cons-atom $documentSpan ()))) (cons-atom (cons-atom bnf-v1:grammar-authority (cons-atom (cons-atom bnf-v1:start (cons-atom $startName ())) (cons-atom (cons-atom bnf-v1:lexical-environment (cons-atom $lexicals ())) ()))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFDiscoveryCollectDefinitionsV1:1000 $definitions $definitionDiagnostics $index) (once (admitted:gslt:fn:BNFDiscoveryCollectDefinitionsV1:1000 $entries))
-   (let (gslt:result:BNFValidateLexicalsV1:110 $lexicalDiagnostics) (superpose (collapse (admitted:gslt:mode:BNFValidateLexicalsV1:110 $lexicals (quote (BNFIndexedDefinitionsV1 $index)))))
-   (let (gslt:result:BNFScanEntryReferencesV1:1110 $referenceDiagnostics) (once (admitted:gslt:fn:BNFScanEntryReferencesV1:1110 $entries (quote (BNFIndexedDefinitionsV1 $index)) $lexicals))
-   (let (gslt:result:BNFDefinitionLookupV1:110 $startLookup) (once (admitted:gslt:fn:BNFDefinitionLookupV1:110 $startName (quote (BNFIndexedDefinitionsV1 $index))))
-   (let (gslt:result:BNFStartAfterLookupV1:1100 $start $startDiagnostics) (once (admitted:gslt:fn:BNFStartAfterLookupV1:1100 $startName $startLookup))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d01) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $definitionDiagnostics $lexicalDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $d02) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $d01 $referenceDiagnostics))
-   (let (gslt:result:BNFAppendDiagnosticsV1:110 $diagnostics) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $d02 $startDiagnostics))
-   (let (gslt:result:BNFFinishValidationV1:111110 $result) (once (admitted:gslt:fn:BNFFinishValidationV1:111110 $documentSpan $start $definitions $lexicals $diagnostics))
-   (quote (gslt:result:BNFValidateGrammarDiscoveryV1:10 $result)))))))))))))
+(= (admitted:gslt:mode:BNFValidateGrammarDiscoveryV1:10 (cons bnf-v1:grammar-input (cons (cons bnf-v1:document (cons $entries (cons $documentSpan ()))) (cons (cons bnf-v1:grammar-authority (cons (cons bnf-v1:start (cons $startName ())) (cons (cons bnf-v1:lexical-environment (cons $lexicals ())) ()))) ()))))
+   (let (cons gslt:result:BNFDiscoveryCollectDefinitionsV1:1000 (cons $definitions (cons $definitionDiagnostics (cons $index ())))) (once (admitted:gslt:fn:BNFDiscoveryCollectDefinitionsV1:1000 $entries))
+   (let (cons gslt:result:BNFValidateLexicalsV1:110 (cons $lexicalDiagnostics ())) (superpose (collapse (admitted:gslt:mode:BNFValidateLexicalsV1:110 $lexicals (quote (BNFIndexedDefinitionsV1 $index)))))
+   (let (cons gslt:result:BNFScanEntryReferencesV1:1110 (cons $referenceDiagnostics ())) (once (admitted:gslt:fn:BNFScanEntryReferencesV1:1110 $entries (quote (BNFIndexedDefinitionsV1 $index)) $lexicals))
+   (let (cons gslt:result:BNFDefinitionLookupV1:110 (cons $startLookup ())) (once (admitted:gslt:fn:BNFDefinitionLookupV1:110 $startName (quote (BNFIndexedDefinitionsV1 $index))))
+   (let (cons gslt:result:BNFStartAfterLookupV1:1100 (cons $start (cons $startDiagnostics ()))) (once (admitted:gslt:fn:BNFStartAfterLookupV1:1100 $startName $startLookup))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d01 ())) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $definitionDiagnostics $lexicalDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $d02 ())) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $d01 $referenceDiagnostics))
+   (let (cons gslt:result:BNFAppendDiagnosticsV1:110 (cons $diagnostics ())) (once (admitted:gslt:fn:BNFAppendDiagnosticsV1:110 $d02 $startDiagnostics))
+   (let (cons gslt:result:BNFFinishValidationV1:111110 (cons $result ())) (once (admitted:gslt:fn:BNFFinishValidationV1:111110 $documentSpan $start $definitions $lexicals $diagnostics))
+   (quote (gslt:result:BNFValidateGrammarDiscoveryV1:10 $result))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=75 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-start-found-v1 target=mode relation=BNFStartAfterLookupV1 input=1100 functional=semidet
-(= (admitted:gslt:fn:BNFStartAfterLookupV1:1100 $name $__gslt_input_v1_0_1)
-   (let (cons-atom BNFDefinitionFoundV1 (cons-atom $expression (cons-atom $span ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:BNFStartAfterLookupV1:1100 (BNFStartSomeV1 $name $span) BNFDiagnosticsNilV1))))
+(= (admitted:gslt:fn:BNFStartAfterLookupV1:1100 $name (cons BNFDefinitionFoundV1 (cons $expression (cons $span ()))))
+   (quote (gslt:result:BNFStartAfterLookupV1:1100 (BNFStartSomeV1 $name $span) BNFDiagnosticsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=76 source-presentation=PlainBnfSemanticAdmissionV1 source-rule=bnf-start-missing-v1 target=mode relation=BNFStartAfterLookupV1 input=1100 functional=semidet
 (= (admitted:gslt:fn:BNFStartAfterLookupV1:1100 $name BNFDefinitionMissingV1)
@@ -2934,47 +2677,40 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=238 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-collect-definitions-v1 target=mode relation=BNFDiscoveryCollectDefinitionsV1 input=1000 functional=semidet
 (= (admitted:gslt:fn:BNFDiscoveryCollectDefinitionsV1:1000 $entries)
-   (let (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $index) (admitted:gslt:fn:BNFDiscoveryCollectLoopV1:111000 $entries BNFGraphTrieEmptyV1 BNFDefinitionsNilV1)
+   (let (cons gslt:result:BNFDiscoveryCollectLoopV1:111000 (cons $definitions (cons $diagnostics (cons $index ())))) (admitted:gslt:fn:BNFDiscoveryCollectLoopV1:111000 $entries BNFGraphTrieEmptyV1 BNFDefinitionsNilV1)
    (quote (gslt:result:BNFDiscoveryCollectDefinitionsV1:1000 $definitions $diagnostics $index))))
 
 ; gslt-lowered-equation-v1 source-rewrite=239 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-collect-nil-v1 target=mode relation=BNFDiscoveryCollectLoopV1 input=111000 functional=semidet
-(= (admitted:gslt:fn:BNFDiscoveryCollectLoopV1:111000 $__gslt_input_v1_0_0 $index $reversed)
-   (let (cons-atom bnf-v1:entries-nil ()) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFDiscoveryReverseDefinitionsV1:110 $definitions) (admitted:gslt:fn:BNFDiscoveryReverseDefinitionsV1:110 $reversed BNFDefinitionsNilV1)
-   (quote (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions BNFDiagnosticsNilV1 $index)))))
+(= (admitted:gslt:fn:BNFDiscoveryCollectLoopV1:111000 (cons bnf-v1:entries-nil ()) $index $reversed)
+   (let (cons gslt:result:BNFDiscoveryReverseDefinitionsV1:110 (cons $definitions ())) (admitted:gslt:fn:BNFDiscoveryReverseDefinitionsV1:110 $reversed BNFDefinitionsNilV1)
+   (quote (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions BNFDiagnosticsNilV1 $index))))
 
 ; gslt-lowered-equation-v1 source-rewrite=240 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-collect-comment-v1 target=mode relation=BNFDiscoveryCollectLoopV1 input=111000 functional=semidet
-(= (admitted:gslt:fn:BNFDiscoveryCollectLoopV1:111000 $__gslt_input_v1_0_0 $index $reversed)
-   (let (cons-atom bnf-v1:entries-cons (cons-atom (cons-atom bnf-v1:comment (cons-atom $text (cons-atom $span ()))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $finalIndex) (admitted:gslt:fn:BNFDiscoveryCollectLoopV1:111000 $tail $index $reversed)
-   (quote (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $finalIndex)))))
+(= (admitted:gslt:fn:BNFDiscoveryCollectLoopV1:111000 (cons bnf-v1:entries-cons (cons (cons bnf-v1:comment (cons $text (cons $span ()))) (cons $tail ()))) $index $reversed)
+   (let (cons gslt:result:BNFDiscoveryCollectLoopV1:111000 (cons $definitions (cons $diagnostics (cons $finalIndex ())))) (admitted:gslt:fn:BNFDiscoveryCollectLoopV1:111000 $tail $index $reversed)
+   (quote (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $finalIndex))))
 
 ; gslt-lowered-equation-v1 source-rewrite=241 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-collect-blank-v1 target=mode relation=BNFDiscoveryCollectLoopV1 input=111000 functional=semidet
-(= (admitted:gslt:fn:BNFDiscoveryCollectLoopV1:111000 $__gslt_input_v1_0_0 $index $reversed)
-   (let (cons-atom bnf-v1:entries-cons (cons-atom (cons-atom bnf-v1:blank (cons-atom $span ())) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $finalIndex) (admitted:gslt:fn:BNFDiscoveryCollectLoopV1:111000 $tail $index $reversed)
-   (quote (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $finalIndex)))))
+(= (admitted:gslt:fn:BNFDiscoveryCollectLoopV1:111000 (cons bnf-v1:entries-cons (cons (cons bnf-v1:blank (cons $span ())) (cons $tail ()))) $index $reversed)
+   (let (cons gslt:result:BNFDiscoveryCollectLoopV1:111000 (cons $definitions (cons $diagnostics (cons $finalIndex ())))) (admitted:gslt:fn:BNFDiscoveryCollectLoopV1:111000 $tail $index $reversed)
+   (quote (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $finalIndex))))
 
 ; gslt-lowered-equation-v1 source-rewrite=242 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-collect-rule-v1 target=mode relation=BNFDiscoveryCollectLoopV1 input=111000 functional=semidet
-(= (admitted:gslt:fn:BNFDiscoveryCollectLoopV1:111000 $__gslt_input_v1_0_0 $index $reversed)
-   (let (cons-atom bnf-v1:entries-cons (cons-atom (cons-atom bnf-v1:rule (cons-atom $name (cons-atom $expression (cons-atom $span ())))) (cons-atom $tail ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:BNFGraphTrieLookupV1:110 $lookup) (admitted:gslt:fn:BNFGraphTrieLookupV1:110 $name $index)
-   (let (gslt:result:BNFDiscoveryCollectAfterLookupV1:11111000 $definitions $diagnostics $finalIndex) (admitted:gslt:fn:BNFDiscoveryCollectAfterLookupV1:11111000 $lookup (quote (BNFDefinitionV1 $name $expression $span)) $tail $index $reversed)
-   (quote (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $finalIndex))))))
+(= (admitted:gslt:fn:BNFDiscoveryCollectLoopV1:111000 (cons bnf-v1:entries-cons (cons (cons bnf-v1:rule (cons $name (cons $expression (cons $span ())))) (cons $tail ()))) $index $reversed)
+   (let (cons gslt:result:BNFGraphTrieLookupV1:110 (cons $lookup ())) (admitted:gslt:fn:BNFGraphTrieLookupV1:110 $name $index)
+   (let (cons gslt:result:BNFDiscoveryCollectAfterLookupV1:11111000 (cons $definitions (cons $diagnostics (cons $finalIndex ())))) (admitted:gslt:fn:BNFDiscoveryCollectAfterLookupV1:11111000 $lookup (quote (BNFDefinitionV1 $name $expression $span)) $tail $index $reversed)
+   (quote (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $finalIndex)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=243 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-collect-fresh-v1 target=mode relation=BNFDiscoveryCollectAfterLookupV1 input=11111000 functional=semidet
-(= (admitted:gslt:fn:BNFDiscoveryCollectAfterLookupV1:11111000 BNFIndexMissingV1 $__gslt_input_v1_0_1 $tail $index $reversed)
-   (let (cons-atom BNFDefinitionV1 (cons-atom $name (cons-atom $expression (cons-atom $span ())))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFGraphTrieInsertFirstV1:1110 $next) (admitted:gslt:fn:BNFGraphTrieInsertFirstV1:1110 $name (quote (BNFDefinitionFoundV1 $expression $span)) $index)
-   (let (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $diagnostics $finalIndex) (admitted:gslt:fn:BNFDiscoveryCollectLoopV1:111000 $tail $next (quote (BNFDefinitionsConsV1 (BNFDefinitionV1 $name $expression $span) $reversed)))
-   (quote (gslt:result:BNFDiscoveryCollectAfterLookupV1:11111000 $definitions $diagnostics $finalIndex))))))
+(= (admitted:gslt:fn:BNFDiscoveryCollectAfterLookupV1:11111000 BNFIndexMissingV1 (cons BNFDefinitionV1 (cons $name (cons $expression (cons $span ())))) $tail $index $reversed)
+   (let (cons gslt:result:BNFGraphTrieInsertFirstV1:1110 (cons $next ())) (admitted:gslt:fn:BNFGraphTrieInsertFirstV1:1110 $name (quote (BNFDefinitionFoundV1 $expression $span)) $index)
+   (let (cons gslt:result:BNFDiscoveryCollectLoopV1:111000 (cons $definitions (cons $diagnostics (cons $finalIndex ())))) (admitted:gslt:fn:BNFDiscoveryCollectLoopV1:111000 $tail $next (quote (BNFDefinitionsConsV1 (BNFDefinitionV1 $name $expression $span) $reversed)))
+   (quote (gslt:result:BNFDiscoveryCollectAfterLookupV1:11111000 $definitions $diagnostics $finalIndex)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=244 source-presentation=PlainBnfGraphDiscoveryV1 source-rule=bnf-discovery-collect-duplicate-v1 target=mode relation=BNFDiscoveryCollectAfterLookupV1 input=11111000 functional=semidet
-(= (admitted:gslt:fn:BNFDiscoveryCollectAfterLookupV1:11111000 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1 $tail $index $reversed)
-   (let (cons-atom BNFIndexFoundV1 (cons-atom (cons-atom BNFDefinitionFoundV1 (cons-atom $firstExpression (cons-atom $firstSpan ()))) ())) $__gslt_input_v1_0_0
-   (let (cons-atom BNFDefinitionV1 (cons-atom $name (cons-atom $expression (cons-atom $span ())))) $__gslt_input_v1_0_1
-   (let (gslt:result:BNFDiscoveryCollectLoopV1:111000 $definitions $following $finalIndex) (admitted:gslt:fn:BNFDiscoveryCollectLoopV1:111000 $tail $index $reversed)
-   (quote (gslt:result:BNFDiscoveryCollectAfterLookupV1:11111000 $definitions (BNFDiagnosticsConsV1 (BNFDuplicateDefinitionV1 $name $firstSpan $span) $following) $finalIndex))))))
+(= (admitted:gslt:fn:BNFDiscoveryCollectAfterLookupV1:11111000 (cons BNFIndexFoundV1 (cons (cons BNFDefinitionFoundV1 (cons $firstExpression (cons $firstSpan ()))) ())) (cons BNFDefinitionV1 (cons $name (cons $expression (cons $span ())))) $tail $index $reversed)
+   (let (cons gslt:result:BNFDiscoveryCollectLoopV1:111000 (cons $definitions (cons $following (cons $finalIndex ())))) (admitted:gslt:fn:BNFDiscoveryCollectLoopV1:111000 $tail $index $reversed)
+   (quote (gslt:result:BNFDiscoveryCollectAfterLookupV1:11111000 $definitions (BNFDiagnosticsConsV1 (BNFDuplicateDefinitionV1 $name $firstSpan $span) $following) $finalIndex))))
 
 
 ; gslt-lowered-entry-v1 admitted:gslt:entry:BNFValidateGrammarDiscoveryV1:10

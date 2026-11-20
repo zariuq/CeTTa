@@ -4,7 +4,7 @@
 ; shows that an invented resolved-FOF constructor is rejected before any
 ; rewrite can run.
 
-!(import! &self lib_tptp)
+!(import! &self (library lib_tptp))
 
 (= (example:normalization-summary $result)
    (case $result

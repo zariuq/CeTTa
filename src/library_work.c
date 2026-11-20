@@ -18,11 +18,9 @@ static Atom *source_view(Arena *arena, Atom *reference, Atom *expected) {
     if (!reference || reference->kind != ATOM_GROUNDED ||
         reference->ground.gkind != GV_SPACE)
         return atom_expr2(arena, atom_symbol(arena, "Work:Fault"), atom_symbol(arena, "InvalidSource"));
-    __attribute__((cleanup(cetta_shared_transition_guard_leave)))
-    CettaSharedTransitionGuard transition = {0};
-    cetta_shared_transition_guard_enter(&transition);
     Space *source = eval_resolve_space_read
         ? eval_resolve_space_read(reference->ground.ptr) : NULL;
+    CETTA_SCOPED_SPACE_READ(transition, source);
     if (!source)
         return atom_expr2(arena, atom_symbol(arena, "Work:Fault"), atom_symbol(arena, "ClosedSource"));
     SpaceReadToken read = space_read_token(source);

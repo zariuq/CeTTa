@@ -717,6 +717,11 @@ static void native_rebuild_match_trie(Space *s) {
 
 static void native_ensure_match_trie(Space *s) {
     SpaceMatchNativeState *st = &s->match_backend.native;
+    if (st->match_trie && !st->match_trie_dirty)
+        return;
+    /* A reader builds the trie under the space's maintenance lock, and
+     * marks it dirty while it does, so no other reader begins in it. */
+    SPACE_MAINTAIN(maintenance, s);
     /* A dirty trie holds the coordinates of rows as they stood, so no
      * reader may begin in it, whatever pins it.  The cursors that read its
      * leaves take it with their view's rows; every other pin is a cursor of
@@ -737,6 +742,7 @@ static void native_ensure_match_trie(Space *s) {
         cetta_runtime_stats_add(
             CETTA_RUNTIME_COUNTER_NATIVE_PATTERN_INDEX_BUILD_ROW,
             s->native.len);
+        st->match_trie_dirty = true;
         st->match_trie = disc_node_new();
         for (CettaIndex i = 0; st->match_trie && i < s->native.len; i++) {
             native_insert_match_trie_entry(s, i);
@@ -771,6 +777,7 @@ void space_match_native_pin_trie(Space *s) {
 void space_match_native_unpin_trie(Space *s) {
     if (!s || s->match_backend.native.match_trie_pins == 0u)
         return;
+    SPACE_MAINTAIN(maintenance, s);
     SpaceMatchNativeState *st = &s->match_backend.native;
     st->match_trie_pins--;
     /* Retired head indexes wait for the last cursor that may read them. */
@@ -783,12 +790,16 @@ void space_match_native_unpin_trie(Space *s) {
 static void native_ensure_stree(Space *s) {
     space_settle_marks(s);
     SpaceMatchNativeState *st = &s->match_backend.native;
+    if (st->stree && !st->stree_dirty)
+        return;
+    SPACE_MAINTAIN(maintenance, s);
     if (!st->stree) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_NATIVE_SUBSTITUTION_INDEX_COLD_BUILD);
         cetta_runtime_stats_add(
             CETTA_RUNTIME_COUNTER_NATIVE_SUBSTITUTION_INDEX_BUILD_ROW,
             s->native.len);
+        st->stree_dirty = true;
         st->stree = cetta_malloc(sizeof(SubstTree));
         stree_init(st->stree);
         for (CettaIndex i = 0; i < s->native.len; i++)
@@ -1341,7 +1352,7 @@ bool space_match_native_exact_occurrences(Space *s, Atom *pattern,
         !space_match_ground_pattern_matches_by_identity(pattern))
         return false;
     /* The certificate and the occurrences read one state of the space. */
-    CETTA_SCOPED_SHARED_TRANSITION(exact_occurrences);
+    CETTA_SCOPED_SPACE_OBSERVE(exact_occurrences, s);
     if (!space_exact_frontier_certified(s, pattern))
         return false;
     *count = space_exact_index_rows64(s, pattern, out);
@@ -6286,7 +6297,7 @@ SpaceMatchPullVisitResult space_match_backend_try_visit_atoms_direct(
     CettaMorkAtomVisitor visitor,
     void *ctx) {
     space_dense_settle(s, SYMBOL_ID_NONE);
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, s);
     ImportedBridgeState *st;
 
     if (!scratch || !visitor ||
@@ -6316,7 +6327,7 @@ bool space_match_backend_visit_bindings_direct(
     void *ctx) {
     if (!space_prepare_proof_read(s, query)) return false;
     space_dense_settle_for_pattern(s, query);
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, s);
     ImportedBridgeState *st;
     CettaMorkSpaceHandle *bridge = NULL;
     SpaceMatchPullVisitResult indexed_result;
@@ -6396,7 +6407,7 @@ space_match_backend_try_visit_bindings_indexed(
     Atom *query,
     CettaMorkBindingsVisitor visitor,
     void *ctx) {
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, s);
     bool attempted = false;
     bool ok;
 
@@ -6431,7 +6442,7 @@ space_match_backend_try_visit_conjunction_indexed(
     const Bindings *seed,
     CettaMorkBindingsVisitor visitor,
     void *ctx) {
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, s);
     if (space_has_dependencies(s))
         return SPACE_MATCH_PULL_VISIT_DECLINED;
     return pathmap_local_visit_conjunction_indexed(
@@ -11574,7 +11585,7 @@ CettaIndex space_match_backend_candidates64(Space *s, Atom *pattern,
                                             CettaIndex **out) {
     if (!space_prepare_proof_read(s, pattern)) { if (out) *out = NULL; return 0u; }
     space_dense_settle_for_pattern(s, pattern);
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, s);
     if (!s->match_backend.ops || !s->match_backend.ops->candidates) {
         if (out)
             *out = NULL;
@@ -11653,7 +11664,7 @@ bool space_match_backend_ground_exact_exists_frontier(
          s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT)) {
         return false;
     }
-    CETTA_SCOPED_SHARED_TRANSITION(candidate_frontier_observation);
+    CETTA_SCOPED_SPACE_OBSERVE(candidate_frontier_observation, s);
     /* The exact index's account of non-exact rows by head proves the
      * frontier exact without reading it. */
     if (space_exact_frontier_certified(s, pattern)) {
@@ -11772,7 +11783,7 @@ bool space_match_candidates_expression_coordinates64(
         if (atom_expr_borrowed_view_init(&probe, coordinates, length))
             space_dense_settle_for_pattern(s, &probe.root);
     }
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, s);
     if (!s || !out || !count || s->overlay_base ||
         (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
          s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
@@ -11848,7 +11859,7 @@ bool space_match_candidates_ids64(Space *s, const TermUniverse *universe,
     if (space_has_proof_image(s, head) &&
         space_settle_proof_images(s) != SPACE_PROOF_IMAGE_READY) return false;
     space_dense_settle_for_head(s, head, len);
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, s);
     if (!s->match_backend.ops ||
         s->match_backend.ops->candidates != native_candidates)
         return false;
@@ -11861,7 +11872,7 @@ bool space_match_candidates_ids64(Space *s, const TermUniverse *universe,
          * representations, which the exact index does not hold. */
         if (numbers && he_numbers_promote())
             return false;
-        CETTA_SCOPED_SHARED_TRANSITION(exact_occurrences);
+        CETTA_SCOPED_SPACE_OBSERVE(exact_occurrences, s);
         if (!space_exact_frontier_certified_head(s, head, len))
             return false;
         *count = space_exact_index_rows_ids64(s, head, columns, len, out);
@@ -11980,7 +11991,7 @@ bool space_match_count_flat_linear64(
 static bool space_match_count_flat_linear_rows64(
     Space *s, Arena *scratch, Atom *pattern,
     uint64_t *count, CettaIndex *examined) {
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, s);
     if (count)
         *count = 0u;
     if (examined)
@@ -12032,7 +12043,7 @@ static bool space_match_count_flat_linear_view_rows64(
     Space *s, Arena *scratch, const CettaGsltTermViewV1 *view,
     CettaGsltTermViewOpenBindingObservationV1 open_bindings,
     uint64_t *count, CettaIndex *examined) {
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, s);
     if (count)
         *count = 0u;
     if (examined)
@@ -12144,7 +12155,7 @@ bool space_match_count_conjunction64(
     for (CettaExprIndex i = 0u; i < npatterns; i++)
         if (!space_prepare_proof_read(s, patterns[i])) return false;
     space_dense_settle_for_patterns(s, patterns, npatterns);
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, s);
     if (count)
         *count = 0u;
     if (!s || !scratch || !patterns || !count ||
@@ -12346,11 +12357,12 @@ static __attribute__((noinline)) void subst_query_append_dependency(
 /* A module space answers its own atoms, then each imported module's own
  * atoms, in import order (HE's ModuleSpace query). */
 void space_subst_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
+    /* The space and every module it imports are read at one cut. */
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, s);
     space_subst_query_member(s, a, query, out);
     uint32_t dependencies = space_dependency_count(s);
     if (dependencies == 0u)
         return;
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     CettaIndex view_base = space_length64(s);
     for (uint32_t d = 0u; d < dependencies; d++) {
         Space *dependency = space_dependency_at(s, d);
@@ -12363,7 +12375,7 @@ void space_subst_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
 
 static inline __attribute__((always_inline)) void space_subst_query_member(
         Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, s);
     if (s && s->overlay_base) {
         overlay_subst_query(s, a, query, out);
         goto finalize_shared_snapshot;
@@ -12502,8 +12514,7 @@ bool space_match_backend_supports_seeded_candidates(Space *s) {
        transition bracket; otherwise choose the exact binding snapshot path.
        They address one space's storage, so a composed space declines. */
     return s && !space_has_dependencies(s) &&
-           (!cetta_shared_transition_scope_active() ||
-            cetta_shared_transition_guard_held_by_current_thread()) &&
+           (!cetta_shared_transition_scope_active() || space_guard_held(s)) &&
            !s->overlay_base &&
            (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
             s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) &&
@@ -12515,7 +12526,7 @@ bool space_match_backend_match_atom_seeded(Space *s, CettaIndex atom_idx,
                                            Arena *a) {
     space_dense_settle_for_pattern(s, pattern);
                                                CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, s);
     if (!s || atom_idx >= s->native.len)
         return false;
     CettaFrameIdentity suffix = cetta_frame_identity_scope_fresh(&frame_identity_scope);
@@ -12527,7 +12538,7 @@ void space_query_conjunction(Space *s, Arena *a, Atom **patterns, CettaExprLen n
     for (CettaExprIndex i = 0u; i < npatterns; i++)
         if (!space_prepare_proof_read(s, patterns[i])) { binding_set_init(out); return; }
     space_dense_settle_for_patterns(s, patterns, npatterns);
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, s);
     space_linearize(s);
     /* Each conjunct of a module space reads the composed view. */
     if (s->match_backend.ops && s->match_backend.ops->query_conjunction &&
@@ -13232,7 +13243,7 @@ bool space_native_flat_chain_aggregate(
     space_settle_marks(space);
     /* A reader of rows: the patterns' relations give their facts back first. */
     space_dense_settle_for_patterns(space, patterns, (CettaExprLen)pattern_count);
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, space);
     /* ChainAggregation extends the grouped-message law to arbitrary finite
      * paths. Machine overflow still declines to ordinary enumeration. */
     if (!space || !patterns || !count_out || !sum_out ||

@@ -4,8 +4,8 @@
 #include "symbol.h"
 #include <stdlib.h>
 #include <string.h>
-#include "runtime/generated/json/lexical_v1.generated.h"
-#include "runtime/generated/json/predictive_v1.generated.h"
+#include "langdef/json/generated/lexical_v1.generated.h"
+#include "langdef/json/generated/predictive_v1.generated.h"
 
 typedef enum {
     JD_CP, JD_STRING, JD_NUMBER, JD_BOOL, JD_ARRAY, JD_OBJECT, JD_MEMBER, JD_SPAN,
@@ -456,7 +456,7 @@ typedef enum {
     JD_LOOK_OBJECT
 } JsonLookaheadV1;
 typedef enum { JD_START_ERROR, JD_START_SCALAR, JD_START_ARRAY, JD_START_OBJECT } JsonStartV1;
-#include "runtime/generated/json/predictive_v1.generated.inc"
+#include "langdef/json/generated/predictive_v1.generated.inc"
 
 typedef struct {
     JsonVectorV1 values;

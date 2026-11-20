@@ -1613,23 +1613,23 @@
 ; mode-specialized relation projections
 ; gslt-lowered-equation-v1 source-rewrite=0 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-apply-v1 target=mode relation=MetamathProvableV1 input=0 functional=relational
 (= (gslt:mode:MetamathProvableV1:0)
-   (let (quote (gslt:result:ProofAssertionDeclaredV1:0 (ProofAssertionV1 $v0 $v1 $v2 $v3 $v4))) (superpose (collapse (gslt:mode:ProofAssertionDeclaredV1:0)))
-   (let (quote (gslt:result:ProofAssertionBuildEnvironmentV1:100 $v5 $v7)) (superpose (collapse (gslt:mode:ProofAssertionBuildEnvironmentV1:100 $v0)))
-   (let (quote (gslt:result:ProofAssertionCheckEssentialsV1:101 $v6)) (superpose (collapse (gslt:mode:ProofAssertionCheckEssentialsV1:101 $v1 $v7)))
-   (let (quote gslt:result:ProofAssertionCheckDisjointsV1:11) (superpose (collapse (gslt:mode:ProofAssertionCheckDisjointsV1:11 $v4 $v7)))
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:110 $v8)) (once (gslt:fn:ProofSequenceInstantiateV1:110 $v3 $v7))
+   (let (cons gslt:result:ProofAssertionDeclaredV1:0 (cons (cons ProofAssertionV1 (cons $v0 (cons $v1 (cons $v2 (cons $v3 (cons $v4 ())))))) ())) (superpose (collapse (gslt:mode:ProofAssertionDeclaredV1:0)))
+   (let (cons gslt:result:ProofAssertionBuildEnvironmentV1:100 (cons $v5 (cons $v7 ()))) (superpose (collapse (gslt:mode:ProofAssertionBuildEnvironmentV1:100 $v0)))
+   (let (cons gslt:result:ProofAssertionCheckEssentialsV1:101 (cons $v6 ())) (superpose (collapse (gslt:mode:ProofAssertionCheckEssentialsV1:101 $v1 $v7)))
+   (let gslt:result:ProofAssertionCheckDisjointsV1:11 (superpose (collapse (gslt:mode:ProofAssertionCheckDisjointsV1:11 $v4 $v7)))
+   (let (cons gslt:result:ProofSequenceInstantiateV1:110 (cons $v8 ())) (once (gslt:fn:ProofSequenceInstantiateV1:110 $v3 $v7))
    (quote (gslt:result:MetamathProvableV1:0 (ProofSequenceConsV1 $v2 $v8)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=7 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-use-premise-v1 target=mode relation=MetamathProvableV1 input=0 functional=relational
 (= (gslt:mode:MetamathProvableV1:0)
-   (let (quote (gslt:result:MetamathProvableV1:0 $v0)) (superpose (collapse (gslt:mode:MetamathProvableV1:0)))
+   (let (cons gslt:result:MetamathProvableV1:0 (cons $v0 ())) (superpose (collapse (gslt:mode:MetamathProvableV1:0)))
    (quote (gslt:result:MetamathProvableV1:0 $v0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=1 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-build-environment-cons-v1 target=mode relation=ProofAssertionBuildEnvironmentV1 input=000 functional=relational
 (= (gslt:mode:ProofAssertionBuildEnvironmentV1:000)
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $v0)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote (gslt:result:MetamathProvableV1:0 (ProofSequenceConsV1 $v1 $v2))) (superpose (collapse (gslt:mode:MetamathProvableV1:0)))
-   (let (quote (gslt:result:ProofAssertionBuildEnvironmentV1:000 $v3 $v4 $v5)) (superpose (collapse (gslt:mode:ProofAssertionBuildEnvironmentV1:000)))
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $v0 ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let (cons gslt:result:MetamathProvableV1:0 (cons (cons ProofSequenceConsV1 (cons $v1 (cons $v2 ()))) ())) (superpose (collapse (gslt:mode:MetamathProvableV1:0)))
+   (let (cons gslt:result:ProofAssertionBuildEnvironmentV1:000 (cons $v3 (cons $v4 (cons $v5 ())))) (superpose (collapse (gslt:mode:ProofAssertionBuildEnvironmentV1:000)))
    (quote (gslt:result:ProofAssertionBuildEnvironmentV1:000 (ProofAssertionListConsV1 (ProofAssertionVariableV1 $v0 $v1) $v3) (ProofAssertionListConsV1 $v2 $v4) (ProofEnvironmentConsV1 $v0 $v2 $v5)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=2 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-build-environment-nil-v1 target=mode relation=ProofAssertionBuildEnvironmentV1 input=000 functional=relational
@@ -1638,11 +1638,11 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=3 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-check-disjoints-cons-v1 target=mode relation=ProofAssertionCheckDisjointsV1 input=00 functional=relational
 (= (gslt:mode:ProofAssertionCheckDisjointsV1:00)
-   (let (quote (gslt:result:ProofTokenDifferentV1:00 $v0 $v1)) (once (gslt:fn:ProofTokenDifferentV1:00))
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:010 $v3 $v4)) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $v0)))
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:010 $v3 $v5)) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $v1)))
+   (let (cons gslt:result:ProofTokenDifferentV1:00 (cons $v0 (cons $v1 ()))) (once (gslt:fn:ProofTokenDifferentV1:00))
+   (let (cons gslt:result:ProofEnvironmentLookupV1:010 (cons $v3 (cons $v4 ()))) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $v0)))
+   (let (cons gslt:result:ProofEnvironmentLookupV1:010 (cons $v3 (cons $v5 ()))) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $v1)))
    (let $_ (gslt:ProofSequenceSupportApartV1 (ProofSequenceSupportApartV1 $v4 $v5))
-   (let (quote (gslt:result:ProofAssertionCheckDisjointsV1:00 $v2 $v3)) (superpose (collapse (gslt:mode:ProofAssertionCheckDisjointsV1:00)))
+   (let (cons gslt:result:ProofAssertionCheckDisjointsV1:00 (cons $v2 (cons $v3 ()))) (superpose (collapse (gslt:mode:ProofAssertionCheckDisjointsV1:00)))
    (quote (gslt:result:ProofAssertionCheckDisjointsV1:00 (ProofAssertionListConsV1 (ProofAssertionDisjointV1 $v0 $v1) $v2) $v3))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=4 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-check-disjoints-nil-v1 target=mode relation=ProofAssertionCheckDisjointsV1 input=00 functional=relational
@@ -1650,25 +1650,23 @@
    (quote (gslt:result:ProofAssertionCheckDisjointsV1:00 (ProofAssertionListNilV1) $v0)))
 
 ; gslt-lowered-equation-v1 source-rewrite=3 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-check-disjoints-cons-v1 target=mode relation=ProofAssertionCheckDisjointsV1 input=11 functional=relational
-(= (gslt:mode:ProofAssertionCheckDisjointsV1:11 $__gslt_input_v1_0_0 $v3)
-   (let (quote (ProofAssertionListConsV1 (ProofAssertionDisjointV1 $v0 $v1) $v2)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ProofTokenDifferentV1:11) (once (gslt:fn:ProofTokenDifferentV1:11 $v0 $v1))
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:110 $v4)) (once (gslt:fn:ProofEnvironmentLookupV1:110 $v3 $v0))
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:110 $v5)) (once (gslt:fn:ProofEnvironmentLookupV1:110 $v3 $v1))
-   (let (quote gslt:result:ProofSequenceSupportApartV1:11) (superpose (collapse (gslt:mode:ProofSequenceSupportApartV1:11 $v4 $v5)))
-   (let (quote gslt:result:ProofAssertionCheckDisjointsV1:11) (superpose (collapse (gslt:mode:ProofAssertionCheckDisjointsV1:11 $v2 $v3)))
-   (quote gslt:result:ProofAssertionCheckDisjointsV1:11))))))))
+(= (gslt:mode:ProofAssertionCheckDisjointsV1:11 (cons ProofAssertionListConsV1 (cons (cons ProofAssertionDisjointV1 (cons $v0 (cons $v1 ()))) (cons $v2 ()))) $v3)
+   (let gslt:result:ProofTokenDifferentV1:11 (once (gslt:fn:ProofTokenDifferentV1:11 $v0 $v1))
+   (let (cons gslt:result:ProofEnvironmentLookupV1:110 (cons $v4 ())) (once (gslt:fn:ProofEnvironmentLookupV1:110 $v3 $v0))
+   (let (cons gslt:result:ProofEnvironmentLookupV1:110 (cons $v5 ())) (once (gslt:fn:ProofEnvironmentLookupV1:110 $v3 $v1))
+   (let gslt:result:ProofSequenceSupportApartV1:11 (superpose (collapse (gslt:mode:ProofSequenceSupportApartV1:11 $v4 $v5)))
+   (let gslt:result:ProofAssertionCheckDisjointsV1:11 (superpose (collapse (gslt:mode:ProofAssertionCheckDisjointsV1:11 $v2 $v3)))
+   (quote gslt:result:ProofAssertionCheckDisjointsV1:11)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=4 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-check-disjoints-nil-v1 target=mode relation=ProofAssertionCheckDisjointsV1 input=11 functional=relational
-(= (gslt:mode:ProofAssertionCheckDisjointsV1:11 $__gslt_input_v1_0_0 $v0)
-   (let (quote (ProofAssertionListNilV1)) $__gslt_input_v1_0_0
-   (quote gslt:result:ProofAssertionCheckDisjointsV1:11)))
+(= (gslt:mode:ProofAssertionCheckDisjointsV1:11 (cons ProofAssertionListNilV1 ()) $v0)
+   (quote gslt:result:ProofAssertionCheckDisjointsV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=5 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-check-essentials-cons-v1 target=mode relation=ProofAssertionCheckEssentialsV1 input=000 functional=relational
 (= (gslt:mode:ProofAssertionCheckEssentialsV1:000)
-   (let (quote (gslt:result:MetamathProvableV1:0 $v1)) (superpose (collapse (gslt:mode:MetamathProvableV1:0)))
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:001 $v0 $v4)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:001 $v1)))
-   (let (quote (gslt:result:ProofAssertionCheckEssentialsV1:000 $v2 $v3 $v4)) (superpose (collapse (gslt:mode:ProofAssertionCheckEssentialsV1:000)))
+   (let (cons gslt:result:MetamathProvableV1:0 (cons $v1 ())) (superpose (collapse (gslt:mode:MetamathProvableV1:0)))
+   (let (cons gslt:result:ProofSequenceInstantiateV1:001 (cons $v0 (cons $v4 ()))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:001 $v1)))
+   (let (cons gslt:result:ProofAssertionCheckEssentialsV1:000 (cons $v2 (cons $v3 (cons $v4 ())))) (superpose (collapse (gslt:mode:ProofAssertionCheckEssentialsV1:000)))
    (quote (gslt:result:ProofAssertionCheckEssentialsV1:000 (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $v0) $v2) (ProofAssertionListConsV1 $v1 $v3) $v4))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=6 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-check-essentials-nil-v1 target=mode relation=ProofAssertionCheckEssentialsV1 input=000 functional=relational
@@ -1676,98 +1674,83 @@
    (quote (gslt:result:ProofAssertionCheckEssentialsV1:000 (ProofAssertionListNilV1) (ProofAssertionListNilV1) $v0)))
 
 ; gslt-lowered-equation-v1 source-rewrite=5 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-check-essentials-cons-v1 target=mode relation=ProofAssertionCheckEssentialsV1 input=101 functional=relational
-(= (gslt:mode:ProofAssertionCheckEssentialsV1:101 $__gslt_input_v1_0_0 $v4)
-   (let (quote (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $v0) $v2)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:MetamathProvableV1:0 $v1)) (superpose (collapse (gslt:mode:MetamathProvableV1:0)))
-   (let (quote gslt:result:ProofSequenceInstantiateV1:111) (once (gslt:fn:ProofSequenceInstantiateV1:111 $v0 $v4 $v1))
-   (let (quote (gslt:result:ProofAssertionCheckEssentialsV1:101 $v3)) (superpose (collapse (gslt:mode:ProofAssertionCheckEssentialsV1:101 $v2 $v4)))
-   (quote (gslt:result:ProofAssertionCheckEssentialsV1:101 (ProofAssertionListConsV1 $v1 $v3))))))))
+(= (gslt:mode:ProofAssertionCheckEssentialsV1:101 (cons ProofAssertionListConsV1 (cons (cons ProofAssertionEssentialV1 (cons $v0 ())) (cons $v2 ()))) $v4)
+   (let (cons gslt:result:MetamathProvableV1:0 (cons $v1 ())) (superpose (collapse (gslt:mode:MetamathProvableV1:0)))
+   (let gslt:result:ProofSequenceInstantiateV1:111 (once (gslt:fn:ProofSequenceInstantiateV1:111 $v0 $v4 $v1))
+   (let (cons gslt:result:ProofAssertionCheckEssentialsV1:101 (cons $v3 ())) (superpose (collapse (gslt:mode:ProofAssertionCheckEssentialsV1:101 $v2 $v4)))
+   (quote (gslt:result:ProofAssertionCheckEssentialsV1:101 (ProofAssertionListConsV1 $v1 $v3)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=6 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-check-essentials-nil-v1 target=mode relation=ProofAssertionCheckEssentialsV1 input=101 functional=relational
-(= (gslt:mode:ProofAssertionCheckEssentialsV1:101 $__gslt_input_v1_0_0 $v0)
-   (let (quote (ProofAssertionListNilV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofAssertionCheckEssentialsV1:101 (ProofAssertionListNilV1)))))
+(= (gslt:mode:ProofAssertionCheckEssentialsV1:101 (cons ProofAssertionListNilV1 ()) $v0)
+   (quote (gslt:result:ProofAssertionCheckEssentialsV1:101 (ProofAssertionListNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=8 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-environment-lookup-compared-equal-v1 target=mode relation=ProofEnvironmentLookupComparedV1 input=11110 functional=semidet
-(= (gslt:fn:ProofEnvironmentLookupComparedV1:11110 $__gslt_input_v1_0_0 $v0 $v1 $v2)
-   (let (quote (ProofTokenEqualV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofEnvironmentLookupComparedV1:11110 $v0))))
+(= (gslt:fn:ProofEnvironmentLookupComparedV1:11110 (cons ProofTokenEqualV1 ()) $v0 $v1 $v2)
+   (quote (gslt:result:ProofEnvironmentLookupComparedV1:11110 $v0)))
 
 ; gslt-lowered-equation-v1 source-rewrite=9 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-environment-lookup-compared-unequal-v1 target=mode relation=ProofEnvironmentLookupComparedV1 input=11110 functional=semidet
-(= (gslt:fn:ProofEnvironmentLookupComparedV1:11110 $__gslt_input_v1_0_0 $v0 $v1 $v2)
-   (let (quote (ProofTokenUnequalV1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:110 $v3)) (gslt:fn:ProofEnvironmentLookupV1:110 $v1 $v2)
-   (quote (gslt:result:ProofEnvironmentLookupComparedV1:11110 $v3)))))
+(= (gslt:fn:ProofEnvironmentLookupComparedV1:11110 (cons ProofTokenUnequalV1 ()) $v0 $v1 $v2)
+   (let (cons gslt:result:ProofEnvironmentLookupV1:110 (cons $v3 ())) (gslt:fn:ProofEnvironmentLookupV1:110 $v1 $v2)
+   (quote (gslt:result:ProofEnvironmentLookupComparedV1:11110 $v3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=10 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-environment-lookup-cons-v1 target=mode relation=ProofEnvironmentLookupV1 input=000 functional=relational
 (= (gslt:mode:ProofEnvironmentLookupV1:000)
-   (let (quote (gslt:result:ProofTokenCompareV1:000 $v0 $v3 $v4)) (superpose (collapse (gslt:mode:ProofTokenCompareV1:000)))
-   (let (quote (gslt:result:ProofEnvironmentLookupComparedV1:10010 $v1 $v2 $v5)) (superpose (collapse (gslt:mode:ProofEnvironmentLookupComparedV1:10010 $v4 $v3)))
+   (let (cons gslt:result:ProofTokenCompareV1:000 (cons $v0 (cons $v3 (cons $v4 ())))) (superpose (collapse (gslt:mode:ProofTokenCompareV1:000)))
+   (let (cons gslt:result:ProofEnvironmentLookupComparedV1:10010 (cons $v1 (cons $v2 (cons $v5 ())))) (superpose (collapse (gslt:mode:ProofEnvironmentLookupComparedV1:10010 $v4 $v3)))
    (quote (gslt:result:ProofEnvironmentLookupV1:000 (ProofEnvironmentConsV1 $v0 $v1 $v2) $v3 $v5)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=10 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-environment-lookup-cons-v1 target=mode relation=ProofEnvironmentLookupV1 input=110 functional=semidet
-(= (gslt:fn:ProofEnvironmentLookupV1:110 $__gslt_input_v1_0_0 $v3)
-   (let (quote (ProofEnvironmentConsV1 $v0 $v1 $v2)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenCompareV1:110 $v4)) (gslt:fn:ProofTokenCompareV1:110 $v0 $v3)
-   (let (quote (gslt:result:ProofEnvironmentLookupComparedV1:11110 $v5)) (gslt:fn:ProofEnvironmentLookupComparedV1:11110 $v4 $v1 $v2 $v3)
-   (quote (gslt:result:ProofEnvironmentLookupV1:110 $v5))))))
+(= (gslt:fn:ProofEnvironmentLookupV1:110 (cons ProofEnvironmentConsV1 (cons $v0 (cons $v1 (cons $v2 ())))) $v3)
+   (let (cons gslt:result:ProofTokenCompareV1:110 (cons $v4 ())) (gslt:fn:ProofTokenCompareV1:110 $v0 $v3)
+   (let (cons gslt:result:ProofEnvironmentLookupComparedV1:11110 (cons $v5 ())) (gslt:fn:ProofEnvironmentLookupComparedV1:11110 $v4 $v1 $v2 $v3)
+   (quote (gslt:result:ProofEnvironmentLookupV1:110 $v5)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=11 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-append-cons-v1 target=mode relation=ProofSequenceAppendV1 input=111 functional=semidet
-(= (gslt:fn:ProofSequenceAppendV1:111 $__gslt_input_v1_0_0 $v2 $__gslt_input_v1_0_2)
-   (let (quote (ProofSequenceConsV1 $v0 $v1)) $__gslt_input_v1_0_0
-   (let (quote (ProofSequenceConsV1 $v0 $v3)) $__gslt_input_v1_0_2
-   (let (quote gslt:result:ProofSequenceAppendV1:111) (gslt:fn:ProofSequenceAppendV1:111 $v1 $v2 $v3)
-   (quote gslt:result:ProofSequenceAppendV1:111)))))
-
-; gslt-lowered-equation-v1 source-rewrite=12 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-append-nil-v1 target=mode relation=ProofSequenceAppendV1 input=111 functional=semidet
-(= (gslt:fn:ProofSequenceAppendV1:111 $__gslt_input_v1_0_0 $v0 $v0)
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_0
+(= (gslt:fn:ProofSequenceAppendV1:111 (cons ProofSequenceConsV1 (cons $v0 (cons $v1 ()))) $v2 (cons ProofSequenceConsV1 (cons $v0 (cons $v3 ()))))
+   (let gslt:result:ProofSequenceAppendV1:111 (gslt:fn:ProofSequenceAppendV1:111 $v1 $v2 $v3)
    (quote gslt:result:ProofSequenceAppendV1:111)))
 
+; gslt-lowered-equation-v1 source-rewrite=12 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-append-nil-v1 target=mode relation=ProofSequenceAppendV1 input=111 functional=semidet
+(= (gslt:fn:ProofSequenceAppendV1:111 (cons ProofSequenceNilV1 ()) $v0 $v0)
+   (quote gslt:result:ProofSequenceAppendV1:111))
+
 ; gslt-lowered-equation-v1 source-rewrite=11 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-append-cons-v1 target=mode relation=ProofSequenceAppendV1 input=110 functional=semidet
-(= (gslt:fn:ProofSequenceAppendV1:110 $__gslt_input_v1_0_0 $v2)
-   (let (quote (ProofSequenceConsV1 $v0 $v1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceAppendV1:110 $v3)) (gslt:fn:ProofSequenceAppendV1:110 $v1 $v2)
-   (quote (gslt:result:ProofSequenceAppendV1:110 (ProofSequenceConsV1 $v0 $v3))))))
+(= (gslt:fn:ProofSequenceAppendV1:110 (cons ProofSequenceConsV1 (cons $v0 (cons $v1 ()))) $v2)
+   (let (cons gslt:result:ProofSequenceAppendV1:110 (cons $v3 ())) (gslt:fn:ProofSequenceAppendV1:110 $v1 $v2)
+   (quote (gslt:result:ProofSequenceAppendV1:110 (ProofSequenceConsV1 $v0 $v3)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=12 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-append-nil-v1 target=mode relation=ProofSequenceAppendV1 input=110 functional=semidet
-(= (gslt:fn:ProofSequenceAppendV1:110 $__gslt_input_v1_0_0 $v0)
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofSequenceAppendV1:110 $v0))))
+(= (gslt:fn:ProofSequenceAppendV1:110 (cons ProofSequenceNilV1 ()) $v0)
+   (quote (gslt:result:ProofSequenceAppendV1:110 $v0)))
 
 ; gslt-lowered-equation-v1 source-rewrite=13 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-class-literal-v1 target=mode relation=ProofSequenceInstantiateClassV1 input=11111 functional=semidet
-(= (gslt:fn:ProofSequenceInstantiateClassV1:11111 $__gslt_input_v1_0_0 $v0 $v1 $v2 $__gslt_input_v1_0_4)
-   (let (quote (ProofTokenLiteralClassV1)) $__gslt_input_v1_0_0
-   (let (quote (ProofSequenceConsV1 $v0 $v3)) $__gslt_input_v1_0_4
-   (let (quote gslt:result:ProofSequenceInstantiateV1:111) (gslt:fn:ProofSequenceInstantiateV1:111 $v1 $v2 $v3)
-   (quote gslt:result:ProofSequenceInstantiateClassV1:11111)))))
+(= (gslt:fn:ProofSequenceInstantiateClassV1:11111 (cons ProofTokenLiteralClassV1 ()) $v0 $v1 $v2 (cons ProofSequenceConsV1 (cons $v0 (cons $v3 ()))))
+   (let gslt:result:ProofSequenceInstantiateV1:111 (gslt:fn:ProofSequenceInstantiateV1:111 $v1 $v2 $v3)
+   (quote gslt:result:ProofSequenceInstantiateClassV1:11111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=14 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-class-variable-v1 target=mode relation=ProofSequenceInstantiateClassV1 input=11111 functional=semidet
-(= (gslt:fn:ProofSequenceInstantiateClassV1:11111 $__gslt_input_v1_0_0 $v0 $v1 $v2 $v5)
-   (let (quote (ProofTokenVariableClassV1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:110 $v3)) (gslt:fn:ProofEnvironmentLookupV1:110 $v2 $v0)
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:110 $v4)) (gslt:fn:ProofSequenceInstantiateV1:110 $v1 $v2)
-   (let (quote gslt:result:ProofSequenceAppendV1:111) (gslt:fn:ProofSequenceAppendV1:111 $v3 $v4 $v5)
-   (quote gslt:result:ProofSequenceInstantiateClassV1:11111))))))
+(= (gslt:fn:ProofSequenceInstantiateClassV1:11111 (cons ProofTokenVariableClassV1 ()) $v0 $v1 $v2 $v5)
+   (let (cons gslt:result:ProofEnvironmentLookupV1:110 (cons $v3 ())) (gslt:fn:ProofEnvironmentLookupV1:110 $v2 $v0)
+   (let (cons gslt:result:ProofSequenceInstantiateV1:110 (cons $v4 ())) (gslt:fn:ProofSequenceInstantiateV1:110 $v1 $v2)
+   (let gslt:result:ProofSequenceAppendV1:111 (gslt:fn:ProofSequenceAppendV1:111 $v3 $v4 $v5)
+   (quote gslt:result:ProofSequenceInstantiateClassV1:11111)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=13 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-class-literal-v1 target=mode relation=ProofSequenceInstantiateClassV1 input=11110 functional=semidet
-(= (gslt:fn:ProofSequenceInstantiateClassV1:11110 $__gslt_input_v1_0_0 $v0 $v1 $v2)
-   (let (quote (ProofTokenLiteralClassV1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:110 $v3)) (gslt:fn:ProofSequenceInstantiateV1:110 $v1 $v2)
-   (quote (gslt:result:ProofSequenceInstantiateClassV1:11110 (ProofSequenceConsV1 $v0 $v3))))))
+(= (gslt:fn:ProofSequenceInstantiateClassV1:11110 (cons ProofTokenLiteralClassV1 ()) $v0 $v1 $v2)
+   (let (cons gslt:result:ProofSequenceInstantiateV1:110 (cons $v3 ())) (gslt:fn:ProofSequenceInstantiateV1:110 $v1 $v2)
+   (quote (gslt:result:ProofSequenceInstantiateClassV1:11110 (ProofSequenceConsV1 $v0 $v3)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=14 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-class-variable-v1 target=mode relation=ProofSequenceInstantiateClassV1 input=11110 functional=semidet
-(= (gslt:fn:ProofSequenceInstantiateClassV1:11110 $__gslt_input_v1_0_0 $v0 $v1 $v2)
-   (let (quote (ProofTokenVariableClassV1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:110 $v3)) (gslt:fn:ProofEnvironmentLookupV1:110 $v2 $v0)
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:110 $v4)) (gslt:fn:ProofSequenceInstantiateV1:110 $v1 $v2)
-   (let (quote (gslt:result:ProofSequenceAppendV1:110 $v5)) (gslt:fn:ProofSequenceAppendV1:110 $v3 $v4)
-   (quote (gslt:result:ProofSequenceInstantiateClassV1:11110 $v5)))))))
+(= (gslt:fn:ProofSequenceInstantiateClassV1:11110 (cons ProofTokenVariableClassV1 ()) $v0 $v1 $v2)
+   (let (cons gslt:result:ProofEnvironmentLookupV1:110 (cons $v3 ())) (gslt:fn:ProofEnvironmentLookupV1:110 $v2 $v0)
+   (let (cons gslt:result:ProofSequenceInstantiateV1:110 (cons $v4 ())) (gslt:fn:ProofSequenceInstantiateV1:110 $v1 $v2)
+   (let (cons gslt:result:ProofSequenceAppendV1:110 (cons $v5 ())) (gslt:fn:ProofSequenceAppendV1:110 $v3 $v4)
+   (quote (gslt:result:ProofSequenceInstantiateClassV1:11110 $v5))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=15 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-cons-v1 target=mode relation=ProofSequenceInstantiateV1 input=000 functional=relational
 (= (gslt:mode:ProofSequenceInstantiateV1:000)
-   (let (quote (gslt:result:ProofTokenClassV1:00 $v0 $v3)) (once (gslt:fn:ProofTokenClassV1:00))
-   (let (quote (gslt:result:ProofSequenceInstantiateClassV1:11000 $v1 $v2 $v4)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateClassV1:11000 $v3 $v0)))
+   (let (cons gslt:result:ProofTokenClassV1:00 (cons $v0 (cons $v3 ()))) (once (gslt:fn:ProofTokenClassV1:00))
+   (let (cons gslt:result:ProofSequenceInstantiateClassV1:11000 (cons $v1 (cons $v2 (cons $v4 ())))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateClassV1:11000 $v3 $v0)))
    (quote (gslt:result:ProofSequenceInstantiateV1:000 (ProofSequenceConsV1 $v0 $v1) $v2 $v4)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=16 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-nil-v1 target=mode relation=ProofSequenceInstantiateV1 input=000 functional=relational
@@ -1775,82 +1758,72 @@
    (quote (gslt:result:ProofSequenceInstantiateV1:000 (ProofSequenceNilV1) $v0 (ProofSequenceNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=15 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-cons-v1 target=mode relation=ProofSequenceInstantiateV1 input=111 functional=semidet
-(= (gslt:fn:ProofSequenceInstantiateV1:111 $__gslt_input_v1_0_0 $v2 $v4)
-   (let (quote (ProofSequenceConsV1 $v0 $v1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenClassV1:10 $v3)) (gslt:fn:ProofTokenClassV1:10 $v0)
-   (let (quote gslt:result:ProofSequenceInstantiateClassV1:11111) (gslt:fn:ProofSequenceInstantiateClassV1:11111 $v3 $v0 $v1 $v2 $v4)
-   (quote gslt:result:ProofSequenceInstantiateV1:111)))))
-
-; gslt-lowered-equation-v1 source-rewrite=16 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-nil-v1 target=mode relation=ProofSequenceInstantiateV1 input=111 functional=semidet
-(= (gslt:fn:ProofSequenceInstantiateV1:111 $__gslt_input_v1_0_0 $v0 $__gslt_input_v1_0_2)
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_0
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_2
+(= (gslt:fn:ProofSequenceInstantiateV1:111 (cons ProofSequenceConsV1 (cons $v0 (cons $v1 ()))) $v2 $v4)
+   (let (cons gslt:result:ProofTokenClassV1:10 (cons $v3 ())) (gslt:fn:ProofTokenClassV1:10 $v0)
+   (let gslt:result:ProofSequenceInstantiateClassV1:11111 (gslt:fn:ProofSequenceInstantiateClassV1:11111 $v3 $v0 $v1 $v2 $v4)
    (quote gslt:result:ProofSequenceInstantiateV1:111))))
 
+; gslt-lowered-equation-v1 source-rewrite=16 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-nil-v1 target=mode relation=ProofSequenceInstantiateV1 input=111 functional=semidet
+(= (gslt:fn:ProofSequenceInstantiateV1:111 (cons ProofSequenceNilV1 ()) $v0 (cons ProofSequenceNilV1 ()))
+   (quote gslt:result:ProofSequenceInstantiateV1:111))
+
 ; gslt-lowered-equation-v1 source-rewrite=15 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-cons-v1 target=mode relation=ProofSequenceInstantiateV1 input=110 functional=semidet
-(= (gslt:fn:ProofSequenceInstantiateV1:110 $__gslt_input_v1_0_0 $v2)
-   (let (quote (ProofSequenceConsV1 $v0 $v1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenClassV1:10 $v3)) (gslt:fn:ProofTokenClassV1:10 $v0)
-   (let (quote (gslt:result:ProofSequenceInstantiateClassV1:11110 $v4)) (gslt:fn:ProofSequenceInstantiateClassV1:11110 $v3 $v0 $v1 $v2)
-   (quote (gslt:result:ProofSequenceInstantiateV1:110 $v4))))))
+(= (gslt:fn:ProofSequenceInstantiateV1:110 (cons ProofSequenceConsV1 (cons $v0 (cons $v1 ()))) $v2)
+   (let (cons gslt:result:ProofTokenClassV1:10 (cons $v3 ())) (gslt:fn:ProofTokenClassV1:10 $v0)
+   (let (cons gslt:result:ProofSequenceInstantiateClassV1:11110 (cons $v4 ())) (gslt:fn:ProofSequenceInstantiateClassV1:11110 $v3 $v0 $v1 $v2)
+   (quote (gslt:result:ProofSequenceInstantiateV1:110 $v4)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=16 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-nil-v1 target=mode relation=ProofSequenceInstantiateV1 input=110 functional=semidet
-(= (gslt:fn:ProofSequenceInstantiateV1:110 $__gslt_input_v1_0_0 $v0)
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofSequenceInstantiateV1:110 (ProofSequenceNilV1)))))
+(= (gslt:fn:ProofSequenceInstantiateV1:110 (cons ProofSequenceNilV1 ()) $v0)
+   (quote (gslt:result:ProofSequenceInstantiateV1:110 (ProofSequenceNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=17 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-support-apart-cons-v1 target=mode relation=ProofSequenceSupportApartV1 input=11 functional=relational
-(= (gslt:mode:ProofSequenceSupportApartV1:11 $__gslt_input_v1_0_0 $v2)
-   (let (quote (ProofSequenceConsV1 $v0 $v1)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ProofTokenAgainstSequenceV1:11) (superpose (collapse (gslt:mode:ProofTokenAgainstSequenceV1:11 $v0 $v2)))
-   (let (quote gslt:result:ProofSequenceSupportApartV1:11) (superpose (collapse (gslt:mode:ProofSequenceSupportApartV1:11 $v1 $v2)))
-   (quote gslt:result:ProofSequenceSupportApartV1:11)))))
+(= (gslt:mode:ProofSequenceSupportApartV1:11 (cons ProofSequenceConsV1 (cons $v0 (cons $v1 ()))) $v2)
+   (let gslt:result:ProofTokenAgainstSequenceV1:11 (superpose (collapse (gslt:mode:ProofTokenAgainstSequenceV1:11 $v0 $v2)))
+   (let gslt:result:ProofSequenceSupportApartV1:11 (superpose (collapse (gslt:mode:ProofSequenceSupportApartV1:11 $v1 $v2)))
+   (quote gslt:result:ProofSequenceSupportApartV1:11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=18 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-support-apart-nil-v1 target=mode relation=ProofSequenceSupportApartV1 input=11 functional=relational
-(= (gslt:mode:ProofSequenceSupportApartV1:11 $__gslt_input_v1_0_0 $v0)
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_0
-   (quote gslt:result:ProofSequenceSupportApartV1:11)))
+(= (gslt:mode:ProofSequenceSupportApartV1:11 (cons ProofSequenceNilV1 ()) $v0)
+   (quote gslt:result:ProofSequenceSupportApartV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=19 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-token-against-sequence-cons-v1 target=mode relation=ProofTokenAgainstSequenceV1 input=11 functional=relational
-(= (gslt:mode:ProofTokenAgainstSequenceV1:11 $v0 $__gslt_input_v1_0_1)
-   (let (quote (ProofSequenceConsV1 $v1 $v2)) $__gslt_input_v1_0_1
-   (let (quote gslt:result:ProofTokenPairAllowedV1:11) (superpose (collapse (gslt:mode:ProofTokenPairAllowedV1:11 $v0 $v1)))
-   (let (quote gslt:result:ProofTokenAgainstSequenceV1:11) (superpose (collapse (gslt:mode:ProofTokenAgainstSequenceV1:11 $v0 $v2)))
-   (quote gslt:result:ProofTokenAgainstSequenceV1:11)))))
+(= (gslt:mode:ProofTokenAgainstSequenceV1:11 $v0 (cons ProofSequenceConsV1 (cons $v1 (cons $v2 ()))))
+   (let gslt:result:ProofTokenPairAllowedV1:11 (superpose (collapse (gslt:mode:ProofTokenPairAllowedV1:11 $v0 $v1)))
+   (let gslt:result:ProofTokenAgainstSequenceV1:11 (superpose (collapse (gslt:mode:ProofTokenAgainstSequenceV1:11 $v0 $v2)))
+   (quote gslt:result:ProofTokenAgainstSequenceV1:11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=20 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-token-against-sequence-nil-v1 target=mode relation=ProofTokenAgainstSequenceV1 input=11 functional=relational
-(= (gslt:mode:ProofTokenAgainstSequenceV1:11 $v0 $__gslt_input_v1_0_1)
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_1
-   (quote gslt:result:ProofTokenAgainstSequenceV1:11)))
+(= (gslt:mode:ProofTokenAgainstSequenceV1:11 $v0 (cons ProofSequenceNilV1 ()))
+   (quote gslt:result:ProofTokenAgainstSequenceV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=21 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-token-pair-apart-v1 target=mode relation=ProofTokenPairAllowedV1 input=11 functional=relational
 (= (gslt:mode:ProofTokenPairAllowedV1:11 $v0 $v1)
-   (let (quote gslt:result:ProofTokenVariableV1:1) (once (gslt:fn:ProofTokenVariableV1:1 $v0))
-   (let (quote gslt:result:ProofTokenVariableV1:1) (once (gslt:fn:ProofTokenVariableV1:1 $v1))
-   (let (quote gslt:result:ProofTokenApartV1:11) (superpose (collapse (gslt:mode:ProofTokenApartV1:11 $v0 $v1)))
+   (let gslt:result:ProofTokenVariableV1:1 (once (gslt:fn:ProofTokenVariableV1:1 $v0))
+   (let gslt:result:ProofTokenVariableV1:1 (once (gslt:fn:ProofTokenVariableV1:1 $v1))
+   (let gslt:result:ProofTokenApartV1:11 (superpose (collapse (gslt:mode:ProofTokenApartV1:11 $v0 $v1)))
    (quote gslt:result:ProofTokenPairAllowedV1:11)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=22 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-token-pair-left-literal-v1 target=mode relation=ProofTokenPairAllowedV1 input=11 functional=relational
 (= (gslt:mode:ProofTokenPairAllowedV1:11 $v0 $v1)
-   (let (quote gslt:result:ProofTokenLiteralV1:1) (once (gslt:fn:ProofTokenLiteralV1:1 $v0))
+   (let gslt:result:ProofTokenLiteralV1:1 (once (gslt:fn:ProofTokenLiteralV1:1 $v0))
    (quote gslt:result:ProofTokenPairAllowedV1:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=23 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-token-pair-right-literal-v1 target=mode relation=ProofTokenPairAllowedV1 input=11 functional=relational
 (= (gslt:mode:ProofTokenPairAllowedV1:11 $v0 $v1)
-   (let (quote gslt:result:ProofTokenLiteralV1:1) (once (gslt:fn:ProofTokenLiteralV1:1 $v1))
+   (let gslt:result:ProofTokenLiteralV1:1 (once (gslt:fn:ProofTokenLiteralV1:1 $v1))
    (quote gslt:result:ProofTokenPairAllowedV1:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=24 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-context-member-v1 target=mode relation=ProofTraceContextMemberV1 input=11 functional=semidet
-(= (gslt:fn:ProofTraceContextMemberV1:11 $__gslt_input_v1_0_0 $formula)
-   (let (quote (ProofTraceContextConsV1 $head $rest)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceCompareV1:110 $comparison)) (gslt:fn:ProofSequenceCompareV1:110 $head $formula)
-   (let (quote gslt:result:ProofTraceContextMemberComparedV1:111) (gslt:fn:ProofTraceContextMemberComparedV1:111 $comparison $rest $formula)
-   (quote gslt:result:ProofTraceContextMemberV1:11)))))
+(= (gslt:fn:ProofTraceContextMemberV1:11 (cons ProofTraceContextConsV1 (cons $head (cons $rest ()))) $formula)
+   (let (cons gslt:result:ProofSequenceCompareV1:110 (cons $comparison ())) (gslt:fn:ProofSequenceCompareV1:110 $head $formula)
+   (let gslt:result:ProofTraceContextMemberComparedV1:111 (gslt:fn:ProofTraceContextMemberComparedV1:111 $comparison $rest $formula)
+   (quote gslt:result:ProofTraceContextMemberV1:11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=24 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-context-member-v1 target=mode relation=ProofTraceContextMemberV1 input=01 functional=relational
 (= (gslt:mode:ProofTraceContextMemberV1:01 $formula)
-   (let (quote (gslt:result:ProofSequenceCompareV1:010 $head $comparison)) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:010 $formula)))
-   (let (quote (gslt:result:ProofTraceContextMemberComparedV1:101 $rest)) (superpose (collapse (gslt:mode:ProofTraceContextMemberComparedV1:101 $comparison $formula)))
+   (let (cons gslt:result:ProofSequenceCompareV1:010 (cons $head (cons $comparison ()))) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:010 $formula)))
+   (let (cons gslt:result:ProofTraceContextMemberComparedV1:101 (cons $rest ())) (superpose (collapse (gslt:mode:ProofTraceContextMemberComparedV1:101 $comparison $formula)))
    (quote (gslt:result:ProofTraceContextMemberV1:01 (ProofTraceContextConsV1 $head $rest))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=25 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-context-member-compared-equal-v1 target=mode relation=ProofTraceContextMemberComparedV1 input=111 functional=semidet
@@ -1859,7 +1832,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=26 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-context-member-compared-different-v1 target=mode relation=ProofTraceContextMemberComparedV1 input=111 functional=semidet
 (= (gslt:fn:ProofTraceContextMemberComparedV1:111 ProofSequenceDifferentV1 $rest $formula)
-   (let (quote gslt:result:ProofTraceContextMemberV1:11) (gslt:fn:ProofTraceContextMemberV1:11 $rest $formula)
+   (let gslt:result:ProofTraceContextMemberV1:11 (gslt:fn:ProofTraceContextMemberV1:11 $rest $formula)
    (quote gslt:result:ProofTraceContextMemberComparedV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=25 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-context-member-compared-equal-v1 target=mode relation=ProofTraceContextMemberComparedV1 input=101 functional=relational
@@ -1868,115 +1841,92 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=26 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-context-member-compared-different-v1 target=mode relation=ProofTraceContextMemberComparedV1 input=101 functional=relational
 (= (gslt:mode:ProofTraceContextMemberComparedV1:101 ProofSequenceDifferentV1 $formula)
-   (let (quote (gslt:result:ProofTraceContextMemberV1:01 $rest)) (superpose (collapse (gslt:mode:ProofTraceContextMemberV1:01 $formula)))
+   (let (cons gslt:result:ProofTraceContextMemberV1:01 (cons $rest ())) (superpose (collapse (gslt:mode:ProofTraceContextMemberV1:01 $formula)))
    (quote (gslt:result:ProofTraceContextMemberComparedV1:101 $rest))))
 
 ; gslt-lowered-equation-v1 source-rewrite=27 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-project-nil-v1 target=mode relation=ProofTraceFrameProjectV1 input=111 functional=semidet
-(= (gslt:fn:ProofTraceFrameProjectV1:111 ProofTraceFrameNilV1 $__gslt_input_v1_0_1 $__gslt_input_v1_0_2)
-   (let (quote (ProofAssertionListNilV1)) $__gslt_input_v1_0_1
-   (let (quote (ProofAssertionListNilV1)) $__gslt_input_v1_0_2
-   (quote gslt:result:ProofTraceFrameProjectV1:111))))
+(= (gslt:fn:ProofTraceFrameProjectV1:111 ProofTraceFrameNilV1 (cons ProofAssertionListNilV1 ()) (cons ProofAssertionListNilV1 ()))
+   (quote gslt:result:ProofTraceFrameProjectV1:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=28 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-project-variable-v1 target=mode relation=ProofTraceFrameProjectV1 input=111 functional=semidet
-(= (gslt:fn:ProofTraceFrameProjectV1:111 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1 $essentials)
-   (let (quote (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 $variable $typecode) $rest)) $__gslt_input_v1_0_0
-   (let (quote (ProofAssertionListConsV1 (ProofAssertionVariableV1 $variable $typecode) $variables)) $__gslt_input_v1_0_1
-   (let (quote gslt:result:ProofTraceFrameProjectV1:111) (gslt:fn:ProofTraceFrameProjectV1:111 $rest $variables $essentials)
-   (quote gslt:result:ProofTraceFrameProjectV1:111)))))
+(= (gslt:fn:ProofTraceFrameProjectV1:111 (cons ProofTraceFrameConsV1 (cons (cons ProofTraceFrameVariableV1 (cons $variable (cons $typecode ()))) (cons $rest ()))) (cons ProofAssertionListConsV1 (cons (cons ProofAssertionVariableV1 (cons $variable (cons $typecode ()))) (cons $variables ()))) $essentials)
+   (let gslt:result:ProofTraceFrameProjectV1:111 (gslt:fn:ProofTraceFrameProjectV1:111 $rest $variables $essentials)
+   (quote gslt:result:ProofTraceFrameProjectV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=29 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-project-essential-v1 target=mode relation=ProofTraceFrameProjectV1 input=111 functional=semidet
-(= (gslt:fn:ProofTraceFrameProjectV1:111 $__gslt_input_v1_0_0 $variables $__gslt_input_v1_0_2)
-   (let (quote (ProofTraceFrameConsV1 (ProofTraceFrameEssentialV1 $template) $rest)) $__gslt_input_v1_0_0
-   (let (quote (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $template) $essentials)) $__gslt_input_v1_0_2
-   (let (quote gslt:result:ProofTraceFrameProjectV1:111) (gslt:fn:ProofTraceFrameProjectV1:111 $rest $variables $essentials)
-   (quote gslt:result:ProofTraceFrameProjectV1:111)))))
+(= (gslt:fn:ProofTraceFrameProjectV1:111 (cons ProofTraceFrameConsV1 (cons (cons ProofTraceFrameEssentialV1 (cons $template ())) (cons $rest ()))) $variables (cons ProofAssertionListConsV1 (cons (cons ProofAssertionEssentialV1 (cons $template ())) (cons $essentials ()))))
+   (let gslt:result:ProofTraceFrameProjectV1:111 (gslt:fn:ProofTraceFrameProjectV1:111 $rest $variables $essentials)
+   (quote gslt:result:ProofTraceFrameProjectV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=27 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-project-nil-v1 target=mode relation=ProofTraceFrameProjectV1 input=011 functional=relational
-(= (gslt:mode:ProofTraceFrameProjectV1:011 $__gslt_input_v1_0_1 $__gslt_input_v1_0_2)
-   (let (quote (ProofAssertionListNilV1)) $__gslt_input_v1_0_1
-   (let (quote (ProofAssertionListNilV1)) $__gslt_input_v1_0_2
-   (quote (gslt:result:ProofTraceFrameProjectV1:011 ProofTraceFrameNilV1)))))
+(= (gslt:mode:ProofTraceFrameProjectV1:011 (cons ProofAssertionListNilV1 ()) (cons ProofAssertionListNilV1 ()))
+   (quote (gslt:result:ProofTraceFrameProjectV1:011 ProofTraceFrameNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=28 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-project-variable-v1 target=mode relation=ProofTraceFrameProjectV1 input=011 functional=relational
-(= (gslt:mode:ProofTraceFrameProjectV1:011 $__gslt_input_v1_0_1 $essentials)
-   (let (quote (ProofAssertionListConsV1 (ProofAssertionVariableV1 $variable $typecode) $variables)) $__gslt_input_v1_0_1
-   (let (quote (ProofTraceFrameProjectV1 $rest $variables $essentials)) (gslt:ProofTraceFrameProjectV1 (ProofTraceFrameProjectV1 $rest $variables $essentials))
-   (quote (gslt:result:ProofTraceFrameProjectV1:011 (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 $variable $typecode) $rest))))))
+(= (gslt:mode:ProofTraceFrameProjectV1:011 (cons ProofAssertionListConsV1 (cons (cons ProofAssertionVariableV1 (cons $variable (cons $typecode ()))) (cons $variables ()))) $essentials)
+   (let (cons ProofTraceFrameProjectV1 (cons $rest (cons $variables (cons $essentials ())))) (gslt:ProofTraceFrameProjectV1 (ProofTraceFrameProjectV1 $rest $variables $essentials))
+   (quote (gslt:result:ProofTraceFrameProjectV1:011 (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 $variable $typecode) $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=29 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-project-essential-v1 target=mode relation=ProofTraceFrameProjectV1 input=011 functional=relational
-(= (gslt:mode:ProofTraceFrameProjectV1:011 $variables $__gslt_input_v1_0_2)
-   (let (quote (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $template) $essentials)) $__gslt_input_v1_0_2
-   (let (quote (ProofTraceFrameProjectV1 $rest $variables $essentials)) (gslt:ProofTraceFrameProjectV1 (ProofTraceFrameProjectV1 $rest $variables $essentials))
-   (quote (gslt:result:ProofTraceFrameProjectV1:011 (ProofTraceFrameConsV1 (ProofTraceFrameEssentialV1 $template) $rest))))))
+(= (gslt:mode:ProofTraceFrameProjectV1:011 $variables (cons ProofAssertionListConsV1 (cons (cons ProofAssertionEssentialV1 (cons $template ())) (cons $essentials ()))))
+   (let (cons ProofTraceFrameProjectV1 (cons $rest (cons $variables (cons $essentials ())))) (gslt:ProofTraceFrameProjectV1 (ProofTraceFrameProjectV1 $rest $variables $essentials))
+   (quote (gslt:result:ProofTraceFrameProjectV1:011 (ProofTraceFrameConsV1 (ProofTraceFrameEssentialV1 $template) $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=33 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-result-nil-v1 target=mode relation=ProofTraceFrameApplyResultV1 input=110 functional=semidet
 (= (gslt:fn:ProofTraceFrameApplyResultV1:110 ProofTraceFrameNilV1 $stack)
    (quote (gslt:result:ProofTraceFrameApplyResultV1:110 (ProofTraceFrameAppliedV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1) $stack))))
 
 ; gslt-lowered-equation-v1 source-rewrite=34 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-result-variable-v1 target=mode relation=ProofTraceFrameApplyResultV1 input=110 functional=semidet
-(= (gslt:fn:ProofTraceFrameApplyResultV1:110 $__gslt_input_v1_0_0 $stack)
-   (let (quote (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 $variable $typecode) $rest)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceFrameApplyResultV1:110 $tail-result)) (gslt:fn:ProofTraceFrameApplyResultV1:110 $rest $stack)
-   (let (quote (gslt:result:ProofTraceFrameApplyVariableResultV1:110 $result)) (gslt:fn:ProofTraceFrameApplyVariableResultV1:110 $typecode $tail-result)
-   (quote (gslt:result:ProofTraceFrameApplyResultV1:110 $result))))))
+(= (gslt:fn:ProofTraceFrameApplyResultV1:110 (cons ProofTraceFrameConsV1 (cons (cons ProofTraceFrameVariableV1 (cons $variable (cons $typecode ()))) (cons $rest ()))) $stack)
+   (let (cons gslt:result:ProofTraceFrameApplyResultV1:110 (cons $tail-result ())) (gslt:fn:ProofTraceFrameApplyResultV1:110 $rest $stack)
+   (let (cons gslt:result:ProofTraceFrameApplyVariableResultV1:110 (cons $result ())) (gslt:fn:ProofTraceFrameApplyVariableResultV1:110 $typecode $tail-result)
+   (quote (gslt:result:ProofTraceFrameApplyResultV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=35 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-result-essential-v1 target=mode relation=ProofTraceFrameApplyResultV1 input=110 functional=semidet
-(= (gslt:fn:ProofTraceFrameApplyResultV1:110 $__gslt_input_v1_0_0 $stack)
-   (let (quote (ProofTraceFrameConsV1 (ProofTraceFrameEssentialV1 $template) $rest)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceFrameApplyResultV1:110 $tail-result)) (gslt:fn:ProofTraceFrameApplyResultV1:110 $rest $stack)
-   (let (quote (gslt:result:ProofTraceFrameApplyEssentialResultV1:10 $result)) (gslt:fn:ProofTraceFrameApplyEssentialResultV1:10 $tail-result)
-   (quote (gslt:result:ProofTraceFrameApplyResultV1:110 $result))))))
+(= (gslt:fn:ProofTraceFrameApplyResultV1:110 (cons ProofTraceFrameConsV1 (cons (cons ProofTraceFrameEssentialV1 (cons $template ())) (cons $rest ()))) $stack)
+   (let (cons gslt:result:ProofTraceFrameApplyResultV1:110 (cons $tail-result ())) (gslt:fn:ProofTraceFrameApplyResultV1:110 $rest $stack)
+   (let (cons gslt:result:ProofTraceFrameApplyEssentialResultV1:10 (cons $result ())) (gslt:fn:ProofTraceFrameApplyEssentialResultV1:10 $tail-result)
+   (quote (gslt:result:ProofTraceFrameApplyResultV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=36 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-essential-applied-v1 target=mode relation=ProofTraceFrameApplyEssentialResultV1 input=10 functional=semidet
-(= (gslt:fn:ProofTraceFrameApplyEssentialResultV1:10 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameAppliedV1 $images $actuals (ProofTraceStackConsV1 $actual $output))) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceFrameApplyEssentialResultV1:10 (ProofTraceFrameAppliedV1 $images (ProofAssertionListConsV1 $actual $actuals) $output)))))
+(= (gslt:fn:ProofTraceFrameApplyEssentialResultV1:10 (cons ProofTraceFrameAppliedV1 (cons $images (cons $actuals (cons (cons ProofTraceStackConsV1 (cons $actual (cons $output ()))) ())))))
+   (quote (gslt:result:ProofTraceFrameApplyEssentialResultV1:10 (ProofTraceFrameAppliedV1 $images (ProofAssertionListConsV1 $actual $actuals) $output))))
 
 ; gslt-lowered-equation-v1 source-rewrite=37 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-essential-refused-v1 target=mode relation=ProofTraceFrameApplyEssentialResultV1 input=10 functional=semidet
-(= (gslt:fn:ProofTraceFrameApplyEssentialResultV1:10 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRealizeRefusedV1 $reason)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceFrameApplyEssentialResultV1:10 (ProofTraceRealizeRefusedV1 $reason)))))
+(= (gslt:fn:ProofTraceFrameApplyEssentialResultV1:10 (cons ProofTraceRealizeRefusedV1 (cons $reason ())))
+   (quote (gslt:result:ProofTraceFrameApplyEssentialResultV1:10 (ProofTraceRealizeRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=38 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-variable-applied-v1 target=mode relation=ProofTraceFrameApplyVariableResultV1 input=110 functional=semidet
-(= (gslt:fn:ProofTraceFrameApplyVariableResultV1:110 $expected-typecode $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceFrameAppliedV1 $images $actuals (ProofTraceStackConsV1 (ProofSequenceConsV1 $actual-typecode $image) $output))) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:ProofTokenCompareV1:110 $comparison)) (gslt:fn:ProofTokenCompareV1:110 $expected-typecode $actual-typecode)
-   (let (quote (gslt:result:ProofTraceFrameApplyVariableComparedV1:11111110 $result)) (gslt:fn:ProofTraceFrameApplyVariableComparedV1:11111110 $comparison $expected-typecode $actual-typecode $image $images $actuals $output)
-   (quote (gslt:result:ProofTraceFrameApplyVariableResultV1:110 $result))))))
+(= (gslt:fn:ProofTraceFrameApplyVariableResultV1:110 $expected-typecode (cons ProofTraceFrameAppliedV1 (cons $images (cons $actuals (cons (cons ProofTraceStackConsV1 (cons (cons ProofSequenceConsV1 (cons $actual-typecode (cons $image ()))) (cons $output ()))) ())))))
+   (let (cons gslt:result:ProofTokenCompareV1:110 (cons $comparison ())) (gslt:fn:ProofTokenCompareV1:110 $expected-typecode $actual-typecode)
+   (let (cons gslt:result:ProofTraceFrameApplyVariableComparedV1:11111110 (cons $result ())) (gslt:fn:ProofTraceFrameApplyVariableComparedV1:11111110 $comparison $expected-typecode $actual-typecode $image $images $actuals $output)
+   (quote (gslt:result:ProofTraceFrameApplyVariableResultV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=39 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-variable-missing-typecode-v1 target=mode relation=ProofTraceFrameApplyVariableResultV1 input=110 functional=semidet
-(= (gslt:fn:ProofTraceFrameApplyVariableResultV1:110 $expected-typecode $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceFrameAppliedV1 $images $actuals (ProofTraceStackConsV1 (ProofSequenceNilV1) $output))) $__gslt_input_v1_0_1
-   (quote (gslt:result:ProofTraceFrameApplyVariableResultV1:110 (ProofTraceRealizeRefusedV1 (ProofTraceRefusedTypecodeMismatchV1 $expected-typecode ProofTraceMissingTypecodeV1))))))
+(= (gslt:fn:ProofTraceFrameApplyVariableResultV1:110 $expected-typecode (cons ProofTraceFrameAppliedV1 (cons $images (cons $actuals (cons (cons ProofTraceStackConsV1 (cons (cons ProofSequenceNilV1 ()) (cons $output ()))) ())))))
+   (quote (gslt:result:ProofTraceFrameApplyVariableResultV1:110 (ProofTraceRealizeRefusedV1 (ProofTraceRefusedTypecodeMismatchV1 $expected-typecode ProofTraceMissingTypecodeV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=40 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-variable-refused-v1 target=mode relation=ProofTraceFrameApplyVariableResultV1 input=110 functional=semidet
-(= (gslt:fn:ProofTraceFrameApplyVariableResultV1:110 $expected-typecode $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceRealizeRefusedV1 $reason)) $__gslt_input_v1_0_1
-   (quote (gslt:result:ProofTraceFrameApplyVariableResultV1:110 (ProofTraceRealizeRefusedV1 $reason)))))
+(= (gslt:fn:ProofTraceFrameApplyVariableResultV1:110 $expected-typecode (cons ProofTraceRealizeRefusedV1 (cons $reason ())))
+   (quote (gslt:result:ProofTraceFrameApplyVariableResultV1:110 (ProofTraceRealizeRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=41 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-variable-equal-v1 target=mode relation=ProofTraceFrameApplyVariableComparedV1 input=11111110 functional=semidet
-(= (gslt:fn:ProofTraceFrameApplyVariableComparedV1:11111110 $__gslt_input_v1_0_0 $expected-typecode $actual-typecode $image $images $actuals $output)
-   (let (quote (ProofTokenEqualV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceFrameApplyVariableComparedV1:11111110 (ProofTraceFrameAppliedV1 (ProofAssertionListConsV1 $image $images) $actuals $output)))))
+(= (gslt:fn:ProofTraceFrameApplyVariableComparedV1:11111110 (cons ProofTokenEqualV1 ()) $expected-typecode $actual-typecode $image $images $actuals $output)
+   (quote (gslt:result:ProofTraceFrameApplyVariableComparedV1:11111110 (ProofTraceFrameAppliedV1 (ProofAssertionListConsV1 $image $images) $actuals $output))))
 
 ; gslt-lowered-equation-v1 source-rewrite=42 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-variable-different-v1 target=mode relation=ProofTraceFrameApplyVariableComparedV1 input=11111110 functional=semidet
-(= (gslt:fn:ProofTraceFrameApplyVariableComparedV1:11111110 $__gslt_input_v1_0_0 $expected-typecode $actual-typecode $image $images $actuals $output)
-   (let (quote (ProofTokenUnequalV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceFrameApplyVariableComparedV1:11111110 (ProofTraceRealizeRefusedV1 (ProofTraceRefusedTypecodeMismatchV1 $expected-typecode $actual-typecode))))))
+(= (gslt:fn:ProofTraceFrameApplyVariableComparedV1:11111110 (cons ProofTokenUnequalV1 ()) $expected-typecode $actual-typecode $image $images $actuals $output)
+   (quote (gslt:result:ProofTraceFrameApplyVariableComparedV1:11111110 (ProofTraceRealizeRefusedV1 (ProofTraceRefusedTypecodeMismatchV1 $expected-typecode $actual-typecode)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=43 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-build-environment-nil-v1 target=mode relation=ProofTraceBuildEnvironmentV1 input=110 functional=semidet
-(= (gslt:fn:ProofTraceBuildEnvironmentV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (ProofAssertionListNilV1)) $__gslt_input_v1_0_0
-   (let (quote (ProofAssertionListNilV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:ProofTraceBuildEnvironmentV1:110 (ProofEnvironmentNilV1))))))
+(= (gslt:fn:ProofTraceBuildEnvironmentV1:110 (cons ProofAssertionListNilV1 ()) (cons ProofAssertionListNilV1 ()))
+   (quote (gslt:result:ProofTraceBuildEnvironmentV1:110 (ProofEnvironmentNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=44 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-build-environment-cons-v1 target=mode relation=ProofTraceBuildEnvironmentV1 input=110 functional=semidet
-(= (gslt:fn:ProofTraceBuildEnvironmentV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (ProofAssertionListConsV1 (ProofAssertionVariableV1 $variable $typecode) $variables)) $__gslt_input_v1_0_0
-   (let (quote (ProofAssertionListConsV1 $image $images)) $__gslt_input_v1_0_1
-   (let (quote gslt:result:ProofTokenVariableV1:1) (gslt:fn:ProofTokenVariableV1:1 $variable)
-   (let (quote (gslt:result:ProofTraceBuildEnvironmentV1:110 $environment)) (gslt:fn:ProofTraceBuildEnvironmentV1:110 $variables $images)
-   (quote (gslt:result:ProofTraceBuildEnvironmentV1:110 (ProofEnvironmentConsV1 $variable $image $environment))))))))
+(= (gslt:fn:ProofTraceBuildEnvironmentV1:110 (cons ProofAssertionListConsV1 (cons (cons ProofAssertionVariableV1 (cons $variable (cons $typecode ()))) (cons $variables ()))) (cons ProofAssertionListConsV1 (cons $image (cons $images ()))))
+   (let gslt:result:ProofTokenVariableV1:1 (gslt:fn:ProofTokenVariableV1:1 $variable)
+   (let (cons gslt:result:ProofTraceBuildEnvironmentV1:110 (cons $environment ())) (gslt:fn:ProofTraceBuildEnvironmentV1:110 $variables $images)
+   (quote (gslt:result:ProofTraceBuildEnvironmentV1:110 (ProofEnvironmentConsV1 $variable $image $environment))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=45 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-essentials-nil-v1 target=mode relation=ProofTraceCheckEssentialsV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceCheckEssentialsV1:000)
@@ -1984,165 +1934,147 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=46 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-essentials-cons-v1 target=mode relation=ProofTraceCheckEssentialsV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceCheckEssentialsV1:000)
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:000 $template $environment $actual)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
-   (let (quote (gslt:result:ProofTraceCheckEssentialsV1:000 $essentials $actuals $environment)) (superpose (collapse (gslt:mode:ProofTraceCheckEssentialsV1:000)))
+   (let (cons gslt:result:ProofSequenceInstantiateV1:000 (cons $template (cons $environment (cons $actual ())))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
+   (let (cons gslt:result:ProofTraceCheckEssentialsV1:000 (cons $essentials (cons $actuals (cons $environment ())))) (superpose (collapse (gslt:mode:ProofTraceCheckEssentialsV1:000)))
    (quote (gslt:result:ProofTraceCheckEssentialsV1:000 (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $template) $essentials) (ProofAssertionListConsV1 $actual $actuals) $environment)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=47 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-essentials-result-nil-v1 target=mode relation=ProofTraceCheckEssentialsResultV1 input=1111 functional=semidet
-(= (gslt:fn:ProofTraceCheckEssentialsResultV1:1111 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1 $environment ProofTraceEssentialsSucceededV1)
-   (let (quote (ProofAssertionListNilV1)) $__gslt_input_v1_0_0
-   (let (quote (ProofAssertionListNilV1)) $__gslt_input_v1_0_1
-   (quote gslt:result:ProofTraceCheckEssentialsResultV1:1111))))
+(= (gslt:fn:ProofTraceCheckEssentialsResultV1:1111 (cons ProofAssertionListNilV1 ()) (cons ProofAssertionListNilV1 ()) $environment ProofTraceEssentialsSucceededV1)
+   (quote gslt:result:ProofTraceCheckEssentialsResultV1:1111))
 
 ; gslt-lowered-equation-v1 source-rewrite=48 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-essentials-result-cons-equal-v1 target=mode relation=ProofTraceCheckEssentialsResultV1 input=1111 functional=semidet
-(= (gslt:fn:ProofTraceCheckEssentialsResultV1:1111 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1 $environment $result)
-   (let (quote (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $template) $essentials)) $__gslt_input_v1_0_0
-   (let (quote (ProofAssertionListConsV1 $actual $actuals)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:110 $expected)) (gslt:fn:ProofSequenceInstantiateV1:110 $template $environment)
-   (let (quote gslt:result:ProofSequenceCompareV1:111) (gslt:fn:ProofSequenceCompareV1:111 $expected $actual ProofSequenceEqualV1)
-   (let (quote gslt:result:ProofTraceCheckEssentialsResultV1:1111) (gslt:fn:ProofTraceCheckEssentialsResultV1:1111 $essentials $actuals $environment $result)
-   (quote gslt:result:ProofTraceCheckEssentialsResultV1:1111)))))))
+(= (gslt:fn:ProofTraceCheckEssentialsResultV1:1111 (cons ProofAssertionListConsV1 (cons (cons ProofAssertionEssentialV1 (cons $template ())) (cons $essentials ()))) (cons ProofAssertionListConsV1 (cons $actual (cons $actuals ()))) $environment $result)
+   (let (cons gslt:result:ProofSequenceInstantiateV1:110 (cons $expected ())) (gslt:fn:ProofSequenceInstantiateV1:110 $template $environment)
+   (let gslt:result:ProofSequenceCompareV1:111 (gslt:fn:ProofSequenceCompareV1:111 $expected $actual ProofSequenceEqualV1)
+   (let gslt:result:ProofTraceCheckEssentialsResultV1:1111 (gslt:fn:ProofTraceCheckEssentialsResultV1:1111 $essentials $actuals $environment $result)
+   (quote gslt:result:ProofTraceCheckEssentialsResultV1:1111)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=49 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-essentials-result-cons-different-v1 target=mode relation=ProofTraceCheckEssentialsResultV1 input=1111 functional=semidet
-(= (gslt:fn:ProofTraceCheckEssentialsResultV1:1111 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1 $environment $__gslt_input_v1_0_3)
-   (let (quote (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $template) $essentials)) $__gslt_input_v1_0_0
-   (let (quote (ProofAssertionListConsV1 $actual $actuals)) $__gslt_input_v1_0_1
-   (let (quote (ProofTraceRefusedEssentialMismatchV1 $template $expected $actual)) $__gslt_input_v1_0_3
-   (let (quote gslt:result:ProofSequenceInstantiateV1:111) (gslt:fn:ProofSequenceInstantiateV1:111 $template $environment $expected)
-   (let (quote gslt:result:ProofSequenceCompareV1:111) (gslt:fn:ProofSequenceCompareV1:111 $expected $actual ProofSequenceDifferentV1)
-   (quote gslt:result:ProofTraceCheckEssentialsResultV1:1111)))))))
+(= (gslt:fn:ProofTraceCheckEssentialsResultV1:1111 (cons ProofAssertionListConsV1 (cons (cons ProofAssertionEssentialV1 (cons $template ())) (cons $essentials ()))) (cons ProofAssertionListConsV1 (cons $actual (cons $actuals ()))) $environment (cons ProofTraceRefusedEssentialMismatchV1 (cons $template (cons $expected (cons $actual ())))))
+   (let gslt:result:ProofSequenceInstantiateV1:111 (gslt:fn:ProofSequenceInstantiateV1:111 $template $environment $expected)
+   (let gslt:result:ProofSequenceCompareV1:111 (gslt:fn:ProofSequenceCompareV1:111 $expected $actual ProofSequenceDifferentV1)
+   (quote gslt:result:ProofTraceCheckEssentialsResultV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=47 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-essentials-result-nil-v1 target=mode relation=ProofTraceCheckEssentialsResultV1 input=1110 functional=semidet
-(= (gslt:fn:ProofTraceCheckEssentialsResultV1:1110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1 $environment)
-   (let (quote (ProofAssertionListNilV1)) $__gslt_input_v1_0_0
-   (let (quote (ProofAssertionListNilV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:ProofTraceCheckEssentialsResultV1:1110 ProofTraceEssentialsSucceededV1)))))
+(= (gslt:fn:ProofTraceCheckEssentialsResultV1:1110 (cons ProofAssertionListNilV1 ()) (cons ProofAssertionListNilV1 ()) $environment)
+   (quote (gslt:result:ProofTraceCheckEssentialsResultV1:1110 ProofTraceEssentialsSucceededV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=48 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-essentials-result-cons-equal-v1 target=mode relation=ProofTraceCheckEssentialsResultV1 input=1110 functional=semidet
-(= (gslt:fn:ProofTraceCheckEssentialsResultV1:1110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1 $environment)
-   (let (quote (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $template) $essentials)) $__gslt_input_v1_0_0
-   (let (quote (ProofAssertionListConsV1 $actual $actuals)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:110 $expected)) (gslt:fn:ProofSequenceInstantiateV1:110 $template $environment)
-   (let (quote gslt:result:ProofSequenceCompareV1:111) (gslt:fn:ProofSequenceCompareV1:111 $expected $actual ProofSequenceEqualV1)
-   (let (quote (gslt:result:ProofTraceCheckEssentialsResultV1:1110 $result)) (gslt:fn:ProofTraceCheckEssentialsResultV1:1110 $essentials $actuals $environment)
-   (quote (gslt:result:ProofTraceCheckEssentialsResultV1:1110 $result))))))))
+(= (gslt:fn:ProofTraceCheckEssentialsResultV1:1110 (cons ProofAssertionListConsV1 (cons (cons ProofAssertionEssentialV1 (cons $template ())) (cons $essentials ()))) (cons ProofAssertionListConsV1 (cons $actual (cons $actuals ()))) $environment)
+   (let (cons gslt:result:ProofSequenceInstantiateV1:110 (cons $expected ())) (gslt:fn:ProofSequenceInstantiateV1:110 $template $environment)
+   (let gslt:result:ProofSequenceCompareV1:111 (gslt:fn:ProofSequenceCompareV1:111 $expected $actual ProofSequenceEqualV1)
+   (let (cons gslt:result:ProofTraceCheckEssentialsResultV1:1110 (cons $result ())) (gslt:fn:ProofTraceCheckEssentialsResultV1:1110 $essentials $actuals $environment)
+   (quote (gslt:result:ProofTraceCheckEssentialsResultV1:1110 $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=49 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-essentials-result-cons-different-v1 target=mode relation=ProofTraceCheckEssentialsResultV1 input=1110 functional=semidet
-(= (gslt:fn:ProofTraceCheckEssentialsResultV1:1110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1 $environment)
-   (let (quote (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $template) $essentials)) $__gslt_input_v1_0_0
-   (let (quote (ProofAssertionListConsV1 $actual $actuals)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:110 $expected)) (gslt:fn:ProofSequenceInstantiateV1:110 $template $environment)
-   (let (quote gslt:result:ProofSequenceCompareV1:111) (gslt:fn:ProofSequenceCompareV1:111 $expected $actual ProofSequenceDifferentV1)
-   (quote (gslt:result:ProofTraceCheckEssentialsResultV1:1110 (ProofTraceRefusedEssentialMismatchV1 $template $expected $actual))))))))
+(= (gslt:fn:ProofTraceCheckEssentialsResultV1:1110 (cons ProofAssertionListConsV1 (cons (cons ProofAssertionEssentialV1 (cons $template ())) (cons $essentials ()))) (cons ProofAssertionListConsV1 (cons $actual (cons $actuals ()))) $environment)
+   (let (cons gslt:result:ProofSequenceInstantiateV1:110 (cons $expected ())) (gslt:fn:ProofSequenceInstantiateV1:110 $template $environment)
+   (let gslt:result:ProofSequenceCompareV1:111 (gslt:fn:ProofSequenceCompareV1:111 $expected $actual ProofSequenceDifferentV1)
+   (quote (gslt:result:ProofTraceCheckEssentialsResultV1:1110 (ProofTraceRefusedEssentialMismatchV1 $template $expected $actual))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=50 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-assertion-result-v1 target=mode relation=ProofTraceRealizeAssertionResultV1 input=1110 functional=relational
-(= (gslt:mode:ProofTraceRealizeAssertionResultV1:1110 $__gslt_input_v1_0_0 $frame $input)
-   (let (quote (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ProofTraceFrameProjectV1:111) (once (gslt:fn:ProofTraceFrameProjectV1:111 $frame $variables $essentials))
-   (let (quote (gslt:result:ProofTraceFrameApplyResultV1:110 $frame-result)) (once (gslt:fn:ProofTraceFrameApplyResultV1:110 $frame $input))
-   (let (quote (gslt:result:ProofTraceRealizeFrameResultV1:1111110 $result)) (superpose (collapse (gslt:mode:ProofTraceRealizeFrameResultV1:1111110 $frame-result $variables $essentials $conclusion-type $conclusion-template $disjoints)))
-   (quote (gslt:result:ProofTraceRealizeAssertionResultV1:1110 $result)))))))
+(= (gslt:mode:ProofTraceRealizeAssertionResultV1:1110 (cons ProofAssertionV1 (cons $variables (cons $essentials (cons $conclusion-type (cons $conclusion-template (cons $disjoints ())))))) $frame $input)
+   (let gslt:result:ProofTraceFrameProjectV1:111 (once (gslt:fn:ProofTraceFrameProjectV1:111 $frame $variables $essentials))
+   (let (cons gslt:result:ProofTraceFrameApplyResultV1:110 (cons $frame-result ())) (once (gslt:fn:ProofTraceFrameApplyResultV1:110 $frame $input))
+   (let (cons gslt:result:ProofTraceRealizeFrameResultV1:1111110 (cons $result ())) (superpose (collapse (gslt:mode:ProofTraceRealizeFrameResultV1:1111110 $frame-result $variables $essentials $conclusion-type $conclusion-template $disjoints)))
+   (quote (gslt:result:ProofTraceRealizeAssertionResultV1:1110 $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=51 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-frame-applied-v1 target=mode relation=ProofTraceRealizeFrameResultV1 input=1111110 functional=relational
-(= (gslt:mode:ProofTraceRealizeFrameResultV1:1111110 $__gslt_input_v1_0_0 $variables $essentials $conclusion-type $conclusion-template $disjoints)
-   (let (quote (ProofTraceFrameAppliedV1 $images $actuals $rest)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceBuildEnvironmentV1:110 $environment)) (once (gslt:fn:ProofTraceBuildEnvironmentV1:110 $variables $images))
-   (let (quote (gslt:result:ProofTraceCheckEssentialsResultV1:1110 $essentials-result)) (once (gslt:fn:ProofTraceCheckEssentialsResultV1:1110 $essentials $actuals $environment))
-   (let (quote (gslt:result:ProofTraceRealizeEssentialsResultV1:1111110 $result)) (superpose (collapse (gslt:mode:ProofTraceRealizeEssentialsResultV1:1111110 $essentials-result $conclusion-type $conclusion-template $disjoints $environment $rest)))
-   (quote (gslt:result:ProofTraceRealizeFrameResultV1:1111110 $result)))))))
+(= (gslt:mode:ProofTraceRealizeFrameResultV1:1111110 (cons ProofTraceFrameAppliedV1 (cons $images (cons $actuals (cons $rest ())))) $variables $essentials $conclusion-type $conclusion-template $disjoints)
+   (let (cons gslt:result:ProofTraceBuildEnvironmentV1:110 (cons $environment ())) (once (gslt:fn:ProofTraceBuildEnvironmentV1:110 $variables $images))
+   (let (cons gslt:result:ProofTraceCheckEssentialsResultV1:1110 (cons $essentials-result ())) (once (gslt:fn:ProofTraceCheckEssentialsResultV1:1110 $essentials $actuals $environment))
+   (let (cons gslt:result:ProofTraceRealizeEssentialsResultV1:1111110 (cons $result ())) (superpose (collapse (gslt:mode:ProofTraceRealizeEssentialsResultV1:1111110 $essentials-result $conclusion-type $conclusion-template $disjoints $environment $rest)))
+   (quote (gslt:result:ProofTraceRealizeFrameResultV1:1111110 $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=52 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-frame-refused-v1 target=mode relation=ProofTraceRealizeFrameResultV1 input=1111110 functional=relational
-(= (gslt:mode:ProofTraceRealizeFrameResultV1:1111110 $__gslt_input_v1_0_0 $variables $essentials $conclusion-type $conclusion-template $disjoints)
-   (let (quote (ProofTraceRealizeRefusedV1 $reason)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceRealizeFrameResultV1:1111110 (ProofTraceRealizeRefusedV1 $reason)))))
+(= (gslt:mode:ProofTraceRealizeFrameResultV1:1111110 (cons ProofTraceRealizeRefusedV1 (cons $reason ())) $variables $essentials $conclusion-type $conclusion-template $disjoints)
+   (quote (gslt:result:ProofTraceRealizeFrameResultV1:1111110 (ProofTraceRealizeRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=53 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-essentials-succeeded-v1 target=mode relation=ProofTraceRealizeEssentialsResultV1 input=1111110 functional=relational
 (= (gslt:mode:ProofTraceRealizeEssentialsResultV1:1111110 ProofTraceEssentialsSucceededV1 $conclusion-type $conclusion-template $disjoints $environment $rest)
-   (let (quote (gslt:result:ProofTraceCheckDisjointsResultV1:110 $disjoint-result)) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointsResultV1:110 $disjoints $environment)))
-   (let (quote (gslt:result:ProofTraceRealizeDisjointsResultV1:111110 $result)) (once (gslt:fn:ProofTraceRealizeDisjointsResultV1:111110 $disjoint-result $conclusion-type $conclusion-template $environment $rest))
+   (let (cons gslt:result:ProofTraceCheckDisjointsResultV1:110 (cons $disjoint-result ())) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointsResultV1:110 $disjoints $environment)))
+   (let (cons gslt:result:ProofTraceRealizeDisjointsResultV1:111110 (cons $result ())) (once (gslt:fn:ProofTraceRealizeDisjointsResultV1:111110 $disjoint-result $conclusion-type $conclusion-template $environment $rest))
    (quote (gslt:result:ProofTraceRealizeEssentialsResultV1:1111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=73 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-essentials-refused-v1 target=mode relation=ProofTraceRealizeEssentialsResultV1 input=1111110 functional=relational
-(= (gslt:mode:ProofTraceRealizeEssentialsResultV1:1111110 $__gslt_input_v1_0_0 $conclusion-type $conclusion-template $disjoints $environment $rest)
-   (let (quote (ProofTraceRefusedEssentialMismatchV1 $template $expected $actual)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceRealizeEssentialsResultV1:1111110 (ProofTraceRealizeRefusedV1 (ProofTraceRefusedEssentialMismatchV1 $template $expected $actual))))))
+(= (gslt:mode:ProofTraceRealizeEssentialsResultV1:1111110 (cons ProofTraceRefusedEssentialMismatchV1 (cons $template (cons $expected (cons $actual ())))) $conclusion-type $conclusion-template $disjoints $environment $rest)
+   (quote (gslt:result:ProofTraceRealizeEssentialsResultV1:1111110 (ProofTraceRealizeRefusedV1 (ProofTraceRefusedEssentialMismatchV1 $template $expected $actual)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=54 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-disjoints-succeeded-v1 target=mode relation=ProofTraceRealizeDisjointsResultV1 input=111110 functional=semidet
 (= (gslt:fn:ProofTraceRealizeDisjointsResultV1:111110 ProofTraceDisjointSucceededV1 $conclusion-type $conclusion-template $environment $rest)
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:110 $result)) (gslt:fn:ProofSequenceInstantiateV1:110 $conclusion-template $environment)
+   (let (cons gslt:result:ProofSequenceInstantiateV1:110 (cons $result ())) (gslt:fn:ProofSequenceInstantiateV1:110 $conclusion-template $environment)
    (quote (gslt:result:ProofTraceRealizeDisjointsResultV1:111110 (ProofTraceRealizeSucceededV1 (ProofTraceStackConsV1 (ProofSequenceConsV1 $conclusion-type $result) $rest))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=55 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-disjoints-refused-v1 target=mode relation=ProofTraceRealizeDisjointsResultV1 input=111110 functional=semidet
-(= (gslt:fn:ProofTraceRealizeDisjointsResultV1:111110 $__gslt_input_v1_0_0 $conclusion-type $conclusion-template $environment $rest)
-   (let (quote (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceRealizeDisjointsResultV1:111110 (ProofTraceRealizeRefusedV1 (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right))))))
+(= (gslt:fn:ProofTraceRealizeDisjointsResultV1:111110 (cons ProofTraceRefusedDisjointV1 (cons $required-left (cons $required-right (cons $actual-left (cons $actual-right ()))))) $conclusion-type $conclusion-template $environment $rest)
+   (quote (gslt:result:ProofTraceRealizeDisjointsResultV1:111110 (ProofTraceRealizeRefusedV1 (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=56 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-left-literal-v1 target=mode relation=ProofTraceTokenPairDecisionV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceTokenPairDecisionV1:000)
-   (let (quote (gslt:result:ProofTokenLiteralV1:0 $left)) (once (gslt:fn:ProofTokenLiteralV1:0))
+   (let (cons gslt:result:ProofTokenLiteralV1:0 (cons $left ())) (once (gslt:fn:ProofTokenLiteralV1:0))
    (quote (gslt:result:ProofTraceTokenPairDecisionV1:000 $left $right ProofTracePairAllowedV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=57 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-right-literal-v1 target=mode relation=ProofTraceTokenPairDecisionV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceTokenPairDecisionV1:000)
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $left)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote (gslt:result:ProofTokenLiteralV1:0 $right)) (once (gslt:fn:ProofTokenLiteralV1:0))
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $left ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let (cons gslt:result:ProofTokenLiteralV1:0 (cons $right ())) (once (gslt:fn:ProofTokenLiteralV1:0))
    (quote (gslt:result:ProofTraceTokenPairDecisionV1:000 $left $right ProofTracePairAllowedV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=58 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-equal-v1 target=mode relation=ProofTraceTokenPairDecisionV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceTokenPairDecisionV1:000)
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $left)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $right)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote gslt:result:ProofTokenCompareV1:111) (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenEqualV1))))
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $left ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $right ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let gslt:result:ProofTokenCompareV1:111 (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenEqualV1))))
    (quote (gslt:result:ProofTraceTokenPairDecisionV1:000 $left $right (ProofTracePairConflictV1 $left $right)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=59 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-unequal-apart-v1 target=mode relation=ProofTraceTokenPairDecisionV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceTokenPairDecisionV1:000)
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $left)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $right)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote gslt:result:ProofTokenCompareV1:111) (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenUnequalV1))))
-   (let (quote gslt:result:ProofTokenApartDecisionV1:111) (once (gslt:fn:ProofTokenApartDecisionV1:111 $left $right ProofTraceApartPresentV1))
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $left ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $right ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let gslt:result:ProofTokenCompareV1:111 (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenUnequalV1))))
+   (let gslt:result:ProofTokenApartDecisionV1:111 (once (gslt:fn:ProofTokenApartDecisionV1:111 $left $right ProofTraceApartPresentV1))
    (quote (gslt:result:ProofTraceTokenPairDecisionV1:000 $left $right ProofTracePairAllowedV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=60 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-unequal-not-apart-v1 target=mode relation=ProofTraceTokenPairDecisionV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceTokenPairDecisionV1:000)
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $left)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $right)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote gslt:result:ProofTokenCompareV1:111) (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenUnequalV1))))
-   (let (quote gslt:result:ProofTokenApartDecisionV1:111) (once (gslt:fn:ProofTokenApartDecisionV1:111 $left $right ProofTraceApartMissingV1))
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $left ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $right ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let gslt:result:ProofTokenCompareV1:111 (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenUnequalV1))))
+   (let gslt:result:ProofTokenApartDecisionV1:111 (once (gslt:fn:ProofTokenApartDecisionV1:111 $left $right ProofTraceApartMissingV1))
    (quote (gslt:result:ProofTraceTokenPairDecisionV1:000 $left $right (ProofTracePairConflictV1 $left $right))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=56 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-left-literal-v1 target=mode relation=ProofTraceTokenPairDecisionV1 input=110 functional=relational
 (= (gslt:mode:ProofTraceTokenPairDecisionV1:110 $left $right)
-   (let (quote gslt:result:ProofTokenLiteralV1:1) (once (gslt:fn:ProofTokenLiteralV1:1 $left))
+   (let gslt:result:ProofTokenLiteralV1:1 (once (gslt:fn:ProofTokenLiteralV1:1 $left))
    (quote (gslt:result:ProofTraceTokenPairDecisionV1:110 ProofTracePairAllowedV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=57 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-right-literal-v1 target=mode relation=ProofTraceTokenPairDecisionV1 input=110 functional=relational
 (= (gslt:mode:ProofTraceTokenPairDecisionV1:110 $left $right)
-   (let (quote gslt:result:ProofTokenVariableV1:1) (once (gslt:fn:ProofTokenVariableV1:1 $left))
-   (let (quote gslt:result:ProofTokenLiteralV1:1) (once (gslt:fn:ProofTokenLiteralV1:1 $right))
+   (let gslt:result:ProofTokenVariableV1:1 (once (gslt:fn:ProofTokenVariableV1:1 $left))
+   (let gslt:result:ProofTokenLiteralV1:1 (once (gslt:fn:ProofTokenLiteralV1:1 $right))
    (quote (gslt:result:ProofTraceTokenPairDecisionV1:110 ProofTracePairAllowedV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=58 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-equal-v1 target=mode relation=ProofTraceTokenPairDecisionV1 input=110 functional=relational
 (= (gslt:mode:ProofTraceTokenPairDecisionV1:110 $left $right)
-   (let (quote gslt:result:ProofTokenVariableV1:1) (once (gslt:fn:ProofTokenVariableV1:1 $left))
-   (let (quote gslt:result:ProofTokenVariableV1:1) (once (gslt:fn:ProofTokenVariableV1:1 $right))
-   (let (quote gslt:result:ProofTokenCompareV1:111) (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenEqualV1))))
+   (let gslt:result:ProofTokenVariableV1:1 (once (gslt:fn:ProofTokenVariableV1:1 $left))
+   (let gslt:result:ProofTokenVariableV1:1 (once (gslt:fn:ProofTokenVariableV1:1 $right))
+   (let gslt:result:ProofTokenCompareV1:111 (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenEqualV1))))
    (quote (gslt:result:ProofTraceTokenPairDecisionV1:110 (ProofTracePairConflictV1 $left $right)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=59 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-unequal-apart-v1 target=mode relation=ProofTraceTokenPairDecisionV1 input=110 functional=relational
 (= (gslt:mode:ProofTraceTokenPairDecisionV1:110 $left $right)
-   (let (quote gslt:result:ProofTokenVariableV1:1) (once (gslt:fn:ProofTokenVariableV1:1 $left))
-   (let (quote gslt:result:ProofTokenVariableV1:1) (once (gslt:fn:ProofTokenVariableV1:1 $right))
-   (let (quote gslt:result:ProofTokenCompareV1:111) (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenUnequalV1))))
-   (let (quote gslt:result:ProofTokenApartDecisionV1:111) (once (gslt:fn:ProofTokenApartDecisionV1:111 $left $right ProofTraceApartPresentV1))
+   (let gslt:result:ProofTokenVariableV1:1 (once (gslt:fn:ProofTokenVariableV1:1 $left))
+   (let gslt:result:ProofTokenVariableV1:1 (once (gslt:fn:ProofTokenVariableV1:1 $right))
+   (let gslt:result:ProofTokenCompareV1:111 (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenUnequalV1))))
+   (let gslt:result:ProofTokenApartDecisionV1:111 (once (gslt:fn:ProofTokenApartDecisionV1:111 $left $right ProofTraceApartPresentV1))
    (quote (gslt:result:ProofTraceTokenPairDecisionV1:110 ProofTracePairAllowedV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=60 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-unequal-not-apart-v1 target=mode relation=ProofTraceTokenPairDecisionV1 input=110 functional=relational
 (= (gslt:mode:ProofTraceTokenPairDecisionV1:110 $left $right)
-   (let (quote gslt:result:ProofTokenVariableV1:1) (once (gslt:fn:ProofTokenVariableV1:1 $left))
-   (let (quote gslt:result:ProofTokenVariableV1:1) (once (gslt:fn:ProofTokenVariableV1:1 $right))
-   (let (quote gslt:result:ProofTokenCompareV1:111) (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenUnequalV1))))
-   (let (quote gslt:result:ProofTokenApartDecisionV1:111) (once (gslt:fn:ProofTokenApartDecisionV1:111 $left $right ProofTraceApartMissingV1))
+   (let gslt:result:ProofTokenVariableV1:1 (once (gslt:fn:ProofTokenVariableV1:1 $left))
+   (let gslt:result:ProofTokenVariableV1:1 (once (gslt:fn:ProofTokenVariableV1:1 $right))
+   (let gslt:result:ProofTokenCompareV1:111 (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenUnequalV1))))
+   (let gslt:result:ProofTokenApartDecisionV1:111 (once (gslt:fn:ProofTokenApartDecisionV1:111 $left $right ProofTraceApartMissingV1))
    (quote (gslt:result:ProofTraceTokenPairDecisionV1:110 (ProofTracePairConflictV1 $left $right))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=61 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-against-sequence-nil-v1 target=mode relation=ProofTraceTokenAgainstSequenceResultV1 input=000 functional=relational
@@ -2151,31 +2083,28 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=62 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-against-sequence-cons-v1 target=mode relation=ProofTraceTokenAgainstSequenceResultV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceTokenAgainstSequenceResultV1:000)
-   (let (quote (gslt:result:ProofTraceTokenPairDecisionV1:000 $left $right $head-result)) (superpose (collapse (gslt:mode:ProofTraceTokenPairDecisionV1:000)))
-   (let (quote (gslt:result:ProofTraceTokenAgainstSequenceHeadResultV1:1100 $rest $result)) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceHeadResultV1:1100 $head-result $left)))
+   (let (cons gslt:result:ProofTraceTokenPairDecisionV1:000 (cons $left (cons $right (cons $head-result ())))) (superpose (collapse (gslt:mode:ProofTraceTokenPairDecisionV1:000)))
+   (let (cons gslt:result:ProofTraceTokenAgainstSequenceHeadResultV1:1100 (cons $rest (cons $result ()))) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceHeadResultV1:1100 $head-result $left)))
    (quote (gslt:result:ProofTraceTokenAgainstSequenceResultV1:000 $left (ProofSequenceConsV1 $right $rest) $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=61 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-against-sequence-nil-v1 target=mode relation=ProofTraceTokenAgainstSequenceResultV1 input=110 functional=relational
-(= (gslt:mode:ProofTraceTokenAgainstSequenceResultV1:110 $left $__gslt_input_v1_0_1)
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:ProofTraceTokenAgainstSequenceResultV1:110 ProofTracePairAllowedV1))))
+(= (gslt:mode:ProofTraceTokenAgainstSequenceResultV1:110 $left (cons ProofSequenceNilV1 ()))
+   (quote (gslt:result:ProofTraceTokenAgainstSequenceResultV1:110 ProofTracePairAllowedV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=62 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-against-sequence-cons-v1 target=mode relation=ProofTraceTokenAgainstSequenceResultV1 input=110 functional=relational
-(= (gslt:mode:ProofTraceTokenAgainstSequenceResultV1:110 $left $__gslt_input_v1_0_1)
-   (let (quote (ProofSequenceConsV1 $right $rest)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:ProofTraceTokenPairDecisionV1:110 $head-result)) (superpose (collapse (gslt:mode:ProofTraceTokenPairDecisionV1:110 $left $right)))
-   (let (quote (gslt:result:ProofTraceTokenAgainstSequenceHeadResultV1:1110 $result)) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceHeadResultV1:1110 $head-result $left $rest)))
-   (quote (gslt:result:ProofTraceTokenAgainstSequenceResultV1:110 $result))))))
+(= (gslt:mode:ProofTraceTokenAgainstSequenceResultV1:110 $left (cons ProofSequenceConsV1 (cons $right (cons $rest ()))))
+   (let (cons gslt:result:ProofTraceTokenPairDecisionV1:110 (cons $head-result ())) (superpose (collapse (gslt:mode:ProofTraceTokenPairDecisionV1:110 $left $right)))
+   (let (cons gslt:result:ProofTraceTokenAgainstSequenceHeadResultV1:1110 (cons $result ())) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceHeadResultV1:1110 $head-result $left $rest)))
+   (quote (gslt:result:ProofTraceTokenAgainstSequenceResultV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=63 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-against-sequence-head-allowed-v1 target=mode relation=ProofTraceTokenAgainstSequenceHeadResultV1 input=1110 functional=relational
 (= (gslt:mode:ProofTraceTokenAgainstSequenceHeadResultV1:1110 ProofTracePairAllowedV1 $left $rest)
-   (let (quote (gslt:result:ProofTraceTokenAgainstSequenceResultV1:110 $result)) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceResultV1:110 $left $rest)))
+   (let (cons gslt:result:ProofTraceTokenAgainstSequenceResultV1:110 (cons $result ())) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceResultV1:110 $left $rest)))
    (quote (gslt:result:ProofTraceTokenAgainstSequenceHeadResultV1:1110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=64 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-against-sequence-head-conflict-v1 target=mode relation=ProofTraceTokenAgainstSequenceHeadResultV1 input=1110 functional=relational
-(= (gslt:mode:ProofTraceTokenAgainstSequenceHeadResultV1:1110 $__gslt_input_v1_0_0 $token $rest)
-   (let (quote (ProofTracePairConflictV1 $left $right)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceTokenAgainstSequenceHeadResultV1:1110 (ProofTracePairConflictV1 $left $right)))))
+(= (gslt:mode:ProofTraceTokenAgainstSequenceHeadResultV1:1110 (cons ProofTracePairConflictV1 (cons $left (cons $right ()))) $token $rest)
+   (quote (gslt:result:ProofTraceTokenAgainstSequenceHeadResultV1:1110 (ProofTracePairConflictV1 $left $right))))
 
 ; gslt-lowered-equation-v1 source-rewrite=65 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-sequence-support-apart-nil-v1 target=mode relation=ProofTraceSequenceSupportApartResultV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceSequenceSupportApartResultV1:000)
@@ -2183,31 +2112,28 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=66 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-sequence-support-apart-cons-v1 target=mode relation=ProofTraceSequenceSupportApartResultV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceSequenceSupportApartResultV1:000)
-   (let (quote (gslt:result:ProofTraceTokenAgainstSequenceResultV1:000 $left $right $head-result)) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceResultV1:000)))
-   (let (quote (gslt:result:ProofTraceSequenceSupportApartHeadResultV1:1000 $rest $right $result)) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartHeadResultV1:1000 $head-result)))
+   (let (cons gslt:result:ProofTraceTokenAgainstSequenceResultV1:000 (cons $left (cons $right (cons $head-result ())))) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceResultV1:000)))
+   (let (cons gslt:result:ProofTraceSequenceSupportApartHeadResultV1:1000 (cons $rest (cons $right (cons $result ())))) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartHeadResultV1:1000 $head-result)))
    (quote (gslt:result:ProofTraceSequenceSupportApartResultV1:000 (ProofSequenceConsV1 $left $rest) $right $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=65 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-sequence-support-apart-nil-v1 target=mode relation=ProofTraceSequenceSupportApartResultV1 input=110 functional=relational
-(= (gslt:mode:ProofTraceSequenceSupportApartResultV1:110 $__gslt_input_v1_0_0 $right)
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceSequenceSupportApartResultV1:110 ProofTracePairAllowedV1))))
+(= (gslt:mode:ProofTraceSequenceSupportApartResultV1:110 (cons ProofSequenceNilV1 ()) $right)
+   (quote (gslt:result:ProofTraceSequenceSupportApartResultV1:110 ProofTracePairAllowedV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=66 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-sequence-support-apart-cons-v1 target=mode relation=ProofTraceSequenceSupportApartResultV1 input=110 functional=relational
-(= (gslt:mode:ProofTraceSequenceSupportApartResultV1:110 $__gslt_input_v1_0_0 $right)
-   (let (quote (ProofSequenceConsV1 $left $rest)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceTokenAgainstSequenceResultV1:110 $head-result)) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceResultV1:110 $left $right)))
-   (let (quote (gslt:result:ProofTraceSequenceSupportApartHeadResultV1:1110 $result)) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartHeadResultV1:1110 $head-result $rest $right)))
-   (quote (gslt:result:ProofTraceSequenceSupportApartResultV1:110 $result))))))
+(= (gslt:mode:ProofTraceSequenceSupportApartResultV1:110 (cons ProofSequenceConsV1 (cons $left (cons $rest ()))) $right)
+   (let (cons gslt:result:ProofTraceTokenAgainstSequenceResultV1:110 (cons $head-result ())) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceResultV1:110 $left $right)))
+   (let (cons gslt:result:ProofTraceSequenceSupportApartHeadResultV1:1110 (cons $result ())) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartHeadResultV1:1110 $head-result $rest $right)))
+   (quote (gslt:result:ProofTraceSequenceSupportApartResultV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=67 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-sequence-support-apart-head-allowed-v1 target=mode relation=ProofTraceSequenceSupportApartHeadResultV1 input=1110 functional=relational
 (= (gslt:mode:ProofTraceSequenceSupportApartHeadResultV1:1110 ProofTracePairAllowedV1 $rest $right)
-   (let (quote (gslt:result:ProofTraceSequenceSupportApartResultV1:110 $result)) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartResultV1:110 $rest $right)))
+   (let (cons gslt:result:ProofTraceSequenceSupportApartResultV1:110 (cons $result ())) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartResultV1:110 $rest $right)))
    (quote (gslt:result:ProofTraceSequenceSupportApartHeadResultV1:1110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=68 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-sequence-support-apart-head-conflict-v1 target=mode relation=ProofTraceSequenceSupportApartHeadResultV1 input=1110 functional=relational
-(= (gslt:mode:ProofTraceSequenceSupportApartHeadResultV1:1110 $__gslt_input_v1_0_0 $rest $sequence)
-   (let (quote (ProofTracePairConflictV1 $left $right)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceSequenceSupportApartHeadResultV1:1110 (ProofTracePairConflictV1 $left $right)))))
+(= (gslt:mode:ProofTraceSequenceSupportApartHeadResultV1:1110 (cons ProofTracePairConflictV1 (cons $left (cons $right ()))) $rest $sequence)
+   (quote (gslt:result:ProofTraceSequenceSupportApartHeadResultV1:1110 (ProofTracePairConflictV1 $left $right))))
 
 ; gslt-lowered-equation-v1 source-rewrite=69 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-disjoints-nil-result-v1 target=mode relation=ProofTraceCheckDisjointsResultV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceCheckDisjointsResultV1:000)
@@ -2215,54 +2141,50 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=70 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-disjoints-cons-result-v1 target=mode relation=ProofTraceCheckDisjointsResultV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceCheckDisjointsResultV1:000)
-   (let (quote (gslt:result:ProofTokenDifferentV1:00 $left $right)) (once (gslt:fn:ProofTokenDifferentV1:00))
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:010 $environment $left-image)) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $left)))
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:010 $environment $right-image)) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $right)))
-   (let (quote (gslt:result:ProofTraceSequenceSupportApartResultV1:000 $left-image $right-image $head-result)) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartResultV1:000)))
-   (let (quote (gslt:result:ProofTraceCheckDisjointHeadResultV1:111000 $rest $environment $result)) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointHeadResultV1:111000 $head-result $left $right)))
+   (let (cons gslt:result:ProofTokenDifferentV1:00 (cons $left (cons $right ()))) (once (gslt:fn:ProofTokenDifferentV1:00))
+   (let (cons gslt:result:ProofEnvironmentLookupV1:010 (cons $environment (cons $left-image ()))) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $left)))
+   (let (cons gslt:result:ProofEnvironmentLookupV1:010 (cons $environment (cons $right-image ()))) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $right)))
+   (let (cons gslt:result:ProofTraceSequenceSupportApartResultV1:000 (cons $left-image (cons $right-image (cons $head-result ())))) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartResultV1:000)))
+   (let (cons gslt:result:ProofTraceCheckDisjointHeadResultV1:111000 (cons $rest (cons $environment (cons $result ())))) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointHeadResultV1:111000 $head-result $left $right)))
    (quote (gslt:result:ProofTraceCheckDisjointsResultV1:000 (ProofAssertionListConsV1 (ProofAssertionDisjointV1 $left $right) $rest) $environment $result))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=69 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-disjoints-nil-result-v1 target=mode relation=ProofTraceCheckDisjointsResultV1 input=110 functional=relational
-(= (gslt:mode:ProofTraceCheckDisjointsResultV1:110 $__gslt_input_v1_0_0 $environment)
-   (let (quote (ProofAssertionListNilV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceCheckDisjointsResultV1:110 ProofTraceDisjointSucceededV1))))
+(= (gslt:mode:ProofTraceCheckDisjointsResultV1:110 (cons ProofAssertionListNilV1 ()) $environment)
+   (quote (gslt:result:ProofTraceCheckDisjointsResultV1:110 ProofTraceDisjointSucceededV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=70 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-disjoints-cons-result-v1 target=mode relation=ProofTraceCheckDisjointsResultV1 input=110 functional=relational
-(= (gslt:mode:ProofTraceCheckDisjointsResultV1:110 $__gslt_input_v1_0_0 $environment)
-   (let (quote (ProofAssertionListConsV1 (ProofAssertionDisjointV1 $left $right) $rest)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ProofTokenDifferentV1:11) (once (gslt:fn:ProofTokenDifferentV1:11 $left $right))
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:110 $left-image)) (once (gslt:fn:ProofEnvironmentLookupV1:110 $environment $left))
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:110 $right-image)) (once (gslt:fn:ProofEnvironmentLookupV1:110 $environment $right))
-   (let (quote (gslt:result:ProofTraceSequenceSupportApartResultV1:110 $head-result)) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartResultV1:110 $left-image $right-image)))
-   (let (quote (gslt:result:ProofTraceCheckDisjointHeadResultV1:111110 $result)) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointHeadResultV1:111110 $head-result $left $right $rest $environment)))
-   (quote (gslt:result:ProofTraceCheckDisjointsResultV1:110 $result)))))))))
+(= (gslt:mode:ProofTraceCheckDisjointsResultV1:110 (cons ProofAssertionListConsV1 (cons (cons ProofAssertionDisjointV1 (cons $left (cons $right ()))) (cons $rest ()))) $environment)
+   (let gslt:result:ProofTokenDifferentV1:11 (once (gslt:fn:ProofTokenDifferentV1:11 $left $right))
+   (let (cons gslt:result:ProofEnvironmentLookupV1:110 (cons $left-image ())) (once (gslt:fn:ProofEnvironmentLookupV1:110 $environment $left))
+   (let (cons gslt:result:ProofEnvironmentLookupV1:110 (cons $right-image ())) (once (gslt:fn:ProofEnvironmentLookupV1:110 $environment $right))
+   (let (cons gslt:result:ProofTraceSequenceSupportApartResultV1:110 (cons $head-result ())) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartResultV1:110 $left-image $right-image)))
+   (let (cons gslt:result:ProofTraceCheckDisjointHeadResultV1:111110 (cons $result ())) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointHeadResultV1:111110 $head-result $left $right $rest $environment)))
+   (quote (gslt:result:ProofTraceCheckDisjointsResultV1:110 $result))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=71 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-disjoint-head-succeeded-v1 target=mode relation=ProofTraceCheckDisjointHeadResultV1 input=111110 functional=relational
 (= (gslt:mode:ProofTraceCheckDisjointHeadResultV1:111110 ProofTracePairAllowedV1 $left $right $rest $environment)
-   (let (quote (gslt:result:ProofTraceCheckDisjointsResultV1:110 $result)) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointsResultV1:110 $rest $environment)))
+   (let (cons gslt:result:ProofTraceCheckDisjointsResultV1:110 (cons $result ())) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointsResultV1:110 $rest $environment)))
    (quote (gslt:result:ProofTraceCheckDisjointHeadResultV1:111110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=72 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-disjoint-head-refused-v1 target=mode relation=ProofTraceCheckDisjointHeadResultV1 input=111110 functional=relational
-(= (gslt:mode:ProofTraceCheckDisjointHeadResultV1:111110 $__gslt_input_v1_0_0 $required-left $required-right $rest $environment)
-   (let (quote (ProofTracePairConflictV1 $actual-left $actual-right)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceCheckDisjointHeadResultV1:111110 (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right)))))
+(= (gslt:mode:ProofTraceCheckDisjointHeadResultV1:111110 (cons ProofTracePairConflictV1 (cons $actual-left (cons $actual-right ()))) $required-left $required-right $rest $environment)
+   (quote (gslt:result:ProofTraceCheckDisjointHeadResultV1:111110 (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right))))
 
 ; gslt-lowered-equation-v1 source-rewrite=75 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-declared-assertion-result-v1 target=mode relation=ProofTraceApplyAssertionResultV1 input=0000 functional=relational
 (= (gslt:mode:ProofTraceApplyAssertionResultV1:0000)
-   (let (quote (gslt:result:ProofAssertionDeclaredV1:0 (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints))) (superpose (collapse (gslt:mode:ProofAssertionDeclaredV1:0)))
-   (let (quote (gslt:result:ProofTraceRealizeAssertionResultV1:1000 $frame $input $result)) (superpose (collapse (gslt:mode:ProofTraceRealizeAssertionResultV1:1000 (quote (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints)))))
+   (let (cons gslt:result:ProofAssertionDeclaredV1:0 (cons (cons ProofAssertionV1 (cons $variables (cons $essentials (cons $conclusion-type (cons $conclusion-template (cons $disjoints ())))))) ())) (superpose (collapse (gslt:mode:ProofAssertionDeclaredV1:0)))
+   (let (cons gslt:result:ProofTraceRealizeAssertionResultV1:1000 (cons $frame (cons $input (cons $result ())))) (superpose (collapse (gslt:mode:ProofTraceRealizeAssertionResultV1:1000 (quote (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints)))))
    (quote (gslt:result:ProofTraceApplyAssertionResultV1:0000 (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints) $frame $input $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=75 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-declared-assertion-result-v1 target=mode relation=ProofTraceApplyAssertionResultV1 input=1110 functional=relational
-(= (gslt:mode:ProofTraceApplyAssertionResultV1:1110 $__gslt_input_v1_0_0 $frame $input)
-   (let (quote (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ProofAssertionDeclaredV1:1) (superpose (collapse (gslt:mode:ProofAssertionDeclaredV1:1 (quote (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints)))))
-   (let (quote (gslt:result:ProofTraceRealizeAssertionResultV1:1110 $result)) (superpose (collapse (gslt:mode:ProofTraceRealizeAssertionResultV1:1110 (quote (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints)) $frame $input)))
-   (quote (gslt:result:ProofTraceApplyAssertionResultV1:1110 $result))))))
+(= (gslt:mode:ProofTraceApplyAssertionResultV1:1110 (cons ProofAssertionV1 (cons $variables (cons $essentials (cons $conclusion-type (cons $conclusion-template (cons $disjoints ())))))) $frame $input)
+   (let gslt:result:ProofAssertionDeclaredV1:1 (superpose (collapse (gslt:mode:ProofAssertionDeclaredV1:1 (quote (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints)))))
+   (let (cons gslt:result:ProofTraceRealizeAssertionResultV1:1110 (cons $result ())) (superpose (collapse (gslt:mode:ProofTraceRealizeAssertionResultV1:1110 (quote (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints)) $frame $input)))
+   (quote (gslt:result:ProofTraceApplyAssertionResultV1:1110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=76 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-assertion-v1 target=mode relation=ProofTraceApplyAssertionV1 input=0000 functional=relational
 (= (gslt:mode:ProofTraceApplyAssertionV1:0000)
-   (let (quote (gslt:result:ProofTraceApplyAssertionResultV1:0000 $assertion $frame $input (ProofTraceRealizeSucceededV1 $output))) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionResultV1:0000)))
+   (let (cons gslt:result:ProofTraceApplyAssertionResultV1:0000 (cons $assertion (cons $frame (cons $input (cons (cons ProofTraceRealizeSucceededV1 (cons $output ())) ()))))) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionResultV1:0000)))
    (quote (gslt:result:ProofTraceApplyAssertionV1:0000 $assertion $frame $input $output))))
 
 ; gslt-lowered-equation-v1 source-rewrite=77 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-append-nil-v1 target=mode relation=ProofTraceSavedAppendV1 input=110 functional=semidet
@@ -2270,10 +2192,9 @@
    (quote (gslt:result:ProofTraceSavedAppendV1:110 (ProofTraceSavedConsV1 $formula ProofTraceSavedNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=78 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-append-cons-v1 target=mode relation=ProofTraceSavedAppendV1 input=110 functional=semidet
-(= (gslt:fn:ProofTraceSavedAppendV1:110 $__gslt_input_v1_0_0 $formula)
-   (let (quote (ProofTraceSavedConsV1 $head $rest)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceSavedAppendV1:110 $output)) (gslt:fn:ProofTraceSavedAppendV1:110 $rest $formula)
-   (quote (gslt:result:ProofTraceSavedAppendV1:110 (ProofTraceSavedConsV1 $head $output))))))
+(= (gslt:fn:ProofTraceSavedAppendV1:110 (cons ProofTraceSavedConsV1 (cons $head (cons $rest ()))) $formula)
+   (let (cons gslt:result:ProofTraceSavedAppendV1:110 (cons $output ())) (gslt:fn:ProofTraceSavedAppendV1:110 $rest $formula)
+   (quote (gslt:result:ProofTraceSavedAppendV1:110 (ProofTraceSavedConsV1 $head $output)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=79 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-lookup-zero-v1 target=mode relation=ProofTraceSavedLookupV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceSavedLookupV1:000)
@@ -2281,25 +2202,22 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=80 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-lookup-succ-v1 target=mode relation=ProofTraceSavedLookupV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceSavedLookupV1:000)
-   (let (quote (ProofTraceSavedLookupV1 $index $rest $formula)) (gslt:ProofTraceSavedLookupV1 (ProofTraceSavedLookupV1 $index $rest $formula))
+   (let (cons ProofTraceSavedLookupV1 (cons $index (cons $rest (cons $formula ())))) (gslt:ProofTraceSavedLookupV1 (ProofTraceSavedLookupV1 $index $rest $formula))
    (quote (gslt:result:ProofTraceSavedLookupV1:000 (ProofTraceNatSuccV1 $index) (ProofTraceSavedConsV1 $head $rest) $formula))))
 
 ; gslt-lowered-equation-v1 source-rewrite=81 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-lookup-result-v1 target=mode relation=ProofTraceSavedLookupResultV1 input=110 functional=semidet
 (= (gslt:fn:ProofTraceSavedLookupResultV1:110 $index $saved)
-   (let (quote (gslt:result:ProofTraceSavedLookupFromV1:1110 $result)) (gslt:fn:ProofTraceSavedLookupFromV1:1110 $index $index $saved)
+   (let (cons gslt:result:ProofTraceSavedLookupFromV1:1110 (cons $result ())) (gslt:fn:ProofTraceSavedLookupFromV1:1110 $index $index $saved)
    (quote (gslt:result:ProofTraceSavedLookupResultV1:110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=82 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-lookup-from-zero-found-v1 target=mode relation=ProofTraceSavedLookupFromV1 input=1110 functional=semidet
-(= (gslt:fn:ProofTraceSavedLookupFromV1:1110 $requested ProofTraceNatZeroV1 $__gslt_input_v1_0_2)
-   (let (quote (ProofTraceSavedConsV1 $formula $rest)) $__gslt_input_v1_0_2
-   (quote (gslt:result:ProofTraceSavedLookupFromV1:1110 (ProofTraceSavedFoundV1 $formula)))))
+(= (gslt:fn:ProofTraceSavedLookupFromV1:1110 $requested ProofTraceNatZeroV1 (cons ProofTraceSavedConsV1 (cons $formula (cons $rest ()))))
+   (quote (gslt:result:ProofTraceSavedLookupFromV1:1110 (ProofTraceSavedFoundV1 $formula))))
 
 ; gslt-lowered-equation-v1 source-rewrite=83 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-lookup-from-succ-v1 target=mode relation=ProofTraceSavedLookupFromV1 input=1110 functional=semidet
-(= (gslt:fn:ProofTraceSavedLookupFromV1:1110 $requested $__gslt_input_v1_0_1 $__gslt_input_v1_0_2)
-   (let (quote (ProofTraceNatSuccV1 $index)) $__gslt_input_v1_0_1
-   (let (quote (ProofTraceSavedConsV1 $head $rest)) $__gslt_input_v1_0_2
-   (let (quote (gslt:result:ProofTraceSavedLookupFromV1:1110 $result)) (gslt:fn:ProofTraceSavedLookupFromV1:1110 $requested $index $rest)
-   (quote (gslt:result:ProofTraceSavedLookupFromV1:1110 $result))))))
+(= (gslt:fn:ProofTraceSavedLookupFromV1:1110 $requested (cons ProofTraceNatSuccV1 (cons $index ())) (cons ProofTraceSavedConsV1 (cons $head (cons $rest ()))))
+   (let (cons gslt:result:ProofTraceSavedLookupFromV1:1110 (cons $result ())) (gslt:fn:ProofTraceSavedLookupFromV1:1110 $requested $index $rest)
+   (quote (gslt:result:ProofTraceSavedLookupFromV1:1110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=84 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-lookup-from-missing-v1 target=mode relation=ProofTraceSavedLookupFromV1 input=1110 functional=semidet
 (= (gslt:fn:ProofTraceSavedLookupFromV1:1110 $requested $index ProofTraceSavedNilV1)
@@ -2315,7 +2233,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=94 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-stack-depth-cons-v1 target=mode relation=ProofTraceFrameStackDepthV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceFrameStackDepthV1:000)
-   (let (quote (ProofTraceFrameStackDepthV1 $frame-rest $stack-rest $result)) (gslt:ProofTraceFrameStackDepthV1 (ProofTraceFrameStackDepthV1 $frame-rest $stack-rest $result))
+   (let (cons ProofTraceFrameStackDepthV1 (cons $frame-rest (cons $stack-rest (cons $result ())))) (gslt:ProofTraceFrameStackDepthV1 (ProofTraceFrameStackDepthV1 $frame-rest $stack-rest $result))
    (quote (gslt:result:ProofTraceFrameStackDepthV1:000 (ProofTraceFrameConsV1 $entry $frame-rest) (ProofTraceStackConsV1 $formula $stack-rest) $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=92 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-stack-depth-frame-nil-v1 target=mode relation=ProofTraceFrameStackDepthV1 input=110 functional=semidet
@@ -2323,55 +2241,46 @@
    (quote (gslt:result:ProofTraceFrameStackDepthV1:110 ProofTraceFrameStackFitsV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=93 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-stack-depth-stack-nil-v1 target=mode relation=ProofTraceFrameStackDepthV1 input=110 functional=semidet
-(= (gslt:fn:ProofTraceFrameStackDepthV1:110 $__gslt_input_v1_0_0 ProofTraceStackNilV1)
-   (let (quote (ProofTraceFrameConsV1 $entry $frame-rest)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceFrameStackDepthV1:110 ProofTraceFrameStackUnderflowV1))))
+(= (gslt:fn:ProofTraceFrameStackDepthV1:110 (cons ProofTraceFrameConsV1 (cons $entry (cons $frame-rest ()))) ProofTraceStackNilV1)
+   (quote (gslt:result:ProofTraceFrameStackDepthV1:110 ProofTraceFrameStackUnderflowV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=94 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-stack-depth-cons-v1 target=mode relation=ProofTraceFrameStackDepthV1 input=110 functional=semidet
-(= (gslt:fn:ProofTraceFrameStackDepthV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceFrameConsV1 $entry $frame-rest)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceStackConsV1 $formula $stack-rest)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:ProofTraceFrameStackDepthV1:110 $result)) (gslt:fn:ProofTraceFrameStackDepthV1:110 $frame-rest $stack-rest)
-   (quote (gslt:result:ProofTraceFrameStackDepthV1:110 $result))))))
+(= (gslt:fn:ProofTraceFrameStackDepthV1:110 (cons ProofTraceFrameConsV1 (cons $entry (cons $frame-rest ()))) (cons ProofTraceStackConsV1 (cons $formula (cons $stack-rest ()))))
+   (let (cons gslt:result:ProofTraceFrameStackDepthV1:110 (cons $result ())) (gslt:fn:ProofTraceFrameStackDepthV1:110 $frame-rest $stack-rest)
+   (quote (gslt:result:ProofTraceFrameStackDepthV1:110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=95 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-nil-v1 target=mode relation=ProofTraceExecStateResultV1 input=11110 functional=relational
 (= (gslt:mode:ProofTraceExecStateResultV1:11110 $context ProofTraceNilV1 $stack $saved)
    (quote (gslt:result:ProofTraceExecStateResultV1:11110 (ProofTraceExecSucceededV1 $stack $saved))))
 
 ; gslt-lowered-equation-v1 source-rewrite=96 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-push-v1 target=mode relation=ProofTraceExecStateResultV1 input=11110 functional=relational
-(= (gslt:mode:ProofTraceExecStateResultV1:11110 $context $__gslt_input_v1_0_1 $stack $saved)
-   (let (quote (ProofTraceConsV1 (ProofTracePushV1 $formula) $trace)) $__gslt_input_v1_0_1
-   (let (quote gslt:result:ProofTraceContextMemberV1:11) (once (gslt:fn:ProofTraceContextMemberV1:11 $context $formula))
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:11110 $result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:11110 $context $trace (quote (ProofTraceStackConsV1 $formula $stack)) $saved)))
-   (quote (gslt:result:ProofTraceExecStateResultV1:11110 $result))))))
-
-; gslt-lowered-equation-v1 source-rewrite=97 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-apply-v1 target=mode relation=ProofTraceExecStateResultV1 input=11110 functional=relational
-(= (gslt:mode:ProofTraceExecStateResultV1:11110 $context $__gslt_input_v1_0_1 $stack $saved)
-   (let (quote (ProofTraceConsV1 (ProofTraceApplyV1 $assertion $frame) $trace)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:ProofTraceFrameStackDepthV1:110 $depth-result)) (once (gslt:fn:ProofTraceFrameStackDepthV1:110 $frame $stack))
-   (let (quote (gslt:result:ProofTraceApplyDepthResultV1:11111110 $result)) (superpose (collapse (gslt:mode:ProofTraceApplyDepthResultV1:11111110 $depth-result $context $trace $assertion $frame $stack $saved)))
-   (quote (gslt:result:ProofTraceExecStateResultV1:11110 $result))))))
-
-; gslt-lowered-equation-v1 source-rewrite=102 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-incomplete-v1 target=mode relation=ProofTraceExecStateResultV1 input=11110 functional=relational
-(= (gslt:mode:ProofTraceExecStateResultV1:11110 $context $__gslt_input_v1_0_1 $stack $saved)
-   (let (quote (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $formula) $trace)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:11110 $result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:11110 $context $trace (quote (ProofTraceStackConsV1 $formula $stack)) $saved)))
+(= (gslt:mode:ProofTraceExecStateResultV1:11110 $context (cons ProofTraceConsV1 (cons (cons ProofTracePushV1 (cons $formula ())) (cons $trace ()))) $stack $saved)
+   (let gslt:result:ProofTraceContextMemberV1:11 (once (gslt:fn:ProofTraceContextMemberV1:11 $context $formula))
+   (let (cons gslt:result:ProofTraceExecStateResultV1:11110 (cons $result ())) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:11110 $context $trace (quote (ProofTraceStackConsV1 $formula $stack)) $saved)))
    (quote (gslt:result:ProofTraceExecStateResultV1:11110 $result)))))
 
+; gslt-lowered-equation-v1 source-rewrite=97 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-apply-v1 target=mode relation=ProofTraceExecStateResultV1 input=11110 functional=relational
+(= (gslt:mode:ProofTraceExecStateResultV1:11110 $context (cons ProofTraceConsV1 (cons (cons ProofTraceApplyV1 (cons $assertion (cons $frame ()))) (cons $trace ()))) $stack $saved)
+   (let (cons gslt:result:ProofTraceFrameStackDepthV1:110 (cons $depth-result ())) (once (gslt:fn:ProofTraceFrameStackDepthV1:110 $frame $stack))
+   (let (cons gslt:result:ProofTraceApplyDepthResultV1:11111110 (cons $result ())) (superpose (collapse (gslt:mode:ProofTraceApplyDepthResultV1:11111110 $depth-result $context $trace $assertion $frame $stack $saved)))
+   (quote (gslt:result:ProofTraceExecStateResultV1:11110 $result)))))
+
+; gslt-lowered-equation-v1 source-rewrite=102 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-incomplete-v1 target=mode relation=ProofTraceExecStateResultV1 input=11110 functional=relational
+(= (gslt:mode:ProofTraceExecStateResultV1:11110 $context (cons ProofTraceConsV1 (cons (cons ProofTraceIncompleteStepV1 (cons $formula ())) (cons $trace ()))) $stack $saved)
+   (let (cons gslt:result:ProofTraceExecStateResultV1:11110 (cons $result ())) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:11110 $context $trace (quote (ProofTraceStackConsV1 $formula $stack)) $saved)))
+   (quote (gslt:result:ProofTraceExecStateResultV1:11110 $result))))
+
 ; gslt-lowered-equation-v1 source-rewrite=103 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-save-v1 target=mode relation=ProofTraceExecStateResultV1 input=11110 functional=relational
-(= (gslt:mode:ProofTraceExecStateResultV1:11110 $context $__gslt_input_v1_0_1 $__gslt_input_v1_0_2 $saved)
-   (let (quote (ProofTraceConsV1 ProofTraceSaveV1 $trace)) $__gslt_input_v1_0_1
-   (let (quote (ProofTraceStackConsV1 $formula $stack)) $__gslt_input_v1_0_2
-   (let (quote (gslt:result:ProofTraceSavedAppendV1:110 $next-saved)) (once (gslt:fn:ProofTraceSavedAppendV1:110 $saved $formula))
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:11110 $result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:11110 $context $trace (quote (ProofTraceStackConsV1 $formula $stack)) $next-saved)))
-   (quote (gslt:result:ProofTraceExecStateResultV1:11110 $result)))))))
+(= (gslt:mode:ProofTraceExecStateResultV1:11110 $context (cons ProofTraceConsV1 (cons ProofTraceSaveV1 (cons $trace ()))) (cons ProofTraceStackConsV1 (cons $formula (cons $stack ()))) $saved)
+   (let (cons gslt:result:ProofTraceSavedAppendV1:110 (cons $next-saved ())) (once (gslt:fn:ProofTraceSavedAppendV1:110 $saved $formula))
+   (let (cons gslt:result:ProofTraceExecStateResultV1:11110 (cons $result ())) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:11110 $context $trace (quote (ProofTraceStackConsV1 $formula $stack)) $next-saved)))
+   (quote (gslt:result:ProofTraceExecStateResultV1:11110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=104 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-restore-v1 target=mode relation=ProofTraceExecStateResultV1 input=11110 functional=relational
-(= (gslt:mode:ProofTraceExecStateResultV1:11110 $context $__gslt_input_v1_0_1 $stack $saved)
-   (let (quote (ProofTraceConsV1 (ProofTraceRestoreV1 $index) $trace)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:ProofTraceSavedLookupResultV1:110 $lookup-result)) (once (gslt:fn:ProofTraceSavedLookupResultV1:110 $index $saved))
-   (let (quote (gslt:result:ProofTraceRestoreLookupExecutionResultV1:111110 $result)) (superpose (collapse (gslt:mode:ProofTraceRestoreLookupExecutionResultV1:111110 $lookup-result $context $trace $stack $saved)))
-   (quote (gslt:result:ProofTraceExecStateResultV1:11110 $result))))))
+(= (gslt:mode:ProofTraceExecStateResultV1:11110 $context (cons ProofTraceConsV1 (cons (cons ProofTraceRestoreV1 (cons $index ())) (cons $trace ()))) $stack $saved)
+   (let (cons gslt:result:ProofTraceSavedLookupResultV1:110 (cons $lookup-result ())) (once (gslt:fn:ProofTraceSavedLookupResultV1:110 $index $saved))
+   (let (cons gslt:result:ProofTraceRestoreLookupExecutionResultV1:111110 (cons $result ())) (superpose (collapse (gslt:mode:ProofTraceRestoreLookupExecutionResultV1:111110 $lookup-result $context $trace $stack $saved)))
+   (quote (gslt:result:ProofTraceExecStateResultV1:11110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=98 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-depth-underflow-v1 target=mode relation=ProofTraceApplyDepthResultV1 input=11111110 functional=relational
 (= (gslt:mode:ProofTraceApplyDepthResultV1:11111110 ProofTraceFrameStackUnderflowV1 $context $trace $assertion $frame $stack $saved)
@@ -2379,31 +2288,27 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=99 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-depth-fits-v1 target=mode relation=ProofTraceApplyDepthResultV1 input=11111110 functional=relational
 (= (gslt:mode:ProofTraceApplyDepthResultV1:11111110 ProofTraceFrameStackFitsV1 $context $trace $assertion $frame $stack $saved)
-   (let (quote (gslt:result:ProofTraceApplyAssertionResultV1:1110 $application-result)) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionResultV1:1110 $assertion $frame $stack)))
-   (let (quote (gslt:result:ProofTraceApplyExecutionResultV1:111110 $result)) (superpose (collapse (gslt:mode:ProofTraceApplyExecutionResultV1:111110 $application-result $context $trace $stack $saved)))
+   (let (cons gslt:result:ProofTraceApplyAssertionResultV1:1110 (cons $application-result ())) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionResultV1:1110 $assertion $frame $stack)))
+   (let (cons gslt:result:ProofTraceApplyExecutionResultV1:111110 (cons $result ())) (superpose (collapse (gslt:mode:ProofTraceApplyExecutionResultV1:111110 $application-result $context $trace $stack $saved)))
    (quote (gslt:result:ProofTraceApplyDepthResultV1:11111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=100 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-execution-succeeded-v1 target=mode relation=ProofTraceApplyExecutionResultV1 input=111110 functional=relational
-(= (gslt:mode:ProofTraceApplyExecutionResultV1:111110 $__gslt_input_v1_0_0 $context $trace $stack $saved)
-   (let (quote (ProofTraceRealizeSucceededV1 $next-stack)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:11110 $result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:11110 $context $trace $next-stack $saved)))
-   (quote (gslt:result:ProofTraceApplyExecutionResultV1:111110 $result)))))
+(= (gslt:mode:ProofTraceApplyExecutionResultV1:111110 (cons ProofTraceRealizeSucceededV1 (cons $next-stack ())) $context $trace $stack $saved)
+   (let (cons gslt:result:ProofTraceExecStateResultV1:11110 (cons $result ())) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:11110 $context $trace $next-stack $saved)))
+   (quote (gslt:result:ProofTraceApplyExecutionResultV1:111110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=101 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-execution-refused-v1 target=mode relation=ProofTraceApplyExecutionResultV1 input=111110 functional=relational
-(= (gslt:mode:ProofTraceApplyExecutionResultV1:111110 $__gslt_input_v1_0_0 $context $trace $stack $saved)
-   (let (quote (ProofTraceRealizeRefusedV1 $reason)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceApplyExecutionResultV1:111110 (ProofTraceExecRefusedV1 $reason $stack $saved)))))
+(= (gslt:mode:ProofTraceApplyExecutionResultV1:111110 (cons ProofTraceRealizeRefusedV1 (cons $reason ())) $context $trace $stack $saved)
+   (quote (gslt:result:ProofTraceApplyExecutionResultV1:111110 (ProofTraceExecRefusedV1 $reason $stack $saved))))
 
 ; gslt-lowered-equation-v1 source-rewrite=105 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-restore-lookup-found-v1 target=mode relation=ProofTraceRestoreLookupExecutionResultV1 input=111110 functional=relational
-(= (gslt:mode:ProofTraceRestoreLookupExecutionResultV1:111110 $__gslt_input_v1_0_0 $context $trace $stack $saved)
-   (let (quote (ProofTraceSavedFoundV1 $formula)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:11110 $result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:11110 $context $trace (quote (ProofTraceStackConsV1 $formula $stack)) $saved)))
-   (quote (gslt:result:ProofTraceRestoreLookupExecutionResultV1:111110 $result)))))
+(= (gslt:mode:ProofTraceRestoreLookupExecutionResultV1:111110 (cons ProofTraceSavedFoundV1 (cons $formula ())) $context $trace $stack $saved)
+   (let (cons gslt:result:ProofTraceExecStateResultV1:11110 (cons $result ())) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:11110 $context $trace (quote (ProofTraceStackConsV1 $formula $stack)) $saved)))
+   (quote (gslt:result:ProofTraceRestoreLookupExecutionResultV1:111110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=106 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-restore-lookup-missing-v1 target=mode relation=ProofTraceRestoreLookupExecutionResultV1 input=111110 functional=relational
-(= (gslt:mode:ProofTraceRestoreLookupExecutionResultV1:111110 $__gslt_input_v1_0_0 $context $trace $stack $saved)
-   (let (quote (ProofTraceSavedMissingV1 $index)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceRestoreLookupExecutionResultV1:111110 (ProofTraceExecRefusedV1 (ProofTraceRefusedSavedStepOutOfRangeV1 $index) $stack $saved)))))
+(= (gslt:mode:ProofTraceRestoreLookupExecutionResultV1:111110 (cons ProofTraceSavedMissingV1 (cons $index ())) $context $trace $stack $saved)
+   (quote (gslt:result:ProofTraceRestoreLookupExecutionResultV1:111110 (ProofTraceExecRefusedV1 (ProofTraceRefusedSavedStepOutOfRangeV1 $index) $stack $saved))))
 
 ; gslt-lowered-equation-v1 source-rewrite=107 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-nil-nil-v1 target=mode relation=ProofSequenceCompareV1 input=000 functional=relational
 (= (gslt:mode:ProofSequenceCompareV1:000)
@@ -2419,167 +2324,135 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=110 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-cons-v1 target=mode relation=ProofSequenceCompareV1 input=000 functional=relational
 (= (gslt:mode:ProofSequenceCompareV1:000)
-   (let (quote (gslt:result:ProofTokenCompareV1:000 $left $right $head-comparison)) (superpose (collapse (gslt:mode:ProofTokenCompareV1:000)))
-   (let (quote (gslt:result:ProofSequenceCompareHeadsV1:1000 $left-rest $right-rest $result)) (superpose (collapse (gslt:mode:ProofSequenceCompareHeadsV1:1000 $head-comparison)))
+   (let (cons gslt:result:ProofTokenCompareV1:000 (cons $left (cons $right (cons $head-comparison ())))) (superpose (collapse (gslt:mode:ProofTokenCompareV1:000)))
+   (let (cons gslt:result:ProofSequenceCompareHeadsV1:1000 (cons $left-rest (cons $right-rest (cons $result ())))) (superpose (collapse (gslt:mode:ProofSequenceCompareHeadsV1:1000 $head-comparison)))
    (quote (gslt:result:ProofSequenceCompareV1:000 (ProofSequenceConsV1 $left $left-rest) (ProofSequenceConsV1 $right $right-rest) $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=107 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-nil-nil-v1 target=mode relation=ProofSequenceCompareV1 input=111 functional=semidet
-(= (gslt:fn:ProofSequenceCompareV1:111 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1 ProofSequenceEqualV1)
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_0
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_1
-   (quote gslt:result:ProofSequenceCompareV1:111))))
+(= (gslt:fn:ProofSequenceCompareV1:111 (cons ProofSequenceNilV1 ()) (cons ProofSequenceNilV1 ()) ProofSequenceEqualV1)
+   (quote gslt:result:ProofSequenceCompareV1:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=108 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-nil-cons-v1 target=mode relation=ProofSequenceCompareV1 input=111 functional=semidet
-(= (gslt:fn:ProofSequenceCompareV1:111 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1 ProofSequenceDifferentV1)
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_0
-   (let (quote (ProofSequenceConsV1 $right $right-rest)) $__gslt_input_v1_0_1
-   (quote gslt:result:ProofSequenceCompareV1:111))))
+(= (gslt:fn:ProofSequenceCompareV1:111 (cons ProofSequenceNilV1 ()) (cons ProofSequenceConsV1 (cons $right (cons $right-rest ()))) ProofSequenceDifferentV1)
+   (quote gslt:result:ProofSequenceCompareV1:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=109 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-cons-nil-v1 target=mode relation=ProofSequenceCompareV1 input=111 functional=semidet
-(= (gslt:fn:ProofSequenceCompareV1:111 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1 ProofSequenceDifferentV1)
-   (let (quote (ProofSequenceConsV1 $left $left-rest)) $__gslt_input_v1_0_0
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_1
-   (quote gslt:result:ProofSequenceCompareV1:111))))
+(= (gslt:fn:ProofSequenceCompareV1:111 (cons ProofSequenceConsV1 (cons $left (cons $left-rest ()))) (cons ProofSequenceNilV1 ()) ProofSequenceDifferentV1)
+   (quote gslt:result:ProofSequenceCompareV1:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=110 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-cons-v1 target=mode relation=ProofSequenceCompareV1 input=111 functional=semidet
-(= (gslt:fn:ProofSequenceCompareV1:111 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1 $result)
-   (let (quote (ProofSequenceConsV1 $left $left-rest)) $__gslt_input_v1_0_0
-   (let (quote (ProofSequenceConsV1 $right $right-rest)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:ProofTokenCompareV1:110 $head-comparison)) (gslt:fn:ProofTokenCompareV1:110 $left $right)
-   (let (quote gslt:result:ProofSequenceCompareHeadsV1:1111) (gslt:fn:ProofSequenceCompareHeadsV1:1111 $head-comparison $left-rest $right-rest $result)
-   (quote gslt:result:ProofSequenceCompareV1:111))))))
+(= (gslt:fn:ProofSequenceCompareV1:111 (cons ProofSequenceConsV1 (cons $left (cons $left-rest ()))) (cons ProofSequenceConsV1 (cons $right (cons $right-rest ()))) $result)
+   (let (cons gslt:result:ProofTokenCompareV1:110 (cons $head-comparison ())) (gslt:fn:ProofTokenCompareV1:110 $left $right)
+   (let gslt:result:ProofSequenceCompareHeadsV1:1111 (gslt:fn:ProofSequenceCompareHeadsV1:1111 $head-comparison $left-rest $right-rest $result)
+   (quote gslt:result:ProofSequenceCompareV1:111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=107 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-nil-nil-v1 target=mode relation=ProofSequenceCompareV1 input=110 functional=semidet
-(= (gslt:fn:ProofSequenceCompareV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_0
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:ProofSequenceCompareV1:110 ProofSequenceEqualV1)))))
+(= (gslt:fn:ProofSequenceCompareV1:110 (cons ProofSequenceNilV1 ()) (cons ProofSequenceNilV1 ()))
+   (quote (gslt:result:ProofSequenceCompareV1:110 ProofSequenceEqualV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=108 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-nil-cons-v1 target=mode relation=ProofSequenceCompareV1 input=110 functional=semidet
-(= (gslt:fn:ProofSequenceCompareV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_0
-   (let (quote (ProofSequenceConsV1 $right $right-rest)) $__gslt_input_v1_0_1
-   (quote (gslt:result:ProofSequenceCompareV1:110 ProofSequenceDifferentV1)))))
+(= (gslt:fn:ProofSequenceCompareV1:110 (cons ProofSequenceNilV1 ()) (cons ProofSequenceConsV1 (cons $right (cons $right-rest ()))))
+   (quote (gslt:result:ProofSequenceCompareV1:110 ProofSequenceDifferentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=109 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-cons-nil-v1 target=mode relation=ProofSequenceCompareV1 input=110 functional=semidet
-(= (gslt:fn:ProofSequenceCompareV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (ProofSequenceConsV1 $left $left-rest)) $__gslt_input_v1_0_0
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:ProofSequenceCompareV1:110 ProofSequenceDifferentV1)))))
+(= (gslt:fn:ProofSequenceCompareV1:110 (cons ProofSequenceConsV1 (cons $left (cons $left-rest ()))) (cons ProofSequenceNilV1 ()))
+   (quote (gslt:result:ProofSequenceCompareV1:110 ProofSequenceDifferentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=110 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-cons-v1 target=mode relation=ProofSequenceCompareV1 input=110 functional=semidet
-(= (gslt:fn:ProofSequenceCompareV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (ProofSequenceConsV1 $left $left-rest)) $__gslt_input_v1_0_0
-   (let (quote (ProofSequenceConsV1 $right $right-rest)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:ProofTokenCompareV1:110 $head-comparison)) (gslt:fn:ProofTokenCompareV1:110 $left $right)
-   (let (quote (gslt:result:ProofSequenceCompareHeadsV1:1110 $result)) (gslt:fn:ProofSequenceCompareHeadsV1:1110 $head-comparison $left-rest $right-rest)
-   (quote (gslt:result:ProofSequenceCompareV1:110 $result)))))))
+(= (gslt:fn:ProofSequenceCompareV1:110 (cons ProofSequenceConsV1 (cons $left (cons $left-rest ()))) (cons ProofSequenceConsV1 (cons $right (cons $right-rest ()))))
+   (let (cons gslt:result:ProofTokenCompareV1:110 (cons $head-comparison ())) (gslt:fn:ProofTokenCompareV1:110 $left $right)
+   (let (cons gslt:result:ProofSequenceCompareHeadsV1:1110 (cons $result ())) (gslt:fn:ProofSequenceCompareHeadsV1:1110 $head-comparison $left-rest $right-rest)
+   (quote (gslt:result:ProofSequenceCompareV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=111 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-heads-equal-v1 target=mode relation=ProofSequenceCompareHeadsV1 input=1111 functional=semidet
-(= (gslt:fn:ProofSequenceCompareHeadsV1:1111 $__gslt_input_v1_0_0 $left-rest $right-rest $result)
-   (let (quote (ProofTokenEqualV1)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ProofSequenceCompareV1:111) (gslt:fn:ProofSequenceCompareV1:111 $left-rest $right-rest $result)
-   (quote gslt:result:ProofSequenceCompareHeadsV1:1111))))
-
-; gslt-lowered-equation-v1 source-rewrite=112 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-heads-unequal-v1 target=mode relation=ProofSequenceCompareHeadsV1 input=1111 functional=semidet
-(= (gslt:fn:ProofSequenceCompareHeadsV1:1111 $__gslt_input_v1_0_0 $left-rest $right-rest ProofSequenceDifferentV1)
-   (let (quote (ProofTokenUnequalV1)) $__gslt_input_v1_0_0
+(= (gslt:fn:ProofSequenceCompareHeadsV1:1111 (cons ProofTokenEqualV1 ()) $left-rest $right-rest $result)
+   (let gslt:result:ProofSequenceCompareV1:111 (gslt:fn:ProofSequenceCompareV1:111 $left-rest $right-rest $result)
    (quote gslt:result:ProofSequenceCompareHeadsV1:1111)))
 
+; gslt-lowered-equation-v1 source-rewrite=112 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-heads-unequal-v1 target=mode relation=ProofSequenceCompareHeadsV1 input=1111 functional=semidet
+(= (gslt:fn:ProofSequenceCompareHeadsV1:1111 (cons ProofTokenUnequalV1 ()) $left-rest $right-rest ProofSequenceDifferentV1)
+   (quote gslt:result:ProofSequenceCompareHeadsV1:1111))
+
 ; gslt-lowered-equation-v1 source-rewrite=111 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-heads-equal-v1 target=mode relation=ProofSequenceCompareHeadsV1 input=1110 functional=semidet
-(= (gslt:fn:ProofSequenceCompareHeadsV1:1110 $__gslt_input_v1_0_0 $left-rest $right-rest)
-   (let (quote (ProofTokenEqualV1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceCompareV1:110 $result)) (gslt:fn:ProofSequenceCompareV1:110 $left-rest $right-rest)
-   (quote (gslt:result:ProofSequenceCompareHeadsV1:1110 $result)))))
+(= (gslt:fn:ProofSequenceCompareHeadsV1:1110 (cons ProofTokenEqualV1 ()) $left-rest $right-rest)
+   (let (cons gslt:result:ProofSequenceCompareV1:110 (cons $result ())) (gslt:fn:ProofSequenceCompareV1:110 $left-rest $right-rest)
+   (quote (gslt:result:ProofSequenceCompareHeadsV1:1110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=112 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-heads-unequal-v1 target=mode relation=ProofSequenceCompareHeadsV1 input=1110 functional=semidet
-(= (gslt:fn:ProofSequenceCompareHeadsV1:1110 $__gslt_input_v1_0_0 $left-rest $right-rest)
-   (let (quote (ProofTokenUnequalV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofSequenceCompareHeadsV1:1110 ProofSequenceDifferentV1))))
+(= (gslt:fn:ProofSequenceCompareHeadsV1:1110 (cons ProofTokenUnequalV1 ()) $left-rest $right-rest)
+   (quote (gslt:result:ProofSequenceCompareHeadsV1:1110 ProofSequenceDifferentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=113 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-finalize-equal-v1 target=mode relation=ProofTraceFinalizeCompareV1 input=1111 functional=semidet
 (= (gslt:fn:ProofTraceFinalizeCompareV1:1111 ProofSequenceEqualV1 $target $actual ProofTraceSucceededV1)
    (quote gslt:result:ProofTraceFinalizeCompareV1:1111))
 
 ; gslt-lowered-equation-v1 source-rewrite=114 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-finalize-different-v1 target=mode relation=ProofTraceFinalizeCompareV1 input=1111 functional=semidet
-(= (gslt:fn:ProofTraceFinalizeCompareV1:1111 ProofSequenceDifferentV1 $target $actual $__gslt_input_v1_0_3)
-   (let (quote (ProofTraceRefusedClaimMismatchV1 $target $actual)) $__gslt_input_v1_0_3
-   (quote gslt:result:ProofTraceFinalizeCompareV1:1111)))
+(= (gslt:fn:ProofTraceFinalizeCompareV1:1111 ProofSequenceDifferentV1 $target $actual (cons ProofTraceRefusedClaimMismatchV1 (cons $target (cons $actual ()))))
+   (quote gslt:result:ProofTraceFinalizeCompareV1:1111))
 
 ; gslt-lowered-equation-v1 source-rewrite=113 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-finalize-equal-v1 target=mode relation=ProofTraceFinalizeCompareV1 input=1011 functional=relational
 (= (gslt:mode:ProofTraceFinalizeCompareV1:1011 ProofSequenceEqualV1 $actual ProofTraceSucceededV1)
    (quote (gslt:result:ProofTraceFinalizeCompareV1:1011 $target)))
 
 ; gslt-lowered-equation-v1 source-rewrite=114 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-finalize-different-v1 target=mode relation=ProofTraceFinalizeCompareV1 input=1011 functional=relational
-(= (gslt:mode:ProofTraceFinalizeCompareV1:1011 ProofSequenceDifferentV1 $actual $__gslt_input_v1_0_3)
-   (let (quote (ProofTraceRefusedClaimMismatchV1 $target $actual)) $__gslt_input_v1_0_3
-   (quote (gslt:result:ProofTraceFinalizeCompareV1:1011 $target))))
+(= (gslt:mode:ProofTraceFinalizeCompareV1:1011 ProofSequenceDifferentV1 $actual (cons ProofTraceRefusedClaimMismatchV1 (cons $target (cons $actual ()))))
+   (quote (gslt:result:ProofTraceFinalizeCompareV1:1011 $target)))
 
 ; gslt-lowered-equation-v1 source-rewrite=115 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-final-empty-v1 target=mode relation=ProofTraceFinalResultV1 input=111 functional=semidet
 (= (gslt:fn:ProofTraceFinalResultV1:111 ProofTraceStackNilV1 $target ProofTraceRefusedEmptyStackV1)
    (quote gslt:result:ProofTraceFinalResultV1:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=116 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-final-single-v1 target=mode relation=ProofTraceFinalResultV1 input=111 functional=semidet
-(= (gslt:fn:ProofTraceFinalResultV1:111 $__gslt_input_v1_0_0 $target $result)
-   (let (quote (ProofTraceStackConsV1 $actual ProofTraceStackNilV1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceCompareV1:110 $comparison)) (gslt:fn:ProofSequenceCompareV1:110 $target $actual)
-   (let (quote gslt:result:ProofTraceFinalizeCompareV1:1111) (gslt:fn:ProofTraceFinalizeCompareV1:1111 $comparison $target $actual $result)
-   (quote gslt:result:ProofTraceFinalResultV1:111)))))
+(= (gslt:fn:ProofTraceFinalResultV1:111 (cons ProofTraceStackConsV1 (cons $actual (cons ProofTraceStackNilV1 ()))) $target $result)
+   (let (cons gslt:result:ProofSequenceCompareV1:110 (cons $comparison ())) (gslt:fn:ProofSequenceCompareV1:110 $target $actual)
+   (let gslt:result:ProofTraceFinalizeCompareV1:1111 (gslt:fn:ProofTraceFinalizeCompareV1:1111 $comparison $target $actual $result)
+   (quote gslt:result:ProofTraceFinalResultV1:111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=117 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-final-extra-v1 target=mode relation=ProofTraceFinalResultV1 input=111 functional=semidet
-(= (gslt:fn:ProofTraceFinalResultV1:111 $__gslt_input_v1_0_0 $target $__gslt_input_v1_0_2)
-   (let (quote (ProofTraceStackConsV1 $top (ProofTraceStackConsV1 $next $rest))) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceRefusedExtraStackV1 (ProofTraceStackConsV1 $top (ProofTraceStackConsV1 $next $rest)))) $__gslt_input_v1_0_2
-   (quote gslt:result:ProofTraceFinalResultV1:111))))
+(= (gslt:fn:ProofTraceFinalResultV1:111 (cons ProofTraceStackConsV1 (cons $top (cons (cons ProofTraceStackConsV1 (cons $next (cons $rest ()))) ()))) $target (cons ProofTraceRefusedExtraStackV1 (cons (cons ProofTraceStackConsV1 (cons $top (cons (cons ProofTraceStackConsV1 (cons $next (cons $rest ()))) ()))) ())))
+   (quote gslt:result:ProofTraceFinalResultV1:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=115 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-final-empty-v1 target=mode relation=ProofTraceFinalResultV1 input=101 functional=relational
 (= (gslt:mode:ProofTraceFinalResultV1:101 ProofTraceStackNilV1 ProofTraceRefusedEmptyStackV1)
    (quote (gslt:result:ProofTraceFinalResultV1:101 $target)))
 
 ; gslt-lowered-equation-v1 source-rewrite=116 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-final-single-v1 target=mode relation=ProofTraceFinalResultV1 input=101 functional=relational
-(= (gslt:mode:ProofTraceFinalResultV1:101 $__gslt_input_v1_0_0 $result)
-   (let (quote (ProofTraceStackConsV1 $actual ProofTraceStackNilV1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceCompareV1:010 $target $comparison)) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:010 $actual)))
-   (let (quote (ProofTraceFinalizeCompareV1 $comparison $target $actual $result)) (gslt:ProofTraceFinalizeCompareV1 (ProofTraceFinalizeCompareV1 $comparison $target $actual $result))
-   (quote (gslt:result:ProofTraceFinalResultV1:101 $target))))))
+(= (gslt:mode:ProofTraceFinalResultV1:101 (cons ProofTraceStackConsV1 (cons $actual (cons ProofTraceStackNilV1 ()))) $result)
+   (let (cons gslt:result:ProofSequenceCompareV1:010 (cons $target (cons $comparison ()))) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:010 $actual)))
+   (let (cons ProofTraceFinalizeCompareV1 (cons $comparison (cons $target (cons $actual (cons $result ()))))) (gslt:ProofTraceFinalizeCompareV1 (ProofTraceFinalizeCompareV1 $comparison $target $actual $result))
+   (quote (gslt:result:ProofTraceFinalResultV1:101 $target)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=117 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-final-extra-v1 target=mode relation=ProofTraceFinalResultV1 input=101 functional=relational
-(= (gslt:mode:ProofTraceFinalResultV1:101 $__gslt_input_v1_0_0 $__gslt_input_v1_0_2)
-   (let (quote (ProofTraceStackConsV1 $top (ProofTraceStackConsV1 $next $rest))) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceRefusedExtraStackV1 (ProofTraceStackConsV1 $top (ProofTraceStackConsV1 $next $rest)))) $__gslt_input_v1_0_2
-   (quote (gslt:result:ProofTraceFinalResultV1:101 $target)))))
+(= (gslt:mode:ProofTraceFinalResultV1:101 (cons ProofTraceStackConsV1 (cons $top (cons (cons ProofTraceStackConsV1 (cons $next (cons $rest ()))) ()))) (cons ProofTraceRefusedExtraStackV1 (cons (cons ProofTraceStackConsV1 (cons $top (cons (cons ProofTraceStackConsV1 (cons $next (cons $rest ()))) ()))) ())))
+   (quote (gslt:result:ProofTraceFinalResultV1:101 $target)))
 
 ; gslt-lowered-equation-v1 source-rewrite=118 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-result-v1 target=mode relation=ProofTraceCheckResultV1 input=1111 functional=relational
 (= (gslt:mode:ProofTraceCheckResultV1:1111 $context $trace $target $result)
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:11110 $execution-result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:11110 $context $trace ProofTraceStackNilV1 ProofTraceSavedNilV1)))
-   (let (quote gslt:result:ProofTraceCheckExecutionResultV1:111) (once (gslt:fn:ProofTraceCheckExecutionResultV1:111 $execution-result $target $result))
+   (let (cons gslt:result:ProofTraceExecStateResultV1:11110 (cons $execution-result ())) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:11110 $context $trace ProofTraceStackNilV1 ProofTraceSavedNilV1)))
+   (let gslt:result:ProofTraceCheckExecutionResultV1:111 (once (gslt:fn:ProofTraceCheckExecutionResultV1:111 $execution-result $target $result))
    (quote gslt:result:ProofTraceCheckResultV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=119 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-execution-result-succeeded-v1 target=mode relation=ProofTraceCheckExecutionResultV1 input=111 functional=semidet
-(= (gslt:fn:ProofTraceCheckExecutionResultV1:111 $__gslt_input_v1_0_0 $target $result)
-   (let (quote (ProofTraceExecSucceededV1 $stack $saved)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ProofTraceFinalResultV1:111) (gslt:fn:ProofTraceFinalResultV1:111 $stack $target $result)
-   (quote gslt:result:ProofTraceCheckExecutionResultV1:111))))
-
-; gslt-lowered-equation-v1 source-rewrite=120 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-execution-result-refused-v1 target=mode relation=ProofTraceCheckExecutionResultV1 input=111 functional=semidet
-(= (gslt:fn:ProofTraceCheckExecutionResultV1:111 $__gslt_input_v1_0_0 $target $reason)
-   (let (quote (ProofTraceExecRefusedV1 $reason $stack $saved)) $__gslt_input_v1_0_0
+(= (gslt:fn:ProofTraceCheckExecutionResultV1:111 (cons ProofTraceExecSucceededV1 (cons $stack (cons $saved ()))) $target $result)
+   (let gslt:result:ProofTraceFinalResultV1:111 (gslt:fn:ProofTraceFinalResultV1:111 $stack $target $result)
    (quote gslt:result:ProofTraceCheckExecutionResultV1:111)))
 
+; gslt-lowered-equation-v1 source-rewrite=120 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-execution-result-refused-v1 target=mode relation=ProofTraceCheckExecutionResultV1 input=111 functional=semidet
+(= (gslt:fn:ProofTraceCheckExecutionResultV1:111 (cons ProofTraceExecRefusedV1 (cons $reason (cons $stack (cons $saved ())))) $target $reason)
+   (quote gslt:result:ProofTraceCheckExecutionResultV1:111))
+
 ; gslt-lowered-equation-v1 source-rewrite=119 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-execution-result-succeeded-v1 target=mode relation=ProofTraceCheckExecutionResultV1 input=101 functional=relational
-(= (gslt:mode:ProofTraceCheckExecutionResultV1:101 $__gslt_input_v1_0_0 $result)
-   (let (quote (ProofTraceExecSucceededV1 $stack $saved)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceFinalResultV1:101 $target)) (superpose (collapse (gslt:mode:ProofTraceFinalResultV1:101 $stack $result)))
-   (quote (gslt:result:ProofTraceCheckExecutionResultV1:101 $target)))))
+(= (gslt:mode:ProofTraceCheckExecutionResultV1:101 (cons ProofTraceExecSucceededV1 (cons $stack (cons $saved ()))) $result)
+   (let (cons gslt:result:ProofTraceFinalResultV1:101 (cons $target ())) (superpose (collapse (gslt:mode:ProofTraceFinalResultV1:101 $stack $result)))
+   (quote (gslt:result:ProofTraceCheckExecutionResultV1:101 $target))))
 
 ; gslt-lowered-equation-v1 source-rewrite=120 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-execution-result-refused-v1 target=mode relation=ProofTraceCheckExecutionResultV1 input=101 functional=relational
-(= (gslt:mode:ProofTraceCheckExecutionResultV1:101 $__gslt_input_v1_0_0 $reason)
-   (let (quote (ProofTraceExecRefusedV1 $reason $stack $saved)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceCheckExecutionResultV1:101 $target))))
+(= (gslt:mode:ProofTraceCheckExecutionResultV1:101 (cons ProofTraceExecRefusedV1 (cons $reason (cons $stack (cons $saved ())))) $reason)
+   (quote (gslt:result:ProofTraceCheckExecutionResultV1:101 $target)))
 
 ; gslt-lowered-equation-v1 source-rewrite=147 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-accepted-v1 target=mode relation=ProofTraceAcceptedV1 input=111 functional=relational
 (= (gslt:mode:ProofTraceAcceptedV1:111 $context $trace $target)
-   (let (quote gslt:result:ProofTraceCheckResultV1:1111) (superpose (collapse (gslt:mode:ProofTraceCheckResultV1:1111 $context $trace $target ProofTraceSucceededV1)))
+   (let gslt:result:ProofTraceCheckResultV1:1111 (superpose (collapse (gslt:mode:ProofTraceCheckResultV1:1111 $context $trace $target ProofTraceSucceededV1)))
    (quote gslt:result:ProofTraceAcceptedV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=148 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-canonical-zero-v1 target=mode relation=ProofTraceNatCanonicalV1 input=00 functional=relational
@@ -2588,19 +2461,19 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=149 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-canonical-succ-v1 target=mode relation=ProofTraceNatCanonicalV1 input=00 functional=relational
 (= (gslt:mode:ProofTraceNatCanonicalV1:00)
-   (let (quote (ProofTraceNatCanonicalV1 $source $canonical)) (gslt:ProofTraceNatCanonicalV1 (ProofTraceNatCanonicalV1 $source $canonical))
+   (let (cons ProofTraceNatCanonicalV1 (cons $source (cons $canonical ()))) (gslt:ProofTraceNatCanonicalV1 (ProofTraceNatCanonicalV1 $source $canonical))
    (quote (gslt:result:ProofTraceNatCanonicalV1:00 (ProofTraceNatSuccV1 $source) (ProofTraceNatSuccV1 $canonical)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=150 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-alias-canonical-v1 target=mode relation=ProofTraceNatAliasCanonicalV1 input=00 functional=relational
 (= (gslt:mode:ProofTraceNatAliasCanonicalV1:00)
-   (let (quote (source-proof-trace-nat-alias-v1 $alias $source)) (gslt:source-proof-trace-nat-alias-v1 (source-proof-trace-nat-alias-v1 $alias $source))
-   (let (quote (gslt:result:ProofTraceNatAliasExpansionCanonicalV1:10 $canonical)) (once (gslt:fn:ProofTraceNatAliasExpansionCanonicalV1:10 $source))
+   (let (cons source-proof-trace-nat-alias-v1 (cons $alias (cons $source ()))) (gslt:source-proof-trace-nat-alias-v1 (source-proof-trace-nat-alias-v1 $alias $source))
+   (let (cons gslt:result:ProofTraceNatAliasExpansionCanonicalV1:10 (cons $canonical ())) (once (gslt:fn:ProofTraceNatAliasExpansionCanonicalV1:10 $source))
    (quote (gslt:result:ProofTraceNatAliasCanonicalV1:00 $alias $canonical)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=150 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-alias-canonical-v1 target=mode relation=ProofTraceNatAliasCanonicalV1 input=10 functional=semidet
 (= (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $alias)
-   (let (quote (gslt:result:source-proof-trace-nat-alias-v1:10 $source)) (gslt:fn:source-proof-trace-nat-alias-v1:10 $alias)
-   (let (quote (gslt:result:ProofTraceNatAliasExpansionCanonicalV1:10 $canonical)) (gslt:fn:ProofTraceNatAliasExpansionCanonicalV1:10 $source)
+   (let (cons gslt:result:source-proof-trace-nat-alias-v1:10 (cons $source ())) (gslt:fn:source-proof-trace-nat-alias-v1:10 $alias)
+   (let (cons gslt:result:ProofTraceNatAliasExpansionCanonicalV1:10 (cons $canonical ())) (gslt:fn:ProofTraceNatAliasExpansionCanonicalV1:10 $source)
    (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=151 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-alias-expansion-zero-v1 target=mode relation=ProofTraceNatAliasExpansionCanonicalV1 input=10 functional=semidet
@@ -2608,10 +2481,9 @@
    (quote (gslt:result:ProofTraceNatAliasExpansionCanonicalV1:10 ProofTraceNatZeroV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=152 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-alias-expansion-succ-v1 target=mode relation=ProofTraceNatAliasExpansionCanonicalV1 input=10 functional=semidet
-(= (gslt:fn:ProofTraceNatAliasExpansionCanonicalV1:10 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceNatSuccV1 $predecessor-alias)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-predecessor)) (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $predecessor-alias)
-   (quote (gslt:result:ProofTraceNatAliasExpansionCanonicalV1:10 (ProofTraceNatSuccV1 $canonical-predecessor))))))
+(= (gslt:fn:ProofTraceNatAliasExpansionCanonicalV1:10 (cons ProofTraceNatSuccV1 (cons $predecessor-alias ())))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-predecessor ())) (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $predecessor-alias)
+   (quote (gslt:result:ProofTraceNatAliasExpansionCanonicalV1:10 (ProofTraceNatSuccV1 $canonical-predecessor)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=153 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-add-zero-v1 target=mode relation=ProofTraceNatAddV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceNatAddV1:000)
@@ -2619,7 +2491,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=154 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-add-succ-v1 target=mode relation=ProofTraceNatAddV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceNatAddV1:000)
-   (let (quote (ProofTraceNatAddV1 $left $right $sum)) (gslt:ProofTraceNatAddV1 (ProofTraceNatAddV1 $left $right $sum))
+   (let (cons ProofTraceNatAddV1 (cons $left (cons $right (cons $sum ())))) (gslt:ProofTraceNatAddV1 (ProofTraceNatAddV1 $left $right $sum))
    (quote (gslt:result:ProofTraceNatAddV1:000 (ProofTraceNatSuccV1 $left) $right (ProofTraceNatSuccV1 $sum)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=153 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-add-zero-v1 target=mode relation=ProofTraceNatAddV1 input=110 functional=semidet
@@ -2627,10 +2499,9 @@
    (quote (gslt:result:ProofTraceNatAddV1:110 $right)))
 
 ; gslt-lowered-equation-v1 source-rewrite=154 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-add-succ-v1 target=mode relation=ProofTraceNatAddV1 input=110 functional=semidet
-(= (gslt:fn:ProofTraceNatAddV1:110 $__gslt_input_v1_0_0 $right)
-   (let (quote (ProofTraceNatSuccV1 $left)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAddV1:110 $sum)) (gslt:fn:ProofTraceNatAddV1:110 $left $right)
-   (quote (gslt:result:ProofTraceNatAddV1:110 (ProofTraceNatSuccV1 $sum))))))
+(= (gslt:fn:ProofTraceNatAddV1:110 (cons ProofTraceNatSuccV1 (cons $left ())) $right)
+   (let (cons gslt:result:ProofTraceNatAddV1:110 (cons $sum ())) (gslt:fn:ProofTraceNatAddV1:110 $left $right)
+   (quote (gslt:result:ProofTraceNatAddV1:110 (ProofTraceNatSuccV1 $sum)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=155 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-mul-zero-v1 target=mode relation=ProofTraceNatMulV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceNatMulV1:000)
@@ -2638,8 +2509,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=156 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-mul-succ-v1 target=mode relation=ProofTraceNatMulV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceNatMulV1:000)
-   (let (quote (ProofTraceNatMulV1 $left $right $partial)) (gslt:ProofTraceNatMulV1 (ProofTraceNatMulV1 $left $right $partial))
-   (let (quote (ProofTraceNatAddV1 $right $partial $product)) (gslt:ProofTraceNatAddV1 (ProofTraceNatAddV1 $right $partial $product))
+   (let (cons ProofTraceNatMulV1 (cons $left (cons $right (cons $partial ())))) (gslt:ProofTraceNatMulV1 (ProofTraceNatMulV1 $left $right $partial))
+   (let (cons ProofTraceNatAddV1 (cons $right (cons $partial (cons $product ())))) (gslt:ProofTraceNatAddV1 (ProofTraceNatAddV1 $right $partial $product))
    (quote (gslt:result:ProofTraceNatMulV1:000 (ProofTraceNatSuccV1 $left) $right $product)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=155 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-mul-zero-v1 target=mode relation=ProofTraceNatMulV1 input=110 functional=semidet
@@ -2647,16 +2518,15 @@
    (quote (gslt:result:ProofTraceNatMulV1:110 ProofTraceNatZeroV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=156 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-mul-succ-v1 target=mode relation=ProofTraceNatMulV1 input=110 functional=semidet
-(= (gslt:fn:ProofTraceNatMulV1:110 $__gslt_input_v1_0_0 $right)
-   (let (quote (ProofTraceNatSuccV1 $left)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatMulV1:110 $partial)) (gslt:fn:ProofTraceNatMulV1:110 $left $right)
-   (let (quote (gslt:result:ProofTraceNatAddV1:110 $product)) (gslt:fn:ProofTraceNatAddV1:110 $right $partial)
-   (quote (gslt:result:ProofTraceNatMulV1:110 $product))))))
+(= (gslt:fn:ProofTraceNatMulV1:110 (cons ProofTraceNatSuccV1 (cons $left ())) $right)
+   (let (cons gslt:result:ProofTraceNatMulV1:110 (cons $partial ())) (gslt:fn:ProofTraceNatMulV1:110 $left $right)
+   (let (cons gslt:result:ProofTraceNatAddV1:110 (cons $product ())) (gslt:fn:ProofTraceNatAddV1:110 $right $partial)
+   (quote (gslt:result:ProofTraceNatMulV1:110 $product)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=157 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-mul-add-v1 target=mode relation=ProofTraceNatMulAddV1 input=1110 functional=semidet
 (= (gslt:fn:ProofTraceNatMulAddV1:1110 $radix $value $digit)
-   (let (quote (gslt:result:ProofTraceNatMulV1:110 $scaled)) (gslt:fn:ProofTraceNatMulV1:110 $radix $value)
-   (let (quote (gslt:result:ProofTraceNatAddV1:110 $result)) (gslt:fn:ProofTraceNatAddV1:110 $scaled $digit)
+   (let (cons gslt:result:ProofTraceNatMulV1:110 (cons $scaled ())) (gslt:fn:ProofTraceNatMulV1:110 $radix $value)
+   (let (cons gslt:result:ProofTraceNatAddV1:110 (cons $result ())) (gslt:fn:ProofTraceNatAddV1:110 $scaled $digit)
    (quote (gslt:result:ProofTraceNatMulAddV1:1110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=158 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-instruction-list-append-nil-v1 target=mode relation=ProofTraceInstructionListAppendV1 input=110 functional=semidet
@@ -2664,10 +2534,9 @@
    (quote (gslt:result:ProofTraceInstructionListAppendV1:110 $right)))
 
 ; gslt-lowered-equation-v1 source-rewrite=159 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-instruction-list-append-cons-v1 target=mode relation=ProofTraceInstructionListAppendV1 input=110 functional=semidet
-(= (gslt:fn:ProofTraceInstructionListAppendV1:110 $__gslt_input_v1_0_0 $right)
-   (let (quote (ProofTraceInstructionConsV1 $head $tail)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceInstructionListAppendV1:110 $output)) (gslt:fn:ProofTraceInstructionListAppendV1:110 $tail $right)
-   (quote (gslt:result:ProofTraceInstructionListAppendV1:110 (ProofTraceInstructionConsV1 $head $output))))))
+(= (gslt:fn:ProofTraceInstructionListAppendV1:110 (cons ProofTraceInstructionConsV1 (cons $head (cons $tail ()))) $right)
+   (let (cons gslt:result:ProofTraceInstructionListAppendV1:110 (cons $output ())) (gslt:fn:ProofTraceInstructionListAppendV1:110 $tail $right)
+   (quote (gslt:result:ProofTraceInstructionListAppendV1:110 (ProofTraceInstructionConsV1 $head $output)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=160 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-instruction-list-nil-v1 target=mode relation=ProofTraceCompileInstructionListV1 input=00 functional=relational
 (= (gslt:mode:ProofTraceCompileInstructionListV1:00)
@@ -2675,8 +2544,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=161 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-instruction-list-cons-v1 target=mode relation=ProofTraceCompileInstructionListV1 input=00 functional=relational
 (= (gslt:mode:ProofTraceCompileInstructionListV1:00)
-   (let (quote (gslt:result:source-proof-trace-label-instruction-v1:00 $label $instruction)) (superpose (collapse (gslt:mode:source-proof-trace-label-instruction-v1:00)))
-   (let (quote (gslt:result:ProofTraceCompileInstructionListV1:00 $labels $instructions)) (superpose (collapse (gslt:mode:ProofTraceCompileInstructionListV1:00)))
+   (let (cons gslt:result:source-proof-trace-label-instruction-v1:00 (cons $label (cons $instruction ()))) (superpose (collapse (gslt:mode:source-proof-trace-label-instruction-v1:00)))
+   (let (cons gslt:result:ProofTraceCompileInstructionListV1:00 (cons $labels (cons $instructions ()))) (superpose (collapse (gslt:mode:ProofTraceCompileInstructionListV1:00)))
    (quote (gslt:result:ProofTraceCompileInstructionListV1:00 (ProofTraceLabelConsV1 $label $labels) (ProofTraceInstructionConsV1 $instruction $instructions))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=160 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-instruction-list-nil-v1 target=mode relation=ProofTraceCompileInstructionListV1 input=10 functional=relational
@@ -2684,11 +2553,10 @@
    (quote (gslt:result:ProofTraceCompileInstructionListV1:10 ProofTraceInstructionNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=161 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-instruction-list-cons-v1 target=mode relation=ProofTraceCompileInstructionListV1 input=10 functional=relational
-(= (gslt:mode:ProofTraceCompileInstructionListV1:10 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceLabelConsV1 $label $labels)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-label-instruction-v1:10 $instruction)) (superpose (collapse (gslt:mode:source-proof-trace-label-instruction-v1:10 $label)))
-   (let (quote (gslt:result:ProofTraceCompileInstructionListV1:10 $instructions)) (superpose (collapse (gslt:mode:ProofTraceCompileInstructionListV1:10 $labels)))
-   (quote (gslt:result:ProofTraceCompileInstructionListV1:10 (ProofTraceInstructionConsV1 $instruction $instructions)))))))
+(= (gslt:mode:ProofTraceCompileInstructionListV1:10 (cons ProofTraceLabelConsV1 (cons $label (cons $labels ()))))
+   (let (cons gslt:result:source-proof-trace-label-instruction-v1:10 (cons $instruction ())) (superpose (collapse (gslt:mode:source-proof-trace-label-instruction-v1:10 $label)))
+   (let (cons gslt:result:ProofTraceCompileInstructionListV1:10 (cons $instructions ())) (superpose (collapse (gslt:mode:ProofTraceCompileInstructionListV1:10 $labels)))
+   (quote (gslt:result:ProofTraceCompileInstructionListV1:10 (ProofTraceInstructionConsV1 $instruction $instructions))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=162 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-all-different-nil-v1 target=mode relation=ProofTraceHeaderAllDifferentFromV1 input=00 functional=relational
 (= (gslt:mode:ProofTraceHeaderAllDifferentFromV1:00)
@@ -2696,8 +2564,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=163 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-all-different-cons-v1 target=mode relation=ProofTraceHeaderAllDifferentFromV1 input=00 functional=relational
 (= (gslt:mode:ProofTraceHeaderAllDifferentFromV1:00)
-   (let (quote (gslt:result:source-proof-trace-input-label-different-v1:00 $label $head)) (once (gslt:fn:source-proof-trace-input-label-different-v1:00))
-   (let (quote (gslt:result:ProofTraceHeaderAllDifferentFromV1:10 $tail)) (superpose (collapse (gslt:mode:ProofTraceHeaderAllDifferentFromV1:10 $label)))
+   (let (cons gslt:result:source-proof-trace-input-label-different-v1:00 (cons $label (cons $head ()))) (once (gslt:fn:source-proof-trace-input-label-different-v1:00))
+   (let (cons gslt:result:ProofTraceHeaderAllDifferentFromV1:10 (cons $tail ())) (superpose (collapse (gslt:mode:ProofTraceHeaderAllDifferentFromV1:10 $label)))
    (quote (gslt:result:ProofTraceHeaderAllDifferentFromV1:00 $label (ProofTraceLabelConsV1 $head $tail))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=162 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-all-different-nil-v1 target=mode relation=ProofTraceHeaderAllDifferentFromV1 input=11 functional=semidet
@@ -2705,22 +2573,20 @@
    (quote gslt:result:ProofTraceHeaderAllDifferentFromV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=163 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-all-different-cons-v1 target=mode relation=ProofTraceHeaderAllDifferentFromV1 input=11 functional=semidet
-(= (gslt:fn:ProofTraceHeaderAllDifferentFromV1:11 $label $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceLabelConsV1 $head $tail)) $__gslt_input_v1_0_1
-   (let (quote gslt:result:source-proof-trace-input-label-different-v1:11) (gslt:fn:source-proof-trace-input-label-different-v1:11 $label $head)
-   (let (quote gslt:result:ProofTraceHeaderAllDifferentFromV1:11) (gslt:fn:ProofTraceHeaderAllDifferentFromV1:11 $label $tail)
-   (quote gslt:result:ProofTraceHeaderAllDifferentFromV1:11)))))
+(= (gslt:fn:ProofTraceHeaderAllDifferentFromV1:11 $label (cons ProofTraceLabelConsV1 (cons $head (cons $tail ()))))
+   (let gslt:result:source-proof-trace-input-label-different-v1:11 (gslt:fn:source-proof-trace-input-label-different-v1:11 $label $head)
+   (let gslt:result:ProofTraceHeaderAllDifferentFromV1:11 (gslt:fn:ProofTraceHeaderAllDifferentFromV1:11 $label $tail)
+   (quote gslt:result:ProofTraceHeaderAllDifferentFromV1:11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=162 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-all-different-nil-v1 target=mode relation=ProofTraceHeaderAllDifferentFromV1 input=01 functional=relational
 (= (gslt:mode:ProofTraceHeaderAllDifferentFromV1:01 ProofTraceLabelNilV1)
    (quote (gslt:result:ProofTraceHeaderAllDifferentFromV1:01 $label)))
 
 ; gslt-lowered-equation-v1 source-rewrite=163 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-all-different-cons-v1 target=mode relation=ProofTraceHeaderAllDifferentFromV1 input=01 functional=relational
-(= (gslt:mode:ProofTraceHeaderAllDifferentFromV1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceLabelConsV1 $head $tail)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:source-proof-trace-input-label-different-v1:01 $label)) (once (gslt:fn:source-proof-trace-input-label-different-v1:01 $head))
-   (let (quote gslt:result:ProofTraceHeaderAllDifferentFromV1:11) (once (gslt:fn:ProofTraceHeaderAllDifferentFromV1:11 $label $tail))
-   (quote (gslt:result:ProofTraceHeaderAllDifferentFromV1:01 $label))))))
+(= (gslt:mode:ProofTraceHeaderAllDifferentFromV1:01 (cons ProofTraceLabelConsV1 (cons $head (cons $tail ()))))
+   (let (cons gslt:result:source-proof-trace-input-label-different-v1:01 (cons $label ())) (once (gslt:fn:source-proof-trace-input-label-different-v1:01 $head))
+   (let gslt:result:ProofTraceHeaderAllDifferentFromV1:11 (once (gslt:fn:ProofTraceHeaderAllDifferentFromV1:11 $label $tail))
+   (quote (gslt:result:ProofTraceHeaderAllDifferentFromV1:01 $label)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=162 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-all-different-nil-v1 target=mode relation=ProofTraceHeaderAllDifferentFromV1 input=10 functional=relational
 (= (gslt:mode:ProofTraceHeaderAllDifferentFromV1:10 $label)
@@ -2728,33 +2594,29 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=163 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-all-different-cons-v1 target=mode relation=ProofTraceHeaderAllDifferentFromV1 input=10 functional=relational
 (= (gslt:mode:ProofTraceHeaderAllDifferentFromV1:10 $label)
-   (let (quote (gslt:result:source-proof-trace-input-label-different-v1:10 $head)) (once (gslt:fn:source-proof-trace-input-label-different-v1:10 $label))
-   (let (quote (gslt:result:ProofTraceHeaderAllDifferentFromV1:10 $tail)) (superpose (collapse (gslt:mode:ProofTraceHeaderAllDifferentFromV1:10 $label)))
+   (let (cons gslt:result:source-proof-trace-input-label-different-v1:10 (cons $head ())) (once (gslt:fn:source-proof-trace-input-label-different-v1:10 $label))
+   (let (cons gslt:result:ProofTraceHeaderAllDifferentFromV1:10 (cons $tail ())) (superpose (collapse (gslt:mode:ProofTraceHeaderAllDifferentFromV1:10 $label)))
    (quote (gslt:result:ProofTraceHeaderAllDifferentFromV1:10 (ProofTraceLabelConsV1 $head $tail))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=164 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-member-head-v1 target=mode relation=ProofTraceHeaderMemberV1 input=11 functional=relational
-(= (gslt:mode:ProofTraceHeaderMemberV1:11 $label $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceLabelConsV1 $label $tail)) $__gslt_input_v1_0_1
-   (quote gslt:result:ProofTraceHeaderMemberV1:11)))
+(= (gslt:mode:ProofTraceHeaderMemberV1:11 $label (cons ProofTraceLabelConsV1 (cons $label (cons $tail ()))))
+   (quote gslt:result:ProofTraceHeaderMemberV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=165 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-member-tail-v1 target=mode relation=ProofTraceHeaderMemberV1 input=11 functional=relational
-(= (gslt:mode:ProofTraceHeaderMemberV1:11 $label $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceLabelConsV1 $head $tail)) $__gslt_input_v1_0_1
-   (let (quote gslt:result:source-proof-trace-input-label-different-v1:11) (once (gslt:fn:source-proof-trace-input-label-different-v1:11 $label $head))
-   (let (quote gslt:result:ProofTraceHeaderMemberV1:11) (superpose (collapse (gslt:mode:ProofTraceHeaderMemberV1:11 $label $tail)))
-   (quote gslt:result:ProofTraceHeaderMemberV1:11)))))
+(= (gslt:mode:ProofTraceHeaderMemberV1:11 $label (cons ProofTraceLabelConsV1 (cons $head (cons $tail ()))))
+   (let gslt:result:source-proof-trace-input-label-different-v1:11 (once (gslt:fn:source-proof-trace-input-label-different-v1:11 $label $head))
+   (let gslt:result:ProofTraceHeaderMemberV1:11 (superpose (collapse (gslt:mode:ProofTraceHeaderMemberV1:11 $label $tail)))
+   (quote gslt:result:ProofTraceHeaderMemberV1:11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=164 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-member-head-v1 target=mode relation=ProofTraceHeaderMemberV1 input=01 functional=relational
-(= (gslt:mode:ProofTraceHeaderMemberV1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceLabelConsV1 $label $tail)) $__gslt_input_v1_0_1
-   (quote (gslt:result:ProofTraceHeaderMemberV1:01 $label))))
+(= (gslt:mode:ProofTraceHeaderMemberV1:01 (cons ProofTraceLabelConsV1 (cons $label (cons $tail ()))))
+   (quote (gslt:result:ProofTraceHeaderMemberV1:01 $label)))
 
 ; gslt-lowered-equation-v1 source-rewrite=165 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-member-tail-v1 target=mode relation=ProofTraceHeaderMemberV1 input=01 functional=relational
-(= (gslt:mode:ProofTraceHeaderMemberV1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceLabelConsV1 $head $tail)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:source-proof-trace-input-label-different-v1:01 $label)) (once (gslt:fn:source-proof-trace-input-label-different-v1:01 $head))
-   (let (quote gslt:result:ProofTraceHeaderMemberV1:11) (superpose (collapse (gslt:mode:ProofTraceHeaderMemberV1:11 $label $tail)))
-   (quote (gslt:result:ProofTraceHeaderMemberV1:01 $label))))))
+(= (gslt:mode:ProofTraceHeaderMemberV1:01 (cons ProofTraceLabelConsV1 (cons $head (cons $tail ()))))
+   (let (cons gslt:result:source-proof-trace-input-label-different-v1:01 (cons $label ())) (once (gslt:fn:source-proof-trace-input-label-different-v1:01 $head))
+   (let gslt:result:ProofTraceHeaderMemberV1:11 (superpose (collapse (gslt:mode:ProofTraceHeaderMemberV1:11 $label $tail)))
+   (quote (gslt:result:ProofTraceHeaderMemberV1:01 $label)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=164 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-member-head-v1 target=mode relation=ProofTraceHeaderMemberV1 input=10 functional=relational
 (= (gslt:mode:ProofTraceHeaderMemberV1:10 $label)
@@ -2762,8 +2624,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=165 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-member-tail-v1 target=mode relation=ProofTraceHeaderMemberV1 input=10 functional=relational
 (= (gslt:mode:ProofTraceHeaderMemberV1:10 $label)
-   (let (quote (gslt:result:source-proof-trace-input-label-different-v1:10 $head)) (once (gslt:fn:source-proof-trace-input-label-different-v1:10 $label))
-   (let (quote (gslt:result:ProofTraceHeaderMemberV1:10 $tail)) (superpose (collapse (gslt:mode:ProofTraceHeaderMemberV1:10 $label)))
+   (let (cons gslt:result:source-proof-trace-input-label-different-v1:10 (cons $head ())) (once (gslt:fn:source-proof-trace-input-label-different-v1:10 $label))
+   (let (cons gslt:result:ProofTraceHeaderMemberV1:10 (cons $tail ())) (superpose (collapse (gslt:mode:ProofTraceHeaderMemberV1:10 $label)))
    (quote (gslt:result:ProofTraceHeaderMemberV1:10 (ProofTraceLabelConsV1 $head $tail))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=168 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-lists-disjoint-nil-v1 target=mode relation=ProofTraceHeaderListsDisjointV1 input=11 functional=semidet
@@ -2771,11 +2633,10 @@
    (quote gslt:result:ProofTraceHeaderListsDisjointV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=169 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-lists-disjoint-cons-v1 target=mode relation=ProofTraceHeaderListsDisjointV1 input=11 functional=semidet
-(= (gslt:fn:ProofTraceHeaderListsDisjointV1:11 $initial $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceLabelConsV1 $label $explicit)) $__gslt_input_v1_0_1
-   (let (quote gslt:result:ProofTraceHeaderAllDifferentFromV1:11) (gslt:fn:ProofTraceHeaderAllDifferentFromV1:11 $label $initial)
-   (let (quote gslt:result:ProofTraceHeaderListsDisjointV1:11) (gslt:fn:ProofTraceHeaderListsDisjointV1:11 $initial $explicit)
-   (quote gslt:result:ProofTraceHeaderListsDisjointV1:11)))))
+(= (gslt:fn:ProofTraceHeaderListsDisjointV1:11 $initial (cons ProofTraceLabelConsV1 (cons $label (cons $explicit ()))))
+   (let gslt:result:ProofTraceHeaderAllDifferentFromV1:11 (gslt:fn:ProofTraceHeaderAllDifferentFromV1:11 $label $initial)
+   (let gslt:result:ProofTraceHeaderListsDisjointV1:11 (gslt:fn:ProofTraceHeaderListsDisjointV1:11 $initial $explicit)
+   (quote gslt:result:ProofTraceHeaderListsDisjointV1:11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=168 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-lists-disjoint-nil-v1 target=mode relation=ProofTraceHeaderListsDisjointV1 input=10 functional=relational
 (= (gslt:mode:ProofTraceHeaderListsDisjointV1:10 $initial)
@@ -2783,71 +2644,62 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=169 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-lists-disjoint-cons-v1 target=mode relation=ProofTraceHeaderListsDisjointV1 input=10 functional=relational
 (= (gslt:mode:ProofTraceHeaderListsDisjointV1:10 $initial)
-   (let (quote (gslt:result:ProofTraceHeaderAllDifferentFromV1:01 $label)) (superpose (collapse (gslt:mode:ProofTraceHeaderAllDifferentFromV1:01 $initial)))
-   (let (quote (gslt:result:ProofTraceHeaderListsDisjointV1:10 $explicit)) (superpose (collapse (gslt:mode:ProofTraceHeaderListsDisjointV1:10 $initial)))
+   (let (cons gslt:result:ProofTraceHeaderAllDifferentFromV1:01 (cons $label ())) (superpose (collapse (gslt:mode:ProofTraceHeaderAllDifferentFromV1:01 $initial)))
+   (let (cons gslt:result:ProofTraceHeaderListsDisjointV1:10 (cons $explicit ())) (superpose (collapse (gslt:mode:ProofTraceHeaderListsDisjointV1:10 $initial)))
    (quote (gslt:result:ProofTraceHeaderListsDisjointV1:10 (ProofTraceLabelConsV1 $label $explicit))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=170 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-admitted-v1 target=mode relation=ProofTraceHeaderAdmittedV1 input=11 functional=semidet
 (= (gslt:fn:ProofTraceHeaderAdmittedV1:11 $initial $explicit)
-   (let (quote gslt:result:ProofTraceHeaderListsDisjointV1:11) (gslt:fn:ProofTraceHeaderListsDisjointV1:11 $initial $explicit)
+   (let gslt:result:ProofTraceHeaderListsDisjointV1:11 (gslt:fn:ProofTraceHeaderListsDisjointV1:11 $initial $explicit)
    (quote gslt:result:ProofTraceHeaderAdmittedV1:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=171 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-dictionary-v1 target=mode relation=ProofTraceCompileDictionaryV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceCompileDictionaryV1:000)
    (let $_ (gslt:ProofTraceHeaderAdmittedV1 (ProofTraceHeaderAdmittedV1 $initial-labels $explicit-labels))
-   (let (quote (gslt:result:ProofTraceCompileInstructionListV1:00 $initial-labels $initial-instructions)) (superpose (collapse (gslt:mode:ProofTraceCompileInstructionListV1:00)))
-   (let (quote (gslt:result:ProofTraceCompileInstructionListV1:00 $explicit-labels $explicit-instructions)) (superpose (collapse (gslt:mode:ProofTraceCompileInstructionListV1:00)))
-   (let (quote (gslt:result:ProofTraceInstructionListAppendV1:110 $dictionary)) (once (gslt:fn:ProofTraceInstructionListAppendV1:110 $initial-instructions $explicit-instructions))
+   (let (cons gslt:result:ProofTraceCompileInstructionListV1:00 (cons $initial-labels (cons $initial-instructions ()))) (superpose (collapse (gslt:mode:ProofTraceCompileInstructionListV1:00)))
+   (let (cons gslt:result:ProofTraceCompileInstructionListV1:00 (cons $explicit-labels (cons $explicit-instructions ()))) (superpose (collapse (gslt:mode:ProofTraceCompileInstructionListV1:00)))
+   (let (cons gslt:result:ProofTraceInstructionListAppendV1:110 (cons $dictionary ())) (once (gslt:fn:ProofTraceInstructionListAppendV1:110 $initial-instructions $explicit-instructions))
    (quote (gslt:result:ProofTraceCompileDictionaryV1:000 $initial-labels $explicit-labels $dictionary)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=171 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-dictionary-v1 target=mode relation=ProofTraceCompileDictionaryV1 input=110 functional=relational
 (= (gslt:mode:ProofTraceCompileDictionaryV1:110 $initial-labels $explicit-labels)
-   (let (quote gslt:result:ProofTraceHeaderAdmittedV1:11) (once (gslt:fn:ProofTraceHeaderAdmittedV1:11 $initial-labels $explicit-labels))
-   (let (quote (gslt:result:ProofTraceCompileInstructionListV1:10 $initial-instructions)) (superpose (collapse (gslt:mode:ProofTraceCompileInstructionListV1:10 $initial-labels)))
-   (let (quote (gslt:result:ProofTraceCompileInstructionListV1:10 $explicit-instructions)) (superpose (collapse (gslt:mode:ProofTraceCompileInstructionListV1:10 $explicit-labels)))
-   (let (quote (gslt:result:ProofTraceInstructionListAppendV1:110 $dictionary)) (once (gslt:fn:ProofTraceInstructionListAppendV1:110 $initial-instructions $explicit-instructions))
+   (let gslt:result:ProofTraceHeaderAdmittedV1:11 (once (gslt:fn:ProofTraceHeaderAdmittedV1:11 $initial-labels $explicit-labels))
+   (let (cons gslt:result:ProofTraceCompileInstructionListV1:10 (cons $initial-instructions ())) (superpose (collapse (gslt:mode:ProofTraceCompileInstructionListV1:10 $initial-labels)))
+   (let (cons gslt:result:ProofTraceCompileInstructionListV1:10 (cons $explicit-instructions ())) (superpose (collapse (gslt:mode:ProofTraceCompileInstructionListV1:10 $explicit-labels)))
+   (let (cons gslt:result:ProofTraceInstructionListAppendV1:110 (cons $dictionary ())) (once (gslt:fn:ProofTraceInstructionListAppendV1:110 $initial-instructions $explicit-instructions))
    (quote (gslt:result:ProofTraceCompileDictionaryV1:110 $dictionary)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=172 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-dictionary-resolve-v1 target=mode relation=ProofTraceDictionaryResolveV1 input=111 functional=semidet
-(= (gslt:fn:ProofTraceDictionaryResolveV1:111 $__gslt_input_v1_0_0 $dictionary $instruction)
-   (let (quote (ProofTraceNatSuccV1 $index)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ProofTraceDictionaryResolveIndexV1:111) (gslt:fn:ProofTraceDictionaryResolveIndexV1:111 $index $dictionary $instruction)
-   (quote gslt:result:ProofTraceDictionaryResolveV1:111))))
+(= (gslt:fn:ProofTraceDictionaryResolveV1:111 (cons ProofTraceNatSuccV1 (cons $index ())) $dictionary $instruction)
+   (let gslt:result:ProofTraceDictionaryResolveIndexV1:111 (gslt:fn:ProofTraceDictionaryResolveIndexV1:111 $index $dictionary $instruction)
+   (quote gslt:result:ProofTraceDictionaryResolveV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=172 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-dictionary-resolve-v1 target=mode relation=ProofTraceDictionaryResolveV1 input=110 functional=semidet
-(= (gslt:fn:ProofTraceDictionaryResolveV1:110 $__gslt_input_v1_0_0 $dictionary)
-   (let (quote (ProofTraceNatSuccV1 $index)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceDictionaryResolveIndexV1:110 $instruction)) (gslt:fn:ProofTraceDictionaryResolveIndexV1:110 $index $dictionary)
-   (quote (gslt:result:ProofTraceDictionaryResolveV1:110 $instruction)))))
+(= (gslt:fn:ProofTraceDictionaryResolveV1:110 (cons ProofTraceNatSuccV1 (cons $index ())) $dictionary)
+   (let (cons gslt:result:ProofTraceDictionaryResolveIndexV1:110 (cons $instruction ())) (gslt:fn:ProofTraceDictionaryResolveIndexV1:110 $index $dictionary)
+   (quote (gslt:result:ProofTraceDictionaryResolveV1:110 $instruction))))
 
 ; gslt-lowered-equation-v1 source-rewrite=173 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-dictionary-resolve-index-zero-v1 target=mode relation=ProofTraceDictionaryResolveIndexV1 input=111 functional=semidet
-(= (gslt:fn:ProofTraceDictionaryResolveIndexV1:111 ProofTraceNatZeroV1 $__gslt_input_v1_0_1 $instruction)
-   (let (quote (ProofTraceInstructionConsV1 $instruction $rest)) $__gslt_input_v1_0_1
-   (quote gslt:result:ProofTraceDictionaryResolveIndexV1:111)))
+(= (gslt:fn:ProofTraceDictionaryResolveIndexV1:111 ProofTraceNatZeroV1 (cons ProofTraceInstructionConsV1 (cons $instruction (cons $rest ()))) $instruction)
+   (quote gslt:result:ProofTraceDictionaryResolveIndexV1:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=174 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-dictionary-resolve-index-succ-v1 target=mode relation=ProofTraceDictionaryResolveIndexV1 input=111 functional=semidet
-(= (gslt:fn:ProofTraceDictionaryResolveIndexV1:111 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1 $instruction)
-   (let (quote (ProofTraceNatSuccV1 $index)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceInstructionConsV1 $head $rest)) $__gslt_input_v1_0_1
-   (let (quote gslt:result:ProofTraceDictionaryResolveV1:111) (gslt:fn:ProofTraceDictionaryResolveV1:111 (quote (ProofTraceNatSuccV1 $index)) $rest $instruction)
-   (quote gslt:result:ProofTraceDictionaryResolveIndexV1:111)))))
-
-; gslt-lowered-equation-v1 source-rewrite=175 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-dictionary-resolve-index-saved-v1 target=mode relation=ProofTraceDictionaryResolveIndexV1 input=111 functional=semidet
-(= (gslt:fn:ProofTraceDictionaryResolveIndexV1:111 $index ProofTraceInstructionNilV1 $__gslt_input_v1_0_2)
-   (let (quote (ProofTraceRestoreV1 $index)) $__gslt_input_v1_0_2
+(= (gslt:fn:ProofTraceDictionaryResolveIndexV1:111 (cons ProofTraceNatSuccV1 (cons $index ())) (cons ProofTraceInstructionConsV1 (cons $head (cons $rest ()))) $instruction)
+   (let gslt:result:ProofTraceDictionaryResolveV1:111 (gslt:fn:ProofTraceDictionaryResolveV1:111 (quote (ProofTraceNatSuccV1 $index)) $rest $instruction)
    (quote gslt:result:ProofTraceDictionaryResolveIndexV1:111)))
 
+; gslt-lowered-equation-v1 source-rewrite=175 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-dictionary-resolve-index-saved-v1 target=mode relation=ProofTraceDictionaryResolveIndexV1 input=111 functional=semidet
+(= (gslt:fn:ProofTraceDictionaryResolveIndexV1:111 $index ProofTraceInstructionNilV1 (cons ProofTraceRestoreV1 (cons $index ())))
+   (quote gslt:result:ProofTraceDictionaryResolveIndexV1:111))
+
 ; gslt-lowered-equation-v1 source-rewrite=173 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-dictionary-resolve-index-zero-v1 target=mode relation=ProofTraceDictionaryResolveIndexV1 input=110 functional=semidet
-(= (gslt:fn:ProofTraceDictionaryResolveIndexV1:110 ProofTraceNatZeroV1 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceInstructionConsV1 $instruction $rest)) $__gslt_input_v1_0_1
-   (quote (gslt:result:ProofTraceDictionaryResolveIndexV1:110 $instruction))))
+(= (gslt:fn:ProofTraceDictionaryResolveIndexV1:110 ProofTraceNatZeroV1 (cons ProofTraceInstructionConsV1 (cons $instruction (cons $rest ()))))
+   (quote (gslt:result:ProofTraceDictionaryResolveIndexV1:110 $instruction)))
 
 ; gslt-lowered-equation-v1 source-rewrite=174 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-dictionary-resolve-index-succ-v1 target=mode relation=ProofTraceDictionaryResolveIndexV1 input=110 functional=semidet
-(= (gslt:fn:ProofTraceDictionaryResolveIndexV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceNatSuccV1 $index)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceInstructionConsV1 $head $rest)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:ProofTraceDictionaryResolveV1:110 $instruction)) (gslt:fn:ProofTraceDictionaryResolveV1:110 (quote (ProofTraceNatSuccV1 $index)) $rest)
-   (quote (gslt:result:ProofTraceDictionaryResolveIndexV1:110 $instruction))))))
+(= (gslt:fn:ProofTraceDictionaryResolveIndexV1:110 (cons ProofTraceNatSuccV1 (cons $index ())) (cons ProofTraceInstructionConsV1 (cons $head (cons $rest ()))))
+   (let (cons gslt:result:ProofTraceDictionaryResolveV1:110 (cons $instruction ())) (gslt:fn:ProofTraceDictionaryResolveV1:110 (quote (ProofTraceNatSuccV1 $index)) $rest)
+   (quote (gslt:result:ProofTraceDictionaryResolveIndexV1:110 $instruction))))
 
 ; gslt-lowered-equation-v1 source-rewrite=175 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-dictionary-resolve-index-saved-v1 target=mode relation=ProofTraceDictionaryResolveIndexV1 input=110 functional=semidet
 (= (gslt:fn:ProofTraceDictionaryResolveIndexV1:110 $index ProofTraceInstructionNilV1)
@@ -2855,7 +2707,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=176 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-v1 target=mode relation=ProofTraceDecodeV1 input=1111 functional=semidet
 (= (gslt:fn:ProofTraceDecodeV1:1111 $dictionary $codes $accumulator $trace)
-   (let (quote gslt:result:ProofTraceDecodeStatusV1:1111111) (gslt:fn:ProofTraceDecodeStatusV1:1111111 $dictionary $codes $accumulator ProofTracePhaseBetweenV1 ProofTraceNoTargetV1 ProofTraceStatusCompleteV1 $trace)
+   (let gslt:result:ProofTraceDecodeStatusV1:1111111 (gslt:fn:ProofTraceDecodeStatusV1:1111111 $dictionary $codes $accumulator ProofTracePhaseBetweenV1 ProofTraceNoTargetV1 ProofTraceStatusCompleteV1 $trace)
    (quote gslt:result:ProofTraceDecodeV1:1111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=177 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-nil-between-v1 target=mode relation=ProofTraceDecodeStatusV1 input=1111111 functional=semidet
@@ -2867,11 +2719,10 @@
    (quote gslt:result:ProofTraceDecodeStatusV1:1111111))
 
 ; gslt-lowered-equation-v1 source-rewrite=179 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-cons-v1 target=mode relation=ProofTraceDecodeStatusV1 input=1111111 functional=semidet
-(= (gslt:fn:ProofTraceDecodeStatusV1:1111111 $dictionary $__gslt_input_v1_0_1 $accumulator $phase $target $status $trace)
-   (let (quote (ProofTraceCodeConsV1 $code $codes)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:source-proof-trace-code-class-v1:10 $class)) (gslt:fn:source-proof-trace-code-class-v1:10 $code)
-   (let (quote gslt:result:ProofTraceDecodeCodeClassV1:11111111) (gslt:fn:ProofTraceDecodeCodeClassV1:11111111 $class $dictionary $codes $accumulator $phase $target $status $trace)
-   (quote gslt:result:ProofTraceDecodeStatusV1:1111111)))))
+(= (gslt:fn:ProofTraceDecodeStatusV1:1111111 $dictionary (cons ProofTraceCodeConsV1 (cons $code (cons $codes ()))) $accumulator $phase $target $status $trace)
+   (let (cons gslt:result:source-proof-trace-code-class-v1:10 (cons $class ())) (gslt:fn:source-proof-trace-code-class-v1:10 $code)
+   (let gslt:result:ProofTraceDecodeCodeClassV1:11111111 (gslt:fn:ProofTraceDecodeCodeClassV1:11111111 $class $dictionary $codes $accumulator $phase $target $status $trace)
+   (quote gslt:result:ProofTraceDecodeStatusV1:1111111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=177 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-nil-between-v1 target=mode relation=ProofTraceDecodeStatusV1 input=1111101 functional=semidet
 (= (gslt:fn:ProofTraceDecodeStatusV1:1111101 $dictionary ProofTraceCodeNilV1 ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target ProofTraceNilV1)
@@ -2882,100 +2733,87 @@
    (quote (gslt:result:ProofTraceDecodeStatusV1:1111101 ProofTraceStatusCompleteV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=179 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-cons-v1 target=mode relation=ProofTraceDecodeStatusV1 input=1111101 functional=semidet
-(= (gslt:fn:ProofTraceDecodeStatusV1:1111101 $dictionary $__gslt_input_v1_0_1 $accumulator $phase $target $trace)
-   (let (quote (ProofTraceCodeConsV1 $code $codes)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:source-proof-trace-code-class-v1:10 $class)) (gslt:fn:source-proof-trace-code-class-v1:10 $code)
-   (let (quote (gslt:result:ProofTraceDecodeCodeClassV1:11111101 $status)) (gslt:fn:ProofTraceDecodeCodeClassV1:11111101 $class $dictionary $codes $accumulator $phase $target $trace)
-   (quote (gslt:result:ProofTraceDecodeStatusV1:1111101 $status))))))
+(= (gslt:fn:ProofTraceDecodeStatusV1:1111101 $dictionary (cons ProofTraceCodeConsV1 (cons $code (cons $codes ()))) $accumulator $phase $target $trace)
+   (let (cons gslt:result:source-proof-trace-code-class-v1:10 (cons $class ())) (gslt:fn:source-proof-trace-code-class-v1:10 $code)
+   (let (cons gslt:result:ProofTraceDecodeCodeClassV1:11111101 (cons $status ())) (gslt:fn:ProofTraceDecodeCodeClassV1:11111101 $class $dictionary $codes $accumulator $phase $target $trace)
+   (quote (gslt:result:ProofTraceDecodeStatusV1:1111101 $status)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=180 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-terminal-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11111111 functional=semidet
-(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111111 $__gslt_input_v1_0_0 $dictionary $codes $accumulator $phase $target $status $__gslt_input_v1_0_7)
-   (let (quote (ProofTraceTerminalCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceConsV1 $instruction $trace)) $__gslt_input_v1_0_7
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit)
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix)
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $number)) (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit)
-   (let (quote gslt:result:ProofTraceDictionaryResolveV1:111) (gslt:fn:ProofTraceDictionaryResolveV1:111 $number $dictionary $instruction)
-   (let (quote gslt:result:ProofTraceDecodeStatusV1:1111111) (gslt:fn:ProofTraceDecodeStatusV1:1111111 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace)
-   (quote gslt:result:ProofTraceDecodeCodeClassV1:11111111)))))))))
-
-; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-continuation-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11111111 functional=semidet
-(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111111 $__gslt_input_v1_0_0 $dictionary $codes $accumulator $phase $target $status $trace)
-   (let (quote (ProofTraceContinuationCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit)
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix)
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $next-accumulator)) (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit)
-   (let (quote gslt:result:ProofTraceDecodeStatusV1:1111111) (gslt:fn:ProofTraceDecodeStatusV1:1111111 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace)
+(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111111 (cons ProofTraceTerminalCodeV1 (cons $digit (cons $radix ()))) $dictionary $codes $accumulator $phase $target $status (cons ProofTraceConsV1 (cons $instruction (cons $trace ()))))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix)
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $number ())) (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit)
+   (let gslt:result:ProofTraceDictionaryResolveV1:111 (gslt:fn:ProofTraceDictionaryResolveV1:111 $number $dictionary $instruction)
+   (let gslt:result:ProofTraceDecodeStatusV1:1111111 (gslt:fn:ProofTraceDecodeStatusV1:1111111 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace)
    (quote gslt:result:ProofTraceDecodeCodeClassV1:11111111)))))))
 
+; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-continuation-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11111111 functional=semidet
+(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111111 (cons ProofTraceContinuationCodeV1 (cons $digit (cons $radix ()))) $dictionary $codes $accumulator $phase $target $status $trace)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix)
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $next-accumulator ())) (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit)
+   (let gslt:result:ProofTraceDecodeStatusV1:1111111 (gslt:fn:ProofTraceDecodeStatusV1:1111111 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace)
+   (quote gslt:result:ProofTraceDecodeCodeClassV1:11111111))))))
+
 ; gslt-lowered-equation-v1 source-rewrite=185 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-save-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11111111 functional=semidet
-(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111111 ProofTraceSaveCodeV1 $dictionary $codes ProofTraceNatZeroV1 $phase $target $status $__gslt_input_v1_0_7)
-   (let (quote (ProofTraceConsV1 ProofTraceSaveV1 $trace)) $__gslt_input_v1_0_7
-   (let (quote (gslt:result:ProofTraceSavePhaseTransitionV1:10 $next-phase)) (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase)
-   (let (quote gslt:result:ProofTraceDecodeStatusV1:1111111) (gslt:fn:ProofTraceDecodeStatusV1:1111111 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace)
-   (quote gslt:result:ProofTraceDecodeCodeClassV1:11111111)))))
+(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111111 ProofTraceSaveCodeV1 $dictionary $codes ProofTraceNatZeroV1 $phase $target $status (cons ProofTraceConsV1 (cons ProofTraceSaveV1 (cons $trace ()))))
+   (let (cons gslt:result:ProofTraceSavePhaseTransitionV1:10 (cons $next-phase ())) (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase)
+   (let gslt:result:ProofTraceDecodeStatusV1:1111111 (gslt:fn:ProofTraceDecodeStatusV1:1111111 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace)
+   (quote gslt:result:ProofTraceDecodeCodeClassV1:11111111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=186 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-between-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11111111 functional=semidet
-(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111111 ProofTraceIncompleteCodeV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target ProofTraceStatusIncompleteV1 $__gslt_input_v1_0_7)
-   (let (quote (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)) $__gslt_input_v1_0_7
-   (let (quote (gslt:result:ProofTraceDecodeStatusV1:1111101 $tail-status)) (gslt:fn:ProofTraceDecodeStatusV1:1111101 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $trace)
-   (quote gslt:result:ProofTraceDecodeCodeClassV1:11111111))))
+(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111111 ProofTraceIncompleteCodeV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target ProofTraceStatusIncompleteV1 (cons ProofTraceConsV1 (cons (cons ProofTraceIncompleteStepV1 (cons $target ())) (cons $trace ()))))
+   (let (cons gslt:result:ProofTraceDecodeStatusV1:1111101 (cons $tail-status ())) (gslt:fn:ProofTraceDecodeStatusV1:1111101 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $trace)
+   (quote gslt:result:ProofTraceDecodeCodeClassV1:11111111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=187 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-completed-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11111111 functional=semidet
-(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111111 ProofTraceIncompleteCodeV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target ProofTraceStatusIncompleteV1 $__gslt_input_v1_0_7)
-   (let (quote (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)) $__gslt_input_v1_0_7
-   (let (quote (gslt:result:ProofTraceDecodeStatusV1:1111101 $tail-status)) (gslt:fn:ProofTraceDecodeStatusV1:1111101 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $trace)
-   (quote gslt:result:ProofTraceDecodeCodeClassV1:11111111))))
+(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111111 ProofTraceIncompleteCodeV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target ProofTraceStatusIncompleteV1 (cons ProofTraceConsV1 (cons (cons ProofTraceIncompleteStepV1 (cons $target ())) (cons $trace ()))))
+   (let (cons gslt:result:ProofTraceDecodeStatusV1:1111101 (cons $tail-status ())) (gslt:fn:ProofTraceDecodeStatusV1:1111101 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $trace)
+   (quote gslt:result:ProofTraceDecodeCodeClassV1:11111111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=180 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-terminal-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11111101 functional=semidet
-(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111101 $__gslt_input_v1_0_0 $dictionary $codes $accumulator $phase $target $__gslt_input_v1_0_7)
-   (let (quote (ProofTraceTerminalCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceConsV1 $instruction $trace)) $__gslt_input_v1_0_7
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit)
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix)
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $number)) (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit)
-   (let (quote gslt:result:ProofTraceDictionaryResolveV1:111) (gslt:fn:ProofTraceDictionaryResolveV1:111 $number $dictionary $instruction)
-   (let (quote (gslt:result:ProofTraceDecodeStatusV1:1111101 $status)) (gslt:fn:ProofTraceDecodeStatusV1:1111101 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $trace)
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11111101 $status))))))))))
-
-; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-continuation-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11111101 functional=semidet
-(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111101 $__gslt_input_v1_0_0 $dictionary $codes $accumulator $phase $target $trace)
-   (let (quote (ProofTraceContinuationCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit)
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix)
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $next-accumulator)) (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit)
-   (let (quote (gslt:result:ProofTraceDecodeStatusV1:1111101 $status)) (gslt:fn:ProofTraceDecodeStatusV1:1111101 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $trace)
+(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111101 (cons ProofTraceTerminalCodeV1 (cons $digit (cons $radix ()))) $dictionary $codes $accumulator $phase $target (cons ProofTraceConsV1 (cons $instruction (cons $trace ()))))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix)
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $number ())) (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit)
+   (let gslt:result:ProofTraceDictionaryResolveV1:111 (gslt:fn:ProofTraceDictionaryResolveV1:111 $number $dictionary $instruction)
+   (let (cons gslt:result:ProofTraceDecodeStatusV1:1111101 (cons $status ())) (gslt:fn:ProofTraceDecodeStatusV1:1111101 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $trace)
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:11111101 $status))))))))
 
+; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-continuation-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11111101 functional=semidet
+(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111101 (cons ProofTraceContinuationCodeV1 (cons $digit (cons $radix ()))) $dictionary $codes $accumulator $phase $target $trace)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix)
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $next-accumulator ())) (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit)
+   (let (cons gslt:result:ProofTraceDecodeStatusV1:1111101 (cons $status ())) (gslt:fn:ProofTraceDecodeStatusV1:1111101 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $trace)
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11111101 $status)))))))
+
 ; gslt-lowered-equation-v1 source-rewrite=185 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-save-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11111101 functional=semidet
-(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111101 ProofTraceSaveCodeV1 $dictionary $codes ProofTraceNatZeroV1 $phase $target $__gslt_input_v1_0_7)
-   (let (quote (ProofTraceConsV1 ProofTraceSaveV1 $trace)) $__gslt_input_v1_0_7
-   (let (quote (gslt:result:ProofTraceSavePhaseTransitionV1:10 $next-phase)) (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase)
-   (let (quote (gslt:result:ProofTraceDecodeStatusV1:1111101 $status)) (gslt:fn:ProofTraceDecodeStatusV1:1111101 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $trace)
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11111101 $status))))))
+(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111101 ProofTraceSaveCodeV1 $dictionary $codes ProofTraceNatZeroV1 $phase $target (cons ProofTraceConsV1 (cons ProofTraceSaveV1 (cons $trace ()))))
+   (let (cons gslt:result:ProofTraceSavePhaseTransitionV1:10 (cons $next-phase ())) (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase)
+   (let (cons gslt:result:ProofTraceDecodeStatusV1:1111101 (cons $status ())) (gslt:fn:ProofTraceDecodeStatusV1:1111101 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $trace)
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11111101 $status)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=186 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-between-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11111101 functional=semidet
-(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111101 ProofTraceIncompleteCodeV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $__gslt_input_v1_0_7)
-   (let (quote (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)) $__gslt_input_v1_0_7
-   (let (quote (gslt:result:ProofTraceDecodeStatusV1:1111101 $tail-status)) (gslt:fn:ProofTraceDecodeStatusV1:1111101 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $trace)
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11111101 ProofTraceStatusIncompleteV1)))))
+(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111101 ProofTraceIncompleteCodeV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target (cons ProofTraceConsV1 (cons (cons ProofTraceIncompleteStepV1 (cons $target ())) (cons $trace ()))))
+   (let (cons gslt:result:ProofTraceDecodeStatusV1:1111101 (cons $tail-status ())) (gslt:fn:ProofTraceDecodeStatusV1:1111101 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $trace)
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11111101 ProofTraceStatusIncompleteV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=187 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-completed-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11111101 functional=semidet
-(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111101 ProofTraceIncompleteCodeV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $__gslt_input_v1_0_7)
-   (let (quote (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)) $__gslt_input_v1_0_7
-   (let (quote (gslt:result:ProofTraceDecodeStatusV1:1111101 $tail-status)) (gslt:fn:ProofTraceDecodeStatusV1:1111101 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $trace)
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11111101 ProofTraceStatusIncompleteV1)))))
+(= (gslt:fn:ProofTraceDecodeCodeClassV1:11111101 ProofTraceIncompleteCodeV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target (cons ProofTraceConsV1 (cons (cons ProofTraceIncompleteStepV1 (cons $target ())) (cons $trace ()))))
+   (let (cons gslt:result:ProofTraceDecodeStatusV1:1111101 (cons $tail-status ())) (gslt:fn:ProofTraceDecodeStatusV1:1111101 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $trace)
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11111101 ProofTraceStatusIncompleteV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=182 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-save-phase-immediate-v1 target=mode relation=ProofTraceSavePhaseTransitionV1 input=00 functional=semidet
 (= (gslt:fn:ProofTraceSavePhaseTransitionV1:00)
-   (let (quote (gslt:result:source-proof-trace-save-placement-v1:0 $placement)) (gslt:fn:source-proof-trace-save-placement-v1:0)
-   (let (quote (gslt:result:ProofTraceSavePlacementTransitionV1:10 $next-phase)) (gslt:fn:ProofTraceSavePlacementTransitionV1:10 $placement)
+   (let (cons gslt:result:source-proof-trace-save-placement-v1:0 (cons $placement ())) (gslt:fn:source-proof-trace-save-placement-v1:0)
+   (let (cons gslt:result:ProofTraceSavePlacementTransitionV1:10 (cons $next-phase ())) (gslt:fn:ProofTraceSavePlacementTransitionV1:10 $placement)
    (quote (gslt:result:ProofTraceSavePhaseTransitionV1:00 ProofTracePhaseJustCompletedV1 $next-phase)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=182 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-save-phase-immediate-v1 target=mode relation=ProofTraceSavePhaseTransitionV1 input=10 functional=semidet
 (= (gslt:fn:ProofTraceSavePhaseTransitionV1:10 ProofTracePhaseJustCompletedV1)
-   (let (quote (gslt:result:source-proof-trace-save-placement-v1:0 $placement)) (gslt:fn:source-proof-trace-save-placement-v1:0)
-   (let (quote (gslt:result:ProofTraceSavePlacementTransitionV1:10 $next-phase)) (gslt:fn:ProofTraceSavePlacementTransitionV1:10 $placement)
+   (let (cons gslt:result:source-proof-trace-save-placement-v1:0 (cons $placement ())) (gslt:fn:source-proof-trace-save-placement-v1:0)
+   (let (cons gslt:result:ProofTraceSavePlacementTransitionV1:10 (cons $next-phase ())) (gslt:fn:ProofTraceSavePlacementTransitionV1:10 $placement)
    (quote (gslt:result:ProofTraceSavePhaseTransitionV1:10 $next-phase)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=183 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-save-placement-immediate-v1 target=mode relation=ProofTraceSavePlacementTransitionV1 input=10 functional=semidet
@@ -2988,12 +2826,12 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=194 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-v1 target=mode relation=ProofTraceCompileNormalV1 input=00 functional=relational
 (= (gslt:mode:ProofTraceCompileNormalV1:00)
-   (let (quote (gslt:result:ProofTraceCompileNormalStatusV1:0110 $labels $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0110 ProofTraceNoTargetV1 ProofTraceStatusCompleteV1)))
+   (let (cons gslt:result:ProofTraceCompileNormalStatusV1:0110 (cons $labels (cons $trace ()))) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0110 ProofTraceNoTargetV1 ProofTraceStatusCompleteV1)))
    (quote (gslt:result:ProofTraceCompileNormalV1:00 $labels $trace))))
 
 ; gslt-lowered-equation-v1 source-rewrite=194 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-v1 target=mode relation=ProofTraceCompileNormalV1 input=11 functional=relational
 (= (gslt:mode:ProofTraceCompileNormalV1:11 $labels $trace)
-   (let (quote gslt:result:ProofTraceCompileNormalStatusV1:1111) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:1111 $labels ProofTraceNoTargetV1 ProofTraceStatusCompleteV1 $trace)))
+   (let gslt:result:ProofTraceCompileNormalStatusV1:1111 (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:1111 $labels ProofTraceNoTargetV1 ProofTraceStatusCompleteV1 $trace)))
    (quote gslt:result:ProofTraceCompileNormalV1:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=195 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-nil-v1 target=mode relation=ProofTraceCompileNormalStatusV1 input=0000 functional=relational
@@ -3002,14 +2840,14 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=196 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-cons-v1 target=mode relation=ProofTraceCompileNormalStatusV1 input=0000 functional=relational
 (= (gslt:mode:ProofTraceCompileNormalStatusV1:0000)
-   (let (quote (gslt:result:source-proof-trace-label-instruction-v1:00 $label $instruction)) (superpose (collapse (gslt:mode:source-proof-trace-label-instruction-v1:00)))
-   (let (quote (gslt:result:ProofTraceCompileNormalStatusV1:0000 $labels $target $status $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0000)))
+   (let (cons gslt:result:source-proof-trace-label-instruction-v1:00 (cons $label (cons $instruction ()))) (superpose (collapse (gslt:mode:source-proof-trace-label-instruction-v1:00)))
+   (let (cons gslt:result:ProofTraceCompileNormalStatusV1:0000 (cons $labels (cons $target (cons $status (cons $trace ()))))) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0000)))
    (quote (gslt:result:ProofTraceCompileNormalStatusV1:0000 (ProofTraceLabelConsV1 $label $labels) $target $status (ProofTraceConsV1 $instruction $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=197 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-incomplete-v1 target=mode relation=ProofTraceCompileNormalStatusV1 input=0000 functional=relational
 (= (gslt:mode:ProofTraceCompileNormalStatusV1:0000)
-   (let (quote (gslt:result:source-proof-trace-input-incomplete-normal-label-v1:0 $label)) (once (gslt:fn:source-proof-trace-input-incomplete-normal-label-v1:0))
-   (let (quote (gslt:result:ProofTraceCompileNormalStatusV1:0000 $labels $target $tail-status $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0000)))
+   (let (cons gslt:result:source-proof-trace-input-incomplete-normal-label-v1:0 (cons $label ())) (once (gslt:fn:source-proof-trace-input-incomplete-normal-label-v1:0))
+   (let (cons gslt:result:ProofTraceCompileNormalStatusV1:0000 (cons $labels (cons $target (cons $tail-status (cons $trace ()))))) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0000)))
    (quote (gslt:result:ProofTraceCompileNormalStatusV1:0000 (ProofTraceLabelConsV1 $label $labels) $target ProofTraceStatusIncompleteV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=195 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-nil-v1 target=mode relation=ProofTraceCompileNormalStatusV1 input=1111 functional=relational
@@ -3017,108 +2855,88 @@
    (quote gslt:result:ProofTraceCompileNormalStatusV1:1111))
 
 ; gslt-lowered-equation-v1 source-rewrite=196 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-cons-v1 target=mode relation=ProofTraceCompileNormalStatusV1 input=1111 functional=relational
-(= (gslt:mode:ProofTraceCompileNormalStatusV1:1111 $__gslt_input_v1_0_0 $target $status $__gslt_input_v1_0_3)
-   (let (quote (ProofTraceLabelConsV1 $label $labels)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceConsV1 $instruction $trace)) $__gslt_input_v1_0_3
-   (let (quote gslt:result:source-proof-trace-label-instruction-v1:11) (once (gslt:fn:source-proof-trace-label-instruction-v1:11 $label $instruction))
-   (let (quote gslt:result:ProofTraceCompileNormalStatusV1:1111) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:1111 $labels $target $status $trace)))
-   (quote gslt:result:ProofTraceCompileNormalStatusV1:1111))))))
+(= (gslt:mode:ProofTraceCompileNormalStatusV1:1111 (cons ProofTraceLabelConsV1 (cons $label (cons $labels ()))) $target $status (cons ProofTraceConsV1 (cons $instruction (cons $trace ()))))
+   (let gslt:result:source-proof-trace-label-instruction-v1:11 (once (gslt:fn:source-proof-trace-label-instruction-v1:11 $label $instruction))
+   (let gslt:result:ProofTraceCompileNormalStatusV1:1111 (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:1111 $labels $target $status $trace)))
+   (quote gslt:result:ProofTraceCompileNormalStatusV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=197 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-incomplete-v1 target=mode relation=ProofTraceCompileNormalStatusV1 input=1111 functional=relational
-(= (gslt:mode:ProofTraceCompileNormalStatusV1:1111 $__gslt_input_v1_0_0 $target ProofTraceStatusIncompleteV1 $__gslt_input_v1_0_3)
-   (let (quote (ProofTraceLabelConsV1 $label $labels)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)) $__gslt_input_v1_0_3
-   (let (quote gslt:result:source-proof-trace-input-incomplete-normal-label-v1:1) (once (gslt:fn:source-proof-trace-input-incomplete-normal-label-v1:1 $label))
-   (let (quote (gslt:result:ProofTraceCompileNormalStatusV1:1101 $tail-status)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:1101 $labels $target $trace)))
-   (quote gslt:result:ProofTraceCompileNormalStatusV1:1111))))))
+(= (gslt:mode:ProofTraceCompileNormalStatusV1:1111 (cons ProofTraceLabelConsV1 (cons $label (cons $labels ()))) $target ProofTraceStatusIncompleteV1 (cons ProofTraceConsV1 (cons (cons ProofTraceIncompleteStepV1 (cons $target ())) (cons $trace ()))))
+   (let gslt:result:source-proof-trace-input-incomplete-normal-label-v1:1 (once (gslt:fn:source-proof-trace-input-incomplete-normal-label-v1:1 $label))
+   (let (cons gslt:result:ProofTraceCompileNormalStatusV1:1101 (cons $tail-status ())) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:1101 $labels $target $trace)))
+   (quote gslt:result:ProofTraceCompileNormalStatusV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=195 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-nil-v1 target=mode relation=ProofTraceCompileNormalStatusV1 input=1101 functional=relational
 (= (gslt:mode:ProofTraceCompileNormalStatusV1:1101 ProofTraceLabelNilV1 $target ProofTraceNilV1)
    (quote (gslt:result:ProofTraceCompileNormalStatusV1:1101 ProofTraceStatusCompleteV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=196 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-cons-v1 target=mode relation=ProofTraceCompileNormalStatusV1 input=1101 functional=relational
-(= (gslt:mode:ProofTraceCompileNormalStatusV1:1101 $__gslt_input_v1_0_0 $target $__gslt_input_v1_0_3)
-   (let (quote (ProofTraceLabelConsV1 $label $labels)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceConsV1 $instruction $trace)) $__gslt_input_v1_0_3
-   (let (quote gslt:result:source-proof-trace-label-instruction-v1:11) (once (gslt:fn:source-proof-trace-label-instruction-v1:11 $label $instruction))
-   (let (quote (gslt:result:ProofTraceCompileNormalStatusV1:1101 $status)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:1101 $labels $target $trace)))
-   (quote (gslt:result:ProofTraceCompileNormalStatusV1:1101 $status)))))))
+(= (gslt:mode:ProofTraceCompileNormalStatusV1:1101 (cons ProofTraceLabelConsV1 (cons $label (cons $labels ()))) $target (cons ProofTraceConsV1 (cons $instruction (cons $trace ()))))
+   (let gslt:result:source-proof-trace-label-instruction-v1:11 (once (gslt:fn:source-proof-trace-label-instruction-v1:11 $label $instruction))
+   (let (cons gslt:result:ProofTraceCompileNormalStatusV1:1101 (cons $status ())) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:1101 $labels $target $trace)))
+   (quote (gslt:result:ProofTraceCompileNormalStatusV1:1101 $status)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=197 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-incomplete-v1 target=mode relation=ProofTraceCompileNormalStatusV1 input=1101 functional=relational
-(= (gslt:mode:ProofTraceCompileNormalStatusV1:1101 $__gslt_input_v1_0_0 $target $__gslt_input_v1_0_3)
-   (let (quote (ProofTraceLabelConsV1 $label $labels)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)) $__gslt_input_v1_0_3
-   (let (quote gslt:result:source-proof-trace-input-incomplete-normal-label-v1:1) (once (gslt:fn:source-proof-trace-input-incomplete-normal-label-v1:1 $label))
-   (let (quote (gslt:result:ProofTraceCompileNormalStatusV1:1101 $tail-status)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:1101 $labels $target $trace)))
-   (quote (gslt:result:ProofTraceCompileNormalStatusV1:1101 ProofTraceStatusIncompleteV1)))))))
+(= (gslt:mode:ProofTraceCompileNormalStatusV1:1101 (cons ProofTraceLabelConsV1 (cons $label (cons $labels ()))) $target (cons ProofTraceConsV1 (cons (cons ProofTraceIncompleteStepV1 (cons $target ())) (cons $trace ()))))
+   (let gslt:result:source-proof-trace-input-incomplete-normal-label-v1:1 (once (gslt:fn:source-proof-trace-input-incomplete-normal-label-v1:1 $label))
+   (let (cons gslt:result:ProofTraceCompileNormalStatusV1:1101 (cons $tail-status ())) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:1101 $labels $target $trace)))
+   (quote (gslt:result:ProofTraceCompileNormalStatusV1:1101 ProofTraceStatusIncompleteV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=198 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-compressed-v1 target=mode relation=ProofTraceCompileCompressedV1 input=0000 functional=relational
 (= (gslt:mode:ProofTraceCompileCompressedV1:0000)
-   (let (quote (gslt:result:ProofTraceCompileDictionaryV1:000 $initial-labels $explicit-labels $dictionary)) (superpose (collapse (gslt:mode:ProofTraceCompileDictionaryV1:000)))
-   (let (quote (ProofTraceDecodeV1 $dictionary $codes ProofTraceNatZeroV1 $trace)) (gslt:ProofTraceDecodeV1 (ProofTraceDecodeV1 $dictionary $codes ProofTraceNatZeroV1 $trace))
+   (let (cons gslt:result:ProofTraceCompileDictionaryV1:000 (cons $initial-labels (cons $explicit-labels (cons $dictionary ())))) (superpose (collapse (gslt:mode:ProofTraceCompileDictionaryV1:000)))
+   (let (cons ProofTraceDecodeV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons $trace ()))))) (gslt:ProofTraceDecodeV1 (ProofTraceDecodeV1 $dictionary $codes ProofTraceNatZeroV1 $trace))
    (quote (gslt:result:ProofTraceCompileCompressedV1:0000 $initial-labels $explicit-labels $codes $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=198 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-compressed-v1 target=mode relation=ProofTraceCompileCompressedV1 input=1111 functional=relational
 (= (gslt:mode:ProofTraceCompileCompressedV1:1111 $initial-labels $explicit-labels $codes $trace)
-   (let (quote (gslt:result:ProofTraceCompileDictionaryV1:110 $dictionary)) (superpose (collapse (gslt:mode:ProofTraceCompileDictionaryV1:110 $initial-labels $explicit-labels)))
-   (let (quote gslt:result:ProofTraceDecodeV1:1111) (once (gslt:fn:ProofTraceDecodeV1:1111 $dictionary $codes ProofTraceNatZeroV1 $trace))
+   (let (cons gslt:result:ProofTraceCompileDictionaryV1:110 (cons $dictionary ())) (superpose (collapse (gslt:mode:ProofTraceCompileDictionaryV1:110 $initial-labels $explicit-labels)))
+   (let gslt:result:ProofTraceDecodeV1:1111 (once (gslt:fn:ProofTraceDecodeV1:1111 $dictionary $codes ProofTraceNatZeroV1 $trace))
    (quote gslt:result:ProofTraceCompileCompressedV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=199 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-accepted-v1 target=mode relation=ProofTraceCompileNormalAcceptedV1 input=101 functional=relational
 (= (gslt:mode:ProofTraceCompileNormalAcceptedV1:101 $context $target)
-   (let (quote (gslt:result:ProofTraceCompileNormalV1:00 $labels $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalV1:00)))
-   (let (quote gslt:result:ProofTraceAcceptedV1:111) (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:111 $context $trace $target)))
+   (let (cons gslt:result:ProofTraceCompileNormalV1:00 (cons $labels (cons $trace ()))) (superpose (collapse (gslt:mode:ProofTraceCompileNormalV1:00)))
+   (let gslt:result:ProofTraceAcceptedV1:111 (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:111 $context $trace $target)))
    (quote (gslt:result:ProofTraceCompileNormalAcceptedV1:101 $labels)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=200 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-incomplete-accepted-v1 target=mode relation=ProofTraceCompileNormalIncompleteAcceptedV1 input=101 functional=relational
 (= (gslt:mode:ProofTraceCompileNormalIncompleteAcceptedV1:101 $context $target)
-   (let (quote (gslt:result:ProofTraceCompileNormalStatusV1:0110 $labels $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0110 $target ProofTraceStatusIncompleteV1)))
-   (let (quote gslt:result:ProofTraceAcceptedV1:111) (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:111 $context $trace $target)))
+   (let (cons gslt:result:ProofTraceCompileNormalStatusV1:0110 (cons $labels (cons $trace ()))) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0110 $target ProofTraceStatusIncompleteV1)))
+   (let gslt:result:ProofTraceAcceptedV1:111 (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:111 $context $trace $target)))
    (quote (gslt:result:ProofTraceCompileNormalIncompleteAcceptedV1:101 $labels)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=203 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-literal-v1 target=mode relation=ProofTraceTokenResultValueV1 input=11 functional=semidet
-(= (gslt:fn:ProofTraceTokenResultValueV1:11 ProofTokenLiteralClassV1 $__gslt_input_v1_0_1)
-   (let (quote (ProofTokenLiteralClassV1)) $__gslt_input_v1_0_1
-   (quote gslt:result:ProofTraceTokenResultValueV1:11)))
+(= (gslt:fn:ProofTraceTokenResultValueV1:11 ProofTokenLiteralClassV1 (cons ProofTokenLiteralClassV1 ()))
+   (quote gslt:result:ProofTraceTokenResultValueV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=204 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-variable-v1 target=mode relation=ProofTraceTokenResultValueV1 input=11 functional=semidet
-(= (gslt:fn:ProofTraceTokenResultValueV1:11 ProofTokenVariableClassV1 $__gslt_input_v1_0_1)
-   (let (quote (ProofTokenVariableClassV1)) $__gslt_input_v1_0_1
-   (quote gslt:result:ProofTraceTokenResultValueV1:11)))
+(= (gslt:fn:ProofTraceTokenResultValueV1:11 ProofTokenVariableClassV1 (cons ProofTokenVariableClassV1 ()))
+   (quote gslt:result:ProofTraceTokenResultValueV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=205 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-equal-v1 target=mode relation=ProofTraceTokenResultValueV1 input=11 functional=semidet
-(= (gslt:fn:ProofTraceTokenResultValueV1:11 ProofTokenEqualV1 $__gslt_input_v1_0_1)
-   (let (quote (ProofTokenEqualV1)) $__gslt_input_v1_0_1
-   (quote gslt:result:ProofTraceTokenResultValueV1:11)))
+(= (gslt:fn:ProofTraceTokenResultValueV1:11 ProofTokenEqualV1 (cons ProofTokenEqualV1 ()))
+   (quote gslt:result:ProofTraceTokenResultValueV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=206 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-unequal-v1 target=mode relation=ProofTraceTokenResultValueV1 input=11 functional=semidet
-(= (gslt:fn:ProofTraceTokenResultValueV1:11 ProofTokenUnequalV1 $__gslt_input_v1_0_1)
-   (let (quote (ProofTokenUnequalV1)) $__gslt_input_v1_0_1
-   (quote gslt:result:ProofTraceTokenResultValueV1:11)))
+(= (gslt:fn:ProofTraceTokenResultValueV1:11 ProofTokenUnequalV1 (cons ProofTokenUnequalV1 ()))
+   (quote gslt:result:ProofTraceTokenResultValueV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=207 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-value-literal-v1 target=mode relation=ProofTraceTokenResultValueV1 input=11 functional=semidet
-(= (gslt:fn:ProofTraceTokenResultValueV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (ProofTokenLiteralClassV1)) $__gslt_input_v1_0_0
-   (let (quote (ProofTokenLiteralClassV1)) $__gslt_input_v1_0_1
-   (quote gslt:result:ProofTraceTokenResultValueV1:11))))
+(= (gslt:fn:ProofTraceTokenResultValueV1:11 (cons ProofTokenLiteralClassV1 ()) (cons ProofTokenLiteralClassV1 ()))
+   (quote gslt:result:ProofTraceTokenResultValueV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=208 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-value-variable-v1 target=mode relation=ProofTraceTokenResultValueV1 input=11 functional=semidet
-(= (gslt:fn:ProofTraceTokenResultValueV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (ProofTokenVariableClassV1)) $__gslt_input_v1_0_0
-   (let (quote (ProofTokenVariableClassV1)) $__gslt_input_v1_0_1
-   (quote gslt:result:ProofTraceTokenResultValueV1:11))))
+(= (gslt:fn:ProofTraceTokenResultValueV1:11 (cons ProofTokenVariableClassV1 ()) (cons ProofTokenVariableClassV1 ()))
+   (quote gslt:result:ProofTraceTokenResultValueV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=209 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-value-equal-v1 target=mode relation=ProofTraceTokenResultValueV1 input=11 functional=semidet
-(= (gslt:fn:ProofTraceTokenResultValueV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (ProofTokenEqualV1)) $__gslt_input_v1_0_0
-   (let (quote (ProofTokenEqualV1)) $__gslt_input_v1_0_1
-   (quote gslt:result:ProofTraceTokenResultValueV1:11))))
+(= (gslt:fn:ProofTraceTokenResultValueV1:11 (cons ProofTokenEqualV1 ()) (cons ProofTokenEqualV1 ()))
+   (quote gslt:result:ProofTraceTokenResultValueV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=210 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-value-unequal-v1 target=mode relation=ProofTraceTokenResultValueV1 input=11 functional=semidet
-(= (gslt:fn:ProofTraceTokenResultValueV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (ProofTokenUnequalV1)) $__gslt_input_v1_0_0
-   (let (quote (ProofTokenUnequalV1)) $__gslt_input_v1_0_1
-   (quote gslt:result:ProofTraceTokenResultValueV1:11))))
+(= (gslt:fn:ProofTraceTokenResultValueV1:11 (cons ProofTokenUnequalV1 ()) (cons ProofTokenUnequalV1 ()))
+   (quote gslt:result:ProofTraceTokenResultValueV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=203 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-literal-v1 target=mode relation=ProofTraceTokenResultValueV1 input=10 functional=semidet
 (= (gslt:fn:ProofTraceTokenResultValueV1:10 ProofTokenLiteralClassV1)
@@ -3137,53 +2955,49 @@
    (quote (gslt:result:ProofTraceTokenResultValueV1:10 (ProofTokenUnequalV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=207 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-value-literal-v1 target=mode relation=ProofTraceTokenResultValueV1 input=10 functional=semidet
-(= (gslt:fn:ProofTraceTokenResultValueV1:10 $__gslt_input_v1_0_0)
-   (let (quote (ProofTokenLiteralClassV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceTokenResultValueV1:10 (ProofTokenLiteralClassV1)))))
+(= (gslt:fn:ProofTraceTokenResultValueV1:10 (cons ProofTokenLiteralClassV1 ()))
+   (quote (gslt:result:ProofTraceTokenResultValueV1:10 (ProofTokenLiteralClassV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=208 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-value-variable-v1 target=mode relation=ProofTraceTokenResultValueV1 input=10 functional=semidet
-(= (gslt:fn:ProofTraceTokenResultValueV1:10 $__gslt_input_v1_0_0)
-   (let (quote (ProofTokenVariableClassV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceTokenResultValueV1:10 (ProofTokenVariableClassV1)))))
+(= (gslt:fn:ProofTraceTokenResultValueV1:10 (cons ProofTokenVariableClassV1 ()))
+   (quote (gslt:result:ProofTraceTokenResultValueV1:10 (ProofTokenVariableClassV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=209 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-value-equal-v1 target=mode relation=ProofTraceTokenResultValueV1 input=10 functional=semidet
-(= (gslt:fn:ProofTraceTokenResultValueV1:10 $__gslt_input_v1_0_0)
-   (let (quote (ProofTokenEqualV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceTokenResultValueV1:10 (ProofTokenEqualV1)))))
+(= (gslt:fn:ProofTraceTokenResultValueV1:10 (cons ProofTokenEqualV1 ()))
+   (quote (gslt:result:ProofTraceTokenResultValueV1:10 (ProofTokenEqualV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=210 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-value-unequal-v1 target=mode relation=ProofTraceTokenResultValueV1 input=10 functional=semidet
-(= (gslt:fn:ProofTraceTokenResultValueV1:10 $__gslt_input_v1_0_0)
-   (let (quote (ProofTokenUnequalV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceTokenResultValueV1:10 (ProofTokenUnequalV1)))))
+(= (gslt:fn:ProofTraceTokenResultValueV1:10 (cons ProofTokenUnequalV1 ()))
+   (quote (gslt:result:ProofTraceTokenResultValueV1:10 (ProofTokenUnequalV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=211 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-token-class-v1 target=mode relation=ProofTokenClassV1 input=00 functional=semidet
 (= (gslt:fn:ProofTokenClassV1:00)
-   (let (quote (gslt:result:source-proof-trace-input-token-class-v1:00 $token $raw-class)) (gslt:fn:source-proof-trace-input-token-class-v1:00)
-   (let (quote (gslt:result:ProofTraceTokenResultValueV1:10 $class)) (gslt:fn:ProofTraceTokenResultValueV1:10 $raw-class)
+   (let (cons gslt:result:source-proof-trace-input-token-class-v1:00 (cons $token (cons $raw-class ()))) (gslt:fn:source-proof-trace-input-token-class-v1:00)
+   (let (cons gslt:result:ProofTraceTokenResultValueV1:10 (cons $class ())) (gslt:fn:ProofTraceTokenResultValueV1:10 $raw-class)
    (quote (gslt:result:ProofTokenClassV1:00 $token $class)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=211 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-token-class-v1 target=mode relation=ProofTokenClassV1 input=10 functional=semidet
 (= (gslt:fn:ProofTokenClassV1:10 $token)
-   (let (quote (gslt:result:source-proof-trace-input-token-class-v1:10 $raw-class)) (gslt:fn:source-proof-trace-input-token-class-v1:10 $token)
-   (let (quote (gslt:result:ProofTraceTokenResultValueV1:10 $class)) (gslt:fn:ProofTraceTokenResultValueV1:10 $raw-class)
+   (let (cons gslt:result:source-proof-trace-input-token-class-v1:10 (cons $raw-class ())) (gslt:fn:source-proof-trace-input-token-class-v1:10 $token)
+   (let (cons gslt:result:ProofTraceTokenResultValueV1:10 (cons $class ())) (gslt:fn:ProofTraceTokenResultValueV1:10 $raw-class)
    (quote (gslt:result:ProofTokenClassV1:10 $class)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=212 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-token-compare-v1 target=mode relation=ProofTokenCompareV1 input=000 functional=relational
 (= (gslt:mode:ProofTokenCompareV1:000)
-   (let (quote (gslt:result:source-proof-trace-input-token-compare-v1:000 $left $right $raw-comparison)) (superpose (collapse (gslt:mode:source-proof-trace-input-token-compare-v1:000)))
-   (let (quote (gslt:result:ProofTraceTokenResultValueV1:10 $comparison)) (once (gslt:fn:ProofTraceTokenResultValueV1:10 $raw-comparison))
+   (let (cons gslt:result:source-proof-trace-input-token-compare-v1:000 (cons $left (cons $right (cons $raw-comparison ())))) (superpose (collapse (gslt:mode:source-proof-trace-input-token-compare-v1:000)))
+   (let (cons gslt:result:ProofTraceTokenResultValueV1:10 (cons $comparison ())) (once (gslt:fn:ProofTraceTokenResultValueV1:10 $raw-comparison))
    (quote (gslt:result:ProofTokenCompareV1:000 $left $right $comparison)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=212 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-token-compare-v1 target=mode relation=ProofTokenCompareV1 input=111 functional=semidet
 (= (gslt:fn:ProofTokenCompareV1:111 $left $right $comparison)
-   (let (quote (gslt:result:source-proof-trace-input-token-compare-v1:110 $raw-comparison)) (gslt:fn:source-proof-trace-input-token-compare-v1:110 $left $right)
-   (let (quote gslt:result:ProofTraceTokenResultValueV1:11) (gslt:fn:ProofTraceTokenResultValueV1:11 $raw-comparison $comparison)
+   (let (cons gslt:result:source-proof-trace-input-token-compare-v1:110 (cons $raw-comparison ())) (gslt:fn:source-proof-trace-input-token-compare-v1:110 $left $right)
+   (let gslt:result:ProofTraceTokenResultValueV1:11 (gslt:fn:ProofTraceTokenResultValueV1:11 $raw-comparison $comparison)
    (quote gslt:result:ProofTokenCompareV1:111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=212 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-token-compare-v1 target=mode relation=ProofTokenCompareV1 input=110 functional=semidet
 (= (gslt:fn:ProofTokenCompareV1:110 $left $right)
-   (let (quote (gslt:result:source-proof-trace-input-token-compare-v1:110 $raw-comparison)) (gslt:fn:source-proof-trace-input-token-compare-v1:110 $left $right)
-   (let (quote (gslt:result:ProofTraceTokenResultValueV1:10 $comparison)) (gslt:fn:ProofTraceTokenResultValueV1:10 $raw-comparison)
+   (let (cons gslt:result:source-proof-trace-input-token-compare-v1:110 (cons $raw-comparison ())) (gslt:fn:source-proof-trace-input-token-compare-v1:110 $left $right)
+   (let (cons gslt:result:ProofTraceTokenResultValueV1:10 (cons $comparison ())) (gslt:fn:ProofTraceTokenResultValueV1:10 $raw-comparison)
    (quote (gslt:result:ProofTokenCompareV1:110 $comparison)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=213 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-token-literal-v1 target=mode relation=ProofTokenLiteralV1 input=0 functional=semidet
@@ -3198,62 +3012,60 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=214 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-token-variable-v1 target=mode relation=ProofTokenVariableV1 input=0 functional=semidet
 (= (gslt:fn:ProofTokenVariableV1:0)
-   (let (quote (gslt:result:source-proof-trace-input-token-variable-v1:0 $token)) (gslt:fn:source-proof-trace-input-token-variable-v1:0)
+   (let (cons gslt:result:source-proof-trace-input-token-variable-v1:0 (cons $token ())) (gslt:fn:source-proof-trace-input-token-variable-v1:0)
    (quote (gslt:result:ProofTokenVariableV1:0 $token))))
 
 ; gslt-lowered-equation-v1 source-rewrite=214 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-token-variable-v1 target=mode relation=ProofTokenVariableV1 input=1 functional=semidet
 (= (gslt:fn:ProofTokenVariableV1:1 $token)
-   (let (quote gslt:result:source-proof-trace-input-token-variable-v1:1) (gslt:fn:source-proof-trace-input-token-variable-v1:1 $token)
+   (let gslt:result:source-proof-trace-input-token-variable-v1:1 (gslt:fn:source-proof-trace-input-token-variable-v1:1 $token)
    (quote gslt:result:ProofTokenVariableV1:1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=215 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-token-different-v1 target=mode relation=ProofTokenDifferentV1 input=00 functional=semidet
 (= (gslt:fn:ProofTokenDifferentV1:00)
-   (let (quote (gslt:result:source-proof-trace-input-token-different-v1:00 $left $right)) (gslt:fn:source-proof-trace-input-token-different-v1:00)
+   (let (cons gslt:result:source-proof-trace-input-token-different-v1:00 (cons $left (cons $right ()))) (gslt:fn:source-proof-trace-input-token-different-v1:00)
    (quote (gslt:result:ProofTokenDifferentV1:00 $left $right))))
 
 ; gslt-lowered-equation-v1 source-rewrite=215 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-token-different-v1 target=mode relation=ProofTokenDifferentV1 input=11 functional=semidet
 (= (gslt:fn:ProofTokenDifferentV1:11 $left $right)
-   (let (quote gslt:result:source-proof-trace-input-token-different-v1:11) (gslt:fn:source-proof-trace-input-token-different-v1:11 $left $right)
+   (let gslt:result:source-proof-trace-input-token-different-v1:11 (gslt:fn:source-proof-trace-input-token-different-v1:11 $left $right)
    (quote gslt:result:ProofTokenDifferentV1:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=216 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-push-instruction-v1 target=mode relation=source-proof-trace-label-instruction-v1 input=00 functional=relational
 (= (gslt:mode:source-proof-trace-label-instruction-v1:00)
-   (let (quote (gslt:result:source-proof-trace-input-request-v1:00 $request $target)) (once (gslt:fn:source-proof-trace-input-request-v1:00))
-   (let (quote (gslt:result:source-proof-trace-input-push-label-v1:100 $label $formula)) (superpose (collapse (gslt:mode:source-proof-trace-input-push-label-v1:100 $request)))
+   (let (cons gslt:result:source-proof-trace-input-request-v1:00 (cons $request (cons $target ()))) (once (gslt:fn:source-proof-trace-input-request-v1:00))
+   (let (cons gslt:result:source-proof-trace-input-push-label-v1:100 (cons $label (cons $formula ()))) (superpose (collapse (gslt:mode:source-proof-trace-input-push-label-v1:100 $request)))
    (quote (gslt:result:source-proof-trace-label-instruction-v1:00 $label (ProofTracePushV1 $formula))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=228 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-apply-instruction-v1 target=mode relation=source-proof-trace-label-instruction-v1 input=00 functional=relational
 (= (gslt:mode:source-proof-trace-label-instruction-v1:00)
-   (let (quote (gslt:result:ProofTraceInputAssertionV1:000 $label $assertion $frame)) (superpose (collapse (gslt:mode:ProofTraceInputAssertionV1:000)))
+   (let (cons gslt:result:ProofTraceInputAssertionV1:000 (cons $label (cons $assertion (cons $frame ())))) (superpose (collapse (gslt:mode:ProofTraceInputAssertionV1:000)))
    (quote (gslt:result:source-proof-trace-label-instruction-v1:00 $label (ProofTraceApplyV1 $assertion $frame)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=216 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-push-instruction-v1 target=mode relation=source-proof-trace-label-instruction-v1 input=11 functional=semidet
-(= (gslt:fn:source-proof-trace-label-instruction-v1:11 $label $__gslt_input_v1_0_1)
-   (let (quote (ProofTracePushV1 $formula)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:source-proof-trace-input-request-v1:00 $request $target)) (gslt:fn:source-proof-trace-input-request-v1:00)
-   (let (quote gslt:result:source-proof-trace-input-push-label-v1:111) (gslt:fn:source-proof-trace-input-push-label-v1:111 $request $label $formula)
-   (quote gslt:result:source-proof-trace-label-instruction-v1:11)))))
+(= (gslt:fn:source-proof-trace-label-instruction-v1:11 $label (cons ProofTracePushV1 (cons $formula ())))
+   (let (cons gslt:result:source-proof-trace-input-request-v1:00 (cons $request (cons $target ()))) (gslt:fn:source-proof-trace-input-request-v1:00)
+   (let gslt:result:source-proof-trace-input-push-label-v1:111 (gslt:fn:source-proof-trace-input-push-label-v1:111 $request $label $formula)
+   (quote gslt:result:source-proof-trace-label-instruction-v1:11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=228 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-apply-instruction-v1 target=mode relation=source-proof-trace-label-instruction-v1 input=11 functional=semidet
-(= (gslt:fn:source-proof-trace-label-instruction-v1:11 $label $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceApplyV1 $assertion $frame)) $__gslt_input_v1_0_1
-   (let (quote gslt:result:ProofTraceInputAssertionV1:111) (gslt:fn:ProofTraceInputAssertionV1:111 $label $assertion $frame)
-   (quote gslt:result:source-proof-trace-label-instruction-v1:11))))
+(= (gslt:fn:source-proof-trace-label-instruction-v1:11 $label (cons ProofTraceApplyV1 (cons $assertion (cons $frame ()))))
+   (let gslt:result:ProofTraceInputAssertionV1:111 (gslt:fn:ProofTraceInputAssertionV1:111 $label $assertion $frame)
+   (quote gslt:result:source-proof-trace-label-instruction-v1:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=216 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-push-instruction-v1 target=mode relation=source-proof-trace-label-instruction-v1 input=10 functional=relational
 (= (gslt:mode:source-proof-trace-label-instruction-v1:10 $label)
-   (let (quote (gslt:result:source-proof-trace-input-request-v1:00 $request $target)) (once (gslt:fn:source-proof-trace-input-request-v1:00))
-   (let (quote (gslt:result:source-proof-trace-input-push-label-v1:110 $formula)) (once (gslt:fn:source-proof-trace-input-push-label-v1:110 $request $label))
+   (let (cons gslt:result:source-proof-trace-input-request-v1:00 (cons $request (cons $target ()))) (once (gslt:fn:source-proof-trace-input-request-v1:00))
+   (let (cons gslt:result:source-proof-trace-input-push-label-v1:110 (cons $formula ())) (once (gslt:fn:source-proof-trace-input-push-label-v1:110 $request $label))
    (quote (gslt:result:source-proof-trace-label-instruction-v1:10 (ProofTracePushV1 $formula))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=228 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-apply-instruction-v1 target=mode relation=source-proof-trace-label-instruction-v1 input=10 functional=relational
 (= (gslt:mode:source-proof-trace-label-instruction-v1:10 $label)
-   (let (quote (gslt:result:ProofTraceInputAssertionV1:100 $assertion $frame)) (superpose (collapse (gslt:mode:ProofTraceInputAssertionV1:100 $label)))
+   (let (cons gslt:result:ProofTraceInputAssertionV1:100 (cons $assertion (cons $frame ()))) (superpose (collapse (gslt:mode:ProofTraceInputAssertionV1:100 $label)))
    (quote (gslt:result:source-proof-trace-label-instruction-v1:10 (ProofTraceApplyV1 $assertion $frame)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=217 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-current-apart-forward-v1 target=mode relation=ProofTokenApartV1 input=11 functional=relational
 (= (gslt:mode:ProofTokenApartV1:11 $left $right)
-   (let (quote gslt:result:ProofTokenApartDecisionV1:111) (once (gslt:fn:ProofTokenApartDecisionV1:111 $left $right ProofTraceApartPresentV1))
+   (let gslt:result:ProofTokenApartDecisionV1:111 (once (gslt:fn:ProofTokenApartDecisionV1:111 $left $right ProofTraceApartPresentV1))
    (quote gslt:result:ProofTokenApartV1:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=218 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-current-apart-reverse-v1 target=mode relation=ProofTokenApartV1 input=11 functional=relational
@@ -3272,8 +3084,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=221 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-context-cons-v1 target=mode relation=ProofTraceInputBuildContextV1 input=1110 functional=relational
 (= (gslt:mode:ProofTraceInputBuildContextV1:1110 $request $index $count)
-   (let (quote (gslt:result:source-proof-trace-input-context-v1:110 $formula)) (once (gslt:fn:source-proof-trace-input-context-v1:110 $request $index))
-   (let (quote (gslt:result:ProofTraceInputBuildContextV1:1110 $context)) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1110 $request (quote (ProofTraceNatSuccV1 $index)) $count)))
+   (let (cons gslt:result:source-proof-trace-input-context-v1:110 (cons $formula ())) (once (gslt:fn:source-proof-trace-input-context-v1:110 $request $index))
+   (let (cons gslt:result:ProofTraceInputBuildContextV1:1110 (cons $context ())) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1110 $request (quote (ProofTraceNatSuccV1 $index)) $count)))
    (quote (gslt:result:ProofTraceInputBuildContextV1:1110 (ProofTraceContextConsV1 $formula $context))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=222 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-frame-nil-v1 target=mode relation=ProofTraceInputBuildFrameV1 input=1111 functional=semidet
@@ -3281,11 +3093,10 @@
    (quote gslt:result:ProofTraceInputBuildFrameV1:1111))
 
 ; gslt-lowered-equation-v1 source-rewrite=223 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-frame-cons-v1 target=mode relation=ProofTraceInputBuildFrameV1 input=1111 functional=semidet
-(= (gslt:fn:ProofTraceInputBuildFrameV1:1111 $assertion $index $count $__gslt_input_v1_0_3)
-   (let (quote (ProofTraceFrameConsV1 $entry $frame)) $__gslt_input_v1_0_3
-   (let (quote gslt:result:source-proof-trace-input-frame-v1:111) (gslt:fn:source-proof-trace-input-frame-v1:111 $assertion $index $entry)
-   (let (quote gslt:result:ProofTraceInputBuildFrameV1:1111) (gslt:fn:ProofTraceInputBuildFrameV1:1111 $assertion (quote (ProofTraceNatSuccV1 $index)) $count $frame)
-   (quote gslt:result:ProofTraceInputBuildFrameV1:1111)))))
+(= (gslt:fn:ProofTraceInputBuildFrameV1:1111 $assertion $index $count (cons ProofTraceFrameConsV1 (cons $entry (cons $frame ()))))
+   (let gslt:result:source-proof-trace-input-frame-v1:111 (gslt:fn:source-proof-trace-input-frame-v1:111 $assertion $index $entry)
+   (let gslt:result:ProofTraceInputBuildFrameV1:1111 (gslt:fn:ProofTraceInputBuildFrameV1:1111 $assertion (quote (ProofTraceNatSuccV1 $index)) $count $frame)
+   (quote gslt:result:ProofTraceInputBuildFrameV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=222 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-frame-nil-v1 target=mode relation=ProofTraceInputBuildFrameV1 input=1110 functional=relational
 (= (gslt:mode:ProofTraceInputBuildFrameV1:1110 $assertion $count $count)
@@ -3293,8 +3104,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=223 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-frame-cons-v1 target=mode relation=ProofTraceInputBuildFrameV1 input=1110 functional=relational
 (= (gslt:mode:ProofTraceInputBuildFrameV1:1110 $assertion $index $count)
-   (let (quote (gslt:result:source-proof-trace-input-frame-v1:110 $entry)) (once (gslt:fn:source-proof-trace-input-frame-v1:110 $assertion $index))
-   (let (quote (gslt:result:ProofTraceInputBuildFrameV1:1110 $frame)) (superpose (collapse (gslt:mode:ProofTraceInputBuildFrameV1:1110 $assertion (quote (ProofTraceNatSuccV1 $index)) $count)))
+   (let (cons gslt:result:source-proof-trace-input-frame-v1:110 (cons $entry ())) (once (gslt:fn:source-proof-trace-input-frame-v1:110 $assertion $index))
+   (let (cons gslt:result:ProofTraceInputBuildFrameV1:1110 (cons $frame ())) (superpose (collapse (gslt:mode:ProofTraceInputBuildFrameV1:1110 $assertion (quote (ProofTraceNatSuccV1 $index)) $count)))
    (quote (gslt:result:ProofTraceInputBuildFrameV1:1110 (ProofTraceFrameConsV1 $entry $frame))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=224 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-apartness-nil-v1 target=mode relation=ProofTraceInputBuildApartnessV1 input=0000 functional=relational
@@ -3304,20 +3115,18 @@
 ; gslt-lowered-equation-v1 source-rewrite=225 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-apartness-cons-v1 target=mode relation=ProofTraceInputBuildApartnessV1 input=0000 functional=relational
 (= (gslt:mode:ProofTraceInputBuildApartnessV1:0000)
    (let $_ (gslt:source-proof-trace-input-apartness-v1 (source-proof-trace-input-apartness-v1 $assertion $index $left $right))
-   (let (quote (gslt:result:ProofTraceInputBuildApartnessV1:0000 $assertion (ProofTraceNatSuccV1 $index) $count $apartness)) (superpose (collapse (gslt:mode:ProofTraceInputBuildApartnessV1:0000)))
+   (let (cons gslt:result:ProofTraceInputBuildApartnessV1:0000 (cons $assertion (cons (cons ProofTraceNatSuccV1 (cons $index ())) (cons $count (cons $apartness ()))))) (superpose (collapse (gslt:mode:ProofTraceInputBuildApartnessV1:0000)))
    (quote (gslt:result:ProofTraceInputBuildApartnessV1:0000 $assertion $index $count (ProofAssertionListConsV1 (ProofAssertionDisjointV1 $left $right) $apartness))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=224 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-apartness-nil-v1 target=mode relation=ProofTraceInputBuildApartnessV1 input=1111 functional=semidet
-(= (gslt:fn:ProofTraceInputBuildApartnessV1:1111 $assertion $count $count $__gslt_input_v1_0_3)
-   (let (quote (ProofAssertionListNilV1)) $__gslt_input_v1_0_3
-   (quote gslt:result:ProofTraceInputBuildApartnessV1:1111)))
+(= (gslt:fn:ProofTraceInputBuildApartnessV1:1111 $assertion $count $count (cons ProofAssertionListNilV1 ()))
+   (quote gslt:result:ProofTraceInputBuildApartnessV1:1111))
 
 ; gslt-lowered-equation-v1 source-rewrite=225 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-apartness-cons-v1 target=mode relation=ProofTraceInputBuildApartnessV1 input=1111 functional=semidet
-(= (gslt:fn:ProofTraceInputBuildApartnessV1:1111 $assertion $index $count $__gslt_input_v1_0_3)
-   (let (quote (ProofAssertionListConsV1 (ProofAssertionDisjointV1 $left $right) $apartness)) $__gslt_input_v1_0_3
+(= (gslt:fn:ProofTraceInputBuildApartnessV1:1111 $assertion $index $count (cons ProofAssertionListConsV1 (cons (cons ProofAssertionDisjointV1 (cons $left (cons $right ()))) (cons $apartness ()))))
    (let $_ (gslt:source-proof-trace-input-apartness-v1 (source-proof-trace-input-apartness-v1 $assertion $index $left $right))
-   (let (quote gslt:result:ProofTraceInputBuildApartnessV1:1111) (gslt:fn:ProofTraceInputBuildApartnessV1:1111 $assertion (quote (ProofTraceNatSuccV1 $index)) $count $apartness)
-   (quote gslt:result:ProofTraceInputBuildApartnessV1:1111)))))
+   (let gslt:result:ProofTraceInputBuildApartnessV1:1111 (gslt:fn:ProofTraceInputBuildApartnessV1:1111 $assertion (quote (ProofTraceNatSuccV1 $index)) $count $apartness)
+   (quote gslt:result:ProofTraceInputBuildApartnessV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=224 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-apartness-nil-v1 target=mode relation=ProofTraceInputBuildApartnessV1 input=1110 functional=relational
 (= (gslt:mode:ProofTraceInputBuildApartnessV1:1110 $assertion $count $count)
@@ -3326,38 +3135,37 @@
 ; gslt-lowered-equation-v1 source-rewrite=225 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-apartness-cons-v1 target=mode relation=ProofTraceInputBuildApartnessV1 input=1110 functional=relational
 (= (gslt:mode:ProofTraceInputBuildApartnessV1:1110 $assertion $index $count)
    (let $_ (gslt:source-proof-trace-input-apartness-v1 (source-proof-trace-input-apartness-v1 $assertion $index $left $right))
-   (let (quote (gslt:result:ProofTraceInputBuildApartnessV1:1110 $apartness)) (superpose (collapse (gslt:mode:ProofTraceInputBuildApartnessV1:1110 $assertion (quote (ProofTraceNatSuccV1 $index)) $count)))
+   (let (cons gslt:result:ProofTraceInputBuildApartnessV1:1110 (cons $apartness ())) (superpose (collapse (gslt:mode:ProofTraceInputBuildApartnessV1:1110 $assertion (quote (ProofTraceNatSuccV1 $index)) $count)))
    (quote (gslt:result:ProofTraceInputBuildApartnessV1:1110 (ProofAssertionListConsV1 (ProofAssertionDisjointV1 $left $right) $apartness))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=226 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-assertion-v1 target=mode relation=ProofTraceInputAssertionV1 input=000 functional=relational
 (= (gslt:mode:ProofTraceInputAssertionV1:000)
-   (let (quote (gslt:result:source-proof-trace-input-assertion-v1:000 $label $conclusion-type $conclusion-template)) (once (gslt:fn:source-proof-trace-input-assertion-v1:000))
-   (let (quote (gslt:result:source-proof-trace-input-frame-count-v1:10 $frame-count)) (once (gslt:fn:source-proof-trace-input-frame-count-v1:10 $label))
-   (let (quote (gslt:result:source-proof-trace-input-apartness-count-v1:10 $apartness-count)) (once (gslt:fn:source-proof-trace-input-apartness-count-v1:10 $label))
-   (let (quote (gslt:result:ProofTraceInputBuildFrameV1:1110 $frame)) (superpose (collapse (gslt:mode:ProofTraceInputBuildFrameV1:1110 $label ProofTraceNatZeroV1 $frame-count)))
-   (let (quote (gslt:result:ProofTraceFrameProjectV1:100 $variables $essentials)) (once (gslt:fn:ProofTraceFrameProjectV1:100 $frame))
-   (let (quote (gslt:result:ProofTraceInputBuildApartnessV1:1110 $apartness)) (superpose (collapse (gslt:mode:ProofTraceInputBuildApartnessV1:1110 $label ProofTraceNatZeroV1 $apartness-count)))
+   (let (cons gslt:result:source-proof-trace-input-assertion-v1:000 (cons $label (cons $conclusion-type (cons $conclusion-template ())))) (once (gslt:fn:source-proof-trace-input-assertion-v1:000))
+   (let (cons gslt:result:source-proof-trace-input-frame-count-v1:10 (cons $frame-count ())) (once (gslt:fn:source-proof-trace-input-frame-count-v1:10 $label))
+   (let (cons gslt:result:source-proof-trace-input-apartness-count-v1:10 (cons $apartness-count ())) (once (gslt:fn:source-proof-trace-input-apartness-count-v1:10 $label))
+   (let (cons gslt:result:ProofTraceInputBuildFrameV1:1110 (cons $frame ())) (superpose (collapse (gslt:mode:ProofTraceInputBuildFrameV1:1110 $label ProofTraceNatZeroV1 $frame-count)))
+   (let (cons gslt:result:ProofTraceFrameProjectV1:100 (cons $variables (cons $essentials ()))) (once (gslt:fn:ProofTraceFrameProjectV1:100 $frame))
+   (let (cons gslt:result:ProofTraceInputBuildApartnessV1:1110 (cons $apartness ())) (superpose (collapse (gslt:mode:ProofTraceInputBuildApartnessV1:1110 $label ProofTraceNatZeroV1 $apartness-count)))
    (quote (gslt:result:ProofTraceInputAssertionV1:000 $label (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $apartness) $frame)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=226 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-assertion-v1 target=mode relation=ProofTraceInputAssertionV1 input=111 functional=semidet
-(= (gslt:fn:ProofTraceInputAssertionV1:111 $label $__gslt_input_v1_0_1 $frame)
-   (let (quote (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $apartness)) $__gslt_input_v1_0_1
-   (let (quote gslt:result:source-proof-trace-input-assertion-v1:111) (gslt:fn:source-proof-trace-input-assertion-v1:111 $label $conclusion-type $conclusion-template)
-   (let (quote (gslt:result:source-proof-trace-input-frame-count-v1:10 $frame-count)) (gslt:fn:source-proof-trace-input-frame-count-v1:10 $label)
-   (let (quote (gslt:result:source-proof-trace-input-apartness-count-v1:10 $apartness-count)) (gslt:fn:source-proof-trace-input-apartness-count-v1:10 $label)
-   (let (quote gslt:result:ProofTraceInputBuildFrameV1:1111) (gslt:fn:ProofTraceInputBuildFrameV1:1111 $label ProofTraceNatZeroV1 $frame-count $frame)
-   (let (quote gslt:result:ProofTraceFrameProjectV1:111) (gslt:fn:ProofTraceFrameProjectV1:111 $frame $variables $essentials)
-   (let (quote gslt:result:ProofTraceInputBuildApartnessV1:1111) (gslt:fn:ProofTraceInputBuildApartnessV1:1111 $label ProofTraceNatZeroV1 $apartness-count $apartness)
-   (quote gslt:result:ProofTraceInputAssertionV1:111)))))))))
+(= (gslt:fn:ProofTraceInputAssertionV1:111 $label (cons ProofAssertionV1 (cons $variables (cons $essentials (cons $conclusion-type (cons $conclusion-template (cons $apartness ())))))) $frame)
+   (let gslt:result:source-proof-trace-input-assertion-v1:111 (gslt:fn:source-proof-trace-input-assertion-v1:111 $label $conclusion-type $conclusion-template)
+   (let (cons gslt:result:source-proof-trace-input-frame-count-v1:10 (cons $frame-count ())) (gslt:fn:source-proof-trace-input-frame-count-v1:10 $label)
+   (let (cons gslt:result:source-proof-trace-input-apartness-count-v1:10 (cons $apartness-count ())) (gslt:fn:source-proof-trace-input-apartness-count-v1:10 $label)
+   (let gslt:result:ProofTraceInputBuildFrameV1:1111 (gslt:fn:ProofTraceInputBuildFrameV1:1111 $label ProofTraceNatZeroV1 $frame-count $frame)
+   (let gslt:result:ProofTraceFrameProjectV1:111 (gslt:fn:ProofTraceFrameProjectV1:111 $frame $variables $essentials)
+   (let gslt:result:ProofTraceInputBuildApartnessV1:1111 (gslt:fn:ProofTraceInputBuildApartnessV1:1111 $label ProofTraceNatZeroV1 $apartness-count $apartness)
+   (quote gslt:result:ProofTraceInputAssertionV1:111))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=227 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-assertion-declared-v1 target=mode relation=ProofAssertionDeclaredV1 input=0 functional=relational
 (= (gslt:mode:ProofAssertionDeclaredV1:0)
-   (let (quote (gslt:result:ProofTraceInputAssertionV1:000 $label $assertion $frame)) (superpose (collapse (gslt:mode:ProofTraceInputAssertionV1:000)))
+   (let (cons gslt:result:ProofTraceInputAssertionV1:000 (cons $label (cons $assertion (cons $frame ())))) (superpose (collapse (gslt:mode:ProofTraceInputAssertionV1:000)))
    (quote (gslt:result:ProofAssertionDeclaredV1:0 $assertion))))
 
 ; gslt-lowered-equation-v1 source-rewrite=227 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-assertion-declared-v1 target=mode relation=ProofAssertionDeclaredV1 input=1 functional=relational
 (= (gslt:mode:ProofAssertionDeclaredV1:1 $assertion)
-   (let (quote (gslt:result:ProofTraceInputAssertionV1:010 $label $frame)) (superpose (collapse (gslt:mode:ProofTraceInputAssertionV1:010 $assertion)))
+   (let (cons gslt:result:ProofTraceInputAssertionV1:010 (cons $label (cons $frame ()))) (superpose (collapse (gslt:mode:ProofTraceInputAssertionV1:010 $assertion)))
    (quote gslt:result:ProofAssertionDeclaredV1:1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=251 source-presentation=MetamathProofTracePolicyV1 source-rule=mm-proof-trace-save-immediately-after-use-v1 target=mode relation=source-proof-trace-save-placement-v1 input=0 functional=semidet
@@ -3661,129 +3469,104 @@
    (quote (gslt:result:source-proof-trace-code-class-v1:01 63)))
 
 ; gslt-lowered-equation-v1 source-rewrite=279 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-a-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitOneV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 65))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitOneV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 65)))
 
 ; gslt-lowered-equation-v1 source-rewrite=280 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-b-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitTwoV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 66))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitTwoV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 66)))
 
 ; gslt-lowered-equation-v1 source-rewrite=281 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-c-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitThreeV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 67))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitThreeV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 67)))
 
 ; gslt-lowered-equation-v1 source-rewrite=282 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-d-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitFourV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 68))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitFourV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 68)))
 
 ; gslt-lowered-equation-v1 source-rewrite=283 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-e-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitFiveV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 69))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitFiveV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 69)))
 
 ; gslt-lowered-equation-v1 source-rewrite=284 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-f-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitSixV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 70))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitSixV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 70)))
 
 ; gslt-lowered-equation-v1 source-rewrite=285 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-g-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitSevenV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 71))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitSevenV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 71)))
 
 ; gslt-lowered-equation-v1 source-rewrite=286 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-h-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitEightV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 72))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitEightV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 72)))
 
 ; gslt-lowered-equation-v1 source-rewrite=287 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-i-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitNineV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 73))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitNineV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 73)))
 
 ; gslt-lowered-equation-v1 source-rewrite=288 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-j-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitTenV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 74))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitTenV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 74)))
 
 ; gslt-lowered-equation-v1 source-rewrite=289 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-k-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitElevenV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 75))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitElevenV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 75)))
 
 ; gslt-lowered-equation-v1 source-rewrite=290 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-l-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitTwelveV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 76))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitTwelveV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 76)))
 
 ; gslt-lowered-equation-v1 source-rewrite=291 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-m-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitThirteenV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 77))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitThirteenV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 77)))
 
 ; gslt-lowered-equation-v1 source-rewrite=292 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-n-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitFourteenV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 78))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitFourteenV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 78)))
 
 ; gslt-lowered-equation-v1 source-rewrite=293 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-o-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitFifteenV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 79))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitFifteenV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 79)))
 
 ; gslt-lowered-equation-v1 source-rewrite=294 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-p-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitSixteenV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 80))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitSixteenV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 80)))
 
 ; gslt-lowered-equation-v1 source-rewrite=295 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-q-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitSeventeenV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 81))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitSeventeenV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 81)))
 
 ; gslt-lowered-equation-v1 source-rewrite=296 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-r-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitEighteenV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 82))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitEighteenV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 82)))
 
 ; gslt-lowered-equation-v1 source-rewrite=297 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-s-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitNineteenV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 83))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitNineteenV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 83)))
 
 ; gslt-lowered-equation-v1 source-rewrite=298 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-t-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceTerminalCodeV1 ProofTraceDigitTwentyV1 ProofTraceRadixTwentyV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 84))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitTwentyV1 (cons ProofTraceRadixTwentyV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 84)))
 
 ; gslt-lowered-equation-v1 source-rewrite=299 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-continuation-u-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceContinuationCodeV1 ProofTraceDigitOneV1 ProofTraceRadixFiveV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 85))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceContinuationCodeV1 (cons ProofTraceDigitOneV1 (cons ProofTraceRadixFiveV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 85)))
 
 ; gslt-lowered-equation-v1 source-rewrite=300 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-continuation-v-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceContinuationCodeV1 ProofTraceDigitTwoV1 ProofTraceRadixFiveV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 86))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceContinuationCodeV1 (cons ProofTraceDigitTwoV1 (cons ProofTraceRadixFiveV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 86)))
 
 ; gslt-lowered-equation-v1 source-rewrite=301 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-continuation-w-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceContinuationCodeV1 ProofTraceDigitThreeV1 ProofTraceRadixFiveV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 87))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceContinuationCodeV1 (cons ProofTraceDigitThreeV1 (cons ProofTraceRadixFiveV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 87)))
 
 ; gslt-lowered-equation-v1 source-rewrite=302 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-continuation-x-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceContinuationCodeV1 ProofTraceDigitFourV1 ProofTraceRadixFiveV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 88))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceContinuationCodeV1 (cons ProofTraceDigitFourV1 (cons ProofTraceRadixFiveV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 88)))
 
 ; gslt-lowered-equation-v1 source-rewrite=303 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-continuation-y-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
-(= (gslt:fn:source-proof-trace-code-class-v1:01 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceContinuationCodeV1 ProofTraceDigitFiveV1 ProofTraceRadixFiveV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-code-class-v1:01 89))))
+(= (gslt:fn:source-proof-trace-code-class-v1:01 (cons ProofTraceContinuationCodeV1 (cons ProofTraceDigitFiveV1 (cons ProofTraceRadixFiveV1 ()))))
+   (quote (gslt:result:source-proof-trace-code-class-v1:01 89)))
 
 ; gslt-lowered-equation-v1 source-rewrite=304 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-save-z-v1 target=mode relation=source-proof-trace-code-class-v1 input=01 functional=semidet
 (= (gslt:fn:source-proof-trace-code-class-v1:01 ProofTraceSaveCodeV1)
@@ -3982,9 +3765,8 @@
    (quote (gslt:result:source-proof-trace-input-request-v1:00 input-request-v1 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=317 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-request-v1 target=mode relation=source-proof-trace-input-request-v1 input=11 functional=semidet
-(= (gslt:fn:source-proof-trace-input-request-v1:11 input-request-v1 $__gslt_input_v1_0_1)
-   (let (quote (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) $__gslt_input_v1_0_1
-   (quote gslt:result:source-proof-trace-input-request-v1:11)))
+(= (gslt:fn:source-proof-trace-input-request-v1:11 input-request-v1 (cons ProofSequenceConsV1 (cons input-wff-v1 (cons (cons ProofSequenceConsV1 (cons input-a-v1 (cons (cons ProofSequenceNilV1 ()) ()))) ()))))
+   (quote gslt:result:source-proof-trace-input-request-v1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=318 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-context-count-v1 target=mode relation=source-proof-trace-input-context-count-v1 input=10 functional=semidet
 (= (gslt:fn:source-proof-trace-input-context-count-v1:10 input-request-v1)
@@ -4003,19 +3785,16 @@
    (quote (gslt:result:source-proof-trace-input-context-v1:110 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=320 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-context-dummy-v1 target=mode relation=source-proof-trace-input-context-v1 input=110 functional=semidet
-(= (gslt:fn:source-proof-trace-input-context-v1:110 input-request-v1 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceNatSuccV1 ProofTraceNatZeroV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:source-proof-trace-input-context-v1:110 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1)))))))
+(= (gslt:fn:source-proof-trace-input-context-v1:110 input-request-v1 (cons ProofTraceNatSuccV1 (cons ProofTraceNatZeroV1 ())))
+   (quote (gslt:result:source-proof-trace-input-context-v1:110 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=321 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-push-target-v1 target=mode relation=source-proof-trace-input-push-label-v1 input=111 functional=semidet
-(= (gslt:fn:source-proof-trace-input-push-label-v1:111 input-request-v1 input-hx-v1 $__gslt_input_v1_0_2)
-   (let (quote (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) $__gslt_input_v1_0_2
-   (quote gslt:result:source-proof-trace-input-push-label-v1:111)))
+(= (gslt:fn:source-proof-trace-input-push-label-v1:111 input-request-v1 input-hx-v1 (cons ProofSequenceConsV1 (cons input-wff-v1 (cons (cons ProofSequenceConsV1 (cons input-a-v1 (cons (cons ProofSequenceNilV1 ()) ()))) ()))))
+   (quote gslt:result:source-proof-trace-input-push-label-v1:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=322 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-push-dummy-v1 target=mode relation=source-proof-trace-input-push-label-v1 input=111 functional=semidet
-(= (gslt:fn:source-proof-trace-input-push-label-v1:111 input-request-v1 input-hdummy-v1 $__gslt_input_v1_0_2)
-   (let (quote (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1)))) $__gslt_input_v1_0_2
-   (quote gslt:result:source-proof-trace-input-push-label-v1:111)))
+(= (gslt:fn:source-proof-trace-input-push-label-v1:111 input-request-v1 input-hdummy-v1 (cons ProofSequenceConsV1 (cons input-wff-v1 (cons (cons ProofSequenceConsV1 (cons input-dummy-v1 (cons (cons ProofSequenceNilV1 ()) ()))) ()))))
+   (quote gslt:result:source-proof-trace-input-push-label-v1:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=321 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-push-target-v1 target=mode relation=source-proof-trace-input-push-label-v1 input=110 functional=semidet
 (= (gslt:fn:source-proof-trace-input-push-label-v1:110 input-request-v1 input-hx-v1)
@@ -4046,14 +3825,12 @@
    (quote (gslt:result:source-proof-trace-input-assertion-v1:000 input-identity-v1 input-wff-v1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=324 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-assertion-v1 target=mode relation=source-proof-trace-input-assertion-v1 input=111 functional=semidet
-(= (gslt:fn:source-proof-trace-input-assertion-v1:111 input-identity-v1 input-wff-v1 $__gslt_input_v1_0_2)
-   (let (quote (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1))) $__gslt_input_v1_0_2
-   (quote gslt:result:source-proof-trace-input-assertion-v1:111)))
+(= (gslt:fn:source-proof-trace-input-assertion-v1:111 input-identity-v1 input-wff-v1 (cons ProofSequenceConsV1 (cons input-x-v1 (cons (cons ProofSequenceNilV1 ()) ()))))
+   (quote gslt:result:source-proof-trace-input-assertion-v1:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=324 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-assertion-v1 target=mode relation=source-proof-trace-input-assertion-v1 input=011 functional=semidet
-(= (gslt:fn:source-proof-trace-input-assertion-v1:011 input-wff-v1 $__gslt_input_v1_0_2)
-   (let (quote (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1))) $__gslt_input_v1_0_2
-   (quote (gslt:result:source-proof-trace-input-assertion-v1:011 input-identity-v1))))
+(= (gslt:fn:source-proof-trace-input-assertion-v1:011 input-wff-v1 (cons ProofSequenceConsV1 (cons input-x-v1 (cons (cons ProofSequenceNilV1 ()) ()))))
+   (quote (gslt:result:source-proof-trace-input-assertion-v1:011 input-identity-v1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=325 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-frame-count-v1 target=mode relation=source-proof-trace-input-frame-count-v1 input=10 functional=semidet
 (= (gslt:fn:source-proof-trace-input-frame-count-v1:10 input-identity-v1)
@@ -4064,9 +3841,8 @@
    (quote (gslt:result:source-proof-trace-input-frame-v1:000 input-identity-v1 ProofTraceNatZeroV1 (ProofTraceFrameVariableV1 input-x-v1 input-wff-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=326 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-frame-variable-v1 target=mode relation=source-proof-trace-input-frame-v1 input=111 functional=semidet
-(= (gslt:fn:source-proof-trace-input-frame-v1:111 input-identity-v1 ProofTraceNatZeroV1 $__gslt_input_v1_0_2)
-   (let (quote (ProofTraceFrameVariableV1 input-x-v1 input-wff-v1)) $__gslt_input_v1_0_2
-   (quote gslt:result:source-proof-trace-input-frame-v1:111)))
+(= (gslt:fn:source-proof-trace-input-frame-v1:111 input-identity-v1 ProofTraceNatZeroV1 (cons ProofTraceFrameVariableV1 (cons input-x-v1 (cons input-wff-v1 ()))))
+   (quote gslt:result:source-proof-trace-input-frame-v1:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=326 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-frame-variable-v1 target=mode relation=source-proof-trace-input-frame-v1 input=110 functional=semidet
 (= (gslt:fn:source-proof-trace-input-frame-v1:110 input-identity-v1 ProofTraceNatZeroV1)
@@ -4078,257 +3854,232 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=328 source-presentation=CertificateGSLTTraceEvidenceCanaryV1 source-rule=proof-trace-input-normal-evidence-v1 target=mode relation=ProofTraceInputNormalEvidenceV1 input=1111 functional=relational
 (= (gslt:mode:ProofTraceInputNormalEvidenceV1:1111 $request $labels $target $trace)
-   (let (quote gslt:result:source-proof-trace-input-request-v1:11) (once (gslt:fn:source-proof-trace-input-request-v1:11 $request $target))
-   (let (quote (gslt:result:source-proof-trace-input-context-count-v1:10 $context-count)) (once (gslt:fn:source-proof-trace-input-context-count-v1:10 $request))
-   (let (quote (gslt:result:ProofTraceInputBuildContextV1:1110 $context)) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1110 $request ProofTraceNatZeroV1 $context-count)))
-   (let (quote gslt:result:ProofTraceCompileNormalV1:11) (superpose (collapse (gslt:mode:ProofTraceCompileNormalV1:11 $labels $trace)))
-   (let (quote gslt:result:ProofTraceAcceptedV1:111) (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:111 $context $trace $target)))
+   (let gslt:result:source-proof-trace-input-request-v1:11 (once (gslt:fn:source-proof-trace-input-request-v1:11 $request $target))
+   (let (cons gslt:result:source-proof-trace-input-context-count-v1:10 (cons $context-count ())) (once (gslt:fn:source-proof-trace-input-context-count-v1:10 $request))
+   (let (cons gslt:result:ProofTraceInputBuildContextV1:1110 (cons $context ())) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1110 $request ProofTraceNatZeroV1 $context-count)))
+   (let gslt:result:ProofTraceCompileNormalV1:11 (superpose (collapse (gslt:mode:ProofTraceCompileNormalV1:11 $labels $trace)))
+   (let gslt:result:ProofTraceAcceptedV1:111 (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:111 $context $trace $target)))
    (quote gslt:result:ProofTraceInputNormalEvidenceV1:1111)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=329 source-presentation=CertificateGSLTTraceEvidenceCanaryV1 source-rule=proof-trace-input-compressed-evidence-v1 target=mode relation=ProofTraceInputCompressedEvidenceV1 input=111111 functional=relational
 (= (gslt:mode:ProofTraceInputCompressedEvidenceV1:111111 $request $initial-labels $explicit-labels $codes $target $trace)
-   (let (quote gslt:result:source-proof-trace-input-request-v1:11) (once (gslt:fn:source-proof-trace-input-request-v1:11 $request $target))
-   (let (quote (gslt:result:source-proof-trace-input-context-count-v1:10 $context-count)) (once (gslt:fn:source-proof-trace-input-context-count-v1:10 $request))
-   (let (quote (gslt:result:ProofTraceInputBuildContextV1:1110 $context)) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1110 $request ProofTraceNatZeroV1 $context-count)))
-   (let (quote gslt:result:ProofTraceCompileCompressedV1:1111) (superpose (collapse (gslt:mode:ProofTraceCompileCompressedV1:1111 $initial-labels $explicit-labels $codes $trace)))
-   (let (quote gslt:result:ProofTraceAcceptedV1:111) (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:111 $context $trace $target)))
+   (let gslt:result:source-proof-trace-input-request-v1:11 (once (gslt:fn:source-proof-trace-input-request-v1:11 $request $target))
+   (let (cons gslt:result:source-proof-trace-input-context-count-v1:10 (cons $context-count ())) (once (gslt:fn:source-proof-trace-input-context-count-v1:10 $request))
+   (let (cons gslt:result:ProofTraceInputBuildContextV1:1110 (cons $context ())) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1110 $request ProofTraceNatZeroV1 $context-count)))
+   (let gslt:result:ProofTraceCompileCompressedV1:1111 (superpose (collapse (gslt:mode:ProofTraceCompileCompressedV1:1111 $initial-labels $explicit-labels $codes $trace)))
+   (let gslt:result:ProofTraceAcceptedV1:111 (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:111 $context $trace $target)))
    (quote gslt:result:ProofTraceInputCompressedEvidenceV1:111111)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=332 source-presentation=CertificateGSLTTraceEvidenceCanaryV1 source-rule=proof-trace-canary-normal-evidence-accepted-v1 target=mode relation=ProofTraceCanaryNormalEvidenceAcceptedV1 input=1 functional=relational
 (= (gslt:mode:ProofTraceCanaryNormalEvidenceAcceptedV1:1 AcceptedV1)
-   (let (quote gslt:result:ProofTraceInputNormalEvidenceV1:1111) (superpose (collapse (gslt:mode:ProofTraceInputNormalEvidenceV1:1111 input-request-v1 (quote (ProofTraceLabelConsV1 input-hx-v1 (ProofTraceLabelConsV1 input-identity-v1 ProofTraceLabelNilV1))) (quote (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) (quote (ProofTraceConsV1 (ProofTracePushV1 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) (ProofTraceConsV1 (ProofTraceApplyV1 (ProofAssertionV1 (ProofAssertionListConsV1 (ProofAssertionVariableV1 input-x-v1 input-wff-v1) (ProofAssertionListNilV1)) (ProofAssertionListNilV1) input-wff-v1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1)) (ProofAssertionListNilV1)) (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 input-x-v1 input-wff-v1) ProofTraceFrameNilV1)) ProofTraceNilV1))))))
+   (let gslt:result:ProofTraceInputNormalEvidenceV1:1111 (superpose (collapse (gslt:mode:ProofTraceInputNormalEvidenceV1:1111 input-request-v1 (quote (ProofTraceLabelConsV1 input-hx-v1 (ProofTraceLabelConsV1 input-identity-v1 ProofTraceLabelNilV1))) (quote (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) (quote (ProofTraceConsV1 (ProofTracePushV1 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) (ProofTraceConsV1 (ProofTraceApplyV1 (ProofAssertionV1 (ProofAssertionListConsV1 (ProofAssertionVariableV1 input-x-v1 input-wff-v1) (ProofAssertionListNilV1)) (ProofAssertionListNilV1) input-wff-v1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1)) (ProofAssertionListNilV1)) (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 input-x-v1 input-wff-v1) ProofTraceFrameNilV1)) ProofTraceNilV1))))))
    (quote gslt:result:ProofTraceCanaryNormalEvidenceAcceptedV1:1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=333 source-presentation=CertificateGSLTTraceEvidenceCanaryV1 source-rule=proof-trace-canary-compressed-evidence-accepted-v1 target=mode relation=ProofTraceCanaryCompressedEvidenceAcceptedV1 input=1 functional=relational
 (= (gslt:mode:ProofTraceCanaryCompressedEvidenceAcceptedV1:1 AcceptedV1)
-   (let (quote gslt:result:ProofTraceInputCompressedEvidenceV1:111111) (superpose (collapse (gslt:mode:ProofTraceInputCompressedEvidenceV1:111111 input-request-v1 (quote (ProofTraceLabelConsV1 input-hx-v1 ProofTraceLabelNilV1)) (quote (ProofTraceLabelConsV1 input-identity-v1 ProofTraceLabelNilV1)) (quote (ProofTraceCodeConsV1 65 (ProofTraceCodeConsV1 66 ProofTraceCodeNilV1))) (quote (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) (quote (ProofTraceConsV1 (ProofTracePushV1 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) (ProofTraceConsV1 (ProofTraceApplyV1 (ProofAssertionV1 (ProofAssertionListConsV1 (ProofAssertionVariableV1 input-x-v1 input-wff-v1) (ProofAssertionListNilV1)) (ProofAssertionListNilV1) input-wff-v1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1)) (ProofAssertionListNilV1)) (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 input-x-v1 input-wff-v1) ProofTraceFrameNilV1)) ProofTraceNilV1))))))
+   (let gslt:result:ProofTraceInputCompressedEvidenceV1:111111 (superpose (collapse (gslt:mode:ProofTraceInputCompressedEvidenceV1:111111 input-request-v1 (quote (ProofTraceLabelConsV1 input-hx-v1 ProofTraceLabelNilV1)) (quote (ProofTraceLabelConsV1 input-identity-v1 ProofTraceLabelNilV1)) (quote (ProofTraceCodeConsV1 65 (ProofTraceCodeConsV1 66 ProofTraceCodeNilV1))) (quote (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) (quote (ProofTraceConsV1 (ProofTracePushV1 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) (ProofTraceConsV1 (ProofTraceApplyV1 (ProofAssertionV1 (ProofAssertionListConsV1 (ProofAssertionVariableV1 input-x-v1 input-wff-v1) (ProofAssertionListNilV1)) (ProofAssertionListNilV1) input-wff-v1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1)) (ProofAssertionListNilV1)) (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 input-x-v1 input-wff-v1) ProofTraceFrameNilV1)) ProofTraceNilV1))))))
    (quote gslt:result:ProofTraceCanaryCompressedEvidenceAcceptedV1:1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=1 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-build-environment-cons-v1 target=mode relation=ProofAssertionBuildEnvironmentV1 input=100 functional=relational
-(= (gslt:mode:ProofAssertionBuildEnvironmentV1:100 $__gslt_input_v1_0_0)
-   (let (quote (ProofAssertionListConsV1 (ProofAssertionVariableV1 $v0 $v1) $v3)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ProofTokenVariableV1:1) (once (gslt:fn:ProofTokenVariableV1:1 $v0))
-   (let (quote (gslt:result:MetamathProvableV1:0 (ProofSequenceConsV1 $v1 $v2))) (superpose (collapse (gslt:mode:MetamathProvableV1:0)))
-   (let (quote (gslt:result:ProofAssertionBuildEnvironmentV1:100 $v4 $v5)) (superpose (collapse (gslt:mode:ProofAssertionBuildEnvironmentV1:100 $v3)))
-   (quote (gslt:result:ProofAssertionBuildEnvironmentV1:100 (ProofAssertionListConsV1 $v2 $v4) (ProofEnvironmentConsV1 $v0 $v2 $v5))))))))
+(= (gslt:mode:ProofAssertionBuildEnvironmentV1:100 (cons ProofAssertionListConsV1 (cons (cons ProofAssertionVariableV1 (cons $v0 (cons $v1 ()))) (cons $v3 ()))))
+   (let gslt:result:ProofTokenVariableV1:1 (once (gslt:fn:ProofTokenVariableV1:1 $v0))
+   (let (cons gslt:result:MetamathProvableV1:0 (cons (cons ProofSequenceConsV1 (cons $v1 (cons $v2 ()))) ())) (superpose (collapse (gslt:mode:MetamathProvableV1:0)))
+   (let (cons gslt:result:ProofAssertionBuildEnvironmentV1:100 (cons $v4 (cons $v5 ()))) (superpose (collapse (gslt:mode:ProofAssertionBuildEnvironmentV1:100 $v3)))
+   (quote (gslt:result:ProofAssertionBuildEnvironmentV1:100 (ProofAssertionListConsV1 $v2 $v4) (ProofEnvironmentConsV1 $v0 $v2 $v5)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=2 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-build-environment-nil-v1 target=mode relation=ProofAssertionBuildEnvironmentV1 input=100 functional=relational
-(= (gslt:mode:ProofAssertionBuildEnvironmentV1:100 $__gslt_input_v1_0_0)
-   (let (quote (ProofAssertionListNilV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofAssertionBuildEnvironmentV1:100 (ProofAssertionListNilV1) (ProofEnvironmentNilV1)))))
+(= (gslt:mode:ProofAssertionBuildEnvironmentV1:100 (cons ProofAssertionListNilV1 ()))
+   (quote (gslt:result:ProofAssertionBuildEnvironmentV1:100 (ProofAssertionListNilV1) (ProofEnvironmentNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=10 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-environment-lookup-cons-v1 target=mode relation=ProofEnvironmentLookupV1 input=010 functional=relational
 (= (gslt:mode:ProofEnvironmentLookupV1:010 $v3)
-   (let (quote (gslt:result:ProofTokenCompareV1:010 $v0 $v4)) (superpose (collapse (gslt:mode:ProofTokenCompareV1:010 $v3)))
-   (let (quote (gslt:result:ProofEnvironmentLookupComparedV1:10010 $v1 $v2 $v5)) (superpose (collapse (gslt:mode:ProofEnvironmentLookupComparedV1:10010 $v4 $v3)))
+   (let (cons gslt:result:ProofTokenCompareV1:010 (cons $v0 (cons $v4 ()))) (superpose (collapse (gslt:mode:ProofTokenCompareV1:010 $v3)))
+   (let (cons gslt:result:ProofEnvironmentLookupComparedV1:10010 (cons $v1 (cons $v2 (cons $v5 ())))) (superpose (collapse (gslt:mode:ProofEnvironmentLookupComparedV1:10010 $v4 $v3)))
    (quote (gslt:result:ProofEnvironmentLookupV1:010 (ProofEnvironmentConsV1 $v0 $v1 $v2) $v5)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=15 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-cons-v1 target=mode relation=ProofSequenceInstantiateV1 input=001 functional=relational
 (= (gslt:mode:ProofSequenceInstantiateV1:001 $v4)
-   (let (quote (gslt:result:ProofTokenClassV1:00 $v0 $v3)) (once (gslt:fn:ProofTokenClassV1:00))
-   (let (quote (gslt:result:ProofSequenceInstantiateClassV1:11001 $v1 $v2)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateClassV1:11001 $v3 $v0 $v4)))
+   (let (cons gslt:result:ProofTokenClassV1:00 (cons $v0 (cons $v3 ()))) (once (gslt:fn:ProofTokenClassV1:00))
+   (let (cons gslt:result:ProofSequenceInstantiateClassV1:11001 (cons $v1 (cons $v2 ()))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateClassV1:11001 $v3 $v0 $v4)))
    (quote (gslt:result:ProofSequenceInstantiateV1:001 (ProofSequenceConsV1 $v0 $v1) $v2)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=16 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-nil-v1 target=mode relation=ProofSequenceInstantiateV1 input=001 functional=relational
-(= (gslt:mode:ProofSequenceInstantiateV1:001 $__gslt_input_v1_0_2)
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_2
-   (quote (gslt:result:ProofSequenceInstantiateV1:001 (ProofSequenceNilV1) $v0))))
+(= (gslt:mode:ProofSequenceInstantiateV1:001 (cons ProofSequenceNilV1 ()))
+   (quote (gslt:result:ProofSequenceInstantiateV1:001 (ProofSequenceNilV1) $v0)))
 
 ; gslt-lowered-equation-v1 source-rewrite=8 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-environment-lookup-compared-equal-v1 target=mode relation=ProofEnvironmentLookupComparedV1 input=10010 functional=relational
-(= (gslt:mode:ProofEnvironmentLookupComparedV1:10010 $__gslt_input_v1_0_0 $v2)
-   (let (quote (ProofTokenEqualV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofEnvironmentLookupComparedV1:10010 $v0 $v1 $v0))))
+(= (gslt:mode:ProofEnvironmentLookupComparedV1:10010 (cons ProofTokenEqualV1 ()) $v2)
+   (quote (gslt:result:ProofEnvironmentLookupComparedV1:10010 $v0 $v1 $v0)))
 
 ; gslt-lowered-equation-v1 source-rewrite=9 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-environment-lookup-compared-unequal-v1 target=mode relation=ProofEnvironmentLookupComparedV1 input=10010 functional=relational
-(= (gslt:mode:ProofEnvironmentLookupComparedV1:10010 $__gslt_input_v1_0_0 $v2)
-   (let (quote (ProofTokenUnequalV1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:010 $v1 $v3)) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $v2)))
-   (quote (gslt:result:ProofEnvironmentLookupComparedV1:10010 $v0 $v1 $v3)))))
+(= (gslt:mode:ProofEnvironmentLookupComparedV1:10010 (cons ProofTokenUnequalV1 ()) $v2)
+   (let (cons gslt:result:ProofEnvironmentLookupV1:010 (cons $v1 (cons $v3 ()))) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $v2)))
+   (quote (gslt:result:ProofEnvironmentLookupComparedV1:10010 $v0 $v1 $v3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=212 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-token-compare-v1 target=mode relation=ProofTokenCompareV1 input=010 functional=relational
 (= (gslt:mode:ProofTokenCompareV1:010 $right)
-   (let (quote (gslt:result:source-proof-trace-input-token-compare-v1:010 $left $raw-comparison)) (superpose (collapse (gslt:mode:source-proof-trace-input-token-compare-v1:010 $right)))
-   (let (quote (gslt:result:ProofTraceTokenResultValueV1:10 $comparison)) (once (gslt:fn:ProofTraceTokenResultValueV1:10 $raw-comparison))
+   (let (cons gslt:result:source-proof-trace-input-token-compare-v1:010 (cons $left (cons $raw-comparison ()))) (superpose (collapse (gslt:mode:source-proof-trace-input-token-compare-v1:010 $right)))
+   (let (cons gslt:result:ProofTraceTokenResultValueV1:10 (cons $comparison ())) (once (gslt:fn:ProofTraceTokenResultValueV1:10 $raw-comparison))
    (quote (gslt:result:ProofTokenCompareV1:010 $left $comparison)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=212 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-token-compare-v1 target=mode relation=ProofTokenCompareV1 input=100 functional=relational
 (= (gslt:mode:ProofTokenCompareV1:100 $left)
-   (let (quote (gslt:result:source-proof-trace-input-token-compare-v1:100 $right $raw-comparison)) (superpose (collapse (gslt:mode:source-proof-trace-input-token-compare-v1:100 $left)))
-   (let (quote (gslt:result:ProofTraceTokenResultValueV1:10 $comparison)) (once (gslt:fn:ProofTraceTokenResultValueV1:10 $raw-comparison))
+   (let (cons gslt:result:source-proof-trace-input-token-compare-v1:100 (cons $right (cons $raw-comparison ()))) (superpose (collapse (gslt:mode:source-proof-trace-input-token-compare-v1:100 $left)))
+   (let (cons gslt:result:ProofTraceTokenResultValueV1:10 (cons $comparison ())) (once (gslt:fn:ProofTraceTokenResultValueV1:10 $raw-comparison))
    (quote (gslt:result:ProofTokenCompareV1:100 $right $comparison)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=13 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-class-literal-v1 target=mode relation=ProofSequenceInstantiateClassV1 input=11000 functional=relational
-(= (gslt:mode:ProofSequenceInstantiateClassV1:11000 $__gslt_input_v1_0_0 $v0)
-   (let (quote (ProofTokenLiteralClassV1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:000 $v1 $v2 $v3)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
-   (quote (gslt:result:ProofSequenceInstantiateClassV1:11000 $v1 $v2 (ProofSequenceConsV1 $v0 $v3))))))
+(= (gslt:mode:ProofSequenceInstantiateClassV1:11000 (cons ProofTokenLiteralClassV1 ()) $v0)
+   (let (cons gslt:result:ProofSequenceInstantiateV1:000 (cons $v1 (cons $v2 (cons $v3 ())))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
+   (quote (gslt:result:ProofSequenceInstantiateClassV1:11000 $v1 $v2 (ProofSequenceConsV1 $v0 $v3)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=14 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-class-variable-v1 target=mode relation=ProofSequenceInstantiateClassV1 input=11000 functional=relational
-(= (gslt:mode:ProofSequenceInstantiateClassV1:11000 $__gslt_input_v1_0_0 $v0)
-   (let (quote (ProofTokenVariableClassV1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:010 $v2 $v3)) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $v0)))
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:000 $v1 $v2 $v4)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
-   (let (quote (ProofSequenceAppendV1 $v3 $v4 $v5)) (gslt:ProofSequenceAppendV1 (ProofSequenceAppendV1 $v3 $v4 $v5))
-   (quote (gslt:result:ProofSequenceInstantiateClassV1:11000 $v1 $v2 $v5)))))))
+(= (gslt:mode:ProofSequenceInstantiateClassV1:11000 (cons ProofTokenVariableClassV1 ()) $v0)
+   (let (cons gslt:result:ProofEnvironmentLookupV1:010 (cons $v2 (cons $v3 ()))) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $v0)))
+   (let (cons gslt:result:ProofSequenceInstantiateV1:000 (cons $v1 (cons $v2 (cons $v4 ())))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
+   (let (cons ProofSequenceAppendV1 (cons $v3 (cons $v4 (cons $v5 ())))) (gslt:ProofSequenceAppendV1 (ProofSequenceAppendV1 $v3 $v4 $v5))
+   (quote (gslt:result:ProofSequenceInstantiateClassV1:11000 $v1 $v2 $v5))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=107 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-nil-nil-v1 target=mode relation=ProofSequenceCompareV1 input=010 functional=relational
-(= (gslt:mode:ProofSequenceCompareV1:010 $__gslt_input_v1_0_1)
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:ProofSequenceCompareV1:010 (ProofSequenceNilV1) ProofSequenceEqualV1))))
+(= (gslt:mode:ProofSequenceCompareV1:010 (cons ProofSequenceNilV1 ()))
+   (quote (gslt:result:ProofSequenceCompareV1:010 (ProofSequenceNilV1) ProofSequenceEqualV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=108 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-nil-cons-v1 target=mode relation=ProofSequenceCompareV1 input=010 functional=relational
-(= (gslt:mode:ProofSequenceCompareV1:010 $__gslt_input_v1_0_1)
-   (let (quote (ProofSequenceConsV1 $right $right-rest)) $__gslt_input_v1_0_1
-   (quote (gslt:result:ProofSequenceCompareV1:010 (ProofSequenceNilV1) ProofSequenceDifferentV1))))
+(= (gslt:mode:ProofSequenceCompareV1:010 (cons ProofSequenceConsV1 (cons $right (cons $right-rest ()))))
+   (quote (gslt:result:ProofSequenceCompareV1:010 (ProofSequenceNilV1) ProofSequenceDifferentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=109 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-cons-nil-v1 target=mode relation=ProofSequenceCompareV1 input=010 functional=relational
-(= (gslt:mode:ProofSequenceCompareV1:010 $__gslt_input_v1_0_1)
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:ProofSequenceCompareV1:010 (ProofSequenceConsV1 $left $left-rest) ProofSequenceDifferentV1))))
+(= (gslt:mode:ProofSequenceCompareV1:010 (cons ProofSequenceNilV1 ()))
+   (quote (gslt:result:ProofSequenceCompareV1:010 (ProofSequenceConsV1 $left $left-rest) ProofSequenceDifferentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=110 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-cons-v1 target=mode relation=ProofSequenceCompareV1 input=010 functional=relational
-(= (gslt:mode:ProofSequenceCompareV1:010 $__gslt_input_v1_0_1)
-   (let (quote (ProofSequenceConsV1 $right $right-rest)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:ProofTokenCompareV1:010 $left $head-comparison)) (superpose (collapse (gslt:mode:ProofTokenCompareV1:010 $right)))
-   (let (quote (gslt:result:ProofSequenceCompareHeadsV1:1010 $left-rest $result)) (superpose (collapse (gslt:mode:ProofSequenceCompareHeadsV1:1010 $head-comparison $right-rest)))
-   (quote (gslt:result:ProofSequenceCompareV1:010 (ProofSequenceConsV1 $left $left-rest) $result))))))
+(= (gslt:mode:ProofSequenceCompareV1:010 (cons ProofSequenceConsV1 (cons $right (cons $right-rest ()))))
+   (let (cons gslt:result:ProofTokenCompareV1:010 (cons $left (cons $head-comparison ()))) (superpose (collapse (gslt:mode:ProofTokenCompareV1:010 $right)))
+   (let (cons gslt:result:ProofSequenceCompareHeadsV1:1010 (cons $left-rest (cons $result ()))) (superpose (collapse (gslt:mode:ProofSequenceCompareHeadsV1:1010 $head-comparison $right-rest)))
+   (quote (gslt:result:ProofSequenceCompareV1:010 (ProofSequenceConsV1 $left $left-rest) $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=33 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-result-nil-v1 target=mode relation=ProofTraceFrameApplyResultV1 input=100 functional=relational
 (= (gslt:mode:ProofTraceFrameApplyResultV1:100 ProofTraceFrameNilV1)
    (quote (gslt:result:ProofTraceFrameApplyResultV1:100 $stack (ProofTraceFrameAppliedV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1) $stack))))
 
 ; gslt-lowered-equation-v1 source-rewrite=34 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-result-variable-v1 target=mode relation=ProofTraceFrameApplyResultV1 input=100 functional=relational
-(= (gslt:mode:ProofTraceFrameApplyResultV1:100 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 $variable $typecode) $rest)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceFrameApplyResultV1:100 $stack $tail-result)) (superpose (collapse (gslt:mode:ProofTraceFrameApplyResultV1:100 $rest)))
-   (let (quote (gslt:result:ProofTraceFrameApplyVariableResultV1:100 $tail-result $result)) (superpose (collapse (gslt:mode:ProofTraceFrameApplyVariableResultV1:100 $typecode)))
-   (quote (gslt:result:ProofTraceFrameApplyResultV1:100 $stack $result))))))
+(= (gslt:mode:ProofTraceFrameApplyResultV1:100 (cons ProofTraceFrameConsV1 (cons (cons ProofTraceFrameVariableV1 (cons $variable (cons $typecode ()))) (cons $rest ()))))
+   (let (cons gslt:result:ProofTraceFrameApplyResultV1:100 (cons $stack (cons $tail-result ()))) (superpose (collapse (gslt:mode:ProofTraceFrameApplyResultV1:100 $rest)))
+   (let (cons gslt:result:ProofTraceFrameApplyVariableResultV1:100 (cons $tail-result (cons $result ()))) (superpose (collapse (gslt:mode:ProofTraceFrameApplyVariableResultV1:100 $typecode)))
+   (quote (gslt:result:ProofTraceFrameApplyResultV1:100 $stack $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=35 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-result-essential-v1 target=mode relation=ProofTraceFrameApplyResultV1 input=100 functional=relational
-(= (gslt:mode:ProofTraceFrameApplyResultV1:100 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameConsV1 (ProofTraceFrameEssentialV1 $template) $rest)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceFrameApplyResultV1:100 $stack $tail-result)) (superpose (collapse (gslt:mode:ProofTraceFrameApplyResultV1:100 $rest)))
-   (let (quote (ProofTraceFrameApplyEssentialResultV1 $tail-result $result)) (gslt:ProofTraceFrameApplyEssentialResultV1 (ProofTraceFrameApplyEssentialResultV1 $tail-result $result))
-   (quote (gslt:result:ProofTraceFrameApplyResultV1:100 $stack $result))))))
+(= (gslt:mode:ProofTraceFrameApplyResultV1:100 (cons ProofTraceFrameConsV1 (cons (cons ProofTraceFrameEssentialV1 (cons $template ())) (cons $rest ()))))
+   (let (cons gslt:result:ProofTraceFrameApplyResultV1:100 (cons $stack (cons $tail-result ()))) (superpose (collapse (gslt:mode:ProofTraceFrameApplyResultV1:100 $rest)))
+   (let (cons ProofTraceFrameApplyEssentialResultV1 (cons $tail-result (cons $result ()))) (gslt:ProofTraceFrameApplyEssentialResultV1 (ProofTraceFrameApplyEssentialResultV1 $tail-result $result))
+   (quote (gslt:result:ProofTraceFrameApplyResultV1:100 $stack $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=41 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-variable-equal-v1 target=mode relation=ProofTraceFrameApplyVariableComparedV1 input=11100000 functional=relational
-(= (gslt:mode:ProofTraceFrameApplyVariableComparedV1:11100000 $__gslt_input_v1_0_0 $expected-typecode $actual-typecode)
-   (let (quote (ProofTokenEqualV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceFrameApplyVariableComparedV1:11100000 $image $images $actuals $output (ProofTraceFrameAppliedV1 (ProofAssertionListConsV1 $image $images) $actuals $output)))))
+(= (gslt:mode:ProofTraceFrameApplyVariableComparedV1:11100000 (cons ProofTokenEqualV1 ()) $expected-typecode $actual-typecode)
+   (quote (gslt:result:ProofTraceFrameApplyVariableComparedV1:11100000 $image $images $actuals $output (ProofTraceFrameAppliedV1 (ProofAssertionListConsV1 $image $images) $actuals $output))))
 
 ; gslt-lowered-equation-v1 source-rewrite=42 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-variable-different-v1 target=mode relation=ProofTraceFrameApplyVariableComparedV1 input=11100000 functional=relational
-(= (gslt:mode:ProofTraceFrameApplyVariableComparedV1:11100000 $__gslt_input_v1_0_0 $expected-typecode $actual-typecode)
-   (let (quote (ProofTokenUnequalV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceFrameApplyVariableComparedV1:11100000 $image $images $actuals $output (ProofTraceRealizeRefusedV1 (ProofTraceRefusedTypecodeMismatchV1 $expected-typecode $actual-typecode))))))
+(= (gslt:mode:ProofTraceFrameApplyVariableComparedV1:11100000 (cons ProofTokenUnequalV1 ()) $expected-typecode $actual-typecode)
+   (quote (gslt:result:ProofTraceFrameApplyVariableComparedV1:11100000 $image $images $actuals $output (ProofTraceRealizeRefusedV1 (ProofTraceRefusedTypecodeMismatchV1 $expected-typecode $actual-typecode)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=15 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-cons-v1 target=mode relation=ProofSequenceInstantiateV1 input=100 functional=relational
-(= (gslt:mode:ProofSequenceInstantiateV1:100 $__gslt_input_v1_0_0)
-   (let (quote (ProofSequenceConsV1 $v0 $v1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenClassV1:10 $v3)) (once (gslt:fn:ProofTokenClassV1:10 $v0))
-   (let (quote (gslt:result:ProofSequenceInstantiateClassV1:11100 $v2 $v4)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateClassV1:11100 $v3 $v0 $v1)))
-   (quote (gslt:result:ProofSequenceInstantiateV1:100 $v2 $v4))))))
+(= (gslt:mode:ProofSequenceInstantiateV1:100 (cons ProofSequenceConsV1 (cons $v0 (cons $v1 ()))))
+   (let (cons gslt:result:ProofTokenClassV1:10 (cons $v3 ())) (once (gslt:fn:ProofTokenClassV1:10 $v0))
+   (let (cons gslt:result:ProofSequenceInstantiateClassV1:11100 (cons $v2 (cons $v4 ()))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateClassV1:11100 $v3 $v0 $v1)))
+   (quote (gslt:result:ProofSequenceInstantiateV1:100 $v2 $v4)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=16 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-nil-v1 target=mode relation=ProofSequenceInstantiateV1 input=100 functional=relational
-(= (gslt:mode:ProofSequenceInstantiateV1:100 $__gslt_input_v1_0_0)
-   (let (quote (ProofSequenceNilV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofSequenceInstantiateV1:100 $v0 (ProofSequenceNilV1)))))
+(= (gslt:mode:ProofSequenceInstantiateV1:100 (cons ProofSequenceNilV1 ()))
+   (quote (gslt:result:ProofSequenceInstantiateV1:100 $v0 (ProofSequenceNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=27 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-project-nil-v1 target=mode relation=ProofTraceFrameProjectV1 input=100 functional=semidet
 (= (gslt:fn:ProofTraceFrameProjectV1:100 ProofTraceFrameNilV1)
    (quote (gslt:result:ProofTraceFrameProjectV1:100 (ProofAssertionListNilV1) (ProofAssertionListNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=28 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-project-variable-v1 target=mode relation=ProofTraceFrameProjectV1 input=100 functional=semidet
-(= (gslt:fn:ProofTraceFrameProjectV1:100 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 $variable $typecode) $rest)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceFrameProjectV1:100 $variables $essentials)) (gslt:fn:ProofTraceFrameProjectV1:100 $rest)
-   (quote (gslt:result:ProofTraceFrameProjectV1:100 (ProofAssertionListConsV1 (ProofAssertionVariableV1 $variable $typecode) $variables) $essentials)))))
+(= (gslt:fn:ProofTraceFrameProjectV1:100 (cons ProofTraceFrameConsV1 (cons (cons ProofTraceFrameVariableV1 (cons $variable (cons $typecode ()))) (cons $rest ()))))
+   (let (cons gslt:result:ProofTraceFrameProjectV1:100 (cons $variables (cons $essentials ()))) (gslt:fn:ProofTraceFrameProjectV1:100 $rest)
+   (quote (gslt:result:ProofTraceFrameProjectV1:100 (ProofAssertionListConsV1 (ProofAssertionVariableV1 $variable $typecode) $variables) $essentials))))
 
 ; gslt-lowered-equation-v1 source-rewrite=29 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-project-essential-v1 target=mode relation=ProofTraceFrameProjectV1 input=100 functional=semidet
-(= (gslt:fn:ProofTraceFrameProjectV1:100 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameConsV1 (ProofTraceFrameEssentialV1 $template) $rest)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceFrameProjectV1:100 $variables $essentials)) (gslt:fn:ProofTraceFrameProjectV1:100 $rest)
-   (quote (gslt:result:ProofTraceFrameProjectV1:100 $variables (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $template) $essentials))))))
+(= (gslt:fn:ProofTraceFrameProjectV1:100 (cons ProofTraceFrameConsV1 (cons (cons ProofTraceFrameEssentialV1 (cons $template ())) (cons $rest ()))))
+   (let (cons gslt:result:ProofTraceFrameProjectV1:100 (cons $variables (cons $essentials ()))) (gslt:fn:ProofTraceFrameProjectV1:100 $rest)
+   (quote (gslt:result:ProofTraceFrameProjectV1:100 $variables (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $template) $essentials)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=43 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-build-environment-nil-v1 target=mode relation=ProofTraceBuildEnvironmentV1 input=100 functional=relational
-(= (gslt:mode:ProofTraceBuildEnvironmentV1:100 $__gslt_input_v1_0_0)
-   (let (quote (ProofAssertionListNilV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceBuildEnvironmentV1:100 (ProofAssertionListNilV1) (ProofEnvironmentNilV1)))))
+(= (gslt:mode:ProofTraceBuildEnvironmentV1:100 (cons ProofAssertionListNilV1 ()))
+   (quote (gslt:result:ProofTraceBuildEnvironmentV1:100 (ProofAssertionListNilV1) (ProofEnvironmentNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=44 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-build-environment-cons-v1 target=mode relation=ProofTraceBuildEnvironmentV1 input=100 functional=relational
-(= (gslt:mode:ProofTraceBuildEnvironmentV1:100 $__gslt_input_v1_0_0)
-   (let (quote (ProofAssertionListConsV1 (ProofAssertionVariableV1 $variable $typecode) $variables)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ProofTokenVariableV1:1) (once (gslt:fn:ProofTokenVariableV1:1 $variable))
-   (let (quote (gslt:result:ProofTraceBuildEnvironmentV1:100 $images $environment)) (superpose (collapse (gslt:mode:ProofTraceBuildEnvironmentV1:100 $variables)))
-   (quote (gslt:result:ProofTraceBuildEnvironmentV1:100 (ProofAssertionListConsV1 $image $images) (ProofEnvironmentConsV1 $variable $image $environment)))))))
+(= (gslt:mode:ProofTraceBuildEnvironmentV1:100 (cons ProofAssertionListConsV1 (cons (cons ProofAssertionVariableV1 (cons $variable (cons $typecode ()))) (cons $variables ()))))
+   (let gslt:result:ProofTokenVariableV1:1 (once (gslt:fn:ProofTokenVariableV1:1 $variable))
+   (let (cons gslt:result:ProofTraceBuildEnvironmentV1:100 (cons $images (cons $environment ()))) (superpose (collapse (gslt:mode:ProofTraceBuildEnvironmentV1:100 $variables)))
+   (quote (gslt:result:ProofTraceBuildEnvironmentV1:100 (ProofAssertionListConsV1 $image $images) (ProofEnvironmentConsV1 $variable $image $environment))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=69 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-disjoints-nil-result-v1 target=mode relation=ProofTraceCheckDisjointsResultV1 input=100 functional=relational
-(= (gslt:mode:ProofTraceCheckDisjointsResultV1:100 $__gslt_input_v1_0_0)
-   (let (quote (ProofAssertionListNilV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceCheckDisjointsResultV1:100 $environment ProofTraceDisjointSucceededV1))))
+(= (gslt:mode:ProofTraceCheckDisjointsResultV1:100 (cons ProofAssertionListNilV1 ()))
+   (quote (gslt:result:ProofTraceCheckDisjointsResultV1:100 $environment ProofTraceDisjointSucceededV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=70 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-disjoints-cons-result-v1 target=mode relation=ProofTraceCheckDisjointsResultV1 input=100 functional=relational
-(= (gslt:mode:ProofTraceCheckDisjointsResultV1:100 $__gslt_input_v1_0_0)
-   (let (quote (ProofAssertionListConsV1 (ProofAssertionDisjointV1 $left $right) $rest)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ProofTokenDifferentV1:11) (once (gslt:fn:ProofTokenDifferentV1:11 $left $right))
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:010 $environment $left-image)) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $left)))
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:010 $environment $right-image)) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $right)))
-   (let (quote (gslt:result:ProofTraceSequenceSupportApartResultV1:000 $left-image $right-image $head-result)) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartResultV1:000)))
-   (let (quote (gslt:result:ProofTraceCheckDisjointHeadResultV1:111100 $environment $result)) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointHeadResultV1:111100 $head-result $left $right $rest)))
-   (quote (gslt:result:ProofTraceCheckDisjointsResultV1:100 $environment $result)))))))))
+(= (gslt:mode:ProofTraceCheckDisjointsResultV1:100 (cons ProofAssertionListConsV1 (cons (cons ProofAssertionDisjointV1 (cons $left (cons $right ()))) (cons $rest ()))))
+   (let gslt:result:ProofTokenDifferentV1:11 (once (gslt:fn:ProofTokenDifferentV1:11 $left $right))
+   (let (cons gslt:result:ProofEnvironmentLookupV1:010 (cons $environment (cons $left-image ()))) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $left)))
+   (let (cons gslt:result:ProofEnvironmentLookupV1:010 (cons $environment (cons $right-image ()))) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $right)))
+   (let (cons gslt:result:ProofTraceSequenceSupportApartResultV1:000 (cons $left-image (cons $right-image (cons $head-result ())))) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartResultV1:000)))
+   (let (cons gslt:result:ProofTraceCheckDisjointHeadResultV1:111100 (cons $environment (cons $result ()))) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointHeadResultV1:111100 $head-result $left $right $rest)))
+   (quote (gslt:result:ProofTraceCheckDisjointsResultV1:100 $environment $result))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=63 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-against-sequence-head-allowed-v1 target=mode relation=ProofTraceTokenAgainstSequenceHeadResultV1 input=1100 functional=relational
 (= (gslt:mode:ProofTraceTokenAgainstSequenceHeadResultV1:1100 ProofTracePairAllowedV1 $left)
-   (let (quote (gslt:result:ProofTraceTokenAgainstSequenceResultV1:100 $rest $result)) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceResultV1:100 $left)))
+   (let (cons gslt:result:ProofTraceTokenAgainstSequenceResultV1:100 (cons $rest (cons $result ()))) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceResultV1:100 $left)))
    (quote (gslt:result:ProofTraceTokenAgainstSequenceHeadResultV1:1100 $rest $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=64 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-against-sequence-head-conflict-v1 target=mode relation=ProofTraceTokenAgainstSequenceHeadResultV1 input=1100 functional=relational
-(= (gslt:mode:ProofTraceTokenAgainstSequenceHeadResultV1:1100 $__gslt_input_v1_0_0 $token)
-   (let (quote (ProofTracePairConflictV1 $left $right)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceTokenAgainstSequenceHeadResultV1:1100 $rest (ProofTracePairConflictV1 $left $right)))))
+(= (gslt:mode:ProofTraceTokenAgainstSequenceHeadResultV1:1100 (cons ProofTracePairConflictV1 (cons $left (cons $right ()))) $token)
+   (quote (gslt:result:ProofTraceTokenAgainstSequenceHeadResultV1:1100 $rest (ProofTracePairConflictV1 $left $right))))
 
 ; gslt-lowered-equation-v1 source-rewrite=56 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-left-literal-v1 target=mode relation=ProofTraceTokenPairDecisionV1 input=100 functional=relational
 (= (gslt:mode:ProofTraceTokenPairDecisionV1:100 $left)
-   (let (quote gslt:result:ProofTokenLiteralV1:1) (once (gslt:fn:ProofTokenLiteralV1:1 $left))
+   (let gslt:result:ProofTokenLiteralV1:1 (once (gslt:fn:ProofTokenLiteralV1:1 $left))
    (quote (gslt:result:ProofTraceTokenPairDecisionV1:100 $right ProofTracePairAllowedV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=57 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-right-literal-v1 target=mode relation=ProofTraceTokenPairDecisionV1 input=100 functional=relational
 (= (gslt:mode:ProofTraceTokenPairDecisionV1:100 $left)
-   (let (quote gslt:result:ProofTokenVariableV1:1) (once (gslt:fn:ProofTokenVariableV1:1 $left))
-   (let (quote (gslt:result:ProofTokenLiteralV1:0 $right)) (once (gslt:fn:ProofTokenLiteralV1:0))
+   (let gslt:result:ProofTokenVariableV1:1 (once (gslt:fn:ProofTokenVariableV1:1 $left))
+   (let (cons gslt:result:ProofTokenLiteralV1:0 (cons $right ())) (once (gslt:fn:ProofTokenLiteralV1:0))
    (quote (gslt:result:ProofTraceTokenPairDecisionV1:100 $right ProofTracePairAllowedV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=58 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-equal-v1 target=mode relation=ProofTraceTokenPairDecisionV1 input=100 functional=relational
 (= (gslt:mode:ProofTraceTokenPairDecisionV1:100 $left)
-   (let (quote gslt:result:ProofTokenVariableV1:1) (once (gslt:fn:ProofTokenVariableV1:1 $left))
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $right)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote gslt:result:ProofTokenCompareV1:111) (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenEqualV1))))
+   (let gslt:result:ProofTokenVariableV1:1 (once (gslt:fn:ProofTokenVariableV1:1 $left))
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $right ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let gslt:result:ProofTokenCompareV1:111 (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenEqualV1))))
    (quote (gslt:result:ProofTraceTokenPairDecisionV1:100 $right (ProofTracePairConflictV1 $left $right)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=59 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-unequal-apart-v1 target=mode relation=ProofTraceTokenPairDecisionV1 input=100 functional=relational
 (= (gslt:mode:ProofTraceTokenPairDecisionV1:100 $left)
-   (let (quote gslt:result:ProofTokenVariableV1:1) (once (gslt:fn:ProofTokenVariableV1:1 $left))
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $right)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote gslt:result:ProofTokenCompareV1:111) (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenUnequalV1))))
-   (let (quote gslt:result:ProofTokenApartDecisionV1:111) (once (gslt:fn:ProofTokenApartDecisionV1:111 $left $right ProofTraceApartPresentV1))
+   (let gslt:result:ProofTokenVariableV1:1 (once (gslt:fn:ProofTokenVariableV1:1 $left))
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $right ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let gslt:result:ProofTokenCompareV1:111 (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenUnequalV1))))
+   (let gslt:result:ProofTokenApartDecisionV1:111 (once (gslt:fn:ProofTokenApartDecisionV1:111 $left $right ProofTraceApartPresentV1))
    (quote (gslt:result:ProofTraceTokenPairDecisionV1:100 $right ProofTracePairAllowedV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=60 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-unequal-not-apart-v1 target=mode relation=ProofTraceTokenPairDecisionV1 input=100 functional=relational
 (= (gslt:mode:ProofTraceTokenPairDecisionV1:100 $left)
-   (let (quote gslt:result:ProofTokenVariableV1:1) (once (gslt:fn:ProofTokenVariableV1:1 $left))
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $right)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote gslt:result:ProofTokenCompareV1:111) (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenUnequalV1))))
-   (let (quote gslt:result:ProofTokenApartDecisionV1:111) (once (gslt:fn:ProofTokenApartDecisionV1:111 $left $right ProofTraceApartMissingV1))
+   (let gslt:result:ProofTokenVariableV1:1 (once (gslt:fn:ProofTokenVariableV1:1 $left))
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $right ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let gslt:result:ProofTokenCompareV1:111 (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenUnequalV1))))
+   (let gslt:result:ProofTokenApartDecisionV1:111 (once (gslt:fn:ProofTokenApartDecisionV1:111 $left $right ProofTraceApartMissingV1))
    (quote (gslt:result:ProofTraceTokenPairDecisionV1:100 $right (ProofTracePairConflictV1 $left $right))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=67 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-sequence-support-apart-head-allowed-v1 target=mode relation=ProofTraceSequenceSupportApartHeadResultV1 input=1000 functional=relational
 (= (gslt:mode:ProofTraceSequenceSupportApartHeadResultV1:1000 ProofTracePairAllowedV1)
-   (let (quote (gslt:result:ProofTraceSequenceSupportApartResultV1:000 $rest $right $result)) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartResultV1:000)))
+   (let (cons gslt:result:ProofTraceSequenceSupportApartResultV1:000 (cons $rest (cons $right (cons $result ())))) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartResultV1:000)))
    (quote (gslt:result:ProofTraceSequenceSupportApartHeadResultV1:1000 $rest $right $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=68 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-sequence-support-apart-head-conflict-v1 target=mode relation=ProofTraceSequenceSupportApartHeadResultV1 input=1000 functional=relational
-(= (gslt:mode:ProofTraceSequenceSupportApartHeadResultV1:1000 $__gslt_input_v1_0_0)
-   (let (quote (ProofTracePairConflictV1 $left $right)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceSequenceSupportApartHeadResultV1:1000 $rest $sequence (ProofTracePairConflictV1 $left $right)))))
+(= (gslt:mode:ProofTraceSequenceSupportApartHeadResultV1:1000 (cons ProofTracePairConflictV1 (cons $left (cons $right ()))))
+   (quote (gslt:result:ProofTraceSequenceSupportApartHeadResultV1:1000 $rest $sequence (ProofTracePairConflictV1 $left $right))))
 
 ; gslt-lowered-equation-v1 source-rewrite=61 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-against-sequence-nil-v1 target=mode relation=ProofTraceTokenAgainstSequenceResultV1 input=100 functional=relational
 (= (gslt:mode:ProofTraceTokenAgainstSequenceResultV1:100 $left)
@@ -4336,38 +4087,34 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=62 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-against-sequence-cons-v1 target=mode relation=ProofTraceTokenAgainstSequenceResultV1 input=100 functional=relational
 (= (gslt:mode:ProofTraceTokenAgainstSequenceResultV1:100 $left)
-   (let (quote (gslt:result:ProofTraceTokenPairDecisionV1:100 $right $head-result)) (superpose (collapse (gslt:mode:ProofTraceTokenPairDecisionV1:100 $left)))
-   (let (quote (gslt:result:ProofTraceTokenAgainstSequenceHeadResultV1:1100 $rest $result)) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceHeadResultV1:1100 $head-result $left)))
+   (let (cons gslt:result:ProofTraceTokenPairDecisionV1:100 (cons $right (cons $head-result ()))) (superpose (collapse (gslt:mode:ProofTraceTokenPairDecisionV1:100 $left)))
+   (let (cons gslt:result:ProofTraceTokenAgainstSequenceHeadResultV1:1100 (cons $rest (cons $result ()))) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceHeadResultV1:1100 $head-result $left)))
    (quote (gslt:result:ProofTraceTokenAgainstSequenceResultV1:100 (ProofSequenceConsV1 $right $rest) $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=50 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-assertion-result-v1 target=mode relation=ProofTraceRealizeAssertionResultV1 input=1000 functional=relational
-(= (gslt:mode:ProofTraceRealizeAssertionResultV1:1000 $__gslt_input_v1_0_0)
-   (let (quote (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceFrameProjectV1 $frame $variables $essentials)) (gslt:ProofTraceFrameProjectV1 (ProofTraceFrameProjectV1 $frame $variables $essentials))
-   (let (quote (gslt:result:ProofTraceFrameApplyResultV1:100 $input $frame-result)) (superpose (collapse (gslt:mode:ProofTraceFrameApplyResultV1:100 $frame)))
-   (let (quote (gslt:result:ProofTraceRealizeFrameResultV1:0111110 $frame-result $result)) (superpose (collapse (gslt:mode:ProofTraceRealizeFrameResultV1:0111110 $variables $essentials $conclusion-type $conclusion-template $disjoints)))
-   (quote (gslt:result:ProofTraceRealizeAssertionResultV1:1000 $frame $input $result)))))))
+(= (gslt:mode:ProofTraceRealizeAssertionResultV1:1000 (cons ProofAssertionV1 (cons $variables (cons $essentials (cons $conclusion-type (cons $conclusion-template (cons $disjoints ())))))))
+   (let (cons ProofTraceFrameProjectV1 (cons $frame (cons $variables (cons $essentials ())))) (gslt:ProofTraceFrameProjectV1 (ProofTraceFrameProjectV1 $frame $variables $essentials))
+   (let (cons gslt:result:ProofTraceFrameApplyResultV1:100 (cons $input (cons $frame-result ()))) (superpose (collapse (gslt:mode:ProofTraceFrameApplyResultV1:100 $frame)))
+   (let (cons gslt:result:ProofTraceRealizeFrameResultV1:0111110 (cons $frame-result (cons $result ()))) (superpose (collapse (gslt:mode:ProofTraceRealizeFrameResultV1:0111110 $variables $essentials $conclusion-type $conclusion-template $disjoints)))
+   (quote (gslt:result:ProofTraceRealizeAssertionResultV1:1000 $frame $input $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=79 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-lookup-zero-v1 target=mode relation=ProofTraceSavedLookupV1 input=010 functional=relational
-(= (gslt:mode:ProofTraceSavedLookupV1:010 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceSavedConsV1 $formula $rest)) $__gslt_input_v1_0_1
-   (quote (gslt:result:ProofTraceSavedLookupV1:010 ProofTraceNatZeroV1 $formula))))
+(= (gslt:mode:ProofTraceSavedLookupV1:010 (cons ProofTraceSavedConsV1 (cons $formula (cons $rest ()))))
+   (quote (gslt:result:ProofTraceSavedLookupV1:010 ProofTraceNatZeroV1 $formula)))
 
 ; gslt-lowered-equation-v1 source-rewrite=80 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-lookup-succ-v1 target=mode relation=ProofTraceSavedLookupV1 input=010 functional=relational
-(= (gslt:mode:ProofTraceSavedLookupV1:010 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceSavedConsV1 $head $rest)) $__gslt_input_v1_0_1
-   (let (quote (ProofTraceSavedLookupV1 $index $rest $formula)) (gslt:ProofTraceSavedLookupV1 (ProofTraceSavedLookupV1 $index $rest $formula))
-   (quote (gslt:result:ProofTraceSavedLookupV1:010 (ProofTraceNatSuccV1 $index) $formula)))))
+(= (gslt:mode:ProofTraceSavedLookupV1:010 (cons ProofTraceSavedConsV1 (cons $head (cons $rest ()))))
+   (let (cons ProofTraceSavedLookupV1 (cons $index (cons $rest (cons $formula ())))) (gslt:ProofTraceSavedLookupV1 (ProofTraceSavedLookupV1 $index $rest $formula))
+   (quote (gslt:result:ProofTraceSavedLookupV1:010 (ProofTraceNatSuccV1 $index) $formula))))
 
 ; gslt-lowered-equation-v1 source-rewrite=77 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-append-nil-v1 target=mode relation=ProofTraceSavedAppendV1 input=100 functional=relational
 (= (gslt:mode:ProofTraceSavedAppendV1:100 ProofTraceSavedNilV1)
    (quote (gslt:result:ProofTraceSavedAppendV1:100 $formula (ProofTraceSavedConsV1 $formula ProofTraceSavedNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=78 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-append-cons-v1 target=mode relation=ProofTraceSavedAppendV1 input=100 functional=relational
-(= (gslt:mode:ProofTraceSavedAppendV1:100 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceSavedConsV1 $head $rest)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceSavedAppendV1 $rest $formula $output)) (gslt:ProofTraceSavedAppendV1 (ProofTraceSavedAppendV1 $rest $formula $output))
-   (quote (gslt:result:ProofTraceSavedAppendV1:100 $formula (ProofTraceSavedConsV1 $head $output))))))
+(= (gslt:mode:ProofTraceSavedAppendV1:100 (cons ProofTraceSavedConsV1 (cons $head (cons $rest ()))))
+   (let (cons ProofTraceSavedAppendV1 (cons $rest (cons $formula (cons $output ())))) (gslt:ProofTraceSavedAppendV1 (ProofTraceSavedAppendV1 $rest $formula $output))
+   (quote (gslt:result:ProofTraceSavedAppendV1:100 $formula (ProofTraceSavedConsV1 $head $output)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=85 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-nil-v1 target=mode relation=ProofTraceExecStateV1 input=000100 functional=relational
 (= (gslt:mode:ProofTraceExecStateV1:000100 $saved)
@@ -4376,30 +4123,30 @@
 ; gslt-lowered-equation-v1 source-rewrite=86 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-push-v1 target=mode relation=ProofTraceExecStateV1 input=000100 functional=relational
 (= (gslt:mode:ProofTraceExecStateV1:000100 $saved)
    (let $_ (gslt:ProofTraceContextMemberV1 (ProofTraceContextMemberV1 $context $formula))
-   (let (quote (gslt:result:ProofTraceExecStateV1:000100 $context $trace (ProofTraceStackConsV1 $formula $stack) $output $output-saved)) (superpose (collapse (gslt:mode:ProofTraceExecStateV1:000100 $saved)))
+   (let (cons gslt:result:ProofTraceExecStateV1:000100 (cons $context (cons $trace (cons (cons ProofTraceStackConsV1 (cons $formula (cons $stack ()))) (cons $output (cons $output-saved ())))))) (superpose (collapse (gslt:mode:ProofTraceExecStateV1:000100 $saved)))
    (quote (gslt:result:ProofTraceExecStateV1:000100 $context (ProofTraceConsV1 (ProofTracePushV1 $formula) $trace) $stack $output $output-saved)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=87 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-apply-v1 target=mode relation=ProofTraceExecStateV1 input=000100 functional=relational
 (= (gslt:mode:ProofTraceExecStateV1:000100 $saved)
-   (let (quote (gslt:result:ProofTraceApplyAssertionV1:0000 $assertion $frame $stack $next-stack)) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionV1:0000)))
-   (let (quote (gslt:result:ProofTraceExecStateV1:000100 $context $trace $next-stack $output $output-saved)) (superpose (collapse (gslt:mode:ProofTraceExecStateV1:000100 $saved)))
+   (let (cons gslt:result:ProofTraceApplyAssertionV1:0000 (cons $assertion (cons $frame (cons $stack (cons $next-stack ()))))) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionV1:0000)))
+   (let (cons gslt:result:ProofTraceExecStateV1:000100 (cons $context (cons $trace (cons $next-stack (cons $output (cons $output-saved ())))))) (superpose (collapse (gslt:mode:ProofTraceExecStateV1:000100 $saved)))
    (quote (gslt:result:ProofTraceExecStateV1:000100 $context (ProofTraceConsV1 (ProofTraceApplyV1 $assertion $frame) $trace) $stack $output $output-saved)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=88 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-incomplete-v1 target=mode relation=ProofTraceExecStateV1 input=000100 functional=relational
 (= (gslt:mode:ProofTraceExecStateV1:000100 $saved)
-   (let (quote (gslt:result:ProofTraceExecStateV1:000100 $context $trace (ProofTraceStackConsV1 $formula $stack) $output $output-saved)) (superpose (collapse (gslt:mode:ProofTraceExecStateV1:000100 $saved)))
+   (let (cons gslt:result:ProofTraceExecStateV1:000100 (cons $context (cons $trace (cons (cons ProofTraceStackConsV1 (cons $formula (cons $stack ()))) (cons $output (cons $output-saved ())))))) (superpose (collapse (gslt:mode:ProofTraceExecStateV1:000100 $saved)))
    (quote (gslt:result:ProofTraceExecStateV1:000100 $context (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $formula) $trace) $stack $output $output-saved))))
 
 ; gslt-lowered-equation-v1 source-rewrite=89 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-save-v1 target=mode relation=ProofTraceExecStateV1 input=000100 functional=relational
 (= (gslt:mode:ProofTraceExecStateV1:000100 $saved)
-   (let (quote (ProofTraceSavedAppendV1 $saved $formula $next-saved)) (gslt:ProofTraceSavedAppendV1 (ProofTraceSavedAppendV1 $saved $formula $next-saved))
+   (let (cons ProofTraceSavedAppendV1 (cons $saved (cons $formula (cons $next-saved ())))) (gslt:ProofTraceSavedAppendV1 (ProofTraceSavedAppendV1 $saved $formula $next-saved))
    (let $_ (gslt:ProofTraceExecStateV1 (ProofTraceExecStateV1 $context $trace (ProofTraceStackConsV1 $formula $stack) $next-saved $output $output-saved))
    (quote (gslt:result:ProofTraceExecStateV1:000100 $context (ProofTraceConsV1 ProofTraceSaveV1 $trace) (ProofTraceStackConsV1 $formula $stack) $output $output-saved)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=90 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-restore-v1 target=mode relation=ProofTraceExecStateV1 input=000100 functional=relational
 (= (gslt:mode:ProofTraceExecStateV1:000100 $saved)
-   (let (quote (ProofTraceSavedLookupV1 $index $saved $formula)) (gslt:ProofTraceSavedLookupV1 (ProofTraceSavedLookupV1 $index $saved $formula))
-   (let (quote (gslt:result:ProofTraceExecStateV1:000100 $context $trace (ProofTraceStackConsV1 $formula $stack) $output $output-saved)) (superpose (collapse (gslt:mode:ProofTraceExecStateV1:000100 $saved)))
+   (let (cons ProofTraceSavedLookupV1 (cons $index (cons $saved (cons $formula ())))) (gslt:ProofTraceSavedLookupV1 (ProofTraceSavedLookupV1 $index $saved $formula))
+   (let (cons gslt:result:ProofTraceExecStateV1:000100 (cons $context (cons $trace (cons (cons ProofTraceStackConsV1 (cons $formula (cons $stack ()))) (cons $output (cons $output-saved ())))))) (superpose (collapse (gslt:mode:ProofTraceExecStateV1:000100 $saved)))
    (quote (gslt:result:ProofTraceExecStateV1:000100 $context (ProofTraceConsV1 (ProofTraceRestoreV1 $index) $trace) $stack $output $output-saved)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=98 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-depth-underflow-v1 target=mode relation=ProofTraceApplyDepthResultV1 input=10000000 functional=relational
@@ -4408,7 +4155,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=99 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-depth-fits-v1 target=mode relation=ProofTraceApplyDepthResultV1 input=10000000 functional=relational
 (= (gslt:mode:ProofTraceApplyDepthResultV1:10000000 ProofTraceFrameStackFitsV1)
-   (let (quote (gslt:result:ProofTraceApplyAssertionResultV1:0000 $assertion $frame $stack $application-result)) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionResultV1:0000)))
+   (let (cons gslt:result:ProofTraceApplyAssertionResultV1:0000 (cons $assertion (cons $frame (cons $stack (cons $application-result ()))))) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionResultV1:0000)))
    (let $_ (gslt:ProofTraceApplyExecutionResultV1 (ProofTraceApplyExecutionResultV1 $application-result $context $trace $stack $saved $result))
    (quote (gslt:result:ProofTraceApplyDepthResultV1:10000000 $context $trace $assertion $frame $stack $saved $result)))))
 
@@ -4421,26 +4168,23 @@
    (quote (gslt:result:ProofTraceFrameStackDepthV1:010 (ProofTraceFrameConsV1 $entry $frame-rest) ProofTraceFrameStackUnderflowV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=94 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-stack-depth-cons-v1 target=mode relation=ProofTraceFrameStackDepthV1 input=010 functional=relational
-(= (gslt:mode:ProofTraceFrameStackDepthV1:010 $__gslt_input_v1_0_1)
-   (let (quote (ProofTraceStackConsV1 $formula $stack-rest)) $__gslt_input_v1_0_1
-   (let (quote (ProofTraceFrameStackDepthV1 $frame-rest $stack-rest $result)) (gslt:ProofTraceFrameStackDepthV1 (ProofTraceFrameStackDepthV1 $frame-rest $stack-rest $result))
-   (quote (gslt:result:ProofTraceFrameStackDepthV1:010 (ProofTraceFrameConsV1 $entry $frame-rest) $result)))))
+(= (gslt:mode:ProofTraceFrameStackDepthV1:010 (cons ProofTraceStackConsV1 (cons $formula (cons $stack-rest ()))))
+   (let (cons ProofTraceFrameStackDepthV1 (cons $frame-rest (cons $stack-rest (cons $result ())))) (gslt:ProofTraceFrameStackDepthV1 (ProofTraceFrameStackDepthV1 $frame-rest $stack-rest $result))
+   (quote (gslt:result:ProofTraceFrameStackDepthV1:010 (ProofTraceFrameConsV1 $entry $frame-rest) $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=81 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-lookup-result-v1 target=mode relation=ProofTraceSavedLookupResultV1 input=010 functional=relational
 (= (gslt:mode:ProofTraceSavedLookupResultV1:010 $saved)
-   (let (quote (ProofTraceSavedLookupFromV1 $index $index $saved $result)) (gslt:ProofTraceSavedLookupFromV1 (ProofTraceSavedLookupFromV1 $index $index $saved $result))
+   (let (cons ProofTraceSavedLookupFromV1 (cons $index (cons $index (cons $saved (cons $result ()))))) (gslt:ProofTraceSavedLookupFromV1 (ProofTraceSavedLookupFromV1 $index $index $saved $result))
    (quote (gslt:result:ProofTraceSavedLookupResultV1:010 $index $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=111 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-heads-equal-v1 target=mode relation=ProofSequenceCompareHeadsV1 input=1000 functional=relational
-(= (gslt:mode:ProofSequenceCompareHeadsV1:1000 $__gslt_input_v1_0_0)
-   (let (quote (ProofTokenEqualV1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceCompareV1:000 $left-rest $right-rest $result)) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:000)))
-   (quote (gslt:result:ProofSequenceCompareHeadsV1:1000 $left-rest $right-rest $result)))))
+(= (gslt:mode:ProofSequenceCompareHeadsV1:1000 (cons ProofTokenEqualV1 ()))
+   (let (cons gslt:result:ProofSequenceCompareV1:000 (cons $left-rest (cons $right-rest (cons $result ())))) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:000)))
+   (quote (gslt:result:ProofSequenceCompareHeadsV1:1000 $left-rest $right-rest $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=112 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-heads-unequal-v1 target=mode relation=ProofSequenceCompareHeadsV1 input=1000 functional=relational
-(= (gslt:mode:ProofSequenceCompareHeadsV1:1000 $__gslt_input_v1_0_0)
-   (let (quote (ProofTokenUnequalV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofSequenceCompareHeadsV1:1000 $left-rest $right-rest ProofSequenceDifferentV1))))
+(= (gslt:mode:ProofSequenceCompareHeadsV1:1000 (cons ProofTokenUnequalV1 ()))
+   (quote (gslt:result:ProofSequenceCompareHeadsV1:1000 $left-rest $right-rest ProofSequenceDifferentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=113 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-finalize-equal-v1 target=mode relation=ProofTraceFinalizeCompareV1 input=1000 functional=relational
 (= (gslt:mode:ProofTraceFinalizeCompareV1:1000 ProofSequenceEqualV1)
@@ -4457,31 +4201,30 @@
 ; gslt-lowered-equation-v1 source-rewrite=96 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-push-v1 target=mode relation=ProofTraceExecStateResultV1 input=00110 functional=relational
 (= (gslt:mode:ProofTraceExecStateResultV1:00110 $stack $saved)
    (let $_ (gslt:ProofTraceContextMemberV1 (ProofTraceContextMemberV1 $context $formula))
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:00010 $context $trace (ProofTraceStackConsV1 $formula $stack) $result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00010 $saved)))
+   (let (cons gslt:result:ProofTraceExecStateResultV1:00010 (cons $context (cons $trace (cons (cons ProofTraceStackConsV1 (cons $formula (cons $stack ()))) (cons $result ()))))) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00010 $saved)))
    (quote (gslt:result:ProofTraceExecStateResultV1:00110 $context (ProofTraceConsV1 (ProofTracePushV1 $formula) $trace) $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=97 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-apply-v1 target=mode relation=ProofTraceExecStateResultV1 input=00110 functional=relational
 (= (gslt:mode:ProofTraceExecStateResultV1:00110 $stack $saved)
-   (let (quote (ProofTraceFrameStackDepthV1 $frame $stack $depth-result)) (gslt:ProofTraceFrameStackDepthV1 (ProofTraceFrameStackDepthV1 $frame $stack $depth-result))
-   (let (quote (gslt:result:ProofTraceApplyDepthResultV1:10000110 $context $trace $assertion $frame $result)) (superpose (collapse (gslt:mode:ProofTraceApplyDepthResultV1:10000110 $depth-result $stack $saved)))
+   (let (cons ProofTraceFrameStackDepthV1 (cons $frame (cons $stack (cons $depth-result ())))) (gslt:ProofTraceFrameStackDepthV1 (ProofTraceFrameStackDepthV1 $frame $stack $depth-result))
+   (let (cons gslt:result:ProofTraceApplyDepthResultV1:10000110 (cons $context (cons $trace (cons $assertion (cons $frame (cons $result ())))))) (superpose (collapse (gslt:mode:ProofTraceApplyDepthResultV1:10000110 $depth-result $stack $saved)))
    (quote (gslt:result:ProofTraceExecStateResultV1:00110 $context (ProofTraceConsV1 (ProofTraceApplyV1 $assertion $frame) $trace) $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=102 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-incomplete-v1 target=mode relation=ProofTraceExecStateResultV1 input=00110 functional=relational
 (= (gslt:mode:ProofTraceExecStateResultV1:00110 $stack $saved)
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:00010 $context $trace (ProofTraceStackConsV1 $formula $stack) $result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00010 $saved)))
+   (let (cons gslt:result:ProofTraceExecStateResultV1:00010 (cons $context (cons $trace (cons (cons ProofTraceStackConsV1 (cons $formula (cons $stack ()))) (cons $result ()))))) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00010 $saved)))
    (quote (gslt:result:ProofTraceExecStateResultV1:00110 $context (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $formula) $trace) $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=103 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-save-v1 target=mode relation=ProofTraceExecStateResultV1 input=00110 functional=relational
-(= (gslt:mode:ProofTraceExecStateResultV1:00110 $__gslt_input_v1_0_2 $saved)
-   (let (quote (ProofTraceStackConsV1 $formula $stack)) $__gslt_input_v1_0_2
-   (let (quote (gslt:result:ProofTraceSavedAppendV1:110 $next-saved)) (once (gslt:fn:ProofTraceSavedAppendV1:110 $saved $formula))
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:00110 $context $trace $result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00110 (quote (ProofTraceStackConsV1 $formula $stack)) $next-saved)))
-   (quote (gslt:result:ProofTraceExecStateResultV1:00110 $context (ProofTraceConsV1 ProofTraceSaveV1 $trace) $result))))))
+(= (gslt:mode:ProofTraceExecStateResultV1:00110 (cons ProofTraceStackConsV1 (cons $formula (cons $stack ()))) $saved)
+   (let (cons gslt:result:ProofTraceSavedAppendV1:110 (cons $next-saved ())) (once (gslt:fn:ProofTraceSavedAppendV1:110 $saved $formula))
+   (let (cons gslt:result:ProofTraceExecStateResultV1:00110 (cons $context (cons $trace (cons $result ())))) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00110 (quote (ProofTraceStackConsV1 $formula $stack)) $next-saved)))
+   (quote (gslt:result:ProofTraceExecStateResultV1:00110 $context (ProofTraceConsV1 ProofTraceSaveV1 $trace) $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=104 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-restore-v1 target=mode relation=ProofTraceExecStateResultV1 input=00110 functional=relational
 (= (gslt:mode:ProofTraceExecStateResultV1:00110 $stack $saved)
-   (let (quote (ProofTraceSavedLookupResultV1 $index $saved $lookup-result)) (gslt:ProofTraceSavedLookupResultV1 (ProofTraceSavedLookupResultV1 $index $saved $lookup-result))
-   (let (quote (gslt:result:ProofTraceRestoreLookupExecutionResultV1:000110 $lookup-result $context $trace $result)) (superpose (collapse (gslt:mode:ProofTraceRestoreLookupExecutionResultV1:000110 $stack $saved)))
+   (let (cons ProofTraceSavedLookupResultV1 (cons $index (cons $saved (cons $lookup-result ())))) (gslt:ProofTraceSavedLookupResultV1 (ProofTraceSavedLookupResultV1 $index $saved $lookup-result))
+   (let (cons gslt:result:ProofTraceRestoreLookupExecutionResultV1:000110 (cons $lookup-result (cons $context (cons $trace (cons $result ()))))) (superpose (collapse (gslt:mode:ProofTraceRestoreLookupExecutionResultV1:000110 $stack $saved)))
    (quote (gslt:result:ProofTraceExecStateResultV1:00110 $context (ProofTraceConsV1 (ProofTraceRestoreV1 $index) $trace) $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=95 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-nil-v1 target=mode relation=ProofTraceExecStateResultV1 input=01110 functional=relational
@@ -4489,44 +4232,38 @@
    (quote (gslt:result:ProofTraceExecStateResultV1:01110 $context (ProofTraceExecSucceededV1 $stack $saved))))
 
 ; gslt-lowered-equation-v1 source-rewrite=96 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-push-v1 target=mode relation=ProofTraceExecStateResultV1 input=01110 functional=relational
-(= (gslt:mode:ProofTraceExecStateResultV1:01110 $__gslt_input_v1_0_1 $stack $saved)
-   (let (quote (ProofTraceConsV1 (ProofTracePushV1 $formula) $trace)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:ProofTraceContextMemberV1:01 $context)) (superpose (collapse (gslt:mode:ProofTraceContextMemberV1:01 $formula)))
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:01110 $context $result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:01110 $trace (quote (ProofTraceStackConsV1 $formula $stack)) $saved)))
-   (quote (gslt:result:ProofTraceExecStateResultV1:01110 $context $result))))))
-
-; gslt-lowered-equation-v1 source-rewrite=97 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-apply-v1 target=mode relation=ProofTraceExecStateResultV1 input=01110 functional=relational
-(= (gslt:mode:ProofTraceExecStateResultV1:01110 $__gslt_input_v1_0_1 $stack $saved)
-   (let (quote (ProofTraceConsV1 (ProofTraceApplyV1 $assertion $frame) $trace)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:ProofTraceFrameStackDepthV1:110 $depth-result)) (once (gslt:fn:ProofTraceFrameStackDepthV1:110 $frame $stack))
-   (let (quote (gslt:result:ProofTraceApplyDepthResultV1:10111110 $context $result)) (superpose (collapse (gslt:mode:ProofTraceApplyDepthResultV1:10111110 $depth-result $trace $assertion $frame $stack $saved)))
-   (quote (gslt:result:ProofTraceExecStateResultV1:01110 $context $result))))))
-
-; gslt-lowered-equation-v1 source-rewrite=102 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-incomplete-v1 target=mode relation=ProofTraceExecStateResultV1 input=01110 functional=relational
-(= (gslt:mode:ProofTraceExecStateResultV1:01110 $__gslt_input_v1_0_1 $stack $saved)
-   (let (quote (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $formula) $trace)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:01110 $context $result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:01110 $trace (quote (ProofTraceStackConsV1 $formula $stack)) $saved)))
+(= (gslt:mode:ProofTraceExecStateResultV1:01110 (cons ProofTraceConsV1 (cons (cons ProofTracePushV1 (cons $formula ())) (cons $trace ()))) $stack $saved)
+   (let (cons gslt:result:ProofTraceContextMemberV1:01 (cons $context ())) (superpose (collapse (gslt:mode:ProofTraceContextMemberV1:01 $formula)))
+   (let (cons gslt:result:ProofTraceExecStateResultV1:01110 (cons $context (cons $result ()))) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:01110 $trace (quote (ProofTraceStackConsV1 $formula $stack)) $saved)))
    (quote (gslt:result:ProofTraceExecStateResultV1:01110 $context $result)))))
 
+; gslt-lowered-equation-v1 source-rewrite=97 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-apply-v1 target=mode relation=ProofTraceExecStateResultV1 input=01110 functional=relational
+(= (gslt:mode:ProofTraceExecStateResultV1:01110 (cons ProofTraceConsV1 (cons (cons ProofTraceApplyV1 (cons $assertion (cons $frame ()))) (cons $trace ()))) $stack $saved)
+   (let (cons gslt:result:ProofTraceFrameStackDepthV1:110 (cons $depth-result ())) (once (gslt:fn:ProofTraceFrameStackDepthV1:110 $frame $stack))
+   (let (cons gslt:result:ProofTraceApplyDepthResultV1:10111110 (cons $context (cons $result ()))) (superpose (collapse (gslt:mode:ProofTraceApplyDepthResultV1:10111110 $depth-result $trace $assertion $frame $stack $saved)))
+   (quote (gslt:result:ProofTraceExecStateResultV1:01110 $context $result)))))
+
+; gslt-lowered-equation-v1 source-rewrite=102 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-incomplete-v1 target=mode relation=ProofTraceExecStateResultV1 input=01110 functional=relational
+(= (gslt:mode:ProofTraceExecStateResultV1:01110 (cons ProofTraceConsV1 (cons (cons ProofTraceIncompleteStepV1 (cons $formula ())) (cons $trace ()))) $stack $saved)
+   (let (cons gslt:result:ProofTraceExecStateResultV1:01110 (cons $context (cons $result ()))) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:01110 $trace (quote (ProofTraceStackConsV1 $formula $stack)) $saved)))
+   (quote (gslt:result:ProofTraceExecStateResultV1:01110 $context $result))))
+
 ; gslt-lowered-equation-v1 source-rewrite=103 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-save-v1 target=mode relation=ProofTraceExecStateResultV1 input=01110 functional=relational
-(= (gslt:mode:ProofTraceExecStateResultV1:01110 $__gslt_input_v1_0_1 $__gslt_input_v1_0_2 $saved)
-   (let (quote (ProofTraceConsV1 ProofTraceSaveV1 $trace)) $__gslt_input_v1_0_1
-   (let (quote (ProofTraceStackConsV1 $formula $stack)) $__gslt_input_v1_0_2
-   (let (quote (gslt:result:ProofTraceSavedAppendV1:110 $next-saved)) (once (gslt:fn:ProofTraceSavedAppendV1:110 $saved $formula))
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:01110 $context $result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:01110 $trace (quote (ProofTraceStackConsV1 $formula $stack)) $next-saved)))
-   (quote (gslt:result:ProofTraceExecStateResultV1:01110 $context $result)))))))
+(= (gslt:mode:ProofTraceExecStateResultV1:01110 (cons ProofTraceConsV1 (cons ProofTraceSaveV1 (cons $trace ()))) (cons ProofTraceStackConsV1 (cons $formula (cons $stack ()))) $saved)
+   (let (cons gslt:result:ProofTraceSavedAppendV1:110 (cons $next-saved ())) (once (gslt:fn:ProofTraceSavedAppendV1:110 $saved $formula))
+   (let (cons gslt:result:ProofTraceExecStateResultV1:01110 (cons $context (cons $result ()))) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:01110 $trace (quote (ProofTraceStackConsV1 $formula $stack)) $next-saved)))
+   (quote (gslt:result:ProofTraceExecStateResultV1:01110 $context $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=104 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-restore-v1 target=mode relation=ProofTraceExecStateResultV1 input=01110 functional=relational
-(= (gslt:mode:ProofTraceExecStateResultV1:01110 $__gslt_input_v1_0_1 $stack $saved)
-   (let (quote (ProofTraceConsV1 (ProofTraceRestoreV1 $index) $trace)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:ProofTraceSavedLookupResultV1:110 $lookup-result)) (once (gslt:fn:ProofTraceSavedLookupResultV1:110 $index $saved))
-   (let (quote (gslt:result:ProofTraceRestoreLookupExecutionResultV1:101110 $context $result)) (superpose (collapse (gslt:mode:ProofTraceRestoreLookupExecutionResultV1:101110 $lookup-result $trace $stack $saved)))
-   (quote (gslt:result:ProofTraceExecStateResultV1:01110 $context $result))))))
+(= (gslt:mode:ProofTraceExecStateResultV1:01110 (cons ProofTraceConsV1 (cons (cons ProofTraceRestoreV1 (cons $index ())) (cons $trace ()))) $stack $saved)
+   (let (cons gslt:result:ProofTraceSavedLookupResultV1:110 (cons $lookup-result ())) (once (gslt:fn:ProofTraceSavedLookupResultV1:110 $index $saved))
+   (let (cons gslt:result:ProofTraceRestoreLookupExecutionResultV1:101110 (cons $context (cons $result ()))) (superpose (collapse (gslt:mode:ProofTraceRestoreLookupExecutionResultV1:101110 $lookup-result $trace $stack $saved)))
+   (quote (gslt:result:ProofTraceExecStateResultV1:01110 $context $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=118 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-result-v1 target=mode relation=ProofTraceCheckResultV1 input=0001 functional=relational
 (= (gslt:mode:ProofTraceCheckResultV1:0001 $result)
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:00110 $context $trace $execution-result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00110 ProofTraceStackNilV1 ProofTraceSavedNilV1)))
-   (let (quote (gslt:result:ProofTraceCheckExecutionResultV1:001 $execution-result $target)) (superpose (collapse (gslt:mode:ProofTraceCheckExecutionResultV1:001 $result)))
+   (let (cons gslt:result:ProofTraceExecStateResultV1:00110 (cons $context (cons $trace (cons $execution-result ())))) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00110 ProofTraceStackNilV1 ProofTraceSavedNilV1)))
+   (let (cons gslt:result:ProofTraceCheckExecutionResultV1:001 (cons $execution-result (cons $target ()))) (superpose (collapse (gslt:mode:ProofTraceCheckExecutionResultV1:001 $result)))
    (quote (gslt:result:ProofTraceCheckResultV1:0001 $context $trace $target)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=155 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-mul-zero-v1 target=mode relation=ProofTraceNatMulV1 input=100 functional=relational
@@ -4534,31 +4271,29 @@
    (quote (gslt:result:ProofTraceNatMulV1:100 $right ProofTraceNatZeroV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=156 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-mul-succ-v1 target=mode relation=ProofTraceNatMulV1 input=100 functional=relational
-(= (gslt:mode:ProofTraceNatMulV1:100 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceNatSuccV1 $left)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceNatMulV1 $left $right $partial)) (gslt:ProofTraceNatMulV1 (ProofTraceNatMulV1 $left $right $partial))
-   (let (quote (ProofTraceNatAddV1 $right $partial $product)) (gslt:ProofTraceNatAddV1 (ProofTraceNatAddV1 $right $partial $product))
-   (quote (gslt:result:ProofTraceNatMulV1:100 $right $product))))))
+(= (gslt:mode:ProofTraceNatMulV1:100 (cons ProofTraceNatSuccV1 (cons $left ())))
+   (let (cons ProofTraceNatMulV1 (cons $left (cons $right (cons $partial ())))) (gslt:ProofTraceNatMulV1 (ProofTraceNatMulV1 $left $right $partial))
+   (let (cons ProofTraceNatAddV1 (cons $right (cons $partial (cons $product ())))) (gslt:ProofTraceNatAddV1 (ProofTraceNatAddV1 $right $partial $product))
+   (quote (gslt:result:ProofTraceNatMulV1:100 $right $product)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=153 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-add-zero-v1 target=mode relation=ProofTraceNatAddV1 input=100 functional=relational
 (= (gslt:mode:ProofTraceNatAddV1:100 ProofTraceNatZeroV1)
    (quote (gslt:result:ProofTraceNatAddV1:100 $right $right)))
 
 ; gslt-lowered-equation-v1 source-rewrite=154 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-add-succ-v1 target=mode relation=ProofTraceNatAddV1 input=100 functional=relational
-(= (gslt:mode:ProofTraceNatAddV1:100 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceNatSuccV1 $left)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceNatAddV1 $left $right $sum)) (gslt:ProofTraceNatAddV1 (ProofTraceNatAddV1 $left $right $sum))
-   (quote (gslt:result:ProofTraceNatAddV1:100 $right (ProofTraceNatSuccV1 $sum))))))
+(= (gslt:mode:ProofTraceNatAddV1:100 (cons ProofTraceNatSuccV1 (cons $left ())))
+   (let (cons ProofTraceNatAddV1 (cons $left (cons $right (cons $sum ())))) (gslt:ProofTraceNatAddV1 (ProofTraceNatAddV1 $left $right $sum))
+   (quote (gslt:result:ProofTraceNatAddV1:100 $right (ProofTraceNatSuccV1 $sum)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=166 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-first-overlap-head-v1 target=mode relation=ProofTraceHeaderFirstOverlapV1 input=100 functional=relational
 (= (gslt:mode:ProofTraceHeaderFirstOverlapV1:100 $initial)
-   (let (quote (gslt:result:ProofTraceHeaderMemberV1:01 $label)) (superpose (collapse (gslt:mode:ProofTraceHeaderMemberV1:01 $initial)))
+   (let (cons gslt:result:ProofTraceHeaderMemberV1:01 (cons $label ())) (superpose (collapse (gslt:mode:ProofTraceHeaderMemberV1:01 $initial)))
    (quote (gslt:result:ProofTraceHeaderFirstOverlapV1:100 (ProofTraceLabelConsV1 $label $explicit) $label))))
 
 ; gslt-lowered-equation-v1 source-rewrite=167 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-first-overlap-tail-v1 target=mode relation=ProofTraceHeaderFirstOverlapV1 input=100 functional=relational
 (= (gslt:mode:ProofTraceHeaderFirstOverlapV1:100 $initial)
-   (let (quote (gslt:result:ProofTraceHeaderAllDifferentFromV1:01 $label)) (superpose (collapse (gslt:mode:ProofTraceHeaderAllDifferentFromV1:01 $initial)))
-   (let (quote (gslt:result:ProofTraceHeaderFirstOverlapV1:100 $explicit $overlap)) (superpose (collapse (gslt:mode:ProofTraceHeaderFirstOverlapV1:100 $initial)))
+   (let (cons gslt:result:ProofTraceHeaderAllDifferentFromV1:01 (cons $label ())) (superpose (collapse (gslt:mode:ProofTraceHeaderAllDifferentFromV1:01 $initial)))
+   (let (cons gslt:result:ProofTraceHeaderFirstOverlapV1:100 (cons $explicit (cons $overlap ()))) (superpose (collapse (gslt:mode:ProofTraceHeaderFirstOverlapV1:100 $initial)))
    (quote (gslt:result:ProofTraceHeaderFirstOverlapV1:100 (ProofTraceLabelConsV1 $label $explicit) $overlap)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=177 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-nil-between-v1 target=mode relation=ProofTraceDecodeStatusV1 input=0001110 functional=relational
@@ -4571,56 +4306,53 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=179 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-cons-v1 target=mode relation=ProofTraceDecodeStatusV1 input=0001110 functional=relational
 (= (gslt:mode:ProofTraceDecodeStatusV1:0001110 $phase $target $status)
-   (let (quote (source-proof-trace-code-class-v1 $code $class)) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code $class))
-   (let (quote (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace)) (gslt:ProofTraceDecodeCodeClassV1 (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace))
+   (let (cons source-proof-trace-code-class-v1 (cons $code (cons $class ()))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code $class))
+   (let (cons ProofTraceDecodeCodeClassV1 (cons $class (cons $dictionary (cons $codes (cons $accumulator (cons $phase (cons $target (cons $status (cons $trace ()))))))))) (gslt:ProofTraceDecodeCodeClassV1 (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace))
    (quote (gslt:result:ProofTraceDecodeStatusV1:0001110 $dictionary (ProofTraceCodeConsV1 $code $codes) $accumulator $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=180 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-terminal-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10000000 functional=relational
-(= (gslt:mode:ProofTraceDecodeCodeClassV1:10000000 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceTerminalCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $number)) (gslt:ProofTraceNatMulAddV1 (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $number))
-   (let (quote (ProofTraceDictionaryResolveV1 $number $dictionary $instruction)) (gslt:ProofTraceDictionaryResolveV1 (ProofTraceDictionaryResolveV1 $number $dictionary $instruction))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10000000 $dictionary $codes $accumulator $phase $target $status (ProofTraceConsV1 $instruction $trace))))))))))
+(= (gslt:mode:ProofTraceDecodeCodeClassV1:10000000 (cons ProofTraceTerminalCodeV1 (cons $digit (cons $radix ()))))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons ProofTraceNatMulAddV1 (cons $canonical-radix (cons $accumulator (cons $canonical-digit (cons $number ()))))) (gslt:ProofTraceNatMulAddV1 (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $number))
+   (let (cons ProofTraceDictionaryResolveV1 (cons $number (cons $dictionary (cons $instruction ())))) (gslt:ProofTraceDictionaryResolveV1 (ProofTraceDictionaryResolveV1 $number $dictionary $instruction))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseJustCompletedV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10000000 $dictionary $codes $accumulator $phase $target $status (ProofTraceConsV1 $instruction $trace)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-continuation-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10000000 functional=relational
-(= (gslt:mode:ProofTraceDecodeCodeClassV1:10000000 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceContinuationCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $next-accumulator)) (gslt:ProofTraceNatMulAddV1 (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $next-accumulator))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10000000 $dictionary $codes $accumulator $phase $target $status $trace))))))))
+(= (gslt:mode:ProofTraceDecodeCodeClassV1:10000000 (cons ProofTraceContinuationCodeV1 (cons $digit (cons $radix ()))))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons ProofTraceNatMulAddV1 (cons $canonical-radix (cons $accumulator (cons $canonical-digit (cons $next-accumulator ()))))) (gslt:ProofTraceNatMulAddV1 (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $next-accumulator))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons $next-accumulator (cons ProofTracePhaseOpenIndexV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10000000 $dictionary $codes $accumulator $phase $target $status $trace)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=185 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-save-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10000000 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:10000000 ProofTraceSaveCodeV1)
-   (let (quote (gslt:result:ProofTraceSavePhaseTransitionV1:00 $phase $next-phase)) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:00))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
+   (let (cons gslt:result:ProofTraceSavePhaseTransitionV1:00 (cons $phase (cons $next-phase ()))) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:00))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons $next-phase (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:10000000 $dictionary $codes ProofTraceNatZeroV1 $phase $target $status (ProofTraceConsV1 ProofTraceSaveV1 $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=186 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-between-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10000000 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:10000000 ProofTraceIncompleteCodeV1)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:10000000 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target ProofTraceStatusIncompleteV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=187 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-completed-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10000000 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:10000000 ProofTraceIncompleteCodeV1)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:10000000 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target ProofTraceStatusIncompleteV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=157 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-mul-add-v1 target=mode relation=ProofTraceNatMulAddV1 input=1010 functional=relational
 (= (gslt:mode:ProofTraceNatMulAddV1:1010 $radix $digit)
-   (let (quote (ProofTraceNatMulV1 $radix $value $scaled)) (gslt:ProofTraceNatMulV1 (ProofTraceNatMulV1 $radix $value $scaled))
-   (let (quote (gslt:result:ProofTraceNatAddV1:110 $result)) (once (gslt:fn:ProofTraceNatAddV1:110 $scaled $digit))
+   (let (cons ProofTraceNatMulV1 (cons $radix (cons $value (cons $scaled ())))) (gslt:ProofTraceNatMulV1 (ProofTraceNatMulV1 $radix $value $scaled))
+   (let (cons gslt:result:ProofTraceNatAddV1:110 (cons $result ())) (once (gslt:fn:ProofTraceNatAddV1:110 $scaled $digit))
    (quote (gslt:result:ProofTraceNatMulAddV1:1010 $value $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=172 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-dictionary-resolve-v1 target=mode relation=ProofTraceDictionaryResolveV1 input=100 functional=relational
-(= (gslt:mode:ProofTraceDictionaryResolveV1:100 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceNatSuccV1 $index)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceDictionaryResolveIndexV1 $index $dictionary $instruction)) (gslt:ProofTraceDictionaryResolveIndexV1 (ProofTraceDictionaryResolveIndexV1 $index $dictionary $instruction))
-   (quote (gslt:result:ProofTraceDictionaryResolveV1:100 $dictionary $instruction)))))
+(= (gslt:mode:ProofTraceDictionaryResolveV1:100 (cons ProofTraceNatSuccV1 (cons $index ())))
+   (let (cons ProofTraceDictionaryResolveIndexV1 (cons $index (cons $dictionary (cons $instruction ())))) (gslt:ProofTraceDictionaryResolveIndexV1 (ProofTraceDictionaryResolveIndexV1 $index $dictionary $instruction))
+   (quote (gslt:result:ProofTraceDictionaryResolveV1:100 $dictionary $instruction))))
 
 ; gslt-lowered-equation-v1 source-rewrite=177 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-nil-between-v1 target=mode relation=ProofTraceDecodeStatusV1 input=1011000 functional=relational
 (= (gslt:mode:ProofTraceDecodeStatusV1:1011000 $dictionary ProofTraceNatZeroV1 ProofTracePhaseBetweenV1)
@@ -4632,8 +4364,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=179 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-cons-v1 target=mode relation=ProofTraceDecodeStatusV1 input=1011000 functional=relational
 (= (gslt:mode:ProofTraceDecodeStatusV1:1011000 $dictionary $accumulator $phase)
-   (let (quote (source-proof-trace-code-class-v1 $code $class)) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code $class))
-   (let (quote (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace)) (gslt:ProofTraceDecodeCodeClassV1 (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace))
+   (let (cons source-proof-trace-code-class-v1 (cons $code (cons $class ()))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code $class))
+   (let (cons ProofTraceDecodeCodeClassV1 (cons $class (cons $dictionary (cons $codes (cons $accumulator (cons $phase (cons $target (cons $status (cons $trace ()))))))))) (gslt:ProofTraceDecodeCodeClassV1 (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace))
    (quote (gslt:result:ProofTraceDecodeStatusV1:1011000 (ProofTraceCodeConsV1 $code $codes) $target $status $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=177 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-nil-between-v1 target=mode relation=ProofTraceDecodeStatusV1 input=0011000 functional=relational
@@ -4646,49 +4378,48 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=179 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-cons-v1 target=mode relation=ProofTraceDecodeStatusV1 input=0011000 functional=relational
 (= (gslt:mode:ProofTraceDecodeStatusV1:0011000 $accumulator $phase)
-   (let (quote (source-proof-trace-code-class-v1 $code $class)) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code $class))
-   (let (quote (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace)) (gslt:ProofTraceDecodeCodeClassV1 (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace))
+   (let (cons source-proof-trace-code-class-v1 (cons $code (cons $class ()))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code $class))
+   (let (cons ProofTraceDecodeCodeClassV1 (cons $class (cons $dictionary (cons $codes (cons $accumulator (cons $phase (cons $target (cons $status (cons $trace ()))))))))) (gslt:ProofTraceDecodeCodeClassV1 (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace))
    (quote (gslt:result:ProofTraceDecodeStatusV1:0011000 $dictionary (ProofTraceCodeConsV1 $code $codes) $target $status $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=188 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-first-refusal-terminal-v1 target=mode relation=ProofTraceDecodeFirstRefusalV1 input=0110 functional=relational
 (= (gslt:mode:ProofTraceDecodeFirstRefusalV1:0110 $accumulator $phase)
-   (let (quote (source-proof-trace-code-class-v1 $code (ProofTraceTerminalCodeV1 $digit $radix))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code (ProofTraceTerminalCodeV1 $digit $radix)))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $number)) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
-   (let (quote (ProofTraceDecodeFirstRefusalV1 $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $reason)) (gslt:ProofTraceDecodeFirstRefusalV1 (ProofTraceDecodeFirstRefusalV1 $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $reason))
+   (let (cons source-proof-trace-code-class-v1 (cons $code (cons (cons ProofTraceTerminalCodeV1 (cons $digit (cons $radix ()))) ()))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code (ProofTraceTerminalCodeV1 $digit $radix)))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $number ())) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
+   (let (cons ProofTraceDecodeFirstRefusalV1 (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseJustCompletedV1 (cons $reason ()))))) (gslt:ProofTraceDecodeFirstRefusalV1 (ProofTraceDecodeFirstRefusalV1 $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $reason))
    (quote (gslt:result:ProofTraceDecodeFirstRefusalV1:0110 (ProofTraceCodeConsV1 $code $codes) $reason))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=189 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-first-refusal-continuation-v1 target=mode relation=ProofTraceDecodeFirstRefusalV1 input=0110 functional=relational
 (= (gslt:mode:ProofTraceDecodeFirstRefusalV1:0110 $accumulator $phase)
-   (let (quote (source-proof-trace-code-class-v1 $code (ProofTraceContinuationCodeV1 $digit $radix))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code (ProofTraceContinuationCodeV1 $digit $radix)))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $next-accumulator)) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
-   (let (quote (ProofTraceDecodeFirstRefusalV1 $codes $next-accumulator ProofTracePhaseOpenIndexV1 $reason)) (gslt:ProofTraceDecodeFirstRefusalV1 (ProofTraceDecodeFirstRefusalV1 $codes $next-accumulator ProofTracePhaseOpenIndexV1 $reason))
+   (let (cons source-proof-trace-code-class-v1 (cons $code (cons (cons ProofTraceContinuationCodeV1 (cons $digit (cons $radix ()))) ()))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code (ProofTraceContinuationCodeV1 $digit $radix)))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $next-accumulator ())) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
+   (let (cons ProofTraceDecodeFirstRefusalV1 (cons $codes (cons $next-accumulator (cons ProofTracePhaseOpenIndexV1 (cons $reason ()))))) (gslt:ProofTraceDecodeFirstRefusalV1 (ProofTraceDecodeFirstRefusalV1 $codes $next-accumulator ProofTracePhaseOpenIndexV1 $reason))
    (quote (gslt:result:ProofTraceDecodeFirstRefusalV1:0110 (ProofTraceCodeConsV1 $code $codes) $reason))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=190 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-first-refusal-save-valid-v1 target=mode relation=ProofTraceDecodeFirstRefusalV1 input=0110 functional=relational
 (= (gslt:mode:ProofTraceDecodeFirstRefusalV1:0110 ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1)
-   (let (quote (gslt:result:source-proof-trace-code-class-v1:01 $code)) (once (gslt:fn:source-proof-trace-code-class-v1:01 ProofTraceSaveCodeV1))
-   (let (quote (gslt:result:ProofTraceSavePhaseTransitionV1:10 $next-phase)) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 ProofTracePhaseJustCompletedV1))
-   (let (quote (ProofTraceDecodeFirstRefusalV1 $codes ProofTraceNatZeroV1 $next-phase $reason)) (gslt:ProofTraceDecodeFirstRefusalV1 (ProofTraceDecodeFirstRefusalV1 $codes ProofTraceNatZeroV1 $next-phase $reason))
+   (let (cons gslt:result:source-proof-trace-code-class-v1:01 (cons $code ())) (once (gslt:fn:source-proof-trace-code-class-v1:01 ProofTraceSaveCodeV1))
+   (let (cons gslt:result:ProofTraceSavePhaseTransitionV1:10 (cons $next-phase ())) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 ProofTracePhaseJustCompletedV1))
+   (let (cons ProofTraceDecodeFirstRefusalV1 (cons $codes (cons ProofTraceNatZeroV1 (cons $next-phase (cons $reason ()))))) (gslt:ProofTraceDecodeFirstRefusalV1 (ProofTraceDecodeFirstRefusalV1 $codes ProofTraceNatZeroV1 $next-phase $reason))
    (quote (gslt:result:ProofTraceDecodeFirstRefusalV1:0110 (ProofTraceCodeConsV1 $code $codes) $reason))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=191 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-first-refusal-save-nonzero-v1 target=mode relation=ProofTraceDecodeFirstRefusalV1 input=0110 functional=relational
-(= (gslt:mode:ProofTraceDecodeFirstRefusalV1:0110 $__gslt_input_v1_0_1 $phase)
-   (let (quote (ProofTraceNatSuccV1 $accumulator)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:source-proof-trace-code-class-v1:01 $code)) (once (gslt:fn:source-proof-trace-code-class-v1:01 ProofTraceSaveCodeV1))
-   (quote (gslt:result:ProofTraceDecodeFirstRefusalV1:0110 (ProofTraceCodeConsV1 $code $codes) (ProofTraceRefusedSaveDuringIndexV1 (ProofTraceNatSuccV1 $accumulator)))))))
+(= (gslt:mode:ProofTraceDecodeFirstRefusalV1:0110 (cons ProofTraceNatSuccV1 (cons $accumulator ())) $phase)
+   (let (cons gslt:result:source-proof-trace-code-class-v1:01 (cons $code ())) (once (gslt:fn:source-proof-trace-code-class-v1:01 ProofTraceSaveCodeV1))
+   (quote (gslt:result:ProofTraceDecodeFirstRefusalV1:0110 (ProofTraceCodeConsV1 $code $codes) (ProofTraceRefusedSaveDuringIndexV1 (ProofTraceNatSuccV1 $accumulator))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=192 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-first-refusal-save-open-zero-v1 target=mode relation=ProofTraceDecodeFirstRefusalV1 input=0110 functional=relational
 (= (gslt:mode:ProofTraceDecodeFirstRefusalV1:0110 ProofTraceNatZeroV1 ProofTracePhaseOpenIndexV1)
-   (let (quote (gslt:result:source-proof-trace-code-class-v1:01 $code)) (once (gslt:fn:source-proof-trace-code-class-v1:01 ProofTraceSaveCodeV1))
+   (let (cons gslt:result:source-proof-trace-code-class-v1:01 (cons $code ())) (once (gslt:fn:source-proof-trace-code-class-v1:01 ProofTraceSaveCodeV1))
    (quote (gslt:result:ProofTraceDecodeFirstRefusalV1:0110 (ProofTraceCodeConsV1 $code $codes) (ProofTraceRefusedSaveDuringIndexV1 ProofTraceNatZeroV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=193 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-first-refusal-save-between-v1 target=mode relation=ProofTraceDecodeFirstRefusalV1 input=0110 functional=relational
 (= (gslt:mode:ProofTraceDecodeFirstRefusalV1:0110 ProofTraceNatZeroV1 ProofTracePhaseBetweenV1)
-   (let (quote (gslt:result:source-proof-trace-code-class-v1:01 $code)) (once (gslt:fn:source-proof-trace-code-class-v1:01 ProofTraceSaveCodeV1))
+   (let (cons gslt:result:source-proof-trace-code-class-v1:01 (cons $code ())) (once (gslt:fn:source-proof-trace-code-class-v1:01 ProofTraceSaveCodeV1))
    (quote (gslt:result:ProofTraceDecodeFirstRefusalV1:0110 (ProofTraceCodeConsV1 $code $codes) (ProofTraceRefusedSavePlacementV1 ProofTracePhaseBetweenV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=195 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-nil-v1 target=mode relation=ProofTraceCompileNormalStatusV1 input=0110 functional=relational
@@ -4697,24 +4428,24 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=196 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-cons-v1 target=mode relation=ProofTraceCompileNormalStatusV1 input=0110 functional=relational
 (= (gslt:mode:ProofTraceCompileNormalStatusV1:0110 $target $status)
-   (let (quote (gslt:result:source-proof-trace-label-instruction-v1:00 $label $instruction)) (superpose (collapse (gslt:mode:source-proof-trace-label-instruction-v1:00)))
-   (let (quote (gslt:result:ProofTraceCompileNormalStatusV1:0110 $labels $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0110 $target $status)))
+   (let (cons gslt:result:source-proof-trace-label-instruction-v1:00 (cons $label (cons $instruction ()))) (superpose (collapse (gslt:mode:source-proof-trace-label-instruction-v1:00)))
+   (let (cons gslt:result:ProofTraceCompileNormalStatusV1:0110 (cons $labels (cons $trace ()))) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0110 $target $status)))
    (quote (gslt:result:ProofTraceCompileNormalStatusV1:0110 (ProofTraceLabelConsV1 $label $labels) (ProofTraceConsV1 $instruction $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=197 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-incomplete-v1 target=mode relation=ProofTraceCompileNormalStatusV1 input=0110 functional=relational
 (= (gslt:mode:ProofTraceCompileNormalStatusV1:0110 $target ProofTraceStatusIncompleteV1)
-   (let (quote (gslt:result:source-proof-trace-input-incomplete-normal-label-v1:0 $label)) (once (gslt:fn:source-proof-trace-input-incomplete-normal-label-v1:0))
-   (let (quote (gslt:result:ProofTraceCompileNormalStatusV1:0100 $labels $tail-status $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0100 $target)))
+   (let (cons gslt:result:source-proof-trace-input-incomplete-normal-label-v1:0 (cons $label ())) (once (gslt:fn:source-proof-trace-input-incomplete-normal-label-v1:0))
+   (let (cons gslt:result:ProofTraceCompileNormalStatusV1:0100 (cons $labels (cons $tail-status (cons $trace ())))) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0100 $target)))
    (quote (gslt:result:ProofTraceCompileNormalStatusV1:0110 (ProofTraceLabelConsV1 $label $labels) (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=176 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-v1 target=mode relation=ProofTraceDecodeV1 input=1010 functional=relational
 (= (gslt:mode:ProofTraceDecodeV1:1010 $dictionary $accumulator)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes $accumulator ProofTracePhaseBetweenV1 ProofTraceNoTargetV1 ProofTraceStatusCompleteV1 $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $accumulator ProofTracePhaseBetweenV1 ProofTraceNoTargetV1 ProofTraceStatusCompleteV1 $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons $accumulator (cons ProofTracePhaseBetweenV1 (cons ProofTraceNoTargetV1 (cons ProofTraceStatusCompleteV1 (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $accumulator ProofTracePhaseBetweenV1 ProofTraceNoTargetV1 ProofTraceStatusCompleteV1 $trace))
    (quote (gslt:result:ProofTraceDecodeV1:1010 $codes $trace))))
 
 ; gslt-lowered-equation-v1 source-rewrite=147 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-accepted-v1 target=mode relation=ProofTraceAcceptedV1 input=010 functional=relational
 (= (gslt:mode:ProofTraceAcceptedV1:010 $trace)
-   (let (quote (gslt:result:ProofTraceCheckResultV1:0101 $context $target)) (superpose (collapse (gslt:mode:ProofTraceCheckResultV1:0101 $trace ProofTraceSucceededV1)))
+   (let (cons gslt:result:ProofTraceCheckResultV1:0101 (cons $context (cons $target ()))) (superpose (collapse (gslt:mode:ProofTraceCheckResultV1:0101 $trace ProofTraceSucceededV1)))
    (quote (gslt:result:ProofTraceAcceptedV1:010 $context $target))))
 
 ; gslt-lowered-equation-v1 source-rewrite=195 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-nil-v1 target=mode relation=ProofTraceCompileNormalStatusV1 input=0010 functional=relational
@@ -4723,14 +4454,14 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=196 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-cons-v1 target=mode relation=ProofTraceCompileNormalStatusV1 input=0010 functional=relational
 (= (gslt:mode:ProofTraceCompileNormalStatusV1:0010 $status)
-   (let (quote (gslt:result:source-proof-trace-label-instruction-v1:00 $label $instruction)) (superpose (collapse (gslt:mode:source-proof-trace-label-instruction-v1:00)))
-   (let (quote (gslt:result:ProofTraceCompileNormalStatusV1:0010 $labels $target $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0010 $status)))
+   (let (cons gslt:result:source-proof-trace-label-instruction-v1:00 (cons $label (cons $instruction ()))) (superpose (collapse (gslt:mode:source-proof-trace-label-instruction-v1:00)))
+   (let (cons gslt:result:ProofTraceCompileNormalStatusV1:0010 (cons $labels (cons $target (cons $trace ())))) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0010 $status)))
    (quote (gslt:result:ProofTraceCompileNormalStatusV1:0010 (ProofTraceLabelConsV1 $label $labels) $target (ProofTraceConsV1 $instruction $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=197 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-incomplete-v1 target=mode relation=ProofTraceCompileNormalStatusV1 input=0010 functional=relational
 (= (gslt:mode:ProofTraceCompileNormalStatusV1:0010 ProofTraceStatusIncompleteV1)
-   (let (quote (gslt:result:source-proof-trace-input-incomplete-normal-label-v1:0 $label)) (once (gslt:fn:source-proof-trace-input-incomplete-normal-label-v1:0))
-   (let (quote (gslt:result:ProofTraceCompileNormalStatusV1:0000 $labels $target $tail-status $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0000)))
+   (let (cons gslt:result:source-proof-trace-input-incomplete-normal-label-v1:0 (cons $label ())) (once (gslt:fn:source-proof-trace-input-incomplete-normal-label-v1:0))
+   (let (cons gslt:result:ProofTraceCompileNormalStatusV1:0000 (cons $labels (cons $target (cons $tail-status (cons $trace ()))))) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0000)))
    (quote (gslt:result:ProofTraceCompileNormalStatusV1:0010 (ProofTraceLabelConsV1 $label $labels) $target (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=177 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-nil-between-v1 target=mode relation=ProofTraceDecodeStatusV1 input=1011010 functional=relational
@@ -4743,8 +4474,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=179 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-cons-v1 target=mode relation=ProofTraceDecodeStatusV1 input=1011010 functional=relational
 (= (gslt:mode:ProofTraceDecodeStatusV1:1011010 $dictionary $accumulator $phase $status)
-   (let (quote (source-proof-trace-code-class-v1 $code $class)) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code $class))
-   (let (quote (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace)) (gslt:ProofTraceDecodeCodeClassV1 (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace))
+   (let (cons source-proof-trace-code-class-v1 (cons $code (cons $class ()))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code $class))
+   (let (cons ProofTraceDecodeCodeClassV1 (cons $class (cons $dictionary (cons $codes (cons $accumulator (cons $phase (cons $target (cons $status (cons $trace ()))))))))) (gslt:ProofTraceDecodeCodeClassV1 (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace))
    (quote (gslt:result:ProofTraceDecodeStatusV1:1011010 (ProofTraceCodeConsV1 $code $codes) $target $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=177 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-nil-between-v1 target=mode relation=ProofTraceDecodeStatusV1 input=1011110 functional=relational
@@ -4757,8 +4488,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=179 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-cons-v1 target=mode relation=ProofTraceDecodeStatusV1 input=1011110 functional=relational
 (= (gslt:mode:ProofTraceDecodeStatusV1:1011110 $dictionary $accumulator $phase $target $status)
-   (let (quote (source-proof-trace-code-class-v1 $code $class)) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code $class))
-   (let (quote (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace)) (gslt:ProofTraceDecodeCodeClassV1 (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace))
+   (let (cons source-proof-trace-code-class-v1 (cons $code (cons $class ()))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code $class))
+   (let (cons ProofTraceDecodeCodeClassV1 (cons $class (cons $dictionary (cons $codes (cons $accumulator (cons $phase (cons $target (cons $status (cons $trace ()))))))))) (gslt:ProofTraceDecodeCodeClassV1 (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace))
    (quote (gslt:result:ProofTraceDecodeStatusV1:1011110 (ProofTraceCodeConsV1 $code $codes) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=308 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-token-equal-x-v1 target=mode relation=source-proof-trace-input-token-compare-v1 input=010 functional=relational
@@ -4819,12 +4550,12 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=226 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-assertion-v1 target=mode relation=ProofTraceInputAssertionV1 input=100 functional=relational
 (= (gslt:mode:ProofTraceInputAssertionV1:100 $label)
-   (let (quote (gslt:result:source-proof-trace-input-assertion-v1:100 $conclusion-type $conclusion-template)) (once (gslt:fn:source-proof-trace-input-assertion-v1:100 $label))
-   (let (quote (gslt:result:source-proof-trace-input-frame-count-v1:10 $frame-count)) (once (gslt:fn:source-proof-trace-input-frame-count-v1:10 $label))
-   (let (quote (gslt:result:source-proof-trace-input-apartness-count-v1:10 $apartness-count)) (once (gslt:fn:source-proof-trace-input-apartness-count-v1:10 $label))
-   (let (quote (gslt:result:ProofTraceInputBuildFrameV1:1110 $frame)) (superpose (collapse (gslt:mode:ProofTraceInputBuildFrameV1:1110 $label ProofTraceNatZeroV1 $frame-count)))
-   (let (quote (gslt:result:ProofTraceFrameProjectV1:100 $variables $essentials)) (once (gslt:fn:ProofTraceFrameProjectV1:100 $frame))
-   (let (quote (gslt:result:ProofTraceInputBuildApartnessV1:1110 $apartness)) (superpose (collapse (gslt:mode:ProofTraceInputBuildApartnessV1:1110 $label ProofTraceNatZeroV1 $apartness-count)))
+   (let (cons gslt:result:source-proof-trace-input-assertion-v1:100 (cons $conclusion-type (cons $conclusion-template ()))) (once (gslt:fn:source-proof-trace-input-assertion-v1:100 $label))
+   (let (cons gslt:result:source-proof-trace-input-frame-count-v1:10 (cons $frame-count ())) (once (gslt:fn:source-proof-trace-input-frame-count-v1:10 $label))
+   (let (cons gslt:result:source-proof-trace-input-apartness-count-v1:10 (cons $apartness-count ())) (once (gslt:fn:source-proof-trace-input-apartness-count-v1:10 $label))
+   (let (cons gslt:result:ProofTraceInputBuildFrameV1:1110 (cons $frame ())) (superpose (collapse (gslt:mode:ProofTraceInputBuildFrameV1:1110 $label ProofTraceNatZeroV1 $frame-count)))
+   (let (cons gslt:result:ProofTraceFrameProjectV1:100 (cons $variables (cons $essentials ()))) (once (gslt:fn:ProofTraceFrameProjectV1:100 $frame))
+   (let (cons gslt:result:ProofTraceInputBuildApartnessV1:1110 (cons $apartness ())) (superpose (collapse (gslt:mode:ProofTraceInputBuildApartnessV1:1110 $label ProofTraceNatZeroV1 $apartness-count)))
    (quote (gslt:result:ProofTraceInputAssertionV1:100 (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $apartness) $frame)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=219 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-current-apart-decision-v1 target=mode relation=ProofTokenApartDecisionV1 input=001 functional=semidet
@@ -4838,8 +4569,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=221 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-context-cons-v1 target=mode relation=ProofTraceInputBuildContextV1 input=1100 functional=relational
 (= (gslt:mode:ProofTraceInputBuildContextV1:1100 $request $index)
-   (let (quote (gslt:result:source-proof-trace-input-context-v1:110 $formula)) (once (gslt:fn:source-proof-trace-input-context-v1:110 $request $index))
-   (let (quote (gslt:result:ProofTraceInputBuildContextV1:1100 $count $context)) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1100 $request (quote (ProofTraceNatSuccV1 $index)))))
+   (let (cons gslt:result:source-proof-trace-input-context-v1:110 (cons $formula ())) (once (gslt:fn:source-proof-trace-input-context-v1:110 $request $index))
+   (let (cons gslt:result:ProofTraceInputBuildContextV1:1100 (cons $count (cons $context ()))) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1100 $request (quote (ProofTraceNatSuccV1 $index)))))
    (quote (gslt:result:ProofTraceInputBuildContextV1:1100 $count (ProofTraceContextConsV1 $formula $context))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=222 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-frame-nil-v1 target=mode relation=ProofTraceInputBuildFrameV1 input=1100 functional=relational
@@ -4848,8 +4579,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=223 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-frame-cons-v1 target=mode relation=ProofTraceInputBuildFrameV1 input=1100 functional=relational
 (= (gslt:mode:ProofTraceInputBuildFrameV1:1100 $assertion $index)
-   (let (quote (gslt:result:source-proof-trace-input-frame-v1:110 $entry)) (once (gslt:fn:source-proof-trace-input-frame-v1:110 $assertion $index))
-   (let (quote (gslt:result:ProofTraceInputBuildFrameV1:1100 $count $frame)) (superpose (collapse (gslt:mode:ProofTraceInputBuildFrameV1:1100 $assertion (quote (ProofTraceNatSuccV1 $index)))))
+   (let (cons gslt:result:source-proof-trace-input-frame-v1:110 (cons $entry ())) (once (gslt:fn:source-proof-trace-input-frame-v1:110 $assertion $index))
+   (let (cons gslt:result:ProofTraceInputBuildFrameV1:1100 (cons $count (cons $frame ()))) (superpose (collapse (gslt:mode:ProofTraceInputBuildFrameV1:1100 $assertion (quote (ProofTraceNatSuccV1 $index)))))
    (quote (gslt:result:ProofTraceInputBuildFrameV1:1100 $count (ProofTraceFrameConsV1 $entry $frame))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=324 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-assertion-v1 target=mode relation=source-proof-trace-input-assertion-v1 input=100 functional=semidet
@@ -4857,84 +4588,75 @@
    (quote (gslt:result:source-proof-trace-input-assertion-v1:100 input-wff-v1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=226 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-assertion-v1 target=mode relation=ProofTraceInputAssertionV1 input=010 functional=relational
-(= (gslt:mode:ProofTraceInputAssertionV1:010 $__gslt_input_v1_0_1)
-   (let (quote (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $apartness)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:source-proof-trace-input-assertion-v1:011 $label)) (once (gslt:fn:source-proof-trace-input-assertion-v1:011 $conclusion-type $conclusion-template))
-   (let (quote (gslt:result:source-proof-trace-input-frame-count-v1:10 $frame-count)) (once (gslt:fn:source-proof-trace-input-frame-count-v1:10 $label))
-   (let (quote (gslt:result:source-proof-trace-input-apartness-count-v1:10 $apartness-count)) (once (gslt:fn:source-proof-trace-input-apartness-count-v1:10 $label))
-   (let (quote (gslt:result:ProofTraceInputBuildFrameV1:1110 $frame)) (superpose (collapse (gslt:mode:ProofTraceInputBuildFrameV1:1110 $label ProofTraceNatZeroV1 $frame-count)))
-   (let (quote gslt:result:ProofTraceFrameProjectV1:111) (once (gslt:fn:ProofTraceFrameProjectV1:111 $frame $variables $essentials))
-   (let (quote gslt:result:ProofTraceInputBuildApartnessV1:1111) (once (gslt:fn:ProofTraceInputBuildApartnessV1:1111 $label ProofTraceNatZeroV1 $apartness-count $apartness))
-   (quote (gslt:result:ProofTraceInputAssertionV1:010 $label $frame))))))))))
+(= (gslt:mode:ProofTraceInputAssertionV1:010 (cons ProofAssertionV1 (cons $variables (cons $essentials (cons $conclusion-type (cons $conclusion-template (cons $apartness ())))))))
+   (let (cons gslt:result:source-proof-trace-input-assertion-v1:011 (cons $label ())) (once (gslt:fn:source-proof-trace-input-assertion-v1:011 $conclusion-type $conclusion-template))
+   (let (cons gslt:result:source-proof-trace-input-frame-count-v1:10 (cons $frame-count ())) (once (gslt:fn:source-proof-trace-input-frame-count-v1:10 $label))
+   (let (cons gslt:result:source-proof-trace-input-apartness-count-v1:10 (cons $apartness-count ())) (once (gslt:fn:source-proof-trace-input-apartness-count-v1:10 $label))
+   (let (cons gslt:result:ProofTraceInputBuildFrameV1:1110 (cons $frame ())) (superpose (collapse (gslt:mode:ProofTraceInputBuildFrameV1:1110 $label ProofTraceNatZeroV1 $frame-count)))
+   (let gslt:result:ProofTraceFrameProjectV1:111 (once (gslt:fn:ProofTraceFrameProjectV1:111 $frame $variables $essentials))
+   (let gslt:result:ProofTraceInputBuildApartnessV1:1111 (once (gslt:fn:ProofTraceInputBuildApartnessV1:1111 $label ProofTraceNatZeroV1 $apartness-count $apartness))
+   (quote (gslt:result:ProofTraceInputAssertionV1:010 $label $frame)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=201 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-compressed-accepted-v1 target=mode relation=ProofTraceCompileCompressedAcceptedV1 input=10001 functional=relational
 (= (gslt:mode:ProofTraceCompileCompressedAcceptedV1:10001 $context $target)
-   (let (quote (gslt:result:ProofTraceCompileCompressedV1:0000 $initial-labels $explicit-labels $codes $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileCompressedV1:0000)))
-   (let (quote gslt:result:ProofTraceAcceptedV1:111) (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:111 $context $trace $target)))
+   (let (cons gslt:result:ProofTraceCompileCompressedV1:0000 (cons $initial-labels (cons $explicit-labels (cons $codes (cons $trace ()))))) (superpose (collapse (gslt:mode:ProofTraceCompileCompressedV1:0000)))
+   (let gslt:result:ProofTraceAcceptedV1:111 (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:111 $context $trace $target)))
    (quote (gslt:result:ProofTraceCompileCompressedAcceptedV1:10001 $initial-labels $explicit-labels $codes)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=202 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-compressed-incomplete-accepted-v1 target=mode relation=ProofTraceCompileCompressedIncompleteAcceptedV1 input=10001 functional=relational
 (= (gslt:mode:ProofTraceCompileCompressedIncompleteAcceptedV1:10001 $context $target)
-   (let (quote (gslt:result:ProofTraceCompileDictionaryV1:000 $initial-labels $explicit-labels $dictionary)) (superpose (collapse (gslt:mode:ProofTraceCompileDictionaryV1:000)))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target ProofTraceStatusIncompleteV1 $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target ProofTraceStatusIncompleteV1 $trace))
-   (let (quote gslt:result:ProofTraceAcceptedV1:111) (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:111 $context $trace $target)))
+   (let (cons gslt:result:ProofTraceCompileDictionaryV1:000 (cons $initial-labels (cons $explicit-labels (cons $dictionary ())))) (superpose (collapse (gslt:mode:ProofTraceCompileDictionaryV1:000)))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons ProofTraceStatusIncompleteV1 (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target ProofTraceStatusIncompleteV1 $trace))
+   (let gslt:result:ProofTraceAcceptedV1:111 (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:111 $context $trace $target)))
    (quote (gslt:result:ProofTraceCompileCompressedIncompleteAcceptedV1:10001 $initial-labels $explicit-labels $codes))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=13 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-class-literal-v1 target=mode relation=ProofSequenceInstantiateClassV1 input=11001 functional=relational
-(= (gslt:mode:ProofSequenceInstantiateClassV1:11001 $__gslt_input_v1_0_0 $v0 $__gslt_input_v1_0_4)
-   (let (quote (ProofTokenLiteralClassV1)) $__gslt_input_v1_0_0
-   (let (quote (ProofSequenceConsV1 $v0 $v3)) $__gslt_input_v1_0_4
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:001 $v1 $v2)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:001 $v3)))
-   (quote (gslt:result:ProofSequenceInstantiateClassV1:11001 $v1 $v2))))))
+(= (gslt:mode:ProofSequenceInstantiateClassV1:11001 (cons ProofTokenLiteralClassV1 ()) $v0 (cons ProofSequenceConsV1 (cons $v0 (cons $v3 ()))))
+   (let (cons gslt:result:ProofSequenceInstantiateV1:001 (cons $v1 (cons $v2 ()))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:001 $v3)))
+   (quote (gslt:result:ProofSequenceInstantiateClassV1:11001 $v1 $v2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=14 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-class-variable-v1 target=mode relation=ProofSequenceInstantiateClassV1 input=11001 functional=relational
-(= (gslt:mode:ProofSequenceInstantiateClassV1:11001 $__gslt_input_v1_0_0 $v0 $v5)
-   (let (quote (ProofTokenVariableClassV1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:010 $v2 $v3)) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $v0)))
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:000 $v1 $v2 $v4)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
-   (let (quote (ProofSequenceAppendV1 $v3 $v4 $v5)) (gslt:ProofSequenceAppendV1 (ProofSequenceAppendV1 $v3 $v4 $v5))
-   (quote (gslt:result:ProofSequenceInstantiateClassV1:11001 $v1 $v2)))))))
+(= (gslt:mode:ProofSequenceInstantiateClassV1:11001 (cons ProofTokenVariableClassV1 ()) $v0 $v5)
+   (let (cons gslt:result:ProofEnvironmentLookupV1:010 (cons $v2 (cons $v3 ()))) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $v0)))
+   (let (cons gslt:result:ProofSequenceInstantiateV1:000 (cons $v1 (cons $v2 (cons $v4 ())))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
+   (let (cons ProofSequenceAppendV1 (cons $v3 (cons $v4 (cons $v5 ())))) (gslt:ProofSequenceAppendV1 (ProofSequenceAppendV1 $v3 $v4 $v5))
+   (quote (gslt:result:ProofSequenceInstantiateClassV1:11001 $v1 $v2))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=111 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-heads-equal-v1 target=mode relation=ProofSequenceCompareHeadsV1 input=1010 functional=relational
-(= (gslt:mode:ProofSequenceCompareHeadsV1:1010 $__gslt_input_v1_0_0 $right-rest)
-   (let (quote (ProofTokenEqualV1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceCompareV1:010 $left-rest $result)) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:010 $right-rest)))
-   (quote (gslt:result:ProofSequenceCompareHeadsV1:1010 $left-rest $result)))))
+(= (gslt:mode:ProofSequenceCompareHeadsV1:1010 (cons ProofTokenEqualV1 ()) $right-rest)
+   (let (cons gslt:result:ProofSequenceCompareV1:010 (cons $left-rest (cons $result ()))) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:010 $right-rest)))
+   (quote (gslt:result:ProofSequenceCompareHeadsV1:1010 $left-rest $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=112 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-heads-unequal-v1 target=mode relation=ProofSequenceCompareHeadsV1 input=1010 functional=relational
-(= (gslt:mode:ProofSequenceCompareHeadsV1:1010 $__gslt_input_v1_0_0 $right-rest)
-   (let (quote (ProofTokenUnequalV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofSequenceCompareHeadsV1:1010 $left-rest ProofSequenceDifferentV1))))
+(= (gslt:mode:ProofSequenceCompareHeadsV1:1010 (cons ProofTokenUnequalV1 ()) $right-rest)
+   (quote (gslt:result:ProofSequenceCompareHeadsV1:1010 $left-rest ProofSequenceDifferentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=13 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-class-literal-v1 target=mode relation=ProofSequenceInstantiateClassV1 input=11100 functional=relational
-(= (gslt:mode:ProofSequenceInstantiateClassV1:11100 $__gslt_input_v1_0_0 $v0 $v1)
-   (let (quote (ProofTokenLiteralClassV1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:100 $v2 $v3)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:100 $v1)))
-   (quote (gslt:result:ProofSequenceInstantiateClassV1:11100 $v2 (ProofSequenceConsV1 $v0 $v3))))))
+(= (gslt:mode:ProofSequenceInstantiateClassV1:11100 (cons ProofTokenLiteralClassV1 ()) $v0 $v1)
+   (let (cons gslt:result:ProofSequenceInstantiateV1:100 (cons $v2 (cons $v3 ()))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:100 $v1)))
+   (quote (gslt:result:ProofSequenceInstantiateClassV1:11100 $v2 (ProofSequenceConsV1 $v0 $v3)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=14 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-class-variable-v1 target=mode relation=ProofSequenceInstantiateClassV1 input=11100 functional=relational
-(= (gslt:mode:ProofSequenceInstantiateClassV1:11100 $__gslt_input_v1_0_0 $v0 $v1)
-   (let (quote (ProofTokenVariableClassV1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:010 $v2 $v3)) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $v0)))
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:100 $v2 $v4)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:100 $v1)))
-   (let (quote (ProofSequenceAppendV1 $v3 $v4 $v5)) (gslt:ProofSequenceAppendV1 (ProofSequenceAppendV1 $v3 $v4 $v5))
-   (quote (gslt:result:ProofSequenceInstantiateClassV1:11100 $v2 $v5)))))))
+(= (gslt:mode:ProofSequenceInstantiateClassV1:11100 (cons ProofTokenVariableClassV1 ()) $v0 $v1)
+   (let (cons gslt:result:ProofEnvironmentLookupV1:010 (cons $v2 (cons $v3 ()))) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $v0)))
+   (let (cons gslt:result:ProofSequenceInstantiateV1:100 (cons $v2 (cons $v4 ()))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:100 $v1)))
+   (let (cons ProofSequenceAppendV1 (cons $v3 (cons $v4 (cons $v5 ())))) (gslt:ProofSequenceAppendV1 (ProofSequenceAppendV1 $v3 $v4 $v5))
+   (quote (gslt:result:ProofSequenceInstantiateClassV1:11100 $v2 $v5))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=54 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-disjoints-succeeded-v1 target=mode relation=ProofTraceRealizeDisjointsResultV1 input=100000 functional=relational
 (= (gslt:mode:ProofTraceRealizeDisjointsResultV1:100000 ProofTraceDisjointSucceededV1)
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:000 $conclusion-template $environment $result)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
+   (let (cons gslt:result:ProofSequenceInstantiateV1:000 (cons $conclusion-template (cons $environment (cons $result ())))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
    (quote (gslt:result:ProofTraceRealizeDisjointsResultV1:100000 $conclusion-type $conclusion-template $environment $rest (ProofTraceRealizeSucceededV1 (ProofTraceStackConsV1 (ProofSequenceConsV1 $conclusion-type $result) $rest))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=55 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-disjoints-refused-v1 target=mode relation=ProofTraceRealizeDisjointsResultV1 input=100000 functional=relational
-(= (gslt:mode:ProofTraceRealizeDisjointsResultV1:100000 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceRealizeDisjointsResultV1:100000 $conclusion-type $conclusion-template $environment $rest (ProofTraceRealizeRefusedV1 (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right))))))
+(= (gslt:mode:ProofTraceRealizeDisjointsResultV1:100000 (cons ProofTraceRefusedDisjointV1 (cons $required-left (cons $required-right (cons $actual-left (cons $actual-right ()))))))
+   (quote (gslt:result:ProofTraceRealizeDisjointsResultV1:100000 $conclusion-type $conclusion-template $environment $rest (ProofTraceRealizeRefusedV1 (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=51 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-frame-applied-v1 target=mode relation=ProofTraceRealizeFrameResultV1 input=0111110 functional=relational
 (= (gslt:mode:ProofTraceRealizeFrameResultV1:0111110 $variables $essentials $conclusion-type $conclusion-template $disjoints)
-   (let (quote (gslt:result:ProofTraceBuildEnvironmentV1:100 $images $environment)) (superpose (collapse (gslt:mode:ProofTraceBuildEnvironmentV1:100 $variables)))
-   (let (quote (gslt:result:ProofTraceCheckEssentialsResultV1:1000 $actuals $environment $essentials-result)) (superpose (collapse (gslt:mode:ProofTraceCheckEssentialsResultV1:1000 $essentials)))
-   (let (quote (gslt:result:ProofTraceRealizeEssentialsResultV1:0111000 $essentials-result $environment $rest $result)) (superpose (collapse (gslt:mode:ProofTraceRealizeEssentialsResultV1:0111000 $conclusion-type $conclusion-template $disjoints)))
+   (let (cons gslt:result:ProofTraceBuildEnvironmentV1:100 (cons $images (cons $environment ()))) (superpose (collapse (gslt:mode:ProofTraceBuildEnvironmentV1:100 $variables)))
+   (let (cons gslt:result:ProofTraceCheckEssentialsResultV1:1000 (cons $actuals (cons $environment (cons $essentials-result ())))) (superpose (collapse (gslt:mode:ProofTraceCheckEssentialsResultV1:1000 $essentials)))
+   (let (cons gslt:result:ProofTraceRealizeEssentialsResultV1:0111000 (cons $essentials-result (cons $environment (cons $rest (cons $result ()))))) (superpose (collapse (gslt:mode:ProofTraceRealizeEssentialsResultV1:0111000 $conclusion-type $conclusion-template $disjoints)))
    (quote (gslt:result:ProofTraceRealizeFrameResultV1:0111110 (ProofTraceFrameAppliedV1 $images $actuals $rest) $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=52 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-frame-refused-v1 target=mode relation=ProofTraceRealizeFrameResultV1 input=0111110 functional=relational
@@ -4943,8 +4665,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=75 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-declared-assertion-result-v1 target=mode relation=ProofTraceApplyAssertionResultV1 input=0010 functional=relational
 (= (gslt:mode:ProofTraceApplyAssertionResultV1:0010 $input)
-   (let (quote (gslt:result:ProofAssertionDeclaredV1:0 (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints))) (superpose (collapse (gslt:mode:ProofAssertionDeclaredV1:0)))
-   (let (quote (gslt:result:ProofTraceRealizeAssertionResultV1:1010 $frame $result)) (superpose (collapse (gslt:mode:ProofTraceRealizeAssertionResultV1:1010 (quote (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints)) $input)))
+   (let (cons gslt:result:ProofAssertionDeclaredV1:0 (cons (cons ProofAssertionV1 (cons $variables (cons $essentials (cons $conclusion-type (cons $conclusion-template (cons $disjoints ())))))) ())) (superpose (collapse (gslt:mode:ProofAssertionDeclaredV1:0)))
+   (let (cons gslt:result:ProofTraceRealizeAssertionResultV1:1010 (cons $frame (cons $result ()))) (superpose (collapse (gslt:mode:ProofTraceRealizeAssertionResultV1:1010 (quote (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints)) $input)))
    (quote (gslt:result:ProofTraceApplyAssertionResultV1:0010 (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints) $frame $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=95 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-nil-v1 target=mode relation=ProofTraceExecStateResultV1 input=00010 functional=relational
@@ -4954,54 +4676,51 @@
 ; gslt-lowered-equation-v1 source-rewrite=96 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-push-v1 target=mode relation=ProofTraceExecStateResultV1 input=00010 functional=relational
 (= (gslt:mode:ProofTraceExecStateResultV1:00010 $saved)
    (let $_ (gslt:ProofTraceContextMemberV1 (ProofTraceContextMemberV1 $context $formula))
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:00010 $context $trace (ProofTraceStackConsV1 $formula $stack) $result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00010 $saved)))
+   (let (cons gslt:result:ProofTraceExecStateResultV1:00010 (cons $context (cons $trace (cons (cons ProofTraceStackConsV1 (cons $formula (cons $stack ()))) (cons $result ()))))) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00010 $saved)))
    (quote (gslt:result:ProofTraceExecStateResultV1:00010 $context (ProofTraceConsV1 (ProofTracePushV1 $formula) $trace) $stack $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=97 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-apply-v1 target=mode relation=ProofTraceExecStateResultV1 input=00010 functional=relational
 (= (gslt:mode:ProofTraceExecStateResultV1:00010 $saved)
-   (let (quote (ProofTraceFrameStackDepthV1 $frame $stack $depth-result)) (gslt:ProofTraceFrameStackDepthV1 (ProofTraceFrameStackDepthV1 $frame $stack $depth-result))
-   (let (quote (gslt:result:ProofTraceApplyDepthResultV1:10000010 $context $trace $assertion $frame $stack $result)) (superpose (collapse (gslt:mode:ProofTraceApplyDepthResultV1:10000010 $depth-result $saved)))
+   (let (cons ProofTraceFrameStackDepthV1 (cons $frame (cons $stack (cons $depth-result ())))) (gslt:ProofTraceFrameStackDepthV1 (ProofTraceFrameStackDepthV1 $frame $stack $depth-result))
+   (let (cons gslt:result:ProofTraceApplyDepthResultV1:10000010 (cons $context (cons $trace (cons $assertion (cons $frame (cons $stack (cons $result ()))))))) (superpose (collapse (gslt:mode:ProofTraceApplyDepthResultV1:10000010 $depth-result $saved)))
    (quote (gslt:result:ProofTraceExecStateResultV1:00010 $context (ProofTraceConsV1 (ProofTraceApplyV1 $assertion $frame) $trace) $stack $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=102 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-incomplete-v1 target=mode relation=ProofTraceExecStateResultV1 input=00010 functional=relational
 (= (gslt:mode:ProofTraceExecStateResultV1:00010 $saved)
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:00010 $context $trace (ProofTraceStackConsV1 $formula $stack) $result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00010 $saved)))
+   (let (cons gslt:result:ProofTraceExecStateResultV1:00010 (cons $context (cons $trace (cons (cons ProofTraceStackConsV1 (cons $formula (cons $stack ()))) (cons $result ()))))) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00010 $saved)))
    (quote (gslt:result:ProofTraceExecStateResultV1:00010 $context (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $formula) $trace) $stack $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=103 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-save-v1 target=mode relation=ProofTraceExecStateResultV1 input=00010 functional=relational
 (= (gslt:mode:ProofTraceExecStateResultV1:00010 $saved)
-   (let (quote (ProofTraceSavedAppendV1 $saved $formula $next-saved)) (gslt:ProofTraceSavedAppendV1 (ProofTraceSavedAppendV1 $saved $formula $next-saved))
+   (let (cons ProofTraceSavedAppendV1 (cons $saved (cons $formula (cons $next-saved ())))) (gslt:ProofTraceSavedAppendV1 (ProofTraceSavedAppendV1 $saved $formula $next-saved))
    (let $_ (gslt:ProofTraceExecStateResultV1 (ProofTraceExecStateResultV1 $context $trace (ProofTraceStackConsV1 $formula $stack) $next-saved $result))
    (quote (gslt:result:ProofTraceExecStateResultV1:00010 $context (ProofTraceConsV1 ProofTraceSaveV1 $trace) (ProofTraceStackConsV1 $formula $stack) $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=104 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-restore-v1 target=mode relation=ProofTraceExecStateResultV1 input=00010 functional=relational
 (= (gslt:mode:ProofTraceExecStateResultV1:00010 $saved)
-   (let (quote (ProofTraceSavedLookupResultV1 $index $saved $lookup-result)) (gslt:ProofTraceSavedLookupResultV1 (ProofTraceSavedLookupResultV1 $index $saved $lookup-result))
-   (let (quote (gslt:result:ProofTraceRestoreLookupExecutionResultV1:000010 $lookup-result $context $trace $stack $result)) (superpose (collapse (gslt:mode:ProofTraceRestoreLookupExecutionResultV1:000010 $saved)))
+   (let (cons ProofTraceSavedLookupResultV1 (cons $index (cons $saved (cons $lookup-result ())))) (gslt:ProofTraceSavedLookupResultV1 (ProofTraceSavedLookupResultV1 $index $saved $lookup-result))
+   (let (cons gslt:result:ProofTraceRestoreLookupExecutionResultV1:000010 (cons $lookup-result (cons $context (cons $trace (cons $stack (cons $result ())))))) (superpose (collapse (gslt:mode:ProofTraceRestoreLookupExecutionResultV1:000010 $saved)))
    (quote (gslt:result:ProofTraceExecStateResultV1:00010 $context (ProofTraceConsV1 (ProofTraceRestoreV1 $index) $trace) $stack $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=82 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-lookup-from-zero-found-v1 target=mode relation=ProofTraceSavedLookupFromV1 input=0010 functional=relational
-(= (gslt:mode:ProofTraceSavedLookupFromV1:0010 $__gslt_input_v1_0_2)
-   (let (quote (ProofTraceSavedConsV1 $formula $rest)) $__gslt_input_v1_0_2
-   (quote (gslt:result:ProofTraceSavedLookupFromV1:0010 $requested ProofTraceNatZeroV1 (ProofTraceSavedFoundV1 $formula)))))
+(= (gslt:mode:ProofTraceSavedLookupFromV1:0010 (cons ProofTraceSavedConsV1 (cons $formula (cons $rest ()))))
+   (quote (gslt:result:ProofTraceSavedLookupFromV1:0010 $requested ProofTraceNatZeroV1 (ProofTraceSavedFoundV1 $formula))))
 
 ; gslt-lowered-equation-v1 source-rewrite=83 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-lookup-from-succ-v1 target=mode relation=ProofTraceSavedLookupFromV1 input=0010 functional=relational
-(= (gslt:mode:ProofTraceSavedLookupFromV1:0010 $__gslt_input_v1_0_2)
-   (let (quote (ProofTraceSavedConsV1 $head $rest)) $__gslt_input_v1_0_2
-   (let (quote (ProofTraceSavedLookupFromV1 $requested $index $rest $result)) (gslt:ProofTraceSavedLookupFromV1 (ProofTraceSavedLookupFromV1 $requested $index $rest $result))
-   (quote (gslt:result:ProofTraceSavedLookupFromV1:0010 $requested (ProofTraceNatSuccV1 $index) $result)))))
+(= (gslt:mode:ProofTraceSavedLookupFromV1:0010 (cons ProofTraceSavedConsV1 (cons $head (cons $rest ()))))
+   (let (cons ProofTraceSavedLookupFromV1 (cons $requested (cons $index (cons $rest (cons $result ()))))) (gslt:ProofTraceSavedLookupFromV1 (ProofTraceSavedLookupFromV1 $requested $index $rest $result))
+   (quote (gslt:result:ProofTraceSavedLookupFromV1:0010 $requested (ProofTraceNatSuccV1 $index) $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=84 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-lookup-from-missing-v1 target=mode relation=ProofTraceSavedLookupFromV1 input=0010 functional=relational
 (= (gslt:mode:ProofTraceSavedLookupFromV1:0010 ProofTraceSavedNilV1)
    (quote (gslt:result:ProofTraceSavedLookupFromV1:0010 $requested $index (ProofTraceSavedMissingV1 $requested))))
 
 ; gslt-lowered-equation-v1 source-rewrite=50 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-assertion-result-v1 target=mode relation=ProofTraceRealizeAssertionResultV1 input=1010 functional=relational
-(= (gslt:mode:ProofTraceRealizeAssertionResultV1:1010 $__gslt_input_v1_0_0 $input)
-   (let (quote (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceFrameProjectV1 $frame $variables $essentials)) (gslt:ProofTraceFrameProjectV1 (ProofTraceFrameProjectV1 $frame $variables $essentials))
-   (let (quote (gslt:result:ProofTraceFrameApplyResultV1:110 $frame-result)) (once (gslt:fn:ProofTraceFrameApplyResultV1:110 $frame $input))
-   (let (quote (gslt:result:ProofTraceRealizeFrameResultV1:1111110 $result)) (superpose (collapse (gslt:mode:ProofTraceRealizeFrameResultV1:1111110 $frame-result $variables $essentials $conclusion-type $conclusion-template $disjoints)))
-   (quote (gslt:result:ProofTraceRealizeAssertionResultV1:1010 $frame $result)))))))
+(= (gslt:mode:ProofTraceRealizeAssertionResultV1:1010 (cons ProofAssertionV1 (cons $variables (cons $essentials (cons $conclusion-type (cons $conclusion-template (cons $disjoints ())))))) $input)
+   (let (cons ProofTraceFrameProjectV1 (cons $frame (cons $variables (cons $essentials ())))) (gslt:ProofTraceFrameProjectV1 (ProofTraceFrameProjectV1 $frame $variables $essentials))
+   (let (cons gslt:result:ProofTraceFrameApplyResultV1:110 (cons $frame-result ())) (once (gslt:fn:ProofTraceFrameApplyResultV1:110 $frame $input))
+   (let (cons gslt:result:ProofTraceRealizeFrameResultV1:1111110 (cons $result ())) (superpose (collapse (gslt:mode:ProofTraceRealizeFrameResultV1:1111110 $frame-result $variables $essentials $conclusion-type $conclusion-template $disjoints)))
+   (quote (gslt:result:ProofTraceRealizeAssertionResultV1:1010 $frame $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=98 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-depth-underflow-v1 target=mode relation=ProofTraceApplyDepthResultV1 input=10000110 functional=relational
 (= (gslt:mode:ProofTraceApplyDepthResultV1:10000110 ProofTraceFrameStackUnderflowV1 $stack $saved)
@@ -5009,8 +4728,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=99 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-depth-fits-v1 target=mode relation=ProofTraceApplyDepthResultV1 input=10000110 functional=relational
 (= (gslt:mode:ProofTraceApplyDepthResultV1:10000110 ProofTraceFrameStackFitsV1 $stack $saved)
-   (let (quote (gslt:result:ProofTraceApplyAssertionResultV1:0010 $assertion $frame $application-result)) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionResultV1:0010 $stack)))
-   (let (quote (gslt:result:ProofTraceApplyExecutionResultV1:100110 $context $trace $result)) (superpose (collapse (gslt:mode:ProofTraceApplyExecutionResultV1:100110 $application-result $stack $saved)))
+   (let (cons gslt:result:ProofTraceApplyAssertionResultV1:0010 (cons $assertion (cons $frame (cons $application-result ())))) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionResultV1:0010 $stack)))
+   (let (cons gslt:result:ProofTraceApplyExecutionResultV1:100110 (cons $context (cons $trace (cons $result ())))) (superpose (collapse (gslt:mode:ProofTraceApplyExecutionResultV1:100110 $application-result $stack $saved)))
    (quote (gslt:result:ProofTraceApplyDepthResultV1:10000110 $context $trace $assertion $frame $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=98 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-depth-underflow-v1 target=mode relation=ProofTraceApplyDepthResultV1 input=10111110 functional=relational
@@ -5019,54 +4738,50 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=99 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-depth-fits-v1 target=mode relation=ProofTraceApplyDepthResultV1 input=10111110 functional=relational
 (= (gslt:mode:ProofTraceApplyDepthResultV1:10111110 ProofTraceFrameStackFitsV1 $trace $assertion $frame $stack $saved)
-   (let (quote (gslt:result:ProofTraceApplyAssertionResultV1:1110 $application-result)) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionResultV1:1110 $assertion $frame $stack)))
-   (let (quote (gslt:result:ProofTraceApplyExecutionResultV1:101110 $context $result)) (superpose (collapse (gslt:mode:ProofTraceApplyExecutionResultV1:101110 $application-result $trace $stack $saved)))
+   (let (cons gslt:result:ProofTraceApplyAssertionResultV1:1110 (cons $application-result ())) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionResultV1:1110 $assertion $frame $stack)))
+   (let (cons gslt:result:ProofTraceApplyExecutionResultV1:101110 (cons $context (cons $result ()))) (superpose (collapse (gslt:mode:ProofTraceApplyExecutionResultV1:101110 $application-result $trace $stack $saved)))
    (quote (gslt:result:ProofTraceApplyDepthResultV1:10111110 $context $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=105 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-restore-lookup-found-v1 target=mode relation=ProofTraceRestoreLookupExecutionResultV1 input=101110 functional=relational
-(= (gslt:mode:ProofTraceRestoreLookupExecutionResultV1:101110 $__gslt_input_v1_0_0 $trace $stack $saved)
-   (let (quote (ProofTraceSavedFoundV1 $formula)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:01110 $context $result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:01110 $trace (quote (ProofTraceStackConsV1 $formula $stack)) $saved)))
-   (quote (gslt:result:ProofTraceRestoreLookupExecutionResultV1:101110 $context $result)))))
+(= (gslt:mode:ProofTraceRestoreLookupExecutionResultV1:101110 (cons ProofTraceSavedFoundV1 (cons $formula ())) $trace $stack $saved)
+   (let (cons gslt:result:ProofTraceExecStateResultV1:01110 (cons $context (cons $result ()))) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:01110 $trace (quote (ProofTraceStackConsV1 $formula $stack)) $saved)))
+   (quote (gslt:result:ProofTraceRestoreLookupExecutionResultV1:101110 $context $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=106 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-restore-lookup-missing-v1 target=mode relation=ProofTraceRestoreLookupExecutionResultV1 input=101110 functional=relational
-(= (gslt:mode:ProofTraceRestoreLookupExecutionResultV1:101110 $__gslt_input_v1_0_0 $trace $stack $saved)
-   (let (quote (ProofTraceSavedMissingV1 $index)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceRestoreLookupExecutionResultV1:101110 $context (ProofTraceExecRefusedV1 (ProofTraceRefusedSavedStepOutOfRangeV1 $index) $stack $saved)))))
+(= (gslt:mode:ProofTraceRestoreLookupExecutionResultV1:101110 (cons ProofTraceSavedMissingV1 (cons $index ())) $trace $stack $saved)
+   (quote (gslt:result:ProofTraceRestoreLookupExecutionResultV1:101110 $context (ProofTraceExecRefusedV1 (ProofTraceRefusedSavedStepOutOfRangeV1 $index) $stack $saved))))
 
 ; gslt-lowered-equation-v1 source-rewrite=180 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-terminal-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10001110 functional=relational
-(= (gslt:mode:ProofTraceDecodeCodeClassV1:10001110 $__gslt_input_v1_0_0 $phase $target $status)
-   (let (quote (ProofTraceTerminalCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $number)) (gslt:ProofTraceNatMulAddV1 (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $number))
-   (let (quote (ProofTraceDictionaryResolveV1 $number $dictionary $instruction)) (gslt:ProofTraceDictionaryResolveV1 (ProofTraceDictionaryResolveV1 $number $dictionary $instruction))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10001110 $dictionary $codes $accumulator (ProofTraceConsV1 $instruction $trace))))))))))
+(= (gslt:mode:ProofTraceDecodeCodeClassV1:10001110 (cons ProofTraceTerminalCodeV1 (cons $digit (cons $radix ()))) $phase $target $status)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons ProofTraceNatMulAddV1 (cons $canonical-radix (cons $accumulator (cons $canonical-digit (cons $number ()))))) (gslt:ProofTraceNatMulAddV1 (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $number))
+   (let (cons ProofTraceDictionaryResolveV1 (cons $number (cons $dictionary (cons $instruction ())))) (gslt:ProofTraceDictionaryResolveV1 (ProofTraceDictionaryResolveV1 $number $dictionary $instruction))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseJustCompletedV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10001110 $dictionary $codes $accumulator (ProofTraceConsV1 $instruction $trace)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-continuation-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10001110 functional=relational
-(= (gslt:mode:ProofTraceDecodeCodeClassV1:10001110 $__gslt_input_v1_0_0 $phase $target $status)
-   (let (quote (ProofTraceContinuationCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $next-accumulator)) (gslt:ProofTraceNatMulAddV1 (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $next-accumulator))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10001110 $dictionary $codes $accumulator $trace))))))))
+(= (gslt:mode:ProofTraceDecodeCodeClassV1:10001110 (cons ProofTraceContinuationCodeV1 (cons $digit (cons $radix ()))) $phase $target $status)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons ProofTraceNatMulAddV1 (cons $canonical-radix (cons $accumulator (cons $canonical-digit (cons $next-accumulator ()))))) (gslt:ProofTraceNatMulAddV1 (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $next-accumulator))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons $next-accumulator (cons ProofTracePhaseOpenIndexV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10001110 $dictionary $codes $accumulator $trace)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=185 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-save-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10001110 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:10001110 ProofTraceSaveCodeV1 $phase $target $status)
-   (let (quote (gslt:result:ProofTraceSavePhaseTransitionV1:10 $next-phase)) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
+   (let (cons gslt:result:ProofTraceSavePhaseTransitionV1:10 (cons $next-phase ())) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons $next-phase (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:10001110 $dictionary $codes ProofTraceNatZeroV1 (ProofTraceConsV1 ProofTraceSaveV1 $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=186 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-between-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10001110 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:10001110 ProofTraceIncompleteCodeV1 ProofTracePhaseBetweenV1 $target ProofTraceStatusIncompleteV1)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:10001110 $dictionary $codes ProofTraceNatZeroV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=187 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-completed-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10001110 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:10001110 ProofTraceIncompleteCodeV1 ProofTracePhaseJustCompletedV1 $target ProofTraceStatusIncompleteV1)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:10001110 $dictionary $codes ProofTraceNatZeroV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=173 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-dictionary-resolve-index-zero-v1 target=mode relation=ProofTraceDictionaryResolveIndexV1 input=100 functional=relational
@@ -5074,83 +4789,78 @@
    (quote (gslt:result:ProofTraceDictionaryResolveIndexV1:100 (ProofTraceInstructionConsV1 $instruction $rest) $instruction)))
 
 ; gslt-lowered-equation-v1 source-rewrite=174 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-dictionary-resolve-index-succ-v1 target=mode relation=ProofTraceDictionaryResolveIndexV1 input=100 functional=relational
-(= (gslt:mode:ProofTraceDictionaryResolveIndexV1:100 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceNatSuccV1 $index)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceDictionaryResolveV1 (ProofTraceNatSuccV1 $index) $rest $instruction)) (gslt:ProofTraceDictionaryResolveV1 (ProofTraceDictionaryResolveV1 (ProofTraceNatSuccV1 $index) $rest $instruction))
-   (quote (gslt:result:ProofTraceDictionaryResolveIndexV1:100 (ProofTraceInstructionConsV1 $head $rest) $instruction)))))
+(= (gslt:mode:ProofTraceDictionaryResolveIndexV1:100 (cons ProofTraceNatSuccV1 (cons $index ())))
+   (let (cons ProofTraceDictionaryResolveV1 (cons (cons ProofTraceNatSuccV1 (cons $index ())) (cons $rest (cons $instruction ())))) (gslt:ProofTraceDictionaryResolveV1 (ProofTraceDictionaryResolveV1 (ProofTraceNatSuccV1 $index) $rest $instruction))
+   (quote (gslt:result:ProofTraceDictionaryResolveIndexV1:100 (ProofTraceInstructionConsV1 $head $rest) $instruction))))
 
 ; gslt-lowered-equation-v1 source-rewrite=175 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-dictionary-resolve-index-saved-v1 target=mode relation=ProofTraceDictionaryResolveIndexV1 input=100 functional=relational
 (= (gslt:mode:ProofTraceDictionaryResolveIndexV1:100 $index)
    (quote (gslt:result:ProofTraceDictionaryResolveIndexV1:100 ProofTraceInstructionNilV1 (ProofTraceRestoreV1 $index))))
 
 ; gslt-lowered-equation-v1 source-rewrite=180 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-terminal-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011000 functional=relational
-(= (gslt:mode:ProofTraceDecodeCodeClassV1:11011000 $__gslt_input_v1_0_0 $dictionary $accumulator $phase)
-   (let (quote (ProofTraceTerminalCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $number)) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
-   (let (quote (gslt:result:ProofTraceDictionaryResolveV1:110 $instruction)) (once (gslt:fn:ProofTraceDictionaryResolveV1:110 $number $dictionary))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011000 $codes $target $status (ProofTraceConsV1 $instruction $trace))))))))))
+(= (gslt:mode:ProofTraceDecodeCodeClassV1:11011000 (cons ProofTraceTerminalCodeV1 (cons $digit (cons $radix ()))) $dictionary $accumulator $phase)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $number ())) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
+   (let (cons gslt:result:ProofTraceDictionaryResolveV1:110 (cons $instruction ())) (once (gslt:fn:ProofTraceDictionaryResolveV1:110 $number $dictionary))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseJustCompletedV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011000 $codes $target $status (ProofTraceConsV1 $instruction $trace)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-continuation-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011000 functional=relational
-(= (gslt:mode:ProofTraceDecodeCodeClassV1:11011000 $__gslt_input_v1_0_0 $dictionary $accumulator $phase)
-   (let (quote (ProofTraceContinuationCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $next-accumulator)) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011000 $codes $target $status $trace))))))))
+(= (gslt:mode:ProofTraceDecodeCodeClassV1:11011000 (cons ProofTraceContinuationCodeV1 (cons $digit (cons $radix ()))) $dictionary $accumulator $phase)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $next-accumulator ())) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons $next-accumulator (cons ProofTracePhaseOpenIndexV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011000 $codes $target $status $trace)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=185 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-save-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011000 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:11011000 ProofTraceSaveCodeV1 $dictionary ProofTraceNatZeroV1 $phase)
-   (let (quote (gslt:result:ProofTraceSavePhaseTransitionV1:10 $next-phase)) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
+   (let (cons gslt:result:ProofTraceSavePhaseTransitionV1:10 (cons $next-phase ())) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons $next-phase (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011000 $codes $target $status (ProofTraceConsV1 ProofTraceSaveV1 $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=186 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-between-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011000 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:11011000 ProofTraceIncompleteCodeV1 $dictionary ProofTraceNatZeroV1 ProofTracePhaseBetweenV1)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011000 $codes $target ProofTraceStatusIncompleteV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=187 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-completed-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011000 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:11011000 ProofTraceIncompleteCodeV1 $dictionary ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011000 $codes $target ProofTraceStatusIncompleteV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=180 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-terminal-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10011000 functional=relational
-(= (gslt:mode:ProofTraceDecodeCodeClassV1:10011000 $__gslt_input_v1_0_0 $accumulator $phase)
-   (let (quote (ProofTraceTerminalCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $number)) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
-   (let (quote (ProofTraceDictionaryResolveV1 $number $dictionary $instruction)) (gslt:ProofTraceDictionaryResolveV1 (ProofTraceDictionaryResolveV1 $number $dictionary $instruction))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011000 $dictionary $codes $target $status (ProofTraceConsV1 $instruction $trace))))))))))
+(= (gslt:mode:ProofTraceDecodeCodeClassV1:10011000 (cons ProofTraceTerminalCodeV1 (cons $digit (cons $radix ()))) $accumulator $phase)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $number ())) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
+   (let (cons ProofTraceDictionaryResolveV1 (cons $number (cons $dictionary (cons $instruction ())))) (gslt:ProofTraceDictionaryResolveV1 (ProofTraceDictionaryResolveV1 $number $dictionary $instruction))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseJustCompletedV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011000 $dictionary $codes $target $status (ProofTraceConsV1 $instruction $trace)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-continuation-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10011000 functional=relational
-(= (gslt:mode:ProofTraceDecodeCodeClassV1:10011000 $__gslt_input_v1_0_0 $accumulator $phase)
-   (let (quote (ProofTraceContinuationCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $next-accumulator)) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011000 $dictionary $codes $target $status $trace))))))))
+(= (gslt:mode:ProofTraceDecodeCodeClassV1:10011000 (cons ProofTraceContinuationCodeV1 (cons $digit (cons $radix ()))) $accumulator $phase)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $next-accumulator ())) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons $next-accumulator (cons ProofTracePhaseOpenIndexV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011000 $dictionary $codes $target $status $trace)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=185 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-save-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10011000 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:10011000 ProofTraceSaveCodeV1 ProofTraceNatZeroV1 $phase)
-   (let (quote (gslt:result:ProofTraceSavePhaseTransitionV1:10 $next-phase)) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
+   (let (cons gslt:result:ProofTraceSavePhaseTransitionV1:10 (cons $next-phase ())) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons $next-phase (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011000 $dictionary $codes $target $status (ProofTraceConsV1 ProofTraceSaveV1 $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=186 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-between-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10011000 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:10011000 ProofTraceIncompleteCodeV1 ProofTraceNatZeroV1 ProofTracePhaseBetweenV1)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011000 $dictionary $codes $target ProofTraceStatusIncompleteV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=187 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-completed-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10011000 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:10011000 ProofTraceIncompleteCodeV1 ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011000 $dictionary $codes $target ProofTraceStatusIncompleteV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=195 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-nil-v1 target=mode relation=ProofTraceCompileNormalStatusV1 input=0100 functional=relational
@@ -5159,111 +4869,104 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=196 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-cons-v1 target=mode relation=ProofTraceCompileNormalStatusV1 input=0100 functional=relational
 (= (gslt:mode:ProofTraceCompileNormalStatusV1:0100 $target)
-   (let (quote (gslt:result:source-proof-trace-label-instruction-v1:00 $label $instruction)) (superpose (collapse (gslt:mode:source-proof-trace-label-instruction-v1:00)))
-   (let (quote (gslt:result:ProofTraceCompileNormalStatusV1:0100 $labels $status $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0100 $target)))
+   (let (cons gslt:result:source-proof-trace-label-instruction-v1:00 (cons $label (cons $instruction ()))) (superpose (collapse (gslt:mode:source-proof-trace-label-instruction-v1:00)))
+   (let (cons gslt:result:ProofTraceCompileNormalStatusV1:0100 (cons $labels (cons $status (cons $trace ())))) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0100 $target)))
    (quote (gslt:result:ProofTraceCompileNormalStatusV1:0100 (ProofTraceLabelConsV1 $label $labels) $status (ProofTraceConsV1 $instruction $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=197 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-incomplete-v1 target=mode relation=ProofTraceCompileNormalStatusV1 input=0100 functional=relational
 (= (gslt:mode:ProofTraceCompileNormalStatusV1:0100 $target)
-   (let (quote (gslt:result:source-proof-trace-input-incomplete-normal-label-v1:0 $label)) (once (gslt:fn:source-proof-trace-input-incomplete-normal-label-v1:0))
-   (let (quote (gslt:result:ProofTraceCompileNormalStatusV1:0100 $labels $tail-status $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0100 $target)))
+   (let (cons gslt:result:source-proof-trace-input-incomplete-normal-label-v1:0 (cons $label ())) (once (gslt:fn:source-proof-trace-input-incomplete-normal-label-v1:0))
+   (let (cons gslt:result:ProofTraceCompileNormalStatusV1:0100 (cons $labels (cons $tail-status (cons $trace ())))) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0100 $target)))
    (quote (gslt:result:ProofTraceCompileNormalStatusV1:0100 (ProofTraceLabelConsV1 $label $labels) ProofTraceStatusIncompleteV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=118 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-result-v1 target=mode relation=ProofTraceCheckResultV1 input=0101 functional=relational
 (= (gslt:mode:ProofTraceCheckResultV1:0101 $trace $result)
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:01110 $context $execution-result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:01110 $trace ProofTraceStackNilV1 ProofTraceSavedNilV1)))
-   (let (quote (gslt:result:ProofTraceCheckExecutionResultV1:101 $target)) (superpose (collapse (gslt:mode:ProofTraceCheckExecutionResultV1:101 $execution-result $result)))
+   (let (cons gslt:result:ProofTraceExecStateResultV1:01110 (cons $context (cons $execution-result ()))) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:01110 $trace ProofTraceStackNilV1 ProofTraceSavedNilV1)))
+   (let (cons gslt:result:ProofTraceCheckExecutionResultV1:101 (cons $target ())) (superpose (collapse (gslt:mode:ProofTraceCheckExecutionResultV1:101 $execution-result $result)))
    (quote (gslt:result:ProofTraceCheckResultV1:0101 $context $target)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=180 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-terminal-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011010 functional=relational
-(= (gslt:mode:ProofTraceDecodeCodeClassV1:11011010 $__gslt_input_v1_0_0 $dictionary $accumulator $phase $status)
-   (let (quote (ProofTraceTerminalCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $number)) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
-   (let (quote (gslt:result:ProofTraceDictionaryResolveV1:110 $instruction)) (once (gslt:fn:ProofTraceDictionaryResolveV1:110 $number $dictionary))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011010 $codes $target (ProofTraceConsV1 $instruction $trace))))))))))
+(= (gslt:mode:ProofTraceDecodeCodeClassV1:11011010 (cons ProofTraceTerminalCodeV1 (cons $digit (cons $radix ()))) $dictionary $accumulator $phase $status)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $number ())) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
+   (let (cons gslt:result:ProofTraceDictionaryResolveV1:110 (cons $instruction ())) (once (gslt:fn:ProofTraceDictionaryResolveV1:110 $number $dictionary))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseJustCompletedV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011010 $codes $target (ProofTraceConsV1 $instruction $trace)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-continuation-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011010 functional=relational
-(= (gslt:mode:ProofTraceDecodeCodeClassV1:11011010 $__gslt_input_v1_0_0 $dictionary $accumulator $phase $status)
-   (let (quote (ProofTraceContinuationCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $next-accumulator)) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011010 $codes $target $trace))))))))
+(= (gslt:mode:ProofTraceDecodeCodeClassV1:11011010 (cons ProofTraceContinuationCodeV1 (cons $digit (cons $radix ()))) $dictionary $accumulator $phase $status)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $next-accumulator ())) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons $next-accumulator (cons ProofTracePhaseOpenIndexV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011010 $codes $target $trace)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=185 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-save-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011010 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:11011010 ProofTraceSaveCodeV1 $dictionary ProofTraceNatZeroV1 $phase $status)
-   (let (quote (gslt:result:ProofTraceSavePhaseTransitionV1:10 $next-phase)) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
+   (let (cons gslt:result:ProofTraceSavePhaseTransitionV1:10 (cons $next-phase ())) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons $next-phase (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011010 $codes $target (ProofTraceConsV1 ProofTraceSaveV1 $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=186 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-between-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011010 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:11011010 ProofTraceIncompleteCodeV1 $dictionary ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 ProofTraceStatusIncompleteV1)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011010 $codes $target (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=187 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-completed-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011010 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:11011010 ProofTraceIncompleteCodeV1 $dictionary ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 ProofTraceStatusIncompleteV1)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011010 $codes $target (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=180 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-terminal-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011110 functional=relational
-(= (gslt:mode:ProofTraceDecodeCodeClassV1:11011110 $__gslt_input_v1_0_0 $dictionary $accumulator $phase $target $status)
-   (let (quote (ProofTraceTerminalCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $number)) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
-   (let (quote (gslt:result:ProofTraceDictionaryResolveV1:110 $instruction)) (once (gslt:fn:ProofTraceDictionaryResolveV1:110 $number $dictionary))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011110 $codes (ProofTraceConsV1 $instruction $trace))))))))))
+(= (gslt:mode:ProofTraceDecodeCodeClassV1:11011110 (cons ProofTraceTerminalCodeV1 (cons $digit (cons $radix ()))) $dictionary $accumulator $phase $target $status)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $number ())) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
+   (let (cons gslt:result:ProofTraceDictionaryResolveV1:110 (cons $instruction ())) (once (gslt:fn:ProofTraceDictionaryResolveV1:110 $number $dictionary))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseJustCompletedV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011110 $codes (ProofTraceConsV1 $instruction $trace)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-continuation-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011110 functional=relational
-(= (gslt:mode:ProofTraceDecodeCodeClassV1:11011110 $__gslt_input_v1_0_0 $dictionary $accumulator $phase $target $status)
-   (let (quote (ProofTraceContinuationCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $next-accumulator)) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011110 $codes $trace))))))))
+(= (gslt:mode:ProofTraceDecodeCodeClassV1:11011110 (cons ProofTraceContinuationCodeV1 (cons $digit (cons $radix ()))) $dictionary $accumulator $phase $target $status)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $next-accumulator ())) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons $next-accumulator (cons ProofTracePhaseOpenIndexV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011110 $codes $trace)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=185 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-save-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011110 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:11011110 ProofTraceSaveCodeV1 $dictionary ProofTraceNatZeroV1 $phase $target $status)
-   (let (quote (gslt:result:ProofTraceSavePhaseTransitionV1:10 $next-phase)) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
+   (let (cons gslt:result:ProofTraceSavePhaseTransitionV1:10 (cons $next-phase ())) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons $next-phase (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011110 $codes (ProofTraceConsV1 ProofTraceSaveV1 $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=186 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-between-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011110 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:11011110 ProofTraceIncompleteCodeV1 $dictionary ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target ProofTraceStatusIncompleteV1)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011110 $codes (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=187 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-completed-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011110 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:11011110 ProofTraceIncompleteCodeV1 $dictionary ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target ProofTraceStatusIncompleteV1)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011110 $codes (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=47 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-essentials-result-nil-v1 target=mode relation=ProofTraceCheckEssentialsResultV1 input=1000 functional=relational
-(= (gslt:mode:ProofTraceCheckEssentialsResultV1:1000 $__gslt_input_v1_0_0)
-   (let (quote (ProofAssertionListNilV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceCheckEssentialsResultV1:1000 (ProofAssertionListNilV1) $environment ProofTraceEssentialsSucceededV1))))
+(= (gslt:mode:ProofTraceCheckEssentialsResultV1:1000 (cons ProofAssertionListNilV1 ()))
+   (quote (gslt:result:ProofTraceCheckEssentialsResultV1:1000 (ProofAssertionListNilV1) $environment ProofTraceEssentialsSucceededV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=48 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-essentials-result-cons-equal-v1 target=mode relation=ProofTraceCheckEssentialsResultV1 input=1000 functional=relational
-(= (gslt:mode:ProofTraceCheckEssentialsResultV1:1000 $__gslt_input_v1_0_0)
-   (let (quote (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $template) $essentials)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:100 $environment $expected)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:100 $template)))
-   (let (quote (gslt:result:ProofSequenceCompareV1:001 $expected $actual)) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:001 ProofSequenceEqualV1)))
-   (let (quote (gslt:result:ProofTraceCheckEssentialsResultV1:1000 $actuals $environment $result)) (superpose (collapse (gslt:mode:ProofTraceCheckEssentialsResultV1:1000 $essentials)))
-   (quote (gslt:result:ProofTraceCheckEssentialsResultV1:1000 (ProofAssertionListConsV1 $actual $actuals) $environment $result)))))))
+(= (gslt:mode:ProofTraceCheckEssentialsResultV1:1000 (cons ProofAssertionListConsV1 (cons (cons ProofAssertionEssentialV1 (cons $template ())) (cons $essentials ()))))
+   (let (cons gslt:result:ProofSequenceInstantiateV1:100 (cons $environment (cons $expected ()))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:100 $template)))
+   (let (cons gslt:result:ProofSequenceCompareV1:001 (cons $expected (cons $actual ()))) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:001 ProofSequenceEqualV1)))
+   (let (cons gslt:result:ProofTraceCheckEssentialsResultV1:1000 (cons $actuals (cons $environment (cons $result ())))) (superpose (collapse (gslt:mode:ProofTraceCheckEssentialsResultV1:1000 $essentials)))
+   (quote (gslt:result:ProofTraceCheckEssentialsResultV1:1000 (ProofAssertionListConsV1 $actual $actuals) $environment $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=49 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-essentials-result-cons-different-v1 target=mode relation=ProofTraceCheckEssentialsResultV1 input=1000 functional=relational
-(= (gslt:mode:ProofTraceCheckEssentialsResultV1:1000 $__gslt_input_v1_0_0)
-   (let (quote (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $template) $essentials)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:100 $environment $expected)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:100 $template)))
-   (let (quote (gslt:result:ProofSequenceCompareV1:001 $expected $actual)) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:001 ProofSequenceDifferentV1)))
-   (quote (gslt:result:ProofTraceCheckEssentialsResultV1:1000 (ProofAssertionListConsV1 $actual $actuals) $environment (ProofTraceRefusedEssentialMismatchV1 $template $expected $actual)))))))
+(= (gslt:mode:ProofTraceCheckEssentialsResultV1:1000 (cons ProofAssertionListConsV1 (cons (cons ProofAssertionEssentialV1 (cons $template ())) (cons $essentials ()))))
+   (let (cons gslt:result:ProofSequenceInstantiateV1:100 (cons $environment (cons $expected ()))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:100 $template)))
+   (let (cons gslt:result:ProofSequenceCompareV1:001 (cons $expected (cons $actual ()))) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:001 ProofSequenceDifferentV1)))
+   (quote (gslt:result:ProofTraceCheckEssentialsResultV1:1000 (ProofAssertionListConsV1 $actual $actuals) $environment (ProofTraceRefusedEssentialMismatchV1 $template $expected $actual))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=98 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-depth-underflow-v1 target=mode relation=ProofTraceApplyDepthResultV1 input=10000010 functional=relational
 (= (gslt:mode:ProofTraceApplyDepthResultV1:10000010 ProofTraceFrameStackUnderflowV1 $saved)
@@ -5271,31 +4974,27 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=99 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-depth-fits-v1 target=mode relation=ProofTraceApplyDepthResultV1 input=10000010 functional=relational
 (= (gslt:mode:ProofTraceApplyDepthResultV1:10000010 ProofTraceFrameStackFitsV1 $saved)
-   (let (quote (gslt:result:ProofTraceApplyAssertionResultV1:0000 $assertion $frame $stack $application-result)) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionResultV1:0000)))
-   (let (quote (gslt:result:ProofTraceApplyExecutionResultV1:000010 $application-result $context $trace $stack $result)) (superpose (collapse (gslt:mode:ProofTraceApplyExecutionResultV1:000010 $saved)))
+   (let (cons gslt:result:ProofTraceApplyAssertionResultV1:0000 (cons $assertion (cons $frame (cons $stack (cons $application-result ()))))) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionResultV1:0000)))
+   (let (cons gslt:result:ProofTraceApplyExecutionResultV1:000010 (cons $application-result (cons $context (cons $trace (cons $stack (cons $result ())))))) (superpose (collapse (gslt:mode:ProofTraceApplyExecutionResultV1:000010 $saved)))
    (quote (gslt:result:ProofTraceApplyDepthResultV1:10000010 $context $trace $assertion $frame $stack $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=100 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-execution-succeeded-v1 target=mode relation=ProofTraceApplyExecutionResultV1 input=100110 functional=relational
-(= (gslt:mode:ProofTraceApplyExecutionResultV1:100110 $__gslt_input_v1_0_0 $stack $saved)
-   (let (quote (ProofTraceRealizeSucceededV1 $next-stack)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:00110 $context $trace $result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00110 $next-stack $saved)))
-   (quote (gslt:result:ProofTraceApplyExecutionResultV1:100110 $context $trace $result)))))
+(= (gslt:mode:ProofTraceApplyExecutionResultV1:100110 (cons ProofTraceRealizeSucceededV1 (cons $next-stack ())) $stack $saved)
+   (let (cons gslt:result:ProofTraceExecStateResultV1:00110 (cons $context (cons $trace (cons $result ())))) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00110 $next-stack $saved)))
+   (quote (gslt:result:ProofTraceApplyExecutionResultV1:100110 $context $trace $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=101 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-execution-refused-v1 target=mode relation=ProofTraceApplyExecutionResultV1 input=100110 functional=relational
-(= (gslt:mode:ProofTraceApplyExecutionResultV1:100110 $__gslt_input_v1_0_0 $stack $saved)
-   (let (quote (ProofTraceRealizeRefusedV1 $reason)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceApplyExecutionResultV1:100110 $context $trace (ProofTraceExecRefusedV1 $reason $stack $saved)))))
+(= (gslt:mode:ProofTraceApplyExecutionResultV1:100110 (cons ProofTraceRealizeRefusedV1 (cons $reason ())) $stack $saved)
+   (quote (gslt:result:ProofTraceApplyExecutionResultV1:100110 $context $trace (ProofTraceExecRefusedV1 $reason $stack $saved))))
 
 ; gslt-lowered-equation-v1 source-rewrite=100 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-execution-succeeded-v1 target=mode relation=ProofTraceApplyExecutionResultV1 input=101110 functional=relational
-(= (gslt:mode:ProofTraceApplyExecutionResultV1:101110 $__gslt_input_v1_0_0 $trace $stack $saved)
-   (let (quote (ProofTraceRealizeSucceededV1 $next-stack)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:01110 $context $result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:01110 $trace $next-stack $saved)))
-   (quote (gslt:result:ProofTraceApplyExecutionResultV1:101110 $context $result)))))
+(= (gslt:mode:ProofTraceApplyExecutionResultV1:101110 (cons ProofTraceRealizeSucceededV1 (cons $next-stack ())) $trace $stack $saved)
+   (let (cons gslt:result:ProofTraceExecStateResultV1:01110 (cons $context (cons $result ()))) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:01110 $trace $next-stack $saved)))
+   (quote (gslt:result:ProofTraceApplyExecutionResultV1:101110 $context $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=101 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-execution-refused-v1 target=mode relation=ProofTraceApplyExecutionResultV1 input=101110 functional=relational
-(= (gslt:mode:ProofTraceApplyExecutionResultV1:101110 $__gslt_input_v1_0_0 $trace $stack $saved)
-   (let (quote (ProofTraceRealizeRefusedV1 $reason)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceApplyExecutionResultV1:101110 $context (ProofTraceExecRefusedV1 $reason $stack $saved)))))
+(= (gslt:mode:ProofTraceApplyExecutionResultV1:101110 (cons ProofTraceRealizeRefusedV1 (cons $reason ())) $trace $stack $saved)
+   (quote (gslt:result:ProofTraceApplyExecutionResultV1:101110 $context (ProofTraceExecRefusedV1 $reason $stack $saved))))
 
 ; gslt-lowered-equation-v1 source-rewrite=177 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-nil-between-v1 target=mode relation=ProofTraceDecodeStatusV1 input=0011110 functional=relational
 (= (gslt:mode:ProofTraceDecodeStatusV1:0011110 ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target ProofTraceStatusCompleteV1)
@@ -5307,8 +5006,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=179 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-cons-v1 target=mode relation=ProofTraceDecodeStatusV1 input=0011110 functional=relational
 (= (gslt:mode:ProofTraceDecodeStatusV1:0011110 $accumulator $phase $target $status)
-   (let (quote (source-proof-trace-code-class-v1 $code $class)) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code $class))
-   (let (quote (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace)) (gslt:ProofTraceDecodeCodeClassV1 (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace))
+   (let (cons source-proof-trace-code-class-v1 (cons $code (cons $class ()))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code $class))
+   (let (cons ProofTraceDecodeCodeClassV1 (cons $class (cons $dictionary (cons $codes (cons $accumulator (cons $phase (cons $target (cons $status (cons $trace ()))))))))) (gslt:ProofTraceDecodeCodeClassV1 (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace))
    (quote (gslt:result:ProofTraceDecodeStatusV1:0011110 $dictionary (ProofTraceCodeConsV1 $code $codes) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=177 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-nil-between-v1 target=mode relation=ProofTraceDecodeStatusV1 input=0011100 functional=relational
@@ -5321,8 +5020,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=179 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-cons-v1 target=mode relation=ProofTraceDecodeStatusV1 input=0011100 functional=relational
 (= (gslt:mode:ProofTraceDecodeStatusV1:0011100 $accumulator $phase $target)
-   (let (quote (source-proof-trace-code-class-v1 $code $class)) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code $class))
-   (let (quote (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace)) (gslt:ProofTraceDecodeCodeClassV1 (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace))
+   (let (cons source-proof-trace-code-class-v1 (cons $code (cons $class ()))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code $class))
+   (let (cons ProofTraceDecodeCodeClassV1 (cons $class (cons $dictionary (cons $codes (cons $accumulator (cons $phase (cons $target (cons $status (cons $trace ()))))))))) (gslt:ProofTraceDecodeCodeClassV1 (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace))
    (quote (gslt:result:ProofTraceDecodeStatusV1:0011100 $dictionary (ProofTraceCodeConsV1 $code $codes) $status $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=177 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-nil-between-v1 target=mode relation=ProofTraceDecodeStatusV1 input=1011100 functional=relational
@@ -5335,113 +5034,107 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=179 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-cons-v1 target=mode relation=ProofTraceDecodeStatusV1 input=1011100 functional=relational
 (= (gslt:mode:ProofTraceDecodeStatusV1:1011100 $dictionary $accumulator $phase $target)
-   (let (quote (source-proof-trace-code-class-v1 $code $class)) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code $class))
-   (let (quote (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace)) (gslt:ProofTraceDecodeCodeClassV1 (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace))
+   (let (cons source-proof-trace-code-class-v1 (cons $code (cons $class ()))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code $class))
+   (let (cons ProofTraceDecodeCodeClassV1 (cons $class (cons $dictionary (cons $codes (cons $accumulator (cons $phase (cons $target (cons $status (cons $trace ()))))))))) (gslt:ProofTraceDecodeCodeClassV1 (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace))
    (quote (gslt:result:ProofTraceDecodeStatusV1:1011100 (ProofTraceCodeConsV1 $code $codes) $status $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=180 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-terminal-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10011110 functional=relational
-(= (gslt:mode:ProofTraceDecodeCodeClassV1:10011110 $__gslt_input_v1_0_0 $accumulator $phase $target $status)
-   (let (quote (ProofTraceTerminalCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $number)) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
-   (let (quote (ProofTraceDictionaryResolveV1 $number $dictionary $instruction)) (gslt:ProofTraceDictionaryResolveV1 (ProofTraceDictionaryResolveV1 $number $dictionary $instruction))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011110 $dictionary $codes (ProofTraceConsV1 $instruction $trace))))))))))
+(= (gslt:mode:ProofTraceDecodeCodeClassV1:10011110 (cons ProofTraceTerminalCodeV1 (cons $digit (cons $radix ()))) $accumulator $phase $target $status)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $number ())) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
+   (let (cons ProofTraceDictionaryResolveV1 (cons $number (cons $dictionary (cons $instruction ())))) (gslt:ProofTraceDictionaryResolveV1 (ProofTraceDictionaryResolveV1 $number $dictionary $instruction))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseJustCompletedV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011110 $dictionary $codes (ProofTraceConsV1 $instruction $trace)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-continuation-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10011110 functional=relational
-(= (gslt:mode:ProofTraceDecodeCodeClassV1:10011110 $__gslt_input_v1_0_0 $accumulator $phase $target $status)
-   (let (quote (ProofTraceContinuationCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $next-accumulator)) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011110 $dictionary $codes $trace))))))))
+(= (gslt:mode:ProofTraceDecodeCodeClassV1:10011110 (cons ProofTraceContinuationCodeV1 (cons $digit (cons $radix ()))) $accumulator $phase $target $status)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $next-accumulator ())) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons $next-accumulator (cons ProofTracePhaseOpenIndexV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011110 $dictionary $codes $trace)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=185 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-save-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10011110 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:10011110 ProofTraceSaveCodeV1 ProofTraceNatZeroV1 $phase $target $status)
-   (let (quote (gslt:result:ProofTraceSavePhaseTransitionV1:10 $next-phase)) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
+   (let (cons gslt:result:ProofTraceSavePhaseTransitionV1:10 (cons $next-phase ())) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons $next-phase (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011110 $dictionary $codes (ProofTraceConsV1 ProofTraceSaveV1 $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=186 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-between-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10011110 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:10011110 ProofTraceIncompleteCodeV1 ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target ProofTraceStatusIncompleteV1)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011110 $dictionary $codes (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=187 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-completed-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10011110 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:10011110 ProofTraceIncompleteCodeV1 ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target ProofTraceStatusIncompleteV1)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011110 $dictionary $codes (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=180 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-terminal-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10011100 functional=relational
-(= (gslt:mode:ProofTraceDecodeCodeClassV1:10011100 $__gslt_input_v1_0_0 $accumulator $phase $target)
-   (let (quote (ProofTraceTerminalCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $number)) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
-   (let (quote (ProofTraceDictionaryResolveV1 $number $dictionary $instruction)) (gslt:ProofTraceDictionaryResolveV1 (ProofTraceDictionaryResolveV1 $number $dictionary $instruction))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011100 $dictionary $codes $status (ProofTraceConsV1 $instruction $trace))))))))))
+(= (gslt:mode:ProofTraceDecodeCodeClassV1:10011100 (cons ProofTraceTerminalCodeV1 (cons $digit (cons $radix ()))) $accumulator $phase $target)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $number ())) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
+   (let (cons ProofTraceDictionaryResolveV1 (cons $number (cons $dictionary (cons $instruction ())))) (gslt:ProofTraceDictionaryResolveV1 (ProofTraceDictionaryResolveV1 $number $dictionary $instruction))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseJustCompletedV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011100 $dictionary $codes $status (ProofTraceConsV1 $instruction $trace)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-continuation-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10011100 functional=relational
-(= (gslt:mode:ProofTraceDecodeCodeClassV1:10011100 $__gslt_input_v1_0_0 $accumulator $phase $target)
-   (let (quote (ProofTraceContinuationCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $next-accumulator)) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011100 $dictionary $codes $status $trace))))))))
+(= (gslt:mode:ProofTraceDecodeCodeClassV1:10011100 (cons ProofTraceContinuationCodeV1 (cons $digit (cons $radix ()))) $accumulator $phase $target)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $next-accumulator ())) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons $next-accumulator (cons ProofTracePhaseOpenIndexV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011100 $dictionary $codes $status $trace)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=185 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-save-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10011100 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:10011100 ProofTraceSaveCodeV1 ProofTraceNatZeroV1 $phase $target)
-   (let (quote (gslt:result:ProofTraceSavePhaseTransitionV1:10 $next-phase)) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
+   (let (cons gslt:result:ProofTraceSavePhaseTransitionV1:10 (cons $next-phase ())) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons $next-phase (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011100 $dictionary $codes $status (ProofTraceConsV1 ProofTraceSaveV1 $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=186 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-between-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10011100 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:10011100 ProofTraceIncompleteCodeV1 ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011100 $dictionary $codes ProofTraceStatusIncompleteV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=187 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-completed-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=10011100 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:10011100 ProofTraceIncompleteCodeV1 ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:10011100 $dictionary $codes ProofTraceStatusIncompleteV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=180 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-terminal-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011100 functional=relational
-(= (gslt:mode:ProofTraceDecodeCodeClassV1:11011100 $__gslt_input_v1_0_0 $dictionary $accumulator $phase $target)
-   (let (quote (ProofTraceTerminalCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $number)) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
-   (let (quote (gslt:result:ProofTraceDictionaryResolveV1:110 $instruction)) (once (gslt:fn:ProofTraceDictionaryResolveV1:110 $number $dictionary))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011100 $codes $status (ProofTraceConsV1 $instruction $trace))))))))))
+(= (gslt:mode:ProofTraceDecodeCodeClassV1:11011100 (cons ProofTraceTerminalCodeV1 (cons $digit (cons $radix ()))) $dictionary $accumulator $phase $target)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $number ())) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
+   (let (cons gslt:result:ProofTraceDictionaryResolveV1:110 (cons $instruction ())) (once (gslt:fn:ProofTraceDictionaryResolveV1:110 $number $dictionary))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseJustCompletedV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011100 $codes $status (ProofTraceConsV1 $instruction $trace)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-continuation-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011100 functional=relational
-(= (gslt:mode:ProofTraceDecodeCodeClassV1:11011100 $__gslt_input_v1_0_0 $dictionary $accumulator $phase $target)
-   (let (quote (ProofTraceContinuationCodeV1 $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (gslt:result:ProofTraceNatMulAddV1:1110 $next-accumulator)) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
-   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011100 $codes $status $trace))))))))
+(= (gslt:mode:ProofTraceDecodeCodeClassV1:11011100 (cons ProofTraceContinuationCodeV1 (cons $digit (cons $radix ()))) $dictionary $accumulator $phase $target)
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons gslt:result:ProofTraceNatMulAddV1:1110 (cons $next-accumulator ())) (once (gslt:fn:ProofTraceNatMulAddV1:1110 $canonical-radix $accumulator $canonical-digit))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons $next-accumulator (cons ProofTracePhaseOpenIndexV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
+   (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011100 $codes $status $trace)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=185 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-save-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011100 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:11011100 ProofTraceSaveCodeV1 $dictionary ProofTraceNatZeroV1 $phase $target)
-   (let (quote (gslt:result:ProofTraceSavePhaseTransitionV1:10 $next-phase)) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
+   (let (cons gslt:result:ProofTraceSavePhaseTransitionV1:10 (cons $next-phase ())) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 $phase))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons $next-phase (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011100 $codes $status (ProofTraceConsV1 ProofTraceSaveV1 $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=186 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-between-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011100 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:11011100 ProofTraceIncompleteCodeV1 $dictionary ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011100 $codes ProofTraceStatusIncompleteV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=187 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-completed-v1 target=mode relation=ProofTraceDecodeCodeClassV1 input=11011100 functional=relational
 (= (gslt:mode:ProofTraceDecodeCodeClassV1:11011100 ProofTraceIncompleteCodeV1 $dictionary ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (gslt:result:ProofTraceDecodeCodeClassV1:11011100 $codes ProofTraceStatusIncompleteV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=25 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-context-member-compared-equal-v1 target=mode relation=ProofTraceContextMemberComparedV1 input=100 functional=relational
@@ -5459,13 +5152,13 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=154 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-add-succ-v1 target=mode relation=ProofTraceNatAddV1 input=010 functional=relational
 (= (gslt:mode:ProofTraceNatAddV1:010 $right)
-   (let (quote (ProofTraceNatAddV1 $left $right $sum)) (gslt:ProofTraceNatAddV1 (ProofTraceNatAddV1 $left $right $sum))
+   (let (cons ProofTraceNatAddV1 (cons $left (cons $right (cons $sum ())))) (gslt:ProofTraceNatAddV1 (ProofTraceNatAddV1 $left $right $sum))
    (quote (gslt:result:ProofTraceNatAddV1:010 (ProofTraceNatSuccV1 $left) (ProofTraceNatSuccV1 $sum)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=38 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-variable-applied-v1 target=mode relation=ProofTraceFrameApplyVariableResultV1 input=100 functional=relational
 (= (gslt:mode:ProofTraceFrameApplyVariableResultV1:100 $expected-typecode)
-   (let (quote (gslt:result:ProofTokenCompareV1:100 $actual-typecode $comparison)) (superpose (collapse (gslt:mode:ProofTokenCompareV1:100 $expected-typecode)))
-   (let (quote (ProofTraceFrameApplyVariableComparedV1 $comparison $expected-typecode $actual-typecode $image $images $actuals $output $result)) (gslt:ProofTraceFrameApplyVariableComparedV1 (ProofTraceFrameApplyVariableComparedV1 $comparison $expected-typecode $actual-typecode $image $images $actuals $output $result))
+   (let (cons gslt:result:ProofTokenCompareV1:100 (cons $actual-typecode (cons $comparison ()))) (superpose (collapse (gslt:mode:ProofTokenCompareV1:100 $expected-typecode)))
+   (let (cons ProofTraceFrameApplyVariableComparedV1 (cons $comparison (cons $expected-typecode (cons $actual-typecode (cons $image (cons $images (cons $actuals (cons $output (cons $result ()))))))))) (gslt:ProofTraceFrameApplyVariableComparedV1 (ProofTraceFrameApplyVariableComparedV1 $comparison $expected-typecode $actual-typecode $image $images $actuals $output $result))
    (quote (gslt:result:ProofTraceFrameApplyVariableResultV1:100 (ProofTraceFrameAppliedV1 $images $actuals (ProofTraceStackConsV1 (ProofSequenceConsV1 $actual-typecode $image) $output)) $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=39 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-variable-missing-typecode-v1 target=mode relation=ProofTraceFrameApplyVariableResultV1 input=100 functional=relational
@@ -5478,17 +5171,16 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=71 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-disjoint-head-succeeded-v1 target=mode relation=ProofTraceCheckDisjointHeadResultV1 input=111100 functional=relational
 (= (gslt:mode:ProofTraceCheckDisjointHeadResultV1:111100 ProofTracePairAllowedV1 $left $right $rest)
-   (let (quote (gslt:result:ProofTraceCheckDisjointsResultV1:100 $environment $result)) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointsResultV1:100 $rest)))
+   (let (cons gslt:result:ProofTraceCheckDisjointsResultV1:100 (cons $environment (cons $result ()))) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointsResultV1:100 $rest)))
    (quote (gslt:result:ProofTraceCheckDisjointHeadResultV1:111100 $environment $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=72 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-disjoint-head-refused-v1 target=mode relation=ProofTraceCheckDisjointHeadResultV1 input=111100 functional=relational
-(= (gslt:mode:ProofTraceCheckDisjointHeadResultV1:111100 $__gslt_input_v1_0_0 $required-left $required-right $rest)
-   (let (quote (ProofTracePairConflictV1 $actual-left $actual-right)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceCheckDisjointHeadResultV1:111100 $environment (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right)))))
+(= (gslt:mode:ProofTraceCheckDisjointHeadResultV1:111100 (cons ProofTracePairConflictV1 (cons $actual-left (cons $actual-right ()))) $required-left $required-right $rest)
+   (quote (gslt:result:ProofTraceCheckDisjointHeadResultV1:111100 $environment (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right))))
 
 ; gslt-lowered-equation-v1 source-rewrite=105 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-restore-lookup-found-v1 target=mode relation=ProofTraceRestoreLookupExecutionResultV1 input=000110 functional=relational
 (= (gslt:mode:ProofTraceRestoreLookupExecutionResultV1:000110 $stack $saved)
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:00010 $context $trace (ProofTraceStackConsV1 $formula $stack) $result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00010 $saved)))
+   (let (cons gslt:result:ProofTraceExecStateResultV1:00010 (cons $context (cons $trace (cons (cons ProofTraceStackConsV1 (cons $formula (cons $stack ()))) (cons $result ()))))) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00010 $saved)))
    (quote (gslt:result:ProofTraceRestoreLookupExecutionResultV1:000110 (ProofTraceSavedFoundV1 $formula) $context $trace $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=106 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-restore-lookup-missing-v1 target=mode relation=ProofTraceRestoreLookupExecutionResultV1 input=000110 functional=relational
@@ -5497,7 +5189,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=119 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-execution-result-succeeded-v1 target=mode relation=ProofTraceCheckExecutionResultV1 input=001 functional=relational
 (= (gslt:mode:ProofTraceCheckExecutionResultV1:001 $result)
-   (let (quote (gslt:result:ProofTraceFinalResultV1:001 $stack $target)) (superpose (collapse (gslt:mode:ProofTraceFinalResultV1:001 $result)))
+   (let (cons gslt:result:ProofTraceFinalResultV1:001 (cons $stack (cons $target ()))) (superpose (collapse (gslt:mode:ProofTraceFinalResultV1:001 $result)))
    (quote (gslt:result:ProofTraceCheckExecutionResultV1:001 (ProofTraceExecSucceededV1 $stack $saved) $target))))
 
 ; gslt-lowered-equation-v1 source-rewrite=120 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-execution-result-refused-v1 target=mode relation=ProofTraceCheckExecutionResultV1 input=001 functional=relational
@@ -5506,8 +5198,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=53 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-essentials-succeeded-v1 target=mode relation=ProofTraceRealizeEssentialsResultV1 input=0111000 functional=relational
 (= (gslt:mode:ProofTraceRealizeEssentialsResultV1:0111000 $conclusion-type $conclusion-template $disjoints)
-   (let (quote (gslt:result:ProofTraceCheckDisjointsResultV1:100 $environment $disjoint-result)) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointsResultV1:100 $disjoints)))
-   (let (quote (gslt:result:ProofTraceRealizeDisjointsResultV1:111000 $environment $rest $result)) (superpose (collapse (gslt:mode:ProofTraceRealizeDisjointsResultV1:111000 $disjoint-result $conclusion-type $conclusion-template)))
+   (let (cons gslt:result:ProofTraceCheckDisjointsResultV1:100 (cons $environment (cons $disjoint-result ()))) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointsResultV1:100 $disjoints)))
+   (let (cons gslt:result:ProofTraceRealizeDisjointsResultV1:111000 (cons $environment (cons $rest (cons $result ())))) (superpose (collapse (gslt:mode:ProofTraceRealizeDisjointsResultV1:111000 $disjoint-result $conclusion-type $conclusion-template)))
    (quote (gslt:result:ProofTraceRealizeEssentialsResultV1:0111000 ProofTraceEssentialsSucceededV1 $environment $rest $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=73 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-essentials-refused-v1 target=mode relation=ProofTraceRealizeEssentialsResultV1 input=0111000 functional=relational
@@ -5516,7 +5208,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=105 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-restore-lookup-found-v1 target=mode relation=ProofTraceRestoreLookupExecutionResultV1 input=000010 functional=relational
 (= (gslt:mode:ProofTraceRestoreLookupExecutionResultV1:000010 $saved)
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:00010 $context $trace (ProofTraceStackConsV1 $formula $stack) $result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00010 $saved)))
+   (let (cons gslt:result:ProofTraceExecStateResultV1:00010 (cons $context (cons $trace (cons (cons ProofTraceStackConsV1 (cons $formula (cons $stack ()))) (cons $result ()))))) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00010 $saved)))
    (quote (gslt:result:ProofTraceRestoreLookupExecutionResultV1:000010 (ProofTraceSavedFoundV1 $formula) $context $trace $stack $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=106 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-restore-lookup-missing-v1 target=mode relation=ProofTraceRestoreLookupExecutionResultV1 input=000010 functional=relational
@@ -5529,47 +5221,43 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=116 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-final-single-v1 target=mode relation=ProofTraceFinalResultV1 input=001 functional=relational
 (= (gslt:mode:ProofTraceFinalResultV1:001 $result)
-   (let (quote (gslt:result:ProofSequenceCompareV1:000 $target $actual $comparison)) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:000)))
-   (let (quote (ProofTraceFinalizeCompareV1 $comparison $target $actual $result)) (gslt:ProofTraceFinalizeCompareV1 (ProofTraceFinalizeCompareV1 $comparison $target $actual $result))
+   (let (cons gslt:result:ProofSequenceCompareV1:000 (cons $target (cons $actual (cons $comparison ())))) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:000)))
+   (let (cons ProofTraceFinalizeCompareV1 (cons $comparison (cons $target (cons $actual (cons $result ()))))) (gslt:ProofTraceFinalizeCompareV1 (ProofTraceFinalizeCompareV1 $comparison $target $actual $result))
    (quote (gslt:result:ProofTraceFinalResultV1:001 (ProofTraceStackConsV1 $actual ProofTraceStackNilV1) $target)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=117 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-final-extra-v1 target=mode relation=ProofTraceFinalResultV1 input=001 functional=relational
-(= (gslt:mode:ProofTraceFinalResultV1:001 $__gslt_input_v1_0_2)
-   (let (quote (ProofTraceRefusedExtraStackV1 (ProofTraceStackConsV1 $top (ProofTraceStackConsV1 $next $rest)))) $__gslt_input_v1_0_2
-   (quote (gslt:result:ProofTraceFinalResultV1:001 (ProofTraceStackConsV1 $top (ProofTraceStackConsV1 $next $rest)) $target))))
+(= (gslt:mode:ProofTraceFinalResultV1:001 (cons ProofTraceRefusedExtraStackV1 (cons (cons ProofTraceStackConsV1 (cons $top (cons (cons ProofTraceStackConsV1 (cons $next (cons $rest ()))) ()))) ())))
+   (quote (gslt:result:ProofTraceFinalResultV1:001 (ProofTraceStackConsV1 $top (ProofTraceStackConsV1 $next $rest)) $target)))
 
 ; gslt-lowered-equation-v1 source-rewrite=54 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-disjoints-succeeded-v1 target=mode relation=ProofTraceRealizeDisjointsResultV1 input=111000 functional=relational
 (= (gslt:mode:ProofTraceRealizeDisjointsResultV1:111000 ProofTraceDisjointSucceededV1 $conclusion-type $conclusion-template)
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:100 $environment $result)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:100 $conclusion-template)))
+   (let (cons gslt:result:ProofSequenceInstantiateV1:100 (cons $environment (cons $result ()))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:100 $conclusion-template)))
    (quote (gslt:result:ProofTraceRealizeDisjointsResultV1:111000 $environment $rest (ProofTraceRealizeSucceededV1 (ProofTraceStackConsV1 (ProofSequenceConsV1 $conclusion-type $result) $rest))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=55 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-disjoints-refused-v1 target=mode relation=ProofTraceRealizeDisjointsResultV1 input=111000 functional=relational
-(= (gslt:mode:ProofTraceRealizeDisjointsResultV1:111000 $__gslt_input_v1_0_0 $conclusion-type $conclusion-template)
-   (let (quote (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceRealizeDisjointsResultV1:111000 $environment $rest (ProofTraceRealizeRefusedV1 (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right))))))
+(= (gslt:mode:ProofTraceRealizeDisjointsResultV1:111000 (cons ProofTraceRefusedDisjointV1 (cons $required-left (cons $required-right (cons $actual-left (cons $actual-right ()))))) $conclusion-type $conclusion-template)
+   (quote (gslt:result:ProofTraceRealizeDisjointsResultV1:111000 $environment $rest (ProofTraceRealizeRefusedV1 (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=113 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-finalize-equal-v1 target=mode relation=ProofTraceFinalizeCompareV1 input=1001 functional=relational
 (= (gslt:mode:ProofTraceFinalizeCompareV1:1001 ProofSequenceEqualV1 ProofTraceSucceededV1)
    (quote (gslt:result:ProofTraceFinalizeCompareV1:1001 $target $actual)))
 
 ; gslt-lowered-equation-v1 source-rewrite=114 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-finalize-different-v1 target=mode relation=ProofTraceFinalizeCompareV1 input=1001 functional=relational
-(= (gslt:mode:ProofTraceFinalizeCompareV1:1001 ProofSequenceDifferentV1 $__gslt_input_v1_0_3)
-   (let (quote (ProofTraceRefusedClaimMismatchV1 $target $actual)) $__gslt_input_v1_0_3
-   (quote (gslt:result:ProofTraceFinalizeCompareV1:1001 $target $actual))))
+(= (gslt:mode:ProofTraceFinalizeCompareV1:1001 ProofSequenceDifferentV1 (cons ProofTraceRefusedClaimMismatchV1 (cons $target (cons $actual ()))))
+   (quote (gslt:result:ProofTraceFinalizeCompareV1:1001 $target $actual)))
 
 ; gslt-lowered-equation-v1 source-rewrite=71 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-disjoint-head-succeeded-v1 target=mode relation=ProofTraceCheckDisjointHeadResultV1 input=111000 functional=relational
 (= (gslt:mode:ProofTraceCheckDisjointHeadResultV1:111000 ProofTracePairAllowedV1 $left $right)
-   (let (quote (gslt:result:ProofTraceCheckDisjointsResultV1:000 $rest $environment $result)) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointsResultV1:000)))
+   (let (cons gslt:result:ProofTraceCheckDisjointsResultV1:000 (cons $rest (cons $environment (cons $result ())))) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointsResultV1:000)))
    (quote (gslt:result:ProofTraceCheckDisjointHeadResultV1:111000 $rest $environment $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=72 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-disjoint-head-refused-v1 target=mode relation=ProofTraceCheckDisjointHeadResultV1 input=111000 functional=relational
-(= (gslt:mode:ProofTraceCheckDisjointHeadResultV1:111000 $__gslt_input_v1_0_0 $required-left $required-right)
-   (let (quote (ProofTracePairConflictV1 $actual-left $actual-right)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofTraceCheckDisjointHeadResultV1:111000 $rest $environment (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right)))))
+(= (gslt:mode:ProofTraceCheckDisjointHeadResultV1:111000 (cons ProofTracePairConflictV1 (cons $actual-left (cons $actual-right ()))) $required-left $required-right)
+   (quote (gslt:result:ProofTraceCheckDisjointHeadResultV1:111000 $rest $environment (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right))))
 
 ; gslt-lowered-equation-v1 source-rewrite=100 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-execution-succeeded-v1 target=mode relation=ProofTraceApplyExecutionResultV1 input=000010 functional=relational
 (= (gslt:mode:ProofTraceApplyExecutionResultV1:000010 $saved)
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:00010 $context $trace $next-stack $result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00010 $saved)))
+   (let (cons gslt:result:ProofTraceExecStateResultV1:00010 (cons $context (cons $trace (cons $next-stack (cons $result ()))))) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00010 $saved)))
    (quote (gslt:result:ProofTraceApplyExecutionResultV1:000010 (ProofTraceRealizeSucceededV1 $next-stack) $context $trace $stack $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=101 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-execution-refused-v1 target=mode relation=ProofTraceApplyExecutionResultV1 input=000010 functional=relational
@@ -5590,351 +5278,348 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=110 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-cons-v1 target=mode relation=ProofSequenceCompareV1 input=001 functional=relational
 (= (gslt:mode:ProofSequenceCompareV1:001 $result)
-   (let (quote (gslt:result:ProofTokenCompareV1:000 $left $right $head-comparison)) (superpose (collapse (gslt:mode:ProofTokenCompareV1:000)))
-   (let (quote (gslt:result:ProofSequenceCompareHeadsV1:1001 $left-rest $right-rest)) (superpose (collapse (gslt:mode:ProofSequenceCompareHeadsV1:1001 $head-comparison $result)))
+   (let (cons gslt:result:ProofTokenCompareV1:000 (cons $left (cons $right (cons $head-comparison ())))) (superpose (collapse (gslt:mode:ProofTokenCompareV1:000)))
+   (let (cons gslt:result:ProofSequenceCompareHeadsV1:1001 (cons $left-rest (cons $right-rest ()))) (superpose (collapse (gslt:mode:ProofSequenceCompareHeadsV1:1001 $head-comparison $result)))
    (quote (gslt:result:ProofSequenceCompareV1:001 (ProofSequenceConsV1 $left $left-rest) (ProofSequenceConsV1 $right $right-rest))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=11 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-append-cons-v1 target=mode relation=ProofSequenceAppendV1 input=001 functional=relational
-(= (gslt:mode:ProofSequenceAppendV1:001 $__gslt_input_v1_0_2)
-   (let (quote (ProofSequenceConsV1 $v0 $v3)) $__gslt_input_v1_0_2
-   (let (quote (ProofSequenceAppendV1 $v1 $v2 $v3)) (gslt:ProofSequenceAppendV1 (ProofSequenceAppendV1 $v1 $v2 $v3))
-   (quote (gslt:result:ProofSequenceAppendV1:001 (ProofSequenceConsV1 $v0 $v1) $v2)))))
+(= (gslt:mode:ProofSequenceAppendV1:001 (cons ProofSequenceConsV1 (cons $v0 (cons $v3 ()))))
+   (let (cons ProofSequenceAppendV1 (cons $v1 (cons $v2 (cons $v3 ())))) (gslt:ProofSequenceAppendV1 (ProofSequenceAppendV1 $v1 $v2 $v3))
+   (quote (gslt:result:ProofSequenceAppendV1:001 (ProofSequenceConsV1 $v0 $v1) $v2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=12 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-append-nil-v1 target=mode relation=ProofSequenceAppendV1 input=001 functional=relational
 (= (gslt:mode:ProofSequenceAppendV1:001 $v0)
    (quote (gslt:result:ProofSequenceAppendV1:001 (ProofSequenceNilV1) $v0)))
 
 ; gslt-lowered-equation-v1 source-rewrite=111 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-heads-equal-v1 target=mode relation=ProofSequenceCompareHeadsV1 input=1001 functional=relational
-(= (gslt:mode:ProofSequenceCompareHeadsV1:1001 $__gslt_input_v1_0_0 $result)
-   (let (quote (ProofTokenEqualV1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceCompareV1:001 $left-rest $right-rest)) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:001 $result)))
-   (quote (gslt:result:ProofSequenceCompareHeadsV1:1001 $left-rest $right-rest)))))
+(= (gslt:mode:ProofSequenceCompareHeadsV1:1001 (cons ProofTokenEqualV1 ()) $result)
+   (let (cons gslt:result:ProofSequenceCompareV1:001 (cons $left-rest (cons $right-rest ()))) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:001 $result)))
+   (quote (gslt:result:ProofSequenceCompareHeadsV1:1001 $left-rest $right-rest))))
 
 ; gslt-lowered-equation-v1 source-rewrite=112 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-heads-unequal-v1 target=mode relation=ProofSequenceCompareHeadsV1 input=1001 functional=relational
-(= (gslt:mode:ProofSequenceCompareHeadsV1:1001 $__gslt_input_v1_0_0 ProofSequenceDifferentV1)
-   (let (quote (ProofTokenUnequalV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ProofSequenceCompareHeadsV1:1001 $left-rest $right-rest))))
+(= (gslt:mode:ProofSequenceCompareHeadsV1:1001 (cons ProofTokenUnequalV1 ()) ProofSequenceDifferentV1)
+   (quote (gslt:result:ProofSequenceCompareHeadsV1:1001 $left-rest $right-rest)))
 
 
 ; gslt-lowered-equation-v1 source-rewrite=0 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-apply-v1 target=relation
 (= (gslt:MetamathProvableV1 $__gslt_input_v1_0_0)
-   (let (quote (MetamathProvableV1 (ProofSequenceConsV1 $v2 $v8))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofAssertionDeclaredV1:0 (ProofAssertionV1 $v0 $v1 $v2 $v3 $v4))) (superpose (collapse (gslt:mode:ProofAssertionDeclaredV1:0)))
-   (let (quote (gslt:result:ProofAssertionBuildEnvironmentV1:100 $v5 $v7)) (superpose (collapse (gslt:mode:ProofAssertionBuildEnvironmentV1:100 $v0)))
-   (let (quote (gslt:result:ProofAssertionCheckEssentialsV1:101 $v6)) (superpose (collapse (gslt:mode:ProofAssertionCheckEssentialsV1:101 $v1 $v7)))
-   (let (quote gslt:result:ProofAssertionCheckDisjointsV1:11) (superpose (collapse (gslt:mode:ProofAssertionCheckDisjointsV1:11 $v4 $v7)))
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:110 $v8)) (once (gslt:fn:ProofSequenceInstantiateV1:110 $v3 $v7))
+   (let (cons MetamathProvableV1 (cons (cons ProofSequenceConsV1 (cons $v2 (cons $v8 ()))) ())) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofAssertionDeclaredV1:0 (cons (cons ProofAssertionV1 (cons $v0 (cons $v1 (cons $v2 (cons $v3 (cons $v4 ())))))) ())) (superpose (collapse (gslt:mode:ProofAssertionDeclaredV1:0)))
+   (let (cons gslt:result:ProofAssertionBuildEnvironmentV1:100 (cons $v5 (cons $v7 ()))) (superpose (collapse (gslt:mode:ProofAssertionBuildEnvironmentV1:100 $v0)))
+   (let (cons gslt:result:ProofAssertionCheckEssentialsV1:101 (cons $v6 ())) (superpose (collapse (gslt:mode:ProofAssertionCheckEssentialsV1:101 $v1 $v7)))
+   (let gslt:result:ProofAssertionCheckDisjointsV1:11 (superpose (collapse (gslt:mode:ProofAssertionCheckDisjointsV1:11 $v4 $v7)))
+   (let (cons gslt:result:ProofSequenceInstantiateV1:110 (cons $v8 ())) (once (gslt:fn:ProofSequenceInstantiateV1:110 $v3 $v7))
    (quote (MetamathProvableV1 (ProofSequenceConsV1 $v2 $v8))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=1 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-build-environment-cons-v1 target=relation
 (= (gslt:ProofAssertionBuildEnvironmentV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofAssertionBuildEnvironmentV1 (ProofAssertionListConsV1 (ProofAssertionVariableV1 $v0 $v1) $v3) (ProofAssertionListConsV1 $v2 $v4) (ProofEnvironmentConsV1 $v0 $v2 $v5))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $v0)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote (gslt:result:MetamathProvableV1:0 (ProofSequenceConsV1 $v1 $v2))) (superpose (collapse (gslt:mode:MetamathProvableV1:0)))
-   (let (quote (gslt:result:ProofAssertionBuildEnvironmentV1:000 $v3 $v4 $v5)) (superpose (collapse (gslt:mode:ProofAssertionBuildEnvironmentV1:000)))
+   (let (cons ProofAssertionBuildEnvironmentV1 (cons (cons ProofAssertionListConsV1 (cons (cons ProofAssertionVariableV1 (cons $v0 (cons $v1 ()))) (cons $v3 ()))) (cons (cons ProofAssertionListConsV1 (cons $v2 (cons $v4 ()))) (cons (cons ProofEnvironmentConsV1 (cons $v0 (cons $v2 (cons $v5 ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $v0 ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let (cons gslt:result:MetamathProvableV1:0 (cons (cons ProofSequenceConsV1 (cons $v1 (cons $v2 ()))) ())) (superpose (collapse (gslt:mode:MetamathProvableV1:0)))
+   (let (cons gslt:result:ProofAssertionBuildEnvironmentV1:000 (cons $v3 (cons $v4 (cons $v5 ())))) (superpose (collapse (gslt:mode:ProofAssertionBuildEnvironmentV1:000)))
    (quote (ProofAssertionBuildEnvironmentV1 (ProofAssertionListConsV1 (ProofAssertionVariableV1 $v0 $v1) $v3) (ProofAssertionListConsV1 $v2 $v4) (ProofEnvironmentConsV1 $v0 $v2 $v5))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=2 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-build-environment-nil-v1 target=relation
 (= (gslt:ProofAssertionBuildEnvironmentV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofAssertionBuildEnvironmentV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1) (ProofEnvironmentNilV1))) $__gslt_input_v1_0_0
+   (let (cons ProofAssertionBuildEnvironmentV1 (cons (cons ProofAssertionListNilV1 ()) (cons (cons ProofAssertionListNilV1 ()) (cons (cons ProofEnvironmentNilV1 ()) ())))) $__gslt_input_v1_0_0
    (quote (ProofAssertionBuildEnvironmentV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1) (ProofEnvironmentNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=3 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-check-disjoints-cons-v1 target=relation
 (= (gslt:ProofAssertionCheckDisjointsV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofAssertionCheckDisjointsV1 (ProofAssertionListConsV1 (ProofAssertionDisjointV1 $v0 $v1) $v2) $v3)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenDifferentV1:00 $v0 $v1)) (once (gslt:fn:ProofTokenDifferentV1:00))
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:010 $v3 $v4)) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $v0)))
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:010 $v3 $v5)) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $v1)))
+   (let (cons ProofAssertionCheckDisjointsV1 (cons (cons ProofAssertionListConsV1 (cons (cons ProofAssertionDisjointV1 (cons $v0 (cons $v1 ()))) (cons $v2 ()))) (cons $v3 ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTokenDifferentV1:00 (cons $v0 (cons $v1 ()))) (once (gslt:fn:ProofTokenDifferentV1:00))
+   (let (cons gslt:result:ProofEnvironmentLookupV1:010 (cons $v3 (cons $v4 ()))) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $v0)))
+   (let (cons gslt:result:ProofEnvironmentLookupV1:010 (cons $v3 (cons $v5 ()))) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $v1)))
    (let $_ (gslt:ProofSequenceSupportApartV1 (ProofSequenceSupportApartV1 $v4 $v5))
-   (let (quote (gslt:result:ProofAssertionCheckDisjointsV1:00 $v2 $v3)) (superpose (collapse (gslt:mode:ProofAssertionCheckDisjointsV1:00)))
+   (let (cons gslt:result:ProofAssertionCheckDisjointsV1:00 (cons $v2 (cons $v3 ()))) (superpose (collapse (gslt:mode:ProofAssertionCheckDisjointsV1:00)))
    (quote (ProofAssertionCheckDisjointsV1 (ProofAssertionListConsV1 (ProofAssertionDisjointV1 $v0 $v1) $v2) $v3)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=4 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-check-disjoints-nil-v1 target=relation
 (= (gslt:ProofAssertionCheckDisjointsV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofAssertionCheckDisjointsV1 (ProofAssertionListNilV1) $v0)) $__gslt_input_v1_0_0
+   (let (cons ProofAssertionCheckDisjointsV1 (cons (cons ProofAssertionListNilV1 ()) (cons $v0 ()))) $__gslt_input_v1_0_0
    (quote (ProofAssertionCheckDisjointsV1 (ProofAssertionListNilV1) $v0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=5 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-check-essentials-cons-v1 target=relation
 (= (gslt:ProofAssertionCheckEssentialsV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofAssertionCheckEssentialsV1 (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $v0) $v2) (ProofAssertionListConsV1 $v1 $v3) $v4)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:MetamathProvableV1:0 $v1)) (superpose (collapse (gslt:mode:MetamathProvableV1:0)))
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:001 $v0 $v4)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:001 $v1)))
-   (let (quote (gslt:result:ProofAssertionCheckEssentialsV1:000 $v2 $v3 $v4)) (superpose (collapse (gslt:mode:ProofAssertionCheckEssentialsV1:000)))
+   (let (cons ProofAssertionCheckEssentialsV1 (cons (cons ProofAssertionListConsV1 (cons (cons ProofAssertionEssentialV1 (cons $v0 ())) (cons $v2 ()))) (cons (cons ProofAssertionListConsV1 (cons $v1 (cons $v3 ()))) (cons $v4 ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:MetamathProvableV1:0 (cons $v1 ())) (superpose (collapse (gslt:mode:MetamathProvableV1:0)))
+   (let (cons gslt:result:ProofSequenceInstantiateV1:001 (cons $v0 (cons $v4 ()))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:001 $v1)))
+   (let (cons gslt:result:ProofAssertionCheckEssentialsV1:000 (cons $v2 (cons $v3 (cons $v4 ())))) (superpose (collapse (gslt:mode:ProofAssertionCheckEssentialsV1:000)))
    (quote (ProofAssertionCheckEssentialsV1 (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $v0) $v2) (ProofAssertionListConsV1 $v1 $v3) $v4)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=6 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-check-essentials-nil-v1 target=relation
 (= (gslt:ProofAssertionCheckEssentialsV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofAssertionCheckEssentialsV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1) $v0)) $__gslt_input_v1_0_0
+   (let (cons ProofAssertionCheckEssentialsV1 (cons (cons ProofAssertionListNilV1 ()) (cons (cons ProofAssertionListNilV1 ()) (cons $v0 ())))) $__gslt_input_v1_0_0
    (quote (ProofAssertionCheckEssentialsV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1) $v0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=7 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-assertion-use-premise-v1 target=relation
 (= (gslt:MetamathProvableV1 $__gslt_input_v1_0_0)
-   (let (quote (MetamathProvableV1 $v0)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:MetamathProvableV1:0 $v0)) (superpose (collapse (gslt:mode:MetamathProvableV1:0)))
+   (let (cons MetamathProvableV1 (cons $v0 ())) $__gslt_input_v1_0_0
+   (let (cons gslt:result:MetamathProvableV1:0 (cons $v0 ())) (superpose (collapse (gslt:mode:MetamathProvableV1:0)))
    (quote (MetamathProvableV1 $v0)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=8 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-environment-lookup-compared-equal-v1 target=relation
 (= (gslt:ProofEnvironmentLookupComparedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofEnvironmentLookupComparedV1 (ProofTokenEqualV1) $v0 $v1 $v2 $v0)) $__gslt_input_v1_0_0
+   (let (cons ProofEnvironmentLookupComparedV1 (cons (cons ProofTokenEqualV1 ()) (cons $v0 (cons $v1 (cons $v2 (cons $v0 ())))))) $__gslt_input_v1_0_0
    (quote (ProofEnvironmentLookupComparedV1 (ProofTokenEqualV1) $v0 $v1 $v2 $v0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=9 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-environment-lookup-compared-unequal-v1 target=relation
 (= (gslt:ProofEnvironmentLookupComparedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofEnvironmentLookupComparedV1 (ProofTokenUnequalV1) $v0 $v1 $v2 $v3)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:000 $v1 $v2 $v3)) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:000)))
+   (let (cons ProofEnvironmentLookupComparedV1 (cons (cons ProofTokenUnequalV1 ()) (cons $v0 (cons $v1 (cons $v2 (cons $v3 ())))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofEnvironmentLookupV1:000 (cons $v1 (cons $v2 (cons $v3 ())))) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:000)))
    (quote (ProofEnvironmentLookupComparedV1 (ProofTokenUnequalV1) $v0 $v1 $v2 $v3)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=10 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-environment-lookup-cons-v1 target=relation
 (= (gslt:ProofEnvironmentLookupV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofEnvironmentLookupV1 (ProofEnvironmentConsV1 $v0 $v1 $v2) $v3 $v5)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenCompareV1:000 $v0 $v3 $v4)) (superpose (collapse (gslt:mode:ProofTokenCompareV1:000)))
-   (let (quote (gslt:result:ProofEnvironmentLookupComparedV1:10010 $v1 $v2 $v5)) (superpose (collapse (gslt:mode:ProofEnvironmentLookupComparedV1:10010 $v4 $v3)))
+   (let (cons ProofEnvironmentLookupV1 (cons (cons ProofEnvironmentConsV1 (cons $v0 (cons $v1 (cons $v2 ())))) (cons $v3 (cons $v5 ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTokenCompareV1:000 (cons $v0 (cons $v3 (cons $v4 ())))) (superpose (collapse (gslt:mode:ProofTokenCompareV1:000)))
+   (let (cons gslt:result:ProofEnvironmentLookupComparedV1:10010 (cons $v1 (cons $v2 (cons $v5 ())))) (superpose (collapse (gslt:mode:ProofEnvironmentLookupComparedV1:10010 $v4 $v3)))
    (quote (ProofEnvironmentLookupV1 (ProofEnvironmentConsV1 $v0 $v1 $v2) $v3 $v5))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=11 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-append-cons-v1 target=relation
 (= (gslt:ProofSequenceAppendV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofSequenceAppendV1 (ProofSequenceConsV1 $v0 $v1) $v2 (ProofSequenceConsV1 $v0 $v3))) $__gslt_input_v1_0_0
-   (let (quote (ProofSequenceAppendV1 $v1 $v2 $v3)) (gslt:ProofSequenceAppendV1 (ProofSequenceAppendV1 $v1 $v2 $v3))
+   (let (cons ProofSequenceAppendV1 (cons (cons ProofSequenceConsV1 (cons $v0 (cons $v1 ()))) (cons $v2 (cons (cons ProofSequenceConsV1 (cons $v0 (cons $v3 ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons ProofSequenceAppendV1 (cons $v1 (cons $v2 (cons $v3 ())))) (gslt:ProofSequenceAppendV1 (ProofSequenceAppendV1 $v1 $v2 $v3))
    (quote (ProofSequenceAppendV1 (ProofSequenceConsV1 $v0 $v1) $v2 (ProofSequenceConsV1 $v0 $v3))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=12 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-append-nil-v1 target=relation
 (= (gslt:ProofSequenceAppendV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofSequenceAppendV1 (ProofSequenceNilV1) $v0 $v0)) $__gslt_input_v1_0_0
+   (let (cons ProofSequenceAppendV1 (cons (cons ProofSequenceNilV1 ()) (cons $v0 (cons $v0 ())))) $__gslt_input_v1_0_0
    (quote (ProofSequenceAppendV1 (ProofSequenceNilV1) $v0 $v0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=13 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-class-literal-v1 target=relation
 (= (gslt:ProofSequenceInstantiateClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofSequenceInstantiateClassV1 (ProofTokenLiteralClassV1) $v0 $v1 $v2 (ProofSequenceConsV1 $v0 $v3))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:000 $v1 $v2 $v3)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
+   (let (cons ProofSequenceInstantiateClassV1 (cons (cons ProofTokenLiteralClassV1 ()) (cons $v0 (cons $v1 (cons $v2 (cons (cons ProofSequenceConsV1 (cons $v0 (cons $v3 ()))) ())))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofSequenceInstantiateV1:000 (cons $v1 (cons $v2 (cons $v3 ())))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
    (quote (ProofSequenceInstantiateClassV1 (ProofTokenLiteralClassV1) $v0 $v1 $v2 (ProofSequenceConsV1 $v0 $v3))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=14 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-class-variable-v1 target=relation
 (= (gslt:ProofSequenceInstantiateClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofSequenceInstantiateClassV1 (ProofTokenVariableClassV1) $v0 $v1 $v2 $v5)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:000 $v2 $v0 $v3)) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:000)))
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:000 $v1 $v2 $v4)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
-   (let (quote (ProofSequenceAppendV1 $v3 $v4 $v5)) (gslt:ProofSequenceAppendV1 (ProofSequenceAppendV1 $v3 $v4 $v5))
+   (let (cons ProofSequenceInstantiateClassV1 (cons (cons ProofTokenVariableClassV1 ()) (cons $v0 (cons $v1 (cons $v2 (cons $v5 ())))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofEnvironmentLookupV1:000 (cons $v2 (cons $v0 (cons $v3 ())))) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:000)))
+   (let (cons gslt:result:ProofSequenceInstantiateV1:000 (cons $v1 (cons $v2 (cons $v4 ())))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
+   (let (cons ProofSequenceAppendV1 (cons $v3 (cons $v4 (cons $v5 ())))) (gslt:ProofSequenceAppendV1 (ProofSequenceAppendV1 $v3 $v4 $v5))
    (quote (ProofSequenceInstantiateClassV1 (ProofTokenVariableClassV1) $v0 $v1 $v2 $v5)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=15 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-cons-v1 target=relation
 (= (gslt:ProofSequenceInstantiateV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofSequenceInstantiateV1 (ProofSequenceConsV1 $v0 $v1) $v2 $v4)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenClassV1:00 $v0 $v3)) (once (gslt:fn:ProofTokenClassV1:00))
-   (let (quote (gslt:result:ProofSequenceInstantiateClassV1:11000 $v1 $v2 $v4)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateClassV1:11000 $v3 $v0)))
+   (let (cons ProofSequenceInstantiateV1 (cons (cons ProofSequenceConsV1 (cons $v0 (cons $v1 ()))) (cons $v2 (cons $v4 ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTokenClassV1:00 (cons $v0 (cons $v3 ()))) (once (gslt:fn:ProofTokenClassV1:00))
+   (let (cons gslt:result:ProofSequenceInstantiateClassV1:11000 (cons $v1 (cons $v2 (cons $v4 ())))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateClassV1:11000 $v3 $v0)))
    (quote (ProofSequenceInstantiateV1 (ProofSequenceConsV1 $v0 $v1) $v2 $v4))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=16 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-instantiate-nil-v1 target=relation
 (= (gslt:ProofSequenceInstantiateV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofSequenceInstantiateV1 (ProofSequenceNilV1) $v0 (ProofSequenceNilV1))) $__gslt_input_v1_0_0
+   (let (cons ProofSequenceInstantiateV1 (cons (cons ProofSequenceNilV1 ()) (cons $v0 (cons (cons ProofSequenceNilV1 ()) ())))) $__gslt_input_v1_0_0
    (quote (ProofSequenceInstantiateV1 (ProofSequenceNilV1) $v0 (ProofSequenceNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=17 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-support-apart-cons-v1 target=relation
 (= (gslt:ProofSequenceSupportApartV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofSequenceSupportApartV1 (ProofSequenceConsV1 $v0 $v1) $v2)) $__gslt_input_v1_0_0
+   (let (cons ProofSequenceSupportApartV1 (cons (cons ProofSequenceConsV1 (cons $v0 (cons $v1 ()))) (cons $v2 ()))) $__gslt_input_v1_0_0
    (let $_ (gslt:ProofTokenAgainstSequenceV1 (ProofTokenAgainstSequenceV1 $v0 $v2))
    (let $_ (gslt:ProofSequenceSupportApartV1 (ProofSequenceSupportApartV1 $v1 $v2))
    (quote (ProofSequenceSupportApartV1 (ProofSequenceConsV1 $v0 $v1) $v2))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=18 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-sequence-support-apart-nil-v1 target=relation
 (= (gslt:ProofSequenceSupportApartV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofSequenceSupportApartV1 (ProofSequenceNilV1) $v0)) $__gslt_input_v1_0_0
+   (let (cons ProofSequenceSupportApartV1 (cons (cons ProofSequenceNilV1 ()) (cons $v0 ()))) $__gslt_input_v1_0_0
    (quote (ProofSequenceSupportApartV1 (ProofSequenceNilV1) $v0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=19 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-token-against-sequence-cons-v1 target=relation
 (= (gslt:ProofTokenAgainstSequenceV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTokenAgainstSequenceV1 $v0 (ProofSequenceConsV1 $v1 $v2))) $__gslt_input_v1_0_0
+   (let (cons ProofTokenAgainstSequenceV1 (cons $v0 (cons (cons ProofSequenceConsV1 (cons $v1 (cons $v2 ()))) ()))) $__gslt_input_v1_0_0
    (let $_ (gslt:ProofTokenPairAllowedV1 (ProofTokenPairAllowedV1 $v0 $v1))
    (let $_ (gslt:ProofTokenAgainstSequenceV1 (ProofTokenAgainstSequenceV1 $v0 $v2))
    (quote (ProofTokenAgainstSequenceV1 $v0 (ProofSequenceConsV1 $v1 $v2)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=20 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-token-against-sequence-nil-v1 target=relation
 (= (gslt:ProofTokenAgainstSequenceV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTokenAgainstSequenceV1 $v0 (ProofSequenceNilV1))) $__gslt_input_v1_0_0
+   (let (cons ProofTokenAgainstSequenceV1 (cons $v0 (cons (cons ProofSequenceNilV1 ()) ()))) $__gslt_input_v1_0_0
    (quote (ProofTokenAgainstSequenceV1 $v0 (ProofSequenceNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=21 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-token-pair-apart-v1 target=relation
 (= (gslt:ProofTokenPairAllowedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTokenPairAllowedV1 $v0 $v1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $v0)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $v1)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote gslt:result:ProofTokenApartV1:11) (superpose (collapse (gslt:mode:ProofTokenApartV1:11 $v0 $v1)))
+   (let (cons ProofTokenPairAllowedV1 (cons $v0 (cons $v1 ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $v0 ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $v1 ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let gslt:result:ProofTokenApartV1:11 (superpose (collapse (gslt:mode:ProofTokenApartV1:11 $v0 $v1)))
    (quote (ProofTokenPairAllowedV1 $v0 $v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=22 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-token-pair-left-literal-v1 target=relation
 (= (gslt:ProofTokenPairAllowedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTokenPairAllowedV1 $v0 $v1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenLiteralV1:0 $v0)) (once (gslt:fn:ProofTokenLiteralV1:0))
+   (let (cons ProofTokenPairAllowedV1 (cons $v0 (cons $v1 ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTokenLiteralV1:0 (cons $v0 ())) (once (gslt:fn:ProofTokenLiteralV1:0))
    (quote (ProofTokenPairAllowedV1 $v0 $v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=23 source-presentation=GeneratedSemanticGSLTV1_fcc33247a0eabe6ceefbbde98071090ad1524c99a22a4fdf0a2edacbc9a483e3 source-rule=proof-token-pair-right-literal-v1 target=relation
 (= (gslt:ProofTokenPairAllowedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTokenPairAllowedV1 $v0 $v1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenLiteralV1:0 $v1)) (once (gslt:fn:ProofTokenLiteralV1:0))
+   (let (cons ProofTokenPairAllowedV1 (cons $v0 (cons $v1 ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTokenLiteralV1:0 (cons $v1 ())) (once (gslt:fn:ProofTokenLiteralV1:0))
    (quote (ProofTokenPairAllowedV1 $v0 $v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=24 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-context-member-v1 target=relation
 (= (gslt:ProofTraceContextMemberV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceContextMemberV1 (ProofTraceContextConsV1 $head $rest) $formula)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceCompareV1:000 $head $formula $comparison)) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:000)))
-   (let (quote (gslt:result:ProofTraceContextMemberComparedV1:100 $rest $formula)) (superpose (collapse (gslt:mode:ProofTraceContextMemberComparedV1:100 $comparison)))
+   (let (cons ProofTraceContextMemberV1 (cons (cons ProofTraceContextConsV1 (cons $head (cons $rest ()))) (cons $formula ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofSequenceCompareV1:000 (cons $head (cons $formula (cons $comparison ())))) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:000)))
+   (let (cons gslt:result:ProofTraceContextMemberComparedV1:100 (cons $rest (cons $formula ()))) (superpose (collapse (gslt:mode:ProofTraceContextMemberComparedV1:100 $comparison)))
    (quote (ProofTraceContextMemberV1 (ProofTraceContextConsV1 $head $rest) $formula))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=25 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-context-member-compared-equal-v1 target=relation
 (= (gslt:ProofTraceContextMemberComparedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceContextMemberComparedV1 ProofSequenceEqualV1 $rest $formula)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceContextMemberComparedV1 (cons ProofSequenceEqualV1 (cons $rest (cons $formula ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceContextMemberComparedV1 ProofSequenceEqualV1 $rest $formula))))
 
 ; gslt-lowered-equation-v1 source-rewrite=26 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-context-member-compared-different-v1 target=relation
 (= (gslt:ProofTraceContextMemberComparedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceContextMemberComparedV1 ProofSequenceDifferentV1 $rest $formula)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceContextMemberComparedV1 (cons ProofSequenceDifferentV1 (cons $rest (cons $formula ())))) $__gslt_input_v1_0_0
    (let $_ (gslt:ProofTraceContextMemberV1 (ProofTraceContextMemberV1 $rest $formula))
    (quote (ProofTraceContextMemberComparedV1 ProofSequenceDifferentV1 $rest $formula)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=27 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-project-nil-v1 target=relation
 (= (gslt:ProofTraceFrameProjectV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameProjectV1 ProofTraceFrameNilV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameProjectV1 (cons ProofTraceFrameNilV1 (cons (cons ProofAssertionListNilV1 ()) (cons (cons ProofAssertionListNilV1 ()) ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceFrameProjectV1 ProofTraceFrameNilV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=28 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-project-variable-v1 target=relation
 (= (gslt:ProofTraceFrameProjectV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameProjectV1 (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 $variable $typecode) $rest) (ProofAssertionListConsV1 (ProofAssertionVariableV1 $variable $typecode) $variables) $essentials)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceFrameProjectV1 $rest $variables $essentials)) (gslt:ProofTraceFrameProjectV1 (ProofTraceFrameProjectV1 $rest $variables $essentials))
+   (let (cons ProofTraceFrameProjectV1 (cons (cons ProofTraceFrameConsV1 (cons (cons ProofTraceFrameVariableV1 (cons $variable (cons $typecode ()))) (cons $rest ()))) (cons (cons ProofAssertionListConsV1 (cons (cons ProofAssertionVariableV1 (cons $variable (cons $typecode ()))) (cons $variables ()))) (cons $essentials ())))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameProjectV1 (cons $rest (cons $variables (cons $essentials ())))) (gslt:ProofTraceFrameProjectV1 (ProofTraceFrameProjectV1 $rest $variables $essentials))
    (quote (ProofTraceFrameProjectV1 (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 $variable $typecode) $rest) (ProofAssertionListConsV1 (ProofAssertionVariableV1 $variable $typecode) $variables) $essentials)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=29 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-project-essential-v1 target=relation
 (= (gslt:ProofTraceFrameProjectV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameProjectV1 (ProofTraceFrameConsV1 (ProofTraceFrameEssentialV1 $template) $rest) $variables (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $template) $essentials))) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceFrameProjectV1 $rest $variables $essentials)) (gslt:ProofTraceFrameProjectV1 (ProofTraceFrameProjectV1 $rest $variables $essentials))
+   (let (cons ProofTraceFrameProjectV1 (cons (cons ProofTraceFrameConsV1 (cons (cons ProofTraceFrameEssentialV1 (cons $template ())) (cons $rest ()))) (cons $variables (cons (cons ProofAssertionListConsV1 (cons (cons ProofAssertionEssentialV1 (cons $template ())) (cons $essentials ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameProjectV1 (cons $rest (cons $variables (cons $essentials ())))) (gslt:ProofTraceFrameProjectV1 (ProofTraceFrameProjectV1 $rest $variables $essentials))
    (quote (ProofTraceFrameProjectV1 (ProofTraceFrameConsV1 (ProofTraceFrameEssentialV1 $template) $rest) $variables (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $template) $essentials))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=30 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-nil-v1 target=relation
 (= (gslt:ProofTraceFrameApplyV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameApplyV1 ProofTraceFrameNilV1 $stack (ProofAssertionListNilV1) (ProofAssertionListNilV1) $stack)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameApplyV1 (cons ProofTraceFrameNilV1 (cons $stack (cons (cons ProofAssertionListNilV1 ()) (cons (cons ProofAssertionListNilV1 ()) (cons $stack ())))))) $__gslt_input_v1_0_0
    (quote (ProofTraceFrameApplyV1 ProofTraceFrameNilV1 $stack (ProofAssertionListNilV1) (ProofAssertionListNilV1) $stack))))
 
 ; gslt-lowered-equation-v1 source-rewrite=31 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-variable-v1 target=relation
 (= (gslt:ProofTraceFrameApplyV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameApplyV1 (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 $variable $typecode) $rest) $stack (ProofAssertionListConsV1 $image $images) $actuals $output)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceFrameApplyV1 $rest $stack $images $actuals (ProofTraceStackConsV1 (ProofSequenceConsV1 $typecode $image) $output))) (gslt:ProofTraceFrameApplyV1 (ProofTraceFrameApplyV1 $rest $stack $images $actuals (ProofTraceStackConsV1 (ProofSequenceConsV1 $typecode $image) $output)))
+   (let (cons ProofTraceFrameApplyV1 (cons (cons ProofTraceFrameConsV1 (cons (cons ProofTraceFrameVariableV1 (cons $variable (cons $typecode ()))) (cons $rest ()))) (cons $stack (cons (cons ProofAssertionListConsV1 (cons $image (cons $images ()))) (cons $actuals (cons $output ())))))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameApplyV1 (cons $rest (cons $stack (cons $images (cons $actuals (cons (cons ProofTraceStackConsV1 (cons (cons ProofSequenceConsV1 (cons $typecode (cons $image ()))) (cons $output ()))) ())))))) (gslt:ProofTraceFrameApplyV1 (ProofTraceFrameApplyV1 $rest $stack $images $actuals (ProofTraceStackConsV1 (ProofSequenceConsV1 $typecode $image) $output)))
    (quote (ProofTraceFrameApplyV1 (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 $variable $typecode) $rest) $stack (ProofAssertionListConsV1 $image $images) $actuals $output)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=32 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-essential-v1 target=relation
 (= (gslt:ProofTraceFrameApplyV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameApplyV1 (ProofTraceFrameConsV1 (ProofTraceFrameEssentialV1 $template) $rest) $stack $images (ProofAssertionListConsV1 $actual $actuals) $output)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceFrameApplyV1 $rest $stack $images $actuals (ProofTraceStackConsV1 $actual $output))) (gslt:ProofTraceFrameApplyV1 (ProofTraceFrameApplyV1 $rest $stack $images $actuals (ProofTraceStackConsV1 $actual $output)))
+   (let (cons ProofTraceFrameApplyV1 (cons (cons ProofTraceFrameConsV1 (cons (cons ProofTraceFrameEssentialV1 (cons $template ())) (cons $rest ()))) (cons $stack (cons $images (cons (cons ProofAssertionListConsV1 (cons $actual (cons $actuals ()))) (cons $output ())))))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameApplyV1 (cons $rest (cons $stack (cons $images (cons $actuals (cons (cons ProofTraceStackConsV1 (cons $actual (cons $output ()))) ())))))) (gslt:ProofTraceFrameApplyV1 (ProofTraceFrameApplyV1 $rest $stack $images $actuals (ProofTraceStackConsV1 $actual $output)))
    (quote (ProofTraceFrameApplyV1 (ProofTraceFrameConsV1 (ProofTraceFrameEssentialV1 $template) $rest) $stack $images (ProofAssertionListConsV1 $actual $actuals) $output)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=33 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-result-nil-v1 target=relation
 (= (gslt:ProofTraceFrameApplyResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameApplyResultV1 ProofTraceFrameNilV1 $stack (ProofTraceFrameAppliedV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1) $stack))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameApplyResultV1 (cons ProofTraceFrameNilV1 (cons $stack (cons (cons ProofTraceFrameAppliedV1 (cons (cons ProofAssertionListNilV1 ()) (cons (cons ProofAssertionListNilV1 ()) (cons $stack ())))) ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceFrameApplyResultV1 ProofTraceFrameNilV1 $stack (ProofTraceFrameAppliedV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1) $stack)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=34 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-result-variable-v1 target=relation
 (= (gslt:ProofTraceFrameApplyResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameApplyResultV1 (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 $variable $typecode) $rest) $stack $result)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameApplyResultV1 (cons (cons ProofTraceFrameConsV1 (cons (cons ProofTraceFrameVariableV1 (cons $variable (cons $typecode ()))) (cons $rest ()))) (cons $stack (cons $result ())))) $__gslt_input_v1_0_0
    (let $_ (gslt:ProofTraceFrameApplyResultV1 (ProofTraceFrameApplyResultV1 $rest $stack $tail-result))
    (let $_ (gslt:ProofTraceFrameApplyVariableResultV1 (ProofTraceFrameApplyVariableResultV1 $typecode $tail-result $result))
    (quote (ProofTraceFrameApplyResultV1 (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 $variable $typecode) $rest) $stack $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=35 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-result-essential-v1 target=relation
 (= (gslt:ProofTraceFrameApplyResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameApplyResultV1 (ProofTraceFrameConsV1 (ProofTraceFrameEssentialV1 $template) $rest) $stack $result)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameApplyResultV1 (cons (cons ProofTraceFrameConsV1 (cons (cons ProofTraceFrameEssentialV1 (cons $template ())) (cons $rest ()))) (cons $stack (cons $result ())))) $__gslt_input_v1_0_0
    (let $_ (gslt:ProofTraceFrameApplyResultV1 (ProofTraceFrameApplyResultV1 $rest $stack $tail-result))
-   (let (quote (ProofTraceFrameApplyEssentialResultV1 $tail-result $result)) (gslt:ProofTraceFrameApplyEssentialResultV1 (ProofTraceFrameApplyEssentialResultV1 $tail-result $result))
+   (let (cons ProofTraceFrameApplyEssentialResultV1 (cons $tail-result (cons $result ()))) (gslt:ProofTraceFrameApplyEssentialResultV1 (ProofTraceFrameApplyEssentialResultV1 $tail-result $result))
    (quote (ProofTraceFrameApplyResultV1 (ProofTraceFrameConsV1 (ProofTraceFrameEssentialV1 $template) $rest) $stack $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=36 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-essential-applied-v1 target=relation
 (= (gslt:ProofTraceFrameApplyEssentialResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameApplyEssentialResultV1 (ProofTraceFrameAppliedV1 $images $actuals (ProofTraceStackConsV1 $actual $output)) (ProofTraceFrameAppliedV1 $images (ProofAssertionListConsV1 $actual $actuals) $output))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameApplyEssentialResultV1 (cons (cons ProofTraceFrameAppliedV1 (cons $images (cons $actuals (cons (cons ProofTraceStackConsV1 (cons $actual (cons $output ()))) ())))) (cons (cons ProofTraceFrameAppliedV1 (cons $images (cons (cons ProofAssertionListConsV1 (cons $actual (cons $actuals ()))) (cons $output ())))) ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceFrameApplyEssentialResultV1 (ProofTraceFrameAppliedV1 $images $actuals (ProofTraceStackConsV1 $actual $output)) (ProofTraceFrameAppliedV1 $images (ProofAssertionListConsV1 $actual $actuals) $output)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=37 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-essential-refused-v1 target=relation
 (= (gslt:ProofTraceFrameApplyEssentialResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameApplyEssentialResultV1 (ProofTraceRealizeRefusedV1 $reason) (ProofTraceRealizeRefusedV1 $reason))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameApplyEssentialResultV1 (cons (cons ProofTraceRealizeRefusedV1 (cons $reason ())) (cons (cons ProofTraceRealizeRefusedV1 (cons $reason ())) ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceFrameApplyEssentialResultV1 (ProofTraceRealizeRefusedV1 $reason) (ProofTraceRealizeRefusedV1 $reason)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=38 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-variable-applied-v1 target=relation
 (= (gslt:ProofTraceFrameApplyVariableResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameApplyVariableResultV1 $expected-typecode (ProofTraceFrameAppliedV1 $images $actuals (ProofTraceStackConsV1 (ProofSequenceConsV1 $actual-typecode $image) $output)) $result)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenCompareV1:000 $expected-typecode $actual-typecode $comparison)) (superpose (collapse (gslt:mode:ProofTokenCompareV1:000)))
-   (let (quote (ProofTraceFrameApplyVariableComparedV1 $comparison $expected-typecode $actual-typecode $image $images $actuals $output $result)) (gslt:ProofTraceFrameApplyVariableComparedV1 (ProofTraceFrameApplyVariableComparedV1 $comparison $expected-typecode $actual-typecode $image $images $actuals $output $result))
+   (let (cons ProofTraceFrameApplyVariableResultV1 (cons $expected-typecode (cons (cons ProofTraceFrameAppliedV1 (cons $images (cons $actuals (cons (cons ProofTraceStackConsV1 (cons (cons ProofSequenceConsV1 (cons $actual-typecode (cons $image ()))) (cons $output ()))) ())))) (cons $result ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTokenCompareV1:000 (cons $expected-typecode (cons $actual-typecode (cons $comparison ())))) (superpose (collapse (gslt:mode:ProofTokenCompareV1:000)))
+   (let (cons ProofTraceFrameApplyVariableComparedV1 (cons $comparison (cons $expected-typecode (cons $actual-typecode (cons $image (cons $images (cons $actuals (cons $output (cons $result ()))))))))) (gslt:ProofTraceFrameApplyVariableComparedV1 (ProofTraceFrameApplyVariableComparedV1 $comparison $expected-typecode $actual-typecode $image $images $actuals $output $result))
    (quote (ProofTraceFrameApplyVariableResultV1 $expected-typecode (ProofTraceFrameAppliedV1 $images $actuals (ProofTraceStackConsV1 (ProofSequenceConsV1 $actual-typecode $image) $output)) $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=39 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-variable-missing-typecode-v1 target=relation
 (= (gslt:ProofTraceFrameApplyVariableResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameApplyVariableResultV1 $expected-typecode (ProofTraceFrameAppliedV1 $images $actuals (ProofTraceStackConsV1 (ProofSequenceNilV1) $output)) (ProofTraceRealizeRefusedV1 (ProofTraceRefusedTypecodeMismatchV1 $expected-typecode ProofTraceMissingTypecodeV1)))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameApplyVariableResultV1 (cons $expected-typecode (cons (cons ProofTraceFrameAppliedV1 (cons $images (cons $actuals (cons (cons ProofTraceStackConsV1 (cons (cons ProofSequenceNilV1 ()) (cons $output ()))) ())))) (cons (cons ProofTraceRealizeRefusedV1 (cons (cons ProofTraceRefusedTypecodeMismatchV1 (cons $expected-typecode (cons ProofTraceMissingTypecodeV1 ()))) ())) ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceFrameApplyVariableResultV1 $expected-typecode (ProofTraceFrameAppliedV1 $images $actuals (ProofTraceStackConsV1 (ProofSequenceNilV1) $output)) (ProofTraceRealizeRefusedV1 (ProofTraceRefusedTypecodeMismatchV1 $expected-typecode ProofTraceMissingTypecodeV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=40 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-variable-refused-v1 target=relation
 (= (gslt:ProofTraceFrameApplyVariableResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameApplyVariableResultV1 $expected-typecode (ProofTraceRealizeRefusedV1 $reason) (ProofTraceRealizeRefusedV1 $reason))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameApplyVariableResultV1 (cons $expected-typecode (cons (cons ProofTraceRealizeRefusedV1 (cons $reason ())) (cons (cons ProofTraceRealizeRefusedV1 (cons $reason ())) ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceFrameApplyVariableResultV1 $expected-typecode (ProofTraceRealizeRefusedV1 $reason) (ProofTraceRealizeRefusedV1 $reason)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=41 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-variable-equal-v1 target=relation
 (= (gslt:ProofTraceFrameApplyVariableComparedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameApplyVariableComparedV1 (ProofTokenEqualV1) $expected-typecode $actual-typecode $image $images $actuals $output (ProofTraceFrameAppliedV1 (ProofAssertionListConsV1 $image $images) $actuals $output))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameApplyVariableComparedV1 (cons (cons ProofTokenEqualV1 ()) (cons $expected-typecode (cons $actual-typecode (cons $image (cons $images (cons $actuals (cons $output (cons (cons ProofTraceFrameAppliedV1 (cons (cons ProofAssertionListConsV1 (cons $image (cons $images ()))) (cons $actuals (cons $output ())))) ()))))))))) $__gslt_input_v1_0_0
    (quote (ProofTraceFrameApplyVariableComparedV1 (ProofTokenEqualV1) $expected-typecode $actual-typecode $image $images $actuals $output (ProofTraceFrameAppliedV1 (ProofAssertionListConsV1 $image $images) $actuals $output)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=42 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-apply-variable-different-v1 target=relation
 (= (gslt:ProofTraceFrameApplyVariableComparedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameApplyVariableComparedV1 (ProofTokenUnequalV1) $expected-typecode $actual-typecode $image $images $actuals $output (ProofTraceRealizeRefusedV1 (ProofTraceRefusedTypecodeMismatchV1 $expected-typecode $actual-typecode)))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameApplyVariableComparedV1 (cons (cons ProofTokenUnequalV1 ()) (cons $expected-typecode (cons $actual-typecode (cons $image (cons $images (cons $actuals (cons $output (cons (cons ProofTraceRealizeRefusedV1 (cons (cons ProofTraceRefusedTypecodeMismatchV1 (cons $expected-typecode (cons $actual-typecode ()))) ())) ()))))))))) $__gslt_input_v1_0_0
    (quote (ProofTraceFrameApplyVariableComparedV1 (ProofTokenUnequalV1) $expected-typecode $actual-typecode $image $images $actuals $output (ProofTraceRealizeRefusedV1 (ProofTraceRefusedTypecodeMismatchV1 $expected-typecode $actual-typecode))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=43 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-build-environment-nil-v1 target=relation
 (= (gslt:ProofTraceBuildEnvironmentV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceBuildEnvironmentV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1) (ProofEnvironmentNilV1))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceBuildEnvironmentV1 (cons (cons ProofAssertionListNilV1 ()) (cons (cons ProofAssertionListNilV1 ()) (cons (cons ProofEnvironmentNilV1 ()) ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceBuildEnvironmentV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1) (ProofEnvironmentNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=44 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-build-environment-cons-v1 target=relation
 (= (gslt:ProofTraceBuildEnvironmentV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceBuildEnvironmentV1 (ProofAssertionListConsV1 (ProofAssertionVariableV1 $variable $typecode) $variables) (ProofAssertionListConsV1 $image $images) (ProofEnvironmentConsV1 $variable $image $environment))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $variable)) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let (cons ProofTraceBuildEnvironmentV1 (cons (cons ProofAssertionListConsV1 (cons (cons ProofAssertionVariableV1 (cons $variable (cons $typecode ()))) (cons $variables ()))) (cons (cons ProofAssertionListConsV1 (cons $image (cons $images ()))) (cons (cons ProofEnvironmentConsV1 (cons $variable (cons $image (cons $environment ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $variable ())) (once (gslt:fn:ProofTokenVariableV1:0))
    (let $_ (gslt:ProofTraceBuildEnvironmentV1 (ProofTraceBuildEnvironmentV1 $variables $images $environment))
    (quote (ProofTraceBuildEnvironmentV1 (ProofAssertionListConsV1 (ProofAssertionVariableV1 $variable $typecode) $variables) (ProofAssertionListConsV1 $image $images) (ProofEnvironmentConsV1 $variable $image $environment)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=45 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-essentials-nil-v1 target=relation
 (= (gslt:ProofTraceCheckEssentialsV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCheckEssentialsV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1) $environment)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceCheckEssentialsV1 (cons (cons ProofAssertionListNilV1 ()) (cons (cons ProofAssertionListNilV1 ()) (cons $environment ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceCheckEssentialsV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1) $environment))))
 
 ; gslt-lowered-equation-v1 source-rewrite=46 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-essentials-cons-v1 target=relation
 (= (gslt:ProofTraceCheckEssentialsV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCheckEssentialsV1 (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $template) $essentials) (ProofAssertionListConsV1 $actual $actuals) $environment)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:000 $template $environment $actual)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
-   (let (quote (gslt:result:ProofTraceCheckEssentialsV1:000 $essentials $actuals $environment)) (superpose (collapse (gslt:mode:ProofTraceCheckEssentialsV1:000)))
+   (let (cons ProofTraceCheckEssentialsV1 (cons (cons ProofAssertionListConsV1 (cons (cons ProofAssertionEssentialV1 (cons $template ())) (cons $essentials ()))) (cons (cons ProofAssertionListConsV1 (cons $actual (cons $actuals ()))) (cons $environment ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofSequenceInstantiateV1:000 (cons $template (cons $environment (cons $actual ())))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
+   (let (cons gslt:result:ProofTraceCheckEssentialsV1:000 (cons $essentials (cons $actuals (cons $environment ())))) (superpose (collapse (gslt:mode:ProofTraceCheckEssentialsV1:000)))
    (quote (ProofTraceCheckEssentialsV1 (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $template) $essentials) (ProofAssertionListConsV1 $actual $actuals) $environment))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=47 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-essentials-result-nil-v1 target=relation
 (= (gslt:ProofTraceCheckEssentialsResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCheckEssentialsResultV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1) $environment ProofTraceEssentialsSucceededV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceCheckEssentialsResultV1 (cons (cons ProofAssertionListNilV1 ()) (cons (cons ProofAssertionListNilV1 ()) (cons $environment (cons ProofTraceEssentialsSucceededV1 ()))))) $__gslt_input_v1_0_0
    (quote (ProofTraceCheckEssentialsResultV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1) $environment ProofTraceEssentialsSucceededV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=48 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-essentials-result-cons-equal-v1 target=relation
 (= (gslt:ProofTraceCheckEssentialsResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCheckEssentialsResultV1 (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $template) $essentials) (ProofAssertionListConsV1 $actual $actuals) $environment $result)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:000 $template $environment $expected)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
-   (let (quote (gslt:result:ProofSequenceCompareV1:001 $expected $actual)) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:001 ProofSequenceEqualV1)))
+   (let (cons ProofTraceCheckEssentialsResultV1 (cons (cons ProofAssertionListConsV1 (cons (cons ProofAssertionEssentialV1 (cons $template ())) (cons $essentials ()))) (cons (cons ProofAssertionListConsV1 (cons $actual (cons $actuals ()))) (cons $environment (cons $result ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofSequenceInstantiateV1:000 (cons $template (cons $environment (cons $expected ())))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
+   (let (cons gslt:result:ProofSequenceCompareV1:001 (cons $expected (cons $actual ()))) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:001 ProofSequenceEqualV1)))
    (let $_ (gslt:ProofTraceCheckEssentialsResultV1 (ProofTraceCheckEssentialsResultV1 $essentials $actuals $environment $result))
    (quote (ProofTraceCheckEssentialsResultV1 (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $template) $essentials) (ProofAssertionListConsV1 $actual $actuals) $environment $result)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=49 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-essentials-result-cons-different-v1 target=relation
 (= (gslt:ProofTraceCheckEssentialsResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCheckEssentialsResultV1 (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $template) $essentials) (ProofAssertionListConsV1 $actual $actuals) $environment (ProofTraceRefusedEssentialMismatchV1 $template $expected $actual))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:000 $template $environment $expected)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
-   (let (quote (gslt:result:ProofSequenceCompareV1:001 $expected $actual)) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:001 ProofSequenceDifferentV1)))
+   (let (cons ProofTraceCheckEssentialsResultV1 (cons (cons ProofAssertionListConsV1 (cons (cons ProofAssertionEssentialV1 (cons $template ())) (cons $essentials ()))) (cons (cons ProofAssertionListConsV1 (cons $actual (cons $actuals ()))) (cons $environment (cons (cons ProofTraceRefusedEssentialMismatchV1 (cons $template (cons $expected (cons $actual ())))) ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofSequenceInstantiateV1:000 (cons $template (cons $environment (cons $expected ())))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
+   (let (cons gslt:result:ProofSequenceCompareV1:001 (cons $expected (cons $actual ()))) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:001 ProofSequenceDifferentV1)))
    (quote (ProofTraceCheckEssentialsResultV1 (ProofAssertionListConsV1 (ProofAssertionEssentialV1 $template) $essentials) (ProofAssertionListConsV1 $actual $actuals) $environment (ProofTraceRefusedEssentialMismatchV1 $template $expected $actual)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=50 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-assertion-result-v1 target=relation
 (= (gslt:ProofTraceRealizeAssertionResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRealizeAssertionResultV1 (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints) $frame $input $result)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceFrameProjectV1 $frame $variables $essentials)) (gslt:ProofTraceFrameProjectV1 (ProofTraceFrameProjectV1 $frame $variables $essentials))
+   (let (cons ProofTraceRealizeAssertionResultV1 (cons (cons ProofAssertionV1 (cons $variables (cons $essentials (cons $conclusion-type (cons $conclusion-template (cons $disjoints ())))))) (cons $frame (cons $input (cons $result ()))))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameProjectV1 (cons $frame (cons $variables (cons $essentials ())))) (gslt:ProofTraceFrameProjectV1 (ProofTraceFrameProjectV1 $frame $variables $essentials))
    (let $_ (gslt:ProofTraceFrameApplyResultV1 (ProofTraceFrameApplyResultV1 $frame $input $frame-result))
    (let $_ (gslt:ProofTraceRealizeFrameResultV1 (ProofTraceRealizeFrameResultV1 $frame-result $variables $essentials $conclusion-type $conclusion-template $disjoints $result))
    (quote (ProofTraceRealizeAssertionResultV1 (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints) $frame $input $result)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=51 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-frame-applied-v1 target=relation
 (= (gslt:ProofTraceRealizeFrameResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRealizeFrameResultV1 (ProofTraceFrameAppliedV1 $images $actuals $rest) $variables $essentials $conclusion-type $conclusion-template $disjoints $result)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRealizeFrameResultV1 (cons (cons ProofTraceFrameAppliedV1 (cons $images (cons $actuals (cons $rest ())))) (cons $variables (cons $essentials (cons $conclusion-type (cons $conclusion-template (cons $disjoints (cons $result ())))))))) $__gslt_input_v1_0_0
    (let $_ (gslt:ProofTraceBuildEnvironmentV1 (ProofTraceBuildEnvironmentV1 $variables $images $environment))
    (let $_ (gslt:ProofTraceCheckEssentialsResultV1 (ProofTraceCheckEssentialsResultV1 $essentials $actuals $environment $essentials-result))
    (let $_ (gslt:ProofTraceRealizeEssentialsResultV1 (ProofTraceRealizeEssentialsResultV1 $essentials-result $conclusion-type $conclusion-template $disjoints $environment $rest $result))
@@ -5942,1635 +5627,1635 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=52 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-frame-refused-v1 target=relation
 (= (gslt:ProofTraceRealizeFrameResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRealizeFrameResultV1 (ProofTraceRealizeRefusedV1 $reason) $variables $essentials $conclusion-type $conclusion-template $disjoints (ProofTraceRealizeRefusedV1 $reason))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRealizeFrameResultV1 (cons (cons ProofTraceRealizeRefusedV1 (cons $reason ())) (cons $variables (cons $essentials (cons $conclusion-type (cons $conclusion-template (cons $disjoints (cons (cons ProofTraceRealizeRefusedV1 (cons $reason ())) ())))))))) $__gslt_input_v1_0_0
    (quote (ProofTraceRealizeFrameResultV1 (ProofTraceRealizeRefusedV1 $reason) $variables $essentials $conclusion-type $conclusion-template $disjoints (ProofTraceRealizeRefusedV1 $reason)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=53 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-essentials-succeeded-v1 target=relation
 (= (gslt:ProofTraceRealizeEssentialsResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRealizeEssentialsResultV1 ProofTraceEssentialsSucceededV1 $conclusion-type $conclusion-template $disjoints $environment $rest $result)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceCheckDisjointsResultV1:000 $disjoints $environment $disjoint-result)) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointsResultV1:000)))
-   (let (quote (gslt:result:ProofTraceRealizeDisjointsResultV1:100000 $conclusion-type $conclusion-template $environment $rest $result)) (superpose (collapse (gslt:mode:ProofTraceRealizeDisjointsResultV1:100000 $disjoint-result)))
+   (let (cons ProofTraceRealizeEssentialsResultV1 (cons ProofTraceEssentialsSucceededV1 (cons $conclusion-type (cons $conclusion-template (cons $disjoints (cons $environment (cons $rest (cons $result ())))))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceCheckDisjointsResultV1:000 (cons $disjoints (cons $environment (cons $disjoint-result ())))) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointsResultV1:000)))
+   (let (cons gslt:result:ProofTraceRealizeDisjointsResultV1:100000 (cons $conclusion-type (cons $conclusion-template (cons $environment (cons $rest (cons $result ())))))) (superpose (collapse (gslt:mode:ProofTraceRealizeDisjointsResultV1:100000 $disjoint-result)))
    (quote (ProofTraceRealizeEssentialsResultV1 ProofTraceEssentialsSucceededV1 $conclusion-type $conclusion-template $disjoints $environment $rest $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=54 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-disjoints-succeeded-v1 target=relation
 (= (gslt:ProofTraceRealizeDisjointsResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRealizeDisjointsResultV1 ProofTraceDisjointSucceededV1 $conclusion-type $conclusion-template $environment $rest (ProofTraceRealizeSucceededV1 (ProofTraceStackConsV1 (ProofSequenceConsV1 $conclusion-type $result) $rest)))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceInstantiateV1:000 $conclusion-template $environment $result)) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
+   (let (cons ProofTraceRealizeDisjointsResultV1 (cons ProofTraceDisjointSucceededV1 (cons $conclusion-type (cons $conclusion-template (cons $environment (cons $rest (cons (cons ProofTraceRealizeSucceededV1 (cons (cons ProofTraceStackConsV1 (cons (cons ProofSequenceConsV1 (cons $conclusion-type (cons $result ()))) (cons $rest ()))) ())) ()))))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofSequenceInstantiateV1:000 (cons $conclusion-template (cons $environment (cons $result ())))) (superpose (collapse (gslt:mode:ProofSequenceInstantiateV1:000)))
    (quote (ProofTraceRealizeDisjointsResultV1 ProofTraceDisjointSucceededV1 $conclusion-type $conclusion-template $environment $rest (ProofTraceRealizeSucceededV1 (ProofTraceStackConsV1 (ProofSequenceConsV1 $conclusion-type $result) $rest)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=55 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-disjoints-refused-v1 target=relation
 (= (gslt:ProofTraceRealizeDisjointsResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRealizeDisjointsResultV1 (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right) $conclusion-type $conclusion-template $environment $rest (ProofTraceRealizeRefusedV1 (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right)))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRealizeDisjointsResultV1 (cons (cons ProofTraceRefusedDisjointV1 (cons $required-left (cons $required-right (cons $actual-left (cons $actual-right ()))))) (cons $conclusion-type (cons $conclusion-template (cons $environment (cons $rest (cons (cons ProofTraceRealizeRefusedV1 (cons (cons ProofTraceRefusedDisjointV1 (cons $required-left (cons $required-right (cons $actual-left (cons $actual-right ()))))) ())) ()))))))) $__gslt_input_v1_0_0
    (quote (ProofTraceRealizeDisjointsResultV1 (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right) $conclusion-type $conclusion-template $environment $rest (ProofTraceRealizeRefusedV1 (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=56 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-left-literal-v1 target=relation
 (= (gslt:ProofTraceTokenPairDecisionV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceTokenPairDecisionV1 $left $right ProofTracePairAllowedV1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenLiteralV1:0 $left)) (once (gslt:fn:ProofTokenLiteralV1:0))
+   (let (cons ProofTraceTokenPairDecisionV1 (cons $left (cons $right (cons ProofTracePairAllowedV1 ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTokenLiteralV1:0 (cons $left ())) (once (gslt:fn:ProofTokenLiteralV1:0))
    (quote (ProofTraceTokenPairDecisionV1 $left $right ProofTracePairAllowedV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=57 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-right-literal-v1 target=relation
 (= (gslt:ProofTraceTokenPairDecisionV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceTokenPairDecisionV1 $left $right ProofTracePairAllowedV1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $left)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote (gslt:result:ProofTokenLiteralV1:0 $right)) (once (gslt:fn:ProofTokenLiteralV1:0))
+   (let (cons ProofTraceTokenPairDecisionV1 (cons $left (cons $right (cons ProofTracePairAllowedV1 ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $left ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let (cons gslt:result:ProofTokenLiteralV1:0 (cons $right ())) (once (gslt:fn:ProofTokenLiteralV1:0))
    (quote (ProofTraceTokenPairDecisionV1 $left $right ProofTracePairAllowedV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=58 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-equal-v1 target=relation
 (= (gslt:ProofTraceTokenPairDecisionV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceTokenPairDecisionV1 $left $right (ProofTracePairConflictV1 $left $right))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $left)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $right)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote gslt:result:ProofTokenCompareV1:111) (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenEqualV1))))
+   (let (cons ProofTraceTokenPairDecisionV1 (cons $left (cons $right (cons (cons ProofTracePairConflictV1 (cons $left (cons $right ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $left ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $right ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let gslt:result:ProofTokenCompareV1:111 (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenEqualV1))))
    (quote (ProofTraceTokenPairDecisionV1 $left $right (ProofTracePairConflictV1 $left $right))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=59 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-unequal-apart-v1 target=relation
 (= (gslt:ProofTraceTokenPairDecisionV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceTokenPairDecisionV1 $left $right ProofTracePairAllowedV1)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $left)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $right)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote gslt:result:ProofTokenCompareV1:111) (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenUnequalV1))))
-   (let (quote gslt:result:ProofTokenApartDecisionV1:111) (once (gslt:fn:ProofTokenApartDecisionV1:111 $left $right ProofTraceApartPresentV1))
+   (let (cons ProofTraceTokenPairDecisionV1 (cons $left (cons $right (cons ProofTracePairAllowedV1 ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $left ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $right ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let gslt:result:ProofTokenCompareV1:111 (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenUnequalV1))))
+   (let gslt:result:ProofTokenApartDecisionV1:111 (once (gslt:fn:ProofTokenApartDecisionV1:111 $left $right ProofTraceApartPresentV1))
    (quote (ProofTraceTokenPairDecisionV1 $left $right ProofTracePairAllowedV1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=60 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-pair-unequal-not-apart-v1 target=relation
 (= (gslt:ProofTraceTokenPairDecisionV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceTokenPairDecisionV1 $left $right (ProofTracePairConflictV1 $left $right))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $left)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote (gslt:result:ProofTokenVariableV1:0 $right)) (once (gslt:fn:ProofTokenVariableV1:0))
-   (let (quote gslt:result:ProofTokenCompareV1:111) (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenUnequalV1))))
-   (let (quote gslt:result:ProofTokenApartDecisionV1:111) (once (gslt:fn:ProofTokenApartDecisionV1:111 $left $right ProofTraceApartMissingV1))
+   (let (cons ProofTraceTokenPairDecisionV1 (cons $left (cons $right (cons (cons ProofTracePairConflictV1 (cons $left (cons $right ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $left ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let (cons gslt:result:ProofTokenVariableV1:0 (cons $right ())) (once (gslt:fn:ProofTokenVariableV1:0))
+   (let gslt:result:ProofTokenCompareV1:111 (once (gslt:fn:ProofTokenCompareV1:111 $left $right (quote (ProofTokenUnequalV1))))
+   (let gslt:result:ProofTokenApartDecisionV1:111 (once (gslt:fn:ProofTokenApartDecisionV1:111 $left $right ProofTraceApartMissingV1))
    (quote (ProofTraceTokenPairDecisionV1 $left $right (ProofTracePairConflictV1 $left $right)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=61 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-against-sequence-nil-v1 target=relation
 (= (gslt:ProofTraceTokenAgainstSequenceResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceTokenAgainstSequenceResultV1 $left (ProofSequenceNilV1) ProofTracePairAllowedV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceTokenAgainstSequenceResultV1 (cons $left (cons (cons ProofSequenceNilV1 ()) (cons ProofTracePairAllowedV1 ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceTokenAgainstSequenceResultV1 $left (ProofSequenceNilV1) ProofTracePairAllowedV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=62 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-against-sequence-cons-v1 target=relation
 (= (gslt:ProofTraceTokenAgainstSequenceResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceTokenAgainstSequenceResultV1 $left (ProofSequenceConsV1 $right $rest) $result)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceTokenPairDecisionV1:000 $left $right $head-result)) (superpose (collapse (gslt:mode:ProofTraceTokenPairDecisionV1:000)))
-   (let (quote (gslt:result:ProofTraceTokenAgainstSequenceHeadResultV1:1100 $rest $result)) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceHeadResultV1:1100 $head-result $left)))
+   (let (cons ProofTraceTokenAgainstSequenceResultV1 (cons $left (cons (cons ProofSequenceConsV1 (cons $right (cons $rest ()))) (cons $result ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceTokenPairDecisionV1:000 (cons $left (cons $right (cons $head-result ())))) (superpose (collapse (gslt:mode:ProofTraceTokenPairDecisionV1:000)))
+   (let (cons gslt:result:ProofTraceTokenAgainstSequenceHeadResultV1:1100 (cons $rest (cons $result ()))) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceHeadResultV1:1100 $head-result $left)))
    (quote (ProofTraceTokenAgainstSequenceResultV1 $left (ProofSequenceConsV1 $right $rest) $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=63 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-against-sequence-head-allowed-v1 target=relation
 (= (gslt:ProofTraceTokenAgainstSequenceHeadResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceTokenAgainstSequenceHeadResultV1 ProofTracePairAllowedV1 $left $rest $result)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceTokenAgainstSequenceResultV1:000 $left $rest $result)) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceResultV1:000)))
+   (let (cons ProofTraceTokenAgainstSequenceHeadResultV1 (cons ProofTracePairAllowedV1 (cons $left (cons $rest (cons $result ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceTokenAgainstSequenceResultV1:000 (cons $left (cons $rest (cons $result ())))) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceResultV1:000)))
    (quote (ProofTraceTokenAgainstSequenceHeadResultV1 ProofTracePairAllowedV1 $left $rest $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=64 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-token-against-sequence-head-conflict-v1 target=relation
 (= (gslt:ProofTraceTokenAgainstSequenceHeadResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceTokenAgainstSequenceHeadResultV1 (ProofTracePairConflictV1 $left $right) $token $rest (ProofTracePairConflictV1 $left $right))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceTokenAgainstSequenceHeadResultV1 (cons (cons ProofTracePairConflictV1 (cons $left (cons $right ()))) (cons $token (cons $rest (cons (cons ProofTracePairConflictV1 (cons $left (cons $right ()))) ()))))) $__gslt_input_v1_0_0
    (quote (ProofTraceTokenAgainstSequenceHeadResultV1 (ProofTracePairConflictV1 $left $right) $token $rest (ProofTracePairConflictV1 $left $right)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=65 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-sequence-support-apart-nil-v1 target=relation
 (= (gslt:ProofTraceSequenceSupportApartResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceSequenceSupportApartResultV1 (ProofSequenceNilV1) $right ProofTracePairAllowedV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceSequenceSupportApartResultV1 (cons (cons ProofSequenceNilV1 ()) (cons $right (cons ProofTracePairAllowedV1 ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceSequenceSupportApartResultV1 (ProofSequenceNilV1) $right ProofTracePairAllowedV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=66 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-sequence-support-apart-cons-v1 target=relation
 (= (gslt:ProofTraceSequenceSupportApartResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceSequenceSupportApartResultV1 (ProofSequenceConsV1 $left $rest) $right $result)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceTokenAgainstSequenceResultV1:000 $left $right $head-result)) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceResultV1:000)))
-   (let (quote (gslt:result:ProofTraceSequenceSupportApartHeadResultV1:1000 $rest $right $result)) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartHeadResultV1:1000 $head-result)))
+   (let (cons ProofTraceSequenceSupportApartResultV1 (cons (cons ProofSequenceConsV1 (cons $left (cons $rest ()))) (cons $right (cons $result ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceTokenAgainstSequenceResultV1:000 (cons $left (cons $right (cons $head-result ())))) (superpose (collapse (gslt:mode:ProofTraceTokenAgainstSequenceResultV1:000)))
+   (let (cons gslt:result:ProofTraceSequenceSupportApartHeadResultV1:1000 (cons $rest (cons $right (cons $result ())))) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartHeadResultV1:1000 $head-result)))
    (quote (ProofTraceSequenceSupportApartResultV1 (ProofSequenceConsV1 $left $rest) $right $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=67 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-sequence-support-apart-head-allowed-v1 target=relation
 (= (gslt:ProofTraceSequenceSupportApartHeadResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceSequenceSupportApartHeadResultV1 ProofTracePairAllowedV1 $rest $right $result)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceSequenceSupportApartResultV1:000 $rest $right $result)) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartResultV1:000)))
+   (let (cons ProofTraceSequenceSupportApartHeadResultV1 (cons ProofTracePairAllowedV1 (cons $rest (cons $right (cons $result ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceSequenceSupportApartResultV1:000 (cons $rest (cons $right (cons $result ())))) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartResultV1:000)))
    (quote (ProofTraceSequenceSupportApartHeadResultV1 ProofTracePairAllowedV1 $rest $right $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=68 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-sequence-support-apart-head-conflict-v1 target=relation
 (= (gslt:ProofTraceSequenceSupportApartHeadResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceSequenceSupportApartHeadResultV1 (ProofTracePairConflictV1 $left $right) $rest $sequence (ProofTracePairConflictV1 $left $right))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceSequenceSupportApartHeadResultV1 (cons (cons ProofTracePairConflictV1 (cons $left (cons $right ()))) (cons $rest (cons $sequence (cons (cons ProofTracePairConflictV1 (cons $left (cons $right ()))) ()))))) $__gslt_input_v1_0_0
    (quote (ProofTraceSequenceSupportApartHeadResultV1 (ProofTracePairConflictV1 $left $right) $rest $sequence (ProofTracePairConflictV1 $left $right)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=69 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-disjoints-nil-result-v1 target=relation
 (= (gslt:ProofTraceCheckDisjointsResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCheckDisjointsResultV1 (ProofAssertionListNilV1) $environment ProofTraceDisjointSucceededV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceCheckDisjointsResultV1 (cons (cons ProofAssertionListNilV1 ()) (cons $environment (cons ProofTraceDisjointSucceededV1 ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceCheckDisjointsResultV1 (ProofAssertionListNilV1) $environment ProofTraceDisjointSucceededV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=70 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-disjoints-cons-result-v1 target=relation
 (= (gslt:ProofTraceCheckDisjointsResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCheckDisjointsResultV1 (ProofAssertionListConsV1 (ProofAssertionDisjointV1 $left $right) $rest) $environment $result)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenDifferentV1:00 $left $right)) (once (gslt:fn:ProofTokenDifferentV1:00))
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:010 $environment $left-image)) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $left)))
-   (let (quote (gslt:result:ProofEnvironmentLookupV1:010 $environment $right-image)) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $right)))
-   (let (quote (gslt:result:ProofTraceSequenceSupportApartResultV1:000 $left-image $right-image $head-result)) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartResultV1:000)))
-   (let (quote (gslt:result:ProofTraceCheckDisjointHeadResultV1:111000 $rest $environment $result)) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointHeadResultV1:111000 $head-result $left $right)))
+   (let (cons ProofTraceCheckDisjointsResultV1 (cons (cons ProofAssertionListConsV1 (cons (cons ProofAssertionDisjointV1 (cons $left (cons $right ()))) (cons $rest ()))) (cons $environment (cons $result ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTokenDifferentV1:00 (cons $left (cons $right ()))) (once (gslt:fn:ProofTokenDifferentV1:00))
+   (let (cons gslt:result:ProofEnvironmentLookupV1:010 (cons $environment (cons $left-image ()))) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $left)))
+   (let (cons gslt:result:ProofEnvironmentLookupV1:010 (cons $environment (cons $right-image ()))) (superpose (collapse (gslt:mode:ProofEnvironmentLookupV1:010 $right)))
+   (let (cons gslt:result:ProofTraceSequenceSupportApartResultV1:000 (cons $left-image (cons $right-image (cons $head-result ())))) (superpose (collapse (gslt:mode:ProofTraceSequenceSupportApartResultV1:000)))
+   (let (cons gslt:result:ProofTraceCheckDisjointHeadResultV1:111000 (cons $rest (cons $environment (cons $result ())))) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointHeadResultV1:111000 $head-result $left $right)))
    (quote (ProofTraceCheckDisjointsResultV1 (ProofAssertionListConsV1 (ProofAssertionDisjointV1 $left $right) $rest) $environment $result)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=71 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-disjoint-head-succeeded-v1 target=relation
 (= (gslt:ProofTraceCheckDisjointHeadResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCheckDisjointHeadResultV1 ProofTracePairAllowedV1 $left $right $rest $environment $result)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceCheckDisjointsResultV1:000 $rest $environment $result)) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointsResultV1:000)))
+   (let (cons ProofTraceCheckDisjointHeadResultV1 (cons ProofTracePairAllowedV1 (cons $left (cons $right (cons $rest (cons $environment (cons $result ()))))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceCheckDisjointsResultV1:000 (cons $rest (cons $environment (cons $result ())))) (superpose (collapse (gslt:mode:ProofTraceCheckDisjointsResultV1:000)))
    (quote (ProofTraceCheckDisjointHeadResultV1 ProofTracePairAllowedV1 $left $right $rest $environment $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=72 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-disjoint-head-refused-v1 target=relation
 (= (gslt:ProofTraceCheckDisjointHeadResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCheckDisjointHeadResultV1 (ProofTracePairConflictV1 $actual-left $actual-right) $required-left $required-right $rest $environment (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceCheckDisjointHeadResultV1 (cons (cons ProofTracePairConflictV1 (cons $actual-left (cons $actual-right ()))) (cons $required-left (cons $required-right (cons $rest (cons $environment (cons (cons ProofTraceRefusedDisjointV1 (cons $required-left (cons $required-right (cons $actual-left (cons $actual-right ()))))) ()))))))) $__gslt_input_v1_0_0
    (quote (ProofTraceCheckDisjointHeadResultV1 (ProofTracePairConflictV1 $actual-left $actual-right) $required-left $required-right $rest $environment (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=73 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-essentials-refused-v1 target=relation
 (= (gslt:ProofTraceRealizeEssentialsResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRealizeEssentialsResultV1 (ProofTraceRefusedEssentialMismatchV1 $template $expected $actual) $conclusion-type $conclusion-template $disjoints $environment $rest (ProofTraceRealizeRefusedV1 (ProofTraceRefusedEssentialMismatchV1 $template $expected $actual)))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRealizeEssentialsResultV1 (cons (cons ProofTraceRefusedEssentialMismatchV1 (cons $template (cons $expected (cons $actual ())))) (cons $conclusion-type (cons $conclusion-template (cons $disjoints (cons $environment (cons $rest (cons (cons ProofTraceRealizeRefusedV1 (cons (cons ProofTraceRefusedEssentialMismatchV1 (cons $template (cons $expected (cons $actual ())))) ())) ())))))))) $__gslt_input_v1_0_0
    (quote (ProofTraceRealizeEssentialsResultV1 (ProofTraceRefusedEssentialMismatchV1 $template $expected $actual) $conclusion-type $conclusion-template $disjoints $environment $rest (ProofTraceRealizeRefusedV1 (ProofTraceRefusedEssentialMismatchV1 $template $expected $actual))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=74 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-realize-assertion-v1 target=relation
 (= (gslt:ProofTraceRealizeAssertionV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRealizeAssertionV1 (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints) $frame $input $output)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRealizeAssertionV1 (cons (cons ProofAssertionV1 (cons $variables (cons $essentials (cons $conclusion-type (cons $conclusion-template (cons $disjoints ())))))) (cons $frame (cons $input (cons $output ()))))) $__gslt_input_v1_0_0
    (let $_ (gslt:ProofTraceRealizeAssertionResultV1 (ProofTraceRealizeAssertionResultV1 (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints) $frame $input (ProofTraceRealizeSucceededV1 $output)))
    (quote (ProofTraceRealizeAssertionV1 (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints) $frame $input $output)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=75 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-declared-assertion-result-v1 target=relation
 (= (gslt:ProofTraceApplyAssertionResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceApplyAssertionResultV1 (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints) $frame $input $result)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofAssertionDeclaredV1:0 (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints))) (superpose (collapse (gslt:mode:ProofAssertionDeclaredV1:0)))
-   (let (quote (gslt:result:ProofTraceRealizeAssertionResultV1:1000 $frame $input $result)) (superpose (collapse (gslt:mode:ProofTraceRealizeAssertionResultV1:1000 (quote (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints)))))
+   (let (cons ProofTraceApplyAssertionResultV1 (cons (cons ProofAssertionV1 (cons $variables (cons $essentials (cons $conclusion-type (cons $conclusion-template (cons $disjoints ())))))) (cons $frame (cons $input (cons $result ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofAssertionDeclaredV1:0 (cons (cons ProofAssertionV1 (cons $variables (cons $essentials (cons $conclusion-type (cons $conclusion-template (cons $disjoints ())))))) ())) (superpose (collapse (gslt:mode:ProofAssertionDeclaredV1:0)))
+   (let (cons gslt:result:ProofTraceRealizeAssertionResultV1:1000 (cons $frame (cons $input (cons $result ())))) (superpose (collapse (gslt:mode:ProofTraceRealizeAssertionResultV1:1000 (quote (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints)))))
    (quote (ProofTraceApplyAssertionResultV1 (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $disjoints) $frame $input $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=76 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-assertion-v1 target=relation
 (= (gslt:ProofTraceApplyAssertionV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceApplyAssertionV1 $assertion $frame $input $output)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceApplyAssertionResultV1:0000 $assertion $frame $input (ProofTraceRealizeSucceededV1 $output))) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionResultV1:0000)))
+   (let (cons ProofTraceApplyAssertionV1 (cons $assertion (cons $frame (cons $input (cons $output ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceApplyAssertionResultV1:0000 (cons $assertion (cons $frame (cons $input (cons (cons ProofTraceRealizeSucceededV1 (cons $output ())) ()))))) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionResultV1:0000)))
    (quote (ProofTraceApplyAssertionV1 $assertion $frame $input $output)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=77 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-append-nil-v1 target=relation
 (= (gslt:ProofTraceSavedAppendV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceSavedAppendV1 ProofTraceSavedNilV1 $formula (ProofTraceSavedConsV1 $formula ProofTraceSavedNilV1))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceSavedAppendV1 (cons ProofTraceSavedNilV1 (cons $formula (cons (cons ProofTraceSavedConsV1 (cons $formula (cons ProofTraceSavedNilV1 ()))) ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceSavedAppendV1 ProofTraceSavedNilV1 $formula (ProofTraceSavedConsV1 $formula ProofTraceSavedNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=78 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-append-cons-v1 target=relation
 (= (gslt:ProofTraceSavedAppendV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceSavedAppendV1 (ProofTraceSavedConsV1 $head $rest) $formula (ProofTraceSavedConsV1 $head $output))) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceSavedAppendV1 $rest $formula $output)) (gslt:ProofTraceSavedAppendV1 (ProofTraceSavedAppendV1 $rest $formula $output))
+   (let (cons ProofTraceSavedAppendV1 (cons (cons ProofTraceSavedConsV1 (cons $head (cons $rest ()))) (cons $formula (cons (cons ProofTraceSavedConsV1 (cons $head (cons $output ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceSavedAppendV1 (cons $rest (cons $formula (cons $output ())))) (gslt:ProofTraceSavedAppendV1 (ProofTraceSavedAppendV1 $rest $formula $output))
    (quote (ProofTraceSavedAppendV1 (ProofTraceSavedConsV1 $head $rest) $formula (ProofTraceSavedConsV1 $head $output))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=79 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-lookup-zero-v1 target=relation
 (= (gslt:ProofTraceSavedLookupV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceSavedLookupV1 ProofTraceNatZeroV1 (ProofTraceSavedConsV1 $formula $rest) $formula)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceSavedLookupV1 (cons ProofTraceNatZeroV1 (cons (cons ProofTraceSavedConsV1 (cons $formula (cons $rest ()))) (cons $formula ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceSavedLookupV1 ProofTraceNatZeroV1 (ProofTraceSavedConsV1 $formula $rest) $formula))))
 
 ; gslt-lowered-equation-v1 source-rewrite=80 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-lookup-succ-v1 target=relation
 (= (gslt:ProofTraceSavedLookupV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceSavedLookupV1 (ProofTraceNatSuccV1 $index) (ProofTraceSavedConsV1 $head $rest) $formula)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceSavedLookupV1 $index $rest $formula)) (gslt:ProofTraceSavedLookupV1 (ProofTraceSavedLookupV1 $index $rest $formula))
+   (let (cons ProofTraceSavedLookupV1 (cons (cons ProofTraceNatSuccV1 (cons $index ())) (cons (cons ProofTraceSavedConsV1 (cons $head (cons $rest ()))) (cons $formula ())))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceSavedLookupV1 (cons $index (cons $rest (cons $formula ())))) (gslt:ProofTraceSavedLookupV1 (ProofTraceSavedLookupV1 $index $rest $formula))
    (quote (ProofTraceSavedLookupV1 (ProofTraceNatSuccV1 $index) (ProofTraceSavedConsV1 $head $rest) $formula)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=81 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-lookup-result-v1 target=relation
 (= (gslt:ProofTraceSavedLookupResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceSavedLookupResultV1 $index $saved $result)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceSavedLookupFromV1 $index $index $saved $result)) (gslt:ProofTraceSavedLookupFromV1 (ProofTraceSavedLookupFromV1 $index $index $saved $result))
+   (let (cons ProofTraceSavedLookupResultV1 (cons $index (cons $saved (cons $result ())))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceSavedLookupFromV1 (cons $index (cons $index (cons $saved (cons $result ()))))) (gslt:ProofTraceSavedLookupFromV1 (ProofTraceSavedLookupFromV1 $index $index $saved $result))
    (quote (ProofTraceSavedLookupResultV1 $index $saved $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=82 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-lookup-from-zero-found-v1 target=relation
 (= (gslt:ProofTraceSavedLookupFromV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceSavedLookupFromV1 $requested ProofTraceNatZeroV1 (ProofTraceSavedConsV1 $formula $rest) (ProofTraceSavedFoundV1 $formula))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceSavedLookupFromV1 (cons $requested (cons ProofTraceNatZeroV1 (cons (cons ProofTraceSavedConsV1 (cons $formula (cons $rest ()))) (cons (cons ProofTraceSavedFoundV1 (cons $formula ())) ()))))) $__gslt_input_v1_0_0
    (quote (ProofTraceSavedLookupFromV1 $requested ProofTraceNatZeroV1 (ProofTraceSavedConsV1 $formula $rest) (ProofTraceSavedFoundV1 $formula)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=83 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-lookup-from-succ-v1 target=relation
 (= (gslt:ProofTraceSavedLookupFromV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceSavedLookupFromV1 $requested (ProofTraceNatSuccV1 $index) (ProofTraceSavedConsV1 $head $rest) $result)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceSavedLookupFromV1 $requested $index $rest $result)) (gslt:ProofTraceSavedLookupFromV1 (ProofTraceSavedLookupFromV1 $requested $index $rest $result))
+   (let (cons ProofTraceSavedLookupFromV1 (cons $requested (cons (cons ProofTraceNatSuccV1 (cons $index ())) (cons (cons ProofTraceSavedConsV1 (cons $head (cons $rest ()))) (cons $result ()))))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceSavedLookupFromV1 (cons $requested (cons $index (cons $rest (cons $result ()))))) (gslt:ProofTraceSavedLookupFromV1 (ProofTraceSavedLookupFromV1 $requested $index $rest $result))
    (quote (ProofTraceSavedLookupFromV1 $requested (ProofTraceNatSuccV1 $index) (ProofTraceSavedConsV1 $head $rest) $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=84 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-saved-lookup-from-missing-v1 target=relation
 (= (gslt:ProofTraceSavedLookupFromV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceSavedLookupFromV1 $requested $index ProofTraceSavedNilV1 (ProofTraceSavedMissingV1 $requested))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceSavedLookupFromV1 (cons $requested (cons $index (cons ProofTraceSavedNilV1 (cons (cons ProofTraceSavedMissingV1 (cons $requested ())) ()))))) $__gslt_input_v1_0_0
    (quote (ProofTraceSavedLookupFromV1 $requested $index ProofTraceSavedNilV1 (ProofTraceSavedMissingV1 $requested)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=85 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-nil-v1 target=relation
 (= (gslt:ProofTraceExecStateV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceExecStateV1 $context ProofTraceNilV1 $stack $saved $stack $saved)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceExecStateV1 (cons $context (cons ProofTraceNilV1 (cons $stack (cons $saved (cons $stack (cons $saved ()))))))) $__gslt_input_v1_0_0
    (quote (ProofTraceExecStateV1 $context ProofTraceNilV1 $stack $saved $stack $saved))))
 
 ; gslt-lowered-equation-v1 source-rewrite=86 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-push-v1 target=relation
 (= (gslt:ProofTraceExecStateV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceExecStateV1 $context (ProofTraceConsV1 (ProofTracePushV1 $formula) $trace) $stack $saved $output $output-saved)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceExecStateV1 (cons $context (cons (cons ProofTraceConsV1 (cons (cons ProofTracePushV1 (cons $formula ())) (cons $trace ()))) (cons $stack (cons $saved (cons $output (cons $output-saved ()))))))) $__gslt_input_v1_0_0
    (let $_ (gslt:ProofTraceContextMemberV1 (ProofTraceContextMemberV1 $context $formula))
    (let $_ (gslt:ProofTraceExecStateV1 (ProofTraceExecStateV1 $context $trace (ProofTraceStackConsV1 $formula $stack) $saved $output $output-saved))
    (quote (ProofTraceExecStateV1 $context (ProofTraceConsV1 (ProofTracePushV1 $formula) $trace) $stack $saved $output $output-saved))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=87 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-apply-v1 target=relation
 (= (gslt:ProofTraceExecStateV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceExecStateV1 $context (ProofTraceConsV1 (ProofTraceApplyV1 $assertion $frame) $trace) $stack $saved $output $output-saved)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceApplyAssertionV1:0000 $assertion $frame $stack $next-stack)) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionV1:0000)))
+   (let (cons ProofTraceExecStateV1 (cons $context (cons (cons ProofTraceConsV1 (cons (cons ProofTraceApplyV1 (cons $assertion (cons $frame ()))) (cons $trace ()))) (cons $stack (cons $saved (cons $output (cons $output-saved ()))))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceApplyAssertionV1:0000 (cons $assertion (cons $frame (cons $stack (cons $next-stack ()))))) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionV1:0000)))
    (let $_ (gslt:ProofTraceExecStateV1 (ProofTraceExecStateV1 $context $trace $next-stack $saved $output $output-saved))
    (quote (ProofTraceExecStateV1 $context (ProofTraceConsV1 (ProofTraceApplyV1 $assertion $frame) $trace) $stack $saved $output $output-saved))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=88 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-incomplete-v1 target=relation
 (= (gslt:ProofTraceExecStateV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceExecStateV1 $context (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $formula) $trace) $stack $saved $output $output-saved)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceExecStateV1 (cons $context (cons (cons ProofTraceConsV1 (cons (cons ProofTraceIncompleteStepV1 (cons $formula ())) (cons $trace ()))) (cons $stack (cons $saved (cons $output (cons $output-saved ()))))))) $__gslt_input_v1_0_0
    (let $_ (gslt:ProofTraceExecStateV1 (ProofTraceExecStateV1 $context $trace (ProofTraceStackConsV1 $formula $stack) $saved $output $output-saved))
    (quote (ProofTraceExecStateV1 $context (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $formula) $trace) $stack $saved $output $output-saved)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=89 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-save-v1 target=relation
 (= (gslt:ProofTraceExecStateV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceExecStateV1 $context (ProofTraceConsV1 ProofTraceSaveV1 $trace) (ProofTraceStackConsV1 $formula $stack) $saved $output $output-saved)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceSavedAppendV1 $saved $formula $next-saved)) (gslt:ProofTraceSavedAppendV1 (ProofTraceSavedAppendV1 $saved $formula $next-saved))
+   (let (cons ProofTraceExecStateV1 (cons $context (cons (cons ProofTraceConsV1 (cons ProofTraceSaveV1 (cons $trace ()))) (cons (cons ProofTraceStackConsV1 (cons $formula (cons $stack ()))) (cons $saved (cons $output (cons $output-saved ()))))))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceSavedAppendV1 (cons $saved (cons $formula (cons $next-saved ())))) (gslt:ProofTraceSavedAppendV1 (ProofTraceSavedAppendV1 $saved $formula $next-saved))
    (let $_ (gslt:ProofTraceExecStateV1 (ProofTraceExecStateV1 $context $trace (ProofTraceStackConsV1 $formula $stack) $next-saved $output $output-saved))
    (quote (ProofTraceExecStateV1 $context (ProofTraceConsV1 ProofTraceSaveV1 $trace) (ProofTraceStackConsV1 $formula $stack) $saved $output $output-saved))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=90 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-restore-v1 target=relation
 (= (gslt:ProofTraceExecStateV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceExecStateV1 $context (ProofTraceConsV1 (ProofTraceRestoreV1 $index) $trace) $stack $saved $output $output-saved)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceSavedLookupV1 $index $saved $formula)) (gslt:ProofTraceSavedLookupV1 (ProofTraceSavedLookupV1 $index $saved $formula))
+   (let (cons ProofTraceExecStateV1 (cons $context (cons (cons ProofTraceConsV1 (cons (cons ProofTraceRestoreV1 (cons $index ())) (cons $trace ()))) (cons $stack (cons $saved (cons $output (cons $output-saved ()))))))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceSavedLookupV1 (cons $index (cons $saved (cons $formula ())))) (gslt:ProofTraceSavedLookupV1 (ProofTraceSavedLookupV1 $index $saved $formula))
    (let $_ (gslt:ProofTraceExecStateV1 (ProofTraceExecStateV1 $context $trace (ProofTraceStackConsV1 $formula $stack) $saved $output $output-saved))
    (quote (ProofTraceExecStateV1 $context (ProofTraceConsV1 (ProofTraceRestoreV1 $index) $trace) $stack $saved $output $output-saved))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=91 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-v1 target=relation
 (= (gslt:ProofTraceExecV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceExecV1 $context $trace $input $output)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceExecStateV1:000100 $context $trace $input $output $output-saved)) (superpose (collapse (gslt:mode:ProofTraceExecStateV1:000100 ProofTraceSavedNilV1)))
+   (let (cons ProofTraceExecV1 (cons $context (cons $trace (cons $input (cons $output ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceExecStateV1:000100 (cons $context (cons $trace (cons $input (cons $output (cons $output-saved ())))))) (superpose (collapse (gslt:mode:ProofTraceExecStateV1:000100 ProofTraceSavedNilV1)))
    (quote (ProofTraceExecV1 $context $trace $input $output)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=92 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-stack-depth-frame-nil-v1 target=relation
 (= (gslt:ProofTraceFrameStackDepthV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameStackDepthV1 ProofTraceFrameNilV1 $stack ProofTraceFrameStackFitsV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameStackDepthV1 (cons ProofTraceFrameNilV1 (cons $stack (cons ProofTraceFrameStackFitsV1 ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceFrameStackDepthV1 ProofTraceFrameNilV1 $stack ProofTraceFrameStackFitsV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=93 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-stack-depth-stack-nil-v1 target=relation
 (= (gslt:ProofTraceFrameStackDepthV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameStackDepthV1 (ProofTraceFrameConsV1 $entry $frame-rest) ProofTraceStackNilV1 ProofTraceFrameStackUnderflowV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameStackDepthV1 (cons (cons ProofTraceFrameConsV1 (cons $entry (cons $frame-rest ()))) (cons ProofTraceStackNilV1 (cons ProofTraceFrameStackUnderflowV1 ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceFrameStackDepthV1 (ProofTraceFrameConsV1 $entry $frame-rest) ProofTraceStackNilV1 ProofTraceFrameStackUnderflowV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=94 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-frame-stack-depth-cons-v1 target=relation
 (= (gslt:ProofTraceFrameStackDepthV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFrameStackDepthV1 (ProofTraceFrameConsV1 $entry $frame-rest) (ProofTraceStackConsV1 $formula $stack-rest) $result)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceFrameStackDepthV1 $frame-rest $stack-rest $result)) (gslt:ProofTraceFrameStackDepthV1 (ProofTraceFrameStackDepthV1 $frame-rest $stack-rest $result))
+   (let (cons ProofTraceFrameStackDepthV1 (cons (cons ProofTraceFrameConsV1 (cons $entry (cons $frame-rest ()))) (cons (cons ProofTraceStackConsV1 (cons $formula (cons $stack-rest ()))) (cons $result ())))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameStackDepthV1 (cons $frame-rest (cons $stack-rest (cons $result ())))) (gslt:ProofTraceFrameStackDepthV1 (ProofTraceFrameStackDepthV1 $frame-rest $stack-rest $result))
    (quote (ProofTraceFrameStackDepthV1 (ProofTraceFrameConsV1 $entry $frame-rest) (ProofTraceStackConsV1 $formula $stack-rest) $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=95 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-nil-v1 target=relation
 (= (gslt:ProofTraceExecStateResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceExecStateResultV1 $context ProofTraceNilV1 $stack $saved (ProofTraceExecSucceededV1 $stack $saved))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceExecStateResultV1 (cons $context (cons ProofTraceNilV1 (cons $stack (cons $saved (cons (cons ProofTraceExecSucceededV1 (cons $stack (cons $saved ()))) ())))))) $__gslt_input_v1_0_0
    (quote (ProofTraceExecStateResultV1 $context ProofTraceNilV1 $stack $saved (ProofTraceExecSucceededV1 $stack $saved)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=96 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-push-v1 target=relation
 (= (gslt:ProofTraceExecStateResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceExecStateResultV1 $context (ProofTraceConsV1 (ProofTracePushV1 $formula) $trace) $stack $saved $result)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceExecStateResultV1 (cons $context (cons (cons ProofTraceConsV1 (cons (cons ProofTracePushV1 (cons $formula ())) (cons $trace ()))) (cons $stack (cons $saved (cons $result ())))))) $__gslt_input_v1_0_0
    (let $_ (gslt:ProofTraceContextMemberV1 (ProofTraceContextMemberV1 $context $formula))
    (let $_ (gslt:ProofTraceExecStateResultV1 (ProofTraceExecStateResultV1 $context $trace (ProofTraceStackConsV1 $formula $stack) $saved $result))
    (quote (ProofTraceExecStateResultV1 $context (ProofTraceConsV1 (ProofTracePushV1 $formula) $trace) $stack $saved $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=97 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-apply-v1 target=relation
 (= (gslt:ProofTraceExecStateResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceExecStateResultV1 $context (ProofTraceConsV1 (ProofTraceApplyV1 $assertion $frame) $trace) $stack $saved $result)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceFrameStackDepthV1 $frame $stack $depth-result)) (gslt:ProofTraceFrameStackDepthV1 (ProofTraceFrameStackDepthV1 $frame $stack $depth-result))
-   (let (quote (gslt:result:ProofTraceApplyDepthResultV1:10000000 $context $trace $assertion $frame $stack $saved $result)) (superpose (collapse (gslt:mode:ProofTraceApplyDepthResultV1:10000000 $depth-result)))
+   (let (cons ProofTraceExecStateResultV1 (cons $context (cons (cons ProofTraceConsV1 (cons (cons ProofTraceApplyV1 (cons $assertion (cons $frame ()))) (cons $trace ()))) (cons $stack (cons $saved (cons $result ())))))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFrameStackDepthV1 (cons $frame (cons $stack (cons $depth-result ())))) (gslt:ProofTraceFrameStackDepthV1 (ProofTraceFrameStackDepthV1 $frame $stack $depth-result))
+   (let (cons gslt:result:ProofTraceApplyDepthResultV1:10000000 (cons $context (cons $trace (cons $assertion (cons $frame (cons $stack (cons $saved (cons $result ())))))))) (superpose (collapse (gslt:mode:ProofTraceApplyDepthResultV1:10000000 $depth-result)))
    (quote (ProofTraceExecStateResultV1 $context (ProofTraceConsV1 (ProofTraceApplyV1 $assertion $frame) $trace) $stack $saved $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=98 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-depth-underflow-v1 target=relation
 (= (gslt:ProofTraceApplyDepthResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceApplyDepthResultV1 ProofTraceFrameStackUnderflowV1 $context $trace $assertion $frame $stack $saved (ProofTraceExecRefusedV1 (ProofTraceRefusedStackUnderflowV1 $frame $stack) $stack $saved))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceApplyDepthResultV1 (cons ProofTraceFrameStackUnderflowV1 (cons $context (cons $trace (cons $assertion (cons $frame (cons $stack (cons $saved (cons (cons ProofTraceExecRefusedV1 (cons (cons ProofTraceRefusedStackUnderflowV1 (cons $frame (cons $stack ()))) (cons $stack (cons $saved ())))) ()))))))))) $__gslt_input_v1_0_0
    (quote (ProofTraceApplyDepthResultV1 ProofTraceFrameStackUnderflowV1 $context $trace $assertion $frame $stack $saved (ProofTraceExecRefusedV1 (ProofTraceRefusedStackUnderflowV1 $frame $stack) $stack $saved)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=99 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-depth-fits-v1 target=relation
 (= (gslt:ProofTraceApplyDepthResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceApplyDepthResultV1 ProofTraceFrameStackFitsV1 $context $trace $assertion $frame $stack $saved $result)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceApplyAssertionResultV1:0000 $assertion $frame $stack $application-result)) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionResultV1:0000)))
+   (let (cons ProofTraceApplyDepthResultV1 (cons ProofTraceFrameStackFitsV1 (cons $context (cons $trace (cons $assertion (cons $frame (cons $stack (cons $saved (cons $result ()))))))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceApplyAssertionResultV1:0000 (cons $assertion (cons $frame (cons $stack (cons $application-result ()))))) (superpose (collapse (gslt:mode:ProofTraceApplyAssertionResultV1:0000)))
    (let $_ (gslt:ProofTraceApplyExecutionResultV1 (ProofTraceApplyExecutionResultV1 $application-result $context $trace $stack $saved $result))
    (quote (ProofTraceApplyDepthResultV1 ProofTraceFrameStackFitsV1 $context $trace $assertion $frame $stack $saved $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=100 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-execution-succeeded-v1 target=relation
 (= (gslt:ProofTraceApplyExecutionResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceApplyExecutionResultV1 (ProofTraceRealizeSucceededV1 $next-stack) $context $trace $stack $saved $result)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceApplyExecutionResultV1 (cons (cons ProofTraceRealizeSucceededV1 (cons $next-stack ())) (cons $context (cons $trace (cons $stack (cons $saved (cons $result ()))))))) $__gslt_input_v1_0_0
    (let $_ (gslt:ProofTraceExecStateResultV1 (ProofTraceExecStateResultV1 $context $trace $next-stack $saved $result))
    (quote (ProofTraceApplyExecutionResultV1 (ProofTraceRealizeSucceededV1 $next-stack) $context $trace $stack $saved $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=101 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-apply-execution-refused-v1 target=relation
 (= (gslt:ProofTraceApplyExecutionResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceApplyExecutionResultV1 (ProofTraceRealizeRefusedV1 $reason) $context $trace $stack $saved (ProofTraceExecRefusedV1 $reason $stack $saved))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceApplyExecutionResultV1 (cons (cons ProofTraceRealizeRefusedV1 (cons $reason ())) (cons $context (cons $trace (cons $stack (cons $saved (cons (cons ProofTraceExecRefusedV1 (cons $reason (cons $stack (cons $saved ())))) ()))))))) $__gslt_input_v1_0_0
    (quote (ProofTraceApplyExecutionResultV1 (ProofTraceRealizeRefusedV1 $reason) $context $trace $stack $saved (ProofTraceExecRefusedV1 $reason $stack $saved)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=102 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-incomplete-v1 target=relation
 (= (gslt:ProofTraceExecStateResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceExecStateResultV1 $context (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $formula) $trace) $stack $saved $result)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceExecStateResultV1 (cons $context (cons (cons ProofTraceConsV1 (cons (cons ProofTraceIncompleteStepV1 (cons $formula ())) (cons $trace ()))) (cons $stack (cons $saved (cons $result ())))))) $__gslt_input_v1_0_0
    (let $_ (gslt:ProofTraceExecStateResultV1 (ProofTraceExecStateResultV1 $context $trace (ProofTraceStackConsV1 $formula $stack) $saved $result))
    (quote (ProofTraceExecStateResultV1 $context (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $formula) $trace) $stack $saved $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=103 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-save-v1 target=relation
 (= (gslt:ProofTraceExecStateResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceExecStateResultV1 $context (ProofTraceConsV1 ProofTraceSaveV1 $trace) (ProofTraceStackConsV1 $formula $stack) $saved $result)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceSavedAppendV1 $saved $formula $next-saved)) (gslt:ProofTraceSavedAppendV1 (ProofTraceSavedAppendV1 $saved $formula $next-saved))
+   (let (cons ProofTraceExecStateResultV1 (cons $context (cons (cons ProofTraceConsV1 (cons ProofTraceSaveV1 (cons $trace ()))) (cons (cons ProofTraceStackConsV1 (cons $formula (cons $stack ()))) (cons $saved (cons $result ())))))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceSavedAppendV1 (cons $saved (cons $formula (cons $next-saved ())))) (gslt:ProofTraceSavedAppendV1 (ProofTraceSavedAppendV1 $saved $formula $next-saved))
    (let $_ (gslt:ProofTraceExecStateResultV1 (ProofTraceExecStateResultV1 $context $trace (ProofTraceStackConsV1 $formula $stack) $next-saved $result))
    (quote (ProofTraceExecStateResultV1 $context (ProofTraceConsV1 ProofTraceSaveV1 $trace) (ProofTraceStackConsV1 $formula $stack) $saved $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=104 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-exec-state-result-restore-v1 target=relation
 (= (gslt:ProofTraceExecStateResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceExecStateResultV1 $context (ProofTraceConsV1 (ProofTraceRestoreV1 $index) $trace) $stack $saved $result)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceSavedLookupResultV1 $index $saved $lookup-result)) (gslt:ProofTraceSavedLookupResultV1 (ProofTraceSavedLookupResultV1 $index $saved $lookup-result))
+   (let (cons ProofTraceExecStateResultV1 (cons $context (cons (cons ProofTraceConsV1 (cons (cons ProofTraceRestoreV1 (cons $index ())) (cons $trace ()))) (cons $stack (cons $saved (cons $result ())))))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceSavedLookupResultV1 (cons $index (cons $saved (cons $lookup-result ())))) (gslt:ProofTraceSavedLookupResultV1 (ProofTraceSavedLookupResultV1 $index $saved $lookup-result))
    (let $_ (gslt:ProofTraceRestoreLookupExecutionResultV1 (ProofTraceRestoreLookupExecutionResultV1 $lookup-result $context $trace $stack $saved $result))
    (quote (ProofTraceExecStateResultV1 $context (ProofTraceConsV1 (ProofTraceRestoreV1 $index) $trace) $stack $saved $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=105 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-restore-lookup-found-v1 target=relation
 (= (gslt:ProofTraceRestoreLookupExecutionResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRestoreLookupExecutionResultV1 (ProofTraceSavedFoundV1 $formula) $context $trace $stack $saved $result)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRestoreLookupExecutionResultV1 (cons (cons ProofTraceSavedFoundV1 (cons $formula ())) (cons $context (cons $trace (cons $stack (cons $saved (cons $result ()))))))) $__gslt_input_v1_0_0
    (let $_ (gslt:ProofTraceExecStateResultV1 (ProofTraceExecStateResultV1 $context $trace (ProofTraceStackConsV1 $formula $stack) $saved $result))
    (quote (ProofTraceRestoreLookupExecutionResultV1 (ProofTraceSavedFoundV1 $formula) $context $trace $stack $saved $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=106 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-restore-lookup-missing-v1 target=relation
 (= (gslt:ProofTraceRestoreLookupExecutionResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRestoreLookupExecutionResultV1 (ProofTraceSavedMissingV1 $index) $context $trace $stack $saved (ProofTraceExecRefusedV1 (ProofTraceRefusedSavedStepOutOfRangeV1 $index) $stack $saved))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRestoreLookupExecutionResultV1 (cons (cons ProofTraceSavedMissingV1 (cons $index ())) (cons $context (cons $trace (cons $stack (cons $saved (cons (cons ProofTraceExecRefusedV1 (cons (cons ProofTraceRefusedSavedStepOutOfRangeV1 (cons $index ())) (cons $stack (cons $saved ())))) ()))))))) $__gslt_input_v1_0_0
    (quote (ProofTraceRestoreLookupExecutionResultV1 (ProofTraceSavedMissingV1 $index) $context $trace $stack $saved (ProofTraceExecRefusedV1 (ProofTraceRefusedSavedStepOutOfRangeV1 $index) $stack $saved)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=107 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-nil-nil-v1 target=relation
 (= (gslt:ProofSequenceCompareV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofSequenceCompareV1 (ProofSequenceNilV1) (ProofSequenceNilV1) ProofSequenceEqualV1)) $__gslt_input_v1_0_0
+   (let (cons ProofSequenceCompareV1 (cons (cons ProofSequenceNilV1 ()) (cons (cons ProofSequenceNilV1 ()) (cons ProofSequenceEqualV1 ())))) $__gslt_input_v1_0_0
    (quote (ProofSequenceCompareV1 (ProofSequenceNilV1) (ProofSequenceNilV1) ProofSequenceEqualV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=108 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-nil-cons-v1 target=relation
 (= (gslt:ProofSequenceCompareV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofSequenceCompareV1 (ProofSequenceNilV1) (ProofSequenceConsV1 $right $right-rest) ProofSequenceDifferentV1)) $__gslt_input_v1_0_0
+   (let (cons ProofSequenceCompareV1 (cons (cons ProofSequenceNilV1 ()) (cons (cons ProofSequenceConsV1 (cons $right (cons $right-rest ()))) (cons ProofSequenceDifferentV1 ())))) $__gslt_input_v1_0_0
    (quote (ProofSequenceCompareV1 (ProofSequenceNilV1) (ProofSequenceConsV1 $right $right-rest) ProofSequenceDifferentV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=109 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-cons-nil-v1 target=relation
 (= (gslt:ProofSequenceCompareV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofSequenceCompareV1 (ProofSequenceConsV1 $left $left-rest) (ProofSequenceNilV1) ProofSequenceDifferentV1)) $__gslt_input_v1_0_0
+   (let (cons ProofSequenceCompareV1 (cons (cons ProofSequenceConsV1 (cons $left (cons $left-rest ()))) (cons (cons ProofSequenceNilV1 ()) (cons ProofSequenceDifferentV1 ())))) $__gslt_input_v1_0_0
    (quote (ProofSequenceCompareV1 (ProofSequenceConsV1 $left $left-rest) (ProofSequenceNilV1) ProofSequenceDifferentV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=110 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-cons-v1 target=relation
 (= (gslt:ProofSequenceCompareV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofSequenceCompareV1 (ProofSequenceConsV1 $left $left-rest) (ProofSequenceConsV1 $right $right-rest) $result)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenCompareV1:000 $left $right $head-comparison)) (superpose (collapse (gslt:mode:ProofTokenCompareV1:000)))
-   (let (quote (gslt:result:ProofSequenceCompareHeadsV1:1000 $left-rest $right-rest $result)) (superpose (collapse (gslt:mode:ProofSequenceCompareHeadsV1:1000 $head-comparison)))
+   (let (cons ProofSequenceCompareV1 (cons (cons ProofSequenceConsV1 (cons $left (cons $left-rest ()))) (cons (cons ProofSequenceConsV1 (cons $right (cons $right-rest ()))) (cons $result ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTokenCompareV1:000 (cons $left (cons $right (cons $head-comparison ())))) (superpose (collapse (gslt:mode:ProofTokenCompareV1:000)))
+   (let (cons gslt:result:ProofSequenceCompareHeadsV1:1000 (cons $left-rest (cons $right-rest (cons $result ())))) (superpose (collapse (gslt:mode:ProofSequenceCompareHeadsV1:1000 $head-comparison)))
    (quote (ProofSequenceCompareV1 (ProofSequenceConsV1 $left $left-rest) (ProofSequenceConsV1 $right $right-rest) $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=111 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-heads-equal-v1 target=relation
 (= (gslt:ProofSequenceCompareHeadsV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofSequenceCompareHeadsV1 (ProofTokenEqualV1) $left-rest $right-rest $result)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceCompareV1:000 $left-rest $right-rest $result)) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:000)))
+   (let (cons ProofSequenceCompareHeadsV1 (cons (cons ProofTokenEqualV1 ()) (cons $left-rest (cons $right-rest (cons $result ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofSequenceCompareV1:000 (cons $left-rest (cons $right-rest (cons $result ())))) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:000)))
    (quote (ProofSequenceCompareHeadsV1 (ProofTokenEqualV1) $left-rest $right-rest $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=112 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-sequence-compare-heads-unequal-v1 target=relation
 (= (gslt:ProofSequenceCompareHeadsV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofSequenceCompareHeadsV1 (ProofTokenUnequalV1) $left-rest $right-rest ProofSequenceDifferentV1)) $__gslt_input_v1_0_0
+   (let (cons ProofSequenceCompareHeadsV1 (cons (cons ProofTokenUnequalV1 ()) (cons $left-rest (cons $right-rest (cons ProofSequenceDifferentV1 ()))))) $__gslt_input_v1_0_0
    (quote (ProofSequenceCompareHeadsV1 (ProofTokenUnequalV1) $left-rest $right-rest ProofSequenceDifferentV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=113 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-finalize-equal-v1 target=relation
 (= (gslt:ProofTraceFinalizeCompareV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFinalizeCompareV1 ProofSequenceEqualV1 $target $actual ProofTraceSucceededV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFinalizeCompareV1 (cons ProofSequenceEqualV1 (cons $target (cons $actual (cons ProofTraceSucceededV1 ()))))) $__gslt_input_v1_0_0
    (quote (ProofTraceFinalizeCompareV1 ProofSequenceEqualV1 $target $actual ProofTraceSucceededV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=114 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-finalize-different-v1 target=relation
 (= (gslt:ProofTraceFinalizeCompareV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFinalizeCompareV1 ProofSequenceDifferentV1 $target $actual (ProofTraceRefusedClaimMismatchV1 $target $actual))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFinalizeCompareV1 (cons ProofSequenceDifferentV1 (cons $target (cons $actual (cons (cons ProofTraceRefusedClaimMismatchV1 (cons $target (cons $actual ()))) ()))))) $__gslt_input_v1_0_0
    (quote (ProofTraceFinalizeCompareV1 ProofSequenceDifferentV1 $target $actual (ProofTraceRefusedClaimMismatchV1 $target $actual)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=115 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-final-empty-v1 target=relation
 (= (gslt:ProofTraceFinalResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFinalResultV1 ProofTraceStackNilV1 $target ProofTraceRefusedEmptyStackV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFinalResultV1 (cons ProofTraceStackNilV1 (cons $target (cons ProofTraceRefusedEmptyStackV1 ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceFinalResultV1 ProofTraceStackNilV1 $target ProofTraceRefusedEmptyStackV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=116 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-final-single-v1 target=relation
 (= (gslt:ProofTraceFinalResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFinalResultV1 (ProofTraceStackConsV1 $actual ProofTraceStackNilV1) $target $result)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofSequenceCompareV1:000 $target $actual $comparison)) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:000)))
-   (let (quote (ProofTraceFinalizeCompareV1 $comparison $target $actual $result)) (gslt:ProofTraceFinalizeCompareV1 (ProofTraceFinalizeCompareV1 $comparison $target $actual $result))
+   (let (cons ProofTraceFinalResultV1 (cons (cons ProofTraceStackConsV1 (cons $actual (cons ProofTraceStackNilV1 ()))) (cons $target (cons $result ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofSequenceCompareV1:000 (cons $target (cons $actual (cons $comparison ())))) (superpose (collapse (gslt:mode:ProofSequenceCompareV1:000)))
+   (let (cons ProofTraceFinalizeCompareV1 (cons $comparison (cons $target (cons $actual (cons $result ()))))) (gslt:ProofTraceFinalizeCompareV1 (ProofTraceFinalizeCompareV1 $comparison $target $actual $result))
    (quote (ProofTraceFinalResultV1 (ProofTraceStackConsV1 $actual ProofTraceStackNilV1) $target $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=117 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-final-extra-v1 target=relation
 (= (gslt:ProofTraceFinalResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceFinalResultV1 (ProofTraceStackConsV1 $top (ProofTraceStackConsV1 $next $rest)) $target (ProofTraceRefusedExtraStackV1 (ProofTraceStackConsV1 $top (ProofTraceStackConsV1 $next $rest))))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceFinalResultV1 (cons (cons ProofTraceStackConsV1 (cons $top (cons (cons ProofTraceStackConsV1 (cons $next (cons $rest ()))) ()))) (cons $target (cons (cons ProofTraceRefusedExtraStackV1 (cons (cons ProofTraceStackConsV1 (cons $top (cons (cons ProofTraceStackConsV1 (cons $next (cons $rest ()))) ()))) ())) ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceFinalResultV1 (ProofTraceStackConsV1 $top (ProofTraceStackConsV1 $next $rest)) $target (ProofTraceRefusedExtraStackV1 (ProofTraceStackConsV1 $top (ProofTraceStackConsV1 $next $rest)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=118 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-result-v1 target=relation
 (= (gslt:ProofTraceCheckResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCheckResultV1 $context $trace $target $result)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceExecStateResultV1:00110 $context $trace $execution-result)) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00110 ProofTraceStackNilV1 ProofTraceSavedNilV1)))
+   (let (cons ProofTraceCheckResultV1 (cons $context (cons $trace (cons $target (cons $result ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceExecStateResultV1:00110 (cons $context (cons $trace (cons $execution-result ())))) (superpose (collapse (gslt:mode:ProofTraceExecStateResultV1:00110 ProofTraceStackNilV1 ProofTraceSavedNilV1)))
    (let $_ (gslt:ProofTraceCheckExecutionResultV1 (ProofTraceCheckExecutionResultV1 $execution-result $target $result))
    (quote (ProofTraceCheckResultV1 $context $trace $target $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=119 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-execution-result-succeeded-v1 target=relation
 (= (gslt:ProofTraceCheckExecutionResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCheckExecutionResultV1 (ProofTraceExecSucceededV1 $stack $saved) $target $result)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceCheckExecutionResultV1 (cons (cons ProofTraceExecSucceededV1 (cons $stack (cons $saved ()))) (cons $target (cons $result ())))) $__gslt_input_v1_0_0
    (let $_ (gslt:ProofTraceFinalResultV1 (ProofTraceFinalResultV1 $stack $target $result))
    (quote (ProofTraceCheckExecutionResultV1 (ProofTraceExecSucceededV1 $stack $saved) $target $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=120 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-check-execution-result-refused-v1 target=relation
 (= (gslt:ProofTraceCheckExecutionResultV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCheckExecutionResultV1 (ProofTraceExecRefusedV1 $reason $stack $saved) $target $reason)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceCheckExecutionResultV1 (cons (cons ProofTraceExecRefusedV1 (cons $reason (cons $stack (cons $saved ())))) (cons $target (cons $reason ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceCheckExecutionResultV1 (ProofTraceExecRefusedV1 $reason $stack $saved) $target $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=121 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-result-is-refusal-empty-stack-v1 target=relation
 (= (gslt:ProofTraceResultIsRefusalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceResultIsRefusalV1 ProofTraceRefusedEmptyStackV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceResultIsRefusalV1 (cons ProofTraceRefusedEmptyStackV1 ())) $__gslt_input_v1_0_0
    (quote (ProofTraceResultIsRefusalV1 ProofTraceRefusedEmptyStackV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=122 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-result-is-refusal-extra-stack-v1 target=relation
 (= (gslt:ProofTraceResultIsRefusalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedExtraStackV1 $stack))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceResultIsRefusalV1 (cons (cons ProofTraceRefusedExtraStackV1 (cons $stack ())) ())) $__gslt_input_v1_0_0
    (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedExtraStackV1 $stack)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=123 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-result-is-refusal-claim-mismatch-v1 target=relation
 (= (gslt:ProofTraceResultIsRefusalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedClaimMismatchV1 $target $actual))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceResultIsRefusalV1 (cons (cons ProofTraceRefusedClaimMismatchV1 (cons $target (cons $actual ()))) ())) $__gslt_input_v1_0_0
    (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedClaimMismatchV1 $target $actual)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=124 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-result-is-refusal-disjoint-v1 target=relation
 (= (gslt:ProofTraceResultIsRefusalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceResultIsRefusalV1 (cons (cons ProofTraceRefusedDisjointV1 (cons $required-left (cons $required-right (cons $actual-left (cons $actual-right ()))))) ())) $__gslt_input_v1_0_0
    (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=125 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-result-is-refusal-essential-mismatch-v1 target=relation
 (= (gslt:ProofTraceResultIsRefusalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedEssentialMismatchV1 $template $expected $actual))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceResultIsRefusalV1 (cons (cons ProofTraceRefusedEssentialMismatchV1 (cons $template (cons $expected (cons $actual ())))) ())) $__gslt_input_v1_0_0
    (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedEssentialMismatchV1 $template $expected $actual)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=126 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-result-is-refusal-explicit-mandatory-v1 target=relation
 (= (gslt:ProofTraceResultIsRefusalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedExplicitMandatoryHypothesisV1 $label))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceResultIsRefusalV1 (cons (cons ProofTraceRefusedExplicitMandatoryHypothesisV1 (cons $label ())) ())) $__gslt_input_v1_0_0
    (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedExplicitMandatoryHypothesisV1 $label)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=127 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-result-is-refusal-inactive-hypothesis-v1 target=relation
 (= (gslt:ProofTraceResultIsRefusalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedInactiveHypothesisV1 $label))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceResultIsRefusalV1 (cons (cons ProofTraceRefusedInactiveHypothesisV1 (cons $label ())) ())) $__gslt_input_v1_0_0
    (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedInactiveHypothesisV1 $label)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=128 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-result-is-refusal-unknown-label-v1 target=relation
 (= (gslt:ProofTraceResultIsRefusalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedUnknownLabelV1 $label))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceResultIsRefusalV1 (cons (cons ProofTraceRefusedUnknownLabelV1 (cons $label ())) ())) $__gslt_input_v1_0_0
    (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedUnknownLabelV1 $label)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=129 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-result-is-refusal-stack-underflow-v1 target=relation
 (= (gslt:ProofTraceResultIsRefusalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedStackUnderflowV1 $frame $stack))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceResultIsRefusalV1 (cons (cons ProofTraceRefusedStackUnderflowV1 (cons $frame (cons $stack ()))) ())) $__gslt_input_v1_0_0
    (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedStackUnderflowV1 $frame $stack)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=130 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-result-is-refusal-saved-step-v1 target=relation
 (= (gslt:ProofTraceResultIsRefusalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedSavedStepOutOfRangeV1 $index))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceResultIsRefusalV1 (cons (cons ProofTraceRefusedSavedStepOutOfRangeV1 (cons $index ())) ())) $__gslt_input_v1_0_0
    (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedSavedStepOutOfRangeV1 $index)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=131 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-result-is-refusal-save-during-index-v1 target=relation
 (= (gslt:ProofTraceResultIsRefusalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedSaveDuringIndexV1 $accumulator))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceResultIsRefusalV1 (cons (cons ProofTraceRefusedSaveDuringIndexV1 (cons $accumulator ())) ())) $__gslt_input_v1_0_0
    (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedSaveDuringIndexV1 $accumulator)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=132 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-result-is-refusal-save-placement-v1 target=relation
 (= (gslt:ProofTraceResultIsRefusalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedSavePlacementV1 $phase))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceResultIsRefusalV1 (cons (cons ProofTraceRefusedSavePlacementV1 (cons $phase ())) ())) $__gslt_input_v1_0_0
    (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedSavePlacementV1 $phase)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=133 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-result-is-refusal-typecode-mismatch-v1 target=relation
 (= (gslt:ProofTraceResultIsRefusalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedTypecodeMismatchV1 $expected-typecode $actual-typecode))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceResultIsRefusalV1 (cons (cons ProofTraceRefusedTypecodeMismatchV1 (cons $expected-typecode (cons $actual-typecode ()))) ())) $__gslt_input_v1_0_0
    (quote (ProofTraceResultIsRefusalV1 (ProofTraceRefusedTypecodeMismatchV1 $expected-typecode $actual-typecode)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=134 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-refusal-class-empty-stack-v1 target=relation
 (= (gslt:ProofTraceRefusalClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRefusalClassV1 ProofTraceRefusedEmptyStackV1 ProofTraceEmptyStackV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRefusalClassV1 (cons ProofTraceRefusedEmptyStackV1 (cons ProofTraceEmptyStackV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceRefusalClassV1 ProofTraceRefusedEmptyStackV1 ProofTraceEmptyStackV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=135 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-refusal-class-extra-stack-v1 target=relation
 (= (gslt:ProofTraceRefusalClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedExtraStackV1 $stack) ProofTraceExtraStackV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRefusalClassV1 (cons (cons ProofTraceRefusedExtraStackV1 (cons $stack ())) (cons ProofTraceExtraStackV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedExtraStackV1 $stack) ProofTraceExtraStackV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=136 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-refusal-class-claim-mismatch-v1 target=relation
 (= (gslt:ProofTraceRefusalClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedClaimMismatchV1 $target $actual) ProofTraceClaimMismatchV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRefusalClassV1 (cons (cons ProofTraceRefusedClaimMismatchV1 (cons $target (cons $actual ()))) (cons ProofTraceClaimMismatchV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedClaimMismatchV1 $target $actual) ProofTraceClaimMismatchV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=137 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-refusal-class-disjoint-v1 target=relation
 (= (gslt:ProofTraceRefusalClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right) ProofTraceDisjointViolationV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRefusalClassV1 (cons (cons ProofTraceRefusedDisjointV1 (cons $required-left (cons $required-right (cons $actual-left (cons $actual-right ()))))) (cons ProofTraceDisjointViolationV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedDisjointV1 $required-left $required-right $actual-left $actual-right) ProofTraceDisjointViolationV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=138 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-refusal-class-essential-mismatch-v1 target=relation
 (= (gslt:ProofTraceRefusalClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedEssentialMismatchV1 $template $expected $actual) ProofTraceSubstitutionMismatchV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRefusalClassV1 (cons (cons ProofTraceRefusedEssentialMismatchV1 (cons $template (cons $expected (cons $actual ())))) (cons ProofTraceSubstitutionMismatchV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedEssentialMismatchV1 $template $expected $actual) ProofTraceSubstitutionMismatchV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=139 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-refusal-class-explicit-mandatory-v1 target=relation
 (= (gslt:ProofTraceRefusalClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedExplicitMandatoryHypothesisV1 $label) ProofTraceExplicitMandatoryHypothesisV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRefusalClassV1 (cons (cons ProofTraceRefusedExplicitMandatoryHypothesisV1 (cons $label ())) (cons ProofTraceExplicitMandatoryHypothesisV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedExplicitMandatoryHypothesisV1 $label) ProofTraceExplicitMandatoryHypothesisV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=140 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-refusal-class-inactive-hypothesis-v1 target=relation
 (= (gslt:ProofTraceRefusalClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedInactiveHypothesisV1 $label) ProofTraceInactiveHypothesisV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRefusalClassV1 (cons (cons ProofTraceRefusedInactiveHypothesisV1 (cons $label ())) (cons ProofTraceInactiveHypothesisV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedInactiveHypothesisV1 $label) ProofTraceInactiveHypothesisV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=141 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-refusal-class-unknown-label-v1 target=relation
 (= (gslt:ProofTraceRefusalClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedUnknownLabelV1 $label) ProofTraceUnknownLabelV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRefusalClassV1 (cons (cons ProofTraceRefusedUnknownLabelV1 (cons $label ())) (cons ProofTraceUnknownLabelV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedUnknownLabelV1 $label) ProofTraceUnknownLabelV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=142 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-refusal-class-stack-underflow-v1 target=relation
 (= (gslt:ProofTraceRefusalClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedStackUnderflowV1 $frame $stack) ProofTraceStackUnderflowV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRefusalClassV1 (cons (cons ProofTraceRefusedStackUnderflowV1 (cons $frame (cons $stack ()))) (cons ProofTraceStackUnderflowV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedStackUnderflowV1 $frame $stack) ProofTraceStackUnderflowV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=143 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-refusal-class-saved-step-v1 target=relation
 (= (gslt:ProofTraceRefusalClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedSavedStepOutOfRangeV1 $index) ProofTraceSavedStepOutOfRangeV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRefusalClassV1 (cons (cons ProofTraceRefusedSavedStepOutOfRangeV1 (cons $index ())) (cons ProofTraceSavedStepOutOfRangeV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedSavedStepOutOfRangeV1 $index) ProofTraceSavedStepOutOfRangeV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=144 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-refusal-class-save-during-index-v1 target=relation
 (= (gslt:ProofTraceRefusalClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedSaveDuringIndexV1 $accumulator) ProofTraceSaveDuringIndexV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRefusalClassV1 (cons (cons ProofTraceRefusedSaveDuringIndexV1 (cons $accumulator ())) (cons ProofTraceSaveDuringIndexV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedSaveDuringIndexV1 $accumulator) ProofTraceSaveDuringIndexV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=145 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-refusal-class-save-placement-v1 target=relation
 (= (gslt:ProofTraceRefusalClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedSavePlacementV1 $phase) ProofTraceSavePlacementV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRefusalClassV1 (cons (cons ProofTraceRefusedSavePlacementV1 (cons $phase ())) (cons ProofTraceSavePlacementV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedSavePlacementV1 $phase) ProofTraceSavePlacementV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=146 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-refusal-class-typecode-mismatch-v1 target=relation
 (= (gslt:ProofTraceRefusalClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedTypecodeMismatchV1 $expected-typecode $actual-typecode) ProofTraceTypecodeMismatchV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceRefusalClassV1 (cons (cons ProofTraceRefusedTypecodeMismatchV1 (cons $expected-typecode (cons $actual-typecode ()))) (cons ProofTraceTypecodeMismatchV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceRefusalClassV1 (ProofTraceRefusedTypecodeMismatchV1 $expected-typecode $actual-typecode) ProofTraceTypecodeMismatchV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=147 source-presentation=CertificateGSLTTraceSemanticsV1 source-rule=proof-trace-accepted-v1 target=relation
 (= (gslt:ProofTraceAcceptedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceAcceptedV1 $context $trace $target)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceCheckResultV1:0001 $context $trace $target)) (superpose (collapse (gslt:mode:ProofTraceCheckResultV1:0001 ProofTraceSucceededV1)))
+   (let (cons ProofTraceAcceptedV1 (cons $context (cons $trace (cons $target ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceCheckResultV1:0001 (cons $context (cons $trace (cons $target ())))) (superpose (collapse (gslt:mode:ProofTraceCheckResultV1:0001 ProofTraceSucceededV1)))
    (quote (ProofTraceAcceptedV1 $context $trace $target)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=148 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-canonical-zero-v1 target=relation
 (= (gslt:ProofTraceNatCanonicalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceNatCanonicalV1 ProofTraceNatZeroV1 ProofTraceNatZeroV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceNatCanonicalV1 (cons ProofTraceNatZeroV1 (cons ProofTraceNatZeroV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceNatCanonicalV1 ProofTraceNatZeroV1 ProofTraceNatZeroV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=149 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-canonical-succ-v1 target=relation
 (= (gslt:ProofTraceNatCanonicalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceNatCanonicalV1 (ProofTraceNatSuccV1 $source) (ProofTraceNatSuccV1 $canonical))) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceNatCanonicalV1 $source $canonical)) (gslt:ProofTraceNatCanonicalV1 (ProofTraceNatCanonicalV1 $source $canonical))
+   (let (cons ProofTraceNatCanonicalV1 (cons (cons ProofTraceNatSuccV1 (cons $source ())) (cons (cons ProofTraceNatSuccV1 (cons $canonical ())) ()))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceNatCanonicalV1 (cons $source (cons $canonical ()))) (gslt:ProofTraceNatCanonicalV1 (ProofTraceNatCanonicalV1 $source $canonical))
    (quote (ProofTraceNatCanonicalV1 (ProofTraceNatSuccV1 $source) (ProofTraceNatSuccV1 $canonical))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=150 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-alias-canonical-v1 target=relation
 (= (gslt:ProofTraceNatAliasCanonicalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceNatAliasCanonicalV1 $alias $canonical)) $__gslt_input_v1_0_0
-   (let (quote (source-proof-trace-nat-alias-v1 $alias $source)) (gslt:source-proof-trace-nat-alias-v1 (source-proof-trace-nat-alias-v1 $alias $source))
-   (let (quote (gslt:result:ProofTraceNatAliasExpansionCanonicalV1:10 $canonical)) (once (gslt:fn:ProofTraceNatAliasExpansionCanonicalV1:10 $source))
+   (let (cons ProofTraceNatAliasCanonicalV1 (cons $alias (cons $canonical ()))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons $alias (cons $source ()))) (gslt:source-proof-trace-nat-alias-v1 (source-proof-trace-nat-alias-v1 $alias $source))
+   (let (cons gslt:result:ProofTraceNatAliasExpansionCanonicalV1:10 (cons $canonical ())) (once (gslt:fn:ProofTraceNatAliasExpansionCanonicalV1:10 $source))
    (quote (ProofTraceNatAliasCanonicalV1 $alias $canonical))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=151 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-alias-expansion-zero-v1 target=relation
 (= (gslt:ProofTraceNatAliasExpansionCanonicalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceNatAliasExpansionCanonicalV1 ProofTraceNatZeroV1 ProofTraceNatZeroV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceNatAliasExpansionCanonicalV1 (cons ProofTraceNatZeroV1 (cons ProofTraceNatZeroV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceNatAliasExpansionCanonicalV1 ProofTraceNatZeroV1 ProofTraceNatZeroV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=152 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-alias-expansion-succ-v1 target=relation
 (= (gslt:ProofTraceNatAliasExpansionCanonicalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceNatAliasExpansionCanonicalV1 (ProofTraceNatSuccV1 $predecessor-alias) (ProofTraceNatSuccV1 $canonical-predecessor))) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceNatAliasCanonicalV1 $predecessor-alias $canonical-predecessor)) (gslt:ProofTraceNatAliasCanonicalV1 (ProofTraceNatAliasCanonicalV1 $predecessor-alias $canonical-predecessor))
+   (let (cons ProofTraceNatAliasExpansionCanonicalV1 (cons (cons ProofTraceNatSuccV1 (cons $predecessor-alias ())) (cons (cons ProofTraceNatSuccV1 (cons $canonical-predecessor ())) ()))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceNatAliasCanonicalV1 (cons $predecessor-alias (cons $canonical-predecessor ()))) (gslt:ProofTraceNatAliasCanonicalV1 (ProofTraceNatAliasCanonicalV1 $predecessor-alias $canonical-predecessor))
    (quote (ProofTraceNatAliasExpansionCanonicalV1 (ProofTraceNatSuccV1 $predecessor-alias) (ProofTraceNatSuccV1 $canonical-predecessor))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=153 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-add-zero-v1 target=relation
 (= (gslt:ProofTraceNatAddV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceNatAddV1 ProofTraceNatZeroV1 $right $right)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceNatAddV1 (cons ProofTraceNatZeroV1 (cons $right (cons $right ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceNatAddV1 ProofTraceNatZeroV1 $right $right))))
 
 ; gslt-lowered-equation-v1 source-rewrite=154 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-add-succ-v1 target=relation
 (= (gslt:ProofTraceNatAddV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceNatAddV1 (ProofTraceNatSuccV1 $left) $right (ProofTraceNatSuccV1 $sum))) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceNatAddV1 $left $right $sum)) (gslt:ProofTraceNatAddV1 (ProofTraceNatAddV1 $left $right $sum))
+   (let (cons ProofTraceNatAddV1 (cons (cons ProofTraceNatSuccV1 (cons $left ())) (cons $right (cons (cons ProofTraceNatSuccV1 (cons $sum ())) ())))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceNatAddV1 (cons $left (cons $right (cons $sum ())))) (gslt:ProofTraceNatAddV1 (ProofTraceNatAddV1 $left $right $sum))
    (quote (ProofTraceNatAddV1 (ProofTraceNatSuccV1 $left) $right (ProofTraceNatSuccV1 $sum))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=155 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-mul-zero-v1 target=relation
 (= (gslt:ProofTraceNatMulV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceNatMulV1 ProofTraceNatZeroV1 $right ProofTraceNatZeroV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceNatMulV1 (cons ProofTraceNatZeroV1 (cons $right (cons ProofTraceNatZeroV1 ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceNatMulV1 ProofTraceNatZeroV1 $right ProofTraceNatZeroV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=156 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-mul-succ-v1 target=relation
 (= (gslt:ProofTraceNatMulV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceNatMulV1 (ProofTraceNatSuccV1 $left) $right $product)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceNatMulV1 $left $right $partial)) (gslt:ProofTraceNatMulV1 (ProofTraceNatMulV1 $left $right $partial))
-   (let (quote (ProofTraceNatAddV1 $right $partial $product)) (gslt:ProofTraceNatAddV1 (ProofTraceNatAddV1 $right $partial $product))
+   (let (cons ProofTraceNatMulV1 (cons (cons ProofTraceNatSuccV1 (cons $left ())) (cons $right (cons $product ())))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceNatMulV1 (cons $left (cons $right (cons $partial ())))) (gslt:ProofTraceNatMulV1 (ProofTraceNatMulV1 $left $right $partial))
+   (let (cons ProofTraceNatAddV1 (cons $right (cons $partial (cons $product ())))) (gslt:ProofTraceNatAddV1 (ProofTraceNatAddV1 $right $partial $product))
    (quote (ProofTraceNatMulV1 (ProofTraceNatSuccV1 $left) $right $product))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=157 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-nat-mul-add-v1 target=relation
 (= (gslt:ProofTraceNatMulAddV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceNatMulAddV1 $radix $value $digit $result)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceNatMulV1 $radix $value $scaled)) (gslt:ProofTraceNatMulV1 (ProofTraceNatMulV1 $radix $value $scaled))
-   (let (quote (ProofTraceNatAddV1 $scaled $digit $result)) (gslt:ProofTraceNatAddV1 (ProofTraceNatAddV1 $scaled $digit $result))
+   (let (cons ProofTraceNatMulAddV1 (cons $radix (cons $value (cons $digit (cons $result ()))))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceNatMulV1 (cons $radix (cons $value (cons $scaled ())))) (gslt:ProofTraceNatMulV1 (ProofTraceNatMulV1 $radix $value $scaled))
+   (let (cons ProofTraceNatAddV1 (cons $scaled (cons $digit (cons $result ())))) (gslt:ProofTraceNatAddV1 (ProofTraceNatAddV1 $scaled $digit $result))
    (quote (ProofTraceNatMulAddV1 $radix $value $digit $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=158 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-instruction-list-append-nil-v1 target=relation
 (= (gslt:ProofTraceInstructionListAppendV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceInstructionListAppendV1 ProofTraceInstructionNilV1 $right $right)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceInstructionListAppendV1 (cons ProofTraceInstructionNilV1 (cons $right (cons $right ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceInstructionListAppendV1 ProofTraceInstructionNilV1 $right $right))))
 
 ; gslt-lowered-equation-v1 source-rewrite=159 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-instruction-list-append-cons-v1 target=relation
 (= (gslt:ProofTraceInstructionListAppendV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceInstructionListAppendV1 (ProofTraceInstructionConsV1 $head $tail) $right (ProofTraceInstructionConsV1 $head $output))) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceInstructionListAppendV1 $tail $right $output)) (gslt:ProofTraceInstructionListAppendV1 (ProofTraceInstructionListAppendV1 $tail $right $output))
+   (let (cons ProofTraceInstructionListAppendV1 (cons (cons ProofTraceInstructionConsV1 (cons $head (cons $tail ()))) (cons $right (cons (cons ProofTraceInstructionConsV1 (cons $head (cons $output ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceInstructionListAppendV1 (cons $tail (cons $right (cons $output ())))) (gslt:ProofTraceInstructionListAppendV1 (ProofTraceInstructionListAppendV1 $tail $right $output))
    (quote (ProofTraceInstructionListAppendV1 (ProofTraceInstructionConsV1 $head $tail) $right (ProofTraceInstructionConsV1 $head $output))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=160 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-instruction-list-nil-v1 target=relation
 (= (gslt:ProofTraceCompileInstructionListV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCompileInstructionListV1 ProofTraceLabelNilV1 ProofTraceInstructionNilV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceCompileInstructionListV1 (cons ProofTraceLabelNilV1 (cons ProofTraceInstructionNilV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceCompileInstructionListV1 ProofTraceLabelNilV1 ProofTraceInstructionNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=161 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-instruction-list-cons-v1 target=relation
 (= (gslt:ProofTraceCompileInstructionListV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCompileInstructionListV1 (ProofTraceLabelConsV1 $label $labels) (ProofTraceInstructionConsV1 $instruction $instructions))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-label-instruction-v1:00 $label $instruction)) (superpose (collapse (gslt:mode:source-proof-trace-label-instruction-v1:00)))
-   (let (quote (gslt:result:ProofTraceCompileInstructionListV1:00 $labels $instructions)) (superpose (collapse (gslt:mode:ProofTraceCompileInstructionListV1:00)))
+   (let (cons ProofTraceCompileInstructionListV1 (cons (cons ProofTraceLabelConsV1 (cons $label (cons $labels ()))) (cons (cons ProofTraceInstructionConsV1 (cons $instruction (cons $instructions ()))) ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-label-instruction-v1:00 (cons $label (cons $instruction ()))) (superpose (collapse (gslt:mode:source-proof-trace-label-instruction-v1:00)))
+   (let (cons gslt:result:ProofTraceCompileInstructionListV1:00 (cons $labels (cons $instructions ()))) (superpose (collapse (gslt:mode:ProofTraceCompileInstructionListV1:00)))
    (quote (ProofTraceCompileInstructionListV1 (ProofTraceLabelConsV1 $label $labels) (ProofTraceInstructionConsV1 $instruction $instructions)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=162 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-all-different-nil-v1 target=relation
 (= (gslt:ProofTraceHeaderAllDifferentFromV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceHeaderAllDifferentFromV1 $label ProofTraceLabelNilV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceHeaderAllDifferentFromV1 (cons $label (cons ProofTraceLabelNilV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceHeaderAllDifferentFromV1 $label ProofTraceLabelNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=163 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-all-different-cons-v1 target=relation
 (= (gslt:ProofTraceHeaderAllDifferentFromV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceHeaderAllDifferentFromV1 $label (ProofTraceLabelConsV1 $head $tail))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-input-label-different-v1:00 $label $head)) (once (gslt:fn:source-proof-trace-input-label-different-v1:00))
-   (let (quote (gslt:result:ProofTraceHeaderAllDifferentFromV1:10 $tail)) (superpose (collapse (gslt:mode:ProofTraceHeaderAllDifferentFromV1:10 $label)))
+   (let (cons ProofTraceHeaderAllDifferentFromV1 (cons $label (cons (cons ProofTraceLabelConsV1 (cons $head (cons $tail ()))) ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-input-label-different-v1:00 (cons $label (cons $head ()))) (once (gslt:fn:source-proof-trace-input-label-different-v1:00))
+   (let (cons gslt:result:ProofTraceHeaderAllDifferentFromV1:10 (cons $tail ())) (superpose (collapse (gslt:mode:ProofTraceHeaderAllDifferentFromV1:10 $label)))
    (quote (ProofTraceHeaderAllDifferentFromV1 $label (ProofTraceLabelConsV1 $head $tail)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=164 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-member-head-v1 target=relation
 (= (gslt:ProofTraceHeaderMemberV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceHeaderMemberV1 $label (ProofTraceLabelConsV1 $label $tail))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceHeaderMemberV1 (cons $label (cons (cons ProofTraceLabelConsV1 (cons $label (cons $tail ()))) ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceHeaderMemberV1 $label (ProofTraceLabelConsV1 $label $tail)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=165 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-member-tail-v1 target=relation
 (= (gslt:ProofTraceHeaderMemberV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceHeaderMemberV1 $label (ProofTraceLabelConsV1 $head $tail))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-input-label-different-v1:00 $label $head)) (once (gslt:fn:source-proof-trace-input-label-different-v1:00))
-   (let (quote (gslt:result:ProofTraceHeaderMemberV1:10 $tail)) (superpose (collapse (gslt:mode:ProofTraceHeaderMemberV1:10 $label)))
+   (let (cons ProofTraceHeaderMemberV1 (cons $label (cons (cons ProofTraceLabelConsV1 (cons $head (cons $tail ()))) ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-input-label-different-v1:00 (cons $label (cons $head ()))) (once (gslt:fn:source-proof-trace-input-label-different-v1:00))
+   (let (cons gslt:result:ProofTraceHeaderMemberV1:10 (cons $tail ())) (superpose (collapse (gslt:mode:ProofTraceHeaderMemberV1:10 $label)))
    (quote (ProofTraceHeaderMemberV1 $label (ProofTraceLabelConsV1 $head $tail)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=166 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-first-overlap-head-v1 target=relation
 (= (gslt:ProofTraceHeaderFirstOverlapV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceHeaderFirstOverlapV1 $initial (ProofTraceLabelConsV1 $label $explicit) $label)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceHeaderFirstOverlapV1 (cons $initial (cons (cons ProofTraceLabelConsV1 (cons $label (cons $explicit ()))) (cons $label ())))) $__gslt_input_v1_0_0
    (let $_ (gslt:ProofTraceHeaderMemberV1 (ProofTraceHeaderMemberV1 $label $initial))
    (quote (ProofTraceHeaderFirstOverlapV1 $initial (ProofTraceLabelConsV1 $label $explicit) $label)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=167 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-first-overlap-tail-v1 target=relation
 (= (gslt:ProofTraceHeaderFirstOverlapV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceHeaderFirstOverlapV1 $initial (ProofTraceLabelConsV1 $label $explicit) $overlap)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceHeaderAllDifferentFromV1:00 $label $initial)) (superpose (collapse (gslt:mode:ProofTraceHeaderAllDifferentFromV1:00)))
-   (let (quote (gslt:result:ProofTraceHeaderFirstOverlapV1:100 $explicit $overlap)) (superpose (collapse (gslt:mode:ProofTraceHeaderFirstOverlapV1:100 $initial)))
+   (let (cons ProofTraceHeaderFirstOverlapV1 (cons $initial (cons (cons ProofTraceLabelConsV1 (cons $label (cons $explicit ()))) (cons $overlap ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceHeaderAllDifferentFromV1:00 (cons $label (cons $initial ()))) (superpose (collapse (gslt:mode:ProofTraceHeaderAllDifferentFromV1:00)))
+   (let (cons gslt:result:ProofTraceHeaderFirstOverlapV1:100 (cons $explicit (cons $overlap ()))) (superpose (collapse (gslt:mode:ProofTraceHeaderFirstOverlapV1:100 $initial)))
    (quote (ProofTraceHeaderFirstOverlapV1 $initial (ProofTraceLabelConsV1 $label $explicit) $overlap))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=168 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-lists-disjoint-nil-v1 target=relation
 (= (gslt:ProofTraceHeaderListsDisjointV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceHeaderListsDisjointV1 $initial ProofTraceLabelNilV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceHeaderListsDisjointV1 (cons $initial (cons ProofTraceLabelNilV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceHeaderListsDisjointV1 $initial ProofTraceLabelNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=169 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-lists-disjoint-cons-v1 target=relation
 (= (gslt:ProofTraceHeaderListsDisjointV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceHeaderListsDisjointV1 $initial (ProofTraceLabelConsV1 $label $explicit))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceHeaderAllDifferentFromV1:00 $label $initial)) (superpose (collapse (gslt:mode:ProofTraceHeaderAllDifferentFromV1:00)))
-   (let (quote (gslt:result:ProofTraceHeaderListsDisjointV1:10 $explicit)) (superpose (collapse (gslt:mode:ProofTraceHeaderListsDisjointV1:10 $initial)))
+   (let (cons ProofTraceHeaderListsDisjointV1 (cons $initial (cons (cons ProofTraceLabelConsV1 (cons $label (cons $explicit ()))) ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceHeaderAllDifferentFromV1:00 (cons $label (cons $initial ()))) (superpose (collapse (gslt:mode:ProofTraceHeaderAllDifferentFromV1:00)))
+   (let (cons gslt:result:ProofTraceHeaderListsDisjointV1:10 (cons $explicit ())) (superpose (collapse (gslt:mode:ProofTraceHeaderListsDisjointV1:10 $initial)))
    (quote (ProofTraceHeaderListsDisjointV1 $initial (ProofTraceLabelConsV1 $label $explicit)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=170 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-header-admitted-v1 target=relation
 (= (gslt:ProofTraceHeaderAdmittedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceHeaderAdmittedV1 $initial $explicit)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceHeaderAdmittedV1 (cons $initial (cons $explicit ()))) $__gslt_input_v1_0_0
    (let $_ (gslt:ProofTraceHeaderListsDisjointV1 (ProofTraceHeaderListsDisjointV1 $initial $explicit))
    (quote (ProofTraceHeaderAdmittedV1 $initial $explicit)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=171 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-dictionary-v1 target=relation
 (= (gslt:ProofTraceCompileDictionaryV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCompileDictionaryV1 $initial-labels $explicit-labels $dictionary)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceCompileDictionaryV1 (cons $initial-labels (cons $explicit-labels (cons $dictionary ())))) $__gslt_input_v1_0_0
    (let $_ (gslt:ProofTraceHeaderAdmittedV1 (ProofTraceHeaderAdmittedV1 $initial-labels $explicit-labels))
-   (let (quote (gslt:result:ProofTraceCompileInstructionListV1:00 $initial-labels $initial-instructions)) (superpose (collapse (gslt:mode:ProofTraceCompileInstructionListV1:00)))
-   (let (quote (gslt:result:ProofTraceCompileInstructionListV1:00 $explicit-labels $explicit-instructions)) (superpose (collapse (gslt:mode:ProofTraceCompileInstructionListV1:00)))
-   (let (quote (gslt:result:ProofTraceInstructionListAppendV1:110 $dictionary)) (once (gslt:fn:ProofTraceInstructionListAppendV1:110 $initial-instructions $explicit-instructions))
+   (let (cons gslt:result:ProofTraceCompileInstructionListV1:00 (cons $initial-labels (cons $initial-instructions ()))) (superpose (collapse (gslt:mode:ProofTraceCompileInstructionListV1:00)))
+   (let (cons gslt:result:ProofTraceCompileInstructionListV1:00 (cons $explicit-labels (cons $explicit-instructions ()))) (superpose (collapse (gslt:mode:ProofTraceCompileInstructionListV1:00)))
+   (let (cons gslt:result:ProofTraceInstructionListAppendV1:110 (cons $dictionary ())) (once (gslt:fn:ProofTraceInstructionListAppendV1:110 $initial-instructions $explicit-instructions))
    (quote (ProofTraceCompileDictionaryV1 $initial-labels $explicit-labels $dictionary))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=172 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-dictionary-resolve-v1 target=relation
 (= (gslt:ProofTraceDictionaryResolveV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceDictionaryResolveV1 (ProofTraceNatSuccV1 $index) $dictionary $instruction)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceDictionaryResolveIndexV1 $index $dictionary $instruction)) (gslt:ProofTraceDictionaryResolveIndexV1 (ProofTraceDictionaryResolveIndexV1 $index $dictionary $instruction))
+   (let (cons ProofTraceDictionaryResolveV1 (cons (cons ProofTraceNatSuccV1 (cons $index ())) (cons $dictionary (cons $instruction ())))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceDictionaryResolveIndexV1 (cons $index (cons $dictionary (cons $instruction ())))) (gslt:ProofTraceDictionaryResolveIndexV1 (ProofTraceDictionaryResolveIndexV1 $index $dictionary $instruction))
    (quote (ProofTraceDictionaryResolveV1 (ProofTraceNatSuccV1 $index) $dictionary $instruction)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=173 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-dictionary-resolve-index-zero-v1 target=relation
 (= (gslt:ProofTraceDictionaryResolveIndexV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceDictionaryResolveIndexV1 ProofTraceNatZeroV1 (ProofTraceInstructionConsV1 $instruction $rest) $instruction)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceDictionaryResolveIndexV1 (cons ProofTraceNatZeroV1 (cons (cons ProofTraceInstructionConsV1 (cons $instruction (cons $rest ()))) (cons $instruction ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceDictionaryResolveIndexV1 ProofTraceNatZeroV1 (ProofTraceInstructionConsV1 $instruction $rest) $instruction))))
 
 ; gslt-lowered-equation-v1 source-rewrite=174 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-dictionary-resolve-index-succ-v1 target=relation
 (= (gslt:ProofTraceDictionaryResolveIndexV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceDictionaryResolveIndexV1 (ProofTraceNatSuccV1 $index) (ProofTraceInstructionConsV1 $head $rest) $instruction)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceDictionaryResolveV1 (ProofTraceNatSuccV1 $index) $rest $instruction)) (gslt:ProofTraceDictionaryResolveV1 (ProofTraceDictionaryResolveV1 (ProofTraceNatSuccV1 $index) $rest $instruction))
+   (let (cons ProofTraceDictionaryResolveIndexV1 (cons (cons ProofTraceNatSuccV1 (cons $index ())) (cons (cons ProofTraceInstructionConsV1 (cons $head (cons $rest ()))) (cons $instruction ())))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceDictionaryResolveV1 (cons (cons ProofTraceNatSuccV1 (cons $index ())) (cons $rest (cons $instruction ())))) (gslt:ProofTraceDictionaryResolveV1 (ProofTraceDictionaryResolveV1 (ProofTraceNatSuccV1 $index) $rest $instruction))
    (quote (ProofTraceDictionaryResolveIndexV1 (ProofTraceNatSuccV1 $index) (ProofTraceInstructionConsV1 $head $rest) $instruction)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=175 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-dictionary-resolve-index-saved-v1 target=relation
 (= (gslt:ProofTraceDictionaryResolveIndexV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceDictionaryResolveIndexV1 $index ProofTraceInstructionNilV1 (ProofTraceRestoreV1 $index))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceDictionaryResolveIndexV1 (cons $index (cons ProofTraceInstructionNilV1 (cons (cons ProofTraceRestoreV1 (cons $index ())) ())))) $__gslt_input_v1_0_0
    (quote (ProofTraceDictionaryResolveIndexV1 $index ProofTraceInstructionNilV1 (ProofTraceRestoreV1 $index)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=176 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-v1 target=relation
 (= (gslt:ProofTraceDecodeV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceDecodeV1 $dictionary $codes $accumulator $trace)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes $accumulator ProofTracePhaseBetweenV1 ProofTraceNoTargetV1 ProofTraceStatusCompleteV1 $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $accumulator ProofTracePhaseBetweenV1 ProofTraceNoTargetV1 ProofTraceStatusCompleteV1 $trace))
+   (let (cons ProofTraceDecodeV1 (cons $dictionary (cons $codes (cons $accumulator (cons $trace ()))))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons $accumulator (cons ProofTracePhaseBetweenV1 (cons ProofTraceNoTargetV1 (cons ProofTraceStatusCompleteV1 (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $accumulator ProofTracePhaseBetweenV1 ProofTraceNoTargetV1 ProofTraceStatusCompleteV1 $trace))
    (quote (ProofTraceDecodeV1 $dictionary $codes $accumulator $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=177 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-nil-between-v1 target=relation
 (= (gslt:ProofTraceDecodeStatusV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary ProofTraceCodeNilV1 ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target ProofTraceStatusCompleteV1 ProofTraceNilV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons ProofTraceCodeNilV1 (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons ProofTraceStatusCompleteV1 (cons ProofTraceNilV1 ())))))))) $__gslt_input_v1_0_0
    (quote (ProofTraceDecodeStatusV1 $dictionary ProofTraceCodeNilV1 ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target ProofTraceStatusCompleteV1 ProofTraceNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=178 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-nil-completed-v1 target=relation
 (= (gslt:ProofTraceDecodeStatusV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary ProofTraceCodeNilV1 ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target ProofTraceStatusCompleteV1 ProofTraceNilV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons ProofTraceCodeNilV1 (cons ProofTraceNatZeroV1 (cons ProofTracePhaseJustCompletedV1 (cons $target (cons ProofTraceStatusCompleteV1 (cons ProofTraceNilV1 ())))))))) $__gslt_input_v1_0_0
    (quote (ProofTraceDecodeStatusV1 $dictionary ProofTraceCodeNilV1 ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target ProofTraceStatusCompleteV1 ProofTraceNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=179 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-status-cons-v1 target=relation
 (= (gslt:ProofTraceDecodeStatusV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary (ProofTraceCodeConsV1 $code $codes) $accumulator $phase $target $status $trace)) $__gslt_input_v1_0_0
-   (let (quote (source-proof-trace-code-class-v1 $code $class)) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code $class))
-   (let (quote (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace)) (gslt:ProofTraceDecodeCodeClassV1 (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons (cons ProofTraceCodeConsV1 (cons $code (cons $codes ()))) (cons $accumulator (cons $phase (cons $target (cons $status (cons $trace ())))))))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons $code (cons $class ()))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code $class))
+   (let (cons ProofTraceDecodeCodeClassV1 (cons $class (cons $dictionary (cons $codes (cons $accumulator (cons $phase (cons $target (cons $status (cons $trace ()))))))))) (gslt:ProofTraceDecodeCodeClassV1 (ProofTraceDecodeCodeClassV1 $class $dictionary $codes $accumulator $phase $target $status $trace))
    (quote (ProofTraceDecodeStatusV1 $dictionary (ProofTraceCodeConsV1 $code $codes) $accumulator $phase $target $status $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=180 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-terminal-v1 target=relation
 (= (gslt:ProofTraceDecodeCodeClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceDecodeCodeClassV1 (ProofTraceTerminalCodeV1 $digit $radix) $dictionary $codes $accumulator $phase $target $status (ProofTraceConsV1 $instruction $trace))) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceNatAliasCanonicalV1 $digit $canonical-digit)) (gslt:ProofTraceNatAliasCanonicalV1 (ProofTraceNatAliasCanonicalV1 $digit $canonical-digit))
-   (let (quote (ProofTraceNatAliasCanonicalV1 $radix $canonical-radix)) (gslt:ProofTraceNatAliasCanonicalV1 (ProofTraceNatAliasCanonicalV1 $radix $canonical-radix))
-   (let (quote (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $number)) (gslt:ProofTraceNatMulAddV1 (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $number))
-   (let (quote (ProofTraceDictionaryResolveV1 $number $dictionary $instruction)) (gslt:ProofTraceDictionaryResolveV1 (ProofTraceDictionaryResolveV1 $number $dictionary $instruction))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
+   (let (cons ProofTraceDecodeCodeClassV1 (cons (cons ProofTraceTerminalCodeV1 (cons $digit (cons $radix ()))) (cons $dictionary (cons $codes (cons $accumulator (cons $phase (cons $target (cons $status (cons (cons ProofTraceConsV1 (cons $instruction (cons $trace ()))) ()))))))))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceNatAliasCanonicalV1 (cons $digit (cons $canonical-digit ()))) (gslt:ProofTraceNatAliasCanonicalV1 (ProofTraceNatAliasCanonicalV1 $digit $canonical-digit))
+   (let (cons ProofTraceNatAliasCanonicalV1 (cons $radix (cons $canonical-radix ()))) (gslt:ProofTraceNatAliasCanonicalV1 (ProofTraceNatAliasCanonicalV1 $radix $canonical-radix))
+   (let (cons ProofTraceNatMulAddV1 (cons $canonical-radix (cons $accumulator (cons $canonical-digit (cons $number ()))))) (gslt:ProofTraceNatMulAddV1 (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $number))
+   (let (cons ProofTraceDictionaryResolveV1 (cons $number (cons $dictionary (cons $instruction ())))) (gslt:ProofTraceDictionaryResolveV1 (ProofTraceDictionaryResolveV1 $number $dictionary $instruction))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseJustCompletedV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target $status $trace))
    (quote (ProofTraceDecodeCodeClassV1 (ProofTraceTerminalCodeV1 $digit $radix) $dictionary $codes $accumulator $phase $target $status (ProofTraceConsV1 $instruction $trace))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-continuation-v1 target=relation
 (= (gslt:ProofTraceDecodeCodeClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceDecodeCodeClassV1 (ProofTraceContinuationCodeV1 $digit $radix) $dictionary $codes $accumulator $phase $target $status $trace)) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceNatAliasCanonicalV1 $digit $canonical-digit)) (gslt:ProofTraceNatAliasCanonicalV1 (ProofTraceNatAliasCanonicalV1 $digit $canonical-digit))
-   (let (quote (ProofTraceNatAliasCanonicalV1 $radix $canonical-radix)) (gslt:ProofTraceNatAliasCanonicalV1 (ProofTraceNatAliasCanonicalV1 $radix $canonical-radix))
-   (let (quote (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $next-accumulator)) (gslt:ProofTraceNatMulAddV1 (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $next-accumulator))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
+   (let (cons ProofTraceDecodeCodeClassV1 (cons (cons ProofTraceContinuationCodeV1 (cons $digit (cons $radix ()))) (cons $dictionary (cons $codes (cons $accumulator (cons $phase (cons $target (cons $status (cons $trace ()))))))))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceNatAliasCanonicalV1 (cons $digit (cons $canonical-digit ()))) (gslt:ProofTraceNatAliasCanonicalV1 (ProofTraceNatAliasCanonicalV1 $digit $canonical-digit))
+   (let (cons ProofTraceNatAliasCanonicalV1 (cons $radix (cons $canonical-radix ()))) (gslt:ProofTraceNatAliasCanonicalV1 (ProofTraceNatAliasCanonicalV1 $radix $canonical-radix))
+   (let (cons ProofTraceNatMulAddV1 (cons $canonical-radix (cons $accumulator (cons $canonical-digit (cons $next-accumulator ()))))) (gslt:ProofTraceNatMulAddV1 (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $next-accumulator))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons $next-accumulator (cons ProofTracePhaseOpenIndexV1 (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes $next-accumulator ProofTracePhaseOpenIndexV1 $target $status $trace))
    (quote (ProofTraceDecodeCodeClassV1 (ProofTraceContinuationCodeV1 $digit $radix) $dictionary $codes $accumulator $phase $target $status $trace))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=182 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-save-phase-immediate-v1 target=relation
 (= (gslt:ProofTraceSavePhaseTransitionV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceSavePhaseTransitionV1 ProofTracePhaseJustCompletedV1 $next-phase)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-save-placement-v1:0 $placement)) (once (gslt:fn:source-proof-trace-save-placement-v1:0))
-   (let (quote (gslt:result:ProofTraceSavePlacementTransitionV1:10 $next-phase)) (once (gslt:fn:ProofTraceSavePlacementTransitionV1:10 $placement))
+   (let (cons ProofTraceSavePhaseTransitionV1 (cons ProofTracePhaseJustCompletedV1 (cons $next-phase ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-save-placement-v1:0 (cons $placement ())) (once (gslt:fn:source-proof-trace-save-placement-v1:0))
+   (let (cons gslt:result:ProofTraceSavePlacementTransitionV1:10 (cons $next-phase ())) (once (gslt:fn:ProofTraceSavePlacementTransitionV1:10 $placement))
    (quote (ProofTraceSavePhaseTransitionV1 ProofTracePhaseJustCompletedV1 $next-phase))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=183 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-save-placement-immediate-v1 target=relation
 (= (gslt:ProofTraceSavePlacementTransitionV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceSavePlacementTransitionV1 state-proof-save-immediately-after-use-v1 ProofTracePhaseBetweenV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceSavePlacementTransitionV1 (cons state-proof-save-immediately-after-use-v1 (cons ProofTracePhaseBetweenV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceSavePlacementTransitionV1 state-proof-save-immediately-after-use-v1 ProofTracePhaseBetweenV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=184 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-save-placement-repeatable-v1 target=relation
 (= (gslt:ProofTraceSavePlacementTransitionV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceSavePlacementTransitionV1 state-proof-save-repeatable-v1 ProofTracePhaseJustCompletedV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceSavePlacementTransitionV1 (cons state-proof-save-repeatable-v1 (cons ProofTracePhaseJustCompletedV1 ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceSavePlacementTransitionV1 state-proof-save-repeatable-v1 ProofTracePhaseJustCompletedV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=185 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-save-v1 target=relation
 (= (gslt:ProofTraceDecodeCodeClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceDecodeCodeClassV1 ProofTraceSaveCodeV1 $dictionary $codes ProofTraceNatZeroV1 $phase $target $status (ProofTraceConsV1 ProofTraceSaveV1 $trace))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceSavePhaseTransitionV1:00 $phase $next-phase)) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:00))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
+   (let (cons ProofTraceDecodeCodeClassV1 (cons ProofTraceSaveCodeV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons $phase (cons $target (cons $status (cons (cons ProofTraceConsV1 (cons ProofTraceSaveV1 (cons $trace ()))) ()))))))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceSavePhaseTransitionV1:00 (cons $phase (cons $next-phase ()))) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:00))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons $next-phase (cons $target (cons $status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 $next-phase $target $status $trace))
    (quote (ProofTraceDecodeCodeClassV1 ProofTraceSaveCodeV1 $dictionary $codes ProofTraceNatZeroV1 $phase $target $status (ProofTraceConsV1 ProofTraceSaveV1 $trace)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=186 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-between-v1 target=relation
 (= (gslt:ProofTraceDecodeCodeClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceDecodeCodeClassV1 ProofTraceIncompleteCodeV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target ProofTraceStatusIncompleteV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace))) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeCodeClassV1 (cons ProofTraceIncompleteCodeV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons ProofTraceStatusIncompleteV1 (cons (cons ProofTraceConsV1 (cons (cons ProofTraceIncompleteStepV1 (cons $target ())) (cons $trace ()))) ()))))))))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (ProofTraceDecodeCodeClassV1 ProofTraceIncompleteCodeV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target ProofTraceStatusIncompleteV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=187 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-class-incomplete-completed-v1 target=relation
 (= (gslt:ProofTraceDecodeCodeClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceDecodeCodeClassV1 ProofTraceIncompleteCodeV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target ProofTraceStatusIncompleteV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace))) $__gslt_input_v1_0_0
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
+   (let (cons ProofTraceDecodeCodeClassV1 (cons ProofTraceIncompleteCodeV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseJustCompletedV1 (cons $target (cons ProofTraceStatusIncompleteV1 (cons (cons ProofTraceConsV1 (cons (cons ProofTraceIncompleteStepV1 (cons $target ())) (cons $trace ()))) ()))))))))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons $tail-status (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target $tail-status $trace))
    (quote (ProofTraceDecodeCodeClassV1 ProofTraceIncompleteCodeV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $target ProofTraceStatusIncompleteV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=188 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-first-refusal-terminal-v1 target=relation
 (= (gslt:ProofTraceDecodeFirstRefusalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceDecodeFirstRefusalV1 (ProofTraceCodeConsV1 $code $codes) $accumulator $phase $reason)) $__gslt_input_v1_0_0
-   (let (quote (source-proof-trace-code-class-v1 $code (ProofTraceTerminalCodeV1 $digit $radix))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code (ProofTraceTerminalCodeV1 $digit $radix)))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $number)) (gslt:ProofTraceNatMulAddV1 (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $number))
-   (let (quote (ProofTraceDecodeFirstRefusalV1 $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $reason)) (gslt:ProofTraceDecodeFirstRefusalV1 (ProofTraceDecodeFirstRefusalV1 $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $reason))
+   (let (cons ProofTraceDecodeFirstRefusalV1 (cons (cons ProofTraceCodeConsV1 (cons $code (cons $codes ()))) (cons $accumulator (cons $phase (cons $reason ()))))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons $code (cons (cons ProofTraceTerminalCodeV1 (cons $digit (cons $radix ()))) ()))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code (ProofTraceTerminalCodeV1 $digit $radix)))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons ProofTraceNatMulAddV1 (cons $canonical-radix (cons $accumulator (cons $canonical-digit (cons $number ()))))) (gslt:ProofTraceNatMulAddV1 (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $number))
+   (let (cons ProofTraceDecodeFirstRefusalV1 (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseJustCompletedV1 (cons $reason ()))))) (gslt:ProofTraceDecodeFirstRefusalV1 (ProofTraceDecodeFirstRefusalV1 $codes ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $reason))
    (quote (ProofTraceDecodeFirstRefusalV1 (ProofTraceCodeConsV1 $code $codes) $accumulator $phase $reason)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=189 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-first-refusal-continuation-v1 target=relation
 (= (gslt:ProofTraceDecodeFirstRefusalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceDecodeFirstRefusalV1 (ProofTraceCodeConsV1 $code $codes) $accumulator $phase $reason)) $__gslt_input_v1_0_0
-   (let (quote (source-proof-trace-code-class-v1 $code (ProofTraceContinuationCodeV1 $digit $radix))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code (ProofTraceContinuationCodeV1 $digit $radix)))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-digit)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
-   (let (quote (gslt:result:ProofTraceNatAliasCanonicalV1:10 $canonical-radix)) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
-   (let (quote (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $next-accumulator)) (gslt:ProofTraceNatMulAddV1 (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $next-accumulator))
-   (let (quote (ProofTraceDecodeFirstRefusalV1 $codes $next-accumulator ProofTracePhaseOpenIndexV1 $reason)) (gslt:ProofTraceDecodeFirstRefusalV1 (ProofTraceDecodeFirstRefusalV1 $codes $next-accumulator ProofTracePhaseOpenIndexV1 $reason))
+   (let (cons ProofTraceDecodeFirstRefusalV1 (cons (cons ProofTraceCodeConsV1 (cons $code (cons $codes ()))) (cons $accumulator (cons $phase (cons $reason ()))))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons $code (cons (cons ProofTraceContinuationCodeV1 (cons $digit (cons $radix ()))) ()))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code (ProofTraceContinuationCodeV1 $digit $radix)))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-digit ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $digit))
+   (let (cons gslt:result:ProofTraceNatAliasCanonicalV1:10 (cons $canonical-radix ())) (once (gslt:fn:ProofTraceNatAliasCanonicalV1:10 $radix))
+   (let (cons ProofTraceNatMulAddV1 (cons $canonical-radix (cons $accumulator (cons $canonical-digit (cons $next-accumulator ()))))) (gslt:ProofTraceNatMulAddV1 (ProofTraceNatMulAddV1 $canonical-radix $accumulator $canonical-digit $next-accumulator))
+   (let (cons ProofTraceDecodeFirstRefusalV1 (cons $codes (cons $next-accumulator (cons ProofTracePhaseOpenIndexV1 (cons $reason ()))))) (gslt:ProofTraceDecodeFirstRefusalV1 (ProofTraceDecodeFirstRefusalV1 $codes $next-accumulator ProofTracePhaseOpenIndexV1 $reason))
    (quote (ProofTraceDecodeFirstRefusalV1 (ProofTraceCodeConsV1 $code $codes) $accumulator $phase $reason)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=190 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-first-refusal-save-valid-v1 target=relation
 (= (gslt:ProofTraceDecodeFirstRefusalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceDecodeFirstRefusalV1 (ProofTraceCodeConsV1 $code $codes) ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $reason)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-code-class-v1:01 $code)) (once (gslt:fn:source-proof-trace-code-class-v1:01 ProofTraceSaveCodeV1))
-   (let (quote (gslt:result:ProofTraceSavePhaseTransitionV1:10 $next-phase)) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 ProofTracePhaseJustCompletedV1))
-   (let (quote (ProofTraceDecodeFirstRefusalV1 $codes ProofTraceNatZeroV1 $next-phase $reason)) (gslt:ProofTraceDecodeFirstRefusalV1 (ProofTraceDecodeFirstRefusalV1 $codes ProofTraceNatZeroV1 $next-phase $reason))
+   (let (cons ProofTraceDecodeFirstRefusalV1 (cons (cons ProofTraceCodeConsV1 (cons $code (cons $codes ()))) (cons ProofTraceNatZeroV1 (cons ProofTracePhaseJustCompletedV1 (cons $reason ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-code-class-v1:01 (cons $code ())) (once (gslt:fn:source-proof-trace-code-class-v1:01 ProofTraceSaveCodeV1))
+   (let (cons gslt:result:ProofTraceSavePhaseTransitionV1:10 (cons $next-phase ())) (once (gslt:fn:ProofTraceSavePhaseTransitionV1:10 ProofTracePhaseJustCompletedV1))
+   (let (cons ProofTraceDecodeFirstRefusalV1 (cons $codes (cons ProofTraceNatZeroV1 (cons $next-phase (cons $reason ()))))) (gslt:ProofTraceDecodeFirstRefusalV1 (ProofTraceDecodeFirstRefusalV1 $codes ProofTraceNatZeroV1 $next-phase $reason))
    (quote (ProofTraceDecodeFirstRefusalV1 (ProofTraceCodeConsV1 $code $codes) ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1 $reason)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=191 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-first-refusal-save-nonzero-v1 target=relation
 (= (gslt:ProofTraceDecodeFirstRefusalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceDecodeFirstRefusalV1 (ProofTraceCodeConsV1 $code $codes) (ProofTraceNatSuccV1 $accumulator) $phase (ProofTraceRefusedSaveDuringIndexV1 (ProofTraceNatSuccV1 $accumulator)))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-code-class-v1:01 $code)) (once (gslt:fn:source-proof-trace-code-class-v1:01 ProofTraceSaveCodeV1))
+   (let (cons ProofTraceDecodeFirstRefusalV1 (cons (cons ProofTraceCodeConsV1 (cons $code (cons $codes ()))) (cons (cons ProofTraceNatSuccV1 (cons $accumulator ())) (cons $phase (cons (cons ProofTraceRefusedSaveDuringIndexV1 (cons (cons ProofTraceNatSuccV1 (cons $accumulator ())) ())) ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-code-class-v1:01 (cons $code ())) (once (gslt:fn:source-proof-trace-code-class-v1:01 ProofTraceSaveCodeV1))
    (quote (ProofTraceDecodeFirstRefusalV1 (ProofTraceCodeConsV1 $code $codes) (ProofTraceNatSuccV1 $accumulator) $phase (ProofTraceRefusedSaveDuringIndexV1 (ProofTraceNatSuccV1 $accumulator)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=192 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-first-refusal-save-open-zero-v1 target=relation
 (= (gslt:ProofTraceDecodeFirstRefusalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceDecodeFirstRefusalV1 (ProofTraceCodeConsV1 $code $codes) ProofTraceNatZeroV1 ProofTracePhaseOpenIndexV1 (ProofTraceRefusedSaveDuringIndexV1 ProofTraceNatZeroV1))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-code-class-v1:01 $code)) (once (gslt:fn:source-proof-trace-code-class-v1:01 ProofTraceSaveCodeV1))
+   (let (cons ProofTraceDecodeFirstRefusalV1 (cons (cons ProofTraceCodeConsV1 (cons $code (cons $codes ()))) (cons ProofTraceNatZeroV1 (cons ProofTracePhaseOpenIndexV1 (cons (cons ProofTraceRefusedSaveDuringIndexV1 (cons ProofTraceNatZeroV1 ())) ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-code-class-v1:01 (cons $code ())) (once (gslt:fn:source-proof-trace-code-class-v1:01 ProofTraceSaveCodeV1))
    (quote (ProofTraceDecodeFirstRefusalV1 (ProofTraceCodeConsV1 $code $codes) ProofTraceNatZeroV1 ProofTracePhaseOpenIndexV1 (ProofTraceRefusedSaveDuringIndexV1 ProofTraceNatZeroV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=193 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-decode-first-refusal-save-between-v1 target=relation
 (= (gslt:ProofTraceDecodeFirstRefusalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceDecodeFirstRefusalV1 (ProofTraceCodeConsV1 $code $codes) ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 (ProofTraceRefusedSavePlacementV1 ProofTracePhaseBetweenV1))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-code-class-v1:01 $code)) (once (gslt:fn:source-proof-trace-code-class-v1:01 ProofTraceSaveCodeV1))
+   (let (cons ProofTraceDecodeFirstRefusalV1 (cons (cons ProofTraceCodeConsV1 (cons $code (cons $codes ()))) (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons (cons ProofTraceRefusedSavePlacementV1 (cons ProofTracePhaseBetweenV1 ())) ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-code-class-v1:01 (cons $code ())) (once (gslt:fn:source-proof-trace-code-class-v1:01 ProofTraceSaveCodeV1))
    (quote (ProofTraceDecodeFirstRefusalV1 (ProofTraceCodeConsV1 $code $codes) ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 (ProofTraceRefusedSavePlacementV1 ProofTracePhaseBetweenV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=194 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-v1 target=relation
 (= (gslt:ProofTraceCompileNormalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCompileNormalV1 $labels $trace)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceCompileNormalStatusV1:0110 $labels $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0110 ProofTraceNoTargetV1 ProofTraceStatusCompleteV1)))
+   (let (cons ProofTraceCompileNormalV1 (cons $labels (cons $trace ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceCompileNormalStatusV1:0110 (cons $labels (cons $trace ()))) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0110 ProofTraceNoTargetV1 ProofTraceStatusCompleteV1)))
    (quote (ProofTraceCompileNormalV1 $labels $trace)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=195 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-nil-v1 target=relation
 (= (gslt:ProofTraceCompileNormalStatusV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCompileNormalStatusV1 ProofTraceLabelNilV1 $target ProofTraceStatusCompleteV1 ProofTraceNilV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceCompileNormalStatusV1 (cons ProofTraceLabelNilV1 (cons $target (cons ProofTraceStatusCompleteV1 (cons ProofTraceNilV1 ()))))) $__gslt_input_v1_0_0
    (quote (ProofTraceCompileNormalStatusV1 ProofTraceLabelNilV1 $target ProofTraceStatusCompleteV1 ProofTraceNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=196 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-cons-v1 target=relation
 (= (gslt:ProofTraceCompileNormalStatusV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCompileNormalStatusV1 (ProofTraceLabelConsV1 $label $labels) $target $status (ProofTraceConsV1 $instruction $trace))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-label-instruction-v1:00 $label $instruction)) (superpose (collapse (gslt:mode:source-proof-trace-label-instruction-v1:00)))
-   (let (quote (gslt:result:ProofTraceCompileNormalStatusV1:0000 $labels $target $status $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0000)))
+   (let (cons ProofTraceCompileNormalStatusV1 (cons (cons ProofTraceLabelConsV1 (cons $label (cons $labels ()))) (cons $target (cons $status (cons (cons ProofTraceConsV1 (cons $instruction (cons $trace ()))) ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-label-instruction-v1:00 (cons $label (cons $instruction ()))) (superpose (collapse (gslt:mode:source-proof-trace-label-instruction-v1:00)))
+   (let (cons gslt:result:ProofTraceCompileNormalStatusV1:0000 (cons $labels (cons $target (cons $status (cons $trace ()))))) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0000)))
    (quote (ProofTraceCompileNormalStatusV1 (ProofTraceLabelConsV1 $label $labels) $target $status (ProofTraceConsV1 $instruction $trace)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=197 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-status-incomplete-v1 target=relation
 (= (gslt:ProofTraceCompileNormalStatusV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCompileNormalStatusV1 (ProofTraceLabelConsV1 $label $labels) $target ProofTraceStatusIncompleteV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-input-incomplete-normal-label-v1:0 $label)) (once (gslt:fn:source-proof-trace-input-incomplete-normal-label-v1:0))
-   (let (quote (gslt:result:ProofTraceCompileNormalStatusV1:0000 $labels $target $tail-status $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0000)))
+   (let (cons ProofTraceCompileNormalStatusV1 (cons (cons ProofTraceLabelConsV1 (cons $label (cons $labels ()))) (cons $target (cons ProofTraceStatusIncompleteV1 (cons (cons ProofTraceConsV1 (cons (cons ProofTraceIncompleteStepV1 (cons $target ())) (cons $trace ()))) ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-input-incomplete-normal-label-v1:0 (cons $label ())) (once (gslt:fn:source-proof-trace-input-incomplete-normal-label-v1:0))
+   (let (cons gslt:result:ProofTraceCompileNormalStatusV1:0000 (cons $labels (cons $target (cons $tail-status (cons $trace ()))))) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0000)))
    (quote (ProofTraceCompileNormalStatusV1 (ProofTraceLabelConsV1 $label $labels) $target ProofTraceStatusIncompleteV1 (ProofTraceConsV1 (ProofTraceIncompleteStepV1 $target) $trace)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=198 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-compressed-v1 target=relation
 (= (gslt:ProofTraceCompileCompressedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCompileCompressedV1 $initial-labels $explicit-labels $codes $trace)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceCompileDictionaryV1:000 $initial-labels $explicit-labels $dictionary)) (superpose (collapse (gslt:mode:ProofTraceCompileDictionaryV1:000)))
-   (let (quote (ProofTraceDecodeV1 $dictionary $codes ProofTraceNatZeroV1 $trace)) (gslt:ProofTraceDecodeV1 (ProofTraceDecodeV1 $dictionary $codes ProofTraceNatZeroV1 $trace))
+   (let (cons ProofTraceCompileCompressedV1 (cons $initial-labels (cons $explicit-labels (cons $codes (cons $trace ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceCompileDictionaryV1:000 (cons $initial-labels (cons $explicit-labels (cons $dictionary ())))) (superpose (collapse (gslt:mode:ProofTraceCompileDictionaryV1:000)))
+   (let (cons ProofTraceDecodeV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons $trace ()))))) (gslt:ProofTraceDecodeV1 (ProofTraceDecodeV1 $dictionary $codes ProofTraceNatZeroV1 $trace))
    (quote (ProofTraceCompileCompressedV1 $initial-labels $explicit-labels $codes $trace))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=199 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-accepted-v1 target=relation
 (= (gslt:ProofTraceCompileNormalAcceptedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCompileNormalAcceptedV1 $context $labels $target)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceCompileNormalV1:00 $labels $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalV1:00)))
-   (let (quote (gslt:result:ProofTraceAcceptedV1:010 $context $target)) (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:010 $trace)))
+   (let (cons ProofTraceCompileNormalAcceptedV1 (cons $context (cons $labels (cons $target ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceCompileNormalV1:00 (cons $labels (cons $trace ()))) (superpose (collapse (gslt:mode:ProofTraceCompileNormalV1:00)))
+   (let (cons gslt:result:ProofTraceAcceptedV1:010 (cons $context (cons $target ()))) (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:010 $trace)))
    (quote (ProofTraceCompileNormalAcceptedV1 $context $labels $target))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=200 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-normal-incomplete-accepted-v1 target=relation
 (= (gslt:ProofTraceCompileNormalIncompleteAcceptedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCompileNormalIncompleteAcceptedV1 $context $labels $target)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceCompileNormalStatusV1:0010 $labels $target $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0010 ProofTraceStatusIncompleteV1)))
+   (let (cons ProofTraceCompileNormalIncompleteAcceptedV1 (cons $context (cons $labels (cons $target ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceCompileNormalStatusV1:0010 (cons $labels (cons $target (cons $trace ())))) (superpose (collapse (gslt:mode:ProofTraceCompileNormalStatusV1:0010 ProofTraceStatusIncompleteV1)))
    (let $_ (gslt:ProofTraceAcceptedV1 (ProofTraceAcceptedV1 $context $trace $target))
    (quote (ProofTraceCompileNormalIncompleteAcceptedV1 $context $labels $target))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=201 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-compressed-accepted-v1 target=relation
 (= (gslt:ProofTraceCompileCompressedAcceptedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCompileCompressedAcceptedV1 $context $initial-labels $explicit-labels $codes $target)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceCompileCompressedV1:0000 $initial-labels $explicit-labels $codes $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileCompressedV1:0000)))
-   (let (quote (gslt:result:ProofTraceAcceptedV1:010 $context $target)) (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:010 $trace)))
+   (let (cons ProofTraceCompileCompressedAcceptedV1 (cons $context (cons $initial-labels (cons $explicit-labels (cons $codes (cons $target ())))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceCompileCompressedV1:0000 (cons $initial-labels (cons $explicit-labels (cons $codes (cons $trace ()))))) (superpose (collapse (gslt:mode:ProofTraceCompileCompressedV1:0000)))
+   (let (cons gslt:result:ProofTraceAcceptedV1:010 (cons $context (cons $target ()))) (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:010 $trace)))
    (quote (ProofTraceCompileCompressedAcceptedV1 $context $initial-labels $explicit-labels $codes $target))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=202 source-presentation=CertificateGSLTTraceCompilerV1 source-rule=proof-trace-compile-compressed-incomplete-accepted-v1 target=relation
 (= (gslt:ProofTraceCompileCompressedIncompleteAcceptedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCompileCompressedIncompleteAcceptedV1 $context $initial-labels $explicit-labels $codes $target)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceCompileDictionaryV1:000 $initial-labels $explicit-labels $dictionary)) (superpose (collapse (gslt:mode:ProofTraceCompileDictionaryV1:000)))
-   (let (quote (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target ProofTraceStatusIncompleteV1 $trace)) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target ProofTraceStatusIncompleteV1 $trace))
+   (let (cons ProofTraceCompileCompressedIncompleteAcceptedV1 (cons $context (cons $initial-labels (cons $explicit-labels (cons $codes (cons $target ())))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceCompileDictionaryV1:000 (cons $initial-labels (cons $explicit-labels (cons $dictionary ())))) (superpose (collapse (gslt:mode:ProofTraceCompileDictionaryV1:000)))
+   (let (cons ProofTraceDecodeStatusV1 (cons $dictionary (cons $codes (cons ProofTraceNatZeroV1 (cons ProofTracePhaseBetweenV1 (cons $target (cons ProofTraceStatusIncompleteV1 (cons $trace ())))))))) (gslt:ProofTraceDecodeStatusV1 (ProofTraceDecodeStatusV1 $dictionary $codes ProofTraceNatZeroV1 ProofTracePhaseBetweenV1 $target ProofTraceStatusIncompleteV1 $trace))
    (let $_ (gslt:ProofTraceAcceptedV1 (ProofTraceAcceptedV1 $context $trace $target))
    (quote (ProofTraceCompileCompressedIncompleteAcceptedV1 $context $initial-labels $explicit-labels $codes $target)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=203 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-literal-v1 target=relation
 (= (gslt:ProofTraceTokenResultValueV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceTokenResultValueV1 ProofTokenLiteralClassV1 (ProofTokenLiteralClassV1))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceTokenResultValueV1 (cons ProofTokenLiteralClassV1 (cons (cons ProofTokenLiteralClassV1 ()) ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceTokenResultValueV1 ProofTokenLiteralClassV1 (ProofTokenLiteralClassV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=204 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-variable-v1 target=relation
 (= (gslt:ProofTraceTokenResultValueV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceTokenResultValueV1 ProofTokenVariableClassV1 (ProofTokenVariableClassV1))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceTokenResultValueV1 (cons ProofTokenVariableClassV1 (cons (cons ProofTokenVariableClassV1 ()) ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceTokenResultValueV1 ProofTokenVariableClassV1 (ProofTokenVariableClassV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=205 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-equal-v1 target=relation
 (= (gslt:ProofTraceTokenResultValueV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceTokenResultValueV1 ProofTokenEqualV1 (ProofTokenEqualV1))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceTokenResultValueV1 (cons ProofTokenEqualV1 (cons (cons ProofTokenEqualV1 ()) ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceTokenResultValueV1 ProofTokenEqualV1 (ProofTokenEqualV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=206 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-unequal-v1 target=relation
 (= (gslt:ProofTraceTokenResultValueV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceTokenResultValueV1 ProofTokenUnequalV1 (ProofTokenUnequalV1))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceTokenResultValueV1 (cons ProofTokenUnequalV1 (cons (cons ProofTokenUnequalV1 ()) ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceTokenResultValueV1 ProofTokenUnequalV1 (ProofTokenUnequalV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=207 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-value-literal-v1 target=relation
 (= (gslt:ProofTraceTokenResultValueV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceTokenResultValueV1 (ProofTokenLiteralClassV1) (ProofTokenLiteralClassV1))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceTokenResultValueV1 (cons (cons ProofTokenLiteralClassV1 ()) (cons (cons ProofTokenLiteralClassV1 ()) ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceTokenResultValueV1 (ProofTokenLiteralClassV1) (ProofTokenLiteralClassV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=208 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-value-variable-v1 target=relation
 (= (gslt:ProofTraceTokenResultValueV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceTokenResultValueV1 (ProofTokenVariableClassV1) (ProofTokenVariableClassV1))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceTokenResultValueV1 (cons (cons ProofTokenVariableClassV1 ()) (cons (cons ProofTokenVariableClassV1 ()) ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceTokenResultValueV1 (ProofTokenVariableClassV1) (ProofTokenVariableClassV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=209 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-value-equal-v1 target=relation
 (= (gslt:ProofTraceTokenResultValueV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceTokenResultValueV1 (ProofTokenEqualV1) (ProofTokenEqualV1))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceTokenResultValueV1 (cons (cons ProofTokenEqualV1 ()) (cons (cons ProofTokenEqualV1 ()) ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceTokenResultValueV1 (ProofTokenEqualV1) (ProofTokenEqualV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=210 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-token-result-value-unequal-v1 target=relation
 (= (gslt:ProofTraceTokenResultValueV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceTokenResultValueV1 (ProofTokenUnequalV1) (ProofTokenUnequalV1))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceTokenResultValueV1 (cons (cons ProofTokenUnequalV1 ()) (cons (cons ProofTokenUnequalV1 ()) ()))) $__gslt_input_v1_0_0
    (quote (ProofTraceTokenResultValueV1 (ProofTokenUnequalV1) (ProofTokenUnequalV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=211 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-token-class-v1 target=relation
 (= (gslt:ProofTokenClassV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTokenClassV1 $token $class)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-input-token-class-v1:00 $token $raw-class)) (once (gslt:fn:source-proof-trace-input-token-class-v1:00))
-   (let (quote (gslt:result:ProofTraceTokenResultValueV1:10 $class)) (once (gslt:fn:ProofTraceTokenResultValueV1:10 $raw-class))
+   (let (cons ProofTokenClassV1 (cons $token (cons $class ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-input-token-class-v1:00 (cons $token (cons $raw-class ()))) (once (gslt:fn:source-proof-trace-input-token-class-v1:00))
+   (let (cons gslt:result:ProofTraceTokenResultValueV1:10 (cons $class ())) (once (gslt:fn:ProofTraceTokenResultValueV1:10 $raw-class))
    (quote (ProofTokenClassV1 $token $class))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=212 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-token-compare-v1 target=relation
 (= (gslt:ProofTokenCompareV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTokenCompareV1 $left $right $comparison)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-input-token-compare-v1:000 $left $right $raw-comparison)) (superpose (collapse (gslt:mode:source-proof-trace-input-token-compare-v1:000)))
-   (let (quote (gslt:result:ProofTraceTokenResultValueV1:10 $comparison)) (once (gslt:fn:ProofTraceTokenResultValueV1:10 $raw-comparison))
+   (let (cons ProofTokenCompareV1 (cons $left (cons $right (cons $comparison ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-input-token-compare-v1:000 (cons $left (cons $right (cons $raw-comparison ())))) (superpose (collapse (gslt:mode:source-proof-trace-input-token-compare-v1:000)))
+   (let (cons gslt:result:ProofTraceTokenResultValueV1:10 (cons $comparison ())) (once (gslt:fn:ProofTraceTokenResultValueV1:10 $raw-comparison))
    (quote (ProofTokenCompareV1 $left $right $comparison))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=213 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-token-literal-v1 target=relation
 (= (gslt:ProofTokenLiteralV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTokenLiteralV1 $token)) $__gslt_input_v1_0_0
+   (let (cons ProofTokenLiteralV1 (cons $token ())) $__gslt_input_v1_0_0
    (let $_ (gslt:source-proof-trace-input-token-literal-v1 (source-proof-trace-input-token-literal-v1 $token))
    (quote (ProofTokenLiteralV1 $token)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=214 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-token-variable-v1 target=relation
 (= (gslt:ProofTokenVariableV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTokenVariableV1 $token)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-input-token-variable-v1:0 $token)) (once (gslt:fn:source-proof-trace-input-token-variable-v1:0))
+   (let (cons ProofTokenVariableV1 (cons $token ())) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-input-token-variable-v1:0 (cons $token ())) (once (gslt:fn:source-proof-trace-input-token-variable-v1:0))
    (quote (ProofTokenVariableV1 $token)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=215 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-token-different-v1 target=relation
 (= (gslt:ProofTokenDifferentV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTokenDifferentV1 $left $right)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-input-token-different-v1:00 $left $right)) (once (gslt:fn:source-proof-trace-input-token-different-v1:00))
+   (let (cons ProofTokenDifferentV1 (cons $left (cons $right ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-input-token-different-v1:00 (cons $left (cons $right ()))) (once (gslt:fn:source-proof-trace-input-token-different-v1:00))
    (quote (ProofTokenDifferentV1 $left $right)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=216 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-push-instruction-v1 target=relation
 (= (gslt:source-proof-trace-label-instruction-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-label-instruction-v1 $label (ProofTracePushV1 $formula))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-input-request-v1:00 $request $target)) (once (gslt:fn:source-proof-trace-input-request-v1:00))
-   (let (quote (gslt:result:source-proof-trace-input-push-label-v1:100 $label $formula)) (superpose (collapse (gslt:mode:source-proof-trace-input-push-label-v1:100 $request)))
+   (let (cons source-proof-trace-label-instruction-v1 (cons $label (cons (cons ProofTracePushV1 (cons $formula ())) ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-input-request-v1:00 (cons $request (cons $target ()))) (once (gslt:fn:source-proof-trace-input-request-v1:00))
+   (let (cons gslt:result:source-proof-trace-input-push-label-v1:100 (cons $label (cons $formula ()))) (superpose (collapse (gslt:mode:source-proof-trace-input-push-label-v1:100 $request)))
    (quote (source-proof-trace-label-instruction-v1 $label (ProofTracePushV1 $formula)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=217 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-current-apart-forward-v1 target=relation
 (= (gslt:ProofTokenApartV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTokenApartV1 $left $right)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTokenApartDecisionV1:001 $left $right)) (once (gslt:fn:ProofTokenApartDecisionV1:001 ProofTraceApartPresentV1))
+   (let (cons ProofTokenApartV1 (cons $left (cons $right ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTokenApartDecisionV1:001 (cons $left (cons $right ()))) (once (gslt:fn:ProofTokenApartDecisionV1:001 ProofTraceApartPresentV1))
    (quote (ProofTokenApartV1 $left $right)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=218 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-current-apart-reverse-v1 target=relation
 (= (gslt:ProofTokenApartV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTokenApartV1 $right $left)) $__gslt_input_v1_0_0
+   (let (cons ProofTokenApartV1 (cons $right (cons $left ()))) $__gslt_input_v1_0_0
    (let $_ (gslt:source-proof-trace-input-current-apart-v1 (source-proof-trace-input-current-apart-v1 $left $right))
    (quote (ProofTokenApartV1 $right $left)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=219 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-current-apart-decision-v1 target=relation
 (= (gslt:ProofTokenApartDecisionV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTokenApartDecisionV1 $left $right $decision)) $__gslt_input_v1_0_0
+   (let (cons ProofTokenApartDecisionV1 (cons $left (cons $right (cons $decision ())))) $__gslt_input_v1_0_0
    (let $_ (gslt:source-proof-trace-input-current-apart-decision-v1 (source-proof-trace-input-current-apart-decision-v1 $left $right $decision))
    (quote (ProofTokenApartDecisionV1 $left $right $decision)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=220 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-context-nil-v1 target=relation
 (= (gslt:ProofTraceInputBuildContextV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceInputBuildContextV1 $request $count $count ProofTraceContextNilV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceInputBuildContextV1 (cons $request (cons $count (cons $count (cons ProofTraceContextNilV1 ()))))) $__gslt_input_v1_0_0
    (quote (ProofTraceInputBuildContextV1 $request $count $count ProofTraceContextNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=221 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-context-cons-v1 target=relation
 (= (gslt:ProofTraceInputBuildContextV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceInputBuildContextV1 $request $index $count (ProofTraceContextConsV1 $formula $context))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-input-context-v1:000 $request $index $formula)) (superpose (collapse (gslt:mode:source-proof-trace-input-context-v1:000)))
-   (let (quote (gslt:result:ProofTraceInputBuildContextV1:1100 $count $context)) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1100 $request (quote (ProofTraceNatSuccV1 $index)))))
+   (let (cons ProofTraceInputBuildContextV1 (cons $request (cons $index (cons $count (cons (cons ProofTraceContextConsV1 (cons $formula (cons $context ()))) ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-input-context-v1:000 (cons $request (cons $index (cons $formula ())))) (superpose (collapse (gslt:mode:source-proof-trace-input-context-v1:000)))
+   (let (cons gslt:result:ProofTraceInputBuildContextV1:1100 (cons $count (cons $context ()))) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1100 $request (quote (ProofTraceNatSuccV1 $index)))))
    (quote (ProofTraceInputBuildContextV1 $request $index $count (ProofTraceContextConsV1 $formula $context)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=222 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-frame-nil-v1 target=relation
 (= (gslt:ProofTraceInputBuildFrameV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceInputBuildFrameV1 $assertion $count $count ProofTraceFrameNilV1)) $__gslt_input_v1_0_0
+   (let (cons ProofTraceInputBuildFrameV1 (cons $assertion (cons $count (cons $count (cons ProofTraceFrameNilV1 ()))))) $__gslt_input_v1_0_0
    (quote (ProofTraceInputBuildFrameV1 $assertion $count $count ProofTraceFrameNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=223 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-frame-cons-v1 target=relation
 (= (gslt:ProofTraceInputBuildFrameV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceInputBuildFrameV1 $assertion $index $count (ProofTraceFrameConsV1 $entry $frame))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-input-frame-v1:000 $assertion $index $entry)) (once (gslt:fn:source-proof-trace-input-frame-v1:000))
-   (let (quote (gslt:result:ProofTraceInputBuildFrameV1:1100 $count $frame)) (superpose (collapse (gslt:mode:ProofTraceInputBuildFrameV1:1100 $assertion (quote (ProofTraceNatSuccV1 $index)))))
+   (let (cons ProofTraceInputBuildFrameV1 (cons $assertion (cons $index (cons $count (cons (cons ProofTraceFrameConsV1 (cons $entry (cons $frame ()))) ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-input-frame-v1:000 (cons $assertion (cons $index (cons $entry ())))) (once (gslt:fn:source-proof-trace-input-frame-v1:000))
+   (let (cons gslt:result:ProofTraceInputBuildFrameV1:1100 (cons $count (cons $frame ()))) (superpose (collapse (gslt:mode:ProofTraceInputBuildFrameV1:1100 $assertion (quote (ProofTraceNatSuccV1 $index)))))
    (quote (ProofTraceInputBuildFrameV1 $assertion $index $count (ProofTraceFrameConsV1 $entry $frame)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=224 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-apartness-nil-v1 target=relation
 (= (gslt:ProofTraceInputBuildApartnessV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceInputBuildApartnessV1 $assertion $count $count (ProofAssertionListNilV1))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceInputBuildApartnessV1 (cons $assertion (cons $count (cons $count (cons (cons ProofAssertionListNilV1 ()) ()))))) $__gslt_input_v1_0_0
    (quote (ProofTraceInputBuildApartnessV1 $assertion $count $count (ProofAssertionListNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=225 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-build-apartness-cons-v1 target=relation
 (= (gslt:ProofTraceInputBuildApartnessV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceInputBuildApartnessV1 $assertion $index $count (ProofAssertionListConsV1 (ProofAssertionDisjointV1 $left $right) $apartness))) $__gslt_input_v1_0_0
+   (let (cons ProofTraceInputBuildApartnessV1 (cons $assertion (cons $index (cons $count (cons (cons ProofAssertionListConsV1 (cons (cons ProofAssertionDisjointV1 (cons $left (cons $right ()))) (cons $apartness ()))) ()))))) $__gslt_input_v1_0_0
    (let $_ (gslt:source-proof-trace-input-apartness-v1 (source-proof-trace-input-apartness-v1 $assertion $index $left $right))
-   (let (quote (gslt:result:ProofTraceInputBuildApartnessV1:0000 $assertion (ProofTraceNatSuccV1 $index) $count $apartness)) (superpose (collapse (gslt:mode:ProofTraceInputBuildApartnessV1:0000)))
+   (let (cons gslt:result:ProofTraceInputBuildApartnessV1:0000 (cons $assertion (cons (cons ProofTraceNatSuccV1 (cons $index ())) (cons $count (cons $apartness ()))))) (superpose (collapse (gslt:mode:ProofTraceInputBuildApartnessV1:0000)))
    (quote (ProofTraceInputBuildApartnessV1 $assertion $index $count (ProofAssertionListConsV1 (ProofAssertionDisjointV1 $left $right) $apartness)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=226 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-assertion-v1 target=relation
 (= (gslt:ProofTraceInputAssertionV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceInputAssertionV1 $label (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $apartness) $frame)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-input-assertion-v1:000 $label $conclusion-type $conclusion-template)) (once (gslt:fn:source-proof-trace-input-assertion-v1:000))
-   (let (quote (gslt:result:source-proof-trace-input-frame-count-v1:10 $frame-count)) (once (gslt:fn:source-proof-trace-input-frame-count-v1:10 $label))
-   (let (quote (gslt:result:source-proof-trace-input-apartness-count-v1:10 $apartness-count)) (once (gslt:fn:source-proof-trace-input-apartness-count-v1:10 $label))
-   (let (quote (gslt:result:ProofTraceInputBuildFrameV1:1110 $frame)) (superpose (collapse (gslt:mode:ProofTraceInputBuildFrameV1:1110 $label ProofTraceNatZeroV1 $frame-count)))
-   (let (quote (gslt:result:ProofTraceFrameProjectV1:100 $variables $essentials)) (once (gslt:fn:ProofTraceFrameProjectV1:100 $frame))
-   (let (quote (gslt:result:ProofTraceInputBuildApartnessV1:1110 $apartness)) (superpose (collapse (gslt:mode:ProofTraceInputBuildApartnessV1:1110 $label ProofTraceNatZeroV1 $apartness-count)))
+   (let (cons ProofTraceInputAssertionV1 (cons $label (cons (cons ProofAssertionV1 (cons $variables (cons $essentials (cons $conclusion-type (cons $conclusion-template (cons $apartness ())))))) (cons $frame ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-input-assertion-v1:000 (cons $label (cons $conclusion-type (cons $conclusion-template ())))) (once (gslt:fn:source-proof-trace-input-assertion-v1:000))
+   (let (cons gslt:result:source-proof-trace-input-frame-count-v1:10 (cons $frame-count ())) (once (gslt:fn:source-proof-trace-input-frame-count-v1:10 $label))
+   (let (cons gslt:result:source-proof-trace-input-apartness-count-v1:10 (cons $apartness-count ())) (once (gslt:fn:source-proof-trace-input-apartness-count-v1:10 $label))
+   (let (cons gslt:result:ProofTraceInputBuildFrameV1:1110 (cons $frame ())) (superpose (collapse (gslt:mode:ProofTraceInputBuildFrameV1:1110 $label ProofTraceNatZeroV1 $frame-count)))
+   (let (cons gslt:result:ProofTraceFrameProjectV1:100 (cons $variables (cons $essentials ()))) (once (gslt:fn:ProofTraceFrameProjectV1:100 $frame))
+   (let (cons gslt:result:ProofTraceInputBuildApartnessV1:1110 (cons $apartness ())) (superpose (collapse (gslt:mode:ProofTraceInputBuildApartnessV1:1110 $label ProofTraceNatZeroV1 $apartness-count)))
    (quote (ProofTraceInputAssertionV1 $label (ProofAssertionV1 $variables $essentials $conclusion-type $conclusion-template $apartness) $frame))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=227 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-assertion-declared-v1 target=relation
 (= (gslt:ProofAssertionDeclaredV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofAssertionDeclaredV1 $assertion)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceInputAssertionV1:000 $label $assertion $frame)) (superpose (collapse (gslt:mode:ProofTraceInputAssertionV1:000)))
+   (let (cons ProofAssertionDeclaredV1 (cons $assertion ())) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceInputAssertionV1:000 (cons $label (cons $assertion (cons $frame ())))) (superpose (collapse (gslt:mode:ProofTraceInputAssertionV1:000)))
    (quote (ProofAssertionDeclaredV1 $assertion)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=228 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-apply-instruction-v1 target=relation
 (= (gslt:source-proof-trace-label-instruction-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-label-instruction-v1 $label (ProofTraceApplyV1 $assertion $frame))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ProofTraceInputAssertionV1:000 $label $assertion $frame)) (superpose (collapse (gslt:mode:ProofTraceInputAssertionV1:000)))
+   (let (cons source-proof-trace-label-instruction-v1 (cons $label (cons (cons ProofTraceApplyV1 (cons $assertion (cons $frame ()))) ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:ProofTraceInputAssertionV1:000 (cons $label (cons $assertion (cons $frame ())))) (superpose (collapse (gslt:mode:ProofTraceInputAssertionV1:000)))
    (quote (source-proof-trace-label-instruction-v1 $label (ProofTraceApplyV1 $assertion $frame))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=229 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-verify-normal-v1 target=relation
 (= (gslt:ProofTraceInputVerifyNormalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceInputVerifyNormalV1 $request $labels)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-input-request-v1:00 $request $target)) (once (gslt:fn:source-proof-trace-input-request-v1:00))
-   (let (quote (gslt:result:source-proof-trace-input-context-count-v1:10 $context-count)) (once (gslt:fn:source-proof-trace-input-context-count-v1:10 $request))
-   (let (quote (gslt:result:ProofTraceInputBuildContextV1:1110 $context)) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1110 $request ProofTraceNatZeroV1 $context-count)))
-   (let (quote (gslt:result:ProofTraceCompileNormalAcceptedV1:101 $labels)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalAcceptedV1:101 $context $target)))
+   (let (cons ProofTraceInputVerifyNormalV1 (cons $request (cons $labels ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-input-request-v1:00 (cons $request (cons $target ()))) (once (gslt:fn:source-proof-trace-input-request-v1:00))
+   (let (cons gslt:result:source-proof-trace-input-context-count-v1:10 (cons $context-count ())) (once (gslt:fn:source-proof-trace-input-context-count-v1:10 $request))
+   (let (cons gslt:result:ProofTraceInputBuildContextV1:1110 (cons $context ())) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1110 $request ProofTraceNatZeroV1 $context-count)))
+   (let (cons gslt:result:ProofTraceCompileNormalAcceptedV1:101 (cons $labels ())) (superpose (collapse (gslt:mode:ProofTraceCompileNormalAcceptedV1:101 $context $target)))
    (quote (ProofTraceInputVerifyNormalV1 $request $labels))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=230 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-accept-incomplete-normal-v1 target=relation
 (= (gslt:ProofTraceInputAcceptIncompleteNormalV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceInputAcceptIncompleteNormalV1 $request $labels)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-input-request-v1:00 $request $target)) (once (gslt:fn:source-proof-trace-input-request-v1:00))
-   (let (quote (gslt:result:source-proof-trace-input-context-count-v1:10 $context-count)) (once (gslt:fn:source-proof-trace-input-context-count-v1:10 $request))
-   (let (quote (gslt:result:ProofTraceInputBuildContextV1:1110 $context)) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1110 $request ProofTraceNatZeroV1 $context-count)))
-   (let (quote (gslt:result:ProofTraceCompileNormalIncompleteAcceptedV1:101 $labels)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalIncompleteAcceptedV1:101 $context $target)))
+   (let (cons ProofTraceInputAcceptIncompleteNormalV1 (cons $request (cons $labels ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-input-request-v1:00 (cons $request (cons $target ()))) (once (gslt:fn:source-proof-trace-input-request-v1:00))
+   (let (cons gslt:result:source-proof-trace-input-context-count-v1:10 (cons $context-count ())) (once (gslt:fn:source-proof-trace-input-context-count-v1:10 $request))
+   (let (cons gslt:result:ProofTraceInputBuildContextV1:1110 (cons $context ())) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1110 $request ProofTraceNatZeroV1 $context-count)))
+   (let (cons gslt:result:ProofTraceCompileNormalIncompleteAcceptedV1:101 (cons $labels ())) (superpose (collapse (gslt:mode:ProofTraceCompileNormalIncompleteAcceptedV1:101 $context $target)))
    (quote (ProofTraceInputAcceptIncompleteNormalV1 $request $labels))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=231 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-verify-compressed-v1 target=relation
 (= (gslt:ProofTraceInputVerifyCompressedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceInputVerifyCompressedV1 $request $initial-labels $explicit-labels $codes)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-input-request-v1:00 $request $target)) (once (gslt:fn:source-proof-trace-input-request-v1:00))
-   (let (quote (gslt:result:source-proof-trace-input-context-count-v1:10 $context-count)) (once (gslt:fn:source-proof-trace-input-context-count-v1:10 $request))
-   (let (quote (gslt:result:ProofTraceInputBuildContextV1:1110 $context)) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1110 $request ProofTraceNatZeroV1 $context-count)))
-   (let (quote (gslt:result:ProofTraceCompileCompressedAcceptedV1:10001 $initial-labels $explicit-labels $codes)) (superpose (collapse (gslt:mode:ProofTraceCompileCompressedAcceptedV1:10001 $context $target)))
+   (let (cons ProofTraceInputVerifyCompressedV1 (cons $request (cons $initial-labels (cons $explicit-labels (cons $codes ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-input-request-v1:00 (cons $request (cons $target ()))) (once (gslt:fn:source-proof-trace-input-request-v1:00))
+   (let (cons gslt:result:source-proof-trace-input-context-count-v1:10 (cons $context-count ())) (once (gslt:fn:source-proof-trace-input-context-count-v1:10 $request))
+   (let (cons gslt:result:ProofTraceInputBuildContextV1:1110 (cons $context ())) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1110 $request ProofTraceNatZeroV1 $context-count)))
+   (let (cons gslt:result:ProofTraceCompileCompressedAcceptedV1:10001 (cons $initial-labels (cons $explicit-labels (cons $codes ())))) (superpose (collapse (gslt:mode:ProofTraceCompileCompressedAcceptedV1:10001 $context $target)))
    (quote (ProofTraceInputVerifyCompressedV1 $request $initial-labels $explicit-labels $codes))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=232 source-presentation=CertificateGSLTTraceInputV1 source-rule=proof-trace-input-accept-incomplete-compressed-v1 target=relation
 (= (gslt:ProofTraceInputAcceptIncompleteCompressedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceInputAcceptIncompleteCompressedV1 $request $initial-labels $explicit-labels $codes)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-input-request-v1:00 $request $target)) (once (gslt:fn:source-proof-trace-input-request-v1:00))
-   (let (quote (gslt:result:source-proof-trace-input-context-count-v1:10 $context-count)) (once (gslt:fn:source-proof-trace-input-context-count-v1:10 $request))
-   (let (quote (gslt:result:ProofTraceInputBuildContextV1:1110 $context)) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1110 $request ProofTraceNatZeroV1 $context-count)))
-   (let (quote (gslt:result:ProofTraceCompileCompressedIncompleteAcceptedV1:10001 $initial-labels $explicit-labels $codes)) (superpose (collapse (gslt:mode:ProofTraceCompileCompressedIncompleteAcceptedV1:10001 $context $target)))
+   (let (cons ProofTraceInputAcceptIncompleteCompressedV1 (cons $request (cons $initial-labels (cons $explicit-labels (cons $codes ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-input-request-v1:00 (cons $request (cons $target ()))) (once (gslt:fn:source-proof-trace-input-request-v1:00))
+   (let (cons gslt:result:source-proof-trace-input-context-count-v1:10 (cons $context-count ())) (once (gslt:fn:source-proof-trace-input-context-count-v1:10 $request))
+   (let (cons gslt:result:ProofTraceInputBuildContextV1:1110 (cons $context ())) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1110 $request ProofTraceNatZeroV1 $context-count)))
+   (let (cons gslt:result:ProofTraceCompileCompressedIncompleteAcceptedV1:10001 (cons $initial-labels (cons $explicit-labels (cons $codes ())))) (superpose (collapse (gslt:mode:ProofTraceCompileCompressedIncompleteAcceptedV1:10001 $context $target)))
    (quote (ProofTraceInputAcceptIncompleteCompressedV1 $request $initial-labels $explicit-labels $codes))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=233 source-presentation=CertificateGSLTTraceInputInterfaceV1 source-rule=proof-trace-input-interface-apartness-count-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (quote (oslf-external-relation-decl-v1 source-proof-trace-input-apartness-count-v1 2)) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-proof-trace-input-apartness-count-v1 (cons 2 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-proof-trace-input-apartness-count-v1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=234 source-presentation=CertificateGSLTTraceInputInterfaceV1 source-rule=proof-trace-input-interface-context-count-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (quote (oslf-external-relation-decl-v1 source-proof-trace-input-context-count-v1 2)) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-proof-trace-input-context-count-v1 (cons 2 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-proof-trace-input-context-count-v1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=235 source-presentation=CertificateGSLTTraceInputInterfaceV1 source-rule=proof-trace-input-interface-frame-count-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (quote (oslf-external-relation-decl-v1 source-proof-trace-input-frame-count-v1 2)) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-proof-trace-input-frame-count-v1 (cons 2 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-proof-trace-input-frame-count-v1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=236 source-presentation=CertificateGSLTTraceInputInterfaceV1 source-rule=proof-trace-input-interface-incomplete-normal-label-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (quote (oslf-external-relation-decl-v1 source-proof-trace-input-incomplete-normal-label-v1 1)) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-proof-trace-input-incomplete-normal-label-v1 (cons 1 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-proof-trace-input-incomplete-normal-label-v1 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=237 source-presentation=CertificateGSLTTraceProjectedInputInterfaceV1 source-rule=proof-trace-projected-input-interface-apartness-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (quote (oslf-external-relation-decl-v1 source-proof-trace-input-apartness-v1 4)) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-proof-trace-input-apartness-v1 (cons 4 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-proof-trace-input-apartness-v1 4))))
 
 ; gslt-lowered-equation-v1 source-rewrite=238 source-presentation=CertificateGSLTTraceProjectedInputInterfaceV1 source-rule=proof-trace-projected-input-interface-assertion-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (quote (oslf-external-relation-decl-v1 source-proof-trace-input-assertion-v1 3)) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-proof-trace-input-assertion-v1 (cons 3 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-proof-trace-input-assertion-v1 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=239 source-presentation=CertificateGSLTTraceProjectedInputInterfaceV1 source-rule=proof-trace-projected-input-interface-context-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (quote (oslf-external-relation-decl-v1 source-proof-trace-input-context-v1 3)) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-proof-trace-input-context-v1 (cons 3 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-proof-trace-input-context-v1 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=240 source-presentation=CertificateGSLTTraceProjectedInputInterfaceV1 source-rule=proof-trace-projected-input-interface-frame-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (quote (oslf-external-relation-decl-v1 source-proof-trace-input-frame-v1 3)) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-proof-trace-input-frame-v1 (cons 3 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-proof-trace-input-frame-v1 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=241 source-presentation=CertificateGSLTTraceProjectedInputInterfaceV1 source-rule=proof-trace-projected-input-interface-label-different-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (quote (oslf-external-relation-decl-v1 source-proof-trace-input-label-different-v1 2)) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-proof-trace-input-label-different-v1 (cons 2 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-proof-trace-input-label-different-v1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=242 source-presentation=CertificateGSLTTraceProjectedInputInterfaceV1 source-rule=proof-trace-projected-input-interface-push-label-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (quote (oslf-external-relation-decl-v1 source-proof-trace-input-push-label-v1 3)) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-proof-trace-input-push-label-v1 (cons 3 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-proof-trace-input-push-label-v1 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=243 source-presentation=CertificateGSLTTraceProjectedInputInterfaceV1 source-rule=proof-trace-projected-input-interface-request-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (quote (oslf-external-relation-decl-v1 source-proof-trace-input-request-v1 2)) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-proof-trace-input-request-v1 (cons 2 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-proof-trace-input-request-v1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=244 source-presentation=CertificateGSLTTraceProjectedInputInterfaceV1 source-rule=proof-trace-projected-input-interface-token-different-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (quote (oslf-external-relation-decl-v1 source-proof-trace-input-token-different-v1 2)) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-proof-trace-input-token-different-v1 (cons 2 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-proof-trace-input-token-different-v1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=245 source-presentation=CertificateGSLTTraceProjectedInputInterfaceV1 source-rule=proof-trace-projected-input-interface-token-class-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (quote (oslf-external-relation-decl-v1 source-proof-trace-input-token-class-v1 2)) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-proof-trace-input-token-class-v1 (cons 2 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-proof-trace-input-token-class-v1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=246 source-presentation=CertificateGSLTTraceProjectedInputInterfaceV1 source-rule=proof-trace-projected-input-interface-token-compare-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (quote (oslf-external-relation-decl-v1 source-proof-trace-input-token-compare-v1 3)) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-proof-trace-input-token-compare-v1 (cons 3 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-proof-trace-input-token-compare-v1 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=247 source-presentation=CertificateGSLTTraceProjectedInputInterfaceV1 source-rule=proof-trace-projected-input-interface-token-literal-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (quote (oslf-external-relation-decl-v1 source-proof-trace-input-token-literal-v1 1)) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-proof-trace-input-token-literal-v1 (cons 1 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-proof-trace-input-token-literal-v1 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=248 source-presentation=CertificateGSLTTraceProjectedInputInterfaceV1 source-rule=proof-trace-projected-input-interface-token-variable-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (quote (oslf-external-relation-decl-v1 source-proof-trace-input-token-variable-v1 1)) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-proof-trace-input-token-variable-v1 (cons 1 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-proof-trace-input-token-variable-v1 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=249 source-presentation=CertificateGSLTTraceApartnessInterfaceV1 source-rule=proof-trace-apartness-interface-current-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (quote (oslf-external-relation-decl-v1 source-proof-trace-input-current-apart-v1 2)) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-proof-trace-input-current-apart-v1 (cons 2 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-proof-trace-input-current-apart-v1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=250 source-presentation=CertificateGSLTTraceApartnessInterfaceV1 source-rule=proof-trace-apartness-interface-decision-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (quote (oslf-external-relation-decl-v1 source-proof-trace-input-current-apart-decision-v1 3)) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-proof-trace-input-current-apart-decision-v1 (cons 3 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-proof-trace-input-current-apart-decision-v1 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=251 source-presentation=MetamathProofTracePolicyV1 source-rule=mm-proof-trace-save-immediately-after-use-v1 target=relation
 (= (gslt:source-proof-trace-save-placement-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-save-placement-v1 state-proof-save-immediately-after-use-v1)) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-save-placement-v1 (cons state-proof-save-immediately-after-use-v1 ())) $__gslt_input_v1_0_0
    (quote (source-proof-trace-save-placement-v1 state-proof-save-immediately-after-use-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=252 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-zero-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitZeroV1 ProofTraceNatZeroV1)) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitZeroV1 (cons ProofTraceNatZeroV1 ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitZeroV1 ProofTraceNatZeroV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=253 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-one-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitOneV1 (ProofTraceNatSuccV1 ProofTraceDigitZeroV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitOneV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitZeroV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitOneV1 (ProofTraceNatSuccV1 ProofTraceDigitZeroV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=254 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-two-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitTwoV1 (ProofTraceNatSuccV1 ProofTraceDigitOneV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitTwoV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitOneV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitTwoV1 (ProofTraceNatSuccV1 ProofTraceDigitOneV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=255 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-three-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitThreeV1 (ProofTraceNatSuccV1 ProofTraceDigitTwoV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitThreeV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitTwoV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitThreeV1 (ProofTraceNatSuccV1 ProofTraceDigitTwoV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=256 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-four-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitFourV1 (ProofTraceNatSuccV1 ProofTraceDigitThreeV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitFourV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitThreeV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitFourV1 (ProofTraceNatSuccV1 ProofTraceDigitThreeV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=257 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-five-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitFiveV1 (ProofTraceNatSuccV1 ProofTraceDigitFourV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitFiveV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitFourV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitFiveV1 (ProofTraceNatSuccV1 ProofTraceDigitFourV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=258 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-six-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitSixV1 (ProofTraceNatSuccV1 ProofTraceDigitFiveV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitSixV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitFiveV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitSixV1 (ProofTraceNatSuccV1 ProofTraceDigitFiveV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=259 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-seven-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitSevenV1 (ProofTraceNatSuccV1 ProofTraceDigitSixV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitSevenV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitSixV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitSevenV1 (ProofTraceNatSuccV1 ProofTraceDigitSixV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=260 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-eight-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitEightV1 (ProofTraceNatSuccV1 ProofTraceDigitSevenV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitEightV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitSevenV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitEightV1 (ProofTraceNatSuccV1 ProofTraceDigitSevenV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=261 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-nine-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitNineV1 (ProofTraceNatSuccV1 ProofTraceDigitEightV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitNineV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitEightV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitNineV1 (ProofTraceNatSuccV1 ProofTraceDigitEightV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=262 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-ten-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitTenV1 (ProofTraceNatSuccV1 ProofTraceDigitNineV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitTenV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitNineV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitTenV1 (ProofTraceNatSuccV1 ProofTraceDigitNineV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=263 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-eleven-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitElevenV1 (ProofTraceNatSuccV1 ProofTraceDigitTenV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitElevenV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitTenV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitElevenV1 (ProofTraceNatSuccV1 ProofTraceDigitTenV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=264 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-twelve-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitTwelveV1 (ProofTraceNatSuccV1 ProofTraceDigitElevenV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitTwelveV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitElevenV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitTwelveV1 (ProofTraceNatSuccV1 ProofTraceDigitElevenV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=265 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-thirteen-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitThirteenV1 (ProofTraceNatSuccV1 ProofTraceDigitTwelveV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitThirteenV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitTwelveV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitThirteenV1 (ProofTraceNatSuccV1 ProofTraceDigitTwelveV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=266 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-fourteen-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitFourteenV1 (ProofTraceNatSuccV1 ProofTraceDigitThirteenV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitFourteenV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitThirteenV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitFourteenV1 (ProofTraceNatSuccV1 ProofTraceDigitThirteenV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=267 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-fifteen-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitFifteenV1 (ProofTraceNatSuccV1 ProofTraceDigitFourteenV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitFifteenV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitFourteenV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitFifteenV1 (ProofTraceNatSuccV1 ProofTraceDigitFourteenV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=268 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-sixteen-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitSixteenV1 (ProofTraceNatSuccV1 ProofTraceDigitFifteenV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitSixteenV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitFifteenV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitSixteenV1 (ProofTraceNatSuccV1 ProofTraceDigitFifteenV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=269 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-seventeen-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitSeventeenV1 (ProofTraceNatSuccV1 ProofTraceDigitSixteenV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitSeventeenV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitSixteenV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitSeventeenV1 (ProofTraceNatSuccV1 ProofTraceDigitSixteenV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=270 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-eighteen-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitEighteenV1 (ProofTraceNatSuccV1 ProofTraceDigitSeventeenV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitEighteenV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitSeventeenV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitEighteenV1 (ProofTraceNatSuccV1 ProofTraceDigitSeventeenV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=271 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-nineteen-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitNineteenV1 (ProofTraceNatSuccV1 ProofTraceDigitEighteenV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitNineteenV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitEighteenV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitNineteenV1 (ProofTraceNatSuccV1 ProofTraceDigitEighteenV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=272 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-nat-twenty-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitTwentyV1 (ProofTraceNatSuccV1 ProofTraceDigitNineteenV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceDigitTwentyV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitNineteenV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceDigitTwentyV1 (ProofTraceNatSuccV1 ProofTraceDigitNineteenV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=273 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-radix-five-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceRadixFiveV1 (ProofTraceNatSuccV1 ProofTraceDigitFourV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceRadixFiveV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitFourV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceRadixFiveV1 (ProofTraceNatSuccV1 ProofTraceDigitFourV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=274 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-radix-twenty-v1 target=relation
 (= (gslt:source-proof-trace-nat-alias-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-nat-alias-v1 ProofTraceRadixTwentyV1 (ProofTraceNatSuccV1 ProofTraceDigitNineteenV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-nat-alias-v1 (cons ProofTraceRadixTwentyV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceDigitNineteenV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-nat-alias-v1 ProofTraceRadixTwentyV1 (ProofTraceNatSuccV1 ProofTraceDigitNineteenV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=275 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-code-compat-v1 target=relation
 (= (gslt:source-proof-trace-terminal-code-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-terminal-code-v1 $code $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (source-proof-trace-code-class-v1 $code (ProofTraceTerminalCodeV1 $digit $radix))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code (ProofTraceTerminalCodeV1 $digit $radix)))
+   (let (cons source-proof-trace-terminal-code-v1 (cons $code (cons $digit (cons $radix ())))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons $code (cons (cons ProofTraceTerminalCodeV1 (cons $digit (cons $radix ()))) ()))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code (ProofTraceTerminalCodeV1 $digit $radix)))
    (quote (source-proof-trace-terminal-code-v1 $code $digit $radix)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=276 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-continuation-code-compat-v1 target=relation
 (= (gslt:source-proof-trace-continuation-code-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-continuation-code-v1 $code $digit $radix)) $__gslt_input_v1_0_0
-   (let (quote (source-proof-trace-code-class-v1 $code (ProofTraceContinuationCodeV1 $digit $radix))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code (ProofTraceContinuationCodeV1 $digit $radix)))
+   (let (cons source-proof-trace-continuation-code-v1 (cons $code (cons $digit (cons $radix ())))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons $code (cons (cons ProofTraceContinuationCodeV1 (cons $digit (cons $radix ()))) ()))) (gslt:source-proof-trace-code-class-v1 (source-proof-trace-code-class-v1 $code (ProofTraceContinuationCodeV1 $digit $radix)))
    (quote (source-proof-trace-continuation-code-v1 $code $digit $radix)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=277 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-save-code-compat-v1 target=relation
 (= (gslt:source-proof-trace-save-code-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-save-code-v1 $code)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-code-class-v1:01 $code)) (once (gslt:fn:source-proof-trace-code-class-v1:01 ProofTraceSaveCodeV1))
+   (let (cons source-proof-trace-save-code-v1 (cons $code ())) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-code-class-v1:01 (cons $code ())) (once (gslt:fn:source-proof-trace-code-class-v1:01 ProofTraceSaveCodeV1))
    (quote (source-proof-trace-save-code-v1 $code)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=278 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-incomplete-code-class-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 63 ProofTraceIncompleteCodeV1)) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 63 (cons ProofTraceIncompleteCodeV1 ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 63 ProofTraceIncompleteCodeV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=279 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-a-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 65 (ProofTraceTerminalCodeV1 ProofTraceDigitOneV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 65 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitOneV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 65 (ProofTraceTerminalCodeV1 ProofTraceDigitOneV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=280 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-b-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 66 (ProofTraceTerminalCodeV1 ProofTraceDigitTwoV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 66 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitTwoV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 66 (ProofTraceTerminalCodeV1 ProofTraceDigitTwoV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=281 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-c-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 67 (ProofTraceTerminalCodeV1 ProofTraceDigitThreeV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 67 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitThreeV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 67 (ProofTraceTerminalCodeV1 ProofTraceDigitThreeV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=282 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-d-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 68 (ProofTraceTerminalCodeV1 ProofTraceDigitFourV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 68 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitFourV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 68 (ProofTraceTerminalCodeV1 ProofTraceDigitFourV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=283 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-e-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 69 (ProofTraceTerminalCodeV1 ProofTraceDigitFiveV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 69 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitFiveV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 69 (ProofTraceTerminalCodeV1 ProofTraceDigitFiveV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=284 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-f-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 70 (ProofTraceTerminalCodeV1 ProofTraceDigitSixV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 70 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitSixV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 70 (ProofTraceTerminalCodeV1 ProofTraceDigitSixV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=285 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-g-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 71 (ProofTraceTerminalCodeV1 ProofTraceDigitSevenV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 71 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitSevenV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 71 (ProofTraceTerminalCodeV1 ProofTraceDigitSevenV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=286 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-h-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 72 (ProofTraceTerminalCodeV1 ProofTraceDigitEightV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 72 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitEightV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 72 (ProofTraceTerminalCodeV1 ProofTraceDigitEightV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=287 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-i-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 73 (ProofTraceTerminalCodeV1 ProofTraceDigitNineV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 73 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitNineV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 73 (ProofTraceTerminalCodeV1 ProofTraceDigitNineV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=288 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-j-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 74 (ProofTraceTerminalCodeV1 ProofTraceDigitTenV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 74 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitTenV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 74 (ProofTraceTerminalCodeV1 ProofTraceDigitTenV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=289 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-k-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 75 (ProofTraceTerminalCodeV1 ProofTraceDigitElevenV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 75 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitElevenV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 75 (ProofTraceTerminalCodeV1 ProofTraceDigitElevenV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=290 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-l-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 76 (ProofTraceTerminalCodeV1 ProofTraceDigitTwelveV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 76 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitTwelveV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 76 (ProofTraceTerminalCodeV1 ProofTraceDigitTwelveV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=291 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-m-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 77 (ProofTraceTerminalCodeV1 ProofTraceDigitThirteenV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 77 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitThirteenV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 77 (ProofTraceTerminalCodeV1 ProofTraceDigitThirteenV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=292 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-n-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 78 (ProofTraceTerminalCodeV1 ProofTraceDigitFourteenV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 78 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitFourteenV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 78 (ProofTraceTerminalCodeV1 ProofTraceDigitFourteenV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=293 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-o-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 79 (ProofTraceTerminalCodeV1 ProofTraceDigitFifteenV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 79 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitFifteenV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 79 (ProofTraceTerminalCodeV1 ProofTraceDigitFifteenV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=294 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-p-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 80 (ProofTraceTerminalCodeV1 ProofTraceDigitSixteenV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 80 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitSixteenV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 80 (ProofTraceTerminalCodeV1 ProofTraceDigitSixteenV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=295 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-q-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 81 (ProofTraceTerminalCodeV1 ProofTraceDigitSeventeenV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 81 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitSeventeenV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 81 (ProofTraceTerminalCodeV1 ProofTraceDigitSeventeenV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=296 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-r-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 82 (ProofTraceTerminalCodeV1 ProofTraceDigitEighteenV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 82 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitEighteenV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 82 (ProofTraceTerminalCodeV1 ProofTraceDigitEighteenV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=297 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-s-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 83 (ProofTraceTerminalCodeV1 ProofTraceDigitNineteenV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 83 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitNineteenV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 83 (ProofTraceTerminalCodeV1 ProofTraceDigitNineteenV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=298 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-terminal-t-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 84 (ProofTraceTerminalCodeV1 ProofTraceDigitTwentyV1 ProofTraceRadixTwentyV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 84 (cons (cons ProofTraceTerminalCodeV1 (cons ProofTraceDigitTwentyV1 (cons ProofTraceRadixTwentyV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 84 (ProofTraceTerminalCodeV1 ProofTraceDigitTwentyV1 ProofTraceRadixTwentyV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=299 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-continuation-u-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 85 (ProofTraceContinuationCodeV1 ProofTraceDigitOneV1 ProofTraceRadixFiveV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 85 (cons (cons ProofTraceContinuationCodeV1 (cons ProofTraceDigitOneV1 (cons ProofTraceRadixFiveV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 85 (ProofTraceContinuationCodeV1 ProofTraceDigitOneV1 ProofTraceRadixFiveV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=300 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-continuation-v-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 86 (ProofTraceContinuationCodeV1 ProofTraceDigitTwoV1 ProofTraceRadixFiveV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 86 (cons (cons ProofTraceContinuationCodeV1 (cons ProofTraceDigitTwoV1 (cons ProofTraceRadixFiveV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 86 (ProofTraceContinuationCodeV1 ProofTraceDigitTwoV1 ProofTraceRadixFiveV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=301 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-continuation-w-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 87 (ProofTraceContinuationCodeV1 ProofTraceDigitThreeV1 ProofTraceRadixFiveV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 87 (cons (cons ProofTraceContinuationCodeV1 (cons ProofTraceDigitThreeV1 (cons ProofTraceRadixFiveV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 87 (ProofTraceContinuationCodeV1 ProofTraceDigitThreeV1 ProofTraceRadixFiveV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=302 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-continuation-x-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 88 (ProofTraceContinuationCodeV1 ProofTraceDigitFourV1 ProofTraceRadixFiveV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 88 (cons (cons ProofTraceContinuationCodeV1 (cons ProofTraceDigitFourV1 (cons ProofTraceRadixFiveV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 88 (ProofTraceContinuationCodeV1 ProofTraceDigitFourV1 ProofTraceRadixFiveV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=303 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-continuation-y-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 89 (ProofTraceContinuationCodeV1 ProofTraceDigitFiveV1 ProofTraceRadixFiveV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 89 (cons (cons ProofTraceContinuationCodeV1 (cons ProofTraceDigitFiveV1 (cons ProofTraceRadixFiveV1 ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 89 (ProofTraceContinuationCodeV1 ProofTraceDigitFiveV1 ProofTraceRadixFiveV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=304 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-save-z-v1 target=relation
 (= (gslt:source-proof-trace-code-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-code-class-v1 90 ProofTraceSaveCodeV1)) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-code-class-v1 (cons 90 (cons ProofTraceSaveCodeV1 ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-code-class-v1 90 ProofTraceSaveCodeV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=305 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-accept-incomplete-normal-v1 target=relation
 (= (gslt:source-proof-trace-accept-incomplete-normal-byte-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-accept-incomplete-normal-byte-v1 63)) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-accept-incomplete-normal-byte-v1 (cons 63 ())) $__gslt_input_v1_0_0
    (quote (source-proof-trace-accept-incomplete-normal-byte-v1 63))))
 
 ; gslt-lowered-equation-v1 source-rewrite=306 source-presentation=MetamathProofTraceCodecV1 source-rule=mm-proof-trace-accept-incomplete-compressed-v1 target=relation
 (= (gslt:source-proof-trace-accept-incomplete-compressed-byte-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-accept-incomplete-compressed-byte-v1 63)) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-accept-incomplete-compressed-byte-v1 (cons 63 ())) $__gslt_input_v1_0_0
    (quote (source-proof-trace-accept-incomplete-compressed-byte-v1 63))))
 
 ; gslt-lowered-equation-v1 source-rewrite=307 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-variable-class-v1 target=relation
 (= (gslt:source-proof-trace-input-token-class-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-token-class-v1 input-x-v1 ProofTokenVariableClassV1)) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-token-class-v1 (cons input-x-v1 (cons ProofTokenVariableClassV1 ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-token-class-v1 input-x-v1 ProofTokenVariableClassV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=308 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-token-equal-x-v1 target=relation
 (= (gslt:source-proof-trace-input-token-compare-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-token-compare-v1 input-x-v1 input-x-v1 ProofTokenEqualV1)) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-token-compare-v1 (cons input-x-v1 (cons input-x-v1 (cons ProofTokenEqualV1 ())))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-token-compare-v1 input-x-v1 input-x-v1 ProofTokenEqualV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=309 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-token-equal-wff-v1 target=relation
 (= (gslt:source-proof-trace-input-token-compare-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-token-compare-v1 input-wff-v1 input-wff-v1 ProofTokenEqualV1)) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-token-compare-v1 (cons input-wff-v1 (cons input-wff-v1 (cons ProofTokenEqualV1 ())))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-token-compare-v1 input-wff-v1 input-wff-v1 ProofTokenEqualV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=310 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-token-equal-a-v1 target=relation
 (= (gslt:source-proof-trace-input-token-compare-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-token-compare-v1 input-a-v1 input-a-v1 ProofTokenEqualV1)) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-token-compare-v1 (cons input-a-v1 (cons input-a-v1 (cons ProofTokenEqualV1 ())))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-token-compare-v1 input-a-v1 input-a-v1 ProofTokenEqualV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=311 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-token-equal-dummy-v1 target=relation
 (= (gslt:source-proof-trace-input-token-compare-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-token-compare-v1 input-dummy-v1 input-dummy-v1 ProofTokenEqualV1)) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-token-compare-v1 (cons input-dummy-v1 (cons input-dummy-v1 (cons ProofTokenEqualV1 ())))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-token-compare-v1 input-dummy-v1 input-dummy-v1 ProofTokenEqualV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=312 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-token-unequal-a-dummy-v1 target=relation
 (= (gslt:source-proof-trace-input-token-compare-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-token-compare-v1 input-a-v1 input-dummy-v1 ProofTokenUnequalV1)) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-token-compare-v1 (cons input-a-v1 (cons input-dummy-v1 (cons ProofTokenUnequalV1 ())))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-token-compare-v1 input-a-v1 input-dummy-v1 ProofTokenUnequalV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=313 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-token-unequal-dummy-a-v1 target=relation
 (= (gslt:source-proof-trace-input-token-compare-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-token-compare-v1 input-dummy-v1 input-a-v1 ProofTokenUnequalV1)) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-token-compare-v1 (cons input-dummy-v1 (cons input-a-v1 (cons ProofTokenUnequalV1 ())))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-token-compare-v1 input-dummy-v1 input-a-v1 ProofTokenUnequalV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=314 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-variable-v1 target=relation
 (= (gslt:source-proof-trace-input-token-variable-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-token-variable-v1 input-x-v1)) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-token-variable-v1 (cons input-x-v1 ())) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-token-variable-v1 input-x-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=315 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-token-different-a-dummy-v1 target=relation
 (= (gslt:source-proof-trace-input-token-different-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-token-different-v1 input-a-v1 input-dummy-v1)) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-token-different-v1 (cons input-a-v1 (cons input-dummy-v1 ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-token-different-v1 input-a-v1 input-dummy-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=316 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-incomplete-normal-v1 target=relation
 (= (gslt:source-proof-trace-input-incomplete-normal-label-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-incomplete-normal-label-v1 input-unknown-v1)) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-incomplete-normal-label-v1 (cons input-unknown-v1 ())) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-incomplete-normal-label-v1 input-unknown-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=317 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-request-v1 target=relation
 (= (gslt:source-proof-trace-input-request-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-request-v1 input-request-v1 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1))))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-request-v1 (cons input-request-v1 (cons (cons ProofSequenceConsV1 (cons input-wff-v1 (cons (cons ProofSequenceConsV1 (cons input-a-v1 (cons (cons ProofSequenceNilV1 ()) ()))) ()))) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-request-v1 input-request-v1 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=318 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-context-count-v1 target=relation
 (= (gslt:source-proof-trace-input-context-count-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-context-count-v1 input-request-v1 (ProofTraceNatSuccV1 (ProofTraceNatSuccV1 ProofTraceNatZeroV1)))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-context-count-v1 (cons input-request-v1 (cons (cons ProofTraceNatSuccV1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceNatZeroV1 ())) ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-context-count-v1 input-request-v1 (ProofTraceNatSuccV1 (ProofTraceNatSuccV1 ProofTraceNatZeroV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=319 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-context-target-v1 target=relation
 (= (gslt:source-proof-trace-input-context-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-context-v1 input-request-v1 ProofTraceNatZeroV1 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1))))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-context-v1 (cons input-request-v1 (cons ProofTraceNatZeroV1 (cons (cons ProofSequenceConsV1 (cons input-wff-v1 (cons (cons ProofSequenceConsV1 (cons input-a-v1 (cons (cons ProofSequenceNilV1 ()) ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-context-v1 input-request-v1 ProofTraceNatZeroV1 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=320 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-context-dummy-v1 target=relation
 (= (gslt:source-proof-trace-input-context-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-context-v1 input-request-v1 (ProofTraceNatSuccV1 ProofTraceNatZeroV1) (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1))))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-context-v1 (cons input-request-v1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceNatZeroV1 ())) (cons (cons ProofSequenceConsV1 (cons input-wff-v1 (cons (cons ProofSequenceConsV1 (cons input-dummy-v1 (cons (cons ProofSequenceNilV1 ()) ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-context-v1 input-request-v1 (ProofTraceNatSuccV1 ProofTraceNatZeroV1) (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=321 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-push-target-v1 target=relation
 (= (gslt:source-proof-trace-input-push-label-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-push-label-v1 input-request-v1 input-hx-v1 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1))))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-push-label-v1 (cons input-request-v1 (cons input-hx-v1 (cons (cons ProofSequenceConsV1 (cons input-wff-v1 (cons (cons ProofSequenceConsV1 (cons input-a-v1 (cons (cons ProofSequenceNilV1 ()) ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-push-label-v1 input-request-v1 input-hx-v1 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=322 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-push-dummy-v1 target=relation
 (= (gslt:source-proof-trace-input-push-label-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-push-label-v1 input-request-v1 input-hdummy-v1 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1))))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-push-label-v1 (cons input-request-v1 (cons input-hdummy-v1 (cons (cons ProofSequenceConsV1 (cons input-wff-v1 (cons (cons ProofSequenceConsV1 (cons input-dummy-v1 (cons (cons ProofSequenceNilV1 ()) ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-push-label-v1 input-request-v1 input-hdummy-v1 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=323 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-identity-different-hx-v1 target=relation
 (= (gslt:source-proof-trace-input-label-different-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-label-different-v1 input-identity-v1 input-hx-v1)) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-label-different-v1 (cons input-identity-v1 (cons input-hx-v1 ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-label-different-v1 input-identity-v1 input-hx-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=324 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-assertion-v1 target=relation
 (= (gslt:source-proof-trace-input-assertion-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-assertion-v1 input-identity-v1 input-wff-v1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1)))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-assertion-v1 (cons input-identity-v1 (cons input-wff-v1 (cons (cons ProofSequenceConsV1 (cons input-x-v1 (cons (cons ProofSequenceNilV1 ()) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-assertion-v1 input-identity-v1 input-wff-v1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=325 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-frame-count-v1 target=relation
 (= (gslt:source-proof-trace-input-frame-count-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-frame-count-v1 input-identity-v1 (ProofTraceNatSuccV1 ProofTraceNatZeroV1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-frame-count-v1 (cons input-identity-v1 (cons (cons ProofTraceNatSuccV1 (cons ProofTraceNatZeroV1 ())) ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-frame-count-v1 input-identity-v1 (ProofTraceNatSuccV1 ProofTraceNatZeroV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=326 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-frame-variable-v1 target=relation
 (= (gslt:source-proof-trace-input-frame-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-frame-v1 input-identity-v1 ProofTraceNatZeroV1 (ProofTraceFrameVariableV1 input-x-v1 input-wff-v1))) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-frame-v1 (cons input-identity-v1 (cons ProofTraceNatZeroV1 (cons (cons ProofTraceFrameVariableV1 (cons input-x-v1 (cons input-wff-v1 ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-frame-v1 input-identity-v1 ProofTraceNatZeroV1 (ProofTraceFrameVariableV1 input-x-v1 input-wff-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=327 source-presentation=CertificateGSLTTraceInputCanaryV1 source-rule=proof-trace-input-canary-empty-apartness-v1 target=relation
 (= (gslt:source-proof-trace-input-apartness-count-v1 $__gslt_input_v1_0_0)
-   (let (quote (source-proof-trace-input-apartness-count-v1 input-identity-v1 ProofTraceNatZeroV1)) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-input-apartness-count-v1 (cons input-identity-v1 (cons ProofTraceNatZeroV1 ()))) $__gslt_input_v1_0_0
    (quote (source-proof-trace-input-apartness-count-v1 input-identity-v1 ProofTraceNatZeroV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=328 source-presentation=CertificateGSLTTraceEvidenceCanaryV1 source-rule=proof-trace-input-normal-evidence-v1 target=relation
 (= (gslt:ProofTraceInputNormalEvidenceV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceInputNormalEvidenceV1 $request $labels $target $trace)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-input-request-v1:00 $request $target)) (once (gslt:fn:source-proof-trace-input-request-v1:00))
-   (let (quote (gslt:result:source-proof-trace-input-context-count-v1:10 $context-count)) (once (gslt:fn:source-proof-trace-input-context-count-v1:10 $request))
-   (let (quote (gslt:result:ProofTraceInputBuildContextV1:1110 $context)) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1110 $request ProofTraceNatZeroV1 $context-count)))
-   (let (quote (gslt:result:ProofTraceCompileNormalV1:00 $labels $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileNormalV1:00)))
-   (let (quote gslt:result:ProofTraceAcceptedV1:111) (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:111 $context $trace $target)))
+   (let (cons ProofTraceInputNormalEvidenceV1 (cons $request (cons $labels (cons $target (cons $trace ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-input-request-v1:00 (cons $request (cons $target ()))) (once (gslt:fn:source-proof-trace-input-request-v1:00))
+   (let (cons gslt:result:source-proof-trace-input-context-count-v1:10 (cons $context-count ())) (once (gslt:fn:source-proof-trace-input-context-count-v1:10 $request))
+   (let (cons gslt:result:ProofTraceInputBuildContextV1:1110 (cons $context ())) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1110 $request ProofTraceNatZeroV1 $context-count)))
+   (let (cons gslt:result:ProofTraceCompileNormalV1:00 (cons $labels (cons $trace ()))) (superpose (collapse (gslt:mode:ProofTraceCompileNormalV1:00)))
+   (let gslt:result:ProofTraceAcceptedV1:111 (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:111 $context $trace $target)))
    (quote (ProofTraceInputNormalEvidenceV1 $request $labels $target $trace)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=329 source-presentation=CertificateGSLTTraceEvidenceCanaryV1 source-rule=proof-trace-input-compressed-evidence-v1 target=relation
 (= (gslt:ProofTraceInputCompressedEvidenceV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceInputCompressedEvidenceV1 $request $initial-labels $explicit-labels $codes $target $trace)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:source-proof-trace-input-request-v1:00 $request $target)) (once (gslt:fn:source-proof-trace-input-request-v1:00))
-   (let (quote (gslt:result:source-proof-trace-input-context-count-v1:10 $context-count)) (once (gslt:fn:source-proof-trace-input-context-count-v1:10 $request))
-   (let (quote (gslt:result:ProofTraceInputBuildContextV1:1110 $context)) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1110 $request ProofTraceNatZeroV1 $context-count)))
-   (let (quote (gslt:result:ProofTraceCompileCompressedV1:0000 $initial-labels $explicit-labels $codes $trace)) (superpose (collapse (gslt:mode:ProofTraceCompileCompressedV1:0000)))
-   (let (quote gslt:result:ProofTraceAcceptedV1:111) (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:111 $context $trace $target)))
+   (let (cons ProofTraceInputCompressedEvidenceV1 (cons $request (cons $initial-labels (cons $explicit-labels (cons $codes (cons $target (cons $trace ()))))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-input-request-v1:00 (cons $request (cons $target ()))) (once (gslt:fn:source-proof-trace-input-request-v1:00))
+   (let (cons gslt:result:source-proof-trace-input-context-count-v1:10 (cons $context-count ())) (once (gslt:fn:source-proof-trace-input-context-count-v1:10 $request))
+   (let (cons gslt:result:ProofTraceInputBuildContextV1:1110 (cons $context ())) (superpose (collapse (gslt:mode:ProofTraceInputBuildContextV1:1110 $request ProofTraceNatZeroV1 $context-count)))
+   (let (cons gslt:result:ProofTraceCompileCompressedV1:0000 (cons $initial-labels (cons $explicit-labels (cons $codes (cons $trace ()))))) (superpose (collapse (gslt:mode:ProofTraceCompileCompressedV1:0000)))
+   (let gslt:result:ProofTraceAcceptedV1:111 (superpose (collapse (gslt:mode:ProofTraceAcceptedV1:111 $context $trace $target)))
    (quote (ProofTraceInputCompressedEvidenceV1 $request $initial-labels $explicit-labels $codes $target $trace)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=330 source-presentation=CertificateGSLTTraceEvidenceCanaryV1 source-rule=proof-trace-canary-normal-accepted-v1 target=relation
 (= (gslt:ProofTraceCanaryNormalAcceptedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCanaryNormalAcceptedV1 AcceptedV1)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ProofTraceCanaryNormalEvidenceAcceptedV1:1) (superpose (collapse (gslt:mode:ProofTraceCanaryNormalEvidenceAcceptedV1:1 AcceptedV1)))
+   (let (cons ProofTraceCanaryNormalAcceptedV1 (cons AcceptedV1 ())) $__gslt_input_v1_0_0
+   (let gslt:result:ProofTraceCanaryNormalEvidenceAcceptedV1:1 (superpose (collapse (gslt:mode:ProofTraceCanaryNormalEvidenceAcceptedV1:1 AcceptedV1)))
    (quote (ProofTraceCanaryNormalAcceptedV1 AcceptedV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=331 source-presentation=CertificateGSLTTraceEvidenceCanaryV1 source-rule=proof-trace-canary-compressed-accepted-v1 target=relation
 (= (gslt:ProofTraceCanaryCompressedAcceptedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCanaryCompressedAcceptedV1 AcceptedV1)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ProofTraceCanaryCompressedEvidenceAcceptedV1:1) (superpose (collapse (gslt:mode:ProofTraceCanaryCompressedEvidenceAcceptedV1:1 AcceptedV1)))
+   (let (cons ProofTraceCanaryCompressedAcceptedV1 (cons AcceptedV1 ())) $__gslt_input_v1_0_0
+   (let gslt:result:ProofTraceCanaryCompressedEvidenceAcceptedV1:1 (superpose (collapse (gslt:mode:ProofTraceCanaryCompressedEvidenceAcceptedV1:1 AcceptedV1)))
    (quote (ProofTraceCanaryCompressedAcceptedV1 AcceptedV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=332 source-presentation=CertificateGSLTTraceEvidenceCanaryV1 source-rule=proof-trace-canary-normal-evidence-accepted-v1 target=relation
 (= (gslt:ProofTraceCanaryNormalEvidenceAcceptedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCanaryNormalEvidenceAcceptedV1 AcceptedV1)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ProofTraceInputNormalEvidenceV1:1111) (superpose (collapse (gslt:mode:ProofTraceInputNormalEvidenceV1:1111 input-request-v1 (quote (ProofTraceLabelConsV1 input-hx-v1 (ProofTraceLabelConsV1 input-identity-v1 ProofTraceLabelNilV1))) (quote (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) (quote (ProofTraceConsV1 (ProofTracePushV1 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) (ProofTraceConsV1 (ProofTraceApplyV1 (ProofAssertionV1 (ProofAssertionListConsV1 (ProofAssertionVariableV1 input-x-v1 input-wff-v1) (ProofAssertionListNilV1)) (ProofAssertionListNilV1) input-wff-v1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1)) (ProofAssertionListNilV1)) (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 input-x-v1 input-wff-v1) ProofTraceFrameNilV1)) ProofTraceNilV1))))))
+   (let (cons ProofTraceCanaryNormalEvidenceAcceptedV1 (cons AcceptedV1 ())) $__gslt_input_v1_0_0
+   (let gslt:result:ProofTraceInputNormalEvidenceV1:1111 (superpose (collapse (gslt:mode:ProofTraceInputNormalEvidenceV1:1111 input-request-v1 (quote (ProofTraceLabelConsV1 input-hx-v1 (ProofTraceLabelConsV1 input-identity-v1 ProofTraceLabelNilV1))) (quote (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) (quote (ProofTraceConsV1 (ProofTracePushV1 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) (ProofTraceConsV1 (ProofTraceApplyV1 (ProofAssertionV1 (ProofAssertionListConsV1 (ProofAssertionVariableV1 input-x-v1 input-wff-v1) (ProofAssertionListNilV1)) (ProofAssertionListNilV1) input-wff-v1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1)) (ProofAssertionListNilV1)) (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 input-x-v1 input-wff-v1) ProofTraceFrameNilV1)) ProofTraceNilV1))))))
    (quote (ProofTraceCanaryNormalEvidenceAcceptedV1 AcceptedV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=333 source-presentation=CertificateGSLTTraceEvidenceCanaryV1 source-rule=proof-trace-canary-compressed-evidence-accepted-v1 target=relation
 (= (gslt:ProofTraceCanaryCompressedEvidenceAcceptedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCanaryCompressedEvidenceAcceptedV1 AcceptedV1)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ProofTraceInputCompressedEvidenceV1:111111) (superpose (collapse (gslt:mode:ProofTraceInputCompressedEvidenceV1:111111 input-request-v1 (quote (ProofTraceLabelConsV1 input-hx-v1 ProofTraceLabelNilV1)) (quote (ProofTraceLabelConsV1 input-identity-v1 ProofTraceLabelNilV1)) (quote (ProofTraceCodeConsV1 65 (ProofTraceCodeConsV1 66 ProofTraceCodeNilV1))) (quote (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) (quote (ProofTraceConsV1 (ProofTracePushV1 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) (ProofTraceConsV1 (ProofTraceApplyV1 (ProofAssertionV1 (ProofAssertionListConsV1 (ProofAssertionVariableV1 input-x-v1 input-wff-v1) (ProofAssertionListNilV1)) (ProofAssertionListNilV1) input-wff-v1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1)) (ProofAssertionListNilV1)) (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 input-x-v1 input-wff-v1) ProofTraceFrameNilV1)) ProofTraceNilV1))))))
+   (let (cons ProofTraceCanaryCompressedEvidenceAcceptedV1 (cons AcceptedV1 ())) $__gslt_input_v1_0_0
+   (let gslt:result:ProofTraceInputCompressedEvidenceV1:111111 (superpose (collapse (gslt:mode:ProofTraceInputCompressedEvidenceV1:111111 input-request-v1 (quote (ProofTraceLabelConsV1 input-hx-v1 ProofTraceLabelNilV1)) (quote (ProofTraceLabelConsV1 input-identity-v1 ProofTraceLabelNilV1)) (quote (ProofTraceCodeConsV1 65 (ProofTraceCodeConsV1 66 ProofTraceCodeNilV1))) (quote (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) (quote (ProofTraceConsV1 (ProofTracePushV1 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) (ProofTraceConsV1 (ProofTraceApplyV1 (ProofAssertionV1 (ProofAssertionListConsV1 (ProofAssertionVariableV1 input-x-v1 input-wff-v1) (ProofAssertionListNilV1)) (ProofAssertionListNilV1) input-wff-v1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1)) (ProofAssertionListNilV1)) (ProofTraceFrameConsV1 (ProofTraceFrameVariableV1 input-x-v1 input-wff-v1) ProofTraceFrameNilV1)) ProofTraceNilV1))))))
    (quote (ProofTraceCanaryCompressedEvidenceAcceptedV1 AcceptedV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=334 source-presentation=CertificateGSLTTraceEvidenceCanaryV1 source-rule=proof-trace-canary-wrong-target-accepted-v1 target=relation
 (= (gslt:ProofTraceCanaryWrongTargetAcceptedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCanaryWrongTargetAcceptedV1 UnexpectedV1)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ProofTraceInputNormalEvidenceV1:1111) (superpose (collapse (gslt:mode:ProofTraceInputNormalEvidenceV1:1111 input-request-v1 (quote (ProofTraceLabelConsV1 input-hdummy-v1 ProofTraceLabelNilV1)) (quote (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) (quote (ProofTraceConsV1 (ProofTracePushV1 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1)))) ProofTraceNilV1)))))
+   (let (cons ProofTraceCanaryWrongTargetAcceptedV1 (cons UnexpectedV1 ())) $__gslt_input_v1_0_0
+   (let gslt:result:ProofTraceInputNormalEvidenceV1:1111 (superpose (collapse (gslt:mode:ProofTraceInputNormalEvidenceV1:1111 input-request-v1 (quote (ProofTraceLabelConsV1 input-hdummy-v1 ProofTraceLabelNilV1)) (quote (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)))) (quote (ProofTraceConsV1 (ProofTracePushV1 (ProofSequenceConsV1 input-wff-v1 (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1)))) ProofTraceNilV1)))))
    (quote (ProofTraceCanaryWrongTargetAcceptedV1 UnexpectedV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=335 source-presentation=CertificateGSLTTraceEvidenceCanaryV1 source-rule=proof-trace-canary-essentials-succeeded-v1 target=relation
 (= (gslt:ProofTraceCanaryEssentialsSucceededV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCanaryEssentialsSucceededV1 ProofTraceEssentialsSucceededV1)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ProofTraceCheckEssentialsResultV1:1111) (once (gslt:fn:ProofTraceCheckEssentialsResultV1:1111 (quote (ProofAssertionListConsV1 (ProofAssertionEssentialV1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1))) (ProofAssertionListNilV1))) (quote (ProofAssertionListConsV1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)) (ProofAssertionListNilV1))) (quote (ProofEnvironmentConsV1 input-x-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)) (ProofEnvironmentNilV1))) ProofTraceEssentialsSucceededV1))
+   (let (cons ProofTraceCanaryEssentialsSucceededV1 (cons ProofTraceEssentialsSucceededV1 ())) $__gslt_input_v1_0_0
+   (let gslt:result:ProofTraceCheckEssentialsResultV1:1111 (once (gslt:fn:ProofTraceCheckEssentialsResultV1:1111 (quote (ProofAssertionListConsV1 (ProofAssertionEssentialV1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1))) (ProofAssertionListNilV1))) (quote (ProofAssertionListConsV1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)) (ProofAssertionListNilV1))) (quote (ProofEnvironmentConsV1 input-x-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)) (ProofEnvironmentNilV1))) ProofTraceEssentialsSucceededV1))
    (quote (ProofTraceCanaryEssentialsSucceededV1 ProofTraceEssentialsSucceededV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=336 source-presentation=CertificateGSLTTraceEvidenceCanaryV1 source-rule=proof-trace-canary-essentials-refused-v1 target=relation
 (= (gslt:ProofTraceCanaryEssentialsRefusedV1 $__gslt_input_v1_0_0)
-   (let (quote (ProofTraceCanaryEssentialsRefusedV1 (ProofTraceRefusedEssentialMismatchV1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1)) (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)) (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1))))) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ProofTraceCheckEssentialsResultV1:1111) (once (gslt:fn:ProofTraceCheckEssentialsResultV1:1111 (quote (ProofAssertionListConsV1 (ProofAssertionEssentialV1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1))) (ProofAssertionListNilV1))) (quote (ProofAssertionListConsV1 (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1)) (ProofAssertionListNilV1))) (quote (ProofEnvironmentConsV1 input-x-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)) (ProofEnvironmentNilV1))) (quote (ProofTraceRefusedEssentialMismatchV1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1)) (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)) (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1))))))
+   (let (cons ProofTraceCanaryEssentialsRefusedV1 (cons (cons ProofTraceRefusedEssentialMismatchV1 (cons (cons ProofSequenceConsV1 (cons input-x-v1 (cons (cons ProofSequenceNilV1 ()) ()))) (cons (cons ProofSequenceConsV1 (cons input-a-v1 (cons (cons ProofSequenceNilV1 ()) ()))) (cons (cons ProofSequenceConsV1 (cons input-dummy-v1 (cons (cons ProofSequenceNilV1 ()) ()))) ())))) ())) $__gslt_input_v1_0_0
+   (let gslt:result:ProofTraceCheckEssentialsResultV1:1111 (once (gslt:fn:ProofTraceCheckEssentialsResultV1:1111 (quote (ProofAssertionListConsV1 (ProofAssertionEssentialV1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1))) (ProofAssertionListNilV1))) (quote (ProofAssertionListConsV1 (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1)) (ProofAssertionListNilV1))) (quote (ProofEnvironmentConsV1 input-x-v1 (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)) (ProofEnvironmentNilV1))) (quote (ProofTraceRefusedEssentialMismatchV1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1)) (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)) (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1))))))
    (quote (ProofTraceCanaryEssentialsRefusedV1 (ProofTraceRefusedEssentialMismatchV1 (ProofSequenceConsV1 input-x-v1 (ProofSequenceNilV1)) (ProofSequenceConsV1 input-a-v1 (ProofSequenceNilV1)) (ProofSequenceConsV1 input-dummy-v1 (ProofSequenceNilV1))))))))

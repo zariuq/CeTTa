@@ -2,7 +2,7 @@
 ; LanguageDefs.  Each stage returns the complete relational result rather than
 ; selecting an arbitrary first reduct.
 
-!(import! &self lib_tptp)
+!(import! &self (library lib_tptp))
 
 (= (example:official-truth)
    (tptp92-ast:fof-formula:alt-1

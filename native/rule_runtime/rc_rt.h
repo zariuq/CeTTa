@@ -23,6 +23,15 @@
 #include <stdint.h>
 #include <string.h>
 
+/* The heap's state is one per process, or one per thread where the instance defines RC_THREAD_HEAP
+ * (several threads each running a compiled module's procedures, as a reader does on worker
+ * threads); a host that keeps several runs alive saves and loads each one's heap (rc_heap_swap). */
+#ifdef RC_THREAD_HEAP
+#define RC_HEAP_LOCAL _Thread_local
+#else
+#define RC_HEAP_LOCAL
+#endif
+
 typedef struct T { uint16_t tag; uint8_t space; uint8_t flags; uint32_t n; struct T *k[]; } T;
 typedef struct { uint16_t tag; uint8_t space; uint8_t flags; uint32_t n; } TH;
 
@@ -45,7 +54,7 @@ enum { RC_SPACE_STATIC = 0, RC_SPACE_YOUNG = 1, RC_SPACE_OLD0 = 2, RC_SPACE_OLD1
 #define RC_FOREIGN(p, tag) ((T *)(((uintptr_t)(p)) | (uintptr_t)(tag)))
 
 /* ---------------------------------------------------------------- allocation */
-extern char *rc_hp, *rc_hlim;
+extern RC_HEAP_LOCAL char *rc_hp, *rc_hlim;
 T *rc_alloc_slow(size_t bytes);
 #ifdef RC_PROFILE
 extern uint64_t rc_prof_objects;
@@ -99,7 +108,7 @@ extern TH rc_empty_bytes;
 
 /* ------------------------------------------------------------------ failures */
 #ifdef RC_COUNT
-extern uint64_t *rc_fail_count;
+extern RC_HEAP_LOCAL uint64_t *rc_fail_count;
 #define RC_COUNT_FAIL(j) (rc_fail_count[(j)]++)
 #else
 #define RC_COUNT_FAIL(j) ((void)0)
@@ -116,7 +125,7 @@ static inline void rc_trace_push(uint16_t e) {
     rc_trace_buf[rc_trace_len++] = e;
 }
 #ifdef RC_COUNT
-extern uint64_t *rc_rule_count;
+extern RC_HEAP_LOCAL uint64_t *rc_rule_count;
 #define RC_COUNT_RULE(r) (rc_rule_count[(r)]++)
 #else
 #define RC_COUNT_RULE(r) ((void)0)
@@ -138,6 +147,13 @@ extern const char *const rc_relation_names[];
 extern bool (*rc_relation_hook)(int rel, int n, T *const *args);
 static inline bool rc_relation_holds(int rel, int n, T *const *args) { return rc_relation_hook && rc_relation_hook(rel, n, args); }
 
+/* A success continuation.  A procedure that may give several results (nondet) passes each result to
+ * its continuation k, as k->fn(k, value), and returns 0 when it has given them all; the continuation's
+ * own state follows the RcK in the object k points to.  rc_solve (generated) gives every result of any
+ * judgment this way. */
+typedef struct RcK RcK;
+struct RcK { void (*fn)(const RcK *k, T *answer); };
+
 /* Tail calls are guaranteed where GCC's musttail is available (GCC 15; clang's needs identical
  * prototypes, which these calls do not have).  Without it a tail call is an ordinary call in tail
  * position: the result is the same, only the stack grows with the records. */
@@ -151,7 +167,7 @@ static inline bool rc_relation_holds(int rel, int n, T *const *args) { return rc
 #endif
 
 /* ------------------------------------------------------------------ safepoint */
-extern T *rc_roots[8];
+extern RC_HEAP_LOCAL T *rc_roots[8];
 void rc_safepoint(int nroots);
 /* Called at the end of every safepoint, after the young space was collected (so the young space is
  * empty and rc_roots hold the live state): a native store can collect here.  rc_major_now copies
@@ -187,8 +203,20 @@ typedef struct {
     uint64_t gc_ns;
     uint64_t trace_events, trace_flushes;
 } RcStats;
-extern RcStats rc_stats;
+extern RC_HEAP_LOCAL RcStats rc_stats;
 void rc_runtime_init(size_t young_chunk);
+/* A heap of a run kept alive between calls: its young and old spaces.  rc_heap_swap exchanges the
+ * runtime's heap (of this thread, with RC_THREAD_HEAP) with *h: a host keeping several runs loads a
+ * run's heap before working in it and saves it after.  A zeroed RcHeap is an empty heap; rc_heap_free
+ * frees a saved one. */
+typedef struct RcHeap {
+    void *young_first, *young_cur, *old_first, *old_cur;
+    char *hp, *hlim, *old_hp;
+    uint8_t cur_old;
+    uint64_t old_bytes_in_use, old_live_after_major, major_threshold;
+} RcHeap;
+void rc_heap_swap(RcHeap *h);
+void rc_heap_free(RcHeap *h);
 void rc_runtime_reset(void);       /* frees every term; statics stay */
 /* the young space's chunks are kept from run to run up to BYTES in all (default 256 MiB): a run that
  * fills as much as an earlier one writes memory already mapped */
@@ -204,7 +232,7 @@ void rc_trace_start(size_t buffer_events);
 void rc_trace_stop(void);
 
 /* term utilities */
-bool rc_term_equal(const T *a, const T *b);
+bool rc_term_equal(const T *a, const T *b);   /* structure; byte strings by their tag and bytes */
 /* a deep copy outside the collected spaces (constants); a foreign value (an interned node) is kept as
  * it is and becomes a root of its store; rc_free_statics frees every such copy and forgets those roots
  * (when the constants are recomputed, for example because the native store they point into was

@@ -9,6 +9,7 @@
 #include "native/deterministic_equation_plan_v1.h"
 #include "native/grammar_canonical_term_v1.h"
 #include "native/langdef_module.h"
+#include "native/tptp_module.h"
 #include "native/tptp_official_snapshot_v1.h"
 #include "parser.h"
 #include "symbol.h"

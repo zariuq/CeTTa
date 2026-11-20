@@ -3,7 +3,7 @@
 ; bookkeeping with an explicit calculus-service table; it is not proof search
 ; and it is not a claim of general TSTP rule coverage.
 
-!(import! &self lib_tptp)
+!(import! &self (library lib_tptp))
 !(import! &self ../../langdef/tptp/generated/official_ground_resolution_word_canary_v1.metta)
 !(import! &self support/derivation_word_executor.metta)
 

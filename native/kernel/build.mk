@@ -17,7 +17,7 @@ KERNEL_CFLAGS = -O2 -std=c11 -Wall -Wextra -Werror
 KERNEL_PRIVATE_INCLUDES = -I$(KERNEL_VENDOR)/native/p1 -I$(KERNEL_VENDOR)/tisa
 native/kernel/pair.%.o native/kernel/observe.%.o native/kernel/constructor.%.o native/kernel/tcalc_native.%.o: private CFLAGS += $(KERNEL_PRIVATE_INCLUDES)
 ifeq ($(ENABLE_SANITIZERS),1)
-KERNEL_CFLAGS = -O1 -g -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer
+KERNEL_CFLAGS = -O1 -g -std=c11 -Wall -Wextra -Werror -fsanitize=$(SANITIZERS) -fno-omit-frame-pointer
 endif
 SRC += native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c native/kernel/tcalc_native.c
 OBJ += $(KERNEL_COMPONENT_OBJ) $(KERNEL_TCALC_IMAGES) $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE)
@@ -89,7 +89,7 @@ test-native-kernel-pair: $(KERNEL_BUILD)/test_pair
 
 KERNEL_MATCH_SUITES = frames patterns numeric lookup
 KERNEL_MATCH_TESTS = $(addprefix $(KERNEL_BUILD)/test_match_,$(KERNEL_MATCH_SUITES))
-KERNEL_MATCH_SRC = src/symbol.c src/scalar_trie.c src/atom.c src/binding/frame_identity.c src/match.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/prime_need.c src/petta_semantics.c src/term_graph.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c
+KERNEL_MATCH_SRC = src/symbol.c src/scalar_trie.c src/atom.c src/binding/frame_identity.c src/match.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/prime_need.c src/petta_semantics.c src/term_graph.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c src/shared_transition.c
 $(KERNEL_BUILD)/test_match_%: tests/kernel_match_%.c tests/native_kernel_matching_runner.h $(wildcard tests/test_match*.c tests/test_pattern_bindings.c tests/test_bindings_lookup_index.c) $(KERNEL_MATCH_SRC) native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE) $(KERNEL_BATCH_IMAGE) $(KERNEL_LIBRARY) $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) $(KERNEL_PRIVATE_INCLUDES) -UNDEBUG -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ $< $(KERNEL_MATCH_SRC) native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE) $(KERNEL_BATCH_IMAGE) $(KERNEL_LIBRARY) $(LDFLAGS) -pthread
 .PHONY: test-native-kernel-matching

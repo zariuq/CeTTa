@@ -22,14 +22,16 @@ static unsigned checks;
 static unsigned read_depth, admissions, direct_visits, native_visits;
 static bool exact_source = true;
 static Atom *observed_row;
-void cetta_shared_transition_guard_enter(CettaSharedTransitionGuard *guard) {
+void space_guard_section_enter(CettaGuardSection *section, const Space *space,
+                               CettaGuardMode mode) {
+    assert(space && mode != 0u);
     read_depth++;
-    guard->held = true;
+    section->held = true;
 }
-void cetta_shared_transition_guard_leave(CettaSharedTransitionGuard *guard) {
-    assert(guard->held && read_depth);
+void cetta_guard_section_end(CettaGuardSection *section) {
+    assert(section->held && read_depth);
     read_depth--;
-    guard->held = false;
+    section->held = false;
 }
 bool space_contains_only_exact_atoms(Space *space) {
     assert(space && read_depth);

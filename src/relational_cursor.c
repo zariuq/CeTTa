@@ -116,7 +116,7 @@ static CettaRelationalCountCursor *relational_cursor_initialize(
 
 bool cetta_relational_count_cursor_open(const CettaRelationalPlan *plan,
     const Space *space, CettaRelationalCountCursor **out) {
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, space);
     if (!out || !cetta_relational_plan_valid_for(plan, space) ||
         plan->rows_unsorted || plan->open_part_count)
         return false;
@@ -133,7 +133,7 @@ bool cetta_relational_count_cursor_open(const CettaRelationalPlan *plan,
 
 bool cetta_relational_count_cursor_clone(const CettaRelationalCountCursor *source,
     const Space *space, CettaRelationalCountCursor **out) {
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, space);
     if (!source || !out || source->status == CETTA_RELATIONAL_COUNT_INVALIDATED ||
         !cetta_relational_plan_valid_for(source->plan, space))
         return false;
@@ -351,7 +351,7 @@ CettaRelationalCountStatus cetta_relational_count_cursor_status(
 CettaRelationalCountStatus cetta_relational_count_cursor_advance(
     CettaRelationalCountCursor *cursor, const Space *space,
     uint64_t quantum, uint64_t *used) {
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, space);
     uint64_t remaining = quantum;
     if (cursor) {
         if (!cetta_relational_plan_valid_for(cursor->plan, space))
@@ -377,7 +377,7 @@ static bool relational_cursor_publish(const CettaRelationalCountCursor *cursor,
 
 bool cetta_relational_count_cursor_result(const CettaRelationalCountCursor *cursor,
     const Space *space, uint64_t *count, CettaRelationalWork *work) {
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, space);
     return cursor && cetta_relational_plan_valid_for(cursor->plan, space) &&
         relational_cursor_publish(cursor, count, work);
 }
@@ -393,7 +393,7 @@ bool cetta_relational_count_cursor_storage(const CettaRelationalCountCursor *cur
 
 bool cetta_relational_plan_count(const CettaRelationalPlan *plan, const Space *space,
     uint64_t *count, CettaRelationalWork *work) {
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, space);
     if (!count || !cetta_relational_plan_valid_for(plan, space) ||
         plan->rows_unsorted)
         return false;
@@ -447,7 +447,7 @@ static bool relational_part_visit(void *context, const AtomId *values,
 bool cetta_relational_plan_enumerate(const CettaRelationalPlan *plan,
     const Space *space, CettaRelationalVisit visit, void *context,
     uint64_t *count, CettaRelationalWork *work) {
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, space);
     if (!visit || !count || !cetta_relational_plan_valid_for(plan, space))
         return false;
     if (plan->rows_unsorted) {
@@ -554,7 +554,7 @@ static CettaContinuationStatus relational_count_capture(void *machine, void **pa
     if (!endpoint || !endpoint->cursor || !*endpoint->cursor || !payload)
         return CETTA_CONTINUATION_UNSUPPORTED;
     CettaRelationalCountCursor *cursor = *endpoint->cursor, *copy = NULL;
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, endpoint->space);
     if (cursor->status == CETTA_RELATIONAL_COUNT_INVALIDATED ||
         !cetta_relational_plan_valid_for(cursor->plan, endpoint->space))
         return CETTA_CONTINUATION_INVALIDATED;
@@ -569,7 +569,7 @@ static CettaContinuationStatus relational_count_restore(void *machine, void **pa
     if (!endpoint || !endpoint->cursor || !payload || !*payload)
         return CETTA_CONTINUATION_UNSUPPORTED;
     CettaRelationalCountCursor *cursor = *payload;
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, endpoint->space);
     if (cursor->status == CETTA_RELATIONAL_COUNT_INVALIDATED ||
         !cetta_relational_plan_valid_for(cursor->plan, endpoint->space))
         return CETTA_CONTINUATION_INVALIDATED;

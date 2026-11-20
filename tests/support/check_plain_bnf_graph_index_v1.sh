@@ -73,10 +73,17 @@ cmp "$evidence/program.metta" "$evidence/regenerated.metta"
 # implemented here and no generated equations are patched.
 # Dollar names below are MeTTa variables, not shell variables.
 # shellcheck disable=SC2016
+# Each run loads the program generated here, so the copy does not also
+# import the installed realization.
 sed -e 's/gslt:admitted-entry:BNFValidateGrammarDiscoveryV1:10 $language $input/gslt:entry:BNFValidateGrammarV1:10 $input/' \
     -e 's/BNFValidateGrammarDiscoveryV1/BNFValidateGrammarV1/g' \
     -e 's/BNFAnalyzeDocumentWorklistV1/BNFAnalyzeDocumentV1/g' \
+    -e '\#^!(import! &self \.\./langdef/he/generated/plain_bnf_semantic_admission_v1\.metta)$#d' \
     lib/lib_bnf.metta > "$evidence/reference-library.metta"
+if rg -q 'generated/plain_bnf_semantic_admission_v1' "$evidence/reference-library.metta"; then
+    echo 'reference orchestration still imports an installed realization' >&2
+    exit 1
+fi
 if rg -q 'gslt:admitted-entry:|BNFValidateGrammarDiscoveryV1|BNFAnalyzeDocumentWorklistV1' \
     "$evidence/reference-library.metta"; then
     echo 'reference orchestration retained a candidate entry' >&2

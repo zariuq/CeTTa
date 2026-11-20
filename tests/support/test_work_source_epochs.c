@@ -118,9 +118,9 @@ int main(void) {
 
     cetta_shared_transition_scope_enter();
     epoch = capture(&arena, &nested);
-    assert(!cetta_shared_transition_guard_held_by_current_thread());
+    assert(!cetta_guard_any_held());
     assert(atom_is_symbol(status(&arena, &nested, epoch), "Work:Current"));
-    assert(!cetta_shared_transition_guard_held_by_current_thread());
+    assert(!cetta_guard_any_held());
     cetta_shared_transition_scope_leave();
 
     const Space *saved_base = overlay.overlay_base;

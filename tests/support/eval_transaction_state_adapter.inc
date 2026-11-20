@@ -330,7 +330,7 @@ static void *cetta_test_resource_owner_thread(void *argument) {
     Arena source;
     arena_init_detached(&source);
     {
-        CETTA_SCOPED_SHARED_TRANSITION(make_resources);
+        CETTA_SCOPED_SPACE_WRITE(make_resources, test->root);
         test->kept = cetta_test_new_managed_space(test->root, &source);
         (void)cetta_test_new_managed_space(test->root, &source);
         test->kept->kind = SPACE_KIND_STACK;
@@ -359,7 +359,7 @@ static void *cetta_test_resource_owner_thread(void *argument) {
     registry_init(&branch.registry);
     Space *adopted;
     {
-        CETTA_SCOPED_SHARED_TRANSITION(make_adopted);
+        CETTA_SCOPED_SPACE_WRITE(make_adopted, test->root);
         void *previous_scope = arena_set_resource_scope(branch.storage);
         adopted = cetta_test_new_managed_space(test->root, &source);
         assert(hyperpose_adopt_tracked_spaces(&branch));
@@ -372,7 +372,7 @@ static void *cetta_test_resource_owner_thread(void *argument) {
     assert(cetta_test_context_provider_count(
         test->root->native.universe, adopted) == 2u);
     {
-        CETTA_SCOPED_SHARED_TRANSITION(free_adopted);
+        CETTA_SCOPED_WORLD(free_adopted);
         hyperpose_thread_branch_free(&branch);
     }
     assert(test->root->native.universe->root_provider_len == test->baseline);

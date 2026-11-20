@@ -59,10 +59,11 @@ int main(int argc, char **argv) {
 
     /* Unknown grounded values stay explicitly unobserved. The value's kind
      * is not treated as its identity or an exported authority payload. */
-    Atom unknown = {0};
-    unknown.kind = ATOM_GROUNDED;
-    unknown.ground.gkind = GV_FOREIGN;
-    Atom *opaque = &unknown;
+    /* A foreign record without retain and release is not held by the
+     * arena. */
+    static CettaForeignHold unheld_foreign = {0};
+    Atom *opaque = atom_foreign(&arena, (CettaForeignValue *)&unheld_foreign);
+    assert(opaque);
     o = run_observation_open(argv[2]);
     assert(o && run_observation_query_begin(o, 1));
     run_observation_answers(o, &opaque, 1);

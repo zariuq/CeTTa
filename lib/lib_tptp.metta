@@ -31,7 +31,8 @@
 ;   fof(q,axiom,![X,Y]:p(X,Y)).
 ; is [(fof q axiom (∀ [X Y] (p X Y)))] under the mixed policy.
 ;
-; Semantic stage operations below use the generic LanguageDef runtime.
+; Reading and printing are the native TPTP module's (tptp); semantic stage
+; operations below use the generic LanguageDef runtime.
 ;
 ; TPTP specifies logic and interchange formats, not a proof-search strategy.
 ; Accordingly this library contains no prover.  ATP examples may consume the
@@ -39,6 +40,7 @@
 ; separate, explicit operation when its semantic derivation layer is present.
 
 !(import! &self langdef)
+!(import! &self tptp)
 !(import! &self fs)
 !(import! &self list)
 !(import! &self str)
@@ -268,7 +270,7 @@
 (= (tptp:free-variables $policy $value)
    (let $signature (tptp:binding-signature $policy)
      (let $names (__cetta_abt_free_names $signature $value)
-       (__cetta_lib_list_from_expression $names))))
+       (list:from $names))))
 
 ; Replace free variables simultaneously: ((X t) (Y u)) replaces X by t and Y
 ; by u.  A binder is renamed only where it would capture a variable of a
@@ -1195,9 +1197,9 @@
 (: tptp:expression-children (-> Atom %Undefined%))
 (= (tptp:expression-children $expression)
    (case (get-metatype $expression)
-     ((Expression (__cetta_lib_list_from_expression (cdr-atom $expression)))
+     ((Expression (list:from (cdr-atom $expression)))
       (List $expression)
-      ($_ (__cetta_lib_list_from_expression ())))))
+      ($_ (list:from ())))))
 
 ; ------------------------------------------------------------- admission --
 
@@ -1604,7 +1606,7 @@
      (tptp-internal:expanded-input-records $inputs)
      $expanded))
 (= (tptp-internal:expanded-input-records (tptp-ci-v1:expanded-inputs-nil))
-   (__cetta_lib_list_from_expression ()))
+   (list:from ()))
 (= (tptp-internal:expanded-input-records
       (tptp-ci-v1:expanded-inputs-cons
         (TPTP:ExpandedInputV1 $origin $path $namespace $name $record) $tail))

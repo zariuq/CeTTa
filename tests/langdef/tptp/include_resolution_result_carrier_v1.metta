@@ -1,4 +1,4 @@
-!(import! &self lib_tptp)
+!(import! &self (library lib_tptp))
 
 (= (test:tptp-include-result-admitted
       (TPTP:StageValue include-resolution-result $expected)

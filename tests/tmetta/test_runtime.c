@@ -96,7 +96,18 @@ static void publication(Fixture *fixture) {
     /* A stale first participant cannot spend a current second participant. */
     assert(!space_publish_native_replacements(destinations, prepared, versions, 2));
     assert(space_contains_exact(&left, coin) && space_contains_exact(&right, coin));
+    Space *reversed[] = {&right, &left};
+    Space *reversed_next[] = {prepared[1], prepared[0]};
+    SpaceReadToken reversed_versions[] = {versions[1], versions[0]};
+    assert(!space_publish_native_replacements(reversed, reversed_next, reversed_versions, 2));
+    assert(space_read_token_matches_live_space(versions[1], &right));
+    assert(space_contains_exact(&right, coin) && space_contains_exact(&left, done));
+    /* Retry against a new snapshot, retaining the intervening write to left. */
+    space_free(prepared[0]);
+    free(prepared[0]);
     versions[0] = space_read_token(&left);
+    prepared[0] = space_heap_clone_shallow(&left);
+    assert(prepared[0] && space_remove(prepared[0], coin));
     assert(space_publish_native_replacements(destinations, prepared, versions, 2));
     assert(space_length64(&left) == 1 && space_contains_exact(&left, done));
     assert(space_length64(&right) == 0);
@@ -166,6 +177,30 @@ static void escaped_answers(Fixture *fixture) {
         assert(pair->kind == ATOM_EXPR && pair->expr.len == 3 && atom_eq(pair->expr.elems[1], pair->expr.elems[2]));
     }
     eval_outcome_free(&result);
+}
+
+static void counted_query_captures(Fixture *fixture) {
+    for (unsigned i = 0; i < 2; ++i) {
+        define(fixture, "(probe-edge a b)");
+        define(fixture, "(= (query-edge $tag) (match &self (probe-edge $tag $field) $field))");
+    }
+    /* Export the caller's activated slot together with the bag it captured. */
+    Atom *pair = ask(fixture, "(let $s (reify (query-edge $capture)) (Pair (hold $capture) $s))");
+    assert(pair->kind == ATOM_EXPR && pair->expr.len == 3);
+    Atom *capture = pair->expr.elems[1];
+    assert(capture->kind == ATOM_VAR);
+    TmAnswers *bag = tm_answers_get(&fixture->runtime.libraries, pair->expr.elems[2]);
+    assert(bag && !bag->ordered && bag->bank.len == 4);
+    for (CettaIndex i = 0; i < bag->bank.len; ++i) {
+        const AnswerRecord *row = answer_bank_get(&bag->bank, i);
+        Bindings caller;
+        bindings_init(&caller);
+        Atom *result = NULL;
+        assert(tm_answer_open(&fixture->retained, row, &caller, &result) == 1);
+        assert(tm_named(bindings_apply_graph(&caller, &fixture->retained, result), "b"));
+        assert(tm_named(bindings_apply_graph(&caller, &fixture->retained, capture), "a"));
+        bindings_free(&caller);
+    }
 }
 
 static void shared_dag(Fixture *fixture) {
@@ -657,6 +692,7 @@ int main(int argc, char **argv) {
     number(ask(fixture, "(identity 7)"), 7);
     publication(fixture);
     escaped_answers(fixture);
+    counted_query_captures(fixture);
     shared_dag(fixture);
     retained_frontiers(fixture);
     ordered_answers(fixture);

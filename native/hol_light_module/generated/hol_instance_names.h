@@ -37,6 +37,8 @@
 #define rc_foreign_equal_hook hlm_rc_foreign_equal_hook
 #define rc_foreign_hook hlm_rc_foreign_hook
 #define rc_free_statics hlm_rc_free_statics
+#define rc_heap_free hlm_rc_heap_free
+#define rc_heap_swap hlm_rc_heap_swap
 #define rc_hlim hlm_rc_hlim
 #define rc_hp hlm_rc_hp
 #define rc_intern_active hlm_rc_intern_active
@@ -98,6 +100,7 @@
 #define rc_safepoint hlm_rc_safepoint
 #define rc_set_remove hlm_rc_set_remove
 #define rc_set_union hlm_rc_set_union
+#define rc_solve hlm_rc_solve
 #define rc_sort_name hlm_rc_sort_name
 #define rc_sort_order hlm_rc_sort_order
 #define rc_sort_rep hlm_rc_sort_rep

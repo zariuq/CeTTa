@@ -17,7 +17,10 @@
  *   (region NAME ...)      every and unique: the rules they range over
  *   (rule NAME CLAUSE ...) a rule; its clauses, each any number of times:
  *        (take P ...) (read P ...) (make P ...)
- *        (tell (= A B) ...)  (check (= A B) ...)  (absent P)  (count N P)  (census P)
+ *        (tell (= A B) ...)  (absent P)  (count N P)  (census P)
+ *        (check C ...), each C an equation (= A B) or a guard (/= A B), (< A B),
+ *        (<= A B); an operand of < and <= may be a sum (+ A B).  A guard reads
+ *        only variables of the rule's take and read patterns (tcalc_core.h).
  *   (put T)                a row whose head is a reserved word
  *
  * Each declaration is made at most once, and rule names are distinct.  In a

@@ -3,6 +3,7 @@
 
 #include "atom.h"
 #include "space.h"
+#include "native/deterministic_equation_plan_v1.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -94,51 +95,20 @@ bool cetta_langdef_expr_head(const Atom *atom, const char *head,
                              CettaExprLen arity);
 bool cetta_langdef_slurp(const char *path, uint8_t **bytes_out,
                          size_t *len_out, char *error, size_t error_size);
-typedef struct CettaDeterministicEquationPlanV1
-    CettaDeterministicEquationPlanV1;
-/* The prepared equations of a reader's compact-v1 directory beside
- * snapshot_path, listed with their SHA-256 digests in manifest_name, or NULL
- * with the reason: no manifest, a listed file whose digest differs, or
- * equations the runner does not admit. */
-CettaDeterministicEquationPlanV1 *cetta_tptp_compact_manifest_plan_v1(
-    const char *snapshot_path, const char *manifest_name,
-    char *reason, size_t reason_size);
-
-/* The two stages after a TPTP read, as tptp:read and tptp:print run them:
- * the compact records of a canonical file term under a leaf policy
- * (tagged, mixed or native), and those records printed back to text.  The
- * corpus tools call the same functions.  Printing uses the given canonical
- * table of the reader's grammar, or with NULL the reader's own. */
-#include "native/deterministic_equation_plan_v1.h"
-#include "native/tptp_official_snapshot_v1.h"
 /* The primitives LangDef programs run with: the structural data primitives
  * and the str: operations, each with the class of its value. */
 extern const CettaDeterministicVocabularyV1
     cetta_langdef_deterministic_vocabulary_v1;
-typedef enum {
-    CETTA_TPTP_COMPACT_PRINT_INVERSE_V1 = 0,
-    CETTA_TPTP_COMPACT_PRINT_NOT_RECORDS_V1,
-    CETTA_TPTP_COMPACT_PRINT_INPUT_V1,
-    CETTA_TPTP_COMPACT_PRINT_MEMORY_V1
-} CettaTptpCompactPrintFailureV1;
-bool cetta_tptp_compact_records_v1(
-    const CettaDeterministicEquationPlanV1 *compact, const char *policy,
-    Atom *canonical, Arena *arena, Atom **records_out,
-    uint64_t *work_used_out, CettaDeterministicEquationStatusV1 *status_out,
-    char *error, size_t error_size);
-bool cetta_tptp_compact_wrappers_v1(
-    const CettaDeterministicEquationPlanV1 *compact,
-    SymbolId **wrappers_out, uint32_t *len_out);
-bool cetta_tptp_compact_print_v1(
-    const CettaTptpPreparedReaderV1 *reader,
-    const CettaGrammarCanonicalTableV1 *table,
-    const CettaDeterministicEquationPlanV1 *print,
-    const SymbolId *wrappers, uint32_t wrapper_len,
-    const Atom *records, Arena *arena,
-    char **text_out, size_t *len_out,
-    CettaTptpCompactPrintFailureV1 *failure_out, uint64_t *index_out,
-    Atom **culprit_out, CettaDeterministicEquationStatusV1 *status_out,
-    uint64_t *work_used_out, char *error, size_t error_size);
+/* The deterministic equations a digest manifest lists, loaded with the
+ * LangDef vocabulary.  Each line of the manifest is "<sha256> <file>", a file
+ * beside the manifest, in load order.  NULL with the reason when there is no
+ * manifest, it lists no file or more than CETTA_LANGDEF_MAX_EXTENSION_SOURCES,
+ * a listed file no longer has its digest (it is stale), or the runner does
+ * not admit the equations.  A language module ships its prepared equations
+ * this way. */
+CettaDeterministicEquationPlanV1 *
+cetta_langdef_deterministic_equations_load_manifest_v1(
+    const char *manifest_path, char *reason, size_t reason_size);
 bool cetta_langdef_sha256_file(const char *path, char digest[65],
                                char *error, size_t error_size);
 bool cetta_langdef_path_join(const char *base_file, const char *relative,
@@ -181,6 +151,12 @@ bool cetta_langdef_run_file_with_proof_execution_v1(
     Arena *arena, CettaLangDefRunReceiptV1 *receipt,
     char *error, size_t error_size);
 #endif
+
+/* A native's value in each dialect's return protocol: HE and Prime take it
+ * as (return value) in their function bodies; PeTTa, which has no return,
+ * takes the value itself.  LangDef's natives answer by it, and so do those of
+ * a language module whose library wraps them as it wraps LangDef's. */
+Atom *cetta_langdef_return(Arena *arena, Atom *value);
 
 Atom *cetta_langdef_module_dispatch(struct CettaLibraryContext *ctx,
                                     Space *space, Arena *arena,

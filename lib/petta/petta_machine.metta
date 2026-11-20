@@ -227,11 +227,27 @@
    (not (== (collapse (match &pm (pm:fun $name) known)) ())))
 
 ; PeTTa's list view.  In a pattern, (cons H T) meets a list that is not empty,
-; H its first item and T the others.  An expression has no form for "a first
-; item and the others", so the pattern is written apart: where (cons H T)
-; stands, a fresh variable, and with the code the pattern guards a view
+; H its first item and T the others.  A spine of views closed by (), as
+; (cons H1 (cons H2 ())), is the list (H1 H2) it spells, and stands in the
+; pattern as that list: the machine's matching meets a cell of a list whose
+; rest is unknown as the list it spells.  Any other spine ends in a rest that
+; is not a list written out, and an expression has no form for "a first item
+; and the others", so that pattern is written apart: where (cons H T) stands,
+; a fresh variable, and with the code the pattern guards a view
 ; (pm:view VARIABLE H T CODE), which a rule opens before the code runs.
 (= (pm:fresh-variable) $fresh)
+
+; The items of a spine of views closed by (), or pm:open.
+(: pm:spine-items (-> Atom %Undefined%))
+(= (pm:spine-items $p)
+   (if (== (get-metatype $p) Expression)
+       (if (== $p ()) ()
+         (if (pm:is-view $p)
+             (let ($_cons $h $t) $p
+               (let $rest (pm:spine-items $t)
+                 (if (== $rest pm:open) pm:open (cons-atom $h $rest))))
+             pm:open))
+       pm:open))
 
 (: pm:is-view (-> Atom %Undefined%))
 (= (pm:is-view $p)
@@ -254,12 +270,15 @@
    (if (== (get-metatype $p) Expression)
        (if (== $p ()) (pm:list3 pm:plain () ())
          (if (pm:is-view $p)
-             (let ($_cons $h $t) $p
-               (let* (($l (pm:fresh-variable))
-                      ((pm:plain $h2 $views-h) (pm:plain-pattern $where $h))
-                      ((pm:plain $t2 $views-t) (pm:plain-pattern $where $t))
-                      ($later (pm:appended $views-h $views-t)))
-                 (pm:list3 pm:plain $l (cons-atom (pm:list4 pm:v $l $h2 $t2) $later))))
+             (let $items (pm:spine-items $p)
+               (if (== $items pm:open)
+                   (let ($_cons $h $t) $p
+                     (let* (($l (pm:fresh-variable))
+                            ((pm:plain $h2 $views-h) (pm:plain-pattern $where $h))
+                            ((pm:plain $t2 $views-t) (pm:plain-pattern $where $t))
+                            ($later (pm:appended $views-h $views-t)))
+                       (pm:list3 pm:plain $l (cons-atom (pm:list4 pm:v $l $h2 $t2) $later))))
+                   (pm:plain-each $where $items)))
              (if (or (pm:call-pattern? $p) (pm:form-in? $where $p))
                  (let* (($l (pm:fresh-variable)) ($call (pm:term $p)))
                    (pm:list3 pm:plain $l (cons-atom (pm:list3 pm:c $l $call) ())))

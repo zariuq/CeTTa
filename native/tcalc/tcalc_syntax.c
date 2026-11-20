@@ -275,20 +275,26 @@ typedef struct {
     TcTerm *take, *read, *tell, *make;
     size_t takes, take_cap, reads, read_cap, tells, tell_cap, makes, make_cap;
     TcCheck *check; size_t checks, check_cap;
+    const Form **check_form;   /* per check: the form it was read from */
 } RuleParts;
 
 static void parts_free(RuleParts *p) {
     free(p->take); free(p->read); free(p->tell); free(p->make); free(p->check);
+    free(p->check_form);
 }
 
-static bool push_check(RuleParts *p, TcCheck c) {
+static bool push_check(RuleParts *p, TcCheck c, const Form *form) {
     if (p->checks == p->check_cap) {
         size_t cap = p->check_cap ? p->check_cap * 2 : 4;
         TcCheck *g = realloc(p->check, cap * sizeof *g);
         if (!g) return false;
         p->check = g;
+        const Form **f = realloc(p->check_form, cap * sizeof *f);
+        if (!f) return false;
+        p->check_form = f;
         p->check_cap = cap;
     }
+    p->check_form[p->checks] = form;
     p->check[p->checks++] = c;
     return true;
 }
@@ -297,6 +303,20 @@ static bool push_check(RuleParts *p, TcCheck c) {
 static bool equation(Reader *r, const Form *f, const Form **a, const Form **b) {
     if (f->kind != F_LIST || f->count != 3 || !is_word(r, item_of(r, f, 0), "="))
         return fail(r, f->line, f->column, "an equation is written (= A B)");
+    *a = item_of(r, f, 1);
+    *b = item_of(r, f, 2);
+    return true;
+}
+
+/* The relation and the two sides of a check: (= A B), (/= A B), (< A B) or
+ * (<= A B). */
+static bool relation(Reader *r, const Form *f, TcCheckKind *kind, const Form **a, const Form **b) {
+    const Form *op = f->kind == F_LIST && f->count == 3 ? item_of(r, f, 0) : NULL;
+    if (op && is_word(r, op, "=")) *kind = TC_CHECK_EQUAL;
+    else if (op && is_word(r, op, "/=")) *kind = TC_CHECK_DIFFERENT;
+    else if (op && is_word(r, op, "<")) *kind = TC_CHECK_LESS;
+    else if (op && is_word(r, op, "<=")) *kind = TC_CHECK_LESS_EQUAL;
+    else return fail(r, f->line, f->column, "a check is written (= A B), (/= A B), (< A B) or (<= A B)");
     *a = item_of(r, f, 1);
     *b = item_of(r, f, 2);
     return true;
@@ -336,13 +356,15 @@ static bool read_rule(Reader *r, TcTerms *t, TcProgram *p, const Form *f) {
             bool tell = is_word(r, head, "tell");
             for (uint32_t k = 1; ok && k < clause->count; k++) {
                 const Form *a = NULL, *b = NULL;
-                if (!(ok = equation(r, item_of(r, clause, k), &a, &b))) break;
+                TcCheckKind kind = TC_CHECK_EQUAL;
+                if (!(ok = tell ? equation(r, item_of(r, clause, k), &a, &b)
+                                : relation(r, item_of(r, clause, k), &kind, &a, &b))) break;
                 TcTerm ta = term_of(r, t, a, &scope, true), tb = term_of(r, t, b, &scope, true);
                 if (tell)
                     ok = ta && tb && tc_push_u32(realloc, &parts.tell, &parts.tells, &parts.tell_cap, ta) &&
                          tc_push_u32(realloc, &parts.tell, &parts.tells, &parts.tell_cap, tb);
                 else
-                    ok = ta && tb && push_check(&parts, (TcCheck){TC_CHECK_EQUAL, ta, tb, 0});
+                    ok = ta && tb && push_check(&parts, (TcCheck){kind, ta, tb, 0}, item_of(r, clause, k));
                 if (!ok) no_memory(r);
             }
         } else if (is_word(r, head, "absent") || is_word(r, head, "census")) {
@@ -354,7 +376,7 @@ static bool read_rule(Reader *r, TcTerms *t, TcProgram *p, const Form *f) {
             }
             TcTerm pattern = term_of(r, t, item_of(r, clause, 1), &scope, true);
             ok = pattern && push_check(&parts, (TcCheck){absent ? TC_CHECK_ABSENT : TC_CHECK_CENSUS,
-                                                         pattern, 0, 0});
+                                                         pattern, 0, 0}, clause);
             if (!ok) no_memory(r);
         } else if (is_word(r, head, "count")) {
             if (clause->count != 3 || item_of(r, clause, 1)->kind != F_INTEGER || item_of(r, clause, 1)->value < 0) {
@@ -363,7 +385,7 @@ static bool read_rule(Reader *r, TcTerms *t, TcProgram *p, const Form *f) {
             }
             TcTerm pattern = term_of(r, t, item_of(r, clause, 2), &scope, true);
             ok = pattern && push_check(&parts, (TcCheck){TC_CHECK_COUNT, pattern, 0,
-                                                         (uint64_t)item_of(r, clause, 1)->value});
+                                                         (uint64_t)item_of(r, clause, 1)->value}, clause);
             if (!ok) no_memory(r);
         } else {
             ok = fail(r, clause->line, clause->column, CLAUSE_FORMS);
@@ -384,8 +406,23 @@ static bool read_rule(Reader *r, TcTerms *t, TcProgram *p, const Form *f) {
                 .make = parts.make, .makes = (uint32_t)parts.makes,
                 .locals = scope.count,
             };
-            ok = tc_program_add_rule(p, &rule);
-            if (!ok) no_memory(r);
+            uint32_t guard = 0, local = 0;
+            const char *why = tc_rule_refusal(t, &rule, &guard, &local);
+            if (why && guard != UINT32_MAX) {
+                const Form *g = parts.check_form[guard];
+                char message[sizeof r->error->message];
+                if (local != UINT32_MAX)
+                    snprintf(message, sizeof message, "%s: %.*s", why,
+                             (int)scope.length[local], scope.name[local]);
+                else
+                    snprintf(message, sizeof message, "%s", why);
+                ok = fail(r, g->line, g->column, message);
+            } else if (why) {
+                ok = no_memory(r);
+            } else {
+                ok = tc_program_add_rule(p, &rule);
+                if (!ok) no_memory(r);
+            }
             free(rule_name);
         }
     }

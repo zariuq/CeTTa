@@ -1,0 +1,16 @@
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+((ra (ra) (1 open-row)) (rb (rb) (0 open-row)) (rc (rc) (1 1)))
+((ra (nested)) (rb ()) (rc ()))
+((ra (1 0 open-row)) (rb (0 open-row)) (rc (1 1 1)))
+((ra (1 0 0 open-row)) (rb (1 0 0 open-row)) (rc (1 1 1)))
+((ra ()) (rb ()) (rc ()))

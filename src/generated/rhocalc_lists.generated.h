@@ -4,7 +4,7 @@
 
 #include <stdint.h>
 
-#if defined(rho_push_var) || defined(rho_push_atom) || defined(rho_push_endpoint) || defined(rho_push_alpha) || defined(rho_push_key) || defined(rho_push_pointer) || defined(rho_push_epoch) || defined(rho_push_text_action)
+#if defined(rho_push_var) || defined(rho_push_atom) || defined(rho_push_endpoint) || defined(rho_push_pointer) || defined(rho_push_epoch)
 #error an exported name is defined as a preprocessor macro
 #endif
 #if defined(__builtin_add_overflow) || defined(__builtin_mul_overflow)
@@ -120,62 +120,6 @@ static inline int rho_push_endpoint(void *(*resize)(void *old, uint32_t), RhoEnd
   return accepted;
 }
 
-/* Append one binder of the alpha environment; 1, or 0 with the list unchanged. */
-static inline int rho_push_alpha(void *(*resize)(void *old, uint32_t), RhoAlphaEntry **buffer, uint32_t *length, uint32_t *capacity, RhoAlphaEntry value) {
-  _Static_assert((uint32_t) -1 > 0, "worklist count must be unsigned");
-  uint32_t next_capacity;
-  uint32_t bytes = 0;
-  RhoAlphaEntry *replacement;
-  int accepted = 1;
-  if (length == capacity || (*length > *capacity || (*capacity && !*buffer))) accepted = 0;
-  if (accepted && *length == *capacity) {
-    if (*capacity == 0) next_capacity = 8;
-    else if (__builtin_add_overflow(*capacity, *capacity, &next_capacity)) accepted = 0;
-    if (accepted && __builtin_mul_overflow(next_capacity, sizeof(RhoAlphaEntry), &bytes)) accepted = 0;
-    if (accepted) {
-      replacement = resize(*buffer, bytes);
-      if (!replacement) accepted = 0;
-      else {
-        *buffer = replacement;
-        *capacity = next_capacity;
-      }
-    }
-  }
-  if (accepted) {
-    (*buffer)[*length] = value;
-    ++*length;
-  }
-  return accepted;
-}
-
-/* Append one canonical key beside its item; 1, or 0 with the list unchanged. */
-static inline int rho_push_key(void *(*resize)(void *old, uint32_t), RhoKey **buffer, uint32_t *length, uint32_t *capacity, RhoKey value) {
-  _Static_assert((uint32_t) -1 > 0, "worklist count must be unsigned");
-  uint32_t next_capacity;
-  uint32_t bytes = 0;
-  RhoKey *replacement;
-  int accepted = 1;
-  if (length == capacity || (*length > *capacity || (*capacity && !*buffer))) accepted = 0;
-  if (accepted && *length == *capacity) {
-    if (*capacity == 0) next_capacity = 8;
-    else if (__builtin_add_overflow(*capacity, *capacity, &next_capacity)) accepted = 0;
-    if (accepted && __builtin_mul_overflow(next_capacity, sizeof(RhoKey), &bytes)) accepted = 0;
-    if (accepted) {
-      replacement = resize(*buffer, bytes);
-      if (!replacement) accepted = 0;
-      else {
-        *buffer = replacement;
-        *capacity = next_capacity;
-      }
-    }
-  }
-  if (accepted) {
-    (*buffer)[*length] = value;
-    ++*length;
-  }
-  return accepted;
-}
-
 /* Append one resource of a promoted map; 1, or 0 with the list unchanged. */
 static inline int rho_push_pointer(void *(*resize)(void *old, CettaCount), RhoPointer **buffer, CettaCount *length, CettaCount *capacity, RhoPointer value) {
   _Static_assert((CettaCount) -1 > 0, "worklist count must be unsigned");
@@ -216,34 +160,6 @@ static inline int rho_push_epoch(void *(*resize)(void *old, CettaCount), uint64_
     if (*capacity == 0) next_capacity = 8;
     else if (__builtin_add_overflow(*capacity, *capacity, &next_capacity)) accepted = 0;
     if (accepted && __builtin_mul_overflow(next_capacity, sizeof(uint64_t), &bytes)) accepted = 0;
-    if (accepted) {
-      replacement = resize(*buffer, bytes);
-      if (!replacement) accepted = 0;
-      else {
-        *buffer = replacement;
-        *capacity = next_capacity;
-      }
-    }
-  }
-  if (accepted) {
-    (*buffer)[*length] = value;
-    ++*length;
-  }
-  return accepted;
-}
-
-/* Append one action of the atom-text walk; 1, or 0 with the list unchanged. */
-static inline int rho_push_text_action(void *(*resize)(void *old, size_t), RhoAtomTextAction **buffer, size_t *length, size_t *capacity, RhoAtomTextAction value) {
-  _Static_assert((size_t) -1 > 0, "worklist count must be unsigned");
-  size_t next_capacity;
-  size_t bytes = 0;
-  RhoAtomTextAction *replacement;
-  int accepted = 1;
-  if (length == capacity || (*length > *capacity || (*capacity && !*buffer))) accepted = 0;
-  if (accepted && *length == *capacity) {
-    if (*capacity == 0) next_capacity = 8;
-    else if (__builtin_add_overflow(*capacity, *capacity, &next_capacity)) accepted = 0;
-    if (accepted && __builtin_mul_overflow(next_capacity, sizeof(RhoAtomTextAction), &bytes)) accepted = 0;
     if (accepted) {
       replacement = resize(*buffer, bytes);
       if (!replacement) accepted = 0;

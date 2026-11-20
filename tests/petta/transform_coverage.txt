@@ -66,8 +66,8 @@ A row names the form and the test that holds it, or says why there is none.
                                   reference for this reason); CeTTa agrees with the reference.
 
 
-2. transform's surface in plain PeTTa (lib_transform_specs.metta)
------------------------------------------------------------------
+2. transform's conjuncts and rules in plain PeTTa (lib_transform_specs.metta)
+-----------------------------------------------------------------------------
 
   conjunct or rule                         test
   read, take, absent, unique, collect,     tests/petta/transform_*.metta; the seeded classes

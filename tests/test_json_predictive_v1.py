@@ -134,8 +134,13 @@ class PredictiveArtifactTest(unittest.TestCase):
         self.assertEqual(first, self.files())
         report = json.loads(first[compiler.ARTIFACT_FILES[3]])
         self.assertEqual(len(report["artifact_sha256"]), 64)
-        self.assertEqual(set(report["compiler_sha256"]),
-                         {"lowering", "schema", "dfa", "predictive", "predictive_adapter", "publication"})
+        # Another build of the DFA compiler, equal in behaviour but not in
+        # bytes, gives the same artifact.
+        rebuilt = self.output/"rebuilt-emitter"
+        rebuilt.write_bytes(self.emitter.read_bytes() + b"\0")
+        rebuilt.chmod(0o755)
+        compiler.build_artifact(SYNTAX, PROFILE, TARGET, PLAN, rebuilt, self.output)
+        self.assertEqual(first, self.files())
 
     def test_failed_dfa_build_does_not_publish(self):
         first = self.files()

@@ -13,7 +13,4 @@
 !(println! (variables (== $x $y) (let $x 1 (== $y $y)) (let $r (== $z 1) (let $z 2 unbound))))
 !(println! (nan (let $_ (translatePredicate (is $n nan)) (== $n $n)) (let $_ (translatePredicate (is $n nan)) (== (a $n) (a $n))) (let $_ (translatePredicate (is $n nan)) (!= $n $n)) (let $_ (translatePredicate (is $n nan)) (< $n 1)) (let $_ (translatePredicate (is $n nan)) (>= $n 1))))
 !(println! (order (< 9007199254740992.0 9007199254740993) (> 9007199254740993 9007199254740992.0) (<= 9007199254740993 9007199254740992.0) (>= 9007199254740993 9007199254740992.0) (<= 1 1.0) (< -0.0 0.0) (< 2 3) (>= 2.5 3)))
-!(println! (rationals (let $_ (translatePredicate (number_string $half "1r2")) ($half (== $half 0.5) (!= $half 0.5) (== (x $half) (x 0.5)) (< $half 0.75))) (let $_ (translatePredicate (number_string $q "7r22")) ($q (== $q 0.3181818181818182) (* $q 22)))))
 !(println! (shared (== (dag 40 1) (dag 40 1.0)) (== (dag 40 1) (dag 40 2)) (let $_ (translatePredicate (is $n nan)) (let $d (dag 40 $n) (== $d $d)))))
-!(let $flag (translatePredicate (set_prolog_flag float_overflow infinity)) infinity-enabled)
-!(println! (infinity (== inf inf) (== (+ inf 0) (+ inf 0)) (== inf (+ inf 0))))

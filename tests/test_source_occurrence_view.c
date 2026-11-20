@@ -12,15 +12,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Observe entry to the real transition guard, without replacing its lock.
+/* Observe entry to the real space guard, without replacing its lock.
  * The main thread changes the Space while the contracting thread waits for
  * that guard. Validation must happen after the wait, not before it. */
 static pthread_mutex_t reached_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t reached_condition = PTHREAD_COND_INITIALIZER;
 static bool reached;
 static _Thread_local bool observe_guard;
-void __real_cetta_shared_transition_guard_enter(CettaSharedTransitionGuard *guard);
-void __wrap_cetta_shared_transition_guard_enter(CettaSharedTransitionGuard *guard) {
+CettaGuardAcquire __real_cetta_guard_section_acquire(
+    CettaGuardSection *section, const CettaGuardRequest *requests, size_t count);
+CettaGuardAcquire __wrap_cetta_guard_section_acquire(
+    CettaGuardSection *section, const CettaGuardRequest *requests, size_t count) {
     if (observe_guard) {
         observe_guard = false;
         assert(pthread_mutex_lock(&reached_mutex) == 0);
@@ -28,7 +30,7 @@ void __wrap_cetta_shared_transition_guard_enter(CettaSharedTransitionGuard *guar
         assert(pthread_cond_signal(&reached_condition) == 0);
         assert(pthread_mutex_unlock(&reached_mutex) == 0);
     }
-    __real_cetta_shared_transition_guard_enter(guard);
+    return __real_cetta_guard_section_acquire(section, requests, count);
 }
 
 typedef struct {
@@ -178,8 +180,8 @@ static void changed_while_waiting(SymbolTable *symbols, bool stack) {
     arena_init_detached(&race.result_arena);
     reached = false;
     cetta_shared_transition_scope_enter();
-    CettaSharedTransitionGuard held = {0};
-    cetta_shared_transition_guard_enter(&held);
+    CettaGuardSection held;
+    space_guard_section_enter(&held, &test.space, CETTA_GUARD_WRITE);
     pthread_t worker;
     assert(pthread_mutex_lock(&reached_mutex) == 0);
     assert(pthread_create(&worker, NULL, contract_worker, &race) == 0);
@@ -189,7 +191,7 @@ static void changed_while_waiting(SymbolTable *symbols, bool stack) {
     CettaCount removed = 0u;
     assert(space_remove_occurrence_mask_stable(&test.space, mask, 3u, &removed) && removed == 1u);
     space_add(&test.space, row(&test.arena, "p", 9));
-    cetta_shared_transition_guard_leave(&held);
+    cetta_guard_section_end(&held);
     cetta_shared_transition_scope_leave();
     assert(pthread_join(worker, NULL) == 0);
     assert_refused(race.result, "StaleCapture");

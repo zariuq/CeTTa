@@ -1,0 +1,8 @@
+(rational-positive false false true true false false true)
+(rational-negative false false true true false)
+(rational-third false false true true false)
+(nan-order false false false false)
+true
+true
+true
+true

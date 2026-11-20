@@ -330,8 +330,7 @@ def compile_sources(syntax, lexical, target, elaboration, predictive_compiler=pr
     output.extend(["case JD_LOOK_ERROR: break; }",
                    'jd_error(p,CETTA_JSON_RUNTIME_V1_SYNTAX_REJECTED,"a JSON value");',
                    "return JD_START_ERROR;", "}"])
-    report = dict(source_sha256={p.name: sha256(p.read_bytes()).hexdigest() for p in (syntax, lexical, target, elaboration)},
-        first={k: sorted(v) for k,v in first.items()}, follow={k: sorted(v) for k,v in follow.items()},
+    report = dict(first={k: sorted(v) for k,v in first.items()}, follow={k: sorted(v) for k,v in follow.items()},
         structural_nonterminals=len(first), conflicts=[], lexical_categories=["JsonWs", "JsonNumber", "JsonString"],
         transformations=["regular lexical folding",
                          "erase only the elaboration's JsonWs positions",
@@ -358,14 +357,8 @@ def build_artifact(syntax, lexical, target, elaboration, dfa_compiler, output,
                    predictive_compiler=predictive.DEFAULT_COMPILER):
     code, report, nfa, start = compile_sources(syntax, lexical, target, elaboration, predictive_compiler)
     report["format"] = "JsonPredictiveArtifactV1"
-    report["compiler_sha256"] = {
-        "lowering": sha256(Path(__file__).read_bytes()).hexdigest(),
-        "schema": sha256(Path(sexpr.__file__).read_bytes()).hexdigest(),
-        "dfa": sha256(dfa_compiler.read_bytes()).hexdigest(),
-        "predictive": sha256(Path(predictive_compiler).read_bytes()).hexdigest(),
-        "predictive_adapter": sha256(Path(predictive.__file__).read_bytes()).hexdigest(),
-        "publication": sha256(Path(publication.__file__).read_bytes()).hexdigest(),
-    }
+    # The identity is the artifact's content, so equal tables from another
+    # build of the compilers are the same artifact.
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="predictive-", dir=output) as temporary:
         work = Path(temporary); nfa.write(work/"lexical.nfa", start)

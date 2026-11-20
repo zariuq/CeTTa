@@ -1,0 +1,22 @@
+; Steps after the first, under step every over a set store, of a program that
+; only reads and makes: no takes, no tells, every check an equation, every
+; local of a made row in a pattern.  A match at a state whose rows were all
+; rows of the state before was fired by that state's step, so it makes only
+; rows that are present, and the step need meet only the matches that read a
+; row the step before made.  Here the fresh row is met at the first pattern
+; (hop, join), at the second (join, same), by two identical patterns (pair),
+; and never (start, which reads nothing, makes its row in the first step only).
+; The outcome and the count of states are those of meeting every match.
+(store set)
+(step every)
+(edge 1 2)
+(edge 2 3)
+(edge 3 4)
+(edge 4 2)
+(rule start (make (seen 1)))
+(rule hop (read (seen $x) (edge $x $y)) (make (seen $y)))
+(rule path (read (edge $x $y)) (make (path $x $y)))
+(rule join (read (path $x $y) (path $y $z)) (make (path $x $z)))
+(rule loop (read (path $x $x)) (make (cycle $x)))
+(rule pair (read (seen $x) (seen $x)) (make (twice (f $x))))
+(rule same (read (path $x $y) (seen $y)) (check (= $x 2)) (make (from-two $y)))

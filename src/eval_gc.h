@@ -827,8 +827,12 @@ static inline bool eval_gc_can_collect_arena(const Arena *arena) {
     /* Hash-cons entries own their interned atoms on the heap.  Eligible eval
        children are interned before they can appear inside an interned parent,
        so resetting the eval arena does not leave hash-cons entries pointing
-       into reclaimed eval blocks. */
-    return arena != NULL;
+       into reclaimed eval blocks.
+       The persistent arena outlives the evaluation, and what it holds is not
+       reached from the evaluator's roots: the term universe's decoded atoms,
+       promoted results and state.  A caller that evaluates in its persistent
+       arena therefore evaluates in an arena no collection may reset. */
+    return arena != NULL && arena != eval_current_persistent_arena();
 }
 
 static inline bool eval_gc_root_chain_is_precise(

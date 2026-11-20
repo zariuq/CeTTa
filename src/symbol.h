@@ -663,6 +663,14 @@ static inline SymbolSpelling symbol_spelling(
     X(petta_with_mutex, "with_mutex") \
     X(petta_min, "min") \
     X(petta_max, "max") \
+    X(petta_exp, "exp") \
+    X(petta_implies, "implies") \
+    X(petta_unifiable, "=?") \
+    X(petta_atom_concat, "atom_concat") \
+    X(petta_atom_chars, "atom_chars") \
+    X(petta_copy_term, "copy_term") \
+    X(petta_term_hash, "term_hash") \
+    X(petta_sort, "sort") \
     X(type_colon_of, "type:of") \
     X(type_colon_check, "type:check") \
     X(type_colon_analyze, "type:analyze") \

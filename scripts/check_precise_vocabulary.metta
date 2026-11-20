@@ -32,6 +32,9 @@
 (= (vocabulary:pinned-source "observation")
   (str:concat "^\\s*\"source\":\\s*\"examples/import_error_" (str:concat (vocabulary:needle)
     "\\.metta\",?\\s*$")))
+(= (vocabulary:pinned-source "corpus")
+  (str:concat "^\\s*\\{\"name\":\\s*\"import_error_" (str:concat (vocabulary:needle)
+    "\\.metta\",\\s*\"mode\":\\s*\"[a-z-]+\",\\s*\"timeout\":\\s*[0-9]+\\},?\\s*$")))
 (= (vocabulary:pinned-match $kind $text)
   (match &self (vocabulary:pinned-pattern $kind $pattern)
     (case (re:is-match $pattern $text)
@@ -42,19 +45,24 @@
     (("langdef/petta/reference.json" (vocabulary:pinned-match "reference" $text))
      ("tests/petta/corrected_stable_observations.json"
         (vocabulary:pinned-match "observation" $text))
+     ("tests/petta/corpus/manifest.json"
+        (vocabulary:pinned-match "corpus" $text))
      ($other False))))
 
 (= (vocabulary:prepare-pinned)
  (let $reference (re:compile (vocabulary:pinned-source "reference"))
  (let $observation (re:compile (vocabulary:pinned-source "observation"))
- (case (VocabularyPatterns $reference $observation)
-  (((VocabularyPatterns (NativeHandle $kind1 $id1) (NativeHandle $kind2 $id2))
+ (let $corpus (re:compile (vocabulary:pinned-source "corpus"))
+ (case (VocabularyPatterns $reference $observation $corpus)
+  (((VocabularyPatterns (NativeHandle $kind1 $id1) (NativeHandle $kind2 $id2)
+                        (NativeHandle $kind3 $id3))
     (let $saved1 (add-atom &self (vocabulary:pinned-pattern "reference" $reference))
      (let $saved2 (add-atom &self (vocabulary:pinned-pattern "observation" $observation))
-      (vocabulary:main))))
+      (let $saved3 (add-atom &self (vocabulary:pinned-pattern "corpus" $corpus))
+       (vocabulary:main)))))
    ($fault
     (let $shown (system:write stderr "Cannot complete vocabulary check: regex preparation failed\n")
-      (system:exit 2))))))))
+      (system:exit 2)))))))))
 ; POSIX filenames can contain non-text bytes. Keep each such byte as a
 ; barrier, as Python's surrogateescaped path spelling does, rather than
 ; deleting bytes and accidentally joining two halves of a word.

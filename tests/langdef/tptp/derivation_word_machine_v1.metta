@@ -1,4 +1,4 @@
-!(import! &self lib_tptp)
+!(import! &self (library lib_tptp))
 
 (= (test:missing-finish-result
       (LangDef:ContextualTermResults LangDef:ContextComplete

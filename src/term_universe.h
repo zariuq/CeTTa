@@ -2,6 +2,7 @@
 #define CETTA_TERM_UNIVERSE_H
 
 #include "atom.h"
+#include "shared_transition.h"
 #include <stddef.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -388,6 +389,18 @@ struct TermUniverse {
     uint64_t diag_atom_id_capacity_override;
     uint64_t diag_logical_atom_id_base_override;
 #endif
+    /* Concurrent use (shared_transition.h).  Interning is monotone: inside a
+     * concurrent scope an operation that adds to the universe, decodes into
+     * it or searches its tables holds this leaf lock, and the readers of
+     * stored terms (record headers, scalar fields, decoded atoms) take no
+     * lock.  Those readers reach the entries, the record pool and the
+     * decoded pages through pointers published after their contents; an
+     * array grown while any thread is in a concurrent scope is replaced and
+     * its old copy kept in `retired` until no thread is in one, so a reader
+     * holding the old copy reads what it held. */
+    CettaLeafRwLock concurrent;
+    void **retired;
+    size_t retired_len, retired_cap;
 };
 
 /* A process-local capability for one stored root in one TermUniverse
@@ -810,16 +823,20 @@ static inline const CettaTermHdr *tu_hdr(const TermUniverse *universe,
     CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
     return term_universe_hdr_checked(universe, id);
 #else
-    /* The sentinel id is past every universe's length. */
-    if (!universe || id >= universe->len)
+    /* The sentinel id is past every universe's length.  The words are read
+     * as published (term_universe.c): the length, then the entries, then
+     * the pool's length, then the pool. */
+    if (!universe || id >= __atomic_load_n(&universe->len, __ATOMIC_ACQUIRE))
         return NULL;
-    const TermEntry *entry = &universe->entries[id];
+    const TermEntry *entry =
+        &__atomic_load_n(&universe->entries, __ATOMIC_ACQUIRE)[id];
     size_t off = term_universe_entry_offset(entry);
-    if (entry->record == CETTA_TERM_ENTRY_BLOB_NONE || !universe->blob_pool ||
-        off > universe->blob_len ||
-        sizeof(CettaTermHdr) > universe->blob_len - off)
+    size_t blob_len = __atomic_load_n(&universe->blob_len, __ATOMIC_ACQUIRE);
+    const uint8_t *pool = __atomic_load_n(&universe->blob_pool, __ATOMIC_ACQUIRE);
+    if (entry->record == CETTA_TERM_ENTRY_BLOB_NONE || !pool ||
+        off > blob_len || sizeof(CettaTermHdr) > blob_len - off)
         return NULL;
-    return (const CettaTermHdr *)(universe->blob_pool + off);
+    return (const CettaTermHdr *)(pool + off);
 #endif
 }
 
@@ -924,11 +941,18 @@ static inline const CettaTermHdr *tu_hdr_stored(const TermUniverse *universe,
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS ||     CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
     return term_universe_hdr_checked(universe, id);
 #else
-    const TermEntry *entry = &universe->entries[id];
-    return entry->record != CETTA_TERM_ENTRY_BLOB_NONE
-        ? (const CettaTermHdr *)(universe->blob_pool +
-                                 term_universe_entry_offset(entry))
-        : NULL;
+    struct TermEntry *entries;
+    uint8_t *pool;
+    if (!universe)
+        return NULL;
+    __atomic_load(&((TermUniverse *)universe)->entries, &entries,
+                  __ATOMIC_ACQUIRE);
+    const TermEntry *entry = &entries[id];
+    if (entry->record == CETTA_TERM_ENTRY_BLOB_NONE)
+        return NULL;
+    __atomic_load(&((TermUniverse *)universe)->blob_pool, &pool,
+                  __ATOMIC_ACQUIRE);
+    return (const CettaTermHdr *)(pool + term_universe_entry_offset(entry));
 #endif
 }
 

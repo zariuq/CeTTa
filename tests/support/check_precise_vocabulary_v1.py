@@ -59,6 +59,8 @@ def main():
     pinned_name = 'examples/import_error_' + 'sur' + 'face.metta'
     reference_field = ('  "' + pinned_name + '": "' + 'a' * 64 + '",\n').encode()
     observation_field = ('  "source": "' + pinned_name + '",\n').encode()
+    corpus_field = ('    {"name": "import_error_' + 'sur' + 'face.metta", "mode": "self-check", '
+                    '"timeout": 60},\n').encode()
     cases.update({
         "pinned_reference": {"langdef/petta/reference.json": reference_field},
         "pinned_observation": {"tests/petta/corrected_stable_observations.json": observation_field},
@@ -69,6 +71,10 @@ def main():
         "pinned_nearby_content": {"langdef/petta/reference.json": reference_field + b'"note": "sur' + b'face"\n'},
         "pinned_unicode_space": {"langdef/petta/reference.json": '\u2003'.encode() + reference_field},
         "pinned_invalid_bytes": {"tests/petta/corrected_stable_observations.json": observation_field.rstrip() + b'\xff\n'},
+        "pinned_corpus": {"tests/petta/corpus/manifest.json": corpus_field},
+        "pinned_corpus_wrong_path": {"tests/petta/manifest.json": corpus_field},
+        "pinned_corpus_extra_field": {"tests/petta/corpus/manifest.json":
+            corpus_field.replace(b'"timeout"', b'"note": "sur' + b'face", "timeout"')},
     })
     for cut in range(1, 8):
         cases[f"literal_seam_{cut}"] = {"src/example.metta": b"x" * (65536 - cut)

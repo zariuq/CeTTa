@@ -232,13 +232,13 @@ static void *writer_main(void *opaque) {
     cetta_shared_transition_scope_enter();
     for (uint32_t round = 0u; round < WRITER_ROUNDS && task->ok; round++) {
         {
-            CETTA_SCOPED_SHARED_TRANSITION(remove_transition);
+            CETTA_SCOPED_SPACE_WRITE(remove_transition, task->space);
             task->ok = space_remove_atom_id(task->space, task->optional_id) &&
                        space_length64(task->space) == BASE_ROW_COUNT;
         }
         sched_yield();
         {
-            CETTA_SCOPED_SHARED_TRANSITION(add_transition);
+            CETTA_SCOPED_SPACE_WRITE(add_transition, task->space);
             space_add_atom_id(task->space, task->optional_id);
             task->ok = space_length64(task->space) == BASE_ROW_COUNT + 1u;
         }
@@ -341,13 +341,13 @@ int main(void) {
     assert_concurrent_snapshot(
         &concurrent_space, &construction, query, true);
     {
-        CETTA_SCOPED_SHARED_TRANSITION(remove_transition);
+        CETTA_SCOPED_SPACE_WRITE(remove_transition, &concurrent_space);
         assert(space_remove_atom_id(&concurrent_space, optional_id));
     }
     assert_concurrent_snapshot(
         &concurrent_space, &construction, query, false);
     {
-        CETTA_SCOPED_SHARED_TRANSITION(add_transition);
+        CETTA_SCOPED_SPACE_WRITE(add_transition, &concurrent_space);
         space_add_atom_id(&concurrent_space, optional_id);
     }
     assert_concurrent_snapshot(

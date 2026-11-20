@@ -2888,7 +2888,7 @@ GSLT_PETTA_DIRECT_GATES_V1 = \
 	test-metta-interact-petta-v1 \
 	test-mettazero-petta-v1 \
 	test-zerouv-petta-v1 \
-	test-gslt-native-direct \
+	test-gslt-c-direct-v1 \
 	test-megalodon-gslt
 
 GSLT_COMPOSITION_WORK_V1 ?= runtime/gslt-through-transform-$(BUILD_OBJ_TAG)

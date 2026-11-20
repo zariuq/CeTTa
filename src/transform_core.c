@@ -41,56 +41,6 @@ static bool transform_cursor_reference(void) {
     return setting && strcmp(setting, "1") == 0;
 }
 
-typedef struct {
-    bool ready, receipts, checked, terms;
-} TfProcessOptions;
-
-static _Thread_local TfProcessOptions transform_options;
-extern char **environ;
-
-/* Process options are sampled together on first use. One environment walk
- * avoids repeating three absent-key searches on a cold firing. As with the
- * engine selector, no environment string is retained. */
-static void transform_options_init(void) {
-    if (transform_options.ready) return;
-    TfProcessOptions options = {.receipts = true};
-    unsigned seen = 0u;
-    for (char **entry = environ; entry && *entry; entry++) {
-        const char *name = *entry;
-        static const char prefix[] = "CETTA_TRANSFORM_TCALC_";
-        if (name[0] != 'C' || name[1] != 'E' ||
-            strncmp(name, prefix, sizeof(prefix) - 1u) != 0) continue;
-        name += sizeof(prefix) - 1u;
-        if (!(seen & 1u) && strncmp(name, "RECEIPTS=", 9u) == 0) {
-            options.receipts = strcmp(name + 9u, "0") != 0;
-            seen |= 1u;
-        } else if (!(seen & 2u) && strncmp(name, "CHECKED=", 8u) == 0) {
-            options.checked = strcmp(name + 8u, "0") != 0;
-            seen |= 2u;
-        } else if (!(seen & 4u) && strncmp(name, "CARRIER=", 8u) == 0) {
-            options.terms = strcmp(name + 8u, "terms") == 0;
-            seen |= 4u;
-        }
-    }
-    options.ready = true;
-    transform_options = options;
-}
-
-static bool transform_match_receipts(void) {
-    transform_options_init();
-    return transform_options.receipts;
-}
-
-bool cetta_transform_tcalc_checking(void) {
-    transform_options_init();
-    return transform_options.checked;
-}
-
-bool cetta_transform_tcalc_terms(void) {
-    transform_options_init();
-    return transform_options.terms;
-}
-
 /* ── The plan ──────────────────────────────────────────────────────────── */
 
 enum {
@@ -587,9 +537,22 @@ static bool tf_spend(TfFire *f) {
     return true;
 }
 
+/* A PeTTa read or take meets a stored row as PeTTa's match does: a cell of
+ * a list whose rest is not yet known (PeTTa's [H|T]) is the list it spells,
+ * and meets a flat list there, binding its rest; a `cons` written in a
+ * pattern or a row is data.  Until a process has built a cell no value holds
+ * one, and the match is structural.  HE matches structurally. */
+static bool tf_match_in(TfFire *f, Arena *arena, Atom *left, Atom *right) {
+    if (f->host->dialect == CETTA_TRANSFORM_DIALECT_PETTA &&
+        petta_semantics_open_cons_built())
+        return petta_semantics_match_lowered_head(arena, left, right,
+                                                  &f->builder);
+    return match_atoms_builder(left, right, &f->builder, arena);
+}
+
 static bool tf_unify(TfFire *f, Atom *left, Atom *right) {
     if (!f->host->logic || !f->host->logic->unify)
-        return match_atoms_builder(left, right, &f->builder, f->scratch);
+        return tf_match_in(f, f->scratch, left, right);
     int decision = f->host->logic->unify(f->host->context, f->scratch, &f->builder, left, right);
     if (decision == 2 || decision < 0) f->interrupted = true;
     return decision == 1;
@@ -1686,8 +1649,7 @@ CettaTransformOutcome cetta_transform_candidate_cursor_next(
                 break;
             }
         }
-        if (!match_atoms_builder(c->pattern, candidate, &f->builder,
-                                 &cursor->scratch)) {
+        if (!tf_match_in(f, &cursor->scratch, c->pattern, candidate)) {
             tf_cursor_backtrack(cursor, at);
             continue;
         }
@@ -2908,7 +2870,7 @@ CettaTransformOutcome cetta_transform_fire(
     }
     f.borrow_match = cetta_transform_engine() == CETTA_TRANSFORM_ENGINE_TCALC &&
         host->decide_firing &&
-        transform_match_receipts() && !host->spend && !f.plan.has_let && !f.plan.has_all;
+        cetta_transform_tcalc_receipts() && !host->spend && !f.plan.has_let && !f.plan.has_all;
     for (size_t i = 0u; f.borrow_match && i < f.plan.len; i++)
         f.borrow_match = !f.plan.items[i].joint &&
             (f.plan.items[i].kind == TF_READ || f.plan.items[i].kind == TF_TAKE ||

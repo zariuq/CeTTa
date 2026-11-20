@@ -72,9 +72,11 @@ if rg -Fq '(superpose (collapse (admitted:gslt:mode:BNFScalarOrderDiagnosticV1:1
 fi
 
 # The checked route is now the public implementation. Preserve an exact
-# snapshot for source-mutation probes; no replacement orchestration is added.
-cp lib/lib_bnf.metta "$bnf_evidence/candidate-library.metta"
-cmp lib/lib_bnf.metta "$bnf_evidence/candidate-library.metta"
+# snapshot for source-mutation probes, less its import of the installed
+# realization: each run loads the program generated here.
+sed '\#^!(import! &self \.\./langdef/he/generated/plain_bnf_semantic_admission_v1\.metta)$#d' \
+    lib/lib_bnf.metta > "$bnf_evidence/candidate-library.metta"
+test "$(( $(wc -l < lib/lib_bnf.metta) - 1 ))" = "$(wc -l < "$bnf_evidence/candidate-library.metta")"
 test "$(rg -c '^\(= \(bnf:validate-document ' "$bnf_evidence/candidate-library.metta")" = 1
 sha256sum "$bnf_evidence/candidate-library.metta" >> "$bnf_evidence/inputs.sha256"
 bnf_count=0

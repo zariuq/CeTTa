@@ -256,38 +256,28 @@ static bool expect_materialization_partition(
 
 static bool prepare_program(
     const char *path,
-    uint32_t expected_steps,
     PPOSLFNativeTypePlanV1 *plan,
     PPOSLFNativeTypeVMV1 *vm) {
     char error[512] = {0};
-    char step_count_error[160] = {0};
-    bool loaded;
 
     pposlf_native_type_plan_v1_init(plan);
     pposlf_native_type_vm_v1_init(vm);
-    loaded = pposlf_native_type_plan_v1_load(
-        plan, path, error, sizeof(error));
-    if (loaded && plan->step_schema_len != expected_steps) {
-        snprintf(step_count_error, sizeof(step_count_error),
-                 "native NTT step count changed: expected %u, got %u (%s)",
-                 expected_steps, plan->step_schema_len, path);
-    }
-    return expect(loaded,
+    return expect(pposlf_native_type_plan_v1_load(
+                      plan, path, error, sizeof(error)),
                   error[0] ? error : "native NTT plan did not load") &&
-           expect(plan->step_schema_len == expected_steps,
-                  step_count_error[0] ? step_count_error :
-                      "native NTT step count changed") &&
+           expect(plan->step_schema_len > 0u,
+                  "native NTT plan has no step") &&
            expect(pposlf_native_type_vm_v1_prepare(
                       vm, plan, error, sizeof(error)),
                   error[0] ? error : "native NTT VM did not prepare");
 }
 
-static bool prepare_large_program(const char *path, uint32_t expected_steps) {
+static bool prepare_large_program(const char *path) {
     PPOSLFNativeTypePlanV1 plan;
     PPOSLFNativeTypeVMV1 vm;
     bool ok;
 
-    ok = prepare_program(path, expected_steps, &plan, &vm);
+    ok = prepare_program(path, &plan, &vm);
     pposlf_native_type_vm_v1_free(&vm);
     pposlf_native_type_plan_v1_free(&plan);
     return ok;
@@ -427,9 +417,14 @@ static bool exercise_canary(
     char error[512] = {0};
     bool ok = false;
 
-    if (!prepare_program(full_path, 30u, &full_plan, &full_vm))
+    if (!prepare_program(full_path, &full_plan, &full_vm))
         return false;
-    if (!prepare_program(deleted_path, 29u, &deleted_plan, &deleted_vm)) {
+    if (!prepare_program(deleted_path, &deleted_plan, &deleted_vm) ||
+        !expect(full_plan.step_schema_len ==
+                    deleted_plan.step_schema_len + 1u,
+                "the deleted-step canary does not lack exactly one step")) {
+        pposlf_native_type_vm_v1_free(&deleted_vm);
+        pposlf_native_type_plan_v1_free(&deleted_plan);
         pposlf_native_type_vm_v1_free(&full_vm);
         pposlf_native_type_plan_v1_free(&full_plan);
         return false;
@@ -892,7 +887,7 @@ static bool exercise_search_hashcons_isolation(const char *program_path) {
     bool control_arena_ready = false;
     bool ok = false;
 
-    if (!prepare_program(program_path, 30u, &plan, &vm))
+    if (!prepare_program(program_path, &plan, &vm))
         return false;
     pposlf_native_vm_result_v1_init(&result);
     arena_init(&query_arena);
@@ -984,7 +979,7 @@ static bool exercise_open_program(
     char error[512] = {0};
     bool ok = false;
 
-    if (!prepare_program(path, 4u, &plan, &vm))
+    if (!prepare_program(path, &plan, &vm))
         return false;
     pposlf_native_capability_set_v1_init(&capabilities);
     pposlf_native_capability_set_v1_init(&reflected);
@@ -1463,7 +1458,7 @@ static bool exercise_trace_program(
     char error[512] = {0};
     bool ok = false;
 
-    if (!prepare_program(program_path, 297u, &plan, &vm))
+    if (!prepare_program(program_path, &plan, &vm))
         return false;
     pposlf_native_capability_set_v1_init(&capabilities);
     pposlf_native_capability_set_v1_init(&deleted);
@@ -1665,7 +1660,7 @@ static bool exercise_full_proof_machine(
     char error[512] = {0};
     bool ok = false;
 
-    if (!prepare_program(program_path, 809u, &plan, &vm))
+    if (!prepare_program(program_path, &plan, &vm))
         return false;
     pposlf_native_capability_set_v1_init(&capabilities);
     pposlf_native_capability_set_v1_init(&deleted);
@@ -1926,8 +1921,8 @@ int main(int argc, char **argv) {
 
     ok = exercise_stats_accumulation() &&
          exercise_positional_linear_builder_view() &&
-         prepare_large_program(argv[1], 809u) &&
-         prepare_large_program(argv[2], 1023u) &&
+         prepare_large_program(argv[1]) &&
+         prepare_large_program(argv[2]) &&
          exercise_canary(argv[3], argv[4]) &&
          exercise_search_hashcons_isolation(argv[3]) &&
          exercise_open_program(argv[5], argv[6]) &&

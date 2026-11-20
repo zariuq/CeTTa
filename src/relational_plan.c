@@ -936,7 +936,7 @@ static bool relational_open_parts(
 bool cetta_relational_plan_prepare(
     Space *space, Arena *scratch, Atom *const *patterns, size_t pattern_count,
     const Bindings *seed, CettaRelationalAdmission admission, CettaRelationalPlan **out) {
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CETTA_SCOPED_SPACE_OBSERVE(shared_read, space);
     size_t budget = RELATIONAL_OPEN_PARTS;
     return relational_plan_prepare_with(space, scratch, patterns, pattern_count,
                                         seed, admission, NULL, &budget, out);

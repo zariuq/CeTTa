@@ -432,9 +432,22 @@ Atom *cetta_source_occurrence_view_dispatch_v1(CettaLibraryContext *ctx, Arena *
     bool selects = atom_is_symbol(head, "__cetta_lib_source_occurrence_select_v1");
     bool contracts = atom_is_symbol(head, "__cetta_lib_source_occurrence_contract_v1");
     if (!captures && !selects && !contracts) return NULL;
-    /* Validation and the update it authorizes share one transition. A
-     * mutation while this operation waits must invalidate its capture. */
-    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    /* Validation and the update it authorizes share one section of the
+     * space they read: a mutation while this operation waits for the guard
+     * must invalidate its capture.  A view's selection state is its
+     * space's, so selections take that space's guard too. */
+    const Space *space = NULL;
+    if (captures && nargs == 1u && args[0] && args[0]->kind == ATOM_GROUNDED &&
+        args[0]->ground.gkind == GV_SPACE)
+        space = args[0]->ground.ptr;
+    else if (contracts && nargs == 3u && args[1] &&
+             args[1]->kind == ATOM_GROUNDED && args[1]->ground.gkind == GV_SPACE)
+        space = args[1]->ground.ptr;
+    else if (selects && nargs == 2u) {
+        OccurrenceView *view = cetta_native_handle_get_owned(ctx, args[0], KIND);
+        space = view ? view->token.space : NULL;
+    }
+    CETTA_SCOPED_SPACE_WRITE(transition, space);
     if (captures) return capture(ctx, a, head, args, nargs);
     if (selects) return select_rows(ctx, a, head, args, nargs);
     return contract(ctx, a, head, args, nargs);

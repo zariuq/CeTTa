@@ -1,0 +1,28 @@
+(index 0 (relation blocked 2) (paths 1))
+(index 1 (relation edge 3) (paths 1))
+(index 2 (relation at 2) (paths 1))
+(plans move
+  (enter 0
+    (probe 0 (relation at 2) (rows))
+    (unify 0)
+    (absent 0 (relation blocked 2) (index 0 1) (keys $0))
+    (probe 1 (relation edge 3) (index 1 1) (keys $0))
+    (unify 1)
+    (take 0)
+    (make 0))
+  (enter 1
+    (probe 1 (relation edge 3) (rows))
+    (unify 1)
+    (absent 0 (relation blocked 2) (index 0 1) (keys $0))
+    (probe 0 (relation at 2) (index 2 1) (keys $0))
+    (unify 0)
+    (take 0)
+    (make 0))
+  (every
+    (probe 0 (relation at 2) (rows))
+    (unify 0)
+    (absent 0 (relation blocked 2) (index 0 1) (keys $0))
+    (probe 1 (relation edge 3) (index 1 1) (keys $0))
+    (unify 1)
+    (take 0)
+    (make 0)))

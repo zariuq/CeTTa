@@ -71,6 +71,24 @@ def main():
     run(two + "!(let $code (hold (let $x (two) $x)) "
         "(let $a (run $code) (let $b (run $code) (Pair $a $b))))", [pairs])
     for profile in ("native", "eager"):
+        query = ("(edge a b) (edge a b) "
+                 "(= (q $tag) (match &self (edge $tag $y) $y)) "
+                 "(= (q $tag) (match &self (edge $tag $y) $y)) ")
+        run(query + "!(count (reify (q $x))) "
+            "!(let $bag (reify (q $x)) "
+            "  (count (reify (chain (unify $x z) $_ (reflect $bag)))))",
+            [["4"], ["0"]], profile)
+        run(query + "!(let $bag (reify (q $x)) "
+            "  (let $value (reflect $bag) (Pair $x $value)))", [["(Pair a b)"] * 4], profile)
+        run(two + "!(hold (two)) !(run (hold (two)))", [["(two)"], ["0", "1"]], profile)
+        run("!(car-atom (collapse (superpose (b a))))",
+            [["(Error (car-atom (collapse (superpose (b a)))) ExpectedAnswerSequence)"]], profile)
+        for first, last in (("a", "b"), ("b", "a")):
+            run(f"!(bind! &s (new-space)) !(add-atom &s {first}) !(add-atom &s {last}) "
+                "!(let $t (match &s $x (chain (remove-atom &s $x) $_ "
+                "  (let $n (count (reify (match &s $y $y))) (Pair $x $n)))) (run $t)) "
+                "!(count (reify (match &s $z $z)))",
+                [["()"], ["()"], ["()"], [f"(Pair {last} 1)", f"(Pair {first} 0)"], ["0"]], profile)
         run("(: raw (-> Atom Atom)) (= (raw $x) $x) !(raw (+ 1 2))", [["(+ 1 2)"]], profile)
         run("(: same-type (-> $T $T $T)) (= (same-type $a $b) $b) "
             "!(same-type (+ 1 2) (+ 2 3)) !(same-type 4 True)",
@@ -264,10 +282,27 @@ def main():
         "!(count (transform &s (, (take only) (take &alias only)) both)) "
         "!(count (reify (match &s only spare)))",
         [["()"], ["()"], ["()"], ["0"], ["1"]])
+    for left, right in (("&s", "&t"), ("&t", "&s")):
+        payment = "(reflect (transform {space} (, (take coin) (read witness)) paid))"
+        run("!(bind! &s (new-space)) !(bind! &t (new-space)) "
+            "!(add-atom &s coin) !(add-atom &s witness) "
+            "!(add-atom &t coin) !(add-atom &t witness) "
+            f"!{payment.format(space=left)} !{payment.format(space=right)} "
+            "!(reflect (serialize canonical (reify (match &s $r $r)))) "
+            "!(reflect (serialize canonical (reify (match &t $r $r))))",
+            [["()"]] * 6 + [["paid"], ["paid"], ["paid", "witness"], ["paid", "witness"]])
     ground_firing = ("!(bind! &s (new-space)) !(add-atom &s coin) !(add-atom &s witness) "
                      "!(reflect (transform &s (, (take coin) (read witness)) paid)) "
-                     "!(count (reify (match &s $row $row)))")
-    ground_answers = [["()"], ["()"], ["()"], ["paid"], ["2"]]
+                     "!(reflect (serialize canonical (reify (match &s $row $row))))")
+    ground_answers = [["()"], ["()"], ["()"], ["paid"], ["paid", "witness"]]
+    standalone = subprocess.run(
+        [binary, "--lang", "tcalc", "--profile",
+         "step=one;ask=after-tells;store=multiset;matches=symmetric", str(fixtures / "payment.tcalc")],
+        capture_output=True, text=True, timeout=90, check=True)
+    assert [line for line in standalone.stdout.splitlines() if line.startswith("(outcome ")] == [
+        "(outcome paid witness)"], standalone.stdout
+    assert "(finished true)" in standalone.stdout, standalone.stdout
+    count += 1
     protocol = {"CETTA_TRANSFORM_ENGINE": "tcalc", "CETTA_TRANSFORM_TRACE": "1",
                 "CETTA_TRANSFORM_TCALC_CHECKED": "1", "CETTA_TRANSFORM_TCALC_CARRIER": "host"}
     run(ground_firing, ground_answers,

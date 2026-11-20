@@ -201,4 +201,5 @@ bool rc_value_bytes(int sort, T *x, const uint8_t **p, size_t *n);
 size_t rc_value_items(int sort, T *x, RcItem *buf, size_t cap);
 size_t rc_list_items(int sort, T **cursor, RcItem *buf, size_t cap);
 T *rc_call(int judgment, T **a);
+void rc_solve(int judgment, T **a, const RcK *k);
 #endif

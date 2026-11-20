@@ -3,7 +3,6 @@ after-literal
 after-built
 after-passed
 done
-(Error foo)
 true
 (Error foo bar)
 true

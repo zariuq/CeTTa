@@ -39,7 +39,7 @@
       ]
     },
     {
-      "directory": "tests/langdef/native_direct",
+      "directory": "tests/langdef/gslt_c",
       "suffixes": [
         "*"
       ]
@@ -278,7 +278,7 @@
       "test-gslt-petta-static-calls-v1"
     ],
     "tests/langdef": [
-      "test-gslt-native-direct"
+      "test-gslt-c-direct-v1"
     ],
     "langdef/zero": [
       "test-mettazero-petta-v1"

@@ -352,6 +352,8 @@
   (invocation-head last 1 list-unary 0 1)
   (invocation-head reverse 1 list-unary 0 1)
   (invocation-head msort 1 list-unary 0 1)
+  (invocation-head sort 1 list-unary 0 1)
+  (invocation-head sort 3 list-unary 0 3)
   (invocation-head sort-atom 1 list-unary 0 1)
   (invocation-form petta predicate 1 predicate-value 0 1)
   (invocation-form petta list-to-set 1 list-set 0 1)

@@ -1,14 +1,16 @@
 /* rc_rt.c - runtime of procedures compiled by rulec (see rc_rt.h). */
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include "rc_rt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 
-char *rc_hp, *rc_hlim;
-RcStats rc_stats;
-T *rc_roots[8];
+RC_HEAP_LOCAL char *rc_hp, *rc_hlim;
+RC_HEAP_LOCAL RcStats rc_stats;
+RC_HEAP_LOCAL T *rc_roots[8];
 TH rc_empty_bytes = {0, RC_SPACE_STATIC, RC_FLAG_BYTES, 0};
 #ifdef RC_PROFILE
 uint64_t rc_prof_objects;
@@ -30,7 +32,7 @@ static Chunk *chunk_new(size_t bytes) {
 static void chunks_free(Chunk *c) { while (c) { Chunk *n = c->next; free(c->start); free(c); c = n; } }
 
 static size_t young_chunk_bytes = (size_t)8 << 20;
-static Chunk *young_first, *young_cur;
+static RC_HEAP_LOCAL Chunk *young_first, *young_cur;
 /* the young chunks after the first are kept for the next run (or the next fill after a minor
  * collection) up to this many bytes in all, so that a run that fills as much as an earlier one
  * writes memory already mapped instead of faulting in fresh pages; the rest is freed */
@@ -49,11 +51,11 @@ static void young_rewind(void) {
     rc_hp = young_first->start;
     rc_hlim = young_first->end;
 }
-static Chunk *old_first, *old_cur;
-static char *old_hp;
-static uint8_t cur_old = RC_SPACE_OLD0;
-static uint64_t old_bytes_in_use, old_live_after_major;
-static uint64_t major_threshold = (uint64_t)64 << 20;
+static RC_HEAP_LOCAL Chunk *old_first, *old_cur;
+static RC_HEAP_LOCAL char *old_hp;
+static RC_HEAP_LOCAL uint8_t cur_old = RC_SPACE_OLD0;
+static RC_HEAP_LOCAL uint64_t old_bytes_in_use, old_live_after_major;
+static RC_HEAP_LOCAL uint64_t major_threshold = (uint64_t)64 << 20;
 
 void rc_runtime_init(size_t young_chunk) {
     if (young_chunk) young_chunk_bytes = young_chunk;
@@ -62,6 +64,24 @@ void rc_runtime_init(size_t young_chunk) {
         rc_hp = young_cur->start;
         rc_hlim = young_cur->end;
     }
+}
+
+void rc_heap_swap(RcHeap *h) {
+    RcHeap cur = {young_first, young_cur, old_first, old_cur, rc_hp, rc_hlim, old_hp, cur_old,
+                  old_bytes_in_use, old_live_after_major, major_threshold};
+    if (young_cur) young_cur->top = rc_hp;
+    young_first = h->young_first; young_cur = h->young_cur;
+    old_first = h->old_first; old_cur = h->old_cur;
+    rc_hp = h->hp; rc_hlim = h->hlim; old_hp = h->old_hp;
+    cur_old = h->cur_old ? h->cur_old : RC_SPACE_OLD0;
+    old_bytes_in_use = h->old_bytes_in_use; old_live_after_major = h->old_live_after_major;
+    major_threshold = h->major_threshold ? h->major_threshold : (uint64_t)64 << 20;
+    *h = cur;
+}
+void rc_heap_free(RcHeap *h) {
+    chunks_free(h->young_first);
+    chunks_free(h->old_first);
+    *h = (RcHeap){0};
 }
 
 uint64_t rc_young_in_use(void) {
@@ -75,6 +95,13 @@ uint64_t rc_young_in_use(void) {
 uint64_t rc_old_in_use(void) { return old_bytes_in_use; }
 
 T *rc_alloc_slow(size_t b) {
+    if (!young_cur) {   /* an empty heap: its first young chunk */
+        young_first = young_cur = chunk_new(b > young_chunk_bytes ? b : young_chunk_bytes);
+        young_cur->top = young_cur->start;
+        rc_hp = young_cur->start + b;
+        rc_hlim = young_cur->end;
+        return (T *)young_cur->start;
+    }
     young_cur->top = rc_hp;
     if (young_cur->next && (size_t)(young_cur->next->end - young_cur->next->start) >= b) {
         young_cur = young_cur->next;
@@ -117,8 +144,8 @@ _Noreturn void rc_refinement_fail(const char *what) {
 }
 
 /* --------------------------------------------------------------- old space */
-static Chunk *to_first, *to_cur;  /* the space being filled during a copy */
-static char *to_hp;
+static RC_HEAP_LOCAL Chunk *to_first, *to_cur;  /* the space being filled during a copy */
+static RC_HEAP_LOCAL char *to_hp;
 
 static T *to_alloc(size_t b) {
     if (!to_cur || (size_t)(to_cur->end - to_hp) < b) {
@@ -134,8 +161,8 @@ static T *to_alloc(size_t b) {
     return r;
 }
 
-static uint8_t to_space_id;
-static uint64_t copied_bytes;
+static RC_HEAP_LOCAL uint8_t to_space_id;
+static RC_HEAP_LOCAL uint64_t copied_bytes;
 
 static inline T *evacuate(T *x, bool major) {
     if (!RC_IS_HEAP(x)) return x;                         /* immediate or foreign */
@@ -346,7 +373,7 @@ bool rc_term_equal(const T *a, const T *b) {
             break;
         }
         if ((x->flags & RC_FLAG_BYTES) != (y->flags & RC_FLAG_BYTES) || x->n != y->n) { eq = false; break; }
-        if (x->flags & RC_FLAG_BYTES) { if (memcmp(x->k, y->k, x->n)) eq = false; continue; }
+        if (x->flags & RC_FLAG_BYTES) { if (x->tag != y->tag || memcmp(x->k, y->k, x->n)) eq = false; continue; }
         if (x->tag != y->tag) { eq = false; break; }
         for (uint32_t i = 0; i < x->n; i++) {
             if (sp + 2 > 2 * cap) { cap *= 2; st = realloc(st, 2 * cap * sizeof(T *)); if (!st) { fputs("rc: out of memory\n", stderr); exit(3); } }

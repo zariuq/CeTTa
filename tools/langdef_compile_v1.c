@@ -3016,8 +3016,6 @@ static bool compile_petta_direct_command_v1(
             entry_modes[entry_mode_count++] = value;
         } else if (strcmp(option, "--target") == 0 && target_name == NULL) {
             target_name = value;
-        } else if (strcmp(option, "--c-prefix") == 0) {
-            cetta_gslt_native_set_prefix_v1(value);
         } else if (strcmp(option, "--out") == 0 && output == NULL) {
             output = value;
         } else {
@@ -3036,6 +3034,7 @@ static bool compile_petta_direct_command_v1(
             target = CETTA_GSLT_DIRECT_TARGET_HE_V1;
         } else if (strcmp(target_name, "c") == 0) {
             target = CETTA_GSLT_DIRECT_TARGET_C_V1;
+            cetta_gslt_rulec_set_output_v1(output);
         } else if (strcmp(target_name, "petta") != 0) {
             set_error(error, error_size,
                       "petta-direct --target must be petta, he or c");
@@ -3148,6 +3147,109 @@ done:
     free(program);
     cetta_language_def_core_v1_free(&admission_language);
     cetta_op_lang_v1_free(&admission_wire);
+    arena_free(&arena);
+    return ok;
+}
+
+/* tcalc-direct: the closed entry residual as a tcalc program read by demand
+ * (gslt_tcalc_direct_v1.c), from the sources, closed entry modes and native
+ * types petta-direct takes; the front end hands its analysis to the tcalc
+ * renderer (CETTA_GSLT_DIRECT_TARGET_TCALC_V1). */
+static bool compile_tcalc_direct_command_v1(
+    int argc, char **argv, size_t *rule_count,
+    char source_digest[65], char artifact_digest[65],
+    char *error, size_t error_size) {
+    const char **sources = NULL;
+    size_t source_count = 0u;
+    const char *composition = NULL;
+    const char *native_types_path = NULL;
+    const char *output = NULL;
+    const char **entry_modes = NULL;
+    size_t entry_mode_count = 0u;
+    Atom **presentations = NULL;
+    Atom *native_type_packet = NULL;
+    Arena arena;
+    uint8_t *program = NULL;
+    size_t program_len = 0u;
+    bool ok = false;
+
+    arena_init(&arena);
+    sources = calloc((size_t)argc, sizeof(*sources));
+    entry_modes = calloc((size_t)argc, sizeof(*entry_modes));
+    if (!sources || !entry_modes) {
+        set_error(error, error_size, "out of memory reading tcalc-direct options");
+        goto done;
+    }
+    for (int index = 2; index < argc; index++) {
+        const char *option = argv[index];
+        const char *value;
+        if (index + 1 >= argc) {
+            set_error(error, error_size, "tcalc-direct option lacks a value");
+            goto done;
+        }
+        value = argv[++index];
+        if (strcmp(option, "--source") == 0) {
+            sources[source_count++] = value;
+        } else if (strcmp(option, "--composition") == 0 && composition == NULL) {
+            composition = value;
+        } else if (strcmp(option, "--native-types") == 0 && native_types_path == NULL) {
+            native_types_path = value;
+        } else if (strcmp(option, "--closed-entry-mode") == 0) {
+            entry_modes[entry_mode_count++] = value;
+        } else if (strcmp(option, "--out") == 0 && output == NULL) {
+            output = value;
+        } else {
+            set_error(error, error_size, "invalid or repeated tcalc-direct option");
+            goto done;
+        }
+    }
+    if ((source_count == 0u) == (composition == NULL) || output == NULL ||
+        entry_mode_count == 0u) {
+        set_error(error, error_size,
+                  "tcalc-direct requires exactly one source list or composition, closed entry modes and an output");
+        goto done;
+    }
+    if (composition != NULL &&
+        !direct_sources_from_composition_v1(
+            composition, &arena, &sources, &source_count,
+            "tcalc-direct", error, error_size))
+        goto done;
+    presentations = calloc(source_count, sizeof(*presentations));
+    if (!presentations) {
+        set_error(error, error_size, "out of memory reading presentations");
+        goto done;
+    }
+    for (size_t index = 0u; index < source_count; index++) {
+        presentations[index] = cetta_langdef_read_single_form(
+            sources[index], &arena, error, error_size);
+        if (presentations[index] == NULL)
+            goto done;
+    }
+    if (native_types_path != NULL) {
+        native_type_packet = cetta_langdef_read_single_form(
+            native_types_path, &arena, error, error_size);
+        if (native_type_packet == NULL)
+            goto done;
+    }
+    if (!(native_type_packet != NULL
+              ? cetta_gslt_petta_direct_native_types_v1(
+                    presentations, source_count, CETTA_GSLT_DIRECT_TARGET_TCALC_V1,
+                    native_type_packet, entry_modes, entry_mode_count, true,
+                    &program, &program_len, rule_count, source_digest,
+                    error, error_size)
+              : cetta_gslt_petta_direct_closed_v1(
+                    presentations, source_count, CETTA_GSLT_DIRECT_TARGET_TCALC_V1,
+                    entry_modes, entry_mode_count, &program, &program_len,
+                    rule_count, source_digest, error, error_size)))
+        goto done;
+    cetta_native_sha256_hex(program, program_len, artifact_digest);
+    ok = write_atomic(output, program, program_len, error, error_size);
+
+done:
+    free(sources);
+    free(entry_modes);
+    free(presentations);
+    free(program);
     arena_free(&arena);
     return ok;
 }
@@ -6724,12 +6826,14 @@ static void usage(const char *program) {
             "  %s equations (--source FILE... | --composition FILE) "
             "--out FILE\n"
             "  %s petta-direct (--source FILE... | --composition FILE) "
-            "[--target petta|he|c [--c-prefix NAME]] "
+            "[--target petta|he|c] "
             "[--entry-mode RELATION:BITS... | "
             "--closed-entry-mode RELATION:BITS...] "
             "[--native-types FILE] "
             "[--admission-language FILE --admission-entry RELATION:TYPE] "
             "[--epilogue FILE] --out FILE\n"
+            "  %s tcalc-direct (--source FILE... | --composition FILE) "
+            "--closed-entry-mode RELATION:BITS... [--native-types FILE] --out FILE\n"
             "  %s rhometta-direct (--source FILE... | --composition FILE) "
             "--target PRESENTATION... "
             "[--entry-rule NAME...] [--epilogue FILE] --out FILE\n"
@@ -6768,7 +6872,7 @@ static void usage(const char *program) {
             program, program, program, program, program, program, program,
             program, program, program, program, program, program, program,
             program, program, program, program, program, program, program,
-            program, program, program);
+            program, program, program, program);
 }
 
 int main(int argc, char **argv) {
@@ -6785,6 +6889,7 @@ int main(int argc, char **argv) {
     bool semantic_gslt_command = false;
     bool petta_direct_command = false;
     bool rhometta_direct_command = false;
+    bool tcalc_direct_command = false;
     bool horn_shape_command = false;
     bool petta_horn_command = false;
     bool petta_horn_check_command = false;
@@ -6800,6 +6905,9 @@ int main(int argc, char **argv) {
     size_t petta_direct_rule_count = 0u;
     char petta_direct_source_digest[65] = {0};
     char petta_direct_artifact_digest[65] = {0};
+    size_t tcalc_direct_rule_count = 0u;
+    char tcalc_direct_source_digest[65] = {0};
+    char tcalc_direct_artifact_digest[65] = {0};
     size_t rhometta_direct_rule_count = 0u;
     size_t rhometta_direct_relation_count = 0u;
     char rhometta_direct_source_digest[65] = {0};
@@ -6828,6 +6936,12 @@ int main(int argc, char **argv) {
         ok = compile_petta_direct_command_v1(
             argc, argv, &petta_direct_rule_count,
             petta_direct_source_digest, petta_direct_artifact_digest,
+            error, sizeof(error));
+    } else if (strcmp(argv[1], "tcalc-direct") == 0) {
+        tcalc_direct_command = true;
+        ok = compile_tcalc_direct_command_v1(
+            argc, argv, &tcalc_direct_rule_count,
+            tcalc_direct_source_digest, tcalc_direct_artifact_digest,
             error, sizeof(error));
     } else if (strcmp(argv[1], "rhometta-direct") == 0) {
         rhometta_direct_command = true;
@@ -6994,6 +7108,11 @@ int main(int argc, char **argv) {
                petta_direct_rule_count,
                petta_direct_source_digest,
                petta_direct_artifact_digest);
+    else if (tcalc_direct_command)
+        printf("(GSLTDirectTcalcV1Summary %zu %s %s)\n",
+               tcalc_direct_rule_count,
+               tcalc_direct_source_digest,
+               tcalc_direct_artifact_digest);
     else if (rhometta_direct_command)
         printf("(GSLTDirectRhoMettaV1Summary %zu %zu %s %s)\n",
                rhometta_direct_rule_count,

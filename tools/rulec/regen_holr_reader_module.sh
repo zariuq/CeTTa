@@ -15,7 +15,8 @@
 # (bytes/lib_byte_modules.metta) and writes the compile request; the module-authoring client exports
 # the core and its ordered rules; tools/rulec/rules_to_wire.metta prints the core as rows
 # (generated/HOLRStream.wire, kept so that --wire regenerates from it alone).  rulec
-# (tools/rulec/compiler) compiles the rows with native/holr_reader_module/holr_reader.bindings;
+# (tools/rulec/compiler) compiles the rows, every judgment a function (--functional), with
+# native/holr_reader_module/holr_reader.bindings;
 # rulec_validate checks every DAG against the rules and the generated dispatch code against the DAGs.
 # Any failure stops before generated/ changes.  Then the instance's names (tools/rulec/instance_names.sh):
 # every global name of hrm_instance.c but cetta_holr_reader gets the prefix hrm_
@@ -57,7 +58,7 @@ fi
 tail -1 "$WORK/HOLRStream.wire" | grep -q '^(wire-end ' || { echo "regen: no wire rows" >&2; exit 1; }
 $CC -O2 -o "$WORK/rulec" "$ROOT"/tools/rulec/compiler/*.c
 $CC -O2 -o "$WORK/rulec_validate" "$ROOT/tools/rulec/rulec_validate.c"
-"$WORK/rulec" "$WORK/HOLRStream.wire" --cache-constants \
+"$WORK/rulec" "$WORK/HOLRStream.wire" --functional --cache-constants \
   --census "$SG/census.txt" --census-tsv "$WORK/census.tsv" --dag "$SG/HOLRStream.dag" \
   --bindings "$ROOT/native/holr_reader_module/holr_reader.bindings" \
   --include-rt ../../rule_runtime/rc_rt.h --component-prefix ../../rule_components/ --source-digest "$DIGEST" \
