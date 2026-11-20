@@ -6526,14 +6526,18 @@ static bool active_profile_is_petta_extended(void) {
             cetta_profile_uses_petta_typing(profile));
 }
 
+static unsigned eval_named_head_rule_form(void) {
+    return cetta_language_rules_need_named_head(eval_current_language_id())
+        ? CETTA_RULE_SYNTAX_NAMED_HEAD : 0u;
+}
+
 static unsigned eval_admitted_rule_forms(void) {
     const CettaProfile *profile = active_profile();
     return CETTA_RULE_SYNTAX_ORDINARY |
         (profile && (profile->id == CETTA_PROFILE_HE_EXTENDED ||
                      profile->id == CETTA_PROFILE_PETTA_EXTENDED)
             ? CETTA_RULE_SYNTAX_DIRECTIONAL : 0u) |
-        (cetta_language_rules_need_named_head(eval_current_language_id())
-            ? CETTA_RULE_SYNTAX_NAMED_HEAD : 0u);
+        eval_named_head_rule_form();
 }
 
 static bool eval_space_has_equations(Space *space, SymbolId head) {
@@ -6602,16 +6606,10 @@ bool eval_petta_steps_are_typed(void) {
     return active_profile_is_petta_typecheck_v2();
 }
 
-/* The typecheck-v2 profile is an additive proving ground over extended
-   PeTTa, so it inherits the existing arrow-mode behavior unchanged. */
-bool cetta_petta_profile_admits_arrow_modes(void) {
-    return active_profile_is_petta_extended();
-}
-
-/* Extended PeTTa retains the historical structural compatibility forms used
-   by PeTTaChainer: brand/the annotations erase and data builds a tuple.  The
-   dedicated typecheck-v2 profile additionally gives `the` a live obligation
-   and interprets `make-list`; those meanings must not affect extended. */
+/* Extended PeTTa keeps `data`, which builds a tuple from evaluated fields.
+   The typecheck profiles add a live obligation for `the`, `make-list`, and
+   the erasure of `brand` at ingestion; none of those affects extended, where
+   `brand` and `the` are ordinary data. */
 bool cetta_petta_profile_admits_typecheck_ops(void) {
     return active_profile_is_petta_extended();
 }
@@ -6692,9 +6690,8 @@ bool cetta_petta_source_head_has_runtime_meaning(
             strcmp(name, "reverse") == 0);
 }
 
-/* `data` is the historical extended-profile tuple constructor.  Live `the`
-   obligations and `make-list` belong only to the dedicated typecheck-v2
-   profile.  `brand`, and extended-profile `the`, erase at ingestion. */
+/* `data` is the extended-profile tuple constructor.  Live `the`
+   obligations and `make-list` belong only to the typecheck profiles. */
 bool cetta_petta_data_op_applies(SymbolId head,
                                  CettaExprLen nargs) {
     if (!cetta_petta_profile_admits_typecheck_ops() ||
@@ -6710,9 +6707,9 @@ bool cetta_petta_data_op_applies(SymbolId head,
             (nargs == 2u && strcmp(name, "the") == 0));
 }
 
-/* Translation-time erasure of representational checker marks.  Extended
-   preserves its established brand/the erasure.  Only typecheck-v2 retains
-   `the` so an open payload can carry a binding-time obligation.  An explicit
+/* Translation-time erasure of the typecheck profiles' `brand` marks.  Those
+   profiles keep `the`, so an open payload can carry a binding-time
+   obligation; every other profile reads both forms as data.  An explicit
    (quote ...) preserves its subtree literally. */
 typedef struct {
     AtomId source;
@@ -6759,7 +6756,7 @@ static void petta_id_rewrite_stack_free(
 }
 
 typedef struct {
-    SymbolId brand, the, as_pattern;
+    SymbolId brand, as_pattern;
     bool unwrap_eval_quote;
 } PettaSourcePolicy;
 
@@ -6796,7 +6793,7 @@ static unsigned petta_source_features(
             if (petta_semantics_form(head) == PETTA_FORM_LAMBDA)
                 found |= PETTA_SOURCE_LAMBDA;
             if (policy) {
-                if (head == policy->brand || head == policy->the)
+                if (head == policy->brand)
                     found |= PETTA_SOURCE_MARK;
                 if (head == policy->as_pattern)
                     found |= PETTA_SOURCE_AS_PATTERN;
@@ -6904,9 +6901,8 @@ static AtomId petta_erase_typecheck_marks_id(
                         continue;
                     }
                 }
-                if (head == SYMBOL_ID_NONE || arity != 3u)
-                    break;
-                if (head != policy->brand && head != policy->the)
+                if (head == SYMBOL_ID_NONE || arity != 3u ||
+                    head != policy->brand)
                     break;
                 frame->source = tu_child(universe, source, 2u);
             }
@@ -7924,10 +7920,10 @@ void cetta_petta_prepare_document_forms(
     bool typecheck = cetta_petta_profile_admits_typecheck_ops();
     PettaSourcePolicy policy = {0};
     if (typecheck) {
-        policy.unwrap_eval_quote = cetta_petta_profile_admits_native_typecheck_v2();
-        policy.brand = symbol_lookup_cstr(g_symbols, "brand");
-        policy.the = policy.unwrap_eval_quote ? SYMBOL_ID_NONE
-            : symbol_lookup_cstr(g_symbols, "the");
+        bool typed = cetta_petta_profile_admits_native_typecheck_v2();
+        policy.unwrap_eval_quote = typed;
+        policy.brand = typed ? symbol_lookup_cstr(g_symbols, "brand")
+                             : SYMBOL_ID_NONE;
         policy.as_pattern = symbol_lookup_cstr(g_symbols, "@");
     }
     for (int index = 0; index < atom_count; index++) {
@@ -8044,6 +8040,10 @@ bool eval_current_builtin_symbol_allowed(SymbolId head) {
     return g_library_context && cetta_native_module_builtin_enabled &&
         cetta_native_module_builtin_enabled(g_library_context,
             g_library_context->active_mask, symbol_bytes(g_symbols, head));
+}
+
+uint64_t eval_current_module_mask(void) {
+    return g_library_context ? g_library_context->active_mask : 0u;
 }
 
 /* Native additions fill undefined PeTTa names.  An exact authored or
@@ -18118,7 +18118,7 @@ static bool stream_visit_collect(Arena *a, Atom *atom, const Bindings *env, void
 
 static void stream_emit(Space *s, Arena *a, Atom *stream_expr, int fuel,
                         bool bounded, int64_t limit, bool preserve_bindings,
-                        CettaSearchPolicyOrder order,
+                        CettaSearchPolicyOrder order, bool first_transform_firing,
                         OutcomeSet *os) {
     Bindings _empty;
     bindings_init(&_empty);
@@ -18131,7 +18131,8 @@ static void stream_emit(Space *s, Arena *a, Atom *stream_expr, int fuel,
         order == CETTA_SEARCH_POLICY_ORDER_NATIVE) {
         OutcomeSet first_transform;
         outcome_set_init(&first_transform);
-        if (cetta_eval_transform_first(s, a, stream_expr, &first_transform)) {
+        if (cetta_eval_transform_first(s, a, stream_expr,
+                                       first_transform_firing, &first_transform)) {
             if (eval_unwinding()) {
                 outcome_set_free(&first_transform);
                 return;
@@ -23431,7 +23432,7 @@ static Atom *runtime_stats_inventory_atom(Arena *a) {
 static bool is_function_type(Atom *a) {
     /* HE uses (-> (->)) for zero-argument functions, so a valid function type
        can have just the arrow head plus a return type.
-       Determinism-annotated arrows (`-[mode]->`, extended PeTTa) are
+       Determinism-annotated arrows (`-[mode]->`) are
        deliberately NOT function types here: in the reference, runtime
        callability is decided by a head's equations, and a mode arrow on a
        equationless head declares a CONSTRUCTOR's field types (the chainer
@@ -28545,18 +28546,16 @@ static bool eval_try_transform_run(Space *space, Arena *arena, Atom *call,
 }
 
 bool cetta_eval_transform_first(Space *space, Arena *a, Atom *call,
-                                OutcomeSet *answers) {
-    if (!space || !a || !call || call->kind != ATOM_EXPR || !answers ||
-        (call->expr.len != 4u && call->expr.len != 5u))
+                                bool first_firing, OutcomeSet *answers) {
+    if (!space || !a || !answers || !cetta_transform_is_run_call(call))
         return false;
-    SymbolId head = atom_head_symbol_id(call);
-    if (head != cetta_transform_name_id(CETTA_TRANSFORM_NAME_TRANSFORM) &&
-        !eval_transform_run_head(head, call->expr.len - 1u))
-        return false;
-    bool he = eval_current_language_id() == CETTA_LANGUAGE_HE;
+    CettaLanguageId language = eval_current_language_id();
+    bool he = language == CETTA_LANGUAGE_HE;
+    CettaTransformDemand demand = first_firing && language == CETTA_LANGUAGE_PETTA
+        ? CETTA_TRANSFORM_FIRST_FIRING : CETTA_TRANSFORM_FIRST;
     EvalTransformProducer *producer = eval_transform_producer_open(space, call,
         he ? CETTA_TRANSFORM_DIALECT_HE : CETTA_TRANSFORM_DIALECT_PETTA,
-        -1, CETTA_TRANSFORM_FIRST);
+        -1, demand);
     if (!producer)
         return false;
     /* An entered producer can have committed an answerless prefix. The
@@ -49768,13 +49767,14 @@ static bool petta_native_query_types_transparent(Space *root, Arena *arena,
 }
 
 /* The equations of HEAD a function reads: the language's rules, so a PeTTa
- * equation whose left side applies no symbol is a fact here too. */
+ * equation whose left side applies no symbol is a fact here too.
+ * Read the language bit directly. Masking the profile-dependent forms can
+ * leave a dead TLS call in GCC PIC builds (PR128437). */
 static bool petta_equation_cursor_init(Space *space, SymbolId head,
                                        SpaceEquationCursor *cursor) {
     return head != SYMBOL_ID_NONE &&
         space_rule_cursor_init(space, head, CETTA_RULE_SYNTAX_ORDINARY |
-            (eval_admitted_rule_forms() & CETTA_RULE_SYNTAX_NAMED_HEAD),
-            cursor);
+            eval_named_head_rule_form(), cursor);
 }
 
 /* A call of a function ROOT defines by equations of which one meets the
@@ -53749,23 +53749,17 @@ static CettaOwnedExecutionStep petta_eval_machine_transform_next(void *context,
 }
 
 static bool petta_eval_machine_transform_open(void *context, Space *space,
-        Arena *arena, Atom *call, CettaOwnedExecution *execution) {
+        Arena *arena, Atom *call, bool first_firing, CettaOwnedExecution *execution) {
     PettaEvalMachineContext *owner = context;
     if (eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
-        !call || call->kind != ATOM_EXPR ||
-        (call->expr.len != 4u && call->expr.len != 5u))
-        return false;
-    SymbolId head = atom_head_symbol_id(call);
-    CettaExprLen arity = call->expr.len - 1u;
-    if (head != cetta_transform_name_id(CETTA_TRANSFORM_NAME_TRANSFORM) &&
-        !eval_transform_run_head(head, arity))
+        !cetta_transform_is_run_call(call))
         return false;
     PettaEvalTransaction *transaction = owner ? owner->transaction : NULL;
     if (transaction)
         call = petta_eval_transaction_rebind_atom(transaction, arena, call, true);
     EvalTransformProducer *producer = eval_transform_producer_open(
         space, call, CETTA_TRANSFORM_DIALECT_PETTA, owner ? owner->fuel : -1,
-        CETTA_TRANSFORM_STREAM);
+        first_firing ? CETTA_TRANSFORM_FIRST_FIRING : CETTA_TRANSFORM_STREAM);
     if (!producer)
         return false;
     producer->transaction = transaction;
@@ -55729,6 +55723,8 @@ static PettaMachineHost petta_eval_machine_host(
             !(g_active_search_controller_requested &&
               g_active_search_controller ==
                   CETTA_SEARCH_CONTROLLER_INLINE_DEPTH_FIRST),
+        .once_observes_firing =
+            eval_current_language_id() == CETTA_LANGUAGE_PETTA,
         .reify_head = eval_reify_head(),
         .bounded_collections =
             eval_current_language_id() == CETTA_LANGUAGE_PETTA,
@@ -60321,6 +60317,7 @@ static CettaOpenEquationHost petta_eval_open_compile_host(
         .evaluates_instances = language == CETTA_LANGUAGE_HE,
         .call_contracts = petta_eval_contracts(),
         .declared_builtin_protocol = language == CETTA_LANGUAGE_PETTA,
+        .once_observes_firing = language == CETTA_LANGUAGE_PETTA,
         .case_switches_on_empty = language == CETTA_LANGUAGE_HE,
     };
     return host;
@@ -64718,7 +64715,7 @@ petta_lowered_to_shared_form:
                 return;
             }
             stream_emit(s, a, stream_expr, fuel, false, 0, preserve_bindings,
-                        policy.order, os);
+                        policy.order, false, os);
             return;
         }
 
@@ -65020,8 +65017,18 @@ petta_lowered_to_shared_form:
          * the entire frontier.  Explicit (delay ...) values remain opaque to
          * this rule and therefore are never silently coerced into streams. */
         stream_expr = prime_need_source_argument(stream_expr, NULL);
+        bool first_transform_firing = language_id == CETTA_LANGUAGE_PETTA &&
+            head_id == g_builtin_syms.once && nargs == 1u &&
+            cetta_transform_is_run_call(stream_expr);
+        if (first_transform_firing && CURRENT_ENV && !bindings_logically_empty(CURRENT_ENV)) {
+            stream_expr = bindings_apply_if_vars((Bindings *)CURRENT_ENV, a, stream_expr);
+            if (!stream_expr) {
+                eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_CAPACITY);
+                return;
+            }
+        }
         stream_emit(s, a, stream_expr, fuel, true, limit, preserve_bindings,
-                    policy.order, os);
+                    policy.order, first_transform_firing, os);
         return;
     }
 
@@ -68731,6 +68738,7 @@ static void eval_top_with_registry_core(
             ? petta_plan : NULL;
     g_petta_source_plan_atom =
         g_petta_source_plan ? expr : NULL;
+    petta_machine_live_begin();
     if (eval_current_language_id() == CETTA_LANGUAGE_PRIME) {
         arena_init(&prime_need_episode);
         arena_set_runtime_kind(&prime_need_episode,
@@ -68804,6 +68812,7 @@ static void eval_top_with_registry_core(
     g_prime_need_answer_observer_context = prev_observer_context;
     g_petta_source_plan = prev_petta_source_plan;
     g_petta_source_plan_atom = prev_petta_source_plan_atom;
+    petta_machine_live_end();
     if (prime_need_episode_ready)
         arena_free(&prime_need_episode);
 }

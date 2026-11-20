@@ -509,7 +509,7 @@ static uint64_t match_decision_key_hash(
         (hash << 6u) + (hash >> 2u);
     hash ^= (uint64_t)expression_length + UINT64_C(0x9e3779b97f4a7c15) +
         (hash << 6u) + (hash >> 2u);
-    hash ^= (uint64_t)atom_hash(atom) + UINT64_C(0x9e3779b97f4a7c15) +
+    hash ^= (uint64_t)atom_lane_hash(atom) + UINT64_C(0x9e3779b97f4a7c15) +
         (hash << 6u) + (hash >> 2u);
     hash ^= hash >> 30u;
     hash *= UINT64_C(0xbf58476d1ce4e5b9);

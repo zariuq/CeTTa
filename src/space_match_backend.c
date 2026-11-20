@@ -2478,16 +2478,30 @@ static void native_query_rows(Space *s, Arena *a, Atom *query,
              query->expr.elems[0]->kind == ATOM_SYMBOL)
         head = query->expr.elems[0]->sym_id;
 
+    /* The tree only selects rows, named here as the other indexes name
+     * theirs: the consumer renames each apart and matches it, once per use.
+     * A row met twice in one derivation -- by two conjuncts, or by a read
+     * nested in another -- is so renamed apart each time, as the equation
+     * index's query_bucket renames its candidates.  A row and a query have
+     * at most one most general unifier, so a row is named once. */
+    CettaIndex *rows = NULL;
+    CettaIndex nrows = 0u, crows = 0u;
     if (head != SYMBOL_ID_NONE) {
         stree_query_bucket(&st->stree->buckets[stree_head_hash(head)],
-                           a, query, NULL, out);
+                           a, query, &rows, &nrows, &crows);
     } else {
         for (uint32_t i = 0; i < STREE_BUCKETS; i++)
-            stree_query_bucket(&st->stree->buckets[i], a, query, NULL, out);
+            stree_query_bucket(&st->stree->buckets[i], a, query,
+                               &rows, &nrows, &crows);
     }
-    stree_query_bucket(&st->stree->wildcard, a, query, NULL, out);
+    stree_query_bucket(&st->stree->wildcard, a, query, &rows, &nrows, &crows);
+    for (CettaIndex next = 0u; next < nrows; next++)
+        subst_matchset_push_row(out, rows[next]);
+    free(rows);
 
     subst_matchset_normalize(out);
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_SUBST_TREE_ROW,
+                            out->len);
 }
 
 typedef struct {
@@ -11986,7 +12000,7 @@ static bool space_match_count_flat_linear_rows64(
     if (examined)
         *examined = 0u;
     if (!s || !scratch || !pattern || !count || !examined ||
-        space_has_dependencies(s) ||
+        space_has_dependencies(s) || match_pattern_is_connective(pattern) ||
         !s->match_backend.ops ||
         !s->match_backend.ops->count_flat_linear) {
         return false;
@@ -12038,7 +12052,8 @@ static bool space_match_count_flat_linear_view_rows64(
     if (examined)
         *examined = 0u;
     if (!s || !scratch || !view || !view->source || !count ||
-        !examined || space_has_dependencies(s) || !s->match_backend.ops ||
+        !examined || space_has_dependencies(s) ||
+        match_pattern_is_connective(view->source) || !s->match_backend.ops ||
         !cetta_gslt_term_view_open_binding_observation_valid_v1(
             open_bindings) ||
         !s->match_backend.ops->count_flat_linear_view) {
@@ -12099,7 +12114,7 @@ static bool space_match_exists_flat_linear_view_rows64(
     if (examined)
         *examined = 0u;
     if (!s || !scratch || !view || !view->source || !exists || !examined ||
-        space_has_dependencies(s) ||
+        space_has_dependencies(s) || match_pattern_is_connective(view->source) ||
         view->source->kind != ATOM_EXPR || view->source->expr.len == 0u ||
         !cetta_gslt_term_view_open_binding_observation_valid_v1(
             open_bindings)) {
@@ -12488,6 +12503,7 @@ bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *
     }
 
     CettaFrameIdentity suffix = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_ROW_REMATCH);
     if (match_space_atom_epoch(space, row, pattern, &merged, a, suffix)) {
         bindings_move(out, &merged);
         return true;
@@ -13289,7 +13305,7 @@ bool space_native_flat_chain_aggregate(
                                                       keys[level - 1u]);
                 CettaChainEntry *entry = inbound
                     ? cetta_chain_message_find(&previous, inbound,
-                                               atom_hash(inbound))
+                                               atom_lane_hash(inbound))
                     : NULL;
                 if (!entry)
                     continue;
@@ -13318,7 +13334,7 @@ bool space_native_flat_chain_aggregate(
                                                    keys[level]);
             if (!outbound ||
                 !cetta_chain_message_add(&current, outbound,
-                                         atom_hash(outbound), count, sum))
+                                         atom_lane_hash(outbound), count, sum))
                 ok = false;
         }
         cetta_chain_message_free(&previous);

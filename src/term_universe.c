@@ -7117,6 +7117,30 @@ static void term_universe_view_memo_keep(TermUniverseViewMemo *memo,
     memo->len++;
 }
 
+/* A symbol, a number or a truth value read by view: built in the reader's
+ * arena, as the view of an expression is, so a view keeps nothing in the
+ * universe.  NULL for any other entry. */
+static Atom *term_universe_view_leaf(const TermUniverse *universe, Arena *dst,
+                                     AtomId id, const CettaTermHdr *hdr) {
+    const uint8_t *payload = term_universe_payload(universe, id);
+    if (!payload)
+        return NULL;
+    if ((AtomKind)hdr->tag == ATOM_SYMBOL)
+        return atom_symbol_id(dst, hdr->sym_or_head);
+    if ((AtomKind)hdr->tag != ATOM_GROUNDED)
+        return NULL;
+    switch (tu_ground_kind(universe, id)) {
+    case GV_INT:
+        return atom_int(dst, term_universe_load_i64(payload));
+    case GV_FLOAT:
+        return atom_float(dst, term_universe_load_double(payload));
+    case GV_BOOL:
+        return atom_bool(dst, term_universe_aux_data(hdr) != 0);
+    default:
+        return NULL;
+    }
+}
+
 static Atom *term_universe_view_atom_at(const TermUniverse *universe,
                                         Arena *dst, AtomId id,
                                         uint32_t depth,
@@ -7135,7 +7159,12 @@ static Atom *term_universe_view_atom_at(const TermUniverse *universe,
     const CettaTermHdr *hdr = tu_hdr_stored(universe, id);
     /* Stored variables are numbered within their term and keep their
      * spelling, so rows share them: a variable is the universe's atom of
-     * it, as a symbol or a number is. */
+     * it.  A symbol or a number is the reader's, as the expression is. */
+    if (hdr && hdr->tag != ATOM_EXPR) {
+        Atom *leaf = term_universe_view_leaf(universe, dst, id, hdr);
+        if (leaf)
+            return leaf;
+    }
     if (!hdr || hdr->tag != ATOM_EXPR || depth > TERM_UNIVERSE_VIEW_DEPTH ||
         !tu_plain_expr(universe, id, hdr))
         return term_universe_get_atom(universe, id);
@@ -7207,8 +7236,23 @@ bool tu_plain_expr(const TermUniverse *universe, AtomId id,
 /* Reads by view an entry takes before it is decoded and kept. */
 enum { TERM_UNIVERSE_VIEW_READS = 4u };
 
+static Atom *term_universe_view_atom_keeping(const TermUniverse *universe,
+                                             Arena *dst, AtomId id,
+                                             bool may_keep);
+
 Atom *term_universe_view_atom(const TermUniverse *universe, Arena *dst,
                               AtomId id) {
+    return term_universe_view_atom_keeping(universe, dst, id, true);
+}
+
+Atom *term_universe_view_atom_rented(const TermUniverse *universe, Arena *dst,
+                                     AtomId id) {
+    return term_universe_view_atom_keeping(universe, dst, id, false);
+}
+
+static Atom *term_universe_view_atom_keeping(const TermUniverse *universe,
+                                             Arena *dst, AtomId id,
+                                             bool may_keep) {
     if (!universe || !dst || id == CETTA_ATOM_ID_NONE)
         return NULL;
     if (!term_universe_borrow_scope(universe, dst))
@@ -7233,10 +7277,11 @@ Atom *term_universe_view_atom(const TermUniverse *universe, Arena *dst,
         Atom *slot = term_universe_decoded_slot(universe, index);
         if (slot && !term_universe_slot_counts_views(slot))
             return slot;
+        /* A rented read is not counted: it never buys. */
         uintptr_t views = (uintptr_t)slot >> 1u;
-        if (views + 1u >= TERM_UNIVERSE_VIEW_READS)
+        if (may_keep && views + 1u >= TERM_UNIVERSE_VIEW_READS)
             return term_universe_get_atom(universe, id);
-        if (!term_universe_set_decoded_at(
+        if (may_keep && !term_universe_set_decoded_at(
                 (TermUniverse *)universe, index,
                 (Atom *)(((views + 1u) << 1u) | 1u)))
             return term_universe_get_atom(universe, id);

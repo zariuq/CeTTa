@@ -7,6 +7,6 @@
 !(insert-once &parameter-set (pair c d))
 !(test (collapse (match &parameter-set $x $x)) ((pair c d)))
 
-; Invalid references are not implicitly replaced by spaces.
-!(remove-atom 7 (item 1))
-!(add-atom-nodup 7 (item 1))
+; Both mutations raise a PeTTa operand error for an invalid space reference.
+!(let (Error $formal $context) (catch (remove-atom 7 (item 1))) $formal)
+!(let (Error $formal $context) (catch (add-atom-nodup 7 (item 1))) $formal)

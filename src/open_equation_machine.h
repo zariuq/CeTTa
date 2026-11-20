@@ -146,6 +146,12 @@ typedef struct {
     bool call_contracts;
     /* PeTTa selects live declarations before entering intrinsic functions. */
     bool declared_builtin_protocol;
+    /* When a transform with takes or a destination space returns its
+     * result to a `once`, the once limits it to its first firing.  The
+     * region runs such a once itself and tells the host, with each host
+     * goal, whose demand its answer meets
+     * (cetta_open_equation_cursor_host_demand). */
+    bool once_observes_firing;
     /* HE's case: a key with no answers is switched on Empty, which a
      * variable pattern meets.  The machine's case is PeTTa's, where such a
      * key fails, so a case with a variable arm stays with the host. */
@@ -636,9 +642,21 @@ bool cetta_open_equation_cursor_host_goal(
     Atom **destination_out, Atom *const **vars_out,
     uint32_t *var_count_out, const struct PettaPlanNode **plan_out,
     CettaOpenEquationHostMode *mode_out, bool *recovers_out);
-/* Whether the newest host goal is beneath a once, captured before any
- * terminal cursor transfer. */
-bool cetta_open_equation_cursor_host_first(
+/* Whose demand the newest host goal's answer meets, captured before any
+ * terminal cursor transfer.  The answer reaches its receiver unchanged when
+ * the goal produces its activation's result with no goal after it and each
+ * caller it returns through returns that result in turn, where the search
+ * machine would leave only its continuation's delimiter beneath the goal. */
+typedef enum {
+    /* The region computes more from the answer: the goal's own demand. */
+    CETTA_OPEN_EQUATION_HOST_DEMAND_OWN = 0,
+    /* The answer reaches a `once` in the region that limits a transform
+     * returning its result to it to that transform's first firing. */
+    CETTA_OPEN_EQUATION_HOST_DEMAND_FIRST_FIRING,
+    /* The answer is the region's own answer: the region's caller's demand. */
+    CETTA_OPEN_EQUATION_HOST_DEMAND_CALLER,
+} CettaOpenEquationHostDemand;
+CettaOpenEquationHostDemand cetta_open_equation_cursor_host_demand(
     const CettaOpenEquationCursor *cursor);
 bool cetta_open_equation_cursor_host_return(
     const CettaOpenEquationCursor *cursor, CettaCallOutcome *outcome);

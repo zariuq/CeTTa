@@ -1,5 +1,6 @@
 #include "petta_semantics.h"
 #include "fallible_alloc.h"
+#include "grounded.h"
 
 #include "space.h"
 #include "stats.h"
@@ -656,9 +657,16 @@ PeTTaNamedArity petta_semantics_named_arity(
         info.smaller = info.smaller || intrinsic < supplied;
     }
 
-    /* A declaration describes a callable; it does not install one. In
-     * particular a forward declaration alone must not manufacture partials. */
-    if (!info.known)
+    /* A declaration describes a callable; it installs no arity.  An
+     * application's kind (call, partial application, over-application or
+     * data) comes from the name's definitions alone (P-APP-1); its
+     * declarations then type it (petta_program_type_calls).  A declaration of
+     * one input does not make the unary application of a binary function a
+     * call, and a forward declaration alone manufactures no partial.  The one
+     * definition whose arity the language records nowhere else is a
+     * library's native operation: its library's declarations state the
+     * arities it implements, beside any equations the library adds. */
+    if (!info.known || !grounded_op_is_library_native(head))
         return info;
 
     Atom **types = NULL;
@@ -673,7 +681,6 @@ PeTTaNamedArity petta_semantics_named_arity(
             continue;
         }
         CettaExprLen arity = type->expr.len - 2u;
-        info.known = true;
         info.exact = info.exact || arity == supplied;
         info.larger = info.larger || arity > supplied;
         info.smaller = info.smaller || arity < supplied;
@@ -4876,6 +4883,11 @@ static Atom *sort_terms(Arena *arena, Atom *list, bool structural) {
 
 Atom *petta_semantics_msort(Arena *arena, Atom *list) {
     return sort_terms(arena, list, false);
+}
+
+bool cetta_term_compare_structural(const Atom *left, const Atom *right,
+                                  int *ordering) {
+    return petta_term_compare_in(left, right, ordering, false, true);
 }
 
 Atom *cetta_term_msort_structural(Arena *arena, Atom *list) {

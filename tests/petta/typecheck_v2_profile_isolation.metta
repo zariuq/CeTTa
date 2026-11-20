@@ -1,13 +1,14 @@
-; Extended keeps the historical annotation erasure used by PeTTaChainer.
-; It must not acquire the live typecheck-v2 meaning of `the` or `make-list`.
+; Outside the typecheck profiles `the` is ordinary data, and extended does
+; not acquire the live typecheck-v2 meaning of `the` or `make-list`.
 !(the Marker (cons : (p s t)))
 !(make-list a b)
 
-; The established extended-profile `data` tuple remains available.
+; The extended-profile `data` tuple remains available.
 !(data a b)
 
-; Erased newtypes acquire their role from a declared argument position.
-; This is contextual construction, not compatibility between distinct roles.
+; The typecheck profiles erase `brand`, and their newtypes acquire a role
+; from a declared argument position: contextual construction, not
+; compatibility between distinct roles.  Elsewhere `brand` is ordinary data.
 (: ContextualKB (Newtype Atom))
 (: ContextualProof (Newtype Atom))
 (: ContextualEvidence (Newtype Atom))

@@ -57,6 +57,8 @@ def steps_fired(output):
 
 
 DIRECT = "!(pm:lane! direct)"
+# The per-run budget, in seconds, of a lane that runs the authored transform.
+AUTHORED_TIMEOUT = 300
 
 
 def machine_answers(output):
@@ -194,14 +196,16 @@ def main():
             specs_import = f"!(import! &self {derived})"
         for stem, source in programs:
             names = names_in(source)
+            # The lanes that run transform as written in PeTTa get the budget
+            # check_petta_by_transform.py gives such runs.
             lanes = [("native", lambda: swi_lane.run_cetta(binary, source, work, stem + "-native")),
                      ("specs", lambda: swi_lane.run_cetta(
                          binary, source.replace(swi_lane.LIBRARY_IMPORT, specs_import),
-                         work, stem + "-specs"))]
+                         work, stem + "-specs", timeout=AUTHORED_TIMEOUT))]
             direct_source = source.replace(MACHINE, MACHINE + "\n" + DIRECT)
             lanes.append(("direct", lambda: swi_lane.run_cetta(
                 binary, direct_source.replace(swi_lane.LIBRARY_IMPORT, specs_import),
-                work, stem + "-direct")))
+                work, stem + "-direct", timeout=AUTHORED_TIMEOUT)))
             if swi:
                 swi_source = swi_lane.for_swi(
                     source.replace(MACHINE, f"!(import! &self {MACHINE_FILE})"),

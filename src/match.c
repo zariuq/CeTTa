@@ -9290,6 +9290,28 @@ uint64_t bindings_builder_frame_write_boundary(
     return index ? index->write_clock : 0u;
 }
 
+bool bindings_builder_open_activation_frame(
+        BindingsBuilder *builder, BindingsFrameSchema *schema,
+        CettaFrameIdentity epoch, uint64_t boundary,
+        BindingsFrameRef *ref_out) {
+    if (ref_out)
+        *ref_out = (BindingsFrameRef){0};
+    if (!builder || !schema || cetta_frame_identity_is_none(epoch))
+        return false;
+    if (bindings_frame_schema_len(schema) == 0u)
+        return true;
+    BindingsFrameRef ref = {0};
+    if (!bindings_builder_register_complete_frame_schema_ref(
+            builder, schema, epoch, &ref) ||
+        !bindings_frame_index_mark_activation_boundary_ref(
+            &builder->current, ref, boundary)) {
+        return false;
+    }
+    if (ref_out)
+        *ref_out = ref;
+    return true;
+}
+
 bool bindings_exclusive_frame_publish_slots(
         BindingsExclusiveFrame *frame, BindingsBuilder *builder) {
     if (!frame || !frame->active || !frame->schema || !builder ||
@@ -9306,19 +9328,16 @@ bool bindings_exclusive_frame_publish_slots(
     uint32_t mark = builder->trail_len;
     uint32_t registrations = builder->frame_registration_undo_len;
     BindingsFrameRef authority_ref = {0};
-    if (!bindings_builder_register_complete_frame_schema_ref(
-            builder, frame->schema, frame->epoch, &authority_ref)) {
+    /* The activation begins with this publication: the head's bindings are
+     * its first writes. */
+    if (!bindings_builder_open_activation_frame(
+            builder, frame->schema, frame->epoch,
+            bindings_builder_frame_write_boundary(builder), &authority_ref)) {
         return false;
     }
     if (frame->write_len == 0u) {
         frame->active = false;
         return true;
-    }
-    uint64_t activation_boundary =
-        bindings_builder_frame_write_boundary(builder);
-    if (!bindings_frame_index_mark_activation_boundary_ref(
-            &builder->current, authority_ref, activation_boundary)) {
-        return false;
     }
     if (bindings_exclusive_frame_fresh_registration(
             frame, builder, registrations, authority_ref, true)) {

@@ -50,7 +50,7 @@
 ;           (pm:try-to F ARGS VALUE)  (pm:try-each-to F ARGS INDICES VALUE)
 ;           (pm:enter-to F ARGS INDEX VALUE DEPTH)
 ;           (pm:chains F TERMS WRITTEN SIGNATURES)
-;           (pm:targs TERMS WRITTEN DEMANDS TYPES DONE TARGET)
+;           (pm:jargs TERMS WRITTEN SIGNATURES SEEN F)
 ;           (pm:select VALUE ROWS)  (pm:meet-row VALUE PATTERN CODE)  (pm:collected DEPTH)
 ;           (pm:cut-find CONTINUATION)  (pm:cut-to DEPTH)
 ;           (pm:raise ERROR)  (pm:raise-find ERROR CONTINUATION)  (pm:raise-to DEPTH ERROR)
@@ -99,12 +99,16 @@
 ; alternative; data comes back as it went.  A value applied to values is
 ; called when it names equations of the program, and is the host's otherwise.
 ; An operation of the host that itself calls a function of the program does
-; that on the host.  A declaration given to pm:type! types the name's calls:
-; each declaration that describes a call is an alternative; an argument is held
-; as written (type Atom), evaluated (%Undefined%), or evaluated and checked
-; against its type, and the result is checked; an equation's body is answered
-; as written when its declaration answers Atom.  Whether a value has a type is
-; asked of the host, whose relation get-type a program can extend.
+; that on the host.  A declaration given to pm:type! types the calls with as
+; many arguments as it has inputs, and a typed call runs once for each tuple of
+; argument values, its declarations deciding whether it runs and which
+; results it keeps: an argument is held as written when every declaration
+; holds it (type Atom), and is otherwise evaluated once and checked against
+; each declaration's type there (none for %Undefined% or _); the result is
+; kept when a declaration that admitted the arguments admits it; an
+; equation's body is answered as written when a declaration of its number of
+; inputs answers Atom.  Whether a value has a type is asked of the host,
+; whose relation get-type a program can extend.
 ; An equation added to &self or removed from it while the program runs
 ; becomes or stops being a clause row, and when a name gains its first equation
 ; or loses its last, the stored bodies that mention it are compiled again; a
@@ -608,9 +612,9 @@
 ; call runs (pm:invoke), which goes through an equation that answers a partial
 ; application and is an error otherwise.  A call of a name with declarations
 ; keeps its arguments as written beside their terms (pm:tcall): which are held
-; and which are evaluated is the declaration's to say, when the call is made.
-; A declaration describes calls with at most as many arguments as it has
-; inputs, so the call inside an application to more is not typed.
+; and which are evaluated is the declarations' to say, when the call is made.
+; A declaration describes the calls with as many arguments as it has inputs,
+; so the call inside an application to more is not typed by a shorter one.
 (: pm:resolved-call (-> Atom Atom %Undefined%))
 (= (pm:resolved-call $head $args)
    (let* (($count (size-atom $args))
@@ -687,19 +691,20 @@
 
 (= (pm:declared? $name) (not (== (pm:chains-of $name) ())))
 
-; The declarations that describe a call with COUNT arguments: those with at
-; least as many inputs.  Each is (pm:sig DEMANDS TYPES DEMAND TYPE): for the
+; The declarations that describe a call with COUNT arguments, a call some
+; equation takes: those with exactly as many inputs (a longer declaration
+; describes other calls).  Each is (pm:sig DEMANDS TYPES DEMAND TYPE): for the
 ; inputs, what each asks of its argument and its type; then the same for the
 ; result.  What a type asks is read off the declaration as written, before a
 ; check binds any of its variables: a type variable that a check later binds
 ; to %Undefined% still checks.
-(= (pm:chains-for $name $count) (pm:items-of (pm:long-enough (pm:chains-of $name) $count)))
+(= (pm:chains-for $name $count) (pm:items-of (pm:with-inputs (pm:chains-of $name) $count)))
 
-(= (pm:long-enough $chains $count)
+(= (pm:with-inputs $chains $count)
    (if (== $chains ()) ()
      (let ($chain $more) (decons-atom $chains)
-       (let $tail (pm:long-enough $more $count)
-         (if (> (size-atom $chain) $count)
+       (let $tail (pm:with-inputs $more $count)
+         (if (== (size-atom $chain) (+ $count 1))
              (let $sig (pm:signature $chain) (cons-atom $sig $tail))
              $tail)))))
 
@@ -1474,58 +1479,57 @@
        (let $values (pm:list-of $args)))
     (pm:state (pm:effect (pm:host-applied $f $values)) $k $d $r))
 
-; A typed call.  No declaration describes it: an ordinary call.  Otherwise each
-; declaration is an alternative that evaluates the arguments for itself: an
-; argument of type Atom is the argument as written; of type %Undefined% or _,
-; its value; of any other type, its value checked against the type; which of
-; the three, the declaration says as it was written (pm:sig).  The check
-; asks the host whether the value has the type, and when the value has no type
-; at all, whether that is its metatype; each way it holds is an alternative,
-; and what it binds in the type reaches the types still to come.  The result is
-; checked the same way against the last type, unless that is Atom, %Undefined%
-; or _.
+; A typed call.  No declaration describes it: an ordinary call.  Otherwise it
+; runs once for each tuple of argument values, and its declarations decide
+; whether it runs and which results it keeps.  An argument is held as written
+; when every declaration holds it (type Atom); otherwise it is evaluated once,
+; and its value meets every declaration still standing: one that holds it or
+; leaves it unchecked (%Undefined% or _) stands as it is, one that checks it
+; stands once for each way the value has its type there, with what that way
+; binds in the types still to come.  The host groups what stands by the
+; values seen so far, up to renaming, and the call goes on once per group;
+; with nothing standing it has no answer, and no later argument runs.  The
+; result is kept, once for each binding it meets, when a declaration still
+; standing admits it, unless no declaration checks a result.  Which of hold,
+; evaluate and check a position asks is the declaration's as written
+; (pm:sig).
 !(pm:rule! (ctl pm:chains)
     (take (pm:state (pm:chains $f $terms $written pm:nil) $k $d $r))
     (pm:state (pm:evlis $terms pm:nil (pm:mk-call $f)) $k $d $r))
 !(pm:rule! (ctl pm:chains)
-    (take (pm:state (pm:chains $f $terms $written (pm:items (pm:sig $ds $ts $od $ot) pm:nil)) $k $d $r))
-    (pm:state (pm:targs $terms $written $ds $ts pm:nil (pm:mk-tcall $f $od $ot)) $k $d $r))
-!(pm:rule! (ctl pm:chains)
-    (take (pm:state (pm:chains $f $terms $written (pm:items (pm:sig $ds $ts $od $ot) $more)) $k $d $r))
-    (, (pm:state (pm:targs $terms $written $ds $ts pm:nil (pm:mk-tcall $f $od $ot)) $k (s $d) $r)
-       (pm:alt (s $d) (pm:chains $f $terms $written $more) $k)))
-!(pm:rule! (ctl pm:targs)
-    (, (take (pm:state (pm:targs pm:nil $ws $ds $ts $done $target) $k $d $r))
-       (let $values (pm:items-reversed $done pm:nil)))
-    (pm:state (pm:ready $values $target) $k $d $r))
-!(pm:rule! (ctl pm:targs)
-    (take (pm:state (pm:targs (pm:items $t $more) (pm:items $w $ws) (pm:items pm:held $ds)
-                              (pm:items $type $ts) $done $target) $k $d $r))
-    (pm:state (pm:targs $more $ws $ds $ts (pm:items $w $done) $target) $k $d $r))
-!(pm:rule! (ctl pm:targs)
-    (take (pm:state (pm:targs (pm:items $t $more) (pm:items $w $ws) (pm:items pm:free $ds)
-                              (pm:items $type $ts) $done $target) $k $d $r))
-    (pm:state (pm:eval $t) (pm:k (pm:k-targ $more $ws $ds $ts $done $target) $k) $d $r))
-!(pm:rule! (ctl pm:targs)
-    (take (pm:state (pm:targs (pm:items $t $more) (pm:items $w $ws) (pm:items pm:checked $ds)
-                              (pm:items $type $ts) $done $target) $k $d $r))
-    (pm:state (pm:eval $t)
-              (pm:k (pm:k-check $type) (pm:k (pm:k-targ $more $ws $ds $ts $done $target) $k)) $d $r))
-!(pm:rule! (ret pm:k-targ)
-    (take (pm:state (pm:ret $v) (pm:k (pm:k-targ $more $ws $ds $ts $done $target) $k) $d $r))
-    (pm:state (pm:targs $more $ws $ds $ts (pm:items $v $done) $target) $k $d $r))
-!(pm:rule! (ret pm:k-check)
-    (take (pm:state (pm:ret $v) (pm:k (pm:k-check $type) $k) $d $r))
-    (pm:state (pm:effect (pm:guard $v $type)) (pm:k (pm:k-keep $v) $k) $d $r))
-!(pm:rule! (ret pm:k-keep)
-    (take (pm:state (pm:ret $u) (pm:k (pm:k-keep $v) $k) $d $r))
-    (pm:state (pm:ret $v) $k $d $r))
+    (take (pm:state (pm:chains $f $terms $written (pm:items $sig $more)) $k $d $r))
+    (pm:state (pm:jargs $terms $written (pm:items $sig $more) pm:nil $f) $k $d $r))
+!(pm:rule! (ctl pm:jargs)
+    (, (take (pm:state (pm:jargs pm:nil pm:nil $sigs $seen $f) $k $d $r))
+       (let $values (pm:items-reversed $seen pm:nil)))
+    (pm:state (pm:ready $values (pm:mk-jcall $f $sigs)) $k $d $r))
+!(pm:rule! (ctl pm:jargs)
+    (, (take (pm:state (pm:jargs (pm:items $t $more) (pm:items $w $ws) $sigs $seen $f) $k $d $r))
+       (let True (pm:all-held $sigs))
+       (let $rest (pm:sigs-rest $sigs)))
+    (pm:state (pm:jargs $more $ws $rest (pm:items $w $seen) $f) $k $d $r))
+!(pm:rule! (ctl pm:jargs)
+    (, (take (pm:state (pm:jargs (pm:items $t $more) (pm:items $w $ws) $sigs $seen $f) $k $d $r))
+       (let False (pm:all-held $sigs)))
+    (pm:state (pm:eval $t) (pm:k (pm:k-jarg $more $ws $sigs $seen $f) $k) $d $r))
+!(pm:rule! (ret pm:k-jarg)
+    (take (pm:state (pm:ret $v) (pm:k (pm:k-jarg $more $ws $sigs $seen $f) $k) $d $r))
+    (pm:state (pm:effect (pm:jguard (pm:items $v $seen) $sigs))
+              (pm:k (pm:k-jnext $more $ws (pm:items $v $seen) $f) $k) $d $r))
+!(pm:rule! (ret pm:k-jnext)
+    (take (pm:state (pm:ret $standing) (pm:k (pm:k-jnext $more $ws $seen $f) $k) $d $r))
+    (pm:state (pm:jargs $more $ws $standing $seen $f) $k $d $r))
 !(pm:rule! (ctl pm:ready)
-    (take (pm:state (pm:ready $acc (pm:mk-tcall $f pm:checked $out)) $k $d $r))
-    (pm:state (pm:try $f $acc) (pm:k (pm:k-check $out) $k) $d $r))
+    (, (take (pm:state (pm:ready $acc (pm:mk-jcall $f $sigs)) $k $d $r))
+       (let True (pm:any-result-checked $sigs)))
+    (pm:state (pm:try $f $acc) (pm:k (pm:k-jresult $acc $sigs) $k) $d $r))
 !(pm:rule! (ctl pm:ready)
-    (take (pm:state (pm:ready $acc (pm:mk-tcall $f $kind $out)) $k $d $r))
+    (, (take (pm:state (pm:ready $acc (pm:mk-jcall $f $sigs)) $k $d $r))
+       (let False (pm:any-result-checked $sigs)))
     (pm:state (pm:try $f $acc) $k $d $r))
+!(pm:rule! (ret pm:k-jresult)
+    (take (pm:state (pm:ret $v) (pm:k (pm:k-jresult $acc $sigs) $k) $d $r))
+    (pm:state (pm:effect (pm:jresult $v $acc $sigs)) $k $d $r))
 
 ; A call: the clauses whose heads meet the arguments, in their order.  One: its
 ; body, with no choice point.  None: no answer.  Several: each in turn, the
@@ -2335,10 +2339,14 @@
      (if (== $tag pm:host-goal)
          ; a goal of the host's Prolog, called with the values as they are
          (let $found (pm:asked-goal $request) (pm:list2 pm:alternatives (pm:items-of $found)))
-     (if (== $tag pm:guard)
-         ; a value against a declared type: each way the value has the type;
-         ; when the value has no type at all, its metatype
-         (let $ways (pm:ways $request) (pm:list2 pm:alternatives (pm:items-of $ways)))
+     (if (== $tag pm:jguard)
+         ; a typed call's argument against the declarations still standing: an
+         ; answer for each tuple of the values seen so far that some way of
+         ; them standing gives
+         (let $ways (pm:joint-ways $request) (pm:list2 pm:alternatives (pm:items-of $ways)))
+     (if (== $tag pm:jresult)
+         ; a typed call's result against the declarations still standing
+         (let $ways (pm:joint-result-ways $request) (pm:list2 pm:alternatives (pm:items-of $ways)))
      (if (== $tag pm:host-to)
          ; the same, the host handed the value the application must answer
          (let $found (pm:asked-to $request) (pm:list2 pm:alternatives (pm:items-of $found)))
@@ -2347,17 +2355,122 @@
          (let $found (pm:atoms-of $request) (pm:list2 pm:alternatives (pm:items-of $found)))
          (let ($_t $space $pattern $term) $request
            (let $found (collapse (match $space $pattern (pm:matched $term $request)))
-             (pm:list2 pm:alternatives (pm:items-of (pm:shown $request $found)))))))))))))))))
+             (pm:list2 pm:alternatives (pm:items-of (pm:shown $request $found))))))))))))))))))
 
-; The ways a value has a declared type, each (pm:answered true REQUEST), the
-; request as that way bound it.  (A function of its own: inside pm:perform's
-; equation CeTTa's PeTTa lane evaluated code held in the value again.)
-(= (pm:ways $request)
-   (let ($_t $value $type) $request
-     (let $exact (collapse (let $type (get-type $value) (pm:answered true $request)))
-       (if (== $exact ())
-           (collapse (let $type (get-metatype $value) (pm:answered true $request)))
-           $exact))))
+; A typed call's declarations, read position by position.  True when every
+; declaration still standing holds its next argument as written.
+(= (pm:all-held $sigs)
+   (if (== $sigs pm:nil) True
+     (let ($_items $sig $more) $sigs
+       (let ($_sig $demands $_types $_od $_ot) $sig
+         (let ($_ds $demand $_rest) $demands
+           (if (== $demand pm:held) (pm:all-held $more) False))))))
+
+; Each declaration past its next position.
+(= (pm:sigs-rest $sigs)
+   (if (== $sigs pm:nil) pm:nil
+     (let ($_items $sig $more) $sigs
+       (let $tail (pm:sigs-rest $more)
+         (pm:list3 pm:items (pm:sig-rest $sig) $tail)))))
+
+(= (pm:sig-rest $sig)
+   (let ($_sig $demands $types $od $ot) $sig
+     (let ($_ds $_demand $demands-rest) $demands
+       (let ($_ts $_type $types-rest) $types
+         (cons-atom pm:sig (pm:list4 $demands-rest $types-rest $od $ot))))))
+
+(= (pm:any-result-checked $sigs)
+   (if (== $sigs pm:nil) False
+     (let ($_items $sig $more) $sigs
+       (let ($_sig $_demands $_types $od $_ot) $sig
+         (if (== $od pm:checked) True (pm:any-result-checked $more))))))
+
+; The ways VALUE has TYPE, each a copy of WHAT as that way bound it: get-type's
+; answers that meet the type, else the metatype when none does; the first way
+; only when the value and the type are ground.  (A function of its own:
+; inside pm:perform's equation CeTTa's PeTTa lane evaluated code held in the
+; value again.)
+(= (pm:type-ways $value $type $what)
+   (if (and (is-ground $value) (is-ground $type))
+       (let $exact (collapse (once (let $type (get-type $value) $what)))
+         (if (== $exact ())
+             (collapse (once (let $type (get-metatype $value) $what)))
+             $exact))
+       (let $exact (collapse (let $type (get-type $value) $what))
+         (if (== $exact ())
+             (collapse (let $type (get-metatype $value) $what))
+             $exact))))
+
+; (pm:jguard SEEN SIGNATURES), SEEN the values so far, the newest first: the
+; declarations that stand for each tuple of values, each answer beside the
+; request as its tuple binds it, the tuples in the order they first come.
+(= (pm:joint-ways $request)
+   (let ($_t $seen $sigs) $request
+     (let ($_items $value $_older) $seen
+       (pm:group-answers pm:jguard (pm:group-pairs (pm:joint-pairs $value $seen $sigs) ())))))
+
+; (SEEN SIGNATURE) for each way a declaration stands, the declarations in order.
+(= (pm:joint-pairs $value $seen $sigs)
+   (if (== $sigs pm:nil) ()
+     (let ($_items $sig $more) $sigs
+       (let ($_sig $demands $types $_od $_ot) $sig
+         (let ($_ds $demand $_demands) $demands
+           (let ($_ts $type $_types) $types
+             (let $here (if (== $demand pm:checked)
+                            (pm:type-ways $value $type (pm:list2 $seen (pm:sig-rest $sig)))
+                            (cons-atom (pm:list2 $seen (pm:sig-rest $sig)) ()))
+               (let $tail (pm:joint-pairs $value $seen $more)
+                 (pm:appended $here $tail)))))))))
+
+; (pm:jresult VALUE VALUES SIGNATURES): the value, once for each binding of it
+; and the arguments that a standing declaration admits; one that checks no
+; result admits every value.
+(= (pm:joint-result-ways $request)
+   (let ($_t $value $values $sigs) $request
+     (pm:group-answers pm:jresult
+       (pm:group-pairs (pm:result-pairs $value (pm:list2 $value $values) $sigs) ()))))
+
+(= (pm:result-pairs $value $seen $sigs)
+   (if (== $sigs pm:nil) ()
+     (let ($_items $sig $more) $sigs
+       (let ($_sig $_demands $_types $od $ot) $sig
+         (let $here (if (== $od pm:checked)
+                        (pm:type-ways $value $ot (pm:list2 $seen $sig))
+                        (cons-atom (pm:list2 $seen $sig) ()))
+           (let $tail (pm:result-pairs $value $seen $more)
+             (pm:appended $here $tail)))))))
+
+; The pairs grouped by their tuple of values, up to renaming, in the order the
+; tuples first come; a member's values are named as its group's first are.
+(= (pm:group-pairs $pairs $groups)
+   (if (== $pairs ()) $groups
+     (let ($pair $more) (decons-atom $pairs)
+       (let ($seen $sig) $pair
+         (pm:group-pairs $more (pm:group-place $seen $sig $groups))))))
+
+(= (pm:group-place $seen $sig $groups)
+   (if (== $groups ())
+       (cons-atom (pm:list2 $seen (cons-atom $sig ())) ())
+     (let ($group $rest) (decons-atom $groups)
+       (let ($first $sigs) $group
+         (if (=alpha $first $seen)
+             (let $first $seen
+               (cons-atom (pm:list2 $first (pm:appended $sigs (cons-atom $sig ()))) $rest))
+             (let $tail (pm:group-place $seen $sig $rest) (cons-atom $group $tail)))))))
+
+; Each group as an answer beside the request as the group's values bind it:
+; for an argument, the declarations that stand; for a result, the value.
+(= (pm:group-answers $tag $groups)
+   (if (== $groups ()) ()
+     (let ($group $more) (decons-atom $groups)
+       (let ($seen $sigs) $group
+         (let $tail (pm:group-answers $tag $more)
+           (if (== $tag pm:jguard)
+               (cons-atom (pm:list3 pm:answered (pm:items-of $sigs)
+                                    (pm:list3 pm:jguard $seen $any)) $tail)
+               (let ($value $values) $seen
+                 (cons-atom (pm:list3 pm:answered $value
+                                      (pm:list4 pm:jresult $value $values $any)) $tail))))))))
 
 (= (pm:coded $request)
    (let ($_t $call) $request

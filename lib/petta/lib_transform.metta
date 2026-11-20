@@ -22,6 +22,13 @@
 ; a bag where the consumer takes every answer.  A take removes the copies the
 ; firing takes: stored atoms that are the taken atom, the same or the same but
 ; for the names of its variables, and no atom it only unifies with.
+; When a take or destination transform supplies once's result, once selects
+; its first successful firing and then seeks an answer in that firing's
+; instances. A returned call or an identity let forwards the demand. When
+; that firing answers nothing, once goes on to its other alternatives, and
+; each transform it reaches so fires at most once. Work performed before
+; returning a value has its own demand. Plain reads use first-answer demand,
+; as with match.
 
 (: transform (-> Atom Atom Atom %Undefined%))
 (: transform (-> Atom Atom Atom Atom %Undefined%))

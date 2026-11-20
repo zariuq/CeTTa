@@ -231,12 +231,12 @@ def for_swi(source, library, work):
     return source.replace(LIBRARY_IMPORT, f"!(import! &self {one_declaration(work, library)})")
 
 
-def run_cetta(binary, source, work, name):
+def run_cetta(binary, source, work, name, timeout=120):
     path = os.path.join(work, name + ".metta")
     with open(path, "w") as stream:
         stream.write(source)
     p = subprocess.run([binary, "--lang", "petta", path], cwd=ROOT, capture_output=True,
-                       text=True, timeout=120,
+                       text=True, timeout=timeout,
                        env=dict(os.environ, CETTA_PETTA_SEARCH_MACHINE="1"))
     return p.returncode, p.stdout, p.stderr
 

@@ -90,7 +90,16 @@ def documents():
                       "(= (typed-f $x $y) (Pair $x $y))\n",
                       "(collapse (typed-f marker (+ 2 3)))"),
     }
+    # A typed call runs its body once for each tuple of argument values.  The
+    # tier's protocol, one alternative per declaration with its guards'
+    # answers as choices, answers alike only for one declaration whose guards
+    # are closed types over the intrinsic type relation, so it hands the host
+    # a call with several declarations, a type variable in a guarded argument,
+    # or a literal whose type the program declares.
+    handed = {"overloads": 1, "held-family": 1, "shared-reject": 2,
+              "late-atom": 2, "bound-reject": 1}
     for name, (prefix, body) in typed.items():
+        allowed = [f"typed-f/{handed[name]}"] if name in handed else []
         for position in ("tail", "field", "binding"):
             if position == "field":
                 placed = f"(Box {body})"
@@ -100,7 +109,7 @@ def documents():
                 placed = body
             # A result-bearing outer box also witnesses the empty-call cases.
             source = prefix + f"(= (composition-run $free) (Box {placed}))\n!(composition-run $free)\n"
-            yield f"typed-{name}-{position}", source, []
+            yield f"typed-{name}-{position}", source, allowed
     parameters = [f"$v{i}" for i in range(70)]
     domains = ["Atom" if i in (0, 64, 69) else "Number" for i in range(70)]
     arguments = ["(+ 2 3)" if d == "Atom" else "6" for d in domains]
@@ -206,10 +215,15 @@ def main():
                             f"typed-registry-{head}-{arity}-")
                             for head in ("fold", "chain")
                             for arity in (0, 1)))
-                    if identity_contract and (not erased or wrapped):
+                    if hosts:
+                        # The host runs the typed call: the tier wraps nothing.
+                        if wrapped or erased:
+                            raise AssertionError(
+                                f"{name}: the host's typed call kept a tier wrapper")
+                    elif identity_contract and (not erased or wrapped):
                         raise AssertionError(
                             f"{name}: identity contract kept its wrapper")
-                    if not identity_contract and (not wrapped or erased):
+                    elif not identity_contract and (not wrapped or erased):
                         raise AssertionError(
                             f"{name}: guarded contract lost its wrapper")
             # tests/petta/swi_differences, 14: SWI-PeTTa's foldl skips its typed

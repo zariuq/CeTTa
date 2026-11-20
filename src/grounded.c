@@ -145,6 +145,44 @@ static bool petta_repra_push_char(
         });
 }
 
+/* A cell whose tail is not a list, an unbound tail included, is Prolog's
+ * partial list: term_to_atom writes [H1,...,Hn|T].  Pushes the elements, the
+ * bar and the tail; the opening bracket is the caller's. */
+static bool petta_repra_push_partial_list(
+    PettaRepraStack *stack, Atom *cell) {
+    PeTTaLogicalListCursor cursor;
+    petta_semantics_logical_list_cursor_init(&cursor, cell);
+    Atom **items = NULL;
+    size_t count = 0u, capacity = 0u;
+    Atom *item = NULL;
+    PeTTaLogicalListStep step;
+    while ((step = petta_semantics_logical_list_cursor_next(&cursor, &item)) ==
+           PETTA_LOGICAL_LIST_ITEM) {
+        if (count == capacity) {
+            capacity = capacity ? capacity * 2u : 8u;
+            items = cetta_realloc(items, sizeof(*items) * capacity);
+        }
+        items[count++] = item;
+    }
+    /* A list end would have closed the cell into a list value. */
+    bool ok = step == PETTA_LOGICAL_LIST_INVALID && cursor.rest && count > 0u &&
+              petta_repra_push(stack, (PettaRepraAction){
+                  .kind = PETTA_REPRA_CHAR, .character = ']'}) &&
+              petta_repra_push(stack, (PettaRepraAction){
+                  .kind = PETTA_REPRA_ATOM, .atom = cursor.rest}) &&
+              petta_repra_push(stack, (PettaRepraAction){
+                  .kind = PETTA_REPRA_CHAR, .character = '|'});
+    for (size_t index = count; ok && index > 0u; index--) {
+        ok = petta_repra_push(stack, (PettaRepraAction){
+                 .kind = PETTA_REPRA_ATOM, .atom = items[index - 1u]}) &&
+             (index == 1u ||
+              petta_repra_push(stack, (PettaRepraAction){
+                  .kind = PETTA_REPRA_CHAR, .character = ','}));
+    }
+    free(items);
+    return ok;
+}
+
 static bool petta_repra_plain_identifier(const char *text) {
     if (!text || text[0] < 'a' || text[0] > 'z')
         return false;
@@ -435,7 +473,8 @@ static bool petta_repra_render(
                     petta_semantics_materialize_closed_logical_list(
                         arena, atom);
                 if (!materialized) {
-                    ok = false;
+                    sb_append_char(output, '[');
+                    ok = petta_repra_push_partial_list(&stack, atom);
                     break;
                 }
                 /* Cells ending in a list close to a list value, which is

@@ -297,11 +297,12 @@ static void captured_source_outputs(void) {
     cetta_embed_atom_release(shape); cetta_embed_atom_release(raw);
 
     cetta_embed_result_release(document(engine, "(= (late-shape-call) 99)"));
+    /* The body was planned before its head had an equation.  Reached now, the
+     * occurrence is a call (P-DEF-4), so the plan imposes no output shape. */
     query = query_new_candidate(engine, &frozen);
-    shape = query_project_output(&query, CETTA_QUERY_OUTPUT_PATTERN);
-    answer = next(&query, 1u);
-    assert(answer && atom_eq(answer->value, shape->value));
-    cetta_embed_atom_release(answer); cetta_embed_atom_release(shape);
+    shape = query_project_output(&query, CETTA_QUERY_OUTPUT_OPAQUE);
+    assert(!shape);
+    assert(integer(next(&query, 1u)) == 99);
     query_close(&query);
     query = query_new(engine, "(late-shape-call)", -1);
     assert(integer(next(&query, 1u)) == 99);

@@ -1,7 +1,8 @@
 ; PeTTa's guard at a typed call evaluates get-type, which a program may
-; extend.  An authored alternative that answers the declared type again
-; continues the call once more, for an argument and for a result, and what
-; the classifier does happens as it runs.
+; extend.  A ground value meets a closed type by the first answer of its
+; guard, and a literal's class is that first answer, before any authored
+; get-type equation: the call runs once, for an argument and for a result,
+; and the authored classifier of a literal does not run.
 (: inc (-> Number Number))
 (= (inc $x) (+ $x 1))
 (= (get-type 3) Number)

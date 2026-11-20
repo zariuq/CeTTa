@@ -763,6 +763,11 @@ Atom *term_universe_decoded_atom_at(const TermUniverse *universe, AtomId id);
  * take apart (tu_plain_expr), or one nested too deep. */
 Atom *term_universe_view_atom(const TermUniverse *universe, Arena *dst,
                               AtomId id);
+/* The same view for a reader that may never have the entry decoded and
+ * kept for it, however often it reads: a strict space, which keeps nothing
+ * beyond its order.  A decode already kept is still the universe's atom. */
+Atom *term_universe_view_atom_rented(const TermUniverse *universe, Arena *dst,
+                                     AtomId id);
 Atom *term_universe_copy_atom(const TermUniverse *universe, Arena *dst,
                               AtomId id);
 /* Read ordinary symbol leaves while copying a form. The callback's meaning

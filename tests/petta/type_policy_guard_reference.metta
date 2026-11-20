@@ -14,8 +14,9 @@
 (= (pcg-later $x $y) OK)
 !(collapse (pcg-later 6 +))
 
-; Exact alternatives retain multiplicity, even though arrow templates are
-; variant-unique. Authored get-type clauses follow the intrinsic relation.
+; A ground value meets a closed formal by the first answer of its guard.
+; Authored get-type clauses follow the intrinsic relation, so this one adds
+; no second call.
 (= (get-type 6) Number)
 (: pcg-exact (-> Number Atom))
 (= (pcg-exact $x) OK)

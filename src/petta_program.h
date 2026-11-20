@@ -196,6 +196,11 @@ struct PettaPlanNode {
      * names a Space relation.  Intrinsics and engine-known names remain
      * callable without acquiring this execution license. */
     bool relation_head_admitted;
+    /* Whether the session offered this occurrence's symbol head as an engine
+     * name when the plan was built.  A module imported later can offer a
+     * clean extension that was an unknown name before, so a plan that read
+     * this is read again when the session's modules change. */
+    bool extension_offered;
     /* Every node of an admitted equation RHS inherits this mark.  Open
      * admission permits a finite LHS/RHS variable inventory and excludes
      * cons constraints; C0 compilation remains independently restricted to
@@ -401,6 +406,15 @@ PettaProgram *petta_program_new(void);
  * New calls then revalidate source translation when named relations change;
  * an already retained invocation continues with its captured plan. */
 bool petta_program_enable_callability_refresh(PettaProgram *program);
+/* Whether an occurrence headed by HEAD is a call: a name the engine provides
+ * or the session offers, or a head with equations (HAS_EQUATIONS).  A plan
+ * decides each occurrence with it when it is built, and the search machine
+ * decides with it again once the program changed after the plan was made. */
+bool petta_program_head_calls(SymbolId head, bool has_equations);
+/* The same decision with whether the session offers HEAD already read
+ * (petta_program_head_applies_at_any_arity), as a plan records it. */
+bool petta_program_head_calls_offered(SymbolId head, bool has_equations,
+                                      bool offered);
 /* Declaration admission is fixed for this owned program and retained by its
  * revision views. The ordinary constructor admits only base equations. */
 PettaProgram *petta_program_new_with_rules(unsigned admitted_forms);

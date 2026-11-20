@@ -330,11 +330,11 @@ typedef struct {
     uint32_t equation_count;
     uint64_t universally_constrained_arguments;
     CettaMatchDecision *selector;
-    /* A group too small for a selector whose every two equations test
-     * different keys at one of the first key_positions arguments:
+    /* A group whose every two equations test different keys at one of
+     * the first key_positions arguments:
      * argument_keys[first_key, +equation_count * key_positions), the keys
-     * of each equation in turn.  tested_positions marks the positions some
-     * equation tests.  Then selector is NULL. */
+     * of each equation in turn. Single-position groups are sorted by key.
+     * tested_positions marks the positions some equation tests. */
     bool keyed;
     uint32_t first_key;
     uint32_t key_positions;
@@ -588,15 +588,9 @@ typedef enum {
 typedef struct {
     uint8_t kind;
     uint32_t arity;
-    /* SINGLE: the equation.  KEYED on the first argument alone: its
-     * equations' keys, packed as prepared_pure_code_key packs a value's,
-     * code_keys[target, +count), and their equations,
-     * code_key_equations[target, +count).  KEYED on more positions: the
-     * decision program `decision`, whose keys prepared_pure_key_lookup
-     * reads. */
+    /* SINGLE enters the equation in target. KEYED uses the same decision
+     * table as node selection. */
     uint32_t target;
-    uint32_t count;
-    uint32_t positions;
     uint32_t decision;
 } PreparedPureCodeEntry;
 
@@ -882,11 +876,6 @@ struct CettaPreparedPureProgram {
     size_t code_head_cap;
     /* One per head: how its calls enter. */
     PreparedPureCodeEntry *code_entries;
-    uint64_t *code_keys;
-    uint32_t *code_key_equations;
-    size_t code_key_len;
-    size_t code_key_cap;
-    size_t code_key_equation_cap;
     PreparedPureCodeBind *code_binds;
     size_t code_bind_len;
     size_t code_bind_cap;
@@ -7730,7 +7719,88 @@ static bool prepared_pure_keys_apart(
     return false;
 }
 
-/* A group too small for a selector is keyed when its equations' compiled
+static inline uint64_t prepared_pure_argument_key_value(
+    const PreparedPureArgumentKey *key) {
+    return (uint64_t)key->symbol << 32 | key->length;
+}
+
+static int prepared_pure_compare_argument_keys(const void *left, const void *right) {
+    uint64_t a = prepared_pure_argument_key_value(left);
+    uint64_t b = prepared_pure_argument_key_value(right);
+    return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/* Publish a table already written after the live key array. A sorted
+ * single-column table certifies separation by adjacent keys. */
+static bool prepared_pure_publish_key_group(
+    CettaPreparedPureProgram *program, uint32_t head_index, uint32_t arity,
+    uint32_t count, uint32_t positions, uint32_t tested) {
+    uint32_t first = (uint32_t)program->argument_key_len;
+    PreparedPureArgumentKey *keys = &program->argument_keys[first];
+    if (positions == 1u) {
+        uint32_t i = 1u;
+        for (; i < count; i++) {
+            int order = prepared_pure_compare_argument_keys(&keys[i - 1u], &keys[i]);
+            if (order == 0)
+                return true;
+            if (order > 0)
+                break;
+        }
+        if (i < count) {
+            qsort(keys, count, sizeof(*keys), prepared_pure_compare_argument_keys);
+            for (i = 1u; i < count; i++)
+                if (prepared_pure_argument_key_value(&keys[i - 1u]) ==
+                    prepared_pure_argument_key_value(&keys[i]))
+                    return true;
+        }
+    }
+    if (program->decision_len >= UINT32_MAX ||
+        !prepared_pure_reserve((void **)&program->decisions,
+            sizeof(*program->decisions), &program->decision_cap,
+            program->decision_len + 1u))
+        return false;
+    program->argument_key_len += (size_t)count * positions;
+    for (uint32_t i = 0u; i < count; i++) {
+        const PreparedPureArgumentKey *key = &keys[(size_t)i * positions];
+        PreparedPureEquation *equation = &program->equations[key->equation];
+        equation->binds_after_key = prepared_pure_binds_after_key(program, equation, key);
+    }
+    uint32_t decision = (uint32_t)program->decision_len;
+    program->decisions[program->decision_len++] = (PreparedPureDecisionProgram){
+        .arity = arity, .equation_count = count, .keyed = true,
+        .first_key = first, .key_positions = positions, .tested_positions = tested,
+    };
+    PreparedPureHead *head = &program->heads[head_index];
+    if (head->decision_count == 0u)
+        head->first_decision = decision;
+    head->decision_count++;
+    return true;
+}
+
+static bool prepared_pure_compile_unary_keys(
+    CettaPreparedPureProgram *program, uint32_t head_index, uint32_t count) {
+    if (program->argument_key_len > UINT32_MAX - count ||
+        !prepared_pure_reserve((void **)&program->argument_keys,
+            sizeof(*program->argument_keys), &program->argument_key_cap,
+            program->argument_key_len + count))
+        return false;
+    const PreparedPureHead *head = &program->heads[head_index];
+    PreparedPureArgumentKey *keys = &program->argument_keys[program->argument_key_len];
+    for (uint32_t i = 0u, next = 0u; i < head->equation_count; i++) {
+        uint32_t ref = head->first_equation + i;
+        const PreparedPureEquation *equation = &program->equations[ref];
+        if (equation->arity != 1u)
+            continue;
+        PreparedPureArgumentKey key = prepared_pure_equation_position_key(program, equation, 0u);
+        if (key.symbol == SYMBOL_ID_NONE)
+            return true;
+        key.equation = ref;
+        keys[next++] = key;
+    }
+    return prepared_pure_publish_key_group(program, head_index, 1u, count, 1u, 1u);
+}
+
+/* A group is keyed when its equations' compiled
  * matches test keys at the first few arguments and every two equations
  * test different keys at one of them.  At most one equation then admits a
  * call's arguments (KeyedEquationSelection.admitted_length_le_one), every
@@ -7755,8 +7825,11 @@ static bool prepared_pure_compile_key_group(
             return true;
         count++;
     }
-    if (arity == 0u || count < 2u ||
-        count >= PREPARED_PURE_DECISION_MIN_EQUATIONS)
+    if (arity == 0u || count < 2u)
+        return true;
+    if (arity == 1u)
+        return prepared_pure_compile_unary_keys(program, head_index, count);
+    if (count >= PREPARED_PURE_DECISION_MIN_EQUATIONS)
         return true;
     uint32_t most = arity < PREPARED_PURE_KEY_MAX_POSITIONS
         ? arity : PREPARED_PURE_KEY_MAX_POSITIONS;
@@ -7794,42 +7867,18 @@ static bool prepared_pure_compile_key_group(
         !prepared_pure_reserve(
             (void **)&program->argument_keys,
             sizeof(*program->argument_keys), &program->argument_key_cap,
-            program->argument_key_len + total) ||
-        program->decision_len >= UINT32_MAX ||
-        !prepared_pure_reserve(
-            (void **)&program->decisions, sizeof(*program->decisions),
-            &program->decision_cap, program->decision_len + 1u))
+            program->argument_key_len + total))
         return false;
-    uint32_t first_key = (uint32_t)program->argument_key_len;
+    PreparedPureArgumentKey *stored = &program->argument_keys[program->argument_key_len];
     uint32_t tested = 0u;
     for (uint32_t i = 0u; i < written; i++) {
         for (uint32_t p = 0u; p < positions; p++) {
-            program->argument_keys[program->argument_key_len++] = keys[i][p];
+            *stored++ = keys[i][p];
             if (keys[i][p].symbol != SYMBOL_ID_NONE)
                 tested |= UINT32_C(1) << p;
         }
     }
-    for (uint32_t i = 0u; i < written; i++) {
-        PreparedPureEquation *equation =
-            &program->equations[keys[i][0].equation];
-        equation->binds_after_key =
-            prepared_pure_binds_after_key(program, equation, &keys[i][0]);
-    }
-    uint32_t decision_index = (uint32_t)program->decision_len;
-    program->decisions[program->decision_len++] =
-        (PreparedPureDecisionProgram){
-            .arity = arity,
-            .equation_count = written,
-            .keyed = true,
-            .first_key = first_key,
-            .key_positions = positions,
-            .tested_positions = tested,
-        };
-    PreparedPureHead *owner = &program->heads[head_index];
-    if (owner->decision_count == 0u)
-        owner->first_decision = decision_index;
-    owner->decision_count++;
-    return true;
+    return prepared_pure_publish_key_group(program, head_index, arity, written, positions, tested);
 }
 
 static bool prepared_pure_compile_decisions_for_head(
@@ -7849,6 +7898,7 @@ static bool prepared_pure_compile_decisions_for_head(
         }
         if (seen)
             continue;
+        size_t prior = program->decision_len;
         if (!prepared_pure_compile_key_group(program, head_index, arity))
             return false;
         /* Dialect-owned pattern views may reinterpret the outer pattern
@@ -7856,7 +7906,7 @@ static bool prepared_pure_compile_decisions_for_head(
          * discriminator, retain the exact generic matcher as the only
          * authority for a selector. */
         head = &program->heads[head_index];
-        if (!program->pattern_view &&
+        if (program->decision_len == prior && !program->pattern_view &&
             !prepared_pure_compile_decision_group(program, head, arity))
             return false;
         head = &program->heads[head_index];
@@ -9656,11 +9706,19 @@ static inline PreparedPureKeyLookup prepared_pure_key_lookup(
         uint32_t length = 0u;
         if (!prepared_pure_value_key(arguments[0], &symbol, &length))
             return PREPARED_PURE_KEY_NOT_APPLICABLE;
-        for (uint32_t i = 0u; i < decision->equation_count; i++) {
-            if (keys[i].symbol == symbol && keys[i].length == length) {
-                *admitted_out = &keys[i];
-                return PREPARED_PURE_KEY_ADMITTED;
-            }
+        uint64_t target = (uint64_t)symbol << 32 | length;
+        uint32_t low = 0u, high = decision->equation_count;
+        while (low < high) {
+            uint32_t middle = low + (high - low) / 2u;
+            if (prepared_pure_argument_key_value(&keys[middle]) < target)
+                low = middle + 1u;
+            else
+                high = middle;
+        }
+        if (low < decision->equation_count &&
+            prepared_pure_argument_key_value(&keys[low]) == target) {
+            *admitted_out = &keys[low];
+            return PREPARED_PURE_KEY_ADMITTED;
         }
         return PREPARED_PURE_KEY_NONE;
     }
@@ -14705,27 +14763,6 @@ static bool prepared_pure_code_liveness(
     return ok;
 }
 
-/* A value's key as a keyed group tests it (prepared_pure_value_key),
- * packed: its symbol above its length, 0 for a symbol.  False for a value
- * with no key. */
-static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_code_key(
-    const Atom *value, uint64_t *key_out) {
-    if (atom_petta_value_representation(value) != PETTA_VALUE_ORDINARY)
-        return false;
-    if (value->kind == ATOM_SYMBOL) {
-        *key_out = (uint64_t)value->sym_id << 32;
-        return true;
-    }
-    if (value->kind == ATOM_EXPR && value->expr.len > 0u &&
-        value->expr.len <= UINT32_MAX && value->expr.elems[0] &&
-        value->expr.elems[0]->kind == ATOM_SYMBOL) {
-        *key_out = (uint64_t)value->expr.elems[0]->sym_id << 32 |
-                   (uint32_t)value->expr.len;
-        return true;
-    }
-    return false;
-}
-
 static bool prepared_pure_code_add_bind(
     CettaPreparedPureProgram *program, uint32_t local, uint32_t source,
     uint32_t field) {
@@ -14949,7 +14986,6 @@ static bool prepared_pure_code_entry(
         (size_t)decision->equation_count * positions >
             program->argument_key_len - decision->first_key)
         return true;
-    bool first_keys = positions == 1u;
     for (uint32_t i = 0u; i < decision->equation_count; i++) {
         const PreparedPureArgumentKey *key =
             &program->argument_keys[decision->first_key + i * positions];
@@ -14962,20 +14998,7 @@ static bool prepared_pure_code_entry(
         if (equation->arity != decision->arity ||
             !prepared_pure_code_enterable(program, equation, key_ops))
             return true;
-        first_keys = first_keys && key->symbol != SYMBOL_ID_NONE;
     }
-    uint32_t first_key = (uint32_t)program->code_key_len;
-    if (first_keys &&
-        (!prepared_pure_reserve(
-             (void **)&program->code_keys, sizeof(*program->code_keys),
-             &program->code_key_cap,
-             program->code_key_len + decision->equation_count) ||
-         !prepared_pure_reserve(
-             (void **)&program->code_key_equations,
-             sizeof(*program->code_key_equations),
-             &program->code_key_equation_cap,
-             program->code_key_len + decision->equation_count)))
-        return false;
     for (uint32_t i = 0u; i < decision->equation_count; i++) {
         const PreparedPureArgumentKey *key =
             &program->argument_keys[decision->first_key + i * positions];
@@ -14983,20 +15006,10 @@ static bool prepared_pure_code_entry(
                 program, &program->equations[key->equation], key,
                 positions))
             return false;
-        if (first_keys) {
-            program->code_keys[program->code_key_len] =
-                (uint64_t)key->symbol << 32 | key->length;
-            program->code_key_equations[program->code_key_len] =
-                key->equation;
-            program->code_key_len++;
-        }
     }
     *entry_out = (PreparedPureCodeEntry){
         .kind = PREPARED_PURE_CODE_ENTRY_KEYED,
         .arity = decision->arity,
-        .target = first_key,
-        .count = decision->equation_count,
-        .positions = positions,
         .decision = head->first_decision,
     };
     return true;
@@ -20261,32 +20274,16 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
             if (code->entry == PREPARED_PURE_CODE_ENTRY_SINGLE) {
                 equation = &program->equations[entry->target];
             } else if (code->entry == PREPARED_PURE_CODE_ENTRY_KEYED) {
-                uint64_t key = 0u;
-                if (entry->positions != 1u) {
-                    const PreparedPureArgumentKey *admitted = NULL;
-                    PreparedPureKeyLookup lookup = prepared_pure_key_lookup(
-                        program, &program->decisions[entry->decision],
-                        arguments, &admitted);
-                    if (lookup == PREPARED_PURE_KEY_NONE) {
-                        decline = "user call was not uniquely matched";
-                        goto call_refused;
-                    }
-                    if (lookup == PREPARED_PURE_KEY_ADMITTED)
-                        equation = &program->equations[admitted->equation];
-                } else if (prepared_pure_code_key(arguments[0], &key)) {
-                    const uint64_t *keys = &program->code_keys[entry->target];
-                    uint32_t i = 0u;
-                    for (; i < entry->count; i++) {
-                        if (keys[i] == key)
-                            break;
-                    }
-                    if (i == entry->count) {
-                        decline = "user call was not uniquely matched";
-                        goto call_refused;
-                    }
-                    equation = &program->equations[
-                        program->code_key_equations[entry->target + i]];
+                const PreparedPureArgumentKey *admitted = NULL;
+                PreparedPureKeyLookup lookup = prepared_pure_key_lookup(
+                    program, &program->decisions[entry->decision],
+                    arguments, &admitted);
+                if (lookup == PREPARED_PURE_KEY_NONE) {
+                    decline = "user call was not uniquely matched";
+                    goto call_refused;
                 }
+                if (lookup == PREPARED_PURE_KEY_ADMITTED)
+                    equation = &program->equations[admitted->equation];
             }
             if (equation) {
                 if (!prepared_pure_reserve(
@@ -21810,8 +21807,6 @@ void cetta_prepared_pure_program_free(
     free(program->code_literals);
     free(program->code_heads);
     free(program->code_entries);
-    free(program->code_keys);
-    free(program->code_key_equations);
     free(program->code_binds);
     free(program->code_live);
     free(program->code_frames);

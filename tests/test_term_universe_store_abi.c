@@ -256,22 +256,27 @@ static void test_structural_variable_name_store_contract(void) {
     Atom *seen_value = atom_expr2(
         &scratch, atom_symbol(&scratch, "seen"),
         atom_symbol(&scratch, "value"));
-    SubstMatchSet matches;
-    smset_init(&matches);
+    /* The tree selects the row by position alone; the reader's match,
+     * renamed apart, binds the named variable. */
+    CettaIndex *rows = NULL;
+    CettaIndex nrows = 0u, crows = 0u;
     stree_query_bucket(
         &stree.buckets[stree_head_hash(
             tu_head_sym(&universe, seen_named_id))],
-        &scratch, seen_value, NULL, &matches);
-    assert(matches.len == 1u);
-    assert(matches.items[0].atom_idx == 91u);
+        &scratch, seen_value, &rows, &nrows, &crows);
+    assert(nrows == 1u && rows[0] == 91u);
+    free(rows);
+    Bindings matched;
+    bindings_init(&matched);
+    assert(match_atoms_atom_id_epoch(seen_value, &universe, seen_named_id,
+                                     &matched, &scratch,
+                                     (CettaFrameIdentity){41u}));
     size_t current_count = 0u;
-    assert(bindings_current_binding_count(
-        &matches.items[0].bindings, &current_count));
+    assert(bindings_current_binding_count(&matched, &current_count));
     assert(current_count == 1u);
     /* Current values may live only in frame slots. Inspect the exported
      * substitution rather than requiring a chronological binding row. */
-    Atom *matched_bindings = bindings_to_atom(
-        &scratch, &matches.items[0].bindings);
+    Atom *matched_bindings = bindings_to_atom(&scratch, &matched);
     assert(matched_bindings && matched_bindings->kind == ATOM_EXPR &&
            matched_bindings->expr.len == 3u);
     Atom *assignments = matched_bindings->expr.elems[1];
@@ -289,7 +294,7 @@ static void test_structural_variable_name_store_contract(void) {
     assert(atom_is_symbol(bindings_apply(&matched_view, &scratch,
                                         matched_variable), "value"));
     bindings_free(&matched_view);
-    smset_free(&matches);
+    bindings_free(&matched);
     stree_free(&stree);
 
     term_universe_free(&universe);
@@ -3178,13 +3183,12 @@ int main(void) {
     SubstTree stree;
     stree_init(&stree);
     assert(stree_insert_id(&stree, &universe, seen_id, 88));
-    SubstMatchSet direct_matches;
-    smset_init(&direct_matches);
+    CettaIndex *direct_rows = NULL;
+    CettaIndex ndirect = 0u, cdirect = 0u;
     stree_query_bucket(&stree.buckets[stree_head_hash(tu_head_sym(&universe, seen_id))],
-                       &scratch, seen_atom, NULL, &direct_matches);
-    assert(direct_matches.len == 1);
-    assert(direct_matches.items[0].atom_idx == 88);
-    smset_free(&direct_matches);
+                       &scratch, seen_atom, &direct_rows, &ndirect, &cdirect);
+    assert(ndirect == 1u && direct_rows[0] == 88u);
+    free(direct_rows);
     stree_free(&stree);
 
     hash_space.exact_idx_dirty = true;

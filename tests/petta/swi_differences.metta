@@ -3,8 +3,9 @@
 ; and who decided it when.  CeTTa's answers are pinned in the .expected file,
 ; so an entry that drifts is noticed; a difference missing from this file is
 ; found only by running both engines.  SWI-PeTTa's answers are those of the
-; pinned in-house snapshot 9b016a39, re-verified 2026-09-29.  An entry
-; leaves this file only when the two engines agree.
+; in-house snapshot 9b016a39, re-verified 2026-09-29; entry 7's is that of
+; stable-fixed 9e8fbb6 (2026-11-19).  An entry leaves this file only when the
+; two engines agree.
 
 (= (twice $x) (* 2 $x))
 (= (boom) (/ 1 0))
@@ -68,12 +69,13 @@
 ;    Recorded 2026-09-27 against revision ae66fa8e; retired by Oruži on
 ;    re-verifying every entry against the pinned snapshot.
 
-; 7. `new-space` makes a fresh space.  SWI-PeTTa has no `new-space`, so
-;    (new-space) stays data there and is an Expression.  The extra form costs
-;    SWI-PeTTa programs nothing: a named space such as &work serves wherever
-;    a fresh one would, and a use of `new-space` translates to one.
-;    Decided: Zar, 2026-09-27 ("extras are ok").
-; SWI-PeTTa: Expression
+; 7. `new-space` makes a fresh space, here a Grounded handle.  Since
+;    stable-fixed 2d679ba and c0f088e, SWI-PeTTa's `new-space` answers a
+;    fresh name &space(N), a Symbol naming a space as every other space name
+;    does, and the name can be written again.  Which law CeTTa's handles
+;    follow, and with it whether CeTTa still frees a temporary space no value
+;    holds, is open for a ruling (Zar, 2026-09-27 "extras are ok" predates it).
+; SWI-PeTTa: Symbol
 !(let $s (new-space) (get-metatype $s))
 
 ; 8. An `if` whose branch has goals and a variable for its value keeps that
@@ -138,19 +140,20 @@
 ; 14. A call uses the declarations present when it starts, including a
 ;     call whose head is resolved from a variable. SWI's translated caller
 ;     retains its earlier argument/guard plan: a later direct call sees
-;     one signature here, while eval at the same point sees both. A
-;     let-bound head can omit the declaration's guards entirely in SWI.
+;     only the first signature here, so it rejects a value of the second
+;     one, while eval at the same point sees both. A let-bound head can
+;     omit the declaration's guards entirely in SWI.
 ;     These are reference translation bugs; refreshing the call plan on
 ;     declaration-generation changes is a repair candidate.
 ;     Decided: Zar, 2026-10-01, preserve live declarations.
 (: visibility-a VisibilityA)
-(: visibility-a VisibilityB)
+(: visibility-b VisibilityB)
 (: visibility-f (-> VisibilityA %Undefined%))
 (= (visibility-f $x) (Visible $x))
 (= (visibility-caller)
    (progn (add-atom &self (: visibility-f (-> VisibilityB %Undefined%)))
-          (collapse (visibility-f visibility-a))))
-; SWI-PeTTa, both qualified pins: ((Visible visibility-a))
+          (collapse (visibility-f visibility-b))))
+; SWI-PeTTa stable-fixed 9e8fbb6: ()
 !(visibility-caller)
 ; SWI-PeTTa, both qualified pins: ((Visible rejected))
 !(let $f visibility-f (collapse ($f rejected)))

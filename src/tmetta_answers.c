@@ -92,10 +92,14 @@ bool tm_is_sequence_operation(SymbolId head, uint32_t arity) {
         head == g_builtin_syms.lib_list_to_expression);
 }
 
-static bool private_variable(const TmAnswers *answers, VarId id) {
+static size_t private_frame(const TmAnswers *answers, VarId id) {
     for (size_t i = 0; i < answers->local_frame_count; ++i)
-        if (cetta_frame_identity_eq(answers->local_frames[i], id.epoch)) return true;
-    return false;
+        if (cetta_frame_identity_eq(answers->local_frames[i], id.epoch)) return i;
+    return SIZE_MAX;
+}
+
+static bool private_variable(const TmAnswers *answers, VarId id) {
+    return private_frame(answers, id) != SIZE_MAX;
 }
 
 /* A closed answer can erase solved, closed assignments made entirely in its
@@ -225,6 +229,68 @@ static Atom *inventory_order_slot(Arena *arena, Atom *variable, void *context) {
     return variable;
 }
 
+typedef struct {
+    const TmOrderKey *key;
+    CettaVarMap names;
+} TmUnplacedNames;
+
+static Atom *collect_unplaced_name(Arena *arena, Atom *variable, void *context) {
+    (void)arena;
+    TmUnplacedNames *unplaced = context;
+    VarId id = variable->var_id;
+    if (private_variable(unplaced->key->answers, id) &&
+        !cetta_var_map_lookup(&unplaced->key->slots, id) &&
+        !cetta_var_map_lookup(&unplaced->names, id) &&
+        !cetta_var_map_add(&unplaced->names, id, variable))
+        return NULL;
+    return variable;
+}
+
+typedef struct {
+    size_t frame;
+    Atom *variable;
+} TmOrderSlot;
+
+static int compare_order_slots(const void *first, const void *second) {
+    const TmOrderSlot *left = first, *right = second;
+    if (left->frame != right->frame) return left->frame < right->frame ? -1 : 1;
+    return var_id_cmp(left->variable->var_id, right->variable->var_id);
+}
+
+/* Give names in the value their structural coordinates first. Names
+ * mentioned only in knowledge use the relative order of their declared
+ * frames and the slots within each frame. Traversal of the constraint
+ * lists cannot assign either kind of coordinate. */
+static bool inventory_order_names(Arena *arena, TmOrderKey *key, Atom *value,
+                                  Atom *knowledge) {
+    if (atom_has_vars(value) &&
+        !cetta_atom_rewrite_vars(arena, value, inventory_order_slot, key, true))
+        return false;
+    if (!atom_has_vars(knowledge)) return true;
+    TmUnplacedNames unplaced = {.key = key};
+    cetta_var_map_init(&unplaced.names);
+    bool ok = cetta_atom_rewrite_vars(arena, knowledge,
+        collect_unplaced_name, &unplaced, true) != NULL;
+    size_t count = unplaced.names.len;
+    if (ok && count) {
+        TmOrderSlot *slots = count <= SIZE_MAX / sizeof(*slots) ?
+            arena_alloc(arena, count * sizeof(*slots)) : NULL;
+        ok = slots != NULL;
+        if (ok) {
+            for (size_t i = 0; i < count; ++i) {
+                CettaVarMapEntry entry = unplaced.names.items[i];
+                slots[i] = (TmOrderSlot){
+                    private_frame(key->answers, entry.source_id), entry.mapped_var};
+            }
+            if (count > 1) qsort(slots, count, sizeof(*slots), compare_order_slots);
+            for (size_t i = 0; i < count && ok; ++i)
+                ok = inventory_order_slot(arena, slots[i].variable, key) != NULL;
+        }
+    }
+    cetta_var_map_free(&unplaced.names);
+    return ok;
+}
+
 static bool order_key_node(Arena *arena, Atom *source, Atom **view, bool *complete,
     void *context) {
     TmOrderKey *key = context;
@@ -260,6 +326,36 @@ static bool order_key_node(Arena *arena, Atom *source, Atom **view, bool *comple
     return true;
 }
 
+/* The binding image presents assignments and residual equalities as lists.
+ * In the key they are conjunctions. Orient the symmetric equations, then
+ * sort each list. The original row and its binding image remain intact. */
+static Atom *order_knowledge_key(Arena *arena, Atom *image) {
+    Atom *assignments = image->expr.elems[1];
+    Atom *residuals = image->expr.elems[2];
+    if (assignments->expr.len > 1)
+        assignments = cetta_term_msort_structural(arena, assignments);
+    if (!assignments) return NULL;
+    if (residuals->expr.len) {
+        CettaExprLen count = residuals->expr.len;
+        if (count > SIZE_MAX / sizeof(Atom *)) return NULL;
+        Atom **oriented = arena_alloc(arena, (size_t)count * sizeof(*oriented));
+        if (!oriented) return NULL;
+        for (CettaExprIndex i = 0; i < count; ++i) {
+            Atom *equation = residuals->expr.elems[i];
+            Atom *left = equation->expr.elems[0], *right = equation->expr.elems[1];
+            int order;
+            if (!cetta_term_compare_structural(left, right, &order)) return NULL;
+            oriented[i] = order <= 0 ? equation : atom_expr2(arena, right, left);
+            if (!oriented[i]) return NULL;
+        }
+        residuals = atom_expr(arena, oriented, count);
+        if (residuals && count > 1)
+            residuals = cetta_term_msort_structural(arena, residuals);
+        if (!residuals) return NULL;
+    }
+    return atom_expr3(arena, image->expr.elems[0], assignments, residuals);
+}
+
 static Atom *order_record_key(Arena *arena, TmOrderKey *key, const AnswerRecord *record) {
     if (prime_need_snapshot_present(bindings_need_view(&record->bindings)) ||
         variant_instance_present(&record->variant)) {
@@ -271,13 +367,12 @@ static Atom *order_record_key(Arena *arena, TmOrderKey *key, const AnswerRecord 
     Atom *pair = observed && equations ? atom_expr2(arena, observed, equations) : NULL;
     if (!pair) return NULL;
     cetta_var_map_init(&key->slots);
-    /* Assign the visible private coordinates before visiting any nested
-     * bag, whose rows may be stored in any order. */
-    bool inventoried = !atom_has_vars(pair) ||
-        cetta_atom_rewrite_vars(arena, pair, inventory_order_slot, key, true);
+    bool inventoried = inventory_order_names(arena, key, observed, equations);
     Atom *result = inventoried ? atom_deep_copy_observed(arena, pair, order_key_node, key) : NULL;
     cetta_var_map_free(&key->slots);
-    return result;
+    if (!result) return NULL;
+    Atom *knowledge = order_knowledge_key(arena, result->expr.elems[1]);
+    return knowledge ? atom_expr2(arena, result->expr.elems[0], knowledge) : NULL;
 }
 
 int tm_answers_canonical_order(CettaLibraryContext *context, Arena *arena,

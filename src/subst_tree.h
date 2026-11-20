@@ -41,13 +41,20 @@ bool stree_query_within_expansion_budget(const Atom *query);
 
 /* ── Substitution Tree (Space-internal fast-path for match) ──────────── *
  *
- * A discrimination tree with named variable branches that produces
- * bindings during the walk — replacing the rename_vars + match_atoms
- * pipeline. Head-partitioned by outer expression symbol (like EqIndex).
- *
- * Epoch-based standardization apart: each inserted atom gets a unique
- * epoch. Output bindings tag indexed-side variable names with the epoch
- * ($name#epoch), eliminating per-candidate rename_vars deep-copy.       */
+ * A discrimination tree whose variable edges are slots, head-partitioned by
+ * outer expression symbol (like EqIndex).  It only selects rows.  A row's
+ * variables are numbered by first occurrence: a variable edge is a new slot
+ * or a slot met again.  A query's walk keeps the rows whose indexed terms
+ * may unify with it: a query variable meets any indexed term; a slot's
+ * first occurrence keeps the query subterm it meets, and the slot met again
+ * must meet a subterm that unifies with that one, in a table that holds the
+ * query's variables only.  A slot is no variable, so a query cannot name a
+ * row's variable, and rows that differ only in their variables' names share
+ * one path.  The rows are named by position, with no bindings: the consumer
+ * renames each apart and matches it, for each use.  One stored row met
+ * twice in one derivation -- by two conjuncts, or by a read nested in
+ * another -- has a renaming of its own each time, and the tree keeps no
+ * variable scope of its own: no row holds a frame identity.             */
 
 /* ── SubstNode ─────────────────────────────────────────────────────────── */
 
@@ -59,6 +66,11 @@ bool stree_query_within_expansion_budget(const Atom *query);
  * overhead for four children. */
 
 #define SNODE_HASH_THRESHOLD 16
+
+/* A slot edge: the next slot on its path, the slot k again (k + 1), or a
+ * placeholder, which meets any query term and keeps nothing. */
+#define SNODE_SLOT_NEW 0u
+#define SNODE_SLOT_PLACEHOLDER UINT32_MAX
 
 typedef struct {
     SymbolId key;
@@ -96,15 +108,13 @@ typedef struct SubstNode {
     SymHashTable sym_ht;
     bool sym_hashed;
 
-    /* Variable branches — each indexed variable id gets its own
-       branch so retrieval can produce bindings during the walk. */
+    /* Slot edges: SNODE_SLOT_NEW, the slot k again as k + 1, or
+       SNODE_SLOT_PLACEHOLDER for a value the tree does not discriminate. */
     struct {
-        VarId var_id;
-        SymbolId spelling;
-        Atom *name_key;
+        uint32_t edge;
         struct SubstNode *child;
-    } *vars;
-    uint32_t nvars, cvars;
+    } *slots;
+    uint32_t nslots, cslots;
 
     /* Expression branches (arity → child) */
     struct { CettaExprLen arity; struct SubstNode *child; } *expr;
@@ -116,8 +126,8 @@ typedef struct SubstNode {
     IntHashTable int_ht;
     bool int_hashed;
 
-    /* Leaves: (space atom index, epoch for standardization apart) */
-    struct { CettaIndex idx; CettaFrameIdentity epoch; bool owns_identity; } *leaves;
+    /* Leaves: the positions of the rows filed under this path */
+    CettaIndex *leaves;
     CettaIndex nleaves, cleaves;
 } SubstNode;
 
@@ -137,11 +147,15 @@ typedef struct {
 
 /* ── Query Result ──────────────────────────────────────────────────────── */
 
+/* A row a space's query names.  An exact row carries the producer's
+ * complete match, and `epoch` the renaming that match used, if it used one.
+ * Any other row is named by position alone and carries no bindings: its
+ * consumer renames it apart and matches it, for each use. */
 typedef struct {
     CettaIndex atom_idx;    /* index into the logical space atom sequence */
-    CettaFrameIdentity epoch; /* standardization-apart epoch for this indexed atom */
+    CettaFrameIdentity epoch; /* the renaming of the producer's match, if any */
     bool owns_identity;
-    Bindings bindings;      /* epoch-tagged, ready for bindings_apply */
+    Bindings bindings;      /* the producer's match when exact, else empty */
     bool exact;             /* backend already proved this match exactly */
 } SubstMatch;
 
@@ -179,11 +193,13 @@ void stree_bucket_insert(SubstBucket *bucket, Atom *atom, CettaIndex atom_idx);
 bool stree_bucket_insert_id(SubstBucket *bucket, const TermUniverse *universe,
                             AtomId atom_id, CettaIndex atom_idx);
 
-/* Full unification retrieval: walk tree with query, produce bindings.
-   Caller must free(out->items). */
-/* Query a single bucket (called from space_subst_query) */
+/* The rows of one bucket whose indexed terms may unify with QUERY,
+ * appended by position to a vector the caller frees (as disc_lookup's
+ * are), in the order of the walk.  No row carries bindings: the caller
+ * renames each apart and matches it for every use. */
 void stree_query_bucket(SubstBucket *bucket, Arena *a, Atom *query,
-                        Atom **space_atoms, SubstMatchSet *out);
+                        CettaIndex **rows, CettaIndex *nrows,
+                        CettaIndex *crows);
 
 /* Head symbol hash for partitioning (same bucket count as EqIndex) */
 uint32_t stree_head_hash(SymbolId id);

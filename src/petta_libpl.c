@@ -171,6 +171,7 @@ static void petta_libpl_advance_revision(
         &runtime->capability_revision,
         capability == UINT64_MAX ? 1u : capability + 1u,
         memory_order_release);
+    space_global_mutation_epoch_advance();
     if (runtime->revision != UINT64_MAX) {
         runtime->revision++;
         return;
@@ -3012,10 +3013,19 @@ static Atom *petta_libpl_from_list(
     Atom **items = NULL;
     size_t length = 0u;
     size_t capacity = 0u;
+    /* PL_is_list admits every list cell, so a partial list [H1,...|T],
+     * whether T is unbound or another term, arrives here too. */
+    Atom *partial_tail = NULL;
     while (!PL_get_nil(cursor)) {
         if (!PL_get_list(cursor, head, tail)) {
-            free(items);
-            return NULL;
+            partial_tail = petta_libpl_from_term_read(
+                arena, cursor, variables, unknown,
+                read_mode | PETTA_LIBPL_READ_ACYCLIC, depth + 1u);
+            if (!partial_tail) {
+                free(items);
+                return NULL;
+            }
+            break;
         }
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PETTA_LIBPL_STRUCTURAL_LIST_CELL_FROM_PROLOG);
@@ -3046,8 +3056,16 @@ static Atom *petta_libpl_from_list(
             return NULL;
         }
     }
-    Atom *result = atom_expr(
-        arena, items, (CettaExprLen)length);
+    Atom *result = partial_tail;
+    if (result) {
+        /* The cells of a partial list, one open cons each, as the pair
+         * branch of petta_libpl_from_term_read builds a single cell. */
+        for (size_t index = length; result && index > 0u; index--)
+            result = petta_semantics_open_cons_value(
+                arena, items[index - 1u], result);
+    } else {
+        result = atom_expr(arena, items, (CettaExprLen)length);
+    }
     free(items);
     return result;
 }
@@ -3535,35 +3553,12 @@ static Atom *petta_libpl_from_term_read(
                 arena, term, variables, unknown, depth);
         read_mode |= PETTA_LIBPL_READ_ACYCLIC;
     }
+    /* Every list cell and [] read here, a partial list included: an
+     * open-cons chain whose tail is unbound or another term. */
     if (PL_is_list(term)) {
         return petta_libpl_from_list(
             arena, term, variables, unknown,
             read_mode, depth + 1u);
-    }
-    if (PL_is_pair(term)) {
-        /*
-         * A pair that is not a proper list is a PARTIAL list — the image of
-         * an open-cons chain whose tail is still unbound.  Rebuild the
-         * carrier chain so the native side sees the same logical list value
-         * it marshalled out.
-         */
-        term_t head = PL_new_term_ref();
-        term_t tail = PL_new_term_ref();
-        if (!head || !tail ||
-            !PL_get_list(term, head, tail))
-            return NULL;
-        cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PETTA_LIBPL_STRUCTURAL_LIST_CELL_FROM_PROLOG);
-        Atom *head_atom = petta_libpl_from_term_read(
-            arena, head, variables, unknown,
-            read_mode, depth + 1u);
-        Atom *tail_atom = petta_libpl_from_term_read(
-            arena, tail, variables, unknown,
-            read_mode, depth + 1u);
-        if (!head_atom || !tail_atom)
-            return NULL;
-        return petta_semantics_open_cons_value(
-            arena, head_atom, tail_atom);
     }
     if (type != PL_TERM) {
         /*

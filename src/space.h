@@ -100,7 +100,7 @@ typedef struct {
     AtomId *atom_ids; /* stable equation ids for backend-primary views */
     CettaIndex len, cap;
     DiscNode *trie; /* discrimination trie over LHS patterns */
-    SubstBucket subst; /* epoch-tagged substitution tree over LHS patterns */
+    SubstBucket subst; /* substitution tree selecting LHS patterns by position */
     SymbolId head; /* exact head if the hash bucket is homogeneous */
     bool mixed_heads; /* true when distinct exact heads share this bucket */
     bool subst_safe; /* all LHS atoms are safe for the subst-tree fast path */
@@ -814,6 +814,19 @@ static inline uint64_t space_global_mutation_epoch(void) {
     return atomic_load_explicit(&cetta_space_global_mutation_epoch,
                                 memory_order_relaxed);
 }
+/* A change of meaning outside every Space (a module imported, an engine name
+ * registered) advances the clock as a mutation does, and the program clock
+ * below, so that a reader keyed on either sees the change. */
+void space_global_mutation_epoch_advance(void);
+/* A clock of programs: it advances when any Space's equations or declarations
+ * change, when a Space gains a dependency, and with every change of meaning
+ * outside the spaces, but not for data.  A reader of the program, not of
+ * data, keys on it. */
+extern _Atomic uint64_t cetta_space_global_program_epoch;
+static inline uint64_t space_global_program_epoch(void) {
+    return atomic_load_explicit(&cetta_space_global_program_epoch,
+                                memory_order_relaxed);
+}
 
 /* An in-process read token for one live Space revision.  The token carries a
    process-local lifetime identity as well as the address and revision, so a
@@ -1088,6 +1101,14 @@ typedef struct {
     size_t kept_next;
     size_t kept_last;
     bool kept_turn;
+    /* A space with dependencies is read as match composes it: its own rows,
+     * then each dependency's own rows (those past its imported prefix), in
+     * import order.  Each dependency is pinned when the cursor opens, as the
+     * space is.  A dependency's rows are named past every index the space's
+     * own rows and relations can take, and past the dependencies before, so
+     * each cursor over one state of the store names a row alike, whatever
+     * its pattern.  NULL without dependencies. */
+    struct SpaceOccurrenceComposition *composition;
 } SpaceOccurrenceCursor;
 
 typedef enum {
@@ -1150,6 +1171,12 @@ AtomId space_occurrence_cursor_lend_kept(SpaceOccurrenceCursor *cursor,
 /* The universe naming the rows a cursor lends by id. */
 TermUniverse *space_occurrence_cursor_universe(
     const SpaceOccurrenceCursor *cursor);
+/* Whether CURSOR lends facts its space's relation kept for its pattern.  A
+ * kept fact's index counts it among the facts that pattern selects, so
+ * another cursor of the same space may give it another index, or give
+ * another fact the same one: a reader that names rows by index across
+ * cursors cannot read such a cursor. */
+bool space_occurrence_cursor_lends_kept(const SpaceOccurrenceCursor *cursor);
 /* The atom at an index the cursor yielded, from the rows it captured. */
 Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
                                    CettaIndex index);
@@ -1868,9 +1895,9 @@ bool space_match_count_conjunction64(Space *s, Arena *scratch,
 
 /* ── Substitution Tree Query ────────────────────────────────────────────── */
 
-/* Find all atoms in space unifying with query, producing bindings directly.
-   Replaces: space_match_candidates + rename_vars + match_atoms pipeline.
-   Caller must free(out->items). */
+/* The rows a query may meet.  An exact row carries its complete match; any
+   other row is named by position, and space_subst_match_with_seed renames it
+   apart for its use and matches it.  Free OUT with smset_free. */
 void space_subst_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out);
 bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *sm,
                                  const Bindings *seed, Arena *a, Bindings *out);

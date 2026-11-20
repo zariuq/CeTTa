@@ -1,6 +1,6 @@
 {
-  "schema": "petta-observation-classification-v1",
-  "reference_commit": "e1db30d56854f081fd3bd1d2cb4b524c49f46dd3",
+  "schema": "petta-observation-classification-v2",
+  "classified_at": "e1db30d56854f081fd3bd1d2cb4b524c49f46dd3",
   "scope": "Observations behind the former eleven-file disagreement report; not a file allowlist or conformance score.",
   "observations": [
     {

@@ -71,6 +71,24 @@ def main():
     run(two + "!(let $code (hold (let $x (two) $x)) "
         "(let $a (run $code) (let $b (run $code) (Pair $a $b))))", [pairs])
     for profile in ("native", "eager"):
+        query = ("(edge a b) (edge a b) "
+                 "(= (q $tag) (match &self (edge $tag $y) $y)) "
+                 "(= (q $tag) (match &self (edge $tag $y) $y)) ")
+        run(query + "!(count (reify (q $x))) "
+            "!(let $bag (reify (q $x)) "
+            "  (count (reify (chain (unify $x z) $_ (reflect $bag)))))",
+            [["4"], ["0"]], profile)
+        run(query + "!(let $bag (reify (q $x)) "
+            "  (let $value (reflect $bag) (Pair $x $value)))", [["(Pair a b)"] * 4], profile)
+        run(two + "!(hold (two)) !(run (hold (two)))", [["(two)"], ["0", "1"]], profile)
+        run("!(car-atom (collapse (superpose (b a))))",
+            [["(Error (car-atom (collapse (superpose (b a)))) ExpectedAnswerSequence)"]], profile)
+        for first, last in (("a", "b"), ("b", "a")):
+            run(f"!(bind! &s (new-space)) !(add-atom &s {first}) !(add-atom &s {last}) "
+                "!(let $t (match &s $x (chain (remove-atom &s $x) $_ "
+                "  (let $n (count (reify (match &s $y $y))) (Pair $x $n)))) (run $t)) "
+                "!(count (reify (match &s $z $z)))",
+                [["()"], ["()"], ["()"], [f"(Pair {last} 1)", f"(Pair {first} 0)"], ["0"]], profile)
         run("(: raw (-> Atom Atom)) (= (raw $x) $x) !(raw (+ 1 2))", [["(+ 1 2)"]], profile)
         run("(: same-type (-> $T $T $T)) (= (same-type $a $b) $b) "
             "!(same-type (+ 1 2) (+ 2 3)) !(same-type 4 True)",
@@ -142,6 +160,31 @@ def main():
             "(index-atom $s 1)))))", [["0"]], profile)
         run(f"!(list:from {constrained})",
             [[f"(Error (list:from {constrained}) ConstrainedAnswerProjection)"]], profile)
+        # With the same caller slots and capture images, changing the order
+        # of independent assignments must leave the canonical choice intact.
+        for first in ("(chain (unify $x a) $_ (chain (unify $y z) $_ done))",
+                      "(chain (unify $y z) $_ (chain (unify $x a) $_ done))"):
+            second = "(chain (unify $x b) $_ (chain (unify $y a) $_ done))"
+            for alternatives in (f"{first} {second}", f"{second} {first}"):
+                run("!(let $template (hold (Pair $x $y)) "
+                    f"(let $s (serialize canonical (reify (amb {alternatives}))) "
+                    "(chain (car-atom $s) $_ $template)))",
+                    [["(Pair a z)"]], profile)
+        # Cardinality observes the saved bag. Reflection joins one saved
+        # answer with the caller, and another reify collects those survivors.
+        for collect in ("reify", "collapse"):
+            run(f"!(let $bag ({collect} (amb (chain (unify $x a) $_ 5) "
+                "(chain (unify $x b) $_ 7))) "
+                "(chain (unify $x a) $_ (Pair (run (count $bag)) "
+                "(run (count (reify (reflect $bag)))))))",
+                [["(Pair 2 1)"]], profile)
+            run("!(bind! &s (new-space)) "
+                f"!({collect} (run (hold (add-atom &s denied))))",
+                [["()"], ["(Error (add-atom &s denied) ReadOnlyCollection)"]], profile)
+            run("!(bind! &s (new-space)) "
+                f"!(let $bag ({collect} (hold (add-atom &s saved))) "
+                "(chain (reflect $bag) $_ (count (reify (match &s saved seen)))))",
+                [["()"], ["0"]], profile)
         run("!(serialize bogus (reify (empty)))",
             [["(Error (serialize bogus (reify (empty))) UnknownSerializeMode)"]], profile)
         run("!(serialize (reify (empty)))",
@@ -230,7 +273,11 @@ def main():
         run("(schematic $local) "
             "!(chain (match &self (schematic red) seen) $_ (match &self (schematic blue) seen))",
             [["seen"]], profile)
-        run("!(add-atom &self (captured $x)) "
+        run("!(add-atom &self (stored $x)) "
+            "!(count (reify (chain (match &self (stored red) seen) "
+            "$_ (match &self (stored blue) also))))",
+            [["()"], ["1"]], profile)
+        run("!(add-atom &self (capture ($x) (captured $x))) "
             "!(count (reify (chain (match &self (captured red) seen) "
             "$_ (match &self (captured blue) leak))))",
             [["()"], ["0"]], profile)
@@ -260,14 +307,47 @@ def main():
     run(setup + "!(count (transform &s (, (take (token $x)) (let True (unify $z 7))) (made $x $z))) "
         "!(match &s (made $x $z) (Pair $x $z))",
         [["()"], ["()"], ["1"], ["(Pair 1 7)"]])
+    for profile in ("native", "eager"):
+        choose = "(transform &s (, (take (group $g)) (all (item $x))) (seen $g $x))"
+        group = "!(bind! &s (new-space)) !(add-atom &s (group g)) "
+        run(group + "!(add-atom &s (item 1)) !(add-atom &s (item 2)) "
+            f"!(let $bag {choose} (chain (unify $x 1) $_ (let $row (reflect $bag) (Pair $g $row)))) "
+            "!(count (reify (match &s (seen g $x) $x))) !(count (reify (match &s (group g) kept)))",
+            [["()"]] * 4 + [["(Pair g (seen g 1))"], ["2"], ["0"]], profile)
+        run(group + f"!(let $bag {choose} (let $n (count $bag) (Pair $g $n))) "
+            "!(count (reify (match &s (group g) kept)))",
+            [["()"], ["()"], ["(Pair g 0)"], ["0"]], profile)
+        claims = "(, (task $t) (absent (claim $t $_any)))"
+        run("!(bind! &s (new-space)) !(add-atom &s (task one)) "
+            f"!(reflect (transform &s {claims} (claim $t alice))) "
+            f"!(count (transform &s {claims} (claim $t carol))) "
+            "!(count (reify (match &s (claim $t $who) $who)))",
+            [["()"], ["()"], ["(claim one alice)"], ["0"], ["1"]], profile)
     run("!(bind! &s (new-space)) !(bind! &alias &s) !(add-atom &s only) "
         "!(count (transform &s (, (take only) (take &alias only)) both)) "
         "!(count (reify (match &s only spare)))",
         [["()"], ["()"], ["()"], ["0"], ["1"]])
+    for left, right in (("&s", "&t"), ("&t", "&s")):
+        payment = "(reflect (transform {space} (, (take coin) (read witness)) paid))"
+        run("!(bind! &s (new-space)) !(bind! &t (new-space)) "
+            "!(add-atom &s coin) !(add-atom &s witness) "
+            "!(add-atom &t coin) !(add-atom &t witness) "
+            f"!{payment.format(space=left)} !{payment.format(space=right)} "
+            "!(reflect (serialize canonical (reify (match &s $r $r)))) "
+            "!(reflect (serialize canonical (reify (match &t $r $r))))",
+            [["()"]] * 6 + [["paid"], ["paid"], ["paid", "witness"], ["paid", "witness"]])
     ground_firing = ("!(bind! &s (new-space)) !(add-atom &s coin) !(add-atom &s witness) "
                      "!(reflect (transform &s (, (take coin) (read witness)) paid)) "
-                     "!(count (reify (match &s $row $row)))")
-    ground_answers = [["()"], ["()"], ["()"], ["paid"], ["2"]]
+                     "!(reflect (serialize canonical (reify (match &s $row $row))))")
+    ground_answers = [["()"], ["()"], ["()"], ["paid"], ["paid", "witness"]]
+    standalone = subprocess.run(
+        [binary, "--lang", "tcalc", "--profile",
+         "step=one;ask=after-tells;store=multiset;matches=symmetric", str(fixtures / "payment.tcalc")],
+        capture_output=True, text=True, timeout=90, check=True)
+    assert [line for line in standalone.stdout.splitlines() if line.startswith("(outcome ")] == [
+        "(outcome paid witness)"], standalone.stdout
+    assert "(finished true)" in standalone.stdout, standalone.stdout
+    count += 1
     protocol = {"CETTA_TRANSFORM_ENGINE": "tcalc", "CETTA_TRANSFORM_TRACE": "1",
                 "CETTA_TRANSFORM_TCALC_CHECKED": "1", "CETTA_TRANSFORM_TCALC_CARRIER": "host"}
     run(ground_firing, ground_answers,
@@ -282,13 +362,15 @@ def main():
         [["()"], ["()"], ["1"]], environment=protocol,
         trace="(engine direct) (requested-engine tcalc)")
     for profile in ("native", "eager"):
-        fixture = fixtures / "transactions.metta"
-        result = subprocess.run([binary, "--lang", "tmetta", "--profile", profile,
-            str(fixture)], text=True, capture_output=True, timeout=90)
-        assert result.returncode == 0, result.stderr
-        expected = [bag(line) for line in fixture.with_suffix(".expected").read_text().splitlines()]
-        assert [bag(line) for line in result.stdout.splitlines() if line.strip()] == expected, result
-        count += len(expected)
+        for name in ("transactions.metta", "stored_rows.metta", "imported_stored_rows.metta",
+                     "conflicting_capture_candidate.metta"):
+            fixture = fixtures / name
+            result = subprocess.run([binary, "--lang", "tmetta", "--profile", profile,
+                str(fixture)], text=True, capture_output=True, timeout=90)
+            assert result.returncode == 0, result.stderr
+            expected = [bag(line) for line in fixture.with_suffix(".expected").read_text().splitlines()]
+            assert [bag(line) for line in result.stdout.splitlines() if line.strip()] == expected, result
+            count += len(expected)
     print(f"PASS: {count} tmetta end-to-end checks")
 
 

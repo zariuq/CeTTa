@@ -2063,7 +2063,9 @@ SHARED_TRANSITION_STANDALONE_SRC = src/shared_transition.c
 SPACE_PROOF_STANDALONE_SRC = src/proof_language_region.c src/proof_producer.c src/proof_row.c src/proof_batches.c src/u64_index.c src/gslt_u32_index_v1.c src/fallible_alloc.c
 SPACE_STANDALONE_SRC = src/space.c src/space_dense.c src/space_tuples.c src/space_skeleton.c src/space_path_index.c src/binding/rule.c src/fixpoint.c $(SPACE_PROOF_STANDALONE_SRC)
 SPACE_STANDALONE_DEPS = $(SPACE_STANDALONE_SRC) $(wildcard src/*.h src/binding/*.h) Makefile
-RELATIONAL_STANDALONE_SRC = src/relational_plan.c src/relational_cursor.c src/native_query.c src/dense_relation.c src/native_open_query.c src/term_molecule.c
+# native_query.c reads the transform engine's process configuration
+# (cetta_transform_tcalc_checking), which transform_core.c provides.
+RELATIONAL_STANDALONE_SRC = src/relational_plan.c src/relational_cursor.c src/native_query.c src/dense_relation.c src/native_open_query.c src/term_molecule.c src/transform_core.c
 SPACE_MATCH_BACKEND_STANDALONE_SRC = src/space_match_backend.c $(RELATIONAL_STANDALONE_SRC)
 MORK_BRIDGE_CONTEXTUAL_EXACT_ROWS_TEST_BIN = runtime/test_mork_bridge_contextual_exact_rows-$(BUILD_OBJ_TAG)
 MORK_CURSOR_BYTE_BUFFER_COUNT_ABI_TEST_BIN = runtime/test_mork_cursor_byte_buffer_count_abi-$(BUILD_OBJ_TAG)
@@ -5564,6 +5566,25 @@ $(STABLE_OCCURRENCE_TRANSPORT_TEST_BIN): $(STABLE_OCCURRENCE_TRANSPORT_TEST_OBJ)
 test-stable-occurrence-transport: $(STABLE_OCCURRENCE_TRANSPORT_TEST_BIN)
 	@$(call cetta_exec,./$(STABLE_OCCURRENCE_TRANSPORT_TEST_BIN))
 
+# A cursor over a space with dependencies reads its own rows, then each
+# dependency's own rows, under the logical indexes after its own; clones keep
+# their place.
+SPACE_COMPOSED_CURSOR_TEST_SRC = tests/test_space_composed_cursor.c
+SPACE_COMPOSED_CURSOR_TEST_OBJ = runtime/bootstrap/test_space_composed_cursor.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+SPACE_COMPOSED_CURSOR_TEST_BIN = runtime/test_space_composed_cursor-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(SPACE_COMPOSED_CURSOR_TEST_OBJ): $(SPACE_COMPOSED_CURSOR_TEST_SRC) src/space.h src/space_match_backend.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(SPACE_COMPOSED_CURSOR_TEST_BIN): $(SPACE_COMPOSED_CURSOR_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -o $@ $(SPACE_COMPOSED_CURSOR_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+
+.PHONY: test-space-composed-cursor
+test-all: test-space-composed-cursor
+test-space-composed-cursor: $(SPACE_COMPOSED_CURSOR_TEST_BIN)
+	@$(call cetta_exec,./$(SPACE_COMPOSED_CURSOR_TEST_BIN))
+
 $(STORE_EFFECT_ALLOCATION_TEST_OBJ): $(STORE_EFFECT_ALLOCATION_TEST_SRC) src/space.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime/bootstrap
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
@@ -6652,6 +6673,29 @@ $(SPACE_SKELETON_TEST_BIN): private CPPFLAGS += -DCETTA_RUNTIME_STATS_IMPL=1
 $(SPACE_SKELETON_TEST_BIN): $(SPACE_SKELETON_TEST_SRC) $(wildcard src/*.h src/binding/*.h) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(SPACE_SKELETON_TEST_SRC) $(LDFLAGS)
+
+# The substitution tree's variable edges are slots: rows that differ only in
+# their variables' names share a path, a query that names a row's variables
+# still meets the row, and a slot met again must meet a subterm that unifies.
+# The mutant walk ignores repeated slots; the same checks must reject it.
+SUBST_TREE_SLOTS_TEST_BIN = runtime/test_subst_tree_slots-$(BUILD_OBJ_TAG)
+SUBST_TREE_SLOTS_MUTANT_BIN = runtime/test_subst_tree_slots_mutant-$(BUILD_OBJ_TAG)
+SUBST_TREE_SLOTS_TEST_SRC = tests/test_subst_tree_slots.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c
+$(SUBST_TREE_SLOTS_TEST_BIN) $(SUBST_TREE_SLOTS_MUTANT_BIN): private CPPFLAGS += -DCETTA_RUNTIME_STATS_IMPL=1
+$(SUBST_TREE_SLOTS_MUTANT_BIN): private CPPFLAGS += -DSTREE_MUTANT_IGNORE_REPEATED_SLOTS=1
+$(SUBST_TREE_SLOTS_TEST_BIN) $(SUBST_TREE_SLOTS_MUTANT_BIN): $(SUBST_TREE_SLOTS_TEST_SRC) $(wildcard src/*.h src/binding/*.h) $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(SUBST_TREE_SLOTS_TEST_SRC) $(LDFLAGS)
+
+.PHONY: test-subst-tree-slots
+test-all: test-subst-tree-slots
+test-subst-tree-slots: $(SUBST_TREE_SLOTS_TEST_BIN) $(SUBST_TREE_SLOTS_MUTANT_BIN)
+	@$(call cetta_exec,./$(SUBST_TREE_SLOTS_TEST_BIN))
+	@if $(call cetta_exec,./$(SUBST_TREE_SLOTS_MUTANT_BIN)) > /dev/null; then \
+		echo "FAIL: the slot checks accept a walk that ignores repeated slots"; \
+		exit 1; \
+	fi; \
+	echo "PASS: the slot checks reject a walk that ignores repeated slots"
 
 # Molecules unify stored terms read under frames and make instances' keys
 # and holes, as unification and alpha keys over atoms do.
@@ -25458,6 +25502,7 @@ test-petta-libpl: $(BIN) test-petta-libpl-explicit-utf8 test-petta-libpl-query-r
 				predicate_function \
 				predicate_atom_parameter \
 				prolog_compound_values \
+				libpl_partial_list_round_trip \
 				libpl_pruned_eval; do \
 			CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 				--profile extended "tests/petta/$$fixture.metta" \
@@ -27138,7 +27183,8 @@ test-petta-type-policy: $(BIN)
 	for route in tier machine; do \
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
 		for profile in "" "--profile extended"; do \
-			for fixture in type_declaration_arity type_policy_reference type_policy_guard_reference \
+			for fixture in type_declaration_arity type_calls_once_per_tuple \
+				type_policy_reference type_policy_guard_reference \
 				type_policy_compound_reference type_policy_dedup_history \
 				type_policy_revision_reference type_policy_mixed_codomain \
 				type_policy_partial_codomain type_policy_held_guard \
@@ -27526,6 +27572,19 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 			<(printf '%s\n' "$$result") | head -40; \
 		exit 1; \
 	fi; \
+	for profile in "" "--profile extended"; do \
+		for machine in 0 1; do \
+			result=$$(CETTA_PETTA_SEARCH_MACHINE=$$machine ./$(BIN) --lang petta \
+				$$profile tests/petta/extended_typing_annotations_are_data.metta 2>&1); \
+			expected=$$(cat tests/petta/extended_typing_annotations_are_data.expected); \
+			if [ "$$result" != "$$expected" ]; then \
+				echo "FAIL: brand, the or a det arrow is not data ($${profile:-default}, machine $$machine)"; \
+				diff <(printf '%s\n' "$$expected") \
+					<(printf '%s\n' "$$result") | head -40; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
 	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 		--profile typecheck-v2 tests/petta/typecheck_v2_profile_isolation.metta 2>&1); \
 	expected=$$(cat tests/petta/typecheck_v2_profile_isolation.typecheck-v2.expected); \
@@ -28375,8 +28434,12 @@ PETTA_SEMANTIC_ORACLE_STEMS = \
 	$(PETTA_SEMANTIC_EXACT_STREAM_STEMS) \
 	$(PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS)
 
-.PHONY: test-petta-relational-head-phases
+.PHONY: test-petta-relational-head-phases test-petta-relational-head-count-let \
+	test-petta-activation-write-boundary test-petta-late-installation
 test-petta-search-machine: test-petta-relational-head-phases
+test-petta-search-machine: test-petta-relational-head-count-let
+test-petta-search-machine: test-petta-activation-write-boundary
+test-petta-search-machine: test-petta-late-installation test-petta-live-reading
 test-petta-search-machine: test-petta-work-control
 test-petta-search-machine: test-petta-prepared-fold-persistence
 test-petta-search-machine: test-petta-prepared-filter-region
@@ -28741,7 +28804,7 @@ test-petta-declaration-rows: $(BIN) tests/petta/duplicate_declaration_rows.metta
 			fi; \
 		done; \
 	done; \
-	echo "PASS: repeated declaration rows are one declaration; distinct rows are alternatives"
+	echo "PASS: repeated declaration rows are one declaration; a call that distinct rows admit runs once"
 
 .PHONY: test-petta-body-policy-arity
 # Whether an equation's body is held as data is decided by the declaration of
@@ -29059,6 +29122,128 @@ test-petta-relational-head-phases: $(BIN)
 		done; \
 	done; \
 	echo "PASS: relational equation left-hand sides reject impossible structure before ordered effects"
+
+# An equation opened through a relational head reads the bindings its head
+# made, and a let in its body that only counts a collapse, or runs it for its
+# effects alone, completes like any other.  Both routes, both profiles, and
+# the materialized relational reference give the same answers.
+test-petta-relational-head-count-let: $(BIN) \
+		tests/petta/search_machine_relational_head_count_let.metta \
+		tests/petta/search_machine_relational_head_count_let.expected \
+		tests/petta/search_machine_relational_head_dead_pattern.metta \
+		tests/petta/search_machine_relational_head_dead_pattern.expected \
+		tests/petta/search_machine_relational_head_bindings.metta \
+		tests/petta/search_machine_relational_head_bindings.expected
+	@set -eu; \
+	for stem in search_machine_relational_head_count_let \
+		search_machine_relational_head_dead_pattern \
+		search_machine_relational_head_bindings; do \
+		expected=$$(cat tests/petta/$$stem.expected); \
+		for profile in "" "--profile extended"; do \
+			for machine in 0 1; do \
+				for materialized in 0 1; do \
+					actual=$$(CETTA_PETTA_SEARCH_MACHINE=$$machine \
+						CETTA_PETTA_RELATIONAL_EQUATION_VIEW_REFERENCE=$$materialized \
+						./$(BIN) --lang petta $$profile tests/petta/$$stem.metta 2>&1); \
+					if [[ "$$actual" != "$$expected" ]]; then \
+						echo "FAIL: $$stem ($${profile:-default}, machine $$machine, materialized $$materialized)"; \
+						diff <(printf '%s\n' "$$expected") \
+							<(printf '%s\n' "$$actual") | head -40; \
+						exit 1; \
+					fi; \
+				done; \
+			done; \
+		done; \
+	done; \
+	echo "PASS: relationally opened equations read their head's bindings, count and collapse on both routes"
+
+# An activation's body reads every binding its head made, after the
+# environment already holds a binding: a head solved against the call, a head
+# that also binds a variable of its caller, and on the default route the
+# equations the compiled tier leaves to the search machine.  Both routes,
+# both profiles and the materialized relational reference give the same
+# answers; equations without variables open no frame.  On the default route a
+# ten-step walk reads its heads through the activations' frames with 20
+# activation materializations and 140 binding applications.
+test-petta-activation-write-boundary: $(BIN) \
+		tests/petta/search_machine_activation_write_boundary.metta \
+		tests/petta/search_machine_activation_write_boundary.expected \
+		tests/petta/search_machine_activation_frame_walk.metta \
+		tests/petta/search_machine_activation_frame_walk.expected
+	@set -eu; \
+	stem=search_machine_activation_write_boundary; \
+	expected=$$(cat tests/petta/$$stem.expected); \
+	for profile in "" "--profile extended"; do \
+		for machine in 0 1; do \
+			for materialized in 0 1; do \
+				actual=$$(CETTA_PETTA_SEARCH_MACHINE=$$machine \
+					CETTA_PETTA_RELATIONAL_EQUATION_VIEW_REFERENCE=$$materialized \
+					./$(BIN) --lang petta $$profile tests/petta/$$stem.metta 2>&1); \
+				if [[ "$$actual" != "$$expected" ]]; then \
+					echo "FAIL: $$stem ($${profile:-default}, machine $$machine, materialized $$materialized)"; \
+					diff <(printf '%s\n' "$$expected") \
+						<(printf '%s\n' "$$actual") | head -40; \
+					exit 1; \
+				fi; \
+			done; \
+		done; \
+	done; \
+	walk=tests/petta/search_machine_activation_frame_walk; \
+	answers=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta $$walk.metta 2>&1); \
+	test "$$answers" = "$$(cat $$walk.expected)"; \
+	stats=$$(CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_MACHINE_STATS=1 \
+		./$(BIN) --lang petta $$walk.metta 2>&1 >/dev/null); \
+	count() { printf '%s\n' "$$stats" | awk -v key="$$1" \
+		'{ for (i = 1; i <= NF; i++) { split($$i, pair, "="); if (pair[1] == key) n += pair[2] } } END { print n + 0 }'; }; \
+	materializations=$$(count activation_materialization_calls); \
+	applications=$$(count binding_apply_calls); \
+	if [ "$$materializations" != 20 ] || [ "$$applications" != 140 ]; then \
+		echo "FAIL: $$walk: $$materializations activation materializations and $$applications binding applications, expected 20 and 140"; \
+		exit 1; \
+	fi; \
+	echo "PASS: activations read every binding their heads made on both routes; the walk reads its heads through its frames"
+
+# Code translated before a head gains a meaning calls it once the meaning is
+# present, an equation that add-atom installs and a builtin that an import
+# enables alike; the running query's own code keeps its translation.  The
+# fixture imports a library the default profile does not offer, so it runs in
+# that profile, on both routes.
+test-petta-late-installation: $(BIN) \
+		tests/petta/search_machine_late_installation.metta \
+		tests/petta/search_machine_late_installation.expected
+	@set -eu; \
+	expected=$$(cat tests/petta/search_machine_late_installation.expected); \
+	for machine in 0 1; do \
+		actual=$$(CETTA_PETTA_SEARCH_MACHINE=$$machine ./$(BIN) --lang petta \
+			tests/petta/search_machine_late_installation.metta 2>&1); \
+		if [[ "$$actual" != "$$expected" ]]; then \
+			echo "FAIL: late installation (machine $$machine)"; \
+			diff <(printf '%s\n' "$$expected") \
+				<(printf '%s\n' "$$actual") | head -40; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: equations and imported builtins installed while a query runs are called by the next occurrence that reaches them"
+
+# The live reading (P-DEF-4): an executable occurrence is decided when it is
+# reached, against the current program, wherever it stands; an entered call
+# keeps the alternatives it selected, a built value and quoted code stay
+# data, and removing the last equation returns later occurrences to data.
+.PHONY: test-petta-live-reading
+test-petta-live-reading: $(BIN) tests/petta/live_reading.metta tests/petta/live_reading.expected
+	@set -eu; \
+	expected=$$(cat tests/petta/live_reading.expected); \
+	for machine in 0 1; do for profile in default extended; do \
+		flags=; if [ $$profile = extended ]; then flags="--profile extended"; fi; \
+		actual=$$(CETTA_PETTA_SEARCH_MACHINE=$$machine ./$(BIN) --lang petta $$flags \
+			tests/petta/live_reading.metta 2>&1); \
+		if [[ "$$actual" != "$$expected" ]]; then \
+			echo "FAIL: live reading (machine $$machine, $$profile)"; \
+			diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual") | head -40; \
+			exit 1; \
+		fi; \
+	done; done; \
+	echo "PASS: an occurrence is decided when it is reached, on both routes and both profiles"
 
 .PHONY: test-petta-profile-boundary test-petta-semantics \
 	test-petta-semantics-differential
@@ -30968,6 +31153,86 @@ test-he-exact-index-frontier: $(BIN) tests/he/exact_index_frontier.metta tests/h
 	fi; \
 	echo "PASS: HE ground matches keep promoted numbers, NaN, rows with variables and a row with no head"
 
+.PHONY: test-he-stored-row-used-twice
+# A stored row read twice in one derivation, by two conjuncts or by a read
+# nested in another, is renamed apart for each use once the space answers
+# from its substitution tree: each bag of answers equals that of a strict
+# space, which reads its rows in turn.  The same program runs in PeTTa on
+# both evaluator routes.
+test-all: test-he-stored-row-used-twice
+test-he-stored-row-used-twice: $(BIN) tests/he/stored_row_used_twice.metta tests/he/stored_row_used_twice.expected tests/he/stored_row_used_twice.petta.expected
+	@set -eu; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang he --profile extended tests/he/stored_row_used_twice.metta 2>&1); \
+	if [ "$$actual" != "$$(cat tests/he/stored_row_used_twice.expected)" ]; then \
+		echo "FAIL: HE stored row read twice in one derivation"; \
+		diff <(cat tests/he/stored_row_used_twice.expected) \
+			<(printf '%s\n' "$$actual") | head -20; \
+		exit 1; \
+	fi; \
+	for machine in 0 1; do \
+		actual=$$(CETTA_PETTA_SEARCH_MACHINE=$$machine $(CETTA_BIN_INVOKE) --lang petta --profile extended tests/he/stored_row_used_twice.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/he/stored_row_used_twice.petta.expected)" ]; then \
+			echo "FAIL: PeTTa stored row read twice in one derivation (CETTA_PETTA_SEARCH_MACHINE=$$machine)"; \
+			diff <(cat tests/he/stored_row_used_twice.petta.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: a stored row read twice in one derivation is renamed apart for each use (HE, PeTTa on both routes)"
+
+.PHONY: test-two-way-matching
+# Two-way matching over stored rows with variables, against a reference
+# unifier that renames every stored row apart for every use: seeded scenarios
+# in HE and in PeTTa on both evaluator routes, past the sizes at which a
+# space reads its indexes, where every bag of answers must equal the model's,
+# and every match's count and emptiness must equal its enumeration's.  Known
+# differences are listed with the step that fixes them.
+test-all: test-two-way-matching
+test-two-way-matching: $(BIN) tests/support/check_two_way_matching.py tests/support/two_way_scenarios.py tests/support/two_way_terms.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_two_way_matching.py $(CETTA_SCRIPT_BIN)
+
+.PHONY: test-index-reproducers
+# The selection layer's reproducers, on HE's default and extended profiles,
+# against their expected answers: Rust HE's, or, for transform, which Rust HE
+# lacks, those of match over the same space.  A fixture in
+# INDEX_REPRODUCERS_PENDING is expected to differ until its step lands; one
+# that agrees while still listed fails the gate, so that its step removes it.
+INDEX_REPRODUCERS = index_d2_space_tree index_d2_equation_tree \
+	index_d3_existence_promotion index_d4_counted_join_promotion \
+	index_d5_transform_composed index_d5_match_composed \
+	index_d6_conjunction_existence
+INDEX_REPRODUCERS_PENDING =
+test-all: test-index-reproducers
+test-index-reproducers: $(BIN) tests/he/index_d5_module.metta \
+		$(foreach f,$(INDEX_REPRODUCERS),tests/he/$(f).metta tests/he/$(f).expected)
+	@set -eu; \
+	failed=0; held=0; \
+	for fixture in $(INDEX_REPRODUCERS); do \
+		step=; \
+		for entry in $(INDEX_REPRODUCERS_PENDING); do \
+			if [ "$${entry%%:*}" = "$$fixture" ]; then step=$${entry#*:}; fi; \
+		done; \
+		for profile in default extended; do \
+			flags=; \
+			if [ $$profile = extended ]; then flags="--profile extended"; fi; \
+			actual=$$($(CETTA_BIN_INVOKE) --lang he $$flags tests/he/$$fixture.metta 2>&1 || true); \
+			if [ "$$actual" = "$$(cat tests/he/$$fixture.expected)" ]; then \
+				if [ -n "$$step" ]; then \
+					echo "FAIL: $$fixture ($$profile) agrees now; step $$step removes it from INDEX_REPRODUCERS_PENDING"; \
+					failed=1; \
+				fi; \
+			elif [ -n "$$step" ]; then \
+				held=$$((held + 1)); \
+			else \
+				echo "FAIL: $$fixture ($$profile)"; \
+				diff <(cat tests/he/$$fixture.expected) <(printf '%s\n' "$$actual") | head -20; \
+				failed=1; \
+			fi; \
+		done; \
+	done; \
+	if [ $$failed != 0 ]; then exit 1; fi; \
+	echo "PASS: the selection layer's reproducers answer as expected on both profiles$(if $(strip $(INDEX_REPRODUCERS_PENDING)),; $$held runs differ until their steps ($(INDEX_REPRODUCERS_PENDING)))"
+
 .PHONY: test-resource-ledger-stats
 # The resource ledger accounts for what a run holds: cursors, their working
 # arenas and spaces are charged while live and returned when released, so the
@@ -31290,21 +31555,24 @@ test-petta-term-language-sequences: $(BIN)
 
 .PHONY: test-petta-tier-repra
 # `repra` of a ground value in an equation the tier runs renders as the host
-# renders it (SWI-PeTTa's answers).
-test-petta-tier-repra: $(BIN)
+# renders it (SWI-PeTTa's answers), a list cell whose tail is not a list as
+# Prolog's partial list.
+test-petta-tier-repra: $(BIN) tests/petta/tier_repra.metta tests/petta/tier_repra.expected tests/petta/repra_partial_lists.metta tests/petta/repra_partial_lists.expected
 	@set -eu; \
+	for fixture in tier_repra repra_partial_lists; do \
 	for route in tier machine; do \
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
 		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
-			--lang petta tests/petta/tier_repra.metta 2>&1); \
-		if [ "$$actual" != "$$(cat tests/petta/tier_repra.expected)" ]; then \
-			echo "FAIL: repra on the $$route route"; \
-			diff <(cat tests/petta/tier_repra.expected) \
+			--lang petta tests/petta/$$fixture.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/$$fixture.expected)" ]; then \
+			echo "FAIL: repra ($$fixture) on the $$route route"; \
+			diff <(cat tests/petta/$$fixture.expected) \
 				<(printf '%s\n' "$$actual") | head -20; \
 			exit 1; \
 		fi; \
 	done; \
-	echo "PASS: repra renders a ground value as SWI-PeTTa, on the tier and in the machine"
+	done; \
+	echo "PASS: repra renders a ground value as SWI-PeTTa, a partial list included, on the tier and in the machine"
 
 .PHONY: test-petta-tier-head-occurrences
 # A head's call of a builtin or of a typed relation runs against the
@@ -32537,7 +32805,8 @@ test-transform-tcalc: $(BIN) tests/he/transform_tcalc.metta tests/he/transform_t
 		tests/he/transform_tcalc_wide.metta tests/he/transform_tcalc_wide.expected \
 		tests/he/transform_tcalc_early.metta tests/he/transform_tcalc_early.expected \
 		tests/petta/transform_tcalc_wide.expected \
-		tests/petta/transform_firing_variables.metta tests/petta/transform_firing_variables.expected
+		tests/petta/transform_firing_variables.metta tests/petta/transform_firing_variables.expected \
+		tests/he/transform_tcalc_kept_facts.metta tests/he/transform_tcalc_kept_facts.expected
 	@set -eu; for fixture in transform_tcalc transform_tcalc_graph; do \
 	for engine in direct tcalc; do for cache in 0 1; do for reference in 0 1; do \
 		CETTA_TRANSFORM_ENGINE=$$engine CETTA_TRANSFORM_TCALC_CACHE=$$cache CETTA_TRANSFORM_TRACE=1 \
@@ -32568,6 +32837,23 @@ test-transform-tcalc: $(BIN) tests/he/transform_tcalc.metta tests/he/transform_t
 			! grep -q '(fast-path retained-match)' runtime/transform_tcalc_receipts-$$engine-$$receipts.trace; \
 		fi; \
 	done; done
+	@# Facts a relation keeps are named by each cursor among the facts its
+	@# pattern selects: the tcalc engine declines such firings on every
+	@# carrier, and the direct engine decides them (until I4 names every
+	@# occurrence once).
+	@set -eu; for engine in direct tcalc; do for receipts in 0 1; do for carrier in host terms; do \
+		out=runtime/transform_tcalc_kept_facts-$$engine-$$receipts-$$carrier; \
+		CETTA_SPACE_DENSE=eager CETTA_TRANSFORM_ENGINE=$$engine CETTA_TRANSFORM_TCALC_RECEIPTS=$$receipts \
+		CETTA_TRANSFORM_TCALC_CARRIER=$$carrier CETTA_TRANSFORM_TCALC_CHECKED=1 CETTA_TRANSFORM_TRACE=1 \
+			$(call cetta_exec,./$(BIN)) --lang he --profile extended tests/he/transform_tcalc_kept_facts.metta \
+			> $$out.out 2> $$out.trace; \
+		diff -u tests/he/transform_tcalc_kept_facts.expected $$out.out; \
+		! grep -q '^\[transform\] error' $$out.trace; \
+		if test "$$engine" = tcalc; then \
+			test "$$(grep -c '(engine direct) (requested-engine tcalc)' $$out.trace)" = 3; \
+			grep -q '(took2 $$y $$x)) (engine tcalc)' $$out.trace; \
+		fi; \
+	done; done; done
 	@set -eu; for engine in direct tcalc; do \
 		CETTA_TRANSFORM_ENGINE=$$engine CETTA_TRANSFORM_TCALC_CHECKED=1 \
 			$(call cetta_exec,./$(BIN)) --lang petta --profile extended tests/petta/transform_firing_variables.metta \
@@ -34016,24 +34302,12 @@ test-petta-chainer-manifest-unit:
 	@PYTHONDONTWRITEBYTECODE=1 \
 		python3 tests/petta/test_chainer_compat_manifest.py
 
-test-petta-chainer-compat: $(BIN) test-petta-chainer-manifest-unit
-	@if [[ -z "$(strip $(PETTA_CHAINER_ROOT))" ]]; then \
-		echo 'set PETTA_CHAINER_ROOT to a PeTTaChainer Git checkout'; \
-		exit 1; \
-	fi
-	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" ]]; then \
-		echo 'set PETTA_ORACLE_ROOT to the pinned PeTTa checkout'; \
-		exit 1; \
-	fi
-	@CETTA_PETTA_SEARCH_MACHINE=1 PYTHONDONTWRITEBYTECODE=1 \
-		python3 scripts/petta_chainer_compat.py \
-		--cetta "./$(BIN)" \
-		--chainer-repo "$(PETTA_CHAINER_ROOT)" \
-		--petta-root "$(PETTA_ORACLE_ROOT)" \
-		--manifest "$(PETTA_CHAINER_COMPAT_MANIFEST)" \
-		--out "$(PETTA_CHAINER_COMPAT_RESULTS)" \
-		--space-engine "$(PETTA_CHAINER_SPACE_ENGINE)" \
-		--reference
+# Retired: the pinned PeTTaChainer revision relies on extended PeTTa erasing
+# `brand` and `the`, which extended no longer does.  The native CeTTa
+# chainer's own tests replace it.  The typecheck-profile chainer gates below
+# keep the shared script and manifest.
+test-petta-chainer-compat:
+	@echo 'RETIRED: test-petta-chainer-compat; the native CeTTa chainer tests replace it'
 
 test-petta-typecheck-v2-chainer: $(BIN) test-petta-chainer-manifest-unit
 	@if [[ -z "$(strip $(PETTA_CHAINER_ROOT))" ]]; then \
@@ -35368,10 +35642,11 @@ test-match-effect-schedule: $(BIN) tests/he/match_effect_schedule.metta \
 # PeTTa 1.0.6 typed calls run in the prepared machine: a value-class
 # signature's parameters are checked where the call enters, and a call that
 # fails them is left to PeTTa's own evaluator, which answers nothing for it,
-# as SWI-PeTTa does.  A program that extends get-type keeps PeTTa's guard:
-# each type answer continues the call, and the classifier's effects happen,
-# also where the extension is added or removed after the call was prepared.
-# A type variable matches each type answer, so its call stays with PeTTa's
+# as SWI-PeTTa does.  A program that extends get-type keeps PeTTa's guard,
+# which checks a ground value at a closed type by its first answer, so the
+# call runs once, also where the extension is added or removed after the call
+# was prepared.  A type variable matches each type answer, and the call still
+# runs once for each tuple of argument values, so its call stays with PeTTa's
 # guard too.  Turning the machine off changes no answer.
 .PHONY: test-petta-typed-calls-prepared
 test-all: test-petta-typed-calls-prepared
@@ -48295,6 +48570,8 @@ test-all: test-petta-priority-heap-native
 test-petta-priority-heap-native: $(BIN) \
 		tests/petta/priority_heap_native.metta \
 		tests/petta/priority_heap_native.expected \
+		tests/petta/priority_heap_payload.metta \
+		tests/petta/priority_heap_payload.expected \
 		tests/petta/priority_heap_unimported.metta \
 		tests/petta/priority_heap_unimported.expected
 	@CETTA_PETTA_NATIVE_PRIORITY_HEAP=1 \
@@ -48310,9 +48587,17 @@ ifeq ($(LIB_PROLOG_ENABLED),1)
 				$(CETTA_BIN_INVOKE) --no-results --lang petta \
 				tests/petta/priority_heap_native.metta | \
 				diff -u tests/petta/priority_heap_native.expected -; \
+			for profile in "" "--profile extended"; do \
+				CETTA_PETTA_SEARCH_MACHINE=$$machine \
+				CETTA_PETTA_NATIVE_PRIORITY_HEAP=$$native \
+					$(CETTA_BIN_INVOKE) --no-results --lang petta $$profile \
+					tests/petta/priority_heap_payload.metta | \
+					diff -u tests/petta/priority_heap_payload.expected -; \
+			done; \
 		done; \
 	done; \
-	echo 'PASS: native persistent priority heaps preserve SWI pairing-heap answers on both PeTTa routes'
+	echo 'PASS: native persistent priority heaps preserve SWI pairing-heap answers on both PeTTa routes'; \
+	echo 'PASS: heap values are payload: open and rational values agree across heap:insert and add_to_heap'
 else
 	@echo 'SKIP: native priority-heap differential requires the optional Prolog adapter'
 endif
@@ -49879,7 +50164,8 @@ EMBED_RUNTIME_OBJ = $(filter-out src/main.%,$(OBJ))
 TMETTA_RUNTIME_TEST := runtime/test-tmetta-$(EMBED_TAG)
 $(TMETTA_RUNTIME_TEST): tests/tmetta/test_runtime.c $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS) \
-		-Wl,--wrap=cetta_native_handle_alloc -Wl,--wrap=match_atoms -Wl,--wrap=match_atoms_builder
+		-Wl,--wrap=cetta_native_handle_alloc -Wl,--wrap=match_atoms -Wl,--wrap=match_atoms_builder \
+		-Wl,--wrap=atom_deep_copy_session_new -Wl,--wrap=atom_deep_copy_session_copy
 .PHONY: test-tmetta
 test-tmetta: all $(TMETTA_RUNTIME_TEST)
 	@$(TMETTA_RUNTIME_TEST)

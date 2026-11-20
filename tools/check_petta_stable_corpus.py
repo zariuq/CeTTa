@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Record pinned corpus diagnostics with independently framed query observations.
+"""Record corpus diagnostics on the stable-fixed checkout as it is, with independently
+framed query observations.
 
 Raw agreement is not conformance. Settled requirements and approved differences
 are qualified by the semantic regression targets; original corpus assertions
 remain diagnostic evidence, including unresolved/reference-specific assertions.
+The checkout's differences from CeTTa's record of its last alignment are listed
+with the diagnostics as alignment work, never as a failure.
 """
 
 import argparse
@@ -17,7 +20,9 @@ import sys
 import tempfile
 import uuid
 
-from check_petta_release_reference import ROOT, check_reference, digest
+from check_petta_release_reference import (
+    ROOT, check_record, check_reference, digest, source_files,
+)
 
 sys.path.insert(0, str(ROOT / 'scripts'))
 from petta_corpus_manifest import (  # noqa: E402
@@ -59,23 +64,27 @@ def main():
     args = parser.parse_args()
     contract = json.loads((ROOT / 'langdef/petta/reference.json').read_text())
     reference, binary = args.reference.resolve(), args.cetta.resolve()
-    check_reference(reference, contract)
+    record = check_record(contract)
+    identity = check_reference(reference, contract)
     if args.timeout <= 0:
         parser.error('--timeout must be positive')
     for relative, expected in contract['corpus_fixtures'].items():
         if digest(ROOT / relative) != expected:
             raise ValueError('corpus fixture changed: ' + relative)
-    programs = sorted(p for p in contract['reference_files']
-                      if p.endswith('.metta') and
-                      ((p.startswith('examples/') and p.count('/') == 1)
-                       or p.startswith('tests/regression/')))
-    result = dict(reference=contract['reference_commit'],
+    members = sorted(source_files(reference))
+    programs = [p for p in members
+                if p.endswith('.metta') and
+                ((p.startswith('examples/') and p.count('/') == 1)
+                 or p.startswith('tests/regression/'))]
+    result = dict(reference=dict(checkout_commit=identity['checkout_commit'],
+                                 last_alignment=record,
+                                 alignment_work=identity['alignment_work']),
                   binary_sha256=digest(binary), cases={}, controls={},
                   scope='diagnostic observations, not a conformance score',
                   excluded=contract['corpus_exclusions'])
     with tempfile.TemporaryDirectory(prefix='cetta-petta-corpus-') as directory:
         stage = Path(directory)
-        for relative in contract['reference_files']:
+        for relative in members:
             target = stage / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes((reference / relative).read_bytes())

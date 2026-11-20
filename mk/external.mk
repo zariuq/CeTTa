@@ -34,9 +34,10 @@
 #   METAMATH_MMLEAN4_BIN_V1    its built binary.
 #
 # Reference implementations
-#   PETTA_ORACLE_ROOT,         SWI-PeTTa at the corrected-stable revision that
-#   PETTA_REFERENCE_ROOT       tools/check_petta_release_reference.py pins (the
-#                              stable-fixed branch of PeTTa).
+#   PETTA_ORACLE_ROOT,         SWI-PeTTa's stable-fixed branch as it is (run with
+#   PETTA_REFERENCE_ROOT       the SWI-Prolog langdef/petta/reference.json records);
+#                              tools/check_petta_release_reference.py lists its
+#                              differences from the last alignment as work.
 #   GSLT2PARSE_PETTA_ROOT      SWI-PeTTa's stable-fixed branch at the revision
 #                              tools/test_petta_parser_authority_v1.py pins
 #                              (c3adb86), as a checkout or a source snapshot

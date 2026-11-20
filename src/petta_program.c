@@ -494,6 +494,9 @@ struct PettaProgram {
     size_t callability_cache_token_len;
     size_t callability_cache_token_cap;
     uint64_t callability_cache_predeclared_generation;
+    /* The session's imported modules when the cache was read: they decide
+       which engine names the session offers. */
+    uint64_t callability_cache_modules;
     bool callability_cache_valid;
     /* Advances whenever the callability cache is rebuilt. */
     uint64_t callability_epoch;
@@ -1792,9 +1795,9 @@ bool petta_program_head_is_intrinsic(SymbolId head) {
          head == ids->transaction ||
          head == ids->with_mutex ||
          petta_semantics_is_mm2_exec(head));
-    /* `data` is shared with historical extended PeTTa.  Live `make-list`
-     * and `the` forms are owned only by typecheck-v2; extended erases `the`
-     * during document ingestion. */
+    /* `data` is shared with extended PeTTa.  Live `make-list` and `the`
+     * forms are owned only by the typecheck profiles; elsewhere `the` is
+     * data. */
     bool typecheck_named =
         ids && ids->table && cetta_petta_profile_admits_typecheck_ops() &&
         (head == ids->data ||
@@ -1824,6 +1827,16 @@ bool petta_program_head_is_intrinsic(SymbolId head) {
 bool petta_program_head_applies_at_any_arity(SymbolId head) {
     return petta_program_head_is_intrinsic(head) &&
         petta_program_extension_offered(head);
+}
+
+bool petta_program_head_calls_offered(SymbolId head, bool has_equations,
+                                      bool offered) {
+    return offered || has_equations || cetta_petta_head_names_extension(head);
+}
+
+bool petta_program_head_calls(SymbolId head, bool has_equations) {
+    return petta_program_head_calls_offered(
+        head, has_equations, petta_program_head_applies_at_any_arity(head));
 }
 
 typedef struct {
@@ -2810,12 +2823,14 @@ static PettaPlanNode *petta_plan_build_in(
             /* A clean primary extension the session does not offer is an
              * unknown name there (plain PeTTa has no `reify`): its call is
              * data whose arguments are evaluated. */
+            node->extension_offered =
+                petta_program_head_applies_at_any_arity(head);
             node->role = constructor_slot_frame
                 ? PETTA_PLAN_DATA
                 : item.direct_call ||
-                  petta_program_head_applies_at_any_arity(head) ||
-                  node->relation_head_admitted ||
-                  cetta_petta_head_names_extension(head)
+                  petta_program_head_calls_offered(
+                      head, node->relation_head_admitted,
+                      node->extension_offered)
                       ? PETTA_PLAN_STATIC_CALL
                       : PETTA_PLAN_DATA;
             node->execution = constructor_slot_frame
@@ -3342,6 +3357,7 @@ __attribute__((cold, noinline)) const PettaPlanNode *petta_program_project_compu
         .source_position = source ? source->source_position : 0u,
         .source_debit = source ? source->source_debit : 0u,
         .relation_head_admitted = relation_head_admitted,
+        .extension_offered = source && source->extension_offered,
         .open_template_admitted = source && source->open_template_admitted,
         .dispatch_handler = dynamic || (source && source->dispatch_handler),
         .child_count = child_count,
@@ -3466,13 +3482,19 @@ static bool petta_program_space_is_live(const PettaProgramSpace *space) {
            space->instance_id == space_instance_id(space->space);
 }
 
-/* The spaces read, their equation tokens and the predeclared generation
-   still describe the cached domain. */
+static uint64_t petta_program_session_modules(void) {
+    return eval_current_module_mask ? eval_current_module_mask() : 0u;
+}
+
+/* The spaces read, their equation tokens, the predeclared generation and
+   the session's modules still describe the cached domain. */
 static bool petta_program_callability_cache_current(
     const PettaProgram *program) {
     if (!program->callability_cache_valid ||
         program->callability_cache_predeclared_generation !=
             program->predeclared_generation ||
+        program->callability_cache_modules !=
+            petta_program_session_modules() ||
         program->callability_cache_token_len != program->space_len) {
         return false;
     }
@@ -3555,6 +3577,8 @@ static bool petta_program_extend_callability(PettaProgram *program) {
     if (!program->callability_cache_valid ||
         program->callability_cache_predeclared_generation !=
             program->predeclared_generation ||
+        program->callability_cache_modules !=
+            petta_program_session_modules() ||
         program->callability_cache_token_len != program->space_len) {
         return false;
     }
@@ -3663,6 +3687,7 @@ static bool petta_program_collect_callability(
     program->callability_cache_token_len = program->space_len;
     program->callability_cache_predeclared_generation =
         program->predeclared_generation;
+    program->callability_cache_modules = petta_program_session_modules();
     program->callability_cache_valid = true;
     program->callability_epoch++;
     return true;
@@ -4231,17 +4256,34 @@ static bool petta_program_type_family_complete(
         return true;
     }
     /* Full predicate calls consume every declared domain. Only a genuine
-     * partial call may use a longer arrow. This fact shares the family's
-     * revision token, including equation changes, so warm calls need no
-     * repeated clause traversal. */
+     * partial call may use a longer arrow. Whether the call is full is
+     * P-APP-1's reading of the name's definitions: its equations, or, for a
+     * name the program does not define, the arity the language gives it.  A
+     * declaration installs no arity.  This fact shares the family's revision
+     * token, including equation changes, so warm calls need no repeated
+     * clause traversal. */
     CettaExprLen minimum = 0u, maximum = 0u;
     *complete = false;
     bool source_callable = space_rule_head_arity_bounds(
         space, family->head, &minimum, &maximum, complete, supplied,
         petta_program_rule_forms(program));
     if (!source_callable) {
-        for (uint32_t i = 0u; i < family->count; i++)
-            *complete = *complete || family->calls[i].arity == supplied;
+        CettaExprLen intrinsic = 0u;
+        uint16_t registered = 0u;
+        bool has_intrinsic = petta_semantics_intrinsic_partial_arity(
+            family->head, &intrinsic);
+        bool has_registered = petta_semantics_registered_builtin_arities(
+            family->head, &registered) && registered != 0u;
+        if (has_intrinsic || has_registered) {
+            *complete = (has_intrinsic && intrinsic == supplied) ||
+                (has_registered && supplied < 16u &&
+                 (registered & (uint16_t)(1u << supplied)) != 0u);
+        } else {
+            /* A foreign function's arity is its provider's, which this
+             * program does not read: its declarations stand for it. */
+            for (uint32_t i = 0u; i < family->count; i++)
+                *complete = *complete || family->calls[i].arity == supplied;
+        }
     }
     if (retain) {
         if (!petta_program_reserve((void **)&family->arities,
@@ -5324,8 +5366,11 @@ static bool petta_plan_callability_changed(const Atom *syntax,
             return false;
         }
         if (count && read.syntax->expr.elems[0]->kind == ATOM_SYMBOL &&
-            read.plan->relation_head_admitted != petta_callability_admits(
-                domain, read.syntax->expr.elems[0]->sym_id)) {
+            (read.plan->relation_head_admitted != petta_callability_admits(
+                 domain, read.syntax->expr.elems[0]->sym_id) ||
+             read.plan->extension_offered !=
+                 petta_program_head_applies_at_any_arity(
+                     read.syntax->expr.elems[0]->sym_id))) {
             *changed = true;
             break;
         }

@@ -1945,6 +1945,86 @@ static void contextual_root_preview(Arena *a) {
     bindings_free(&b);
 }
 
+/* An activation opens its frame at the write clock it began with.  The
+ * environment already holds a binding when the frame opens, so the
+ * activation reads only what follows that entry: the binding its head makes
+ * after the opening is its own, and both its dense frame and its epoch reads
+ * see it.  A binding the frame received before it opened is not the
+ * activation's.  A schema without variables opens no frame. */
+static void open_activation_frame_boundary(Arena *a) {
+    Atom *x = atom_var_with_id(a, "open-x", var_id_from_base(UINT64_C(63001)));
+    Atom *outer = atom_var_with_id(a, "open-outer", var_id_from_base(UINT64_C(63002)));
+    Atom *leaf = atom_symbol(a, "open-leaf");
+    VarId source_ids[] = {x->var_id};
+    Atom *source_variables[] = {x};
+    BindingsFrameSchema *schema =
+        bindings_frame_schema_new_presented(source_ids, source_variables, 1u);
+    BindingsFrameSchema *empty =
+        bindings_frame_schema_new_presented(NULL, NULL, 0u);
+    BindingsBuilder builder;
+    CHECK(schema && empty && bindings_builder_init(&builder, NULL) &&
+          bindings_builder_add_var_fresh(&builder, outer, leaf),
+          "construct an environment that already holds a binding");
+    uint32_t first_entry = builder.current.len;
+
+    CettaFrameIdentity epoch = {631u};
+    Atom *activated = atom_var_with_id(
+        a, "open-x", var_epoch_id(x->var_id, epoch));
+    BindingsFrameRef ref = {0};
+    CHECK(first_entry > 0u &&
+          bindings_builder_open_activation_frame(
+              &builder, schema, epoch,
+              bindings_builder_frame_write_boundary(&builder), &ref) &&
+          bindings_frame_ref_is_valid(ref) &&
+          bindings_builder_add_var_fresh(&builder, activated, leaf),
+          "open an activation's frame, then bind its head's variable");
+    BindingsActivationView view;
+    bindings_activation_view_init(&view);
+    Atom *ground = NULL;
+    CHECK(bindings_activation_view_prepare_schema(
+              &view, &builder, schema, source_variables, epoch, first_entry) &&
+          atom_eq(bindings_apply_activation_view_then_all(
+                      &builder.current, a, x, &view), leaf) &&
+          bindings_resolve_epoch_view_ground(
+              &builder.current, x, epoch, first_entry, &ground) &&
+          ground == leaf,
+          "the activation's dense frame and its epoch reads see its head's binding");
+
+    CettaFrameIdentity late = {632u};
+    Atom *late_x = atom_var_with_id(
+        a, "open-x", var_epoch_id(x->var_id, late));
+    CHECK(bindings_builder_register_complete_frame_schema(
+              &builder, schema, late) &&
+          bindings_builder_add_var_fresh(&builder, late_x, leaf) &&
+          bindings_builder_open_activation_frame(
+              &builder, schema, late,
+              bindings_builder_frame_write_boundary(&builder), NULL),
+          "open a frame after it received a binding");
+    BindingsActivationView late_view;
+    bindings_activation_view_init(&late_view);
+    ground = NULL;
+    CHECK(bindings_activation_view_prepare_schema(
+              &late_view, &builder, schema, source_variables, late,
+              first_entry) &&
+          atom_eq(bindings_apply_activation_view_then_all(
+                      &builder.current, a, x, &late_view), late_x) &&
+          !(bindings_resolve_epoch_view_ground(
+                &builder.current, x, late, first_entry, &ground) &&
+            ground == leaf),
+          "a binding the frame received before it opened is not the activation's");
+
+    BindingsFrameRef none = {0};
+    CHECK(bindings_builder_open_activation_frame(
+              &builder, empty, (CettaFrameIdentity){633u},
+              bindings_builder_frame_write_boundary(&builder), &none) &&
+          !bindings_frame_ref_is_valid(none),
+          "a schema without variables opens no frame");
+    bindings_builder_rollback(&builder, 0u);
+    bindings_builder_free(&builder);
+    bindings_frame_schema_release(empty);
+    bindings_frame_schema_release(schema);
+}
+
 /* A frame minted for one activation elides occurs checks at its own slots
  * only while no stored value mentions the frame: until then a value built
  * from older variables cannot reach a local slot.  An outer write over the
@@ -2454,6 +2534,7 @@ int main(int argc, char **argv) {
     contextual_exact_root_policy(&arena);
     contextual_observation_without_binding(&arena);
     exclusive_candidate_frame(&arena);
+    open_activation_frame_boundary(&arena);
     exclusive_fresh_frame_occurs_check(&arena);
     exclusive_pattern_ownership(&arena);
     attempt_profile(&arena);

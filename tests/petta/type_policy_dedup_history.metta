@@ -1,5 +1,7 @@
 ; Differential witness for type declaration deduplication.
-; Keep declaration multiplicity distinct from typed-call alternatives.
+; Keep declaration multiplicity distinct from typed-call answers: a typed
+; call runs its body once for each tuple of argument values, and the
+; declarations that accept it decide only whether it runs.
 
 (: dedup-concrete (-> Number Atom))
 (: dedup-concrete (-> Number Atom))

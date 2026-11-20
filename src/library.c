@@ -895,6 +895,7 @@ static void cetta_library_petta_admission_advance(
     ctx->petta_admission_revision =
         ctx->petta_admission_revision == UINT64_MAX
             ? 1u : ctx->petta_admission_revision + 1u;
+    space_global_mutation_epoch_advance();
 }
 
 static void cetta_library_petta_translator_rule_advance(
@@ -11798,6 +11799,7 @@ static bool library_import_native(CettaLibraryContext *ctx, const char *name,
 #endif
 
     ctx->active_mask |= import_bit;
+    space_global_mutation_epoch_advance();
     memset(&parsed_spec, 0, sizeof(parsed_spec));
     parsed_spec.kind = CETTA_MODULE_SPEC_STDLIB;
     snprintf(parsed_spec.raw_spec, sizeof(parsed_spec.raw_spec), "%s", import_name);
@@ -11811,8 +11813,10 @@ static bool library_import_native(CettaLibraryContext *ctx, const char *name,
                              &plan, eval_arena, error_out) ||
         !execute_import_plan(ctx, &plan, eval_arena, persistent_arena,
                              registry, fuel, NULL, error_out)) {
-        if (!previously_active)
+        if (!previously_active) {
             ctx->active_mask &= ~import_bit;
+            space_global_mutation_epoch_advance();
+        }
         return false;
     }
     if (import_bit == CETTA_LIBRARY_IO && !ctx->io_runtime)

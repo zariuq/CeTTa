@@ -55,6 +55,15 @@ static inline bool cetta_transform_run_call_head(SymbolId head,
         cetta_transform_run_call_head_slow(head, arity);
 }
 
+static inline bool cetta_transform_is_run_call(const Atom *call) {
+    if (!call || call->kind != ATOM_EXPR ||
+        (call->expr.len != 4u && call->expr.len != 5u))
+        return false;
+    SymbolId head = atom_head_symbol_id(call);
+    return head == cetta_transform_name_id(CETTA_TRANSFORM_NAME_TRANSFORM) ||
+        cetta_transform_run_call_head(head, call->expr.len - 1u);
+}
+
 static inline bool cetta_transform_name_head(SymbolId head) {
     return head != SYMBOL_ID_NONE && !symbol_id_is_builtin(head) &&
         !(symbol_flags(g_symbols, head) & CETTA_SYMBOL_FLAG_NOT_TRANSFORM_NAME) &&
@@ -92,12 +101,16 @@ CettaTransformEngine cetta_transform_engine(void);
 bool cetta_transform_tcalc_checking(void);
 bool cetta_transform_tcalc_terms(void);
 
-/* A finite selected interface to a Space, not a materialized store. */
+/* A finite selected interface to a Space, not a materialized store.
+ * POSITION names the row among the cursor's; KEPT: that cursor lends facts a
+ * relation kept, whose positions are that cursor's own
+ * (space_occurrence_cursor_lends_kept). */
 typedef struct {
     Space *space;
     SpaceReadToken view;
     CettaIndex position;
     Atom *opened;
+    bool kept;
 } CettaTransformWitness;
 
 typedef struct {
@@ -152,6 +165,13 @@ typedef struct {
     int (*open_row)(void *, Arena *, BindingsBuilder *, Atom *, Atom **);
     int (*unify)(void *, Arena *, BindingsBuilder *, Atom *, Atom *);
     Atom *(*capture)(void *, Arena *, Atom *, const Bindings *);
+    /* Borrow each stored read/take occurrence of the selected firing before
+     * its effects. SIZE_MAX denotes the common kernel, otherwise the index
+     * is that of the retained extension in the publication. */
+    bool (*selected_row)(void *, Atom *, size_t);
+    /* A pure admission check on several publications and their borrowed
+     * footprint. It discards its observations on every outcome. */
+    int (*compatible_publications)(void *, Atom *const *, size_t);
     /* Resource accounting uses live space identity and exact stored rows. */
     bool exact_occurrences;
 } CettaTransformLogic;
@@ -163,6 +183,9 @@ typedef struct {
      * still isolated by the common trail and never mutate this loan. */
     const Bindings *environment;
     const CettaTransformLogic *logic;
+    /* Optional owned image of the winning kernel of an all-firing.
+     * Its extension rows each carry their own full binding image. */
+    Atom **extension_basis_out;
     /* Pure lookup of the space named by a conjunct. It may be queried during
      * planning and again after earlier bindings/effects. False for an operand
      * that names no space; true with *space_out NULL for a location that
@@ -301,6 +324,9 @@ typedef enum {
     CETTA_TRANSFORM_STREAM,
     CETTA_TRANSFORM_FIRST,
     CETTA_TRANSFORM_COLLECT,
+    /* A directly observed PeTTa take or destination gets one firing.
+     * The consumer can still ask for the first answer of that firing. */
+    CETTA_TRANSFORM_FIRST_FIRING,
 } CettaTransformDemand;
 CettaTransformRun *cetta_transform_run_open(
     Atom *space, Atom *conjuncts, Atom *instance, Atom *target,

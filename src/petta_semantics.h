@@ -634,6 +634,8 @@ Atom *petta_semantics_msort(Arena *arena, Atom *list);
 
 /* Stable sort of structural keys made from scalar leaves, variables and
  * finite expressions. Compare node kinds before their contents. */
+bool cetta_term_compare_structural(const Atom *left, const Atom *right,
+                                   int *ordering);
 Atom *cetta_term_msort_structural(Arena *arena, Atom *keys);
 
 /*

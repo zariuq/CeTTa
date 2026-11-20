@@ -139,7 +139,7 @@ CASES = [{'name': 'one',
             '(= (f $x) (let $u (println! body) 1))\n'
             '(= (invoke $f $x) ($f $x))\n'
             '!(invoke f 3)\n',
-  'petta': 'body\nbody\n1\n1\n',
+  'petta': 'body\n1\n',
   'he': 'body\n[1]\n'}]
 
 def normalize(text):

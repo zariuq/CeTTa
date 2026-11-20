@@ -132,6 +132,11 @@ struct TfTc {
     TcOccurrence *selected;
     size_t takes;
     bool unsupported;
+    /* A cursor lent facts a relation kept.  Rows are told apart by their
+     * positions, and a kept fact's position is its cursor's own, so the
+     * decision is declined and the direct engine decides the firing; I4
+     * gives every occurrence one name and removes this. */
+    bool kept;
     bool no_memory;
     bool protocol_started;
     Atom *error;
@@ -511,6 +516,8 @@ static TcStoreStatus tftc_cursor(TfTc *ctx, uint32_t location, Atom *pattern, vo
         space_occurrence_cursor_release(&cursor->rows);
         return TC_STORE_NO_MEMORY;
     }
+    if (space_occurrence_cursor_lends_kept(&cursor->rows))
+        ctx->kept = true;
     ctx->cursors[ctx->cursor_length++] = cursor;
     *out = cursor;
     return TC_STORE_ROW;
@@ -519,6 +526,9 @@ static TcStoreStatus tftc_cursor(TfTc *ctx, uint32_t location, Atom *pattern, vo
 static TcStoreStatus tftc_next(void *raw, TcOccurrence *out) {
     TfTcCursor *cursor = raw;
     TfTc *ctx = cursor->owner;
+    /* No row is named once positions may confuse two of them. */
+    if (ctx->kept)
+        return TC_STORE_END;
     if (ctx->firing->spend && !ctx->firing->spend(ctx->firing->context, 1u))
         return TC_STORE_INTERRUPTED;
     CettaIndex position = 0u;
@@ -828,7 +838,8 @@ static CettaTransformOutcome tftc_terms_decide(void *unused, Arena *arena,
     case TC_DECIDED_NO_MEMORY: break;
     }
 done:
-    if (ctx.unsupported && !ctx.protocol_started) result = CETTA_TRANSFORM_DECLINED;
+    if ((ctx.unsupported && !ctx.protocol_started) || ctx.kept)
+        result = CETTA_TRANSFORM_DECLINED;
     if (result == CETTA_TRANSFORM_ERROR && !*error)
         *error = ctx.error && atom_is_error(ctx.error) ? ctx.error
             : atom_error(arena, firing->publication,
@@ -1134,6 +1145,10 @@ static bool tftc_witnesses_current(const CettaTransformFiring *firing) {
 
 static bool tftc_witnesses_enabled(const CettaTransformFiring *firing) {
     if (!tftc_witnesses_current(firing)) return false;
+    /* A witness whose cursor lends kept facts names its row by that
+     * cursor's position (TfTc.kept). */
+    for (size_t i = 0u; i < firing->port_count; i++)
+        if (firing->ports[i].witness->kept) return false;
     for (size_t i = 0u; i < firing->port_count; i++) {
         const CettaTransformPort *take = &firing->ports[i];
         if (!take->take) continue;
@@ -1231,7 +1246,7 @@ protocol:
     (void)tc_fire(&x);
     result = x.outcome;
 done:
-    if (x.store.unsupported) result = CETTA_TRANSFORM_DECLINED;
+    if (x.store.unsupported || x.store.kept) result = CETTA_TRANSFORM_DECLINED;
     if (x.store.no_memory) result = CETTA_TRANSFORM_ERROR;
     if (compare_carriers && result != CETTA_TRANSFORM_ERROR && result != CETTA_TRANSFORM_INTERRUPTED) {
         CettaTransformFiring reference = *firing;

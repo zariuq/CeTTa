@@ -14,10 +14,10 @@ void cetta_tmetta_eval(struct CettaLibraryContext *context, Space *space,
 void cetta_tmetta_resume(struct CettaLibraryContext *context, Space *space,
     Registry *registry, Arena *output, Atom *frontier, int fuel, EvalOutcome *result);
 
-/* Deliver a closed value to suspended reads of a query input and advance the
+/* Deliver a closed value to branches watching a query input and advance the
  * frontier. Use the variable's original source identity or a qualified
- * captured identity. Return the number of branches woken. Unrelated inputs
- * leave sleeping branches alone, and completed answers are unchanged. */
+ * captured identity. Return the number of branches that received the input.
+ * A contextual match may still have residual equations after receiving it. */
 size_t cetta_tmetta_resume_with_value(struct CettaLibraryContext *context, Space *space,
     Registry *registry, Arena *output, Atom *frontier, Atom *variable,
     Atom *value, int fuel, EvalOutcome *result);

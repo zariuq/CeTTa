@@ -2672,6 +2672,17 @@ CettaNativeQueryStatus cetta_native_query_run(
     TermUniverse *universe = query->source->native.universe;
     if (!universe)
         return CETTA_NATIVE_QUERY_DECLINED;
+    /* A space with dependencies reads its own rows, then each dependency's
+     * own rows, as match composes them; this engine reads one space's rows
+     * and indexes, and is not used on such a space, read or guarded. */
+    if (!query->rows && space_has_dependencies(query->source))
+        return CETTA_NATIVE_QUERY_DECLINED;
+    for (size_t i = 0u; !query->rows && query->sources &&
+                        i < query->pattern_count; i++)
+        if (space_has_dependencies(query->sources[i]))
+            return CETTA_NATIVE_QUERY_DECLINED;
+    if (query->guard_space && space_has_dependencies(query->guard_space))
+        return CETTA_NATIVE_QUERY_DECLINED;
     /* The engine reads each pattern as the rows it matches; a conjunction
      * or a union among them is a query over parts, which it does not read. */
     for (size_t i = 0u; i < query->pattern_count; i++)

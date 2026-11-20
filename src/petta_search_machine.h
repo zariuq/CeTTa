@@ -168,6 +168,11 @@ typedef enum {
 } PettaTableMutationPolicy;
 
 PettaMachineTable *petta_machine_table_new(void);
+/* A top-level directive's bracket for the live reading (P-DEF-4): every
+ * machine it runs decides a planned data occurrence again once the program
+ * differs from the one the directive began under. */
+void petta_machine_live_begin(void);
+void petta_machine_live_end(void);
 PettaMachineTable *petta_machine_table_new_with_mutation_policy(PettaTableMutationPolicy);
 void petta_machine_table_free(PettaMachineTable *table);
 
@@ -244,7 +249,7 @@ typedef struct {
      * the host's ordinary call dispatch. */
     bool (*transform_open)(
         void *context, Space *space, Arena *arena, Atom *call,
-        CettaOwnedExecution *execution);
+        bool first_firing, CettaOwnedExecution *execution);
     /* The error a failed native collection raised, taken from the host so
      * that the machine raises it under its own handlers, as it raises a
      * host application's error.  NULL when the host raised none. */
@@ -331,6 +336,10 @@ typedef struct {
     /* A `once` whose body is one call to the open tier takes its witness
      * from a portfolio of depth-first search and iterative deepening. */
     bool first_witness_portfolio;
+    /* When a transform with takes or a destination space returns its
+     * result to a `once`, the once limits it to its first firing; when that
+     * firing answers nothing, the once goes on to its other alternatives. */
+    bool once_observes_firing;
     /* The language's answer-traversal materializer beside `collapse`:
      * `reify` where the profile offers it, and `collapse` in plain PeTTa,
      * which has no `reify`.  A zero field means `collapse`, for standalone

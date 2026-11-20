@@ -12,6 +12,7 @@
 !(test (get-state &builtin-ticks) 2)
 !(test (collapse (let $v (quote (builtin-tick)) (+ $v 1))) ())
 !(test (get-state &builtin-ticks) 2)
-; Duplicate valid declaration branches retain multiplicity.
+; Two declarations that both admit the call do not multiply it: it runs once
+; for its tuple of argument values.
 (: + (-> %Undefined% Number Number))
-!(test (collapse (+ 1 2)) (3 3))
+!(test (collapse (+ 1 2)) (3))

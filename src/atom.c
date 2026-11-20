@@ -7770,6 +7770,14 @@ uint32_t atom_value_hash(Atom *a) {
     return atom_hash_fold(a, true, false);
 }
 
+uint32_t atom_lane_hash(Atom *a) {
+    if (!a)
+        return 0u;
+    return eval_current_language_id &&
+           eval_current_language_id() == CETTA_LANGUAGE_HE
+        ? atom_value_hash(a) : atom_hash(a);
+}
+
 static __attribute__((noinline)) bool atom_value_eq_walk(
     Atom *a, Atom *b, bool all_numbers) {
     return atom_compare_driver(a, b, ATOM_COMPARE_VALUE, all_numbers);

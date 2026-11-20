@@ -4,7 +4,8 @@
 (: pcg-symbol (-> Symbol Atom))
 (= (pcg-symbol $x) SHOULD-NOT-SUCCEED)
 !(let (Error $reason $context) (catch (pcg-symbol pcg-poison)) $reason)
-; An intrinsic proof does not skip an authored classifier's effect or answer.
+; A literal's intrinsic type is the first answer of its guard: the call
+; commits to it, and the authored classifier after it does not run.
 (= (get-type 6) (progn (println! EXACT-RAN) Number))
 (: pcg-number (-> Number Atom))
 (= (pcg-number $x) OK)
