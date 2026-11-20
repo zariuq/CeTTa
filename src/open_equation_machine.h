@@ -96,6 +96,12 @@ typedef struct {
     /* Present only in profiles whose builtin calls also enumerate authored
      * equations. The result observes an exact head and arity in this space;
      * absence permits native lowering until the program stamp changes. */
+    /* As the search machine's host: whether running an occurrence, or the
+     * goals it runs before child BEFORE_CHILD, may change the program.
+     * NULL: any goal with a call may. */
+    bool (*may_change_program)(void *context, Space *space, Atom *source,
+                               const struct PettaPlanNode *plan,
+                               uint32_t before_child);
     bool (*builtin_equations)(void *context, Space *space, SymbolId head,
                               uint32_t arity);
     /* Whether a goal of `head` with `arity` arguments may answer with goals

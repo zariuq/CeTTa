@@ -2623,6 +2623,32 @@ static PettaLiveNote *petta_machine_live_current(PettaMachineImpl *machine) {
     return note;
 }
 
+/* Whether a data occurrence its plan made, reached now, is a call: one load
+ * while the program is the one the directive began with (P-DEF-4). */
+static inline bool petta_machine_planned_data_calls(PettaMachineImpl *machine,
+                                                    Atom *source) {
+    PettaLiveNote *note = petta_machine_live_current(machine);
+    return __builtin_expect(space_global_program_epoch() !=
+                                note->confirmed_epoch, 0) &&
+        petta_machine_live_data_calls(machine, note, source);
+}
+
+/* Whether running an occurrence, or the goals it runs before child
+ * BEFORE_CHILD (nonzero), may change the program, so that a data occurrence
+ * they precede is decided only when it is reached. */
+static bool petta_machine_occurrence_may_change_program(
+    PettaMachineImpl *machine, Atom *source, const PettaPlanNode *plan,
+    CettaExprIndex before_child) {
+    if (!source || !plan)
+        return true;
+    if (!plan->contains_call)
+        return false;
+    return !machine->host.may_change_program ||
+        machine->host.may_change_program(machine->host.context,
+                                         machine->space, source, plan,
+                                         before_child);
+}
+
 static bool petta_goal_growth_trace_enabled(void) {
     static _Thread_local int enabled = -1;
     if (enabled < 0) {
@@ -14913,8 +14939,9 @@ static bool petta_machine_planned_value_ready(
     if (plan && plan->role == PETTA_PLAN_VALUE)
         return true;
     if (plan && plan->role == PETTA_PLAN_DATA) {
-        return !petta_machine_contains_callable(
-            machine, value, false, NULL, plan);
+        return !petta_machine_planned_data_calls(machine, value) &&
+            !petta_machine_contains_callable(
+                machine, value, false, NULL, plan);
     }
     return !petta_machine_callable_root(
                machine, value, NULL) &&
@@ -15905,6 +15932,8 @@ typedef struct {
     Atom **children;
     Atom **result_slot;
     CettaExprIndex next;
+    /* A field before `next` may have changed the program. */
+    bool preceded;
 } PettaOutputPatternFrame;
 
 /* Projection runs before preceding source effects. An extensible builtin
@@ -15917,11 +15946,8 @@ static bool petta_machine_builtin_output_is_open(
         return false;
     /* A data occurrence whose head the program has made a call since its
      * plan was made is decided when it is reached (P-DEF-4): open too. */
-    if (plan && plan->role == PETTA_PLAN_DATA) {
-        PettaLiveNote *note = petta_machine_live_current(machine);
-        return space_global_program_epoch() != note->confirmed_epoch &&
-            petta_machine_live_data_calls(machine, note, source);
-    }
+    if (plan && plan->role == PETTA_PLAN_DATA)
+        return petta_machine_planned_data_calls(machine, source);
     SymbolId head = source->expr.elems[0]->sym_id;
     if (plan && plan->role == PETTA_PLAN_DYNAMIC_CALL &&
         petta_semantics_runtime_head(head) == PETTA_RUNTIME_HEAD_DATA)
@@ -15959,7 +15985,9 @@ static bool petta_machine_output_constraint_demanded(
  * descendants become fresh holes; constructors and transparent result paths
  * preserve their complete variable correlation.  The expected value connects
  * these holes to the ordinary child continuations when those children run.
- * Quotes retain raw syntax, including a literal cons symbol. */
+ * Quotes retain raw syntax, including a literal cons symbol.  A data
+ * occurrence that a goal able to change the program precedes is decided
+ * when it is reached, not here: it is a hole too. */
 static bool petta_machine_output_pattern(
     PettaMachineImpl *machine, Atom *source, const PettaPlanNode *plan,
     CettaFrameIdentity epoch, Atom **pattern_out, CettaFrameIdentity *pattern_epoch_out) {
@@ -15972,12 +16000,15 @@ static bool petta_machine_output_pattern(
     size_t frame_len = 0u;
     size_t frame_cap = 0u;
     Atom **slot = pattern_out;
+    bool preceded = false;
 
 next_node:
     while (plan) {
-        /* A builtin's result projection describes only its own branch.
-         * Authored alternatives can return a different constructor. */
-        if (petta_machine_builtin_output_is_open(machine, source, plan)) {
+        /* A data occurrence an effect may precede is decided when it is
+         * reached.  A builtin's result projection describes only its own
+         * branch: authored alternatives can return a different constructor. */
+        if ((preceded && plan->role == PETTA_PLAN_DATA) ||
+            petta_machine_builtin_output_is_open(machine, source, plan)) {
             plan = NULL;
             break;
         }
@@ -15988,6 +16019,9 @@ next_node:
             plan->output_child >= source->expr.len)
             goto fail;
         CettaExprIndex child = plan->output_child;
+        if (!preceded && child > 1u)
+            preceded = petta_machine_occurrence_may_change_program(
+                machine, source, plan, child);
         source = source->expr.elems[child];
         plan = petta_plan_child(plan, child);
     }
@@ -16029,6 +16063,7 @@ next_node:
         frames[frame_len++] = (PettaOutputPatternFrame){
             .source = source, .plan = plan,
             .children = children, .result_slot = slot, .next = 1u,
+            .preceded = preceded,
         };
         source = source->expr.elems[0];
         plan = petta_plan_child(plan, 0u);
@@ -16043,6 +16078,11 @@ next_node:
         PettaOutputPatternFrame *frame = &frames[frame_len - 1u];
         if (frame->next < frame->source->expr.len) {
             CettaExprIndex child = frame->next++;
+            if (!frame->preceded && child > 1u)
+                frame->preceded = petta_machine_occurrence_may_change_program(
+                    machine, frame->source->expr.elems[child - 1u],
+                    petta_plan_child(frame->plan, child - 1u), 0u);
+            preceded = frame->preceded;
             source = frame->source->expr.elems[child];
             plan = petta_plan_child(frame->plan, child);
             slot = &frame->children[child];

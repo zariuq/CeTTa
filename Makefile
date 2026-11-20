@@ -29230,20 +29230,22 @@ test-petta-late-installation: $(BIN) \
 # keeps the alternatives it selected, a built value and quoted code stay
 # data, and removing the last equation returns later occurrences to data.
 .PHONY: test-petta-live-reading
-test-petta-live-reading: $(BIN) tests/petta/live_reading.metta tests/petta/live_reading.expected
+test-petta-live-reading: $(BIN) tests/petta/live_reading.metta tests/petta/live_reading.expected \
+		tests/petta/live_reading_tiers.metta tests/petta/live_reading_tiers.expected
 	@set -eu; \
-	expected=$$(cat tests/petta/live_reading.expected); \
+	for fixture in live_reading live_reading_tiers; do \
+	expected=$$(cat tests/petta/$$fixture.expected); \
 	for machine in 0 1; do for profile in default extended; do \
 		flags=; if [ $$profile = extended ]; then flags="--profile extended"; fi; \
 		actual=$$(CETTA_PETTA_SEARCH_MACHINE=$$machine ./$(BIN) --lang petta $$flags \
-			tests/petta/live_reading.metta 2>&1); \
+			tests/petta/$$fixture.metta 2>&1); \
 		if [[ "$$actual" != "$$expected" ]]; then \
-			echo "FAIL: live reading (machine $$machine, $$profile)"; \
+			echo "FAIL: $$fixture (machine $$machine, $$profile)"; \
 			diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual") | head -40; \
 			exit 1; \
 		fi; \
-	done; done; \
-	echo "PASS: an occurrence is decided when it is reached, on both routes and both profiles"
+	done; done; done; \
+	echo "PASS: an occurrence is decided when it is reached, on every tier, both routes and both profiles"
 
 .PHONY: test-petta-profile-boundary test-petta-semantics \
 	test-petta-semantics-differential
@@ -50542,6 +50544,28 @@ test-embedding-query-mutants: $(EMBED_QUERY_TEST)
 	python3 tests/support/check_embedding_query_mutants.py --cc='$(CC)' \
 		--cppflags='$(CPPFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' \
 		--objects $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
+
+# The program clock's law: every operation that can change a program moves
+# the clock (equations and declarations added and removed, imports, module
+# bits, the engine's registries, through each route that performs them), and
+# a change of data alone leaves it, so no tier decides again for a program
+# that did not change.  Both equation routes.
+PROGRAM_CLOCK_LAW_TEST = runtime/test_program_clock_law-$(EMBED_TAG)
+$(PROGRAM_CLOCK_LAW_TEST): tests/support/test_program_clock_law.c src/embedding.c $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS)
+	@set -eu; \
+	tmp_out=$$(mktemp "runtime/.cetta-program-clock-law.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Iinclude -o "$$tmp_out" $< $(EMBED_RUNTIME_OBJ) $(BRIDGE_DEPS) $(LDFLAGS); \
+	mv "$$tmp_out" "$@"
+.PHONY: test-program-clock-law
+test-all: test-program-clock-law
+test-petta-search-machine: test-program-clock-law
+test-program-clock-law: $(PROGRAM_CLOCK_LAW_TEST)
+	@set -eu; \
+	for machine in 0 1; do \
+		CETTA_PETTA_SEARCH_MACHINE=$$machine ./$(PROGRAM_CLOCK_LAW_TEST) \
+			--lib-prolog $(LIB_PROLOG_ENABLED); \
+	done
 
 .PHONY: test-petta-provider-mutants
 test-all: test-petta-provider-mutants

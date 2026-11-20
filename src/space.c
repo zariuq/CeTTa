@@ -70,11 +70,23 @@ static _Thread_local CettaCount g_query_results_capacity_limit_override = 0;
 static _Atomic uint64_t g_space_next_instance_id = 1u;
 static _Atomic uint64_t g_space_next_prefix_epoch = 1u;
 _Atomic uint64_t cetta_space_global_mutation_epoch = 0u;
-_Atomic uint64_t cetta_space_global_program_epoch = 0u;
+/* Starts at one: a decision stamped zero was made under no program. */
+_Atomic uint64_t cetta_space_global_program_epoch = 1u;
 
 static void space_advance_global_program_epoch(void) {
-    atomic_fetch_add_explicit(&cetta_space_global_program_epoch, 1u,
-                              memory_order_relaxed);
+    uint64_t prior = atomic_fetch_add_explicit(
+        &cetta_space_global_program_epoch, 1u, memory_order_relaxed);
+    if (prior == UINT64_MAX) {
+        fputs("CeTTa: exhausted global program epoch\n", stderr);
+        abort();
+    }
+}
+
+/* Whether a space's identity is part of some program's observations: it has
+ * held equations or declarations, or reads another space's. */
+static bool space_identity_observed_by_programs(const Space *s) {
+    return s->equation_revision != 0u || s->declaration_revision != 0u ||
+        s->overlay_base != NULL || s->dep_count != 0u;
 }
 
 static _Thread_local bool g_declared_type_index_configured = false;
@@ -12970,6 +12982,9 @@ static void space_move_storage_and_backend(Space *dst, Space *src) {
 static void space_reset_moved_from(Space *s) {
     if (!s)
         return;
+    /* A program read through the old identity ends with it. */
+    if (space_identity_observed_by_programs(s))
+        space_advance_global_program_epoch();
     s->kind = SPACE_KIND_ATOM;
     s->strict = false;
     /* Moving the payload ends the old source lifetime.  Re-establish every
@@ -13442,6 +13457,9 @@ void space_module_own_view_release(Space *view, Space *storage) {
 void space_free(Space *s) {
     if (!s)
         return;
+    /* Read before the links go: a program read through this identity ends
+     * with it (below). */
+    bool observed_by_programs = space_identity_observed_by_programs(s);
     if (s->ledger_counted) {
         s->ledger_counted = false;
         cetta_runtime_stats_gauge_add(CETTA_RUNTIME_COUNTER_SPACE_LIVE,
@@ -13476,6 +13494,8 @@ void space_free(Space *s) {
     s->native.len = 0;
     s->native.cap = 0;
     s->native.universe = space_default_universe();
+    if (observed_by_programs)
+        space_advance_global_program_epoch();
     s->instance_id = 0;
     s->revision = 0;
     s->equation_revision = 0;

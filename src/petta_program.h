@@ -405,7 +405,10 @@ PettaProgram *petta_program_new(void);
 /* Select live callability at creation, before any source is registered.
  * New calls then revalidate source translation when named relations change;
  * an already retained invocation continues with its captured plan. */
-bool petta_program_enable_callability_refresh(PettaProgram *program);
+/* Plans of this program follow the program they run in: an equation's plan
+ * is revalidated at entry once the program clock has moved since it was
+ * decided.  Only before any space is synchronized. */
+bool petta_program_enable_plan_revalidation(PettaProgram *program);
 /* Whether an occurrence headed by HEAD is a call: a name the engine provides
  * or the session offers, or a head with equations (HAS_EQUATIONS).  A plan
  * decides each occurrence with it when it is built, and the search machine
@@ -792,6 +795,20 @@ bool petta_program_relation_table_safe(
 PettaRelationSafety petta_program_relation_safety(
     PettaProgram *program, Space *space,
     SymbolId head, CettaExprLen arity);
+
+/* Whether running SOURCE under PLAN may change the program, or, for a
+ * nonzero BEFORE_CHILD, running the goals SOURCE runs before that child (a
+ * binding's pattern is data, not a goal).  May change: a goal reaches an
+ * effect on the program (any effect but a data row's addition or removal),
+ * a dynamically headed application, or a relation the safety proof above,
+ * counting only such effects, does not show free of both, in the current
+ * program.  Conservative: false is a proof that the program stays as it is.
+ * A plan that decides an occurrence before it is reached (an output
+ * projection) may rely on that proof for the occurrences such goals
+ * precede. */
+bool petta_program_occurrence_may_change_program(
+    PettaProgram *program, Space *space, Atom *source,
+    const PettaPlanNode *plan, CettaExprIndex before_child);
 PettaResolvedCallClass petta_program_classify_resolved_call(
     PettaProgram *program, Space *space, Atom *call);
 

@@ -25266,9 +25266,9 @@ struct PreparedPureProgramCache {
      * the language and its profile.  A program that would read the
      * registry's bindings is declined, so the registry is no key. */
     SpaceProgramToken program;
-    /* The global mutation clock when `program` was last found current.
-     * Every change the token reads moves the clock, so while the clock
-     * stands there the token is still current. */
+    /* The program clock when `program` was last found current.  Every
+     * change the token reads moves the clock, so while the clock stands
+     * there the token is still current. */
     uint64_t program_current_clock;
     bool program_current_known;
     uint64_t capability_revision;
@@ -25519,7 +25519,7 @@ static inline bool prepared_pure_program_cache_still_current(
     uint64_t capability_revision) {
     return cache && space && cache->root_space == space &&
         cache->program_current_known &&
-        cache->program_current_clock == space_global_mutation_epoch() &&
+        cache->program_current_clock == space_global_program_epoch() &&
         cache->capability_revision == capability_revision &&
         cache->library_mask ==
             (g_library_context ? g_library_context->active_mask : 0u) &&
@@ -25539,7 +25539,7 @@ prepared_pure_program_cache_check_revision(
     CettaLanguageId language = eval_current_language_id();
     /* Read before the token: a change after this read moves the clock past
      * the stamp, and the next check reads the token again. */
-    uint64_t clock = space_global_mutation_epoch();
+    uint64_t clock = space_global_program_epoch();
     if (cache->capability_revision == capability_revision &&
         cache->library_mask == library_mask && cache->profile == profile &&
         cache->language == language &&
@@ -47663,6 +47663,18 @@ static PettaDispatchMemoMode petta_dispatch_memo_mode(void) {
  * profile, the symbol table and whether the space is `&self`; the machine
  * remembers it per head and arity until one of those changes.  Inside a
  * transaction it is computed each time, as relation admission is. */
+/* The program's proof that goals leave the program as it is. */
+static bool petta_eval_may_change_program(void *context, Space *space,
+                                          Atom *source,
+                                          const PettaPlanNode *plan,
+                                          uint32_t before_child) {
+    (void)context;
+    CettaLibraryContext *library = g_library_context;
+    return petta_program_occurrence_may_change_program(
+        library ? library->petta_program : NULL, space, source, plan,
+        (CettaExprIndex)before_child);
+}
+
 static PettaMachineBuiltinEquations petta_eval_machine_builtin_equations(
     void *context, Space *space, SymbolId head, CettaExprLen arity) {
     PettaEvalMachineContext *eval_context = context;
@@ -55757,6 +55769,7 @@ static PettaMachineHost petta_eval_machine_host(
             g_he_shared_execution && g_he_shared_execution_effect_free,
         .stream_head_admitted = g_he_shared_execution
             ? he_machine_stream_head_admitted : NULL,
+        .may_change_program = petta_eval_may_change_program,
         .builtin_equations = eval_current_language_id() == CETTA_LANGUAGE_PETTA
             ? petta_eval_machine_builtin_equations : NULL,
         .callability_authority_token =
@@ -60300,6 +60313,7 @@ static CettaOpenEquationHost petta_eval_open_compile_host(
         .head_callable = language == CETTA_LANGUAGE_HE
             ? NULL : petta_eval_open_head_callable,
         .builtin_allowed = petta_eval_machine_builtin_allowed,
+        .may_change_program = petta_eval_may_change_program,
         .builtin_equations = language == CETTA_LANGUAGE_PETTA &&
             (active_profile_is_petta_extended() ||
              !petta_builtin_self_space(g_registry, space))

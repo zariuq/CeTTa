@@ -819,9 +819,11 @@ static inline uint64_t space_global_mutation_epoch(void) {
  * below, so that a reader keyed on either sees the change. */
 void space_global_mutation_epoch_advance(void);
 /* A clock of programs: it advances when any Space's equations or declarations
- * change, when a Space gains a dependency, and with every change of meaning
- * outside the spaces, but not for data.  A reader of the program, not of
- * data, keys on it. */
+ * change, when a Space gains a dependency, when a Space that held a program
+ * ends, and with every change of meaning outside the spaces (imports, module
+ * bits, the engine's registries, a program's spaces), but not for data.  A
+ * reader of the program, not of data, keys on it; test-program-clock-law
+ * checks the law for every route. */
 extern _Atomic uint64_t cetta_space_global_program_epoch;
 static inline uint64_t space_global_program_epoch(void) {
     return atomic_load_explicit(&cetta_space_global_program_epoch,

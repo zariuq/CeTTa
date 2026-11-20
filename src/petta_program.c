@@ -257,6 +257,9 @@ typedef struct {
     Atom *equation;
     uint64_t source_root;
     const PettaPlanNode *plan;
+    /* The program clock (space_global_program_epoch) `plan` was decided or
+     * last revalidated under; zero: not yet. */
+    uint64_t plan_program_epoch;
     const PettaEquationTemplateC0 *equation_template_c0;
     const PettaEquationTemplate *equation_template;
     uint32_t static_variable_count;
@@ -351,10 +354,6 @@ typedef struct {
     size_t synchronized_equation_len;
     uint64_t synchronized_catalog_generation;
     uint64_t catalog_generation;
-    /* Optional validation stamps, allocated only by live translation. They
-     * follow current catalog positions; retained plans themselves are immutable. */
-    uint64_t *plan_callability_epochs;
-    size_t plan_callability_epoch_len, plan_callability_epoch_cap;
     PettaProgramEquation *equations;
     size_t equation_len;
     size_t equation_cap;
@@ -443,6 +442,9 @@ typedef struct {
     CettaExprLen arity;
     uint64_t native_observers;
     PettaRelationSafety safety;
+    /* Classified for effects on the program only
+     * (petta_program_occurrence_may_change_program). */
+    bool program_only;
     bool occupied;
 } PettaTableSafetyCacheEntry;
 
@@ -462,7 +464,9 @@ struct PettaProgram {
     _Atomic uint64_t lifetime_references;
     _Atomic bool closed;
     unsigned admitted_rule_forms;
-    bool refresh_callability;
+    /* Plans follow the program they run in: at entry each is revalidated
+     * when the program clock has moved since it was decided. */
+    bool revalidate_plans;
     Arena plans;
     /* Plans of runtime translations (eval, a computed hyperpose branch),
      * one per distinct content, and the arena each is first built in. */
@@ -498,8 +502,6 @@ struct PettaProgram {
        which engine names the session offers. */
     uint64_t callability_cache_modules;
     bool callability_cache_valid;
-    /* Advances whenever the callability cache is rebuilt. */
-    uint64_t callability_epoch;
     /* Plans of goals planned at run time, by the goal's syntax up to the
        names of its variables and by the callability they were built under:
        an alpha-equivalent goal takes its plan again, rather than building
@@ -1551,6 +1553,8 @@ bool petta_program_predeclare_equation(
     if (!petta_program_equation_view(program, atom, &lhs, NULL, &head))
         return false;
     program->predeclared_generation++;
+    /* A predeclared head is callable before its equation is added. */
+    space_global_mutation_epoch_advance();
     if (petta_equation_lhs_admits_any_named_head(lhs)) {
         program->predeclared_callability.admits_any_head = true;
     }
@@ -3602,8 +3606,6 @@ static bool petta_program_extend_callability(PettaProgram *program) {
             return false;
         }
     }
-    size_t named_before = program->callability_cache.named_len;
-    bool any_before = program->callability_cache.admits_any_head;
     for (size_t index = 0u; index < program->space_len; index++) {
         const PettaProgramSpace *space = &program->spaces[index];
         PettaCallabilityScan *scan =
@@ -3622,9 +3624,6 @@ static bool petta_program_extend_callability(PettaProgram *program) {
         }
         *scan = petta_program_callability_scan_of(space);
     }
-    if (program->callability_cache.named_len != named_before ||
-        program->callability_cache.admits_any_head != any_before)
-        program->callability_epoch++;
     return true;
 }
 
@@ -3689,7 +3688,6 @@ static bool petta_program_collect_callability(
         program->predeclared_generation;
     program->callability_cache_modules = petta_program_session_modules();
     program->callability_cache_valid = true;
-    program->callability_epoch++;
     return true;
 }
 
@@ -3837,9 +3835,6 @@ static void petta_program_space_dispose_catalog(
     petta_program_space_clear_head_index(entry);
     petta_program_space_clear_candidate_snapshots(entry);
     petta_program_space_clear_type_families(entry);
-    free(entry->plan_callability_epochs);
-    entry->plan_callability_epochs = NULL;
-    entry->plan_callability_epoch_len = entry->plan_callability_epoch_cap = 0u;
     free(entry->equations);
     entry->equations = NULL;
     entry->equation_len = 0u;
@@ -3938,20 +3933,13 @@ static bool petta_program_space_remove_all_matching_equations(
     for (size_t read = 0u; read < entry->equation_len; read++) {
         if (atom_eq(entry->equations[read].equation, atom))
             continue;
-        if (write != read) {
+        if (write != read)
             entry->equations[write] = entry->equations[read];
-            if (write < entry->plan_callability_epoch_len)
-                entry->plan_callability_epochs[write] =
-                    read < entry->plan_callability_epoch_len
-                        ? entry->plan_callability_epochs[read] : 0u;
-        }
         write++;
     }
     if (write == entry->equation_len)
         return false;
     entry->equation_len = write;
-    if (entry->plan_callability_epoch_len > write)
-        entry->plan_callability_epoch_len = write;
     entry->head_index_dirty = true;
     petta_program_space_commit_catalog_mutation(entry);
     return true;
@@ -3966,13 +3954,6 @@ static void petta_program_space_remove_equation_at(
         entry->equations + remove + 1u,
         sizeof(*entry->equations) *
             (entry->equation_len - remove - 1u));
-    if (remove < entry->plan_callability_epoch_len) {
-        memmove(entry->plan_callability_epochs + remove,
-                entry->plan_callability_epochs + remove + 1u,
-                sizeof(*entry->plan_callability_epochs) *
-                    (entry->plan_callability_epoch_len - remove - 1u));
-        entry->plan_callability_epoch_len--;
-    }
     entry->equation_len--;
     entry->head_index_dirty = true;
     petta_program_space_commit_catalog_mutation(entry);
@@ -3985,7 +3966,6 @@ static void petta_program_space_replace_catalog(
         abort();
     petta_program_space_clear_head_index(entry);
     free(entry->equations);
-    entry->plan_callability_epoch_len = 0u;
     entry->equations = equations;
     entry->equation_len = count;
     entry->equation_cap = count;
@@ -3993,8 +3973,11 @@ static void petta_program_space_replace_catalog(
     petta_program_space_commit_catalog_mutation(entry);
 }
 
-static bool petta_program_refresh_callability(PettaProgram *program,
+static bool petta_program_revalidate_plans(PettaProgram *program,
     PettaProgramSpace *entry, SymbolId head);
+static bool petta_plan_reads_hold(const Atom *syntax,
+        const PettaPlanNode *plan, const PettaCallabilityDomain *domain,
+        bool *hold);
 
 PettaProgramRevisionView *petta_program_revision_view_capture(
         PettaProgram *program, Space *source) {
@@ -4003,7 +3986,7 @@ PettaProgramRevisionView *petta_program_revision_view_capture(
     PettaProgramSpace *entry =
         petta_program_find_space(program, source);
     if (!entry || !source ||
-        !petta_program_refresh_callability(program, entry, SYMBOL_ID_NONE)) {
+        !petta_program_revalidate_plans(program, entry, SYMBOL_ID_NONE)) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PETTA_PROGRAM_REVISION_VIEW_CAPTURE_DECLINE);
         return NULL;
@@ -4212,6 +4195,8 @@ static PettaProgramSpace *petta_program_ensure_space(
     memset(created, 0, sizeof(*created));
     created->space = space;
     created->instance_id = space_instance_id(space);
+    /* The space's equations join the program's callability. */
+    space_global_mutation_epoch_advance();
     return created;
 }
 
@@ -4466,10 +4451,10 @@ failed_plans:
     return NULL;
 }
 
-bool petta_program_enable_callability_refresh(PettaProgram *program) {
+bool petta_program_enable_plan_revalidation(PettaProgram *program) {
     if (!program || program->space_len)
         return false;
-    program->refresh_callability = true;
+    program->revalidate_plans = true;
     return true;
 }
 
@@ -4648,7 +4633,8 @@ const PettaPlanNode *petta_program_plan_current_in(
 
 typedef struct PettaTransientPlan {
     uint64_t hash;
-    uint64_t epoch;
+    /* The program clock the plan was decided or last revalidated under. */
+    uint64_t program_epoch;
     Atom *atom;
     const PettaPlanNode *plan;
 } PettaTransientPlan;
@@ -4786,7 +4772,7 @@ static void petta_transient_plan_keep(PettaProgram *program, uint64_t hash,
     if (!entry->atom)
         program->transient_plan_len++;
     *entry = (PettaTransientPlan){
-        .hash = hash, .epoch = program->callability_epoch,
+        .hash = hash, .program_epoch = space_global_program_epoch(),
         .atom = copy, .plan = plan,
     };
 }
@@ -4797,7 +4783,8 @@ static void petta_transient_plan_keep(PettaProgram *program, uint64_t hash,
 typedef struct PettaTransientValue {
     const Atom *atom;
     uint64_t reset_epoch;
-    uint64_t callability_epoch;
+    /* The program clock the certificate was made under. */
+    uint64_t program_epoch;
     uint32_t arena_identity;
 } PettaTransientValue;
 
@@ -4860,7 +4847,7 @@ static bool petta_translation_value_cached(
     bool cached = slot && slot->atom == atom &&
         slot->arena_identity == source->identity &&
         slot->reset_epoch == source->reset_epoch &&
-        slot->callability_epoch == program->callability_epoch;
+        slot->program_epoch == space_global_program_epoch();
     if (cached) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PETTA_TRANSLATION_VALUE_REUSE);
@@ -4879,7 +4866,7 @@ static void petta_translation_value_keep(
         *slot = (PettaTransientValue){
             .atom = atom, .reset_epoch = source->reset_epoch,
             .arena_identity = source->identity,
-            .callability_epoch = program->callability_epoch,
+            .program_epoch = space_global_program_epoch(),
         };
     }
 }
@@ -5004,7 +4991,13 @@ const PettaPlanNode *petta_program_plan_transient(
     if (keyed && program->transient_plan_len > 0u) {
         PettaTransientPlan *entry =
             petta_transient_plan_slot(program, hash, atom);
-        if (entry->atom && entry->epoch == program->callability_epoch) {
+        uint64_t clock = space_global_program_epoch();
+        bool hold = false;
+        if (entry->atom &&
+            (entry->program_epoch == clock ||
+             (petta_plan_reads_hold(entry->atom, entry->plan, callability,
+                                    &hold) && hold))) {
+            entry->program_epoch = clock;
             free(owned.named_heads);
             return entry->plan;
         }
@@ -5333,19 +5326,21 @@ static bool petta_program_space_sync_one_append(
         space_program_token_matches_live_space(token, space);
 }
 
-/* Check the same callability observations that formed this source plan.
- * Value positions retain their interpretation; evaluating a held value is a
- * separate translation boundary. The traversal is iterative for deep terms. */
-static bool petta_plan_callability_changed(const Atom *syntax,
+/* Whether the callability observations that formed this source plan still
+ * hold in DOMAIN: the reads of CallabilityTranslation's refresh.  Each head
+ * the plan decided is read again (relation admission and the extension
+ * offer); value positions keep their interpretation, since evaluating a held
+ * value is a separate translation boundary.  Iterative for deep terms. */
+static bool petta_plan_reads_hold(const Atom *syntax,
         const PettaPlanNode *plan, const PettaCallabilityDomain *domain,
-        bool *changed) {
+        bool *hold) {
     typedef struct {
         const Atom *syntax;
         const PettaPlanNode *plan;
     } Read;
     Read *reads = NULL;
     size_t len = 0u, cap = 0u;
-    *changed = !plan;
+    *hold = plan != NULL;
     if (!plan)
         return true;
     if (!petta_program_reserve((void **)&reads, &cap, 1u, sizeof(*reads)))
@@ -5371,7 +5366,7 @@ static bool petta_plan_callability_changed(const Atom *syntax,
              read.plan->extension_offered !=
                  petta_program_head_applies_at_any_arity(
                      read.syntax->expr.elems[0]->sym_id))) {
-            *changed = true;
+            *hold = false;
             break;
         }
         if (!petta_program_reserve((void **)&reads, &cap, len + count,
@@ -5387,30 +5382,20 @@ static bool petta_plan_callability_changed(const Atom *syntax,
     return true;
 }
 
-/* Refresh only the selected declaration family. Existing leases keep the
- * immutable plans they captured; new selections see the complete replacement
- * batch. A global callability epoch is just a fast rejection stamp: the source
- * plan's actual reads decide whether recompilation is necessary. */
-static bool petta_program_refresh_callability(PettaProgram *program,
+/* Entered equations take plans decided against the current program.  Each
+ * plan records the program clock it was decided under: while the clock
+ * stands, so does the plan (one load).  Once it has moved, the plan's reads
+ * are checked against the current program, and a plan whose reads changed is
+ * decided again.  Only HEAD's family is examined (all, for SYMBOL_ID_NONE).
+ * Leases already taken keep the immutable plans they captured; new
+ * selections see the complete replacement batch. */
+static bool petta_program_revalidate_plans(PettaProgram *program,
         PettaProgramSpace *entry, SymbolId head) {
-    if (!program || !entry || !program->refresh_callability)
+    if (!program || !entry || !program->revalidate_plans)
         return true;
-    if (!petta_program_reserve((void **)&entry->plan_callability_epochs,
-            &entry->plan_callability_epoch_cap, entry->equation_len,
-            sizeof(*entry->plan_callability_epochs)))
-        return false;
-    if (entry->plan_callability_epoch_len < entry->equation_len) {
-        memset(entry->plan_callability_epochs + entry->plan_callability_epoch_len,
-               0, sizeof(*entry->plan_callability_epochs) *
-                    (entry->equation_len - entry->plan_callability_epoch_len));
-        entry->plan_callability_epoch_len = entry->equation_len;
-    }
+    uint64_t clock = space_global_program_epoch();
     PettaCallabilityDomain local = {0};
     const PettaCallabilityDomain *domain = NULL;
-    if (!petta_program_callability_view(program, &local, &domain)) {
-        free(local.named_heads);
-        return false;
-    }
     typedef struct {
         size_t index;
         const PettaPlanNode *plan;
@@ -5434,18 +5419,21 @@ static bool petta_program_refresh_callability(PettaProgram *program,
             if (head != SYMBOL_ID_NONE && record->head != SYMBOL_ID_NONE &&
                 record->head != head)
                 continue;
-            if (program->callability_cache_valid && program->callability_epoch &&
-                entry->plan_callability_epochs[index] == program->callability_epoch)
+            if (record->plan_program_epoch == clock)
                 continue;
+            if (!domain &&
+                !petta_program_callability_view(program, &local, &domain)) {
+                ok = false;
+                break;
+            }
             Atom *syntax = record->equation_template
                 ? record->equation_template->equation : record->equation;
-            bool changed = false;
-            ok = petta_plan_callability_changed(syntax, record->plan, domain, &changed);
+            bool hold = false;
+            ok = petta_plan_reads_hold(syntax, record->plan, domain, &hold);
             if (!ok)
                 break;
-            if (!changed) {
-                entry->plan_callability_epochs[index] =
-                    program->callability_cache_valid ? program->callability_epoch : 0u;
+            if (hold) {
+                record->plan_program_epoch = clock;
                 continue;
             }
             const PettaPlanNode *plan = petta_plan_build(program, domain, syntax);
@@ -5466,8 +5454,7 @@ static bool petta_program_refresh_callability(PettaProgram *program,
         for (size_t i = 0u; i < len; i++) {
             PettaProgramEquation *record = &entry->equations[updates[i].index];
             record->plan = updates[i].plan;
-            entry->plan_callability_epochs[updates[i].index] =
-                program->callability_cache_valid ? program->callability_epoch : 0u;
+            record->plan_program_epoch = clock;
         }
         if (len)
             petta_program_space_commit_catalog_mutation(entry);
@@ -6006,6 +5993,8 @@ void petta_program_forget_space(
             sizeof(*entry) *
                 (program->space_len - index - 1u));
         program->space_len--;
+        /* Its equations leave the program's callability. */
+        space_global_mutation_epoch_advance();
         break;
     }
     if (!program->analysis)
@@ -6553,7 +6542,7 @@ bool petta_program_candidate_snapshot_lease_profiled(
         program && !cetta_shared_transition_scope_active()
             ? petta_program_find_space(program, space)
             : NULL;
-    if (!petta_program_refresh_callability(program, entry, head))
+    if (!petta_program_revalidate_plans(program, entry, head))
         return false;
     return petta_program_candidate_snapshot_lease_from_entry(
         entry, entry, true, petta_program_rule_forms(program), space, head, lease, stats);
@@ -7479,67 +7468,51 @@ static bool petta_table_safety_trace_enabled(void) {
 /* `transient_out` is raised when an UNSAFE answer does not follow from the
  * program itself: an equation whose plan is not built yet, or an allocation
  * failure.  Such an answer must not be memoized under the program token. */
-static PettaRelationSafety petta_table_safety_scan_relation(
-    PettaProgram *program, Space *space,
-    PettaTableSafetyRelation relation,
-    uint64_t native_observers,
+/* A row whatever values its variables take: no equation or declaration
+ * (the forms Space reads as program rows), and no variable where one could
+ * stand for such a form. */
+static bool petta_table_safety_row_is_data(const Atom *row) {
+    if (!row || row->kind == ATOM_VAR)
+        return false;
+    if (row->kind != ATOM_EXPR || row->expr.len == 0u)
+        return true;
+    const Atom *head = row->expr.elems[0];
+    if (!head || head->kind != ATOM_SYMBOL)
+        return false;
+    return row->expr.len != 3u ||
+        (head->sym_id != g_builtin_syms.equals &&
+         head->sym_id != g_builtin_syms.equals_percent &&
+         head->sym_id != g_builtin_syms.colon &&
+         head->sym_id != g_builtin_syms.subtype);
+}
+
+/* An addition or a removal of a data row: it changes data, never the
+ * program, whichever space its target names. */
+static bool petta_table_safety_writes_data_row(SymbolId head,
+                                               const Atom *atom) {
+    return (head == g_builtin_syms.add_atom ||
+            head == g_builtin_syms.remove_atom) &&
+        atom->expr.len == 3u &&
+        petta_table_safety_row_is_data(atom->expr.elems[2]);
+}
+
+/* Classify the occurrences on the stack and those they run: true when none
+ * is unsafe.  With `program_only`, only an effect on the program is unsafe:
+ * a data row's write is not.   Each named relation they call joins `relations`, whose
+ * equations the caller classifies in turn; a dynamically headed application
+ * sets `guarded_dynamic`.  `relation` only names the scan in traces. */
+static bool petta_table_safety_scan_nodes(
+    PettaTableSafetyNode **node_stack, size_t *node_count,
+    size_t *node_capacity, PettaTableSafetyRelation relation,
+    uint64_t native_observers, bool program_only,
     PettaTableSafetyRelation **relations,
     size_t *relation_len, size_t *relation_cap,
-    bool *transient_out) {
-    PettaEquationCandidate *candidates = NULL;
-    size_t candidate_count = 0u;
-    if (!petta_program_candidate_snapshot(
-            program, space, relation.head,
-            &candidates, &candidate_count)) {
-        if (transient_out)
-            *transient_out = true;
-        return PETTA_RELATION_SAFETY_UNSAFE;
-    }
-
-    PettaTableSafetyNode *nodes = NULL;
-    size_t node_len = 0u;
-    size_t node_cap = 0u;
-    bool saw_matching_equation = false;
+    bool *guarded_dynamic_out, bool *transient_out, bool trace) {
+    PettaTableSafetyNode *nodes = *node_stack;
+    size_t node_len = *node_count;
+    size_t node_cap = *node_capacity;
     bool safe = true;
     bool guarded_dynamic = false;
-    bool trace = petta_table_safety_trace_enabled();
-    for (size_t index = 0u;
-         safe && index < candidate_count; index++) {
-        Atom *lhs = NULL;
-        Atom *rhs = NULL;
-        if (candidates[index].activation_layout.binding != CETTA_RULE_BIND_UNIFY) {
-            safe = false;
-            break;
-        }
-        if (!petta_equation_view(
-                candidates[index].equation,
-                &lhs, &rhs, NULL) ||
-            !lhs || lhs->expr.len == 0u ||
-            lhs->expr.len - 1u != relation.arity) {
-            continue;
-        }
-        Atom *lhs_head = lhs->expr.elems[0];
-        if (lhs_head->kind == ATOM_SYMBOL &&
-            lhs_head->sym_id != relation.head) {
-            continue;
-        }
-        saw_matching_equation = true;
-        safe = petta_table_safety_push_node(
-            &nodes, &node_len, &node_cap,
-            rhs, candidates[index].rhs_plan);
-        if (!safe && transient_out)
-            *transient_out = true;
-        if (!safe && trace) {
-            fprintf(
-                stderr,
-                "[petta-table-safety] head=%s arity=%u "
-                "missing-or-invalid-rhs-plan equation=%zu\n",
-                symbol_bytes(g_symbols, relation.head),
-                (unsigned)relation.arity, index);
-        }
-    }
-    free(candidates);
-
     while (safe && node_len > 0u) {
         PettaTableSafetyNode item = nodes[--node_len];
         Atom *atom = item.atom;
@@ -7674,6 +7647,21 @@ static PettaRelationSafety petta_table_safety_scan_relation(
             continue;
         }
 
+        if (program_only &&
+            petta_table_safety_writes_data_row(call_head, atom)) {
+            /* The row is stored as written; only its space runs. */
+            if (plan->child_count != atom->expr.len) {
+                safe = false;
+                break;
+            }
+            safe = petta_table_safety_push_node(
+                &nodes, &node_len, &node_cap,
+                atom->expr.elems[1], &plan->children[1]);
+            if (!safe && transient_out)
+                *transient_out = true;
+            continue;
+        }
+
         if (petta_program_head_is_intrinsic(call_head) ||
             !petta_table_safety_add_relation(
                 relations, relation_len, relation_cap,
@@ -7690,6 +7678,80 @@ static PettaRelationSafety petta_table_safety_scan_relation(
             }
         }
     }
+    *node_stack = nodes;
+    *node_count = node_len;
+    *node_capacity = node_cap;
+    if (guarded_dynamic)
+        *guarded_dynamic_out = true;
+    return safe;
+}
+
+static PettaRelationSafety petta_table_safety_scan_relation(
+    PettaProgram *program, Space *space,
+    PettaTableSafetyRelation relation,
+    uint64_t native_observers, bool program_only,
+    PettaTableSafetyRelation **relations,
+    size_t *relation_len, size_t *relation_cap,
+    bool *transient_out) {
+    PettaEquationCandidate *candidates = NULL;
+    size_t candidate_count = 0u;
+    if (!petta_program_candidate_snapshot(
+            program, space, relation.head,
+            &candidates, &candidate_count)) {
+        if (transient_out)
+            *transient_out = true;
+        return PETTA_RELATION_SAFETY_UNSAFE;
+    }
+
+    PettaTableSafetyNode *nodes = NULL;
+    size_t node_len = 0u;
+    size_t node_cap = 0u;
+    bool saw_matching_equation = false;
+    bool safe = true;
+    bool guarded_dynamic = false;
+    bool trace = petta_table_safety_trace_enabled();
+    for (size_t index = 0u;
+         safe && index < candidate_count; index++) {
+        Atom *lhs = NULL;
+        Atom *rhs = NULL;
+        if (candidates[index].activation_layout.binding != CETTA_RULE_BIND_UNIFY) {
+            safe = false;
+            break;
+        }
+        if (!petta_equation_view(
+                candidates[index].equation,
+                &lhs, &rhs, NULL) ||
+            !lhs || lhs->expr.len == 0u ||
+            lhs->expr.len - 1u != relation.arity) {
+            continue;
+        }
+        Atom *lhs_head = lhs->expr.elems[0];
+        if (lhs_head->kind == ATOM_SYMBOL &&
+            lhs_head->sym_id != relation.head) {
+            continue;
+        }
+        saw_matching_equation = true;
+        safe = petta_table_safety_push_node(
+            &nodes, &node_len, &node_cap,
+            rhs, candidates[index].rhs_plan);
+        if (!safe && transient_out)
+            *transient_out = true;
+        if (!safe && trace) {
+            fprintf(
+                stderr,
+                "[petta-table-safety] head=%s arity=%u "
+                "missing-or-invalid-rhs-plan equation=%zu\n",
+                symbol_bytes(g_symbols, relation.head),
+                (unsigned)relation.arity, index);
+        }
+    }
+    free(candidates);
+
+    if (safe)
+        safe = petta_table_safety_scan_nodes(
+            &nodes, &node_len, &node_cap, relation, native_observers,
+            program_only, relations, relation_len, relation_cap,
+            &guarded_dynamic, transient_out, trace);
     free(nodes);
     if (trace && !saw_matching_equation) {
         fprintf(
@@ -7717,9 +7779,9 @@ static size_t petta_table_safety_cache_slot(
            PETTA_TABLE_SAFETY_CACHE_WAYS;
 }
 
-PettaRelationSafety petta_program_relation_safety(
+static PettaRelationSafety petta_program_relation_safety_for(
     PettaProgram *program, Space *space,
-    SymbolId head, CettaExprLen arity) {
+    SymbolId head, CettaExprLen arity, bool program_only) {
     if (!program || !space || head == SYMBOL_ID_NONE)
         return PETTA_RELATION_SAFETY_UNSAFE;
 
@@ -7739,6 +7801,7 @@ PettaRelationSafety petta_program_relation_safety(
         PettaTableSafetyCacheEntry *entry =
             &program->table_safety_cache[cache_slot + way];
         if (entry->occupied && entry->head == head && entry->arity == arity &&
+            entry->program_only == program_only &&
             entry->program.space == program_token.space &&
             entry->program.instance_id == program_token.instance_id) {
             if (space_program_token_eq(entry->program, program_token) &&
@@ -7780,7 +7843,7 @@ PettaRelationSafety petta_program_relation_safety(
         PettaRelationSafety relation_safety =
             petta_table_safety_scan_relation(
             program, space, relations[index], native_observers,
-            &relations, &relation_len, &relation_cap,
+            program_only, &relations, &relation_len, &relation_cap,
             &transient);
         safe = relation_safety != PETTA_RELATION_SAFETY_UNSAFE;
         if (safe &&
@@ -7814,10 +7877,18 @@ PettaRelationSafety petta_program_relation_safety(
             .arity = arity,
             .native_observers = native_observers,
             .safety = safety,
+            .program_only = program_only,
             .occupied = true,
         };
     }
     return safety;
+}
+
+PettaRelationSafety petta_program_relation_safety(
+    PettaProgram *program, Space *space,
+    SymbolId head, CettaExprLen arity) {
+    return petta_program_relation_safety_for(program, space, head, arity,
+                                             false);
 }
 
 bool petta_program_relation_table_safe(
@@ -7826,6 +7897,101 @@ bool petta_program_relation_table_safe(
     return petta_program_relation_safety(
                program, space, head, arity) ==
            PETTA_RELATION_SAFETY_STATIC;
+}
+
+/* The goals SOURCE runs before its child BEFORE_CHILD, or SOURCE itself for
+ * zero.  A binding's pattern is data (petta_table_safety_push_binding), and
+ * so is each pattern of a let*'s bindings; every other earlier child runs. */
+static bool petta_program_push_preceding_goals(
+    PettaTableSafetyNode **nodes, size_t *len, size_t *cap, Atom *source,
+    const PettaPlanNode *plan, CettaExprIndex before_child) {
+    if (before_child == 0u)
+        return !plan->contains_call ||
+            petta_table_safety_push_node(nodes, len, cap, source, plan);
+    if (source->kind != ATOM_EXPR || source->expr.len != plan->child_count ||
+        before_child > source->expr.len)
+        return false;
+    Atom *head = source->expr.elems[0];
+    PeTTaForm form = head->kind == ATOM_SYMBOL
+        ? petta_semantics_form(head->sym_id) : PETTA_FORM_NONE;
+    if (source->expr.len == 4u && before_child == 3u &&
+        (form == PETTA_FORM_LET || form == PETTA_FORM_CHAIN)) {
+        CettaExprIndex value = form == PETTA_FORM_CHAIN ? 1u : 2u;
+        const PettaPlanNode *value_plan = petta_plan_child(plan, value);
+        return !value_plan || !value_plan->contains_call ||
+            petta_table_safety_push_node(nodes, len, cap,
+                source->expr.elems[value], value_plan);
+    }
+    if (source->expr.len == 3u && before_child == 2u &&
+        head->kind == ATOM_SYMBOL && head->sym_id == g_builtin_syms.let_star) {
+        Atom *bindings = source->expr.elems[1];
+        const PettaPlanNode *bindings_plan = petta_plan_child(plan, 1u);
+        if (!bindings || bindings->kind != ATOM_EXPR || !bindings_plan ||
+            bindings_plan->child_count != bindings->expr.len)
+            return false;
+        for (CettaExprIndex index = 0u; index < bindings->expr.len; index++) {
+            Atom *binding = bindings->expr.elems[index];
+            const PettaPlanNode *binding_plan =
+                petta_plan_child(bindings_plan, index);
+            if (!binding || binding->kind != ATOM_EXPR ||
+                binding->expr.len != 2u || !binding_plan ||
+                binding_plan->child_count != 2u)
+                return false;
+            const PettaPlanNode *value_plan = petta_plan_child(binding_plan, 1u);
+            if (value_plan && value_plan->contains_call &&
+                !petta_table_safety_push_node(nodes, len, cap,
+                    binding->expr.elems[1], value_plan))
+                return false;
+        }
+        return true;
+    }
+    for (CettaExprIndex index = 1u; index < before_child; index++) {
+        const PettaPlanNode *child = petta_plan_child(plan, index);
+        if (child && child->contains_call &&
+            !petta_table_safety_push_node(nodes, len, cap,
+                source->expr.elems[index], child))
+            return false;
+    }
+    return true;
+}
+
+bool petta_program_occurrence_may_change_program(
+    PettaProgram *program, Space *space, Atom *source,
+    const PettaPlanNode *plan, CettaExprIndex before_child) {
+    if (!source || !plan)
+        return true;
+    if (!plan->contains_call)
+        return false;
+    if (!program || !space)
+        return true;
+    uint64_t native_observers = eval_current_native_observer_mask
+        ? eval_current_native_observer_mask() : 0u;
+    PettaTableSafetyNode *nodes = NULL;
+    size_t node_len = 0u, node_cap = 0u;
+    PettaTableSafetyRelation *relations = NULL;
+    size_t relation_len = 0u, relation_cap = 0u;
+    bool guarded_dynamic = false;
+    if (!petta_program_push_preceding_goals(&nodes, &node_len, &node_cap,
+                                            source, plan, before_child)) {
+        free(nodes);
+        return true;
+    }
+    if (node_len == 0u) {
+        free(nodes);
+        return false;
+    }
+    bool safe = petta_table_safety_scan_nodes(
+            &nodes, &node_len, &node_cap, (PettaTableSafetyRelation){0},
+            native_observers, true, &relations, &relation_len, &relation_cap,
+            &guarded_dynamic, NULL, false) &&
+        !guarded_dynamic;
+    for (size_t index = 0u; safe && index < relation_len; index++)
+        safe = petta_program_relation_safety_for(program, space,
+                   relations[index].head, relations[index].arity, true) ==
+               PETTA_RELATION_SAFETY_STATIC;
+    free(nodes);
+    free(relations);
+    return !safe;
 }
 
 PettaResolvedCallClass petta_program_classify_resolved_call(

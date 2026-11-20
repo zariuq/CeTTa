@@ -704,6 +704,10 @@ struct CettaPreparedPureProgram {
     size_t owned_source_cap;
     Space *space;
     SpaceProgramToken source_program;
+    /* The program clock read before `source_program`, and re-armed when the
+     * token is found current after the clock moved
+     * (prepared_pure_source_current). */
+    _Atomic uint64_t source_program_epoch;
     SpaceEquationToken equation_projection;
     CettaPreparedPureBooleanValue boolean_value;
     /* Immutable Boolean leaves copied into program-owned storage at compile
@@ -1131,6 +1135,31 @@ static bool prepared_pure_he_value_has_type(
  * type stamp store's arena oracle. */
 static _Thread_local const CettaPreparedPureProgram *g_prepared_pure_stamp_program;
 static _Thread_local const Arena *g_prepared_pure_stamp_arena;
+
+/* The prepared program's source observations (the equations and
+ * declarations of its space, of the spaces it reads through, and that
+ * space's identity) still hold.  Every writer of those observations moves
+ * the program clock (space.h), so while the clock stands where it was read
+ * before the program's token, they hold; once it has moved, the token itself
+ * is read, and a token found current re-arms the clock check. */
+static __attribute__((cold, noinline)) bool prepared_pure_source_recheck(
+    const CettaPreparedPureProgram *program) {
+    uint64_t clock = space_global_program_epoch();
+    if (!space_program_token_is_current(program->source_program))
+        return false;
+    atomic_store_explicit(
+        &((CettaPreparedPureProgram *)program)->source_program_epoch, clock,
+        memory_order_relaxed);
+    return true;
+}
+
+static inline bool prepared_pure_source_current(
+    const CettaPreparedPureProgram *program) {
+    return space_global_program_epoch() ==
+            atomic_load_explicit(&program->source_program_epoch,
+                                 memory_order_relaxed) ||
+        prepared_pure_source_recheck(program);
+}
 
 bool cetta_prepared_pure_stamp_arena_epoch(const Atom *atom, uint32_t *arena,
                                            uint64_t *epoch) {
@@ -3527,7 +3556,7 @@ static bool prepared_pure_head_index_admitted(
         !prepared_pure_head_buckets_rebuild(
             program, program->head_len + 1u))
         return false;
-    if (!space_program_token_is_current(program->source_program))
+    if (!prepared_pure_source_current(program))
         return false;
     *index_out = (uint32_t)program->head_len;
     program->heads[program->head_len++] = (PreparedPureHead){
@@ -3551,7 +3580,7 @@ static bool prepared_pure_head_index(
             program->space, head, &defined, &dynamic) !=
             CETTA_GSLT_QUERY_EFFECT_PURE ||
         !defined ||
-        !space_program_token_is_current(program->source_program)) {
+        !prepared_pure_source_current(program)) {
         return prepared_pure_reject(
             program, "user head is not revision-pinned pure", NULL);
     }
@@ -8398,7 +8427,7 @@ static bool prepared_pure_compile_head(
     }
     head = &program->heads[head_index];
     if (head->equation_count == 0u ||
-        !space_program_token_is_current(program->source_program))
+        !prepared_pure_source_current(program))
         return prepared_pure_reject(
             program, "empty or invalidated user head", NULL);
     bool has_scalar_guard = false;
@@ -8729,7 +8758,7 @@ static bool prepared_pure_compile_pending_heads(
             !prepared_pure_compile_head(program, i))
             return false;
     }
-    return space_program_token_is_current(program->source_program) &&
+    return prepared_pure_source_current(program) &&
         prepared_pure_binds_meet_destinations(program);
 }
 
@@ -11782,6 +11811,10 @@ static CettaPreparedPureProgram *prepared_pure_program_new(
     }
     program->references = 1u;
     program->space = space;
+    /* Read before the token: a change after this read moves the clock past
+     * the stamp, and the next check reads the token again. */
+    atomic_store_explicit(&program->source_program_epoch,
+                          space_global_program_epoch(), memory_order_relaxed);
     program->source_program = space_program_token(space);
     program->equation_projection = space_equation_token(space);
     program->boolean_value = boolean_value;
@@ -16198,7 +16231,7 @@ bool cetta_prepared_pure_program_use_exportable_booleans(
 
 bool cetta_prepared_pure_program_is_current(
     const CettaPreparedPureProgram *program) {
-    if (!program || !space_program_token_is_current(program->source_program))
+    if (!program || !prepared_pure_source_current(program))
         return false;
     for (size_t i = 0u; i < program->owned_source_len; i++)
         if (!program->source_view.source_call_owned ||
@@ -18250,7 +18283,7 @@ CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
     }
     CettaPreparedPureProgram *program = cursor->program;
     if (!cursor->native_frontier_owned &&
-        (!space_program_token_is_current(program->source_program) ||
+        (!prepared_pure_source_current(program) ||
          (cursor->continuation_current &&
           !cursor->continuation_current(cursor->continuation_context)))) {
         if (!cetta_prepared_pure_answer_cursor_frontier_is_complete(cursor))

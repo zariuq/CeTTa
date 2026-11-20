@@ -640,7 +640,7 @@ bool cetta_library_context_try_init_for_language_profile(CettaLibraryContext *ct
     if (ctx->petta_program &&
         (language_id == CETTA_LANGUAGE_HE ||
          language_id == CETTA_LANGUAGE_PETTA))
-        (void)petta_program_enable_callability_refresh(ctx->petta_program);
+        (void)petta_program_enable_plan_revalidation(ctx->petta_program);
     if (ctx->petta_program && cetta_profile_uses_petta_typing(profile)) {
         (void)petta_program_enable_analysis(ctx->petta_program);
     }

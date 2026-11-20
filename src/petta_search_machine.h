@@ -442,6 +442,14 @@ typedef struct {
     /* Authority for authored equations sharing an intrinsic head. APPEND
      * enumerates the intrinsic first; OWNED selects this space's equations;
      * PROTECTED retains rows as data without executing them. */
+    /* Whether running an occurrence, or the goals it runs before child
+     * BEFORE_CHILD, may change the program
+     * (petta_program_occurrence_may_change_program).  An output projection
+     * leaves open each data occurrence such goals precede.  NULL: any goal
+     * with a call may. */
+    bool (*may_change_program)(void *context, Space *space, Atom *source,
+                               const PettaPlanNode *plan,
+                               uint32_t before_child);
     PettaMachineBuiltinEquations (*builtin_equations)(
         void *context, Space *space, SymbolId head, CettaExprLen arity);
     /* Exact mutable authority for deciding whether an expression root is
