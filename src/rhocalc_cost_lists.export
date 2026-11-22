@@ -16,6 +16,6 @@
  (function rhocost_push_trace_component Push (element RhoCostTraceComponent) (count uint32_t)
    (doc "Append one trace component; 1, or 0 with the list unchanged."))
  (function rhocost_push_step Push (element RhoCostStep) (count uint32_t)
-   (doc "Append one funded step beside its key; 1, or 0 with the list unchanged."))
+   (doc "Append one funded step; 1, or 0 with the list unchanged."))
  (function rhocost_push_parallel_task Push (element RhoCostParallelTask) (count uint32_t)
    (doc "Append one task of a parallel wave; 1, or 0 with the list unchanged.")))

@@ -1144,13 +1144,20 @@ def occurs_reuse_document(depth):
 PETTA_FIXED = [
     (occurs_reuse_document(24), "()\nhit\n"),
     (occurs_reuse_document(64), "()\nhit\n"),
+    # The annotations admit a call and filter its answers. Two applicable
+    # declarations are not two executions (type_calls_once_per_tuple).
     ("""(: overloaded-length (-> Atom Number))
 (: overloaded-length (-> Atom %Undefined%))
 (= (overloaded-length $xs)
    (case $xs ((End 0) ((Link $head $tail) (+ 1 (overloaded-length $tail))))))
 (= (wrapped-overloaded-length $xs) (overloaded-length $xs))
 !(collapse (wrapped-overloaded-length (Link a (Link b End))))
-""", "(2)\n"),
+(: overloaded-choice (-> Atom Number))
+(: overloaded-choice (-> Atom %Undefined%))
+(= (overloaded-choice $x) 3)
+(= (overloaded-choice $x) 4)
+!(collapse (overloaded-choice ok))
+""", "(2)\n(3 4)\n"),
     ("""(: alias-length (-> Atom %Undefined%))
 (= (alias-length $xs)
    (case $xs ((End 0) ((Link $head $xs) (+ 1 (alias-length $xs))))))

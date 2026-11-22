@@ -1,4 +1,3 @@
-woke
 accepted-ran
 (pair 3 3)
 (pair 3 3)
@@ -12,8 +11,6 @@ accepted-ran
 ()
 (5)
 ()
-1
-()
 ()
 ()
 ()
@@ -26,7 +23,5 @@ accepted-ran
 (1 2 2 3)
 (1 2 2 3)
 3
-(Error identity-forward-fault)
-(Error identity-forward-fault)
 (7 7)
 (7 7 9 9)

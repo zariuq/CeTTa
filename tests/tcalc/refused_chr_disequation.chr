@@ -1,4 +1,4 @@
-% tcalc@0.1 knows equations; a disequation in a guard has no meaning there,
-% and the program is refused at it.
+% A disequation is a guard, never told: tcalc@0.1's knowledge is equations
+% (RuleSyntax/Core.lean), so one in a rule's body is refused at its place.
 p(a).
-r @ p(X) <=> X \== b | q(X).
+r @ p(X) <=> q(X), X \== b.

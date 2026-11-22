@@ -1547,6 +1547,7 @@
 (rep "TmPairs" "intern")
 (rep "Table" "table")
 (rep "Records" "records")
+(rep "Terminal" "promise")
 (block "name equality" "hl:str-eq" (equal hl:yes hl:no) "proved" "strEq_binding, names_eq_iff: interned byte strings have equal bytes exactly when they are one node; strEq_refines" (rules "str-eq"))
 (block "name order" "hl:cmp-str" (bytes-order hl:lt hl:eq hl:gt) "proved" "cmpStr_refines, nativeCmp_eq_memcmp: the rules' order is the unsigned byte order, a proper prefix first; trusted: C memcmp compares unsigned" (rules "cmp-str-nn" "cmp-str-nc" "cmp-str-cn" "cmp-str-cc"))
 (block "name prime" "hl:str-prime" (bytes-snoc 27) "proved" "strPrime_refines: the rules append the byte 0x27" (rules "str-prime-nil" "str-prime-cons"))

@@ -1,14 +1,16 @@
 /* rc_rt.c - runtime of procedures compiled by rulec (see rc_rt.h). */
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include "rc_rt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 
-char *rc_hp, *rc_hlim;
-RcStats rc_stats;
-T *rc_roots[8];
+RC_HEAP_LOCAL char *rc_hp, *rc_hlim;
+RC_HEAP_LOCAL RcStats rc_stats;
+RC_HEAP_LOCAL T *rc_roots[8];
 TH rc_empty_bytes = {0, RC_SPACE_STATIC, RC_FLAG_BYTES, 0};
 #ifdef RC_PROFILE
 uint64_t rc_prof_objects;
@@ -30,7 +32,7 @@ static Chunk *chunk_new(size_t bytes) {
 static void chunks_free(Chunk *c) { while (c) { Chunk *n = c->next; free(c->start); free(c); c = n; } }
 
 static size_t young_chunk_bytes = (size_t)8 << 20;
-static Chunk *young_first, *young_cur;
+static RC_HEAP_LOCAL Chunk *young_first, *young_cur;
 /* the young chunks after the first are kept for the next run (or the next fill after a minor
  * collection) up to this many bytes in all, so that a run that fills as much as an earlier one
  * writes memory already mapped instead of faulting in fresh pages; the rest is freed */
@@ -49,11 +51,11 @@ static void young_rewind(void) {
     rc_hp = young_first->start;
     rc_hlim = young_first->end;
 }
-static Chunk *old_first, *old_cur;
-static char *old_hp;
-static uint8_t cur_old = RC_SPACE_OLD0;
-static uint64_t old_bytes_in_use, old_live_after_major;
-static uint64_t major_threshold = (uint64_t)64 << 20;
+static RC_HEAP_LOCAL Chunk *old_first, *old_cur;
+static RC_HEAP_LOCAL char *old_hp;
+static RC_HEAP_LOCAL uint8_t cur_old = RC_SPACE_OLD0;
+static RC_HEAP_LOCAL uint64_t old_bytes_in_use, old_live_after_major;
+static RC_HEAP_LOCAL uint64_t major_threshold = (uint64_t)64 << 20;
 
 void rc_runtime_init(size_t young_chunk) {
     if (young_chunk) young_chunk_bytes = young_chunk;
@@ -62,6 +64,31 @@ void rc_runtime_init(size_t young_chunk) {
         rc_hp = young_cur->start;
         rc_hlim = young_cur->end;
     }
+}
+
+void rc_heap_swap(RcHeap *h) {
+    RcHeap cur = {young_first, young_cur, old_first, old_cur, rc_hp, rc_hlim, old_hp, cur_old,
+                  old_bytes_in_use, old_live_after_major, major_threshold,
+                  {0}, rc_pend, rc_pend_depth, rc_pend_cap, rc_stop_mark, rc_root_slots, rc_root_nslots};
+    memcpy(cur.roots, rc_roots, sizeof cur.roots);
+    if (young_cur) young_cur->top = rc_hp;
+    young_first = h->young_first; young_cur = h->young_cur;
+    old_first = h->old_first; old_cur = h->old_cur;
+    rc_hp = h->hp; rc_hlim = h->hlim; old_hp = h->old_hp;
+    cur_old = h->cur_old ? h->cur_old : RC_SPACE_OLD0;
+    old_bytes_in_use = h->old_bytes_in_use; old_live_after_major = h->old_live_after_major;
+    major_threshold = h->major_threshold ? h->major_threshold : (uint64_t)64 << 20;
+    memcpy(rc_roots, h->roots, sizeof cur.roots);
+    rc_pend = h->pend; rc_pend_depth = h->pend_depth; rc_pend_cap = h->pend_cap;
+    rc_stop_mark = h->stop_mark;
+    rc_root_slots = h->root_slots; rc_root_nslots = h->root_nslots;
+    *h = cur;
+}
+void rc_heap_free(RcHeap *h) {
+    chunks_free(h->young_first);
+    chunks_free(h->old_first);
+    free(h->pend);
+    *h = (RcHeap){0};
 }
 
 uint64_t rc_young_in_use(void) {
@@ -75,6 +102,13 @@ uint64_t rc_young_in_use(void) {
 uint64_t rc_old_in_use(void) { return old_bytes_in_use; }
 
 T *rc_alloc_slow(size_t b) {
+    if (!young_cur) {   /* an empty heap: its first young chunk */
+        young_first = young_cur = chunk_new(b > young_chunk_bytes ? b : young_chunk_bytes);
+        young_cur->top = young_cur->start;
+        rc_hp = young_cur->start + b;
+        rc_hlim = young_cur->end;
+        return (T *)young_cur->start;
+    }
     young_cur->top = rc_hp;
     if (young_cur->next && (size_t)(young_cur->next->end - young_cur->next->start) >= b) {
         young_cur = young_cur->next;
@@ -109,6 +143,20 @@ T *rc_bytes_new(const uint8_t *b, size_t n) {
     return t;
 }
 
+#include <sys/mman.h>
+void *rc_alloc_table(size_t bytes) {
+    size_t huge = (size_t)2 << 20;
+    if (bytes < huge) return calloc(1, bytes ? bytes : 1);
+    size_t rounded = (bytes + huge - 1) & ~(huge - 1);
+    void *t = aligned_alloc(huge, rounded);
+    if (!t) return NULL;
+#ifdef MADV_HUGEPAGE
+    madvise(t, rounded, MADV_HUGEPAGE);
+#endif
+    memset(t, 0, bytes);
+    return t;
+}
+
 void (*rc_fail_hook)(const char *what);
 _Noreturn void rc_refinement_fail(const char *what) {
     if (rc_fail_hook) rc_fail_hook(what);
@@ -117,8 +165,8 @@ _Noreturn void rc_refinement_fail(const char *what) {
 }
 
 /* --------------------------------------------------------------- old space */
-static Chunk *to_first, *to_cur;  /* the space being filled during a copy */
-static char *to_hp;
+static RC_HEAP_LOCAL Chunk *to_first, *to_cur;  /* the space being filled during a copy */
+static RC_HEAP_LOCAL char *to_hp;
 
 static T *to_alloc(size_t b) {
     if (!to_cur || (size_t)(to_cur->end - to_hp) < b) {
@@ -134,8 +182,8 @@ static T *to_alloc(size_t b) {
     return r;
 }
 
-static uint8_t to_space_id;
-static uint64_t copied_bytes;
+static RC_HEAP_LOCAL uint8_t to_space_id;
+static RC_HEAP_LOCAL uint64_t copied_bytes;
 
 static inline T *evacuate(T *x, bool major) {
     if (!RC_IS_HEAP(x)) return x;                         /* immediate or foreign */
@@ -177,6 +225,8 @@ static uint64_t now_ns(void) {
 }
 
 void (*rc_extra_roots_hook)(int major, T *(*evac)(T *x));
+RC_HEAP_LOCAL T **rc_root_slots;
+RC_HEAP_LOCAL size_t rc_root_nslots;
 static T *evac_minor_fn(T *x) { return evacuate(x, false); }
 static T *evac_major_fn(T *x) { return evacuate(x, true); }
 
@@ -186,6 +236,9 @@ static void minor(int nroots) {
     Chunk *scan_c = to_cur; char *scan_p = to_hp;
     copied_bytes = 0;
     for (int i = 0; i < nroots; i++) rc_roots[i] = evacuate(rc_roots[i], false);
+    for (size_t f = 0; f < rc_pend_depth; f++)
+        for (uint8_t i = 0; i < rc_pend[f].n; i++) if (i != rc_pend[f].k) rc_pend[f].a[i] = evacuate(rc_pend[f].a[i], false);
+    for (size_t i = 0; i < rc_root_nslots; i++) rc_root_slots[i] = evacuate(rc_root_slots[i], false);
     if (rc_extra_roots_hook) rc_extra_roots_hook(0, evac_minor_fn);
     if (!scan_c) { scan_c = to_first; scan_p = scan_c ? scan_c->start : NULL; }
     if (scan_c) scan_from(scan_c, scan_p, false);
@@ -203,6 +256,9 @@ static void major(int nroots) {
     to_space_id = cur_old == RC_SPACE_OLD0 ? RC_SPACE_OLD1 : RC_SPACE_OLD0;
     copied_bytes = 0;
     for (int i = 0; i < nroots; i++) rc_roots[i] = evacuate(rc_roots[i], true);
+    for (size_t f = 0; f < rc_pend_depth; f++)
+        for (uint8_t i = 0; i < rc_pend[f].n; i++) if (i != rc_pend[f].k) rc_pend[f].a[i] = evacuate(rc_pend[f].a[i], true);
+    for (size_t i = 0; i < rc_root_nslots; i++) rc_root_slots[i] = evacuate(rc_root_slots[i], true);
     if (rc_extra_roots_hook) rc_extra_roots_hook(1, evac_major_fn);
     if (to_first) scan_from(to_first, to_first->start, true);
     chunks_free(from);
@@ -215,11 +271,19 @@ static void major(int nroots) {
     major_threshold = 2 * old_live_after_major > ((uint64_t)64 << 20) ? 2 * old_live_after_major : ((uint64_t)64 << 20);
 }
 
-static uint64_t young_gc_threshold = (uint64_t)4 << 20;
+/* a safepoint collects the young space once it holds this much: small enough that the young space
+ * stays in the processor's second-level cache (measured: 0.5 to 2 MiB about 4% fewer cycles than
+ * 4 MiB on the HOL Light module and its reader, 16 MiB 15% more) */
+#ifndef RC_YOUNG_GC_KB
+#define RC_YOUNG_GC_KB 1024
+#endif
+static uint64_t young_gc_threshold = (uint64_t)RC_YOUNG_GC_KB << 10;
 
 void (*rc_foreign_hook)(int nroots);
 
-void rc_safepoint(int nroots) {
+RC_HEAP_LOCAL bool (*rc_stop_hook)(void);
+RC_HEAP_LOCAL size_t rc_stop_mark;
+bool rc_safepoint(int nroots) {
     if (rc_trace_on) rc_trace_push(RC_EV_RECORD);
     uint64_t used = rc_young_in_use();
     if (used >= young_gc_threshold) {
@@ -232,6 +296,7 @@ void rc_safepoint(int nroots) {
         rc_stats.gc_ns += now_ns() - t0;
     }
     if (rc_foreign_hook) rc_foreign_hook(nroots);
+    return rc_stop_hook && rc_stop_hook();
 }
 
 void rc_major_now(int nroots) {
@@ -243,6 +308,28 @@ void rc_major_now(int nroots) {
     if (old_bytes_in_use > rc_stats.old_live_peak) rc_stats.old_live_peak = old_bytes_in_use;
     major(nroots);
     rc_stats.gc_ns += now_ns() - t0;
+}
+
+/* ------------------------------------------------------------- pending wrappers */
+RC_HEAP_LOCAL RcPend *rc_pend;
+RC_HEAP_LOCAL size_t rc_pend_depth, rc_pend_cap;
+void rc_pend_grow(void) {
+    size_t n = rc_pend_cap ? 2 * rc_pend_cap : 1024;
+    RcPend *p = realloc(rc_pend, n * sizeof *p);
+    if (!p) { fputs("rc: out of memory (pending wrappers)\n", stderr); exit(3); }
+    rc_pend = p;
+    rc_pend_cap = n;
+}
+/* the frames above mark applied to v, the newest first: each a call of its wrapper (rc_call, which
+ * applies whatever that call leaves pending); after a failure the rest are dropped */
+T *rc_pend_apply(size_t mark, T *v) {
+    while (rc_pend_depth > mark) {
+        RcPend f = rc_pend[--rc_pend_depth];
+        if (!v) continue;
+        f.a[f.k] = v;
+        v = rc_call(f.w, f.a);
+    }
+    return v;
 }
 
 /* constants made by rc_make_static: their children are roots of a native store too, and so is a
@@ -272,9 +359,13 @@ void rc_walk_live(int nroots, void (*fn)(T *child, void *ctx), void *ctx) {
             for (uint32_t i = 0; i < y->n; i++) fn(y->k[i], ctx);
     }
     for (size_t s = 0; s < nstatic_vals; s++) fn(static_vals[s], ctx);
+    for (size_t f = 0; f < rc_pend_depth; f++)
+        for (uint8_t i = 0; i < rc_pend[f].n; i++) if (i != rc_pend[f].k) fn(rc_pend[f].a[i], ctx);
+    for (size_t i = 0; i < rc_root_nslots; i++) fn(rc_root_slots[i], ctx);
 }
 
 void rc_runtime_reset(void) {
+    rc_pend_depth = 0;   /* a stopped run may leave frames */
     uint64_t used = rc_young_in_use();
     rc_stats.young_bytes += used;
     if (used > rc_stats.young_peak) rc_stats.young_peak = used;
@@ -327,8 +418,16 @@ void rc_trace_stop(void) {
     rc_trace_on = 0;
 }
 
+/* ------------------------------------------------------------------ promises */
+RC_HEAP_LOCAL T *(*rc_promise_hook)(uint64_t id);
+T *rc_promise_force(T *x) {
+    if (!rc_promise_hook) rc_refinement_fail("a promise read with no host to keep it");
+    T *v = rc_promise_hook(RC_PROMISE_ID(x));
+    if (!v || RC_IS_PROMISE(v)) rc_refinement_fail("a promise the host does not keep");
+    return v;
+}
+
 /* ------------------------------------------------------------- term equality */
-bool (*rc_foreign_equal_hook)(const T *a, const T *b);
 bool rc_term_equal(const T *a, const T *b) {
     size_t cap = 256, sp = 0;
     const T **st = malloc(2 * cap * sizeof(T *));
@@ -338,15 +437,16 @@ bool rc_term_equal(const T *a, const T *b) {
     while (sp && eq) {
         const T *y = st[--sp], *x = st[--sp];
         if (x == y) continue;
-        if (!RC_IS_HEAP(x) || !RC_IS_HEAP(y)) {   /* distinct immediates or foreign values */
-            if (RC_IS_FOREIGN(x) && RC_IS_FOREIGN(y) && RC_FOREIGN_TAG(x) == RC_FOREIGN_TAG(y) &&
-                rc_foreign_equal_hook && rc_foreign_equal_hook(x, y))
-                continue;
-            eq = false;
-            break;
+        /* a promise is the term it promises */
+        if (RC_IS_PROMISE(x) || RC_IS_PROMISE(y)) {
+            x = rc_promised((T *)x); y = rc_promised((T *)y);
+            if (x == y) continue;
         }
+        /* distinct immediates, or distinct foreign values (their stores intern: different objects are
+         * different values) */
+        if (!RC_IS_HEAP(x) || !RC_IS_HEAP(y)) { eq = false; break; }
         if ((x->flags & RC_FLAG_BYTES) != (y->flags & RC_FLAG_BYTES) || x->n != y->n) { eq = false; break; }
-        if (x->flags & RC_FLAG_BYTES) { if (memcmp(x->k, y->k, x->n)) eq = false; continue; }
+        if (x->flags & RC_FLAG_BYTES) { if (x->tag != y->tag || memcmp(x->k, y->k, x->n)) eq = false; continue; }
         if (x->tag != y->tag) { eq = false; break; }
         for (uint32_t i = 0; i < x->n; i++) {
             if (sp + 2 > 2 * cap) { cap *= 2; st = realloc(st, 2 * cap * sizeof(T *)); if (!st) { fputs("rc: out of memory\n", stderr); exit(3); } }

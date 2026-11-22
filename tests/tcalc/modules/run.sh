@@ -4,7 +4,8 @@
 # - NAME.module with NAME.rows: the module read by demand, with the rows (a relation's rows and the
 #   calls asked), runs as NAME.expected says;
 # - refused_NAME.module: the reading refuses it as refused_NAME.expected says;
-# - choice.module: rulec refuses the overlap whose call the reading answers with two values;
+# - choice.module: the overlap whose call the reading answers with two values: rulec compiles the
+#   judgment nondet, giving both values, and refuses it as a function (--functional);
 # - the lambda client of rulec (tests/rulec/lambda): rulec's compiled C and the reading agree on
 #   every case;
 # - the Megalodon kernel (megalodon_kernel.tcalc, the reading of the module mgmodule is compiled
@@ -59,12 +60,22 @@ wire() {   # wire MODULE THEORY OUT: the module's core rows, printed by CeTTa's 
     "$bin" "$work/dump.metta" | grep '^(' > "$3"
 }
 
-# choice: rulec refuses what the reading answers with two values
+# choice: what the reading answers with two values rulec compiles nondet, both values given; as a
+# function (--functional) it is refused
 wire "$here/choice.module" Calc "$work/choice.wire"
-if "$work/rulec" "$work/choice.wire" --emit "$work/choice.c" --emit-h "$work/choice.h" > "$work/choice.rulec" 2>&1; then
-    echo "FAIL: rulec compiles choice.module"; fail=1
+if ! "$work/rulec" "$work/choice.wire" --census "$work/choice.census" --emit "$work/choice.c" > "$work/choice.rulec" 2>&1; then
+    echo "FAIL: rulec refuses choice.module:"; cat "$work/choice.rulec"; fail=1
+elif ! grep -q '^  c:toss  *nondet' "$work/choice.census"; then
+    echo "FAIL: rulec does not compile c:toss nondet"; fail=1
+else
+    $cc -O2 -std=gnu11 -I. -Inative/rule_runtime -Inative/rule_components -DCHOICE_C="\"$work/choice.c\"" "$here/choice_values.c" -o "$work/choice_values"
+    values=$("$work/choice_values" | sort | tr '\n' ' ')
+    if [ "$values" != "c:heads c:tails " ]; then echo "FAIL: c:toss gives $values, not c:heads c:tails"; fail=1; fi
+fi
+if "$work/rulec" "$work/choice.wire" --functional --emit "$work/choice.c" > "$work/choice.rulec" 2>&1; then
+    echo "FAIL: rulec compiles choice.module as a function"; fail=1
 elif ! grep -q 'left side overlaps rule' "$work/choice.rulec"; then
-    echo "FAIL: rulec refuses choice.module for another reason:"; cat "$work/choice.rulec"; fail=1
+    echo "FAIL: rulec refuses choice.module as a function for another reason:"; cat "$work/choice.rulec"; fail=1
 fi
 
 # lambda: the compiled module (every rule as written) against the reading, case by case

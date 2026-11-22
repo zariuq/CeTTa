@@ -8,6 +8,9 @@
 (: math:min (-> Number Number Number))
 (: math:max (-> Number Number Number))
 (: math:clamp (-> Number Number Number Number))
+(: math:quot (-> Number Number Number))
+(: math:div (-> Number Number Number))
+(: math:floor-div (-> Number Number Number))
 (: math:mod (-> Number Number Number))
 (: math:rem (-> Number Number Number))
 (: math:floor-mod (-> Number Number Number))
@@ -45,6 +48,27 @@
     (@param "Upper bound")
     (@param "Input value")))
   (@return "Input clamped into the inclusive [min, max] interval"))
+
+(@doc math:quot
+  (@desc "Truncating quotient in the math: namespace. Rounds toward zero and pairs with math:rem so that a = b * q + r.")
+  (@params (
+    (@param "Dividend")
+    (@param "Divisor")))
+  (@return "Quotient from truncating division"))
+
+(@doc math:div
+  (@desc "Euclidean quotient in the math: namespace. Pairs with math:mod so that a = b * q + r with 0 <= r < |b|.")
+  (@params (
+    (@param "Dividend")
+    (@param "Divisor")))
+  (@return "Quotient from Euclidean division"))
+
+(@doc math:floor-div
+  (@desc "Floor-division quotient in the math: namespace. Rounds toward negative infinity and pairs with math:floor-mod so that a = b * q + r.")
+  (@params (
+    (@param "Dividend")
+    (@param "Divisor")))
+  (@return "Quotient from floor division"))
 
 (@doc math:mod
   (@desc "Euclidean modulo in the math: namespace. The result is the canonical non-negative remainder modulo the absolute divisor.")
@@ -142,28 +166,31 @@
   (@return "True when the input is infinite, otherwise False"))
 
 (= (math:min $a $b)
-   (if (<= $a $b) $a $b))
+   (__cetta_lib_math_min $a $b))
 
 (= (math:max $a $b)
-   (if (>= $a $b) $a $b))
+   (__cetta_lib_math_max $a $b))
 
 (= (math:clamp $min $max $v)
-   (math:min $max (math:max $v $min)))
+   (__cetta_lib_math_clamp $min $max $v))
+
+(= (math:quot $a $b)
+   (__cetta_lib_math_quot $a $b))
+
+(= (math:div $a $b)
+   (__cetta_lib_math_div $a $b))
+
+(= (math:floor-div $a $b)
+   (__cetta_lib_math_floor_div $a $b))
 
 (= (math:mod $a $b)
-   (- $a (* (math:abs $b) (// $a (math:abs $b)))))
+   (__cetta_lib_math_mod $a $b))
 
 (= (math:rem $a $b)
-   (let $r (math:mod $a $b)
-     (if (< $a 0)
-         (if (== $r 0) 0 (- $r (math:abs $b)))
-         $r)))
+   (__cetta_lib_math_rem $a $b))
 
 (= (math:floor-mod $a $b)
-   (let $r (math:mod $a $b)
-     (if (< $b 0)
-         (if (== $r 0) 0 (- $r (math:abs $b)))
-         $r)))
+   (__cetta_lib_math_floor_mod $a $b))
 
 (= (math:pow $base $exponent)
    (pow-math $base $exponent))
@@ -178,10 +205,10 @@
    (log-math $base $x))
 
 (= (math:ln $x)
-   (log-math 2.718281828459045 $x))
+   (__cetta_lib_math_ln $x))
 
 (= (math:exp $x)
-   (pow-math 2.718281828459045 $x))
+   (__cetta_lib_math_exp $x))
 
 (= (math:trunc $x)
    (trunc-math $x))

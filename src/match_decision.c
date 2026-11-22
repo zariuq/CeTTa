@@ -1,4 +1,5 @@
 #include "match_decision.h"
+#include "shared_transition.h"
 #include "stats.h"
 #include "select/code_tree.h"
 #include "generated/match_decision_policy_v1.generated.h"
@@ -2273,8 +2274,16 @@ static CettaMatchDecisionSelectState match_decision_select_query(
         (!query->whole && !query->head) ||
         !source_refs || !source_ref_count)
         return CETTA_MATCH_DECISION_SELECT_ERROR;
-    if (!cetta_match_decision_is_current(
-            decision, live_space, semantic_identity)) {
+    bool current = false;
+    {
+        /* Selection re-enters the space's observation boundary: whether the
+         * decision still answers for its space is one read of the equation
+         * token it was compiled against. */
+        CETTA_SCOPED_SPACE_OBSERVE(decision_authority, live_space);
+        current = cetta_match_decision_is_current(
+            decision, live_space, semantic_identity);
+    }
+    if (!current) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_MATCH_DECISION_INVALIDATION);
         return CETTA_MATCH_DECISION_SELECT_INVALIDATED;

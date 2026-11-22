@@ -1533,9 +1533,12 @@ static bool bindings_builder_restore_frame_registration_count(
             return false;
         BindingsFrameIndex *index = bb->current.frame_index;
         BindingsFrameIndexEntry *frame = bindings_frame_index_find_frame(index, undo->epoch);
-        if (!frame)
-            return false;
-        if (!undo->frame_existed) {
+        if (!frame) {
+            /* A registration that failed before making its frame left
+             * nothing to remove. */
+            if (undo->frame_existed)
+                return false;
+        } else if (!undo->frame_existed) {
             uint32_t position = (uint32_t)(frame - index->frames);
             if (!bindings_frame_index_recycle_entry(index, frame))
                 return false;

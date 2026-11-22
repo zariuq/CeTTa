@@ -3,5 +3,5 @@
 !(import! &self ipasir)
 !(ipasir:solve ((clause (a) ()) (clause (b) (a))))
 !(ipasir:models ((clause (a) ())))
-!(import-as! &self sat ipasir)
+!(import-as! &self ipasir sat)
 !(sat:solve ((clause (a) ())))

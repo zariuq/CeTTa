@@ -1,0 +1,40 @@
+5
+-1
+6
+-4
+-3
+1
+2
+3
+6
+true
+false
+true
+false
+2
+2
+8
+-2
+2
+2
+3
+done
+()
+()
+()
+5
+3
+()
+6
+ok
+()
+true
+()
+(true 3)
+no-constraint
+(7 (2 3))
+7
+yes
+()
+(error (domain_error clpfd_expression 1.5))
+(error (domain_error clpfd_expression a))

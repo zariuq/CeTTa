@@ -38,6 +38,10 @@ int tcalc_step_text(const char *program, size_t length, const char *state, size_
  * line (answers (outcome ROW ...) ROW ...) per outcome and the explored line. */
 int tcalc_query_text(const char *program, size_t length, const char *pattern, size_t pattern_length,
                      const char *profile, FILE *out, FILE *err);
+/* Prints the join plans of the program of a file (tc_program_print_plans),
+ * written in `syntax` (NULL: the one its suffix names).  Exit status as
+ * above. */
+int cetta_tcalc_plans_file(const char *path, const char *syntax);
 /* Prints the program of a file, written in syntax `from`, in syntax `to`
  * (tcalc, rho or chr), by way of the canonical form.  Exit status as above. */
 int cetta_tcalc_translate_file(const char *path, const char *from, const char *to);

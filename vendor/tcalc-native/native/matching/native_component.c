@@ -64,16 +64,72 @@ const uint8_t *nm_component_bytes(const NmComponent *c,size_t *size) {
     if (size) *size=c && c->has_native ? (size_t)((uintptr_t)c->image->body_end-(uintptr_t)c->image->entry) : 0;
     return c && c->has_native ? c->image->entry : NULL;
 }
-bool nm_component_span(NmComponentSpan *span,const void *pointer,size_t count,size_t width,bool writable) {
-    if (!width || count>SIZE_MAX/width || (count && !pointer)) return false;
-    *span=(NmComponentSpan){(uint8_t *)(uintptr_t)pointer,count*width,writable};return true;
-}
 static void frame_make(TcIsaRuntimeFrame *frame,const NmComponentSpan spans[NM_COMPONENT_REGIONS],
                         unsigned n,uint64_t arg0,uint64_t arg1,uint64_t budget,uint64_t used) {
     uint64_t words[2*NM_COMPONENT_REGIONS]={0};
     for (unsigned r=0;r<n;++r) { words[2*r]=(uint64_t)(uintptr_t)spans[r].base;words[2*r+1]=spans[r].bytes; }
     memset(frame,0,sizeof *frame);memcpy(frame,words,sizeof words);
     frame->arg0=arg0;frame->arg1=arg1;frame->fuel_budget=budget;frame->fuel_used=used;
+}
+/* A native call runs in one frame per thread, at a fixed address: a call fills it, runs the
+   image and reads the result, and images make no calls, so no other call runs in it meanwhile.
+   tisa_entry_valid depends on the frame's address, the declared regions' words, the receipt
+   and the initial registers; component profiles have no initial registers (nm_component_init).
+   So once a component's region words have been validated in this frame, a later call with the
+   same words needs only the receipt check. */
+typedef struct { const NmComponentImage *image;uint64_t words[2*NM_COMPONENT_REGIONS]; } Validated;
+enum { VALIDATED_SLOTS=8 };
+static _Thread_local TcIsaRuntimeFrame native_frame;
+static _Thread_local Validated validated[VALIDATED_SLOTS];
+/* Only the declared regions' words are written: neither the image nor tisa_entry_valid reads
+   the others. The result is read word by word: the image stores status and ret_val separately,
+   and one wider load across both stores would wait for them to reach the cache. */
+static void native_run(const NmComponent *c,const uint64_t *in,uint64_t arg0,uint64_t arg1,
+                       uint64_t budget,uint64_t used,NmComponentResult *out) {
+    TcIsaRuntimeFrame *f=&native_frame;uint64_t *words=(uint64_t *)f;unsigned n=c->image->regions;
+    Validated *v=&validated[((uintptr_t)c->image>>4)%VALIDATED_SLOTS];
+    uint64_t differ=v->image!=c->image;
+    /* Scalar: the compares are independent; vectorized, they become one chain. */
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__>=14
+#pragma GCC novector
+#endif
+    for (unsigned r=0;r<n;++r) {
+        uint64_t base=in[2*r],bytes=in[2*r+1];
+        differ|=(base^v->words[2*r])|(bytes^v->words[2*r+1]);words[2*r]=base;words[2*r+1]=bytes;
+    }
+    f->status=f->ret_val=0;f->fuel_budget=budget;f->fuel_used=used;f->arg0=arg0;f->arg1=arg1;
+    bool valid=used<=budget;
+    if (valid && differ) {
+        uint64_t regs[TISA_NUM_VREGS]={(uint64_t)(uintptr_t)f};
+        valid=tisa_entry_valid(&c->source.prog,f,regs);
+        if (valid) { v->image=c->image;memcpy(v->words,words,2*n*sizeof *words); }
+    }
+#if NM_COMPONENT_CHECK_VALIDATION
+    { uint64_t regs[TISA_NUM_VREGS]={(uint64_t)(uintptr_t)f};
+      if (valid!=tisa_entry_valid(&c->source.prog,f,regs)) abort(); }
+#endif
+    if (!valid) { *out=(NmComponentResult){TISA_OUTCOME_INVALID_INPUT,TISA_OUTCOME_INVALID_INPUT,used};return; }
+    union { const void *code;TcIsaNativeFn fn; } entry={.code=c->image->entry};
+    entry.fn(f,0,0,0,0,0);
+    uint64_t status=f->status,payload=f->ret_val,fuel=f->fuel_used;
+    __asm__("" : "+r"(status),"+r"(payload),"+r"(fuel));
+    out->outcome=(TcIsaOutcome)status;out->payload=payload;out->fuel_used=fuel;
+}
+static void native_call(const NmComponent *c,const NmComponentSpan *spans,uint64_t arg0,uint64_t arg1,
+                        uint64_t budget,uint64_t used,NmComponentResult *out) {
+    uint64_t in[2*NM_COMPONENT_REGIONS];
+    for (unsigned r=0;r<c->image->regions;++r) { in[2*r]=(uint64_t)(uintptr_t)spans[r].base;in[2*r+1]=spans[r].bytes; }
+    native_run(c,in,arg0,arg1,budget,used,out);
+}
+NmCallStatus nm_component_call_scalar(const NmComponent *c,uint64_t arg0,uint64_t arg1,uint64_t budget,uint64_t used,
+                                      NmComponentResult *result) {
+    if (!c || !c->image || !result || c->image->regions || !c->has_native) return NM_CALL_BAD_ARGUMENT;
+    native_run(c,NULL,arg0,arg1,budget,used,result);return NM_CALL_OK;
+}
+NmCallStatus nm_component_call_words(const NmComponent *c,const uint64_t *words,uint64_t budget,uint64_t used,
+                                     NmComponentResult *result) {
+    if (!c || !c->image || !words || !result || !c->has_native) return NM_CALL_BAD_ARGUMENT;
+    native_run(c,words,0,0,budget,used,result);return NM_CALL_OK;
 }
 static NmComponentResult execute(const NmComponent *c,bool native,const NmComponentSpan *spans,
                                   uint64_t arg0,uint64_t arg1,uint64_t budget,uint64_t used) {
@@ -123,7 +179,8 @@ NmCallStatus nm_component_call(const NmComponent *c,NmExecution mode,const NmCom
     for (unsigned r=0;r<n;++r) if (original[r].writable!=(c->image->modes[r]==2))
         return call_failed(NM_CALL_BAD_ARGUMENT,error,size,"component span access differs from its declared interface");
     if (error && size) error[0]=0;
-    if (mode!=NM_COMPARE) { *result=execute(c,mode==NM_NATIVE,original,arg0,arg1,budget,used);return NM_CALL_OK; }
+    if (mode==NM_NATIVE) { native_call(c,original,arg0,arg1,budget,used,result);return NM_CALL_OK; }
+    if (mode!=NM_COMPARE) { *result=execute(c,false,original,arg0,arg1,budget,used);return NM_CALL_OK; }
 #if TISA_DEV_REFERENCE
     TcIsaRuntimeFrame entry;frame_make(&entry,original,n,arg0,arg1,budget,used);
     uint64_t regs[TISA_NUM_VREGS]={0};regs[0]=(uint64_t)(uintptr_t)&entry;

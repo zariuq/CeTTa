@@ -29,10 +29,19 @@ typedef struct {
     uint32_t same;    /* the first rule equal to this one up to renaming      */
 } TcStoredRule;
 
-/* A state: a bag of rows, kept in a canonical order (the order of printing). */
+/* A state: a bag of rows (tcalc_store.c, the table of states). */
 typedef struct {
-    uint32_t start, rows; /* its rows in the state pool */
-    uint64_t hash;
+    uint64_t hash;        /* its identity hash                                      */
+    uint64_t sum;         /* the sum of its rows of fixed terms' hashes, a copy
+                             counted each time                                       */
+    uint32_t rows;        /* its rows of fixed terms: a map of (run, row) -> copies */
+    uint32_t size;        /* its rows, copies counted                               */
+    uint32_t loose, looses;  /* its rows with unknowns, canonical: in the loose pool */
+    uint32_t unknowns;    /* the unknowns they mention: 0 .. unknowns-1             */
+    uint32_t parent;      /* the state it was made from, UINT32_MAX none            */
+    uint32_t diff, diffs; /* its rows of fixed terms changed from the parent's: the
+                             diffs (row, copies added) pairs from word diff of the
+                             diff pool                                              */
 } TcState;
 
 /* A match at a state: a rule and the rows it selects for its take and read

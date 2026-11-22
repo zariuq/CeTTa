@@ -141,7 +141,9 @@
    (let $_widened (to:widen $head (- (size-atom $e) 1)) (to:call $head $e)))
 
 (= (to:call $head $e)
-   (let $held (collapse (match &to (to:holds $head $index) $index))
+   ; One operand position is held or not, regardless of how many
+   ; declarations supply the same information.
+   (let $held (unique-atom (collapse (match &to (to:holds $head $index) $index)))
      (if (== $held ()) (to:each $e)
        (cons-atom $head (to:arguments (cdr-atom $e) 1 $held)))))
 
@@ -222,6 +224,9 @@
    (case (to:key $head $size)
      (((to:key match 4) (to:match $e))
       ((to:key add-atom 3) (to:write to:add-own to:add-atom $e))
+      ((to:key add-reduct 3)
+        (let ($_reduct $space $atom) $e
+          (to:list3 to:add-reduct (to:expression $space) $atom)))
       ((to:key remove-atom 3) (to:write to:remove-own to:remove-atom $e))
       ((to:key get-atoms 2)
         (if (to:rewrites space)
@@ -246,6 +251,12 @@
       ((to:key cut 1)
         (if (to:rewrites calls) (to:list3 progn (to:list2 pt:cut! to:mark) $e) $e))
       ((to:key eval 2) (to:list2 to:eval (to:second $e)))
+      ((to:key evalc 3)
+        (let ($_evalc $code $space) $e
+          (to:list3 to:evalc $code (to:expression $space))))
+      ((to:key get-type-space 3)
+        (let ($_lookup $space $item) (to:application $head $e)
+          (to:list3 $head (to:list2 to:execution-space $space) $item)))
       ($other (to:application $head $e)))))
 
 ; A read: the firing answers the row of the pattern's bindings and pt:read binds
@@ -748,10 +759,41 @@
 (= (to:eval $code)
    (let $rewritten (to:expression $code) (eval $rewritten)))
 
+; The program's own data view is not where the compiled equations live.
+; Evaluation in logical self enters its compiled code; other scopes stay
+; with evalc, including its refusal of an invalid scope.
+(: to:evalc (-> Atom %Undefined% %Undefined%))
+(= (to:evalc $code $space)
+   (if (to:is-own $space) (to:eval $code) (evalc $code $space)))
+
+; Declarations are installed with the executable equations. Ordinary
+; atom reads keep using the separate source-row view.
+(= (to:execution-space $space)
+   (if (to:is-own $space) &self $space))
+
 ; An equation added to the program's own space is a definition.
 (: to:add-atom (-> %Undefined% Atom %Undefined%))
 (= (to:add-atom $space $atom)
    (if (to:is-own $space) (to:add-own $atom) (pt:add-atom $space $atom)))
+
+; A host reducer writes its ordinary row representation. For logical self,
+; collect its writes in a private space, then publish each through the same
+; row/definition adapter as a source add. Other destinations need no adapter.
+(: to:add-reduct (-> %Undefined% Atom %Undefined%))
+(= (to:add-reduct $space $atom)
+   (if (to:is-own $space)
+       (let $staging (new-space)
+         (let $answer (add-reduct $staging $atom)
+           (let $_ (to:publish-reducts $staging (collapse (get-atoms $staging)))
+             $answer)))
+       (add-reduct $space $atom)))
+
+(= (to:publish-reducts $staging $rows)
+   (if (== $rows ()) done
+       (let ($atom $more) (decons-atom $rows)
+         (let* (($_added (to:add-own $atom))
+                ($_drained (remove-atom $staging $atom)))
+           (to:publish-reducts $staging $more)))))
 
 ; An atom added to the program's own store: an equation is also defined, a
 ; declaration is also given to the host.  An unbound atom is the host's to

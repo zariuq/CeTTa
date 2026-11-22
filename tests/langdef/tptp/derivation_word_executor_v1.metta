@@ -1,4 +1,4 @@
-!(import! &self lib_tptp)
+!(import! &self (library lib_tptp))
 !(import! &self ../../../examples/tptp/support/derivation_word_executor.metta)
 
 (= (test:complete-after-one

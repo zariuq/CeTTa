@@ -1,5 +1,5 @@
 /*
- * mg-gslt-native (--tokens | --items) [--trace TRACE] [-I SIGNATURE]... FILE
+ * mg-gslt-native (--tokens | --items) [--trace PREFIX] [-I SIGNATURE]... FILE
  *
  * Reads FILE, after its signatures, with the Megalodon syntax presentations
  * (langdef/megalodon/) compiled to C (native/megalodon/mg_gslt_reader.h),
@@ -9,9 +9,9 @@
  * stderr; mg-run-refused, when the presentations have no reading; or
  * mg-run-malformed (exit 2), a step outside its contract.
  * The reading runs on a thread with a large stack: the compiled relations
- * recurse as deep as the terms they read are nested.  Built with -DGN_TRACE
- * (mg-gslt-native-trace), --trace writes the run's trace to TRACE
- * (gslt_native_runtime_v1.h).
+ * recurse as deep as the terms they read are nested.  --trace PREFIX writes
+ * each step's derivation, as rulec's trace events, to PREFIX.ENTRY
+ * (mg_gslt_reader_trace).
  */
 #include <pthread.h>
 #include <stdio.h>
@@ -33,52 +33,70 @@ typedef struct {
     int status;
     MgGsltReadStatus read;
     char message[512];
-    GnCtx *cx;                /* the values printed */
-    FILE *trace;
+    const char *trace;        /* the trace's path prefix, or NULL */
 } Job;
 
-static void trace_to(Job *job) {
-#ifdef GN_TRACE
-    if (job->trace)
-        gn_ctx_set_trace(job->cx, job->trace);
-#else
-    (void)job;
-#endif
-}
-
-static void say(void *ctx, GnVal *v) {
-    gn_print(((Job *)ctx)->cx, stdout, v);
-    fputc('\n', stdout);
+/* A reading in PeTTa's spelling: an application (and the unread input, read as
+ * the list it is) as (NAME CHILD ...), a nullary one as its name.  Iterative:
+ * readings nest as deeply as the text they read. */
+static void say(void *ctx, const MgGsltValue *v) {
+    (void)ctx;
+    typedef struct { const MgGsltValue *v; size_t k; MgGsltNode n; } Frame;
+    size_t len = 0, cap = 64;
+    Frame *st = malloc(cap * sizeof *st);
+    if (!st) return;
+    st[len++] = (Frame){v, 0, {0}};
+    mg_gslt_node(v, &st[0].n);
+    while (len) {
+        Frame *f = &st[len - 1];
+        const MgGsltNode *n = &f->n;
+        bool apply = n->kind == MG_GSLT_APPLY || n->kind == MG_GSLT_UNREAD;
+        if (!apply || n->arity == 0) {
+            if (n->kind == MG_GSLT_INT) printf("%lld", (long long)n->integer);
+            else if (n->kind == MG_GSLT_STRING) printf("\"%.*s\"", (int)n->len, n->name);
+            else printf("%.*s", (int)n->len, n->name);
+            len--;
+            continue;
+        }
+        if (f->k == n->arity) { putchar(')'); len--; continue; }
+        if (f->k == 0) printf("(%.*s", (int)n->len, n->name);
+        putchar(' ');
+        const MgGsltValue *kid = mg_gslt_child(f->v, f->k++);
+        if (len == cap) {
+            cap *= 2;
+            Frame *g = realloc(st, cap * sizeof *g);
+            if (!g) { free(st); return; }
+            st = g;
+        }
+        st[len] = (Frame){kid, 0, {0}};
+        mg_gslt_node(kid, &st[len].n);
+        len++;
+    }
+    free(st);
+    putchar('\n');
 }
 
 static void read_tokens(Job *job) {
-    GnSourceV1 *src = mg_gslt_source_load(job->files[job->count - 1]);
-    job->cx = src ? mg_gslt_reader_context() : NULL;
-    if (!job->cx) {
+    size_t len;
+    char *bytes = mg_gslt_file_bytes(job->files[job->count - 1], &len);
+    if (!bytes) {
         snprintf(job->message, sizeof job->message, "cannot read %s", job->files[job->count - 1]);
         job->status = 2;
-    } else if (trace_to(job), !GN_TRY(job->cx, job->read = mg_gslt_read_tokens(job->cx, src, say, job))) {
-        snprintf(job->message, sizeof job->message, "out of memory");
-        job->status = 2;
-    } else if (job->read == MG_GSLT_READ_ERROR) {
-        snprintf(job->message, sizeof job->message, "%s", MG_GSLT_LEXING_FAILURE);
+        return;
     }
-    gn_ctx_free(job->cx);
-    mg_gslt_source_free(src);
+    job->read = mg_gslt_read_tokens(bytes, len, say, job);
+    if (job->read == MG_GSLT_READ_ERROR)
+        snprintf(job->message, sizeof job->message, "%s", MG_GSLT_LEXING_FAILURE);
+    free(bytes);
 }
 
-/* The signatures read through, then the file's items printed.  The reader
- * starts with its first input, after its trace is set. */
+/* The signatures read through, then the file's items printed. */
 static void read_items(Job *job) {
     char **bytes = calloc((size_t)job->count, sizeof *bytes);
     MgSource *source = bytes ? mg_source_new(NULL, 0u) : NULL;
     if (bytes && !source) {
         snprintf(job->message, sizeof job->message, "out of memory");
         job->status = 2;
-    }
-    if (source) {
-        job->cx = mg_source_context(source);
-        trace_to(job);
     }
     job->read = MG_GSLT_READ_END;
     for (int f = 0; source && f < job->count && job->read == MG_GSLT_READ_END; f++) {
@@ -104,6 +122,11 @@ static void read_items(Job *job) {
 }
 
 static void run(Job *job) {
+    if (job->trace && !mg_gslt_reader_trace(job->trace)) {
+        snprintf(job->message, sizeof job->message, "cannot write the trace %s", job->trace);
+        job->status = 2;
+        return;
+    }
     if (job->items)
         read_items(job);
     else
@@ -133,24 +156,13 @@ int main(int argc, char **argv) {
             mode = 1;
         else if (strcmp(argv[i], "-I") == 0 && i + 1 < argc)
             job.files[job.count++] = argv[++i];
-        else if (strcmp(argv[i], "--trace") == 0 && i + 1 < argc) {
-#ifdef GN_TRACE
-            if (!(job.trace = fopen(argv[++i], "w"))) {
-                fprintf(stderr, "mg-gslt-native: cannot write %s\n", argv[i]);
-                free(job.files);
-                return 2;
-            }
-#else
-            fprintf(stderr, "mg-gslt-native: built without GN_TRACE; --trace needs mg-gslt-native-trace\n");
-            free(job.files);
-            return 64;
-#endif
-        }
+        else if (strcmp(argv[i], "--trace") == 0 && i + 1 < argc)
+            job.trace = argv[++i];
         else
             job.files[job.count++] = argv[i];
     }
     if (mode < 0 || job.count == 0) {
-        fprintf(stderr, "usage: mg-gslt-native (--tokens | --items) [--trace TRACE] [-I SIGNATURE]... FILE\n");
+        fprintf(stderr, "usage: mg-gslt-native (--tokens | --items) [--trace PREFIX] [-I SIGNATURE]... FILE\n");
         free(job.files);
         return 64;
     }
@@ -168,8 +180,6 @@ int main(int argc, char **argv) {
     fflush(stdout);
     if (job.message[0])
         fprintf(stderr, "%s%s\n", job.status ? "mg-gslt-native: " : "", job.message);
-    if (job.trace && fclose(job.trace) != 0 && !job.status)
-        job.status = 2;
     free(job.files);
     return job.status;
 }

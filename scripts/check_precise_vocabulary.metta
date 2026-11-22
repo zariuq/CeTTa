@@ -27,12 +27,12 @@
 ; The observation ledger's exact source field and the corpus manifest's entry
 ; for that example retain an upstream evidence identity. An unrelated field,
 ; path or spelling is still authored text.
-(= (vocabulary:pinned-source "corpus")
-  (str:concat "^\\s*\\{\"name\":\\s*\"import_error_" (str:concat (vocabulary:needle)
-    "\\.metta\",\\s*\"mode\":\\s*\"[a-z-]+\",\\s*\"timeout\":\\s*[0-9]+\\},?\\s*$")))
 (= (vocabulary:pinned-source "observation")
   (str:concat "^\\s*\"source\":\\s*\"examples/import_error_" (str:concat (vocabulary:needle)
     "\\.metta\",?\\s*$")))
+(= (vocabulary:pinned-source "corpus")
+  (str:concat "^\\s*\\{\"name\":\\s*\"import_error_" (str:concat (vocabulary:needle)
+    "\\.metta\",\\s*\"mode\":\\s*\"[a-z-]+\",\\s*\"timeout\":\\s*[0-9]+\\},?\\s*$")))
 (= (vocabulary:pinned-match $kind $text)
   (match &self (vocabulary:pinned-pattern $kind $pattern)
     (case (re:is-match $pattern $text)

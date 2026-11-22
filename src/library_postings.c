@@ -22,10 +22,27 @@ extern void space_match_backend_clear_error(void) __attribute__((weak));
 extern bool space_contains_only_exact_atoms(Space *) __attribute__((weak));
 extern CettaCount space_length64(const Space *) __attribute__((weak));
 extern Atom *space_get_at64(const Space *, CettaIndex) __attribute__((weak));
-extern void cetta_shared_transition_guard_enter(CettaSharedTransitionGuard *)
-    __attribute__((weak));
-extern void cetta_shared_transition_guard_leave(CettaSharedTransitionGuard *)
-    __attribute__((weak));
+extern void space_guard_section_enter(CettaGuardSection *, const Space *,
+                                      CettaGuardMode) __attribute__((weak));
+extern void cetta_guard_section_end(CettaGuardSection *) __attribute__((weak));
+extern bool cetta_shared_transition_scope_active(void) __attribute__((weak));
+
+/* A minimal build may omit the coordination domain (the weak references
+ * above), so this library brackets its reads of a source space through
+ * the guard's functions directly: inside a concurrent scope where the
+ * domain is linked, and always where only a provider spy supplies it. */
+static void postings_space_open(CettaGuardSection *section, const Space *space) {
+    section->held = false;
+    if (space_guard_section_enter &&
+        (!cetta_shared_transition_scope_active ||
+         cetta_shared_transition_scope_active()))
+        space_guard_section_enter(section, space, CETTA_GUARD_WRITE);
+}
+
+static void postings_space_close(CettaGuardSection *section) {
+    if (section->held && cetta_guard_section_end)
+        cetta_guard_section_end(section);
+}
 /* Minimal provider tests need no evaluator. The compiled fold is optional
  * there, just as direct source traversal is. */
 #pragma weak eval_prepare_pure_value_call
@@ -500,12 +517,12 @@ static SpaceMatchPullVisitResult visit_native_space_blocks(
 
 static SpaceMatchPullVisitResult visit_exact_space_blocks(
         Space *source, SpaceBlockBuilder *builder) {
-    if (!space_contains_only_exact_atoms ||
-        !cetta_shared_transition_guard_enter ||
-        !cetta_shared_transition_guard_leave)
+    if (!space_contains_only_exact_atoms || !space_guard_section_enter ||
+        !cetta_guard_section_end)
         return SPACE_MATCH_PULL_VISIT_DECLINED;
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     if (eval_resolve_space_read) source = eval_resolve_space_read(source);
+    __attribute__((cleanup(postings_space_close))) CettaGuardSection shared_read;
+    postings_space_open(&shared_read, source);
     if (!source || source->overlay_base || space_has_dependencies(source) ||
         !space_contains_only_exact_atoms(source))
         return SPACE_MATCH_PULL_VISIT_DECLINED;
@@ -1082,7 +1099,8 @@ static Atom *table_fold(Arena *arena, PostingsTable *table, Atom *request, bool 
         !cetta_prepared_pure_program_execute_closed_controlled ||
         !cetta_prepared_pure_program_release_closed_execution ||
         !cetta_prepared_pure_program_clear_closed_entry_call ||
-        !cetta_prepared_pure_program_is_current || !cetta_prepared_pure_program_free)
+        !cetta_prepared_pure_program_is_current || !cetta_prepared_pure_program_free ||
+        !space_guard_section_enter || !cetta_guard_section_end)
         return fallback(arena);
     Atom **parts, **queries, **initial; size_t length, count, width;
     if (!sequence(request,&parts,&length) || length!=(columns ? 7u : 6u) ||
@@ -1211,8 +1229,17 @@ static Atom *table_fold(Arena *arena, PostingsTable *table, Atom *request, bool 
             arena_reset(&scratch,origin);
         }
     }
-    if (!cetta_prepared_pure_program_is_current(program) ||
-        !cetta_prepared_pure_program_is_current(key_program)) goto cleanup;
+    bool current;
+    {
+        /* Both programs' dependencies are read in one observation of the
+         * shared space. */
+        __attribute__((cleanup(postings_space_close)))
+        CettaGuardSection fold_authority;
+        postings_space_open(&fold_authority, space);
+        current = cetta_prepared_pure_program_is_current(program) &&
+            cetta_prepared_pure_program_is_current(key_program);
+    }
+    if (!current) goto cleanup;
     if (columns) {
         result=fold_columns(arena,&fold,types);
         goto cleanup;

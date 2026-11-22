@@ -12,8 +12,6 @@ true
 (20)
 (installed-later 5)
 6
-true
-(Error (representation_error cyclic_term) $V0)
 ((Visible visibility-b))
 ()
 (Raw (+ 1 2))
@@ -43,3 +41,8 @@ true
 true
 true
 (a)
+1.0
+1.0
+1.0
+0.0
+1

@@ -2,12 +2,13 @@
 ; and formulas, the leaf tags of the tagged policy and a parsed JSON number.
 ; Reading, inspecting, printing, importing, expanding includes and the binding
 ; operations pass records and formulas as data, so none of them fires, and
-; the values are the same in the HE and PeTTa lanes.  `let(X,p,q)` is a
-; formula whose mixed spelling is a host builtin; it stays a formula.
+; the values are the same in the HE and PeTTa lanes.  `let(X,p,q)` and
+; `and(X,n0)` are formulas whose mixed spellings are host builtins; they stay
+; formulas.  PeTTa does not let a program define `and`, so its equation is in
+; data_boundary_he_traps_v1.metta, which only the HE lanes load.
 
 (= (p $x) BOOM-p)
 (= (word $x) BOOM-word)
-(= (and $x $y) BOOM-and)
 (= (fof $n $r $f) BOOM-fof)
 (= (JsonNumberV1 $x) BOOM-json)
 

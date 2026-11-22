@@ -235,6 +235,11 @@ struct CettaLdPatternV1 {
 void cetta_ld_pattern_v1_init(CettaLdPatternV1 *pattern);
 void cetta_ld_pattern_v1_free(CettaLdPatternV1 *pattern);
 
+/* Whether every bound variable of the pattern, under `binders` enclosing
+ * binders, refers to one of them (the formal Pattern's lc_at). */
+bool cetta_ld_pattern_v1_well_scoped(const CettaLdPatternV1 *pattern,
+                                     uint64_t binders);
+
 typedef struct CettaLdPremiseV1 CettaLdPremiseV1;
 
 typedef struct {

@@ -7,7 +7,7 @@ import signal
 import subprocess
 import tempfile
 
-from check_gslt_through_machine import process_signal
+from native_observation import process_signal
 
 
 def main():

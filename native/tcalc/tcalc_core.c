@@ -190,19 +190,24 @@ static bool walk_seen(const TcTerms *t, TcTerm id, TcTerm *value) {
     return true;
 }
 
+/* Room for the records of the terms below count. */
+static bool walk_reserve(TcTerms *t, size_t count) {
+    if (count <= t->seen_cap) return true;
+    size_t cap = t->seen_cap ? t->seen_cap : 1024;
+    while (cap < count) cap *= 2;
+    uint32_t *seen = realloc(t->seen, cap * sizeof *seen);
+    if (!seen) return false;
+    t->seen = seen;
+    TcTerm *value_of = realloc(t->seen_value, cap * sizeof *value_of);
+    if (!value_of) return false;
+    t->seen_value = value_of;
+    memset(t->seen + t->seen_cap, 0, (cap - t->seen_cap) * sizeof *t->seen);
+    t->seen_cap = cap;
+    return true;
+}
+
 static void walk_record(TcTerms *t, TcTerm id, TcTerm value) {
-    if (id >= t->seen_cap) {
-        size_t cap = t->seen_cap ? t->seen_cap : 1024;
-        while (cap <= id) cap *= 2;
-        uint32_t *seen = realloc(t->seen, cap * sizeof *seen);
-        if (!seen) return;
-        t->seen = seen;
-        TcTerm *value_of = realloc(t->seen_value, cap * sizeof *value_of);
-        if (!value_of) return;
-        t->seen_value = value_of;
-        memset(t->seen + t->seen_cap, 0, (cap - t->seen_cap) * sizeof *t->seen);
-        t->seen_cap = cap;
-    }
+    if (!walk_reserve(t, (size_t)id + 1)) return;
     t->seen[id] = t->walk;
     t->seen_value[id] = value;
 }
@@ -303,7 +308,12 @@ typedef struct TcKernelSolver {
     uint32_t *trail; size_t trail_len, trail_cap; /* (index << 1) | is-local  */
     uint32_t *work;  size_t work_len, work_cap;   /* unification work list    */
     TcTerm *build;   size_t build_len, build_cap; /* items of the expressions being remade */
+    uint32_t *native_out;   size_t native_out_cap;   /* the native term builder's entries */
+    uint32_t *native_stack; size_t native_stack_cap; /* its roots and frames, then the entries' terms */
+    uint64_t native[TU_FACTS];             /* the native unifier's state words (tcunify.metta) */
+    uint64_t native_build[TB_FACTS];       /* the native term builder's (tcbuild.metta) */
     bool failed;
+    uint64_t unifications;                 /* work counted: unifications asked */
 } Solver;
 
 typedef struct { size_t trail; uint32_t unknowns; } Mark;
@@ -526,6 +536,7 @@ static bool unify_c(TcTerms *terms, Solver *s, TcTerm a, uint32_t abase, TcTerm 
 #include "tcalc_kernel.c"
 
 static bool unify(TcTerms *terms,Solver *s,TcTerm a,uint32_t abase,TcTerm b,uint32_t bbase) {
+    s->unifications++;
     if (cetta_kernel_requested()==CETTA_KERNEL_X86) return tc_kernel_unify(terms,s,a,abase,b,bbase);
     if (cetta_kernel_note_c) cetta_kernel_note_c();
     return unify_c(terms,s,a,abase,b,bbase);
@@ -533,6 +544,7 @@ static bool unify(TcTerms *terms,Solver *s,TcTerm a,uint32_t abase,TcTerm b,uint
 
 static void solver_free(Solver *s) {
     free(s->local); free(s->unknown); free(s->trail); free(s->work); free(s->build);
+    free(s->native_out); free(s->native_stack);
 }
 
 /* ======================================================================
@@ -547,7 +559,11 @@ static void solver_free(Solver *s) {
  * some whose rows differ only in how their unknowns are shared; those are kept
  * apart (counted twice, never merged wrongly).
  *
- * Their representation, the canonical forms and the table of states, is
+ * A state is kept as its rows of fixed terms, a persistent map that shares
+ * every node off the paths a step changed with the state it was made from
+ * (tcalc_trie.c), and its rows with unknowns in canonical form; its identity is
+ * an incremental multiset hash, confirmed by comparing the maps.  The
+ * representation, the canonical forms and the table of states, is
  * tcalc_store.c, included below with that of section 4.
  * ====================================================================== */
 
@@ -562,6 +578,7 @@ static void solver_free(Solver *s) {
  * ====================================================================== */
 
 #include "tcalc_store.c"
+#include "tcalc_plan.c"
 
 /* ======================================================================
  * 5. One firing: matching, admission, result
@@ -578,6 +595,86 @@ typedef struct {
                                                         first reached it, 0 none */
 } Fired;
 
+/* The store being matched (the view): a state of the table, the one store of
+ * a run by delta (VIEW_ONE), or a store of no state (VIEW_BARE: the rows
+ * present partway through a round, section 6), whose indexes are not made.
+ * Its rows with unknowns are copied out of the table, which may grow while
+ * the view is matched. */
+enum { VIEW_ONE = UINT32_MAX - 1, VIEW_BARE = UINT32_MAX };
+
+typedef struct {
+    uint32_t rows;        /* its rows of fixed terms: a map (tcalc_store.c)        */
+    uint32_t state;       /* its state, VIEW_ONE or VIEW_BARE                       */
+    uint64_t sum;         /* the hash sum of its rows of fixed terms               */
+    uint32_t size;        /* its rows, copies counted                              */
+    uint32_t unknowns;    /* the unknowns its rows mention: 0 .. unknowns-1        */
+    TcTerm *loose; size_t looses, loose_cap;   /* its rows with unknowns, canonical */
+    TcTerm *shape; size_t shape_cap;           /* their shapes                      */
+} View;
+
+/* An occurrence of a row: the row's term and which of its copies, packed as
+ * copy << 32 | term.  Distinct occurrences are distinct rows of the state,
+ * whatever their terms (Core.lean: a row is an occurrence with an identity of
+ * its own). */
+typedef uint64_t Occurrence;
+#define NO_OCCURRENCE UINT64_MAX
+static inline Occurrence occurrence(TcTerm row, uint32_t copy) { return (uint64_t)copy << 32 | row; }
+static inline TcTerm occurrence_row(Occurrence o) { return (TcTerm)o; }
+
+/* Occurrences counted: an open-addressing table, key 0 empty (no row is term
+ * 0).  A key whose count falls to 0 stays, counted 0. */
+typedef struct {
+    Occurrence *key; size_t key_cap;
+    uint32_t *count; size_t count_cap;
+    size_t used;
+} Occurrences;
+
+static inline uint32_t occurrences_count(const Occurrences *s, Occurrence o) {
+    if (!s->key_cap) return 0;
+    size_t mask = s->key_cap - 1;
+    for (size_t h = row_hash((TcTerm)(o ^ (o >> 29))) & mask; s->key[h]; h = (h + 1) & mask)
+        if (s->key[h] == o) return s->count[h];
+    return 0;
+}
+
+/* Adds delta to the occurrence's count; false when memory ran out. */
+static bool occurrences_add(Occurrences *s, Occurrence o, uint32_t delta) {
+    if ((s->used + 1) * 2 > s->key_cap) {
+        size_t cap = s->key_cap ? s->key_cap * 2 : 16;
+        Occurrence *key = calloc(cap, sizeof *key);
+        uint32_t *count = calloc(cap, sizeof *count);
+        if (!key || !count) { free(key); free(count); return false; }
+        for (size_t i = 0; i < s->key_cap; i++) {
+            if (!s->key[i]) continue;
+            size_t h = row_hash((TcTerm)(s->key[i] ^ (s->key[i] >> 29))) & (cap - 1);
+            while (key[h]) h = (h + 1) & (cap - 1);
+            key[h] = s->key[i];
+            count[h] = s->count[i];
+        }
+        free(s->key); free(s->count);
+        s->key = key;
+        s->count = count;
+        s->key_cap = s->count_cap = cap;
+    }
+    size_t mask = s->key_cap - 1, h = row_hash((TcTerm)(o ^ (o >> 29))) & mask;
+    for (; s->key[h]; h = (h + 1) & mask)
+        if (s->key[h] == o) { s->count[h] += delta; return true; }
+    s->key[h] = o;
+    s->count[h] = delta;
+    s->used++;
+    return true;
+}
+
+static void occurrences_clear(Occurrences *s) {
+    if (s->used) {
+        memset(s->key, 0, s->key_cap * sizeof *s->key);
+        memset(s->count, 0, s->count_cap * sizeof *s->count);
+    }
+    s->used = 0;
+}
+
+static void occurrences_free(Occurrences *s) { free(s->key); free(s->count); }
+
 /* The work of one exploration.  It holds the program's term table for its
  * duration (tc_explore and tc_successors hand it over and take it back), a
  * view of the program and a copy of the interpretation, so that the matching
@@ -587,13 +684,19 @@ typedef struct {
     ProgramView program;
     TcInterpretation how;
     Solver solver;
+    Trie trie;             /* the nodes of every map of rows the exploration holds */
+    Places places;         /* the runs and indexes met                             */
     StateTable states;
-    /* the state being expanded: its rows, borrowed from the state table;
-     * whether they mention no unknown; its index (UINT32_MAX outside the
-     * exploration) */
-    const TcTerm *row; uint32_t rows;
+    /* the store being matched; whether its rows mention no unknown; its state's
+     * index (UINT32_MAX outside the exploration); the entry view kept while a
+     * round's check reads the rows present partway through (section 6) */
+    View view;
     bool ground;
     uint32_t at;
+    View present;
+    /* the bag being fitted (section 6): the occurrences its members take, and
+     * those they read, counted per member */
+    Occurrences taken, read;
     /* step one: the firings met, kept while `derive` (below); and whether a
      * shortcut, checked, ever found another successor than the full one */
     Fired fired;
@@ -601,20 +704,20 @@ typedef struct {
     TcTerm *key; size_t key_cap;   /* scratch: the row terms of the match decided */
     /* the matches at it the discipline can use (match_from) */
     TcMember *member; size_t members, member_cap;
-    uint32_t *selection; size_t selections, selection_cap;
+    Occurrence *selection; size_t selections, selection_cap;
     /* those matches by their rule and the row terms they select: member index
      * + 1 per slot, 0 empty (see known_selection) */
     uint32_t *known; size_t known_cap, known_used;
     /* scratch: the rows of a successor under construction */
     TcTerm *next; size_t next_len, next_cap;
-    /* the selection being chosen: a row position for each pattern */
-    uint32_t *pick; size_t pick_cap;
+    /* the selection being chosen: an occurrence for each pattern */
+    Occurrence *pick; size_t pick_cap;
     /* the match being decided (the protocol tc_fire): its rule, as stored and
      * as an index, and the mark of the trail before its tells */
     TcStoredRule fire; uint32_t fire_rule; Mark fire_mark;
     RunBudget budget;   /* units of work: states expanded, bags examined, orders tried */
     bool out_of_memory;
-    /* backend x86-flat: each rule's packed plan, the state's rows packed four
+    /* backend x86-flat: each rule's packed plan, the selected rows packed four
      * words a row, and whether the decider ever gave no verdict */
     struct FlatPlan *plans; size_t plans_len;
     uint32_t *flat_words; size_t flat_words_cap;
@@ -622,6 +725,10 @@ typedef struct {
     uint32_t *batch_cursor; size_t batch_cursor_cap;
     uint32_t *batch_output; size_t batch_output_cap;
     uint64_t batch_used;
+    /* the resident batch's rows: the runs its rule meets, each copy, and each
+     * one's occurrence */
+    uint32_t *batch_row; size_t batch_rows, batch_row_cap;
+    Occurrence *batch_occurrence; size_t batch_occurrences, batch_occurrence_cap;
     /* tc_decide: the host's store the match is decided over (0 for the
      * explorer's own states), the selection, how the store answered (ROW
      * until a cursor or an import fails) and how the host's commit went */
@@ -630,16 +737,40 @@ typedef struct {
     const TcOccurrence *selected;
     TcStoreStatus store_status;
     TcCommitStatus commit;
+    /* scratch of a successor: its rows with unknowns, their shapes, the
+     * changes of its rows of fixed terms (row, copies added), the
+     * occurrences gone, and rows listed */
+    TcTerm *loose_next; size_t loose_nexts, loose_next_cap;
+    TcTerm *shape_next; size_t shape_next_cap;
+    uint32_t *change; size_t changes, change_cap;
+    Occurrence *gone; size_t gones, gone_cap;
+    TcTerm *listed; size_t listed_len, listed_cap;
+    /* step every over a set store, of a program that propagates, from a
+     * state of fixed terms (section 7, tcalc_delta.c): whether the run is
+     * kept in one store, and the store; an admitted match then adds the rows
+     * it makes to `next` */
+    bool delta;
+    DeltaStore delta_store;
+    /* while a rule's plan runs: whether its steps decide its checks (the
+     * protocol then asks none) */
+    bool plan_checked;
+    /* work counted, for growth gates (tcalc_core.h): rows a pattern was
+     * unified with while matching, matches decided, and the rule patterns a
+     * matching started from */
+    uint64_t met, decided, tried;
 } Explorer;
 
-static inline TcTerm row_at(const Explorer *x, uint32_t i) { return x->row[i]; }
-static inline uint32_t pick_at(const Explorer *x, uint32_t k) { return x->pick[k]; }
-static inline void pick_put(Explorer *x, uint32_t k, uint32_t row) { x->pick[k] = row; }
+static inline Occurrence pick_at(const Explorer *x, uint32_t k) { return x->pick[k]; }
+static inline TcMember member_at(const Explorer *x, size_t m) { return x->member[m]; }
+static inline Occurrence selection_at(const Explorer *x, size_t k) { return x->selection[k]; }
+static inline void pick_put(Explorer *x, uint32_t k, Occurrence o) { x->pick[k] = o; }
+static inline TcTerm loose_at(const View *v, size_t i) { return v->loose[i]; }
+static inline TcTerm shape_at(const View *v, size_t i) { return v->shape[i]; }
 
 /* Room for a selection of `count` patterns. */
 static bool ensure_pick(Explorer *x, size_t count) {
     if (count <= x->pick_cap) return true;
-    uint32_t *grown = realloc(x->pick, count * sizeof *grown);
+    Occurrence *grown = realloc(x->pick, count * sizeof *grown);
     if (!grown) return false;
     x->pick = grown;
     x->pick_cap = count;
@@ -659,43 +790,240 @@ static bool reserve_unknowns(Solver *s, uint32_t count) {
 /* One unit of work, if the budget has one left. */
 static bool spend(Explorer *x) { return run_spend(&x->budget); }
 
-/* The first of the state's sorted rows whose (head, length) is at least, or
- * with `after` beyond, the given one. */
-static uint32_t first_row(const Explorer *x, uint32_t head, uint32_t length, bool after) {
-    uint32_t a = 0, b = x->rows;
-    while (a < b) {
-        uint32_t m = a + (b - a) / 2;
-        TcNode rn = term_node(x->terms, row_at(x, m));
-        uint32_t rl = rn.kind == TC_EXPRESSION ? rn.length : 0;
-        bool before = rn.head < head || (rn.head == head && (after ? rl <= length : rl < length));
-        if (before) a = m + 1; else b = m;
-    }
-    return a;
+/* Room for `count` rows with unknowns in a view. */
+static bool view_room(View *v, size_t count) {
+    return reserve(&v->loose, &v->loose_cap, count) && reserve(&v->shape, &v->shape_cap, count);
 }
 
-/* The rows a pattern can meet, as two runs of the sorted rows (positions
- * lo[k] .. hi[k]-1): the rows of its head and length, and the rows with no
- * symbol at their head; or every row, when the pattern's own head is not a
- * fixed symbol. */
-typedef struct { uint32_t lo[2], hi[2]; } Runs;
+/* The view of state q: its map, and its rows with unknowns copied out. */
+static bool view_state(Explorer *x, uint32_t q) {
+    TcState s = state_at(&x->states, q);
+    View *v = &x->view;
+    if (!view_room(v, s.looses)) return false;
+    for (uint32_t i = 0; i < s.looses; i++) {
+        v->loose[i] = x->states.loose[(size_t)s.loose + i];
+        v->shape[i] = x->states.shape[(size_t)s.loose + i];
+    }
+    v->looses = s.looses;
+    v->rows = s.rows;
+    v->state = q;
+    v->sum = s.sum;
+    v->size = s.size;
+    v->unknowns = s.unknowns;
+    x->ground = s.looses == 0;
+    x->at = q;
+    return true;
+}
 
-static Runs candidates(const Explorer *x, TcTerm pattern, uint32_t base) {
-    TcTerm p = walk(x->terms, &x->solver, pattern, base);
-    TcNode pn = term_node(x->terms, p);
-    Runs all = {{0, 0}, {0, x->rows}};
-    if (pn.kind == TC_LOCAL || pn.kind == TC_UNKNOWN) return all;
-    uint32_t head = pn.head, length = pn.kind == TC_EXPRESSION ? pn.length : 0;
+/* ---- The rows a probe meets --------------------------------------------------
+ * A plan's probe (tcalc_plan.c) meets the rows of its relation whose keys at
+ * its index's first L paths are the probed term's terms there, walked: a row
+ * of fixed terms holds a fixed term at such a place only when it is that
+ * term, and a row with no item there meets no term that has one.  A key that
+ * is not fixed when the probe runs (a local bound to a term with unknowns)
+ * ends the keys at the level before it.  Over a state's view a probe reads,
+ * in turn:
+ *   - the rows with unknowns of its relation, and those with no symbol at
+ *     their head (an unknown, or an expression headed by one, can meet a
+ *     term of any head), less those holding another fixed term at a key's
+ *     path;
+ *   - the rows of fixed terms: its run's (level 0), or its index's rows under
+ *     the key node of its keys.
+ * A probe of no fixed relation reads, at level 0, the relation its term walks
+ * to when it runs; a term walking to a variable meets every row.  Over the
+ * one store of a run by delta a probe reads the store's own lists
+ * (tcalc_delta.c); a store of no state (VIEW_BARE: the rows present partway
+ * through a round) keeps no index, and its probes read their runs.  Each
+ * copy of a row is an occurrence, its copies met one after another. */
+typedef struct {
+    TrieCursor ground;            /* the rows of fixed terms: one range of a map,
+                                     or (every) the runs of the rows map in order   */
+    bool open;                    /* the range is open                              */
+    bool every;                   /* every run of the rows map, in order            */
+    uint32_t order_at;            /* every: the next run in the order of runs       */
+    TcTerm g;                     /* the row of fixed terms next (0: none left)     */
+    uint32_t g_copies, g_copy;
+    uint32_t lo[2], hi[2];        /* the rows with unknowns met: two ranges of the
+                                     view's, in canonical order                     */
+    uint32_t keys;                /* the keys met, for passing rows with unknowns   */
+    uint32_t path[INDEX_PATHS];
+    TcTerm key[INDEX_PATHS];
+    Occurrence bound;             /* only the occurrences from it on, in canonical
+                                     order (NO_OCCURRENCE: every one)               */
+    TcTerm bound_shape;
+} Candidates;
+
+/* The next row of fixed terms of the cursor, in c->g (0 when none is left). */
+static void cand_ground(const Explorer *x, Candidates *c) {
+    uint64_t key = 0;
+    uint32_t value = 0;
+    for (;;) {
+        if (c->open && trie_next(&x->trie, &c->ground, &key, &value)) {
+            c->g = (TcTerm)key;
+            c->g_copies = value;
+            c->g_copy = 0;
+            return;
+        }
+        c->open = false;
+        if (!c->every || c->order_at >= x->places.orders) { c->g = 0; return; }
+        uint32_t run = x->places.order[c->order_at++];
+        trie_seek(&x->trie, &c->ground, x->view.rows, map_key(run, 1), map_key(run, UINT32_MAX));
+        c->open = true;
+    }
+}
+
+/* Whether the row with unknowns at position i is passed: it holds another
+ * fixed term at a key's path. */
+static bool cand_passed(const Explorer *x, const Candidates *c, uint32_t i) {
+    for (uint32_t l = 0; l < c->keys; l++) {
+        TcTerm at = 0;
+        if (path_key(x->terms, loose_at(&x->view, i), c->path[l], &at) && term_node(x->terms, at).ground &&
+            at != c->key[l])
+            return true;
+    }
+    return false;
+}
+
+/* The canonical order of two rows of the view (by head and length, shape,
+ * term): whether a (shape sa) comes before b (shape sb). */
+static bool row_before(const TcTerms *t, TcTerm a, TcTerm sa, TcTerm b, TcTerm sb) {
+    int c = head_length_order(t->node, a, b);
+    if (c) return c < 0;
+    return sa != sb ? sa < sb : a < b;
+}
+
+/* The copies of the row at position i that come before it. */
+static uint32_t loose_copy(const View *v, uint32_t i) {
+    uint32_t copy = 0;
+    while (copy < i && loose_at(v, i - copy - 1) == loose_at(v, i)) copy++;
+    return copy;
+}
+
+/* The shape of a row of the view: itself when it is fixed. */
+static TcTerm view_shape(const Explorer *x, TcTerm row) {
+    if (term_node(x->terms, row).ground) return row;
+    for (size_t i = 0; i < x->view.looses; i++)
+        if (loose_at(&x->view, i) == row) return shape_at(&x->view, i);
+    return row;
+}
+
+/* The canonical order of two occurrences of the view (section 3): -1, 0 or 1. */
+static int occurrence_order(const Explorer *x, Occurrence a, Occurrence b, TcTerm shape_a, TcTerm shape_b) {
+    if (a == b) return 0;
+    TcTerm ra = occurrence_row(a), rb = occurrence_row(b);
+    if (ra == rb) return (a >> 32) < (b >> 32) ? -1 : 1;
+    return row_before(x->terms, ra, shape_a, rb, shape_b) ? -1 : 1;
+}
+
+/* Whether the occurrence (its row's shape `shape`) comes before the cursor's
+ * bound. */
+static bool cand_before(const Explorer *x, const Candidates *c, Occurrence o, TcTerm shape) {
+    return c->bound != NO_OCCURRENCE && occurrence_order(x, o, c->bound, shape, c->bound_shape) < 0;
+}
+
+/* The next occurrence of the cursor; NO_OCCURRENCE when none is left. */
+static Occurrence cand_next(const Explorer *x, Candidates *c) {
+    for (int part = 0; part < 2; part++)
+        while (c->lo[part] < c->hi[part]) {
+            uint32_t i = c->lo[part]++;
+            Occurrence o = occurrence(loose_at(&x->view, i), loose_copy(&x->view, i));
+            if (!cand_passed(x, c, i) && !cand_before(x, c, o, shape_at(&x->view, i))) return o;
+        }
+    Occurrence o = NO_OCCURRENCE;
+    do {
+        if (!c->g || c->g_copy >= c->g_copies) cand_ground(x, c);
+        if (!c->g) return NO_OCCURRENCE;
+        o = occurrence(c->g, c->g_copy++);
+    } while (cand_before(x, c, o, c->g));
+    return o;
+}
+
+/* The shape of the cursor's bound. */
+static void cand_bound_shape(const Explorer *x, Candidates *c) {
+    if (c->bound != NO_OCCURRENCE) c->bound_shape = view_shape(x, occurrence_row(c->bound));
+}
+
+/* The rows of the relation (head, length): its rows with unknowns, those with
+ * no symbol at their head, and its run's rows of fixed terms.  Its run, or
+ * UINT32_MAX when it has none. */
+static uint32_t cand_relation(const Explorer *x, Candidates *c, uint32_t head, uint32_t length) {
+    uint32_t looses = (uint32_t)x->view.looses;
+    for (uint32_t i = 0; i < looses; i++) {   /* the rows with unknowns met, by head and length */
+        uint32_t h = 0, l = 0;
+        row_place(x->terms, loose_at(&x->view, i), &h, &l);
+        if (head && h == 0) c->hi[0] = i + 1;
+        if (h == head && l == length) {
+            if (c->lo[1] == c->hi[1]) c->lo[1] = i;
+            c->hi[1] = i + 1;
+        }
+    }
+    uint32_t run = place_find(&x->places, head, length);
+    if (run == UINT32_MAX) return run;
+    c->open = true;
+    trie_seek(&x->trie, &c->ground, x->view.rows, map_key(run, 1), map_key(run, UINT32_MAX));
+    return run;
+}
+
+/* The rows `term` (at base) can meet at level 0: those of the relation it
+ * walks to, or every row when it walks to a variable or to an expression
+ * headed by no symbol. */
+static void cand_open(const Explorer *x, TcTerm term, uint32_t base, Occurrence bound, Candidates *c) {
+    const TcTerms *t = x->terms;
+    *c = (Candidates){.bound = bound};
+    cand_bound_shape(x, c);
+    TcNode pn = term_node(t, walk(t, &x->solver, term, base));
+    uint32_t head = 0, length = 0;
+    bool every = pn.kind == TC_LOCAL || pn.kind == TC_UNKNOWN;
     if (pn.kind == TC_EXPRESSION && pn.length > 0) {
-        TcTerm first = walk(x->terms, &x->solver, term_item(x->terms, pn.start), base);
-        if (term_node(x->terms, first).kind != TC_SYMBOL) return all;
+        TcTerm first = walk(t, &x->solver, term_item(t, pn.start), base);
+        if (term_node(t, first).kind != TC_SYMBOL) every = true;
         head = first;
+        length = pn.length;
     }
-    Runs r = {{0, first_row(x, head, length, false)}, {0, first_row(x, head, length, true)}};
-    /* the rows with no symbol at their head, first in the order: an unknown,
-     * or an expression headed by one, can meet a pattern of any head */
-    if (head) r.hi[0] = first_row(x, 1, 0, false);
-    return r;
+    if (every) {
+        c->every = true;
+        c->hi[1] = (uint32_t)x->view.looses;
+        return;
+    }
+    (void)cand_relation(x, c, head, length);
 }
+
+/* The rows probe `probe` meets over the view, its terms walked at base.
+ * False when memory ran out. */
+static bool cand_probe(Explorer *x, uint32_t probe, uint32_t base, Occurrence bound, Candidates *c) {
+    const ProgramView *v = &x->program;
+    uint32_t head = probe_head(v, probe), length = probe_length(v, probe);
+    *c = (Candidates){.bound = bound};
+    if (head == PLAN_OPEN) { cand_open(x, probe_term(v, probe), base, bound, c); return true; }
+    cand_bound_shape(x, c);
+    uint32_t run = cand_relation(x, c, head, length), index = probe_index(v, probe);
+    for (uint32_t l = 0; l < probe_level(v, probe); l++) {
+        TcTerm key = walk(x->terms, &x->solver, probe_key(v, probe, l), base);
+        if (!term_node(x->terms, key).ground) break;   /* the keys end at a term not fixed */
+        c->path[l] = index_path_at(v, index, l);
+        c->key[l] = key;
+        c->keys++;
+    }
+    if (run == UINT32_MAX || !c->keys || x->view.state == VIEW_BARE) return true;   /* the run's rows */
+    IndexShape shape = index_shape(v, index);
+    uint32_t map = 0, level = shape_kept(&shape, c->keys);   /* a level the index keeps */
+    if (!level) return true;   /* the run's rows */
+    TcTerm split_key = 0;
+    uint32_t split = index_split(v, index, &split_key), cut = 0;
+    if (!place_index(&x->places, index, head, length, split, split_key, &cut) ||
+        !state_index(&x->states, &x->trie, &x->places, x->terms, x->view.state, index, &shape, &map))
+        return false;
+    uint32_t node = keys_node(&x->places, index_root(&x->places, index), &shape, c->key, level);
+    c->open = node != 0;   /* none: no row of fixed terms has these keys */
+    if (node) trie_seek(&x->trie, &c->ground, map, map_key(node, 1), map_key(node, UINT32_MAX));
+    return true;
+}
+
+/* The rows a probe meets over the one store of a run by delta, at positions
+ * lo .. hi-1 (tcalc_delta.c). */
+static bool delta_probe(Explorer *x, uint32_t probe, uint32_t base, uint32_t lo, uint32_t hi, DeltaCursor *c);
+static uint32_t delta_next(const Explorer *x, DeltaCursor *c);
+static inline TcTerm delta_row(const DeltaStore *s, size_t i) { return s->row[i]; }
 
 /* Whether a check holds at every solution of what the solver now holds, over
  * the rows present (the entry state of the step).  At the most general
@@ -755,7 +1083,75 @@ static bool store_check_holds(Explorer *x, TcCheck c, uint32_t base, TcTerm patt
     return holds && (c.kind != TC_CHECK_COUNT || equal == c.count);
 }
 
-static bool check_holds(Explorer *x, TcCheck c, uint32_t base) {
+/* ---- Guards --------------------------------------------------------------
+ * A guard reads no row: it is decided on the match's values alone, at the
+ * most general solution, which is the decision at every solution.  /= holds
+ * when the two sides do not unify (two ground terms: when they are two
+ * terms).  < and <= hold when both sides are integers in that order; a side
+ * that is no integer (an unknown, which some solution makes a symbol, or any
+ * other term) fails them.  A sum written (+ A B) is computed exactly: its
+ * value, and how it left the 64-bit range (-1 below, 1 above, by less than
+ * 2^64, its value then the sum wrapped), so that two such values compare as
+ * the integers they are. */
+typedef struct { int wrap; int64_t value; } GuardInteger;
+
+/* The integer a term walks to: false when it is no integer. */
+static bool guard_integer_term(const Explorer *x, TcTerm term, uint32_t base, int64_t *value) {
+    TcNode n = term_node(x->terms, walk(x->terms, &x->solver, term, base));
+    if (n.kind != TC_INTEGER) return false;
+    *value = n.value;
+    return true;
+}
+
+static bool guard_integer(const Explorer *x, TcTerm operand, uint32_t base, GuardInteger *out) {
+    if (!written_sum(x->terms, operand)) {
+        out->wrap = 0;
+        return guard_integer_term(x, operand, base, &out->value);
+    }
+    TcNode n = term_node(x->terms, operand);
+    int64_t a = 0, b = 0;
+    if (!guard_integer_term(x, term_item(x->terms, n.start + 1), base, &a) ||
+        !guard_integer_term(x, term_item(x->terms, n.start + 2), base, &b))
+        return false;
+    out->wrap = __builtin_add_overflow(a, b, &out->value) ? (a > 0 ? 1 : -1) : 0;
+    return true;
+}
+
+static bool guard_holds(Explorer *x, TcCheck c, uint32_t base) {
+    if (c.kind == TC_CHECK_DIFFERENT) {
+        TcTerm left = walk(x->terms, &x->solver, c.left, base);
+        TcTerm right = walk(x->terms, &x->solver, c.right, base);
+        if (term_node(x->terms, left).ground && term_node(x->terms, right).ground) return left != right;
+        Mark m = mark(&x->solver);
+        bool meets = unify(x->terms, &x->solver, c.left, base, c.right, base);
+        undo(&x->solver, m);
+        return !meets && !x->solver.failed;
+    }
+    GuardInteger a = {0, 0}, b = {0, 0};
+    if (!guard_integer(x, c.left, base, &a) || !guard_integer(x, c.right, base, &b)) return false;
+    int order = a.wrap != b.wrap ? (a.wrap < b.wrap ? -1 : 1)
+              : a.value < b.value ? -1 : a.value > b.value ? 1 : 0;
+    return c.kind == TC_CHECK_LESS ? order < 0 : order <= 0;
+}
+
+/* A row an absence, a count or a census meets (pattern: its term resolved):
+ * counted when it equals the pattern, the check failed (false) when it only
+ * unifies with it, which some solution makes a match and another not. */
+static bool check_row(Explorer *x, TcCheck c, uint32_t base, TcTerm pattern, TcTerm at, uint64_t *equal) {
+    TcTerm row = resolve(x->terms, &x->solver, at, 0);
+    if (c.kind != TC_CHECK_ABSENT && row == pattern) { (*equal)++; return true; }
+    Mark m = mark(&x->solver);
+    bool meets = unify(x->terms, &x->solver, c.left, base, row, 0);
+    undo(&x->solver, m);
+    return !meets;
+}
+
+/* Check i of rule r (at base): a guard or an equation on the match's values,
+ * or the rows of the store matched that its pattern meets, read by the probe
+ * its rule's plans give it (tcalc_plan.c). */
+static bool check_holds(Explorer *x, const TcStoredRule *r, uint32_t i, uint32_t base) {
+    TcCheck c = check_at(&x->program, r, i);
+    if (check_guard(c.kind)) return guard_holds(x, c, base);
     if (c.kind == TC_CHECK_EQUAL) {
         TcTerm left=resolve(x->terms,&x->solver,c.left,base);
         if (!left || x->solver.failed || x->terms->failed) return false;
@@ -766,22 +1162,30 @@ static bool check_holds(Explorer *x, TcCheck c, uint32_t base) {
     if (!pattern || x->solver.failed || x->terms->failed) return false;
     if (x->has_store) return store_check_holds(x, c, base, pattern);
     uint64_t equal = 0;
-    Runs runs = candidates(x, c.left, base);
-    for (int k = 0; k < 2; k++)
-        for (uint32_t i = runs.lo[k]; i < runs.hi[k]; i++) {
-            TcTerm row = resolve(x->terms, &x->solver, row_at(x, i), 0);
-            if (c.kind != TC_CHECK_ABSENT && row == pattern) { equal++; continue; }
-            Mark m = mark(&x->solver);
-            bool meets = unify(x->terms, &x->solver, c.left, base, row, 0);
-            undo(&x->solver, m);
-            if (meets) return false;   /* some solution makes this row match */
+    uint32_t probe = plan_check_probe(&x->program, r->same, i);
+    if (x->view.state == VIEW_ONE) {   /* the one store's rows */
+        DeltaCursor rows;
+        if (!delta_probe(x, probe, base, 0, (uint32_t)x->delta_store.rows, &rows)) {
+            x->solver.failed = true;
+            return false;
         }
+        for (uint32_t at; (at = delta_next(x, &rows)) != UINT32_MAX;)
+            if (!check_row(x, c, base, pattern, delta_row(&x->delta_store, at), &equal)) return false;
+    } else {
+        Candidates rows;
+        if (!cand_probe(x, probe, base, NO_OCCURRENCE, &rows)) {
+            x->solver.failed = true;
+            return false;
+        }
+        for (Occurrence o; (o = cand_next(x, &rows)) != NO_OCCURRENCE;)
+            if (!check_row(x, c, base, pattern, occurrence_row(o), &equal)) return false;
+    }
     return c.kind != TC_CHECK_COUNT || equal == c.count;
 }
 
 static bool checks_hold(Explorer *x, const TcStoredRule *r, uint32_t base) {
     for (uint32_t i = 0; i < r->check_count; i++)
-        if (!check_holds(x, check_at(&x->program, r, i), base)) return false;
+        if (!check_holds(x, r, i, base)) return false;
     return true;
 }
 
@@ -823,74 +1227,177 @@ static bool append_made(Explorer *x, const TcStoredRule *r, uint32_t base) {
     return true;
 }
 
-/* At a state with no unknowns the solver changes no row, and the state's rows
- * are in canonical order already.  So the successor's canonical rows are those
- * rows without the gone ones, merged with the made rows (x->next) put in the
- * same order: a firing costs a merge, where canonical_form would sort every
- * row.  UINT32_MAX when memory ran out. */
-static uint32_t merged_successor(Explorer *x, const bool *gone) {
-    uint32_t made = (uint32_t)x->next_len, m = 0;
-    uint32_t *pos = malloc((made ? made : 1) * sizeof *pos);
-    if (!pos) return UINT32_MAX;
-    for (uint32_t i = 0; i < made; i++) pos[i] = i;
-    const TcNode *nodes = x->terms->node;
-    if (!nodes) { free(pos); return UINT32_MAX; }
-    bool ok;
-    {
-        RowOrder by = {nodes, x->terms->nodes, x->next, x->next, made, false};
-        ok = sort_positions(&by, pos, made);
-    }
-    for (uint32_t i = 0; ok && i <= x->rows; i++) {
-        while (ok && m < made && (i == x->rows ||
-                                  ground_order(nodes, x->next[pos[m]], x->row[i]) <= 0))
-            ok = next_push(x, x->next[pos[m++]]);
-        if (ok && i < x->rows && !gone[i]) ok = next_push(x, x->row[i]);
-    }
-    free(pos);
-    if (!ok) return UINT32_MAX;
-    TcTerm *rows = x->next + made;
-    uint32_t n = 0;
-    for (size_t i = 0; i < x->next_len - made; i++) {   /* a set store keeps one of equal rows */
-        TcTerm row = rows[i];
-        if (x->how.store == TC_STORE_SET && n > 0 && rows[n - 1] == row) continue;
-        rows[n++] = row;
-    }
-    return state_index(&x->states, rows, n, true);
+/* ---- The state a firing reaches ---------------------------------------------
+ * The view's rows without the occurrences gone, with the made rows x->next,
+ * all under the solver's present assignments (Core.lean: Firing.result: the
+ * taken rows leave, the made rows arrive with new identities, and the
+ * information becomes the knowledge).  The rows of fixed terms are the view's
+ * map, changed along the paths of the rows that left and arrived (path
+ * copying: every other node is shared), its hash sum by their hashes; the rows
+ * with unknowns are resolved, those now fixed join the map, the rest are put
+ * in canonical form.  With shortcuts checked the state is also computed in
+ * full, every row listed, resolved and put in canonical form and a map made of
+ * them, and the two compared. */
+
+/* A row of fixed terms leaves (copies UINT32_MAX) or arrives (1) at the state
+ * under construction; in a set store a row present arrives as no change.
+ * False when memory ran out. */
+static bool state_change(Explorer *x, TcState *s, TcTerm row, uint32_t copies) {
+    uint32_t run = row_run(&x->places, x->terms, row, true);
+    if (run == UINT32_MAX) return false;
+    if (copies == 1 && x->how.store == TC_STORE_SET && trie_get(&x->trie, s->rows, map_key(run, row)))
+        return true;
+    if (!map_change(&x->trie, &s->rows, run, row, copies, copies)) return false;
+    s->sum += copies == 1 ? row_hash(row) : 0 - row_hash(row);
+    s->size += copies;
+    return tc_push_u32(realloc, &x->change, &x->changes, &x->change_cap, row) &&
+           tc_push_u32(realloc, &x->change, &x->changes, &x->change_cap, copies);
 }
 
-/* The state of the rows not in `gone` (a flag per row) plus x->next, under the
- * solver's present assignments, by the full computation: every row resolved,
- * the whole put in canonical form.  UINT32_MAX when memory ran out. */
-static uint32_t full_successor(Explorer *x, const bool *gone) {
-    size_t made = x->next_len;
-    for (uint32_t i = 0; i < x->rows; i++)
-        if (!gone[i]) {
-            TcTerm row = resolve(x->terms, &x->solver, x->row[i], 0);
-            if (!row || !next_push(x, row)) return UINT32_MAX;
+/* The changes, each row once with its copies added (none of 0 kept),
+ * sorted by row.  False when memory ran out. */
+static bool changes_merge(Explorer *x) {
+    size_t n = x->changes / 2;
+    for (size_t i = 1; i < n; i++)   /* insertion sort: a firing changes a few rows */
+        for (size_t j = i; j > 0 && x->change[2 * (j - 1)] > x->change[2 * j]; j--)
+            for (size_t w = 0; w < 2; w++) {
+                uint32_t tmp = x->change[2 * j + w];
+                x->change[2 * j + w] = x->change[2 * (j - 1) + w];
+                x->change[2 * (j - 1) + w] = tmp;
+            }
+    size_t kept = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (kept && x->change[2 * (kept - 1)] == x->change[2 * i]) {
+            x->change[2 * (kept - 1) + 1] += x->change[2 * i + 1];
+            if (!x->change[2 * (kept - 1) + 1]) kept--;
+            continue;
         }
-    for (size_t i = 0; i < made; i++) x->next[i] = resolve(x->terms, &x->solver, x->next[i], 0);
-    uint32_t n = (uint32_t)x->next_len;
+        x->change[2 * kept] = x->change[2 * i];
+        x->change[2 * kept + 1] = x->change[2 * i + 1];
+        kept++;
+    }
+    x->changes = 2 * kept;
+    return true;
+}
+
+/* Whether the occurrence is among the n gone. */
+static bool occurrence_gone(const Occurrence *gone, size_t n, Occurrence o) {
+    for (size_t i = 0; i < n; i++) if (gone[i] == o) return true;
+    return false;
+}
+
+/* A resolved row arrives: a fixed one at the map, one with unknowns among
+ * x->loose_next.  False when memory ran out. */
+static bool state_arrive(Explorer *x, TcState *s, TcTerm row) {
+    if (!row) return false;
+    if (term_node(x->terms, row).ground) return state_change(x, s, row, 1);
+    return tc_push_u32(realloc, &x->loose_next, &x->loose_nexts, &x->loose_next_cap, row);
+}
+
+/* Enters the state of the map s.rows (held) and the rows with unknowns
+ * x->loose_next (put in canonical form here), made from `parent` by the
+ * changes x->change.  UINT32_MAX when memory ran out. */
+static uint32_t state_close(Explorer *x, TcState s, uint32_t parent) {
+    uint32_t n = (uint32_t)x->loose_nexts;
+    bool ground = true;
+    if (!reserve(&x->shape_next, &x->shape_next_cap, n ? n : 1) ||
+        (n && !canonical_form(x->terms, x->loose_next, &n, x->how.store, &ground, x->shape_next))) {
+        trie_release(&x->trie, s.rows);
+        return UINT32_MAX;
+    }
+    s.looses = n;
+    s.size += n;
+    s.unknowns = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t m = max_unknown(x->terms, x->loose_next[i]);
+        if (m > s.unknowns) s.unknowns = m;
+    }
+    s.parent = parent;
+    if (parent == UINT32_MAX) x->changes = 0;
+    else if (!changes_merge(x)) { trie_release(&x->trie, s.rows); return UINT32_MAX; }
+    if (x->trie.failed) { trie_release(&x->trie, s.rows); return UINT32_MAX; }
+    return state_enter(&x->states, &x->trie, s, x->loose_next, x->shape_next, x->change,
+                       (uint32_t)(x->changes / 2));
+}
+
+/* The state of rows in canonical form (canonical_form), made from no other.
+ * UINT32_MAX when memory ran out. */
+static uint32_t state_of_rows(Explorer *x, const TcTerm *rows, uint32_t n) {
+    TcState s = {.parent = UINT32_MAX};
+    x->changes = 0;
+    x->loose_nexts = 0;
+    for (uint32_t i = 0; i < n; i++)
+        if (!state_arrive(x, &s, rows[i])) { trie_release(&x->trie, s.rows); return UINT32_MAX; }
+    return state_close(x, s, UINT32_MAX);
+}
+
+/* The state of `n` rows, in canonical form, entered in the explorer's table;
+ * UINT32_MAX when memory ran out. */
+static uint32_t explorer_state(Explorer *x, const TcTerm *given, size_t n) {
+    TcTerm *rows = malloc((n ? n : 1) * sizeof *rows);
+    uint32_t count = (uint32_t)n, q = UINT32_MAX;
+    bool ground;
+    if (!rows) return UINT32_MAX;
+    if (n) {
+        if (!given) { free(rows); return UINT32_MAX; }
+        memcpy(rows, given, n * sizeof *rows);
+    }
+    if (canonical_form(x->terms, rows, &count, x->how.store, &ground, NULL))
+        q = state_of_rows(x, rows, count);
+    free(rows);
+    return q;
+}
+
+/* The successor computed in full (above).  UINT32_MAX when memory ran out. */
+static uint32_t full_successor(Explorer *x, const Occurrence *gone, size_t ngone) {
+    x->listed_len = 0;
+    if (!store_rows(&x->trie, &x->places, x->terms, x->view.rows, x->view.loose, x->view.shape,
+                    (uint32_t)x->view.looses, &x->listed, &x->listed_len, &x->listed_cap))
+        return UINT32_MAX;
+    size_t kept = 0;
+    for (size_t i = 0; i < x->listed_len; i++) {   /* listed rows: copies adjacent */
+        uint32_t copy = 0;
+        while (copy < i && x->listed[i - copy - 1] == x->listed[i]) copy++;
+        if (occurrence_gone(gone, ngone, occurrence(x->listed[i], copy))) continue;
+        TcTerm row = resolve(x->terms, &x->solver, x->listed[i], 0);
+        if (!row) return UINT32_MAX;
+        x->listed[kept++] = row;
+    }
+    x->listed_len = kept;
+    for (size_t i = 0; i < x->next_len; i++) {
+        TcTerm row = resolve(x->terms, &x->solver, x->next[i], 0);
+        if (!row || !tc_push_u32(realloc, &x->listed, &x->listed_len, &x->listed_cap, row)) return UINT32_MAX;
+    }
+    uint32_t n = (uint32_t)x->listed_len;
     bool ground;
     if (x->solver.failed || x->terms->failed ||
-        !canonical_form(x->terms, x->next, &n, x->how.store, &ground))
+        !canonical_form(x->terms, x->listed, &n, x->how.store, &ground, NULL))
         return UINT32_MAX;
-    return state_index(&x->states, x->next, n, ground);
+    return state_of_rows(x, x->listed, n);
 }
 
-/* The state of the rows not in `gone` plus the made rows x->next: merged at a
- * state of fixed terms when every made row is fixed too, otherwise in full
- * (with shortcuts checked, both, compared).  UINT32_MAX when memory ran out. */
-static uint32_t successor_state(Explorer *x, const bool *gone) {
-    size_t made = x->next_len;
+static uint32_t successor_state(Explorer *x, const Occurrence *gone, size_t ngone) {
     if (x->solver.failed || x->terms->failed) return UINT32_MAX;
-    bool fixed = x->ground && x->how.shortcuts != TC_SHORTCUTS_NONE;
-    for (size_t i = 0; fixed && i < made; i++) fixed = term_node(x->terms, x->next[i]).ground;
-    if (!fixed) return full_successor(x, gone);
-    uint32_t merged = merged_successor(x, gone);
-    if (x->how.shortcuts == TC_SHORTCUTS_TAKEN || merged == UINT32_MAX) return merged;
-    x->next_len = made;   /* the made rows again, for the full computation */
-    uint32_t full = full_successor(x, gone);
-    if (full != merged) x->disagreed = true;
+    TcState s = {.rows = x->view.rows, .sum = x->view.sum,
+                 .size = x->view.size - (uint32_t)x->view.looses};
+    trie_retain(&x->trie, s.rows);
+    x->changes = 0;
+    x->loose_nexts = 0;
+    bool ok = true;
+    for (size_t i = 0; ok && i < ngone; i++)
+        if (term_node(x->terms, occurrence_row(gone[i])).ground)
+            ok = state_change(x, &s, occurrence_row(gone[i]), UINT32_MAX);
+    for (uint32_t i = 0; ok && i < x->view.looses; i++)
+        if (!occurrence_gone(gone, ngone, occurrence(loose_at(&x->view, i), loose_copy(&x->view, i))))
+            ok = state_arrive(x, &s, resolve(x->terms, &x->solver, loose_at(&x->view, i), 0));
+    for (size_t i = 0; ok && i < x->next_len; i++)
+        ok = state_arrive(x, &s, resolve(x->terms, &x->solver, x->next[i], 0));
+    if (!ok || x->solver.failed || x->terms->failed) { trie_release(&x->trie, s.rows); return UINT32_MAX; }
+    uint32_t parent = x->view.state < VIEW_ONE ? x->view.state : UINT32_MAX;
+    uint32_t q = state_close(x, s, parent);
+    if (x->how.shortcuts != TC_SHORTCUTS_CHECKED || q == UINT32_MAX) return q;
+    uint32_t full = full_successor(x, gone, ngone);
+    if (full != q) x->disagreed = true;
     return full;
 }
 
@@ -913,7 +1420,7 @@ static bool record_member(Explorer *x, uint32_t rule, uint32_t total, bool alone
     TcMember e = {.rule = rule, .start = (uint32_t)x->selections, .successor = successor,
                   .firing = firing, .alone = alone};
     for (uint32_t i = 0; i < total; i++)
-        if (!tc_push_u32(realloc, &x->selection, &x->selections, &x->selection_cap, x->pick[i]))
+        if (!tc_push_u64(realloc, &x->selection, &x->selections, &x->selection_cap, x->pick[i]))
             return false;
     return tc_push_member(realloc, &x->member, &x->members, &x->member_cap, e);
 }
@@ -923,22 +1430,22 @@ static bool record_member(Explorer *x, uint32_t rule, uint32_t total, bool alone
  * and one successor: a state is a bag of terms.  The members met at a state are
  * kept by rule and row terms, so that a successor is computed once.  The table
  * is a shortcut: a member it cannot hold is computed again, to the same end. */
-static uint64_t selection_hash(const Explorer *x, uint32_t rule, const uint32_t *pick,
-                               uint32_t total) {
+static uint64_t selection_hash(uint32_t rule, const Occurrence *pick, uint32_t total) {
     uint64_t h = (rule + 1) * UINT64_C(0x9E3779B97F4A7C15);
-    for (uint32_t i = 0; i < total; i++) h = (h ^ x->row[pick[i]]) * UINT64_C(0x100000001B3);
+    for (uint32_t i = 0; i < total; i++) h = (h ^ occurrence_row(pick[i])) * UINT64_C(0x100000001B3);
     return h ^ (h >> 29);
 }
 
 /* Whether a member with rule and the row terms of x->pick was met at this
  * state; then *met is that member. */
 static bool known_selection(const Explorer *x, uint32_t rule, uint32_t total, TcMember *met) {
-    for (size_t i = x->known_cap ? selection_hash(x, rule, x->pick, total) & (x->known_cap - 1) : 0;
+    for (size_t i = x->known_cap ? selection_hash(rule, x->pick, total) & (x->known_cap - 1) : 0;
          x->known_cap && x->known[i]; i = (i + 1) & (x->known_cap - 1)) {
         const TcMember *e = &x->member[x->known[i] - 1];
-        const uint32_t *other = x->selection + e->start;
+        const Occurrence *other = x->selection + e->start;
         bool same = e->rule == rule;
-        for (uint32_t j = 0; same && j < total; j++) same = x->row[other[j]] == x->row[x->pick[j]];
+        for (uint32_t j = 0; same && j < total; j++)
+            same = occurrence_row(other[j]) == occurrence_row(x->pick[j]);
         if (same) { *met = *e; return true; }
     }
     return false;
@@ -953,7 +1460,7 @@ static void remember_selection(Explorer *x, uint32_t m, uint32_t total) {
             if (!x->known[i]) continue;
             const TcMember *e = &x->member[x->known[i] - 1];
             uint32_t n = x->program.rule[e->rule].takes + x->program.rule[e->rule].reads;
-            size_t j = selection_hash(x, e->rule, x->selection + e->start, n) & (cap - 1);
+            size_t j = selection_hash(e->rule, x->selection + e->start, n) & (cap - 1);
             while (grown[j]) j = (j + 1) & (cap - 1);
             grown[j] = x->known[i];
         }
@@ -962,7 +1469,7 @@ static void remember_selection(Explorer *x, uint32_t m, uint32_t total) {
         x->known_cap = cap;
     }
     const TcMember *e = &x->member[m];
-    size_t j = selection_hash(x, e->rule, x->selection + e->start, total) & (x->known_cap - 1);
+    size_t j = selection_hash(e->rule, x->selection + e->start, total) & (x->known_cap - 1);
     while (x->known[j]) j = (j + 1) & (x->known_cap - 1);
     x->known[j] = m + 1;
     x->known_used++;
@@ -1001,13 +1508,8 @@ static bool loose_members(TcStep step) {
  * its made rows added, under the solver's present assignments.  UINT32_MAX
  * when memory ran out. */
 static uint32_t own_successor(Explorer *x, const TcStoredRule *r) {
-    bool *gone = calloc(x->rows ? x->rows : 1, sizeof *gone);
-    if (!gone) return UINT32_MAX;
-    for (uint32_t i = 0; i < r->takes; i++) gone[x->pick[i]] = true;
     x->next_len = 0;
-    uint32_t succ = append_made(x, r, 0) ? successor_state(x, gone) : UINT32_MAX;
-    free(gone);
-    return succ;
+    return append_made(x, r, 0) ? successor_state(x, x->pick, r->takes) : UINT32_MAX;
 }
 
 /* ---- Independent firings explored once (step one) -------------------------
@@ -1113,31 +1615,26 @@ static bool selection_key(Explorer *x, uint32_t total) {
         x->key = grown;
         x->key_cap = total;
     }
-    for (uint32_t i = 0; i < total; i++) x->key[i] = x->row[x->pick[i]];
+    for (uint32_t i = 0; i < total; i++) x->key[i] = occurrence_row(x->pick[i]);
     return true;
 }
 
-/* A positive rule (Scope.Positive): its checks are equations; it has no
- * absence, count or census. */
+/* A positive rule (Scope.Positive): its checks are equations and guards,
+ * each decided on the match's own values; it has no absence, count or census,
+ * which read the rest of the state. */
 static bool positive_rule(const ProgramView *v, uint32_t rule) {
     TcStoredRule r = rule_at(v, rule);
     for (uint32_t i = 0; i < r.check_count; i++)
-        if (check_at(v, &r, i).kind != TC_CHECK_EQUAL) return false;
+        if (!check_binary(check_at(v, &r, i).kind)) return false;
     return true;
 }
 
-/* How many rows of state q, a state of fixed terms and so in ground order,
- * are the term. */
-static uint32_t state_count(const StateTable *st, const TcTerms *t, uint32_t q, TcTerm term) {
-    TcState s = st->state[q];
-    const TcTerm *row = st->row + s.start;
-    uint32_t lo = 0, hi = s.rows, n = 0;
-    while (lo < hi) {
-        uint32_t m = lo + (hi - lo) / 2;
-        if (ground_order(t->node, row[m], term) < 0) lo = m + 1; else hi = m;
-    }
-    while (lo + n < s.rows && row[lo + n] == term) n++;
-    return n;
+/* How many rows of state q, a state of fixed terms, are the term. */
+static uint32_t state_count(const Explorer *x, uint32_t q, TcTerm term) {
+    uint32_t head = 0, length = 0;
+    row_place(x->terms, term, &head, &length);
+    uint32_t run = place_find(&x->places, head, length);
+    return run == UINT32_MAX ? 0 : trie_get(&x->trie, state_at(&x->states, q).rows, map_key(run, term));
 }
 
 /* Whether two selections of row terms (each a rule's takes, then its reads)
@@ -1156,7 +1653,7 @@ static bool selections_fit(const Explorer *x, uint32_t q, const TcTerm *a, uint3
             if (j < a_takes || (j >= a_total && j - a_total < b_takes)) takes++;
             else read = true;
         }
-        if (!earlier && takes + (read ? 1u : 0u) > state_count(&x->states, x->terms, q, t))
+        if (!earlier && takes + (read ? 1u : 0u) > state_count(x, q, t))
             return false;
     }
     return true;
@@ -1174,7 +1671,7 @@ static uint32_t derived_successor(Explorer *x, uint32_t total) {
     size_t a = f->first[x->at] - 1;                       /* p --a--> the state expanded */
     uint32_t p = f->firing[4 * a], a_rule = f->firing[4 * a + 1];
     const TcTerm *a_terms = f->term + f->firing[4 * a + 2];
-    if (!x->states.ground[p] || !positive_rule(&x->program, x->fire_rule) ||
+    if (state_at(&x->states, p).looses || !positive_rule(&x->program, x->fire_rule) ||
         !positive_rule(&x->program, a_rule) || !selection_key(x, total))
         return UINT32_MAX;
     uint32_t u = fired_find(f, p, x->fire_rule, x->key, total);   /* p --u--> p.u */
@@ -1183,7 +1680,7 @@ static uint32_t derived_successor(Explorer *x, uint32_t total) {
                               fired_terms(f, a));                  /* p.u --a--> */
     if (far == UINT32_MAX) return UINT32_MAX;
     uint32_t target = f->firing[4 * (size_t)far + 3];
-    if (!x->states.ground[target] ||
+    if (state_at(&x->states, target).looses ||
         !selections_fit(x, p, x->key, x->fire.takes, total, a_terms,
                         rule_at(&x->program, a_rule).takes, fired_terms(f, a)))
         return UINT32_MAX;
@@ -1217,16 +1714,15 @@ static bool tc_fire_tells(Explorer *x) {
     TcStoredRule r = x->fire;
     return tells_hold(x, &r, 0);
 }
+/* The checks of the match: none left when the steps of its plan decided
+ * them (tcalc_plan.c: placed checks, decided once their values are fixed). */
 static bool tc_fire_checks(Explorer *x) {
     TcStoredRule r = x->fire;
-    return checks_hold(x, &r, 0);
+    return x->plan_checked || checks_hold(x, &r, 0);
 }
 static bool tc_fire_checks_first(Explorer *x) { return tc_fire_checks(x); }
 static bool tc_fire_loose(Explorer *x) { return loose_members(x->how.step); }
 
-/* Admitted on its own: its successor is looked up (the second order of an
- * independent pair met before) or computed, and recorded.  With shortcuts
- * checked it is computed always, and compared. */
 /* tc_decide's admit: the host commits the rows taken and made.  The buffer the
  * made rows are returned in is reserved first, so that nothing can fail after
  * the host's effects. */
@@ -1264,10 +1760,25 @@ static bool store_admit(Explorer *x, const TcStoredRule *r) {
     return true;
 }
 
+/* Whether a step reads a member's own successor: step one steps to it and
+ * unique to its one member's; every other step reads bags of members, whose
+ * results it computes, so a member's own successor is never asked for. */
+static bool own_successors_read(TcStep step) { return step == TC_STEP_ONE || step == TC_STEP_UNIQUE; }
+
+/* Admitted on its own: a member, with its successor when the step reads it,
+ * looked up (the second order of an independent pair met before) or computed.
+ * With shortcuts checked it is computed always, and compared. */
 static bool tc_fire_admit(Explorer *x) {
     TcStoredRule r = x->fire;
     if (x->has_store) return store_admit(x, &r);
-    uint32_t total = r.takes + r.reads, succ = derived_successor(x, total);
+    if (x->delta) return append_made(x, &r, 0);   /* one store: its rows made */
+    uint32_t total = r.takes + r.reads;
+    if (!own_successors_read(x->how.step)) {   /* no successor (0), as for a loose member */
+        if (!record_member(x, x->fire_rule, total, true, 0, UINT32_MAX)) return false;
+        remember_selection(x, (uint32_t)x->members - 1, total);
+        return true;
+    }
+    uint32_t succ = derived_successor(x, total);
     if (succ == UINT32_MAX || x->how.shortcuts == TC_SHORTCUTS_CHECKED) {
         uint32_t own = own_successor(x, &r);
         if (succ != UINT32_MAX && own != succ) x->disagreed = true;
@@ -1291,57 +1802,204 @@ static bool tc_fire_admit_loose(Explorer *x) {
 
 #include "tcalc_fire.generated.h"
 
-/* Chooses rows (x->pick) for the patterns of rule `rule` from position k on
- * (takes first, then reads), and records every match the discipline can use:
- * each one admitted on its own, and for bag, synchronous and maximal also
- * each one whose own information (its matching and its tells) is solvable.
- *
- * Under step one a step is one match and a state is a bag of terms, so two
- * selections that differ only in which copy of a row term they choose reach
- * the same state: at each position one copy of each row term is tried (equal
- * rows are adjacent in a state).  The other steps count every copy, since
- * their members are occurrences. */
-static bool match_from(Explorer *x, uint32_t rule, uint32_t k) {
+/* The match of rule `rule` and the selection x->pick, its patterns unified
+ * with its rows: decided, or the decision of the same row terms met before
+ * reused. */
+static bool decide_selection(Explorer *x, uint32_t rule) {
     TcStoredRule r = rule_at(&x->program, rule);
     uint32_t total = r.takes + r.reads;
-    if (k == total) {
-        TcMember same = {0};
-        if (known_selection(x, rule, total, &same))   /* the same row terms: the same */
-            return record_member(x, rule, total, same.alone, same.successor,   /* decision */
-                                 same.firing);
-        x->fire = r;
-        x->fire_rule = rule;
-        return tc_fire(x) != tc_fire_engine_failure && !x->solver.failed;
+    TcMember same = {0};
+    x->decided++;
+    if (known_selection(x, rule, total, &same))   /* the same row terms: the same decision */
+        return record_member(x, rule, total, same.alone, same.successor, same.firing);
+    x->fire = r;
+    x->fire_rule = rule;
+    return tc_fire(x) != tc_fire_engine_failure && !x->solver.failed;
+}
+
+/* ---- Running a plan ---------------------------------------------------------
+ * A rule's matches are met by running one of its plans (tcalc_plan.c): each
+ * probe's rows in turn, each unified with its pattern, each check decided at
+ * its step, the match decided at the end.  This is the one way a rule is run:
+ * over a state's view (the matches the discipline can use, each recorded as a
+ * member), and over the one store of a run by delta (each match admitted adds
+ * the rows it makes; tcalc_delta.c), where the plan entering by pattern d
+ * meets d's rows from delta_lo on, the rows before delta_lo for the patterns
+ * written before d, and every row for those written after it (the
+ * semi-naive split).
+ *
+ * Over a view the matches are those the discipline can use: each one admitted
+ * on its own, and for bag, synchronous and maximal also each one whose own
+ * information (its matching and its tells) is solvable.  Its takes are
+ * distinct rows and a read is never a taken row (Core.lean: Firing.Shapes and
+ * Enabled), whatever order the plan meets them in.  Under step one a step is
+ * one match and a state is a bag of terms, so two selections that differ only
+ * in which copy of a row term they choose reach the same state: at each probe
+ * one copy of each row term is tried (a row's copies are met one after
+ * another).  The other steps count every copy, since their members are
+ * occurrences. */
+typedef struct {
+    uint32_t rule, plan;
+    uint32_t entry;       /* by delta: the pattern the delta's rows enter by; UINT32_MAX: none */
+    uint32_t delta_lo, size;
+    bool checks;          /* the plan's steps decide the checks */
+} PlanRun;
+
+static bool plan_from(Explorer *x, const PlanRun *run, uint32_t k);
+static bool delta_decide(Explorer *x, uint32_t rule);
+
+/* Whether the plan's probes before op k met pattern j. */
+static bool plan_met(const ProgramView *v, uint32_t plan, uint32_t k, uint32_t j) {
+    for (uint32_t i = 0; i < k; i++)
+        if (plan_op(v, plan, i, 0) == PLAN_PROBE && plan_op(v, plan, i, 1) == j) return true;
+    return false;
+}
+
+/* Whether occurrence o may not be met by pattern `pattern` at op k: a take
+ * meets a row no pattern met before it holds, a read one no take met before
+ * it holds. */
+static bool plan_clash(const Explorer *x, const PlanRun *run, const TcStoredRule *r, uint32_t k, uint32_t pattern,
+                       Occurrence o) {
+    bool take = pattern < r->takes;
+    for (uint32_t i = 0; i < k; i++) {
+        if (plan_op(&x->program, run->plan, i, 0) != PLAN_PROBE) continue;
+        uint32_t j = plan_op(&x->program, run->plan, i, 1);
+        if ((take || j < r->takes) && pick_at(x, j) == o) return true;
     }
-    bool take = k < r.takes;
-    TcTerm pattern = pattern_at(&x->program, &r, k);
-    Runs runs = candidates(x, pattern, 0);
-    if (x->how.matches == TC_MATCHES_SYMMETRIC) {
-        uint32_t twin = identical_before(x, &r, k);
-        uint32_t bound = twin == UINT32_MAX ? 0 : pick_at(x, twin) + (take ? 1 : 0);
-        for (int p = 0; p < 2; p++) if (runs.lo[p] < bound) runs.lo[p] = bound;
+    return false;
+}
+
+/* A row the probe at op k meets, as pattern_k's: unified with its pattern
+ * (the unify after the probe), the plan run on from op k + 2.  False when
+ * memory ran out. */
+static bool plan_row(Explorer *x, const PlanRun *run, uint32_t k, TcTerm pattern, uint32_t pattern_k,
+                     Occurrence o) {
+    Mark m = mark(&x->solver);
+    x->met++;
+    pick_put(x, pattern_k, o);
+    bool ok = !unify(x->terms, &x->solver, pattern, 0, occurrence_row(o), 0) || plan_from(x, run, k + 2);
+    undo(&x->solver, m);
+    return ok && !x->solver.failed;
+}
+
+/* The probe at op k and the unify after it: each row the probe meets, unified
+ * with its pattern, the plan run on from op k + 2. */
+static bool plan_probe(Explorer *x, const PlanRun *run, uint32_t k) {
+    TcStoredRule r = rule_at(&x->program, run->rule);
+    uint32_t pattern_k = plan_op(&x->program, run->plan, k, 1);
+    bool take = pattern_k < r.takes;
+    TcTerm pattern = pattern_at(&x->program, &r, pattern_k);
+    uint32_t lo = 0, hi = run->size;
+    if (x->delta && run->entry != UINT32_MAX) {   /* the semi-naive split */
+        if (pattern_k == run->entry) lo = run->delta_lo;
+        else if (pattern_k < run->entry) hi = run->delta_lo;
+        if (lo >= hi) return true;
     }
+    Occurrence bound = NO_OCCURRENCE;
+    if (!x->delta && x->how.matches == TC_MATCHES_SYMMETRIC) {
+        uint32_t twin = identical_before(x, &r, pattern_k);   /* from the twin's row on (a take: past it) */
+        if (twin != UINT32_MAX && plan_met(&x->program, run->plan, k, twin))
+            bound = pick_at(x, twin) + (take ? (uint64_t)1 << 32 : 0);
+    }
+    uint32_t probe = plan_op(&x->program, run->plan, k, 2);
+    if (x->delta) {   /* the one store's rows in the window */
+        DeltaCursor rows;
+        if (!delta_probe(x, probe, 0, lo, hi, &rows)) { x->solver.failed = true; return false; }
+        for (uint32_t at; (at = delta_next(x, &rows)) != UINT32_MAX;)
+            if (!plan_row(x, run, k, pattern, pattern_k, occurrence(delta_row(&x->delta_store, at), 0)))
+                return false;
+        return true;
+    }
+    Candidates rows;
+    if (!cand_probe(x, probe, 0, bound, &rows)) { x->solver.failed = true; return false; }
     bool one = x->how.step == TC_STEP_ONE;
-    for (int p = 0; p < 2; p++) {
-        TcTerm tried = 0;   /* the row term last tried at this position */
-        for (uint32_t i = runs.lo[p]; i < runs.hi[p]; i++) {
-            bool clash = false;   /* takes distinct; a read is never a taken row */
-            for (uint32_t j = 0; j < (take ? k : r.takes) && !clash; j++) clash = pick_at(x, j) == i;
-            if (clash) continue;
-            TcTerm row = row_at(x, i);
-            if (one) {
-                if (row == tried) continue;   /* another copy of the term just tried */
-                tried = row;
-            }
-            Mark m = mark(&x->solver);
-            if (unify(x->terms, &x->solver, pattern, 0, row, 0)) {
-                pick_put(x, k, i);
-                if (!match_from(x, rule, k + 1)) return false;
-            }
-            undo(&x->solver, m);
-            if (x->solver.failed) return false;
+    TcTerm tried = 0;   /* the row term last tried at this probe */
+    for (Occurrence o; (o = cand_next(x, &rows)) != NO_OCCURRENCE;) {
+        if (plan_clash(x, run, &r, k, pattern_k, o)) continue;
+        if (one) {
+            if (occurrence_row(o) == tried) continue;   /* another copy of the term just tried */
+            tried = occurrence_row(o);
         }
+        if (!plan_row(x, run, k, pattern, pattern_k, o)) return false;
     }
+    return true;
+}
+
+/* Runs the plan from op k: its probes, its checks (when the plan decides
+ * them), and the match decided where the tells, takes and makes begin (the
+ * protocol tc_fire's). */
+static bool plan_from(Explorer *x, const PlanRun *run, uint32_t k) {
+    TcStoredRule r = rule_at(&x->program, run->rule);
+    for (; k < plan_ops(&x->program, run->plan); k++) {
+        uint32_t op = plan_op(&x->program, run->plan, k, 0);
+        if (op == PLAN_PROBE) return plan_probe(x, run, k);
+        if (op != PLAN_CHECK && op != PLAN_ABSENT) break;
+        if (run->checks && !check_holds(x, &r, plan_op(&x->program, run->plan, k, 1), 0))
+            return !x->solver.failed && !x->terms->failed;
+    }
+    return x->delta ? delta_decide(x, run->rule) : decide_selection(x, run->rule);
+}
+
+/* Whether a plan's steps decide rule r's checks: the values each reads are
+ * fixed at its step when the store matched holds fixed terms and the rule
+ * tells nothing (tcalc_plan.c), and a match only the joint information of a
+ * bag admits is a member though its own checks fail, so bag, synchronous and
+ * maximal ask them at the end. */
+static bool plan_checks(const Explorer *x, const TcStoredRule *r) {
+    return x->ground && !x->has_store && r->tells == 0 && !loose_members(x->how.step);
+}
+
+/* Runs rule `rule`'s plan entering by pattern `entry` (UINT32_MAX: its plan
+ * of no entry), over the one store's window (delta_lo, size) when the run is
+ * by delta. */
+static bool plan_run(Explorer *x, uint32_t rule, uint32_t entry, uint32_t delta_lo, uint32_t size) {
+    TcStoredRule r = rule_at(&x->program, rule);
+    uint32_t total = r.takes + r.reads;
+    PlanRun run = {rule, plan_of(&x->program, rule, entry == UINT32_MAX ? total : entry), entry, delta_lo, size,
+                   plan_checks(x, &r)};
+    if (total) x->tried++;
+    x->plan_checked = run.checks;
+    bool ok = plan_from(x, &run, 0);
+    x->plan_checked = false;
+    return ok;
+}
+
+/* The order of two members: by rule, then each pattern's occurrence in the
+ * canonical order of the view (section 3); -1, 0 or 1. */
+static int member_order(const Explorer *x, TcMember a, TcMember b) {
+    if (a.rule != b.rule) return a.rule < b.rule ? -1 : 1;
+    TcStoredRule r = rule_at(&x->program, a.rule);
+    for (uint32_t k = 0; k < r.takes + r.reads; k++) {
+        Occurrence oa = selection_at(x, a.start + k), ob = selection_at(x, b.start + k);
+        int c = occurrence_order(x, oa, ob, view_shape(x, occurrence_row(oa)), view_shape(x, occurrence_row(ob)));
+        if (c) return c;
+    }
+    return 0;
+}
+
+/* The members in the order of their selections (member_order), so that a
+ * state's matches, and so its steps, come in one order whatever order its
+ * rules' plans meet them in.  False when memory ran out. */
+static bool members_sort(Explorer *x) {
+    size_t n = x->members;
+    if (n < 2) return true;
+    TcMember *sorted = malloc(n * sizeof *sorted), *tmp = malloc(n * sizeof *tmp);
+    if (!sorted || !tmp) { free(sorted); free(tmp); return false; }
+    for (size_t i = 0; i < n; i++) sorted[i] = member_at(x, i);
+    for (size_t width = 1; width < n; width *= 2) {   /* merge sort, stable */
+        for (size_t lo = 0; lo < n; lo += 2 * width) {
+            size_t mid = lo + width < n ? lo + width : n;
+            size_t hi = lo + 2 * width < n ? lo + 2 * width : n;
+            size_t i = lo, j = mid, k = lo;
+            while (i < mid && j < hi)
+                tmp[k++] = member_order(x, sorted[i], sorted[j]) <= 0 ? sorted[i++] : sorted[j++];
+            while (i < mid) tmp[k++] = sorted[i++];
+            while (j < hi) tmp[k++] = sorted[j++];
+        }
+        memcpy(sorted, tmp, n * sizeof *sorted);
+    }
+    for (size_t i = 0; i < n; i++) x->member[i] = sorted[i];
+    free(sorted); free(tmp);
     return true;
 }
 
@@ -1359,13 +2017,9 @@ static bool resident_collect(Explorer *x,uint32_t rule,const FlatPlan *plan);
 /* The matches at the state (rows) the discipline can use, each once. */
 static bool collect_members(Explorer *x) {
     forget_members(x);
-    if (x->how.backend == TC_BACKEND_X86_FLAT) return flat_collect(x);
-    uint32_t state_unknowns = 0;   /* the state's unknowns are 0 .. state_unknowns-1 */
-    for (uint32_t i = 0; i < x->rows; i++) {
-        uint32_t m = max_unknown(x->terms, row_at(x, i));
-        if (m > state_unknowns) state_unknowns = m;
-    }
-    x->ground = state_unknowns == 0;
+    if (x->how.backend == TC_BACKEND_X86_FLAT) return flat_collect(x) && members_sort(x);
+    uint32_t state_unknowns = x->view.unknowns;   /* the state's unknowns are 0 .. state_unknowns-1 */
+    x->ground = x->view.looses == 0;
     for (uint32_t rule = 0; rule < x->program.rules; rule++) {
         TcStoredRule r = rule_at(&x->program, rule);
         if (r.same != rule) continue;   /* that rule again: its matches are met there */
@@ -1374,9 +2028,9 @@ static bool collect_members(Explorer *x) {
         if (x->how.step==TC_STEP_ONE && x->how.shortcuts!=TC_SHORTCUTS_NONE && x->ground && rule<x->program.prepared_count &&
             x->program.prepared[rule].guards!=UINT32_MAX && cetta_kernel_batch) {
             if (!resident_collect(x,rule,&x->program.prepared[rule])) return false;
-        } else if (!match_from(x,rule,0)) return false;
+        } else if (!plan_run(x, rule, UINT32_MAX, 0, 0)) return false;
     }
-    return true;
+    return members_sort(x);
 }
 
 /* ======================================================================
@@ -1409,37 +2063,31 @@ static bool collect_members(Explorer *x) {
  * number of times.
  * ====================================================================== */
 
+/* A bag of members; the occurrences they take and read are the explorer's
+ * (x->taken, x->read), since one bag is fitted at a time. */
 typedef struct {
     uint32_t *member; size_t len, cap;   /* member indices, in order of addition */
     uint32_t *base;   size_t blen, bcap; /* each member's frame base             */
     uint32_t next_base;
-    bool *taken, *read;                  /* per entry row                         */
-    uint32_t rows;                       /* the entry rows taken and read count   */
     bool snapshot;   /* each member enabled on its own (synchronous), not the
                         joint selection as one commit                         */
     bool tells;      /* a member's tells are solved as it joins; otherwise the
                         bag's checks are asked first (before-tells)            */
 } Bag;
 
-/* One proposed order borrows the entry-row masks from its bag while owning
- * only its ordered member/base arrays. */
+/* One proposed order of a bag's members, with their frame bases. */
 typedef struct {
     uint32_t *member; size_t len, cap;
     uint32_t *base; size_t blen, bcap;
     uint32_t next_base;
-    const bool *taken, *read; uint32_t rows;
 } RunOrder;
 
-static const uint32_t *member_pick(const Explorer *x, const TcMember *e) {
-    return x->selection ? x->selection + e->start : no_items;
+static const Occurrence no_occurrences[1];
+
+static const Occurrence *member_pick(const Explorer *x, const TcMember *e) {
+    return x->selection ? x->selection + e->start : no_occurrences;
 }
 
-static inline TcMember member_at(const Explorer *x, size_t m) { return x->member[m]; }
-static inline uint32_t selection_at(const Explorer *x, size_t k) { return x->selection[k]; }
-static inline bool bag_taken(const Bag *b, uint32_t row) { return b->taken[row]; }
-static inline bool bag_reads(const Bag *b, uint32_t row) { return b->read[row]; }
-static inline void bag_take(Bag *b, uint32_t row) { b->taken[row] = true; }
-static inline void bag_read_row(Bag *b, uint32_t row) { b->read[row] = true; }
 static inline uint32_t bag_member(const Bag *b, size_t k) { return b->member[k]; }
 static inline uint32_t bag_base(const Bag *b, size_t k) { return b->base[k]; }
 
@@ -1455,23 +2103,24 @@ static bool bag_add(Explorer *x, Bag *b, uint32_t m) {
     TcMember e = member_at(x, m);
     TcStoredRule r = rule_at(&x->program, e.rule);
     for (uint32_t i = 0; i < r.takes; i++) {
-        uint32_t row = selection_at(x, e.start + i);
-        if (bag_taken(b, row) || (!b->snapshot && bag_reads(b, row))) return false;
+        Occurrence o = selection_at(x, e.start + i);
+        if (occurrences_count(&x->taken, o) || (!b->snapshot && occurrences_count(&x->read, o))) return false;
     }
     if (!b->snapshot)
         for (uint32_t i = r.takes; i < r.takes + r.reads; i++)
-            if (bag_taken(b, selection_at(x, e.start + i))) return false;
+            if (occurrences_count(&x->taken, selection_at(x, e.start + i))) return false;
     uint32_t base = b->next_base;
     if (!frame(x, base, &r)) return false;   /* memory ran out: the solver says so */
     for (uint32_t i = 0; i < r.takes + r.reads; i++)   /* the takes, then the reads */
         if (!unify(x->terms, &x->solver, pattern_at(&x->program, &r, i), base,
-                   row_at(x, selection_at(x, e.start + i)), 0))
+                   occurrence_row(selection_at(x, e.start + i)), 0))
             return false;
     if (b->tells && !tells_hold(x, &r, base)) return false;
-    for (uint32_t i = 0; i < r.takes; i++) bag_take(b, selection_at(x, e.start + i));
-    for (uint32_t i = r.takes; i < r.takes + r.reads; i++)
-        bag_read_row(b, selection_at(x, e.start + i));
-    if (!bag_push(b, m, base)) {
+    bool ok = true;
+    for (uint32_t i = 0; ok && i < r.takes; i++) ok = occurrences_add(&x->taken, selection_at(x, e.start + i), 1);
+    for (uint32_t i = r.takes; ok && i < r.takes + r.reads; i++)
+        ok = occurrences_add(&x->read, selection_at(x, e.start + i), 1);
+    if (!ok || !bag_push(b, m, base)) {
         x->solver.failed = true;
         return false;
     }
@@ -1484,16 +2133,9 @@ static void bag_remove_last(Explorer *x, Bag *b) {
     b->next_base = b->base[--b->blen];
     const TcMember *e = &x->member[m];
     const TcStoredRule *r = &x->program.rule[e->rule];
-    const uint32_t *pick = member_pick(x, e);
-    for (uint32_t i = 0; i < r->takes; i++) b->taken[pick[i]] = false;
-    /* reads may be shared with other members: recompute them */
-    memset(b->read, 0, x->rows * sizeof *b->read);
-    for (size_t k = 0; k < b->len; k++) {
-        const TcMember *o = &x->member[b->member[k]];
-        const TcStoredRule *orule = &x->program.rule[o->rule];
-        const uint32_t *op = member_pick(x, o);
-        for (uint32_t i = orule->takes; i < orule->takes + orule->reads; i++) b->read[op[i]] = true;
-    }
+    const Occurrence *pick = member_pick(x, e);
+    for (uint32_t i = 0; i < r->takes; i++) (void)occurrences_add(&x->taken, pick[i], UINT32_MAX);
+    for (uint32_t i = r->takes; i < r->takes + r->reads; i++) (void)occurrences_add(&x->read, pick[i], UINT32_MAX);
 }
 
 /* The checks of every member at every solution of the joint information. */
@@ -1515,112 +2157,129 @@ static bool bag_tells_hold(Explorer *x, const Bag *b) {
     return true;
 }
 
-/* The state of the entry rows the bag leaves, with the rows it made. */
-static uint32_t bag_successor(Explorer *x, const Bag *b) { return successor_state(x, b->taken); }
+/* The occurrences the members of the n members `member` take, in x->gone.
+ * False when memory ran out. */
+static bool members_taken(Explorer *x, const uint32_t *member, size_t n) {
+    x->gones = 0;
+    for (size_t k = 0; k < n; k++) {
+        const TcMember *e = &x->member[member[k]];
+        const Occurrence *pick = member_pick(x, e);
+        for (uint32_t i = 0; i < x->program.rule[e->rule].takes; i++)
+            if (!tc_push_u64(realloc, &x->gone, &x->gones, &x->gone_cap, pick[i])) return false;
+    }
+    return true;
+}
 
-/* The state the bag reaches; UINT32_MAX when memory ran out. */
+/* The state the bag reaches: the entry rows it leaves, with the rows it made.
+ * UINT32_MAX when memory ran out. */
 static uint32_t bag_result(Explorer *x, const Bag *b) {
     x->next_len = 0;
     for (size_t k = 0; k < b->len; k++) {
         TcStoredRule r = rule_at(&x->program, member_at(x, bag_member(b, k)).rule);
         if (!append_made(x, &r, bag_base(b, k))) return UINT32_MAX;
     }
-    return bag_successor(x, b);
+    if (!members_taken(x, b->member, b->len)) return UINT32_MAX;
+    return successor_state(x, x->gone, x->gones);
+}
+
+/* Copies a view (its map stays its holder's). */
+static bool view_copy(View *to, const View *from) {
+    if (!view_room(to, from->looses)) return false;
+    for (size_t i = 0; i < from->looses; i++) {
+        to->loose[i] = from->loose[i];
+        to->shape[i] = from->shape[i];
+    }
+    to->looses = from->looses;
+    to->rows = from->rows;
+    to->state = from->state;
+    to->sum = from->sum;
+    to->size = from->size;
+    to->unknowns = from->unknowns;
+    return true;
+}
+
+/* The rows present partway through a round become the view: the entry view's
+ * rows (kept in x->present) without the occurrences gone (x->gone), with the
+ * rows made so far (x->next), all resolved, its rows with unknowns in the
+ * order of head, length and term.  The view holds its map; false when memory
+ * ran out. */
+static bool present_view(Explorer *x) {
+    View *v = &x->view;
+    uint32_t rows = x->present.rows;
+    v->rows = 0;
+    v->state = VIEW_BARE;
+    v->looses = 0;
+    trie_retain(&x->trie, rows);
+    bool ok = true;
+    for (size_t i = 0; ok && i < x->gones; i++) {
+        TcTerm row = occurrence_row(x->gone[i]);
+        if (term_node(x->terms, row).ground)
+            ok = map_change(&x->trie, &rows, row_run(&x->places, x->terms, row, true), row, UINT32_MAX, UINT32_MAX);
+    }
+    size_t entry = x->present.looses;
+    for (size_t i = 0; ok && i < entry + x->next_len; i++) {
+        TcTerm row = i < entry ? loose_at(&x->present, i) : x->next[i - entry];
+        if (i < entry && occurrence_gone(x->gone, x->gones, occurrence(row, loose_copy(&x->present, (uint32_t)i))))
+            continue;
+        row = resolve(x->terms, &x->solver, row, 0);
+        if (!row) { ok = false; break; }
+        if (term_node(x->terms, row).ground) {
+            uint32_t run = row_run(&x->places, x->terms, row, true);
+            ok = run != UINT32_MAX && map_change(&x->trie, &rows, run, row, 1, 1);
+            continue;
+        }
+        ok = view_room(v, v->looses + 1);
+        if (ok) { v->loose[v->looses] = row; v->shape[v->looses] = row; v->looses++; }
+    }
+    v->rows = rows;
+    if (!ok) return false;
+    const TcNode *nodes = x->terms->node;
+    for (size_t i = 1; i < v->looses; i++)   /* by head, length and term (no shapes: a check reads no order) */
+        for (size_t j = i; j > 0 && ground_order(nodes, v->loose[j], v->loose[j - 1]) < 0; j--) {
+            TcTerm tmp = v->loose[j];
+            v->loose[j] = v->loose[j - 1];
+            v->loose[j - 1] = tmp;
+            v->shape[j] = v->loose[j];
+            v->shape[j - 1] = v->loose[j - 1];
+        }
+    return true;
 }
 
 /* Fires the members of a bag one at a time in the given order, each admitted
  * on its own at the state the ones before it left; returns the state reached,
  * or UINT32_MAX - 1 when some member is not admitted, UINT32_MAX on memory. */
 static uint32_t run_in_order(Explorer *x, const RunOrder *b, const uint32_t *order) {
-    uint32_t n = x->rows;
-    size_t cap = (size_t)n + 16, needed = n;
+    x->gones = 0;
+    x->next_len = 0;
     for (size_t k = 0; k < b->len; k++) {
         const TcMember *e = &x->member[b->member[order[k]]];
-        const TcStoredRule *r = &x->program.rule[e->rule];
-        if ((size_t)r->makes > SIZE_MAX - needed) return UINT32_MAX;
-        needed += r->makes;
-    }
-    while (cap < needed) {
-        if (cap > SIZE_MAX / 2) return UINT32_MAX;
-        cap *= 2;
-    }
-    TcTerm *now = malloc(cap * sizeof *now);     /* present rows: entry rows, then made */
-    bool *gone = calloc(cap, sizeof *gone);
-    uint32_t count = n, result = UINT32_MAX - 1;
-    if (!now || !gone) { free(now); free(gone); return UINT32_MAX; }
-    if (n) {
-        if (!x->row) { free(now); free(gone); return UINT32_MAX; }
-        memcpy(now, x->row, n * sizeof *now);
-    }
-    for (size_t k = 0; k < b->len; k++) {
-        const TcMember *e = &x->member[b->member[order[k]]];
-        const TcStoredRule *r = &x->program.rule[e->rule];
-        const uint32_t *pick = member_pick(x, e);
+        TcStoredRule rule = x->program.rule[e->rule];
+        const Occurrence *pick = member_pick(x, e);
         uint32_t base = b->base[order[k]];
         bool ok = true;
-        for (uint32_t i = 0; ok && i < r->takes + r->reads; i++) ok = !gone[pick[i]];
-        for (uint32_t i = 0; ok && i < r->takes + r->reads; i++)   /* the takes, then the reads */
-            ok = unify(x->terms, &x->solver, pattern_at(&x->program, r, i), base, now[pick[i]], 0);
-        if (ok) {   /* the checks read the rows present now */
-            TcTerm *present = malloc((count ? count : 1) * sizeof *present);
-            uint32_t p = 0;
-            if (!present) { result = UINT32_MAX; break; }
-            for (uint32_t i = 0; i < count; i++)
-                if (!gone[i]) present[p++] = resolve(x->terms, &x->solver, now[i], 0);
-            uint32_t *pos = malloc((p ? p : 1) * sizeof *pos);
-            TcTerm *sorted = malloc((p ? p : 1) * sizeof *sorted);
-            if (!pos || !sorted) {
-                free(present); free(pos); free(sorted);
-                result = UINT32_MAX - 1;
-                goto done;
-            }
-            {
-                const TcNode *nodes = x->terms->node;
-                if (!nodes) {
-                    free(present); free(pos); free(sorted);
-                    result = UINT32_MAX;
-                    goto done;
-                }
-                RowOrder by = {nodes, x->terms->nodes, present, present, p, false};
-                for (uint32_t i = 0; i < p; i++) pos[i] = i;
-                ok = sort_positions(&by, pos, p);
-                for (uint32_t i = 0; ok && i < p; i++) sorted[i] = present[pos[i]];
-            }
-            free(present); free(pos);
-            if (ok) {   /* the explorer's rows are the present rows while it asks */
-                const TcTerm *entry = x->row;
-                uint32_t entry_rows = x->rows;
-                TcStoredRule rule = *r;
-                x->row = sorted;
-                x->rows = p;
-                ok = admitted(x, &rule, base);
-                x->row = entry;
-                x->rows = entry_rows;
-            }
-            free(sorted);
+        for (uint32_t i = 0; ok && i < rule.takes + rule.reads; i++)
+            ok = !occurrence_gone(x->gone, x->gones, pick[i]);
+        for (uint32_t i = 0; ok && i < rule.takes + rule.reads; i++)   /* the takes, then the reads */
+            ok = unify(x->terms, &x->solver, pattern_at(&x->program, &rule, i), base,
+                       occurrence_row(pick[i]), 0);
+        if (ok) {   /* the checks read the rows present now, the entry view kept aside */
+            if (!view_copy(&x->present, &x->view)) return UINT32_MAX;
+            bool built = present_view(x);
+            ok = built && admitted(x, &rule, base);
+            uint32_t present = x->view.rows;
+            bool restored = view_copy(&x->view, &x->present);
+            trie_release(&x->trie, present);
+            if (!built || !restored) return UINT32_MAX;
         }
-        if (!ok) { result = UINT32_MAX - 1; goto done; }
-        for (uint32_t i = 0; i < r->takes; i++) gone[pick[i]] = true;
-        for (uint32_t i = 0; i < r->makes; i++) {
-            if (!(now[count++] = close_term(x->terms, &x->solver, make_at(&x->program, r, i), base))) {
-                result = UINT32_MAX;
-                goto done;
-            }
+        if (!ok) return x->solver.failed ? UINT32_MAX : UINT32_MAX - 1;
+        for (uint32_t i = 0; i < rule.takes; i++)
+            if (!tc_push_u64(realloc, &x->gone, &x->gones, &x->gone_cap, pick[i])) return UINT32_MAX;
+        for (uint32_t i = 0; i < rule.makes; i++) {
+            TcTerm made = close_term(x->terms, &x->solver, make_at(&x->program, &rule, i), base);
+            if (!made || !next_push(x, made)) return UINT32_MAX;
         }
     }
-    x->next_len = 0;
-    for (uint32_t i = 0; i < count; i++)
-        if (!gone[i] && !tc_push_u32(realloc, &x->next, &x->next_len, &x->next_cap,
-                                     resolve(x->terms, &x->solver, now[i], 0))) { result = UINT32_MAX; goto done; }
-    {
-        uint32_t m = (uint32_t)x->next_len;
-        bool ground;
-        result = canonical_form(x->terms, x->next, &m, x->how.store, &ground)
-                 ? state_index(&x->states, x->next, m, ground) : UINT32_MAX;
-    }
-done:
-    free(now); free(gone);
-    return result;
+    return successor_state(x, x->gone, x->gones);
 }
 
 /* Whether every order of the bag's members runs to `target`. */
@@ -1754,6 +2413,28 @@ static bool members_within(const uint32_t *a, size_t na, const uint32_t *b, size
     return true;
 }
 
+/* every: the state the bag of all the region's matches reaches, each match's
+ * checks met on its own (*result; UINT32_MAX - 1 when the region has no match
+ * or its matches do not fit together).  False when memory ran out. */
+static bool every_result(Explorer *x, Bag *b, uint32_t *result) {
+    b->len = b->blen = 0;
+    b->next_base = 0;
+    occurrences_clear(&x->taken);
+    occurrences_clear(&x->read);
+    Mark m = mark(&x->solver);
+    size_t in = 0, fitted = 0;
+    for (uint32_t k = 0; k < x->members; k++)
+        if (in_region(x, x->member[k].rule)) {
+            in++;
+            if (!bag_add(x, b, k)) break;
+            fitted++;
+        }
+    *result = UINT32_MAX - 1;
+    if (in > 0 && fitted == in) *result = bag_result(x, b);
+    undo(&x->solver, m);
+    return *result != UINT32_MAX && !x->solver.failed;
+}
+
 static bool successors(Explorer *x, Successors *out) {
     out->len = 0;
     out->budget_out = false;
@@ -1778,33 +2459,18 @@ static bool successors(Explorer *x, Successors *out) {
          * as members join; the others ask the bag's checks in the ask's order */
         .tells = step == TC_STEP_EVERY || x->how.ask == TC_ASK_AFTER_TELLS,
     };
-    b.rows = x->rows;
     size_t bag_cap = x->members ? x->members : 1;
     b.member = malloc(bag_cap * sizeof *b.member);
     b.base = malloc(bag_cap * sizeof *b.base);
     b.cap = b.bcap = bag_cap;
-    b.taken = calloc(x->rows ? x->rows : 1, sizeof *b.taken);
-    b.read = calloc(x->rows ? x->rows : 1, sizeof *b.read);
-    if (!b.member) { free(b.base); free(b.taken); free(b.read); return false; }
-    if (!b.base) { free(b.member); free(b.taken); free(b.read); return false; }
-    if (!b.taken) { free(b.member); free(b.base); free(b.read); return false; }
-    if (!b.read) { free(b.member); free(b.base); free(b.taken); return false; }
+    if (!b.member || !b.base) { free(b.member); free(b.base); return false; }
+    occurrences_clear(&x->taken);
+    occurrences_clear(&x->read);
     bool ok = true;
     if (ok && step == TC_STEP_EVERY) {
-        /* every match of the region; the checks of each were met on its own */
-        Mark m = mark(&x->solver);
-        size_t in = 0, fitted = 0;
-        for (uint32_t k = 0; k < x->members; k++)
-            if (in_region(x, x->member[k].rule)) {
-                in++;
-                if (!bag_add(x, &b, k)) break;
-                fitted++;
-            }
-        if (in > 0 && fitted == in) {
-            uint32_t result = bag_result(x, &b);
-            ok = result != UINT32_MAX && add_successor(out, result);
-        }
-        undo(&x->solver, m);
+        uint32_t result = UINT32_MAX - 1;
+        ok = every_result(x, &b, &result);
+        if (ok && result != UINT32_MAX - 1) ok = add_successor(out, result);
     } else if (ok) {
         uint32_t *bags = malloc(8 * sizeof *bags);
         uint32_t *starts = malloc(8 * sizeof *starts);
@@ -1831,8 +2497,7 @@ static bool successors(Explorer *x, Successors *out) {
                     free(order_member); free(order_base); ok = false; break;
                 }
                 RunOrder order = {.member = order_member, .cap = order_cap,
-                    .base = order_base, .bcap = order_cap,
-                    .taken = b.taken, .read = b.read, .rows = b.rows};
+                    .base = order_base, .bcap = order_cap};
                 for (size_t i = start; ok && i < end; i++) {
                     const TcStoredRule *r = &x->program.rule[x->member[en.bags[i]].rule];
                     uint32_t base = order.next_base;
@@ -1869,7 +2534,7 @@ static bool successors(Explorer *x, Successors *out) {
         free(en.bags); free(en.bag_start); free(en.bag_result);
         }
     }
-    free(b.member); free(b.base); free(b.taken); free(b.read);
+    free(b.member); free(b.base);
     return ok && !x->solver.failed;   /* a bag cut short by memory is no answer */
 }
 
@@ -1886,23 +2551,85 @@ static bool successors(Explorer *x, Successors *out) {
  * already present changes nothing, and is no step.
  * ====================================================================== */
 
-/* The successors of state q, its rows copied first: the state table may grow
- * while q is expanded.  False when memory ran out. */
-static bool expand(Explorer *x, uint32_t q, Successors *next) {
-    TcState s = x->states.state[q];
-    x->row = NULL;
-    x->rows = 0;
-    TcTerm *mine = malloc((s.rows ? s.rows : 1) * sizeof *mine);
-    if (!mine) return false;
-    if (s.rows) memcpy(mine, x->states.row + s.start, s.rows * sizeof *mine);
-    x->at = q;
-    x->row = mine;
-    x->rows = s.rows;
-    bool ok = successors(x, next);
-    x->row = NULL;
-    x->rows = 0;
-    free(mine);
+/* ---- Programs that propagate ----------------------------------------------
+ * A program propagates when its rules only read and make: no takes, no
+ * tells, every check an equation or a guard, every local of a made row or a
+ * check one of a read pattern (RuleSyntax/SetStoreSyntax: Propagates).  A
+ * guard, like an equation, only filters matches: it is decided on the
+ * match's values alone.  Then, at a state of fixed terms, whether a rule
+ * matches some rows depends on those rows alone, and the rows it makes are
+ * fixed terms.  Under step every over a set store, from a state of fixed
+ * terms, every state of the run holds the one before: the run is kept in one
+ * store, and each step after the first meets only the matches that read a
+ * row the step before added (tcalc_delta.c).  Not when a rule takes (a row it
+ * took can be made again), tells, or asks an absence, a count or a census
+ * (they read the whole state); nor in a multiset store, where a firing that
+ * makes a row again adds a copy of it; nor under another discipline, whose
+ * step need not fire every match; nor from a state with unknowns, which a
+ * read may decide, changing rows: those runs are explored state by state. */
+
+/* Whether the rule propagates (above). */
+static bool rule_propagates(const Explorer *x, uint32_t rule) {
+    TcStoredRule r = rule_at(&x->program, rule);
+    if (r.takes || r.tells) return false;
+    bool *read = calloc(r.locals ? r.locals : 1, sizeof *read);
+    if (!read) return false;
+    bool ok = true;
+    for (uint32_t k = 0; ok && k < r.reads; k++)
+        ok = locals_in(x->terms, pattern_at(&x->program, &r, k), read, r.locals, true);
+    for (uint32_t k = 0; ok && k < r.makes; k++)
+        ok = locals_in(x->terms, make_at(&x->program, &r, k), read, r.locals, false);
+    for (uint32_t k = 0; ok && k < r.check_count; k++) {
+        TcCheck c = check_at(&x->program, &r, k);
+        ok = check_binary(c.kind) && locals_in(x->terms, c.left, read, r.locals, false) &&
+             locals_in(x->terms, c.right, read, r.locals, false);
+    }
+    free(read);
     return ok;
+}
+
+/* Whether the run is kept in one store (above): the program propagates, the
+ * interpretation is step every over a set store on the C backend, and the
+ * initial rows are fixed terms. */
+static bool delta_admits(const Explorer *x, const TcTerm *initial, size_t initials) {
+    if (x->how.step != TC_STEP_EVERY || x->how.store != TC_STORE_SET || x->how.backend != TC_BACKEND_C)
+        return false;
+    for (uint32_t rule = 0; rule < x->program.rules; rule++)
+        if (!rule_propagates(x, rule)) return false;
+    if (!initials) return true;
+    if (!initial) return false;
+    for (size_t i = 0; i < initials; i++)
+        if (!term_node(x->terms, initial[i]).ground) return false;
+    return true;
+}
+
+/* The successors of state q, matched at its view.  False when memory ran
+ * out. */
+static bool expand(Explorer *x, uint32_t q, Successors *next) {
+    return view_state(x, q) && successors(x, next);
+}
+
+/* Lists state q of the table (list_state). */
+static bool list_table_state(TcOutcomes *o, const Explorer *x, uint32_t q, bool ambiguous, uint64_t matches) {
+    TcState s = state_at(&x->states, q);
+    return list_state(o, &x->trie, &x->places, x->terms, s.rows, x->states.loose + s.loose,
+                      x->states.shape + s.loose, s.looses, ambiguous, matches);
+}
+
+/* The structural order of states a and b (rows_order), their rows listed in
+ * x->listed.  -2 when memory ran out. */
+static int state_order(Explorer *x, uint32_t a, uint32_t b) {
+    TcState sa = state_at(&x->states, a), sb = state_at(&x->states, b);
+    x->listed_len = 0;
+    if (!store_rows(&x->trie, &x->places, x->terms, sa.rows, x->states.loose + sa.loose,
+                    x->states.shape + sa.loose, sa.looses, &x->listed, &x->listed_len, &x->listed_cap))
+        return -2;
+    size_t na = x->listed_len;
+    if (!store_rows(&x->trie, &x->places, x->terms, sb.rows, x->states.loose + sb.loose,
+                    x->states.shape + sb.loose, sb.looses, &x->listed, &x->listed_len, &x->listed_cap) ||
+        !x->listed)
+        return -2;
+    return rows_order(x->terms, x->listed, (uint32_t)na, (uint32_t)(x->listed_len - na));
 }
 
 /* The k-th of n states in the structural order of states: the least by a scan
@@ -1912,7 +2639,7 @@ static bool nth_least_state(Explorer *x, uint32_t *states, size_t n, size_t k, u
     if (k == 0) {
         uint32_t best = states[0];
         for (size_t i = 1; i < n; i++) {
-            int c = state_order(&x->states, x->terms, states[i], best);
+            int c = state_order(x, states[i], best);
             if (c == -2) return false;
             if (c < 0) best = states[i];
         }
@@ -1921,7 +2648,7 @@ static bool nth_least_state(Explorer *x, uint32_t *states, size_t n, size_t k, u
     }
     for (size_t i = 1; i < n; i++)
         for (size_t j = i; j > 0; j--) {
-            int c = state_order(&x->states, x->terms, states[j], states[j - 1]);
+            int c = state_order(x, states[j], states[j - 1]);
             if (c == -2) return false;
             if (c >= 0) break;
             uint32_t t = states[j]; states[j] = states[j - 1]; states[j - 1] = t;
@@ -1941,8 +2668,6 @@ static bool run_path(Explorer *x, TcOutcomes *o, uint32_t q, bool *finished) {
     Successors next = {0};
     uint64_t turn = 0;
     bool ok = true;
-    x->row = NULL;
-    x->rows = 0;
     if (!spend(x)) { run_visits_free(&visits); return true; }
     int again = run_visit(&visits, q, turn);
     if (again < 0) { run_visits_free(&visits); return false; }
@@ -1952,7 +2677,7 @@ static bool run_path(Explorer *x, TcOutcomes *o, uint32_t q, bool *finished) {
         run_visits_free(&visits);
         return true;
     }
-    if (!list_state(o, &x->states, q, false, 0)) {
+    if (!list_table_state(o, x, q, false, 0)) {
         run_visits_free(&visits);
         return false;
     }
@@ -1964,7 +2689,7 @@ static bool run_path(Explorer *x, TcOutcomes *o, uint32_t q, bool *finished) {
     }
     for (;;) {
         if (next.ambiguous) {
-            ok = list_state(o, &x->states, q, true, next.ambiguous);
+            ok = list_table_state(o, x, q, true, next.ambiguous);
             *finished = true;
             break;
         }
@@ -1983,7 +2708,7 @@ static bool run_path(Explorer *x, TcOutcomes *o, uint32_t q, bool *finished) {
         again = run_visit(&visits, q, turn);
         if (again < 0) { ok = false; break; }
         if (again) { o->cyclic = true; *finished = true; break; }
-        if (!(ok = list_state(o, &x->states, q, false, 0))) break;
+        if (!(ok = list_table_state(o, x, q, false, 0))) break;
         if (!(ok = expand(x, q, &next)) || next.budget_out) break;
     }
     run_visits_free(&visits);
@@ -2003,30 +2728,20 @@ static bool explorer_start(Explorer *x) {
     return flat_start(x);
 }
 
+/* Releases the exploration's storage; every map of rows goes with the pool. */
 static void explorer_free(Explorer *x) {
     free(x->member); free(x->selection); free(x->next); free(x->known); free(x->pick);
     free(x->plans); free(x->flat_words); free(x->key);
-    free(x->batch_cursor); free(x->batch_output);
+    free(x->batch_cursor); free(x->batch_output); free(x->batch_row); free(x->batch_occurrence);
+    free(x->view.loose); free(x->view.shape); free(x->present.loose); free(x->present.shape);
+    free(x->loose_next); free(x->shape_next); free(x->change); free(x->gone); free(x->listed);
+    occurrences_free(&x->taken); occurrences_free(&x->read);
+    delta_free(&x->delta_store);
     fired_free(&x->fired);
     solver_free(&x->solver);
     states_free(&x->states);
-}
-
-/* The state of `n` rows, in canonical form, entered in the explorer's table;
- * UINT32_MAX when memory ran out. */
-static uint32_t explorer_state(Explorer *x, const TcTerm *given, size_t n) {
-    TcTerm *rows = malloc((n ? n : 1) * sizeof *rows);
-    uint32_t count = (uint32_t)n, q = UINT32_MAX;
-    bool ground;
-    if (!rows) return UINT32_MAX;
-    if (n) {
-        if (!given) { free(rows); return UINT32_MAX; }
-        memcpy(rows, given, n * sizeof *rows);
-    }
-    if (canonical_form(x->terms, rows, &count, x->how.store, &ground))
-        q = state_index(&x->states, rows, count, ground);
-    free(rows);
-    return q;
+    places_free(&x->places);
+    trie_free(&x->trie);
 }
 
 /* observe outcomes: the exploration of every state reached, as the runner's
@@ -2044,12 +2759,7 @@ static RunExpansion explore_state(void *lane, uint32_t q, RunGraph *g) {
     Explorer *x = e->x;
     Successors *next = &e->next;
     if (!spend(x)) return RUN_STOP;
-    const TcTerm *saved_row = x->row;
-    uint32_t saved_rows = x->rows;
-    bool expanded = expand(x, q, next);
-    x->row = saved_row;
-    x->rows = saved_rows;
-    if (!expanded) return RUN_FAILED;
+    if (!expand(x, q, next)) return RUN_FAILED;
     if (next->budget_out) return RUN_STOP;   /* partly expanded: neither outcome nor steps */
     if (x->how.store == TC_STORE_SET && next->len) {   /* a firing that changes nothing is no step */
         if (!next->state) return RUN_FAILED;
@@ -2068,10 +2778,25 @@ static RunExpansion explore_state(void *lane, uint32_t q, RunGraph *g) {
             x->derive = false;
     }
     bool ok = run_steps(g, next->state, next->len);
-    if (ok && next->ambiguous) ok = list_state(e->o, &x->states, q, true, next->ambiguous);
-    else if (ok && next->len == 0) ok = list_state(e->o, &x->states, q, false, 0);
+    if (ok && next->ambiguous) ok = list_table_state(e->o, x, q, true, next->ambiguous);
+    else if (ok && next->len == 0) ok = list_table_state(e->o, x, q, false, 0);
     return ok ? RUN_EXPANDED : RUN_FAILED;
 }
+
+/* The work an exploration counted (tcalc_core.h), into its outcomes. */
+static void count_work(TcOutcomes *o, const Explorer *x) {
+    o->unifications = x->solver.unifications;
+    o->rows_met = x->met;
+    o->matches = x->decided;
+    o->rows_stored = x->trie.held + x->states.looses + x->delta_store.rows;
+    o->patterns_tried = x->tried;
+    o->identity_work = x->trie.compared + x->states.compared;
+    o->indexes = x->places.met;
+}
+
+/* ---- Step every over a set store, in one store ------------------------------
+ * The run of a program that propagates, by delta (above), is tcalc_delta.c. */
+#include "tcalc_delta.c"
 
 TcOutcomes *tc_explore(TcProgram *program, const TcInterpretation *how) {
     TcOutcomes *o = calloc(1, sizeof *o);
@@ -2079,15 +2804,28 @@ TcOutcomes *tc_explore(TcProgram *program, const TcInterpretation *how) {
     *o = (TcOutcomes){0};
     o->memory_ok = true;
     if (how->backend==TC_BACKEND_C && how->step==TC_STEP_ONE && how->shortcuts!=TC_SHORTCUTS_NONE) resident_prepare(program);
+    bool planned = plans_prepare(program);   /* the rules' plans, chosen once (tcalc_plan.c) */
     Explorer x = {.terms = program->terms, .program = program_view(program),
                   .how = *how, .budget = {.limit = how->budget}};
-    bool ok = explorer_start(&x), finished = false;
+    bool ok = planned && explorer_start(&x), finished = false;
+    if (ok && delta_admits(&x, program->row, program->rows)) {   /* one store, by delta */
+        ok = delta_run(&x, program->row, program->rows, o, &finished);
+        o->finished = ok && finished;
+        o->disagreed = x.disagreed;
+        o->work = x.budget.spent;
+        count_work(o, &x);
+        bool memory_ok = ok && !x.solver.failed && !x.terms->failed && !x.trie.failed;
+        explorer_free(&x);   /* the term table is the program's again */
+        o->memory_ok = memory_ok;
+        return o;
+    }
     if (!ok) {
         o->finished = false;
         o->decider_failed = x.flat_failed;
         o->disagreed = x.disagreed;
         o->work = x.budget.spent;
-        bool memory_ok = x.flat_failed && !x.solver.failed && !x.terms->failed;
+        count_work(o, &x);
+        bool memory_ok = x.flat_failed && !x.solver.failed && !x.terms->failed && !x.trie.failed;
         explorer_free(&x);
         o->memory_ok = memory_ok;
         return o;
@@ -2098,7 +2836,8 @@ TcOutcomes *tc_explore(TcProgram *program, const TcInterpretation *how) {
         o->decider_failed = x.flat_failed;
         o->disagreed = x.disagreed;
         o->work = x.budget.spent;
-        bool memory_ok = x.flat_failed && !x.solver.failed && !x.terms->failed;
+        count_work(o, &x);
+        bool memory_ok = x.flat_failed && !x.solver.failed && !x.terms->failed && !x.trie.failed;
         explorer_free(&x);
         o->memory_ok = memory_ok;
         return o;
@@ -2110,7 +2849,8 @@ TcOutcomes *tc_explore(TcProgram *program, const TcInterpretation *how) {
         o->decider_failed = x.flat_failed;
         o->disagreed = x.disagreed;
         o->work = x.budget.spent;
-        bool memory_ok = (ok || x.flat_failed) && !x.solver.failed && !x.terms->failed;
+        count_work(o, &x);
+        bool memory_ok = (ok || x.flat_failed) && !x.solver.failed && !x.terms->failed && !x.trie.failed;
         explorer_free(&x);   /* the term table is the program's again */
         o->memory_ok = memory_ok;
         return o;
@@ -2131,9 +2871,10 @@ TcOutcomes *tc_explore(TcProgram *program, const TcInterpretation *how) {
         e.o->decider_failed = e.x->flat_failed;
         e.o->disagreed = e.x->disagreed;
         e.o->work = e.x->budget.spent;
+        count_work(e.o, e.x);
         bool flat_failed = e.x->flat_failed;
         bool solver_failed = e.x->solver.failed;
-        bool terms_failed = e.x->terms->failed;
+        bool terms_failed = e.x->terms->failed || e.x->trie.failed;
         memory_ok = (ok || flat_failed) && !solver_failed && !terms_failed;
         explorer_free(e.x);   /* the term table is the program's again */
         }
@@ -2153,10 +2894,11 @@ TcOutcomes *tc_successors(TcProgram *program, const TcInterpretation *how,
     if (!o) return NULL;
     *o = (TcOutcomes){0};
     if (how->backend==TC_BACKEND_C && how->step==TC_STEP_ONE && how->shortcuts!=TC_SHORTCUTS_NONE) resident_prepare(program);
+    bool planned = plans_prepare(program);
     Explorer x = {.terms = program->terms, .program = program_view(program),
                   .how = *how, .budget = {.limit = how->budget}};
     Successors next = {0};
-    bool ok = explorer_start(&x);
+    bool ok = planned && explorer_start(&x);
     bool expanded = false;
 #define TC_SUCCESSORS_RETURN() { \
         o->finished = ok && expanded && !next.budget_out; \
@@ -2164,8 +2906,9 @@ TcOutcomes *tc_successors(TcProgram *program, const TcInterpretation *how,
         o->disagreed = x.disagreed; \
         o->states = x.states.states; \
         o->work = x.budget.spent; \
+        count_work(o, &x); \
         free(next.state); \
-        bool memory_ok = (ok || x.flat_failed) && !x.solver.failed && !x.terms->failed; \
+        bool memory_ok = (ok || x.flat_failed) && !x.solver.failed && !x.terms->failed && !x.trie.failed; \
         explorer_free(&x); \
         o->memory_ok = memory_ok; \
         return o; \
@@ -2178,7 +2921,7 @@ TcOutcomes *tc_successors(TcProgram *program, const TcInterpretation *how,
     ok = expand(&x, q, &next);
     if (!ok || next.budget_out) TC_SUCCESSORS_RETURN();
     if (next.ambiguous) {
-        ok = list_state(o, &x.states, q, true, next.ambiguous);
+        ok = list_table_state(o, &x, q, true, next.ambiguous);
         TC_SUCCESSORS_RETURN();
     }
     if (!next.len) TC_SUCCESSORS_RETURN();
@@ -2187,11 +2930,11 @@ TcOutcomes *tc_successors(TcProgram *program, const TcInterpretation *how,
     while (first < next.len && x.how.store == TC_STORE_SET && next.state[first] == q) first++;
     if (first == next.len) TC_SUCCESSORS_RETURN();
     size_t i = first + 1;
-    ok = list_state(o, &x.states, next.state[first], false, 0);
+    ok = list_table_state(o, &x, next.state[first], false, 0);
     if (!ok) TC_SUCCESSORS_RETURN();
     for (; i < next.len; i++)
         if (!(x.how.store == TC_STORE_SET && next.state[i] == q))
-            if (!list_state(o, &x.states, next.state[i], false, 0)) {
+            if (!list_table_state(o, &x, next.state[i], false, 0)) {
                 ok = false;
                 TC_SUCCESSORS_RETURN();
             }
@@ -2218,7 +2961,7 @@ TcTerm *tc_canonical_key(TcTerms *terms, const TcTerm *rows, size_t n, TcStore s
     bool ground;
     if (!key) return NULL;
     if (n) memcpy(key, rows, n * sizeof *key);
-    if (!canonical_form(terms, key, &m, store, &ground) || terms->failed) { free(key); return NULL; }
+    if (!canonical_form(terms, key, &m, store, &ground, NULL) || terms->failed) { free(key); return NULL; }
     *count = m;
     return key;
 }

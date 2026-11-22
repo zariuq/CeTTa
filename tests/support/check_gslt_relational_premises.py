@@ -8,7 +8,6 @@ import sys
 import tempfile
 
 import native_observation
-from check_gslt_through_machine import through_the_machine
 from check_transform_swi_differential import read_forms, write_forms
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -108,7 +107,6 @@ def qualify(args, work):
     queries.extend(["!", ["collapse", ["gslt:SharedV1", ["SharedV1", "$first", "$second"]]]])
     driver = work / "driver.metta"
     driver.write_text(write_forms(queries))
-    captured = work / "captured"
     command = [sys.executable, str(ROOT / "tests/support/run_gslt_program.py"),
                str(args.runtime), "--lang", "petta", str(mixed), str(driver)]
     residual = work / "closed.metta"
@@ -122,26 +120,22 @@ def qualify(args, work):
               ["once", ["gslt:entry:LessV1:00"]],
               ["test", ["get-metatype", "$open"], "Variable"]]]))
     closed_command = command[:-2] + [str(residual), str(closed_driver)]
-    local = dict(env, CETTA_GSLT_RECORD_DIR=str(captured))
-    local.pop("CETTA_GSLT_SOURCE_GATE", None)
-    completed(command, env=local)
-    completed(closed_command, env=local)
-    runs = work / "runs"
-    completed([sys.executable, str(ROOT / "tests/support/check_gslt_through_machine.py"),
-               str(args.runtime), "--corpus", str(captured), "--keep", str(runs),
-               "--timeout", "30", "--turns", "4000", "2"], env=env)
-    observations = list(runs.glob("*.written.events.jsonl"))
-    assert len(observations) == 2
-    packets = [list(native_observation.read_observation(path)["queries"].values())
-               for path in observations]
-    frontiers, = [packet for packet in packets if len(packet) == test_count + 1]
-    closed_frontiers, = [packet for packet in packets if len(packet) == 2]
+    def observe(definitions, queries, name, count):
+        receipt = work / (name + ".events.jsonl")
+        completed([str(args.runtime), "--lang", "petta", "--run-observation", str(receipt),
+                   str(definitions), str(queries)], env=env)
+        found = native_observation.read_observation(receipt)
+        assert found["final"]["contract_exit"] == 0
+        assert len(found["queries"]) == count
+        return native_observation.project(found, [(i, i) for i in found["queries"]])
+
+    frontiers = observe(mixed, driver, "mixed", test_count + 1)
+    closed_frontiers = observe(residual, closed_driver, "closed", 2)
     # The PeTTa test service acknowledges success with its `true` symbol.
     acknowledgements = [frontier["answers"] for frontier in frontiers[:-1]]
-    assert all(answer == [[["symbol", "true".encode().hex()]]]
-               for answer in acknowledgements), acknowledgements
-    assert all(frontier["answers"] == [[["symbol", "true".encode().hex()]]]
-               for frontier in closed_frontiers), closed_frontiers
+    acknowledged = [(("symbol", "true".encode().hex()),)]
+    assert all(answer == acknowledged for answer in acknowledgements), acknowledgements
+    assert all(frontier["answers"] == acknowledged for frontier in closed_frontiers), closed_frontiers
     open_answer, = frontiers[-1]["answers"]
     variables = [token for token in open_answer if token[0] == "variable"]
     assert len(variables) == 2 and variables[0] == variables[1]
@@ -152,26 +146,17 @@ def qualify(args, work):
         ("recursive-target-equation", overridden, "!(loop-v1 z)"),
     ]
     for name, definitions, query in pending_cases:
-        text = definitions.read_text() + "\n" + query + "\n"
-        plan = dict(queries=0, guests=[])
-        transformed = through_the_machine(text, "!(import! &self (library lib_transform))", plan=plan)
-        pending = work / (name + ".metta")
-        # Drive one finite turn, then inspect only the private run status.
-        begin = transformed.index("!(pm:begin-quietly")
-        pending.write_text(transformed[:begin] + transformed[begin:].splitlines()[0] +
-                           "\n!(pm:advance-quietly 100)\n!(get-state &pm-outcome)\n")
-        events = work / (name + ".events.jsonl")
-        completed([str(args.runtime), "--run-observation", str(events),
-                   "--lang", "petta", str(pending)], env=env)
-        status = native_observation.read_observation(events)
-        last = list(status["queries"].values())[-1]
-        assert last["answers"] == [[["symbol", "pm:turn-over".encode().hex()]]], name
+        query_path = work / (name + ".metta")
+        query_path.write_text(query + "\n")
+        native_observation.check_petta_fuel_exhaustion(
+            args.runtime, [definitions, query_path], work / (name + ".events.jsonl"), env=env)
     # The production corpus records only the qualified original invocation,
     # once all local checks have passed; administrative probes stay private.
     if env.get("CETTA_GSLT_RECORD_DIR"):
         completed(command, env=env)
         completed(closed_command, env=env)
-    print("PASS: constrained recursive goals, ordered duplicates, open sharing, conservative effects and pending work")
+    print("PASS: compiled relational premises on CeTTa: ordered duplicates, open sharing, "
+          "conservative effects and pending work")
 
 
 def main():

@@ -10,8 +10,8 @@
         (match &implicit-space (item $x) (item $x))))
     ((item 1) (item 1) (item 2)))
 
-; Removing an atom removes every copy of it from the bag, as SWI-PeTTa's
-; retraction does.
+; A removal removes every occurrence its pattern matches, the copies of one
+; atom included.
 !(remove-atom &implicit-space (item 1))
 !(test
     (collapse

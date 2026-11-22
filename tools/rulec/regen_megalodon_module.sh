@@ -5,7 +5,8 @@
 #
 # MODULE-FILE is the Megalodon kernel module, kept in Mettapedia as
 # metta/gslt/module/MegalodonKernel.module.  As for the HOL Light module (regen_hol_light_module.sh):
-# CeTTa's own module reader prints the module's core rows, rulec compiles them, rulec_validate checks
+# CeTTa's own module reader prints the module's core rows, rulec compiles them, every judgment a function
+# (--functional), rulec_validate checks
 # every DAG against the rules (with the leaves where overlapping rules are told apart by their
 # premises) and the generated dispatch code against the DAGs.  The representations and components
 # are the rows of native/megalodon_module/mgk.bindings.  Then the instance's names
@@ -28,7 +29,7 @@ $CC -O2 -o "$WORK/rulec_validate" "$ROOT/tools/rulec/rulec_validate.c"
 printf '!(import! &self "%s")\n!(wire:dump "%s" "Kernel")\n' "$ROOT/tools/rulec/dump_wire.metta" "$MODULE" > "$WORK/dump.metta"
 "$CETTA" "$WORK/dump.metta" | grep '^(' > "$WORK/MegalodonKernel.wire"
 SHA=$(sha256sum "$MODULE" | cut -d' ' -f1)
-"$WORK/rulec" "$WORK/MegalodonKernel.wire" \
+"$WORK/rulec" "$WORK/MegalodonKernel.wire" --functional \
   --census "$SG/census.txt" --census-tsv "$WORK/census.tsv" --dag "$SG/MegalodonKernel.dag" \
   --bindings "$ROOT/native/megalodon_module/mgk.bindings" \
   --include-rt ../../rule_runtime/rc_rt.h --component-prefix ../../rule_components/ --source-digest "$SHA" \
@@ -36,7 +37,7 @@ SHA=$(sha256sum "$MODULE" | cut -d' ' -f1)
 "$WORK/rulec_validate" "$WORK/MegalodonKernel.wire" "$SG/MegalodonKernel.dag" "$SG/mgk_module.c"
 # the instance's names
 cp -r "$ROOT/native/rule_runtime" "$ROOT/native/rule_components" "$ROOT/native/rule_module" "$STAGE/native/"
-cp "$ROOT/native/megalodon_module/mgm_instance.c" "$STAGE/native/megalodon_module/"
+cp "$ROOT/native/megalodon_module/mgm_instance.c" "$ROOT/native/megalodon_module/mgm_instance.h" "$STAGE/native/megalodon_module/"
 sh "$ROOT/tools/rulec/instance_names.sh" "$STAGE/native/megalodon_module/mgm_instance.c" "$SG/mgk_instance_names.h" mgk_ cetta_mgm_dispatch \
   -std=c11 -pthread -I"$ROOT/src" -I"$ROOT"
 cp "$SG/mgk_module.c" "$SG/mgk_module_ids.h" "$SG/mgk_instance_names.h" "$SG/MegalodonKernel.dag" "$SG/census.txt" "$GEN/"

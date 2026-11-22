@@ -495,7 +495,7 @@ static void concurrent_marker_control(TermUniverse *u, Arena *a, CettaProofImage
         /* Only the representation marker is observed outside the physical
          * guard. Ordinary rows/TU access retains its existing serialization. */
         (void)space_has_proof_image(&s, SYMBOL_ID_NONE);
-        CETTA_SCOPED_SHARED_TRANSITION(physical_read);
+        CETTA_SCOPED_SPACE_READ(physical_read, &s);
         assert(space_length64(&s) == 5u);
         AtomId row = space_get_atom_id_at64(&s, 0u);
         assert(row != CETTA_ATOM_ID_NONE && tu_hdr(u, row));

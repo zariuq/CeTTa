@@ -1,7 +1,12 @@
 /* main.c - see rulec.h */
 #include "rulec.h"
 
-int main(int argc, char **argv) {
+/* The compiler, once per process (its state is global): the options of the command line.  Returns 0
+ * when the module was compiled, 1 when a check failed, 2 when the input was refused. */
+int rulec_main(int argc, char **argv) {
+    jmp_buf refused;
+    rulec_die_jump = &refused;
+    if (setjmp(refused)) { rulec_die_jump = NULL; return 2; }
     const char *wire = NULL, *census = NULL, *census_tsv = NULL, *dag = NULL, *emit = NULL, *emit_h = NULL;
     const char *native_sorts[16]; int nns = 0;
     const char *native_op_specs[64]; int nos = 0;
@@ -15,9 +20,9 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--safepoint") && i + 1 < argc) safepoint_name = argv[++i];
         else if (!strcmp(argv[i], "--no-musttail")) no_musttail = true;
         else if (!strcmp(argv[i], "--census-only")) census_only = true;
+        else if (!strcmp(argv[i], "--functional")) functional_only = true;
         else if (!strcmp(argv[i], "--cache-constants")) cache_constants = true;
         else if (!strcmp(argv[i], "--include-rt") && i + 1 < argc) include_rt = argv[++i];
-        else if (!strcmp(argv[i], "--rep-header") && i + 1 < argc) rep_header = argv[++i];
         else if ((!strcmp(argv[i], "--blocks") || !strcmp(argv[i], "--bindings")) && i + 1 < argc) blocks_file = argv[++i];
         else if (!strcmp(argv[i], "--component-prefix") && i + 1 < argc) component_prefix = argv[++i];
         else if (!strcmp(argv[i], "--source-digest") && i + 1 < argc) source_digest = argv[++i];
@@ -33,16 +38,18 @@ int main(int argc, char **argv) {
                 layer_name[nlayers] = t; layer_first[nlayers++] = eq + 1;
             }
         } else if (argv[i][0] != '-' && !wire) wire = argv[i];
-        else die("usage: rulec WIRE [--census F] [--census-tsv F] [--dag F] [--emit F.c] [--emit-h F.h] [--layers L=label,...] [--safepoint J] [--native-sort S=kind(...)] [--native-op J=fn[:why]]");
+        else die("usage: rulec WIRE [--census F] [--census-tsv F] [--dag F] [--emit F.c] [--emit-h F.h] [--layers L=label,...] [--safepoint J] [--functional] [--native-sort S=kind(...)] [--native-op J=fn[:why]]");
     }
     if (!wire) die("no wire file");
     load_wire(wire);
     flatten_calls();
-    check_rules();
-    if (nerrors) { fprintf(stderr, "rulec: %d check failures; nothing emitted\n", nerrors); return 1; }
+    check_heads();
     for (int i = 0; i < nns; i++) parse_native_sort(native_sorts[i]);
     if (blocks_file) read_blocks(blocks_file);
+    check_rules();
+    if (nerrors) { fprintf(stderr, "rulec: %d check failures; nothing emitted\n", nerrors); rulec_die_jump = NULL; return 1; }
     check_reps();
+    apply_tests();
     apply_blocks();
     for (int i = 0; i < nos; i++) {
         char *s = xstrdup(native_op_specs[i]), *eq = strchr(s, '='), *colon;
@@ -78,15 +85,28 @@ int main(int argc, char **argv) {
         if (!ctors[c].complete) die("--refl-law: %s does not cover every input, so it cannot be reflexive on every input", s);
         laws[nlaws++] = (Law){c, r, colon ? colon + 1 : NULL, xstrdup(s), colon && !strncmp(colon + 1, "proved", 6) ? "proved" : "checked"};
     }
-    if (nerrors) { fprintf(stderr, "rulec: %d check failures; nothing emitted\n", nerrors); return 1; }
-    int nj = 0;
-    for (int c = 0; c < nctors; c++) if (ctors[c].defined) nj++;
-    fprintf(stderr, "rulec: %s/%s: %d sorts, %d constructors, %d judgments, %d rules, %d DAG nodes, %d occurrences\n",
-            module_name, theory_name, nsorts, nctors, nj, nrules, nnodes, noccs);
+    /* answers kept, blocks, laws and the safepoint are for judgments of at most one result */
+    for (int c = 0; c < nctors; c++) {
+        if (!ctors[c].nondet) continue;
+        if (ctors[c].memo) die("memo: %s may give several results", ctors[c].name);
+        if (native_op_of(c) >= 0) die("block: %s may give several results", ctors[c].name);
+        if (law_of(c) >= 0) die("law: %s may give several results", ctors[c].name);
+        if (c == safepoint_ctor) die("safepoint: %s may give several results", ctors[c].name);
+    }
+    if (nerrors) { fprintf(stderr, "rulec: %d check failures; nothing emitted\n", nerrors); rulec_die_jump = NULL; return 1; }
+    int nj = 0, nnd = 0;
+    for (int c = 0; c < nctors; c++) if (ctors[c].defined) { nj++; if (ctors[c].nondet) nnd++; }
+    fprintf(stderr, "rulec: %s/%s: %d sorts, %d constructors, %d judgments (%d nondet), %d rules, %d DAG nodes, %d occurrences\n",
+            module_name, theory_name, nsorts, nctors, nj, nnd, nrules, nnodes, noccs);
+    number_trmc();
     if (census) { write_census(census, census_tsv); write_census_blocks(census); }
     if (dag) { write_dag(dag); write_block_table(dag, "a"); }
     if (emit && census_only) die("--census-only: nothing is emitted");
     if (emit) emit_c(emit, emit_h, wire);
+    rulec_die_jump = NULL;
     return 0;
 }
 
+#ifndef RULEC_LIBRARY
+int main(int argc, char **argv) { return rulec_main(argc, argv); }
+#endif

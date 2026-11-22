@@ -3,6 +3,7 @@
 #include "eval.h"
 #include "petta_semantics.h"
 #include "search_machine.h"
+#include "shared_transition.h"
 #include "space.h"
 #include "stats.h"
 #include "symbol.h"
@@ -1650,6 +1651,10 @@ bool petta_type_intrinsic_answers(
     *count_out = 0u;
     if (!space || !arena || !subject)
         return false;
+    /* The declarations the answers are read from, and the program token the
+     * remembered facts are kept under, are one observation of the shared
+     * space. */
+    CETTA_SCOPED_SPACE_OBSERVE(intrinsic_type_observation, space);
     PettaTypeResourceScope scope = {
         .completion = CETTA_EVAL_COMPLETE,
         .parent = g_petta_type_resource_scope,

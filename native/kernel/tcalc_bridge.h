@@ -1,35 +1,48 @@
 #ifndef CETTA_KERNEL_TCALC_BRIDGE_H
 #define CETTA_KERNEL_TCALC_BRIDGE_H
 #include "kernel.h"
+#include "tcunify_layout.generated.h"
+#include "tcbuild_layout.generated.h"
 #include "../tcalc/tcalc_core.h"
+#include "../tcalc/tcalc_records.h"
 
-typedef struct TcKernelSolver TcKernelSolver;
-typedef NmViewStatus (*TcNativeInspect)(TcTerms *,TcKernelSolver *,NmHostValue,NmViewNode *);
-typedef NmViewStatus (*TcNativeChild)(TcTerms *,TcKernelSolver *,NmHostValue,uint64_t,NmHostValue *);
-typedef NmViewStatus (*TcNativeBinding)(TcTerms *,TcKernelSolver *,bool,NmHostValue,bool *,NmHostValue *);
-typedef bool (*TcNativeApply)(TcTerms *,TcKernelSolver *,NmVariableKey,NmHostValue);
-typedef TcTerm (*TcNativeMake)(TcTerms *,const TcTerm *,uint32_t);
+/* tcalc's x86 kernel (tcalc_native.c). Each call borrows the core's term
+ * store and solver tables as the regions of one p1 program and returns its
+ * answer; it retains no pointer and makes no term. */
+
+/* One unification (tcunify.metta). state holds TU_FACTS words. */
 typedef struct {
-    TcNativeInspect inspect;
-    TcNativeChild child;
-    TcNativeBinding binding;
-    TcNativeApply apply;
-    TcNativeMake make;
-} CettaTcKernelOps;
+    const TcNode *node;   uint64_t nodes;
+    const uint32_t *item; uint64_t items;
+    uint32_t *local;      uint64_t locals;
+    uint32_t *unknown;    uint64_t unknowns;
+    uint32_t *trail;      uint64_t trail_cap;
+    uint32_t *work;       uint64_t work_cap;
+    uint32_t *seen;       uint64_t seen_cap;
+    uint64_t *state;      uint64_t state_words;
+} TcUnifyStore;
+/* Its answer (TU_R_*), or TU_R_FAULT when the call itself fails. */
+uint64_t cetta_kernel_tcalc_unify(TcUnifyStore *store);
 
-/* Synchronous native boundary. Context, callbacks, source syntax and buffers
- * are borrowed for this call only. All sessions and workspaces are released
- * before return. Checked callbacks receive the original typed context. A
- * failed adoption can leave private solver writes for caller rollback. No
- * Space is published and no host commit callback is invoked. */
-CettaKernelStatus cetta_kernel_tcalc_solve(TcTerms *,TcKernelSolver *,const CettaTcKernelOps *,
-    CettaKernelMode,TcTerm,uint32_t,TcTerm,uint32_t);
-CettaKernelStatus cetta_kernel_tcalc_construct(TcTerms *,TcKernelSolver *,const CettaTcKernelOps *,
-    CettaKernelMode,const TcTerm *,size_t,uint32_t,bool,TcTerm *);
+/* The entries that make terms with the assignments applied (tcbuild.metta).
+ * state holds TB_FACTS words. */
+typedef struct {
+    const TcNode *node;     uint64_t nodes;
+    const uint32_t *item;   uint64_t items;
+    const uint32_t *local;  uint64_t locals;
+    const uint32_t *unknown; uint64_t unknowns;
+    uint32_t *seen;         uint64_t seen_cap;
+    uint32_t *memo;         uint64_t memo_cap;
+    uint32_t *out;          uint64_t out_cap;
+    uint32_t *stack;        uint64_t stack_cap;
+    uint64_t *state;        uint64_t state_words;
+} TcBuildStore;
+/* Its answer (TB_R_*), or TB_R_FAULT when the call itself fails. A
+ * reference with this bit set names an entry (tcbuild.metta). */
+uint64_t cetta_kernel_tcalc_build(TcBuildStore *store);
+#define TB_ENTRY_BIT (UINT32_C(1) << 31)
 #if defined(__GNUC__)
-extern CettaKernelStatus cetta_kernel_tcalc_solve(TcTerms *,TcKernelSolver *,const CettaTcKernelOps *,
-    CettaKernelMode,TcTerm,uint32_t,TcTerm,uint32_t) __attribute__((weak));
-extern CettaKernelStatus cetta_kernel_tcalc_construct(TcTerms *,TcKernelSolver *,const CettaTcKernelOps *,
-    CettaKernelMode,const TcTerm *,size_t,uint32_t,bool,TcTerm *) __attribute__((weak));
+extern uint64_t cetta_kernel_tcalc_unify(TcUnifyStore *store) __attribute__((weak));
+extern uint64_t cetta_kernel_tcalc_build(TcBuildStore *store) __attribute__((weak));
 #endif
 #endif

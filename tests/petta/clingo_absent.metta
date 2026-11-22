@@ -4,5 +4,5 @@
 !(clingo:ground "a :- not b.")
 !(clingo:models ((rule a () ())))
 !(clingo:solve ((rule a () ())))
-!(import-as! &self asp clingo)
+!(import-as! &self clingo asp)
 !(asp:models ((rule a () ())))

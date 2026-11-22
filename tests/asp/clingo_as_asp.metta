@@ -2,7 +2,7 @@
 ; with asp: in place of clingo:, so a program written against asp:solve and
 ; asp:models runs on clingo, its answers in the same shapes with clingo as
 ; their evidence.  asp:trace, which clingo does not give, stays as written.
-!(import-as! &self asp clingo)
+!(import-as! &self clingo asp)
 !(asp:solve ((rule a () ()) (rule b (a) ())))
 !(asp:solve ((choice x () ()) (constraint () (x)) (constraint (x) ())))
 !(let (models $ms $evidence) (asp:models ((choice x () ()) (choice y () ()) (constraint (x y) ())))

@@ -209,6 +209,10 @@ PRIME_TEST_NOTES = {
     "tests/prime/let_result_survives_collection.metta": (
         "Prime let keeps a collected call's answer across mixed-lifetime Need paths"
     ),
+    "tests/prime/typed_bound_head_application.metta": (
+        "Prime typed application equivalence across written and bound heads "
+        "with ill-typed, non-callable, and quoted negative controls"
+    ),
     "tests/prime/typed_call_routes.metta": (
         "Prime typed-call answers, errors and effects on every call route and "
         "execution tier"

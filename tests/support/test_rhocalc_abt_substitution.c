@@ -18,9 +18,8 @@ int main(void) {
     arena_init(&arena);
 
     bool abt_ok = rhocalc_abt_substitution_correspondence_selftest(&arena);
-    bool text_key_ok =
-        rhocalc_atom_text_key_correspondence_selftest(&arena);
-    unsigned passed = (abt_ok ? 1u : 0u) + (text_key_ok ? 1u : 0u);
+    bool order_ok = rhocalc_structural_order_selftest(&arena);
+    unsigned passed = (abt_ok ? 1u : 0u) + (order_ok ? 1u : 0u);
 
     arena_free(&arena);
     symbol_table_free(&symbols);
@@ -28,8 +27,8 @@ int main(void) {
 
     printf("(RhoCoreCorrespondenceSummary 2 %u %u)\n",
            passed, 2u - passed);
-    if (!abt_ok || !text_key_ok) return 1;
+    if (!abt_ok || !order_ok) return 1;
     puts("PASS: nameful rho substitution agrees with canonical ABT substitution");
-    puts("PASS: direct rho payload keys agree with ordinary atom rendering");
+    puts("PASS: the structural order identifies congruent terms and orders the rest");
     return 0;
 }

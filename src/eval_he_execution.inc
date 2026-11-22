@@ -2156,9 +2156,42 @@ static HeReturnProvenance he_return_body(HeReturnAnalysis *analysis,
         he_library_stream_aggregate(analysis->space, body) != SYMBOL_ID_NONE)
         return HE_RETURN_UNKNOWN;
     if (head == g_builtin_syms.empty_form) return HE_RETURN_NONE;
-    bool primitive = ((he_execution_intrinsic(head) && head != g_builtin_syms.let &&
+    bool math_primitive =
+        !eval_space_has_equations(analysis->space, head) &&
+        ((length == 2u &&
+          (head == g_builtin_syms.abs_math ||
+           head == g_builtin_syms.sqrt_math ||
+           head == g_builtin_syms.trunc_math ||
+           head == g_builtin_syms.ceil_math ||
+           head == g_builtin_syms.floor_math ||
+           head == g_builtin_syms.round_math ||
+           head == g_builtin_syms.sin_math ||
+           head == g_builtin_syms.asin_math ||
+           head == g_builtin_syms.cos_math ||
+           head == g_builtin_syms.acos_math ||
+           head == g_builtin_syms.tan_math ||
+           head == g_builtin_syms.atan_math ||
+           head == g_builtin_syms.isnan_math ||
+           head == g_builtin_syms.isinf_math ||
+           head == g_builtin_syms.lib_math_exp ||
+           head == g_builtin_syms.lib_math_ln)) ||
+         (length == 3u &&
+          (head == g_builtin_syms.pow_math ||
+           head == g_builtin_syms.log_math ||
+           head == g_builtin_syms.lib_math_quot ||
+           head == g_builtin_syms.lib_math_rem ||
+           head == g_builtin_syms.lib_math_div ||
+           head == g_builtin_syms.lib_math_mod ||
+           head == g_builtin_syms.lib_math_floor_div ||
+           head == g_builtin_syms.lib_math_floor_mod ||
+           head == g_builtin_syms.lib_math_min ||
+           head == g_builtin_syms.lib_math_max)) ||
+         (length == 4u &&
+          head == g_builtin_syms.lib_math_clamp));
+    bool primitive = (((he_execution_intrinsic(head) && head != g_builtin_syms.let &&
         head != g_builtin_syms.if_text) ||
-        he_return_numeric_test(analysis->space, head)) && length == 3u;
+        he_return_numeric_test(analysis->space, head)) && length == 3u) ||
+        math_primitive;
     CettaExprLen arity = length - 1u;
     if (!cetta_expr_len_mul_fits_size(arity, sizeof(HeReturnProvenance)))
         return HE_RETURN_UNKNOWN;
@@ -3919,7 +3952,7 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
      * window. A suspended program owner alone cannot establish currency.
      * Workers retain their canonical adapter until shared program mutation
      * and compiled episodes have a separately qualified concurrent contract. */
-    CETTA_SCOPED_SHARED_TRANSITION(he_execution_observation);
+    CETTA_SCOPED_SPACE_OBSERVE(he_execution_observation, space);
     HeSharedExecutionPlan plan;
     if (!he_shared_execution_admit_environment(space, arena, source, preserve_bindings,
                                                environment, &plan))

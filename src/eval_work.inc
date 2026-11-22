@@ -285,7 +285,7 @@ static bool eval_work_start_general_reopened(EvalWork *work, Arena *scratch,
         if (!he_shared_execution_candidate(space, source, NULL,
                                            work->fuel))
             return false;
-        CETTA_SCOPED_SHARED_TRANSITION(work_admission);
+        CETTA_SCOPED_SPACE_OBSERVE(work_admission, space);
         if (!he_shared_execution_admit(space, scratch, source, false,
                                        &work->he_plan))
             return false;
@@ -711,7 +711,7 @@ static bool eval_work_rearm_native_authority(EvalWork *work) {
     arena_init_detached(&scratch);
     bool current;
     {
-        CETTA_SCOPED_SHARED_TRANSITION(work_native_readmission);
+        CETTA_SCOPED_SPACE_OBSERVE(work_native_readmission, work->space);
         current = he_native_contracts_rearm(work->space, &scratch,
                                             work->he_plan.native_contracts);
     }

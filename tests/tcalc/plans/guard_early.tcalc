@@ -1,0 +1,6 @@
+; A guard on A's value is decided right after A, which the plan meets
+; first since it completes the guard; the guard on both values waits for B.
+(step every)
+(store set)
+(rule one (read (B $y) (A $x)) (check (< $x 0)) (make (D $x $y)))
+(rule both (read (B $y) (A $x)) (check (< (+ $x $y) 0)) (make (E $x $y)))

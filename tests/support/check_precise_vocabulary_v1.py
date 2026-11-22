@@ -72,9 +72,10 @@ def main():
         "pinned_unicode_space": {"tests/petta/corrected_stable_observations.json": '\u2003'.encode() + observation_field},
         "pinned_invalid_bytes": {"tests/petta/corrected_stable_observations.json": observation_field.rstrip() + b'\xff\n'},
         "pinned_corpus_entry": {"tests/petta/corpus/manifest.json": corpus_field},
+        "pinned_corpus_wrong_path": {"tests/petta/manifest.json": corpus_field},
+        "pinned_corpus_wrong_sibling": {"tests/petta/corpus/other.json": corpus_field},
         "pinned_corpus_extra_field": {"tests/petta/corpus/manifest.json":
-            corpus_field.replace(b'60}', b'60, "note": "x"}')},
-        "pinned_corpus_wrong_path": {"tests/petta/corpus/other.json": corpus_field},
+            corpus_field.replace(b'"timeout"', b'"note": "sur' + b'face", "timeout"')},
     })
     for cut in range(1, 8):
         cases[f"literal_seam_{cut}"] = {"src/example.metta": b"x" * (65536 - cut)

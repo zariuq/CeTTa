@@ -589,7 +589,7 @@ def build_baseline(root, revision, work):
     subprocess.run(["tar", "-xf", archive, "-C", directory], check=True)
     archive.unlink()
     subprocess.run(["make", "-s", "BUILD=python", "ENABLE_RUNTIME_STATS=0",
-                    "BIN=cetta", "-j3"], cwd=directory, check=True)
+                    "BIN=cetta", "-j3", "cetta"], cwd=directory, check=True)
     stamp.write_text(full + "\n")
     return binary
 

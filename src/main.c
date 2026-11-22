@@ -1879,7 +1879,7 @@ static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] [--syntax <metta|mrho|rho|holr|tcalc|chr>] <file>\n", out);
     fputs("       note: without --lang, cetta runs corrected stable petta\n", out);
     fputs("       cetta [options] -- <file>           # filenames beginning with a dash\n", out);
-    fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
+    fputs("       cetta -e|--expr '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta --repl [--lang petta --profile extended] # multiline source; :cancel / :quit\n", out);
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
     fputs("       cetta --lang petta --profile extended --syntax <cstyle|pystyle|rhostyle|sexpr> <file> # read by a GSLT presentation compiled at build time\n", out);

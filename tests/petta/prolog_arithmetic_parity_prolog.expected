@@ -1,0 +1,11 @@
+(rational-division 1r2 7r22 7)
+(bigint-division 18446744073709551616r3 9223372036854775808 1r2 0.5)
+(overflow-allowed 1.0Inf 1.0Inf)
+(underflow (error (evaluation_error float_underflow)) (error (evaluation_error float_underflow)) (error (evaluation_error float_underflow)))
+rationals
+true
+true
+infinity
+true
+underflow-error
+true

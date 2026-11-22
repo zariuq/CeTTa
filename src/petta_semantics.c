@@ -125,7 +125,8 @@ typedef struct {
     SymbolId id;
     SymbolId append;
     SymbolId cons;
-    SymbolId int_add;
+    /* #+ #- #* #div #// #mod #min #max #< #> #= #\= */
+    SymbolId integer_constraint[12];
     SymbolId stream_unique;
     SymbolId stream_alpha_unique;
     SymbolId stream_union;
@@ -134,7 +135,6 @@ typedef struct {
     SymbolId length;
     SymbolId msort;
     SymbolId sort_atom;
-    SymbolId sort;
     SymbolId first_from_pair;
     SymbolId first;
     SymbolId second_from_pair;
@@ -237,7 +237,18 @@ static PeTTaForm petta_form_overflow_lookup(
     X(ids->id, PETTA_FORM_ID);                                           \
     X(ids->append, PETTA_FORM_APPEND);                                   \
     X(ids->cons, PETTA_FORM_CONS);                                       \
-    X(ids->int_add, PETTA_FORM_INT_ADD);                                 \
+    X(ids->integer_constraint[0], PETTA_FORM_INTEGER_CONSTRAINT);       \
+    X(ids->integer_constraint[1], PETTA_FORM_INTEGER_CONSTRAINT);       \
+    X(ids->integer_constraint[2], PETTA_FORM_INTEGER_CONSTRAINT);       \
+    X(ids->integer_constraint[3], PETTA_FORM_INTEGER_CONSTRAINT);       \
+    X(ids->integer_constraint[4], PETTA_FORM_INTEGER_CONSTRAINT);       \
+    X(ids->integer_constraint[5], PETTA_FORM_INTEGER_CONSTRAINT);       \
+    X(ids->integer_constraint[6], PETTA_FORM_INTEGER_CONSTRAINT);       \
+    X(ids->integer_constraint[7], PETTA_FORM_INTEGER_CONSTRAINT);       \
+    X(ids->integer_constraint[8], PETTA_FORM_INTEGER_CONSTRAINT);       \
+    X(ids->integer_constraint[9], PETTA_FORM_INTEGER_CONSTRAINT);       \
+    X(ids->integer_constraint[10], PETTA_FORM_INTEGER_CONSTRAINT);       \
+    X(ids->integer_constraint[11], PETTA_FORM_INTEGER_CONSTRAINT);       \
     X(ids->stream_unique, PETTA_FORM_STREAM_UNIQUE);                     \
     X(ids->stream_alpha_unique, PETTA_FORM_STREAM_ALPHA_UNIQUE);         \
     X(ids->stream_union, PETTA_FORM_STREAM_UNION);                       \
@@ -449,7 +460,15 @@ static const PeTTaSymbolIds *petta_symbol_ids_refresh(void) {
         ids.id = symbol_intern_cstr(g_symbols, "id");
         ids.append = symbol_intern_cstr(g_symbols, "append");
         ids.cons = symbol_intern_cstr(g_symbols, "cons");
-        ids.int_add = symbol_intern_cstr(g_symbols, "#+");
+        {
+            static const char *const integer_constraints[12] = {
+                "#+", "#-", "#*", "#div", "#//", "#mod", "#min", "#max",
+                "#<", "#>", "#=", "#\\=",
+            };
+            for (size_t k = 0u; k < 12u; k++)
+                ids.integer_constraint[k] = symbol_intern_cstr(
+                    g_symbols, integer_constraints[k]);
+        }
         ids.stream_unique = symbol_intern_cstr(g_symbols, "unique");
         ids.stream_alpha_unique =
             symbol_intern_cstr(g_symbols, "alpha-unique");
@@ -461,7 +480,6 @@ static const PeTTaSymbolIds *petta_symbol_ids_refresh(void) {
         ids.length = symbol_intern_cstr(g_symbols, "length");
         ids.msort = symbol_intern_cstr(g_symbols, "msort");
         ids.sort_atom = symbol_intern_cstr(g_symbols, "sort-atom");
-        ids.sort = symbol_intern_cstr(g_symbols, "sort");
         ids.first_from_pair =
             symbol_intern_cstr(g_symbols, "first-from-pair");
         ids.first = symbol_intern_cstr(g_symbols, "first");
@@ -1010,6 +1028,8 @@ Atom *petta_semantics_list_error(Arena *arena, SymbolId operation,
         context = petta_error_predicate_context(arena, NULL, "length", 2);
     else if (form == PETTA_FORM_MSORT)
         context = petta_error_predicate_context(arena, "system", "msort", 2);
+    else if (operation == g_builtin_syms.petta_sort)
+        context = petta_error_predicate_context(arena, "system", "sort", 2);
     else if (form == PETTA_FORM_LIST_TO_SET || form == PETTA_FORM_APPEND)
         context = petta_error_unbound_context(arena);
     else
@@ -1398,7 +1418,7 @@ Atom *petta_semantics_sort_value(Arena *arena, Atom *value, bool total,
 }
 
 bool petta_semantics_is_sort(SymbolId head) {
-    return head != SYMBOL_ID_NONE && head == petta_symbol_ids()->sort;
+    return head != SYMBOL_ID_NONE && head == g_builtin_syms.petta_sort;
 }
 
 /* A sorted sequence with each run of equal elements kept once, in the
@@ -1443,6 +1463,292 @@ Atom *petta_semantics_sort_unique_value(Arena *arena, Atom *value,
     return sorted ? petta_sorted_unique(arena, sorted) : NULL;
 }
 
+/* A Prolog compound Name(A) or Name(A, B, C): SWI's terms are compounds
+ * in a carrier, never lists. */
+static Atom *petta_sort_compound(Arena *arena, const char *name, Atom *a,
+                                 Atom *b, Atom *c) {
+    Atom *items[4] = {atom_symbol(arena, name), a, b, c};
+    CettaExprLen len = c ? 4u : b ? 3u : 2u;
+    Atom *body = atom_expr(arena, items, len);
+    return body ? atom_petta_prolog_compound(arena, body) : NULL;
+}
+
+/* error(Formal, context(system:sort/4, _)); an unbound culprit of a type
+ * error is SWI's instantiation_error. */
+static Atom *petta_sort_error(Arena *arena, Atom *formal) {
+    Atom *indicator = petta_sort_compound(
+        arena, "/", atom_symbol(arena, "sort"), atom_int(arena, 4), NULL);
+    Atom *qualified = petta_sort_compound(
+        arena, ":", atom_symbol(arena, "system"), indicator, NULL);
+    Atom *context = petta_sort_compound(
+        arena, "context", qualified, petta_error_unbound_context(arena), NULL);
+    return formal && context ? atom_error(arena, formal, context) : NULL;
+}
+
+static Atom *petta_sort_type_error(Arena *arena, const char *type,
+                                   Atom *culprit) {
+    if (culprit->kind == ATOM_VAR)
+        return petta_sort_error(arena,
+                                atom_symbol(arena, "instantiation_error"));
+    return petta_sort_error(arena, petta_sort_compound(
+        arena, "type_error", atom_symbol(arena, type), culprit, NULL));
+}
+
+/* One step of a sort key: argument `index` of a compound, or an atom,
+ * which names a dict key (PeTTa has no dicts). */
+typedef struct {
+    bool atom;
+    int64_t index;
+} PeTTaSortKeyStep;
+
+typedef enum {
+    PETTA_SORT_KEY_OK,
+    PETTA_SORT_KEY_FAILS,
+    PETTA_SORT_KEY_RAISES,
+} PeTTaSortKeyStatus;
+
+/* SWI's get_key_arg_ex: a positive integer that fits a tagged integer or
+ * an atom is a step; zero is one only at the top (the whole element); a
+ * non-positive integer is domain_error(not_less_than_one, K); a positive
+ * integer too large to tag fails; anything else is no step (-1). */
+static int petta_sort_key_step(Arena *arena, Atom *key, bool zero_ok,
+                               PeTTaSortKeyStep *step, Atom **raised) {
+    if (key->kind == ATOM_SYMBOL ||
+        (key->kind == ATOM_GROUNDED && key->ground.gkind == GV_BOOL) ||
+        (key->kind == ATOM_EXPR && key->expr.len == 0u)) {
+        step->atom = true;
+        return PETTA_SORT_KEY_OK;
+    }
+    if (key->kind != ATOM_GROUNDED ||
+        (key->ground.gkind != GV_INT && key->ground.gkind != GV_BIGINT))
+        return -1;
+    bool positive = false;
+    bool tagged = key->ground.gkind == GV_INT &&
+        key->ground.ival <= (INT64_C(1) << 56) - 1;
+    if (key->ground.gkind == GV_INT) {
+        positive = key->ground.ival > 0;
+        if (key->ground.ival == 0 && zero_ok) {
+            step->atom = false;
+            step->index = 0;
+            return PETTA_SORT_KEY_OK;
+        }
+    } else {
+        const char *text = atom_bigint_cstr(key);
+        positive = text && text[0] != '-';
+    }
+    if (positive && tagged) {
+        step->atom = false;
+        step->index = key->ground.ival;
+        return PETTA_SORT_KEY_OK;
+    }
+    if (positive)
+        return PETTA_SORT_KEY_FAILS;
+    *raised = petta_sort_error(arena, petta_sort_compound(
+        arena, "domain_error", atom_symbol(arena, "not_less_than_one"), key,
+        NULL));
+    return PETTA_SORT_KEY_RAISES;
+}
+
+/* The arguments of `term` as SWI sees it: a nonempty expression is the
+ * list cell '[|]'(Head, Rest), an open cell its head and tail, a Prolog
+ * compound its own arguments.  False for a term that is no compound. */
+static bool petta_sort_compound_arg(Arena *arena, Atom *term, int64_t index,
+                                    Atom **arg, int64_t *arity) {
+    Atom *body = NULL;
+    if (atom_petta_prolog_compound_body(term, &body)) {
+        *arity = (int64_t)body->expr.len - 1;
+        *arg = index >= 1 && index <= *arity ? body->expr.elems[index] : NULL;
+        return true;
+    }
+    if (petta_semantics_is_open_cons_value(term)) {
+        *arity = 2;
+        *arg = index == 1 ? term->expr.elems[1]
+             : index == 2 ? term->expr.elems[2] : NULL;
+        return true;
+    }
+    if (term->kind == ATOM_EXPR && term->expr.len > 0u &&
+        !petta_semantics_is_nonlist_carrier(term)) {
+        bool list = atom_is_list(term);
+        Atom *const *elems = list ? atom_list_elems(term) : term->expr.elems;
+        CettaExprLen length = list ? atom_list_len(term) : term->expr.len;
+        *arity = 2;
+        if (index == 1)
+            *arg = elems[0];
+        else if (index == 2)
+            *arg = list ? atom_list(arena, (Atom **)elems + 1, length - 1u)
+                        : atom_expr_suffix(arena, term, 1u);
+        else
+            *arg = NULL;
+        return true;
+    }
+    return false;
+}
+
+typedef struct {
+    Atom *item;
+    Atom *key;
+    size_t position;
+    bool descending;
+} PeTTaSortEntry;
+
+static int petta_sort_entry_compare(const void *left, const void *right) {
+    const PeTTaSortEntry *a = left, *b = right;
+    int ordering = 0;
+    (void)petta_semantics_term_compare(a->key, b->key, &ordering);
+    if (a->descending)
+        ordering = -ordering;
+    if (ordering != 0)
+        return ordering;
+    return (a->position > b->position) - (a->position < b->position);
+}
+
+Atom *petta_semantics_sort_keyed(Arena *arena, Atom *key, Atom *order,
+                                 Atom *list, Atom **raised) {
+    *raised = NULL;
+    if (!arena || !key || !order || !list)
+        return NULL;
+    /* The key: one step, or a list of steps. */
+    PeTTaSortKeyStep single;
+    PeTTaSortKeyStep *steps = NULL;
+    size_t step_count = 0u;
+    if (key->kind == ATOM_VAR) {
+        *raised = petta_sort_error(arena,
+                                   atom_symbol(arena, "instantiation_error"));
+        return NULL;
+    }
+    int status = petta_sort_key_step(arena, key, true, &single, raised);
+    if (status == PETTA_SORT_KEY_FAILS || status == PETTA_SORT_KEY_RAISES)
+        return NULL;
+    if (status == PETTA_SORT_KEY_OK) {
+        if (single.atom || single.index > 0) {
+            steps = &single;
+            step_count = 1u;
+        }
+    } else if (key->kind == ATOM_EXPR &&
+               !petta_semantics_is_nonlist_carrier(key) &&
+               !petta_semantics_is_open_cons_value(key)) {
+        bool keys_list = atom_is_list(key);
+        Atom *const *keys = keys_list ? atom_list_elems(key)
+                                      : key->expr.elems;
+        step_count = keys_list ? atom_list_len(key) : key->expr.len;
+        steps = arena_alloc(arena, sizeof(*steps) * step_count);
+        if (!steps)
+            return NULL;
+        for (size_t k = 0u; k < step_count; k++) {
+            int each = petta_sort_key_step(arena, keys[k], false, &steps[k],
+                                           raised);
+            if (each != PETTA_SORT_KEY_OK)
+                return NULL;
+        }
+    } else {
+        *raised = petta_sort_type_error(arena, "sort_key", key);
+        return NULL;
+    }
+    /* The order. */
+    bool atom_order = order->kind == ATOM_SYMBOL ||
+        (order->kind == ATOM_GROUNDED && order->ground.gkind == GV_BOOL) ||
+        (order->kind == ATOM_EXPR && order->expr.len == 0u);
+    if (!atom_order) {
+        *raised = petta_sort_type_error(arena, "atom", order);
+        return NULL;
+    }
+    static const struct {
+        const char *name;
+        bool descending;
+        bool remove_dups;
+    } orders[] = {
+        {"<", false, true}, {"@<", false, true},
+        {"=<", false, false}, {"@=<", false, false},
+        {">", true, true}, {"@>", true, true},
+        {">=", true, false}, {"@>=", true, false},
+    };
+    const char *order_name = order->kind == ATOM_SYMBOL
+        ? symbol_bytes(g_symbols, order->sym_id) : NULL;
+    int chosen = -1;
+    for (size_t k = 0u; order_name && k < sizeof(orders) / sizeof(orders[0]);
+         k++)
+        if (strcmp(order_name, orders[k].name) == 0)
+            chosen = (int)k;
+    if (chosen < 0) {
+        *raised = petta_sort_error(arena, petta_sort_compound(
+            arena, "domain_error", atom_symbol(arena, "order"), order, NULL));
+        return NULL;
+    }
+    /* The list: proper, or an error naming it. */
+    Atom *tail = list;
+    while (petta_semantics_is_open_cons_value(tail))
+        tail = tail->expr.elems[2];
+    if (tail->kind == ATOM_VAR) {
+        *raised = petta_sort_error(arena,
+                                   atom_symbol(arena, "instantiation_error"));
+        return NULL;
+    }
+    Atom *closed = petta_semantics_is_open_cons_value(list)
+        ? petta_semantics_closed_list(arena, list)
+        : (list->kind == ATOM_EXPR &&
+           !petta_semantics_is_nonlist_carrier(list) ? list : NULL);
+    if (!closed) {
+        *raised = petta_sort_type_error(arena, "list", list);
+        return NULL;
+    }
+    bool list_form = atom_is_list(closed);
+    Atom *const *elems = list_form ? atom_list_elems(closed)
+                                   : closed->expr.elems;
+    size_t length = list_form ? atom_list_len(closed) : closed->expr.len;
+    if (length == 0u)
+        return closed;
+    /* Every element's key, in order, before any comparison. */
+    PeTTaSortEntry *entries = arena_alloc(arena, sizeof(*entries) * length);
+    if (!entries)
+        return NULL;
+    for (size_t at = 0u; at < length; at++) {
+        Atom *term = elems[at];
+        for (size_t k = 0u; k < step_count; k++) {
+            Atom *arg = NULL;
+            int64_t arity = 0;
+            bool compound = term->kind != ATOM_VAR &&
+                petta_sort_compound_arg(arena, term, steps[k].index, &arg,
+                                        &arity);
+            if (!compound) {
+                *raised = petta_sort_type_error(arena, "compound", term);
+                return NULL;
+            }
+            if (steps[k].atom) {
+                *raised = petta_sort_type_error(arena, "dict", term);
+                return NULL;
+            }
+            if (!arg) {
+                *raised = petta_sort_error(arena, petta_sort_compound(
+                    arena, "existence_error", atom_symbol(arena, "argument"),
+                    atom_int(arena, steps[k].index), term));
+                return NULL;
+            }
+            term = arg;
+        }
+        entries[at] = (PeTTaSortEntry){
+            .item = elems[at], .key = term, .position = at,
+            .descending = orders[chosen].descending,
+        };
+    }
+    qsort(entries, length, sizeof(*entries), petta_sort_entry_compare);
+    Atom **items = arena_alloc(arena, sizeof(*items) * length);
+    if (!items)
+        return NULL;
+    size_t kept = 0u;
+    for (size_t at = 0u; at < length; at++) {
+        if (orders[chosen].remove_dups && kept > 0u) {
+            int ordering = 0;
+            if (petta_semantics_term_compare(entries[at - 1u].key,
+                                             entries[at].key, &ordering) &&
+                ordering == 0)
+                continue;
+        }
+        items[kept++] = entries[at].item;
+    }
+    return list_form ? atom_list(arena, items, kept)
+                     : atom_expr(arena, items, (CettaExprLen)kept);
+}
+
 Atom *petta_semantics_materialize_closed_logical_list(
     Arena *arena, Atom *list) {
     if (!arena || !list)
@@ -1459,23 +1765,69 @@ Atom *petta_semantics_materialize_closed_logical_list(
     return closed;
 }
 
+/* The depth to which the index's reading of a pattern looks for cells; a
+ * part below it that may still hold one is read as a wildcard. */
+enum { PETTA_MATCH_INDEX_DEPTH = 256u };
+
+/* The index's reading of PART, a part of a match pattern at DEPTH
+ * (petta_semantics_match_index_pattern).  A part that holds no cell is
+ * itself.  A closed chain of cells is the flat list it spells, read in turn,
+ * since its elements may be chains too.  A chain whose tail is not a complete
+ * list may spell lists of any length, so it is read as a fresh wildcard of
+ * its own, as is a part past the depth bound; either clears *EXACT.  The
+ * pattern's other parts select rows as they would in a flat key.  NULL only
+ * when allocation fails. */
+static Atom *petta_match_index_part(Arena *arena, Atom *part,
+                                    uint32_t depth, bool *exact) {
+    if (part->kind != ATOM_EXPR ||
+        !atom_structural_may_have_list_carrier(part))
+        return part;
+    if (depth >= PETTA_MATCH_INDEX_DEPTH)
+        goto wildcard;
+    if (petta_semantics_is_open_cons_value(part)) {
+        Atom *flat = petta_semantics_materialize_closed_logical_list(arena,
+                                                                     part);
+        if (!flat)
+            goto wildcard;
+        part = flat;
+        if (!atom_structural_may_have_list_carrier(part))
+            return part;
+    }
+    Atom **rebuilt = NULL;
+    for (CettaExprIndex index = 0u; index < part->expr.len; index++) {
+        Atom *child = part->expr.elems[index];
+        Atom *read = petta_match_index_part(arena, child, depth + 1u, exact);
+        if (!read)
+            return NULL;
+        if (!rebuilt && read != child) {
+            rebuilt = arena_alloc(arena, sizeof(*rebuilt) * part->expr.len);
+            if (!rebuilt)
+                return NULL;
+            memcpy(rebuilt, part->expr.elems, sizeof(*rebuilt) * index);
+        }
+        if (rebuilt)
+            rebuilt[index] = read;
+    }
+    return rebuilt ? atom_expr(arena, rebuilt, part->expr.len) : part;
+wildcard:
+    /* The wildcard is the index's alone: the rows it offers are unified
+     * with the original pattern, whose cells keep their bindings
+     * (MatchIndexProjection). */
+    *exact = false;
+    return atom_var_with_literal(arena, "__match_index", fresh_var_id());
+}
+
 Atom *petta_semantics_match_index_pattern(
     Arena *arena, Atom *pattern, bool *exact) {
     if (exact)
         *exact = false;
     if (!arena || !pattern)
         return NULL;
-    Atom *query = pattern;
-    if (petta_semantics_is_open_cons_value(query))
-        query = petta_semantics_materialize_closed_logical_list(arena, query);
-    if (query && !atom_structural_may_have_list_carrier(query)) {
-        if (exact)
-            *exact = true;
-        return query;
-    }
-    /* Partial tails and nested carriers retain their original bindings.
-     * Only the index sees this wildcard (MatchIndexProjection). */
-    return atom_var_with_literal(arena, "__match_index", fresh_var_id());
+    bool same = true;
+    Atom *query = petta_match_index_part(arena, pattern, 0u, &same);
+    if (exact)
+        *exact = query && same;
+    return query;
 }
 
 Atom *petta_semantics_materialize_logical_list(
@@ -1505,6 +1857,34 @@ Atom *petta_semantics_materialize_logical_list(
     return result;
 }
 
+/* A chain of cells whose end is no complete list stays a chain, but its
+ * items and its end may hold closed chains: [[a|[b]]|T] is [[a,b]|T].  The
+ * chain is walked along its cells, not recursed into, so its length does
+ * not bound the walk; each item and the end are flattened, and the cells
+ * from the first changed one back to the front are rebuilt. */
+static Atom *petta_flatten_open_chain_parts(Arena *arena, Atom *chain) {
+    PeTTaListItems cells = {0};
+    Atom *end = chain;
+    while (petta_semantics_is_open_cons_value(end)) {
+        if (!petta_list_items_append(&cells, &end, 1u)) {
+            free(cells.items);
+            return chain;
+        }
+        end = end->expr.elems[2];
+    }
+    Atom *rest = petta_semantics_flatten_closed_open_cons(arena, end);
+    for (size_t index = cells.length; rest && index > 0u; index--) {
+        Atom *cell = cells.items[index - 1u];
+        Atom *head = petta_semantics_flatten_closed_open_cons(
+            arena, cell->expr.elems[1]);
+        rest = head == cell->expr.elems[1] && rest == cell->expr.elems[2]
+            ? cell
+            : head ? atom_expr3(arena, cell->expr.elems[0], head, rest) : NULL;
+    }
+    free(cells.items);
+    return rest ? rest : chain;
+}
+
 Atom *petta_semantics_flatten_closed_open_cons(Arena *arena, Atom *atom) {
     if (!arena || !atom || atom->kind != ATOM_EXPR)
         return atom;
@@ -1517,7 +1897,7 @@ Atom *petta_semantics_flatten_closed_open_cons(Arena *arena, Atom *atom) {
             petta_semantics_materialize_closed_logical_list(
                 arena, atom);
         if (!flat)
-            return atom;
+            return petta_flatten_open_chain_parts(arena, atom);
         atom = flat;
     }
     Atom **rebuilt = NULL;
@@ -2180,6 +2560,8 @@ typedef struct {
 typedef struct {
     const Atom *pattern;
     const Atom *value;
+    /* An element of a cons spine: head data, matched literally. */
+    bool data;
 } PeTTaConsShapePair;
 
 static bool petta_cons_match_pair_push(
@@ -2203,7 +2585,7 @@ static bool petta_cons_match_pair_push(
 
 static bool petta_cons_shape_pair_push(
     PeTTaConsShapePair **pairs, size_t *length, size_t *capacity,
-    const Atom *pattern, const Atom *value) {
+    const Atom *pattern, const Atom *value, bool data) {
     if (*length == *capacity) {
         size_t next = *capacity ? *capacity * 2u : 32u;
         if (next <= *capacity ||
@@ -2219,6 +2601,7 @@ static bool petta_cons_shape_pair_push(
         (PeTTaConsShapePair){
             .pattern = pattern,
             .value = value,
+            .data = data,
         };
     return true;
 }
@@ -2235,7 +2618,7 @@ bool petta_semantics_cons_pattern_may_match(
     size_t length = 0u;
     size_t capacity = 0u;
     if (!petta_cons_shape_pair_push(
-            &pairs, &length, &capacity, pattern, value)) {
+            &pairs, &length, &capacity, pattern, value, false)) {
         return true;
     }
 
@@ -2254,13 +2637,41 @@ bool petta_semantics_cons_pattern_may_match(
             if (petta_semantics_facts_is_cons_constraint(
                     &facts, value))
                 continue;
-            if (value->kind == ATOM_EXPR &&
-                value->expr.len > 0u) {
+            if (value->kind != ATOM_EXPR || value->expr.len == 0u)
+                goto impossible;
+            if (petta_semantics_facts_is_open_cons_value(&facts, pattern))
                 continue;
+            /* An authored spine meets the expression element by element,
+             * and a spine closed by () fixes its length. */
+            const Atom *spine = pattern;
+            CettaExprIndex at = 0u;
+            while (at < value->expr.len &&
+                   petta_semantics_facts_is_cons_constraint(&facts, spine) &&
+                   !petta_semantics_facts_is_open_cons_value(&facts, spine)) {
+                if (!petta_cons_shape_pair_push(
+                        &pairs, &length, &capacity,
+                        spine->expr.elems[1], value->expr.elems[at], true)) {
+                    free(pairs);
+                    return true;
+                }
+                spine = spine->expr.elems[2];
+                at++;
             }
-            free(pairs);
-            return !petta_semantics_cons_shape_facts_current(&facts);
+            bool closed = spine->kind == ATOM_EXPR && spine->expr.len == 0u;
+            if ((closed && at != value->expr.len) ||
+                (at == value->expr.len &&
+                 petta_semantics_facts_is_cons_constraint(&facts, spine) &&
+                 !petta_semantics_facts_is_open_cons_value(&facts, spine)))
+                goto impossible;
+            continue;
         }
+
+        /* A literal element of a spine matches only itself. */
+        bool literal_pattern = pattern->kind == ATOM_SYMBOL ||
+            pattern->kind == ATOM_GROUNDED ||
+            (pattern->kind == ATOM_EXPR && pattern->expr.len == 0u);
+        if (pair.data && literal_pattern && !atom_eq((Atom *)pattern, (Atom *)value))
+            goto impossible;
 
         /*
          * Descend only through aligned expression positions.  A shape or
@@ -2279,7 +2690,7 @@ bool petta_semantics_cons_pattern_may_match(
                 if (!petta_cons_shape_pair_push(
                         &pairs, &length, &capacity,
                         pattern->expr.elems[child],
-                        value->expr.elems[child])) {
+                        value->expr.elems[child], false)) {
                 free(pairs);
                 return true;
             }
@@ -2288,6 +2699,10 @@ bool petta_semantics_cons_pattern_may_match(
 
     free(pairs);
     return true;
+
+impossible:
+    free(pairs);
+    return !petta_semantics_cons_shape_facts_current(&facts);
 }
 
 /* Field zero can itself be an alias. Observe its root while retaining the
@@ -2362,9 +2777,9 @@ static bool petta_cons_cells_end_in_expression(Atom *cells) {
 }
 
 static bool petta_semantics_match_cons_constraint_mode(
-    Arena *arena, Atom *constraint, Atom *value,
-    BindingsBuilder *builder, bool authored_cons, CettaFrameIdentity source_epoch) {
-    if (!arena || !constraint || !value || !builder)
+    Arena *arena, BindingValue constraint, BindingValue value,
+    BindingsBuilder *builder, bool authored_cons) {
+    if (!arena || !constraint.skeleton || !value.skeleton || !builder)
         return false;
     uint32_t entry_mark = bindings_builder_save(builder);
     PeTTaConsMatchPair *pairs = NULL;
@@ -2372,11 +2787,7 @@ static bool petta_semantics_match_cons_constraint_mode(
     size_t capacity = 0u;
     CettaTermGraphAssumptions assumed = {0};
     if (!petta_cons_match_pair_push(
-            &pairs, &length, &capacity,
-            !cetta_frame_identity_is_none(source_epoch)
-            ? binding_value_from_context(constraint, source_epoch)
-                         : binding_value_from_atom(constraint),
-            binding_value_from_atom(value), authored_cons)) {
+            &pairs, &length, &capacity, constraint, value, authored_cons)) {
         return false;
     }
 
@@ -2393,6 +2804,26 @@ static bool petta_semantics_match_cons_constraint_mode(
         /* What a pattern variable is bound to is data, as values are. */
         bool left_authored = pair.left_authored && pair.left.skeleton &&
                              pair.left.skeleton->kind != ATOM_VAR;
+        /*
+         * A sibling's cell does not turn closed data into a list pattern.
+         * These constructor facts exclude even nested cells, list rests and
+         * rational graphs; with no variables, there is no live image to
+         * inspect. Reuse the ordinary matcher on the whole subtree (it can
+         * decide shared ground data without walking to every leaf).
+         */
+        if (!left_authored && left->kind == ATOM_EXPR &&
+            right->kind == ATOM_EXPR &&
+            !atom_has_vars(left) && !atom_has_vars(right) &&
+            !atom_structural_may_have_list_carrier(left) &&
+            !atom_structural_may_have_list_carrier(right) &&
+            !atom_structural_may_have_open_list(left) &&
+            !atom_structural_may_have_open_list(right) &&
+            !atom_structural_has_rational(left) &&
+            !atom_structural_has_rational(right)) {
+            if (!match_binding_values_builder(left_value, right_value, builder, arena))
+                goto fail;
+            continue;
+        }
         bool left_cons = false;
         bool right_cons = false;
         if (!petta_semantics_match_value_cons(
@@ -2577,20 +3008,31 @@ bool petta_semantics_match_cons_constraint(
     Arena *arena, Atom *constraint, Atom *value,
     BindingsBuilder *builder) {
     return petta_semantics_match_cons_constraint_mode(
-        arena, constraint, value, builder, true, CETTA_FRAME_IDENTITY_NONE);
+        arena, binding_value_from_atom(constraint), binding_value_from_atom(value),
+        builder, true);
+}
+
+bool petta_semantics_match_list_values(
+    Arena *arena, BindingValue left, BindingValue right,
+    BindingsBuilder *builder) {
+    return petta_semantics_match_cons_constraint_mode(
+        arena, left, right, builder, false);
 }
 
 bool petta_semantics_match_lowered_head(
     Arena *arena, Atom *head, Atom *value, BindingsBuilder *builder) {
-    return petta_semantics_match_cons_constraint_mode(
-        arena, head, value, builder, false, CETTA_FRAME_IDENTITY_NONE);
+    return petta_semantics_match_list_values(
+        arena, binding_value_from_atom(head), binding_value_from_atom(value), builder);
 }
 
 bool petta_semantics_match_lowered_head_epoch(
     Arena *arena, Atom *head, Atom *value,
     BindingsBuilder *builder, CettaFrameIdentity epoch) {
-    return petta_semantics_match_cons_constraint_mode(
-        arena, head, value, builder, false, epoch);
+    BindingValue source = cetta_frame_identity_is_none(epoch)
+        ? binding_value_from_atom(head)
+        : binding_value_from_context(head, epoch);
+    return petta_semantics_match_list_values(
+        arena, source, binding_value_from_atom(value), builder);
 }
 
 typedef struct {
@@ -2832,7 +3274,8 @@ bool petta_semantics_boolean_relation_arity(
         result = 1u;
     } else if (head == g_builtin_syms.op_and ||
                head == g_builtin_syms.op_or ||
-               head == g_builtin_syms.op_xor) {
+               head == g_builtin_syms.op_xor ||
+               head == g_builtin_syms.petta_implies) {
         result = 2u;
     } else {
         return false;
@@ -2871,7 +3314,7 @@ bool petta_semantics_intrinsic_partial_arity(
         head == g_builtin_syms.op_eq ||
         head == g_builtin_syms.alpha_eq ||
         head == g_builtin_syms.equals ||
-        head == ids->int_add;
+        petta_semantics_form(head) == PETTA_FORM_INTEGER_CONSTRAINT;
     if (binary) {
         if (arity)
             *arity = 2u;
@@ -3088,21 +3531,47 @@ enum {
         sizeof(petta_registered_builtins[0]),
 };
 
-typedef struct {
-    SymbolId id;
-    uint16_t arities;
-} PeTTaRegisteredBuiltin;
+enum { PETTA_REGISTERED_BUILTIN_HASH_CAP = 1024u };
+
+static uint16_t g_petta_registered_name_slots[PETTA_REGISTERED_BUILTIN_HASH_CAP];
+static pthread_once_t g_petta_registered_name_once = PTHREAD_ONCE_INIT;
+
+static inline uint32_t petta_registered_name_hash_span(const char *s, size_t len) {
+    uint32_t h = 2166136261u;
+    for (size_t i = 0u; i < len; i++) {
+        h ^= (uint32_t)(unsigned char)s[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+static void petta_registered_name_table_init(void) {
+    uint32_t mask = PETTA_REGISTERED_BUILTIN_HASH_CAP - 1u;
+    for (size_t i = 0u; i < PETTA_REGISTERED_BUILTIN_COUNT; i++) {
+        const char *name = petta_registered_builtins[i].name;
+        uint32_t slot = petta_registered_name_hash_span(name, strlen(name)) & mask;
+        while (g_petta_registered_name_slots[slot] != 0u) {
+            uint16_t existing = (uint16_t)(g_petta_registered_name_slots[slot] - 1u);
+            if (strcmp(petta_registered_builtins[existing].name, name) == 0) {
+                g_petta_registered_name_slots[slot] = (uint16_t)(i + 1u);
+                goto next_builtin;
+            }
+            slot = (slot + 1u) & mask;
+        }
+        g_petta_registered_name_slots[slot] = (uint16_t)(i + 1u);
+next_builtin:;
+    }
+}
 
 typedef struct {
     const SymbolTable *table;
     uint64_t table_instance_id;
-    size_t len;
-    PeTTaRegisteredBuiltin entries[PETTA_REGISTERED_BUILTIN_COUNT];
-    /* The same by symbol id, below `by_id_len` (one past the largest
-     * builtin's id): a builtin's arities plus one, 0 for any other symbol.
-     * Every dispatch asks, so it is answered by one load. */
+    /* Per-SymbolId lazy cache: 0 = uncached, 1 = not a registered builtin,
+     * arities + 2 = registered builtin. Every repeated dispatch hits in one load
+     * without interning unused builtin names into g_symbols. */
     uint32_t *by_id;
-    SymbolId by_id_len;
+    SymbolId by_id_cap;
+    bool registered_cleanup;
 } PeTTaRegisteredBuiltins;
 
 static _Thread_local PeTTaRegisteredBuiltins g_petta_registered_builtins;
@@ -3129,79 +3598,82 @@ static bool petta_registered_builtins_register(void) {
                              &g_petta_registered_builtins) == 0;
 }
 
-static int petta_registered_builtin_compare(const void *left,
-                                            const void *right) {
-    SymbolId a = ((const PeTTaRegisteredBuiltin *)left)->id;
-    SymbolId b = ((const PeTTaRegisteredBuiltin *)right)->id;
-    return (a > b) - (a < b);
+static bool petta_registered_name_lookup(const char *name, size_t len,
+                                         uint16_t *arities) {
+    pthread_once(&g_petta_registered_name_once, petta_registered_name_table_init);
+    uint32_t mask = PETTA_REGISTERED_BUILTIN_HASH_CAP - 1u;
+    uint32_t slot = petta_registered_name_hash_span(name, len) & mask;
+    for (;;) {
+        uint16_t entry = g_petta_registered_name_slots[slot];
+        if (entry == 0u)
+            return false;
+        const char *candidate = petta_registered_builtins[entry - 1u].name;
+        if (strlen(candidate) == len && memcmp(candidate, name, len) == 0) {
+            if (arities)
+                *arities = petta_registered_builtins[entry - 1u].arities;
+            return true;
+        }
+        slot = (slot + 1u) & mask;
+    }
 }
 
 bool petta_semantics_registered_builtin_arities(SymbolId symbol,
                                                 uint16_t *arities) {
+    if (!g_symbols || symbol == SYMBOL_ID_NONE)
+        return false;
     PeTTaRegisteredBuiltins *set = &g_petta_registered_builtins;
     uint64_t table_instance_id = symbol_table_instance_id(g_symbols);
-    if (set->table != g_symbols ||
-        set->table_instance_id != table_instance_id) {
-        if (!g_symbols || symbol == SYMBOL_ID_NONE)
-            return false;
-        set->table = NULL;
-        set->table_instance_id = 0u;
-        set->len = 0u;
-        free(set->by_id);
-        set->by_id = NULL;
-        set->by_id_len = 0u;
-        size_t len = 0u;
-        for (size_t index = 0u; index < PETTA_REGISTERED_BUILTIN_COUNT;
-             index++) {
-            SymbolId id = symbol_intern_cstr(
-                g_symbols, petta_registered_builtins[index].name);
-            if (id == SYMBOL_ID_NONE)
-                return false;
-            set->entries[len++] = (PeTTaRegisteredBuiltin){
-                    .id = id,
-                    .arities = petta_registered_builtins[index].arities,
-                };
-        }
-        qsort(set->entries, len, sizeof(set->entries[0]),
-              petta_registered_builtin_compare);
-        set->len = len;
-        SymbolId bound = len ? set->entries[len - 1u].id + 1u : 0u;
-        if (bound && bound <= (SymbolId)(1u << 20)) {
-            set->by_id = calloc((size_t)bound, sizeof(*set->by_id));
-            if (set->by_id && !petta_registered_builtins_register()) {
-                free(set->by_id);
-                set->by_id = NULL;
-            }
-            if (set->by_id) {
-                for (size_t index = 0u; index < len; index++)
-                    set->by_id[set->entries[index].id] =
-                        (uint32_t)set->entries[index].arities + 1u;
-                set->by_id_len = bound;
-            }
-        }
+    if (__builtin_expect(set->table != g_symbols ||
+                         set->table_instance_id != table_instance_id, 0)) {
+        if (set->by_id && set->by_id_cap != 0u)
+            memset(set->by_id, 0, (size_t)set->by_id_cap * sizeof(*set->by_id));
         set->table = g_symbols;
         set->table_instance_id = table_instance_id;
     }
-    if (set->by_id) {
-        uint32_t known = symbol < set->by_id_len ? set->by_id[symbol] : 0u;
-        if (known && arities)
-            *arities = (uint16_t)(known - 1u);
-        return known != 0u;
+    if (symbol < set->by_id_cap) {
+        uint32_t cached = set->by_id[symbol];
+        if (cached != 0u) {
+            if (cached == 1u)
+                return false;
+            if (arities)
+                *arities = (uint16_t)(cached - 2u);
+            return true;
+        }
     }
-    size_t low = 0u;
-    size_t high = set->len;
-    while (low < high) {
-        size_t middle = low + (high - low) / 2u;
-        if (set->entries[middle].id < symbol)
-            low = middle + 1u;
-        else
-            high = middle;
-    }
-    if (low >= set->len || set->entries[low].id != symbol)
+    const char *name = symbol_bytes(g_symbols, symbol);
+    if (!name)
         return false;
-    if (arities)
-        *arities = set->entries[low].arities;
-    return true;
+    uint16_t found_arities = 0u;
+    bool found = petta_registered_name_lookup(
+        name, (size_t)symbol_len(g_symbols, symbol), &found_arities);
+    if (symbol < (SymbolId)(1u << 20)) {
+        if (symbol >= set->by_id_cap) {
+            SymbolId next_cap = set->by_id_cap ? set->by_id_cap : 256u;
+            while (next_cap <= symbol)
+                next_cap *= 2u;
+            uint32_t *grown = realloc(set->by_id, (size_t)next_cap * sizeof(*grown));
+            if (grown) {
+                memset(grown + set->by_id_cap, 0,
+                       (size_t)(next_cap - set->by_id_cap) * sizeof(*grown));
+                set->by_id = grown;
+                set->by_id_cap = next_cap;
+                if (!set->registered_cleanup) {
+                    if (petta_registered_builtins_register()) {
+                        set->registered_cleanup = true;
+                    } else {
+                        free(set->by_id);
+                        set->by_id = NULL;
+                        set->by_id_cap = 0u;
+                    }
+                }
+            }
+        }
+        if (symbol < set->by_id_cap)
+            set->by_id[symbol] = found ? ((uint32_t)found_arities + 2u) : 1u;
+    }
+    if (found && arities)
+        *arities = found_arities;
+    return found;
 }
 
 /* A registered name's answer about `supplied` arguments, read from the bits
@@ -3997,7 +4469,7 @@ Atom *petta_semantics_lower(
     case PETTA_FORM_IS_EXPR:
     case PETTA_FORM_IS_SPACE:
     case PETTA_FORM_IS_MEMBER:
-    case PETTA_FORM_INT_ADD:
+    case PETTA_FORM_INTEGER_CONSTRAINT:
     case PETTA_FORM_IS_ALPHA_MEMBER:
     case PETTA_FORM_ALPHA_UNIQUE:
     case PETTA_FORM_LIST_TO_SET:
@@ -4820,15 +5292,35 @@ static Atom *sort_terms(Arena *arena, Atom *list, bool structural) {
     }
 
     size_t length = (size_t)list->expr.len;
+    /* The sequence's facts are its elements': when they show no internal
+     * tag, every element is read as written, known once for every
+     * comparison. */
+    bool written = petta_order_holds_no_tag(list);
+    if (length > 1u) {
+        bool already_sorted = true;
+        for (size_t i = 1u; i < length; i++) {
+            int ordering = 0;
+            if (!petta_term_compare_in(
+                    list->expr.elems[i - 1u], list->expr.elems[i],
+                    &ordering, written, structural)) {
+                return NULL;
+            }
+            if (ordering > 0) {
+                already_sorted = false;
+                break;
+            }
+        }
+        if (already_sorted)
+            return atom_expr(arena, list->expr.elems, list->expr.len);
+    } else {
+        return atom_expr(arena, list->expr.elems, list->expr.len);
+    }
+
     Atom **items = arena_alloc(arena, sizeof(*items) * length);
     Atom **scratch = arena_alloc(arena, sizeof(*scratch) * length);
     if (!items || !scratch)
         return NULL;
     memcpy(items, list->expr.elems, sizeof(*items) * length);
-    /* The sequence's facts are its elements': when they show no internal
-     * tag, every element is read as written, known once for every
-     * comparison. */
-    bool written = petta_order_holds_no_tag(list);
 
     Atom **source = items;
     Atom **target = scratch;
@@ -4840,6 +5332,25 @@ static Atom *sort_terms(Arena *arena, Atom *list, bool structural) {
             size_t remaining = length - middle;
             size_t right_width = remaining < width ? remaining : width;
             size_t end = middle + right_width;
+            if (middle < end) {
+                int boundary = 0;
+                if (!petta_term_compare_in(
+                        source[middle - 1u], source[middle],
+                        &boundary, written, structural)) {
+                    return NULL;
+                }
+                if (boundary <= 0) {
+                    memcpy(target + start, source + start,
+                           sizeof(*source) * (end - start));
+                    start = end;
+                    continue;
+                }
+            } else {
+                memcpy(target + start, source + start,
+                       sizeof(*source) * (end - start));
+                start = end;
+                continue;
+            }
             size_t left_index = start;
             size_t right_index = middle;
             size_t output = start;

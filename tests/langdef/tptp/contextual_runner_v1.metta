@@ -178,7 +178,18 @@
 !(assertEqual
    &malformed-provider-result
    (LangDef:ContextualFault ContextualRelationProviderMalformed
-     "contextual runner accepts only PApp/FVar Pattern wires"))
+     "contextual relation rows are well-scoped Patterns: a bound variable lies outside every binder"))
+
+!(bind! &scoped-provider-result
+   (langdef:rewrite-pattern-at
+     &resolved 2 200000
+     (LangDef:RelationRows
+       (LangDef:RelationRow "PatternEqualityDecision" 1003
+         (PLam BNone (Var 0))))
+     &lookup-source))
+!(assertEqual
+   &scoped-provider-result
+   (LangDef:ContextualResults LangDef:ContextComplete))
 
 !(bind! &normalization
    (langdef:load-language "langdef/tptp/fof_normalization_v1.metta"))
@@ -245,4 +256,4 @@
 !(assertEqual (langdef:close-language &normalization) True)
 !(assertEqual (langdef:close-language &resolved) True)
 !(assertEqual (langdef:close-language &official-to-named) True)
-!(println! (LanguageDefContextualRuntimeV1Summary 15 15 0))
+!(println! (LanguageDefContextualRuntimeV1Summary 16 16 0))

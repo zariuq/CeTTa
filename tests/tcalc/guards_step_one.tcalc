@@ -1,0 +1,10 @@
+; Guards under step one, where two firings whose selections fit together at a
+; state of fixed terms commute (Independent.lean): a guard, decided on the
+; match's own values, keeps a rule positive.  Jobs up to the limit run, in
+; either order to one state; job 3 is over the limit and stays.
+(step one)
+(job 1)
+(job 2)
+(job 3)
+(limit 2)
+(rule run (take (job $j)) (read (limit $n)) (check (<= $j $n) (/= $j 0)) (make (done $j)))

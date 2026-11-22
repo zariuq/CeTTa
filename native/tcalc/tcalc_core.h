@@ -59,7 +59,20 @@ typedef enum {
     TC_CHECK_CENSUS, /* the rows that match left are the same rows at every
                         solution (Core.lean: a census pattern and the rows
                         it claims to see)                                  */
+    /* The guards: a predicate on the values the rule's patterns bind, which
+     * reads no row.  Each holds at every solution or the match is not
+     * admitted. */
+    TC_CHECK_DIFFERENT,  /* left /= right: no solution makes them one term (on
+                            ground terms, term disequality)               */
+    TC_CHECK_LESS,       /* left < right, as integers                      */
+    TC_CHECK_LESS_EQUAL, /* left <= right, as integers                     */
 } TcCheckKind;
+/* An operand of < or <= is an integer: a term whose value is an integer
+ * term, or a sum written (+ A B) in the rule, of two such terms (A and B no
+ * sums), computed exactly.  A value that is not an integer (an unknown, a
+ * symbol, any other term) makes the guard fail: some solution, or every one,
+ * gives it no integer value.  Only the rule's own writing makes a sum; a
+ * value (+ 1 2) a pattern binds is a term, and no integer. */
 
 typedef struct {
     TcCheckKind kind;
@@ -82,10 +95,18 @@ typedef struct TcProgram TcProgram;
 TcProgram *tc_program_new(TcTerms *terms);
 void tc_program_free(TcProgram *program);
 /* Copies the rule.  A rule is refused (false) when a term mentions a local
- * outside 0 .. locals-1 or an unknown.  A program is a set of rules up to the
- * names of their locals: a rule equal to an earlier one up to renaming is that
- * rule again, and adds no matches of its own. */
+ * outside 0 .. locals-1 or an unknown, or when tc_rule_refusal gives a reason.
+ * A program is a set of rules up to the names of their locals: a rule equal to
+ * an earlier one up to renaming is that rule again, and adds no matches of its
+ * own. */
 bool tc_program_add_rule(TcProgram *program, const TcRule *rule);
+/* Why a well-formed rule is refused, or NULL: a guard reads only values the
+ * rule's take and read patterns bind, so a guard operand mentioning a local
+ * that no pattern mentions refuses the rule (*check, *local: that guard and
+ * local); and a sum (+ A B) is no summand of a sum (*check that guard, *local
+ * UINT32_MAX). */
+const char *tc_rule_refusal(const TcTerms *terms, const TcRule *rule, uint32_t *check,
+                            uint32_t *local);
 /* A row of the initial state.  It may mention unknowns, never locals. */
 bool tc_program_add_row(TcProgram *program, TcTerm row);
 uint32_t tc_program_rules(const TcProgram *program);
@@ -93,6 +114,58 @@ uint32_t tc_program_rules(const TcProgram *program);
 const TcTerm *tc_program_rows(const TcProgram *program, size_t *n);
 const char *tc_program_rule_name(const TcProgram *program, uint32_t rule);
 TcTerms *tc_program_terms(TcProgram *program);
+
+/* ---- Join plans ------------------------------------------------------------
+ * How each rule is run, decided once for the program (tcalc_plan.c): for each
+ * rule a plan entering by each of its patterns (the run by delta's
+ * semi-naive split) and one of no entry, and the indexes the plans' probes
+ * read.  Plain words, in terms of the program's terms and its rules'
+ * positions (patterns: the takes, then the reads), for any backend to read:
+ *
+ *   [0] the rules planned R   [1] the offset of the indexes
+ *   [2 .. 2+R) each rule's offset, 0 for a rule equal to an earlier one up
+ *              to renaming (planned there)
+ *   rule:    its plans E (its patterns + 1), E plan offsets (plan e < E - 1
+ *            enters by pattern e; plan E - 1 has no entry), then a probe
+ *            offset per check (0: an equation or a guard)
+ *   plan:    its ops n, then n ops of four words: the op, then its operands
+ *   probe:   the term probed; its relation (head symbol, length; head
+ *            TC_PLAN_OPEN: no fixed relation, read off the term when it is
+ *            met); its index (TC_PLAN_NONE: the relation's rows); its level
+ *            L; then TC_PLAN_KEYS words, the first L the terms the index's
+ *            first L paths are keyed by
+ *   indexes: their number I, I offsets, then each index: its relation (head,
+ *            length), its paths m, the offset of its domain (0: none), its
+ *            levels (bit l - 1 for each l whose first l keys a probe reads
+ *            it by; bit m - 1 always), the m paths in order (a path: argument | (item + 1) << 10 | (item of
+ *            the item + 1) << 20); a domain: its keys d, then d keys, sorted:
+ *            the index keeps only the rows holding one of them at its first
+ *            path, the only keys its probes read it by there
+ *
+ * The ops, and their operands:
+ *   PROBE p r    the rows pattern p can meet, by probe r: its relation's rows
+ *                whose terms at the index's first L paths are the probe's
+ *                keys, walked when it runs
+ *   UNIFY p      pattern p equal to the row met (after each PROBE of p)
+ *   CHECK c      check c (an equation or a guard), its locals that patterns
+ *                bind bound here
+ *   ABSENT c r   check c (an absence, a count or a census), placed as a
+ *                check, its rows read by probe r
+ *   TELL e       the rule's equation e
+ *   TAKE p       the row pattern p met leaves
+ *   MAKE m       made row m arrives
+ * A check placed at a step is decided there when the rule tells nothing and
+ * the store holds fixed terms (the values it reads are then fixed); else
+ * after the matching, where the protocol tc_fire asks the checks. */
+enum { TC_PLAN_PROBE, TC_PLAN_UNIFY, TC_PLAN_CHECK, TC_PLAN_ABSENT, TC_PLAN_TELL, TC_PLAN_TAKE, TC_PLAN_MAKE };
+#define TC_PLAN_KEYS 8u            /* the most paths an index orders */
+#define TC_PLAN_OPEN UINT32_MAX    /* a probe of no fixed relation */
+#define TC_PLAN_NONE UINT32_MAX    /* a probe of no index: its relation's rows */
+
+/* The program's plans, chosen when the program is first explored or asked
+ * for here, and again when rules were added since: *words words owned by the
+ * program, valid until it changes.  No words when memory ran out. */
+const uint32_t *tc_program_plans(TcProgram *program, size_t *words);
 
 /* ---- The interpretation of a run ------------------------------------------
  * tcalc is a moving target: a family of transform steps that differ in a few
@@ -117,8 +190,8 @@ TcTerms *tc_program_terms(TcProgram *program);
 
 /* ---- Another decider of firings (backend x86-flat) -------------------------
  * A flat firing is packed as flat_fire takes it: the selected rows, four words
- * each (term ids, unused words 0), as premise offsets into the state's packed
- * rows; the rule's constants, which follow the premises as one more row;
+ * each (term ids, unused words 0), each premise the offset of its row among
+ * them; the rule's constants, which follow the premises as one more row;
  * guards, each two (row, column) selections packed into bytes as
  * row | column << 8 | row' << 16 | column' << 24, which must be equal words;
  * and make entries, each a selection row | column << 8 whose word is copied
@@ -139,11 +212,16 @@ typedef uint64_t (*TcFlatDecider)(const uint32_t *source, size_t source_words,
 bool tc_program_flat(const TcProgram *program, char *why, size_t why_size);
 
 /* Not part of the interpretation: the output is the same either way.  The
- * exploration's shortcuts are a successor merged rather than sorted at a state
- * of fixed terms, and the second order of an independent pair of firings
- * looked up rather than fired (tcalc_core.c, section 5).  Computing every
- * successor in full is the reference; computing both checks the shortcuts
- * against it (tc_outcomes_shortcuts_disagreed). */
+ * exploration's shortcuts are the second order of an independent pair of
+ * firings looked up rather than fired (tcalc_core.c, section 5), and under
+ * step every over a set store, for a program that only reads and makes run in
+ * one store, a step that meets only the matches reading a row the step before
+ * added (tcalc_delta.c).  Firing every match, and meeting every match, is the
+ * reference.  Checked computes both and compares them
+ * (tc_outcomes_shortcuts_disagreed), and computes every successor also in
+ * full: every row listed, resolved and put in canonical form, compared with
+ * the successor the shared store reaches by changing only the rows that left
+ * and arrived. */
 typedef enum {
     TC_SHORTCUTS_TAKEN,
     TC_SHORTCUTS_NONE,
@@ -220,6 +298,24 @@ const TcTerm *tc_ambiguous_rows(const TcOutcomes *outcomes, size_t i, size_t *ro
 bool tc_outcomes_finished(const TcOutcomes *outcomes);
 uint64_t tc_outcomes_states(const TcOutcomes *outcomes);
 uint64_t tc_outcomes_work(const TcOutcomes *outcomes);
+/* The work an exploration did, counted, for gates of its growth (not part of
+ * the interpretation or the output; they read counts, not time): the
+ * unifications asked, the rows a pattern was unified with while matching,
+ * the matches decided, the rows held at the end (the entries of the maps of
+ * rows the states share, or of the one store of a run by delta,
+ * tcalc_delta.c, and the rows with unknowns each state keeps), the rule
+ * patterns a matching started from, and the work of deciding whether two
+ * states are one (map nodes compared, and rows with unknowns hashed and
+ * compared). */
+uint64_t tc_outcomes_unifications(const TcOutcomes *outcomes);
+uint64_t tc_outcomes_rows_met(const TcOutcomes *outcomes);
+uint64_t tc_outcomes_matches(const TcOutcomes *outcomes);
+uint64_t tc_outcomes_rows_stored(const TcOutcomes *outcomes);
+uint64_t tc_outcomes_patterns_tried(const TcOutcomes *outcomes);
+uint64_t tc_outcomes_identity_work(const TcOutcomes *outcomes);
+/* The indexes the run kept: the indexes of the rules' plans that some probe
+ * read (each kept as rows arrive), for gates of their sharing. */
+uint64_t tc_outcomes_indexes(const TcOutcomes *outcomes);
 /* False when memory ran out; the outcomes are then incomplete as well. */
 bool tc_outcomes_complete_memory(const TcOutcomes *outcomes);
 /* True when the steps found among the states reached contain a cycle: some run

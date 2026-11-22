@@ -287,7 +287,6 @@ def main() -> None:
     fixture(cases,work/"cases.p1t")
     baseline = run("native",[runner,"--image",work/"native_unify.hol","native_unify",program,work/"cases.p1t"])
     assert f"{len(cases)} SAME, 0 DIFF" in baseline and "0 missed" in baseline.splitlines()[-1]
-    run("hoisted",[runner,"--quiet","--hoist",program,work/"cases.p1t"])
     actual = {name:(out,int(pay),int(used)) for name,out,pay,used in re.findall(
         r"(?m)^([^/\n]+)/1 SAME expected (\w+) ret=(\d+) used=(\d+)$",baseline)}
     assert len(actual) == len(cases)

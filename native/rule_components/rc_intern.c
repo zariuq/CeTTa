@@ -19,6 +19,9 @@ static int non_collect;
 
 static _Noreturn void oom(void) { rc_refinement_fail("the interning store is out of memory"); }
 
+/* the slot table (random lookups: a large one on large pages, rc_alloc_table) */
+static Slot *slots_new(size_t n) { return rc_alloc_table(n * sizeof(Slot)); }
+
 static inline uint32_t mix(uint64_t h) {
     h ^= h >> 33; h *= 0xff51afd7ed558ccdull; h ^= h >> 33; h *= 0xc4ceb9fe1a85ec53ull; h ^= h >> 33;
     return (uint32_t)h;
@@ -36,7 +39,7 @@ static uint32_t hash_bytes(const uint8_t *b, size_t n) {
 
 static void grow(void) {
     size_t ncap = cap ? 2 * cap : 4096;
-    Slot *ns = calloc(ncap, sizeof *ns);
+    Slot *ns = slots_new(ncap);
     if (!ns) oom();
     for (size_t i = 0; i < cap; i++) {
         RcINode *x = slot[i].node;
@@ -63,14 +66,28 @@ static inline bool same_kids(T *const *a, T *const *b, uint32_t n) {
     for (uint32_t i = 0; i < n; i++) if (a[i] != b[i]) return false;
     return true;
 }
+/* A direct-mapped front cache of the nodes of at most three children looked up or made last: an
+ * entry holds a node's constructor and children beside the node, so a repeated construction is found
+ * without probing the table or reading the node.  Cleared whenever nodes may be freed. */
+#ifndef RC_INTERN_FRONT_BITS
+#define RC_INTERN_FRONT_BITS 12
+#endif
+typedef struct { uint16_t c; uint16_t n; uint32_t h; T *k[3]; RcINode *x; } FrontEntry;
+static FrontEntry front[(size_t)1 << RC_INTERN_FRONT_BITS];
+static void front_clear(void) { memset(front, 0, sizeof front); }
 T *rc_intern_node(uint16_t c, uint32_t n, T *const *kids) {
     if (!active) rc_intern_begin();
     uint32_t h = hash_node(c, n, kids);
+    FrontEntry *f = &front[h >> (32 - RC_INTERN_FRONT_BITS)];
+    if (n <= 3 && f->x && f->h == h && f->c == c && f->n == n && same_kids(f->k, kids, n)) return RC_IVAL(f->x);
     if (2 * (count + 1) > cap) grow();
     size_t j = h & (cap - 1);
     for (; slot[j].node; j = (j + 1) & (cap - 1)) {
         RcINode *x = slot[j].node;
-        if (slot[j].hash == h && x->ctor == c && x->n == n && same_kids(x->kid, kids, n)) return RC_IVAL(x);
+        if (slot[j].hash == h && x->ctor == c && x->n == n && same_kids(x->kid, kids, n)) {
+            if (n <= 3) { f->c = c; f->n = (uint16_t)n; f->h = h; for (uint32_t i = 0; i < n; i++) f->k[i] = kids[i]; f->x = x; }
+            return RC_IVAL(x);
+        }
     }
     uint8_t ns = rc_ctor_slots[c];
     RcINode *x = new_node((n + ns) * sizeof(T *));
@@ -79,6 +96,7 @@ T *rc_intern_node(uint16_t c, uint32_t n, T *const *kids) {
     for (uint32_t i = 0; i < ns; i++) x->kid[n + i] = NULL;
     slot[j].hash = h; slot[j].node = x;
     count++;
+    if (n <= 3) { f->c = c; f->n = (uint16_t)n; f->h = h; for (uint32_t i = 0; i < n; i++) f->k[i] = kids[i]; f->x = x; }
     return RC_IVAL(x);
 }
 
@@ -153,6 +171,7 @@ static void mark_held(T *v) { mark_value(v, NULL); }
  * (or with an empty heap) */
 void rc_intern_collect(int nroots) {
     if (!active) return;
+    front_clear();
     for (int i = 0; i < non_collect; i++) on_collect[i]();
     rc_walk_live(nroots, mark_value, NULL);
     for (size_t c = 0; c < nnullary; c++) if (nullary[c]) mark_value(nullary[c], NULL);
@@ -161,7 +180,7 @@ void rc_intern_collect(int nroots) {
     for (size_t i = 0; i < cap; i++) if (slot[i].node && slot[i].node->mark) live++;
     size_t ncap = 4096;
     while (ncap < 2 * (live + 1)) ncap *= 2;
-    Slot *ns = calloc(ncap, sizeof *ns);
+    Slot *ns = slots_new(ncap);
     if (!ns) oom();
     for (size_t i = 0; i < cap; i++) {
         RcINode *x = slot[i].node;
@@ -199,6 +218,7 @@ void rc_intern_fresh(bool f) { fresh = f; }
 bool rc_intern_active(void) { return active; }
 void rc_intern_free(void) {
     if (!active) return;
+    front_clear();
     for (int i = 0; i < non_collect; i++) on_collect[i]();
     for (size_t i = 0; i < cap; i++) free(slot[i].node);
     free(slot);

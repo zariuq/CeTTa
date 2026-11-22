@@ -6,6 +6,7 @@
 #include "eval.h"
 #include "prepared_pure_machine.h"
 #include "lang.h"
+#include "shared_transition.h"
 #include <errno.h>
 #include <float.h>
 #include <inttypes.h>
@@ -509,7 +510,14 @@ static Atom *zip_map(Space *space, Arena *destination, Atom **args) {
         cetta_prepared_pure_program_clear_closed_entry_call(program);
         arena_reset(&scratch, mark);
     }
-    if (!cetta_prepared_pure_program_is_current(program)) goto cleanup;
+    bool program_current = false;
+    {
+        /* Publication reads the program's dependencies as one observation
+         * of the shared space. */
+        CETTA_SCOPED_SPACE_OBSERVE(tensor_callback_authority, space);
+        program_current = cetta_prepared_pure_program_is_current(program);
+    }
+    if (!program_current) goto cleanup;
     /* The authored constructor returns COO. Preserve that explicit layout
      * observation too, including dense-only transport refusal. */
     CettaTensorStatus status = cetta_tensor_coo(CETTA_TENSOR_F64, cetta_tensor_shape(tensors[0]),

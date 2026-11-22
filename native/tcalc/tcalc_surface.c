@@ -169,10 +169,10 @@ static void skip_space(Reader *r) {
 
 /* Longest first where one spelling begins another. */
 static const char *const rho_punctuation[] = {
-    "<<-", "<-", "<=", "==", "!=", "!!", "!?", "?!", "!", "(", ")", "{", "}", "[", "]",
+    "<<-", "<-", "<=", "<", "==", "!=", "!!", "!?", "?!", "!", "(", ")", "{", "}", "[", "]",
     ",", "|", "&", ";", "@", "=", "*", NULL};
 static const char *const chr_punctuation[] = {
-    "<=>", "==>", "\\==", "==", "=", "\\+", "\\", ":-", "@", "|", ",", ".", "(", ")", "[", "]", NULL};
+    "<=>", "==>", "\\==", "==", "=<", "=", "<", "\\+", "\\", ":-", "@", "|", ",", ".", "(", ")", "[", "]", NULL};
 
 static bool word_char(char c) { return isalnum((unsigned char)c) || c == '_' || c == '\''; }
 
@@ -302,12 +302,11 @@ static Term *term(Reader *r) {
         return make_term(r, 'v', &t);
     case TOK_NUMBER: next(r); return make_term(r, 'n', &t);
     case TOK_STRING: next(r); return make_term(r, 'q', &t);
-    case TOK_QUOTED:
+    case TOK_QUOTED:   /* a name, applied as a word is: 'cycle-free'(X) */
         if (!symbol_text(t.text, t.length))
             return fail(r, t.line, t.column, "a quoted atom here names a tcalc symbol, which has no space, "
                         "quote or parenthesis"), NULL;
-        next(r);
-        return make_term(r, 's', &t);
+        /* fall through */
     case TOK_WORD: {
         next(r);
         if (!is_punct(r, "(")) return make_term(r, 's', &t);
@@ -422,7 +421,7 @@ static void put_row(Out *o, const Term *t) {
  *   bind    ::= pattern, ... <- channel     take, the receive fires once
  *             | pattern, ... <= channel     take, the receive persists
  *             | pattern, ... <<- channel    read, the receive fires once
- *   guard   ::= term == term                a check
+ *   guard   ::= term == term                a check; also != < <=, the guards /= < <=
  *             | term = term                 a tell
  *             | absent(channel!(pattern, ...))   count(N, ...)   census(...)
  *   channel ::= NAME | $x | @term
@@ -443,7 +442,8 @@ typedef struct { Term *channel; List arg; size_t line, column; } Shape;   /* cha
 typedef struct { Shape shape; char mode; } Bind;   /* '-' <-, '=' <=, '<' <<- */
 
 typedef struct {
-    char kind;          /* '=' check, 't' tell, 'a' absent, 'n' count, 'c' census */
+    char kind;          /* '=' check, 'd' !=, '<' <, 'l' <=, 't' tell, 'a' absent, 'n' count,
+                           'c' census */
     Term *left, *right;
     Shape shape;
     Token count;
@@ -509,12 +509,12 @@ static bool guard(Reader *r, Receive *x) {
         } else {
             if (!(g->left = term(r))) return false;
             if (is_punct(r, "==")) g->kind = '=';
+            else if (is_punct(r, "!=")) g->kind = 'd';
+            else if (is_punct(r, "<")) g->kind = '<';
+            else if (is_punct(r, "<=")) g->kind = 'l';
             else if (is_punct(r, "=")) g->kind = 't';
-            else if (is_punct(r, "!="))
-                return fail(r, r->token.line, r->token.column,
-                            "tcalc@0.1 knows equations; a disequation (!=) has no meaning in its checks");
-            else return expected(r, "a guard: A == B, A = B (told), absent(c!(...)), count(N, c!(...)) "
-                                    "or census(c!(...))");
+            else return expected(r, "a guard: A == B, A != B, A < B, A <= B, A = B (told), absent(c!(...)), "
+                                    "count(N, c!(...)) or census(c!(...))");
             next(r);
             if (!(g->right = term(r))) return false;
         }
@@ -733,8 +733,9 @@ static void put_receive_rule(Reader *r, Out *o, const Receive *x, const List *vi
     }
     for (size_t i = 0; i < x->guard.len; i++) {
         const Guard *g = x->guard.item[i];
-        if (g->kind == '=' || g->kind == 't') {
-            put_text(o, g->kind == '=' ? " (check (= " : " (tell (= ");
+        if (g->kind == '=' || g->kind == 'd' || g->kind == '<' || g->kind == 'l' || g->kind == 't') {
+            put_text(o, g->kind == '=' ? " (check (= " : g->kind == 'd' ? " (check (/= "
+                      : g->kind == '<' ? " (check (< " : g->kind == 'l' ? " (check (<= " : " (tell (= ");
             put_term(o, g->left);
             put_bytes(o, " ", 1);
             put_term(o, g->right);
@@ -798,7 +799,8 @@ static void rho_program(Reader *r, Out *o) {
  *            | [NAME @] kept \ removed <=> [guard |] body.     simpagation
  *            | [NAME @] removed <=> [guard |] body.            simplification
  *            | [NAME @] kept ==> [guard |] body.               propagation
- *   guard  ::= goal, ...    X == Y   \+ constraint   count(N, c)   census(c)   true
+ *   guard  ::= goal, ...    X == Y   X \== Y   X < Y   X =< Y   \+ constraint
+ *                          count(N, c)   census(c)   true
  *   body   ::= goal, ...    X = Y (told)   constraint (made)   true
  *
  * Kept heads are read and removed heads are taken.  A constraint is a name or
@@ -807,7 +809,8 @@ static void rho_program(Reader *r, Out *o) {
  * ====================================================================== */
 
 typedef struct { char kind; Term *left, *right; size_t line, column; } Goal;
-/* kind: 'e' A == B, 't' A = B, 'a' \+ C, 'g' a term: a constraint, true, count(...), census(...) */
+/* kind: 'e' A == B, 'd' A \== B, '<' A < B, 'l' A =< B, 't' A = B, 'a' \+ C, 'g' a term: a
+ * constraint, true, count(...), census(...) */
 
 static Term *constraint(Reader *r) {
     Token t = r->token;
@@ -829,10 +832,8 @@ static bool goals(Reader *r, List *out) {
             if (!(g->left = constraint(r))) return false;
         } else {
             if (!(g->left = term(r))) return false;
-            g->kind = is_punct(r, "==") ? 'e' : is_punct(r, "=") ? 't' : 'g';
-            if (is_punct(r, "\\=="))
-                return fail(r, r->token.line, r->token.column,
-                            "tcalc@0.1 knows equations; a disequation (\\==) has no meaning in its checks");
+            g->kind = is_punct(r, "==") ? 'e' : is_punct(r, "\\==") ? 'd' : is_punct(r, "<") ? '<'
+                    : is_punct(r, "=<") ? 'l' : is_punct(r, "=") ? 't' : 'g';
             if (g->kind != 'g') {
                 next(r);
                 if (!(g->right = term(r))) return false;
@@ -850,8 +851,9 @@ static bool is_name(const Term *t, const char *name, size_t args) {
 }
 
 static bool put_guard(Reader *r, Out *o, const Goal *g) {
-    if (g->kind == 'e') {
-        put_text(o, " (check (= ");
+    if (g->kind == 'e' || g->kind == 'd' || g->kind == '<' || g->kind == 'l') {
+        put_text(o, g->kind == 'e' ? " (check (= " : g->kind == 'd' ? " (check (/= "
+                  : g->kind == '<' ? " (check (< " : " (check (<= ");
         put_term(o, g->left);
         put_bytes(o, " ", 1);
         put_term(o, g->right);
@@ -872,7 +874,8 @@ static bool put_guard(Reader *r, Out *o, const Goal *g) {
         put_row(o, g->left->arg.item[0]);
         put_bytes(o, ")", 1);
     } else {
-        return fail(r, g->line, g->column, "a guard goal is X == Y, \\+ c, count(N, c), census(c) or true");
+        return fail(r, g->line, g->column,
+                    "a guard goal is X == Y, X \\== Y, X < Y, X =< Y, \\+ c, count(N, c), census(c) or true");
     }
     return true;
 }
@@ -1281,6 +1284,19 @@ static bool write_equation(Writer *w, const Sexp *eq, const char *sign) {
     return write_term(w, sexp_item(eq, 2));
 }
 
+/* A check (OP A B): an equation, or a guard /=, < or <=. */
+static bool write_relation(Writer *w, const Sexp *eq) {
+    static const char *const op[] = {"=", "/=", "<", "<="};
+    static const char *const rho[] = {" == ", " != ", " < ", " <= "};
+    static const char *const chr[] = {" == ", " \\== ", " < ", " =< "};
+    size_t k = 0;
+    while (k < 4 && !(eq->list && eq->item.len == 3 && sexp_is(sexp_item(eq, 0), op[k]))) k++;
+    if (k == 4) return fail(w->r, eq->line, 1, "a check is (= A B), (/= A B), (< A B) or (<= A B)");
+    if (!write_term(w, sexp_item(eq, 1))) return false;
+    fputs(w->surface == TC_SURFACE_CHR ? chr[k] : rho[k], w->out);
+    return write_term(w, sexp_item(eq, 2));
+}
+
 /* A check that is no equation: absent, count, census. */
 static bool write_row_check(Writer *w, const Sexp *clause) {
     const Sexp *kind = sexp_item(clause, 0);
@@ -1369,7 +1385,8 @@ static bool write_rule(Writer *w, const Sexp *rule) {
                 for (size_t j = 1; j < c->item.len; j++) {
                     fputs(any ? " and " : " where ", o);
                     any = true;
-                    if (!write_equation(w, c->item.item[j], sexp_is(kind, "tell") ? " = " : " == "))
+                    if (sexp_is(kind, "tell") ? !write_equation(w, c->item.item[j], " = ")
+                                              : !write_relation(w, c->item.item[j]))
                         return false;
                 }
             } else {
@@ -1419,7 +1436,7 @@ static bool write_rule(Writer *w, const Sexp *rule) {
             for (size_t j = 1; j < c->item.len; j++) {
                 if (!first) fputs(", ", o);
                 first = false;
-                if (!write_equation(w, c->item.item[j], " == ")) return false;
+                if (!write_relation(w, c->item.item[j])) return false;
             }
         } else if (sexp_is(kind, "absent") || sexp_is(kind, "count") || sexp_is(kind, "census")) {
             if (!first) fputs(", ", o);

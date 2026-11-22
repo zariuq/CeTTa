@@ -982,6 +982,26 @@ static void mixed_profile_gates(TestCounts *counts) {
         "builtin carrier does not silently coerce integer payloads");
     (void)expect(counts, !MIX_CODEC("Nat") && status == CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
         "admission does not imply a reversible untagged builtin-plus-constructor codec");
+    language.term_len = 1u;
+    (void)expect(counts, MIX_CODEC("Nat"),
+        "a nullary constructor labelled by a String leaf is that leaf");
+    (void)expect(counts, cetta_language_def_ground_term_v1_to_pattern(&language, "Nat", z, &pattern,
+        128u, 10000u, &status, error, sizeof(error)) && pattern_apply_has_head(&pattern, "Z", 0u),
+        "the literal constructor encodes as its leaf");
+    roundtrip = cetta_language_def_ground_term_v1_from_pattern(&output.arena, &language,
+        "Nat", &pattern, 128u, 10000u, &status, error, sizeof(error));
+    (void)expect(counts, roundtrip && atom_eq(roundtrip, pool_string(&input, "Z")),
+        "the leaf reads back as the builtin value it is");
+    types[0].carrier = CETTA_LD_CARRIER_BUILTIN_INT_V1;
+    (void)expect(counts, !MIX_CODEC("Nat") && status == CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+        "a nullary Integer constructor whose label is not an integer leaf needs a tag");
+    rules[0].label = (CettaLdTextV1)PROJECT_TEXT("7");
+    (void)expect(counts, MIX_CODEC("Nat"),
+        "a nullary Integer constructor labelled by canonical decimal text is that leaf");
+    rules[0].label = (CettaLdTextV1)PROJECT_TEXT("07");
+    (void)expect(counts, !MIX_CODEC("Nat") && status == CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+        "a non-canonical decimal label is not an Integer leaf");
+    rules[0].label = (CettaLdTextV1)PROJECT_TEXT("Z");
     cetta_ld_pattern_v1_free(&pattern);
     pool_free(&input); pool_free(&output);
 #undef MIX_PROJECT

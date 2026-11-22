@@ -1,0 +1,5 @@
+(rationals (1r2 true false true true) (7r22 false 7))
+(infinity true true false)
+true
+infinity-enabled
+true

@@ -5,7 +5,7 @@
 ;                            solver's own name and version
 ;   (ipasir:models CLAUSES)  (models ((A ...) ...) (reference SIGNATURE)): every
 ;                            model once, each found blocked by one more clause
-; The clauses are read as sat:solve reads them, so (import-as! &self sat ipasir)
+; The clauses are read as sat:solve reads them, so (import-as! &self ipasir sat)
 ; runs a program's sat:solve and sat:models on the loaded solver.  Without one
 ; loadable the library's heads are not its to answer: they stay as written,
 ; also under the sat library's names.

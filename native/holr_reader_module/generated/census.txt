@@ -10,6 +10,7 @@ overlapping left sides in one judgment: 0 pairs; shown exclusive by their premis
 relation premises (queries of the module's relations): 0, of which 0 bind a variable; judgments with one that binds (possibly several answers): 0
 rules whose last premise is a tail call: 75; recursive judgments (self or mutual): 27
 rules in functional form (calls nested in a right side or a premise's arguments, read call by value): 88, their calls made premises: 197
+rules whose recursion passes its result to a wrapper (tail recursion modulo the wrapper: the wrapper's frame pushed, no C stack): 3
 
 dispatch-group sizes (rules per judgment): 1:20 2:16 3:23 4-5:30 6-9:3 10-16:0 17-32:0 >32:0
 

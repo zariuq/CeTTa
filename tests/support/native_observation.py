@@ -5,10 +5,28 @@ interleaving inside an evaluator call, nor observe uninstrumented foreign I/O.
 """
 from pathlib import Path
 import json
+import subprocess
 
 
 class UnobservedValue(ValueError):
     pass
+
+
+def process_signal(code, observation):
+    """Distinguish a recorded child signal from a raw exit with the same status."""
+    if code < 0:
+        return -code
+    try:
+        report = json.loads(Path(str(observation) + ".process.json").read_text())
+        physical = report["process"]
+        number = physical["signal"]
+        if (report["contract_exit"] == 1 and report["document_framing_ok"] is False
+                and physical["state"] == "signalled" and type(number) is int
+                and number > 0 and code == 128 + number):
+            return number
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
 
 
 def check_value(tokens):
@@ -151,3 +169,18 @@ def project(observation, spans):
         if query["terminal"] is None or query["terminal"]["stop"] != 0:
             raise ValueError("unsettled administrative query")
     return projected
+
+
+def check_petta_fuel_exhaustion(binary, documents, receipt, *, env=None):
+    """A bounded native query must not publish a settled empty frontier."""
+    result = subprocess.run([str(binary), "--lang", "petta", "--fuel", "100",
+                             "--run-observation", str(receipt), *map(str, documents)],
+                            env=env, capture_output=True, timeout=30)
+    found = read_observation(receipt)
+    query, = found["queries"].values()
+    assert result.returncode == 1 and found["final"]["contract_exit"] != 0, result
+    assert b"error: observation incomplete: fuel-exhausted" in result.stderr, result.stderr
+    assert not result.stdout and not query["answers"], found
+    terminal = query["terminal"]
+    assert terminal["stop"] != 0 and not terminal["output_ok"] and terminal["cleanup_ok"], found
+    assert not query["effects"] and not found["outside_effects"], found

@@ -343,6 +343,17 @@ static inline SymbolSpelling symbol_spelling(
     X(atan_math, "atan-math") \
     X(isnan_math, "isnan-math") \
     X(isinf_math, "isinf-math") \
+    X(lib_math_quot, "__cetta_lib_math_quot") \
+    X(lib_math_rem, "__cetta_lib_math_rem") \
+    X(lib_math_div, "__cetta_lib_math_div") \
+    X(lib_math_mod, "__cetta_lib_math_mod") \
+    X(lib_math_floor_div, "__cetta_lib_math_floor_div") \
+    X(lib_math_floor_mod, "__cetta_lib_math_floor_mod") \
+    X(lib_math_exp, "__cetta_lib_math_exp") \
+    X(lib_math_ln, "__cetta_lib_math_ln") \
+    X(lib_math_min, "__cetta_lib_math_min") \
+    X(lib_math_max, "__cetta_lib_math_max") \
+    X(lib_math_clamp, "__cetta_lib_math_clamp") \
     /* ── Grounded internal helpers ── */ \
     X(grounded_placeholder, "__grounded__") \
     X(llist_nil, "LNil") \
@@ -661,6 +672,14 @@ static inline SymbolSpelling symbol_spelling(
     X(petta_with_mutex, "with_mutex") \
     X(petta_min, "min") \
     X(petta_max, "max") \
+    X(petta_exp, "exp") \
+    X(petta_implies, "implies") \
+    X(petta_unifiable, "=?") \
+    X(petta_atom_concat, "atom_concat") \
+    X(petta_atom_chars, "atom_chars") \
+    X(petta_copy_term, "copy_term") \
+    X(petta_term_hash, "term_hash") \
+    X(petta_sort, "sort") \
     X(type_colon_of, "type:of") \
     X(type_colon_check, "type:check") \
     X(type_colon_analyze, "type:analyze") \
@@ -856,6 +875,17 @@ static inline SymbolSpelling symbol_spelling(
     X(atan_math) \
     X(isnan_math) \
     X(isinf_math) \
+    X(lib_math_quot) \
+    X(lib_math_rem) \
+    X(lib_math_div) \
+    X(lib_math_mod) \
+    X(lib_math_floor_div) \
+    X(lib_math_floor_mod) \
+    X(lib_math_exp) \
+    X(lib_math_ln) \
+    X(lib_math_min) \
+    X(lib_math_max) \
+    X(lib_math_clamp) \
     X(size) \
     X(size_atom) \
     X(index_atom) \
@@ -924,6 +954,17 @@ static inline SymbolSpelling symbol_spelling(
     X(atan_math) \
     X(isnan_math) \
     X(isinf_math) \
+    X(lib_math_quot) \
+    X(lib_math_rem) \
+    X(lib_math_div) \
+    X(lib_math_mod) \
+    X(lib_math_floor_div) \
+    X(lib_math_floor_mod) \
+    X(lib_math_exp) \
+    X(lib_math_ln) \
+    X(lib_math_min) \
+    X(lib_math_max) \
+    X(lib_math_clamp) \
     X(car_atom) \
     X(cdr_atom) \
     X(size_atom) \

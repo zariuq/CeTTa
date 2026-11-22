@@ -98,6 +98,7 @@ typedef enum {
 
 CettaTransformEngine cetta_transform_engine(void);
 /* Process configuration, sampled once per thread like the engine setting. */
+bool cetta_transform_tcalc_receipts(void);
 bool cetta_transform_tcalc_checking(void);
 bool cetta_transform_tcalc_terms(void);
 

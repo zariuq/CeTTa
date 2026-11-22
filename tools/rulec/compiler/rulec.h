@@ -18,12 +18,16 @@
 #define RULEC_H
 #define _GNU_SOURCE
 #include <ctype.h>
+#include <setjmp.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* the representations a sort may be given: the runtime's list (RC_REP_*, and their views' names) */
+#include "../../../native/rule_runtime/rc_rep.h"
 
 #define VEC_PUSH(arr, len, cap, val) do { \
     if ((len) == (cap)) { (cap) = (cap) ? 2 * (cap) : 16; (arr) = xrealloc((arr), (size_t)(cap) * sizeof(*(arr))); } \
@@ -33,12 +37,15 @@
 typedef struct { char **keys; int *vals; size_t cap, len; } Map;
 enum { SX_SYM, SX_STR, SX_LIST };
 typedef struct Sx { int k; char *s; int n; struct Sx **v; } Sx;
-typedef struct { char *name; int ndata; int *data; int datacap; int native; char *repname; int *extctors; int nextctors;
-                 int rp[4]; int width; } Sort;   /* rp, width: a per-sort representation's constructors and word width */
+typedef struct { char *name; int ndata; int *data; int datacap; int native; char *repname;
+                 int rp[4]; int width; int src[3]; bool source; } Sort;   /* rp, width: a per-sort representation's constructors and word width
+                                                    (atoms: the constructors standing for the other integers,
+                                                    strings, symbols and expressions); src: an atoms sort's source list CONS CP NIL */
 typedef struct {
     char *name; int sort; int arity; int *asort; char **aname;
     bool defined; int nrules; int *rules; int rcap;
-    int det;          /* 1 det, 0 semidet (judgments) */
+    int det;          /* 1 det, 0 semidet or nondet (judgments) */
+    bool nondet;      /* may give several results: answers are passed to a success continuation */
     bool complete;    /* the group covers every input */
     int dag_root;
     int native_op;    /* index into native_ops or -1 */
@@ -47,12 +54,17 @@ typedef struct {
     int scc;          /* call-graph component */
     bool overlap_open;  /* two of its left sides overlap and their premises are not shown exclusive */
     bool recursive;
+    int lit;          /* a nullary constructor of an atoms sort that stands for a literal: LIT_INT, LIT_STRING */
+    int64_t ival;     /* LIT_INT: the integer */
+    char *sval; int slen;   /* LIT_STRING: the string's bytes */
 } Ctor;
+enum { LIT_NONE = 0, LIT_INT, LIT_STRING };
 typedef struct Pat { int var; int ctor; int n; struct Pat **k; int sort; int ground; } Pat;  /* var >= 0: variable; var == -1: app; var == -2: wildcard;
                                                                                 ground: 1 + the index of a kept constant (emit_c) */
 /* a premise is a call J(args) ~> target, or a query of a relation of the module (no target): the
- * relation's rows are host data; such premises are counted by the census but not compiled */
-typedef struct { Pat *src, *tgt; bool *eqv; char *relation; int nrel; Pat **rel; bool binds; } Prem;
+ * relation's rows are host data, or a test component the binding table names (test >= 0); a query
+ * that binds a variable is counted by the census but not compiled */
+typedef struct { Pat *src, *tgt; bool *eqv; char *relation; int nrel; Pat **rel; bool binds; int test; } Prem;
 typedef struct {
     int id; char *label; int nv; char **vn; int *vs;
     Pat *lhs, *rhs; int np; Prem *p; int head; int layer;
@@ -66,12 +78,10 @@ typedef struct { int rule; Pat **cols; } Row;
 enum { OV_TARGETS, OV_EVALUATED, OV_UNRESOLVED, OV_COUNT };
 typedef struct { int judgment, a, b, cls; } OverlapPair;
 #define MAXLAYERS 16
-enum { REP_SYMBOLIC = 0, REP_RECORDS, REP_NAT, REP_STR, REP_EXT, REP_INTERN, REP_BYTES, REP_TABLE, REP_UNARY, REP_WORD, REP_BINARY,
-       REP_SLICES, REP_COUNT };
 /* representations with parameters of their own per sort (Sort.rp, Sort.width; views named by sort) */
-#define REP_PERSORT(r) ((r) == REP_WORD || (r) == REP_BINARY || (r) == REP_SLICES)
+#define REP_PERSORT(r) ((r) == RC_REP_WORD || (r) == RC_REP_BINARY || (r) == RC_REP_SLICES || (r) == RC_REP_ATOMS)
 /* naturals held as immediates: binary numerals (nat) or unary ones (unary) */
-#define REP_IMMNAT(r) ((r) == REP_NAT || (r) == REP_UNARY)
+#define REP_IMMNAT(r) ((r) == RC_REP_NAT || (r) == RC_REP_UNARY)
 /* a block: judgment ctor answered by fn (a C function the back end binds) or by a generic component
  * (comp: the component's expression in the binding table; fn is then the generated glue) */
 typedef struct { int ctor; char *fn; char *why; char *name; char *label; Sx *comp; } NativeOp;
@@ -79,6 +89,10 @@ typedef struct { int ctor; int result; char *why; char *name; char *label; } Law
 typedef struct { bool law; char *name, *judgment, *fn, *label, *why; Sx *comp; } BlockRow;
 /* a memo row: judgment ctor keeps its results per arguments */
 typedef struct { int ctor; char *name; char *label; char *why; } MemoRow;
+/* a test row: the relation's queries with every argument bound are answered by a test component */
+enum { TEST_EQUAL, TEST_DIFFERENT, TEST_INT_LESS, TEST_INT_NOT_LESS, TEST_INT_GAP, TEST_INT_NO_GAP, TEST_SCALAR, TEST_NON_SCALAR,
+       TEST_KINDS };
+typedef struct { char *relation; int kind; int arity; int sort; char *name; char *label; char *why; } TestRow;
 
 /* ---- shared state ---- */
 /* ir.c */
@@ -86,6 +100,7 @@ extern Sort *sorts; extern int nsorts, sortcap;
 extern Ctor *ctors; extern int nctors, ctorcap;
 extern Rule *rules; extern int nrules, rulecap;
 extern Map sort_map, ctor_map;
+extern char **declared_judgments; extern int ndeclared_judgments;   /* (Judgment NAME) rows */
 extern int nerrors;
 extern char *module_name, *theory_name;
 /* check.c */
@@ -105,15 +120,18 @@ extern Pat wildcard;
 /* census.c */
 extern char *layer_name[MAXLAYERS]; extern char *layer_first[MAXLAYERS]; extern int nlayers;
 /* bindings.c */
-extern const char *rep_name[];
-extern const char *rep_header;
-extern int rep_ctor[REP_COUNT][4];
+extern const char *rep_name[];     /* the suffix of a representation's views */
+extern const char *rep_id_name[];  /* its constant in the generated code (RC_REP_...) */
+extern int rep_ctor[RC_REP_COUNT][4];
 extern int table_ctor[4];             /* TABLE LEAF NODE NONE of an array-table representation */
 extern MemoRow memo_rows[64]; extern int nmemo_rows;
 extern int *sorts_memo_slots;
 extern const char *component_prefix; /* where the generated code finds the component headers */
-extern int str_nib[16];
+extern int byte_nib[16];
 extern Law laws[64]; extern int nlaws;
+extern TestRow test_rows[64]; extern int ntest_rows;
+extern const char *const test_kind_name[TEST_KINDS];
+extern bool functional_only;
 extern NativeOp native_ops[64]; extern int nnative_ops;
 extern char *safepoint_name;
 extern int safepoint_ctor;
@@ -130,6 +148,9 @@ extern const bool *cur_eqv;
 
 /* ---- functions ---- */
 void die(const char *fmt, ...);
+extern jmp_buf *rulec_die_jump;   /* set by rulec_main: die returns there instead of ending the process */
+void fput_quoted(FILE *o, const char *s);
+void fput_cstring(FILE *o, const char *s);
 void *xmalloc(size_t n);
 void *xcalloc(size_t a, size_t b);
 void *xrealloc(void *p, size_t n);
@@ -165,6 +186,10 @@ void u_undo(int mark);
 int ut_push(int ctor, int n, const int *kids);
 int ut_var(void);
 bool rule_excluded_at(const Rule *r, int input);
+int test_of(const char *relation, int arity);
+int test_complement(int kind);
+bool test_holds_on(int kind, const int64_t *v);
+void check_heads(void);
 void check_rules(void);
 bool irrefutable(const Pat *p);
 bool prem_irrefutable(const Prem *p);
@@ -199,12 +224,17 @@ void parse_native_sort(const char *spec);
 bool pat_has_var(const Pat *p);
 void occ_expr(char *out, size_t cap, int occ);
 void emit_build(FILE *o, const Pat *p);
+void number_trmc(void);   /* the rules that push a pending wrapper (emit_c.c) */
+extern bool *pend_required;   /* per rule: its call into the safepoint must be a pending wrapper (check.c) */
+int pat_count_var(const Pat *p, int v);
+extern int n_trmc;
 bool pat_has_used_var(const Pat *p);
 void mark_used(const Pat *p);
 void emit_lhs_bind(FILE *o, const Pat *p, const char *e);
 void emit_tgt_match(FILE *o, const Pat *p, const char *e, int judgment);
 const char *target_label(int child, char *buf, size_t cap);
 void emit_params(FILE *o, int arity);
+void emit_params_k(FILE *o, int arity);
 void emit_rules_body(FILE *o, int c);
 void emit_proc(FILE *o, int c);
 void c_ident(char *out, size_t cap, const char *name);
@@ -219,8 +249,11 @@ void check_component(NativeOp *b);
 void apply_blocks(void);
 void apply_laws(void);
 void check_memo_safepoint(const bool *reaches);
+void apply_tests(void);
 /* emit_c.c */
 void emit_component_glue(FILE *o);
 void emit_relation_table(FILE *o);
+/* main.c */
+int rulec_main(int argc, char **argv);
 
 #endif

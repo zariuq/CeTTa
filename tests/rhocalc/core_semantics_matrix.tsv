@@ -45,5 +45,5 @@ syntax	reflection_name_generation	paper_reflection_name_generation_h4.rho	syntax
 syntax	input_guarded_unfold	paper_input_guarded_replication_unfold_h4.rho	syntax rho preserves input-guarded unfolding through one COMM	Meredith-Radestock 2005 replication discussion
 syntax	rotating_witness	rotating_scheduler_persistent_branch.rho	syntax rho preserves the recreating-vs-one-shot scheduler witness shape	operational control choice over the same one-step relation image
 syntax	open_name	rho_open_name_variable.rho	explicit $x is accepted as an open syntax name	local syntax syntax for full core
-syntax	quote_drop_scope	rho_quote_drop_names_outer_binder.rho	@{*x} is the name x: the text reader binds it like the mrho reader	Meredith-Radestock 2005 section 2.4 quote-drop
-syntax	closed_quote_scope	rho_closed_quote_seals_outer_binder.rho	any other @{...} is closed: the text reader does not bind inside it	Meredith-Radestock 2005 section 2.0.4 quoted process impervious to substitution
+syntax	quote_drop_scope	rho_quote_drop_names_outer_binder.rho	@{*x} is the name x: the rho reader binds it like the mrho reader	Meredith-Radestock 2005 section 2.4 quote-drop
+syntax	closed_quote_scope	rho_closed_quote_seals_outer_binder.rho	any other @{...} is closed: the rho reader does not bind inside it	Meredith-Radestock 2005 section 2.0.4 quoted process impervious to substitution

@@ -692,21 +692,17 @@
    (quote (gslt:result:NatCompareV1:110 CompareEqualV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=3 source-presentation=RelationalStateTransitionCoreV1 source-rule=nat-compare-zero-succ-v1 target=mode relation=NatCompareV1 input=110 functional=semidet
-(= (gslt:fn:NatCompareV1:110 NatZeroV1 $__gslt_input_v1_0_1)
-   (let (quote (NatSuccV1 $n)) $__gslt_input_v1_0_1
-   (quote (gslt:result:NatCompareV1:110 CompareLessV1))))
+(= (gslt:fn:NatCompareV1:110 NatZeroV1 (cons NatSuccV1 (cons $n ())))
+   (quote (gslt:result:NatCompareV1:110 CompareLessV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=4 source-presentation=RelationalStateTransitionCoreV1 source-rule=nat-compare-succ-zero-v1 target=mode relation=NatCompareV1 input=110 functional=semidet
-(= (gslt:fn:NatCompareV1:110 $__gslt_input_v1_0_0 NatZeroV1)
-   (let (quote (NatSuccV1 $n)) $__gslt_input_v1_0_0
-   (quote (gslt:result:NatCompareV1:110 CompareGreaterV1))))
+(= (gslt:fn:NatCompareV1:110 (cons NatSuccV1 (cons $n ())) NatZeroV1)
+   (quote (gslt:result:NatCompareV1:110 CompareGreaterV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=5 source-presentation=RelationalStateTransitionCoreV1 source-rule=nat-compare-succ-succ-v1 target=mode relation=NatCompareV1 input=110 functional=semidet
-(= (gslt:fn:NatCompareV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (NatSuccV1 $a)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 $b)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:NatCompareV1:110 $result)) (gslt:fn:NatCompareV1:110 $a $b)
-   (quote (gslt:result:NatCompareV1:110 $result))))))
+(= (gslt:fn:NatCompareV1:110 (cons NatSuccV1 (cons $a ())) (cons NatSuccV1 (cons $b ())))
+   (let (cons gslt:result:NatCompareV1:110 (cons $result ())) (gslt:fn:NatCompareV1:110 $a $b)
+   (quote (gslt:result:NatCompareV1:110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=8 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-value-compare-equal-v1 target=mode relation=StateValueCompareV1 input=111 functional=semidet
 (= (gslt:fn:StateValueCompareV1:111 $value $value CompareEqualV1)
@@ -729,26 +725,22 @@
    (quote (gslt:result:RowCompareV1:110 CompareEqualV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=11 source-presentation=RelationalStateTransitionCoreV1 source-rule=row-compare-nil-cons-v1 target=mode relation=RowCompareV1 input=110 functional=semidet
-(= (gslt:fn:RowCompareV1:110 RowNilV1 $__gslt_input_v1_0_1)
-   (let (quote (RowConsV1 $v $rest)) $__gslt_input_v1_0_1
-   (quote (gslt:result:RowCompareV1:110 CompareDifferentV1))))
+(= (gslt:fn:RowCompareV1:110 RowNilV1 (cons RowConsV1 (cons $v (cons $rest ()))))
+   (quote (gslt:result:RowCompareV1:110 CompareDifferentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=12 source-presentation=RelationalStateTransitionCoreV1 source-rule=row-compare-cons-nil-v1 target=mode relation=RowCompareV1 input=110 functional=semidet
-(= (gslt:fn:RowCompareV1:110 $__gslt_input_v1_0_0 RowNilV1)
-   (let (quote (RowConsV1 $v $rest)) $__gslt_input_v1_0_0
-   (quote (gslt:result:RowCompareV1:110 CompareDifferentV1))))
+(= (gslt:fn:RowCompareV1:110 (cons RowConsV1 (cons $v (cons $rest ()))) RowNilV1)
+   (quote (gslt:result:RowCompareV1:110 CompareDifferentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=13 source-presentation=RelationalStateTransitionCoreV1 source-rule=row-compare-cons-cons-v1 target=mode relation=RowCompareV1 input=110 functional=semidet
-(= (gslt:fn:RowCompareV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (RowConsV1 $a $as)) $__gslt_input_v1_0_0
-   (let (quote (RowConsV1 $b $bs)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:StateValueCompareV1:110 $comparison)) (gslt:fn:StateValueCompareV1:110 $a $b)
-   (let (quote (gslt:result:RowCompareHeadsV1:1110 $result)) (gslt:fn:RowCompareHeadsV1:1110 $comparison $as $bs)
-   (quote (gslt:result:RowCompareV1:110 $result)))))))
+(= (gslt:fn:RowCompareV1:110 (cons RowConsV1 (cons $a (cons $as ()))) (cons RowConsV1 (cons $b (cons $bs ()))))
+   (let (cons gslt:result:StateValueCompareV1:110 (cons $comparison ())) (gslt:fn:StateValueCompareV1:110 $a $b)
+   (let (cons gslt:result:RowCompareHeadsV1:1110 (cons $result ())) (gslt:fn:RowCompareHeadsV1:1110 $comparison $as $bs)
+   (quote (gslt:result:RowCompareV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=14 source-presentation=RelationalStateTransitionCoreV1 source-rule=row-compare-heads-equal-v1 target=mode relation=RowCompareHeadsV1 input=1110 functional=semidet
 (= (gslt:fn:RowCompareHeadsV1:1110 CompareEqualV1 $as $bs)
-   (let (quote (gslt:result:RowCompareV1:110 $result)) (gslt:fn:RowCompareV1:110 $as $bs)
+   (let (cons gslt:result:RowCompareV1:110 (cons $result ())) (gslt:fn:RowCompareV1:110 $as $bs)
    (quote (gslt:result:RowCompareHeadsV1:1110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=15 source-presentation=RelationalStateTransitionCoreV1 source-rule=row-compare-heads-different-v1 target=mode relation=RowCompareHeadsV1 input=1110 functional=semidet
@@ -760,22 +752,19 @@
    (quote (gslt:result:RowKeyPrefixV1:110 RowNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=17 source-presentation=RelationalStateTransitionCoreV1 source-rule=row-key-prefix-succ-v1 target=mode relation=RowKeyPrefixV1 input=110 functional=semidet
-(= (gslt:fn:RowKeyPrefixV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (NatSuccV1 $k)) $__gslt_input_v1_0_0
-   (let (quote (RowConsV1 $v $rest)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:RowKeyPrefixV1:110 $key)) (gslt:fn:RowKeyPrefixV1:110 $k $rest)
-   (quote (gslt:result:RowKeyPrefixV1:110 (RowConsV1 $v $key)))))))
+(= (gslt:fn:RowKeyPrefixV1:110 (cons NatSuccV1 (cons $k ())) (cons RowConsV1 (cons $v (cons $rest ()))))
+   (let (cons gslt:result:RowKeyPrefixV1:110 (cons $key ())) (gslt:fn:RowKeyPrefixV1:110 $k $rest)
+   (quote (gslt:result:RowKeyPrefixV1:110 (RowConsV1 $v $key)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=18 source-presentation=RelationalStateTransitionCoreV1 source-rule=table-of-nil-v1 target=mode relation=TableOfV1 input=110 functional=semidet
 (= (gslt:fn:TableOfV1:110 TablesNilV1 $name)
    (quote (gslt:result:TableOfV1:110 TableAbsentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=19 source-presentation=RelationalStateTransitionCoreV1 source-rule=table-of-cons-v1 target=mode relation=TableOfV1 input=110 functional=semidet
-(= (gslt:fn:TableOfV1:110 $__gslt_input_v1_0_0 $name)
-   (let (quote (TablesConsV1 (TableV1 $other $entries) $rest)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:StateValueCompareV1:110 $comparison)) (gslt:fn:StateValueCompareV1:110 $other $name)
-   (let (quote (gslt:result:TableOfComparedV1:11110 $result)) (gslt:fn:TableOfComparedV1:11110 $comparison $entries $rest $name)
-   (quote (gslt:result:TableOfV1:110 $result))))))
+(= (gslt:fn:TableOfV1:110 (cons TablesConsV1 (cons (cons TableV1 (cons $other (cons $entries ()))) (cons $rest ()))) $name)
+   (let (cons gslt:result:StateValueCompareV1:110 (cons $comparison ())) (gslt:fn:StateValueCompareV1:110 $other $name)
+   (let (cons gslt:result:TableOfComparedV1:11110 (cons $result ())) (gslt:fn:TableOfComparedV1:11110 $comparison $entries $rest $name)
+   (quote (gslt:result:TableOfV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=20 source-presentation=RelationalStateTransitionCoreV1 source-rule=table-of-compared-equal-v1 target=mode relation=TableOfComparedV1 input=11110 functional=semidet
 (= (gslt:fn:TableOfComparedV1:11110 CompareEqualV1 $entries $rest $name)
@@ -783,7 +772,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=21 source-presentation=RelationalStateTransitionCoreV1 source-rule=table-of-compared-different-v1 target=mode relation=TableOfComparedV1 input=11110 functional=semidet
 (= (gslt:fn:TableOfComparedV1:11110 CompareDifferentV1 $entries $rest $name)
-   (let (quote (gslt:result:TableOfV1:110 $result)) (gslt:fn:TableOfV1:110 $rest $name)
+   (let (cons gslt:result:TableOfV1:110 (cons $result ())) (gslt:fn:TableOfV1:110 $rest $name)
    (quote (gslt:result:TableOfComparedV1:11110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=23 source-presentation=RelationalStateTransitionCoreV1 source-rule=entries-lookup-key-nil-v1 target=mode relation=EntriesLookupKeyV1 input=1110 functional=semidet
@@ -791,12 +780,11 @@
    (quote (gslt:result:EntriesLookupKeyV1:1110 RowAbsentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=24 source-presentation=RelationalStateTransitionCoreV1 source-rule=entries-lookup-key-cons-v1 target=mode relation=EntriesLookupKeyV1 input=1110 functional=semidet
-(= (gslt:fn:EntriesLookupKeyV1:1110 $__gslt_input_v1_0_0 $keyArity $key)
-   (let (quote (EntriesConsV1 (EntryV1 $seq $row $depth) $rest)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:RowKeyPrefixV1:110 $rowKey)) (gslt:fn:RowKeyPrefixV1:110 $keyArity $row)
-   (let (quote (gslt:result:RowCompareV1:110 $comparison)) (gslt:fn:RowCompareV1:110 $rowKey $key)
-   (let (quote (gslt:result:EntriesLookupKeyComparedV1:111110 $result)) (gslt:fn:EntriesLookupKeyComparedV1:111110 $comparison $row $rest $keyArity $key)
-   (quote (gslt:result:EntriesLookupKeyV1:1110 $result)))))))
+(= (gslt:fn:EntriesLookupKeyV1:1110 (cons EntriesConsV1 (cons (cons EntryV1 (cons $seq (cons $row (cons $depth ())))) (cons $rest ()))) $keyArity $key)
+   (let (cons gslt:result:RowKeyPrefixV1:110 (cons $rowKey ())) (gslt:fn:RowKeyPrefixV1:110 $keyArity $row)
+   (let (cons gslt:result:RowCompareV1:110 (cons $comparison ())) (gslt:fn:RowCompareV1:110 $rowKey $key)
+   (let (cons gslt:result:EntriesLookupKeyComparedV1:111110 (cons $result ())) (gslt:fn:EntriesLookupKeyComparedV1:111110 $comparison $row $rest $keyArity $key)
+   (quote (gslt:result:EntriesLookupKeyV1:1110 $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=25 source-presentation=RelationalStateTransitionCoreV1 source-rule=entries-lookup-key-compared-equal-v1 target=mode relation=EntriesLookupKeyComparedV1 input=111110 functional=semidet
 (= (gslt:fn:EntriesLookupKeyComparedV1:111110 CompareEqualV1 $row $rest $keyArity $key)
@@ -804,7 +792,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=26 source-presentation=RelationalStateTransitionCoreV1 source-rule=entries-lookup-key-compared-different-v1 target=mode relation=EntriesLookupKeyComparedV1 input=111110 functional=semidet
 (= (gslt:fn:EntriesLookupKeyComparedV1:111110 CompareDifferentV1 $row $rest $keyArity $key)
-   (let (quote (gslt:result:EntriesLookupKeyV1:1110 $result)) (gslt:fn:EntriesLookupKeyV1:1110 $rest $keyArity $key)
+   (let (cons gslt:result:EntriesLookupKeyV1:1110 (cons $result ())) (gslt:fn:EntriesLookupKeyV1:1110 $rest $keyArity $key)
    (quote (gslt:result:EntriesLookupKeyComparedV1:111110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=27 source-presentation=RelationalStateTransitionCoreV1 source-rule=entries-append-nil-v1 target=mode relation=EntriesAppendV1 input=110 functional=semidet
@@ -812,35 +800,30 @@
    (quote (gslt:result:EntriesAppendV1:110 (EntriesConsV1 $entry EntriesNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=28 source-presentation=RelationalStateTransitionCoreV1 source-rule=entries-append-cons-v1 target=mode relation=EntriesAppendV1 input=110 functional=semidet
-(= (gslt:fn:EntriesAppendV1:110 $__gslt_input_v1_0_0 $entry)
-   (let (quote (EntriesConsV1 $head $rest)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:EntriesAppendV1:110 $out)) (gslt:fn:EntriesAppendV1:110 $rest $entry)
-   (quote (gslt:result:EntriesAppendV1:110 (EntriesConsV1 $head $out))))))
+(= (gslt:fn:EntriesAppendV1:110 (cons EntriesConsV1 (cons $head (cons $rest ()))) $entry)
+   (let (cons gslt:result:EntriesAppendV1:110 (cons $out ())) (gslt:fn:EntriesAppendV1:110 $rest $entry)
+   (quote (gslt:result:EntriesAppendV1:110 (EntriesConsV1 $head $out)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=29 source-presentation=RelationalStateTransitionCoreV1 source-rule=tables-replace-cons-v1 target=mode relation=TablesReplaceV1 input=1111 functional=semidet
-(= (gslt:fn:TablesReplaceV1:1111 $__gslt_input_v1_0_0 $name $new $out)
-   (let (quote (TablesConsV1 (TableV1 $other $entries) $rest)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:StateValueCompareV1:110 $comparison)) (gslt:fn:StateValueCompareV1:110 $other $name)
-   (let (quote gslt:result:TablesReplaceComparedV1:1111111) (gslt:fn:TablesReplaceComparedV1:1111111 $comparison $other $entries $rest $name $new $out)
-   (quote gslt:result:TablesReplaceV1:1111)))))
+(= (gslt:fn:TablesReplaceV1:1111 (cons TablesConsV1 (cons (cons TableV1 (cons $other (cons $entries ()))) (cons $rest ()))) $name $new $out)
+   (let (cons gslt:result:StateValueCompareV1:110 (cons $comparison ())) (gslt:fn:StateValueCompareV1:110 $other $name)
+   (let gslt:result:TablesReplaceComparedV1:1111111 (gslt:fn:TablesReplaceComparedV1:1111111 $comparison $other $entries $rest $name $new $out)
+   (quote gslt:result:TablesReplaceV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=29 source-presentation=RelationalStateTransitionCoreV1 source-rule=tables-replace-cons-v1 target=mode relation=TablesReplaceV1 input=1110 functional=semidet
-(= (gslt:fn:TablesReplaceV1:1110 $__gslt_input_v1_0_0 $name $new)
-   (let (quote (TablesConsV1 (TableV1 $other $entries) $rest)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:StateValueCompareV1:110 $comparison)) (gslt:fn:StateValueCompareV1:110 $other $name)
-   (let (quote (gslt:result:TablesReplaceComparedV1:1111110 $out)) (gslt:fn:TablesReplaceComparedV1:1111110 $comparison $other $entries $rest $name $new)
-   (quote (gslt:result:TablesReplaceV1:1110 $out))))))
+(= (gslt:fn:TablesReplaceV1:1110 (cons TablesConsV1 (cons (cons TableV1 (cons $other (cons $entries ()))) (cons $rest ()))) $name $new)
+   (let (cons gslt:result:StateValueCompareV1:110 (cons $comparison ())) (gslt:fn:StateValueCompareV1:110 $other $name)
+   (let (cons gslt:result:TablesReplaceComparedV1:1111110 (cons $out ())) (gslt:fn:TablesReplaceComparedV1:1111110 $comparison $other $entries $rest $name $new)
+   (quote (gslt:result:TablesReplaceV1:1110 $out)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=30 source-presentation=RelationalStateTransitionCoreV1 source-rule=tables-replace-compared-equal-v1 target=mode relation=TablesReplaceComparedV1 input=1111111 functional=semidet
-(= (gslt:fn:TablesReplaceComparedV1:1111111 CompareEqualV1 $other $entries $rest $name $new $__gslt_input_v1_0_6)
-   (let (quote (TablesConsV1 (TableV1 $name $new) $rest)) $__gslt_input_v1_0_6
-   (quote gslt:result:TablesReplaceComparedV1:1111111)))
+(= (gslt:fn:TablesReplaceComparedV1:1111111 CompareEqualV1 $other $entries $rest $name $new (cons TablesConsV1 (cons (cons TableV1 (cons $name (cons $new ()))) (cons $rest ()))))
+   (quote gslt:result:TablesReplaceComparedV1:1111111))
 
 ; gslt-lowered-equation-v1 source-rewrite=31 source-presentation=RelationalStateTransitionCoreV1 source-rule=tables-replace-compared-different-v1 target=mode relation=TablesReplaceComparedV1 input=1111111 functional=semidet
-(= (gslt:fn:TablesReplaceComparedV1:1111111 CompareDifferentV1 $other $entries $rest $name $new $__gslt_input_v1_0_6)
-   (let (quote (TablesConsV1 (TableV1 $other $entries) $out)) $__gslt_input_v1_0_6
-   (let (quote gslt:result:TablesReplaceV1:1111) (gslt:fn:TablesReplaceV1:1111 $rest $name $new $out)
-   (quote gslt:result:TablesReplaceComparedV1:1111111))))
+(= (gslt:fn:TablesReplaceComparedV1:1111111 CompareDifferentV1 $other $entries $rest $name $new (cons TablesConsV1 (cons (cons TableV1 (cons $other (cons $entries ()))) (cons $out ()))))
+   (let gslt:result:TablesReplaceV1:1111 (gslt:fn:TablesReplaceV1:1111 $rest $name $new $out)
+   (quote gslt:result:TablesReplaceComparedV1:1111111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=30 source-presentation=RelationalStateTransitionCoreV1 source-rule=tables-replace-compared-equal-v1 target=mode relation=TablesReplaceComparedV1 input=1111110 functional=semidet
 (= (gslt:fn:TablesReplaceComparedV1:1111110 CompareEqualV1 $other $entries $rest $name $new)
@@ -848,101 +831,85 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=31 source-presentation=RelationalStateTransitionCoreV1 source-rule=tables-replace-compared-different-v1 target=mode relation=TablesReplaceComparedV1 input=1111110 functional=semidet
 (= (gslt:fn:TablesReplaceComparedV1:1111110 CompareDifferentV1 $other $entries $rest $name $new)
-   (let (quote (gslt:result:TablesReplaceV1:1110 $out)) (gslt:fn:TablesReplaceV1:1110 $rest $name $new)
+   (let (cons gslt:result:TablesReplaceV1:1110 (cons $out ())) (gslt:fn:TablesReplaceV1:1110 $rest $name $new)
    (quote (gslt:result:TablesReplaceComparedV1:1111110 (TablesConsV1 (TableV1 $other $entries) $out)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=44 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-tables-of-v1 target=mode relation=StateTablesOfV1 input=10 functional=semidet
-(= (gslt:fn:StateTablesOfV1:10 $__gslt_input_v1_0_0)
-   (let (quote (StateV1 $package $depth $seq $tables)) $__gslt_input_v1_0_0
-   (quote (gslt:result:StateTablesOfV1:10 $tables))))
+(= (gslt:fn:StateTablesOfV1:10 (cons StateV1 (cons $package (cons $depth (cons $seq (cons $tables ()))))))
+   (quote (gslt:result:StateTablesOfV1:10 $tables)))
 
 ; gslt-lowered-equation-v1 source-rewrite=45 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-package-of-v1 target=mode relation=StatePackageOfV1 input=11 functional=semidet
-(= (gslt:fn:StatePackageOfV1:11 $__gslt_input_v1_0_0 $package)
-   (let (quote (StateV1 $package $depth $seq $tables)) $__gslt_input_v1_0_0
-   (quote gslt:result:StatePackageOfV1:11)))
+(= (gslt:fn:StatePackageOfV1:11 (cons StateV1 (cons $package (cons $depth (cons $seq (cons $tables ()))))) $package)
+   (quote gslt:result:StatePackageOfV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=46 source-presentation=RelationalStateTransitionCoreV1 source-rule=values-view-list-empty-v1 target=mode relation=ValuesViewV1 input=11 functional=semidet
 (= (gslt:fn:ValuesViewV1:11 ValuesNilV1 ValuesEmptyViewV1)
    (quote gslt:result:ValuesViewV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=47 source-presentation=RelationalStateTransitionCoreV1 source-rule=values-view-list-uncons-v1 target=mode relation=ValuesViewV1 input=11 functional=semidet
-(= (gslt:fn:ValuesViewV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (ValuesConsV1 $value $rest)) $__gslt_input_v1_0_0
-   (let (quote (ValuesUnconsViewV1 $value $rest)) $__gslt_input_v1_0_1
-   (quote gslt:result:ValuesViewV1:11))))
+(= (gslt:fn:ValuesViewV1:11 (cons ValuesConsV1 (cons $value (cons $rest ()))) (cons ValuesUnconsViewV1 (cons $value (cons $rest ()))))
+   (quote gslt:result:ValuesViewV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=48 source-presentation=RelationalStateTransitionCoreV1 source-rule=values-view-realized-v1 target=mode relation=ValuesViewV1 input=11 functional=semidet
-(= (gslt:fn:ValuesViewV1:11 $__gslt_input_v1_0_0 $view)
-   (let (quote (StateValueSequenceV1 $stream $sequenceId)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ValueSequenceRealizationV1:10 $sequence)) (gslt:fn:ValueSequenceRealizationV1:10 (quote (StateValueSequenceV1 $stream $sequenceId)))
-   (let (quote gslt:result:ValuesViewV1:11) (gslt:fn:ValuesViewV1:11 $sequence $view)
-   (quote gslt:result:ValuesViewV1:11)))))
+(= (gslt:fn:ValuesViewV1:11 (cons StateValueSequenceV1 (cons $stream (cons $sequenceId ()))) $view)
+   (let (cons gslt:result:ValueSequenceRealizationV1:10 (cons $sequence ())) (gslt:fn:ValueSequenceRealizationV1:10 (quote (StateValueSequenceV1 $stream $sequenceId)))
+   (let gslt:result:ValuesViewV1:11 (gslt:fn:ValuesViewV1:11 $sequence $view)
+   (quote gslt:result:ValuesViewV1:11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=49 source-presentation=RelationalStateTransitionCoreV1 source-rule=values-view-tree-empty-v1 target=mode relation=ValuesViewV1 input=11 functional=semidet
-(= (gslt:fn:ValuesViewV1:11 $__gslt_input_v1_0_0 ValuesEmptyViewV1)
-   (let (quote (ValuesSequenceV1 ValuesTreeEmptyV1 ValuesTreeStackNilV1)) $__gslt_input_v1_0_0
-   (quote gslt:result:ValuesViewV1:11)))
+(= (gslt:fn:ValuesViewV1:11 (cons ValuesSequenceV1 (cons ValuesTreeEmptyV1 (cons ValuesTreeStackNilV1 ()))) ValuesEmptyViewV1)
+   (quote gslt:result:ValuesViewV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=50 source-presentation=RelationalStateTransitionCoreV1 source-rule=values-view-tree-pop-v1 target=mode relation=ValuesViewV1 input=11 functional=semidet
-(= (gslt:fn:ValuesViewV1:11 $__gslt_input_v1_0_0 $view)
-   (let (quote (ValuesSequenceV1 ValuesTreeEmptyV1 (ValuesTreeStackConsV1 $tree $stack))) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ValuesViewV1:11) (gslt:fn:ValuesViewV1:11 (quote (ValuesSequenceV1 $tree $stack)) $view)
-   (quote gslt:result:ValuesViewV1:11))))
+(= (gslt:fn:ValuesViewV1:11 (cons ValuesSequenceV1 (cons ValuesTreeEmptyV1 (cons (cons ValuesTreeStackConsV1 (cons $tree (cons $stack ()))) ()))) $view)
+   (let gslt:result:ValuesViewV1:11 (gslt:fn:ValuesViewV1:11 (quote (ValuesSequenceV1 $tree $stack)) $view)
+   (quote gslt:result:ValuesViewV1:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=51 source-presentation=RelationalStateTransitionCoreV1 source-rule=values-view-tree-leaf-v1 target=mode relation=ValuesViewV1 input=11 functional=semidet
-(= (gslt:fn:ValuesViewV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (ValuesSequenceV1 (ValuesTreeLeafV1 $value) $stack)) $__gslt_input_v1_0_0
-   (let (quote (ValuesUnconsViewV1 $value (ValuesSequenceV1 ValuesTreeEmptyV1 $stack))) $__gslt_input_v1_0_1
-   (quote gslt:result:ValuesViewV1:11))))
+(= (gslt:fn:ValuesViewV1:11 (cons ValuesSequenceV1 (cons (cons ValuesTreeLeafV1 (cons $value ())) (cons $stack ()))) (cons ValuesUnconsViewV1 (cons $value (cons (cons ValuesSequenceV1 (cons ValuesTreeEmptyV1 (cons $stack ()))) ()))))
+   (quote gslt:result:ValuesViewV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=52 source-presentation=RelationalStateTransitionCoreV1 source-rule=values-view-tree-node-v1 target=mode relation=ValuesViewV1 input=11 functional=semidet
-(= (gslt:fn:ValuesViewV1:11 $__gslt_input_v1_0_0 $view)
-   (let (quote (ValuesSequenceV1 (ValuesTreeNodeV1 $left $right) $stack)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:ValuesViewV1:11) (gslt:fn:ValuesViewV1:11 (quote (ValuesSequenceV1 $left (ValuesTreeStackConsV1 $right $stack))) $view)
-   (quote gslt:result:ValuesViewV1:11))))
+(= (gslt:fn:ValuesViewV1:11 (cons ValuesSequenceV1 (cons (cons ValuesTreeNodeV1 (cons $left (cons $right ()))) (cons $stack ()))) $view)
+   (let gslt:result:ValuesViewV1:11 (gslt:fn:ValuesViewV1:11 (quote (ValuesSequenceV1 $left (ValuesTreeStackConsV1 $right $stack))) $view)
+   (quote gslt:result:ValuesViewV1:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=46 source-presentation=RelationalStateTransitionCoreV1 source-rule=values-view-list-empty-v1 target=mode relation=ValuesViewV1 input=10 functional=semidet
 (= (gslt:fn:ValuesViewV1:10 ValuesNilV1)
    (quote (gslt:result:ValuesViewV1:10 ValuesEmptyViewV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=47 source-presentation=RelationalStateTransitionCoreV1 source-rule=values-view-list-uncons-v1 target=mode relation=ValuesViewV1 input=10 functional=semidet
-(= (gslt:fn:ValuesViewV1:10 $__gslt_input_v1_0_0)
-   (let (quote (ValuesConsV1 $value $rest)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ValuesViewV1:10 (ValuesUnconsViewV1 $value $rest)))))
+(= (gslt:fn:ValuesViewV1:10 (cons ValuesConsV1 (cons $value (cons $rest ()))))
+   (quote (gslt:result:ValuesViewV1:10 (ValuesUnconsViewV1 $value $rest))))
 
 ; gslt-lowered-equation-v1 source-rewrite=48 source-presentation=RelationalStateTransitionCoreV1 source-rule=values-view-realized-v1 target=mode relation=ValuesViewV1 input=10 functional=semidet
-(= (gslt:fn:ValuesViewV1:10 $__gslt_input_v1_0_0)
-   (let (quote (StateValueSequenceV1 $stream $sequenceId)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ValueSequenceRealizationV1:10 $sequence)) (gslt:fn:ValueSequenceRealizationV1:10 (quote (StateValueSequenceV1 $stream $sequenceId)))
-   (let (quote (gslt:result:ValuesViewV1:10 $view)) (gslt:fn:ValuesViewV1:10 $sequence)
-   (quote (gslt:result:ValuesViewV1:10 $view))))))
+(= (gslt:fn:ValuesViewV1:10 (cons StateValueSequenceV1 (cons $stream (cons $sequenceId ()))))
+   (let (cons gslt:result:ValueSequenceRealizationV1:10 (cons $sequence ())) (gslt:fn:ValueSequenceRealizationV1:10 (quote (StateValueSequenceV1 $stream $sequenceId)))
+   (let (cons gslt:result:ValuesViewV1:10 (cons $view ())) (gslt:fn:ValuesViewV1:10 $sequence)
+   (quote (gslt:result:ValuesViewV1:10 $view)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=49 source-presentation=RelationalStateTransitionCoreV1 source-rule=values-view-tree-empty-v1 target=mode relation=ValuesViewV1 input=10 functional=semidet
-(= (gslt:fn:ValuesViewV1:10 $__gslt_input_v1_0_0)
-   (let (quote (ValuesSequenceV1 ValuesTreeEmptyV1 ValuesTreeStackNilV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ValuesViewV1:10 ValuesEmptyViewV1))))
+(= (gslt:fn:ValuesViewV1:10 (cons ValuesSequenceV1 (cons ValuesTreeEmptyV1 (cons ValuesTreeStackNilV1 ()))))
+   (quote (gslt:result:ValuesViewV1:10 ValuesEmptyViewV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=50 source-presentation=RelationalStateTransitionCoreV1 source-rule=values-view-tree-pop-v1 target=mode relation=ValuesViewV1 input=10 functional=semidet
-(= (gslt:fn:ValuesViewV1:10 $__gslt_input_v1_0_0)
-   (let (quote (ValuesSequenceV1 ValuesTreeEmptyV1 (ValuesTreeStackConsV1 $tree $stack))) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ValuesViewV1:10 $view)) (gslt:fn:ValuesViewV1:10 (quote (ValuesSequenceV1 $tree $stack)))
-   (quote (gslt:result:ValuesViewV1:10 $view)))))
+(= (gslt:fn:ValuesViewV1:10 (cons ValuesSequenceV1 (cons ValuesTreeEmptyV1 (cons (cons ValuesTreeStackConsV1 (cons $tree (cons $stack ()))) ()))))
+   (let (cons gslt:result:ValuesViewV1:10 (cons $view ())) (gslt:fn:ValuesViewV1:10 (quote (ValuesSequenceV1 $tree $stack)))
+   (quote (gslt:result:ValuesViewV1:10 $view))))
 
 ; gslt-lowered-equation-v1 source-rewrite=51 source-presentation=RelationalStateTransitionCoreV1 source-rule=values-view-tree-leaf-v1 target=mode relation=ValuesViewV1 input=10 functional=semidet
-(= (gslt:fn:ValuesViewV1:10 $__gslt_input_v1_0_0)
-   (let (quote (ValuesSequenceV1 (ValuesTreeLeafV1 $value) $stack)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ValuesViewV1:10 (ValuesUnconsViewV1 $value (ValuesSequenceV1 ValuesTreeEmptyV1 $stack))))))
+(= (gslt:fn:ValuesViewV1:10 (cons ValuesSequenceV1 (cons (cons ValuesTreeLeafV1 (cons $value ())) (cons $stack ()))))
+   (quote (gslt:result:ValuesViewV1:10 (ValuesUnconsViewV1 $value (ValuesSequenceV1 ValuesTreeEmptyV1 $stack)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=52 source-presentation=RelationalStateTransitionCoreV1 source-rule=values-view-tree-node-v1 target=mode relation=ValuesViewV1 input=10 functional=semidet
-(= (gslt:fn:ValuesViewV1:10 $__gslt_input_v1_0_0)
-   (let (quote (ValuesSequenceV1 (ValuesTreeNodeV1 $left $right) $stack)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:ValuesViewV1:10 $view)) (gslt:fn:ValuesViewV1:10 (quote (ValuesSequenceV1 $left (ValuesTreeStackConsV1 $right $stack))))
-   (quote (gslt:result:ValuesViewV1:10 $view)))))
+(= (gslt:fn:ValuesViewV1:10 (cons ValuesSequenceV1 (cons (cons ValuesTreeNodeV1 (cons $left (cons $right ()))) (cons $stack ()))))
+   (let (cons gslt:result:ValuesViewV1:10 (cons $view ())) (gslt:fn:ValuesViewV1:10 (quote (ValuesSequenceV1 $left (ValuesTreeStackConsV1 $right $stack))))
+   (quote (gslt:result:ValuesViewV1:10 $view))))
 
 ; gslt-lowered-equation-v1 source-rewrite=56 source-presentation=RelationalStateTransitionCoreV1 source-rule=occurrence-role-nonempty-v1 target=mode relation=OccurrenceRoleNonemptyV1 input=11 functional=semidet
 (= (gslt:fn:OccurrenceRoleNonemptyV1:11 $occurrence $role)
-   (let (quote (gslt:result:OccurrenceRoleValuesV1:110 $values)) (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role)
-   (let (quote (gslt:result:ValuesViewV1:10 (ValuesUnconsViewV1 $value $rest))) (gslt:fn:ValuesViewV1:10 $values)
+   (let (cons gslt:result:OccurrenceRoleValuesV1:110 (cons $values ())) (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role)
+   (let (cons gslt:result:ValuesViewV1:10 (cons (cons ValuesUnconsViewV1 (cons $value (cons $rest ()))) ())) (gslt:fn:ValuesViewV1:10 $values)
    (quote gslt:result:OccurrenceRoleNonemptyV1:11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=57 source-presentation=RelationalStateTransitionCoreV1 source-rule=pop-entries-nil-v1 target=mode relation=PopEntriesV1 input=110 functional=semidet
@@ -950,21 +917,19 @@
    (quote (gslt:result:PopEntriesV1:110 EntriesNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=58 source-presentation=RelationalStateTransitionCoreV1 source-rule=pop-entries-cons-v1 target=mode relation=PopEntriesV1 input=110 functional=semidet
-(= (gslt:fn:PopEntriesV1:110 $__gslt_input_v1_0_0 $depth)
-   (let (quote (EntriesConsV1 (EntryV1 $seq $row $entryDepth) $rest)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:NatCompareV1:110 $comparison)) (gslt:fn:NatCompareV1:110 $entryDepth $depth)
-   (let (quote (gslt:result:PopEntriesComparedV1:11110 $out)) (gslt:fn:PopEntriesComparedV1:11110 $comparison (quote (EntryV1 $seq $row $entryDepth)) $rest $depth)
-   (quote (gslt:result:PopEntriesV1:110 $out))))))
+(= (gslt:fn:PopEntriesV1:110 (cons EntriesConsV1 (cons (cons EntryV1 (cons $seq (cons $row (cons $entryDepth ())))) (cons $rest ()))) $depth)
+   (let (cons gslt:result:NatCompareV1:110 (cons $comparison ())) (gslt:fn:NatCompareV1:110 $entryDepth $depth)
+   (let (cons gslt:result:PopEntriesComparedV1:11110 (cons $out ())) (gslt:fn:PopEntriesComparedV1:11110 $comparison (quote (EntryV1 $seq $row $entryDepth)) $rest $depth)
+   (quote (gslt:result:PopEntriesV1:110 $out)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=59 source-presentation=RelationalStateTransitionCoreV1 source-rule=pop-entries-compared-keep-v1 target=mode relation=PopEntriesComparedV1 input=11110 functional=semidet
-(= (gslt:fn:PopEntriesComparedV1:11110 CompareLessV1 $__gslt_input_v1_0_1 $rest $depth)
-   (let (quote (EntryV1 $seq $row $entryDepth)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:PopEntriesV1:110 $out)) (gslt:fn:PopEntriesV1:110 $rest $depth)
-   (quote (gslt:result:PopEntriesComparedV1:11110 (EntriesConsV1 (EntryV1 $seq $row $entryDepth) $out))))))
+(= (gslt:fn:PopEntriesComparedV1:11110 CompareLessV1 (cons EntryV1 (cons $seq (cons $row (cons $entryDepth ())))) $rest $depth)
+   (let (cons gslt:result:PopEntriesV1:110 (cons $out ())) (gslt:fn:PopEntriesV1:110 $rest $depth)
+   (quote (gslt:result:PopEntriesComparedV1:11110 (EntriesConsV1 (EntryV1 $seq $row $entryDepth) $out)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=60 source-presentation=RelationalStateTransitionCoreV1 source-rule=pop-entries-compared-drop-v1 target=mode relation=PopEntriesComparedV1 input=11110 functional=semidet
 (= (gslt:fn:PopEntriesComparedV1:11110 CompareEqualV1 $entry $rest $depth)
-   (let (quote (gslt:result:PopEntriesV1:110 $out)) (gslt:fn:PopEntriesV1:110 $rest $depth)
+   (let (cons gslt:result:PopEntriesV1:110 (cons $out ())) (gslt:fn:PopEntriesV1:110 $rest $depth)
    (quote (gslt:result:PopEntriesComparedV1:11110 $out))))
 
 ; gslt-lowered-equation-v1 source-rewrite=61 source-presentation=RelationalStateTransitionCoreV1 source-rule=pop-tables-nil-v1 target=mode relation=PopTablesV1 input=1110 functional=semidet
@@ -972,26 +937,25 @@
    (quote (gslt:result:PopTablesV1:1110 TablesNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=62 source-presentation=RelationalStateTransitionCoreV1 source-rule=pop-tables-cons-v1 target=mode relation=PopTablesV1 input=1110 functional=semidet
-(= (gslt:fn:PopTablesV1:1110 $package $__gslt_input_v1_0_1 $depth)
-   (let (quote (TablesConsV1 (TableV1 $name $entries) $rest)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:StateTableLifetimeV1:110 $lifetime)) (gslt:fn:StateTableLifetimeV1:110 $package $name)
-   (let (quote (gslt:result:PopTablesLifetimeV1:1111110 $out)) (gslt:fn:PopTablesLifetimeV1:1111110 $lifetime $package $name $entries $rest $depth)
-   (quote (gslt:result:PopTablesV1:1110 $out))))))
+(= (gslt:fn:PopTablesV1:1110 $package (cons TablesConsV1 (cons (cons TableV1 (cons $name (cons $entries ()))) (cons $rest ()))) $depth)
+   (let (cons gslt:result:StateTableLifetimeV1:110 (cons $lifetime ())) (gslt:fn:StateTableLifetimeV1:110 $package $name)
+   (let (cons gslt:result:PopTablesLifetimeV1:1111110 (cons $out ())) (gslt:fn:PopTablesLifetimeV1:1111110 $lifetime $package $name $entries $rest $depth)
+   (quote (gslt:result:PopTablesV1:1110 $out)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=63 source-presentation=RelationalStateTransitionCoreV1 source-rule=pop-tables-lifetime-persistent-v1 target=mode relation=PopTablesLifetimeV1 input=1111110 functional=semidet
 (= (gslt:fn:PopTablesLifetimeV1:1111110 StatePersistentV1 $package $name $entries $rest $depth)
-   (let (quote (gslt:result:PopTablesV1:1110 $out)) (gslt:fn:PopTablesV1:1110 $package $rest $depth)
+   (let (cons gslt:result:PopTablesV1:1110 (cons $out ())) (gslt:fn:PopTablesV1:1110 $package $rest $depth)
    (quote (gslt:result:PopTablesLifetimeV1:1111110 (TablesConsV1 (TableV1 $name $entries) $out)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=64 source-presentation=RelationalStateTransitionCoreV1 source-rule=pop-tables-lifetime-transactional-v1 target=mode relation=PopTablesLifetimeV1 input=1111110 functional=semidet
 (= (gslt:fn:PopTablesLifetimeV1:1111110 StateTransactionalV1 $package $name $entries $rest $depth)
-   (let (quote (gslt:result:PopTablesV1:1110 $out)) (gslt:fn:PopTablesV1:1110 $package $rest $depth)
+   (let (cons gslt:result:PopTablesV1:1110 (cons $out ())) (gslt:fn:PopTablesV1:1110 $package $rest $depth)
    (quote (gslt:result:PopTablesLifetimeV1:1111110 (TablesConsV1 (TableV1 $name $entries) $out)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=65 source-presentation=RelationalStateTransitionCoreV1 source-rule=pop-tables-lifetime-scoped-v1 target=mode relation=PopTablesLifetimeV1 input=1111110 functional=semidet
 (= (gslt:fn:PopTablesLifetimeV1:1111110 StateScopedV1 $package $name $entries $rest $depth)
-   (let (quote (gslt:result:PopEntriesV1:110 $kept)) (gslt:fn:PopEntriesV1:110 $entries $depth)
-   (let (quote (gslt:result:PopTablesV1:1110 $out)) (gslt:fn:PopTablesV1:1110 $package $rest $depth)
+   (let (cons gslt:result:PopEntriesV1:110 (cons $kept ())) (gslt:fn:PopEntriesV1:110 $entries $depth)
+   (let (cons gslt:result:PopTablesV1:1110 (cons $out ())) (gslt:fn:PopTablesV1:1110 $package $rest $depth)
    (quote (gslt:result:PopTablesLifetimeV1:1111110 (TablesConsV1 (TableV1 $name $kept) $out))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=66 source-presentation=RelationalStateTransitionCoreV1 source-rule=seen-lookup-nil-v1 target=mode relation=SeenLookupV1 input=111 functional=semidet
@@ -999,82 +963,76 @@
    (quote gslt:result:SeenLookupV1:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=67 source-presentation=RelationalStateTransitionCoreV1 source-rule=seen-lookup-hit-v1 target=mode relation=SeenLookupV1 input=111 functional=semidet
-(= (gslt:fn:SeenLookupV1:111 $__gslt_input_v1_0_0 $value $__gslt_input_v1_0_2)
-   (let (quote (SeenConsV1 $other $position $rest)) $__gslt_input_v1_0_0
-   (let (quote (SeenAtV1 $position)) $__gslt_input_v1_0_2
-   (let (quote gslt:result:StateValueCompareV1:111) (gslt:fn:StateValueCompareV1:111 $value $other CompareEqualV1)
-   (quote gslt:result:SeenLookupV1:111)))))
+(= (gslt:fn:SeenLookupV1:111 (cons SeenConsV1 (cons $other (cons $position (cons $rest ())))) $value (cons SeenAtV1 (cons $position ())))
+   (let gslt:result:StateValueCompareV1:111 (gslt:fn:StateValueCompareV1:111 $value $other CompareEqualV1)
+   (quote gslt:result:SeenLookupV1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=68 source-presentation=RelationalStateTransitionCoreV1 source-rule=seen-lookup-miss-v1 target=mode relation=SeenLookupV1 input=111 functional=semidet
-(= (gslt:fn:SeenLookupV1:111 $__gslt_input_v1_0_0 $value $result)
-   (let (quote (SeenConsV1 $other $position $rest)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:StateValueCompareV1:111) (gslt:fn:StateValueCompareV1:111 $value $other CompareDifferentV1)
-   (let (quote gslt:result:SeenLookupV1:111) (gslt:fn:SeenLookupV1:111 $rest $value $result)
-   (quote gslt:result:SeenLookupV1:111)))))
+(= (gslt:fn:SeenLookupV1:111 (cons SeenConsV1 (cons $other (cons $position (cons $rest ())))) $value $result)
+   (let gslt:result:StateValueCompareV1:111 (gslt:fn:StateValueCompareV1:111 $value $other CompareDifferentV1)
+   (let gslt:result:SeenLookupV1:111 (gslt:fn:SeenLookupV1:111 $rest $value $result)
+   (quote gslt:result:SeenLookupV1:111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=66 source-presentation=RelationalStateTransitionCoreV1 source-rule=seen-lookup-nil-v1 target=mode relation=SeenLookupV1 input=110 functional=semidet
 (= (gslt:fn:SeenLookupV1:110 SeenNilV1 $value)
    (quote (gslt:result:SeenLookupV1:110 SeenAbsentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=67 source-presentation=RelationalStateTransitionCoreV1 source-rule=seen-lookup-hit-v1 target=mode relation=SeenLookupV1 input=110 functional=semidet
-(= (gslt:fn:SeenLookupV1:110 $__gslt_input_v1_0_0 $value)
-   (let (quote (SeenConsV1 $other $position $rest)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:StateValueCompareV1:111) (gslt:fn:StateValueCompareV1:111 $value $other CompareEqualV1)
-   (quote (gslt:result:SeenLookupV1:110 (SeenAtV1 $position))))))
+(= (gslt:fn:SeenLookupV1:110 (cons SeenConsV1 (cons $other (cons $position (cons $rest ())))) $value)
+   (let gslt:result:StateValueCompareV1:111 (gslt:fn:StateValueCompareV1:111 $value $other CompareEqualV1)
+   (quote (gslt:result:SeenLookupV1:110 (SeenAtV1 $position)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=68 source-presentation=RelationalStateTransitionCoreV1 source-rule=seen-lookup-miss-v1 target=mode relation=SeenLookupV1 input=110 functional=semidet
-(= (gslt:fn:SeenLookupV1:110 $__gslt_input_v1_0_0 $value)
-   (let (quote (SeenConsV1 $other $position $rest)) $__gslt_input_v1_0_0
-   (let (quote gslt:result:StateValueCompareV1:111) (gslt:fn:StateValueCompareV1:111 $value $other CompareDifferentV1)
-   (let (quote (gslt:result:SeenLookupV1:110 $result)) (gslt:fn:SeenLookupV1:110 $rest $value)
-   (quote (gslt:result:SeenLookupV1:110 $result))))))
+(= (gslt:fn:SeenLookupV1:110 (cons SeenConsV1 (cons $other (cons $position (cons $rest ())))) $value)
+   (let gslt:result:StateValueCompareV1:111 (gslt:fn:StateValueCompareV1:111 $value $other CompareDifferentV1)
+   (let (cons gslt:result:SeenLookupV1:110 (cons $result ())) (gslt:fn:SeenLookupV1:110 $rest $value)
+   (quote (gslt:result:SeenLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=69 source-presentation=RelationalStateTransitionCoreV1 source-rule=distinct-scan-nil-v1 target=mode relation=DistinctScanV1 input=1111 functional=semidet
 (= (gslt:fn:DistinctScanV1:1111 $values $index $seen DistinctOkV1)
-   (let (quote gslt:result:ValuesViewV1:11) (gslt:fn:ValuesViewV1:11 $values ValuesEmptyViewV1)
+   (let gslt:result:ValuesViewV1:11 (gslt:fn:ValuesViewV1:11 $values ValuesEmptyViewV1)
    (quote gslt:result:DistinctScanV1:1111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=70 source-presentation=RelationalStateTransitionCoreV1 source-rule=distinct-scan-duplicate-v1 target=mode relation=DistinctScanV1 input=1111 functional=semidet
-(= (gslt:fn:DistinctScanV1:1111 $values $index $seen $__gslt_input_v1_0_3)
-   (let (quote (DuplicateAtV1 $value $first $index)) $__gslt_input_v1_0_3
-   (let (quote (gslt:result:ValuesViewV1:10 (ValuesUnconsViewV1 $value $rest))) (gslt:fn:ValuesViewV1:10 $values)
-   (let (quote gslt:result:SeenLookupV1:111) (gslt:fn:SeenLookupV1:111 $seen $value (quote (SeenAtV1 $first)))
-   (quote gslt:result:DistinctScanV1:1111)))))
+(= (gslt:fn:DistinctScanV1:1111 $values $index $seen (cons DuplicateAtV1 (cons $value (cons $first (cons $index ())))))
+   (let (cons gslt:result:ValuesViewV1:10 (cons (cons ValuesUnconsViewV1 (cons $value (cons $rest ()))) ())) (gslt:fn:ValuesViewV1:10 $values)
+   (let gslt:result:SeenLookupV1:111 (gslt:fn:SeenLookupV1:111 $seen $value (quote (SeenAtV1 $first)))
+   (quote gslt:result:DistinctScanV1:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=71 source-presentation=RelationalStateTransitionCoreV1 source-rule=distinct-scan-fresh-v1 target=mode relation=DistinctScanV1 input=1111 functional=semidet
 (= (gslt:fn:DistinctScanV1:1111 $values $index $seen $result)
-   (let (quote (gslt:result:ValuesViewV1:10 (ValuesUnconsViewV1 $value $rest))) (gslt:fn:ValuesViewV1:10 $values)
-   (let (quote gslt:result:SeenLookupV1:111) (gslt:fn:SeenLookupV1:111 $seen $value SeenAbsentV1)
-   (let (quote gslt:result:DistinctScanV1:1111) (gslt:fn:DistinctScanV1:1111 $rest (quote (NatSuccV1 $index)) (quote (SeenConsV1 $value $index $seen)) $result)
+   (let (cons gslt:result:ValuesViewV1:10 (cons (cons ValuesUnconsViewV1 (cons $value (cons $rest ()))) ())) (gslt:fn:ValuesViewV1:10 $values)
+   (let gslt:result:SeenLookupV1:111 (gslt:fn:SeenLookupV1:111 $seen $value SeenAbsentV1)
+   (let gslt:result:DistinctScanV1:1111 (gslt:fn:DistinctScanV1:1111 $rest (quote (NatSuccV1 $index)) (quote (SeenConsV1 $value $index $seen)) $result)
    (quote gslt:result:DistinctScanV1:1111)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=69 source-presentation=RelationalStateTransitionCoreV1 source-rule=distinct-scan-nil-v1 target=mode relation=DistinctScanV1 input=1110 functional=semidet
 (= (gslt:fn:DistinctScanV1:1110 $values $index $seen)
-   (let (quote gslt:result:ValuesViewV1:11) (gslt:fn:ValuesViewV1:11 $values ValuesEmptyViewV1)
+   (let gslt:result:ValuesViewV1:11 (gslt:fn:ValuesViewV1:11 $values ValuesEmptyViewV1)
    (quote (gslt:result:DistinctScanV1:1110 DistinctOkV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=70 source-presentation=RelationalStateTransitionCoreV1 source-rule=distinct-scan-duplicate-v1 target=mode relation=DistinctScanV1 input=1110 functional=semidet
 (= (gslt:fn:DistinctScanV1:1110 $values $index $seen)
-   (let (quote (gslt:result:ValuesViewV1:10 (ValuesUnconsViewV1 $value $rest))) (gslt:fn:ValuesViewV1:10 $values)
-   (let (quote (gslt:result:SeenLookupV1:110 (SeenAtV1 $first))) (gslt:fn:SeenLookupV1:110 $seen $value)
+   (let (cons gslt:result:ValuesViewV1:10 (cons (cons ValuesUnconsViewV1 (cons $value (cons $rest ()))) ())) (gslt:fn:ValuesViewV1:10 $values)
+   (let (cons gslt:result:SeenLookupV1:110 (cons (cons SeenAtV1 (cons $first ())) ())) (gslt:fn:SeenLookupV1:110 $seen $value)
    (quote (gslt:result:DistinctScanV1:1110 (DuplicateAtV1 $value $first $index))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=71 source-presentation=RelationalStateTransitionCoreV1 source-rule=distinct-scan-fresh-v1 target=mode relation=DistinctScanV1 input=1110 functional=semidet
 (= (gslt:fn:DistinctScanV1:1110 $values $index $seen)
-   (let (quote (gslt:result:ValuesViewV1:10 (ValuesUnconsViewV1 $value $rest))) (gslt:fn:ValuesViewV1:10 $values)
-   (let (quote gslt:result:SeenLookupV1:111) (gslt:fn:SeenLookupV1:111 $seen $value SeenAbsentV1)
-   (let (quote (gslt:result:DistinctScanV1:1110 $result)) (gslt:fn:DistinctScanV1:1110 $rest (quote (NatSuccV1 $index)) (quote (SeenConsV1 $value $index $seen)))
+   (let (cons gslt:result:ValuesViewV1:10 (cons (cons ValuesUnconsViewV1 (cons $value (cons $rest ()))) ())) (gslt:fn:ValuesViewV1:10 $values)
+   (let gslt:result:SeenLookupV1:111 (gslt:fn:SeenLookupV1:111 $seen $value SeenAbsentV1)
+   (let (cons gslt:result:DistinctScanV1:1110 (cons $result ())) (gslt:fn:DistinctScanV1:1110 $rest (quote (NatSuccV1 $index)) (quote (SeenConsV1 $value $index $seen)))
    (quote (gslt:result:DistinctScanV1:1110 $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=72 source-presentation=RelationalStateTransitionCoreV1 source-rule=pairs-with-nil-v1 target=mode relation=PairsWithV1 input=110 functional=semidet
 (= (gslt:fn:PairsWithV1:110 $value $values)
-   (let (quote gslt:result:ValuesViewV1:11) (gslt:fn:ValuesViewV1:11 $values ValuesEmptyViewV1)
+   (let gslt:result:ValuesViewV1:11 (gslt:fn:ValuesViewV1:11 $values ValuesEmptyViewV1)
    (quote (gslt:result:PairsWithV1:110 PairsNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=73 source-presentation=RelationalStateTransitionCoreV1 source-rule=pairs-with-cons-v1 target=mode relation=PairsWithV1 input=110 functional=semidet
 (= (gslt:fn:PairsWithV1:110 $value $values)
-   (let (quote (gslt:result:ValuesViewV1:10 (ValuesUnconsViewV1 $other $rest))) (gslt:fn:ValuesViewV1:10 $values)
-   (let (quote (gslt:result:PairsWithV1:110 $out)) (gslt:fn:PairsWithV1:110 $value $rest)
+   (let (cons gslt:result:ValuesViewV1:10 (cons (cons ValuesUnconsViewV1 (cons $other (cons $rest ()))) ())) (gslt:fn:ValuesViewV1:10 $values)
+   (let (cons gslt:result:PairsWithV1:110 (cons $out ())) (gslt:fn:PairsWithV1:110 $value $rest)
    (quote (gslt:result:PairsWithV1:110 (PairsConsV1 (PairV1 $value $other) $out))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=74 source-presentation=RelationalStateTransitionCoreV1 source-rule=pairs-append-nil-v1 target=mode relation=PairsAppendV1 input=110 functional=semidet
@@ -1082,105 +1040,91 @@
    (quote (gslt:result:PairsAppendV1:110 $ys)))
 
 ; gslt-lowered-equation-v1 source-rewrite=75 source-presentation=RelationalStateTransitionCoreV1 source-rule=pairs-append-cons-v1 target=mode relation=PairsAppendV1 input=110 functional=semidet
-(= (gslt:fn:PairsAppendV1:110 $__gslt_input_v1_0_0 $ys)
-   (let (quote (PairsConsV1 $p $xs)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:PairsAppendV1:110 $out)) (gslt:fn:PairsAppendV1:110 $xs $ys)
-   (quote (gslt:result:PairsAppendV1:110 (PairsConsV1 $p $out))))))
+(= (gslt:fn:PairsAppendV1:110 (cons PairsConsV1 (cons $p (cons $xs ()))) $ys)
+   (let (cons gslt:result:PairsAppendV1:110 (cons $out ())) (gslt:fn:PairsAppendV1:110 $xs $ys)
+   (quote (gslt:result:PairsAppendV1:110 (PairsConsV1 $p $out)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=76 source-presentation=RelationalStateTransitionCoreV1 source-rule=all-pairs-nil-v1 target=mode relation=AllPairsV1 input=10 functional=semidet
 (= (gslt:fn:AllPairsV1:10 $values)
-   (let (quote gslt:result:ValuesViewV1:11) (gslt:fn:ValuesViewV1:11 $values ValuesEmptyViewV1)
+   (let gslt:result:ValuesViewV1:11 (gslt:fn:ValuesViewV1:11 $values ValuesEmptyViewV1)
    (quote (gslt:result:AllPairsV1:10 PairsNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=77 source-presentation=RelationalStateTransitionCoreV1 source-rule=all-pairs-cons-v1 target=mode relation=AllPairsV1 input=10 functional=semidet
 (= (gslt:fn:AllPairsV1:10 $values)
-   (let (quote (gslt:result:ValuesViewV1:10 (ValuesUnconsViewV1 $value $rest))) (gslt:fn:ValuesViewV1:10 $values)
-   (let (quote (gslt:result:PairsWithV1:110 $head)) (gslt:fn:PairsWithV1:110 $value $rest)
-   (let (quote (gslt:result:AllPairsV1:10 $tail)) (gslt:fn:AllPairsV1:10 $rest)
-   (let (quote (gslt:result:PairsAppendV1:110 $out)) (gslt:fn:PairsAppendV1:110 $head $tail)
+   (let (cons gslt:result:ValuesViewV1:10 (cons (cons ValuesUnconsViewV1 (cons $value (cons $rest ()))) ())) (gslt:fn:ValuesViewV1:10 $values)
+   (let (cons gslt:result:PairsWithV1:110 (cons $head ())) (gslt:fn:PairsWithV1:110 $value $rest)
+   (let (cons gslt:result:AllPairsV1:10 (cons $tail ())) (gslt:fn:AllPairsV1:10 $rest)
+   (let (cons gslt:result:PairsAppendV1:110 (cons $out ())) (gslt:fn:PairsAppendV1:110 $head $tail)
    (quote (gslt:result:AllPairsV1:10 $out)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=78 source-presentation=RelationalStateTransitionCoreV1 source-rule=values-lookup-zero-v1 target=mode relation=ValuesLookupV1 input=110 functional=semidet
 (= (gslt:fn:ValuesLookupV1:110 $values NatZeroV1)
-   (let (quote (gslt:result:ValuesViewV1:10 (ValuesUnconsViewV1 $value $rest))) (gslt:fn:ValuesViewV1:10 $values)
+   (let (cons gslt:result:ValuesViewV1:10 (cons (cons ValuesUnconsViewV1 (cons $value (cons $rest ()))) ())) (gslt:fn:ValuesViewV1:10 $values)
    (quote (gslt:result:ValuesLookupV1:110 $value))))
 
 ; gslt-lowered-equation-v1 source-rewrite=79 source-presentation=RelationalStateTransitionCoreV1 source-rule=values-lookup-succ-v1 target=mode relation=ValuesLookupV1 input=110 functional=semidet
-(= (gslt:fn:ValuesLookupV1:110 $values $__gslt_input_v1_0_1)
-   (let (quote (NatSuccV1 $index)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:ValuesViewV1:10 (ValuesUnconsViewV1 $head $rest))) (gslt:fn:ValuesViewV1:10 $values)
-   (let (quote (gslt:result:ValuesLookupV1:110 $value)) (gslt:fn:ValuesLookupV1:110 $rest $index)
-   (quote (gslt:result:ValuesLookupV1:110 $value))))))
+(= (gslt:fn:ValuesLookupV1:110 $values (cons NatSuccV1 (cons $index ())))
+   (let (cons gslt:result:ValuesViewV1:10 (cons (cons ValuesUnconsViewV1 (cons $head (cons $rest ()))) ())) (gslt:fn:ValuesViewV1:10 $values)
+   (let (cons gslt:result:ValuesLookupV1:110 (cons $value ())) (gslt:fn:ValuesLookupV1:110 $rest $index)
+   (quote (gslt:result:ValuesLookupV1:110 $value)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=80 source-presentation=RelationalStateTransitionCoreV1 source-rule=row-lookup-zero-v1 target=mode relation=RowLookupV1 input=110 functional=semidet
-(= (gslt:fn:RowLookupV1:110 $__gslt_input_v1_0_0 NatZeroV1)
-   (let (quote (RowConsV1 $value $rest)) $__gslt_input_v1_0_0
-   (quote (gslt:result:RowLookupV1:110 $value))))
+(= (gslt:fn:RowLookupV1:110 (cons RowConsV1 (cons $value (cons $rest ()))) NatZeroV1)
+   (quote (gslt:result:RowLookupV1:110 $value)))
 
 ; gslt-lowered-equation-v1 source-rewrite=81 source-presentation=RelationalStateTransitionCoreV1 source-rule=row-lookup-succ-v1 target=mode relation=RowLookupV1 input=110 functional=semidet
-(= (gslt:fn:RowLookupV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (RowConsV1 $head $rest)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 $index)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:RowLookupV1:110 $value)) (gslt:fn:RowLookupV1:110 $rest $index)
-   (quote (gslt:result:RowLookupV1:110 $value))))))
+(= (gslt:fn:RowLookupV1:110 (cons RowConsV1 (cons $head (cons $rest ()))) (cons NatSuccV1 (cons $index ())))
+   (let (cons gslt:result:RowLookupV1:110 (cons $value ())) (gslt:fn:RowLookupV1:110 $rest $index)
+   (quote (gslt:result:RowLookupV1:110 $value))))
 
 ; gslt-lowered-equation-v1 source-rewrite=82 source-presentation=RelationalStateTransitionCoreV1 source-rule=row-expr-eval-nil-v1 target=mode relation=RowExprEvalV1 input=11110 functional=relational
 (= (gslt:mode:RowExprEvalV1:11110 StateRowNilV1 $occurrence $input $source)
    (quote (gslt:result:RowExprEvalV1:11110 (EvaluatedRowV1 RowNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=83 source-presentation=RelationalStateTransitionCoreV1 source-rule=row-expr-eval-cons-v1 target=mode relation=RowExprEvalV1 input=11110 functional=relational
-(= (gslt:mode:RowExprEvalV1:11110 $__gslt_input_v1_0_0 $occurrence $input $source)
-   (let (quote (StateRowConsV1 $head $tail)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:RowExprValueV1:11110 $value)) (superpose (collapse (gslt:mode:RowExprValueV1:11110 $head $occurrence $input $source)))
-   (let (quote (gslt:result:RowExprEvalV1:11110 (EvaluatedRowV1 $rest))) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $tail $occurrence $input $source)))
-   (quote (gslt:result:RowExprEvalV1:11110 (EvaluatedRowV1 (RowConsV1 $value $rest))))))))
+(= (gslt:mode:RowExprEvalV1:11110 (cons StateRowConsV1 (cons $head (cons $tail ()))) $occurrence $input $source)
+   (let (cons gslt:result:RowExprValueV1:11110 (cons $value ())) (superpose (collapse (gslt:mode:RowExprValueV1:11110 $head $occurrence $input $source)))
+   (let (cons gslt:result:RowExprEvalV1:11110 (cons (cons EvaluatedRowV1 (cons $rest ())) ())) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $tail $occurrence $input $source)))
+   (quote (gslt:result:RowExprEvalV1:11110 (EvaluatedRowV1 (RowConsV1 $value $rest)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=84 source-presentation=RelationalStateTransitionCoreV1 source-rule=row-expr-value-input-v1 target=mode relation=RowExprValueV1 input=11110 functional=relational
 (= (gslt:mode:RowExprValueV1:11110 StateInputV1 $occurrence $input $source)
    (quote (gslt:result:RowExprValueV1:11110 $input)))
 
 ; gslt-lowered-equation-v1 source-rewrite=85 source-presentation=RelationalStateTransitionCoreV1 source-rule=row-expr-value-literal-v1 target=mode relation=RowExprValueV1 input=11110 functional=relational
-(= (gslt:mode:RowExprValueV1:11110 $__gslt_input_v1_0_0 $occurrence $input $source)
-   (let (quote (StateLiteralV1 $value)) $__gslt_input_v1_0_0
-   (quote (gslt:result:RowExprValueV1:11110 $value))))
+(= (gslt:mode:RowExprValueV1:11110 (cons StateLiteralV1 (cons $value ())) $occurrence $input $source)
+   (quote (gslt:result:RowExprValueV1:11110 $value)))
 
 ; gslt-lowered-equation-v1 source-rewrite=86 source-presentation=RelationalStateTransitionCoreV1 source-rule=row-expr-value-literal-symbol-v1 target=mode relation=RowExprValueV1 input=11110 functional=relational
-(= (gslt:mode:RowExprValueV1:11110 $__gslt_input_v1_0_0 $occurrence $input $source)
-   (let (quote (StateLiteralSymbolV1 $literal)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:OccurrenceLiteralValueV1:110 $value)) (superpose (collapse (gslt:mode:OccurrenceLiteralValueV1:110 $occurrence $literal)))
-   (quote (gslt:result:RowExprValueV1:11110 $value)))))
+(= (gslt:mode:RowExprValueV1:11110 (cons StateLiteralSymbolV1 (cons $literal ())) $occurrence $input $source)
+   (let (cons gslt:result:OccurrenceLiteralValueV1:110 (cons $value ())) (superpose (collapse (gslt:mode:OccurrenceLiteralValueV1:110 $occurrence $literal)))
+   (quote (gslt:result:RowExprValueV1:11110 $value))))
 
 ; gslt-lowered-equation-v1 source-rewrite=88 source-presentation=RelationalStateTransitionCoreV1 source-rule=row-expr-value-role-at-v1 target=mode relation=RowExprValueV1 input=11110 functional=relational
-(= (gslt:mode:RowExprValueV1:11110 $__gslt_input_v1_0_0 $occurrence $input $source)
-   (let (quote (StateRoleAtV1 $role $index)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:OccurrenceRoleValuesV1:110 $values)) (once (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role))
-   (let (quote (gslt:result:ValuesLookupV1:110 $value)) (once (gslt:fn:ValuesLookupV1:110 $values $index))
-   (quote (gslt:result:RowExprValueV1:11110 $value))))))
+(= (gslt:mode:RowExprValueV1:11110 (cons StateRoleAtV1 (cons $role (cons $index ()))) $occurrence $input $source)
+   (let (cons gslt:result:OccurrenceRoleValuesV1:110 (cons $values ())) (once (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role))
+   (let (cons gslt:result:ValuesLookupV1:110 (cons $value ())) (once (gslt:fn:ValuesLookupV1:110 $values $index))
+   (quote (gslt:result:RowExprValueV1:11110 $value)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=89 source-presentation=RelationalStateTransitionCoreV1 source-rule=row-expr-value-role-list-v1 target=mode relation=RowExprValueV1 input=11110 functional=relational
-(= (gslt:mode:RowExprValueV1:11110 $__gslt_input_v1_0_0 $occurrence $input $source)
-   (let (quote (StateRoleListV1 $role $index)) $__gslt_input_v1_0_0
+(= (gslt:mode:RowExprValueV1:11110 (cons StateRoleListV1 (cons $role (cons $index ()))) $occurrence $input $source)
    (let $_ (gslt:OccurrenceRoleListValueV1 (OccurrenceRoleListValueV1 $occurrence $role $index $value))
-   (quote (gslt:result:RowExprValueV1:11110 $value)))))
+   (quote (gslt:result:RowExprValueV1:11110 $value))))
 
 ; gslt-lowered-equation-v1 source-rewrite=90 source-presentation=RelationalStateTransitionCoreV1 source-rule=row-expr-value-source-column-v1 target=mode relation=RowExprValueV1 input=11110 functional=relational
-(= (gslt:mode:RowExprValueV1:11110 $__gslt_input_v1_0_0 $occurrence $input $__gslt_input_v1_0_3)
-   (let (quote (StateSourceColumnV1 $index)) $__gslt_input_v1_0_0
-   (let (quote (SourceContextV1 $row $rowIndex $matchIndex)) $__gslt_input_v1_0_3
-   (let (quote (gslt:result:RowLookupV1:110 $value)) (once (gslt:fn:RowLookupV1:110 $row $index))
-   (quote (gslt:result:RowExprValueV1:11110 $value))))))
+(= (gslt:mode:RowExprValueV1:11110 (cons StateSourceColumnV1 (cons $index ())) $occurrence $input (cons SourceContextV1 (cons $row (cons $rowIndex (cons $matchIndex ())))))
+   (let (cons gslt:result:RowLookupV1:110 (cons $value ())) (once (gslt:fn:RowLookupV1:110 $row $index))
+   (quote (gslt:result:RowExprValueV1:11110 $value))))
 
 ; gslt-lowered-equation-v1 source-rewrite=91 source-presentation=RelationalStateTransitionCoreV1 source-rule=row-expr-value-source-row-index-v1 target=mode relation=RowExprValueV1 input=11110 functional=relational
-(= (gslt:mode:RowExprValueV1:11110 StateSourceRowIndexV1 $occurrence $input $__gslt_input_v1_0_3)
-   (let (quote (SourceContextV1 $row $rowIndex $matchIndex)) $__gslt_input_v1_0_3
-   (let (quote (gslt:result:OccurrenceIndexValueV1:110 $value)) (once (gslt:fn:OccurrenceIndexValueV1:110 $occurrence $rowIndex))
-   (quote (gslt:result:RowExprValueV1:11110 $value)))))
+(= (gslt:mode:RowExprValueV1:11110 StateSourceRowIndexV1 $occurrence $input (cons SourceContextV1 (cons $row (cons $rowIndex (cons $matchIndex ())))))
+   (let (cons gslt:result:OccurrenceIndexValueV1:110 (cons $value ())) (once (gslt:fn:OccurrenceIndexValueV1:110 $occurrence $rowIndex))
+   (quote (gslt:result:RowExprValueV1:11110 $value))))
 
 ; gslt-lowered-equation-v1 source-rewrite=92 source-presentation=RelationalStateTransitionCoreV1 source-rule=row-expr-value-source-match-index-v1 target=mode relation=RowExprValueV1 input=11110 functional=relational
-(= (gslt:mode:RowExprValueV1:11110 StateSourceMatchIndexV1 $occurrence $input $__gslt_input_v1_0_3)
-   (let (quote (SourceContextV1 $row $rowIndex $matchIndex)) $__gslt_input_v1_0_3
-   (let (quote (gslt:result:OccurrenceIndexValueV1:110 $value)) (once (gslt:fn:OccurrenceIndexValueV1:110 $occurrence $matchIndex))
-   (quote (gslt:result:RowExprValueV1:11110 $value)))))
+(= (gslt:mode:RowExprValueV1:11110 StateSourceMatchIndexV1 $occurrence $input (cons SourceContextV1 (cons $row (cons $rowIndex (cons $matchIndex ())))))
+   (let (cons gslt:result:OccurrenceIndexValueV1:110 (cons $value ())) (once (gslt:fn:OccurrenceIndexValueV1:110 $occurrence $matchIndex))
+   (quote (gslt:result:RowExprValueV1:11110 $value))))
 
 ; gslt-lowered-equation-v1 source-rewrite=87 source-presentation=RelationalStateTransitionCoreV1 source-rule=occurrence-literal-value-from-stream-v1 target=mode relation=OccurrenceLiteralValueV1 input=110 functional=relational
 (= (gslt:mode:OccurrenceLiteralValueV1:110 $occurrence $literal)
@@ -1202,8 +1146,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=94 source-presentation=RelationalStateTransitionCoreV1 source-rule=commit-action-state-v1 target=mode relation=CommitActionStateV1 input=1110 functional=semidet
 (= (gslt:fn:CommitActionStateV1:1110 $before $outcome $tentative)
-   (let (quote (gslt:result:OutcomeClassV1:10 $class)) (gslt:fn:OutcomeClassV1:10 $outcome)
-   (let (quote (gslt:result:CommitActionStateClassifiedV1:1110 $after)) (gslt:fn:CommitActionStateClassifiedV1:1110 $class $before $tentative)
+   (let (cons gslt:result:OutcomeClassV1:10 (cons $class ())) (gslt:fn:OutcomeClassV1:10 $outcome)
+   (let (cons gslt:result:CommitActionStateClassifiedV1:1110 (cons $after ())) (gslt:fn:CommitActionStateClassifiedV1:1110 $class $before $tentative)
    (quote (gslt:result:CommitActionStateV1:1110 $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=95 source-presentation=RelationalStateTransitionCoreV1 source-rule=commit-action-state-classified-accepted-v1 target=mode relation=CommitActionStateClassifiedV1 input=1110 functional=semidet
@@ -1219,11 +1163,10 @@
    (quote (gslt:result:EntriesRowMemberV1:110 RowMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=111 source-presentation=RelationalStateTransitionCoreV1 source-rule=entries-row-member-cons-v1 target=mode relation=EntriesRowMemberV1 input=110 functional=semidet
-(= (gslt:fn:EntriesRowMemberV1:110 $__gslt_input_v1_0_0 $row)
-   (let (quote (EntriesConsV1 (EntryV1 $s $other $d) $rest)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:RowCompareV1:110 $comparison)) (gslt:fn:RowCompareV1:110 $other $row)
-   (let (quote (gslt:result:EntriesRowMemberComparedV1:1110 $result)) (gslt:fn:EntriesRowMemberComparedV1:1110 $comparison $rest $row)
-   (quote (gslt:result:EntriesRowMemberV1:110 $result))))))
+(= (gslt:fn:EntriesRowMemberV1:110 (cons EntriesConsV1 (cons (cons EntryV1 (cons $s (cons $other (cons $d ())))) (cons $rest ()))) $row)
+   (let (cons gslt:result:RowCompareV1:110 (cons $comparison ())) (gslt:fn:RowCompareV1:110 $other $row)
+   (let (cons gslt:result:EntriesRowMemberComparedV1:1110 (cons $result ())) (gslt:fn:EntriesRowMemberComparedV1:1110 $comparison $rest $row)
+   (quote (gslt:result:EntriesRowMemberV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=112 source-presentation=RelationalStateTransitionCoreV1 source-rule=entries-row-member-compared-equal-v1 target=mode relation=EntriesRowMemberComparedV1 input=1110 functional=semidet
 (= (gslt:fn:EntriesRowMemberComparedV1:1110 CompareEqualV1 $rest $row)
@@ -1231,7 +1174,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=113 source-presentation=RelationalStateTransitionCoreV1 source-rule=entries-row-member-compared-different-v1 target=mode relation=EntriesRowMemberComparedV1 input=1110 functional=semidet
 (= (gslt:fn:EntriesRowMemberComparedV1:1110 CompareDifferentV1 $rest $row)
-   (let (quote (gslt:result:EntriesRowMemberV1:110 $result)) (gslt:fn:EntriesRowMemberV1:110 $rest $row)
+   (let (cons gslt:result:EntriesRowMemberV1:110 (cons $result ())) (gslt:fn:EntriesRowMemberV1:110 $rest $row)
    (quote (gslt:result:EntriesRowMemberComparedV1:1110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=165 source-presentation=RelationalStateTransitionCoreV1 source-rule=history-append-nil-v1 target=mode relation=HistoryAppendV1 input=110 functional=semidet
@@ -1239,21 +1182,20 @@
    (quote (gslt:result:HistoryAppendV1:110 $ys)))
 
 ; gslt-lowered-equation-v1 source-rewrite=166 source-presentation=RelationalStateTransitionCoreV1 source-rule=history-append-cons-v1 target=mode relation=HistoryAppendV1 input=110 functional=semidet
-(= (gslt:fn:HistoryAppendV1:110 $__gslt_input_v1_0_0 $ys)
-   (let (quote (HistoryConsV1 $e $xs)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:HistoryAppendV1:110 $out)) (gslt:fn:HistoryAppendV1:110 $xs $ys)
-   (quote (gslt:result:HistoryAppendV1:110 (HistoryConsV1 $e $out))))))
+(= (gslt:fn:HistoryAppendV1:110 (cons HistoryConsV1 (cons $e (cons $xs ()))) $ys)
+   (let (cons gslt:result:HistoryAppendV1:110 (cons $out ())) (gslt:fn:HistoryAppendV1:110 $xs $ys)
+   (quote (gslt:result:HistoryAppendV1:110 (HistoryConsV1 $e $out)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=167 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-interning-injective-v1 target=mode relation=StateInterningInjectiveV1 input=11 functional=semidet
 (= (gslt:fn:StateInterningInjectiveV1:11 $occurrence $role)
-   (let (quote (gslt:result:OccurrenceRoleValuesV1:110 $values)) (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role)
-   (let (quote (gslt:result:OccurrenceRoleSymbolsV1:110 $symbols)) (gslt:fn:OccurrenceRoleSymbolsV1:110 $occurrence $role)
-   (let (quote gslt:result:InterningInjectiveOnV1:11) (gslt:fn:InterningInjectiveOnV1:11 $symbols $values)
+   (let (cons gslt:result:OccurrenceRoleValuesV1:110 (cons $values ())) (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role)
+   (let (cons gslt:result:OccurrenceRoleSymbolsV1:110 (cons $symbols ())) (gslt:fn:OccurrenceRoleSymbolsV1:110 $occurrence $role)
+   (let gslt:result:InterningInjectiveOnV1:11 (gslt:fn:InterningInjectiveOnV1:11 $symbols $values)
    (quote gslt:result:StateInterningInjectiveV1:11)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=168 source-presentation=RelationalStateTransitionCoreV1 source-rule=occurrence-interning-faithful-v1 target=mode relation=OccurrenceInterningFaithfulV1 input=11 functional=semidet
 (= (gslt:fn:OccurrenceInterningFaithfulV1:11 $occurrence $role)
-   (let (quote gslt:result:StateInterningInjectiveV1:11) (gslt:fn:StateInterningInjectiveV1:11 $occurrence $role)
+   (let gslt:result:StateInterningInjectiveV1:11 (gslt:fn:StateInterningInjectiveV1:11 $occurrence $role)
    (quote gslt:result:OccurrenceInterningFaithfulV1:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=173 source-presentation=RelationalStateTransitionCoreV1 source-rule=outcome-class-accepted-v1 target=mode relation=OutcomeClassV1 input=10 functional=semidet
@@ -1261,39 +1203,32 @@
    (quote (gslt:result:OutcomeClassV1:10 OutcomeAcceptedV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=175 source-presentation=RelationalStateTransitionCoreV1 source-rule=outcome-class-row-absent-v1 target=mode relation=OutcomeClassV1 input=10 functional=semidet
-(= (gslt:fn:OutcomeClassV1:10 $__gslt_input_v1_0_0)
-   (let (quote (RefusedRowAbsentV1 $table $row)) $__gslt_input_v1_0_0
-   (quote (gslt:result:OutcomeClassV1:10 OutcomeRefusedV1))))
+(= (gslt:fn:OutcomeClassV1:10 (cons RefusedRowAbsentV1 (cons $table (cons $row ()))))
+   (quote (gslt:result:OutcomeClassV1:10 OutcomeRefusedV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=177 source-presentation=RelationalStateTransitionCoreV1 source-rule=outcome-class-duplicate-value-v1 target=mode relation=OutcomeClassV1 input=10 functional=semidet
-(= (gslt:fn:OutcomeClassV1:10 $__gslt_input_v1_0_0)
-   (let (quote (RefusedDuplicateValueV1 $value $first $second)) $__gslt_input_v1_0_0
-   (quote (gslt:result:OutcomeClassV1:10 OutcomeRefusedV1))))
+(= (gslt:fn:OutcomeClassV1:10 (cons RefusedDuplicateValueV1 (cons $value (cons $first (cons $second ())))))
+   (quote (gslt:result:OutcomeClassV1:10 OutcomeRefusedV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=179 source-presentation=RelationalStateTransitionCoreV1 source-rule=outcome-class-key-disagrees-v1 target=mode relation=OutcomeClassV1 input=10 functional=semidet
-(= (gslt:fn:OutcomeClassV1:10 $__gslt_input_v1_0_0)
-   (let (quote (RefusedKeyDisagreesV1 $table $row $existing)) $__gslt_input_v1_0_0
-   (quote (gslt:result:OutcomeClassV1:10 OutcomeRefusedV1))))
+(= (gslt:fn:OutcomeClassV1:10 (cons RefusedKeyDisagreesV1 (cons $table (cons $row (cons $existing ())))))
+   (quote (gslt:result:OutcomeClassV1:10 OutcomeRefusedV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=RelationalStateTransitionCoreV1 source-rule=outcome-class-key-present-v1 target=mode relation=OutcomeClassV1 input=10 functional=semidet
-(= (gslt:fn:OutcomeClassV1:10 $__gslt_input_v1_0_0)
-   (let (quote (RefusedKeyPresentV1 $table $existing)) $__gslt_input_v1_0_0
-   (quote (gslt:result:OutcomeClassV1:10 OutcomeRefusedV1))))
+(= (gslt:fn:OutcomeClassV1:10 (cons RefusedKeyPresentV1 (cons $table (cons $existing ()))))
+   (quote (gslt:result:OutcomeClassV1:10 OutcomeRefusedV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=183 source-presentation=RelationalStateTransitionCoreV1 source-rule=outcome-class-unsupported-row-expr-v1 target=mode relation=OutcomeClassV1 input=10 functional=semidet
-(= (gslt:fn:OutcomeClassV1:10 $__gslt_input_v1_0_0)
-   (let (quote (RefusedUnsupportedRowExprV1 $expr)) $__gslt_input_v1_0_0
-   (quote (gslt:result:OutcomeClassV1:10 OutcomeRefusedV1))))
+(= (gslt:fn:OutcomeClassV1:10 (cons RefusedUnsupportedRowExprV1 (cons $expr ())))
+   (quote (gslt:result:OutcomeClassV1:10 OutcomeRefusedV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=185 source-presentation=RelationalStateTransitionCoreV1 source-rule=outcome-class-depth-mismatch-v1 target=mode relation=OutcomeClassV1 input=10 functional=semidet
-(= (gslt:fn:OutcomeClassV1:10 $__gslt_input_v1_0_0)
-   (let (quote (RefusedDepthMismatchV1 $expected $actual)) $__gslt_input_v1_0_0
-   (quote (gslt:result:OutcomeClassV1:10 OutcomeRefusedV1))))
+(= (gslt:fn:OutcomeClassV1:10 (cons RefusedDepthMismatchV1 (cons $expected (cons $actual ()))))
+   (quote (gslt:result:OutcomeClassV1:10 OutcomeRefusedV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=187 source-presentation=RelationalStateTransitionCoreV1 source-rule=outcome-class-scope-underflow-v1 target=mode relation=OutcomeClassV1 input=10 functional=semidet
-(= (gslt:fn:OutcomeClassV1:10 $__gslt_input_v1_0_0)
-   (let (quote (RefusedScopeUnderflowV1 $actual)) $__gslt_input_v1_0_0
-   (quote (gslt:result:OutcomeClassV1:10 OutcomeRefusedV1))))
+(= (gslt:fn:OutcomeClassV1:10 (cons RefusedScopeUnderflowV1 (cons $actual ())))
+   (quote (gslt:result:OutcomeClassV1:10 OutcomeRefusedV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=208 source-presentation=MetamathStateTransitionExecutionCanaryV1 source-rule=metamath-constants-good-role-values-v1 target=mode relation=OccurrenceRoleValuesV1 input=110 functional=semidet
 (= (gslt:fn:OccurrenceRoleValuesV1:110 MetamathConstantsGoodOccurrenceV1 mm-symbol)
@@ -1304,14 +1239,12 @@
    (quote (gslt:result:OccurrenceRoleValuesV1:110 (StateValueSequenceV1 MetamathConstantsCanaryStreamV1 (NatSuccV1 NatZeroV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=209 source-presentation=MetamathStateTransitionExecutionCanaryV1 source-rule=metamath-constants-good-value-sequence-v1 target=mode relation=ValueSequenceRealizationV1 input=10 functional=semidet
-(= (gslt:fn:ValueSequenceRealizationV1:10 $__gslt_input_v1_0_0)
-   (let (quote (StateValueSequenceV1 MetamathConstantsCanaryStreamV1 NatZeroV1)) $__gslt_input_v1_0_0
-   (quote (gslt:result:ValueSequenceRealizationV1:10 (ValuesConsV1 NatZeroV1 (ValuesConsV1 (NatSuccV1 NatZeroV1) ValuesNilV1))))))
+(= (gslt:fn:ValueSequenceRealizationV1:10 (cons StateValueSequenceV1 (cons MetamathConstantsCanaryStreamV1 (cons NatZeroV1 ()))))
+   (quote (gslt:result:ValueSequenceRealizationV1:10 (ValuesConsV1 NatZeroV1 (ValuesConsV1 (NatSuccV1 NatZeroV1) ValuesNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=215 source-presentation=MetamathStateTransitionExecutionCanaryV1 source-rule=metamath-constants-repeated-value-sequence-v1 target=mode relation=ValueSequenceRealizationV1 input=10 functional=semidet
-(= (gslt:fn:ValueSequenceRealizationV1:10 $__gslt_input_v1_0_0)
-   (let (quote (StateValueSequenceV1 MetamathConstantsCanaryStreamV1 (NatSuccV1 NatZeroV1))) $__gslt_input_v1_0_0
-   (quote (gslt:result:ValueSequenceRealizationV1:10 (ValuesConsV1 NatZeroV1 (ValuesConsV1 NatZeroV1 ValuesNilV1))))))
+(= (gslt:fn:ValueSequenceRealizationV1:10 (cons StateValueSequenceV1 (cons MetamathConstantsCanaryStreamV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ()))))
+   (quote (gslt:result:ValueSequenceRealizationV1:10 (ValuesConsV1 NatZeroV1 (ValuesConsV1 NatZeroV1 ValuesNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=210 source-presentation=MetamathStateTransitionExecutionCanaryV1 source-rule=metamath-constants-good-position-v1 target=mode relation=OccurrencePositionV1 input=10 functional=semidet
 (= (gslt:fn:OccurrencePositionV1:10 MetamathConstantsGoodOccurrenceV1)
@@ -1330,376 +1263,318 @@
    (quote (gslt:result:OccurrenceRoleSymbolsV1:110 (SymbolsConsV1 MetamathConstantFirstV1 (SymbolsConsV1 MetamathConstantFirstV1 SymbolsNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=212 source-presentation=MetamathStateTransitionExecutionCanaryV1 source-rule=metamath-constants-good-interning-v1 target=mode relation=InterningInjectiveOnV1 input=11 functional=semidet
-(= (gslt:fn:InterningInjectiveOnV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (SymbolsConsV1 MetamathConstantFirstV1 (SymbolsConsV1 MetamathConstantSecondV1 SymbolsNilV1))) $__gslt_input_v1_0_0
-   (let (quote (StateValueSequenceV1 MetamathConstantsCanaryStreamV1 NatZeroV1)) $__gslt_input_v1_0_1
-   (quote gslt:result:InterningInjectiveOnV1:11))))
+(= (gslt:fn:InterningInjectiveOnV1:11 (cons SymbolsConsV1 (cons MetamathConstantFirstV1 (cons (cons SymbolsConsV1 (cons MetamathConstantSecondV1 (cons SymbolsNilV1 ()))) ()))) (cons StateValueSequenceV1 (cons MetamathConstantsCanaryStreamV1 (cons NatZeroV1 ()))))
+   (quote gslt:result:InterningInjectiveOnV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=218 source-presentation=MetamathStateTransitionExecutionCanaryV1 source-rule=metamath-constants-repeated-interning-v1 target=mode relation=InterningInjectiveOnV1 input=11 functional=semidet
-(= (gslt:fn:InterningInjectiveOnV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (SymbolsConsV1 MetamathConstantFirstV1 (SymbolsConsV1 MetamathConstantFirstV1 SymbolsNilV1))) $__gslt_input_v1_0_0
-   (let (quote (StateValueSequenceV1 MetamathConstantsCanaryStreamV1 (NatSuccV1 NatZeroV1))) $__gslt_input_v1_0_1
-   (quote gslt:result:InterningInjectiveOnV1:11))))
+(= (gslt:fn:InterningInjectiveOnV1:11 (cons SymbolsConsV1 (cons MetamathConstantFirstV1 (cons (cons SymbolsConsV1 (cons MetamathConstantFirstV1 (cons SymbolsNilV1 ()))) ()))) (cons StateValueSequenceV1 (cons MetamathConstantsCanaryStreamV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ()))))
+   (quote gslt:result:InterningInjectiveOnV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=232 source-presentation=GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776 source-rule=answer-fact-a33a583aec8106ee6eca413d2f930b3134eda9bbac81b52a2d430762fd754379 target=mode relation=StateTableLifetimeV1 input=110 functional=semidet
-(= (gslt:fn:StateTableLifetimeV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))))) $__gslt_input_v1_0_1
-   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))))
+(= (gslt:fn:StateTableLifetimeV1:110 (cons StateProgramDigestV1 (cons sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())))
+   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=233 source-presentation=GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776 source-rule=answer-fact-a13cc707f162f48d3c606db1626d116acb901e20eba4ccdf30cff417ff04595a target=mode relation=StateTableLifetimeV1 input=110 functional=semidet
-(= (gslt:fn:StateTableLifetimeV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))) $__gslt_input_v1_0_1
-   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))))
+(= (gslt:fn:StateTableLifetimeV1:110 (cons StateProgramDigestV1 (cons sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())))
+   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=234 source-presentation=GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776 source-rule=answer-fact-05f510c9b5f64fc3f423171ba9b239e3d55aa44055292299940d9096288dd5ab target=mode relation=StateTableLifetimeV1 input=110 functional=semidet
-(= (gslt:fn:StateTableLifetimeV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))))) $__gslt_input_v1_0_1
-   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))))
+(= (gslt:fn:StateTableLifetimeV1:110 (cons StateProgramDigestV1 (cons sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())))
+   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=235 source-presentation=GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776 source-rule=answer-fact-8180ac273ba097898a588a611a4dc21e21a9b3ca1bf990d173d11a295b7bcc56 target=mode relation=StateTableLifetimeV1 input=110 functional=semidet
-(= (gslt:fn:StateTableLifetimeV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))) $__gslt_input_v1_0_1
-   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))))
+(= (gslt:fn:StateTableLifetimeV1:110 (cons StateProgramDigestV1 (cons sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())))
+   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=236 source-presentation=GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776 source-rule=answer-fact-da492785a039fd9b74954829047c43bc83384adcb4f43e1762476c1f3610a164 target=mode relation=StateTableLifetimeV1 input=110 functional=semidet
-(= (gslt:fn:StateTableLifetimeV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))))) $__gslt_input_v1_0_1
-   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))))
+(= (gslt:fn:StateTableLifetimeV1:110 (cons StateProgramDigestV1 (cons sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())))
+   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=237 source-presentation=GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776 source-rule=answer-fact-1a1a951a0a7117e2a57221c674aa4476149bb1a3055caf1571541cb24ab5ff64 target=mode relation=StateTableLifetimeV1 input=110 functional=semidet
-(= (gslt:fn:StateTableLifetimeV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))) $__gslt_input_v1_0_1
-   (quote (gslt:result:StateTableLifetimeV1:110 StateScopedV1)))))
+(= (gslt:fn:StateTableLifetimeV1:110 (cons StateProgramDigestV1 (cons sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())))
+   (quote (gslt:result:StateTableLifetimeV1:110 StateScopedV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=238 source-presentation=GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776 source-rule=answer-fact-bd9b72c185a6451b2da89a6e352bc354dbc27e891170d430e3afdfb5e8539322 target=mode relation=StateTableLifetimeV1 input=110 functional=semidet
-(= (gslt:fn:StateTableLifetimeV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))) $__gslt_input_v1_0_1
-   (quote (gslt:result:StateTableLifetimeV1:110 StateScopedV1)))))
+(= (gslt:fn:StateTableLifetimeV1:110 (cons StateProgramDigestV1 (cons sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())))
+   (quote (gslt:result:StateTableLifetimeV1:110 StateScopedV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=239 source-presentation=GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776 source-rule=answer-fact-2a17f580675e171ad18b67397282a7ac0ae7239e12a520195d8d2332bff4a1b6 target=mode relation=StateTableLifetimeV1 input=110 functional=semidet
-(= (gslt:fn:StateTableLifetimeV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))) $__gslt_input_v1_0_1
-   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))))
+(= (gslt:fn:StateTableLifetimeV1:110 (cons StateProgramDigestV1 (cons sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())) ())))
+   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=240 source-presentation=GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776 source-rule=answer-fact-bf232c6d72c55e02b02459c8dc611f15672fe7ac52f3c65cbdc49362b1bb5750 target=mode relation=StateTableLifetimeV1 input=110 functional=semidet
-(= (gslt:fn:StateTableLifetimeV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))) $__gslt_input_v1_0_1
-   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))))
+(= (gslt:fn:StateTableLifetimeV1:110 (cons StateProgramDigestV1 (cons sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())) ())))
+   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=241 source-presentation=GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776 source-rule=answer-fact-d109b79017a6fed9f385bec9996920171a077b96e881ba9690807b2fd0e99fb3 target=mode relation=StateTableLifetimeV1 input=110 functional=semidet
-(= (gslt:fn:StateTableLifetimeV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))) $__gslt_input_v1_0_1
-   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))))
+(= (gslt:fn:StateTableLifetimeV1:110 (cons StateProgramDigestV1 (cons sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())) ())))
+   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=242 source-presentation=GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776 source-rule=answer-fact-89eaf7027d6c7ed18986e99a463a24ee382a47058697bbd93f8d7e66d1bd7961 target=mode relation=StateTableLifetimeV1 input=110 functional=semidet
-(= (gslt:fn:StateTableLifetimeV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))) $__gslt_input_v1_0_1
-   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))))
+(= (gslt:fn:StateTableLifetimeV1:110 (cons StateProgramDigestV1 (cons sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ())) ())) ())) ())) ())) ())) ())))
+   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=243 source-presentation=GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776 source-rule=answer-fact-777e0155965b307feab5d2efd1a7deac0705e955276ecccdad38939bebfa44d7 target=mode relation=StateTableLifetimeV1 input=110 functional=semidet
-(= (gslt:fn:StateTableLifetimeV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))) $__gslt_input_v1_0_1
-   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))))
+(= (gslt:fn:StateTableLifetimeV1:110 (cons StateProgramDigestV1 (cons sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ())) ())) ())) ())) ())) ())))
+   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=244 source-presentation=GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776 source-rule=answer-fact-48421df262f0cc1e27dbdc38c20e8711a0892c7902f187756e60d267710a214c target=mode relation=StateTableLifetimeV1 input=110 functional=semidet
-(= (gslt:fn:StateTableLifetimeV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))) $__gslt_input_v1_0_1
-   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))))
+(= (gslt:fn:StateTableLifetimeV1:110 (cons StateProgramDigestV1 (cons sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ())) ())) ())) ())) ())))
+   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=245 source-presentation=GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776 source-rule=answer-fact-092508ed9b723cc30a1a3a30b867820f3e2c59325fdc05b3e631aa61d7afc044 target=mode relation=StateTableLifetimeV1 input=110 functional=semidet
-(= (gslt:fn:StateTableLifetimeV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))) $__gslt_input_v1_0_1
-   (quote (gslt:result:StateTableLifetimeV1:110 StateTransactionalV1)))))
+(= (gslt:fn:StateTableLifetimeV1:110 (cons StateProgramDigestV1 (cons sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ())) ())) ())) ())))
+   (quote (gslt:result:StateTableLifetimeV1:110 StateTransactionalV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=246 source-presentation=GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776 source-rule=answer-fact-c744ac095c931d3b9f9151728dbfffb9a39eaeedfca0c49a9000aef6a0b227fc target=mode relation=StateTableLifetimeV1 input=110 functional=semidet
-(= (gslt:fn:StateTableLifetimeV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))) $__gslt_input_v1_0_1
-   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))))
+(= (gslt:fn:StateTableLifetimeV1:110 (cons StateProgramDigestV1 (cons sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ())) ())) ())))
+   (quote (gslt:result:StateTableLifetimeV1:110 StatePersistentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=247 source-presentation=GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776 source-rule=answer-fact-cbd05e5746edad5e9369bc333f2d95e00c7a6acc133d8f0b868533eb90691fb7 target=mode relation=StateTableLifetimeV1 input=110 functional=semidet
-(= (gslt:fn:StateTableLifetimeV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))) $__gslt_input_v1_0_1
-   (quote (gslt:result:StateTableLifetimeV1:110 StateScopedV1)))))
+(= (gslt:fn:StateTableLifetimeV1:110 (cons StateProgramDigestV1 (cons sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons NatSuccV1 (cons (cons NatSuccV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ())) ())))
+   (quote (gslt:result:StateTableLifetimeV1:110 StateScopedV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=248 source-presentation=GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776 source-rule=answer-fact-60b0ee0e370b60e61206e053a55f27f88063cdbbd32163f2765304290ab23c05 target=mode relation=StateTableLifetimeV1 input=110 functional=semidet
-(= (gslt:fn:StateTableLifetimeV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 (NatSuccV1 NatZeroV1))) $__gslt_input_v1_0_1
-   (quote (gslt:result:StateTableLifetimeV1:110 StateScopedV1)))))
+(= (gslt:fn:StateTableLifetimeV1:110 (cons StateProgramDigestV1 (cons sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons NatSuccV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ())))
+   (quote (gslt:result:StateTableLifetimeV1:110 StateScopedV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=249 source-presentation=GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776 source-rule=answer-fact-9ad11a8c0b4d5b9b70c51491ace4efcfb612319f57f5a971c7e6b169508827a3 target=mode relation=StateTableLifetimeV1 input=110 functional=semidet
-(= (gslt:fn:StateTableLifetimeV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (quote (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)) $__gslt_input_v1_0_0
-   (let (quote (NatSuccV1 NatZeroV1)) $__gslt_input_v1_0_1
-   (quote (gslt:result:StateTableLifetimeV1:110 StateScopedV1)))))
+(= (gslt:fn:StateTableLifetimeV1:110 (cons StateProgramDigestV1 (cons sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) (cons NatSuccV1 (cons NatZeroV1 ())))
+   (quote (gslt:result:StateTableLifetimeV1:110 StateScopedV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=250 source-presentation=GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776 source-rule=answer-fact-ce3228eb9847e0a3c9778aa626bbf7ed93b52ea923239fc80d90ebb4dedff5ef target=mode relation=StateTableLifetimeV1 input=110 functional=semidet
-(= (gslt:fn:StateTableLifetimeV1:110 $__gslt_input_v1_0_0 NatZeroV1)
-   (let (quote (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76)) $__gslt_input_v1_0_0
-   (quote (gslt:result:StateTableLifetimeV1:110 StateScopedV1))))
+(= (gslt:fn:StateTableLifetimeV1:110 (cons StateProgramDigestV1 (cons sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 ())) NatZeroV1)
+   (quote (gslt:result:StateTableLifetimeV1:110 StateScopedV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=97 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-require-depth-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
-(= (gslt:mode:StateStepV1:1111000 $package $__gslt_input_v1_0_1 $occurrence $__gslt_input_v1_0_3)
-   (let (quote (StateV1 $package $depth $seq $tables)) $__gslt_input_v1_0_1
-   (let (quote (StateRequireDepthV1 $expected)) $__gslt_input_v1_0_3
-   (let (quote (gslt:result:OccurrencePositionV1:10 $position)) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
-   (let (quote (gslt:result:NatCompareV1:110 $comparison)) (once (gslt:fn:NatCompareV1:110 $depth $expected))
-   (let (quote (gslt:result:StateRequireDepthComparedV1:1111000 $outcome $after $history)) (once (gslt:fn:StateRequireDepthComparedV1:1111000 $comparison (quote (StateV1 $package $depth $seq $tables)) (quote (StateRequireDepthV1 $expected)) $position))
-   (quote (gslt:result:StateStepV1:1111000 $outcome $after $history))))))))
+(= (gslt:mode:StateStepV1:1111000 $package (cons StateV1 (cons $package (cons $depth (cons $seq (cons $tables ()))))) $occurrence (cons StateRequireDepthV1 (cons $expected ())))
+   (let (cons gslt:result:OccurrencePositionV1:10 (cons $position ())) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
+   (let (cons gslt:result:NatCompareV1:110 (cons $comparison ())) (once (gslt:fn:NatCompareV1:110 $depth $expected))
+   (let (cons gslt:result:StateRequireDepthComparedV1:1111000 (cons $outcome (cons $after (cons $history ())))) (once (gslt:fn:StateRequireDepthComparedV1:1111000 $comparison (quote (StateV1 $package $depth $seq $tables)) (quote (StateRequireDepthV1 $expected)) $position))
+   (quote (gslt:result:StateStepV1:1111000 $outcome $after $history))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=101 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-push-scope-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
-(= (gslt:mode:StateStepV1:1111000 $package $__gslt_input_v1_0_1 $occurrence StatePushScopeV1)
-   (let (quote (StateV1 $package $depth $seq $tables)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:OccurrencePositionV1:10 $position)) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
-   (quote (gslt:result:StateStepV1:1111000 AcceptedV1 (StateV1 $package (NatSuccV1 $depth) $seq $tables) (HistoryConsV1 (EnteredActionV1 StatePushScopeV1 $position) (HistoryConsV1 (PushedScopeV1 (NatSuccV1 $depth)) HistoryNilV1)))))))
+(= (gslt:mode:StateStepV1:1111000 $package (cons StateV1 (cons $package (cons $depth (cons $seq (cons $tables ()))))) $occurrence StatePushScopeV1)
+   (let (cons gslt:result:OccurrencePositionV1:10 (cons $position ())) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
+   (quote (gslt:result:StateStepV1:1111000 AcceptedV1 (StateV1 $package (NatSuccV1 $depth) $seq $tables) (HistoryConsV1 (EnteredActionV1 StatePushScopeV1 $position) (HistoryConsV1 (PushedScopeV1 (NatSuccV1 $depth)) HistoryNilV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=102 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-pop-scope-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
-(= (gslt:mode:StateStepV1:1111000 $package $__gslt_input_v1_0_1 $occurrence StatePopScopeV1)
-   (let (quote (StateV1 $package (NatSuccV1 $depth) $seq $tables)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:OccurrencePositionV1:10 $position)) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
-   (let (quote (gslt:result:PopTablesV1:1110 $out)) (once (gslt:fn:PopTablesV1:1110 $package $tables (quote (NatSuccV1 $depth))))
-   (quote (gslt:result:StateStepV1:1111000 AcceptedV1 (StateV1 $package $depth $seq $out) (HistoryConsV1 (EnteredActionV1 StatePopScopeV1 $position) (HistoryConsV1 (PoppedScopeV1 (NatSuccV1 $depth) $depth) HistoryNilV1))))))))
+(= (gslt:mode:StateStepV1:1111000 $package (cons StateV1 (cons $package (cons (cons NatSuccV1 (cons $depth ())) (cons $seq (cons $tables ()))))) $occurrence StatePopScopeV1)
+   (let (cons gslt:result:OccurrencePositionV1:10 (cons $position ())) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
+   (let (cons gslt:result:PopTablesV1:1110 (cons $out ())) (once (gslt:fn:PopTablesV1:1110 $package $tables (quote (NatSuccV1 $depth))))
+   (quote (gslt:result:StateStepV1:1111000 AcceptedV1 (StateV1 $package $depth $seq $out) (HistoryConsV1 (EnteredActionV1 StatePopScopeV1 $position) (HistoryConsV1 (PoppedScopeV1 (NatSuccV1 $depth) $depth) HistoryNilV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=103 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-pop-scope-underflow-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
-(= (gslt:mode:StateStepV1:1111000 $package $__gslt_input_v1_0_1 $occurrence StatePopScopeV1)
-   (let (quote (StateV1 $package NatZeroV1 $seq $tables)) $__gslt_input_v1_0_1
-   (let (quote (gslt:result:OccurrencePositionV1:10 $position)) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
-   (quote (gslt:result:StateStepV1:1111000 (RefusedScopeUnderflowV1 NatZeroV1) (StateV1 $package NatZeroV1 $seq $tables) (HistoryConsV1 (EnteredActionV1 StatePopScopeV1 $position) HistoryNilV1))))))
+(= (gslt:mode:StateStepV1:1111000 $package (cons StateV1 (cons $package (cons NatZeroV1 (cons $seq (cons $tables ()))))) $occurrence StatePopScopeV1)
+   (let (cons gslt:result:OccurrencePositionV1:10 (cons $position ())) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
+   (quote (gslt:result:StateStepV1:1111000 (RefusedScopeUnderflowV1 NatZeroV1) (StateV1 $package NatZeroV1 $seq $tables) (HistoryConsV1 (EnteredActionV1 StatePopScopeV1 $position) HistoryNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=104 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-noop-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
 (= (gslt:mode:StateStepV1:1111000 $package $state $occurrence StateNoopV1)
-   (let (quote gslt:result:StatePackageOfV1:11) (once (gslt:fn:StatePackageOfV1:11 $state $package))
-   (let (quote (gslt:result:OccurrencePositionV1:10 $position)) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
+   (let gslt:result:StatePackageOfV1:11 (once (gslt:fn:StatePackageOfV1:11 $state $package))
+   (let (cons gslt:result:OccurrencePositionV1:10 (cons $position ())) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
    (quote (gslt:result:StateStepV1:1111000 AcceptedV1 $state (HistoryConsV1 (EnteredActionV1 StateNoopV1 $position) (HistoryConsV1 (CompletedActionV1 StateNoopV1) HistoryNilV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=105 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-require-each-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
-(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence $__gslt_input_v1_0_3)
-   (let (quote (StateRequireEachV1 $role $table $rowExpr)) $__gslt_input_v1_0_3
-   (let (quote gslt:result:StatePackageOfV1:11) (once (gslt:fn:StatePackageOfV1:11 $before $package))
-   (let (quote gslt:result:OccurrenceRoleNonemptyV1:11) (once (gslt:fn:OccurrenceRoleNonemptyV1:11 $occurrence $role))
-   (let (quote (gslt:result:OccurrenceRoleValuesV1:110 $values)) (once (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role))
-   (let (quote (gslt:result:OccurrencePositionV1:10 $position)) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
-   (let (quote (gslt:result:RequireEachV1:1111100 $outcome $steps)) (superpose (collapse (gslt:mode:RequireEachV1:1111100 $before $occurrence $table $rowExpr $values)))
-   (let (quote (gslt:result:HistoryAppendV1:110 $history)) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateRequireEachV1 $role $table $rowExpr) $position) HistoryNilV1)) $steps))
-   (quote (gslt:result:StateStepV1:1111000 $outcome $before $history))))))))))
+(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence (cons StateRequireEachV1 (cons $role (cons $table (cons $rowExpr ())))))
+   (let gslt:result:StatePackageOfV1:11 (once (gslt:fn:StatePackageOfV1:11 $before $package))
+   (let gslt:result:OccurrenceRoleNonemptyV1:11 (once (gslt:fn:OccurrenceRoleNonemptyV1:11 $occurrence $role))
+   (let (cons gslt:result:OccurrenceRoleValuesV1:110 (cons $values ())) (once (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role))
+   (let (cons gslt:result:OccurrencePositionV1:10 (cons $position ())) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
+   (let (cons gslt:result:RequireEachV1:1111100 (cons $outcome (cons $steps ()))) (superpose (collapse (gslt:mode:RequireEachV1:1111100 $before $occurrence $table $rowExpr $values)))
+   (let (cons gslt:result:HistoryAppendV1:110 (cons $history ())) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateRequireEachV1 $role $table $rowExpr) $position) HistoryNilV1)) $steps))
+   (quote (gslt:result:StateStepV1:1111000 $outcome $before $history)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=151 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-require-each-key-absent-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
-(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence $__gslt_input_v1_0_3)
-   (let (quote (StateRequireEachKeyAbsentV1 $role $table $keyArity $rowExpr)) $__gslt_input_v1_0_3
-   (let (quote gslt:result:StatePackageOfV1:11) (once (gslt:fn:StatePackageOfV1:11 $before $package))
-   (let (quote gslt:result:OccurrenceRoleNonemptyV1:11) (once (gslt:fn:OccurrenceRoleNonemptyV1:11 $occurrence $role))
-   (let (quote (gslt:result:OccurrenceRoleValuesV1:110 $values)) (once (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role))
-   (let (quote (gslt:result:OccurrencePositionV1:10 $position)) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
-   (let (quote (gslt:result:RequireEachKeyAbsentV1:11111100 $outcome $steps)) (superpose (collapse (gslt:mode:RequireEachKeyAbsentV1:11111100 $before $occurrence $table $keyArity $rowExpr $values)))
-   (let (quote (gslt:result:HistoryAppendV1:110 $history)) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateRequireEachKeyAbsentV1 $role $table $keyArity $rowExpr) $position) HistoryNilV1)) $steps))
-   (quote (gslt:result:StateStepV1:1111000 $outcome $before $history))))))))))
+(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence (cons StateRequireEachKeyAbsentV1 (cons $role (cons $table (cons $keyArity (cons $rowExpr ()))))))
+   (let gslt:result:StatePackageOfV1:11 (once (gslt:fn:StatePackageOfV1:11 $before $package))
+   (let gslt:result:OccurrenceRoleNonemptyV1:11 (once (gslt:fn:OccurrenceRoleNonemptyV1:11 $occurrence $role))
+   (let (cons gslt:result:OccurrenceRoleValuesV1:110 (cons $values ())) (once (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role))
+   (let (cons gslt:result:OccurrencePositionV1:10 (cons $position ())) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
+   (let (cons gslt:result:RequireEachKeyAbsentV1:11111100 (cons $outcome (cons $steps ()))) (superpose (collapse (gslt:mode:RequireEachKeyAbsentV1:11111100 $before $occurrence $table $keyArity $rowExpr $values)))
+   (let (cons gslt:result:HistoryAppendV1:110 (cons $history ())) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateRequireEachKeyAbsentV1 $role $table $keyArity $rowExpr) $position) HistoryNilV1)) $steps))
+   (quote (gslt:result:StateStepV1:1111000 $outcome $before $history)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=152 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-insert-each-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
-(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence $__gslt_input_v1_0_3)
-   (let (quote (StateInsertEachV1 $role $table $keyArity $policy $rowExpr)) $__gslt_input_v1_0_3
-   (let (quote gslt:result:StatePackageOfV1:11) (once (gslt:fn:StatePackageOfV1:11 $before $package))
-   (let (quote gslt:result:OccurrenceRoleNonemptyV1:11) (once (gslt:fn:OccurrenceRoleNonemptyV1:11 $occurrence $role))
-   (let (quote (gslt:result:OccurrenceRoleValuesV1:110 $values)) (once (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role))
-   (let (quote (gslt:result:OccurrencePositionV1:10 $position)) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
-   (let (quote (gslt:result:InsertEachV1:1111111000 $outcome $tentative $steps)) (superpose (collapse (gslt:mode:InsertEachV1:1111111000 $before $occurrence $table $keyArity $policy $rowExpr $values)))
-   (let (quote (gslt:result:CommitActionStateV1:1110 $after)) (once (gslt:fn:CommitActionStateV1:1110 $before $outcome $tentative))
-   (let (quote (gslt:result:HistoryAppendV1:110 $history)) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateInsertEachV1 $role $table $keyArity $policy $rowExpr) $position) HistoryNilV1)) $steps))
-   (quote (gslt:result:StateStepV1:1111000 $outcome $after $history)))))))))))
-
-; gslt-lowered-equation-v1 source-rewrite=153 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-require-row-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
-(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence $__gslt_input_v1_0_3)
-   (let (quote (StateRequireRowV1 $table $rowExpr)) $__gslt_input_v1_0_3
-   (let (quote gslt:result:StatePackageOfV1:11) (once (gslt:fn:StatePackageOfV1:11 $before $package))
-   (let (quote (gslt:result:OccurrencePositionV1:10 $position)) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
-   (let (quote (gslt:result:RowExprEvalV1:11110 (EvaluatedRowV1 $row))) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $rowExpr $occurrence NoInputV1 NoSourceContextV1)))
-   (let (quote (gslt:result:RequireRowV1:11100 $outcome $steps)) (once (gslt:fn:RequireRowV1:11100 $before $table $row))
-   (let (quote (gslt:result:HistoryAppendV1:110 $history)) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateRequireRowV1 $table $rowExpr) $position) HistoryNilV1)) $steps))
-   (quote (gslt:result:StateStepV1:1111000 $outcome $before $history)))))))))
-
-; gslt-lowered-equation-v1 source-rewrite=154 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-require-row-key-absent-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
-(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence $__gslt_input_v1_0_3)
-   (let (quote (StateRequireRowKeyAbsentV1 $table $keyArity $rowExpr)) $__gslt_input_v1_0_3
-   (let (quote gslt:result:StatePackageOfV1:11) (once (gslt:fn:StatePackageOfV1:11 $before $package))
-   (let (quote (gslt:result:OccurrencePositionV1:10 $position)) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
-   (let (quote (gslt:result:RowExprEvalV1:11110 (EvaluatedRowV1 $row))) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $rowExpr $occurrence NoInputV1 NoSourceContextV1)))
-   (let (quote (gslt:result:RequireRowKeyAbsentV1:111100 $outcome $steps)) (once (gslt:fn:RequireRowKeyAbsentV1:111100 $before $table $keyArity $row))
-   (let (quote (gslt:result:HistoryAppendV1:110 $history)) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateRequireRowKeyAbsentV1 $table $keyArity $rowExpr) $position) HistoryNilV1)) $steps))
-   (quote (gslt:result:StateStepV1:1111000 $outcome $before $history)))))))))
-
-; gslt-lowered-equation-v1 source-rewrite=155 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-insert-row-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
-(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence $__gslt_input_v1_0_3)
-   (let (quote (StateInsertRowV1 $table $keyArity $policy $rowExpr)) $__gslt_input_v1_0_3
-   (let (quote gslt:result:StatePackageOfV1:11) (once (gslt:fn:StatePackageOfV1:11 $before $package))
-   (let (quote (gslt:result:OccurrencePositionV1:10 $position)) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
-   (let (quote (gslt:result:RowExprEvalV1:11110 (EvaluatedRowV1 $row))) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $rowExpr $occurrence NoInputV1 NoSourceContextV1)))
-   (let (quote (gslt:result:InsertRowV1:11111000 $outcome $tentative $steps)) (once (gslt:fn:InsertRowV1:11111000 $before $table $keyArity $policy $row))
-   (let (quote (gslt:result:CommitActionStateV1:1110 $after)) (once (gslt:fn:CommitActionStateV1:1110 $before $outcome $tentative))
-   (let (quote (gslt:result:HistoryAppendV1:110 $history)) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateInsertRowV1 $table $keyArity $policy $rowExpr) $position) HistoryNilV1)) $steps))
+(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence (cons StateInsertEachV1 (cons $role (cons $table (cons $keyArity (cons $policy (cons $rowExpr ())))))))
+   (let gslt:result:StatePackageOfV1:11 (once (gslt:fn:StatePackageOfV1:11 $before $package))
+   (let gslt:result:OccurrenceRoleNonemptyV1:11 (once (gslt:fn:OccurrenceRoleNonemptyV1:11 $occurrence $role))
+   (let (cons gslt:result:OccurrenceRoleValuesV1:110 (cons $values ())) (once (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role))
+   (let (cons gslt:result:OccurrencePositionV1:10 (cons $position ())) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
+   (let (cons gslt:result:InsertEachV1:1111111000 (cons $outcome (cons $tentative (cons $steps ())))) (superpose (collapse (gslt:mode:InsertEachV1:1111111000 $before $occurrence $table $keyArity $policy $rowExpr $values)))
+   (let (cons gslt:result:CommitActionStateV1:1110 (cons $after ())) (once (gslt:fn:CommitActionStateV1:1110 $before $outcome $tentative))
+   (let (cons gslt:result:HistoryAppendV1:110 (cons $history ())) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateInsertEachV1 $role $table $keyArity $policy $rowExpr) $position) HistoryNilV1)) $steps))
    (quote (gslt:result:StateStepV1:1111000 $outcome $after $history))))))))))
 
+; gslt-lowered-equation-v1 source-rewrite=153 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-require-row-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
+(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence (cons StateRequireRowV1 (cons $table (cons $rowExpr ()))))
+   (let gslt:result:StatePackageOfV1:11 (once (gslt:fn:StatePackageOfV1:11 $before $package))
+   (let (cons gslt:result:OccurrencePositionV1:10 (cons $position ())) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
+   (let (cons gslt:result:RowExprEvalV1:11110 (cons (cons EvaluatedRowV1 (cons $row ())) ())) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $rowExpr $occurrence NoInputV1 NoSourceContextV1)))
+   (let (cons gslt:result:RequireRowV1:11100 (cons $outcome (cons $steps ()))) (once (gslt:fn:RequireRowV1:11100 $before $table $row))
+   (let (cons gslt:result:HistoryAppendV1:110 (cons $history ())) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateRequireRowV1 $table $rowExpr) $position) HistoryNilV1)) $steps))
+   (quote (gslt:result:StateStepV1:1111000 $outcome $before $history))))))))
+
+; gslt-lowered-equation-v1 source-rewrite=154 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-require-row-key-absent-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
+(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence (cons StateRequireRowKeyAbsentV1 (cons $table (cons $keyArity (cons $rowExpr ())))))
+   (let gslt:result:StatePackageOfV1:11 (once (gslt:fn:StatePackageOfV1:11 $before $package))
+   (let (cons gslt:result:OccurrencePositionV1:10 (cons $position ())) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
+   (let (cons gslt:result:RowExprEvalV1:11110 (cons (cons EvaluatedRowV1 (cons $row ())) ())) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $rowExpr $occurrence NoInputV1 NoSourceContextV1)))
+   (let (cons gslt:result:RequireRowKeyAbsentV1:111100 (cons $outcome (cons $steps ()))) (once (gslt:fn:RequireRowKeyAbsentV1:111100 $before $table $keyArity $row))
+   (let (cons gslt:result:HistoryAppendV1:110 (cons $history ())) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateRequireRowKeyAbsentV1 $table $keyArity $rowExpr) $position) HistoryNilV1)) $steps))
+   (quote (gslt:result:StateStepV1:1111000 $outcome $before $history))))))))
+
+; gslt-lowered-equation-v1 source-rewrite=155 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-insert-row-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
+(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence (cons StateInsertRowV1 (cons $table (cons $keyArity (cons $policy (cons $rowExpr ()))))))
+   (let gslt:result:StatePackageOfV1:11 (once (gslt:fn:StatePackageOfV1:11 $before $package))
+   (let (cons gslt:result:OccurrencePositionV1:10 (cons $position ())) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
+   (let (cons gslt:result:RowExprEvalV1:11110 (cons (cons EvaluatedRowV1 (cons $row ())) ())) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $rowExpr $occurrence NoInputV1 NoSourceContextV1)))
+   (let (cons gslt:result:InsertRowV1:11111000 (cons $outcome (cons $tentative (cons $steps ())))) (once (gslt:fn:InsertRowV1:11111000 $before $table $keyArity $policy $row))
+   (let (cons gslt:result:CommitActionStateV1:1110 (cons $after ())) (once (gslt:fn:CommitActionStateV1:1110 $before $outcome $tentative))
+   (let (cons gslt:result:HistoryAppendV1:110 (cons $history ())) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateInsertRowV1 $table $keyArity $policy $rowExpr) $position) HistoryNilV1)) $steps))
+   (quote (gslt:result:StateStepV1:1111000 $outcome $after $history)))))))))
+
 ; gslt-lowered-equation-v1 source-rewrite=156 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-insert-each-matching-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
-(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence $__gslt_input_v1_0_3)
-   (let (quote (StateInsertEachMatchingV1 $role $conditionTable $conditionExpr $targetTable $keyArity $policy $targetExpr)) $__gslt_input_v1_0_3
-   (let (quote gslt:result:StatePackageOfV1:11) (once (gslt:fn:StatePackageOfV1:11 $before $package))
-   (let (quote gslt:result:OccurrenceRoleNonemptyV1:11) (once (gslt:fn:OccurrenceRoleNonemptyV1:11 $occurrence $role))
-   (let (quote (gslt:result:OccurrenceRoleValuesV1:110 $values)) (once (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role))
-   (let (quote (gslt:result:OccurrencePositionV1:10 $position)) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
-   (let (quote (gslt:result:InsertEachMatchingV1:111111111000 $outcome $tentative $steps)) (superpose (collapse (gslt:mode:InsertEachMatchingV1:111111111000 $before $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $values)))
-   (let (quote (gslt:result:CommitActionStateV1:1110 $after)) (once (gslt:fn:CommitActionStateV1:1110 $before $outcome $tentative))
-   (let (quote (gslt:result:HistoryAppendV1:110 $history)) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateInsertEachMatchingV1 $role $conditionTable $conditionExpr $targetTable $keyArity $policy $targetExpr) $position) HistoryNilV1)) $steps))
-   (quote (gslt:result:StateStepV1:1111000 $outcome $after $history)))))))))))
+(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence (cons StateInsertEachMatchingV1 (cons $role (cons $conditionTable (cons $conditionExpr (cons $targetTable (cons $keyArity (cons $policy (cons $targetExpr ())))))))))
+   (let gslt:result:StatePackageOfV1:11 (once (gslt:fn:StatePackageOfV1:11 $before $package))
+   (let gslt:result:OccurrenceRoleNonemptyV1:11 (once (gslt:fn:OccurrenceRoleNonemptyV1:11 $occurrence $role))
+   (let (cons gslt:result:OccurrenceRoleValuesV1:110 (cons $values ())) (once (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role))
+   (let (cons gslt:result:OccurrencePositionV1:10 (cons $position ())) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
+   (let (cons gslt:result:InsertEachMatchingV1:111111111000 (cons $outcome (cons $tentative (cons $steps ())))) (superpose (collapse (gslt:mode:InsertEachMatchingV1:111111111000 $before $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $values)))
+   (let (cons gslt:result:CommitActionStateV1:1110 (cons $after ())) (once (gslt:fn:CommitActionStateV1:1110 $before $outcome $tentative))
+   (let (cons gslt:result:HistoryAppendV1:110 (cons $history ())) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateInsertEachMatchingV1 $role $conditionTable $conditionExpr $targetTable $keyArity $policy $targetExpr) $position) HistoryNilV1)) $steps))
+   (quote (gslt:result:StateStepV1:1111000 $outcome $after $history))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=157 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-copy-each-row-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
-(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence $__gslt_input_v1_0_3)
-   (let (quote (StateCopyEachRowV1 $sourceTable $targetTable $keyArity $policy $targetExpr)) $__gslt_input_v1_0_3
-   (let (quote gslt:result:StatePackageOfV1:11) (once (gslt:fn:StatePackageOfV1:11 $before $package))
-   (let (quote (gslt:result:StateTablesOfV1:10 $tables)) (once (gslt:fn:StateTablesOfV1:10 $before))
-   (let (quote (gslt:result:TableOfV1:110 (FoundTableV1 $sourceEntries))) (once (gslt:fn:TableOfV1:110 $tables $sourceTable))
-   (let (quote (gslt:result:OccurrencePositionV1:10 $position)) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
-   (let (quote (gslt:result:CopyEachRowV1:11111111000 $outcome $tentative $steps)) (superpose (collapse (gslt:mode:CopyEachRowV1:11111111000 $before $occurrence $targetTable $keyArity $policy $targetExpr $sourceEntries NatZeroV1)))
-   (let (quote (gslt:result:CommitActionStateV1:1110 $after)) (once (gslt:fn:CommitActionStateV1:1110 $before $outcome $tentative))
-   (let (quote (gslt:result:HistoryAppendV1:110 $history)) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateCopyEachRowV1 $sourceTable $targetTable $keyArity $policy $targetExpr) $position) HistoryNilV1)) $steps))
-   (quote (gslt:result:StateStepV1:1111000 $outcome $after $history)))))))))))
+(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence (cons StateCopyEachRowV1 (cons $sourceTable (cons $targetTable (cons $keyArity (cons $policy (cons $targetExpr ())))))))
+   (let gslt:result:StatePackageOfV1:11 (once (gslt:fn:StatePackageOfV1:11 $before $package))
+   (let (cons gslt:result:StateTablesOfV1:10 (cons $tables ())) (once (gslt:fn:StateTablesOfV1:10 $before))
+   (let (cons gslt:result:TableOfV1:110 (cons (cons FoundTableV1 (cons $sourceEntries ())) ())) (once (gslt:fn:TableOfV1:110 $tables $sourceTable))
+   (let (cons gslt:result:OccurrencePositionV1:10 (cons $position ())) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
+   (let (cons gslt:result:CopyEachRowV1:11111111000 (cons $outcome (cons $tentative (cons $steps ())))) (superpose (collapse (gslt:mode:CopyEachRowV1:11111111000 $before $occurrence $targetTable $keyArity $policy $targetExpr $sourceEntries NatZeroV1)))
+   (let (cons gslt:result:CommitActionStateV1:1110 (cons $after ())) (once (gslt:fn:CommitActionStateV1:1110 $before $outcome $tentative))
+   (let (cons gslt:result:HistoryAppendV1:110 (cons $history ())) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateCopyEachRowV1 $sourceTable $targetTable $keyArity $policy $targetExpr) $position) HistoryNilV1)) $steps))
+   (quote (gslt:result:StateStepV1:1111000 $outcome $after $history))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=158 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-copy-each-row-matching-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
-(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence $__gslt_input_v1_0_3)
-   (let (quote (StateCopyEachRowMatchingV1 $sourceTable $conditionTable $conditionExpr $targetTable $keyArity $policy $targetExpr)) $__gslt_input_v1_0_3
-   (let (quote gslt:result:StatePackageOfV1:11) (once (gslt:fn:StatePackageOfV1:11 $before $package))
-   (let (quote (gslt:result:StateTablesOfV1:10 $tables)) (once (gslt:fn:StateTablesOfV1:10 $before))
-   (let (quote (gslt:result:TableOfV1:110 (FoundTableV1 $sourceEntries))) (once (gslt:fn:TableOfV1:110 $tables $sourceTable))
-   (let (quote (gslt:result:OccurrencePositionV1:10 $position)) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
-   (let (quote (gslt:result:CopyEachRowMatchingV1:11111111111000 $outcome $tentative $steps)) (superpose (collapse (gslt:mode:CopyEachRowMatchingV1:11111111111000 $before $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $sourceEntries NatZeroV1 NatZeroV1)))
-   (let (quote (gslt:result:CommitActionStateV1:1110 $after)) (once (gslt:fn:CommitActionStateV1:1110 $before $outcome $tentative))
-   (let (quote (gslt:result:HistoryAppendV1:110 $history)) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateCopyEachRowMatchingV1 $sourceTable $conditionTable $conditionExpr $targetTable $keyArity $policy $targetExpr) $position) HistoryNilV1)) $steps))
-   (quote (gslt:result:StateStepV1:1111000 $outcome $after $history)))))))))))
+(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence (cons StateCopyEachRowMatchingV1 (cons $sourceTable (cons $conditionTable (cons $conditionExpr (cons $targetTable (cons $keyArity (cons $policy (cons $targetExpr ())))))))))
+   (let gslt:result:StatePackageOfV1:11 (once (gslt:fn:StatePackageOfV1:11 $before $package))
+   (let (cons gslt:result:StateTablesOfV1:10 (cons $tables ())) (once (gslt:fn:StateTablesOfV1:10 $before))
+   (let (cons gslt:result:TableOfV1:110 (cons (cons FoundTableV1 (cons $sourceEntries ())) ())) (once (gslt:fn:TableOfV1:110 $tables $sourceTable))
+   (let (cons gslt:result:OccurrencePositionV1:10 (cons $position ())) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
+   (let (cons gslt:result:CopyEachRowMatchingV1:11111111111000 (cons $outcome (cons $tentative (cons $steps ())))) (superpose (collapse (gslt:mode:CopyEachRowMatchingV1:11111111111000 $before $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $sourceEntries NatZeroV1 NatZeroV1)))
+   (let (cons gslt:result:CommitActionStateV1:1110 (cons $after ())) (once (gslt:fn:CommitActionStateV1:1110 $before $outcome $tentative))
+   (let (cons gslt:result:HistoryAppendV1:110 (cons $history ())) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateCopyEachRowMatchingV1 $sourceTable $conditionTable $conditionExpr $targetTable $keyArity $policy $targetExpr) $position) HistoryNilV1)) $steps))
+   (quote (gslt:result:StateStepV1:1111000 $outcome $after $history))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=159 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-require-pairwise-distinct-ok-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
-(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence $__gslt_input_v1_0_3)
-   (let (quote (StateRequirePairwiseDistinctV1 $role)) $__gslt_input_v1_0_3
-   (let (quote gslt:result:StatePackageOfV1:11) (once (gslt:fn:StatePackageOfV1:11 $before $package))
-   (let (quote gslt:result:OccurrenceRoleNonemptyV1:11) (once (gslt:fn:OccurrenceRoleNonemptyV1:11 $occurrence $role))
-   (let (quote (gslt:result:OccurrenceRoleValuesV1:110 $values)) (once (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role))
-   (let (quote (gslt:result:OccurrencePositionV1:10 $position)) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
-   (let (quote gslt:result:OccurrenceInterningFaithfulV1:11) (once (gslt:fn:OccurrenceInterningFaithfulV1:11 $occurrence $role))
-   (let (quote gslt:result:DistinctScanV1:1111) (once (gslt:fn:DistinctScanV1:1111 $values NatZeroV1 SeenNilV1 DistinctOkV1))
-   (quote (gslt:result:StateStepV1:1111000 AcceptedV1 $before (HistoryConsV1 (EnteredActionV1 (StateRequirePairwiseDistinctV1 $role) $position) (HistoryConsV1 (CheckedPairwiseDistinctV1 $values) HistoryNilV1))))))))))))
+(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence (cons StateRequirePairwiseDistinctV1 (cons $role ())))
+   (let gslt:result:StatePackageOfV1:11 (once (gslt:fn:StatePackageOfV1:11 $before $package))
+   (let gslt:result:OccurrenceRoleNonemptyV1:11 (once (gslt:fn:OccurrenceRoleNonemptyV1:11 $occurrence $role))
+   (let (cons gslt:result:OccurrenceRoleValuesV1:110 (cons $values ())) (once (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role))
+   (let (cons gslt:result:OccurrencePositionV1:10 (cons $position ())) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
+   (let gslt:result:OccurrenceInterningFaithfulV1:11 (once (gslt:fn:OccurrenceInterningFaithfulV1:11 $occurrence $role))
+   (let gslt:result:DistinctScanV1:1111 (once (gslt:fn:DistinctScanV1:1111 $values NatZeroV1 SeenNilV1 DistinctOkV1))
+   (quote (gslt:result:StateStepV1:1111000 AcceptedV1 $before (HistoryConsV1 (EnteredActionV1 (StateRequirePairwiseDistinctV1 $role) $position) (HistoryConsV1 (CheckedPairwiseDistinctV1 $values) HistoryNilV1)))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=160 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-require-pairwise-distinct-duplicate-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
-(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence $__gslt_input_v1_0_3)
-   (let (quote (StateRequirePairwiseDistinctV1 $role)) $__gslt_input_v1_0_3
-   (let (quote gslt:result:StatePackageOfV1:11) (once (gslt:fn:StatePackageOfV1:11 $before $package))
-   (let (quote gslt:result:OccurrenceRoleNonemptyV1:11) (once (gslt:fn:OccurrenceRoleNonemptyV1:11 $occurrence $role))
-   (let (quote (gslt:result:OccurrenceRoleValuesV1:110 $values)) (once (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role))
-   (let (quote (gslt:result:OccurrencePositionV1:10 $position)) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
-   (let (quote gslt:result:OccurrenceInterningFaithfulV1:11) (once (gslt:fn:OccurrenceInterningFaithfulV1:11 $occurrence $role))
-   (let (quote (gslt:result:DistinctScanV1:1110 (DuplicateAtV1 $value $first $second))) (once (gslt:fn:DistinctScanV1:1110 $values NatZeroV1 SeenNilV1))
-   (quote (gslt:result:StateStepV1:1111000 (RefusedDuplicateValueV1 $value $first $second) $before (HistoryConsV1 (EnteredActionV1 (StateRequirePairwiseDistinctV1 $role) $position) HistoryNilV1)))))))))))
+(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence (cons StateRequirePairwiseDistinctV1 (cons $role ())))
+   (let gslt:result:StatePackageOfV1:11 (once (gslt:fn:StatePackageOfV1:11 $before $package))
+   (let gslt:result:OccurrenceRoleNonemptyV1:11 (once (gslt:fn:OccurrenceRoleNonemptyV1:11 $occurrence $role))
+   (let (cons gslt:result:OccurrenceRoleValuesV1:110 (cons $values ())) (once (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role))
+   (let (cons gslt:result:OccurrencePositionV1:10 (cons $position ())) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
+   (let gslt:result:OccurrenceInterningFaithfulV1:11 (once (gslt:fn:OccurrenceInterningFaithfulV1:11 $occurrence $role))
+   (let (cons gslt:result:DistinctScanV1:1110 (cons (cons DuplicateAtV1 (cons $value (cons $first (cons $second ())))) ())) (once (gslt:fn:DistinctScanV1:1110 $values NatZeroV1 SeenNilV1))
+   (quote (gslt:result:StateStepV1:1111000 (RefusedDuplicateValueV1 $value $first $second) $before (HistoryConsV1 (EnteredActionV1 (StateRequirePairwiseDistinctV1 $role) $position) HistoryNilV1))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=161 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-step-insert-all-pairs-v1 target=mode relation=StateStepV1 input=1111000 functional=relational
-(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence $__gslt_input_v1_0_3)
-   (let (quote (StateInsertAllPairsV1 $role $table $policy)) $__gslt_input_v1_0_3
-   (let (quote gslt:result:StatePackageOfV1:11) (once (gslt:fn:StatePackageOfV1:11 $before $package))
-   (let (quote gslt:result:OccurrenceRoleNonemptyV1:11) (once (gslt:fn:OccurrenceRoleNonemptyV1:11 $occurrence $role))
-   (let (quote (gslt:result:OccurrenceRoleValuesV1:110 $values)) (once (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role))
-   (let (quote (gslt:result:OccurrencePositionV1:10 $position)) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
-   (let (quote (gslt:result:AllPairsV1:10 $pairs)) (once (gslt:fn:AllPairsV1:10 $values))
-   (let (quote (gslt:result:InsertAllPairsV1:1111000 $outcome $tentative $steps)) (once (gslt:fn:InsertAllPairsV1:1111000 $before $table $policy $pairs))
-   (let (quote (gslt:result:CommitActionStateV1:1110 $after)) (once (gslt:fn:CommitActionStateV1:1110 $before $outcome $tentative))
-   (let (quote (gslt:result:HistoryAppendV1:110 $history)) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateInsertAllPairsV1 $role $table $policy) $position) HistoryNilV1)) $steps))
-   (quote (gslt:result:StateStepV1:1111000 $outcome $after $history))))))))))))
+(= (gslt:mode:StateStepV1:1111000 $package $before $occurrence (cons StateInsertAllPairsV1 (cons $role (cons $table (cons $policy ())))))
+   (let gslt:result:StatePackageOfV1:11 (once (gslt:fn:StatePackageOfV1:11 $before $package))
+   (let gslt:result:OccurrenceRoleNonemptyV1:11 (once (gslt:fn:OccurrenceRoleNonemptyV1:11 $occurrence $role))
+   (let (cons gslt:result:OccurrenceRoleValuesV1:110 (cons $values ())) (once (gslt:fn:OccurrenceRoleValuesV1:110 $occurrence $role))
+   (let (cons gslt:result:OccurrencePositionV1:10 (cons $position ())) (once (gslt:fn:OccurrencePositionV1:10 $occurrence))
+   (let (cons gslt:result:AllPairsV1:10 (cons $pairs ())) (once (gslt:fn:AllPairsV1:10 $values))
+   (let (cons gslt:result:InsertAllPairsV1:1111000 (cons $outcome (cons $tentative (cons $steps ())))) (once (gslt:fn:InsertAllPairsV1:1111000 $before $table $policy $pairs))
+   (let (cons gslt:result:CommitActionStateV1:1110 (cons $after ())) (once (gslt:fn:CommitActionStateV1:1110 $before $outcome $tentative))
+   (let (cons gslt:result:HistoryAppendV1:110 (cons $history ())) (once (gslt:fn:HistoryAppendV1:110 (quote (HistoryConsV1 (EnteredActionV1 (StateInsertAllPairsV1 $role $table $policy) $position) HistoryNilV1)) $steps))
+   (quote (gslt:result:StateStepV1:1111000 $outcome $after $history)))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=106 source-presentation=RelationalStateTransitionCoreV1 source-rule=require-each-nil-v1 target=mode relation=RequireEachV1 input=1111100 functional=relational
 (= (gslt:mode:RequireEachV1:1111100 $state $occurrence $table $rowExpr $values)
-   (let (quote gslt:result:ValuesViewV1:11) (once (gslt:fn:ValuesViewV1:11 $values ValuesEmptyViewV1))
+   (let gslt:result:ValuesViewV1:11 (once (gslt:fn:ValuesViewV1:11 $values ValuesEmptyViewV1))
    (quote (gslt:result:RequireEachV1:1111100 AcceptedV1 HistoryNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=107 source-presentation=RelationalStateTransitionCoreV1 source-rule=require-each-cons-v1 target=mode relation=RequireEachV1 input=1111100 functional=relational
 (= (gslt:mode:RequireEachV1:1111100 $state $occurrence $table $rowExpr $values)
-   (let (quote (gslt:result:ValuesViewV1:10 (ValuesUnconsViewV1 $value $rest))) (once (gslt:fn:ValuesViewV1:10 $values))
-   (let (quote (gslt:result:RowExprEvalV1:11110 (EvaluatedRowV1 $row))) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $rowExpr $occurrence $value NoSourceContextV1)))
-   (let (quote (gslt:result:StateTablesOfV1:10 $tables)) (once (gslt:fn:StateTablesOfV1:10 $state))
-   (let (quote (gslt:result:TableOfV1:110 (FoundTableV1 $entries))) (once (gslt:fn:TableOfV1:110 $tables $table))
-   (let (quote (gslt:result:EntriesRowMemberV1:110 $membership)) (once (gslt:fn:EntriesRowMemberV1:110 $entries $row))
-   (let (quote (gslt:result:RequireEachByMembershipV1:111111100 $outcome $history)) (superpose (collapse (gslt:mode:RequireEachByMembershipV1:111111100 $membership $state $occurrence $table $rowExpr $row $rest)))
+   (let (cons gslt:result:ValuesViewV1:10 (cons (cons ValuesUnconsViewV1 (cons $value (cons $rest ()))) ())) (once (gslt:fn:ValuesViewV1:10 $values))
+   (let (cons gslt:result:RowExprEvalV1:11110 (cons (cons EvaluatedRowV1 (cons $row ())) ())) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $rowExpr $occurrence $value NoSourceContextV1)))
+   (let (cons gslt:result:StateTablesOfV1:10 (cons $tables ())) (once (gslt:fn:StateTablesOfV1:10 $state))
+   (let (cons gslt:result:TableOfV1:110 (cons (cons FoundTableV1 (cons $entries ())) ())) (once (gslt:fn:TableOfV1:110 $tables $table))
+   (let (cons gslt:result:EntriesRowMemberV1:110 (cons $membership ())) (once (gslt:fn:EntriesRowMemberV1:110 $entries $row))
+   (let (cons gslt:result:RequireEachByMembershipV1:111111100 (cons $outcome (cons $history ()))) (superpose (collapse (gslt:mode:RequireEachByMembershipV1:111111100 $membership $state $occurrence $table $rowExpr $row $rest)))
    (quote (gslt:result:RequireEachV1:1111100 $outcome $history)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=127 source-presentation=RelationalStateTransitionCoreV1 source-rule=require-each-key-absent-nil-v1 target=mode relation=RequireEachKeyAbsentV1 input=11111100 functional=relational
 (= (gslt:mode:RequireEachKeyAbsentV1:11111100 $state $occurrence $table $keyArity $rowExpr $values)
-   (let (quote gslt:result:ValuesViewV1:11) (once (gslt:fn:ValuesViewV1:11 $values ValuesEmptyViewV1))
+   (let gslt:result:ValuesViewV1:11 (once (gslt:fn:ValuesViewV1:11 $values ValuesEmptyViewV1))
    (quote (gslt:result:RequireEachKeyAbsentV1:11111100 AcceptedV1 HistoryNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=128 source-presentation=RelationalStateTransitionCoreV1 source-rule=require-each-key-absent-cons-v1 target=mode relation=RequireEachKeyAbsentV1 input=11111100 functional=relational
 (= (gslt:mode:RequireEachKeyAbsentV1:11111100 $state $occurrence $table $keyArity $rowExpr $values)
-   (let (quote (gslt:result:ValuesViewV1:10 (ValuesUnconsViewV1 $value $rest))) (once (gslt:fn:ValuesViewV1:10 $values))
-   (let (quote (gslt:result:RowExprEvalV1:11110 (EvaluatedRowV1 $row))) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $rowExpr $occurrence $value NoSourceContextV1)))
-   (let (quote (gslt:result:RequireRowKeyAbsentV1:111100 $stepOutcome (HistoryConsV1 $entry HistoryNilV1))) (once (gslt:fn:RequireRowKeyAbsentV1:111100 $state $table $keyArity $row))
-   (let (quote (gslt:result:OutcomeClassV1:10 $class)) (once (gslt:fn:OutcomeClassV1:10 $stepOutcome))
-   (let (quote (gslt:result:RequireEachKeyAbsentAfterStepV1:11111111100 $outcome $history)) (superpose (collapse (gslt:mode:RequireEachKeyAbsentAfterStepV1:11111111100 $class $state $occurrence $table $keyArity $rowExpr $rest $stepOutcome $entry)))
+   (let (cons gslt:result:ValuesViewV1:10 (cons (cons ValuesUnconsViewV1 (cons $value (cons $rest ()))) ())) (once (gslt:fn:ValuesViewV1:10 $values))
+   (let (cons gslt:result:RowExprEvalV1:11110 (cons (cons EvaluatedRowV1 (cons $row ())) ())) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $rowExpr $occurrence $value NoSourceContextV1)))
+   (let (cons gslt:result:RequireRowKeyAbsentV1:111100 (cons $stepOutcome (cons (cons HistoryConsV1 (cons $entry (cons HistoryNilV1 ()))) ()))) (once (gslt:fn:RequireRowKeyAbsentV1:111100 $state $table $keyArity $row))
+   (let (cons gslt:result:OutcomeClassV1:10 (cons $class ())) (once (gslt:fn:OutcomeClassV1:10 $stepOutcome))
+   (let (cons gslt:result:RequireEachKeyAbsentAfterStepV1:11111111100 (cons $outcome (cons $history ()))) (superpose (collapse (gslt:mode:RequireEachKeyAbsentAfterStepV1:11111111100 $class $state $occurrence $table $keyArity $rowExpr $rest $stepOutcome $entry)))
    (quote (gslt:result:RequireEachKeyAbsentV1:11111100 $outcome $history))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=131 source-presentation=RelationalStateTransitionCoreV1 source-rule=insert-each-nil-v1 target=mode relation=InsertEachV1 input=1111111000 functional=relational
 (= (gslt:mode:InsertEachV1:1111111000 $state $occurrence $table $keyArity $policy $rowExpr $values)
-   (let (quote gslt:result:ValuesViewV1:11) (once (gslt:fn:ValuesViewV1:11 $values ValuesEmptyViewV1))
+   (let gslt:result:ValuesViewV1:11 (once (gslt:fn:ValuesViewV1:11 $values ValuesEmptyViewV1))
    (quote (gslt:result:InsertEachV1:1111111000 AcceptedV1 $state (HistoryConsV1 (CompletedActionV1 $table) HistoryNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=132 source-presentation=RelationalStateTransitionCoreV1 source-rule=insert-each-cons-v1 target=mode relation=InsertEachV1 input=1111111000 functional=relational
 (= (gslt:mode:InsertEachV1:1111111000 $state $occurrence $table $keyArity $policy $rowExpr $values)
-   (let (quote (gslt:result:ValuesViewV1:10 (ValuesUnconsViewV1 $value $rest))) (once (gslt:fn:ValuesViewV1:10 $values))
-   (let (quote (gslt:result:RowExprEvalV1:11110 (EvaluatedRowV1 $row))) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $rowExpr $occurrence $value NoSourceContextV1)))
-   (let (quote (gslt:result:InsertRowV1:11111000 $stepOutcome $next (HistoryConsV1 $entry HistoryNilV1))) (once (gslt:fn:InsertRowV1:11111000 $state $table $keyArity $policy $row))
-   (let (quote (gslt:result:OutcomeClassV1:10 $class)) (once (gslt:fn:OutcomeClassV1:10 $stepOutcome))
-   (let (quote (gslt:result:InsertEachAfterStepV1:11111111111000 $outcome $after $history)) (superpose (collapse (gslt:mode:InsertEachAfterStepV1:11111111111000 $class $state $occurrence $table $keyArity $policy $rowExpr $rest $stepOutcome $next $entry)))
+   (let (cons gslt:result:ValuesViewV1:10 (cons (cons ValuesUnconsViewV1 (cons $value (cons $rest ()))) ())) (once (gslt:fn:ValuesViewV1:10 $values))
+   (let (cons gslt:result:RowExprEvalV1:11110 (cons (cons EvaluatedRowV1 (cons $row ())) ())) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $rowExpr $occurrence $value NoSourceContextV1)))
+   (let (cons gslt:result:InsertRowV1:11111000 (cons $stepOutcome (cons $next (cons (cons HistoryConsV1 (cons $entry (cons HistoryNilV1 ()))) ())))) (once (gslt:fn:InsertRowV1:11111000 $state $table $keyArity $policy $row))
+   (let (cons gslt:result:OutcomeClassV1:10 (cons $class ())) (once (gslt:fn:OutcomeClassV1:10 $stepOutcome))
+   (let (cons gslt:result:InsertEachAfterStepV1:11111111111000 (cons $outcome (cons $after (cons $history ())))) (superpose (collapse (gslt:mode:InsertEachAfterStepV1:11111111111000 $class $state $occurrence $table $keyArity $policy $rowExpr $rest $stepOutcome $next $entry)))
    (quote (gslt:result:InsertEachV1:1111111000 $outcome $after $history))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=117 source-presentation=RelationalStateTransitionCoreV1 source-rule=require-row-v1 target=mode relation=RequireRowV1 input=11100 functional=semidet
 (= (gslt:fn:RequireRowV1:11100 $state $table $row)
-   (let (quote (gslt:result:StateTablesOfV1:10 $tables)) (gslt:fn:StateTablesOfV1:10 $state)
-   (let (quote (gslt:result:TableOfV1:110 (FoundTableV1 $entries))) (gslt:fn:TableOfV1:110 $tables $table)
-   (let (quote (gslt:result:EntriesRowMemberV1:110 $membership)) (gslt:fn:EntriesRowMemberV1:110 $entries $row)
-   (let (quote (gslt:result:RequireRowByMembershipV1:11100 $outcome $history)) (gslt:fn:RequireRowByMembershipV1:11100 $membership $table $row)
+   (let (cons gslt:result:StateTablesOfV1:10 (cons $tables ())) (gslt:fn:StateTablesOfV1:10 $state)
+   (let (cons gslt:result:TableOfV1:110 (cons (cons FoundTableV1 (cons $entries ())) ())) (gslt:fn:TableOfV1:110 $tables $table)
+   (let (cons gslt:result:EntriesRowMemberV1:110 (cons $membership ())) (gslt:fn:EntriesRowMemberV1:110 $entries $row)
+   (let (cons gslt:result:RequireRowByMembershipV1:11100 (cons $outcome (cons $history ()))) (gslt:fn:RequireRowByMembershipV1:11100 $membership $table $row)
    (quote (gslt:result:RequireRowV1:11100 $outcome $history)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=120 source-presentation=RelationalStateTransitionCoreV1 source-rule=require-row-key-absent-v1 target=mode relation=RequireRowKeyAbsentV1 input=111100 functional=semidet
 (= (gslt:fn:RequireRowKeyAbsentV1:111100 $state $table $keyArity $row)
-   (let (quote (gslt:result:StateTablesOfV1:10 $tables)) (gslt:fn:StateTablesOfV1:10 $state)
-   (let (quote (gslt:result:TableOfV1:110 (FoundTableV1 $entries))) (gslt:fn:TableOfV1:110 $tables $table)
-   (let (quote (gslt:result:RowKeyPrefixV1:110 $key)) (gslt:fn:RowKeyPrefixV1:110 $keyArity $row)
-   (let (quote (gslt:result:EntriesLookupKeyV1:1110 $lookup)) (gslt:fn:EntriesLookupKeyV1:1110 $entries $keyArity $key)
-   (let (quote (gslt:result:RequireRowKeyAbsentByLookupV1:11100 $outcome $history)) (gslt:fn:RequireRowKeyAbsentByLookupV1:11100 $lookup $table $key)
+   (let (cons gslt:result:StateTablesOfV1:10 (cons $tables ())) (gslt:fn:StateTablesOfV1:10 $state)
+   (let (cons gslt:result:TableOfV1:110 (cons (cons FoundTableV1 (cons $entries ())) ())) (gslt:fn:TableOfV1:110 $tables $table)
+   (let (cons gslt:result:RowKeyPrefixV1:110 (cons $key ())) (gslt:fn:RowKeyPrefixV1:110 $keyArity $row)
+   (let (cons gslt:result:EntriesLookupKeyV1:1110 (cons $lookup ())) (gslt:fn:EntriesLookupKeyV1:1110 $entries $keyArity $key)
+   (let (cons gslt:result:RequireRowKeyAbsentByLookupV1:11100 (cons $outcome (cons $history ()))) (gslt:fn:RequireRowKeyAbsentByLookupV1:11100 $lookup $table $key)
    (quote (gslt:result:RequireRowKeyAbsentV1:111100 $outcome $history))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=123 source-presentation=RelationalStateTransitionCoreV1 source-rule=insert-row-v1 target=mode relation=InsertRowV1 input=11111000 functional=semidet
 (= (gslt:fn:InsertRowV1:11111000 $state $table $keyArity $policy $row)
-   (let (quote (gslt:result:TableInsertV1:11111000 $tableResult $tentative $entry)) (gslt:fn:TableInsertV1:11111000 $state $table $keyArity $policy $row)
-   (let (quote (gslt:result:InsertRowByTableResultV1:111111000 $outcome $after $history)) (gslt:fn:InsertRowByTableResultV1:111111000 $tableResult $state $table $row $tentative $entry)
+   (let (cons gslt:result:TableInsertV1:11111000 (cons $tableResult (cons $tentative (cons $entry ())))) (gslt:fn:TableInsertV1:11111000 $state $table $keyArity $policy $row)
+   (let (cons gslt:result:InsertRowByTableResultV1:111111000 (cons $outcome (cons $after (cons $history ())))) (gslt:fn:InsertRowByTableResultV1:111111000 $tableResult $state $table $row $tentative $entry)
    (quote (gslt:result:InsertRowV1:11111000 $outcome $after $history)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=135 source-presentation=RelationalStateTransitionCoreV1 source-rule=insert-each-matching-nil-v1 target=mode relation=InsertEachMatchingV1 input=111111111000 functional=relational
 (= (gslt:mode:InsertEachMatchingV1:111111111000 $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $values)
-   (let (quote gslt:result:ValuesViewV1:11) (once (gslt:fn:ValuesViewV1:11 $values ValuesEmptyViewV1))
+   (let gslt:result:ValuesViewV1:11 (once (gslt:fn:ValuesViewV1:11 $values ValuesEmptyViewV1))
    (quote (gslt:result:InsertEachMatchingV1:111111111000 AcceptedV1 $state (HistoryConsV1 (CompletedActionV1 $targetTable) HistoryNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=136 source-presentation=RelationalStateTransitionCoreV1 source-rule=insert-each-matching-cons-v1 target=mode relation=InsertEachMatchingV1 input=111111111000 functional=relational
 (= (gslt:mode:InsertEachMatchingV1:111111111000 $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $values)
-   (let (quote (gslt:result:ValuesViewV1:10 (ValuesUnconsViewV1 $input $rest))) (once (gslt:fn:ValuesViewV1:10 $values))
-   (let (quote (gslt:result:ConditionRowV1:11111100 $condition $conditionEntry)) (superpose (collapse (gslt:mode:ConditionRowV1:11111100 $state $occurrence $input NoSourceContextV1 $conditionTable $conditionExpr)))
-   (let (quote (gslt:result:InsertEachMatchingByConditionV1:111111111111000 $outcome $after $history)) (superpose (collapse (gslt:mode:InsertEachMatchingByConditionV1:111111111111000 $condition $conditionEntry $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $input $rest)))
+   (let (cons gslt:result:ValuesViewV1:10 (cons (cons ValuesUnconsViewV1 (cons $input (cons $rest ()))) ())) (once (gslt:fn:ValuesViewV1:10 $values))
+   (let (cons gslt:result:ConditionRowV1:11111100 (cons $condition (cons $conditionEntry ()))) (superpose (collapse (gslt:mode:ConditionRowV1:11111100 $state $occurrence $input NoSourceContextV1 $conditionTable $conditionExpr)))
+   (let (cons gslt:result:InsertEachMatchingByConditionV1:111111111111000 (cons $outcome (cons $after (cons $history ())))) (superpose (collapse (gslt:mode:InsertEachMatchingByConditionV1:111111111111000 $condition $conditionEntry $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $input $rest)))
    (quote (gslt:result:InsertEachMatchingV1:111111111000 $outcome $after $history))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=141 source-presentation=RelationalStateTransitionCoreV1 source-rule=copy-each-row-nil-v1 target=mode relation=CopyEachRowV1 input=11111111000 functional=relational
@@ -1707,96 +1582,83 @@
    (quote (gslt:result:CopyEachRowV1:11111111000 AcceptedV1 $state (HistoryConsV1 (CompletedActionV1 $targetTable) HistoryNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=142 source-presentation=RelationalStateTransitionCoreV1 source-rule=copy-each-row-cons-v1 target=mode relation=CopyEachRowV1 input=11111111000 functional=relational
-(= (gslt:mode:CopyEachRowV1:11111111000 $state $occurrence $targetTable $keyArity $policy $targetExpr $__gslt_input_v1_0_6 $rowIndex)
-   (let (quote (EntriesConsV1 (EntryV1 $seq $sourceRow $depth) $rest)) $__gslt_input_v1_0_6
-   (let (quote (gslt:result:RowExprEvalV1:11110 (EvaluatedRowV1 $targetRow))) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $targetExpr $occurrence NoInputV1 (quote (SourceContextV1 $sourceRow $rowIndex NoMatchIndexV1)))))
-   (let (quote (gslt:result:InsertRowV1:11111000 $stepOutcome $next (HistoryConsV1 $insertEntry HistoryNilV1))) (once (gslt:fn:InsertRowV1:11111000 $state $targetTable $keyArity $policy $targetRow))
-   (let (quote (gslt:result:OutcomeClassV1:10 $class)) (once (gslt:fn:OutcomeClassV1:10 $stepOutcome))
-   (let (quote (gslt:result:CopyEachRowAfterInsertV1:111111111111000 $outcome $after $history)) (superpose (collapse (gslt:mode:CopyEachRowAfterInsertV1:111111111111000 $class $state $occurrence $targetTable $keyArity $policy $targetExpr $rest (quote (NatSuccV1 $rowIndex)) $stepOutcome $next $insertEntry)))
-   (quote (gslt:result:CopyEachRowV1:11111111000 $outcome $after $history))))))))
+(= (gslt:mode:CopyEachRowV1:11111111000 $state $occurrence $targetTable $keyArity $policy $targetExpr (cons EntriesConsV1 (cons (cons EntryV1 (cons $seq (cons $sourceRow (cons $depth ())))) (cons $rest ()))) $rowIndex)
+   (let (cons gslt:result:RowExprEvalV1:11110 (cons (cons EvaluatedRowV1 (cons $targetRow ())) ())) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $targetExpr $occurrence NoInputV1 (quote (SourceContextV1 $sourceRow $rowIndex NoMatchIndexV1)))))
+   (let (cons gslt:result:InsertRowV1:11111000 (cons $stepOutcome (cons $next (cons (cons HistoryConsV1 (cons $insertEntry (cons HistoryNilV1 ()))) ())))) (once (gslt:fn:InsertRowV1:11111000 $state $targetTable $keyArity $policy $targetRow))
+   (let (cons gslt:result:OutcomeClassV1:10 (cons $class ())) (once (gslt:fn:OutcomeClassV1:10 $stepOutcome))
+   (let (cons gslt:result:CopyEachRowAfterInsertV1:111111111111000 (cons $outcome (cons $after (cons $history ())))) (superpose (collapse (gslt:mode:CopyEachRowAfterInsertV1:111111111111000 $class $state $occurrence $targetTable $keyArity $policy $targetExpr $rest (quote (NatSuccV1 $rowIndex)) $stepOutcome $next $insertEntry)))
+   (quote (gslt:result:CopyEachRowV1:11111111000 $outcome $after $history)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=145 source-presentation=RelationalStateTransitionCoreV1 source-rule=copy-each-row-matching-nil-v1 target=mode relation=CopyEachRowMatchingV1 input=11111111111000 functional=relational
 (= (gslt:mode:CopyEachRowMatchingV1:11111111111000 $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr EntriesNilV1 $rowIndex $matchIndex)
    (quote (gslt:result:CopyEachRowMatchingV1:11111111111000 AcceptedV1 $state (HistoryConsV1 (CompletedActionV1 $targetTable) HistoryNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=146 source-presentation=RelationalStateTransitionCoreV1 source-rule=copy-each-row-matching-cons-v1 target=mode relation=CopyEachRowMatchingV1 input=11111111111000 functional=relational
-(= (gslt:mode:CopyEachRowMatchingV1:11111111111000 $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $__gslt_input_v1_0_8 $rowIndex $matchIndex)
-   (let (quote (EntriesConsV1 (EntryV1 $seq $sourceRow $depth) $rest)) $__gslt_input_v1_0_8
-   (let (quote (gslt:result:ConditionRowV1:11111100 $condition $conditionEntry)) (superpose (collapse (gslt:mode:ConditionRowV1:11111100 $state $occurrence NoInputV1 (quote (SourceContextV1 $sourceRow $rowIndex $matchIndex)) $conditionTable $conditionExpr)))
-   (let (quote (gslt:result:CopyEachRowMatchingByConditionV1:11111111111111000 $outcome $after $history)) (superpose (collapse (gslt:mode:CopyEachRowMatchingByConditionV1:11111111111111000 $condition $conditionEntry $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $sourceRow $rest $rowIndex $matchIndex)))
-   (quote (gslt:result:CopyEachRowMatchingV1:11111111111000 $outcome $after $history))))))
+(= (gslt:mode:CopyEachRowMatchingV1:11111111111000 $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr (cons EntriesConsV1 (cons (cons EntryV1 (cons $seq (cons $sourceRow (cons $depth ())))) (cons $rest ()))) $rowIndex $matchIndex)
+   (let (cons gslt:result:ConditionRowV1:11111100 (cons $condition (cons $conditionEntry ()))) (superpose (collapse (gslt:mode:ConditionRowV1:11111100 $state $occurrence NoInputV1 (quote (SourceContextV1 $sourceRow $rowIndex $matchIndex)) $conditionTable $conditionExpr)))
+   (let (cons gslt:result:CopyEachRowMatchingByConditionV1:11111111111111000 (cons $outcome (cons $after (cons $history ())))) (superpose (collapse (gslt:mode:CopyEachRowMatchingByConditionV1:11111111111111000 $condition $conditionEntry $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $sourceRow $rest $rowIndex $matchIndex)))
+   (quote (gslt:result:CopyEachRowMatchingV1:11111111111000 $outcome $after $history)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=162 source-presentation=RelationalStateTransitionCoreV1 source-rule=insert-all-pairs-nil-v1 target=mode relation=InsertAllPairsV1 input=1111000 functional=semidet
 (= (gslt:fn:InsertAllPairsV1:1111000 $state $table $policy PairsNilV1)
    (quote (gslt:result:InsertAllPairsV1:1111000 AcceptedV1 $state (HistoryConsV1 (CompletedActionV1 $table) HistoryNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=163 source-presentation=RelationalStateTransitionCoreV1 source-rule=insert-all-pairs-step-v1 target=mode relation=InsertAllPairsV1 input=1111000 functional=semidet
-(= (gslt:fn:InsertAllPairsV1:1111000 $state $table $policy $__gslt_input_v1_0_3)
-   (let (quote (PairsConsV1 (PairV1 $left $right) $rest)) $__gslt_input_v1_0_3
-   (let (quote (gslt:result:TableInsertV1:11111000 (InsertedV1 $table $row) $next $entry)) (gslt:fn:TableInsertV1:11111000 $state $table (quote (NatSuccV1 (NatSuccV1 NatZeroV1))) $policy (quote (RowConsV1 $left (RowConsV1 $right RowNilV1))))
-   (let (quote (gslt:result:InsertAllPairsV1:1111000 $outcome $after $steps)) (gslt:fn:InsertAllPairsV1:1111000 $next $table $policy $rest)
-   (quote (gslt:result:InsertAllPairsV1:1111000 $outcome $after (HistoryConsV1 $entry $steps)))))))
+(= (gslt:fn:InsertAllPairsV1:1111000 $state $table $policy (cons PairsConsV1 (cons (cons PairV1 (cons $left (cons $right ()))) (cons $rest ()))))
+   (let (cons gslt:result:TableInsertV1:11111000 (cons (cons InsertedV1 (cons $table (cons $row ()))) (cons $next (cons $entry ())))) (gslt:fn:TableInsertV1:11111000 $state $table (quote (NatSuccV1 (NatSuccV1 NatZeroV1))) $policy (quote (RowConsV1 $left (RowConsV1 $right RowNilV1))))
+   (let (cons gslt:result:InsertAllPairsV1:1111000 (cons $outcome (cons $after (cons $steps ())))) (gslt:fn:InsertAllPairsV1:1111000 $next $table $policy $rest)
+   (quote (gslt:result:InsertAllPairsV1:1111000 $outcome $after (HistoryConsV1 $entry $steps))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=164 source-presentation=RelationalStateTransitionCoreV1 source-rule=insert-all-pairs-refused-key-v1 target=mode relation=InsertAllPairsV1 input=1111000 functional=semidet
-(= (gslt:fn:InsertAllPairsV1:1111000 $state $table $policy $__gslt_input_v1_0_3)
-   (let (quote (PairsConsV1 (PairV1 $left $right) $rest)) $__gslt_input_v1_0_3
-   (let (quote (gslt:result:TableInsertV1:11111010 (RefusedKeyDisagreesV1 $table $row $existing) $entry)) (gslt:fn:TableInsertV1:11111010 $state $table (quote (NatSuccV1 (NatSuccV1 NatZeroV1))) $policy (quote (RowConsV1 $left (RowConsV1 $right RowNilV1))) $state)
-   (quote (gslt:result:InsertAllPairsV1:1111000 (RefusedKeyDisagreesV1 $table $row $existing) $state (HistoryConsV1 $entry HistoryNilV1))))))
+(= (gslt:fn:InsertAllPairsV1:1111000 $state $table $policy (cons PairsConsV1 (cons (cons PairV1 (cons $left (cons $right ()))) (cons $rest ()))))
+   (let (cons gslt:result:TableInsertV1:11111010 (cons (cons RefusedKeyDisagreesV1 (cons $table (cons $row (cons $existing ())))) (cons $entry ()))) (gslt:fn:TableInsertV1:11111010 $state $table (quote (NatSuccV1 (NatSuccV1 NatZeroV1))) $policy (quote (RowConsV1 $left (RowConsV1 $right RowNilV1))) $state)
+   (quote (gslt:result:InsertAllPairsV1:1111000 (RefusedKeyDisagreesV1 $table $row $existing) $state (HistoryConsV1 $entry HistoryNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=124 source-presentation=RelationalStateTransitionCoreV1 source-rule=insert-row-by-table-result-accepted-v1 target=mode relation=InsertRowByTableResultV1 input=111111000 functional=semidet
-(= (gslt:fn:InsertRowByTableResultV1:111111000 $__gslt_input_v1_0_0 $state $table $row $tentative $entry)
-   (let (quote (InsertedV1 $table $row)) $__gslt_input_v1_0_0
-   (quote (gslt:result:InsertRowByTableResultV1:111111000 AcceptedV1 $tentative (HistoryConsV1 $entry HistoryNilV1)))))
+(= (gslt:fn:InsertRowByTableResultV1:111111000 (cons InsertedV1 (cons $table (cons $row ()))) $state $table $row $tentative $entry)
+   (quote (gslt:result:InsertRowByTableResultV1:111111000 AcceptedV1 $tentative (HistoryConsV1 $entry HistoryNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=125 source-presentation=RelationalStateTransitionCoreV1 source-rule=insert-row-by-table-result-refused-disagrees-v1 target=mode relation=InsertRowByTableResultV1 input=111111000 functional=semidet
-(= (gslt:fn:InsertRowByTableResultV1:111111000 $__gslt_input_v1_0_0 $state $table $row $tentative $entry)
-   (let (quote (RefusedKeyDisagreesV1 $table $row $existing)) $__gslt_input_v1_0_0
-   (quote (gslt:result:InsertRowByTableResultV1:111111000 (RefusedKeyDisagreesV1 $table $row $existing) $state (HistoryConsV1 $entry HistoryNilV1)))))
+(= (gslt:fn:InsertRowByTableResultV1:111111000 (cons RefusedKeyDisagreesV1 (cons $table (cons $row (cons $existing ())))) $state $table $row $tentative $entry)
+   (quote (gslt:result:InsertRowByTableResultV1:111111000 (RefusedKeyDisagreesV1 $table $row $existing) $state (HistoryConsV1 $entry HistoryNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=126 source-presentation=RelationalStateTransitionCoreV1 source-rule=insert-row-by-table-result-refused-present-v1 target=mode relation=InsertRowByTableResultV1 input=111111000 functional=semidet
-(= (gslt:fn:InsertRowByTableResultV1:111111000 $__gslt_input_v1_0_0 $state $table $row $tentative $entry)
-   (let (quote (RefusedKeyPresentV1 $table $existing)) $__gslt_input_v1_0_0
-   (quote (gslt:result:InsertRowByTableResultV1:111111000 (RefusedKeyPresentV1 $table $existing) $state (HistoryConsV1 $entry HistoryNilV1)))))
+(= (gslt:fn:InsertRowByTableResultV1:111111000 (cons RefusedKeyPresentV1 (cons $table (cons $existing ()))) $state $table $row $tentative $entry)
+   (quote (gslt:result:InsertRowByTableResultV1:111111000 (RefusedKeyPresentV1 $table $existing) $state (HistoryConsV1 $entry HistoryNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=37 source-presentation=RelationalStateTransitionCoreV1 source-rule=table-insert-v1 target=mode relation=TableInsertV1 input=11111000 functional=semidet
 (= (gslt:fn:TableInsertV1:11111000 $state $name $keyArity $policy $row)
-   (let (quote (gslt:result:StateTablesOfV1:10 $tables)) (gslt:fn:StateTablesOfV1:10 $state)
-   (let (quote (gslt:result:TableOfV1:110 (FoundTableV1 $entries))) (gslt:fn:TableOfV1:110 $tables $name)
-   (let (quote (gslt:result:RowKeyPrefixV1:110 $key)) (gslt:fn:RowKeyPrefixV1:110 $keyArity $row)
-   (let (quote (gslt:result:EntriesLookupKeyV1:1110 $lookup)) (gslt:fn:EntriesLookupKeyV1:1110 $entries $keyArity $key)
-   (let (quote (gslt:result:TableInsertByLookupV1:111111000 $outcome $after $history)) (gslt:fn:TableInsertByLookupV1:111111000 $lookup $entries $state $name $policy $row)
+   (let (cons gslt:result:StateTablesOfV1:10 (cons $tables ())) (gslt:fn:StateTablesOfV1:10 $state)
+   (let (cons gslt:result:TableOfV1:110 (cons (cons FoundTableV1 (cons $entries ())) ())) (gslt:fn:TableOfV1:110 $tables $name)
+   (let (cons gslt:result:RowKeyPrefixV1:110 (cons $key ())) (gslt:fn:RowKeyPrefixV1:110 $keyArity $row)
+   (let (cons gslt:result:EntriesLookupKeyV1:1110 (cons $lookup ())) (gslt:fn:EntriesLookupKeyV1:1110 $entries $keyArity $key)
+   (let (cons gslt:result:TableInsertByLookupV1:111111000 (cons $outcome (cons $after (cons $history ())))) (gslt:fn:TableInsertByLookupV1:111111000 $lookup $entries $state $name $policy $row)
    (quote (gslt:result:TableInsertV1:11111000 $outcome $after $history))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=114 source-presentation=RelationalStateTransitionCoreV1 source-rule=condition-row-v1 target=mode relation=ConditionRowV1 input=11111100 functional=relational
 (= (gslt:mode:ConditionRowV1:11111100 $state $occurrence $input $source $table $rowExpr)
-   (let (quote (gslt:result:RowExprEvalV1:11110 (EvaluatedRowV1 $row))) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $rowExpr $occurrence $input $source)))
-   (let (quote (gslt:result:StateTablesOfV1:10 $tables)) (once (gslt:fn:StateTablesOfV1:10 $state))
-   (let (quote (gslt:result:TableOfV1:110 (FoundTableV1 $entries))) (once (gslt:fn:TableOfV1:110 $tables $table))
-   (let (quote (gslt:result:EntriesRowMemberV1:110 $membership)) (once (gslt:fn:EntriesRowMemberV1:110 $entries $row))
-   (let (quote (gslt:result:ConditionRowByMembershipV1:11100 $result $history)) (once (gslt:fn:ConditionRowByMembershipV1:11100 $membership $table $row))
+   (let (cons gslt:result:RowExprEvalV1:11110 (cons (cons EvaluatedRowV1 (cons $row ())) ())) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $rowExpr $occurrence $input $source)))
+   (let (cons gslt:result:StateTablesOfV1:10 (cons $tables ())) (once (gslt:fn:StateTablesOfV1:10 $state))
+   (let (cons gslt:result:TableOfV1:110 (cons (cons FoundTableV1 (cons $entries ())) ())) (once (gslt:fn:TableOfV1:110 $tables $table))
+   (let (cons gslt:result:EntriesRowMemberV1:110 (cons $membership ())) (once (gslt:fn:EntriesRowMemberV1:110 $entries $row))
+   (let (cons gslt:result:ConditionRowByMembershipV1:11100 (cons $result (cons $history ()))) (once (gslt:fn:ConditionRowByMembershipV1:11100 $membership $table $row))
    (quote (gslt:result:ConditionRowV1:11111100 $result $history))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=98 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-require-depth-compared-equal-v1 target=mode relation=StateRequireDepthComparedV1 input=1111000 functional=semidet
-(= (gslt:fn:StateRequireDepthComparedV1:1111000 CompareEqualV1 $__gslt_input_v1_0_1 $__gslt_input_v1_0_2 $position)
-   (let (quote (StateV1 $package $depth $seq $tables)) $__gslt_input_v1_0_1
-   (let (quote (StateRequireDepthV1 $expected)) $__gslt_input_v1_0_2
-   (quote (gslt:result:StateRequireDepthComparedV1:1111000 AcceptedV1 (StateV1 $package $depth $seq $tables) (HistoryConsV1 (EnteredActionV1 (StateRequireDepthV1 $expected) $position) (HistoryConsV1 (CheckedDepthV1 $depth) HistoryNilV1)))))))
+(= (gslt:fn:StateRequireDepthComparedV1:1111000 CompareEqualV1 (cons StateV1 (cons $package (cons $depth (cons $seq (cons $tables ()))))) (cons StateRequireDepthV1 (cons $expected ())) $position)
+   (quote (gslt:result:StateRequireDepthComparedV1:1111000 AcceptedV1 (StateV1 $package $depth $seq $tables) (HistoryConsV1 (EnteredActionV1 (StateRequireDepthV1 $expected) $position) (HistoryConsV1 (CheckedDepthV1 $depth) HistoryNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=99 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-require-depth-compared-less-v1 target=mode relation=StateRequireDepthComparedV1 input=1111000 functional=semidet
-(= (gslt:fn:StateRequireDepthComparedV1:1111000 CompareLessV1 $__gslt_input_v1_0_1 $__gslt_input_v1_0_2 $position)
-   (let (quote (StateV1 $package $depth $seq $tables)) $__gslt_input_v1_0_1
-   (let (quote (StateRequireDepthV1 $expected)) $__gslt_input_v1_0_2
-   (quote (gslt:result:StateRequireDepthComparedV1:1111000 (RefusedDepthMismatchV1 $expected $depth) (StateV1 $package $depth $seq $tables) (HistoryConsV1 (EnteredActionV1 (StateRequireDepthV1 $expected) $position) HistoryNilV1))))))
+(= (gslt:fn:StateRequireDepthComparedV1:1111000 CompareLessV1 (cons StateV1 (cons $package (cons $depth (cons $seq (cons $tables ()))))) (cons StateRequireDepthV1 (cons $expected ())) $position)
+   (quote (gslt:result:StateRequireDepthComparedV1:1111000 (RefusedDepthMismatchV1 $expected $depth) (StateV1 $package $depth $seq $tables) (HistoryConsV1 (EnteredActionV1 (StateRequireDepthV1 $expected) $position) HistoryNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=100 source-presentation=RelationalStateTransitionCoreV1 source-rule=state-require-depth-compared-greater-v1 target=mode relation=StateRequireDepthComparedV1 input=1111000 functional=semidet
-(= (gslt:fn:StateRequireDepthComparedV1:1111000 CompareGreaterV1 $__gslt_input_v1_0_1 $__gslt_input_v1_0_2 $position)
-   (let (quote (StateV1 $package $depth $seq $tables)) $__gslt_input_v1_0_1
-   (let (quote (StateRequireDepthV1 $expected)) $__gslt_input_v1_0_2
-   (quote (gslt:result:StateRequireDepthComparedV1:1111000 (RefusedDepthMismatchV1 $expected $depth) (StateV1 $package $depth $seq $tables) (HistoryConsV1 (EnteredActionV1 (StateRequireDepthV1 $expected) $position) HistoryNilV1))))))
+(= (gslt:fn:StateRequireDepthComparedV1:1111000 CompareGreaterV1 (cons StateV1 (cons $package (cons $depth (cons $seq (cons $tables ()))))) (cons StateRequireDepthV1 (cons $expected ())) $position)
+   (quote (gslt:result:StateRequireDepthComparedV1:1111000 (RefusedDepthMismatchV1 $expected $depth) (StateV1 $package $depth $seq $tables) (HistoryConsV1 (EnteredActionV1 (StateRequireDepthV1 $expected) $position) HistoryNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=129 source-presentation=RelationalStateTransitionCoreV1 source-rule=require-each-key-absent-after-step-accepted-v1 target=mode relation=RequireEachKeyAbsentAfterStepV1 input=11111111100 functional=relational
 (= (gslt:mode:RequireEachKeyAbsentAfterStepV1:11111111100 OutcomeAcceptedV1 $state $occurrence $table $keyArity $rowExpr $rest AcceptedV1 $entry)
-   (let (quote (gslt:result:RequireEachKeyAbsentV1:11111100 $outcome $steps)) (superpose (collapse (gslt:mode:RequireEachKeyAbsentV1:11111100 $state $occurrence $table $keyArity $rowExpr $rest)))
+   (let (cons gslt:result:RequireEachKeyAbsentV1:11111100 (cons $outcome (cons $steps ()))) (superpose (collapse (gslt:mode:RequireEachKeyAbsentV1:11111100 $state $occurrence $table $keyArity $rowExpr $rest)))
    (quote (gslt:result:RequireEachKeyAbsentAfterStepV1:11111111100 $outcome (HistoryConsV1 $entry $steps)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=130 source-presentation=RelationalStateTransitionCoreV1 source-rule=require-each-key-absent-after-step-refused-v1 target=mode relation=RequireEachKeyAbsentAfterStepV1 input=11111111100 functional=relational
@@ -1805,7 +1667,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=133 source-presentation=RelationalStateTransitionCoreV1 source-rule=insert-each-after-step-accepted-v1 target=mode relation=InsertEachAfterStepV1 input=11111111111000 functional=relational
 (= (gslt:mode:InsertEachAfterStepV1:11111111111000 OutcomeAcceptedV1 $state $occurrence $table $keyArity $policy $rowExpr $rest AcceptedV1 $next $entry)
-   (let (quote (gslt:result:InsertEachV1:1111111000 $outcome $after $steps)) (superpose (collapse (gslt:mode:InsertEachV1:1111111000 $next $occurrence $table $keyArity $policy $rowExpr $rest)))
+   (let (cons gslt:result:InsertEachV1:1111111000 (cons $outcome (cons $after (cons $steps ())))) (superpose (collapse (gslt:mode:InsertEachV1:1111111000 $next $occurrence $table $keyArity $policy $rowExpr $rest)))
    (quote (gslt:result:InsertEachAfterStepV1:11111111111000 $outcome $after (HistoryConsV1 $entry $steps)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=134 source-presentation=RelationalStateTransitionCoreV1 source-rule=insert-each-after-step-refused-v1 target=mode relation=InsertEachAfterStepV1 input=11111111111000 functional=relational
@@ -1814,7 +1676,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=143 source-presentation=RelationalStateTransitionCoreV1 source-rule=copy-each-row-after-insert-accepted-v1 target=mode relation=CopyEachRowAfterInsertV1 input=111111111111000 functional=relational
 (= (gslt:mode:CopyEachRowAfterInsertV1:111111111111000 OutcomeAcceptedV1 $state $occurrence $targetTable $keyArity $policy $targetExpr $rest $nextRowIndex AcceptedV1 $next $insertEntry)
-   (let (quote (gslt:result:CopyEachRowV1:11111111000 $outcome $after $steps)) (superpose (collapse (gslt:mode:CopyEachRowV1:11111111000 $next $occurrence $targetTable $keyArity $policy $targetExpr $rest $nextRowIndex)))
+   (let (cons gslt:result:CopyEachRowV1:11111111000 (cons $outcome (cons $after (cons $steps ())))) (superpose (collapse (gslt:mode:CopyEachRowV1:11111111000 $next $occurrence $targetTable $keyArity $policy $targetExpr $rest $nextRowIndex)))
    (quote (gslt:result:CopyEachRowAfterInsertV1:111111111111000 $outcome $after (HistoryConsV1 $insertEntry $steps)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=144 source-presentation=RelationalStateTransitionCoreV1 source-rule=copy-each-row-after-insert-refused-v1 target=mode relation=CopyEachRowAfterInsertV1 input=111111111111000 functional=relational
@@ -1823,7 +1685,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=108 source-presentation=RelationalStateTransitionCoreV1 source-rule=require-each-by-membership-present-v1 target=mode relation=RequireEachByMembershipV1 input=111111100 functional=relational
 (= (gslt:mode:RequireEachByMembershipV1:111111100 RowPresentV1 $state $occurrence $table $rowExpr $row $rest)
-   (let (quote (gslt:result:RequireEachV1:1111100 $outcome $steps)) (superpose (collapse (gslt:mode:RequireEachV1:1111100 $state $occurrence $table $rowExpr $rest)))
+   (let (cons gslt:result:RequireEachV1:1111100 (cons $outcome (cons $steps ()))) (superpose (collapse (gslt:mode:RequireEachV1:1111100 $state $occurrence $table $rowExpr $rest)))
    (quote (gslt:result:RequireEachByMembershipV1:111111100 $outcome (HistoryConsV1 (CheckedRowPresentV1 $table $row) $steps)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=109 source-presentation=RelationalStateTransitionCoreV1 source-rule=require-each-by-membership-missing-v1 target=mode relation=RequireEachByMembershipV1 input=111111100 functional=relational
@@ -1843,61 +1705,54 @@
    (quote (gslt:result:RequireRowKeyAbsentByLookupV1:11100 AcceptedV1 (HistoryConsV1 (CheckedKeyAbsentV1 $table $key) HistoryNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=122 source-presentation=RelationalStateTransitionCoreV1 source-rule=require-row-key-absent-by-lookup-present-v1 target=mode relation=RequireRowKeyAbsentByLookupV1 input=11100 functional=semidet
-(= (gslt:fn:RequireRowKeyAbsentByLookupV1:11100 $__gslt_input_v1_0_0 $table $key)
-   (let (quote (FoundRowV1 $existing)) $__gslt_input_v1_0_0
-   (quote (gslt:result:RequireRowKeyAbsentByLookupV1:11100 (RefusedKeyPresentV1 $table $existing) (HistoryConsV1 (CheckedRowPresentV1 $table $existing) HistoryNilV1)))))
+(= (gslt:fn:RequireRowKeyAbsentByLookupV1:11100 (cons FoundRowV1 (cons $existing ())) $table $key)
+   (quote (gslt:result:RequireRowKeyAbsentByLookupV1:11100 (RefusedKeyPresentV1 $table $existing) (HistoryConsV1 (CheckedRowPresentV1 $table $existing) HistoryNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=137 source-presentation=RelationalStateTransitionCoreV1 source-rule=insert-each-matching-by-condition-missed-v1 target=mode relation=InsertEachMatchingByConditionV1 input=111111111111000 functional=relational
-(= (gslt:mode:InsertEachMatchingByConditionV1:111111111111000 $__gslt_input_v1_0_0 $conditionEntry $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $input $rest)
-   (let (quote (ConditionMissedV1 $conditionRow)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:InsertEachMatchingV1:111111111000 $outcome $after $steps)) (superpose (collapse (gslt:mode:InsertEachMatchingV1:111111111000 $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $rest)))
-   (quote (gslt:result:InsertEachMatchingByConditionV1:111111111111000 $outcome $after (HistoryConsV1 $conditionEntry $steps))))))
+(= (gslt:mode:InsertEachMatchingByConditionV1:111111111111000 (cons ConditionMissedV1 (cons $conditionRow ())) $conditionEntry $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $input $rest)
+   (let (cons gslt:result:InsertEachMatchingV1:111111111000 (cons $outcome (cons $after (cons $steps ())))) (superpose (collapse (gslt:mode:InsertEachMatchingV1:111111111000 $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $rest)))
+   (quote (gslt:result:InsertEachMatchingByConditionV1:111111111111000 $outcome $after (HistoryConsV1 $conditionEntry $steps)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=138 source-presentation=RelationalStateTransitionCoreV1 source-rule=insert-each-matching-by-condition-matched-v1 target=mode relation=InsertEachMatchingByConditionV1 input=111111111111000 functional=relational
-(= (gslt:mode:InsertEachMatchingByConditionV1:111111111111000 $__gslt_input_v1_0_0 $conditionEntry $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $input $rest)
-   (let (quote (ConditionMatchedV1 $conditionRow)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:RowExprEvalV1:11110 (EvaluatedRowV1 $targetRow))) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $targetExpr $occurrence $input NoSourceContextV1)))
-   (let (quote (gslt:result:InsertRowV1:11111000 $stepOutcome $next (HistoryConsV1 $insertEntry HistoryNilV1))) (once (gslt:fn:InsertRowV1:11111000 $state $targetTable $keyArity $policy $targetRow))
-   (let (quote (gslt:result:OutcomeClassV1:10 $class)) (once (gslt:fn:OutcomeClassV1:10 $stepOutcome))
-   (let (quote (gslt:result:InsertEachMatchingAfterInsertV1:11111111111111000 $outcome $after $history)) (superpose (collapse (gslt:mode:InsertEachMatchingAfterInsertV1:11111111111111000 $class $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $rest $stepOutcome $next $conditionEntry $insertEntry)))
-   (quote (gslt:result:InsertEachMatchingByConditionV1:111111111111000 $outcome $after $history))))))))
+(= (gslt:mode:InsertEachMatchingByConditionV1:111111111111000 (cons ConditionMatchedV1 (cons $conditionRow ())) $conditionEntry $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $input $rest)
+   (let (cons gslt:result:RowExprEvalV1:11110 (cons (cons EvaluatedRowV1 (cons $targetRow ())) ())) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $targetExpr $occurrence $input NoSourceContextV1)))
+   (let (cons gslt:result:InsertRowV1:11111000 (cons $stepOutcome (cons $next (cons (cons HistoryConsV1 (cons $insertEntry (cons HistoryNilV1 ()))) ())))) (once (gslt:fn:InsertRowV1:11111000 $state $targetTable $keyArity $policy $targetRow))
+   (let (cons gslt:result:OutcomeClassV1:10 (cons $class ())) (once (gslt:fn:OutcomeClassV1:10 $stepOutcome))
+   (let (cons gslt:result:InsertEachMatchingAfterInsertV1:11111111111111000 (cons $outcome (cons $after (cons $history ())))) (superpose (collapse (gslt:mode:InsertEachMatchingAfterInsertV1:11111111111111000 $class $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $rest $stepOutcome $next $conditionEntry $insertEntry)))
+   (quote (gslt:result:InsertEachMatchingByConditionV1:111111111111000 $outcome $after $history)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=147 source-presentation=RelationalStateTransitionCoreV1 source-rule=copy-each-row-matching-by-condition-missed-v1 target=mode relation=CopyEachRowMatchingByConditionV1 input=11111111111111000 functional=relational
-(= (gslt:mode:CopyEachRowMatchingByConditionV1:11111111111111000 $__gslt_input_v1_0_0 $conditionEntry $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $sourceRow $rest $rowIndex $matchIndex)
-   (let (quote (ConditionMissedV1 $conditionRow)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:CopyEachRowMatchingV1:11111111111000 $outcome $after $steps)) (superpose (collapse (gslt:mode:CopyEachRowMatchingV1:11111111111000 $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $rest (quote (NatSuccV1 $rowIndex)) $matchIndex)))
-   (quote (gslt:result:CopyEachRowMatchingByConditionV1:11111111111111000 $outcome $after (HistoryConsV1 $conditionEntry $steps))))))
+(= (gslt:mode:CopyEachRowMatchingByConditionV1:11111111111111000 (cons ConditionMissedV1 (cons $conditionRow ())) $conditionEntry $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $sourceRow $rest $rowIndex $matchIndex)
+   (let (cons gslt:result:CopyEachRowMatchingV1:11111111111000 (cons $outcome (cons $after (cons $steps ())))) (superpose (collapse (gslt:mode:CopyEachRowMatchingV1:11111111111000 $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $rest (quote (NatSuccV1 $rowIndex)) $matchIndex)))
+   (quote (gslt:result:CopyEachRowMatchingByConditionV1:11111111111111000 $outcome $after (HistoryConsV1 $conditionEntry $steps)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=148 source-presentation=RelationalStateTransitionCoreV1 source-rule=copy-each-row-matching-by-condition-matched-v1 target=mode relation=CopyEachRowMatchingByConditionV1 input=11111111111111000 functional=relational
-(= (gslt:mode:CopyEachRowMatchingByConditionV1:11111111111111000 $__gslt_input_v1_0_0 $conditionEntry $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $sourceRow $rest $rowIndex $matchIndex)
-   (let (quote (ConditionMatchedV1 $conditionRow)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:RowExprEvalV1:11110 (EvaluatedRowV1 $targetRow))) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $targetExpr $occurrence NoInputV1 (quote (SourceContextV1 $sourceRow $rowIndex $matchIndex)))))
-   (let (quote (gslt:result:InsertRowV1:11111000 $stepOutcome $next (HistoryConsV1 $insertEntry HistoryNilV1))) (once (gslt:fn:InsertRowV1:11111000 $state $targetTable $keyArity $policy $targetRow))
-   (let (quote (gslt:result:OutcomeClassV1:10 $class)) (once (gslt:fn:OutcomeClassV1:10 $stepOutcome))
-   (let (quote (gslt:result:CopyEachRowMatchingAfterInsertV1:1111111111111111000 $outcome $after $history)) (superpose (collapse (gslt:mode:CopyEachRowMatchingAfterInsertV1:1111111111111111000 $class $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $rest (quote (NatSuccV1 $rowIndex)) (quote (NatSuccV1 $matchIndex)) $stepOutcome $next $conditionEntry $insertEntry)))
-   (quote (gslt:result:CopyEachRowMatchingByConditionV1:11111111111111000 $outcome $after $history))))))))
+(= (gslt:mode:CopyEachRowMatchingByConditionV1:11111111111111000 (cons ConditionMatchedV1 (cons $conditionRow ())) $conditionEntry $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $sourceRow $rest $rowIndex $matchIndex)
+   (let (cons gslt:result:RowExprEvalV1:11110 (cons (cons EvaluatedRowV1 (cons $targetRow ())) ())) (superpose (collapse (gslt:mode:RowExprEvalV1:11110 $targetExpr $occurrence NoInputV1 (quote (SourceContextV1 $sourceRow $rowIndex $matchIndex)))))
+   (let (cons gslt:result:InsertRowV1:11111000 (cons $stepOutcome (cons $next (cons (cons HistoryConsV1 (cons $insertEntry (cons HistoryNilV1 ()))) ())))) (once (gslt:fn:InsertRowV1:11111000 $state $targetTable $keyArity $policy $targetRow))
+   (let (cons gslt:result:OutcomeClassV1:10 (cons $class ())) (once (gslt:fn:OutcomeClassV1:10 $stepOutcome))
+   (let (cons gslt:result:CopyEachRowMatchingAfterInsertV1:1111111111111111000 (cons $outcome (cons $after (cons $history ())))) (superpose (collapse (gslt:mode:CopyEachRowMatchingAfterInsertV1:1111111111111111000 $class $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $rest (quote (NatSuccV1 $rowIndex)) (quote (NatSuccV1 $matchIndex)) $stepOutcome $next $conditionEntry $insertEntry)))
+   (quote (gslt:result:CopyEachRowMatchingByConditionV1:11111111111111000 $outcome $after $history)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=37 source-presentation=RelationalStateTransitionCoreV1 source-rule=table-insert-v1 target=mode relation=TableInsertV1 input=11111010 functional=semidet
 (= (gslt:fn:TableInsertV1:11111010 $state $name $keyArity $policy $row $after)
-   (let (quote (gslt:result:StateTablesOfV1:10 $tables)) (gslt:fn:StateTablesOfV1:10 $state)
-   (let (quote (gslt:result:TableOfV1:110 (FoundTableV1 $entries))) (gslt:fn:TableOfV1:110 $tables $name)
-   (let (quote (gslt:result:RowKeyPrefixV1:110 $key)) (gslt:fn:RowKeyPrefixV1:110 $keyArity $row)
-   (let (quote (gslt:result:EntriesLookupKeyV1:1110 $lookup)) (gslt:fn:EntriesLookupKeyV1:1110 $entries $keyArity $key)
-   (let (quote (gslt:result:TableInsertByLookupV1:111111010 $outcome $history)) (gslt:fn:TableInsertByLookupV1:111111010 $lookup $entries $state $name $policy $row $after)
+   (let (cons gslt:result:StateTablesOfV1:10 (cons $tables ())) (gslt:fn:StateTablesOfV1:10 $state)
+   (let (cons gslt:result:TableOfV1:110 (cons (cons FoundTableV1 (cons $entries ())) ())) (gslt:fn:TableOfV1:110 $tables $name)
+   (let (cons gslt:result:RowKeyPrefixV1:110 (cons $key ())) (gslt:fn:RowKeyPrefixV1:110 $keyArity $row)
+   (let (cons gslt:result:EntriesLookupKeyV1:1110 (cons $lookup ())) (gslt:fn:EntriesLookupKeyV1:1110 $entries $keyArity $key)
+   (let (cons gslt:result:TableInsertByLookupV1:111111010 (cons $outcome (cons $history ()))) (gslt:fn:TableInsertByLookupV1:111111010 $lookup $entries $state $name $policy $row $after)
    (quote (gslt:result:TableInsertV1:11111010 $outcome $history))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=38 source-presentation=RelationalStateTransitionCoreV1 source-rule=table-insert-by-lookup-absent-v1 target=mode relation=TableInsertByLookupV1 input=111111000 functional=semidet
-(= (gslt:fn:TableInsertByLookupV1:111111000 RowAbsentV1 $entries $__gslt_input_v1_0_2 $name $policy $row)
-   (let (quote (StateV1 $package $depth $seq $tables)) $__gslt_input_v1_0_2
-   (let (quote (gslt:result:EntriesAppendV1:110 $entriesOut)) (gslt:fn:EntriesAppendV1:110 $entries (quote (EntryV1 $seq $row $depth)))
-   (let (quote (gslt:result:TablesReplaceV1:1110 $tablesOut)) (gslt:fn:TablesReplaceV1:1110 $tables $name $entriesOut)
-   (quote (gslt:result:TableInsertByLookupV1:111111000 (InsertedV1 $name $row) (StateV1 $package $depth (NatSuccV1 $seq) $tablesOut) (InsertedRowV1 $name $row)))))))
+(= (gslt:fn:TableInsertByLookupV1:111111000 RowAbsentV1 $entries (cons StateV1 (cons $package (cons $depth (cons $seq (cons $tables ()))))) $name $policy $row)
+   (let (cons gslt:result:EntriesAppendV1:110 (cons $entriesOut ())) (gslt:fn:EntriesAppendV1:110 $entries (quote (EntryV1 $seq $row $depth)))
+   (let (cons gslt:result:TablesReplaceV1:1110 (cons $tablesOut ())) (gslt:fn:TablesReplaceV1:1110 $tables $name $entriesOut)
+   (quote (gslt:result:TableInsertByLookupV1:111111000 (InsertedV1 $name $row) (StateV1 $package $depth (NatSuccV1 $seq) $tablesOut) (InsertedRowV1 $name $row))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=39 source-presentation=RelationalStateTransitionCoreV1 source-rule=table-insert-by-lookup-present-v1 target=mode relation=TableInsertByLookupV1 input=111111000 functional=semidet
-(= (gslt:fn:TableInsertByLookupV1:111111000 $__gslt_input_v1_0_0 $entries $state $name $policy $row)
-   (let (quote (FoundRowV1 $existing)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:TableInsertPresentV1:11111000 $outcome $after $history)) (gslt:fn:TableInsertPresentV1:11111000 $policy $existing $state $name $row)
-   (quote (gslt:result:TableInsertByLookupV1:111111000 $outcome $after $history)))))
+(= (gslt:fn:TableInsertByLookupV1:111111000 (cons FoundRowV1 (cons $existing ())) $entries $state $name $policy $row)
+   (let (cons gslt:result:TableInsertPresentV1:11111000 (cons $outcome (cons $after (cons $history ())))) (gslt:fn:TableInsertPresentV1:11111000 $policy $existing $state $name $row)
+   (quote (gslt:result:TableInsertByLookupV1:111111000 $outcome $after $history))))
 
 ; gslt-lowered-equation-v1 source-rewrite=115 source-presentation=RelationalStateTransitionCoreV1 source-rule=condition-row-by-membership-present-v1 target=mode relation=ConditionRowByMembershipV1 input=11100 functional=semidet
 (= (gslt:fn:ConditionRowByMembershipV1:11100 RowPresentV1 $table $row)
@@ -1909,7 +1764,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=139 source-presentation=RelationalStateTransitionCoreV1 source-rule=insert-each-matching-after-insert-accepted-v1 target=mode relation=InsertEachMatchingAfterInsertV1 input=11111111111111000 functional=relational
 (= (gslt:mode:InsertEachMatchingAfterInsertV1:11111111111111000 OutcomeAcceptedV1 $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $rest AcceptedV1 $next $conditionEntry $insertEntry)
-   (let (quote (gslt:result:InsertEachMatchingV1:111111111000 $outcome $after $steps)) (superpose (collapse (gslt:mode:InsertEachMatchingV1:111111111000 $next $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $rest)))
+   (let (cons gslt:result:InsertEachMatchingV1:111111111000 (cons $outcome (cons $after (cons $steps ())))) (superpose (collapse (gslt:mode:InsertEachMatchingV1:111111111000 $next $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $rest)))
    (quote (gslt:result:InsertEachMatchingAfterInsertV1:11111111111111000 $outcome $after (HistoryConsV1 $conditionEntry (HistoryConsV1 $insertEntry $steps))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=140 source-presentation=RelationalStateTransitionCoreV1 source-rule=insert-each-matching-after-insert-refused-v1 target=mode relation=InsertEachMatchingAfterInsertV1 input=11111111111111000 functional=relational
@@ -1918,7 +1773,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=149 source-presentation=RelationalStateTransitionCoreV1 source-rule=copy-each-row-matching-after-insert-accepted-v1 target=mode relation=CopyEachRowMatchingAfterInsertV1 input=1111111111111111000 functional=relational
 (= (gslt:mode:CopyEachRowMatchingAfterInsertV1:1111111111111111000 OutcomeAcceptedV1 $state $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $rest $nextRowIndex $nextMatchIndex AcceptedV1 $next $conditionEntry $insertEntry)
-   (let (quote (gslt:result:CopyEachRowMatchingV1:11111111111000 $outcome $after $steps)) (superpose (collapse (gslt:mode:CopyEachRowMatchingV1:11111111111000 $next $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $rest $nextRowIndex $nextMatchIndex)))
+   (let (cons gslt:result:CopyEachRowMatchingV1:11111111111000 (cons $outcome (cons $after (cons $steps ())))) (superpose (collapse (gslt:mode:CopyEachRowMatchingV1:11111111111000 $next $occurrence $conditionTable $targetTable $keyArity $policy $conditionExpr $targetExpr $rest $nextRowIndex $nextMatchIndex)))
    (quote (gslt:result:CopyEachRowMatchingAfterInsertV1:1111111111111111000 $outcome $after (HistoryConsV1 $conditionEntry (HistoryConsV1 $insertEntry $steps))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=150 source-presentation=RelationalStateTransitionCoreV1 source-rule=copy-each-row-matching-after-insert-refused-v1 target=mode relation=CopyEachRowMatchingAfterInsertV1 input=1111111111111111000 functional=relational
@@ -1926,23 +1781,20 @@
    (quote (gslt:result:CopyEachRowMatchingAfterInsertV1:1111111111111111000 $stepOutcome $state (HistoryConsV1 $conditionEntry (HistoryConsV1 $insertEntry HistoryNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=38 source-presentation=RelationalStateTransitionCoreV1 source-rule=table-insert-by-lookup-absent-v1 target=mode relation=TableInsertByLookupV1 input=111111010 functional=semidet
-(= (gslt:fn:TableInsertByLookupV1:111111010 RowAbsentV1 $entries $__gslt_input_v1_0_2 $name $policy $row $__gslt_input_v1_0_7)
-   (let (quote (StateV1 $package $depth $seq $tables)) $__gslt_input_v1_0_2
-   (let (quote (StateV1 $package $depth (NatSuccV1 $seq) $tablesOut)) $__gslt_input_v1_0_7
-   (let (quote (gslt:result:EntriesAppendV1:110 $entriesOut)) (gslt:fn:EntriesAppendV1:110 $entries (quote (EntryV1 $seq $row $depth)))
-   (let (quote gslt:result:TablesReplaceV1:1111) (gslt:fn:TablesReplaceV1:1111 $tables $name $entriesOut $tablesOut)
-   (quote (gslt:result:TableInsertByLookupV1:111111010 (InsertedV1 $name $row) (InsertedRowV1 $name $row))))))))
+(= (gslt:fn:TableInsertByLookupV1:111111010 RowAbsentV1 $entries (cons StateV1 (cons $package (cons $depth (cons $seq (cons $tables ()))))) $name $policy $row (cons StateV1 (cons $package (cons $depth (cons (cons NatSuccV1 (cons $seq ())) (cons $tablesOut ()))))))
+   (let (cons gslt:result:EntriesAppendV1:110 (cons $entriesOut ())) (gslt:fn:EntriesAppendV1:110 $entries (quote (EntryV1 $seq $row $depth)))
+   (let gslt:result:TablesReplaceV1:1111 (gslt:fn:TablesReplaceV1:1111 $tables $name $entriesOut $tablesOut)
+   (quote (gslt:result:TableInsertByLookupV1:111111010 (InsertedV1 $name $row) (InsertedRowV1 $name $row))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=39 source-presentation=RelationalStateTransitionCoreV1 source-rule=table-insert-by-lookup-present-v1 target=mode relation=TableInsertByLookupV1 input=111111010 functional=semidet
-(= (gslt:fn:TableInsertByLookupV1:111111010 $__gslt_input_v1_0_0 $entries $state $name $policy $row $after)
-   (let (quote (FoundRowV1 $existing)) $__gslt_input_v1_0_0
-   (let (quote (gslt:result:TableInsertPresentV1:11111010 $outcome $history)) (gslt:fn:TableInsertPresentV1:11111010 $policy $existing $state $name $row $after)
-   (quote (gslt:result:TableInsertByLookupV1:111111010 $outcome $history)))))
+(= (gslt:fn:TableInsertByLookupV1:111111010 (cons FoundRowV1 (cons $existing ())) $entries $state $name $policy $row $after)
+   (let (cons gslt:result:TableInsertPresentV1:11111010 (cons $outcome (cons $history ()))) (gslt:fn:TableInsertPresentV1:11111010 $policy $existing $state $name $row $after)
+   (quote (gslt:result:TableInsertByLookupV1:111111010 $outcome $history))))
 
 ; gslt-lowered-equation-v1 source-rewrite=40 source-presentation=RelationalStateTransitionCoreV1 source-rule=table-insert-present-or-require-equal-v1 target=mode relation=TableInsertPresentV1 input=11111000 functional=semidet
 (= (gslt:fn:TableInsertPresentV1:11111000 StateInsertOrRequireEqualV1 $existing $state $name $row)
-   (let (quote (gslt:result:RowCompareV1:110 $comparison)) (gslt:fn:RowCompareV1:110 $existing $row)
-   (let (quote (gslt:result:TableInsertComparedV1:11111000 $outcome $after $history)) (gslt:fn:TableInsertComparedV1:11111000 $comparison $existing $state $name $row)
+   (let (cons gslt:result:RowCompareV1:110 (cons $comparison ())) (gslt:fn:RowCompareV1:110 $existing $row)
+   (let (cons gslt:result:TableInsertComparedV1:11111000 (cons $outcome (cons $after (cons $history ())))) (gslt:fn:TableInsertComparedV1:11111000 $comparison $existing $state $name $row)
    (quote (gslt:result:TableInsertPresentV1:11111000 $outcome $after $history)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=41 source-presentation=RelationalStateTransitionCoreV1 source-rule=table-insert-present-required-absent-v1 target=mode relation=TableInsertPresentV1 input=11111000 functional=semidet
@@ -1951,8 +1803,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=40 source-presentation=RelationalStateTransitionCoreV1 source-rule=table-insert-present-or-require-equal-v1 target=mode relation=TableInsertPresentV1 input=11111010 functional=semidet
 (= (gslt:fn:TableInsertPresentV1:11111010 StateInsertOrRequireEqualV1 $existing $state $name $row $after)
-   (let (quote (gslt:result:RowCompareV1:110 $comparison)) (gslt:fn:RowCompareV1:110 $existing $row)
-   (let (quote (gslt:result:TableInsertComparedV1:11111010 $outcome $history)) (gslt:fn:TableInsertComparedV1:11111010 $comparison $existing $state $name $row $after)
+   (let (cons gslt:result:RowCompareV1:110 (cons $comparison ())) (gslt:fn:RowCompareV1:110 $existing $row)
+   (let (cons gslt:result:TableInsertComparedV1:11111010 (cons $outcome (cons $history ()))) (gslt:fn:TableInsertComparedV1:11111010 $comparison $existing $state $name $row $after)
    (quote (gslt:result:TableInsertPresentV1:11111010 $outcome $history)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=41 source-presentation=RelationalStateTransitionCoreV1 source-rule=table-insert-present-required-absent-v1 target=mode relation=TableInsertPresentV1 input=11111010 functional=semidet

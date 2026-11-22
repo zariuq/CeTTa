@@ -1,0 +1,6 @@
+; A guard reads only values the rule's patterns bind: $y is mentioned by no
+; take or read pattern (a made row does not bind it), so the rule is refused
+; when it is loaded, at the guard.
+(step one)
+(a 1)
+(rule r (take (a $x)) (check (< $x 2) (/= $x $y)) (make (b $x $y)))

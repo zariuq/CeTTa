@@ -3,10 +3,11 @@
 # core rows and validated there (decision DAGs and the generated dispatch code against the rules).
 # Names, types and terms are interned nodes, id tables arrays; the judgments of hol.bindings are
 # answered by the generic components of native/rule_components.  Streams are read by the HOLR reader
-# compiled from its GSLT modules (native/holr_reader_module); of native/hol_light only the stream
-# format's constants (opcodes, flags, policies) are used.  hlm_instance.c is the
-# module's instance of the rule runtime, the components, the bridge and the host glue: one
-# translation unit with the instance's own global names (as every compiled module).
+# compiled from its GSLT modules (native/holr_reader_module) and fed to the module while it runs
+# (native/rule_module/rc_feed.c, described by hlm_feed.c); of native/hol_light only the stream
+# format's constants (opcodes, flags, policies) are used.  hlm_instance.c is the module's instance of
+# the rule runtime, the components, the feed and the generic host glue (native/rule_module/
+# rcm_cetta.c): one translation unit with the instance's own global names (as every compiled module).
 SRC += native/hol_light_module/hlm_instance.c
 
 # The module on fixture streams (tests/rulec/holmodule/check.metta): accepted, refused by the kernel,

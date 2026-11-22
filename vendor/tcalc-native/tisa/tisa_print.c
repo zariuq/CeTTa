@@ -169,44 +169,6 @@ bool tisa_print_program(FILE *f, TcIsaTextStyle style, const TcIsaProgram *p) {
     return true;
 }
 
-static void span_paths(const TcIsaStmt *s, const char *path, char (*paths)[256], size_t *k, size_t cap) {
-    if (!s) return;
-    char child[256];
-    #define CHILD(n) (snprintf(child, sizeof child, "%s%s%d", path, *path ? "." : "", (n)), child)
-    #define HERE() do { if (*k < cap) snprintf(paths[*k], 256, "%s", path); ++*k; } while (0)
-    switch (s->kind) {
-    case TISA_CTRL_INSTR: case TISA_CTRL_RETURN: case TISA_CTRL_FUND:
-        HERE();
-        return;
-    case TISA_CTRL_SEQ:
-        span_paths(s->u.seq.first, CHILD(0), paths, k, cap);
-        span_paths(s->u.seq.second, CHILD(1), paths, k, cap);
-        return;
-    case TISA_CTRL_IF:
-        HERE();
-        span_paths(s->u.if_cond.then_branch, CHILD(1), paths, k, cap);
-        if (s->u.if_cond.else_branch) {
-            HERE();
-            span_paths(s->u.if_cond.else_branch, CHILD(2), paths, k, cap);
-        }
-        return;
-    case TISA_CTRL_COUNT_LOOP: case TISA_CTRL_EARLY_EXIT_LOOP:
-        HERE(); HERE();
-        span_paths(s->kind == TISA_CTRL_COUNT_LOOP ? s->u.count_loop.body : s->u.early_exit_loop.body,
-                   CHILD(0), paths, k, cap);
-        HERE();
-        return;
-    }
-    #undef HERE
-    #undef CHILD
-}
-
-size_t tisa_span_paths(const TcIsaStmt *s, char (*paths)[256], size_t cap) {
-    size_t k = 0;
-    span_paths(s, "", paths, &k, cap);
-    return k;
-}
-
 /* Every statement with its path, for spans found by statement. */
 typedef struct { const TcIsaStmt *s; char path[256]; } StmtPath;
 static void stmt_paths(const TcIsaStmt *s, const char *path, StmtPath *out, size_t *k, size_t cap) {
@@ -231,6 +193,21 @@ static void stmt_paths(const TcIsaStmt *s, const char *path, StmtPath *out, size
     default: return;
     }
     #undef CHILD
+}
+
+size_t tisa_span_paths(const TcIsaProgram *p, const TcIsaX86 *code, char (*paths)[256]) {
+    static StmtPath table[8192];
+    size_t n = 0;
+    stmt_paths(p->root, "", table, &n, 8192);
+    if (n > 8192) return 0;
+    for (size_t k = 0; k < code->nspans; k++) {
+        if (!code->spans[k].stmt) { snprintf(paths[k], 256, "-"); continue; }
+        size_t j = 0;
+        while (j < n && table[j].s != code->spans[k].stmt) ++j;
+        if (j == n) return 0;
+        snprintf(paths[k], 256, "%s", table[j].path);
+    }
+    return code->nspans;
 }
 
 /* Spans name their statement's path, "-" for the wrapper and handlers; a span

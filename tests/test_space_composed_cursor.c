@@ -7,6 +7,7 @@
 
 #include "space.h"
 #include "space_match_backend.h"
+#include "shared_transition.h"
 #include "stats.h"
 #include "symbol.h"
 
@@ -118,9 +119,11 @@ int main(void) {
      * module: (p 20).  Small spaces read every row: the cursor lends each
      * row as a candidate, in row order. */
     Space self, module, second;
-    space_init_with_universe(&self, &universe);
     space_init_with_universe(&module, &universe);
     space_init_with_universe(&second, &universe);
+    /* The imported guards rank below the owner. Opening the joined view
+     * must discover and acquire this set before taking maintenance locks. */
+    space_init_with_universe(&self, &universe);
     space_add_atom_id(&self, store(&universe, row(&scratch, "p", 1)));
     space_add_atom_id(&self, store(&universe, row(&scratch, "p", 2)));
     space_add_atom_id(&self, store(&universe, row(&scratch, "p", 3)));
@@ -138,6 +141,7 @@ int main(void) {
 
     Lent lent[16];
     SpaceOccurrenceCursor cursor;
+    cetta_shared_transition_scope_enter();
     space_occurrence_cursor_init_empty(&cursor);
     assert(space_occurrence_cursor_init(&self, pattern, &cursor));
     /* own (p 1) (p 2) (p 3); the module's own rows after the space's three;
@@ -199,6 +203,7 @@ int main(void) {
     const CettaIndex grown_indexes[] = {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u};
     expect(lent, drain(&cursor, lent, 16u), grown_values, grown_indexes, 9u);
     space_occurrence_cursor_release(&cursor);
+    cetta_shared_transition_scope_leave();
 
     /* A space of (f 0) imports a module whose relation holds (e 0 1000)
      * (e 1 1001) (e 2 1002) beside its row (f 1), then a module of (e 0 5)

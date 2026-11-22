@@ -145,7 +145,10 @@ typedef struct {
     OutcomeSet *root_target;
     Arena *arena;
     ArenaMark gc_anchor;
+    size_t gc_anchor_bytes;
     size_t gc_survivor_floor_bytes;
+    size_t gc_fast_threshold;
+    bool gc_threshold_ready;
     bool retained;
 } HeCanonicalDriver;
 
@@ -834,8 +837,13 @@ static void he_canonical_resume_tuple(HeCanonicalFrame *frame) {
         return;
     }
     if (tuple->state == INTERPRET_TUPLE_FRAME_ENTER) {
-        outcome_set_init(&tuple->sub);
-        tuple->sub_initialized = true;
+        if (!tuple->sub_initialized) {
+            outcome_set_init(&tuple->sub);
+            tuple->sub_initialized = true;
+        } else {
+            outcome_set_clear(&tuple->sub);
+        }
+        tuple->sub_index = 0u;
         frame->phase = 1u;
         tuple->state = INTERPRET_TUPLE_FRAME_ITERATE;
         Atom *elem = bindings_apply_if_vars(tuple->ctx, a,
@@ -843,6 +851,40 @@ static void he_canonical_resume_tuple(HeCanonicalFrame *frame) {
         he_canonical_argument_schedule(frame->space, a, NULL, elem,
             frame->fuel, tuple->ctx, &tuple->sub);
         return;
+    }
+    /* Single deterministic outcome with trivially empty item bindings: advance
+     * this frame in-place instead of constructing a BindingsBuilder or pushing
+     * another HE_CANONICAL_TUPLE frame. */
+    if (frame->phase == 1u && tuple->sub.len == 1u && !tuple->prefix_variant) {
+        Outcome *item = &tuple->sub.items[0];
+        Atom *value = item->atom;
+        if (!atom_is_legacy_empty_sentinel(value) &&
+            !outcome_atom_is_error(a, item) &&
+            !variant_instance_present(&item->variant) &&
+            item->env.len == 0u && item->env.eq_len == 0u &&
+            !item->env.frame_index && !item->env.prime_ext &&
+            !item->env.owners) {
+            registers->prefix[tuple->idx] = value;
+            if (frame->owns_registers)
+                registers->source[tuple->idx] = NULL;
+            outcome_set_clear(&tuple->sub);
+            tuple->sub_index = 0u;
+            tuple->idx++;
+            if (tuple->idx == registers->len) {
+                outcome_set_add(frame->target,
+                    atom_expr(a, registers->prefix, registers->len),
+                    tuple->ctx);
+                he_canonical_pop();
+                return;
+            }
+            frame->phase = 1u;
+            tuple->state = INTERPRET_TUPLE_FRAME_ITERATE;
+            Atom *elem = bindings_apply_if_vars(tuple->ctx, a,
+                registers->source[tuple->idx]);
+            he_canonical_argument_schedule(frame->space, a, NULL, elem,
+                frame->fuel, tuple->ctx, &tuple->sub);
+            return;
+        }
     }
     if (frame->phase == 1u) {
         frame->phase = 2u;
@@ -883,6 +925,40 @@ static void he_canonical_resume_tuple(HeCanonicalFrame *frame) {
                 tuple->active_variant_owned = false;
             }
             continue;
+        }
+        /* Last outcome with no variant: reuse this tuple frame in-place so
+         * long deterministic expressions stay O(1) in frame and GC-root depth. */
+        if (tuple->sub_index == tuple->sub.len && !variant &&
+            !tuple->prefix_variant) {
+            Bindings next_env;
+            bool replaced = false;
+            if (!attempt.used_builder) {
+                next_env = attempt.owned;
+                bindings_init(&attempt.owned);
+                replaced = true;
+            } else {
+                bindings_init(&next_env);
+                if (bindings_clone(&next_env, attempt.env)) {
+                    bindings_merge_attempt_finish(&tuple->merged_builder,
+                                                  &attempt);
+                    replaced = true;
+                }
+            }
+            if (replaced) {
+                bindings_builder_free(&tuple->merged_builder);
+                tuple->builder_initialized = false;
+                bindings_free(&frame->env);
+                frame->env = next_env;
+                registers->prefix[tuple->idx] = value;
+                if (frame->owns_registers)
+                    registers->source[tuple->idx] = NULL;
+                outcome_set_clear(&tuple->sub);
+                tuple->sub_index = 0u;
+                tuple->idx++;
+                tuple->state = INTERPRET_TUPLE_FRAME_ENTER;
+                frame->phase = 0u;
+                return;
+            }
         }
         tuple->active_attempt = attempt;
         if (!tuple->active_attempt.used_builder)
@@ -2437,8 +2513,10 @@ static void he_canonical_resume_match(HeCanonicalFrame *frame) {
         if (!frame->sourced_match && registers->len > 1u) {
             CettaExprIndex last = registers->len - 1u;
             BindingSet rows;
-            if (!match_query_bindings(frame->match_spaces[last], a,
-                    registers->source[last], &prefix->env, &rows)) {
+            bool ok = match_query_bindings(frame->match_spaces[last], a,
+                    registers->source[last], &prefix->env, &rows);
+            outcome_free_fields(prefix);
+            if (!ok) {
                 eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
                 return;
             }
@@ -2446,7 +2524,7 @@ static void he_canonical_resume_match(HeCanonicalFrame *frame) {
                 outcome_set_add(&frame->child, atom_unit(a), &rows.items[i]);
             binding_set_free(&rows);
         } else
-            outcome_set_add_existing(&frame->child, prefix);
+            outcome_set_add_existing_move(&frame->child, prefix);
         frame->head_index = 0u;
         frame->phase = 4u;
     }
@@ -3060,24 +3138,51 @@ static void he_last_call(HeCanonicalDriver *driver) {
     }
 }
 
+static void he_canonical_gc_refresh_threshold(HeCanonicalDriver *driver) {
+    Arena *a = driver->arena;
+    driver->gc_anchor_bytes = arena_mark_accounted_live_bytes(driver->gc_anchor);
+    driver->gc_threshold_ready = true;
+    if (!eval_gc_enabled() || !eval_gc_can_collect_arena(a) ||
+        g_eval_gc.region_arena != a) {
+        driver->gc_fast_threshold = SIZE_MAX;
+        return;
+    }
+    /* Monotone lower bound on anchor + cetta_gc_collection_budget(budget,
+     * eval_gc_retained_work(gc_survivor_floor_bytes)): retained work is never
+     * smaller than gc_survivor_floor_bytes, so live < gc_fast_threshold proves
+     * the collection budget cannot be reached yet. */
+    size_t floor_budget = cetta_gc_collection_budget(
+        g_eval_gc.budget_bytes, driver->gc_survivor_floor_bytes);
+    driver->gc_fast_threshold =
+        cetta_gc_budget_add(driver->gc_anchor_bytes, floor_budget);
+}
+
 static void he_canonical_advance(HeCanonicalDriver *driver) {
     Arena *a = driver->arena;
-    if (g_eval_gc.region_arena == a &&
-        g_eval_gc.external_owner_depth == 0u &&
-        eval_gc_budget_reached_with_floor(a, driver->gc_anchor,
-            driver->gc_survivor_floor_bytes) &&
-        eval_gc_root_chain_is_precise(g_eval_gc.roots)) {
-        uint64_t before = g_eval_gc.collections;
-        eval_gc_collect(a, driver->gc_anchor, NULL, NULL, NULL,
-            g_prime_need_episode_owner, &g_prime_need_active,
-            &g_prime_need_branch_state_active
+    if (__builtin_expect(!driver->gc_threshold_ready, 0))
+        he_canonical_gc_refresh_threshold(driver);
+    if (__builtin_expect(
+            arena_accounted_live_bytes(a) >= driver->gc_fast_threshold, 0)) {
+        EvalGc *gc = eval_gc_current_ptr();
+        if (gc->region_arena == a &&
+            gc->external_owner_depth == 0u &&
+            eval_gc_budget_reached_with_floor(a, driver->gc_anchor,
+                driver->gc_survivor_floor_bytes) &&
+            eval_gc_root_chain_is_precise(gc->roots)) {
+            uint64_t before = gc->collections;
+            eval_gc_collect(a, driver->gc_anchor, NULL, NULL, NULL,
+                g_prime_need_episode_owner, &g_prime_need_active,
+                &g_prime_need_branch_state_active
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-            , &g_prime_need_receipt_active
+                , &g_prime_need_receipt_active
 #endif
-            );
-        if (g_eval_gc.collections != before)
-            driver->gc_survivor_floor_bytes =
-                arena_accounted_live_bytes(&g_eval_gc.survivor);
+                );
+            if (gc->collections != before) {
+                driver->gc_survivor_floor_bytes =
+                    arena_accounted_live_bytes(&gc->survivor);
+                he_canonical_gc_refresh_threshold(driver);
+            }
+        }
     }
     HeCanonicalFrame *frame = (HeCanonicalFrame *)driver->stack.top;
     HeCanonicalFrame *owner = frame->target_owner;

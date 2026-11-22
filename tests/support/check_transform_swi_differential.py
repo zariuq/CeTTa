@@ -265,18 +265,24 @@ if threading.current_thread() is threading.main_thread():
     signal.signal(signal.SIGINT, stop_live_groups)
 
 
-def run_group(command, cwd, timeout, env=None, limit=None, text=True):
+def run_group(command, cwd, timeout, env=None, cpu_seconds=None, text=True):
     """Run COMMAND: (status, output, errors), status 124 when stopped for time.
 
-    The command gets a process group of its own, and stopping it stops the
-    group.  `sh run.sh` starts the Prolog system as a child of the shell;
-    stopping the shell alone leaves that child running with no parent."""
-    def prepare():
-        os.setpgid(0, 0)
-        if limit:
-            limit()
+    The command gets a session, and so a process group, of its own, and
+    stopping it stops the group.  `sh run.sh` starts the Prolog system as a
+    child of the shell; stopping the shell alone leaves that child running
+    with no parent.  With CPU_SECONDS the command may use that much processor
+    time; it is then signalled (SIGXCPU) and stopped five seconds later.  The
+    limit is set by the shell that execs the command, so no Python runs
+    between fork and exec, and callers may run commands from several
+    threads."""
+    if cpu_seconds is not None:
+        # The soft limit first: lowering the hard one first would leave the
+        # unlimited soft limit above it, which setrlimit refuses.
+        command = ["sh", "-c", 'ulimit -S -t "$1" && ulimit -H -t "$2" && shift 2 && exec "$@"',
+                   "sh", str(cpu_seconds), str(cpu_seconds + 5)] + list(command)
     p = subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE, text=text, preexec_fn=prepare)
+                         stderr=subprocess.PIPE, text=text, start_new_session=True)
     LIVE.add(p.pid)
     try:
         out, err = p.communicate(timeout=timeout)

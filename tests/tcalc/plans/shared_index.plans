@@ -1,0 +1,82 @@
+(index 0 (relation R 5) (paths 1 2 3))
+(index 1 (relation R 5) (paths 2))
+(index 2 (relation Q1 2) (paths 1))
+(index 3 (relation Q2 3) (paths 1 2))
+(index 4 (relation Q3 4) (paths 1 2 3))
+(index 5 (relation P 2) (paths 1))
+(plans s1
+  (enter 0
+    (probe 0 (relation Q1 2) (rows))
+    (unify 0)
+    (probe 1 (relation R 5) (index 0 1) (keys $0))
+    (unify 1)
+    (make 0))
+  (enter 1
+    (probe 1 (relation R 5) (rows))
+    (unify 1)
+    (probe 0 (relation Q1 2) (index 2 1) (keys $0))
+    (unify 0)
+    (make 0))
+  (every
+    (probe 0 (relation Q1 2) (rows))
+    (unify 0)
+    (probe 1 (relation R 5) (index 0 1) (keys $0))
+    (unify 1)
+    (make 0)))
+(plans s2
+  (enter 0
+    (probe 0 (relation Q2 3) (rows))
+    (unify 0)
+    (probe 1 (relation R 5) (index 0 2) (keys $0 $1))
+    (unify 1)
+    (make 0))
+  (enter 1
+    (probe 1 (relation R 5) (rows))
+    (unify 1)
+    (probe 0 (relation Q2 3) (index 3 2) (keys $0 $1))
+    (unify 0)
+    (make 0))
+  (every
+    (probe 0 (relation Q2 3) (rows))
+    (unify 0)
+    (probe 1 (relation R 5) (index 0 2) (keys $0 $1))
+    (unify 1)
+    (make 0)))
+(plans s3
+  (enter 0
+    (probe 0 (relation Q3 4) (rows))
+    (unify 0)
+    (probe 1 (relation R 5) (index 0 3) (keys $0 $1 $2))
+    (unify 1)
+    (make 0))
+  (enter 1
+    (probe 1 (relation R 5) (rows))
+    (unify 1)
+    (probe 0 (relation Q3 4) (index 4 3) (keys $0 $1 $2))
+    (unify 0)
+    (make 0))
+  (every
+    (probe 0 (relation Q3 4) (rows))
+    (unify 0)
+    (probe 1 (relation R 5) (index 0 3) (keys $0 $1 $2))
+    (unify 1)
+    (make 0)))
+(plans t
+  (enter 0
+    (probe 0 (relation P 2) (rows))
+    (unify 0)
+    (probe 1 (relation R 5) (index 1 1) (keys $0))
+    (unify 1)
+    (make 0))
+  (enter 1
+    (probe 1 (relation R 5) (rows))
+    (unify 1)
+    (probe 0 (relation P 2) (index 5 1) (keys $0))
+    (unify 0)
+    (make 0))
+  (every
+    (probe 0 (relation P 2) (rows))
+    (unify 0)
+    (probe 1 (relation R 5) (index 1 1) (keys $0))
+    (unify 1)
+    (make 0)))

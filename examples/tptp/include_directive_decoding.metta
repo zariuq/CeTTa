@@ -2,7 +2,7 @@
 ; file.  The first result is the implicit-all form.  The second demonstrates
 ; that named selection preserves both source order and duplicate occurrences.
 
-!(import! &self lib_tptp)
+!(import! &self (library lib_tptp))
 
 (= (example:implicit-summary
       $raw

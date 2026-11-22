@@ -1,0 +1,3 @@
+(interpretation (version tcalc@0.1) (step every) (ask after-tells) (store set) (region all) (matches symmetric) (solver mgu-first-order) (observe outcomes) (budget 100000) (backend c))
+(outcome (edge 1 2) (edge 2 3) (edge 3 1) (edge 3 4) (edge 4 4) (fork 1 2 3) (fork 1 2 4) (fork 1 3 2) (fork 1 3 4) (fork 1 4 2) (fork 1 4 3) (fork 2 3 4) (fork 2 4 3) (reach 1 2) (reach 1 3) (reach 1 4) (reach 2 3) (reach 2 4) (reach 3 4))
+(explored (states 5) (work 5) (finished true) (cycle false))

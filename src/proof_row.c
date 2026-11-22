@@ -35,7 +35,7 @@ CettaProofRowStatus cetta_proof_row_materialize(
     TermUniverse *u, const CettaProofRowLayout *layout,
     const CettaProofWord *word, CettaProofRowRetain retain, void *context,
     AtomId *out, CettaProofRowWork *work) {
-    CETTA_SCOPED_SHARED_TRANSITION(guard);
+    /* Reads and interns only in `u`, which brackets its own insertions. */
     if (work) *work = (CettaProofRowWork){0};
     if (!u || !layout || !word || !out || !work || !retain ||
         u->instance_id != layout->universe_instance ||

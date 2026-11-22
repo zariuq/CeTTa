@@ -212,6 +212,9 @@ typedef struct {
 
 static bool eval_owned_answers_authority_current(const void *context) {
     const EvalOwnedAnswers *answers = context;
+    /* The program's dependencies and the library revisions are one
+     * observation of the shared space. */
+    CETTA_SCOPED_SPACE_OBSERVE(owned_answers_authority, answers->space);
     CettaLibraryContext *library = answers->library;
     if (library != g_library_context || !cetta_prepared_pure_program_is_current(answers->program))
         return false;
@@ -299,28 +302,35 @@ static bool eval_owned_answers_open(EvalOwnedAnswers *answers,
         closed->expr.len == 0u || atom_has_identity_grounded(closed) ||
         hyperpose_atom_has_thread_local_resource(closed))
         goto declined;
-    if (!eval_owned_producer_admitted(space, closed, shape))
-        goto declined;
-    /* Only already-completed entry arguments cross this boundary. A source
-     * expression requiring interpretation keeps the dialect's original path. */
-    for (CettaExprIndex index = 1u; index < closed->expr.len; index++) {
-        if (!atom_is_constructor_normal_form(space, &answers->captures,
-                                             closed->expr.elems[index], fuel))
-            goto declined;
-    }
     answers->space = space;
     answers->adapter = eval_owned_demand_adapter();
     EvalOwnedDemandAdapter *adapter = &answers->adapter;
-    CettaPreparedPureSourceView source_view =
-        prepared_pure_source_view_for_language(language, closed);
-    answers->program = cetta_prepared_pure_program_compile_closed_answers(
-        space, closed, CETTA_GSLT_PURE_CALL_EAGER,
-        adapter->boolean_value, adapter->construct_value,
-        adapter->constructs_expression, adapter->opaque_value,
-        adapter->register_view, adapter->expression_view, adapter->pattern_view,
-        &source_view, true,
-        active_composition_uses_total_structural_eq(),
-        prepared_pure_match_decision_semantics(CETTA_GSLT_PURE_CALL_EAGER), NULL);
+    {
+        /* The producer's admission, its arguments' normal forms and its
+         * compilation read the program as one observation of the shared
+         * space; the cursor checks the program's token again where it
+         * continues. */
+        CETTA_SCOPED_SPACE_OBSERVE(owned_producer_admission, space);
+        if (!eval_owned_producer_admitted(space, closed, shape))
+            goto declined;
+        /* Only already-completed entry arguments cross this boundary. A source
+         * expression requiring interpretation keeps the dialect's original path. */
+        for (CettaExprIndex index = 1u; index < closed->expr.len; index++) {
+            if (!atom_is_constructor_normal_form(space, &answers->captures,
+                                                 closed->expr.elems[index], fuel))
+                goto declined;
+        }
+        CettaPreparedPureSourceView source_view =
+            prepared_pure_source_view_for_language(language, closed);
+        answers->program = cetta_prepared_pure_program_compile_closed_answers(
+            space, closed, CETTA_GSLT_PURE_CALL_EAGER,
+            adapter->boolean_value, adapter->construct_value,
+            adapter->constructs_expression, adapter->opaque_value,
+            adapter->register_view, adapter->expression_view, adapter->pattern_view,
+            &source_view, true,
+            active_composition_uses_total_structural_eq(),
+            prepared_pure_match_decision_semantics(CETTA_GSLT_PURE_CALL_EAGER), NULL);
+    }
     if (!answers->program)
         goto declined;
     size_t scratch_budget = prepared_pure_nursery_budget_bytes();
@@ -706,7 +716,14 @@ static bool eval_owned_fold_return(void *context, const CettaOwnedReturn *return
         return false;
     arena_reset(&fold->nursery, fold->nursery_origin);
     CettaCallOutcome completed = {0};
-    if (!cetta_prepared_pure_program_is_current(fold->step) ||
+    bool step_current = false;
+    {
+        /* Each step reads its program's dependencies as one observation of
+         * the shared space. */
+        CETTA_SCOPED_SPACE_OBSERVE(owned_fold_step_authority, fold->answers ? fold->answers->space : NULL);
+        step_current = cetta_prepared_pure_program_is_current(fold->step);
+    }
+    if (!step_current ||
         !cetta_prepared_pure_program_execute_controlled(fold->step, &fold->nursery,
             fold->accumulator, returned->outcome.term,
             eval_prepared_pure_interrupt_poll, NULL, &completed) ||
@@ -780,11 +797,18 @@ static bool eval_owned_collapsed_fold(Space *space, Arena *arena, Atom *collapse
     Atom *closed_body = environment
         ? bindings_apply_if_vars(environment, arena, body) : body;
     VarId variables[2] = {accumulator_binder->var_id, item_binder->var_id};
-    EvalOwnedAdmission admission = {.space = space, .read = space_read_token(space)};
-    bool safe = eval_owned_is_number(closed_initial) &&
-        eval_owned_shape(&admission, closed_body, variables, 2u,
-                          EVAL_OWNED_NUMBER, 0u) &&
-        space_read_token_is_current(admission.read);
+    EvalOwnedAdmission admission = {.space = space};
+    bool safe = false;
+    {
+        /* The body's shape is read from the program against one read
+         * token: one observation of the shared space. */
+        CETTA_SCOPED_SPACE_OBSERVE(owned_fold_admission, space);
+        admission.read = space_read_token(space);
+        safe = eval_owned_is_number(closed_initial) &&
+            eval_owned_shape(&admission, closed_body, variables, 2u,
+                              EVAL_OWNED_NUMBER, 0u) &&
+            space_read_token_is_current(admission.read);
+    }
     free(admission.heads);
     if (!safe)
         return false;
@@ -798,14 +822,20 @@ static bool eval_owned_collapsed_fold(Space *space, Arena *arena, Atom *collapse
         ? CETTA_GSLT_PURE_CALL_EAGER : CETTA_GSLT_PURE_CALL_CALL_BY_NEED;
     CettaPreparedPureSourceView source_view =
         prepared_pure_source_view_for_language(adapter->language, body);
-    CettaPreparedPureProgram *step = cetta_prepared_pure_program_compile(
-        space, closed_body, variables[0], variables[1], mode,
-        adapter->boolean_value, adapter->construct_value,
-        adapter->constructs_expression, adapter->opaque_value,
-        adapter->register_view, adapter->expression_view, adapter->pattern_view,
-        &source_view,
-        active_composition_uses_total_structural_eq(),
-        prepared_pure_match_decision_semantics(mode));
+    CettaPreparedPureProgram *step = NULL;
+    {
+        /* Compilation reads the step's equations and declarations, and the
+         * program token each step validates, in one observation. */
+        CETTA_SCOPED_SPACE_OBSERVE(owned_fold_step_compilation, space);
+        step = cetta_prepared_pure_program_compile(
+            space, closed_body, variables[0], variables[1], mode,
+            adapter->boolean_value, adapter->construct_value,
+            adapter->constructs_expression, adapter->opaque_value,
+            adapter->register_view, adapter->expression_view, adapter->pattern_view,
+            &source_view,
+            active_composition_uses_total_structural_eq(),
+            prepared_pure_match_decision_semantics(mode));
+    }
     if (!step) {
         eval_owned_answers_close(&answers);
         return false;

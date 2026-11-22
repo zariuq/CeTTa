@@ -134,13 +134,21 @@ bool tc_program_flat(const TcProgram *p, char *why, size_t why_size) {
 }
 
 /* Decides one full selection (x->pick) through the decider and records the
- * match it admits.  False when memory ran out or the decider gave no verdict. */
+ * match it admits: the selected rows are packed four words a row, each
+ * premise the offset of its row.  False when memory ran out or the decider
+ * gave no verdict. */
 static bool flat_decide(Explorer *x, uint32_t rule, const FlatPlan *plan) {
-    if (!x->how.flat || !x->flat_words || !x->pick) { x->flat_failed = true; return false; }
     TcStoredRule r = x->program.rule[rule];
     uint32_t total = r.takes + r.reads, premise[FLAT_PATTERNS] = {0}, out[FLAT_MAKES] = {0};
-    for (uint32_t i = 0; i < total; i++) premise[i] = FLAT_ROW * x->pick[i];
-    uint64_t verdict = x->how.flat(x->flat_words, (size_t)FLAT_ROW * x->rows, premise, total,
+    if (!reserve(&x->flat_words, &x->flat_words_cap, (size_t)FLAT_ROW * (total ? total : 1))) return false;
+    if (!x->how.flat || !x->flat_words || !x->pick) { x->flat_failed = true; return false; }
+    for (uint32_t i = 0; i < total; i++) {   /* each selected row's items, then 0 */
+        const TcNode *n = node_of(x->terms, occurrence_row(x->pick[i]));
+        for (uint32_t c = 0; c < FLAT_ROW; c++)
+            x->flat_words[FLAT_ROW * i + c] = c < n->length ? x->terms->item[n->start + c] : 0;
+        premise[i] = FLAT_ROW * i;
+    }
+    uint64_t verdict = x->how.flat(x->flat_words, (size_t)FLAT_ROW * total, premise, total,
                                    plan->constant, plan->constants, plan->guard, plan->guards,
                                    plan->make, plan->makes, out);
     if (verdict == 0) return true;   /* a guard failed: no match */
@@ -152,11 +160,7 @@ static bool flat_decide(Explorer *x, uint32_t rule, const FlatPlan *plan) {
         TcTerm made = tc_expression(x->terms, &out[at], plan->made_length[m]);
         if (!made || !next_push(x, made)) return false;
     }
-    bool *gone = calloc(x->rows ? x->rows : 1, sizeof *gone);
-    if (!gone) return false;
-    for (uint32_t i = 0; i < r.takes; i++) gone[x->pick[i]] = true;
-    uint32_t succ = successor_state(x, gone);
-    free(gone);
+    uint32_t succ = successor_state(x, x->pick, r.takes);
     return succ != UINT32_MAX && record_member(x, rule, total, true, succ, UINT32_MAX);
 }
 
@@ -170,39 +174,30 @@ static bool flat_match_from(Explorer *x, uint32_t rule, const FlatPlan *plan, ui
     bool take = k < r.takes;
     TcTerm pattern = pattern_at(&x->program, &r, k);   /* takes, then reads */
     uint32_t length = term_node(x->terms, pattern).length;
-    Runs runs = candidates(x, pattern, 0);
+    /* the decider decides each row of the pattern's head and length: it binds no local */
+    Occurrence bound = NO_OCCURRENCE;
     if (x->how.matches == TC_MATCHES_SYMMETRIC) {
         uint32_t twin = identical_before(x, &r, k);
-        uint32_t bound = twin == UINT32_MAX ? 0 : pick_at(x, twin) + (take ? 1 : 0);
-        for (int p = 0; p < 2; p++) if (runs.lo[p] < bound) runs.lo[p] = bound;
+        if (twin != UINT32_MAX) bound = pick_at(x, twin) + (take ? (uint64_t)1 << 32 : 0);
     }
-    for (int p = 0; p < 2; p++) {
-        TcTerm tried = 0;   /* the row term last tried at this position */
-        for (uint32_t i = runs.lo[p]; i < runs.hi[p]; i++) {
-            TcTerm row = row_at(x, i);
-            if (term_node(x->terms, row).length != length) continue;
-            bool clash = false;   /* takes distinct; a read is never a taken row */
-            for (uint32_t j = 0; j < (take ? k : r.takes) && !clash; j++) clash = pick_at(x, j) == i;
-            if (clash || row == tried) continue;
-            tried = row;
-            pick_put(x, k, i);
-            if (!flat_match_from(x, rule, plan, k + 1)) return false;
-        }
+    Candidates rows;
+    cand_open(x, pattern, 0, bound, &rows);
+    TcTerm tried = 0;   /* the row term last tried at this position */
+    for (Occurrence o; (o = cand_next(x, &rows)) != NO_OCCURRENCE;) {
+        TcTerm row = occurrence_row(o);
+        if (term_node(x->terms, row).length != length) continue;
+        bool clash = false;   /* takes distinct; a read is never a taken row */
+        for (uint32_t j = 0; j < (take ? k : r.takes) && !clash; j++) clash = pick_at(x, j) == o;
+        if (clash || row == tried) continue;
+        tried = row;
+        pick_put(x, k, o);
+        if (!flat_match_from(x, rule, plan, k + 1)) return false;
     }
     return true;
 }
 
 /* Every match of a flat program at the state, each decided by the decider. */
 static bool flat_collect(Explorer *x) {
-    size_t words = (size_t)FLAT_ROW * (x->rows ? x->rows : 1);
-    if (!reserve(&x->flat_words, &x->flat_words_cap, words)) return false;
-    uint32_t *packed = x->flat_words;
-    if (!packed) return false;
-    for (uint32_t i = 0; i < x->rows; i++) {   /* each row's items, then 0 */
-        const TcNode *n = node_of(x->terms, x->row[i]);
-        for (uint32_t c = 0; c < FLAT_ROW; c++)
-            packed[FLAT_ROW * i + c] = c < n->length ? x->terms->item[n->start + c] : 0;
-    }
     x->ground = true;   /* a flat program's rows are ground */
     if (!ensure_pick(x, FLAT_PATTERNS)) return false;
     for (uint32_t rule = 0; rule < x->program.rules; rule++) {
@@ -237,7 +232,7 @@ static void resident_prepare(TcProgram *p) {
     FlatPlan *grown=realloc(p->prepared,p->rules*sizeof *grown);
     if (!grown) return;
     p->prepared=grown;
-    ProgramView view={p->rule,p->rules,p->term,p->terms_len,p->check,p->checks_len,p->name,NULL,0};
+    ProgramView view={p->rule,p->rules,p->term,p->terms_len,p->check,p->checks_len,p->name,NULL,0,NULL,0};
     for (size_t k=p->prepared_count;k<p->rules;++k) {
         FlatPlan plan={0};char why[160]={0};
         if (p->rule[k].same!=k || !flat_plan(p->terms,&view,&p->rule[k],&plan,why,sizeof why))
@@ -246,12 +241,10 @@ static void resident_prepare(TcProgram *p) {
             bool indexed=true;uint32_t patterns=p->rule[k].takes+p->rule[k].reads;
             for (uint32_t i=0;indexed && i<patterns;++i) {
                 TcNode n=term_node(p->terms,pattern_at(&view,&p->rule[k],i));
-                TcNode head=term_node(p->terms,term_item(p->terms,n.start));
-                if (head.kind==TC_LOCAL) for (uint32_t g=0;g<plan.guards;++g)
-                    if ((plan.guard[g]&65535u)==i) { indexed=false;break; }
+                indexed=term_node(p->terms,term_item(p->terms,n.start)).kind==TC_SYMBOL;
             }
-            /* A head bound by an earlier pattern needs its dynamic index.
-             * Retain the general matcher until that index is in the batch. */
+            /* The batch reads the run of each pattern's head symbol; a rule
+             * with a pattern of no fixed head keeps the general matcher. */
             if (!indexed) plan.guards=UINT32_MAX;
         }
         p->prepared[k]=plan;
@@ -263,7 +256,10 @@ static void resident_prepare(TcProgram *p) {
  * state builder as ordinary matching decide the observable successor. */
 static bool resident_record(Explorer *x,uint32_t rule,const FlatPlan *plan,const uint32_t *record) {
     TcStoredRule r=rule_at(&x->program,rule);uint32_t total=r.takes+r.reads;
-    for (uint32_t i=0;i<total;++i) pick_put(x,i,record[i]);
+    for (uint32_t i=0;i<total;++i) {
+        if (record[i]>=x->batch_occurrences) { x->solver.failed=true;return false; }
+        pick_put(x,i,x->batch_occurrence[record[i]]);
+    }
     TcMember same={0};
     if (known_selection(x,rule,total,&same))
         return record_member(x,rule,total,same.alone,same.successor,same.firing);
@@ -275,10 +271,7 @@ static bool resident_record(Explorer *x,uint32_t rule,const FlatPlan *plan,const
             TcTerm made=tc_expression(x->terms,record+total+at,plan->made_length[m]);
             if (!made || !next_push(x,made)) return false;
         }
-        bool *gone=calloc(x->rows ? x->rows : 1,sizeof *gone);
-        if (!gone) return false;
-        for (uint32_t i=0;i<r.takes;++i) gone[pick_at(x,i)]=true;
-        succ=successor_state(x,gone);free(gone);
+        succ=successor_state(x,x->pick,r.takes);
         if (derived!=UINT32_MAX && derived!=succ) x->disagreed=true;
     }
     if (succ==UINT32_MAX) return false;
@@ -287,19 +280,47 @@ static bool resident_record(Explorer *x,uint32_t rule,const FlatPlan *plan,const
     remember_selection(x,(uint32_t)x->members-1,total);return true;
 }
 
+/* The occurrences of a run of the view, each copy, in canonical order,
+ * appended to the batch's rows.  False when memory ran out. */
+static bool resident_run(Explorer *x,uint32_t run) {
+    TrieCursor c;
+    trie_seek(&x->trie,&c,x->view.rows,map_key(run,1),map_key(run,UINT32_MAX));
+    uint64_t key=0;uint32_t copies=0;
+    while (trie_next(&x->trie,&c,&key,&copies))
+        for (uint32_t k=0;k<copies;++k)
+            if (!tc_push_u32(realloc,&x->batch_row,&x->batch_rows,&x->batch_row_cap,(TcTerm)key) ||
+                !tc_push_u64(realloc,&x->batch_occurrence,&x->batch_occurrences,&x->batch_occurrence_cap,
+                             occurrence((TcTerm)key,k)))
+                return false;
+    return true;
+}
+
 /* One resident rule circuit over the original term buffers. The native call
  * never allocates, calls C or publishes. Source pointers are borrowed only
- * inside each call: host interning may relocate pools between result blocks. */
+ * inside each call: host interning may relocate pools between result blocks.
+ * Its rows are the runs of its patterns' heads and lengths, one section a
+ * run, each copy of a row once: identical patterns read one section, so the
+ * batch's positions order the occurrences of a run as the matcher does. */
 static bool resident_collect(Explorer *x,uint32_t rule,const FlatPlan *plan) {
     TcStoredRule r=rule_at(&x->program,rule);uint32_t total=r.takes+r.reads;
     const FlatPlan physical=*plan;
     uint32_t stages[TC_BATCH_PATTERNS*TC_BATCH_STAGE_WORDS]={0},guard=0;
-    for (uint32_t k=0;k<total;++k) {
+    uint32_t section_run[TC_BATCH_PATTERNS],section_lo[TC_BATCH_PATTERNS],section_hi[TC_BATCH_PATTERNS],sections=0;
+    x->batch_rows=0;x->batch_occurrences=0;
+    for (uint32_t k=0;k<total && k<TC_BATCH_PATTERNS;++k) {
         uint32_t offset=TC_BATCH_STAGE_WORDS*k;
-        TcTerm pattern=pattern_at(&x->program,&r,k);Runs runs=candidates(x,pattern,0);
-        stages[offset+TC_BATCH_LENGTH]=term_node(x->terms,pattern).length;
-        stages[offset+TC_BATCH_LO0]=runs.lo[0];stages[offset+TC_BATCH_HI0]=runs.hi[0];
-        stages[offset+TC_BATCH_LO1]=runs.lo[1];stages[offset+TC_BATCH_HI1]=runs.hi[1];
+        TcTerm pattern=pattern_at(&x->program,&r,k);
+        TcNode pn=term_node(x->terms,pattern);
+        uint32_t run=place_find(&x->places,term_item(x->terms,pn.start),pn.length),at=0;
+        while (at<sections && section_run[at]!=run) ++at;
+        if (at==sections) {   /* a run not read yet: its section */
+            section_run[at]=run;section_lo[at]=(uint32_t)x->batch_rows;
+            if (run!=UINT32_MAX && !resident_run(x,run)) return false;
+            section_hi[at]=(uint32_t)x->batch_rows;++sections;
+        }
+        stages[offset+TC_BATCH_LENGTH]=pn.length;
+        stages[offset+TC_BATCH_LO0]=section_lo[at];stages[offset+TC_BATCH_HI0]=section_lo[at];
+        stages[offset+TC_BATCH_LO1]=section_lo[at];stages[offset+TC_BATCH_HI1]=section_hi[at];
         stages[offset+TC_BATCH_TWIN]=identical_before(x,&r,k);stages[offset+TC_BATCH_GUARD_BEGIN]=guard;
         while (guard<plan->guards && (plan->guard[guard]&255u)==k) ++guard;
         stages[offset+TC_BATCH_GUARD_END]=guard;
@@ -313,7 +334,7 @@ static bool resident_collect(Explorer *x,uint32_t rule,const FlatPlan *plan) {
         uint64_t status,produced;
         {
             TcBatchInput input={x->terms->node,x->terms->nodes,x->terms->item,x->terms->items,
-                x->row,x->rows,&physical,stages,total,r.takes,TC_BATCH_ONE|
+                x->batch_row ? x->batch_row : no_items,x->batch_rows,&physical,stages,total,r.takes,TC_BATCH_ONE|
                 (x->how.matches==TC_MATCHES_SYMMETRIC ? TC_BATCH_SYMMETRIC : 0),4096,UINT64_MAX};
             TcBatchWork work={x->batch_cursor,x->batch_cursor_cap,x->batch_output,x->batch_output_cap,
                 0,x->batch_used,0,0};

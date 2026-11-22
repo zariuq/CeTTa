@@ -98,7 +98,10 @@ static void realize_both_indexes(Space *space, Arena *scratch, Atom *query) {
 
     /* The substitution tree is rented: queries answer from the trie's
      * candidates until those have cost as many matches as the space has
-     * rows, and then it is built. */
+     * rows, and then it is built.  A space of an ordered kind answers every
+     * query from candidates in its order and never reads the tree, so the
+     * trie is its one index.  The bags below are hash spaces, which read
+     * the tree and keep no facts as dense relations. */
     CettaCount rows = space_length64(space);
     for (CettaCount query_count = 0u;
          query_count <= rows && !space->match_backend.native.stree;
@@ -109,6 +112,10 @@ static void realize_both_indexes(Space *space, Arena *scratch, Atom *query) {
     }
     assert(space->match_backend.native.match_trie != NULL);
     assert(!space->match_backend.native.match_trie_dirty);
+    if (space_is_ordered(space)) {
+        assert(space->match_backend.native.stree == NULL);
+        return;
+    }
     assert(space->match_backend.native.stree != NULL);
     assert(!space->match_backend.native.stree_dirty);
 }
@@ -140,7 +147,7 @@ static void test_duplicate_order_and_open_patterns(
                          atom_symbol_id(scratch, b)));
 
     space_init_with_universe(&space, universe);
-    space.kind = SPACE_KIND_STACK;
+    space.kind = SPACE_KIND_HASH;
     for (CettaIndex i = 0u; i < 24u; i++)
         space_add_atom_id(&space, source[i]);
 
@@ -219,7 +226,7 @@ static void test_remove_all_releases_small_indexes(
     SymbolId edge = symbol_intern_cstr(g_symbols, "transport-all-edge");
     Atom *query = edge_value(scratch, edge, 3);
     space_init_with_universe(&space, universe);
-    space.kind = SPACE_KIND_STACK;
+    space.kind = SPACE_KIND_HASH;
     for (CettaIndex i = 0u; i < 24u; i++)
         space_add_atom_id(
             &space, store_atom(universe, edge_value(scratch, edge, (int64_t)i)));
@@ -284,7 +291,7 @@ static void test_partial_remove_releases_small_indexes(
     Space space;
     SymbolId edge = symbol_intern_cstr(g_symbols, "partial-small-edge");
     space_init_with_universe(&space, universe);
-    space.kind = SPACE_KIND_STACK;
+    space.kind = SPACE_KIND_HASH;
     for (int64_t i = 0; i < 24; i++)
         space_add_atom_id(&space, store_atom(universe, edge_value(scratch, edge, i)));
     Atom *remaining = edge_value(scratch, edge, 23);
@@ -322,7 +329,7 @@ static void test_bounded_graph_index(TermUniverse *universe, Arena *scratch) {
     for (unsigned specimen = 0; specimen < 2u; specimen++) {
         Space space;
         space_init_with_universe(&space, universe);
-        space.kind = SPACE_KIND_STACK;
+        space.kind = SPACE_KIND_QUEUE;
         Atom *shared = shared_tree(scratch, depths[specimen], widths[specimen],
                                   atom_symbol(scratch, "bounded-index-leaf"));
         SymbolId head = symbol_intern_cstr(g_symbols, "bounded-index-row");
@@ -374,7 +381,7 @@ static void test_repeated_churn_is_amortized(
     SymbolId edge = symbol_intern_cstr(g_symbols, "transport-churn-edge");
     AtomId expected[24];
     space_init_with_universe(&space, universe);
-    space.kind = SPACE_KIND_STACK;
+    space.kind = SPACE_KIND_HASH;
     for (CettaIndex i = 0u; i < 24u; i++) {
         expected[i] = store_atom(
             universe, edge_value(scratch, edge, (int64_t)i));
@@ -510,7 +517,7 @@ static void test_occurrence_cursor_exact_clone(
         TermUniverse *universe, Arena *scratch) {
     Space space;
     space_init_with_universe(&space, universe);
-    space.kind = SPACE_KIND_STACK;
+    space.kind = SPACE_KIND_QUEUE;
     for (int64_t value = 0; value < 4; value++) {
         space_add_atom_id(
             &space, store_atom(universe, atom_int(scratch, value)));
@@ -659,7 +666,7 @@ static void test_atom_id_removal_preserves_pinned_view(
     Space space;
     AtomId rows[3];
     space_init_with_universe(&space, universe);
-    space.kind = SPACE_KIND_STACK;
+    space.kind = SPACE_KIND_QUEUE;
     for (int64_t value = 0; value < 3; value++) {
         rows[value] = store_atom(universe, atom_int(scratch, value));
         space_add_atom_id(&space, rows[value]);
@@ -819,7 +826,7 @@ static void test_reset_releases_storage_after_readers(
     for (unsigned episode = 0u; episode < EPISODES; episode++) {
         Space space;
         space_init_with_universe(&space, universe);
-        space.kind = SPACE_KIND_STACK;
+        space.kind = SPACE_KIND_QUEUE;
         for (CettaIndex row = 0u; row < ROWS; row++)
             space_add_atom_id(&space, values[row % 2u]);
         space_match_native_ensure_trie(&space);
@@ -872,12 +879,61 @@ static void test_reset_releases_storage_after_readers(
     }
 }
 
+static void test_small_frontier_retains_live_index(
+        TermUniverse *universe, Arena *scratch) {
+    enum { ROWS = 96, REMOVED = 5, KEPT = 8 };
+    Space space;
+    space_init_with_universe(&space, universe);
+    Atom *head = atom_symbol(scratch, "narrow-frontier");
+    Atom *wanted = atom_symbol(scratch, "wanted");
+    Atom *unrelated = atom_symbol(scratch, "unrelated");
+    AtomId rows[ROWS];
+    for (CettaIndex row = 0u; row < ROWS; row++) {
+        Atom *parts[] = {head, row == REMOVED || row == KEPT ? wanted : unrelated,
+                         atom_int(scratch, (int64_t)row), atom_unit(scratch)};
+        rows[row] = store_atom(universe, atom_expr(scratch, parts, 4u));
+    }
+    assert(space_add_atom_ids_batch(&space, rows, ROWS));
+    space_match_native_ensure_trie(&space);
+    DiscNode *trie = space.match_backend.native.match_trie;
+    assert(trie);
+    Atom *fields[] = {head, wanted, atom_var(scratch, "narrow-payload"),
+                      atom_var(scratch, "narrow-tail")};
+    Atom *query = atom_expr(scratch, fields, 4u);
+    SpaceOccurrenceCursor old, live;
+    assert(space_occurrence_cursor_init(&space, query, &old));
+    assert(old.flat_mode && !old.index_reader && old.flat_len == 2u);
+    CettaIndex removal = REMOVED;
+    assert(space_remove_logical_positions(&space, &removal, 1u));
+    assert(space.match_backend.native.match_trie == trie);
+    assert(space.native.marked == 1u);
+    assert(space_occurrence_cursor_init(&space, query, &live));
+    AtomId id;
+    CettaIndex logical;
+    assert(space_occurrence_cursor_next_id(&live, &logical, &id) ==
+           SPACE_OCCURRENCE_CURSOR_ITEM);
+    assert(id == rows[KEPT] && logical == KEPT - 1u);
+    assert(space_occurrence_cursor_next_id(&live, NULL, NULL) ==
+           SPACE_OCCURRENCE_CURSOR_END);
+    assert(space_occurrence_cursor_next_id(&old, &logical, &id) ==
+           SPACE_OCCURRENCE_CURSOR_ITEM);
+    assert(id == rows[REMOVED] && logical == REMOVED);
+    assert(space_occurrence_cursor_next_id(&old, &logical, &id) ==
+           SPACE_OCCURRENCE_CURSOR_ITEM);
+    assert(id == rows[KEPT] && logical == KEPT);
+    assert(space_occurrence_cursor_next_id(&old, NULL, NULL) ==
+           SPACE_OCCURRENCE_CURSOR_END);
+    space_occurrence_cursor_release(&live);
+    space_occurrence_cursor_release(&old);
+    space_free(&space);
+}
+
 static void test_lazy_merge_and_independent_clones(
         TermUniverse *universe, Arena *scratch) {
     enum { ROWS = 257, KEYS = 7, PREFIX = 3 };
     Space space;
     space_init_with_universe(&space, universe);
-    space.kind = SPACE_KIND_STACK;
+    space.kind = SPACE_KIND_QUEUE;
     SymbolId edge = symbol_intern_cstr(g_symbols, "merge-edge");
     AtomId rows[ROWS];
     for (CettaIndex row = 0u; row < ROWS; row++) {
@@ -951,7 +1007,7 @@ static void test_full_frontier_sequence(TermUniverse *universe, Arena *scratch) 
     enum { ROWS = 33, PREFIX = 3 };
     Space space;
     space_init_with_universe(&space, universe);
-    space.kind = SPACE_KIND_STACK;
+    space.kind = SPACE_KIND_QUEUE;
     SymbolId edge = symbol_intern_cstr(g_symbols, "full-frontier-edge");
     AtomId rows[ROWS];
     for (CettaIndex row = 0u; row < ROWS - 2u; row++)
@@ -1726,6 +1782,7 @@ int main(void) {
     test_occurrence_cursor_fused_delivery();
     test_atom_id_removal_preserves_pinned_view(&universe, &scratch);
     test_reset_releases_storage_after_readers(&universe, &scratch);
+    test_small_frontier_retains_live_index(&universe, &scratch);
     test_lazy_merge_and_independent_clones(&universe, &scratch);
     test_full_frontier_sequence(&universe, &scratch);
     test_equation_coordinate_retention();

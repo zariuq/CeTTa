@@ -42,56 +42,6 @@ static bool transform_cursor_reference(void) {
     return setting && strcmp(setting, "1") == 0;
 }
 
-typedef struct {
-    bool ready, receipts, checked, terms;
-} TfProcessOptions;
-
-static _Thread_local TfProcessOptions transform_options;
-extern char **environ;
-
-/* Process options are sampled together on first use. One environment walk
- * avoids repeating three absent-key searches on a cold firing. As with the
- * engine selector, no environment string is retained. */
-static void transform_options_init(void) {
-    if (transform_options.ready) return;
-    TfProcessOptions options = {.receipts = true};
-    unsigned seen = 0u;
-    for (char **entry = environ; entry && *entry; entry++) {
-        const char *name = *entry;
-        static const char prefix[] = "CETTA_TRANSFORM_TCALC_";
-        if (name[0] != 'C' || name[1] != 'E' ||
-            strncmp(name, prefix, sizeof(prefix) - 1u) != 0) continue;
-        name += sizeof(prefix) - 1u;
-        if (!(seen & 1u) && strncmp(name, "RECEIPTS=", 9u) == 0) {
-            options.receipts = strcmp(name + 9u, "0") != 0;
-            seen |= 1u;
-        } else if (!(seen & 2u) && strncmp(name, "CHECKED=", 8u) == 0) {
-            options.checked = strcmp(name + 8u, "0") != 0;
-            seen |= 2u;
-        } else if (!(seen & 4u) && strncmp(name, "CARRIER=", 8u) == 0) {
-            options.terms = strcmp(name + 8u, "terms") == 0;
-            seen |= 4u;
-        }
-    }
-    options.ready = true;
-    transform_options = options;
-}
-
-static bool transform_match_receipts(void) {
-    transform_options_init();
-    return transform_options.receipts;
-}
-
-bool cetta_transform_tcalc_checking(void) {
-    transform_options_init();
-    return transform_options.checked;
-}
-
-bool cetta_transform_tcalc_terms(void) {
-    transform_options_init();
-    return transform_options.terms;
-}
-
 /* ── The plan ──────────────────────────────────────────────────────────── */
 
 enum {
@@ -723,9 +673,22 @@ static bool tf_spend(TfFire *f) {
     return true;
 }
 
+/* A PeTTa read or take meets a stored row as PeTTa's match does: a cell of
+ * a list whose rest is not yet known (PeTTa's [H|T]) is the list it spells,
+ * and meets a flat list there, binding its rest; a `cons` written in a
+ * pattern or a row is data.  Until a process has built a cell no value holds
+ * one, and the match is structural.  HE matches structurally. */
+static bool tf_match_in(TfFire *f, Arena *arena, Atom *left, Atom *right) {
+    if (f->host->dialect == CETTA_TRANSFORM_DIALECT_PETTA &&
+        petta_semantics_open_cons_built())
+        return petta_semantics_match_lowered_head(arena, left, right,
+                                                  &f->builder);
+    return match_atoms_builder(left, right, &f->builder, arena);
+}
+
 static bool tf_unify(TfFire *f, Atom *left, Atom *right) {
     if (!f->host->logic || !f->host->logic->unify)
-        return match_atoms_builder(left, right, &f->builder, f->scratch);
+        return tf_match_in(f, f->scratch, left, right);
     int decision = f->host->logic->unify(f->host->context, f->scratch, &f->builder, left, right);
     if (decision == 2 || decision < 0) f->interrupted = true;
     return decision == 1;
@@ -1835,8 +1798,7 @@ CettaTransformOutcome cetta_transform_candidate_cursor_next(
                 break;
             }
         }
-        if (!match_atoms_builder(c->pattern, candidate, &f->builder,
-                                 &cursor->scratch)) {
+        if (!tf_match_in(f, &cursor->scratch, c->pattern, candidate)) {
             tf_cursor_backtrack(cursor, at);
             continue;
         }
@@ -2751,6 +2713,36 @@ static bool tf_protocol_current(const CettaTransformPort *ports, size_t count) {
     return true;
 }
 
+/* Validate and publish against one cut of precisely the spaces visited
+ * by this firing. The decision backend and checks run before this cut. */
+static bool tf_protocol_publish_cut(CettaGuardSection *cut,
+                                    const CettaTransformPort *ports, size_t count) {
+    cut->held = false;
+    if (!CETTA_COORDINATION_ACTIVE())
+        return true;
+    const Space *inline_spaces[8];
+    CettaGuardMode inline_modes[8];
+    bool allocated = count > 8u;
+    const Space **spaces = allocated ? calloc(count, sizeof(*spaces)) : inline_spaces;
+    CettaGuardMode *modes = allocated ? calloc(count, sizeof(*modes)) : inline_modes;
+    if (!spaces || !modes) {
+        free(spaces);
+        free(modes);
+        return false;
+    }
+    for (size_t i = 0u; i < count; i++) {
+        spaces[i] = ports[i].space;
+        modes[i] = ports[i].take ? CETTA_GUARD_WRITE
+                                : space_observation_mode(ports[i].space);
+    }
+    space_guard_section_enter_spaces(cut, spaces, modes, count);
+    if (allocated) {
+        free(spaces);
+        free(modes);
+    }
+    return true;
+}
+
 static bool tf_protocol_try(TfFire *f, const TfFootprint *fp, TfGroups *groups,
                              TfStatus *status, bool preparing, bool publish_read) {
     if (cetta_transform_engine() != CETTA_TRANSFORM_ENGINE_TCALC ||
@@ -2859,9 +2851,10 @@ static bool tf_protocol_try(TfFire *f, const TfFootprint *fp, TfGroups *groups,
         bool current = tf_protocol_current(ports, used);
         if (current)
             *status = tf_valid(f, groups, false, &valid);
-        CETTA_SCOPED_SHARED_TRANSITION(publish);
-        current = current && tf_protocol_current(ports, used);
-        if (!current) {
+        CettaGuardSection publish __attribute__((cleanup(cetta_guard_section_close))) = {0};
+        if (current && !tf_protocol_publish_cut(&publish, ports, used)) {
+            *status = TF_ERROR;
+        } else if (!current || !tf_protocol_current(ports, used)) {
             f->error = atom_error(f->answer_arena, f->template_atom,
                 atom_symbol(f->answer_arena, "TransformReadViewInvalidated"));
             *status = TF_ERROR;
@@ -3162,7 +3155,7 @@ static CettaTransformOutcome tf_fire_execute(
     }
     f.borrow_match = cetta_transform_engine() == CETTA_TRANSFORM_ENGINE_TCALC &&
         host->decide_firing &&
-        transform_match_receipts() && !host->spend && !f.plan.has_let && !f.plan.has_all;
+        cetta_transform_tcalc_receipts() && !host->spend && !f.plan.has_let && !f.plan.has_all;
     for (size_t i = 0u; f.borrow_match && i < f.plan.len; i++)
         f.borrow_match = !f.plan.items[i].joint &&
             (f.plan.items[i].kind == TF_READ || f.plan.items[i].kind == TF_TAKE ||

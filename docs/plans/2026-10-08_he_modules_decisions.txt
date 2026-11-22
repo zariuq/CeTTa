@@ -1,0 +1,86 @@
+HE modules restart: retained decisions and working references
+
+2026-10-08 — Oruži / codex, tmux main:5 Co NIK.
+This accompanies 2026-10-08_he_modules_goal.txt. It is a proposed replacement objective, not an instruction to resume the discarded bundle. The previous goal was cleared. This revision retains the module scope of Opus's restart draft and the applicable call-guard decisions; it adds no implementation project.
+
+Starting state and reusable evidence
+
+The existing NIK worktree is /home/aimama/aihub/hyperon/cetta-prime-nik-20260811 on branch oruzi-prime-nik-20260811, currently at Opt commit 1775a4b87804f3965b907e733f65722fe7b97689. The archived attempt is commit 06c16aafce12cbefcea3d08dfcf0ddab51cda4dd on failed/nik-native-he-module-20261008, in the existing cetta-nik-native-he-module-FAILED-20261008 worktree. Treat it as evidence and source material for individual changes, not as a patch set that must be restored.
+
+Pinned baseline executable inside NIK:
+.nik-module-qualification-20261007/cetta-opt-1775a4b8-20261008
+SHA-256 e4493481824840ba794ff68d63896d52686491874b8908808f454a7bb365c24d.
+
+Identify the actual build used for each test. The runtime directory still contains objects from the archived attempt; the first fresh build must account for that, using the existing build system rather than trusting old outputs.
+
+Reference installations already available:
+- HE 0.2.10: /home/aimama/miniforge3/envs/hyperon/bin/python.
+- Fixed fork: /home/aimama/aihub/hyperon/hyperon-experimental/build/venv/bin/python.
+Record the selected reference's identity when reusing or producing evidence; the fork checkout may have changed since older reports.
+
+Baseline entry points are the existing import/include/register/git-module and inventory services in src/library.c, and their dispatch handlers in src/eval.c. Small supporting edits in existing components are normal module implementation work. Choose changes by the behavior they implement rather than by a blanket ban on editing a particular file.
+
+Architecture retained from the call-guard brainstorming
+
+The workspace source is GPT-Pro_Responses/MeTTaKernel/petta_callguard_brainstorming_30-9-26_1.md. Its opening design discussion settles compact dialect-specific policies with shared lookup, matching, bindings, storage and existing evaluator continuations. The later module discussions retain scoped binding, actual module identity, retained defining context and revision-aware observations.
+
+HE and PeTTa have distinct argument/body/result demands and type judgments. Preserve their existing interfaces and behavior. A policy may determine when an argument is interpreted; evaluating it first and checking afterward cannot undo its effects. This module goal introduces no replacement type controller, evaluator, binding trail or request broker.
+
+Sharing implementation does not merge meanings or mutable instances. Equal source, equal display names or operation equality do not establish that defining contexts can be substituted. Keep the existing distinction between code reuse and module/session identity.
+
+Use the baseline's accelerated execution and query machinery. The join planner was already in Opt. The archive's reconnection of that planner is useful evidence; it is not a newly discovered join algorithm that must be ported as another project.
+
+Linking, naming and publication
+
+Linking makes the dependency graph available transitively, deduplicated by actual module identity. Naming publishes the explicitly imported module's exports into this importer's lexicon. Being linked through a different module does not satisfy a later request for those lexical names. Preserve token selection priority and whole-token behavior through the existing registration mechanisms.
+
+Initialization, export and invocation are separate events. An initializer is not rerun merely to expose already initialized exports to another importer. Export hooks may run for a new importer according to the identified reference/profile contract.
+
+Atomic publication protects importer links and tokens. A failed module may retain private state that escaped callbacks legitimately own; already completed external I/O cannot be erased. Successfully initialized children remain usable under the established profile rules. Restore nested module/session context after both normal and failing exits, and use the existing ownership and close mechanisms for retained callbacks.
+
+Default he/extended remember failures for the established importer/module/source identity and allow the documented source-change retry. he-compat uses the identified reference contract, including the agreed repaired import cases. The restart draft's blanket sentence that every retry is fresh does not override the default profile policy.
+
+The module reference contract was updated with Zar's approval on 2026-10-09: he-compat follows the identified fixed HE fork on module cases, including fresh attempts after failed initialization and removal of children belonging to a failed parent. Atomic failed-export publication and direct-import naming after a transitive link remain part of that contract. Keep the pinned observations as records of the defects alongside the fixed-fork comparisons. This does not authorize automatically adopting unrelated or later fork changes.
+
+Dependency views and observations
+
+Own-before-imported priority applies where the language requires it. A diamond shares a module once, but two equal stored atom occurrences remain two occurrences. Listing, counting and mutation keep their own-only contracts; get-atoms must not be turned into an imported-space listing just because matching or type lookup reads dependencies. module-space-no-deps is the explicit own-storage view.
+
+Compare answer bags by values and multiplicity. Lists, inner atom structure, token choice, precedence and effects keep required order. Retained storage is a lifetime guarantee; current observations additionally depend on the governing revisions. Reuse the baseline's reader and ownership services instead of reopening a completed observation or retaining a stale cache result.
+
+Scope retained for the restart
+
+The eight operations and their module behavior are this project. Preserve normal/light C HE availability, Python module support, PeTTa, Prime, Rho and existing permitted profile extensions, including targeted include where provided.
+
+Keep the baseline's kernel built-in representation and call route for this goal. The full kernel operation-value conversion, P11 authority completion, reader/regex/Unicode/number changes, native-call or compiler optimization, general module algebra and full C/ABI/C11 verification are deferred projects. Their existing settled principles remain retained: HE authority comes from acquired values and defining contexts; PeTTa keeps its own name-based interpretation; native library names are lexical, with system/fs/json additions belonging to extended profiles. Deferral is not a claim that those obligations are already complete.
+
+The default repeated-include change proposed by Opus was marked as a recommendation, not an approved settlement. Preserve the existing documented profile behavior until that choice is resolved from the concrete evidence and high-level intent. This rewrite does not introduce a new include policy.
+
+No arbitrary default search limits. Existing optional user-requested limits remain optional. Reuse existing dependencies and ownership services; the module project does not add a Rust dependency, regex library, build-time download or ownership framework.
+
+Evidence and sequence
+
+Bring the module fixtures and reference tools needed for this scope into the existing worktree. Keep the complete source fixtures and an explicit mapping of observations deferred to the operation-value project, rather than silently deleting or skipping failures. Test corrections require independent reference/spec evidence and a discriminating replacement.
+
+The existing cost driver is whole_program_cost.py in the previous Opus work area; adapt its reusable measurement logic into a tool in this worktree. Workload mode matters: term-sharing requires the statistics build and its specified profile. Measurement flags need investigation with valid controls, baseline variation and identical identified executables. Repeated runs support the no-performance-reduction requirement; there is no newly granted percentage tolerance.
+
+Treat the public and upstream corpora case by case. Existing non-module baseline failures remain visible; this goal must fix its module failures and introduce no new regressions. Compare relevant effects as well as answers. Use module sanitizer, allocation and ownership controls; maintain the actual coverage of existing linking/publication laws without adding general verification to the finish line.
+
+Suggested sequence and work estimate:
+1. Baseline/reference/cost controls: 1 substantial pass; success estimate 95%.
+2. Operations: 1–2 passes; 85%.
+3. Initialization, export, failure and retained contexts: 2 passes; 80%.
+4. Per-importer naming and dependency views: 2 passes; 85%.
+5. Combined module qualification: 1 pass; 90%.
+Total: 7–8 substantial passes. The strongest agent-sized packages are module operations, lifecycle/publication, and naming/dependency views. Use one writer for the shared runtime seam. The two leading concerns are carrying archive dependencies back into this scope and confusing publication rollback with external-effect rollback.
+
+Baseline runtime functionality and reusable evidence account for approximately 25% of this module restart; this rewrite changes no runtime behavior and claims no additional implementation progress.
+
+Relevant retained reports in the garden:
+- 2026-10-05-claude-crux-choices-settled-by-principle.md.
+- 2026-10-07-claude-import-link-versus-naming.md.
+- 2026-10-07-claude-publication-policy-recommendation.md.
+- 2026-10-08-claude-native-he-module-attempt-set-aside.md and its handoff-column correction.
+These are historical evidence. Later explicit user decisions and the restart scope govern where they differ.
+
+Git remains Zar's. Keep builds and scratch inside the existing worktree and write immutable milestone reports in the established garden. Do not reactivate the discarded goal or begin runtime work merely because this proposal was written.

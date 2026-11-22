@@ -1,5 +1,7 @@
-/* holm_cetta_module.h - the HOL Light kernel module, compiled by rulec, as a CeTTa native builtin
- * module.  Registration (native/native_modules.c, g_native_modules[]):
+/* holm_cetta_module.h - the HOL Light kernel module compiled by rulec, as a CeTTa native builtin
+ * module: the instance hlm_instance.c of the generic host glue (native/rule_module/rcm_cetta.c), which
+ * reads HOLR streams through the HOLR reader compiled from its GSLT modules.  Registration
+ * (native/native_modules.c, g_native_modules[]):
  *
  *     {"holmodule", CETTA_NATIVE_IMPORT_HOLM, NULL, "__cetta_lib_holm_", holm_module_call, NULL},
  *

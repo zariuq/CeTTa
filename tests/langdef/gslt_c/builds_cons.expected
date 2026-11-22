@@ -1,0 +1,2 @@
+((gslt:result:Mk:10 (cons A nil)))
+((gslt:result:Mk:10 (cons (cons B nil) nil)))

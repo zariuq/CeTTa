@@ -5,6 +5,7 @@
 #include "kernel_private.h"
 #include "constructor.h"
 #include "batch.h"
+#include "tcalc_native.h"
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -16,12 +17,25 @@ struct CettaKernelCheckpoint { uint64_t session_identity;NmSolution *solution; }
 typedef struct { NmUnifyProgram *unifier;NmEmitProgram *emitter;CettaKernelPairProgram *pair;CettaKernelObserveProgram *observe;CettaKernelConstructorProgram *constructor; } Programs;
 static pthread_mutex_t programs_lock=PTHREAD_MUTEX_INITIALIZER;
 static Programs programs;
+uint32_t cetta_kernel_fast_flags;
 static _Atomic int selected;
 static _Atomic uint64_t solves,probes,constructions,c_calls,x86_calls;
 static _Atomic uint64_t fuel_used,imports,callbacks,output_nodes,output_edges,deferrals,resource_failures;
 static _Atomic uint64_t host_services;
 static _Atomic bool statistics_enabled;
-void cetta_kernel_enable_stats(void) { atomic_store_explicit(&statistics_enabled,true,memory_order_relaxed); }
+static void kernel_fast_flags_set_mode(uint32_t mode) {
+    uint32_t cur = __atomic_load_n(&cetta_kernel_fast_flags, __ATOMIC_RELAXED);
+    for (;;) {
+        uint32_t next = (cur & ~3u) | (mode & 3u);
+        if (__atomic_compare_exchange_n(&cetta_kernel_fast_flags, &cur, next,
+                true, __ATOMIC_RELEASE, __ATOMIC_RELAXED))
+            return;
+    }
+}
+void cetta_kernel_enable_stats(void) {
+    atomic_store_explicit(&statistics_enabled,true,memory_order_relaxed);
+    __atomic_fetch_or(&cetta_kernel_fast_flags, 4u, __ATOMIC_RELEASE);
+}
 bool cetta_kernel_stats_enabled(void) { return atomic_load_explicit(&statistics_enabled,memory_order_relaxed); }
 #define COUNT(counter,amount) do { if (cetta_kernel_stats_enabled()) atomic_fetch_add(&(counter),(amount)); } while (0)
 static _Atomic uint64_t session_identity;
@@ -75,10 +89,14 @@ bool cetta_kernel_select(CettaKernelMode mode,char *error,size_t size) {
             if (error && size) snprintf(error,size,"native batch image differs from its expected bytes");
             return false;
         }
+        if (cetta_kernel_tcalc_native_ready && !cetta_kernel_tcalc_native_ready(error,size)) return false;
     }
     pthread_mutex_lock(&programs_lock);
     bool active=atomic_load(&active_sessions)!=0;
-    if (!active || cetta_kernel_current()==mode) atomic_store(&selected,(int)mode);
+    if (!active || cetta_kernel_current()==mode) {
+        atomic_store(&selected,(int)mode);
+        kernel_fast_flags_set_mode((uint32_t)mode);
+    }
     pthread_mutex_unlock(&programs_lock);
     if (active && cetta_kernel_current()!=mode) {
         if (error && size) snprintf(error,size,"kernel selection cannot change during an active session");

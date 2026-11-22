@@ -250,10 +250,10 @@ void write_dag(const char *path) {
         Node *n = &nodes[i];
         if (n->kind == N_FAIL || n->kind == N_LEAF) {
             fprintf(o, "(node %d %s", i, n->kind == N_FAIL ? "fail" : "leaf");
-            for (int c = 0; c < n->ncand; c++) fprintf(o, " \"%s\"", rules[n->cand[c]].label);
+            for (int c = 0; c < n->ncand; c++) { fputc(' ', o); fput_quoted(o, rules[n->cand[c]].label); }
             if (n->nexcl) {
                 fprintf(o, " (excluded");
-                for (int c = 0; c < n->nexcl; c++) fprintf(o, " \"%s\"", rules[n->excl[c]].label);
+                for (int c = 0; c < n->nexcl; c++) { fputc(' ', o); fput_quoted(o, rules[n->excl[c]].label); }
                 fputc(')', o);
             }
             fprintf(o, ")\n");
@@ -262,11 +262,13 @@ void write_dag(const char *path) {
             fprintf(o, "(node %d switch (occ", i);
             for (int k = 0; k < occs[n->occ].len; k++) fprintf(o, " %d", occs[n->occ].p[k]);
             fprintf(o, ") (cases");
-            for (int k = 0; k < n->ncase; k++) fprintf(o, " (\"%s\" %d)", ctors[n->cctor[k]].name, n->cchild[k]);
+            for (int k = 0; k < n->ncase; k++) { fputs(" (", o); fput_quoted(o, ctors[n->cctor[k]].name); fprintf(o, " %d)", n->cchild[k]); }
             fprintf(o, ") (default %d))\n", n->dflt);
         }
     }
-    for (int c = 0; c < nctors; c++) if (ctors[c].defined) fprintf(o, "(root \"%s\" %d)\n", ctors[c].name, ctors[c].dag_root);
+    /* a judgment that may give several results tries every rule of a leaf (nondet) */
+    for (int c = 0; c < nctors; c++)
+        if (ctors[c].defined) { fputs("(root ", o); fput_quoted(o, ctors[c].name); fprintf(o, " %d%s)\n", ctors[c].dag_root, ctors[c].nondet ? " nondet" : ""); }
     fclose(o);
 }
 

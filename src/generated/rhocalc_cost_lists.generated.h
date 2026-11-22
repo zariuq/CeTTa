@@ -232,7 +232,7 @@ static inline int rhocost_push_trace_component(void *(*resize)(void *old, uint32
   return accepted;
 }
 
-/* Append one funded step beside its key; 1, or 0 with the list unchanged. */
+/* Append one funded step; 1, or 0 with the list unchanged. */
 static inline int rhocost_push_step(void *(*resize)(void *old, uint32_t), RhoCostStep **buffer, uint32_t *length, uint32_t *capacity, RhoCostStep value) {
   _Static_assert((uint32_t) -1 > 0, "worklist count must be unsigned");
   uint32_t next_capacity;

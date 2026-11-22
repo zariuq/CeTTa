@@ -18,6 +18,19 @@
 #include <stdio.h>
 
 extern void eval_mark_interrupted(CettaEvalCompletion) __attribute__((weak));
+extern uint32_t cetta_kernel_fast_flags __attribute__((weak));
+
+static inline CettaKernelMode match_kernel_requested(void) {
+    if (&cetta_kernel_fast_flags)
+        return (CettaKernelMode)(__atomic_load_n(&cetta_kernel_fast_flags, __ATOMIC_ACQUIRE) & 3u);
+    return cetta_kernel_requested();
+}
+
+static inline bool cetta_kernel_stats_active(void) {
+    if (&cetta_kernel_fast_flags)
+        return (__atomic_load_n(&cetta_kernel_fast_flags, __ATOMIC_RELAXED) & 4u) != 0u;
+    return cetta_kernel_stats_enabled && cetta_kernel_stats_enabled();
+}
 
 static uint64_t match_native_kind(AtomKind kind) {
     switch (kind) {
@@ -3668,38 +3681,64 @@ bool bindings_promote_logical_atoms_with_session(
         return true;
     if (atom_deep_copy_session_failed(session))
         return false;
-    if (!bindings_prepare_logical_write(bindings))
-        return false;
+    bool need_logical_write = false;
     for (uint32_t i = 0; i < bindings->len; i++) {
-        Atom *promoted_name_key = bindings->entries[i].name_key
-            ? atom_deep_copy_session_copy(
-                  session, bindings->entries[i].name_key)
-            : NULL;
-        Atom *promoted = bindings->entries[i].value.skeleton
-            ? atom_deep_copy_session_copy(
-                  session, bindings->entries[i].value.skeleton)
-            : NULL;
-        if ((bindings->entries[i].name_key && !promoted_name_key) ||
-            (bindings->entries[i].value.skeleton && !promoted))
-            return false;
-        bindings->entries[i].name_key = promoted_name_key;
-        bindings->entries[i].value.skeleton = promoted;
-    }
-    for (uint32_t i = 0; i < bindings->eq_len; i++) {
-        Atom *lhs = bindings->constraints[i].lhs.skeleton
-            ? atom_deep_copy_session_copy(
-                  session, bindings->constraints[i].lhs.skeleton)
-            : NULL;
-        Atom *rhs = bindings->constraints[i].rhs.skeleton
-            ? atom_deep_copy_session_copy(
-                  session, bindings->constraints[i].rhs.skeleton)
-            : NULL;
-        if ((bindings->constraints[i].lhs.skeleton && !lhs) ||
-            (bindings->constraints[i].rhs.skeleton && !rhs)) {
-            return false;
+        const Binding *entry = bindings_entry_at(bindings, i);
+        if ((entry->name_key &&
+             !atom_deep_copy_session_settled(session, entry->name_key)) ||
+            (entry->value.skeleton &&
+             !atom_deep_copy_session_settled(session, entry->value.skeleton))) {
+            need_logical_write = true;
+            break;
         }
-        bindings->constraints[i].lhs.skeleton = lhs;
-        bindings->constraints[i].rhs.skeleton = rhs;
+    }
+    if (!need_logical_write) {
+        for (uint32_t i = 0; i < bindings->eq_len; i++) {
+            if ((bindings->constraints[i].lhs.skeleton &&
+                 !atom_deep_copy_session_settled(
+                     session, bindings->constraints[i].lhs.skeleton)) ||
+                (bindings->constraints[i].rhs.skeleton &&
+                 !atom_deep_copy_session_settled(
+                     session, bindings->constraints[i].rhs.skeleton))) {
+                need_logical_write = true;
+                break;
+            }
+        }
+    }
+    if (need_logical_write) {
+        if (!bindings_prepare_logical_write(bindings))
+            return false;
+        for (uint32_t i = 0; i < bindings->len; i++) {
+            Atom *promoted_name_key = bindings->entries[i].name_key
+                ? atom_deep_copy_session_copy(
+                      session, bindings->entries[i].name_key)
+                : NULL;
+            Atom *promoted = bindings->entries[i].value.skeleton
+                ? atom_deep_copy_session_copy(
+                      session, bindings->entries[i].value.skeleton)
+                : NULL;
+            if ((bindings->entries[i].name_key && !promoted_name_key) ||
+                (bindings->entries[i].value.skeleton && !promoted))
+                return false;
+            bindings->entries[i].name_key = promoted_name_key;
+            bindings->entries[i].value.skeleton = promoted;
+        }
+        for (uint32_t i = 0; i < bindings->eq_len; i++) {
+            Atom *lhs = bindings->constraints[i].lhs.skeleton
+                ? atom_deep_copy_session_copy(
+                      session, bindings->constraints[i].lhs.skeleton)
+                : NULL;
+            Atom *rhs = bindings->constraints[i].rhs.skeleton
+                ? atom_deep_copy_session_copy(
+                      session, bindings->constraints[i].rhs.skeleton)
+                : NULL;
+            if ((bindings->constraints[i].lhs.skeleton && !lhs) ||
+                (bindings->constraints[i].rhs.skeleton && !rhs)) {
+                return false;
+            }
+            bindings->constraints[i].lhs.skeleton = lhs;
+            bindings->constraints[i].rhs.skeleton = rhs;
+        }
     }
     if (bindings->frame_index) {
         /* A frame whose keys and values already live closed in the
@@ -5595,11 +5634,11 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
     uint32_t expressions = 0u;
     Atom *result;
     CettaKernelObserveScope *native=NULL;
-    CettaKernelMode mode=cetta_kernel_requested();
+    CettaKernelMode mode=match_kernel_requested();
     if (mode == CETTA_KERNEL_X86) {
         if (!cetta_kernel_observe_begin || !(native=cetta_kernel_observe_begin(mode))) goto failed;
         fold->native=native;
-    } else if (cetta_kernel_stats_enabled && cetta_kernel_stats_enabled()) cetta_kernel_note_c();
+    } else if (cetta_kernel_stats_active()) cetta_kernel_note_c();
     for (;;) {
         /* Descend: the image of `atom`, or the frame that will receive it. */
         result = NULL;
@@ -11569,8 +11608,8 @@ static bool atom_pair_walk(Atom *left, Atom *right, Bindings *bindings,
     alpha_pair_set_init(&pairs);
     bool ok = false;
     CettaKernelPairScope *native_scope=NULL;
-    bool measure=cetta_kernel_stats_enabled && cetta_kernel_stats_enabled();
-    CettaKernelMode kernel=cetta_kernel_requested();
+    bool measure=cetta_kernel_stats_active();
+    CettaKernelMode kernel=match_kernel_requested();
     if (!alpha && (kernel == CETTA_KERNEL_X86)) {
         if (!cetta_kernel_pair_begin || !(native_scope=cetta_kernel_pair_begin(kernel))) {
             match_native_failure();goto done;
@@ -12102,7 +12141,7 @@ static bool match_decoded_atoms_worklist(BindingValue left_value, BindingValue r
                                          Bindings *bindings,
                                          BindingsBuilder *builder,
                                          Arena *a, bool undefined_is_wildcard) {
-    CettaKernelMode requested=cetta_kernel_requested();
+    CettaKernelMode requested=match_kernel_requested();
     if (!undefined_is_wildcard) {
         bool result=false;
         if (match_kernel_dag_try(left_value,right_value,bindings,builder,requested,&result)) return result;
@@ -12111,7 +12150,7 @@ static bool match_decoded_atoms_worklist(BindingValue left_value, BindingValue r
     DecodedMatchWorklist work;
     MatchPathSet path;
     CettaKernelPairScope *native_scope=NULL;
-    bool measure=cetta_kernel_stats_enabled && cetta_kernel_stats_enabled();
+    bool measure=cetta_kernel_stats_active();
     Bindings *initial = builder ? &builder->current : bindings;
     MatchWriteStamp attempt_start = match_write_stamp(initial, 0u);
     bool attempt_repeated_var = false;
@@ -12124,7 +12163,7 @@ static bool match_decoded_atoms_worklist(BindingValue left_value, BindingValue r
     uint32_t untracked_pairs = 0u;
     decoded_match_worklist_init(&work);
     match_path_init(&path);
-    CettaKernelMode kernel=cetta_kernel_requested();
+    CettaKernelMode kernel=match_kernel_requested();
     if (kernel == CETTA_KERNEL_X86) {
         if (!cetta_kernel_pair_begin || !(native_scope=cetta_kernel_pair_begin(kernel))) {
             match_native_failure();goto fail;
@@ -12752,14 +12791,14 @@ bool match_atoms_epoch_positional_linear(Atom *query, Atom *lhs, Bindings *b,
     Bindings trial;
     if (!bindings_clone(&trial, b))
         return false;
-    CettaKernelMode mode = cetta_kernel_requested();
+    CettaKernelMode mode = match_kernel_requested();
     if (mode == CETTA_KERNEL_X86) {
         bool matched = match_atoms_epoch_worklist(query, lhs, &trial, NULL, a, epoch);
         if (matched) bindings_replace(b, &trial);
         else bindings_free(&trial);
         return matched;
     }
-    if (cetta_kernel_stats_enabled && cetta_kernel_stats_enabled()) cetta_kernel_note_c();
+    if (cetta_kernel_stats_active()) cetta_kernel_note_c();
     for (CettaExprIndex i = 1; i < lhs->expr.len; i++) {
         Atom *pi = lhs->expr.elems[i];
         Atom *qi = query->expr.elems[i];
@@ -12815,10 +12854,10 @@ bool match_atoms_epoch_positional_linear_builder(
         seen[nseen++] = eid;
     }
 
-    CettaKernelMode mode = cetta_kernel_requested();
+    CettaKernelMode mode = match_kernel_requested();
     if (mode == CETTA_KERNEL_X86)
         return match_atoms_epoch_worklist(query, lhs, NULL, bb, a, epoch);
-    if (cetta_kernel_stats_enabled && cetta_kernel_stats_enabled()) cetta_kernel_note_c();
+    if (cetta_kernel_stats_active()) cetta_kernel_note_c();
     for (CettaExprIndex i = 1u; i < lhs->expr.len; i++) {
         Atom *binding_var = epoch_var_atom(a, lhs->expr.elems[i], epoch);
         if (!binding_var || !bindings_builder_add_var_fresh(
@@ -13567,7 +13606,7 @@ static bool match_atoms_epoch_views_worklist(
     }
     AtomDeepCopySession *transport = NULL;
     CettaKernelPairScope *native_scope=NULL;
-    bool measure=cetta_kernel_stats_enabled && cetta_kernel_stats_enabled();
+    bool measure=cetta_kernel_stats_active();
     MatchWriteStamp attempt_start = match_write_stamp(
         initial, rule_frame_region_staged_len(right_frame_region));
     bool attempt_repeated_var = false;
@@ -13584,7 +13623,7 @@ static bool match_atoms_epoch_views_worklist(
     work.len = 0;
     work.cap = sizeof work.inline_items / sizeof work.inline_items[0];
     match_path_init(&path);
-    CettaKernelMode kernel=cetta_kernel_requested();
+    CettaKernelMode kernel=match_kernel_requested();
     if (kernel == CETTA_KERNEL_X86) {
         if (!cetta_kernel_pair_begin || !(native_scope=cetta_kernel_pair_begin(kernel))) { match_native_failure();goto fail; }
     }
@@ -14131,7 +14170,7 @@ static bool match_atoms_epoch_views_linear(
     }
     AtomDeepCopySession *transport = NULL;
     CettaKernelPairScope *native_scope=NULL;
-    bool measure=cetta_kernel_stats_enabled && cetta_kernel_stats_enabled();
+    bool measure=cetta_kernel_stats_active();
 
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_MATCH_OPEN_LINEAR_ATTEMPT);
@@ -14147,7 +14186,7 @@ static bool match_atoms_epoch_views_linear(
     RuleFrameRegion frame_region;
     rule_frame_region_init_exclusive(
         &frame_region, right_plan, exclusive);
-    CettaKernelMode mode = cetta_kernel_requested();
+    CettaKernelMode mode = match_kernel_requested();
     if (mode == CETTA_KERNEL_X86) {
         if (!cetta_kernel_pair_begin || !(native_scope=cetta_kernel_pair_begin(mode))) { match_native_failure();goto fail; }
     }
@@ -14682,7 +14721,7 @@ static MatchBareVariableStep match_exclusive_bare_variable(
         const CettaOpenPatternPlan *right_plan,
         BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch,
         BindingsExclusiveFrame *exclusive) {
-    CettaKernelMode mode = cetta_kernel_requested();
+    CettaKernelMode mode = match_kernel_requested();
     if (mode == CETTA_KERNEL_X86)
         return MATCH_BARE_VARIABLE_DECLINE;
     if (right->kind != ATOM_VAR || !left.skeleton ||
@@ -14698,7 +14737,7 @@ static MatchBareVariableStep match_exclusive_bare_variable(
         exclusive, NULL, var_epoch_id(right->var_id, right_epoch), &local);
     if (!local || existing.skeleton)
         return MATCH_BARE_VARIABLE_DECLINE;
-    if (cetta_kernel_stats_enabled && cetta_kernel_stats_enabled()) cetta_kernel_note_c();
+    if (cetta_kernel_stats_active()) cetta_kernel_note_c();
     AtomDeepCopySession *transport = NULL;
     MatchWriteStamp start = match_write_stamp(
         &bb->current, rule_frame_region_staged_len(&region));
@@ -15032,7 +15071,7 @@ static bool match_atoms_atom_id_epoch_worklist(
     Atom *left = left_value.skeleton;
     if (!left || !candidate_universe || right_id == CETTA_ATOM_ID_NONE)
         return false;
-    CettaKernelMode mode = cetta_kernel_requested();
+    CettaKernelMode mode = match_kernel_requested();
     if (mode == CETTA_KERNEL_X86) {
         Atom *right = term_universe_scoped_atom(candidate_universe, a, right_id);
         if (!right) { match_native_failure(); return false; }
@@ -15040,7 +15079,7 @@ static bool match_atoms_atom_id_epoch_worklist(
             left_value, binding_value_from_persistent_context(right, epoch),
             b, NULL, a, false);
     }
-    if (cetta_kernel_stats_enabled && cetta_kernel_stats_enabled()) cetta_kernel_note_c();
+    if (cetta_kernel_stats_active()) cetta_kernel_note_c();
     /* The encoded frontier does not keep an active substitution path. A
      * cyclic environment uses the existing guarded contextual matcher so
      * only cycles reachable from this comparison can reject it. */

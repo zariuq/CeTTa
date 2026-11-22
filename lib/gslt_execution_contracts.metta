@@ -352,6 +352,8 @@
   (invocation-head last 1 list-unary 0 1)
   (invocation-head reverse 1 list-unary 0 1)
   (invocation-head msort 1 list-unary 0 1)
+  (invocation-head sort 1 list-unary 0 1)
+  (invocation-head sort 3 list-unary 0 3)
   (invocation-head sort-atom 1 list-unary 0 1)
   (invocation-form petta predicate 1 predicate-value 0 1)
   (invocation-form petta list-to-set 1 list-set 0 1)
@@ -1051,7 +1053,57 @@
   (prepared-pure-intrinsic-head
     abs-math 1 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
+    pow-math 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    sqrt-math 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
     log-math 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    trunc-math 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    ceil-math 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    floor-math 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    round-math 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    sin-math 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    asin-math 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    cos-math 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    acos-math 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    tan-math 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    atan-math 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    isnan-math 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    isinf-math 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_math_quot 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_math_rem 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_math_div 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_math_mod 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_math_floor_div 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_math_floor_mod 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_math_exp 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_math_ln 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_math_min 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_math_max 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_math_clamp 3 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
     car-atom 1 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head

@@ -1,6 +1,7 @@
 ; Counts over a pattern or a conjunction count the facts the space keeps in
 ; relations beside its rows, and rows holding variables, which meet every
-; pattern they unify with, as ordinary search does.
+; pattern they unify with, as ordinary search does.  (A PeTTa program stores
+; no bare variable; tests/he/native_count_stored_variable.metta counts one.)
 (edge 1 2)
 (edge 2 3)
 (edge 3 4)

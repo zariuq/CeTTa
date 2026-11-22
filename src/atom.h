@@ -1034,7 +1034,7 @@ int   cetta_format_float(char *buf, size_t size, double value);
 
 /* ── Hash-Consing (structural sharing for immutable atoms) ─────────────── */
 
-#define HASHCONS_TABLE_SIZE 65536
+#define HASHCONS_TABLE_SIZE 1024
 
 struct HashConsTable {
     CettaFrameIdentityScope frame_identities;
@@ -1053,6 +1053,7 @@ void hashcons_init(HashConsTable *hc);
 /* A private ownership domain starts small and uses the same growing table.
  * Canonical atoms retain their addresses when its index grows. */
 void hashcons_init_compact(HashConsTable *hc);
+void hashcons_reserve(HashConsTable *hc, uint32_t min_capacity);
 void hashcons_free(HashConsTable *hc);
 /* Process-wide stamp for caches borrowing atoms from any hash-cons table.
  * Reclamation advances it before freeing atoms; UINT64_MAX permanently

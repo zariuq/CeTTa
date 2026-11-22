@@ -1797,6 +1797,7 @@ static bool path_candidates(Space *space, CettaSpacePathIndex *index, Atom *patt
 
 bool space_path_index_candidates(Space *space, Atom *pattern,
                                 CettaIndex **out, CettaIndex *count) {
+    SPACE_MAINTAIN(maintenance, space);
     space_dense_settle_for_pattern(space, pattern);
     if (!space || !space->native.universe || !out || !count || space->overlay_base ||
         (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
@@ -1923,6 +1924,7 @@ static size_t path_demand_bytes(size_t depth) {
 
 CettaSpacePathDemand *space_path_index_offer(Space *space, Atom *pattern,
                                              CettaCount *price, bool *wanted) {
+    SPACE_MAINTAIN(maintenance, space);
     *wanted = false;
     if (!space || !space->native.universe || !pattern || space->overlay_base ||
         (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
@@ -1979,6 +1981,7 @@ CettaSpacePathDemand *space_path_index_offer(Space *space, Atom *pattern,
 bool space_path_index_demand_rows(Space *space,
                                   const CettaSpacePathDemand *demand,
                                   CettaIndex **out, CettaCount *count) {
+    SPACE_MAINTAIN(maintenance, space);
     *out = NULL;
     *count = 0u;
     if (!path_generation_current(space))
@@ -2007,12 +2010,14 @@ CettaSpacePathDemand *space_path_index_demand_copy(
 }
 
 void space_path_index_rent(Space *space, CettaCount rows) {
+    SPACE_MAINTAIN(maintenance, space);
     CettaCount *rent = &space->match_backend.native.path_rent;
     *rent = rows > UINT64_MAX - *rent ? UINT64_MAX : *rent + rows;
 }
 
 bool space_path_index_lead_candidates(Space *space, Atom *pattern, bool build,
                                       CettaIndex **out, CettaIndex *count) {
+    SPACE_MAINTAIN(maintenance, space);
     space_dense_settle_for_pattern(space, pattern);
     if (!space || !space->native.universe || !out || !count || space->overlay_base ||
         space->native.marked != 0u ||
@@ -2134,6 +2139,7 @@ size_t space_path_index_prefix_bound(const Atom *pattern) {
 
 bool space_path_index_prefix_candidates(Space *space, Atom *pattern, bool build,
                                         CettaIndex **out, CettaIndex *count) {
+    SPACE_MAINTAIN(maintenance, space);
     space_dense_settle_for_pattern(space, pattern);
     if (!space || !space->native.universe || !out || !count || space->overlay_base ||
         space->native.marked != 0u ||
@@ -2192,6 +2198,7 @@ bool space_path_index_prefix_candidates_ids(Space *space, SymbolId head,
                                             CettaExprLen len,
                                             CettaIndex **out,
                                             CettaIndex *count) {
+    SPACE_MAINTAIN(maintenance, space);
     space_dense_settle_for_head(space, head, len);
     if (!space || !space->native.universe || !out || !count || space->overlay_base ||
         space->native.marked != 0u ||
@@ -2244,6 +2251,7 @@ bool space_path_index_prefix_candidates_ids(Space *space, SymbolId head,
 
 bool space_path_index_existing_candidates(Space *space, Atom *pattern,
                                           CettaIndex **out, CettaIndex *count) {
+    SPACE_MAINTAIN(maintenance, space);
     space_dense_settle_for_pattern(space, pattern);
     if (!space || !out || !count || !space_path_index_may_select(pattern) ||
         !path_generation_current(space))
@@ -2513,6 +2521,7 @@ void space_path_indexes_retire(Space *space) {
 }
 
 bool space_path_indexes_info(const Space *space, CettaSpacePathIndexInfo *out) {
+    SPACE_MAINTAIN(maintenance, space);
     if (!space || !out || !space->match_backend.native.path_indexes)
         return false;
     const CettaSpacePathIndex *first = space->match_backend.native.path_indexes;
@@ -2803,6 +2812,7 @@ fail:
 }
 
 CettaSpaceHeadIndex *space_head_index_prepare(Space *space) {
+    SPACE_MAINTAIN(maintenance, space);
     if (!space || !space->native.universe || space->overlay_base ||
         (space->kind != SPACE_KIND_ATOM && space->kind != SPACE_KIND_SET) ||
         space->native.start != 0u ||
@@ -2855,6 +2865,7 @@ bool space_head_index_select_heads(const CettaSpaceHeadIndex *index,
 
 bool space_head_index_open(Space *space, const Atom *pattern,
                            CettaSpaceHeadCursor *cursor) {
+    SPACE_MAINTAIN(maintenance, space);
     space_dense_settle_for_pattern(space, pattern);
     memset(cursor, 0, sizeof(*cursor));
     if(!space_head_index_admits(pattern))return false;

@@ -1,5 +1,6 @@
 #include "match.h"
 #include "parser.h"
+#include "space.h"
 #include "symbol.h"
 
 #include <stdint.h>
@@ -125,7 +126,11 @@ int main(void) {
     bindings_free(&fresh_bindings);
 
     Atom *fresh_one = parse_one(&arena, "$");
-    Atom *space = atom_space(&arena, (void *)(uintptr_t)0x1u);
+    /* A grounded space reference names a live space: constructing its atom
+     * retains the space's storage owner. */
+    Space referenced_space;
+    space_init(&referenced_space);
+    Atom *space = atom_space(&arena, &referenced_space);
     Bindings reference_binding;
     bindings_init(&reference_binding);
     CHECK(fresh_one && fresh_one->kind == ATOM_VAR && space &&
@@ -192,6 +197,7 @@ int main(void) {
     g_var_intern = NULL;
     g_symbols = NULL;
     arena_free(&arena);
+    space_free(&referenced_space);
     hashcons_free(&hashcons);
     var_intern_free(&variables);
     symbol_table_free(&symbols);

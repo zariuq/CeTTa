@@ -1,7 +1,7 @@
 -- theory: Calc
--- Two rules for one call that give different values.  rulec refuses the module (the left sides
--- overlap and nothing makes the premises exclusive); the reading by demand gives the call both values,
--- which is how a run shows that a judgment is not a function.
+-- Two rules for one call that give different values.  The left sides overlap and nothing makes the
+-- premises exclusive: rulec compiles the judgment nondet, and the reading by demand gives the call
+-- both values, which is how a run shows that a judgment is not a function.
 Module Choice {
   Theory Calc() {
     Empty

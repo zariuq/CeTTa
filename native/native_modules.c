@@ -19,10 +19,11 @@
 #include "lib_parse_inference_native.h"
 #include "lib_parse_native_grammar.h"
 #include "native/langdef_module.h"
+#include "native/tptp_module.h"
 #include "native/hol_light/hol_cetta_module.h"
 #include "native/tcalc/tcalc_cetta_module.h"
 #include "native/hol_light_module/holm_cetta_module.h"
-#include "native/rule_module/rcm_cetta.h"
+#include "native/megalodon_module/mgm_instance.h"
 #include "native/mm0/mm0_cetta_module.h"
 #include "native/seal_module.h"
 #include "native/megalodon/mg_cetta_module.h"
@@ -1250,6 +1251,18 @@ static bool langdef_module_call(CettaLibraryContext *ctx, Space *space,
     return true;
 }
 
+/* A TPTP native answers data as a langdef native does: a read, a printed
+ * text, a reader or a refusal, as a completed value. */
+static bool tptp_module_call(CettaLibraryContext *ctx, Space *space,
+                             Arena *a, Atom *head, Atom **args,
+                             uint32_t nargs, CettaCallOutcome *out) {
+    Atom *result = cetta_tptp_module_dispatch(ctx, space, a, head, args, nargs);
+    if (!result)
+        return false;
+    *out = cetta_call_completed_value(result);
+    return true;
+}
+
 static bool hol_module_call(CettaLibraryContext *ctx, Space *space,
                             Arena *arena, Atom *head, Atom **args,
                             uint32_t nargs, CettaCallOutcome *out) {
@@ -1286,6 +1299,12 @@ static bool mm0_module_call(CettaLibraryContext *ctx, Space *space,
     return true;
 }
 
+/* Every operation of the module speaks the term language. */
+static bool native_module_every_operation(const Atom *head) {
+    (void)head;
+    return true;
+}
+
 /* The operations answering PeTTa values: langdef's text <-> codepoints. */
 static bool langdef_text_operation(const Atom *head) {
     return atom_is_symbol((Atom *)head, "__cetta_lib_langdef_codepoints_symbol") ||
@@ -1318,6 +1337,10 @@ static const CettaNativeBuiltinModule g_native_modules[] = {
     /* Keyed by name: no bit of the import mask, which has none free; the
      * module answers once lib/tcalc.metta is imported (native_module_loaded). */
     {"tcalc", 0u, NULL, "__cetta_lib_tcalc_", cetta_tcalc_module_call, NULL},
+    /* Keyed by name too: it answers once lib/tptp.metta is imported.  Its
+     * values are CeTTa's term language, as langdef's are. */
+    {"tptp", 0u, NULL, "__cetta_lib_tptp_", tptp_module_call, NULL,
+     native_module_every_operation},
 #if CETTA_BUILD_WITH_DURABLE
     {"supervise", CETTA_NATIVE_IMPORT_SUPERVISE, cetta_supervise_dispatch, "__cetta_lib_supervise_", NULL, NULL},
 #endif

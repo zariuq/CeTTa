@@ -1,11 +1,10 @@
 /*
- * tisa_x86.h -- t-ISA profile p1 to x86-64 (SysV LP64), by fixed templates.
+ * tisa_x86.h -- t-ISA profile p1 to x86-64 (SysV LP64).
  *
- * Each statement of an admitted program becomes one template: a fixed byte
- * pattern whose only parameters are register numbers, immediates and jump
- * offsets. A proof of a template covers every use of it. The image starts
- * with the public entry; its spans name the template and statement behind
- * every byte range.
+ * An admitted program becomes one image with the reference's observable
+ * behaviour (tisa_x86.c says how checks are decided). The image starts with
+ * the public entry; its spans name the byte pattern and statement behind every
+ * byte range, and each loop has a record of the checks decided at its entry.
  */
 #pragma once
 
@@ -19,11 +18,11 @@ typedef struct {
     uint32_t         offset, length;   /* a byte range of the image */
     const char      *template_name;    /* the template these bytes instantiate */
     const TcIsaStmt *stmt;             /* the statement realized; NULL for the wrapper and handlers */
-    bool             fast;             /* in a loop's copy without its hoisted checks */
+    bool             fast;             /* in a loop's copy without its entry-decided checks */
 } TcIsaX86Span;
 
-/* What became of one loop: whether its bounds checks were hoisted and, if
- * not, why. */
+/* What became of one loop: whether its checks were decided at its entry
+ * (hoisted) and, if not, why. */
 typedef struct {
     const TcIsaStmt *loop;
     bool             hoisted;
@@ -45,21 +44,8 @@ typedef struct {
     TcIsaX86Loop *loops;  size_t nloops;  /* one record per loop, in emission order */
 } TcIsaX86;
 
-/* Emission options. All off is the default emission, which tisa_x86_emit
- * produces and the exported manifests record. */
-typedef struct {
-    /* Loops (counted and early-exit) whose region accesses are affine in the
-     * loop index get one entry test on the extreme addresses, and one on the
-     * allowance when the body pays FUND. When the tests pass, a copy of the
-     * loop runs without those checks; when not, the unchanged template loop
-     * runs. */
-    bool hoist_bounds;
-} TcIsaX86Options;
-
 /* Emits an admitted program. False, with a reason in err, if it is not. */
 bool tisa_x86_emit(const TcIsaProgram *prog, TcIsaX86 *out, char *err, size_t cap);
-bool tisa_x86_emit_with(const TcIsaProgram *prog, const TcIsaX86Options *opts, TcIsaX86 *out,
-                        char *err, size_t cap);
 
 /* Maps the image executable (written, then made read-only and executable). */
 bool tisa_x86_load(TcIsaX86 *x, char *err, size_t cap);

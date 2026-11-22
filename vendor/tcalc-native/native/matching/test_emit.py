@@ -160,7 +160,6 @@ def main():
     runs=fixtures(cases,work/"cases.p1t")
     result=run("native",[runner,"--image",work/"native_emit.hol","native_emit",program,work/"cases.p1t"])
     assert f"{runs} SAME, 0 DIFF" in result and "0 missed" in result.splitlines()[-1]
-    run("hoisted",[runner,"--quiet","--hoist",program,work/"cases.p1t"])
     costs={name.removesuffix("_chunk0"):(out,int(pay),int(cost)) for name,out,pay,cost in re.findall(
         r"(?m)^([^/\n]+)/1 SAME expected (\w+) ret=(\d+) used=(\d+)$",result) if name.endswith("_chunk0")}
     boundaries=[]

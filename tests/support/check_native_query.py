@@ -25,7 +25,9 @@ space, a bag or a set and sharing variables, are joined natively as one
 conjunction; where an effect may change a row a later one of them reads,
 which it reads afresh, the run makes its effects only if none met such a
 read, a removal included that takes a row holding a variable which a
-pattern reads, though the two fix different atoms.  Variables are read outside
+pattern reads, though the two fix different atoms, and an addition the
+body makes into the inner match's space that a later outer row's read of
+it meets.  Variables are read outside
 the construct that binds them: a let's or a case clause's variable that
 the pattern binds first or an if branch reads, a let's variable read after
 the let or passed in by a caller, a collected match's variables read by
@@ -380,6 +382,24 @@ def program(rng):
             else:
                 match = f"(match &self (, (edge $x $y) (br {read})) {removal})"
             lines.append(f"!(let $h (collapse {match}) (sort-atom $h))")
+    # A match inside a match whose body adds the row a later read of the
+    # inner match meets: the inner match is read for each outer row after
+    # the rows before it made their effects, so what one row adds the next
+    # reads, along the edges.  The additions go to the inner match's space,
+    # never the outer one's, so the run ends.  Their own random stream
+    # leaves the programs above as they were.
+    grow = random.Random(nodes * 3010349 + len(lines))
+    if grow.random() < 0.5:
+        for _ in range(grow.randrange(1, 3)):
+            space = grow.choice(("&b", "&s"))
+            for _ in range(grow.randrange(1, 3)):
+                lines.append(f"!(add-atom {space} (g {value(grow, nodes)} k))")
+            body = f"(add-atom {space} (g $y $w))"
+            if grow.random() < 0.5:
+                body = f"(let $_ {body} (seen $x $y $w))"
+            match = f"(match &self (edge $x $y) (match {space} (g $x $w) {body}))"
+            lines.append(f"!(let $h (collapse {match}) (sort-atom $h))")
+            lines.append(f"!(let $h (collapse (match {space} (g $a $b) ($a $b))) (sort-atom $h))")
     # Calls of a function of one equation that branches on an absence,
     # inside matches: a native join with a guard, unless an effect may
     # change a row the guard reads, the function has another equation or a
@@ -1026,7 +1046,8 @@ def program(rng):
             pat, spread = "$a", distinct.choice(("(add-atom &u $a)", "(seen $a)",
                                                  "(add-atom &u (w $a))"))
             if template.startswith("$") and spread == "(add-atom &u $a)":
-                # a bare element may be an open row's unbound variable
+                # an element may be an open row's variable, and PeTTa adds no
+                # bare variable: its add-atom raises, as assertz does
                 spread = "(add-atom &u (w $a))"
             if template.startswith("(pr ") and distinct.random() < 0.2:
                 parts = template[4:-1].split()

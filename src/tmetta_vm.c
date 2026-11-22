@@ -2820,7 +2820,9 @@ static void frontier_free(void *resource) {
 
 void cetta_tmetta_eval(CettaLibraryContext *context, Space *space,
     Registry *registry, Arena *output, Atom *expression, int fuel, EvalOutcome *result) {
-    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    /* The tmetta runtime is a world resource with its own engine lock;
+     * the world channel is taken before that lock and before any space. */
+    CETTA_SCOPED_WORLD(transition);
     struct CettaTmettaRuntime *runtime = tm_runtime(context);
     if (!runtime || pthread_mutex_lock(&runtime->mutex)) {
         result->completion = CETTA_EVAL_INCOMPLETE_CAPACITY;
@@ -3040,7 +3042,7 @@ failed:
 size_t cetta_tmetta_resume_with_value(CettaLibraryContext *context, Space *space,
     Registry *registry, Arena *output, Atom *frontier, Atom *variable,
     Atom *value, int fuel, EvalOutcome *result) {
-    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    CETTA_SCOPED_WORLD(transition);
     struct CettaTmettaRuntime *runtime = context->tmetta_runtime;
     size_t woken = 0;
     result->frontier = NULL;

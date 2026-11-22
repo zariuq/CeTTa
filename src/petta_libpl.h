@@ -104,27 +104,6 @@ bool petta_libpl_call(
     bool *recognized, CettaCallOutcome *end,
     const CettaDelayView *delay);
 
-/*
- * PeTTa arithmetic off CeTTa's native fast path.  The embedded Prolog
- * evaluates functor(args...) with is/2, or with no functor the single
- * argument, so the value, the float flags in force and any error are
- * exactly SWI-PeTTa's.  *out is the number as a VALUE, or the error is/2
- * raised as (Error Formal Context), RAISED.  False when no embedded Prolog
- * is available.
- */
-bool petta_libpl_evaluate_arithmetic(
-    Arena *arena, const char *functor, Atom **args, uint32_t nargs,
-    CettaCallOutcome *out);
-
-/* SWI arithmetic comparison, including rational/float promotion and its
- * overflow rules. The result is a PeTTa truth value or a raised payload. */
-bool petta_libpl_compare_arithmetic(
-    Arena *arena, const char *relation, Atom **args, CettaCallOutcome *out);
-
-/* SWI's prefer_rationals flag in the embedded Prolog: whether PeTTa's /
- * gives a rational for integers that do not divide. */
-bool petta_libpl_prefer_rationals(void);
-
 /* SWI's cpu_count flag in the embedded Prolog, which sizes the worker pool
  * of concurrent_and and so of SWI-PeTTa's hyperpose.  False when no embedded
  * Prolog has started. */

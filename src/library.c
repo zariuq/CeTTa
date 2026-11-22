@@ -992,6 +992,11 @@ static void cetta_library_petta_memo_sync(CettaLibraryContext *ctx);
 uint64_t cetta_library_petta_admission_revision(CettaLibraryContext *ctx) {
     if (!ctx)
         return 0u;
+    uint64_t instance = symbol_table_instance_id(g_symbols);
+    if (ctx->petta_translator_symbol_table_instance == instance &&
+        ctx->petta_tabled_symbol_table_instance == instance &&
+        ctx->petta_memo.symbol_table_instance == instance)
+        return ctx->petta_admission_revision;
     cetta_library_petta_translator_rule_sync(ctx);
     cetta_library_petta_tabled_relation_sync(ctx);
     cetta_library_petta_memo_sync(ctx);
@@ -11658,12 +11663,24 @@ static bool library_import_native(CettaLibraryContext *ctx, const char *name,
      * to each importing space. The file inventory prevents replay in that
      * space, including cycles, without skipping another space's import. */
     bool previously_active = (ctx->active_mask & import_bit) != 0u;
+    bool has_import_as = ctx->import_as_prefix[0] != '\0';
     /* HE's native modules have session-wide initialization; its vocabulary
      * libraries alone republish words into each reader. PeTTa source modules
      * use the per-space file inventory below. */
     if (previously_active && ctx->session.language_id != CETTA_LANGUAGE_PETTA &&
-        import_bit != CETTA_LIBRARY_RHO && !ctx->import_as_prefix[0])
+        import_bit != CETTA_LIBRARY_RHO && !has_import_as) {
+        if (ctx->session.language_id == CETTA_LANGUAGE_HE &&
+            spec && spec->he_words) {
+            char words_path[PATH_MAX];
+            return build_library_path(ctx, spec->he_words, words_path,
+                                      sizeof(words_path)) &&
+                load_module_file(ctx, words_path,
+                                 logical_import_space(ctx, space), space,
+                                 eval_arena, persistent_arena, registry, fuel,
+                                 NULL, NULL, error_out);
+        }
         return true;
+    }
 
 #if CETTA_BUILD_WITH_JSON_GSLT
     if (import_bit == CETTA_LIBRARY_JSON && !ctx->json_runtime) {
@@ -11700,6 +11717,22 @@ static bool library_import_native(CettaLibraryContext *ctx, const char *name,
             space_global_mutation_epoch_advance();
         }
         return false;
+    }
+    if (ctx->session.language_id == CETTA_LANGUAGE_HE &&
+        spec && spec->he_words && !has_import_as) {
+        char words_path[PATH_MAX];
+        if (!build_library_path(ctx, spec->he_words, words_path,
+                                sizeof(words_path)) ||
+            !load_module_file(ctx, words_path,
+                              logical_import_space(ctx, space), space,
+                              eval_arena, persistent_arena, registry, fuel,
+                              NULL, NULL, error_out)) {
+            if (!previously_active) {
+                ctx->active_mask &= ~import_bit;
+                space_global_mutation_epoch_advance();
+            }
+            return false;
+        }
     }
     if (import_bit == CETTA_LIBRARY_IO && !ctx->io_runtime)
         ctx->io_runtime = cetta_io_runtime_new();
@@ -12128,8 +12161,7 @@ static bool library_import_module(CettaLibraryContext *ctx, const char *spec,
         *module_space_out = NULL;
 
     const CettaLibrarySpec *interface = spec ? cetta_library_lookup(spec) : NULL;
-    bool word_interface = interface && interface->he_words;
-    if (spec && ((interface && !word_interface) || cetta_native_module_lookup(spec))) {
+    if (spec && (interface || cetta_native_module_lookup(spec))) {
         if (target_is_fresh) {
             *error_out = atom_symbol(eval_arena,
                                      "builtin libraries can only import into existing spaces");

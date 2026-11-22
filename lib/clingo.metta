@@ -20,7 +20,7 @@
 ;   (clingo:solve P)       (model (A ...)) for the first stable model clingo
 ;                          finds, or (unsat (reference clingo))
 ; The answers have the asp library's shapes, with clingo as the evidence where
-; the asp library gives its certificate, so (import-as! &self asp clingo) runs
+; the asp library gives its certificate, so (import-as! &self clingo asp) runs
 ; a program's asp:solve and asp:models on clingo.  Without clingo these stay
 ; as they are written.
 (: __cetta_lib_clingo_ground (-> Atom Atom))

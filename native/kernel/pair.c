@@ -28,7 +28,7 @@ size_t cetta_kernel_pair_bytes(const CettaKernelPairProgram *p) {
 bool cetta_kernel_pair_call(const CettaKernelPairProgram *p,const CettaKernelPairFacts *facts,
     uint64_t budget,uint64_t used,CettaKernelPairPlan *plan) {
     if (!p || !facts || !plan) return false;
-    uint64_t result[4]={0};NmComponentSpan spans[NM_COMPONENT_REGIONS]={0};
+    uint64_t result[4]={0};NmComponentSpan spans[NM_COMPONENT_REGIONS];   /* a call reads the declared two */
     if (!nm_component_span(spans,facts,1,sizeof *facts,false) || !nm_component_span(spans+1,result,4,sizeof *result,true)) return false;
     NmComponentResult r;char error[128];
     if (nm_component_call(&p->component,NM_NATIVE,spans,0,0,budget,used,&r,error,sizeof error)!=NM_CALL_OK ||
@@ -39,8 +39,8 @@ bool cetta_kernel_pair_call(const CettaKernelPairProgram *p,const CettaKernelPai
 bool cetta_kernel_pair_word_call(const CettaKernelPairProgram *p,uint64_t left,uint64_t right,
         uint64_t budget,uint64_t used,bool *equal,uint64_t *fuel) {
     if (!p || !equal || !fuel) return false;
-    NmComponentSpan spans[NM_COMPONENT_REGIONS]={0};NmComponentResult r;char error[128];
-    if (nm_component_call(&p->word,NM_NATIVE,spans,left,right,budget,used,&r,error,sizeof error)!=NM_CALL_OK ||
+    NmComponentResult r;
+    if (nm_component_call_scalar(&p->word,left,right,budget,used,&r)!=NM_CALL_OK ||
         r.outcome!=TISA_OUTCOME_FIRED || r.payload>1) return false;
     *equal=r.payload!=0;*fuel=r.fuel_used;return true;
 }
