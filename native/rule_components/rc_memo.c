@@ -31,7 +31,7 @@ void rc_memo_clear(void) {
 }
 static void gen_grow(Gen *g) {
     size_t ncap = g->cap ? 2 * g->cap : 1024;
-    Entry *nt = calloc(ncap, sizeof *nt);
+    Entry *nt = rc_alloc_table(ncap * sizeof *nt);   /* random lookups: large pages where possible */
     if (!nt) rc_refinement_fail("memory for a memo table");
     for (size_t i = 0; i < g->cap; i++) {
         if (!g->tab[i].hash) continue;

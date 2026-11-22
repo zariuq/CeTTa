@@ -10,6 +10,7 @@ overlapping left sides in one judgment: 0 pairs; shown exclusive by their premis
 relation premises (queries of the module's relations): 0, of which 0 bind a variable; judgments with one that binds (possibly several answers): 0
 rules whose last premise is a tail call: 264; recursive judgments (self or mutual): 117
 rules in functional form (calls nested in a right side or a premise's arguments, read call by value): 0, their calls made premises: 0
+rules whose recursion passes its result to a wrapper (tail recursion modulo the wrapper: the wrapper's frame pushed, no C stack): 0
 
 layer        rules  judgments  det-judgments
 data           102         50             50
@@ -115,7 +116,7 @@ justified blocks (the judgment's rules are the contract):
   vsubst recursion       hl:vsubst-rec                  4  proved   (memo)                         vsubst-rec is a function of an interned substitution and an interned term: memo_sound, memo2_sound; trusted: rc_memo.c is the model, cleared before every collection
   type_subst             hl:type-subst                  2  proved   (memo)                         type_subst is a function of an interned instantiation and an interned type: memo_sound, memo2_sound; trusted: rc_memo.c is the model, cleared before every collection
   term list equality, reflexive hl:tms-eq                      4  proved   law hl:tms-eq(x, x) = hl:yes; tmsEq_refl, fastPath_sound
-sorts with a native representation: 10
+sorts with a native representation: 11
   Str        bytes
   Nat        nat
   Type       intern
@@ -126,3 +127,4 @@ sorts with a native representation: 10
   TmPairs    intern
   Table      table
   Records    records
+  Terminal   promise

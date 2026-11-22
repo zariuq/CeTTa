@@ -400,9 +400,26 @@ void analyse_calls(void) {
     }
 }
 
-/* every call of the safepoint judgment, and of every judgment that reaches it, is a tail call:
- * then at the safepoint no frame below holds a term */
+/* every call of the safepoint judgment, and of every judgment that reaches it, is a tail call, or a
+ * call whose result only a tail call of a wrapper takes (t := J(...) then W(..., t, ...), W not
+ * reaching the safepoint), made a pending wrapper (emit_c.c): then at the safepoint no frame below
+ * holds a term, and a run can stop there and be resumed from the safepoint's arguments */
+bool *pend_required;   /* per rule: its call into the safepoint is made a pending wrapper */
+static bool pend_shape(const Rule *r, int j) {
+    if (!r->tail || j != r->np - 2 || r->np < 2) return false;
+    const Prem *pj = &r->p[j], *pw = &r->p[r->np - 1];
+    if (pw->relation) return false;
+    int t = pj->tgt->var;
+    if (t < 0 || (pj->eqv && pj->eqv[t])) return false;
+    int uses = 0, whole = 0;
+    for (int a = 0; a < pw->src->n; a++) {
+        if (pw->src->k[a]->var == t) whole++;
+        uses += pat_count_var(pw->src->k[a], t);
+    }
+    return whole == 1 && uses == 1;
+}
 void check_safepoint(void) {
+    pend_required = xcalloc((size_t)(nrules ? nrules : 1), 1);
     if (!safepoint_name) return;
     safepoint_ctor = map_get(&ctor_map, safepoint_name);
     if (safepoint_ctor < 0 || !ctors[safepoint_ctor].defined) die("safepoint %s is not a judgment", safepoint_name);
@@ -414,10 +431,16 @@ void check_safepoint(void) {
             Rule *r = &rules[i];
             for (int j = 0; j < r->np; j++) {
                 if (r->p[j].relation || !in[r->p[j].src->ctor]) continue;
-                if (j != r->np - 1 || !r->tail) err(r, "calls %s (which reaches the safepoint) other than as a tail call", ctors[r->p[j].src->ctor].name);
+                if (!(j == r->np - 1 && r->tail) && !pend_shape(r, j)) err(r, "calls %s (which reaches the safepoint) other than as a tail call", ctors[r->p[j].src->ctor].name);
                 if (!in[r->head]) { in[r->head] = true; changed = true; }
             }
         }
+    }
+    for (int i = 0; i < nrules; i++) {
+        Rule *r = &rules[i];
+        if (r->np < 2 || r->p[r->np - 2].relation || !in[r->p[r->np - 2].src->ctor] || !pend_shape(r, r->np - 2)) continue;
+        if (in[r->p[r->np - 1].src->ctor]) err(r, "its wrapper %s reaches the safepoint", ctors[r->p[r->np - 1].src->ctor].name);
+        pend_required[i] = true;
     }
     int n = 0;
     for (int c = 0; c < nctors; c++) if (in[c]) n++;

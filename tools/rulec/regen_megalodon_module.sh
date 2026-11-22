@@ -36,7 +36,7 @@ SHA=$(sha256sum "$MODULE" | cut -d' ' -f1)
 "$WORK/rulec_validate" "$WORK/MegalodonKernel.wire" "$SG/MegalodonKernel.dag" "$SG/mgk_module.c"
 # the instance's names
 cp -r "$ROOT/native/rule_runtime" "$ROOT/native/rule_components" "$ROOT/native/rule_module" "$STAGE/native/"
-cp "$ROOT/native/megalodon_module/mgm_instance.c" "$STAGE/native/megalodon_module/"
+cp "$ROOT/native/megalodon_module/mgm_instance.c" "$ROOT/native/megalodon_module/mgm_instance.h" "$STAGE/native/megalodon_module/"
 sh "$ROOT/tools/rulec/instance_names.sh" "$STAGE/native/megalodon_module/mgm_instance.c" "$SG/mgk_instance_names.h" mgk_ cetta_mgm_dispatch \
   -std=c11 -pthread -I"$ROOT/src" -I"$ROOT"
 cp "$SG/mgk_module.c" "$SG/mgk_module_ids.h" "$SG/mgk_instance_names.h" "$SG/MegalodonKernel.dag" "$SG/census.txt" "$GEN/"

@@ -76,6 +76,7 @@ static inline T *RC_MK1_unary(uint16_t c, T *m) {
     return RC_IMM(v + 1);
 }
 
+#define RC_CLOSED(e) (e)
 #ifdef RC_CHECK_NATIVE
 #define RC_BLOCK_INLINE
 #else
@@ -226,7 +227,7 @@ static RC_BLOCK_INLINE T *p8(T *a0, T *a1) {
     if (rc_check_native) {
         int tr_ = rc_trace_on; rc_trace_on = 0;
         rc_check_depth++;
-        T *s_ = p8_rules(a0, a1);
+        T *s_ = (p8_rules(a0, a1));
         rc_check_depth--;
         rc_trace_on = tr_;
         T *n_ = rc_bind_0(a0, a1);
@@ -246,7 +247,7 @@ l7: {
         if (rc_trace_on) tm_ = rc_trial_begin();
         T *v0 = a0;
         T *v1 = a1;
-        T *s_ = p8(v0, v1);
+        T *s_ = (p8(v0, v1));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 4); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* NAT-EQ-EQ */
@@ -281,7 +282,7 @@ static RC_BLOCK_INLINE T *p9(T *a0, T *a1) {
     if (rc_check_native) {
         int tr_ = rc_trace_on; rc_trace_on = 0;
         rc_check_depth++;
-        T *s_ = p9_rules(a0, a1);
+        T *s_ = (p9_rules(a0, a1));
         rc_check_depth--;
         rc_trace_on = tr_;
         T *n_ = rc_bind_1(a0, a1);
@@ -306,7 +307,7 @@ r8: { /* NAT-ADD-S */
         T *v0 = RC_KID_unary(a0, 0);
         T *v1 = a1;
         RC_RULE(8);
-        T *t0 = p10(v0, v1);
+        T *t0 = (p10(v0, v1));
         if (!t0) return (T *)0;
         T *v2 = t0;
         return RC_MK1_unary(1, v2);
@@ -320,7 +321,7 @@ static RC_BLOCK_INLINE T *p10(T *a0, T *a1) {
     if (rc_check_native) {
         int tr_ = rc_trace_on; rc_trace_on = 0;
         rc_check_depth++;
-        T *s_ = p10_rules(a0, a1);
+        T *s_ = (p10_rules(a0, a1));
         rc_check_depth--;
         rc_trace_on = tr_;
         T *n_ = rc_bind_2(a0, a1);
@@ -435,7 +436,7 @@ static RC_BLOCK_INLINE T *p17(T *a0, T *a1) {
     if (rc_check_native) {
         int tr_ = rc_trace_on; rc_trace_on = 0;
         rc_check_depth++;
-        T *s_ = p17_rules(a0, a1);
+        T *s_ = (p17_rules(a0, a1));
         rc_check_depth--;
         rc_trace_on = tr_;
         T *n_ = rc_bind_3(a0, a1);
@@ -459,7 +460,7 @@ l34: {
         if (rc_trace_on) tm_ = rc_trial_begin();
         T *v0 = RC_KID_intern(a0, 0);
         T *v2 = a1;
-        T *s_ = p17(v2, v0);
+        T *s_ = (p17(v2, v0));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 25); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* NAMES-HAS-HIT */
@@ -501,10 +502,10 @@ r32: { /* TP-SHIFT-ARR */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(32);
-        T *t0 = p26(v0, v1, v2);
+        T *t0 = (p26(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p26(v0, v1, v3);
+        T *t1 = (p26(v0, v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return RC_MK2_intern(24, v4, v5);
@@ -514,7 +515,7 @@ r33: { /* TP-SHIFT-ALL */
         T *v1 = a1;
         T *v2 = RC_KID_intern(a2, 0);
         RC_RULE(33);
-        T *t0 = p26(RC_MK1_unary(1, v0), v1, v2);
+        T *t0 = (p26(RC_MK1_unary(1, v0), v1, v2));
         if (!t0) return (T *)0;
         T *v3 = t0;
         return RC_MK1_intern(25, v3);
@@ -524,7 +525,7 @@ l36: {
         if (rc_trace_on) tm_ = rc_trial_begin();
         T *v0 = a0;
         T *v2 = RC_KID_intern(a2, 0);
-        T *s_ = p8(v2, v0);
+        T *s_ = (p8(v2, v0));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 27); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* TP-SHIFT-VAR-LT */
@@ -540,7 +541,7 @@ l36: {
         T *v2 = RC_KID_intern(a2, 0);
         T *t0 = s_; (void)t0;
         if (RC_TAG_symbolic(t0) != 5) goto c36_2;
-        T *t1 = p10(v1, v2);
+        T *t1 = (p10(v1, v2));
         if (!t1) goto c36_2;
         T *v3 = t1;
         if (rc_trace_on) rc_trial_end(tm_, 28);
@@ -553,7 +554,7 @@ l36: {
         T *v2 = RC_KID_intern(a2, 0);
         T *t0 = s_; (void)t0;
         if (RC_TAG_symbolic(t0) != 6) { if (rc_trace_on) rc_trial_end(tm_, 29); return rc_fail_target(26); }
-        T *t1 = p10(v1, v2);
+        T *t1 = (p10(v1, v2));
         if (!t1) { if (rc_trace_on) rc_trial_end(tm_, 29); return (T *)0; }
         T *v3 = t1;
         if (rc_trace_on) rc_trial_end(tm_, 29);
@@ -573,7 +574,7 @@ r34: { /* TP-DOWN-VAR-LT */
         T *v0 = a0;
         T *v1 = RC_KID_intern(a1, 0);
         RC_RULE(34);
-        T *t0 = p8(v1, v0);
+        T *t0 = (p8(v1, v0));
         if (!t0) return (T *)0;
         if (RC_TAG_symbolic(t0) != 4) return rc_fail_target(27);
         return a1;
@@ -591,10 +592,10 @@ r38: { /* TP-DOWN-ARR */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(38);
-        T *t0 = p27(v0, v1);
+        T *t0 = (p27(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p27(v0, v2);
+        T *t1 = (p27(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return RC_MK2_intern(24, v3, v4);
@@ -603,7 +604,7 @@ r39: { /* TP-DOWN-ALL */
         T *v0 = a0;
         T *v1 = RC_KID_intern(a1, 0);
         RC_RULE(39);
-        T *t0 = p27(RC_MK1_unary(1, v0), v1);
+        T *t0 = (p27(RC_MK1_unary(1, v0), v1));
         if (!t0) return (T *)0;
         T *v2 = t0;
         return RC_MK1_intern(25, v2);
@@ -615,7 +616,7 @@ l42: {
     { /* TP-DOWN-VAR-LT */
         T *v0 = a0;
         T *v1 = RC_KID_intern(a1, 0);
-        T *t0 = p8(v1, v0);
+        T *t0 = (p8(v1, v0));
         if (!t0) goto c42_1;
         if (RC_TAG_symbolic(t0) != 4) goto c42_1;
         if (rc_trace_on) rc_trial_end(tm_, 34);
@@ -626,7 +627,7 @@ l42: {
         if (rc_trace_on) rc_trace_len = ts_;
         T *v0 = a0;
         T *v1 = RC_KID_unary(RC_KID_intern(a1, 0), 0);
-        T *t0 = p8(RC_KID_intern(a1, 0), v0);
+        T *t0 = (p8(RC_KID_intern(a1, 0), v0));
         if (!t0) { if (rc_trace_on) rc_trial_end(tm_, 35); return (T *)0; }
         if (RC_TAG_symbolic(t0) != 6) { if (rc_trace_on) rc_trial_end(tm_, 35); return rc_fail_target(27); }
         if (rc_trace_on) rc_trial_end(tm_, 35);
@@ -656,10 +657,10 @@ r45: { /* TP-INST-ARR */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(45);
-        T *t0 = p28(v0, v1, v2);
+        T *t0 = (p28(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p28(v0, v1, v3);
+        T *t1 = (p28(v0, v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return RC_MK2_intern(24, v4, v5);
@@ -669,7 +670,7 @@ r46: { /* TP-INST-ALL */
         T *v1 = a1;
         T *v2 = RC_KID_intern(a2, 0);
         RC_RULE(46);
-        T *t0 = p28(RC_MK1_unary(1, v0), v1, v2);
+        T *t0 = (p28(RC_MK1_unary(1, v0), v1, v2));
         if (!t0) return (T *)0;
         T *v3 = t0;
         return RC_MK1_intern(25, v3);
@@ -681,7 +682,7 @@ l50: {
     { /* TP-INST-VAR-LT */
         T *v0 = a0;
         T *v2 = RC_KID_intern(a2, 0);
-        T *t0 = p8(v2, v0);
+        T *t0 = (p8(v2, v0));
         if (!t0) goto c50_1;
         if (RC_TAG_symbolic(t0) != 4) goto c50_1;
         if (rc_trace_on) rc_trial_end(tm_, 40);
@@ -693,10 +694,10 @@ l50: {
         T *v0 = a0;
         T *v1 = a1;
         T *v2 = RC_KID_intern(a2, 0);
-        T *t0 = p8(v2, v0);
+        T *t0 = (p8(v2, v0));
         if (!t0) goto c50_2;
         if (RC_TAG_symbolic(t0) != 5) goto c50_2;
-        T *t1 = p26(RC_NUL_unary(0), v0, v1);
+        T *t1 = (p26(RC_NUL_unary(0), v0, v1));
         if (!t1) goto c50_2;
         T *v3 = t1;
         if (rc_trace_on) rc_trial_end(tm_, 41);
@@ -707,7 +708,7 @@ l50: {
         if (rc_trace_on) rc_trace_len = ts_;
         T *v0 = a0;
         T *v2 = RC_KID_unary(RC_KID_intern(a2, 0), 0);
-        T *t0 = p8(RC_KID_intern(a2, 0), v0);
+        T *t0 = (p8(RC_KID_intern(a2, 0), v0));
         if (!t0) { if (rc_trace_on) rc_trial_end(tm_, 42); return (T *)0; }
         if (RC_TAG_symbolic(t0) != 6) { if (rc_trace_on) rc_trial_end(tm_, 42); return rc_fail_target(28); }
         if (rc_trace_on) rc_trial_end(tm_, 42);
@@ -720,7 +721,7 @@ l51: {
         if (rc_trace_on) tm_ = rc_trial_begin();
         T *v0 = a0;
         T *v2 = RC_KID_intern(a2, 0);
-        T *s_ = p8(v2, v0);
+        T *s_ = (p8(v2, v0));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 40); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* TP-INST-VAR-LT */
@@ -761,10 +762,10 @@ r52: { /* TP-PLAIN-ARR */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(52);
-        T *t0 = p29(v0, v1);
+        T *t0 = (p29(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p29(v0, v2);
+        T *t1 = (p29(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return p11(v3, v4);
@@ -778,7 +779,7 @@ l58: {
         if (rc_trace_on) tm_ = rc_trial_begin();
         T *v0 = a0;
         T *v1 = RC_KID_intern(a1, 0);
-        T *s_ = p8(v1, v0);
+        T *s_ = (p8(v1, v0));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 47); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* TP-PLAIN-VAR-LT */
@@ -862,10 +863,10 @@ r62: { /* TP-FREE-ARR */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(62);
-        T *t0 = p31(v0, v1);
+        T *t0 = (p31(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p31(v0, v2);
+        T *t1 = (p31(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return p12(v3, v4);
@@ -920,13 +921,13 @@ r69: { /* TP-EQ-HEADS */
         T *v0 = a0;
         T *v1 = a1;
         RC_RULE(69);
-        T *t0 = p32(v0);
+        T *t0 = (p32(v0));
         if (!t0) return (T *)0;
         T *v2 = t0;
-        T *t1 = p32(v1);
+        T *t1 = (p32(v1));
         if (!t1) return (T *)0;
         T *v3 = t1;
-        T *t2 = p9(v2, v3);
+        T *t2 = (p9(v2, v3));
         if (!t2) return (T *)0;
         if (RC_TAG_symbolic(t2) != 3) return rc_fail_target(33);
         return RC_NUL_symbolic(3);
@@ -953,10 +954,10 @@ r73: { /* TP-EQ-ARR */
         T *v2 = RC_KID_intern(a1, 0);
         T *v3 = RC_KID_intern(a1, 1);
         RC_RULE(73);
-        T *t0 = p33(v0, v2);
+        T *t0 = (p33(v0, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p33(v1, v3);
+        T *t1 = (p33(v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return p11(v4, v5);
@@ -976,7 +977,7 @@ static RC_BLOCK_INLINE T *p33(T *a0, T *a1) {
     if (rc_check_native) {
         int tr_ = rc_trace_on; rc_trace_on = 0;
         rc_check_depth++;
-        T *s_ = p33_rules(a0, a1);
+        T *s_ = (p33_rules(a0, a1));
         rc_check_depth--;
         rc_trace_on = tr_;
         T *n_ = rc_bind_4(a0, a1);
@@ -1017,7 +1018,7 @@ r77: { /* TPS-LEN-NIL */
 r78: { /* TPS-LEN-CONS */
         T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(78);
-        T *t0 = p37(v1);
+        T *t0 = (p37(v1));
         if (!t0) return (T *)0;
         T *v2 = t0;
         return RC_MK1_unary(1, v2);
@@ -1037,10 +1038,10 @@ r80: { /* TPS-SHIFT1-CONS */
         T *v0 = RC_KID_intern(a0, 0);
         T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(80);
-        T *t0 = p26(RC_NUL_unary(0), RC_MK1_unary(1, RC_NUL_unary(0)), v0);
+        T *t0 = (p26(RC_NUL_unary(0), RC_MK1_unary(1, RC_NUL_unary(0)), v0));
         if (!t0) return (T *)0;
         T *v2 = t0;
-        T *t1 = p38(v1);
+        T *t1 = (p38(v1));
         if (!t1) return (T *)0;
         T *v3 = t1;
         return RC_MK2_intern(35, v2, v3);
@@ -1066,10 +1067,10 @@ r86: { /* TM-SHIFT-APP */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(86);
-        T *t0 = p49(v0, v1, v2);
+        T *t0 = (p49(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p49(v0, v1, v3);
+        T *t1 = (p49(v0, v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return RC_MK2_intern(42, v4, v5);
@@ -1080,7 +1081,7 @@ r87: { /* TM-SHIFT-LAM */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(87);
-        T *t0 = p49(RC_MK1_unary(1, v0), v1, v3);
+        T *t0 = (p49(RC_MK1_unary(1, v0), v1, v3));
         if (!t0) return (T *)0;
         T *v4 = t0;
         return RC_MK2_intern(43, v2, v4);
@@ -1091,10 +1092,10 @@ r88: { /* TM-SHIFT-IMP */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(88);
-        T *t0 = p49(v0, v1, v2);
+        T *t0 = (p49(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p49(v0, v1, v3);
+        T *t1 = (p49(v0, v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return RC_MK2_intern(44, v4, v5);
@@ -1105,7 +1106,7 @@ r89: { /* TM-SHIFT-ALL */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(89);
-        T *t0 = p49(RC_MK1_unary(1, v0), v1, v3);
+        T *t0 = (p49(RC_MK1_unary(1, v0), v1, v3));
         if (!t0) return (T *)0;
         T *v4 = t0;
         return RC_MK2_intern(45, v2, v4);
@@ -1116,7 +1117,7 @@ r90: { /* TM-SHIFT-TAPP */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(90);
-        T *t0 = p49(v0, v1, v2);
+        T *t0 = (p49(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
         return RC_MK2_intern(46, v4, v3);
@@ -1126,7 +1127,7 @@ r91: { /* TM-SHIFT-TLAM */
         T *v1 = a1;
         T *v2 = RC_KID_intern(a2, 0);
         RC_RULE(91);
-        T *t0 = p49(v0, v1, v2);
+        T *t0 = (p49(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v3 = t0;
         return RC_MK1_intern(47, v3);
@@ -1136,7 +1137,7 @@ r92: { /* TM-SHIFT-TALL */
         T *v1 = a1;
         T *v2 = RC_KID_intern(a2, 0);
         RC_RULE(92);
-        T *t0 = p49(v0, v1, v2);
+        T *t0 = (p49(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v3 = t0;
         return RC_MK1_intern(48, v3);
@@ -1146,7 +1147,7 @@ l105: {
         if (rc_trace_on) tm_ = rc_trial_begin();
         T *v0 = a0;
         T *v2 = RC_KID_intern(a2, 0);
-        T *s_ = p8(v2, v0);
+        T *s_ = (p8(v2, v0));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 81); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* TM-SHIFT-DB-LT */
@@ -1162,7 +1163,7 @@ l105: {
         T *v2 = RC_KID_intern(a2, 0);
         T *t0 = s_; (void)t0;
         if (RC_TAG_symbolic(t0) != 5) goto c105_2;
-        T *t1 = p10(v1, v2);
+        T *t1 = (p10(v1, v2));
         if (!t1) goto c105_2;
         T *v3 = t1;
         if (rc_trace_on) rc_trial_end(tm_, 82);
@@ -1175,7 +1176,7 @@ l105: {
         T *v2 = RC_KID_intern(a2, 0);
         T *t0 = s_; (void)t0;
         if (RC_TAG_symbolic(t0) != 6) { if (rc_trace_on) rc_trial_end(tm_, 83); return rc_fail_target(49); }
-        T *t1 = p10(v1, v2);
+        T *t1 = (p10(v1, v2));
         if (!t1) { if (rc_trace_on) rc_trial_end(tm_, 83); return (T *)0; }
         T *v3 = t1;
         if (rc_trace_on) rc_trial_end(tm_, 83);
@@ -1195,7 +1196,7 @@ r93: { /* TM-DOWN-DB-LT */
         T *v0 = a0;
         T *v1 = RC_KID_intern(a1, 0);
         RC_RULE(93);
-        T *t0 = p8(v1, v0);
+        T *t0 = (p8(v1, v0));
         if (!t0) return (T *)0;
         if (RC_TAG_symbolic(t0) != 4) return rc_fail_target(50);
         return a1;
@@ -1213,10 +1214,10 @@ r97: { /* TM-DOWN-APP */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(97);
-        T *t0 = p50(v0, v1);
+        T *t0 = (p50(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p50(v0, v2);
+        T *t1 = (p50(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return RC_MK2_intern(42, v3, v4);
@@ -1226,7 +1227,7 @@ r98: { /* TM-DOWN-LAM */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(98);
-        T *t0 = p50(RC_MK1_unary(1, v0), v2);
+        T *t0 = (p50(RC_MK1_unary(1, v0), v2));
         if (!t0) return (T *)0;
         T *v3 = t0;
         return RC_MK2_intern(43, v1, v3);
@@ -1236,10 +1237,10 @@ r99: { /* TM-DOWN-IMP */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(99);
-        T *t0 = p50(v0, v1);
+        T *t0 = (p50(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p50(v0, v2);
+        T *t1 = (p50(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return RC_MK2_intern(44, v3, v4);
@@ -1249,7 +1250,7 @@ r100: { /* TM-DOWN-ALL */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(100);
-        T *t0 = p50(RC_MK1_unary(1, v0), v2);
+        T *t0 = (p50(RC_MK1_unary(1, v0), v2));
         if (!t0) return (T *)0;
         T *v3 = t0;
         return RC_MK2_intern(45, v1, v3);
@@ -1259,7 +1260,7 @@ r101: { /* TM-DOWN-TAPP */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(101);
-        T *t0 = p50(v0, v1);
+        T *t0 = (p50(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
         return RC_MK2_intern(46, v3, v2);
@@ -1268,7 +1269,7 @@ r102: { /* TM-DOWN-TLAM */
         T *v0 = a0;
         T *v1 = RC_KID_intern(a1, 0);
         RC_RULE(102);
-        T *t0 = p50(v0, v1);
+        T *t0 = (p50(v0, v1));
         if (!t0) return (T *)0;
         T *v2 = t0;
         return RC_MK1_intern(47, v2);
@@ -1277,7 +1278,7 @@ r103: { /* TM-DOWN-TALL */
         T *v0 = a0;
         T *v1 = RC_KID_intern(a1, 0);
         RC_RULE(103);
-        T *t0 = p50(v0, v1);
+        T *t0 = (p50(v0, v1));
         if (!t0) return (T *)0;
         T *v2 = t0;
         return RC_MK1_intern(48, v2);
@@ -1289,7 +1290,7 @@ l116: {
     { /* TM-DOWN-DB-LT */
         T *v0 = a0;
         T *v1 = RC_KID_intern(a1, 0);
-        T *t0 = p8(v1, v0);
+        T *t0 = (p8(v1, v0));
         if (!t0) goto c116_1;
         if (RC_TAG_symbolic(t0) != 4) goto c116_1;
         if (rc_trace_on) rc_trial_end(tm_, 93);
@@ -1300,7 +1301,7 @@ l116: {
         if (rc_trace_on) rc_trace_len = ts_;
         T *v0 = a0;
         T *v1 = RC_KID_unary(RC_KID_intern(a1, 0), 0);
-        T *t0 = p8(RC_KID_intern(a1, 0), v0);
+        T *t0 = (p8(RC_KID_intern(a1, 0), v0));
         if (!t0) { if (rc_trace_on) rc_trial_end(tm_, 94); return (T *)0; }
         if (RC_TAG_symbolic(t0) != 6) { if (rc_trace_on) rc_trial_end(tm_, 94); return rc_fail_target(50); }
         if (rc_trace_on) rc_trial_end(tm_, 94);
@@ -1333,10 +1334,10 @@ r119: { /* TM-TSHIFT-APP */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(119);
-        T *t0 = p51(v0, v1, v2);
+        T *t0 = (p51(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p51(v0, v1, v3);
+        T *t1 = (p51(v0, v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return RC_MK2_intern(42, v4, v5);
@@ -1347,10 +1348,10 @@ r120: { /* TM-TSHIFT-LAM */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(120);
-        T *t0 = p26(v0, v1, v2);
+        T *t0 = (p26(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p51(v0, v1, v3);
+        T *t1 = (p51(v0, v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return RC_MK2_intern(43, v4, v5);
@@ -1361,10 +1362,10 @@ r121: { /* TM-TSHIFT-IMP */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(121);
-        T *t0 = p51(v0, v1, v2);
+        T *t0 = (p51(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p51(v0, v1, v3);
+        T *t1 = (p51(v0, v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return RC_MK2_intern(44, v4, v5);
@@ -1375,10 +1376,10 @@ r122: { /* TM-TSHIFT-ALL */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(122);
-        T *t0 = p26(v0, v1, v2);
+        T *t0 = (p26(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p51(v0, v1, v3);
+        T *t1 = (p51(v0, v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return RC_MK2_intern(45, v4, v5);
@@ -1389,10 +1390,10 @@ r123: { /* TM-TSHIFT-TAPP */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(123);
-        T *t0 = p51(v0, v1, v2);
+        T *t0 = (p51(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p26(v0, v1, v3);
+        T *t1 = (p26(v0, v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return RC_MK2_intern(46, v4, v5);
@@ -1402,7 +1403,7 @@ r124: { /* TM-TSHIFT-TLAM */
         T *v1 = a1;
         T *v2 = RC_KID_intern(a2, 0);
         RC_RULE(124);
-        T *t0 = p51(RC_MK1_unary(1, v0), v1, v2);
+        T *t0 = (p51(RC_MK1_unary(1, v0), v1, v2));
         if (!t0) return (T *)0;
         T *v3 = t0;
         return RC_MK1_intern(47, v3);
@@ -1412,7 +1413,7 @@ r125: { /* TM-TSHIFT-TALL */
         T *v1 = a1;
         T *v2 = RC_KID_intern(a2, 0);
         RC_RULE(125);
-        T *t0 = p51(RC_MK1_unary(1, v0), v1, v2);
+        T *t0 = (p51(RC_MK1_unary(1, v0), v1, v2));
         if (!t0) return (T *)0;
         T *v3 = t0;
         return RC_MK1_intern(48, v3);
@@ -1441,10 +1442,10 @@ r129: { /* TM-TDOWN-APP */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(129);
-        T *t0 = p52(v0, v1);
+        T *t0 = (p52(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p52(v0, v2);
+        T *t1 = (p52(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return RC_MK2_intern(42, v3, v4);
@@ -1454,10 +1455,10 @@ r130: { /* TM-TDOWN-LAM */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(130);
-        T *t0 = p27(v0, v1);
+        T *t0 = (p27(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p52(v0, v2);
+        T *t1 = (p52(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return RC_MK2_intern(43, v3, v4);
@@ -1467,10 +1468,10 @@ r131: { /* TM-TDOWN-IMP */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(131);
-        T *t0 = p52(v0, v1);
+        T *t0 = (p52(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p52(v0, v2);
+        T *t1 = (p52(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return RC_MK2_intern(44, v3, v4);
@@ -1480,10 +1481,10 @@ r132: { /* TM-TDOWN-ALL */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(132);
-        T *t0 = p27(v0, v1);
+        T *t0 = (p27(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p52(v0, v2);
+        T *t1 = (p52(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return RC_MK2_intern(45, v3, v4);
@@ -1493,10 +1494,10 @@ r133: { /* TM-TDOWN-TAPP */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(133);
-        T *t0 = p52(v0, v1);
+        T *t0 = (p52(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p27(v0, v2);
+        T *t1 = (p27(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return RC_MK2_intern(46, v3, v4);
@@ -1505,7 +1506,7 @@ r134: { /* TM-TDOWN-TLAM */
         T *v0 = a0;
         T *v1 = RC_KID_intern(a1, 0);
         RC_RULE(134);
-        T *t0 = p52(RC_MK1_unary(1, v0), v1);
+        T *t0 = (p52(RC_MK1_unary(1, v0), v1));
         if (!t0) return (T *)0;
         T *v2 = t0;
         return RC_MK1_intern(47, v2);
@@ -1514,7 +1515,7 @@ r135: { /* TM-TDOWN-TALL */
         T *v0 = a0;
         T *v1 = RC_KID_intern(a1, 0);
         RC_RULE(135);
-        T *t0 = p52(RC_MK1_unary(1, v0), v1);
+        T *t0 = (p52(RC_MK1_unary(1, v0), v1));
         if (!t0) return (T *)0;
         T *v2 = t0;
         return RC_MK1_intern(48, v2);
@@ -1541,10 +1542,10 @@ r109: { /* TM-INST-APP */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(109);
-        T *t0 = p53(v0, v1, v2);
+        T *t0 = (p53(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p53(v0, v1, v3);
+        T *t1 = (p53(v0, v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return RC_MK2_intern(42, v4, v5);
@@ -1555,7 +1556,7 @@ r110: { /* TM-INST-LAM */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(110);
-        T *t0 = p53(RC_MK1_unary(1, v0), v1, v3);
+        T *t0 = (p53(RC_MK1_unary(1, v0), v1, v3));
         if (!t0) return (T *)0;
         T *v4 = t0;
         return RC_MK2_intern(43, v2, v4);
@@ -1566,10 +1567,10 @@ r111: { /* TM-INST-IMP */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(111);
-        T *t0 = p53(v0, v1, v2);
+        T *t0 = (p53(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p53(v0, v1, v3);
+        T *t1 = (p53(v0, v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return RC_MK2_intern(44, v4, v5);
@@ -1580,7 +1581,7 @@ r112: { /* TM-INST-ALL */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(112);
-        T *t0 = p53(RC_MK1_unary(1, v0), v1, v3);
+        T *t0 = (p53(RC_MK1_unary(1, v0), v1, v3));
         if (!t0) return (T *)0;
         T *v4 = t0;
         return RC_MK2_intern(45, v2, v4);
@@ -1591,7 +1592,7 @@ r113: { /* TM-INST-TAPP */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(113);
-        T *t0 = p53(v0, v1, v2);
+        T *t0 = (p53(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
         return RC_MK2_intern(46, v4, v3);
@@ -1601,7 +1602,7 @@ r114: { /* TM-INST-TLAM */
         T *v1 = a1;
         T *v2 = RC_KID_intern(a2, 0);
         RC_RULE(114);
-        T *t0 = p53(v0, v1, v2);
+        T *t0 = (p53(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v3 = t0;
         return RC_MK1_intern(47, v3);
@@ -1611,7 +1612,7 @@ r115: { /* TM-INST-TALL */
         T *v1 = a1;
         T *v2 = RC_KID_intern(a2, 0);
         RC_RULE(115);
-        T *t0 = p53(v0, v1, v2);
+        T *t0 = (p53(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v3 = t0;
         return RC_MK1_intern(48, v3);
@@ -1623,7 +1624,7 @@ l151: {
     { /* TM-INST-DB-LT */
         T *v0 = a0;
         T *v2 = RC_KID_intern(a2, 0);
-        T *t0 = p8(v2, v0);
+        T *t0 = (p8(v2, v0));
         if (!t0) goto c151_1;
         if (RC_TAG_symbolic(t0) != 4) goto c151_1;
         if (rc_trace_on) rc_trial_end(tm_, 104);
@@ -1635,10 +1636,10 @@ l151: {
         T *v0 = a0;
         T *v1 = a1;
         T *v2 = RC_KID_intern(a2, 0);
-        T *t0 = p8(v2, v0);
+        T *t0 = (p8(v2, v0));
         if (!t0) goto c151_2;
         if (RC_TAG_symbolic(t0) != 5) goto c151_2;
-        T *t1 = p49(RC_NUL_unary(0), v0, v1);
+        T *t1 = (p49(RC_NUL_unary(0), v0, v1));
         if (!t1) goto c151_2;
         T *v3 = t1;
         if (rc_trace_on) rc_trial_end(tm_, 105);
@@ -1649,7 +1650,7 @@ l151: {
         if (rc_trace_on) rc_trace_len = ts_;
         T *v0 = a0;
         T *v2 = RC_KID_unary(RC_KID_intern(a2, 0), 0);
-        T *t0 = p8(RC_KID_intern(a2, 0), v0);
+        T *t0 = (p8(RC_KID_intern(a2, 0), v0));
         if (!t0) { if (rc_trace_on) rc_trial_end(tm_, 106); return (T *)0; }
         if (RC_TAG_symbolic(t0) != 6) { if (rc_trace_on) rc_trial_end(tm_, 106); return rc_fail_target(53); }
         if (rc_trace_on) rc_trial_end(tm_, 106);
@@ -1662,7 +1663,7 @@ l152: {
         if (rc_trace_on) tm_ = rc_trial_begin();
         T *v0 = a0;
         T *v2 = RC_KID_intern(a2, 0);
-        T *s_ = p8(v2, v0);
+        T *s_ = (p8(v2, v0));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 104); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* TM-INST-DB-LT */
@@ -1693,14 +1694,14 @@ static T *p53(T *a0, T *a1, T *a2) {
     else if (rc_memo_get(53, 3, k_, &r_)) {
         p53_front[f_].gen = rc_memo_gen; p53_front[f_].k[0] = a0; p53_front[f_].k[1] = a1; p53_front[f_].k[2] = a2; p53_front[f_].r = r_;
     } else {
-        r_ = p53_rules(a0, a1, a2);
+        r_ = (p53_rules(a0, a1, a2));
         rc_memo_put(53, 3, k_, r_);
         p53_front[f_].gen = rc_memo_gen; p53_front[f_].k[0] = a0; p53_front[f_].k[1] = a1; p53_front[f_].k[2] = a2; p53_front[f_].r = r_;
         return r_;
     }
     if (rc_trace_on) { rc_trace_push((uint16_t)(RC_EV_MEMO + 53)); if (!r_) rc_trace_push(RC_EV_NO_RULE); }
 #ifdef RC_CHECK_NATIVE
-    if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *s_ = p53_rules(a0, a1, a2); rc_check_depth--; rc_trace_on = tr_; rc_memo_checked(5, r_, s_); }
+    if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *s_ = (p53_rules(a0, a1, a2)); rc_check_depth--; rc_trace_on = tr_; rc_memo_checked(5, r_, s_); }
 #endif
     return r_;
 }
@@ -1727,10 +1728,10 @@ r139: { /* TM-TINST-APP */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(139);
-        T *t0 = p54(v0, v1, v2);
+        T *t0 = (p54(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p54(v0, v1, v3);
+        T *t1 = (p54(v0, v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return RC_MK2_intern(42, v4, v5);
@@ -1741,10 +1742,10 @@ r140: { /* TM-TINST-LAM */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(140);
-        T *t0 = p28(v0, v1, v2);
+        T *t0 = (p28(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p54(v0, v1, v3);
+        T *t1 = (p54(v0, v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return RC_MK2_intern(43, v4, v5);
@@ -1755,10 +1756,10 @@ r141: { /* TM-TINST-IMP */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(141);
-        T *t0 = p54(v0, v1, v2);
+        T *t0 = (p54(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p54(v0, v1, v3);
+        T *t1 = (p54(v0, v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return RC_MK2_intern(44, v4, v5);
@@ -1769,10 +1770,10 @@ r142: { /* TM-TINST-ALL */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(142);
-        T *t0 = p28(v0, v1, v2);
+        T *t0 = (p28(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p54(v0, v1, v3);
+        T *t1 = (p54(v0, v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return RC_MK2_intern(45, v4, v5);
@@ -1783,10 +1784,10 @@ r143: { /* TM-TINST-TAPP */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(143);
-        T *t0 = p54(v0, v1, v2);
+        T *t0 = (p54(v0, v1, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p28(v0, v1, v3);
+        T *t1 = (p28(v0, v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return RC_MK2_intern(46, v4, v5);
@@ -1796,7 +1797,7 @@ r144: { /* TM-TINST-TLAM */
         T *v1 = a1;
         T *v2 = RC_KID_intern(a2, 0);
         RC_RULE(144);
-        T *t0 = p54(RC_MK1_unary(1, v0), v1, v2);
+        T *t0 = (p54(RC_MK1_unary(1, v0), v1, v2));
         if (!t0) return (T *)0;
         T *v3 = t0;
         return RC_MK1_intern(47, v3);
@@ -1806,7 +1807,7 @@ r145: { /* TM-TINST-TALL */
         T *v1 = a1;
         T *v2 = RC_KID_intern(a2, 0);
         RC_RULE(145);
-        T *t0 = p54(RC_MK1_unary(1, v0), v1, v2);
+        T *t0 = (p54(RC_MK1_unary(1, v0), v1, v2));
         if (!t0) return (T *)0;
         T *v3 = t0;
         return RC_MK1_intern(48, v3);
@@ -1837,10 +1838,10 @@ r149: { /* TM-FREE-APP */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(149);
-        T *t0 = p55(v0, v1);
+        T *t0 = (p55(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p55(v0, v2);
+        T *t1 = (p55(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return p12(v3, v4);
@@ -1856,10 +1857,10 @@ r151: { /* TM-FREE-IMP */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(151);
-        T *t0 = p55(v0, v1);
+        T *t0 = (p55(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p55(v0, v2);
+        T *t1 = (p55(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return p12(v3, v4);
@@ -1912,10 +1913,10 @@ r159: { /* TM-TFREE-APP */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(159);
-        T *t0 = p56(v0, v1);
+        T *t0 = (p56(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p56(v0, v2);
+        T *t1 = (p56(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return p12(v3, v4);
@@ -1925,10 +1926,10 @@ r160: { /* TM-TFREE-LAM */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(160);
-        T *t0 = p31(v0, v1);
+        T *t0 = (p31(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p56(v0, v2);
+        T *t1 = (p56(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return p12(v3, v4);
@@ -1938,10 +1939,10 @@ r161: { /* TM-TFREE-IMP */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(161);
-        T *t0 = p56(v0, v1);
+        T *t0 = (p56(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p56(v0, v2);
+        T *t1 = (p56(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return p12(v3, v4);
@@ -1951,10 +1952,10 @@ r162: { /* TM-TFREE-ALL */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(162);
-        T *t0 = p31(v0, v1);
+        T *t0 = (p31(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p56(v0, v2);
+        T *t1 = (p56(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return p12(v3, v4);
@@ -1964,10 +1965,10 @@ r163: { /* TM-TFREE-TAPP */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(163);
-        T *t0 = p56(v0, v1);
+        T *t0 = (p56(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p31(v0, v2);
+        T *t1 = (p31(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return p12(v3, v4);
@@ -2004,10 +2005,10 @@ r171: { /* TM-CLOSED-APP */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(171);
-        T *t0 = p57(v0, v1);
+        T *t0 = (p57(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p57(v0, v2);
+        T *t1 = (p57(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return p11(v3, v4);
@@ -2023,10 +2024,10 @@ r173: { /* TM-CLOSED-IMP */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(173);
-        T *t0 = p57(v0, v1);
+        T *t0 = (p57(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p57(v0, v2);
+        T *t1 = (p57(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return p11(v3, v4);
@@ -2060,7 +2061,7 @@ l197: {
         if (rc_trace_on) tm_ = rc_trial_begin();
         T *v0 = a0;
         T *v1 = RC_KID_intern(a1, 0);
-        T *s_ = p8(v1, v0);
+        T *s_ = (p8(v1, v0));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 166); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* TM-CLOSED-DB-LT */
@@ -2110,10 +2111,10 @@ r181: { /* TM-PROT-APP */
         T *v0 = RC_KID_intern(a0, 0);
         T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(181);
-        T *t0 = p58(v0);
+        T *t0 = (p58(v0));
         if (!t0) return (T *)0;
         T *v2 = t0;
-        T *t1 = p58(v1);
+        T *t1 = (p58(v1));
         if (!t1) return (T *)0;
         T *v3 = t1;
         return p11(v2, v3);
@@ -2127,10 +2128,10 @@ r183: { /* TM-PROT-IMP */
         T *v0 = RC_KID_intern(a0, 0);
         T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(183);
-        T *t0 = p58(v0);
+        T *t0 = (p58(v0));
         if (!t0) return (T *)0;
         T *v2 = t0;
-        T *t1 = p58(v1);
+        T *t1 = (p58(v1));
         if (!t1) return (T *)0;
         T *v3 = t1;
         return p11(v2, v3);
@@ -2143,10 +2144,10 @@ r184: { /* TM-PROT-ALL */
 r185: { /* TM-PROT-TAPP */
         T *v0 = RC_KID_intern(a0, 0);
         RC_RULE(185);
-        T *t0 = p57(RC_NUL_unary(0), v0);
+        T *t0 = (p57(RC_NUL_unary(0), v0));
         if (!t0) return (T *)0;
         T *v2 = t0;
-        T *t1 = p58(v0);
+        T *t1 = (p58(v0));
         if (!t1) return (T *)0;
         T *v3 = t1;
         return p11(v2, v3);
@@ -2154,10 +2155,10 @@ r185: { /* TM-PROT-TAPP */
 r186: { /* TM-PROT-TLAM */
         T *v0 = RC_KID_intern(a0, 0);
         RC_RULE(186);
-        T *t0 = p57(RC_NUL_unary(0), v0);
+        T *t0 = (p57(RC_NUL_unary(0), v0));
         if (!t0) return (T *)0;
         T *v1 = t0;
-        T *t1 = p58(v0);
+        T *t1 = (p58(v0));
         if (!t1) return (T *)0;
         T *v2 = t1;
         return p11(v1, v2);
@@ -2165,10 +2166,10 @@ r186: { /* TM-PROT-TLAM */
 r187: { /* TM-PROT-TALL */
         T *v0 = RC_KID_intern(a0, 0);
         RC_RULE(187);
-        T *t0 = p57(RC_NUL_unary(0), v0);
+        T *t0 = (p57(RC_NUL_unary(0), v0));
         if (!t0) return (T *)0;
         T *v1 = t0;
-        T *t1 = p58(v0);
+        T *t1 = (p58(v0));
         if (!t1) return (T *)0;
         T *v2 = t1;
         return p11(v1, v2);
@@ -2181,11 +2182,11 @@ static T *p58(T *a0) {
         if (r_ == RC_SLOT_NONE) r_ = NULL;
         if (rc_trace_on) { rc_trace_push((uint16_t)(RC_EV_MEMO + 58)); if (!r_) rc_trace_push(RC_EV_NO_RULE); }
 #ifdef RC_CHECK_NATIVE
-        if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *t_ = p58_rules(a0); rc_check_depth--; rc_trace_on = tr_; rc_memo_checked(6, r_, t_); }
+        if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *t_ = (p58_rules(a0)); rc_check_depth--; rc_trace_on = tr_; rc_memo_checked(6, r_, t_); }
 #endif
         return r_;
     }
-    r_ = p58_rules(a0);
+    r_ = (p58_rules(a0));
     *rc_intern_slot(a0, 1) = r_ ? r_ : RC_SLOT_NONE;
     return r_;
 }
@@ -2213,10 +2214,10 @@ r191: { /* TM-MENTIONS-APP */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(191);
-        T *t0 = p59(v0, v1);
+        T *t0 = (p59(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p59(v0, v2);
+        T *t1 = (p59(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return p12(v3, v4);
@@ -2232,10 +2233,10 @@ r193: { /* TM-MENTIONS-IMP */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(193);
-        T *t0 = p59(v0, v1);
+        T *t0 = (p59(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p59(v0, v2);
+        T *t1 = (p59(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return p12(v3, v4);
@@ -2333,13 +2334,13 @@ r208: { /* TM-EQ-HEADS */
         T *v0 = a0;
         T *v1 = a1;
         RC_RULE(208);
-        T *t0 = p60(v0);
+        T *t0 = (p60(v0));
         if (!t0) return (T *)0;
         T *v2 = t0;
-        T *t1 = p60(v1);
+        T *t1 = (p60(v1));
         if (!t1) return (T *)0;
         T *v3 = t1;
-        T *t2 = p9(v2, v3);
+        T *t2 = (p9(v2, v3));
         if (!t2) return (T *)0;
         if (RC_TAG_symbolic(t2) != 3) return rc_fail_target(61);
         return RC_NUL_symbolic(3);
@@ -2368,10 +2369,10 @@ r212: { /* TM-EQ-APP */
         T *v2 = RC_KID_intern(a1, 0);
         T *v3 = RC_KID_intern(a1, 1);
         RC_RULE(212);
-        T *t0 = p61(v0, v2);
+        T *t0 = (p61(v0, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p61(v1, v3);
+        T *t1 = (p61(v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return p11(v4, v5);
@@ -2382,10 +2383,10 @@ r213: { /* TM-EQ-LAM */
         T *v2 = RC_KID_intern(a1, 0);
         T *v3 = RC_KID_intern(a1, 1);
         RC_RULE(213);
-        T *t0 = p33(v0, v2);
+        T *t0 = (p33(v0, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p61(v1, v3);
+        T *t1 = (p61(v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return p11(v4, v5);
@@ -2396,10 +2397,10 @@ r214: { /* TM-EQ-IMP */
         T *v2 = RC_KID_intern(a1, 0);
         T *v3 = RC_KID_intern(a1, 1);
         RC_RULE(214);
-        T *t0 = p61(v0, v2);
+        T *t0 = (p61(v0, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p61(v1, v3);
+        T *t1 = (p61(v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return p11(v4, v5);
@@ -2410,10 +2411,10 @@ r215: { /* TM-EQ-ALL */
         T *v2 = RC_KID_intern(a1, 0);
         T *v3 = RC_KID_intern(a1, 1);
         RC_RULE(215);
-        T *t0 = p33(v0, v2);
+        T *t0 = (p33(v0, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p61(v1, v3);
+        T *t1 = (p61(v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return p11(v4, v5);
@@ -2424,10 +2425,10 @@ r216: { /* TM-EQ-TAPP */
         T *v2 = RC_KID_intern(a1, 0);
         T *v3 = RC_KID_intern(a1, 1);
         RC_RULE(216);
-        T *t0 = p61(v0, v2);
+        T *t0 = (p61(v0, v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p33(v1, v3);
+        T *t1 = (p33(v1, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return p11(v4, v5);
@@ -2453,7 +2454,7 @@ static RC_BLOCK_INLINE T *p61(T *a0, T *a1) {
     if (rc_check_native) {
         int tr_ = rc_trace_on; rc_trace_on = 0;
         rc_check_depth++;
-        T *s_ = p61_rules(a0, a1);
+        T *s_ = (p61_rules(a0, a1));
         rc_check_depth--;
         rc_trace_on = tr_;
         T *n_ = rc_bind_5(a0, a1);
@@ -2484,10 +2485,10 @@ r222: { /* NF-APP */
         T *v0 = RC_KID_intern(a0, 0);
         T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(222);
-        T *t0 = p62(v0);
+        T *t0 = (p62(v0));
         if (!t0) return (T *)0;
         T *v2 = t0;
-        T *t1 = p62(v1);
+        T *t1 = (p62(v1));
         if (!t1) return (T *)0;
         T *v3 = t1;
         RC_TAIL return p63(v2, v3);
@@ -2496,7 +2497,7 @@ r223: { /* NF-LAM */
         T *v0 = RC_KID_intern(a0, 0);
         T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(223);
-        T *t0 = p62(v1);
+        T *t0 = (p62(v1));
         if (!t0) return (T *)0;
         T *v2 = t0;
         return p64(v0, v2);
@@ -2505,10 +2506,10 @@ r224: { /* NF-IMP */
         T *v0 = RC_KID_intern(a0, 0);
         T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(224);
-        T *t0 = p62(v0);
+        T *t0 = (p62(v0));
         if (!t0) return (T *)0;
         T *v2 = t0;
-        T *t1 = p62(v1);
+        T *t1 = (p62(v1));
         if (!t1) return (T *)0;
         T *v3 = t1;
         return RC_MK2_intern(44, v2, v3);
@@ -2517,7 +2518,7 @@ r225: { /* NF-ALL */
         T *v0 = RC_KID_intern(a0, 0);
         T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(225);
-        T *t0 = p62(v1);
+        T *t0 = (p62(v1));
         if (!t0) return (T *)0;
         T *v2 = t0;
         return RC_MK2_intern(45, v0, v2);
@@ -2526,7 +2527,7 @@ r226: { /* NF-TAPP */
         T *v0 = RC_KID_intern(a0, 0);
         T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(226);
-        T *t0 = p62(v0);
+        T *t0 = (p62(v0));
         if (!t0) return (T *)0;
         T *v2 = t0;
         RC_TAIL return p66(v2, v1);
@@ -2534,7 +2535,7 @@ r226: { /* NF-TAPP */
 r227: { /* NF-TLAM */
         T *v0 = RC_KID_intern(a0, 0);
         RC_RULE(227);
-        T *t0 = p62(v0);
+        T *t0 = (p62(v0));
         if (!t0) return (T *)0;
         T *v1 = t0;
         return p67(v1);
@@ -2542,7 +2543,7 @@ r227: { /* NF-TLAM */
 r228: { /* NF-TALL */
         T *v0 = RC_KID_intern(a0, 0);
         RC_RULE(228);
-        T *t0 = p62(v0);
+        T *t0 = (p62(v0));
         if (!t0) return (T *)0;
         T *v1 = t0;
         return RC_MK1_intern(48, v1);
@@ -2555,11 +2556,11 @@ static T *p62(T *a0) {
         if (r_ == RC_SLOT_NONE) r_ = NULL;
         if (rc_trace_on) { rc_trace_push((uint16_t)(RC_EV_MEMO + 62)); if (!r_) rc_trace_push(RC_EV_NO_RULE); }
 #ifdef RC_CHECK_NATIVE
-        if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *t_ = p62_rules(a0); rc_check_depth--; rc_trace_on = tr_; rc_memo_checked(0, r_, t_); }
+        if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *t_ = (p62_rules(a0)); rc_check_depth--; rc_trace_on = tr_; rc_memo_checked(0, r_, t_); }
 #endif
         return r_;
     }
-    r_ = p62_rules(a0);
+    r_ = (p62_rules(a0));
     *rc_intern_slot(a0, 0) = r_ ? r_ : RC_SLOT_NONE;
     return r_;
 }
@@ -2572,7 +2573,7 @@ r229: { /* BETA */
         T *v1 = RC_KID_intern(a0, 1);
         T *v2 = a1;
         RC_RULE(229);
-        T *t0 = p53(RC_NUL_unary(0), v2, v1);
+        T *t0 = (p53(RC_NUL_unary(0), v2, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
         RC_TAIL return p62(v3);
@@ -2753,14 +2754,14 @@ l296: {
         size_t tm_ = 0, ts_ = 0; (void)ts_;
         if (rc_trace_on) tm_ = rc_trial_begin();
         T *v1 = a1;
-        T *s_ = p55(RC_NUL_unary(0), v1);
+        T *s_ = (p55(RC_NUL_unary(0), v1));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 249); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* ETA */
         T *v1 = a1;
         T *t0 = s_; (void)t0;
         if (RC_TAG_symbolic(t0) != 3) goto c296_1;
-        T *t1 = p50(RC_NUL_unary(0), v1);
+        T *t1 = (p50(RC_NUL_unary(0), v1));
         if (!t1) goto c296_1;
         T *v2 = t1;
         if (rc_trace_on) rc_trial_end(tm_, 249);
@@ -2789,7 +2790,7 @@ r261: { /* TBETA */
         T *v0 = RC_KID_intern(a0, 0);
         T *v1 = a1;
         RC_RULE(261);
-        T *t0 = p54(RC_NUL_unary(0), v1, v0);
+        T *t0 = (p54(RC_NUL_unary(0), v1, v0));
         if (!t0) return (T *)0;
         T *v2 = t0;
         RC_TAIL return p62(v2);
@@ -2925,14 +2926,14 @@ l331: {
         size_t tm_ = 0, ts_ = 0; (void)ts_;
         if (rc_trace_on) tm_ = rc_trial_begin();
         T *v0 = a0;
-        T *s_ = p56(RC_NUL_unary(0), v0);
+        T *s_ = (p56(RC_NUL_unary(0), v0));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 281); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* TETA */
         T *v0 = a0;
         T *t0 = s_; (void)t0;
         if (RC_TAG_symbolic(t0) != 3) goto c331_1;
-        T *t1 = p52(RC_NUL_unary(0), v0);
+        T *t1 = (p52(RC_NUL_unary(0), v0));
         if (!t1) goto c331_1;
         T *v1 = t1;
         if (rc_trace_on) rc_trial_end(tm_, 281);
@@ -2964,7 +2965,7 @@ r289: { /* DELTA-NAMED */
         T *v0 = a0;
         T *v1 = RC_KID_intern(a1, 0);
         RC_RULE(289);
-        T *t0 = p127(v0, v1);
+        T *t0 = (p127(v0, v1));
         if (!t0) return (T *)0;
         T *v2 = t0;
         RC_TAIL return p70(v0, v1, v2);
@@ -2978,10 +2979,10 @@ r294: { /* DELTA-APP */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(294);
-        T *t0 = p69(v0, v1);
+        T *t0 = (p69(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p69(v0, v2);
+        T *t1 = (p69(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return RC_MK2_intern(42, v3, v4);
@@ -2991,7 +2992,7 @@ r295: { /* DELTA-LAM */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(295);
-        T *t0 = p69(v0, v2);
+        T *t0 = (p69(v0, v2));
         if (!t0) return (T *)0;
         T *v3 = t0;
         return RC_MK2_intern(43, v1, v3);
@@ -3001,10 +3002,10 @@ r296: { /* DELTA-IMP */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(296);
-        T *t0 = p69(v0, v1);
+        T *t0 = (p69(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p69(v0, v2);
+        T *t1 = (p69(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return RC_MK2_intern(44, v3, v4);
@@ -3014,7 +3015,7 @@ r297: { /* DELTA-ALL */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(297);
-        T *t0 = p69(v0, v2);
+        T *t0 = (p69(v0, v2));
         if (!t0) return (T *)0;
         T *v3 = t0;
         return RC_MK2_intern(45, v1, v3);
@@ -3024,7 +3025,7 @@ r298: { /* DELTA-TAPP */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(298);
-        T *t0 = p69(v0, v1);
+        T *t0 = (p69(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
         return RC_MK2_intern(46, v3, v2);
@@ -3033,7 +3034,7 @@ r299: { /* DELTA-TLAM */
         T *v0 = a0;
         T *v1 = RC_KID_intern(a1, 0);
         RC_RULE(299);
-        T *t0 = p69(v0, v1);
+        T *t0 = (p69(v0, v1));
         if (!t0) return (T *)0;
         T *v2 = t0;
         return RC_MK1_intern(47, v2);
@@ -3042,7 +3043,7 @@ r300: { /* DELTA-TALL */
         T *v0 = a0;
         T *v1 = RC_KID_intern(a1, 0);
         RC_RULE(300);
-        T *t0 = p69(v0, v1);
+        T *t0 = (p69(v0, v1));
         if (!t0) return (T *)0;
         T *v2 = t0;
         return RC_MK1_intern(48, v2);
@@ -3057,14 +3058,14 @@ static T *p69(T *a0, T *a1) {
     else if (rc_memo_get(69, 2, k_, &r_)) {
         p69_front[f_].gen = rc_memo_gen; p69_front[f_].k[0] = a0; p69_front[f_].k[1] = a1; p69_front[f_].r = r_;
     } else {
-        r_ = p69_rules(a0, a1);
+        r_ = (p69_rules(a0, a1));
         rc_memo_put(69, 2, k_, r_);
         p69_front[f_].gen = rc_memo_gen; p69_front[f_].k[0] = a0; p69_front[f_].k[1] = a1; p69_front[f_].r = r_;
         return r_;
     }
     if (rc_trace_on) { rc_trace_push((uint16_t)(RC_EV_MEMO + 69)); if (!r_) rc_trace_push(RC_EV_NO_RULE); }
 #ifdef RC_CHECK_NATIVE
-    if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *s_ = p69_rules(a0, a1); rc_check_depth--; rc_trace_on = tr_; rc_memo_checked(1, r_, s_); }
+    if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *s_ = (p69_rules(a0, a1)); rc_check_depth--; rc_trace_on = tr_; rc_memo_checked(1, r_, s_); }
 #endif
     return r_;
 }
@@ -3099,7 +3100,7 @@ r301: { /* NORM */
         T *v0 = a0;
         T *v1 = a1;
         RC_RULE(301);
-        T *t0 = p69(v0, v1);
+        T *t0 = (p69(v0, v1));
         if (!t0) return (T *)0;
         T *v2 = t0;
         return p62(v2);
@@ -3113,7 +3114,7 @@ r302: { /* NORMALIZE */
         T *v0 = a0;
         T *v1 = a1;
         RC_RULE(302);
-        T *t0 = p58(v1);
+        T *t0 = (p58(v1));
         if (!t0) return (T *)0;
         if (RC_TAG_symbolic(t0) != 2) return rc_fail_target(72);
         return p71(v0, v1);
@@ -3134,7 +3135,7 @@ r304: { /* INFER-PRIM */
         T *v0 = a0;
         T *v3 = RC_KID_intern(a3, 0);
         RC_RULE(304);
-        T *t0 = p126(v0, v3);
+        T *t0 = (p126(v0, v3));
         if (!t0) return (T *)0;
         if (RC_TAG_intern(t0) != 102) return rc_fail_target(73);
         T *m0 = RC_KID_intern(t0, 0);
@@ -3145,7 +3146,7 @@ r305: { /* INFER-NAMED */
         T *v0 = a0;
         T *v3 = RC_KID_intern(a3, 0);
         RC_RULE(305);
-        T *t0 = p127(v0, v3);
+        T *t0 = (p127(v0, v3));
         if (!t0) return (T *)0;
         T *v4 = t0;
         return p74(v4);
@@ -3157,14 +3158,14 @@ r308: { /* INFER-APP */
         T *v3 = RC_KID_intern(a3, 0);
         T *v4 = RC_KID_intern(a3, 1);
         RC_RULE(308);
-        T *t0 = p73(v0, v1, v2, v3);
+        T *t0 = (p73(v0, v1, v2, v3));
         if (!t0) return (T *)0;
         if (RC_TAG_intern(t0) != 24) return rc_fail_target(73);
         T *m0 = RC_KID_intern(t0, 0);
         T *v5 = m0;
         T *m1 = RC_KID_intern(t0, 1);
         T *v6 = m1;
-        T *t1 = p73(v0, v1, v2, v4);
+        T *t1 = (p73(v0, v1, v2, v4));
         if (!t1) return (T *)0;
         if (!rc_term_equal(t1, v5)) return rc_fail_target(73);
         return v6;
@@ -3176,10 +3177,10 @@ r309: { /* INFER-TAPP */
         T *v3 = RC_KID_intern(a3, 0);
         T *v4 = RC_KID_intern(a3, 1);
         RC_RULE(309);
-        T *t0 = p29(v1, v4);
+        T *t0 = (p29(v1, v4));
         if (!t0) return (T *)0;
         if (RC_TAG_symbolic(t0) != 2) return rc_fail_target(73);
-        T *t1 = p73(v0, v1, v2, v3);
+        T *t1 = (p73(v0, v1, v2, v3));
         if (!t1) return (T *)0;
         if (RC_TAG_intern(t1) != 25) return rc_fail_target(73);
         T *m0 = RC_KID_intern(t1, 0);
@@ -3193,10 +3194,10 @@ r310: { /* INFER-LAM */
         T *v3 = RC_KID_intern(a3, 0);
         T *v4 = RC_KID_intern(a3, 1);
         RC_RULE(310);
-        T *t0 = p29(v1, v3);
+        T *t0 = (p29(v1, v3));
         if (!t0) return (T *)0;
         if (RC_TAG_symbolic(t0) != 2) return rc_fail_target(73);
-        T *t1 = p73(v0, v1, RC_MK2_intern(35, v3, v2), v4);
+        T *t1 = (p73(v0, v1, RC_MK2_intern(35, v3, v2), v4));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return RC_MK2_intern(24, v3, v5);
@@ -3207,10 +3208,10 @@ r311: { /* INFER-TLAM */
         T *v2 = a2;
         T *v3 = RC_KID_intern(a3, 0);
         RC_RULE(311);
-        T *t0 = p38(v2);
+        T *t0 = (p38(v2));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p73(v0, RC_MK1_unary(1, v1), v4, v3);
+        T *t1 = (p73(v0, RC_MK1_unary(1, v1), v4, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return RC_MK1_intern(25, v5);
@@ -3222,10 +3223,10 @@ r312: { /* INFER-IMP */
         T *v3 = RC_KID_intern(a3, 0);
         T *v4 = RC_KID_intern(a3, 1);
         RC_RULE(312);
-        T *t0 = p73(v0, v1, v2, v3);
+        T *t0 = (p73(v0, v1, v2, v3));
         if (!t0) return (T *)0;
         if (RC_TAG_intern(t0) != 22) return rc_fail_target(73);
-        T *t1 = p73(v0, v1, v2, v4);
+        T *t1 = (p73(v0, v1, v2, v4));
         if (!t1) return (T *)0;
         if (RC_TAG_intern(t1) != 22) return rc_fail_target(73);
         return RC_NUL_intern(22);
@@ -3237,10 +3238,10 @@ r313: { /* INFER-ALL */
         T *v3 = RC_KID_intern(a3, 0);
         T *v4 = RC_KID_intern(a3, 1);
         RC_RULE(313);
-        T *t0 = p29(v1, v3);
+        T *t0 = (p29(v1, v3));
         if (!t0) return (T *)0;
         if (RC_TAG_symbolic(t0) != 2) return rc_fail_target(73);
-        T *t1 = p73(v0, v1, RC_MK2_intern(35, v3, v2), v4);
+        T *t1 = (p73(v0, v1, RC_MK2_intern(35, v3, v2), v4));
         if (!t1) return (T *)0;
         if (RC_TAG_intern(t1) != 22) return rc_fail_target(73);
         return RC_NUL_intern(22);
@@ -3255,14 +3256,14 @@ static T *p73(T *a0, T *a1, T *a2, T *a3) {
     else if (rc_memo_get(73, 4, k_, &r_)) {
         p73_front[f_].gen = rc_memo_gen; p73_front[f_].k[0] = a0; p73_front[f_].k[1] = a1; p73_front[f_].k[2] = a2; p73_front[f_].k[3] = a3; p73_front[f_].r = r_;
     } else {
-        r_ = p73_rules(a0, a1, a2, a3);
+        r_ = (p73_rules(a0, a1, a2, a3));
         rc_memo_put(73, 4, k_, r_);
         p73_front[f_].gen = rc_memo_gen; p73_front[f_].k[0] = a0; p73_front[f_].k[1] = a1; p73_front[f_].k[2] = a2; p73_front[f_].k[3] = a3; p73_front[f_].r = r_;
         return r_;
     }
     if (rc_trace_on) { rc_trace_push((uint16_t)(RC_EV_MEMO + 73)); if (!r_) rc_trace_push(RC_EV_NO_RULE); }
 #ifdef RC_CHECK_NATIVE
-    if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *s_ = p73_rules(a0, a1, a2, a3); rc_check_depth--; rc_trace_on = tr_; rc_memo_checked(4, r_, s_); }
+    if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *s_ = (p73_rules(a0, a1, a2, a3)); rc_check_depth--; rc_trace_on = tr_; rc_memo_checked(4, r_, s_); }
 #endif
     return r_;
 }
@@ -3293,7 +3294,7 @@ r314: { /* PROP-TALL */
         T *v1 = a1;
         T *v3 = RC_KID_intern(a3, 0);
         RC_RULE(314);
-        T *t0 = p75(v0, RC_MK1_unary(1, v1), RC_NUL_intern(34), v3);
+        T *t0 = (p75(v0, RC_MK1_unary(1, v1), RC_NUL_intern(34), v3));
         if (!t0) return (T *)0;
         return RC_NUL_symbolic(7);
     }
@@ -3302,7 +3303,7 @@ r315: { /* PROP-DB */
         T *v1 = a1;
         T *v2 = a2;
         RC_RULE(315);
-        T *t0 = p73(v0, v1, v2, a3);
+        T *t0 = (p73(v0, v1, v2, a3));
         if (!t0) return (T *)0;
         if (RC_TAG_intern(t0) != 22) return rc_fail_target(75);
         return RC_NUL_symbolic(7);
@@ -3312,7 +3313,7 @@ r316: { /* PROP-NAMED */
         T *v1 = a1;
         T *v2 = a2;
         RC_RULE(316);
-        T *t0 = p73(v0, v1, v2, a3);
+        T *t0 = (p73(v0, v1, v2, a3));
         if (!t0) return (T *)0;
         if (RC_TAG_intern(t0) != 22) return rc_fail_target(75);
         return RC_NUL_symbolic(7);
@@ -3322,7 +3323,7 @@ r317: { /* PROP-PRIM */
         T *v1 = a1;
         T *v2 = a2;
         RC_RULE(317);
-        T *t0 = p73(v0, v1, v2, a3);
+        T *t0 = (p73(v0, v1, v2, a3));
         if (!t0) return (T *)0;
         if (RC_TAG_intern(t0) != 22) return rc_fail_target(75);
         return RC_NUL_symbolic(7);
@@ -3332,7 +3333,7 @@ r318: { /* PROP-APP */
         T *v1 = a1;
         T *v2 = a2;
         RC_RULE(318);
-        T *t0 = p73(v0, v1, v2, a3);
+        T *t0 = (p73(v0, v1, v2, a3));
         if (!t0) return (T *)0;
         if (RC_TAG_intern(t0) != 22) return rc_fail_target(75);
         return RC_NUL_symbolic(7);
@@ -3342,7 +3343,7 @@ r319: { /* PROP-LAM */
         T *v1 = a1;
         T *v2 = a2;
         RC_RULE(319);
-        T *t0 = p73(v0, v1, v2, a3);
+        T *t0 = (p73(v0, v1, v2, a3));
         if (!t0) return (T *)0;
         if (RC_TAG_intern(t0) != 22) return rc_fail_target(75);
         return RC_NUL_symbolic(7);
@@ -3352,7 +3353,7 @@ r320: { /* PROP-IMP */
         T *v1 = a1;
         T *v2 = a2;
         RC_RULE(320);
-        T *t0 = p73(v0, v1, v2, a3);
+        T *t0 = (p73(v0, v1, v2, a3));
         if (!t0) return (T *)0;
         if (RC_TAG_intern(t0) != 22) return rc_fail_target(75);
         return RC_NUL_symbolic(7);
@@ -3362,7 +3363,7 @@ r321: { /* PROP-ALL */
         T *v1 = a1;
         T *v2 = a2;
         RC_RULE(321);
-        T *t0 = p73(v0, v1, v2, a3);
+        T *t0 = (p73(v0, v1, v2, a3));
         if (!t0) return (T *)0;
         if (RC_TAG_intern(t0) != 22) return rc_fail_target(75);
         return RC_NUL_symbolic(7);
@@ -3372,7 +3373,7 @@ r322: { /* PROP-TAPP */
         T *v1 = a1;
         T *v2 = a2;
         RC_RULE(322);
-        T *t0 = p73(v0, v1, v2, a3);
+        T *t0 = (p73(v0, v1, v2, a3));
         if (!t0) return (T *)0;
         if (RC_TAG_intern(t0) != 22) return rc_fail_target(75);
         return RC_NUL_symbolic(7);
@@ -3382,7 +3383,7 @@ r323: { /* PROP-TLAM */
         T *v1 = a1;
         T *v2 = a2;
         RC_RULE(323);
-        T *t0 = p73(v0, v1, v2, a3);
+        T *t0 = (p73(v0, v1, v2, a3));
         if (!t0) return (T *)0;
         if (RC_TAG_intern(t0) != 22) return rc_fail_target(75);
         return RC_NUL_symbolic(7);
@@ -3400,19 +3401,19 @@ r324: { /* CONV */
         T *v3 = a3;
         T *v4 = a4;
         RC_RULE(324);
-        T *t0 = p58(v3);
+        T *t0 = (p58(v3));
         if (!t0) return (T *)0;
         if (RC_TAG_symbolic(t0) != 2) return rc_fail_target(76);
-        T *t1 = p58(v4);
+        T *t1 = (p58(v4));
         if (!t1) return (T *)0;
         if (RC_TAG_symbolic(t1) != 2) return rc_fail_target(76);
-        T *t2 = p73(v0, v1, v2, v3);
+        T *t2 = (p73(v0, v1, v2, v3));
         if (!t2) return (T *)0;
         T *v5 = t2;
-        T *t3 = p73(v0, v1, v2, v4);
+        T *t3 = (p73(v0, v1, v2, v4));
         if (!t3) return (T *)0;
         T *v6 = t3;
-        T *t4 = p33(v5, v6);
+        T *t4 = (p33(v5, v6));
         if (!t4) return (T *)0;
         T *v7 = t4;
         return p77(v0, v7, v3, v4);
@@ -3432,10 +3433,10 @@ r326: { /* CONV-NORMAL-FORMS */
         T *v1 = a2;
         T *v2 = a3;
         RC_RULE(326);
-        T *t0 = p71(v0, v1);
+        T *t0 = (p71(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p71(v0, v2);
+        T *t1 = (p71(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return p61(v3, v4);
@@ -3474,10 +3475,10 @@ r330: { /* TMS-SHIFT1-CONS */
         T *v0 = RC_KID_intern(a0, 0);
         T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(330);
-        T *t0 = p49(RC_NUL_unary(0), RC_MK1_unary(1, RC_NUL_unary(0)), v0);
+        T *t0 = (p49(RC_NUL_unary(0), RC_MK1_unary(1, RC_NUL_unary(0)), v0));
         if (!t0) return (T *)0;
         T *v2 = t0;
-        T *t1 = p81(v1);
+        T *t1 = (p81(v1));
         if (!t1) return (T *)0;
         T *v3 = t1;
         return RC_MK2_intern(79, v2, v3);
@@ -3498,10 +3499,10 @@ r332: { /* TMS-CLOSED-CONS */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(332);
-        T *t0 = p57(v0, v1);
+        T *t0 = (p57(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p82(v0, v2);
+        T *t1 = (p82(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return p11(v3, v4);
@@ -3521,10 +3522,10 @@ r334: { /* TMS-PROT-CONS */
         T *v0 = RC_KID_intern(a0, 0);
         T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(334);
-        T *t0 = p58(v0);
+        T *t0 = (p58(v0));
         if (!t0) return (T *)0;
         T *v2 = t0;
-        T *t1 = p83(v1);
+        T *t1 = (p83(v1));
         if (!t1) return (T *)0;
         T *v3 = t1;
         return p11(v2, v3);
@@ -3545,10 +3546,10 @@ r336: { /* TMS-NORM-CONS */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a1, 1);
         RC_RULE(336);
-        T *t0 = p71(v0, v1);
+        T *t0 = (p71(v0, v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p84(v0, v2);
+        T *t1 = (p84(v0, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
         return RC_MK2_intern(79, v3, v4);
@@ -3571,10 +3572,10 @@ r338: { /* TMS-FORMED-CONS */
         T *v3 = RC_KID_intern(a3, 0);
         T *v4 = RC_KID_intern(a3, 1);
         RC_RULE(338);
-        T *t0 = p73(v0, v1, v2, v3);
+        T *t0 = (p73(v0, v1, v2, v3));
         if (!t0) return (T *)0;
         if (RC_TAG_intern(t0) != 22) return rc_fail_target(85);
-        T *t1 = p85(v0, v1, v2, v4);
+        T *t1 = (p85(v0, v1, v2, v4));
         if (!t1) return (T *)0;
         return RC_NUL_symbolic(7);
     }
@@ -3589,13 +3590,13 @@ r347: { /* CTX-SAFE */
         T *v1 = RC_KID_intern(a0, 1);
         T *v2 = RC_KID_intern(a0, 2);
         RC_RULE(347);
-        T *t0 = p37(v1);
+        T *t0 = (p37(v1));
         if (!t0) return (T *)0;
         T *v3 = t0;
-        T *t1 = p82(v3, v2);
+        T *t1 = (p82(v3, v2));
         if (!t1) return (T *)0;
         T *v4 = t1;
-        T *t2 = p83(v2);
+        T *t2 = (p83(v2));
         if (!t2) return (T *)0;
         T *v5 = t2;
         return p11(v4, v5);
@@ -3619,10 +3620,10 @@ r341: { /* PF-PROT-TERMAPP */
         T *v0 = RC_KID_intern(a0, 0);
         T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(341);
-        T *t0 = p96(v0);
+        T *t0 = (p96(v0));
         if (!t0) return (T *)0;
         T *v2 = t0;
-        T *t1 = p58(v1);
+        T *t1 = (p58(v1));
         if (!t1) return (T *)0;
         T *v3 = t1;
         return p11(v2, v3);
@@ -3631,10 +3632,10 @@ r342: { /* PF-PROT-PROOFAPP */
         T *v0 = RC_KID_intern(a0, 0);
         T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(342);
-        T *t0 = p96(v0);
+        T *t0 = (p96(v0));
         if (!t0) return (T *)0;
         T *v2 = t0;
-        T *t1 = p96(v1);
+        T *t1 = (p96(v1));
         if (!t1) return (T *)0;
         T *v3 = t1;
         return p11(v2, v3);
@@ -3643,10 +3644,10 @@ r343: { /* PF-PROT-PROOFLAM */
         T *v0 = RC_KID_intern(a0, 0);
         T *v1 = RC_KID_intern(a0, 1);
         RC_RULE(343);
-        T *t0 = p58(v0);
+        T *t0 = (p58(v0));
         if (!t0) return (T *)0;
         T *v2 = t0;
-        T *t1 = p96(v1);
+        T *t1 = (p96(v1));
         if (!t1) return (T *)0;
         T *v3 = t1;
         return p11(v2, v3);
@@ -3690,7 +3691,7 @@ r349: { /* KNOWN */
         T *v0 = a0;
         T *v2 = RC_KID_intern(a2, 0);
         RC_RULE(349);
-        T *t0 = p128(v0, v2);
+        T *t0 = (p128(v0, v2));
         if (!t0) return (T *)0;
         if (RC_TAG_intern(t0) != 122) return rc_fail_target(97);
         T *m0 = RC_KID_intern(t0, 0);
@@ -3704,20 +3705,20 @@ r350: { /* TERM-APP */
         T *v4 = RC_KID_intern(a2, 0);
         T *v5 = RC_KID_intern(a2, 1);
         RC_RULE(350);
-        T *t0 = p97(v0, a1, v4);
+        T *t0 = (p97(v0, a1, v4));
         if (!t0) return (T *)0;
         if (RC_TAG_intern(t0) != 45) return rc_fail_target(97);
         T *m0 = RC_KID_intern(t0, 0);
         T *v6 = m0;
         T *m1 = RC_KID_intern(t0, 1);
         T *v7 = m1;
-        T *t1 = p73(v0, v1, v2, v5);
+        T *t1 = (p73(v0, v1, v2, v5));
         if (!t1) return (T *)0;
         if (!rc_term_equal(t1, v6)) return rc_fail_target(97);
-        T *t2 = p69(v0, v5);
+        T *t2 = (p69(v0, v5));
         if (!t2) return (T *)0;
         T *v8 = t2;
-        T *t3 = p53(RC_NUL_unary(0), v8, v7);
+        T *t3 = (p53(RC_NUL_unary(0), v8, v7));
         if (!t3) return (T *)0;
         T *v9 = t3;
         return p71(v0, v9);
@@ -3728,14 +3729,14 @@ r351: { /* PROOF-APP */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(351);
-        T *t0 = p97(v0, v1, v2);
+        T *t0 = (p97(v0, v1, v2));
         if (!t0) return (T *)0;
         if (RC_TAG_intern(t0) != 44) return rc_fail_target(97);
         T *m0 = RC_KID_intern(t0, 0);
         T *v4 = m0;
         T *m1 = RC_KID_intern(t0, 1);
         T *v5 = m1;
-        T *t1 = p97(v0, v1, v3);
+        T *t1 = (p97(v0, v1, v3));
         if (!t1) return (T *)0;
         if (!rc_term_equal(t1, v4)) return rc_fail_target(97);
         return v5;
@@ -3748,13 +3749,13 @@ r352: { /* TERM-LAM */
         T *v4 = RC_KID_intern(a2, 0);
         T *v5 = RC_KID_intern(a2, 1);
         RC_RULE(352);
-        T *t0 = p29(v1, v4);
+        T *t0 = (p29(v1, v4));
         if (!t0) return (T *)0;
         if (RC_TAG_symbolic(t0) != 2) return rc_fail_target(97);
-        T *t1 = p81(v3);
+        T *t1 = (p81(v3));
         if (!t1) return (T *)0;
         T *v6 = t1;
-        T *t2 = p97(v0, RC_MK3_intern(94, v1, RC_MK2_intern(35, v4, v2), v6), v5);
+        T *t2 = (p97(v0, RC_MK3_intern(94, v1, RC_MK2_intern(35, v4, v2), v6), v5));
         if (!t2) return (T *)0;
         T *v7 = t2;
         return RC_MK2_intern(45, v4, v7);
@@ -3767,13 +3768,13 @@ r353: { /* PROOF-LAM */
         T *v4 = RC_KID_intern(a2, 0);
         T *v5 = RC_KID_intern(a2, 1);
         RC_RULE(353);
-        T *t0 = p73(v0, v1, v2, v4);
+        T *t0 = (p73(v0, v1, v2, v4));
         if (!t0) return (T *)0;
         if (RC_TAG_intern(t0) != 22) return rc_fail_target(97);
-        T *t1 = p71(v0, v4);
+        T *t1 = (p71(v0, v4));
         if (!t1) return (T *)0;
         T *v6 = t1;
-        T *t2 = p97(v0, RC_MK3_intern(94, v1, v2, RC_MK2_intern(79, v6, v3)), v5);
+        T *t2 = (p97(v0, RC_MK3_intern(94, v1, v2, RC_MK2_intern(79, v6, v3)), v5));
         if (!t2) return (T *)0;
         T *v7 = t2;
         return RC_MK2_intern(44, v6, v7);
@@ -3784,7 +3785,7 @@ r354: { /* TYPE-APP */
         T *v2 = RC_KID_intern(a2, 0);
         T *v3 = RC_KID_intern(a2, 1);
         RC_RULE(354);
-        T *t0 = p97(v0, v1, v2);
+        T *t0 = (p97(v0, v1, v2));
         if (!t0) return (T *)0;
         if (RC_TAG_intern(t0) != 48) return rc_fail_target(97);
         T *m0 = RC_KID_intern(t0, 0);
@@ -3796,7 +3797,7 @@ r355: { /* TYPE-LAM */
         T *v1 = RC_KID_intern(a1, 0);
         T *v2 = RC_KID_intern(a2, 0);
         RC_RULE(355);
-        T *t0 = p97(v0, RC_MK3_intern(94, RC_MK1_unary(1, v1), RC_NUL_intern(34), RC_NUL_intern(78)), v2);
+        T *t0 = (p97(v0, RC_MK3_intern(94, RC_MK1_unary(1, v1), RC_NUL_intern(34), RC_NUL_intern(78)), v2));
         if (!t0) return (T *)0;
         T *v3 = t0;
         return RC_MK1_intern(48, v3);
@@ -3815,15 +3816,15 @@ r356: { /* CHECK */
         T *v3 = RC_KID_intern(a1, 2);
         T *v4 = a2;
         RC_RULE(356);
-        T *t0 = p95(a1);
+        T *t0 = (p95(a1));
         if (!t0) return (T *)0;
         if (RC_TAG_symbolic(t0) != 2) return rc_fail_target(98);
-        T *t1 = p96(v4);
+        T *t1 = (p96(v4));
         if (!t1) return (T *)0;
         if (RC_TAG_symbolic(t1) != 2) return rc_fail_target(98);
-        T *t2 = p85(v0, v1, v2, v3);
+        T *t2 = (p85(v0, v1, v2, v3));
         if (!t2) return (T *)0;
-        T *t3 = p84(v0, v3);
+        T *t3 = (p84(v0, v3));
         if (!t3) return (T *)0;
         T *v5 = t3;
         return p97(v0, RC_MK3_intern(94, v1, v2, v5), v4);
@@ -3839,10 +3840,10 @@ r357: { /* CHECK-REF */
         T *v1 = a1;
         T *v2 = a2;
         RC_RULE(357);
-        T *t0 = p95(v1);
+        T *t0 = (p95(v1));
         if (!t0) return (T *)0;
         if (RC_TAG_symbolic(t0) != 2) return rc_fail_target(99);
-        T *t1 = p96(v2);
+        T *t1 = (p96(v2));
         if (!t1) return (T *)0;
         if (RC_TAG_symbolic(t1) != 2) return rc_fail_target(99);
         return p97(v0, v1, v2);
@@ -3857,18 +3858,18 @@ r358: { /* THEOREM */
         T *v1 = a1;
         T *v2 = a2;
         RC_RULE(358);
-        T *t0 = p58(v1);
+        T *t0 = (p58(v1));
         if (!t0) return (T *)0;
         if (RC_TAG_symbolic(t0) != 2) return rc_fail_target(100);
-        T *t1 = p96(v2);
+        T *t1 = (p96(v2));
         if (!t1) return (T *)0;
         if (RC_TAG_symbolic(t1) != 2) return rc_fail_target(100);
-        T *t2 = p75(v0, RC_NUL_unary(0), RC_NUL_intern(34), v1);
+        T *t2 = (p75(v0, RC_NUL_unary(0), RC_NUL_intern(34), v1));
         if (!t2) return (T *)0;
-        T *t3 = p71(v0, v1);
+        T *t3 = (p71(v0, v1));
         if (!t3) return (T *)0;
         T *v3 = t3;
-        T *t4 = p97(v0, RC_MK3_intern(94, RC_NUL_unary(0), RC_NUL_intern(34), RC_NUL_intern(78)), v2);
+        T *t4 = (p97(v0, RC_MK3_intern(94, RC_NUL_unary(0), RC_NUL_intern(34), RC_NUL_intern(78)), v2));
         if (!t4) return (T *)0;
         if (!rc_term_equal(t4, v3)) return rc_fail_target(100);
         return RC_NUL_symbolic(7);
@@ -3963,7 +3964,7 @@ l446: {
         if (rc_trace_on) tm_ = rc_trial_begin();
         T *v0 = RC_KID_intern(RC_KID_intern(a0, 0), 0);
         T *v3 = a1;
-        T *s_ = p17(v3, v0);
+        T *s_ = (p17(v3, v0));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 366); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* TERM-PARAM-HIT */
@@ -3990,7 +3991,7 @@ l447: {
         if (rc_trace_on) tm_ = rc_trial_begin();
         T *v0 = RC_KID_intern(RC_KID_intern(a0, 0), 0);
         T *v4 = a1;
-        T *s_ = p17(v4, v0);
+        T *s_ = (p17(v4, v0));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 368); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* TERM-DEF-HIT */
@@ -4018,7 +4019,7 @@ l448: {
         if (rc_trace_on) tm_ = rc_trial_begin();
         T *v0 = RC_KID_intern(RC_KID_intern(a0, 0), 0);
         T *v4 = a1;
-        T *s_ = p17(v4, v0);
+        T *s_ = (p17(v4, v0));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 370); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* TERM-REAL-HIT */
@@ -4051,14 +4052,14 @@ static T *p129(T *a0, T *a1) {
     else if (rc_memo_get(129, 2, k_, &r_)) {
         p129_front[f_].gen = rc_memo_gen; p129_front[f_].k[0] = a0; p129_front[f_].k[1] = a1; p129_front[f_].r = r_;
     } else {
-        r_ = p129_rules(a0, a1);
+        r_ = (p129_rules(a0, a1));
         rc_memo_put(129, 2, k_, r_);
         p129_front[f_].gen = rc_memo_gen; p129_front[f_].k[0] = a0; p129_front[f_].k[1] = a1; p129_front[f_].r = r_;
         return r_;
     }
     if (rc_trace_on) { rc_trace_push((uint16_t)(RC_EV_MEMO + 129)); if (!r_) rc_trace_push(RC_EV_NO_RULE); }
 #ifdef RC_CHECK_NATIVE
-    if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *s_ = p129_rules(a0, a1); rc_check_depth--; rc_trace_on = tr_; rc_memo_checked(2, r_, s_); }
+    if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *s_ = (p129_rules(a0, a1)); rc_check_depth--; rc_trace_on = tr_; rc_memo_checked(2, r_, s_); }
 #endif
     return r_;
 }
@@ -4095,7 +4096,7 @@ l454: {
         if (rc_trace_on) tm_ = rc_trial_begin();
         T *v0 = RC_KID_intern(RC_KID_intern(a0, 0), 0);
         T *v3 = a1;
-        T *s_ = p17(v3, v0);
+        T *s_ = (p17(v3, v0));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 375); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* KNOWN-AXIOM-HIT */
@@ -4122,7 +4123,7 @@ l455: {
         if (rc_trace_on) tm_ = rc_trial_begin();
         T *v0 = RC_KID_intern(RC_KID_intern(a0, 0), 0);
         T *v3 = a1;
-        T *s_ = p17(v3, v0);
+        T *s_ = (p17(v3, v0));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 377); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* KNOWN-THM-HIT */
@@ -4154,14 +4155,14 @@ static T *p130(T *a0, T *a1) {
     else if (rc_memo_get(130, 2, k_, &r_)) {
         p130_front[f_].gen = rc_memo_gen; p130_front[f_].k[0] = a0; p130_front[f_].k[1] = a1; p130_front[f_].r = r_;
     } else {
-        r_ = p130_rules(a0, a1);
+        r_ = (p130_rules(a0, a1));
         rc_memo_put(130, 2, k_, r_);
         p130_front[f_].gen = rc_memo_gen; p130_front[f_].k[0] = a0; p130_front[f_].k[1] = a1; p130_front[f_].r = r_;
         return r_;
     }
     if (rc_trace_on) { rc_trace_push((uint16_t)(RC_EV_MEMO + 130)); if (!r_) rc_trace_push(RC_EV_NO_RULE); }
 #ifdef RC_CHECK_NATIVE
-    if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *s_ = p130_rules(a0, a1); rc_check_depth--; rc_trace_on = tr_; rc_memo_checked(3, r_, s_); }
+    if (rc_check_native) { int tr_ = rc_trace_on; rc_trace_on = 0; rc_check_depth++; T *s_ = (p130_rules(a0, a1)); rc_check_depth--; rc_trace_on = tr_; rc_memo_checked(3, r_, s_); }
 #endif
     return r_;
 }
@@ -4180,10 +4181,10 @@ r383: { /* HAS-TERM-PARAM */
         T *v2 = RC_KID_intern(a0, 1);
         T *v3 = a1;
         RC_RULE(383);
-        T *t0 = p17(v3, v0);
+        T *t0 = (p17(v3, v0));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p131(v2, v3);
+        T *t1 = (p131(v2, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return p12(v4, v5);
@@ -4193,10 +4194,10 @@ r384: { /* HAS-TERM-DEF */
         T *v3 = RC_KID_intern(a0, 1);
         T *v4 = a1;
         RC_RULE(384);
-        T *t0 = p17(v4, v0);
+        T *t0 = (p17(v4, v0));
         if (!t0) return (T *)0;
         T *v5 = t0;
-        T *t1 = p131(v3, v4);
+        T *t1 = (p131(v3, v4));
         if (!t1) return (T *)0;
         T *v6 = t1;
         return p12(v5, v6);
@@ -4206,10 +4207,10 @@ r385: { /* HAS-TERM-REAL */
         T *v3 = RC_KID_intern(a0, 1);
         T *v4 = a1;
         RC_RULE(385);
-        T *t0 = p17(v4, v0);
+        T *t0 = (p17(v4, v0));
         if (!t0) return (T *)0;
         T *v5 = t0;
-        T *t1 = p131(v3, v4);
+        T *t1 = (p131(v3, v4));
         if (!t1) return (T *)0;
         T *v6 = t1;
         return p12(v5, v6);
@@ -4243,10 +4244,10 @@ r389: { /* HAS-KNOWN-AXIOM */
         T *v2 = RC_KID_intern(a0, 1);
         T *v3 = a1;
         RC_RULE(389);
-        T *t0 = p17(v3, v0);
+        T *t0 = (p17(v3, v0));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p132(v2, v3);
+        T *t1 = (p132(v2, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return p12(v4, v5);
@@ -4256,10 +4257,10 @@ r390: { /* HAS-KNOWN-THM */
         T *v2 = RC_KID_intern(a0, 1);
         T *v3 = a1;
         RC_RULE(390);
-        T *t0 = p17(v3, v0);
+        T *t0 = (p17(v3, v0));
         if (!t0) return (T *)0;
         T *v4 = t0;
-        T *t1 = p132(v2, v3);
+        T *t1 = (p132(v2, v3));
         if (!t1) return (T *)0;
         T *v5 = t1;
         return p12(v4, v5);
@@ -4305,7 +4306,7 @@ l478: {
         if (rc_trace_on) tm_ = rc_trial_begin();
         T *v0 = RC_KID_intern(RC_KID_intern(a0, 0), 0);
         T *v3 = a1;
-        T *s_ = p17(v3, v0);
+        T *s_ = (p17(v3, v0));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 397); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* SEL-PARAM-HIT */
@@ -4350,7 +4351,7 @@ l483: {
         if (rc_trace_on) tm_ = rc_trial_begin();
         T *v0 = RC_KID_intern(RC_KID_intern(a0, 0), 0);
         T *v3 = a1;
-        T *s_ = p17(v3, v0);
+        T *s_ = (p17(v3, v0));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 401); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* SEL-KNOWN-HIT */
@@ -4384,13 +4385,13 @@ r394: { /* FRESH-TERM */
         T *v2 = RC_KID_intern(a0, 2);
         T *v4 = a1;
         RC_RULE(394);
-        T *t0 = p20(v1, v4);
+        T *t0 = (p20(v1, v4));
         if (!t0) return (T *)0;
         T *v5 = t0;
-        T *t1 = p131(v2, v4);
+        T *t1 = (p131(v2, v4));
         if (!t1) return (T *)0;
         T *v6 = t1;
-        T *t2 = p12(v5, v6);
+        T *t2 = (p12(v5, v6));
         if (!t2) return (T *)0;
         T *v7 = t2;
         return p13(v7);
@@ -4407,13 +4408,13 @@ r395: { /* FRESH-KNOWN */
         T *v2 = RC_KID_intern(a0, 2);
         T *v4 = a1;
         RC_RULE(395);
-        T *t0 = p20(v1, v4);
+        T *t0 = (p20(v1, v4));
         if (!t0) return (T *)0;
         T *v5 = t0;
-        T *t1 = p132(v2, v4);
+        T *t1 = (p132(v2, v4));
         if (!t1) return (T *)0;
         T *v6 = t1;
-        T *t2 = p12(v5, v6);
+        T *t2 = (p12(v5, v6));
         if (!t2) return (T *)0;
         T *v7 = t2;
         return p13(v7);
@@ -4429,7 +4430,7 @@ l491: {
         size_t tm_ = 0, ts_ = 0; (void)ts_;
         if (rc_trace_on) tm_ = rc_trial_begin();
         T *v5 = a2;
-        T *s_ = p30(RC_NUL_unary(0), v5);
+        T *s_ = (p30(RC_NUL_unary(0), v5));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 404); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* SELECT-PARAM-NEW */
@@ -4441,7 +4442,7 @@ l491: {
         T *v5 = a2;
         T *t0 = s_; (void)t0;
         if (RC_TAG_symbolic(t0) != 2) goto c491_1;
-        T *t1 = p133(v3, v4);
+        T *t1 = (p133(v3, v4));
         if (!t1) goto c491_1;
         if (RC_TAG_intern(t1) != 123) goto c491_1;
         if (rc_trace_on) rc_trial_end(tm_, 404);
@@ -4455,7 +4456,7 @@ l491: {
         T *v5 = a2;
         T *t0 = s_; (void)t0;
         if (RC_TAG_symbolic(t0) != 2) { if (rc_trace_on) rc_trial_end(tm_, 405); return rc_fail_target(137); }
-        T *t1 = p133(v3, v4);
+        T *t1 = (p133(v3, v4));
         if (!t1) { if (rc_trace_on) rc_trial_end(tm_, 405); return (T *)0; }
         if (RC_TAG_intern(t1) != 124) { if (rc_trace_on) rc_trial_end(tm_, 405); return rc_fail_target(137); }
         T *m0 = RC_KID_intern(t1, 0);
@@ -4477,7 +4478,7 @@ l493: {
         if (rc_trace_on) tm_ = rc_trial_begin();
         T *v3 = RC_KID_intern(a0, 3);
         T *v4 = a1;
-        T *s_ = p134(v3, v4);
+        T *s_ = (p134(v3, v4));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 406); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* SELECT-KNOWN-NEW */
@@ -4520,13 +4521,13 @@ r408: { /* ADMIT-PARAM */
         T *v4 = a1;
         T *v5 = a2;
         RC_RULE(408);
-        T *t0 = p135(a0, v4);
+        T *t0 = (p135(a0, v4));
         if (!t0) return (T *)0;
         if (RC_TAG_symbolic(t0) != 2) return rc_fail_target(139);
-        T *t1 = p30(RC_NUL_unary(0), v5);
+        T *t1 = (p30(RC_NUL_unary(0), v5));
         if (!t1) return (T *)0;
         if (RC_TAG_symbolic(t1) != 2) return rc_fail_target(139);
-        T *t2 = p133(v3, v4);
+        T *t2 = (p133(v3, v4));
         if (!t2) return (T *)0;
         if (RC_TAG_intern(t2) != 124) return rc_fail_target(139);
         T *m0 = RC_KID_intern(t2, 0);
@@ -4548,7 +4549,7 @@ l497: {
         T *v2 = RC_KID_intern(a0, 2);
         T *v3 = RC_KID_intern(a0, 3);
         T *v4 = a1;
-        T *s_ = p135(RC_MK4_intern(117, v0, v1, v2, v3), v4);
+        T *s_ = (p135(RC_MK4_intern(117, v0, v1, v2, v3), v4));
         if (!s_) { if (rc_trace_on) rc_trial_end(tm_, 409); return (T *)0; }
         if (rc_trace_on) ts_ = rc_trace_len;
     { /* ADMIT-DEF */
@@ -4561,16 +4562,16 @@ l497: {
         T *v6 = a3;
         T *t0 = s_; (void)t0;
         if (RC_TAG_symbolic(t0) != 2) goto c497_1;
-        T *t1 = p30(RC_NUL_unary(0), v5);
+        T *t1 = (p30(RC_NUL_unary(0), v5));
         if (!t1) goto c497_1;
         if (RC_TAG_symbolic(t1) != 2) goto c497_1;
-        T *t2 = p58(v6);
+        T *t2 = (p58(v6));
         if (!t2) goto c497_1;
         if (RC_TAG_symbolic(t2) != 2) goto c497_1;
-        T *t3 = p62(v6);
+        T *t3 = (p62(v6));
         if (!t3) goto c497_1;
         if (!rc_term_equal(t3, v6)) goto c497_1;
-        T *t4 = p73(a0, RC_NUL_unary(0), RC_NUL_intern(34), v6);
+        T *t4 = (p73(a0, RC_NUL_unary(0), RC_NUL_intern(34), v6));
         if (!t4) goto c497_1;
         if (!rc_term_equal(t4, v5)) goto c497_1;
         if (rc_trace_on) rc_trial_end(tm_, 409);
@@ -4588,25 +4589,25 @@ l497: {
         T *v6 = a3;
         T *t0 = s_; (void)t0;
         if (RC_TAG_symbolic(t0) != 3) { if (rc_trace_on) rc_trial_end(tm_, 410); return rc_fail_target(140); }
-        T *t1 = p127(a0, v4);
+        T *t1 = (p127(a0, v4));
         if (!t1) { if (rc_trace_on) rc_trial_end(tm_, 410); return (T *)0; }
         if (RC_TAG_intern(t1) != 119) { if (rc_trace_on) rc_trial_end(tm_, 410); return rc_fail_target(140); }
         T *m0 = RC_KID_intern(t1, 0);
         if (!rc_term_equal(m0, v5)) { if (rc_trace_on) rc_trial_end(tm_, 410); return rc_fail_target(140); }
-        T *t2 = p30(RC_NUL_unary(0), v5);
+        T *t2 = (p30(RC_NUL_unary(0), v5));
         if (!t2) { if (rc_trace_on) rc_trial_end(tm_, 410); return (T *)0; }
         if (RC_TAG_symbolic(t2) != 2) { if (rc_trace_on) rc_trial_end(tm_, 410); return rc_fail_target(140); }
-        T *t3 = p58(v6);
+        T *t3 = (p58(v6));
         if (!t3) { if (rc_trace_on) rc_trial_end(tm_, 410); return (T *)0; }
         if (RC_TAG_symbolic(t3) != 2) { if (rc_trace_on) rc_trial_end(tm_, 410); return rc_fail_target(140); }
-        T *t4 = p62(v6);
+        T *t4 = (p62(v6));
         if (!t4) { if (rc_trace_on) rc_trial_end(tm_, 410); return (T *)0; }
         if (!rc_term_equal(t4, v6)) { if (rc_trace_on) rc_trial_end(tm_, 410); return rc_fail_target(140); }
-        T *t5 = p73(a0, RC_NUL_unary(0), RC_NUL_intern(34), v6);
+        T *t5 = (p73(a0, RC_NUL_unary(0), RC_NUL_intern(34), v6));
         if (!t5) { if (rc_trace_on) rc_trial_end(tm_, 410); return (T *)0; }
         if (!rc_term_equal(t5, v5)) { if (rc_trace_on) rc_trial_end(tm_, 410); return rc_fail_target(140); }
         { T *q_[] = {v4, v5, v6}; if (!rc_relation_holds(0, 3, q_)) { if (rc_trace_on) rc_trial_end(tm_, 410); return rc_no_row(140); } }
-        T *t7 = p59(v4, v6);
+        T *t7 = (p59(v4, v6));
         if (!t7) { if (rc_trace_on) rc_trial_end(tm_, 410); return (T *)0; }
         if (RC_TAG_symbolic(t7) != 3) { if (rc_trace_on) rc_trial_end(tm_, 410); return rc_fail_target(140); }
         if (rc_trace_on) rc_trial_end(tm_, 410);
@@ -4629,15 +4630,15 @@ r411: { /* ADMIT-AXIOM */
         T *v4 = a1;
         T *v5 = a2;
         RC_RULE(411);
-        T *t0 = p136(a0, v4);
+        T *t0 = (p136(a0, v4));
         if (!t0) return (T *)0;
         if (RC_TAG_symbolic(t0) != 2) return rc_fail_target(141);
-        T *t1 = p58(v5);
+        T *t1 = (p58(v5));
         if (!t1) return (T *)0;
         if (RC_TAG_symbolic(t1) != 2) return rc_fail_target(141);
-        T *t2 = p75(a0, RC_NUL_unary(0), RC_NUL_intern(34), v5);
+        T *t2 = (p75(a0, RC_NUL_unary(0), RC_NUL_intern(34), v5));
         if (!t2) return (T *)0;
-        T *t3 = p134(v3, v4);
+        T *t3 = (p134(v3, v4));
         if (!t3) return (T *)0;
         if (RC_TAG_intern(t3) != 125) return rc_fail_target(141);
         T *m0 = RC_KID_intern(t3, 0);
@@ -4660,10 +4661,10 @@ r412: { /* ADMIT-THEOREM */
         T *v5 = a2;
         T *v6 = a3;
         RC_RULE(412);
-        T *t0 = p136(a0, v4);
+        T *t0 = (p136(a0, v4));
         if (!t0) return (T *)0;
         if (RC_TAG_symbolic(t0) != 2) return rc_fail_target(142);
-        T *t1 = p100(a0, v5, v6);
+        T *t1 = (p100(a0, v5, v6));
         if (!t1) return (T *)0;
         return RC_MK4_intern(117, v0, v1, RC_MK2_intern(112, RC_MK2_intern(110, v4, v5), v2), v3);
     }
@@ -4677,10 +4678,10 @@ r413: { /* CONJECTURE */
         T *v0 = a0;
         T *v1 = a1;
         RC_RULE(413);
-        T *t0 = p58(v1);
+        T *t0 = (p58(v1));
         if (!t0) return (T *)0;
         if (RC_TAG_symbolic(t0) != 2) return rc_fail_target(143);
-        T *t1 = p75(v0, RC_NUL_unary(0), RC_NUL_intern(34), v1);
+        T *t1 = (p75(v0, RC_NUL_unary(0), RC_NUL_intern(34), v1));
         if (!t1) return (T *)0;
         return RC_NUL_symbolic(7);
     }
@@ -4936,6 +4937,17 @@ bool rc_value_u64(int sort, T *x, uint64_t *v) {
 bool rc_value_bytes(int sort, T *x, const uint8_t **p, size_t *n) {
     switch (sort) {
     default: (void)x; (void)p; (void)n; return false;
+    }
+}
+T *rc_value_of_u64(int sort, uint64_t v) {
+    switch (sort) {
+    case 0: return v <= (UINT64_MAX >> 3) ? RC_IMM(v) : (T *)0;
+    default: (void)v; return (T *)0;
+    }
+}
+T *rc_value_of_bytes(int sort, const uint8_t *p, size_t n) {
+    switch (sort) {
+    default: (void)p; (void)n; return (T *)0;
     }
 }
 static size_t rcw_0(T *x, RcItem *b, size_t at, size_t cap);
@@ -5652,7 +5664,7 @@ const uint16_t rc_ctor_sort[] = {0,0,1,1,2,2,2,3,2,1,0,1,1,1,4,4,4,1,5,5,1,6,6,6
 const uint8_t rc_ctor_judgment[] = {0,0,0,0,0,0,0,0,2,1,2,2,2,2,0,0,0,2,0,0,1,0,0,0,0,0,1,1,1,1,1,1,2,1,0,0,1,2,1,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,2,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,1,1,1,1,2,2,1,1,1,1,1,1,1,1,1,1,1};
 const uint16_t rc_ctor_asort_off[] = {1,1,2,2,2,2,2,2,2,4,6,8,10,12,13,13,14,15,17,17,19,21,22,22,23,25,26,29,31,34,36,38,40,41,43,43,45,47,48,49,50,51,52,54,56,58,60,62,63,64,67,69,72,74,77,80,82,84,86,87,89,90,92,93,95,97,100,102,103,105,107,110,112,114,118,119,123,128,132,132,134,136,137,139,140,142,146,147,148,150,152,154,156,158,159,162,163,164,167,170,173,176,176,177,177,179,181,183,186,189,191,193,193,195,197,199,199,201,205,205,206,208,208,209,209,210,211,213,215,217,219,221,223,225,227,229,231,233,236,239,242,246,249,253};
 const uint16_t rc_ctor_asort[] = {0,0,0,0,0,0,0,0,1,1,1,1,1,4,4,4,4,4,5,5,4,0,0,6,6,6,0,0,6,0,6,0,6,6,0,6,0,6,0,6,6,6,6,6,9,9,0,9,9,0,4,0,7,7,6,7,7,7,6,7,7,6,7,7,0,0,7,0,7,0,0,7,0,7,0,7,7,0,6,7,0,7,0,7,0,7,7,4,7,7,7,7,7,7,7,6,7,6,7,7,7,6,7,7,6,18,7,18,4,19,18,7,18,7,18,0,9,7,19,18,0,9,7,18,0,9,7,7,18,1,7,7,7,10,10,0,10,0,10,10,18,10,18,0,9,10,0,4,8,7,8,8,7,8,6,8,8,6,8,0,9,10,11,8,18,11,8,18,11,8,18,11,8,18,7,8,6,12,13,13,0,4,6,4,6,7,4,6,7,4,7,4,7,14,15,4,6,4,7,16,17,13,5,15,17,6,6,7,7,6,7,18,0,18,4,18,4,15,4,15,4,15,4,15,4,17,4,17,4,18,4,18,4,18,4,6,18,4,7,18,4,6,18,4,6,7,18,4,7,18,4,7,8,18,7};
-const uint8_t rc_sort_rep[] = {8,0,0,0,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5};
+const uint8_t rc_sort_rep[] = {RC_REP_UNARY,RC_REP_SYMBOLIC,RC_REP_SYMBOLIC,RC_REP_SYMBOLIC,RC_REP_INTERN,RC_REP_INTERN,RC_REP_INTERN,RC_REP_INTERN,RC_REP_INTERN,RC_REP_INTERN,RC_REP_INTERN,RC_REP_INTERN,RC_REP_INTERN,RC_REP_INTERN,RC_REP_INTERN,RC_REP_INTERN,RC_REP_INTERN,RC_REP_INTERN,RC_REP_INTERN,RC_REP_INTERN,RC_REP_INTERN,RC_REP_INTERN};
 const char *const rc_rule_label[] = {
     "NAT-CMP-ZZ",
     "NAT-CMP-ZS",
@@ -6084,7 +6096,7 @@ const char *const rc_law_justification[] = {""};
 const int rc_nlaws = 0;
 const char *const rc_native_op_justification[] = {"natCmp_iff, natCmp_binding (Megalodon/RuleModuleBindings.lean): nat.cmp's rules are the numeric order of unary numerals, which rc_nat_cmp computes on immediates (the unary view: UNat.toNat_ofNat, Unary.tag_eq_s_iff); trusted: the comparison of uint64_t", "natEq_iff, natEq_binding: nat.eq's rules answer bool.t exactly on equal numerals; trusted: two immediates are the same word exactly when they hold the same number", "natAdd_iff, cNatAdd_refines, cNatAdd_binding: nat.add's rules are addition, which rc_nat_add computes wherever it gives a value; checked at run time: the immediate range", "nameEq_iff, nameEq_binding (through interning_eq_iff): name.eq's rules decide equality of bit strings, and two interned names are equal exactly when they are one node; trusted: a node's id stands for its pointer", "tpEq_iff, tpEq_binding: tp.eq's rules (TP-EQ-HEADS for different heads, a rule per head) decide syntactic equality of types; trusted: a node's id stands for its pointer", "tmEq_iff, tmEq_binding: tm.eq's rules (TM-EQ-HEADS for different heads, a rule per head) decide syntactic equality of terms; trusted: a node's id stands for its pointer"};
 
-T *rc_call(int judgment, T **a) {
+static T *rc_enter(int judgment, T **a) {
     switch (judgment) {
     case 8: return p8(a[0], a[1]);
     case 9: return p9(a[0], a[1]);
@@ -6167,4 +6179,19 @@ T *rc_call(int judgment, T **a) {
     case 143: return p143(a[0], a[1]);
     default: return (T *)0;
     }
+}
+T *rc_call(int judgment, T **a) {
+    size_t m_ = rc_pend_depth;
+    T *v_ = rc_enter(judgment, a);
+    if (v_ == RC_STOPPED) { rc_stop_mark = m_; return v_; }
+    return rc_pend_unwind(m_, v_);
+}
+T *rc_start(int judgment, T **a) {
+    size_t m_ = rc_pend_depth;
+    T *v_ = rc_enter(judgment, a);
+    rc_stop_mark = m_;
+    return v_;
+}
+T *rc_resume(void) {
+    return (T *)0;
 }

@@ -85,14 +85,31 @@ exclusive) rules tries them in turn, a failure moving on to the next; a first pr
 same call in all of them is made once; only the last may tail call.  A relation query with every
 argument bound calls the host (rc_relation_hook; no host, no rows).
 
+Pending wrappers (tail recursion modulo a wrapper).  In the safepoint's own loop (and for a call into
+the safepoint, which must be one), a rule whose last two steps are t := J(...) and then the tail call
+W(..., t, ...), t nowhere else, pushes W's frame (W, the position of t, W's other arguments) and
+tail-calls J: the loop over the records needs no C stack and keeps nothing on it.  Whoever made a
+call that may return with frames pending (a fixed point over tail calls; RC_CLOSED marks the call)
+applies them to its result, the newest first; a failure drops them.  Frames are roots of the
+collector.  Elsewhere recursion stays on the C stack: measured on the HOL Light module, a pushed
+frame and its later application cost more than the call they replace.
+
+Stopping and resuming.  The safepoint asks the host whether to stop (rc_stop_hook); a stopped run
+returns RC_STOPPED to the host's entry with its state kept (the safepoint's arguments in rc_roots,
+the frames above rc_stop_mark), and rc_resume continues it.  When it ends, rc_resume leaves the
+frames to the host, who takes what it wants from them and applies the rest (rc_pend_apply): a reader
+that streams its records (section 7).
+
 Runtime (rc_rt.h).  A heap term is a header and its children; a nullary constructor one static
 header.  Allocation bumps a pointer.  At the safepoint judgment (--safepoint J: the entry of a fold,
-reached by tail calls only, which rulec checks) the young terms reachable from J's arguments are
-copied to an old space, and the old space is copied when it has doubled.  The young space's chunks
+reached by tail calls or pending-wrapper calls only, which rulec checks) the young terms reachable
+from J's arguments, the pending frames and the host's root slots (rc_root_slots) are copied to an
+old space once the young space holds 1 MiB (small enough to stay in the second-level cache; measured
+against 4 and 16 MiB), and the old space is copied when it has doubled.  The young space's chunks
 are kept from run to run up to a bound (rc_runtime_retain; 256 MiB unless the host sets another), so
 a run that fills as much as an earlier one writes memory already mapped.  Values outside the heap
 are immediates (low bit set) and foreign pointers (tagged 2, 4, 6) of a native store, which the
-copying collector neither moves nor scans.
+copying collector neither moves nor scans; tag 6 is a host's promise (section 4).
 
 Constants (--cache-constants): a judgment of no arguments is evaluated once, made static, and so
 is a ground term of a right side or of a call's arguments (no variable, at least one child; only
@@ -123,18 +140,21 @@ A sort is symbolic (heap terms) unless the binding table gives it a representati
 code reads and builds a represented sort only through its views: RC_TAG_<rep>(x) (the constructor
 id), RC_KID_<rep>(x, i), RC_NUL_<rep>(c), RC_MK<n>_<rep>(c, ...).  Kinds:
 
-  records NIL CONS          the record cursor: an index into records a host decoded, read as a
-                            list; a record's term is built when the module reaches it
+  records NIL CONS          the record cursor: an index into a host's records, read as a list;
+                            rc_record_more(i) asks the host for record i when it has not given it
+                            yet (a host that streams reads on only as far as the module reads), and
+                            a record's term is built when the module reaches it (rc_record_term)
+  promise                   symbolic terms, or a host's promise of a term (a foreign value, tag 6):
+                            reading it, its constructor or a child, forces it (rc_promise_hook gives
+                            the term, the same module data each time); equality forces promises
   nat ZERO B0 B1            binary numerals (ZERO; B0 m = 2m, m > 0; B1 m = 2m + 1) as immediates
   unary ZERO SUCC           unary numerals (ZERO; SUCC m = m + 1) as immediates
-  str NIL CONS BYTE NIB     strings spelled as byte lists, as heap byte strings
-  bytes NIL CONS BYTE NIB   the same, interned (rc_bytes.h)
+  bytes NIL CONS BYTE NIB   strings spelled as byte lists, as interned byte strings (rc_bytes.h)
   intern                    hash-consed constructor nodes (rc_intern.h); every child sort must be
                             interned, immediate or nullary-only, which rulec checks
   array-table TABLE LEAF NODE NONE
                             id tables TABLE next trie (a binary trie of cells keyed by the id's
                             digits) as arrays updated in place (rc_table.h)
-  ext NAME CTOR...          views from a header given with --rep-header
   word CTOR BIT0 BIT1       words of bits as immediates: the sort's one constructor CTOR of w
                             children (1 <= w <= 62) of a bit sort whose only constructors are the
                             nullary BIT0, BIT1; the first child is the most significant bit
@@ -147,12 +167,16 @@ id), RC_KID_<rep>(x, i), RC_NUL_<rep>(c), RC_MK<n>_<rep>(c, ...).  Kinds:
                             module; never compared by identity, never held across calls
 
 The per-sort kinds (word, binary, slices) name their views after the sort (RC_TAG_word_<sort id>...).
+The kinds are one list, rc_rep.h, shared by rulec, the generated code and the hosts: the generated
+table rc_sort_rep gives each sort's kind by its constant (RC_REP_INTERN ...), never by number.
 
 Hosts build and read module data through the generated
   T *rc_construct(int ctor, T *const *kids);   int rc_view(int sort, T *x, T **kids);
   bool rc_value_equal(int sort, T *a, T *b);   (equality as module data, through the views)
   bool rc_value_u64(int sort, T *x, uint64_t *v);   (a number of a word or natural sort)
   bool rc_value_bytes(int sort, T *x, const uint8_t **p, size_t *n);   (a byte string's content)
+  T *rc_value_of_u64(int sort, uint64_t v);   T *rc_value_of_bytes(int sort, const uint8_t *p, size_t n);
+                                               (a number or a byte string as a value of the sort)
   size_t rc_value_items(int sort, T *x, RcItem *buf, size_t cap);   (a value's items in pre-order)
   size_t rc_list_items(int sort, T **cursor, RcItem *buf, size_t cap);   (whole list elements' items)
 which use each sort's representation, so one host works with every build of a module.  An item is
@@ -236,7 +260,9 @@ glue (rc_bind_<k>).
 
 memo: the judgment's results are kept per arguments (all arguments and the result of interned,
 immediate or nullary-only sorts; the judgment must not reach the safepoint).  law: J(x, x) gives the
-nullary constructor RESULT without running J's rules; rulec requires J to cover every input.
+nullary constructor RESULT without running J's rules; rulec requires J to cover every input.  A law
+and a memo may bind one judgment of two arguments: the law answers equal arguments before the
+tables are asked.
 
 The contract of a block is the judgment's rules.  LABEL:
   proved   JUSTIFICATION names the theorems (the Lean files of Mettapedia: the HOLLight directory's
@@ -270,16 +296,33 @@ that includes the runtime, the components, the generated code and the host glue;
 name it defines except its dispatch function gets the instance's prefix (a generated names header,
 written and checked by tools/rulec/instance_names.sh), so modules link side by side, each with its
 own store.  The generic host glue native/rule_module/rcm_cetta.c calls any judgment on atoms
-(PREFIX call TERM: module data read against the judgment's argument sorts, the value written back
-as atoms), supplies relation rows (PREFIX set-relation NAME ROWS), counts the boundary's costs
+(PREFIX call TERM: the arguments read against the judgment's argument sorts straight into module
+values, a subterm equal to one read before in the call read once; the value written back as atoms,
+an interned value written before in the result shared), supplies relation rows (PREFIX set-relation
+NAME ROWS), counts the boundary's costs
 (PREFIX stats) and, with RCM_CAPTURE=DIR, writes every call and its result to DIR for replay outside
 CeTTa (a differential between builds, profiles, check mode, traces).
 
 Instance tables.  An instance may export one table of entry points instead of a dispatch function
 (native/rule_module/rc_instance_api.h, included last as rc_instance_api.c with RC_INSTANCE_API set
 to the table's name): other native code of the binary calls its judgments and reads their values
-only through the table (run_begin / run_end, retain, call, view, value_u64, value_bytes, list_items,
-bytes_input), so values of different instances never meet.
+only through the table (run_begin / run_end, retain, call, view, value_u64, value_bytes,
+value_items, list_items, bytes_input; for a run stopped at its safepoint: set_stop_hook, resume,
+root, stop_mark, the pending frames read in place, pend_drop, pend_apply; set_fail_hook), so values
+of different instances never meet.
+
+Feeding one module from another (native/rule_module/rc_feed.h).  A module whose input is read by
+another compiled module (a reader built on the byte-record library: records BRecord OPCODE
+OPERANDS) reads it while the reader reads: the reader stops at its loop every 256 records, its
+records are taken out of their pending frames (and the frames dropped, so the reader collects as it
+goes), and the module's record cursor asks for more only when the module reaches the end of what it
+has, so a stream the module refuses early is not read further.  A record's term is built from the
+instance's record table (data: opcode -> constructor, the operands in order as the children, each in
+the representation of its child's sort); the stream's end is a promise, read only when the module
+reads it.  The instance's description (an RcFeed: the reader's table, its entry, wrapper, element
+and header positions, the record table, the stream's value and its end) is the only part that knows
+the two modules.  rcm_cetta.c, given RCM_FEED, adds PREFIX feed PATH TERM and PREFIX feed-measure
+PATH TERM (TERM a call one of whose arguments is (TAG:stream)).
 
 The handles of the host glue (PREFIX hold TERM, PREFIX call-hold TERM, PREFIX view HANDLE, PREFIX
 release HANDLE, PREFIX reset): a handle (TAG:handle N) stands for module data kept in the
@@ -289,10 +332,13 @@ made (the store's epoch), so a changed or extended value always gets a new handl
 never answers for it.  Kept values are roots of the store; values of a slices sort are never kept.
 
 Four clients use the same components.  The HOL Light kernel module (native/hol_light_module:
-hol.bindings): names as interned byte strings, types, terms and their lists as interned nodes, id
-tables as arrays; name, type and term equality, the orders, the hypothesis-set operations, the
-table operations as components; type_of, alphaorder, inst, vsubst's recursion and type_subst
-memoised; everything else compiled from the module's rules.  The untyped lambda calculus
+hol.bindings, lib/holmodule.metta): names as interned byte strings, types, terms and their lists as
+interned nodes, id tables as arrays, the stream's end a promise; name, type and term equality, the
+orders, the hypothesis-set operations, the table operations as components; type_of, alphaorder,
+inst, vsubst's recursion and type_subst memoised; everything else compiled from the module's rules.
+Its instance (hlm_instance.c) is the generic glue with a feed from the HOLR reader (hlm_feed.c: the
+record table, the header and the end); holm:check PATH POLICY is (holm:feed PATH (hl:check POLICY
+(holm:stream))) unwrapped.  The untyped lambda calculus
 (tests/rulec/lambda): names interned, terms, name sets and renaming environments interned; the
 same components for names, numerals, the term order, the name sets; substitution, free names and
 alpha-equivalence memoised.  Its gate (tests/rulec/lambda/gate.sh) runs the module compiled with
@@ -307,9 +353,9 @@ where the heads are equal; its relation "identity" a host query.  The HOLR strea
 HOLRStream Format, rules in functional form): bytes as words, naturals binary of any size, byte
 strings slices of the stream; the arithmetic, byte-string length, take and equality, the LEB128
 integers and the FNV-1a checksum as components; the schema lookup memoised; the header, the record
-loop, the fields, the lists, the trailer and every refusal compiled from the rules.  Its instance
-exports the table cetta_holr_reader, through which the HOL Light module's bridge reads every
-stream.
+loop, the fields, the lists, the trailer and every refusal compiled from the rules; its record loop
+(HOLRLoop, the safepoint) with pending wrappers.  Its instance exports the table cetta_holr_reader,
+through which the HOL Light module is fed every stream.
 
 To add a component: a header in native/rule_components with the contract and the label, the C file,
 a COMPONENT kind in rulec's bindings.c (the shape check) and emit_c.c (the glue), a line in this

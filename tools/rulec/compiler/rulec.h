@@ -25,6 +25,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* the representations a sort may be given: the runtime's list (RC_REP_*, and their views' names) */
+#include "../../../native/rule_runtime/rc_rep.h"
+
 #define VEC_PUSH(arr, len, cap, val) do { \
     if ((len) == (cap)) { (cap) = (cap) ? 2 * (cap) : 16; (arr) = xrealloc((arr), (size_t)(cap) * sizeof(*(arr))); } \
     (arr)[(len)++] = (val); } while (0)
@@ -33,7 +36,7 @@
 typedef struct { char **keys; int *vals; size_t cap, len; } Map;
 enum { SX_SYM, SX_STR, SX_LIST };
 typedef struct Sx { int k; char *s; int n; struct Sx **v; } Sx;
-typedef struct { char *name; int ndata; int *data; int datacap; int native; char *repname; int *extctors; int nextctors;
+typedef struct { char *name; int ndata; int *data; int datacap; int native; char *repname;
                  int rp[4]; int width; } Sort;   /* rp, width: a per-sort representation's constructors and word width */
 typedef struct {
     char *name; int sort; int arity; int *asort; char **aname;
@@ -66,12 +69,10 @@ typedef struct { int rule; Pat **cols; } Row;
 enum { OV_TARGETS, OV_EVALUATED, OV_UNRESOLVED, OV_COUNT };
 typedef struct { int judgment, a, b, cls; } OverlapPair;
 #define MAXLAYERS 16
-enum { REP_SYMBOLIC = 0, REP_RECORDS, REP_NAT, REP_STR, REP_EXT, REP_INTERN, REP_BYTES, REP_TABLE, REP_UNARY, REP_WORD, REP_BINARY,
-       REP_SLICES, REP_COUNT };
 /* representations with parameters of their own per sort (Sort.rp, Sort.width; views named by sort) */
-#define REP_PERSORT(r) ((r) == REP_WORD || (r) == REP_BINARY || (r) == REP_SLICES)
+#define REP_PERSORT(r) ((r) == RC_REP_WORD || (r) == RC_REP_BINARY || (r) == RC_REP_SLICES)
 /* naturals held as immediates: binary numerals (nat) or unary ones (unary) */
-#define REP_IMMNAT(r) ((r) == REP_NAT || (r) == REP_UNARY)
+#define REP_IMMNAT(r) ((r) == RC_REP_NAT || (r) == RC_REP_UNARY)
 /* a block: judgment ctor answered by fn (a C function the back end binds) or by a generic component
  * (comp: the component's expression in the binding table; fn is then the generated glue) */
 typedef struct { int ctor; char *fn; char *why; char *name; char *label; Sx *comp; } NativeOp;
@@ -105,14 +106,14 @@ extern Pat wildcard;
 /* census.c */
 extern char *layer_name[MAXLAYERS]; extern char *layer_first[MAXLAYERS]; extern int nlayers;
 /* bindings.c */
-extern const char *rep_name[];
-extern const char *rep_header;
-extern int rep_ctor[REP_COUNT][4];
+extern const char *rep_name[];     /* the suffix of a representation's views */
+extern const char *rep_id_name[];  /* its constant in the generated code (RC_REP_...) */
+extern int rep_ctor[RC_REP_COUNT][4];
 extern int table_ctor[4];             /* TABLE LEAF NODE NONE of an array-table representation */
 extern MemoRow memo_rows[64]; extern int nmemo_rows;
 extern int *sorts_memo_slots;
 extern const char *component_prefix; /* where the generated code finds the component headers */
-extern int str_nib[16];
+extern int byte_nib[16];
 extern Law laws[64]; extern int nlaws;
 extern NativeOp native_ops[64]; extern int nnative_ops;
 extern char *safepoint_name;
@@ -199,6 +200,10 @@ void parse_native_sort(const char *spec);
 bool pat_has_var(const Pat *p);
 void occ_expr(char *out, size_t cap, int occ);
 void emit_build(FILE *o, const Pat *p);
+void number_trmc(void);   /* the rules that push a pending wrapper (emit_c.c) */
+extern bool *pend_required;   /* per rule: its call into the safepoint must be a pending wrapper (check.c) */
+int pat_count_var(const Pat *p, int v);
+extern int n_trmc;
 bool pat_has_used_var(const Pat *p);
 void mark_used(const Pat *p);
 void emit_lhs_bind(FILE *o, const Pat *p, const char *e);

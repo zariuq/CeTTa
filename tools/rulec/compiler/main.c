@@ -17,7 +17,6 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--census-only")) census_only = true;
         else if (!strcmp(argv[i], "--cache-constants")) cache_constants = true;
         else if (!strcmp(argv[i], "--include-rt") && i + 1 < argc) include_rt = argv[++i];
-        else if (!strcmp(argv[i], "--rep-header") && i + 1 < argc) rep_header = argv[++i];
         else if ((!strcmp(argv[i], "--blocks") || !strcmp(argv[i], "--bindings")) && i + 1 < argc) blocks_file = argv[++i];
         else if (!strcmp(argv[i], "--component-prefix") && i + 1 < argc) component_prefix = argv[++i];
         else if (!strcmp(argv[i], "--source-digest") && i + 1 < argc) source_digest = argv[++i];
@@ -83,6 +82,7 @@ int main(int argc, char **argv) {
     for (int c = 0; c < nctors; c++) if (ctors[c].defined) nj++;
     fprintf(stderr, "rulec: %s/%s: %d sorts, %d constructors, %d judgments, %d rules, %d DAG nodes, %d occurrences\n",
             module_name, theory_name, nsorts, nctors, nj, nrules, nnodes, noccs);
+    number_trmc();
     if (census) { write_census(census, census_tsv); write_census_blocks(census); }
     if (dag) { write_dag(dag); write_block_table(dag, "a"); }
     if (emit && census_only) die("--census-only: nothing is emitted");

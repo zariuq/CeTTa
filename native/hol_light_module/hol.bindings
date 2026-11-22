@@ -10,6 +10,7 @@
 
 ; representations
 (rep "Records" records "hl:rnil" "hl:rcons")
+(rep "Terminal" promise)
 (rep "Nat" nat "hl:nz" "hl:nb0" "hl:nb1")
 (rep "Str" bytes "hl:nnil" "hl:ncons" "hl:byte" "hl:x")
 (rep "Type" intern)

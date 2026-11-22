@@ -24,12 +24,15 @@
  * generated wrapper: an entry holds arguments and the result the tables gave (or the rules gave and
  * the tables were given) for them, and is valid while rc_memo_gen is the generation it was made in;
  * rc_memo_clear starts a new generation, so no entry outlives the tables' contents. */
-#define RC_MEMO_FRONT 256
+#ifndef RC_MEMO_FRONT_BITS
+#define RC_MEMO_FRONT_BITS 8
+#endif
+#define RC_MEMO_FRONT ((size_t)1 << RC_MEMO_FRONT_BITS)
 extern uint64_t rc_memo_gen;
 static inline size_t rc_memo_front_slot(int n, T *const *a) {
     uint64_t h = 0x9e3779b97f4a7c15ull;
     for (int i = 0; i < n; i++) { h ^= (uint64_t)(uintptr_t)a[i]; h *= 0xff51afd7ed558ccdull; }
-    return (size_t)(h >> 56);
+    return (size_t)(h >> (64 - RC_MEMO_FRONT_BITS));
 }
 bool rc_memo_get(uint16_t j, int n, T *const *args, T **out);
 void rc_memo_put(uint16_t j, int n, T *const *args, T *result);

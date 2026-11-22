@@ -4,13 +4,14 @@
  * says how a back end may represent sorts and which judgments it may answer by a component or a
  * bound function instead of running their rules; the judgments' rules stay the contract.  Rows:
  *
- *   (rep SORT records NIL CONS)                  the record cursor (decoded records, read as a list)
+ *   (rep SORT records NIL CONS)                  the record cursor (a host's records, read as a list; the
+ *                                                host may produce them while the cursor advances)
+ *   (rep SORT promise)                           symbolic terms, or a host's promise of a term that the
+ *                                                host gives when the value is first read (rc_rt.h)
  *   (rep SORT nat ZERO B0 B1)                    binary numerals as immediates
- *   (rep SORT str NIL CONS BYTE NIBBLE)          byte strings on the heap
  *   (rep SORT bytes NIL CONS BYTE NIBBLE)        interned byte strings (rc_bytes.h)
  *   (rep SORT intern)                            hash-consed constructor nodes (rc_intern.h)
  *   (rep SORT array-table TABLE LEAF NODE NONE)  id tables as arrays (rc_table.h)
- *   (rep SORT ext NAME CTOR...)                  views from --rep-header, the constructors in order
  *   (rep SORT word CTOR BIT0 BIT1)               words of bits as immediates: the sort's one constructor
  *                                                CTOR of w children (1 <= w <= 62) of a bit sort whose
  *                                                constructors are exactly the nullary BIT0, BIT1; the
@@ -59,12 +60,16 @@
 #include "rulec.h"
 #include <errno.h>
 
-const char *rep_name[] = {"symbolic", "records", "nat", "str", "ext", "intern", "bytes", "table", "unary", "word", "binary", "slices"};
-const char *rep_header;
+#define REP_VIEW(name, view) #view,
+#define REP_ID_NAME(name, view) "RC_REP_" #name,
+const char *rep_name[] = {RC_REP_LIST(REP_VIEW)};
+const char *rep_id_name[] = {RC_REP_LIST(REP_ID_NAME)};
+#undef REP_VIEW
+#undef REP_ID_NAME
 const char *component_prefix = "";
-const char *sort_rep(int s) { return sorts[s].native == REP_EXT || REP_PERSORT(sorts[s].native) ? sorts[s].repname : rep_name[sorts[s].native]; }
-int rep_ctor[REP_COUNT][4];   /* constructor ids a native representation views */
-int str_nib[16];              /* the sixteen nibble constructors of a byte string's view */
+const char *sort_rep(int s) { return REP_PERSORT(sorts[s].native) ? sorts[s].repname : rep_name[sorts[s].native]; }
+int rep_ctor[RC_REP_COUNT][4];  /* constructor ids a native representation views */
+int byte_nib[16];               /* the sixteen nibble constructors of a byte string's view */
 int table_ctor[4];            /* TABLE LEAF NODE NONE */
 Law laws[64]; int nlaws;
 NativeOp native_ops[64]; int nnative_ops;
@@ -95,8 +100,8 @@ static void byte_list_shape(int sort, int *rc, const char *nibprefix, const char
     for (int i = 0; i < 16; i++) {
         char nm[256];
         snprintf(nm, sizeof nm, "%s%x", nibprefix, i);
-        str_nib[i] = map_get(&ctor_map, nm);
-        if (str_nib[i] < 0 || ctors[str_nib[i]].arity != 0 || ctors[str_nib[i]].sort != ctors[by].asort[0])
+        byte_nib[i] = map_get(&ctor_map, nm);
+        if (byte_nib[i] < 0 || ctors[byte_nib[i]].arity != 0 || ctors[byte_nib[i]].sort != ctors[by].asort[0])
             die("%s: nibble constructor %s missing", where, nm);
     }
 }
@@ -104,7 +109,14 @@ void set_rep(int sort, const char *kind, char **args, int na, const char *where)
     if (sorts[sort].native) die("%s: sort %s already has a representation", where, sorts[sort].name);
     if (!strcmp(kind, "intern")) {
         if (na) die("%s: (rep SORT intern) has no parameters", where);
-        sorts[sort].native = REP_INTERN;
+        sorts[sort].native = RC_REP_INTERN;
+        return;
+    }
+    if (!strcmp(kind, "promise")) {
+        /* symbolic terms, or a host's promise of one (forced where it is read) */
+        if (na) die("%s: (rep SORT promise) has no parameters", where);
+        if (!sorts[sort].ndata) die("%s: %s has no data constructors", where, sorts[sort].name);
+        sorts[sort].native = RC_REP_PROMISE;
         return;
     }
     if (!strcmp(kind, "array-table")) {
@@ -116,30 +128,12 @@ void set_rep(int sort, const char *kind, char **args, int na, const char *where)
               ctors[nd].asort[1] == ctors[lf].sort && ctors[nd].asort[2] == ctors[lf].sort && ctors[none].arity == 0 &&
               ctors[none].sort == ctors[nd].asort[0]))
             die("%s: not TABLE next trie with LEAF / NODE cell t0 t1 and a nullary cell NONE", where);
-        sorts[sort].native = REP_TABLE;
-        return;
-    }
-    if (!strncmp(kind, "ext:", 4) || !strcmp(kind, "ext")) {
-        /* ext:NAME(c1,...,cn), or (rep SORT ext NAME c1 ... cn): every data constructor, in the
-         * order the header numbers them */
-        const char *name = kind[3] == ':' ? kind + 4 : (na ? args[0] : NULL);
-        if (!name) die("%s: ext needs a name", where);
-        if (kind[3] != ':') { args++; na--; }
-        sorts[sort].native = REP_EXT;
-        sorts[sort].repname = xstrdup(name);
-        sorts[sort].extctors = xcalloc((size_t)(na ? na : 1), sizeof(int));
-        for (int i = 0; i < na; i++) {
-            int c = ctor_named(args[i], where);
-            if (ctors[c].sort != sort || ctors[c].defined) die("%s: %s is not a data constructor of %s", where, args[i], sorts[sort].name);
-            sorts[sort].extctors[i] = c;
-        }
-        if (na != sorts[sort].ndata) die("%s: names %d of the %d data constructors", where, na, sorts[sort].ndata);
-        sorts[sort].nextctors = na;
+        sorts[sort].native = RC_REP_TABLE;
         return;
     }
     if (!strcmp(kind, "word") || !strcmp(kind, "binary") || !strcmp(kind, "slices")) {
-        int r = kind[0] == 'w' ? REP_WORD : kind[0] == 'b' ? REP_BINARY : REP_SLICES;
-        int want = r == REP_WORD ? 3 : r == REP_BINARY ? 4 : 2;
+        int r = kind[0] == 'w' ? RC_REP_WORD : kind[0] == 'b' ? RC_REP_BINARY : RC_REP_SLICES;
+        int want = r == RC_REP_WORD ? 3 : r == RC_REP_BINARY ? 4 : 2;
         if (na != want) die("%s: (rep %s %s) takes %d constructors", where, sorts[sort].name, kind, want);
         Sort *so = &sorts[sort];
         for (int i = 0; i < na; i++) so->rp[i] = ctor_named(args[i], where);
@@ -147,7 +141,7 @@ void set_rep(int sort, const char *kind, char **args, int na, const char *where)
         #define BIT_SORT(bs, c0, c1) ((bs) >= 0 && sorts[(bs)].ndata == 2 && !sorts[(bs)].native && ctors[(c0)].sort == (bs) && \
             ctors[(c1)].sort == (bs) && !ctors[(c0)].defined && !ctors[(c1)].defined && ctors[(c0)].arity == 0 && \
             ctors[(c1)].arity == 0 && (c0) != (c1))
-        if (r == REP_WORD) {
+        if (r == RC_REP_WORD) {
             const Ctor *w = &ctors[so->rp[0]];
             int bs = w->arity ? w->asort[0] : -1;
             bool same = true;
@@ -155,7 +149,7 @@ void set_rep(int sort, const char *kind, char **args, int na, const char *where)
             if (!(so->ndata == 1 && w->sort == sort && !w->defined && w->arity >= 1 && w->arity <= 62 && same && BIT_SORT(bs, so->rp[1], so->rp[2])))
                 die("%s: (rep %s word CTOR BIT0 BIT1): not one constructor of 1 to 62 children of one bit sort with exactly BIT0, BIT1", where, so->name);
             so->width = w->arity;
-        } else if (r == REP_BINARY) {
+        } else if (r == RC_REP_BINARY) {
             const Ctor *z = &ctors[so->rp[0]], *b = &ctors[so->rp[1]];
             if (!(so->ndata == 2 && z->sort == sort && !z->defined && z->arity == 0 && b->sort == sort && !b->defined && b->arity == 2 &&
                   b->asort[1] == sort && BIT_SORT(b->asort[0], so->rp[2], so->rp[3])))
@@ -166,7 +160,7 @@ void set_rep(int sort, const char *kind, char **args, int na, const char *where)
                   cs->asort[1] == sort && cs->asort[0] != sort))
                 die("%s: (rep %s slices NIL CONS): not NIL and CONS (a byte, the rest)", where, so->name);
             for (int s2 = 0; s2 < nsorts; s2++)
-                if (s2 != sort && sorts[s2].native == REP_SLICES) die("%s: one slices sort per module (the run's input is one)", where);
+                if (s2 != sort && sorts[s2].native == RC_REP_SLICES) die("%s: one slices sort per module (the run's input is one)", where);
         }
         #undef BIT_SORT
         char nm[64];
@@ -175,25 +169,25 @@ void set_rep(int sort, const char *kind, char **args, int na, const char *where)
         so->native = r;
         return;
     }
-    int rep = !strcmp(kind, "records") ? REP_RECORDS : !strcmp(kind, "nat") ? REP_NAT : !strcmp(kind, "str") ? REP_STR
-            : !strcmp(kind, "bytes") ? REP_BYTES : !strcmp(kind, "unary") ? REP_UNARY : -1;
-    int want = rep == REP_RECORDS ? 2 : rep == REP_NAT ? 3 : rep == REP_STR || rep == REP_BYTES ? 4 : rep == REP_UNARY ? 2 : -1;
+    int rep = !strcmp(kind, "records") ? RC_REP_RECORDS : !strcmp(kind, "nat") ? RC_REP_NAT : !strcmp(kind, "bytes") ? RC_REP_BYTES
+            : !strcmp(kind, "unary") ? RC_REP_UNARY : -1;
+    int want = rep == RC_REP_RECORDS ? 2 : rep == RC_REP_NAT ? 3 : rep == RC_REP_BYTES ? 4 : rep == RC_REP_UNARY ? 2 : -1;
     if (rep < 0 || na != want) die("%s: unknown representation or wrong parameters", where);
-    for (int i = 0; i < ((rep == REP_STR || rep == REP_BYTES) ? 3 : na); i++) rep_ctor[rep][i] = ctor_named(args[i], where);
+    for (int i = 0; i < (rep == RC_REP_BYTES ? 3 : na); i++) rep_ctor[rep][i] = ctor_named(args[i], where);
     int *rc = rep_ctor[rep];
-    if (rep == REP_RECORDS && !(ctors[rc[0]].sort == sort && ctors[rc[0]].arity == 0 && ctors[rc[1]].sort == sort &&
+    if (rep == RC_REP_RECORDS && !(ctors[rc[0]].sort == sort && ctors[rc[0]].arity == 0 && ctors[rc[1]].sort == sort &&
                                 ctors[rc[1]].arity == 2 && ctors[rc[1]].asort[1] == sort && sorts[sort].ndata == 2))
         die("%s: not a list sort with exactly these two constructors", where);
-    if (rep == REP_NAT && !(sorts[sort].ndata == 3 && ctors[rc[0]].sort == sort && ctors[rc[0]].arity == 0 &&
+    if (rep == RC_REP_NAT && !(sorts[sort].ndata == 3 && ctors[rc[0]].sort == sort && ctors[rc[0]].arity == 0 &&
                             ctors[rc[1]].arity == 1 && ctors[rc[1]].asort[0] == sort && ctors[rc[2]].arity == 1 &&
                             ctors[rc[2]].asort[0] == sort && ctors[rc[1]].sort == sort && ctors[rc[2]].sort == sort))
         die("%s: not a binary-numeral sort with exactly these three constructors", where);
-    if (rep == REP_UNARY && !(sorts[sort].ndata == 2 && ctors[rc[0]].sort == sort && ctors[rc[0]].arity == 0 &&
+    if (rep == RC_REP_UNARY && !(sorts[sort].ndata == 2 && ctors[rc[0]].sort == sort && ctors[rc[0]].arity == 0 &&
                               ctors[rc[1]].sort == sort && ctors[rc[1]].arity == 1 && ctors[rc[1]].asort[0] == sort))
         die("%s: not a unary-numeral sort with exactly these two constructors (zero, successor)", where);
-    if (rep == REP_STR || rep == REP_BYTES) {
+    if (rep == RC_REP_BYTES) {
         for (int s2 = 0; s2 < nsorts; s2++)
-            if (s2 != sort && (sorts[s2].native == REP_STR || sorts[s2].native == REP_BYTES)) die("%s: one byte-string sort per module", where);
+            if (s2 != sort && sorts[s2].native == RC_REP_BYTES) die("%s: one bytes sort per module", where);
         byte_list_shape(sort, rc, args[3], where);
     }
     sorts[sort].native = rep;
@@ -215,20 +209,20 @@ void parse_native_sort(const char *spec) {
  * nullary constructors of a symbolic sort (static terms) */
 static bool identity_sort(int s) {
     int r = sorts[s].native;
-    if (r == REP_INTERN || r == REP_BYTES || REP_IMMNAT(r) || r == REP_WORD || r == REP_BINARY) return true;
-    if (r != REP_SYMBOLIC) return false;
+    if (r == RC_REP_INTERN || r == RC_REP_BYTES || REP_IMMNAT(r) || r == RC_REP_WORD || r == RC_REP_BINARY) return true;
+    if (r != RC_REP_SYMBOLIC) return false;
     for (int c = 0; c < nctors; c++) if (ctors[c].sort == s && !ctors[c].defined && ctors[c].arity) return false;
     return true;
 }
 void check_reps(void) {
     for (int s = 0; s < nsorts; s++) {
-        if (sorts[s].native != REP_SLICES) continue;
+        if (sorts[s].native != RC_REP_SLICES) continue;
         int bs = ctors[sorts[s].rp[1]].asort[0];
-        if (sorts[bs].native != REP_WORD || sorts[bs].width != 8)
+        if (sorts[bs].native != RC_REP_WORD || sorts[bs].width != 8)
             die("(rep %s slices ...): the byte sort %s is not (rep %s word ...) of eight bits", sorts[s].name, sorts[bs].name, sorts[bs].name);
     }
     for (int c = 0; c < nctors; c++) {
-        if (ctors[c].defined || sorts[ctors[c].sort].native != REP_INTERN) continue;
+        if (ctors[c].defined || sorts[ctors[c].sort].native != RC_REP_INTERN) continue;
         if (ctors[c].arity > 6) die("(rep %s intern): constructor %s has more than 6 children", sorts[ctors[c].sort].name, ctors[c].name);
         for (int i = 0; i < ctors[c].arity; i++)
             if (!identity_sort(ctors[c].asort[i]))
@@ -334,57 +328,57 @@ void check_component(NativeOp *b) {
              "two arguments of one interned or immediate sort");
         comp_ctor(b, x, 1, r, 0); comp_ctor(b, x, 2, r, 0);
     } else if (!strcmp(kind, "bytes-order") || !strcmp(kind, "nat-order") || !strcmp(kind, "structural-order")) {
-        int want = !strcmp(kind, "bytes-order") ? REP_BYTES : !strcmp(kind, "nat-order") ? REP_NAT : -1;
+        int want = !strcmp(kind, "bytes-order") ? RC_REP_BYTES : !strcmp(kind, "nat-order") ? RC_REP_NAT : -1;
         NEED(k->arity == 2 && k->asort[0] == k->asort[1], "two arguments of one sort");
         int rep = sorts[k->asort[0]].native;
-        NEED(want < 0 ? (rep == REP_INTERN || rep == REP_BYTES || REP_IMMNAT(rep) || rep == REP_WORD)
-                      : want == REP_NAT ? (REP_IMMNAT(rep) || rep == REP_BINARY) : rep == want,
+        NEED(want < 0 ? (rep == RC_REP_INTERN || rep == RC_REP_BYTES || REP_IMMNAT(rep) || rep == RC_REP_WORD)
+                      : want == RC_REP_NAT ? (REP_IMMNAT(rep) || rep == RC_REP_BINARY) : rep == want,
              "arguments of the component's representation");
         for (int i = 1; i <= 3; i++) comp_ctor(b, x, i, r, 0);
     } else if (!strcmp(kind, "bytes-snoc")) {
-        NEED(k->arity == 1 && k->asort[0] == r && sorts[r].native == REP_BYTES && x->n == 2, "a byte string to a byte string, one hex parameter");
+        NEED(k->arity == 1 && k->asort[0] == r && sorts[r].native == RC_REP_BYTES && x->n == 2, "a byte string to a byte string, one hex parameter");
         const char *hex = sx_atom(x->v[1], "bytes");
         NEED(strlen(hex) % 2 == 0 && strspn(hex, "0123456789abcdefABCDEF") == strlen(hex), "bytes as hex digits");
     } else if (!strcmp(kind, "nat-succ")) {
-        NEED(k->arity == 1 && k->asort[0] == r && (REP_IMMNAT(sorts[r].native) || sorts[r].native == REP_BINARY), "a natural to a natural");
+        NEED(k->arity == 1 && k->asort[0] == r && (REP_IMMNAT(sorts[r].native) || sorts[r].native == RC_REP_BINARY), "a natural to a natural");
     } else if (!strcmp(kind, "nat-add")) {
-        NEED(k->arity == 2 && k->asort[0] == r && k->asort[1] == r && (REP_IMMNAT(sorts[r].native) || sorts[r].native == REP_BINARY),
+        NEED(k->arity == 2 && k->asort[0] == r && k->asort[1] == r && (REP_IMMNAT(sorts[r].native) || sorts[r].native == RC_REP_BINARY),
              "two naturals to a natural");
     } else if (!strcmp(kind, "nat-pred")) {
-        NEED(x->n == 1 && k->arity == 1 && k->asort[0] == r && sorts[r].native == REP_BINARY, "a binary natural to a binary natural");
+        NEED(x->n == 1 && k->arity == 1 && k->asort[0] == r && sorts[r].native == RC_REP_BINARY, "a binary natural to a binary natural");
     } else if (!strcmp(kind, "nat-xor") || !strcmp(kind, "nat-multiply") || !strcmp(kind, "nat-subtract") || !strcmp(kind, "nat-trim")) {
-        NEED(x->n == 1 && k->arity == 2 && k->asort[0] == r && k->asort[1] == r && sorts[r].native == REP_BINARY,
+        NEED(x->n == 1 && k->arity == 2 && k->asort[0] == r && k->asort[1] == r && sorts[r].native == RC_REP_BINARY,
              "two binary naturals to a binary natural");
     } else if (!strcmp(kind, "nat-push-bit")) {
-        NEED(x->n == 1 && sorts[r].native == REP_BINARY && k->arity == 2 && k->asort[1] == r && k->asort[0] == ctors[sorts[r].rp[1]].asort[0],
+        NEED(x->n == 1 && sorts[r].native == RC_REP_BINARY && k->arity == 2 && k->asort[1] == r && k->asort[0] == ctors[sorts[r].rp[1]].asort[0],
              "a bit and a binary natural to a binary natural");
     } else if (!strcmp(kind, "word-pack")) {
-        NEED(x->n == 1 && sorts[r].native == REP_BINARY && k->arity == 2 && sorts[k->asort[0]].native == REP_WORD && k->asort[1] == r,
+        NEED(x->n == 1 && sorts[r].native == RC_REP_BINARY && k->arity == 2 && sorts[k->asort[0]].native == RC_REP_WORD && k->asort[1] == r,
              "a word and a binary natural to a binary natural");
     } else if (!strcmp(kind, "bytes-length")) {
-        NEED(x->n == 1 && sorts[r].native == REP_BINARY && k->arity == 1 && sorts[k->asort[0]].native == REP_SLICES,
+        NEED(x->n == 1 && sorts[r].native == RC_REP_BINARY && k->arity == 1 && sorts[k->asort[0]].native == RC_REP_SLICES,
              "a slices byte string to a binary natural");
     } else if (!strcmp(kind, "bytes-take")) {
-        NEED(k->arity == 2 && sorts[k->asort[0]].native == REP_BINARY && sorts[k->asort[1]].native == REP_SLICES,
+        NEED(k->arity == 2 && sorts[k->asort[0]].native == RC_REP_BINARY && sorts[k->asort[1]].native == RC_REP_SLICES,
              "a binary natural and a slices byte string");
         int tk = comp_ctor(b, x, 1, r, 2);
         comp_ctor(b, x, 2, r, 0);
         NEED(ctors[tk].asort[0] == k->asort[1] && ctors[tk].asort[1] == k->asort[1], "TAKEN holds two byte strings of the argument's sort");
         NEED(x->n == 3, "TAKEN NEED");
     } else if (!strcmp(kind, "bytes-equal")) {
-        NEED(k->arity == 2 && k->asort[0] == k->asort[1] && sorts[k->asort[0]].native == REP_SLICES, "two slices byte strings");
+        NEED(k->arity == 2 && k->asort[0] == k->asort[1] && sorts[k->asort[0]].native == RC_REP_SLICES, "two slices byte strings");
         comp_ctor(b, x, 1, r, 0); comp_ctor(b, x, 2, r, 0);
         NEED(x->n == 3, "YES NO");
     } else if (!strcmp(kind, "uleb")) {
-        NEED(x->n == 6 && k->arity == 1 && sorts[k->asort[0]].native == REP_SLICES, "a slices byte string; DECODED NEED BAD MAXBYTES LASTBITS");
+        NEED(x->n == 6 && k->arity == 1 && sorts[k->asort[0]].native == RC_REP_SLICES, "a slices byte string; DECODED NEED BAD MAXBYTES LASTBITS");
         int dc = comp_ctor(b, x, 1, r, 2);
         comp_ctor(b, x, 2, r, 0); comp_ctor(b, x, 3, r, 0);
-        NEED(sorts[ctors[dc].asort[0]].native == REP_BINARY && ctors[dc].asort[1] == k->asort[0], "DECODED holds a binary natural and the rest");
+        NEED(sorts[ctors[dc].asort[0]].native == RC_REP_BINARY && ctors[dc].asort[1] == k->asort[0], "DECODED holds a binary natural and the rest");
         char *e1, *e2;
         long mb = strtol(sx_atom(x->v[4], "bytes"), &e1, 10), lb = strtol(sx_atom(x->v[5], "bits"), &e2, 10);
         NEED(!*e1 && !*e2 && mb >= 1 && mb <= 9 && lb >= 1 && lb <= 7 && 7 * (mb - 1) + lb <= 64, "1 <= MAXBYTES <= 9, 1 <= LASTBITS <= 7, at most 64 bits");
     } else if (!strcmp(kind, "fnv-hash")) {
-        NEED(x->n == 4 && sorts[r].native == REP_BINARY && k->arity == 1 && sorts[k->asort[0]].native == REP_SLICES,
+        NEED(x->n == 4 && sorts[r].native == RC_REP_BINARY && k->arity == 1 && sorts[k->asort[0]].native == RC_REP_SLICES,
              "a slices byte string to a binary natural, BASIS PRIME BITS");
         char *e1, *e2, *e3;
         errno = 0;
@@ -395,7 +389,7 @@ void check_component(NativeOp *b) {
     } else if (!strcmp(kind, "set-union") || !strcmp(kind, "set-remove")) {
         bool uni = !strcmp(kind, "set-union");
         int ls = uni ? k->asort[0] : k->asort[1], nil = -1, cons = -1;
-        NEED(k->arity == 2 && r == ls && sorts[ls].native == REP_INTERN && list_sort_ctors(ls, &nil, &cons), "an interned list sort");
+        NEED(k->arity == 2 && r == ls && sorts[ls].native == RC_REP_INTERN && list_sort_ctors(ls, &nil, &cons), "an interned list sort");
         NEED(uni ? k->asort[1] == ls : k->asort[0] == ctors[cons].asort[0], "the arguments of the operation");
         const char *cn = sx_atom(x->v[1], "comparator");
         int cmp = map_get(&ctor_map, cn);
@@ -404,7 +398,7 @@ void check_component(NativeOp *b) {
         for (int i = 2; i <= 4; i++) comp_ctor(b, x, i, ctors[cmp].sort, 0);
     } else if (!strncmp(kind, "table-", 6)) {
         int ts = -1;
-        for (int s = 0; s < nsorts; s++) if (sorts[s].native == REP_TABLE) ts = s;
+        for (int s = 0; s < nsorts; s++) if (sorts[s].native == RC_REP_TABLE) ts = s;
         NEED(ts >= 0, "an array-table representation");
         int nat = ctors[table_ctor[0]].asort[0], cell = ctors[table_ctor[2]].asort[0];
         if (!strcmp(kind, "table-get")) NEED(k->arity == 2 && k->asort[0] == ts && k->asort[1] == nat && r == cell, "Table Nat -> Cell");
@@ -449,7 +443,7 @@ void apply_blocks(void) {
         if (!identity_sort(k->sort)) die("memo %s: the result sort of %s is not interned, immediate or nullary", memo_rows[i].name, k->name);
         ctors[c].memo = true;
         /* one interned argument: the result is kept in a slot of the argument's node */
-        if (k->arity == 1 && sorts[k->asort[0]].native == REP_INTERN) ctors[c].memo_slot = slots_of_sort[k->asort[0]]++;
+        if (k->arity == 1 && sorts[k->asort[0]].native == RC_REP_INTERN) ctors[c].memo_slot = slots_of_sort[k->asort[0]]++;
     }
     for (int s = 0; s < nsorts; s++) if (slots_of_sort[s] > 8) die("more than 8 memo slots on sort %s", sorts[s].name);
     sorts_memo_slots = slots_of_sort;
@@ -465,7 +459,7 @@ void apply_laws(void) {
             die("law %s: %s is not a nullary constructor of %s's sort", b->name, b->fn, b->judgment);
         if (!ctors[c].complete) die("law %s: %s does not cover every input", b->name, b->judgment);
         for (int j = 0; j < nnative_ops; j++) if (native_ops[j].ctor == c) die("law %s: %s already has a block", b->name, b->judgment);
-        if (ctors[c].memo) die("law %s: %s is memoised", b->name, b->judgment);
+        if (ctors[c].memo && ctors[c].memo_slot >= 0) die("law %s: %s keeps its results in its argument's node", b->name, b->judgment);
         laws[nlaws++] = (Law){c, r, b->why, b->name, b->label};
     }
 }

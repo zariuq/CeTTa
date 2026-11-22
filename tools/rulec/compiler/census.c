@@ -65,8 +65,10 @@ void write_census(const char *path, const char *tsv) {
     fprintf(o, "relation premises (queries of the module's relations): %d, of which %d bind a variable; judgments with one that binds (possibly several answers): %d\n",
             nrelq, nrelbind, nrelational);
     fprintf(o, "rules whose last premise is a tail call: %d; recursive judgments (self or mutual): %d\n", ntail, nrec);
-    fprintf(o, "rules in functional form (calls nested in a right side or a premise's arguments, read call by value): %d, their calls made premises: %d\n\n",
+    fprintf(o, "rules in functional form (calls nested in a right side or a premise's arguments, read call by value): %d, their calls made premises: %d\n",
             n_flattened_rules, n_flattened_calls);
+    fprintf(o, "rules whose recursion passes its result to a wrapper (tail recursion modulo the wrapper: the wrapper's frame pushed, no C stack): %d\n\n",
+            n_trmc);
     /* layers */
     if (nlayers) {
         fprintf(o, "layer        rules  judgments  det-judgments\n");

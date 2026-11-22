@@ -21,7 +21,7 @@
 #include "native/langdef_module.h"
 #include "native/hol_light/hol_cetta_module.h"
 #include "native/hol_light_module/holm_cetta_module.h"
-#include "native/rule_module/rcm_cetta.h"
+#include "native/megalodon_module/mgm_instance.h"
 #include "native/mm0/mm0_cetta_module.h"
 #include "native/seal_module.h"
 #include "native/megalodon/mg_cetta_module.h"
