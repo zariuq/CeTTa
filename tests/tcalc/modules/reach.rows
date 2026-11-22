@@ -1,0 +1,6 @@
+; a chain a -> b -> c -> d with the cycle d -> b, and the call reach(a)
+(edge (n:a) (n:b))
+(edge (n:b) (n:c))
+(edge (n:c) (n:d))
+(edge (n:d) (n:b))
+(demand (n:reach (n:a)))

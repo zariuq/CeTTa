@@ -7,8 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The surface readers build terms without scope; the elaborator below binds
- * names for every reader, so all readers share one scoping law. */
+/* The rho, rho-cost and mrho text readers build terms without scope; the
+ * elaborator below binds names for every reader, so all readers share one
+ * scoping law. */
 typedef struct {
     const char *text;
     size_t pos;
@@ -27,6 +28,18 @@ typedef struct {
     VarId source_var_id;
     Atom *var;
 } RhoElabBinding;
+
+typedef struct {
+    VarId id;
+    const char *name;
+    bool owned;
+} RhoPrintBinding;
+
+/* The growable lists of the readers, the elaborator and the printer are
+ * Cesta worklists (rhocalc_syntax_lists.export). */
+typedef Atom *RhoSyntaxAtom;
+static void *rho_syntax_resize(void *old, uint32_t bytes) { return cetta_realloc(old, bytes); }
+#include "generated/rhocalc_syntax_lists.generated.h"
 
 /* Which reader a term came from: it decides what a bare name means when no
  * receive binds it. */
@@ -101,15 +114,7 @@ static void rho_vec_free(RhoSyntaxVec *vec) {
 }
 
 static bool rho_vec_push(RhoSyntaxVec *vec, Atom *atom) {
-    if (vec->len == vec->cap) {
-        uint32_t next_cap = vec->cap ? vec->cap * 2u : 8u;
-        Atom **next = cetta_realloc(vec->items, sizeof(Atom *) * next_cap);
-        if (!next) return false;
-        vec->items = next;
-        vec->cap = next_cap;
-    }
-    vec->items[vec->len++] = atom;
-    return true;
+    return rho_syntax_push_atom(rho_syntax_resize, &vec->items, &vec->len, &vec->cap, atom);
 }
 
 static Atom *rho_call(Arena *arena, const char *head,
@@ -142,14 +147,6 @@ static Atom *rho_ternary(Arena *arena, const char *head,
 
 static Atom *rho_cost_signed(Arena *arena, Atom *body, Atom *sig) {
     return rho_binary(arena, "rho:cost:signed", body, sig);
-}
-
-static Atom *rho_cost_sig_mul(Arena *arena, Atom *const *items, uint32_t len) {
-    return rho_call(arena, "rho:cost:sig-mul", items, len);
-}
-
-static Atom *rho_cost_par(Arena *arena, Atom *const *items, uint32_t len) {
-    return rho_call(arena, "rho:cost:par", items, len);
 }
 
 static Atom *rho_cost_nil(Arena *arena) {
@@ -457,116 +454,30 @@ static Atom *rp_parse_name(RhoParser *parser) {
     return NULL;
 }
 
-static Atom *rp_parse_proc_atom(RhoParser *parser) {
-    rp_skip_ws(parser);
-    if (rp_consume_char(parser, '{')) {
-        Atom *inner = rp_parse_proc(parser);
-        if (!inner) return NULL;
-        if (!rp_consume_char(parser, '}')) {
-            rp_error(parser, "expected '}'");
-            return NULL;
-        }
-        return inner;
-    }
-    if (rp_consume_char(parser, '0')) {
-        return rho_nil(parser->arena);
-    }
-    if (rp_consume_keyword(parser, "for")) {
-        char *binder_name;
-        Atom *binder;
-        Atom *channel;
-        Atom *body;
-        if (!rp_consume_char(parser, '(')) {
-            rp_error(parser, "expected '(' after for");
-            return NULL;
-        }
-        if (rp_consume_char(parser, '$')) {
-            binder_name = rp_parse_ident(parser);
-        } else {
-            binder_name = rp_parse_ident(parser);
-        }
-        if (!binder_name) {
-            rp_error(parser, "expected input binder");
-            return NULL;
-        }
-        if (!rp_consume_span(parser, "<-")) {
-            rp_error(parser, "expected '<-' in input");
-            return NULL;
-        }
-        channel = rp_parse_name(parser);
-        if (!channel) return NULL;
-        if (!rp_consume_char(parser, ')')) {
-            rp_error(parser, "expected ')' after input channel");
-            return NULL;
-        }
-        if (!rp_consume_char(parser, '{')) {
-            rp_error(parser, "expected input body block");
-            return NULL;
-        }
-        binder = atom_var(parser->arena, binder_name);
-        body = rp_parse_proc(parser);
-        if (!body) return NULL;
-        if (!rp_consume_char(parser, '}')) {
-            rp_error(parser, "expected '}' after input body");
-            return NULL;
-        }
-        return rho_ternary(parser->arena, "rho:recv", channel, binder, body);
-    }
-    if (rp_consume_char(parser, '*')) {
-        Atom *name = rp_parse_name(parser);
-        if (!name) return NULL;
-        return rho_unary(parser->arena, "rho:drop", name);
-    }
-    {
-        Atom *channel = rp_parse_name(parser);
-        Atom *payload;
-        if (!channel) return NULL;
-        if (!rp_consume_char(parser, '!')) {
-            rp_error(parser, "expected output after leading name");
-            return NULL;
-        }
-        if (!rp_consume_char(parser, '(')) {
-            rp_error(parser, "expected '(' after '!'");
-            return NULL;
-        }
-        payload = rp_parse_proc(parser);
-        if (!payload) return NULL;
-        if (!rp_consume_char(parser, ')')) {
-            rp_error(parser, "expected ')' after output payload");
-            return NULL;
-        }
-        return rho_binary(parser->arena, "rho:send", channel, payload);
-    }
-}
-
-static Atom *rp_parse_proc(RhoParser *parser) {
+/* item (SEP item)*: one item as it is; several, the expression (HEAD item ...). */
+static Atom *rp_parse_joined(RhoParser *parser, Atom *(*item)(RhoParser *), char sep,
+                             const char *head) {
     RhoSyntaxVec items;
-    Atom *first;
+    Atom *out;
     rho_vec_init(&items);
-    first = rp_parse_proc_atom(parser);
-    if (!first) {
-        rho_vec_free(&items);
-        return NULL;
-    }
-    (void)rho_vec_push(&items, first);
-    while (rp_consume_char(parser, '|')) {
-        Atom *next = rp_parse_proc_atom(parser);
+    do {
+        Atom *next = item(parser);
         if (!next) {
             rho_vec_free(&items);
             return NULL;
         }
         (void)rho_vec_push(&items, next);
-    }
-    if (items.len == 1) {
-        Atom *out = items.items[0];
-        rho_vec_free(&items);
-        return out;
-    }
-    {
-        Atom *out = rho_call(parser->arena, "rho:par", items.items, items.len);
-        rho_vec_free(&items);
-        return out;
-    }
+    } while (rp_consume_char(parser, sep));
+    out = items.len == 1 ? items.items[0]
+                         : rho_call(parser->arena, head, items.items, items.len);
+    rho_vec_free(&items);
+    return out;
+}
+
+static Atom *rp_parse_proc_atom(RhoParser *parser);
+
+static Atom *rp_parse_proc(RhoParser *parser) {
+    return rp_parse_joined(parser, rp_parse_proc_atom, '|', "rho:par");
 }
 
 static Atom *rc_parse_term(RhoParser *parser);
@@ -589,33 +500,7 @@ static Atom *rc_parse_signature_atom(RhoParser *parser) {
 }
 
 static Atom *rc_parse_signature(RhoParser *parser) {
-    RhoSyntaxVec items;
-    Atom *first;
-    rho_vec_init(&items);
-    first = rc_parse_signature_atom(parser);
-    if (!first) {
-        rho_vec_free(&items);
-        return NULL;
-    }
-    (void)rho_vec_push(&items, first);
-    while (rp_consume_char(parser, '*')) {
-        Atom *next = rc_parse_signature_atom(parser);
-        if (!next) {
-            rho_vec_free(&items);
-            return NULL;
-        }
-        (void)rho_vec_push(&items, next);
-    }
-    if (items.len == 1) {
-        Atom *out = items.items[0];
-        rho_vec_free(&items);
-        return out;
-    }
-    {
-        Atom *out = rho_cost_sig_mul(parser->arena, items.items, items.len);
-        rho_vec_free(&items);
-        return out;
-    }
+    return rp_parse_joined(parser, rc_parse_signature_atom, '*', "rho:cost:sig-mul");
 }
 
 static Atom *rc_parse_name(RhoParser *parser) {
@@ -640,10 +525,20 @@ static Atom *rc_parse_name(RhoParser *parser) {
 
 static Atom *rc_parse_proc(RhoParser *parser);
 
-static Atom *rc_parse_proc_atom(RhoParser *parser) {
+/* The pure and cost text grammars read processes alike, but for how a channel
+ * is read, what a send carries and a receive runs, and whether *x is a
+ * process (in the cost grammar it is a signed term). */
+typedef struct {
+    Atom *(*name)(RhoParser *);
+    Atom *(*payload)(RhoParser *);
+    Atom *(*proc)(RhoParser *);
+    bool drop_is_process;
+} RhoTextGrammar;
+
+static Atom *rho_parse_proc_atom(RhoParser *parser, const RhoTextGrammar *g) {
     rp_skip_ws(parser);
     if (rp_consume_char(parser, '{')) {
-        Atom *inner = rc_parse_proc(parser);
+        Atom *inner = g->proc(parser);
         if (!inner) return NULL;
         if (!rp_consume_char(parser, '}')) {
             rp_error(parser, "expected '}'");
@@ -656,18 +551,14 @@ static Atom *rc_parse_proc_atom(RhoParser *parser) {
     }
     if (rp_consume_keyword(parser, "for")) {
         char *binder_name;
-        Atom *binder;
         Atom *channel;
         Atom *body;
         if (!rp_consume_char(parser, '(')) {
             rp_error(parser, "expected '(' after for");
             return NULL;
         }
-        if (rp_consume_char(parser, '$')) {
-            binder_name = rp_parse_ident(parser);
-        } else {
-            binder_name = rp_parse_ident(parser);
-        }
+        (void)rp_consume_char(parser, '$');   /* $x and x name one binder */
+        binder_name = rp_parse_ident(parser);
         if (!binder_name) {
             rp_error(parser, "expected input binder");
             return NULL;
@@ -676,7 +567,7 @@ static Atom *rc_parse_proc_atom(RhoParser *parser) {
             rp_error(parser, "expected '<-' in input");
             return NULL;
         }
-        channel = rc_parse_name(parser);
+        channel = g->name(parser);
         if (!channel) return NULL;
         if (!rp_consume_char(parser, ')')) {
             rp_error(parser, "expected ')' after input channel");
@@ -686,8 +577,8 @@ static Atom *rc_parse_proc_atom(RhoParser *parser) {
             rp_error(parser, "expected input body block");
             return NULL;
         }
-        binder = atom_var(parser->arena, binder_name);
-        body = rc_parse_term(parser);
+        Atom *binder = atom_var(parser->arena, binder_name);
+        body = g->payload(parser);
         if (!body) return NULL;
         if (!rp_consume_char(parser, '}')) {
             rp_error(parser, "expected '}' after input body");
@@ -695,56 +586,43 @@ static Atom *rc_parse_proc_atom(RhoParser *parser) {
         }
         return rho_ternary(parser->arena, "rho:recv", channel, binder, body);
     }
-    {
-        Atom *channel = rc_parse_name(parser);
-        Atom *payload;
-        if (!channel) return NULL;
-        if (!rp_consume_char(parser, '!')) {
-            rp_error(parser, "expected output after leading name");
-            return NULL;
-        }
-        if (!rp_consume_char(parser, '(')) {
-            rp_error(parser, "expected '(' after '!'");
-            return NULL;
-        }
-        payload = rc_parse_term(parser);
-        if (!payload) return NULL;
-        if (!rp_consume_char(parser, ')')) {
-            rp_error(parser, "expected ')' after output payload");
-            return NULL;
-        }
-        return rho_binary(parser->arena, "rho:send", channel, payload);
+    if (g->drop_is_process && rp_consume_char(parser, '*')) {
+        Atom *name = g->name(parser);
+        if (!name) return NULL;
+        return rho_unary(parser->arena, "rho:drop", name);
     }
+    Atom *channel = g->name(parser);
+    Atom *payload;
+    if (!channel) return NULL;
+    if (!rp_consume_char(parser, '!')) {
+        rp_error(parser, "expected output after leading name");
+        return NULL;
+    }
+    if (!rp_consume_char(parser, '(')) {
+        rp_error(parser, "expected '(' after '!'");
+        return NULL;
+    }
+    payload = g->payload(parser);
+    if (!payload) return NULL;
+    if (!rp_consume_char(parser, ')')) {
+        rp_error(parser, "expected ')' after output payload");
+        return NULL;
+    }
+    return rho_binary(parser->arena, "rho:send", channel, payload);
+}
+
+static Atom *rp_parse_proc_atom(RhoParser *parser) {
+    static const RhoTextGrammar pure = {rp_parse_name, rp_parse_proc, rp_parse_proc, true};
+    return rho_parse_proc_atom(parser, &pure);
+}
+
+static Atom *rc_parse_proc_atom(RhoParser *parser) {
+    static const RhoTextGrammar cost = {rc_parse_name, rc_parse_term, rc_parse_proc, false};
+    return rho_parse_proc_atom(parser, &cost);
 }
 
 static Atom *rc_parse_proc(RhoParser *parser) {
-    RhoSyntaxVec items;
-    Atom *first;
-    rho_vec_init(&items);
-    first = rc_parse_proc_atom(parser);
-    if (!first) {
-        rho_vec_free(&items);
-        return NULL;
-    }
-    (void)rho_vec_push(&items, first);
-    while (rp_consume_char(parser, '|')) {
-        Atom *next = rc_parse_proc_atom(parser);
-        if (!next) {
-            rho_vec_free(&items);
-            return NULL;
-        }
-        (void)rho_vec_push(&items, next);
-    }
-    if (items.len == 1) {
-        Atom *out = items.items[0];
-        rho_vec_free(&items);
-        return out;
-    }
-    {
-        Atom *out = rho_call(parser->arena, "rho:par", items.items, items.len);
-        rho_vec_free(&items);
-        return out;
-    }
+    return rp_parse_joined(parser, rc_parse_proc_atom, '|', "rho:par");
 }
 
 static Atom *rc_parse_stack(RhoParser *parser) {
@@ -814,41 +692,15 @@ static Atom *rc_parse_term_atom(RhoParser *parser) {
 }
 
 static Atom *rc_parse_term(RhoParser *parser) {
-    RhoSyntaxVec items;
-    Atom *first;
-    rho_vec_init(&items);
-    first = rc_parse_term_atom(parser);
-    if (!first) {
-        rho_vec_free(&items);
-        return NULL;
-    }
-    (void)rho_vec_push(&items, first);
-    while (rp_consume_char(parser, '|')) {
-        Atom *next = rc_parse_term_atom(parser);
-        if (!next) {
-            rho_vec_free(&items);
-            return NULL;
-        }
-        (void)rho_vec_push(&items, next);
-    }
-    if (items.len == 1) {
-        Atom *out = items.items[0];
-        rho_vec_free(&items);
-        return out;
-    }
-    {
-        Atom *out = rho_cost_par(parser->arena, items.items, items.len);
-        rho_vec_free(&items);
-        return out;
-    }
+    return rp_parse_joined(parser, rc_parse_term_atom, '|', "rho:cost:par");
 }
 
 /* Reads Rholang-style text: the pure grammar, or the cost grammar.  The
  * elaborator links a receive to its occurrences by spelling, which takes one
  * variable identity per spelling for the whole text; a caller without an
  * intern table gets one for the read. */
-static int rhocalc_parse_surface(const char *text, Arena *arena,
-                                 Atom ***out_atoms, RhoReader reader) {
+static int rhocalc_parse_rho_text(const char *text, Arena *arena,
+                                  Atom ***out_atoms, RhoReader reader) {
     RhoParser parser = {0};
     VarInternTable local;
     bool own_intern = g_var_intern == NULL;
@@ -937,22 +789,12 @@ static Atom *rho_elab_lookup(RhoElaborator *elab, SymbolId spelling,
 
 static bool rho_elab_push(RhoElaborator *elab, SymbolId spelling,
                           VarId source_var_id, Atom *var) {
-    if (elab->binding_len == elab->binding_cap) {
-        uint32_t next_cap = elab->binding_cap ? elab->binding_cap * 2u : 8u;
-        RhoElabBinding *next =
-            cetta_realloc(elab->bindings,
-                          sizeof(RhoElabBinding) * next_cap);
-        if (!next) {
-            elab->failed = true;
-            return false;
-        }
-        elab->bindings = next;
-        elab->binding_cap = next_cap;
+    RhoElabBinding binding = {spelling, source_var_id, var};
+    if (!rho_syntax_push_binding(rho_syntax_resize, &elab->bindings, &elab->binding_len,
+                                 &elab->binding_cap, binding)) {
+        elab->failed = true;
+        return false;
     }
-    elab->bindings[elab->binding_len].spelling = spelling;
-    elab->bindings[elab->binding_len].source_var_id = source_var_id;
-    elab->bindings[elab->binding_len].var = var;
-    elab->binding_len++;
     return true;
 }
 
@@ -987,7 +829,7 @@ static Atom *rho_quote_dropped_name(Atom *quote) {
                : NULL;
 }
 
-/* A name written without '$' in the surface syntax: the receive in scope
+/* A name written without '$' in rho syntax: the receive in scope
  * that binds its spelling.  Unbound, the cost reader reads the signature of
  * that spelling; the pure reader has no such name. */
 static Atom *rho_elab_bare_name(RhoElaborator *elab, Atom *bare) {
@@ -1105,71 +947,34 @@ Atom *rhocalc_elaborate_mrho_atom(Arena *arena, Atom *atom) {
     return atom;
 }
 
-int rhocalc_parse_text(const char *text,
-                       RhocalcSemanticProfileId semantic_profile,
-                       CettaSyntaxId syntax,
-                       Arena *arena,
-                       Atom ***out_atoms) {
+/* Reads a source, the text itself or (is_path) a file's, in a syntax. */
+static int rhocalc_parse_source(const char *source, bool is_path,
+                                RhocalcSemanticProfileId semantic_profile,
+                                CettaSyntaxId syntax, Arena *arena, Atom ***out_atoms) {
     if (!out_atoms) return -1;
     *out_atoms = NULL;
     rho_parse_clear_error();
     if (!rhocalc_semantic_profile_parse_supported(semantic_profile)) {
         return -1;
     }
-    if (syntax == CETTA_SYNTAX_METTA &&
-        semantic_profile == RHOCALC_SEMANTIC_PROFILE_RHOMETTA) {
-        return parse_metta_text(text, arena, out_atoms);
-    }
-    if (syntax == CETTA_SYNTAX_METTA) syntax = CETTA_SYNTAX_MRHO;
-    if (syntax == CETTA_SYNTAX_MRHO) {
-        int n;
-        n = parse_metta_text(text, arena, out_atoms);
+    if (syntax == CETTA_SYNTAX_METTA || syntax == CETTA_SYNTAX_MRHO) {
+        int n = is_path ? parse_metta_file(source, arena, out_atoms)
+                        : parse_metta_text(source, arena, out_atoms);
+        if (syntax == CETTA_SYNTAX_METTA &&
+            semantic_profile == RHOCALC_SEMANTIC_PROFILE_RHOMETTA)
+            return n;
         if (n < 0) return n;
         return rhocalc_elaborate_atoms(arena, *out_atoms, n, RHO_READER_MRHO);
     }
     if (syntax == CETTA_SYNTAX_RHO) {
-        return rhocalc_parse_surface(
-            text, arena, out_atoms,
-            semantic_profile == RHOCALC_SEMANTIC_PROFILE_COST
-                ? RHO_READER_RHO_COST : RHO_READER_RHO);
-    }
-    snprintf(g_rhocalc_parse_error, sizeof(g_rhocalc_parse_error),
-             "unsupported rhocalc syntax '%s'", cetta_syntax_name(syntax));
-    return -1;
-}
-
-int rhocalc_parse_file(const char *path,
-                       RhocalcSemanticProfileId semantic_profile,
-                       CettaSyntaxId syntax,
-                       Arena *arena,
-                       Atom ***out_atoms) {
-    if (!out_atoms) return -1;
-    *out_atoms = NULL;
-    rho_parse_clear_error();
-    if (!rhocalc_semantic_profile_parse_supported(semantic_profile)) {
-        return -1;
-    }
-    if (syntax == CETTA_SYNTAX_METTA &&
-        semantic_profile == RHOCALC_SEMANTIC_PROFILE_RHOMETTA) {
-        return parse_metta_file(path, arena, out_atoms);
-    }
-    if (syntax == CETTA_SYNTAX_METTA) syntax = CETTA_SYNTAX_MRHO;
-    if (syntax == CETTA_SYNTAX_MRHO) {
-        int n;
-        n = parse_metta_file(path, arena, out_atoms);
-        if (n < 0) return n;
-        return rhocalc_elaborate_atoms(arena, *out_atoms, n, RHO_READER_MRHO);
-    }
-    if (syntax == CETTA_SYNTAX_RHO) {
-        char *text = rhocalc_read_file(path);
-        int n;
-        if (!text) {
+        char *text = is_path ? rhocalc_read_file(source) : NULL;
+        if (is_path && !text) {
             snprintf(g_rhocalc_parse_error, sizeof(g_rhocalc_parse_error),
-                     "could not read %s", path ? path : "<null>");
+                     "could not read %s", source ? source : "<null>");
             return -1;
         }
-        n = rhocalc_parse_surface(
-            text, arena, out_atoms,
+        int n = rhocalc_parse_rho_text(
+            is_path ? text : source, arena, out_atoms,
             semantic_profile == RHOCALC_SEMANTIC_PROFILE_COST
                 ? RHO_READER_RHO_COST : RHO_READER_RHO);
         free(text);
@@ -1180,11 +985,15 @@ int rhocalc_parse_file(const char *path,
     return -1;
 }
 
-typedef struct {
-    VarId id;
-    const char *name;
-    bool owned;
-} RhoPrintBinding;
+int rhocalc_parse_text(const char *text, RhocalcSemanticProfileId semantic_profile,
+                       CettaSyntaxId syntax, Arena *arena, Atom ***out_atoms) {
+    return rhocalc_parse_source(text, false, semantic_profile, syntax, arena, out_atoms);
+}
+
+int rhocalc_parse_file(const char *path, RhocalcSemanticProfileId semantic_profile,
+                       CettaSyntaxId syntax, Arena *arena, Atom ***out_atoms) {
+    return rhocalc_parse_source(path, true, semantic_profile, syntax, arena, out_atoms);
+}
 
 typedef struct {
     VarId *items;
@@ -1204,15 +1013,7 @@ typedef struct {
 } RhoPrintCtx;
 
 static bool rho_id_stack_push(RhoIdStack *stack, VarId id) {
-    if (stack->len == stack->cap) {
-        uint32_t next_cap = stack->cap ? stack->cap * 2u : 8u;
-        VarId *next = cetta_realloc(stack->items, sizeof(VarId) * next_cap);
-        if (!next) return false;
-        stack->items = next;
-        stack->cap = next_cap;
-    }
-    stack->items[stack->len++] = id;
-    return true;
+    return rho_syntax_push_var(rho_syntax_resize, &stack->items, &stack->len, &stack->cap, id);
 }
 
 static bool rho_id_stack_contains(RhoIdStack *stack, VarId id) {
@@ -1231,18 +1032,9 @@ static bool rho_print_free_contains(RhoPrintCtx *ctx, SymbolId sym) {
 
 static void rho_print_free_add(RhoPrintCtx *ctx, SymbolId sym) {
     if (rho_print_free_contains(ctx, sym)) return;
-    if (ctx->free_len == ctx->free_cap) {
-        uint32_t next_cap = ctx->free_cap ? ctx->free_cap * 2u : 8u;
-        SymbolId *next =
-            cetta_realloc(ctx->free_syms, sizeof(SymbolId) * next_cap);
-        if (!next) {
-            ctx->failed = true;
-            return;
-        }
-        ctx->free_syms = next;
-        ctx->free_cap = next_cap;
-    }
-    ctx->free_syms[ctx->free_len++] = sym;
+    if (!rho_syntax_push_symbol(rho_syntax_resize, &ctx->free_syms, &ctx->free_len,
+                                &ctx->free_cap, sym))
+        ctx->failed = true;
 }
 
 static void rho_print_collect_free(RhoPrintCtx *ctx, Atom *atom,
@@ -1345,23 +1137,13 @@ static bool rho_print_binding_push(RhoPrintCtx *ctx, Atom *var,
         owned = true;
         if (!name) return false;
     }
-    if (ctx->binding_len == ctx->binding_cap) {
-        uint32_t next_cap = ctx->binding_cap ? ctx->binding_cap * 2u : 8u;
-        RhoPrintBinding *next =
-            cetta_realloc(ctx->bindings,
-                          sizeof(RhoPrintBinding) * next_cap);
-        if (!next) {
-            if (owned) free((char *)name);
-            ctx->failed = true;
-            return false;
-        }
-        ctx->bindings = next;
-        ctx->binding_cap = next_cap;
+    RhoPrintBinding binding = {var->var_id, name, owned};
+    if (!rho_syntax_push_print_binding(rho_syntax_resize, &ctx->bindings, &ctx->binding_len,
+                                       &ctx->binding_cap, binding)) {
+        if (owned) free((char *)name);
+        ctx->failed = true;
+        return false;
     }
-    ctx->bindings[ctx->binding_len].id = var->var_id;
-    ctx->bindings[ctx->binding_len].name = name;
-    ctx->bindings[ctx->binding_len].owned = owned;
-    ctx->binding_len++;
     *out_name = name;
     return true;
 }
@@ -1379,16 +1161,26 @@ static void rho_print_syntax_proc(RhoPrintCtx *ctx, Atom *atom, FILE *out);
 static void rho_print_syntax_stack(RhoPrintCtx *ctx, Atom *atom, FILE *out);
 static void rho_print_syntax_term(RhoPrintCtx *ctx, Atom *atom, FILE *out);
 
-static bool rho_cost_stack_empty_atom(Atom *atom) {
-    return atom_is_symbol(atom, "rho:cost:stack-empty");
+/* What a send carries or a receive runs: a signed term, or a process. */
+static void rho_print_syntax_body(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
+    if (rhocalc_is_cost_term_atom(atom)) rho_print_syntax_term(ctx, atom, out);
+    else rho_print_syntax_proc(ctx, atom, out);
 }
 
-static bool rho_cost_signature_atom(Atom *atom) {
-    return rhocalc_is_cost_signature_atom(atom);
+/* A closed quote is printed in a scope of its own: binders outside it do not
+ * reach in, and its fresh names continue the outer count. */
+static void rho_print_scope_open(const RhoPrintCtx *ctx, RhoPrintCtx *inner) {
+    *inner = *ctx;
+    inner->bindings = NULL;
+    inner->binding_len = 0;
+    inner->binding_cap = 0;
 }
 
-static bool rho_cost_term_atom(Atom *atom) {
-    return rhocalc_is_cost_term_atom(atom);
+static void rho_print_scope_close(RhoPrintCtx *ctx, RhoPrintCtx *inner) {
+    ctx->fresh_counter = inner->fresh_counter;
+    if (inner->failed) ctx->failed = true;
+    rho_print_binding_pop(inner, 0);
+    free(inner->bindings);
 }
 
 static void rho_print_syntax_signature(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
@@ -1433,16 +1225,11 @@ static void rho_print_mrho_atom(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
     }
     if (rho_expr_head_named(atom, "rho:quote") && atom->expr.len == 2 &&
         !rho_quote_dropped_name(atom)) {
-        RhoPrintCtx inner = *ctx;
-        inner.bindings = NULL;
-        inner.binding_len = 0;
-        inner.binding_cap = 0;
+        RhoPrintCtx inner;
+        rho_print_scope_open(ctx, &inner);
         fputs("(rho:quote ", out);
         rho_print_mrho_atom(&inner, atom->expr.elems[1], out);
-        ctx->fresh_counter = inner.fresh_counter;
-        if (inner.failed) ctx->failed = true;
-        rho_print_binding_pop(&inner, 0);
-        free(inner.bindings);
+        rho_print_scope_close(ctx, &inner);
         fputc(')', out);
         return;
     }
@@ -1474,29 +1261,15 @@ static void rho_print_syntax_name(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
     }
     if (rho_expr_head_named(atom, "rho:quote") && atom->expr.len == 2) {
         bool closed = !rho_quote_dropped_name(atom);
-        RhoPrintCtx inner = *ctx;
-        RhoPrintCtx *scope = closed ? &inner : ctx;
-        if (closed) {
-            inner.bindings = NULL;
-            inner.binding_len = 0;
-            inner.binding_cap = 0;
-        }
+        RhoPrintCtx inner;
+        if (closed) rho_print_scope_open(ctx, &inner);
         fputs("@{", out);
-        if (rho_cost_term_atom(atom->expr.elems[1])) {
-            rho_print_syntax_term(scope, atom->expr.elems[1], out);
-        } else {
-            rho_print_syntax_proc(scope, atom->expr.elems[1], out);
-        }
-        if (closed) {
-            ctx->fresh_counter = inner.fresh_counter;
-            if (inner.failed) ctx->failed = true;
-            rho_print_binding_pop(&inner, 0);
-            free(inner.bindings);
-        }
+        rho_print_syntax_body(closed ? &inner : ctx, atom->expr.elems[1], out);
+        if (closed) rho_print_scope_close(ctx, &inner);
         fputs("}", out);
         return;
     }
-    if (rho_cost_signature_atom(atom)) {
+    if (rhocalc_is_cost_signature_atom(atom)) {
         rho_print_syntax_signature(ctx, atom, out);
         return;
     }
@@ -1539,7 +1312,7 @@ static void rho_print_syntax_term(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
 }
 
 static void rho_print_syntax_stack(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
-    if (rho_cost_stack_empty_atom(atom)) {
+    if (atom_is_symbol(atom, "rho:cost:stack-empty")) {
         fputs("()", out);
         return;
     }
@@ -1569,11 +1342,7 @@ static void rho_print_syntax_proc(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
     if (rho_expr_head_named(atom, "rho:send") && atom->expr.len == 3) {
         rho_print_syntax_name(ctx, atom->expr.elems[1], out);
         fputs("!(", out);
-        if (rho_cost_term_atom(atom->expr.elems[2])) {
-            rho_print_syntax_term(ctx, atom->expr.elems[2], out);
-        } else {
-            rho_print_syntax_proc(ctx, atom->expr.elems[2], out);
-        }
+        rho_print_syntax_body(ctx, atom->expr.elems[2], out);
         fputs(")", out);
         return;
     }
@@ -1590,11 +1359,7 @@ static void rho_print_syntax_proc(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
         fputs(" <- ", out);
         rho_print_syntax_name(ctx, atom->expr.elems[1], out);
         fputs(") {", out);
-        if (rho_cost_term_atom(atom->expr.elems[3])) {
-            rho_print_syntax_term(ctx, atom->expr.elems[3], out);
-        } else {
-            rho_print_syntax_proc(ctx, atom->expr.elems[3], out);
-        }
+        rho_print_syntax_body(ctx, atom->expr.elems[3], out);
         rho_print_binding_pop(ctx, mark);
         fputc('}', out);
         return;
@@ -1618,11 +1383,7 @@ void rhocalc_print_atom_syntax(Atom *atom, CettaSyntaxId syntax, FILE *out) {
         return;
     }
     if (syntax == CETTA_SYNTAX_RHO) {
-        if (rho_cost_term_atom(atom)) {
-            rho_print_syntax_term(&ctx, atom, out);
-        } else {
-            rho_print_syntax_proc(&ctx, atom, out);
-        }
+        rho_print_syntax_body(&ctx, atom, out);
     } else {
         rho_print_mrho_atom(&ctx, atom, out);
     }

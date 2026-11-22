@@ -1,0 +1,6 @@
+; A run that comes back to a state it has been in never ends: it is reported
+; as a cycle after its states, here the one state it keeps returning to.
+(step one)
+(observe run)
+(light)
+(rule toggle (take (light)) (make (light)))

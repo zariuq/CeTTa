@@ -1,0 +1,122 @@
+{
+  "artifact_sha256": "d563749490db98176c04f76006e064c5000eaaf0dde37e3f1a00880aa52dd55d",
+  "conflicts": [],
+  "first": {
+    "JsonArray": [
+      "["
+    ],
+    "JsonElementTail": [
+      ","
+    ],
+    "JsonElements": [
+      "@JsonNumber",
+      "@JsonString",
+      "[",
+      "false",
+      "null",
+      "true",
+      "{"
+    ],
+    "JsonElementsOpt": [
+      "@JsonNumber",
+      "@JsonString",
+      "[",
+      "false",
+      "null",
+      "true",
+      "{"
+    ],
+    "JsonMember": [
+      "@JsonString"
+    ],
+    "JsonMemberTail": [
+      ","
+    ],
+    "JsonMembers": [
+      "@JsonString"
+    ],
+    "JsonMembersOpt": [
+      "@JsonString"
+    ],
+    "JsonObject": [
+      "{"
+    ],
+    "JsonText": [
+      "@JsonNumber",
+      "@JsonString",
+      "[",
+      "false",
+      "null",
+      "true",
+      "{"
+    ],
+    "JsonValue": [
+      "@JsonNumber",
+      "@JsonString",
+      "[",
+      "false",
+      "null",
+      "true",
+      "{"
+    ]
+  },
+  "follow": {
+    "JsonArray": [
+      "$EOF",
+      ",",
+      "]",
+      "}"
+    ],
+    "JsonElementTail": [
+      "]"
+    ],
+    "JsonElements": [
+      "]"
+    ],
+    "JsonElementsOpt": [
+      "]"
+    ],
+    "JsonMember": [
+      ",",
+      "}"
+    ],
+    "JsonMemberTail": [
+      "}"
+    ],
+    "JsonMembers": [
+      "}"
+    ],
+    "JsonMembersOpt": [
+      "}"
+    ],
+    "JsonObject": [
+      "$EOF",
+      ",",
+      "]",
+      "}"
+    ],
+    "JsonText": [
+      "$EOF"
+    ],
+    "JsonValue": [
+      "$EOF",
+      ",",
+      "]",
+      "}"
+    ]
+  },
+  "format": "JsonPredictiveArtifactV1",
+  "generalized_islands": [],
+  "lexical_categories": [
+    "JsonWs",
+    "JsonNumber",
+    "JsonString"
+  ],
+  "structural_nonterminals": 11,
+  "transformations": [
+    "regular lexical folding",
+    "erase only the elaboration's JsonWs positions",
+    "fold member and element tail recursion into loops",
+    "factor predictive lookahead across value and selective observers"
+  ]
+}

@@ -561,12 +561,12 @@ test-tiers:
 # native compilers; qualify runs every gate, including corpora, compiler
 # matrices and actual-data Lean admissions. test_tiers.py keeps every
 # previously required gate inside qualify.
-CHECK_GATES := test-tiers test-foundation test-formatting test-source-core test-pp-core test-qualification-controls test-ownership-smoke \
+CHECK_GATES := test-tiers test-foundation test-formatting test-source-core test-pp-core test-qualification-controls test-ownership-smoke test-ownership-admission-cache \
 	test-reference test-wire test-literal-bytes test-coverage test-presentations test-presentation-coverage \
 	test-unicode-names test-source-driver test-driver test-macro-prescan test-macro-definition-ports \
 	test-macro-export test-macro-program-export test-export-counters test-layouts test-layout-edges test-tables test-protocols test-protocol-loops \
 	test-checked-core test-checked-libraries test-checked-spans test-checked-contracts
-TEST_GATES := $(CHECK_GATES) test-c test-modules test-semantics test-compiler-builds test-gnu-extensions test-half-floats test-ownership-core test-ownership-arrays test-ownership-nullable-loops test-ownership-switch test-ownership-unchecked test-ownership-runtime test-ownership-views test-checked-hints test-protocol-certificates test-protocol-call-once \
+TEST_GATES := $(CHECK_GATES) test-c test-modules test-semantics test-compiler-builds test-gnu-extensions test-half-floats test-ownership-core test-ownership-arrays test-ownership-nullable-loops test-ownership-switch test-ownership-unchecked test-ownership-runtime test-ownership-views test-ownership-buffers test-ownership-frame test-checked-hints test-protocol-certificates test-protocol-call-once \
 	test-ownership-control-flow \
 	test-checked-imports test-checked-flat-spans test-checked-foreign-abi test-checked-operations test-ownership-record-results test-ownership-record-values test-ownership-whole-views test-ownership-callbacks test-ownership-interfaces test-ownership-link test-ownership-refinement test-ownership-callback-interfaces test-ownership-abi \
 	test-native-authoring test-one-language test-project-build test-macro-engine test-macro-native-names test-macro-types test-macro-narrowing \
@@ -582,9 +582,9 @@ QUALIFY_GATES := $(TEST_GATES) test-compiler-sanitizers test-corpora test-c11par
 	test-layout-sanitizers test-layout-bridge test-layout-model test-operation-audit test-operation-model \
 	test-operations test-operation-proposal test-table-model test-table-admission test-operation-protocol \
 	test-protocol-model test-protocol-admission test-protocol-loop-admission test-protocol-bound-resources test-checked-model test-checked-admission test-checked-sanitizers test-checked-generated \
-	test-ownership-model test-ownership-admission test-ownership-views-admission test-ownership-staging test-ownership-switch-exhaustive test-ownership-arrays-admission test-ownership-nullable-loops-admission test-checked-spans-admission test-checked-contracts-admission test-checked-operations-admission test-ownership-record-results-admission test-ownership-record-values-admission test-ownership-whole-views-admission test-ownership-callbacks-admission test-ownership-interfaces-admission test-ownership-refinement-admission test-ownership-callback-interfaces-admission test-macro-records-admission test-tcalc-event-view test-tcalc-recorded-cursor
+	test-ownership-model test-ownership-admission test-ownership-admission-cache-integration test-ownership-views-admission test-ownership-staging test-ownership-switch-exhaustive test-ownership-arrays-admission test-ownership-nullable-loops-admission test-checked-spans-admission test-checked-contracts-admission test-checked-operations-admission test-ownership-record-results-admission test-ownership-record-values-admission test-ownership-whole-views-admission test-ownership-callbacks-admission test-ownership-interfaces-admission test-ownership-refinement-admission test-ownership-callback-interfaces-admission test-macro-records-admission test-tcalc-event-view test-tcalc-recorded-cursor
 
-.PHONY: test-ownership-smoke test-ownership-core test-ownership-switch test-ownership-runtime test-ownership-model test-ownership-admission test-ownership-views test-ownership-views-admission test-ownership-staging
+.PHONY: test-ownership-smoke test-ownership-core test-ownership-switch test-ownership-runtime test-ownership-model test-ownership-admission test-ownership-views test-ownership-buffers test-ownership-frame test-ownership-views-admission test-ownership-staging
 test-ownership-smoke: build/cesta
 	python3 -B tests/ownership_core.py --quick --output build/ownership-smoke.json
 
@@ -698,14 +698,31 @@ test-ownership-runtime: build/cesta
 test-ownership-views: build/cesta
 	python3 -B tests/ownership_views.py
 
+# Counted buffers (ownership/INTERFACE.txt): the accepted program under each C
+# compiler, and every refusal for its reason.
+test-ownership-buffers: build/cesta
+	sh tests/ownership_buffers.sh build/cesta
+
+test-ownership-frame: build/cesta
+	sh tests/ownership_frame.sh build/cesta
+
 test-ownership-views-admission: build/cesta test-ownership-model test-checked-model
 	python3 -B tests/ownership_views.py --admit --output build/ownership-views-admission
 
 test-ownership-model: build/cesta
 	python3 -B tests/lean_contracts.py --ownership-only --output build/ownership-model
 
+OWNERSHIP_ADMISSION_JOBS ?= 1
 test-ownership-admission: build/cesta test-ownership-model
-	python3 -B tests/ownership_admission.py
+	python3 -B tests/ownership_admission.py --jobs $(OWNERSHIP_ADMISSION_JOBS)
+
+.PHONY: test-ownership-admission-cache
+test-ownership-admission-cache:
+	python3 -B tests/ownership_admission_cache.py
+
+.PHONY: test-ownership-admission-cache-integration
+test-ownership-admission-cache-integration: build/cesta test-ownership-model
+	python3 -B tests/ownership_admission_cache.py --integration
 
 test-ownership-staging: build/cesta test-ownership-model
 	python3 -B tests/ownership_staging.py

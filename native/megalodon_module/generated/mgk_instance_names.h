@@ -6,6 +6,7 @@
 #define rc_bytes_cmp mgk_rc_bytes_cmp
 #define rc_bytes_cons mgk_rc_bytes_cons
 #define rc_bytes_init mgk_rc_bytes_init
+#define rc_bytes_new mgk_rc_bytes_new
 #define rc_bytes_nil mgk_rc_bytes_nil
 #define rc_bytes_snoc mgk_rc_bytes_snoc
 #define rc_byte_term mgk_rc_byte_term
@@ -21,10 +22,13 @@
 #define rc_ctor_rank mgk_rc_ctor_rank
 #define rc_ctor_slots mgk_rc_ctor_slots
 #define rc_ctor_sort mgk_rc_ctor_sort
+#define rc_empty_bytes mgk_rc_empty_bytes
 #define rc_extra_roots_hook mgk_rc_extra_roots_hook
 #define rc_fail_hook mgk_rc_fail_hook
 #define rc_foreign_hook mgk_rc_foreign_hook
 #define rc_free_statics mgk_rc_free_statics
+#define rc_heap_free mgk_rc_heap_free
+#define rc_heap_swap mgk_rc_heap_swap
 #define rc_hlim mgk_rc_hlim
 #define rc_hp mgk_rc_hp
 #define rc_intern_active mgk_rc_intern_active
@@ -94,6 +98,7 @@
 #define rc_safepoint mgk_rc_safepoint
 #define rc_set_remove mgk_rc_set_remove
 #define rc_set_union mgk_rc_set_union
+#define rc_solve mgk_rc_solve
 #define rc_sort_name mgk_rc_sort_name
 #define rc_sort_order mgk_rc_sort_order
 #define rc_sort_rep mgk_rc_sort_rep

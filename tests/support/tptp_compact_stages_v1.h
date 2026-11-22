@@ -9,7 +9,7 @@
 #ifndef CETTA_TPTP_COMPACT_STAGES_V1_H
 #define CETTA_TPTP_COMPACT_STAGES_V1_H
 
-#include "native/langdef_module.h"
+#include "native/tptp_module.h"
 
 #include <stdbool.h>
 #include <stdio.h>

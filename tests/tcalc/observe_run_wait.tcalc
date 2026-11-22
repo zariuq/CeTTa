@@ -1,0 +1,9 @@
+; From (wait) a step stays at (wait) or wakes.  (wait) is the least successor,
+; so the canonical run, which always takes the least, waits for ever: a cycle
+; at its first step.  observe_run_rotating_wakes.tcalc runs this program under
+; the rotating schedule.
+(step one)
+(observe run)
+(wait)
+(rule stay (take (wait)) (make (wait)))
+(rule wake (take (wait)) (make (wake)))

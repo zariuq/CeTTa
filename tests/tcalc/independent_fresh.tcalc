@@ -1,0 +1,9 @@
+; profile: step=one
+; Two independent firings at a state of fixed terms, one making a row with a
+; fresh unknown.  Both orders end at one state, which mentions an unknown: it
+; is reached twice and counted once, and its successor is computed, not
+; looked up.
+(p a)
+(q b)
+(rule mint (take (p $x)) (make (r $x $fresh)))
+(rule move (take (q $y)) (make (t $y)))

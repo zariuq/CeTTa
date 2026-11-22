@@ -20,9 +20,14 @@
 typedef enum {
     CETTA_GSLT_DIRECT_TARGET_PETTA_V1 = 0,
     CETTA_GSLT_DIRECT_TARGET_HE_V1 = 1,
-    /* C for a closed entry residual whose modes are all functional
-     * (gslt_native_direct_v1.c), linked natively instead of evaluated. */
-    CETTA_GSLT_DIRECT_TARGET_C_V1 = 2
+    /* C for a closed entry residual: its modes read as a rule module
+     * (gslt_rulec_direct_v1.c) that rulec compiles, linked natively
+     * instead of evaluated. */
+    CETTA_GSLT_DIRECT_TARGET_C_V1 = 2,
+    /* tcalc for a closed entry residual, read by demand
+     * (gslt_tcalc_direct_v1.c): rules over a set store run by step every.
+     * The rule count it reports is the number of tcalc rules written. */
+    CETTA_GSLT_DIRECT_TARGET_TCALC_V1 = 3
 } CettaGsltDirectTargetV1;
 
 /* Lower the relation-rule fragment of an ordered GSLT composition directly
@@ -57,9 +62,9 @@ bool cetta_gslt_petta_direct_selected_v1(
     char *error,
     size_t error_size);
 
-/* Specialize transitively from the requested entry modes and emit only those
- * mode projections.  Unlike selected_v1, this is a closed residual: no
- * unspecialized relation rules are retained as runtime fallbacks. */
+/* Specialize transitively from the requested entry modes. Public generic
+ * relation entries are omitted. PeTTa retains the closed Horn dependencies
+ * needed by relational premises under private residual names. */
 bool cetta_gslt_petta_direct_closed_v1(
     Atom *const *presentations,
     size_t presentation_count,

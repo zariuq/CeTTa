@@ -1,0 +1,8 @@
+; Demands of two calls are one relation; each call's searches hold its own
+; head symbol first, so each call has its index, keeping only its rows.
+(step every)
+(store set)
+(rule len-nil (read (demand (Len nil))) (make (value (Len nil) z)))
+(rule len-cons (read (demand (Len (cons $h $t))) (value (Len $t) $n)) (make (value (Len (cons $h $t)) (s $n))))
+(rule sum-nil (read (demand (Sum nil))) (make (value (Sum nil) 0)))
+(rule sum-cons (read (demand (Sum (cons $h $t))) (value (Sum $t) $n)) (make (value (Sum (cons $h $t)) (+ $h $n))))

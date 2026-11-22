@@ -1,0 +1,3 @@
+(interpretation (version tcalc@0.1) (step one) (ask after-tells) (store multiset) (matches symmetric) (solver mgu-first-order) (observe outcomes) (budget 100000) (backend c))
+(outcome divides(n2, n10) divides(n2, n12) divides(n2, n4) divides(n2, n6) divides(n2, n8) divides(n3, n12) divides(n3, n6) divides(n3, n9) divides(n4, n12) divides(n4, n8) divides(n5, n10) divides(n6, n12) pred(n10, n9) pred(n11, n10) pred(n12, n11) pred(n2, n1) pred(n3, n2) pred(n4, n3) pred(n5, n4) pred(n6, n5) pred(n7, n6) pred(n8, n7) pred(n9, n8) prime(n11) prime(n2) prime(n3) prime(n5) prime(n7))
+(explored (states 181) (work 181) (finished true) (cycle false))

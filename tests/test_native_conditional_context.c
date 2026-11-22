@@ -4162,17 +4162,9 @@ static unsigned source_invocation_plans(void) {
     unsigned checks = 0u;
     for (unsigned i = 0u; i < sizeof(cases) / sizeof(*cases); i++) {
         Atom *call = fixture_atom(&source, cases[i].call);
+        /* Every head here is a name the reference's prelude registers
+         * (decons among them), so each is a call with its body layout. */
         const PettaPlanNode *plan = petta_program_plan_current(program, call);
-        /* This extension spelling needs source registration. A known body
-         * layout must not itself establish that the source is a call. */
-        if (i == 5u) {
-            assert(plan && plan->role == PETTA_PLAN_DATA && !plan->computation.invocation.operation);
-            CettaInvocationPlan layout = petta_semantics_elaborate_invocation(
-                call->expr.elems[0]->sym_id, PETTA_FORM_NONE, cases[i].arity);
-            assert(layout.operation == cases[i].operation);
-            checks++;
-            continue;
-        }
         if (!plan || plan->role != PETTA_PLAN_STATIC_CALL)
             fprintf(stderr, "invocation authority: %s\n", cases[i].call);
         assert(plan && plan->role == PETTA_PLAN_STATIC_CALL);
@@ -9749,13 +9741,16 @@ static unsigned conditional_native_continuation_controls(void) {
         cetta_prepared_pure_program_free(program);
         checks++;
     }
-    /* Entry carries a positional translation event across a declaration
-     * change, independently of retaining the packet's variable coordinates. */
-    for (unsigned known = 0u; known < 2u; known++) {
+    /* A retained caller can explicitly keep a value, or carry an
+     * executable occurrence whose head is still decided at reach. */
+    for (unsigned kind = 0u; kind < 3u; kind++) {
+        bool held = kind == 0u;
+        bool known = kind == 2u;
         Arena execution;
         arena_init_detached(&execution);
         Atom *hole = atom_var_with_id(&execution, "$staged-return", fresh_var_id());
-        Atom *head = atom_symbol(&execution, known ? "conditional-staged-known" : "conditional-staged-data");
+        Atom *head = atom_symbol(&execution, held ? "conditional-staged-held"
+            : known ? "conditional-staged-known" : "conditional-staged-data");
         Atom *query = atom_expr2(&execution, head, hole);
         char declaration[160];
         snprintf(declaration, sizeof(declaration), "(= (%s $x) changed)", atom_name_cstr(head));
@@ -9771,7 +9766,16 @@ static unsigned conditional_native_continuation_controls(void) {
         PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
             false, true, false, petta_eval_machine_match_semantics(library, false));
         const Arena *owners[] = {&execution};
-        const PettaPlanNode *plan = host.translate_source(host.context, &space, query, owners, 1u);
+        const PettaPlanNode fields[] = {{.role = PETTA_PLAN_VALUE},
+                                        {.role = PETTA_PLAN_VALUE}};
+        const PettaPlanNode held_plan = {.role = PETTA_PLAN_VALUE,
+            .output = PETTA_PLAN_OUTPUT_VALUE, .computation.control = CETTA_CONTROL_RETURN_VALUE_PLAN};
+        const PettaPlanNode written_plan = {.role = PETTA_PLAN_DATA,
+            .output = PETTA_PLAN_OUTPUT_CONSTRUCTOR, .computation.control = CETTA_CONTROL_CONSTRUCT_PLAN,
+            .child_count = 2u, .children = fields};
+        const PettaPlanNode *plan = known
+            ? host.translate_source(host.context, &space, query, owners, 1u)
+            : held ? &held_plan : &written_plan;
         assert(plan);
         CettaPreparedPureCaller caller = {.input = hole, .term = query, .plan = plan};
         bindings_init(&caller.captures);
@@ -9793,9 +9797,16 @@ static unsigned conditional_native_continuation_controls(void) {
         Atom *answer = NULL;
         Bindings environment;
         assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_ANSWER);
-        Atom *expected = known ? atom_symbol(&execution, "changed")
-            : atom_expr2(&execution, head, atom_int(&execution, 5));
-        assert(atom_eq(bindings_apply_if_vars(&environment, &execution, answer), expected));
+        Atom *expected = held
+            ? atom_expr2(&execution, head, atom_int(&execution, 5))
+            : atom_symbol(&execution, "changed");
+        Atom *actual = bindings_apply_if_vars(&environment, &execution, answer);
+        if (!atom_eq(actual, expected)) {
+            fprintf(stderr, "staged caller kind=%u role=%u actual=", kind, plan->role);
+            atom_print(actual, stderr);
+            fputc('\n', stderr);
+        }
+        assert(atom_eq(actual, expected));
         bindings_free(&environment);
         assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_EXHAUSTED);
         bindings_free(&environment);
@@ -9804,8 +9815,8 @@ static unsigned conditional_native_continuation_controls(void) {
         arena_free(&execution);
         checks++;
     }
-    /* A native expression may introduce a callable between transfer and
-     * caller execution. The saved source occurrence keeps its entry role. */
+    /* A native expression can install the head before the saved caller
+     * reaches it, without re-running the entered native effect. */
     for (unsigned known = 0u; known < 2u; known++) {
         const char *head = known ? "conditional-parent-known" : "conditional-parent-data";
         char declaration[192], entry[256], entry_name[64];
@@ -9851,8 +9862,7 @@ static unsigned conditional_native_continuation_controls(void) {
         Atom *answer = NULL;
         Bindings environment;
         assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_ANSWER);
-        Atom *expected = known ? atom_symbol(&execution, "changed") : atom_expr2(&execution,
-            atom_symbol(&execution, head), atom_int(&execution, 5));
+        Atom *expected = atom_symbol(&execution, "changed");
         assert(atom_eq(bindings_apply_if_vars(&environment, &execution, answer), expected));
         bindings_free(&environment);
         assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_EXHAUSTED);
@@ -10266,8 +10276,9 @@ static unsigned native_frontier_rejoin_controls(void) {
         petta_machine_destroy(&machine); prepared_pure_program_cache_free(&context.prepared_pure_cache);
         arena_free(&execution); checks++;
     }
-    /* All transferred callers retain their original data/call roles,
-     * including a continuation not entered until after native mutation. */
+    /* Every transferred caller rechecks a written head at reach. A
+     * second installation is a second equation occurrence; it counts
+     * for the later call without replaying either native effect. */
     for (unsigned known = 0u; known < 2u; known++) {
         char declaration[160], definition[256], entry_name[64], head[64];
         snprintf(head, sizeof(head), "rejoin-born-%u", known);
@@ -10303,13 +10314,13 @@ static unsigned native_frontier_rejoin_controls(void) {
         PettaMachine machine;
         Atom *query = atom_expr2(&execution, atom_symbol_id(&execution, resumption_root), atom_int(&execution, 11));
         assert(petta_machine_init(&machine, &space, &execution, query, NULL, &host));
-        Atom *expected = known ? atom_symbol(&execution, "changed") : atom_expr2(&execution,
-            atom_symbol(&execution, head), atom_int(&execution, 5));
-        for (unsigned count = 0u; count < 3u; count++) {
+        Atom *expected = atom_symbol(&execution, "changed");
+        unsigned answers = known ? 2u : 3u;
+        for (unsigned count = 0u; count <= answers; count++) {
             Atom *answer = NULL; Bindings environment;
             PettaMachineStep step = petta_machine_next(&machine, &answer, &environment);
-            assert(step == (count < 2u ? PETTA_MACHINE_STEP_ANSWER : PETTA_MACHINE_STEP_EXHAUSTED));
-            if (count < 2u)
+            assert(step == (count < answers ? PETTA_MACHINE_STEP_ANSWER : PETTA_MACHINE_STEP_EXHAUSTED));
+            if (count < answers)
                 assert(atom_eq(bindings_apply_if_vars(&environment, &execution, answer), expected));
             bindings_free(&environment);
         }
@@ -10401,7 +10412,7 @@ static const void *decline_constructor_projection(void *context,
         ? NULL : petta_prepared_pure_project_source(context, projection);
 }
 
-static unsigned frozen_source_caller_controls(void) {
+static unsigned live_source_caller_controls(void) {
     CettaLibraryContext *library = calloc(1u, sizeof(*library));
     assert(library);
     cetta_library_context_init_for_language_profile(library, CETTA_LANGUAGE_PETTA, NULL);
@@ -10432,7 +10443,7 @@ static unsigned frozen_source_caller_controls(void) {
     for (unsigned data = 0u; data < 2u; data++)
     for (unsigned ordinary = 0u; ordinary < 2u; ordinary++)
     for (size_t budget = 0u; budget < sizeof(allowances) / sizeof(*allowances); budget++) {
-        char name[96], root[96], rows[2][384], declaration[192], query[128], expected[192];
+        char name[96], root[96], rows[2][384], declaration[192], query[128];
         snprintf(name, sizeof(name), "caller-born-%u-%u-%u-%zu", known, data, ordinary, budget);
         snprintf(root, sizeof(root), "caller-owner-%u-%u-%u-%zu", known, data, ordinary, budget);
         snprintf(rows[0], sizeof(rows[0]), "(= (%s $x) (let $v (__cetta_lib_json_parse_v1 $x) (%s $v (Pair $v $v))))", root, name);
@@ -10449,8 +10460,6 @@ static unsigned frozen_source_caller_controls(void) {
         }
         snprintf(declaration, sizeof(declaration), "(= (%s $a $b) 99)", name);
         snprintf(query, sizeof(query), "(%s 11)", root);
-        const char *value = data ? "(readln!)" : "17";
-        snprintf(expected, sizeof(expected), "(%s %s (Pair %s %s))", name, value, value, value);
         if (!known && !data && !ordinary && !budget) {
             /* A source adapter's refused caller projection must decline
              * compilation before the native effect can be entered. */
@@ -10500,20 +10509,19 @@ static unsigned frozen_source_caller_controls(void) {
             }
             Atom *actual = bindings_apply_if_vars(&environment, &output, answer);
             assert(actual);
-            if (known) {
-                old += atom_eq(actual, atom_int(&output, 42));
-                added += atom_eq(actual, atom_int(&output, 99));
-            } else {
-                assert(atom_eq(actual, fixture_atom(&output, expected)));
-            }
+            /* The callback installs 99 before this occurrence is reached.
+             * PeTTa rechecks its callability at that point, even if the
+             * head was data when the caller was installed (P-DEF-4). */
+            old += atom_eq(actual, atom_int(&output, 42));
+            added += atom_eq(actual, atom_int(&output, 99));
             answers++;
             bindings_free(&environment);
         }
-        if (answers != (known ? 2u : 1u) || old != known || added != known ||
+        if (answers != (known ? 2u : 1u) || old != known || added != 1u ||
             prepared_calls != 1u || prepared_effects || space_length64(&space) != before + 1u)
-            fprintf(stderr, "frozen caller known=%u data=%u ordinary=%u budget=%zu answers=%u old=%u added=%u calls=%u effects=%u\n",
+            fprintf(stderr, "live caller known=%u data=%u ordinary=%u budget=%zu answers=%u old=%u added=%u calls=%u effects=%u\n",
                 known, data, ordinary, budget, answers, old, added, prepared_calls, prepared_effects);
-        assert(answers == (known ? 2u : 1u) && old == known && added == known &&
+        assert(answers == (known ? 2u : 1u) && old == known && added == 1u &&
             prepared_calls == 1u && !prepared_effects && space_length64(&space) == before + 1u);
         if (!ordinary && budget == 3u)
             assert(resumption_opened && resumption_native_transfers == 1u);
@@ -12660,7 +12668,7 @@ int main(int argc, char **argv) {
     else if (stale_tail_only)
         checks += stale_native_tail_controls();
     else if (caller_dag_only)
-        checks += frozen_source_caller_controls() + branching_native_frontier_controls() + caller_dag_scaling_controls();
+        checks += live_source_caller_controls() + branching_native_frontier_controls() + caller_dag_scaling_controls();
     else if (conditional_only)
         checks += conditional_native_continuation_controls() + native_frontier_rejoin_controls() +
             branching_native_frontier_controls();
@@ -12683,7 +12691,7 @@ int main(int argc, char **argv) {
     else if (episode_only)
         checks += episode_accounting() + evaluator_episode_consumers();
     else if (!availability_only && !ledger_only && !ordered_only && !metered_invocation_only)
-        checks += callable_preparation_retry_controls() + callable_signature_reuse_controls() + caller_result_controls() + caller_real_collection_controls() + he_prepared_completion_controls() + authority_observation_controls() + lexical_source_controls() + uncertified_compile_refusal_controls() + source_admission_refusal_controls() + he_source_refusal_controls() + graph_consumer_refusal_controls() + he_instruction_completion_controls(false) + frozen_source_caller_controls() + stale_native_tail_controls() + conditional_native_continuation_controls() + native_frontier_rejoin_controls() + branching_native_frontier_controls() + caller_dag_scaling_controls() + contextual_resumption_controls() + bound_native_completion_controls() + relational_body_destination_controls() + oem_body_retention_controls() + prepared_body_entry_controls() + lexical_native_tail_controls() + lexical_packet_controls() + program_operand_controls() + oem_callee_owner_controls() + fold_completion_controls() + prime_prepared_data_controls() + episode_accounting() + evaluator_episode_consumers() + source_computation_plans() + source_role_elaboration_controls() + source_invocation_plans() + prepared_computation_plans() + generic_budget_checks() + source_first_success_plans() + source_collection_plans() + source_case_plans() + captured_binding_projection_controls() + he_instruction_plan_controls() + he_canonical_plan_controls() + he_instruction_source_gc_controls() + ordinary_invocation_consumers() + retry_demand_controls() + shared_compilation_refusals() + closed_failure_cache() + ready_invocation_controls() + evaluator_consumers() + projected_roots() + residual_consumers() + prepared_native_consumers() + scalar_callable_admission();
+        checks += callable_preparation_retry_controls() + callable_signature_reuse_controls() + caller_result_controls() + caller_real_collection_controls() + he_prepared_completion_controls() + authority_observation_controls() + lexical_source_controls() + uncertified_compile_refusal_controls() + source_admission_refusal_controls() + he_source_refusal_controls() + graph_consumer_refusal_controls() + he_instruction_completion_controls(false) + live_source_caller_controls() + stale_native_tail_controls() + conditional_native_continuation_controls() + native_frontier_rejoin_controls() + branching_native_frontier_controls() + caller_dag_scaling_controls() + contextual_resumption_controls() + bound_native_completion_controls() + relational_body_destination_controls() + oem_body_retention_controls() + prepared_body_entry_controls() + lexical_native_tail_controls() + lexical_packet_controls() + program_operand_controls() + oem_callee_owner_controls() + fold_completion_controls() + prime_prepared_data_controls() + episode_accounting() + evaluator_episode_consumers() + source_computation_plans() + source_role_elaboration_controls() + source_invocation_plans() + prepared_computation_plans() + generic_budget_checks() + source_first_success_plans() + source_collection_plans() + source_case_plans() + captured_binding_projection_controls() + he_instruction_plan_controls() + he_canonical_plan_controls() + he_instruction_source_gc_controls() + ordinary_invocation_consumers() + retry_demand_controls() + shared_compilation_refusals() + closed_failure_cache() + ready_invocation_controls() + evaluator_consumers() + projected_roots() + residual_consumers() + prepared_native_consumers() + scalar_callable_admission();
     cetta_lib_prolog_global_shutdown();
     symbol_table_free(&symbols);
     var_intern_free(&variables);

@@ -128,10 +128,51 @@ static int u_zonk(int t, int base, bool *local) {
 #define EV_NONE (-2)
 static long ev_budget;
 static int eval_call(int t, int depth);
+/* Tests met while premises are evaluated (a query of a relation the binding table answers by a test
+ * component), decided once every premise of the rules at hand has been evaluated (tests_fail): a
+ * term-different test of two identical terms, an integer test on literals that does not hold, and a
+ * test whose complement was met on the same arguments, cannot hold.  A term-equal test unifies its
+ * arguments when it is met. */
+typedef struct { int kind, n, arg[2]; } PendingTest;
+static PendingTest *pending; static int npending, pendingcap;
+static bool lit_int_of(int t, int64_t *v) {
+    t = u_resolve(t);
+    if (ut[t].var >= 0 || ut[t].ctor < 0 || ctors[ut[t].ctor].lit != LIT_INT) return false;
+    *v = ctors[ut[t].ctor].ival;
+    return true;
+}
+static bool tests_fail(int mark) {
+    for (int i = mark; i < npending; i++) {
+        const PendingTest *x = &pending[i];
+        if (x->kind == TEST_DIFFERENT && u_equal(x->arg[0], x->arg[1])) return true;
+        if (x->kind >= TEST_INT_LESS) {
+            int64_t v[2];
+            bool lit = true;
+            for (int a = 0; a < x->n; a++) lit = lit && lit_int_of(x->arg[a], &v[a]);
+            if (lit && !test_holds_on(x->kind, v)) return true;
+        }
+        for (int j = mark; j < i; j++) {
+            const PendingTest *y = &pending[j];
+            if (y->kind != test_complement(x->kind) || y->n != x->n) continue;
+            bool same = true;
+            for (int a = 0; a < x->n; a++) same = same && u_equal(x->arg[a], y->arg[a]);
+            if (same) return true;
+        }
+    }
+    return false;
+}
 static bool eval_premises(const Rule *r, int base, int depth) {
     for (int j = 0; j < r->np; j++) {
         const Prem *p = &r->p[j];
-        if (p->relation) continue;
+        if (p->relation) {
+            if (p->test < 0) continue;
+            const TestRow *t = &test_rows[p->test];
+            PendingTest x = {t->kind, p->nrel, {0, 0}};
+            for (int a = 0; a < p->nrel && a < 2; a++) x.arg[a] = ut_from(p->rel[a], base);
+            if (t->kind == TEST_EQUAL) { if (!u_unify(x.arg[0], x.arg[1])) return false; continue; }
+            VEC_PUSH(pending, npending, pendingcap, x);
+            continue;
+        }
         int v = eval_call(ut_from(p->src, base), depth + 1);
         if (v == EV_NONE) return false;
         if (v == EV_UNKNOWN) continue;
@@ -149,8 +190,10 @@ static int eval_call(int t, int depth) {
     int result = EV_NONE;
     for (int i = 0; i < k->nrules; i++) {
         const Rule *r = &rules[k->rules[i]];
-        int mark = nutrail, base = u_fresh(r->nv);
-        if (!u_unify(ut_from(r->lhs, base), t) || !eval_premises(r, base, depth)) { u_undo(mark); continue; }
+        int mark = nutrail, base = u_fresh(r->nv), tmark = npending;
+        bool excluded = !u_unify(ut_from(r->lhs, base), t) || !eval_premises(r, base, depth) || tests_fail(tmark);
+        npending = tmark;
+        if (excluded) { u_undo(mark); continue; }
         bool local = false;
         int rv = u_zonk(ut_from(r->rhs, base), base, &local);
         u_undo(mark);
@@ -161,11 +204,13 @@ static int eval_call(int t, int depth) {
     return result;
 }
 
-/* judgments that may give several results (a rule with a relation query that binds, directly or
- * through a call); the lockstep argument below needs a callee with at most one result */
+/* judgments that may give several results: a rule with a relation query that binds, an overlap of
+ * two rules not shown exclusive, or a call of such a judgment.  The lockstep and saturation
+ * arguments below need a callee with at most one result; check_rules computes the set as a fixpoint
+ * (an overlap is classified with the set as it stands, which only grows) */
 static bool *multi_valued;
-static void find_multi_valued(void) {
-    multi_valued = xcalloc((size_t)(nctors ? nctors : 1), sizeof(bool));
+static bool close_multi_valued(void) {
+    bool any = false;
     for (bool changed = true; changed;) {
         changed = false;
         for (int c = 0; c < nctors; c++) {
@@ -174,11 +219,45 @@ static void find_multi_valued(void) {
                 const Rule *r = &rules[ctors[c].rules[i]];
                 for (int j = 0; j < r->np; j++)
                     if ((r->p[j].relation && r->p[j].binds) || (!r->p[j].relation && r->p[j].src->ctor >= 0 && multi_valued[r->p[j].src->ctor])) {
-                        multi_valued[c] = true; changed = true; break;
+                        multi_valued[c] = true; changed = any = true; break;
                     }
             }
         }
     }
+    return any;
+}
+
+/* Target saturation: premises of the two rules (either rule) that call one single-valued judgment on
+ * arguments identical under the current unifier have equal results, so their targets are unified;
+ * when two cannot be, the rules never both hold.  A term-equal test unifies its arguments first. */
+static bool saturation_clash(const Rule *a, int oa, const Rule *b, int ob) {
+    const Rule *rs[2] = {a, b};
+    int os[2] = {oa, ob};
+    for (int x = 0; x < 2; x++)
+        for (int j = 0; j < rs[x]->np; j++) {
+            const Prem *p = &rs[x]->p[j];
+            if (p->relation && p->test >= 0 && test_rows[p->test].kind == TEST_EQUAL &&
+                !u_unify(ut_from(p->rel[0], os[x]), ut_from(p->rel[1], os[x])))
+                return true;
+        }
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int x = 0; x < 2; x++)
+            for (int i = 0; i < rs[x]->np; i++) {
+                const Prem *p = &rs[x]->p[i];
+                if (p->relation || p->src->ctor < 0 || multi_valued[p->src->ctor]) continue;
+                for (int y = x; y < 2; y++)
+                    for (int j = y == x ? i + 1 : 0; j < rs[y]->np; j++) {
+                        const Prem *q = &rs[y]->p[j];
+                        if (q->relation || q->src->ctor != p->src->ctor) continue;
+                        int ta = ut_from(p->tgt, os[x]), tb = ut_from(q->tgt, os[y]);
+                        if (u_equal(ta, tb) || !u_equal(ut_from(p->src, os[x]), ut_from(q->src, os[y]))) continue;
+                        if (!u_unify(ta, tb)) return true;
+                        changed = true;
+                    }
+            }
+    }
+    return false;
 }
 
 /* the class of an overlapping pair a, b (their left sides unify):
@@ -203,7 +282,19 @@ int overlap_class(const Rule *a, const Rule *b) {
         if (!u_unify(ut_from(pa->tgt, oa), ut_from(pb->tgt, ob))) return OV_TARGETS;
     }
     ev_budget = 200000;
-    if (!eval_premises(a, oa, 0) || !eval_premises(b, ob, 0)) return OV_EVALUATED;
+    int tmark = npending;
+    bool evaluated = !eval_premises(a, oa, 0) || !eval_premises(b, ob, 0) || tests_fail(tmark);
+    npending = tmark;
+    if (evaluated) return OV_EVALUATED;
+    /* the same, after unifying the results of calls both rules make on the same arguments */
+    u_reset();
+    oa = u_fresh(a->nv); ob = u_fresh(b->nv);
+    u_unify(ut_from(a->lhs, oa), ut_from(b->lhs, ob));
+    if (saturation_clash(a, oa, b, ob)) return OV_TARGETS;
+    ev_budget = 200000;
+    evaluated = !eval_premises(a, oa, 0) || !eval_premises(b, ob, 0) || tests_fail(tmark);
+    npending = tmark;
+    if (evaluated) return OV_EVALUATED;
     return OV_UNRESOLVED;
 }
 
@@ -212,9 +303,10 @@ int overlap_class(const Rule *a, const Rule *b) {
  * u_reset/u_fresh/ut store terms: the judgment applied to the tested constructors, variables
  * elsewhere).  The bindings are undone. */
 bool rule_excluded_at(const Rule *r, int input) {
-    int mark = nutrail, base = u_fresh(r->nv);
+    int mark = nutrail, base = u_fresh(r->nv), tmark = npending;
     ev_budget = 200000;
-    bool excluded = !u_unify(ut_from(r->lhs, base), input) || !eval_premises(r, base, 0);
+    bool excluded = !u_unify(ut_from(r->lhs, base), input) || !eval_premises(r, base, 0) || tests_fail(tmark);
+    npending = tmark;
     u_undo(mark);
     return excluded;
 }
@@ -231,8 +323,14 @@ int ut_var(void) {
     return nut - 1;
 }
 
-void check_rules(void) {
-    /* judgments: heads of left sides */
+/* judgments (the heads of left sides) and the data constructors of each sort; the binding table is
+ * read after this and before check_rules (its tests take part in the overlap analysis) */
+void check_heads(void) {
+    for (int i = 0; i < ndeclared_judgments; i++) {
+        int c = map_get(&ctor_map, declared_judgments[i]);
+        if (c < 0) die("(Judgment %s): no such constructor", declared_judgments[i]);
+        ctors[c].defined = true;
+    }
     for (int i = 0; i < nrules; i++) {
         Rule *r = &rules[i];
         if (r->lhs->var != -1) { err(r, "left side is a variable"); continue; }
@@ -242,9 +340,11 @@ void check_rules(void) {
         c->defined = true;
         VEC_PUSH(c->rules, c->nrules, c->rcap, i);
     }
-    /* data constructors of each sort */
     for (int c = 0; c < nctors; c++)
         if (!ctors[c].defined) { Sort *s = &sorts[ctors[c].sort]; VEC_PUSH(s->data, s->ndata, s->datacap, c); }
+}
+
+void check_rules(void) {
     for (int i = 0; i < nrules; i++) {
         Rule *r = &rules[i];
         if (r->lhs->var != -1 || r->lhs->ctor < 0) continue;
@@ -266,6 +366,8 @@ void check_rules(void) {
                 memset(cnt, 0, (size_t)r->nv * sizeof(int));
                 for (int a = 0; a < p->nrel; a++) { if (pat_has_judgment(p->rel[a])) err(r, "premise %d: a relation argument contains a judgment", j); pat_vars(p->rel[a], cnt); }
                 for (int v = 0; v < r->nv; v++) if (cnt[v]) { if (!bound[v]) p->binds = true; bound[v] = true; }
+                p->test = test_of(p->relation, p->nrel);
+                if (p->test >= 0 && p->binds) err(r, "premise %d: the test %s has an argument no earlier premise binds", j, p->relation);
                 continue;
             }
             if (p->src->var != -1) { err(r, "premise %d: the source is a variable", j); continue; }
@@ -299,26 +401,42 @@ void check_rules(void) {
         free(cnt);
         free(bound);
     }
-    /* overlaps: two left sides of one judgment that unify; each pair is classified (overlap_class);
-     * an unresolved pair fails the build unless the run only takes the census */
-    find_multi_valued();
-    for (int c = 0; c < nctors; c++) {
-        Ctor *k = &ctors[c];
-        for (int i = 0; i < k->nrules; i++)
-            for (int j = i + 1; j < k->nrules; j++) {
-                Rule *a = &rules[k->rules[i]], *b = &rules[k->rules[j]];
-                if (!pat_unify(a->lhs, b->lhs)) continue;
-                n_overlaps++;
-                int cls = overlap_class(a, b);
-                n_overlaps_class[cls]++;
-                OverlapPair op = {c, a->id, b->id, cls};
-                VEC_PUSH(overlap_pairs, noverlap_pairs, overlap_pair_cap, op);
-                if (cls != OV_UNRESOLVED) { n_overlaps_exclusive++; continue; }
-                k->overlap_open = true;
-                n_overlaps_unresolved++;
-                if (census_only) { if (n_overlaps_unresolved <= 12) fprintf(stderr, "rulec: census: \"%s\" and \"%s\" overlap; not shown exclusive\n", a->label, b->label); }
-                else err(a, "left side overlaps rule \"%s\" and their premises are not shown exclusive", b->label);
-            }
+    /* overlaps: two left sides of one judgment that unify; each pair is classified (overlap_class).  A
+     * judgment with a pair not shown exclusive may give several results (nondet), and so may every
+     * judgment that calls it; the classes are computed again until that set is stable.  With
+     * --functional such a pair fails the build. */
+    multi_valued = xcalloc((size_t)(nctors ? nctors : 1), sizeof(bool));
+    close_multi_valued();
+    for (bool again = true; again;) {
+        again = false;
+        noverlap_pairs = 0; n_overlaps = n_overlaps_exclusive = n_overlaps_unresolved = 0;
+        memset(n_overlaps_class, 0, sizeof n_overlaps_class);
+        for (int c = 0; c < nctors; c++) {
+            Ctor *k = &ctors[c];
+            k->overlap_open = false;
+            for (int i = 0; i < k->nrules; i++)
+                for (int j = i + 1; j < k->nrules; j++) {
+                    Rule *a = &rules[k->rules[i]], *b = &rules[k->rules[j]];
+                    if (!pat_unify(a->lhs, b->lhs)) continue;
+                    n_overlaps++;
+                    int cls = overlap_class(a, b);
+                    n_overlaps_class[cls]++;
+                    OverlapPair op = {c, a->id, b->id, cls};
+                    VEC_PUSH(overlap_pairs, noverlap_pairs, overlap_pair_cap, op);
+                    if (cls != OV_UNRESOLVED) { n_overlaps_exclusive++; continue; }
+                    k->overlap_open = true;
+                    n_overlaps_unresolved++;
+                }
+            if (k->overlap_open && !multi_valued[c]) { multi_valued[c] = true; again = true; }
+        }
+        if (close_multi_valued()) again = true;
+    }
+    for (int c = 0; c < nctors; c++) ctors[c].nondet = ctors[c].defined && multi_valued[c];
+    for (int i = 0; i < noverlap_pairs; i++) {
+        if (overlap_pairs[i].cls != OV_UNRESOLVED) continue;
+        const Rule *a = &rules[overlap_pairs[i].a], *b = &rules[overlap_pairs[i].b];
+        if (census_only) { if (i < 12) fprintf(stderr, "rulec: census: \"%s\" and \"%s\" overlap; not shown exclusive\n", a->label, b->label); }
+        else if (functional_only) err(a, "left side overlaps rule \"%s\" and their premises are not shown exclusive (--functional)", b->label);
     }
 }
 
@@ -442,6 +560,10 @@ void check_safepoint(void) {
         if (in[r->p[r->np - 1].src->ctor]) err(r, "its wrapper %s reaches the safepoint", ctors[r->p[r->np - 1].src->ctor].name);
         pend_required[i] = true;
     }
+    /* a success continuation keeps terms on the C stack, and below the safepoint no frame holds one */
+    for (int c = 0; c < nctors; c++)
+        if (in[c] && ctors[c].nondet && c != safepoint_ctor)
+            die("safepoint: %s may give several results and reaches %s", ctors[c].name, safepoint_name);
     int n = 0;
     for (int c = 0; c < nctors; c++) if (in[c]) n++;
     fprintf(stderr, "rulec: safepoint %s reached through tail calls only, from %d judgments\n", safepoint_name, n);

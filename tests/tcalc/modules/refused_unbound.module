@@ -1,0 +1,18 @@
+-- theory: Calc
+-- A rule whose right side has a variable no premise binds: in tcalc a variable only a make mentions is
+-- a fresh unknown, which no module rule means, so the reading refuses the module and says which rule.
+Module Unbound {
+  Theory Calc() {
+    Empty
+    Types {
+      Node;
+    }
+    Terms {
+      "n:a". |- "a" : Node;
+      "n:next". x:Node |- "next" x : Node;
+    }
+    Rewrites {
+      "next-any". x:Node, w:Node |- "n:next"(x) ~> w;
+    }
+  }
+}

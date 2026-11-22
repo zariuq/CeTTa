@@ -21,6 +21,16 @@
  *                                                BIT BIT0 ZERO is not canonical and stops the run
  *   (rep SORT slices NIL CONS)                   byte strings of a word sort of 8 bits as slices of the
  *                                                run's input or interned strings (rc_slices.h)
+ *   (rep SORT atoms INT STRING SYMBOL EXPRESSION)
+ *                                                MeTTa atoms (rc_atoms.h): constructor applications as heap
+ *                                                terms, integers as immediates, strings and symbols as byte
+ *                                                strings; a nullary constructor named by a decimal integer
+ *                                                or by a quoted string stands for that literal; the four
+ *                                                nullary constructors named stand for the integers, strings,
+ *                                                symbols and expressions that are no constructor of the sort
+ *   (atoms-source SORT CONS CP NIL)              the run's source (rc_atoms_set_source) as a value of the
+ *                                                atoms sort: the list (CONS (CP n) ...) ending in NIL of
+ *                                                its scalars, read through cursors (rc_atoms.h)
  *   (block NAME JUDGMENT IMPLEMENTATION LABEL WHY)
  *       IMPLEMENTATION is a component, (KIND PARAM...), or a string naming a C function:
  *         (equal YES NO)                 identity of two values of an interned or immediate sort
@@ -53,6 +63,13 @@
  *         (set-remove CMP LT EQ GT)      rc_set_remove
  *         (table-get) (table-put) (table-set) (table-next) (table-empty)
  *   (memo NAME JUDGMENT LABEL WHY)               keep the judgment's results per arguments
+ *   (test NAME RELATION COMPONENT LABEL WHY)     the relation's queries (every argument bound) answered by a
+ *                                                test component on an atoms sort (rc_atoms.h):
+ *         (term-equal) (term-different)  two values equal, or different, as module data
+ *         (int-less) (int-not-less)      a < b; b <= a (integers; no other value passes either)
+ *         (int-gap) (int-no-gap)         a + 1 < b; b <= a + 1
+ *         (unicode-scalar) (non-unicode-scalar)
+ *                                        an integer that is (is not) a Unicode scalar value
  *   (law NAME JUDGMENT RESULT LABEL WHY)         J(x, x) gives the constant RESULT
  * LABEL is proved (WHY names the theorems), checked (every call compared with the rules in check
  * mode) or trusted (WHY gives the reason).
@@ -72,6 +89,8 @@ int rep_ctor[RC_REP_COUNT][4];  /* constructor ids a native representation views
 int byte_nib[16];               /* the sixteen nibble constructors of a byte string's view */
 int table_ctor[4];            /* TABLE LEAF NODE NONE */
 Law laws[64]; int nlaws;
+TestRow test_rows[64]; int ntest_rows;
+bool functional_only;
 NativeOp native_ops[64]; int nnative_ops;
 MemoRow memo_rows[64]; int nmemo_rows;
 int *sorts_memo_slots;     /* memo slots per sort (apply_blocks) */
@@ -129,6 +148,41 @@ void set_rep(int sort, const char *kind, char **args, int na, const char *where)
               ctors[none].sort == ctors[nd].asort[0]))
             die("%s: not TABLE next trie with LEAF / NODE cell t0 t1 and a nullary cell NONE", where);
         sorts[sort].native = RC_REP_TABLE;
+        return;
+    }
+    if (!strcmp(kind, "atoms")) {
+        if (na != 4) die("%s: (rep %s atoms INT STRING SYMBOL EXPRESSION)", where, sorts[sort].name);
+        Sort *so = &sorts[sort];
+        for (int i = 0; i < 4; i++) {
+            so->rp[i] = ctor_named(args[i], where);
+            if (ctors[so->rp[i]].sort != sort || ctors[so->rp[i]].defined || ctors[so->rp[i]].arity)
+                die("%s: %s is not a nullary data constructor of %s", where, args[i], so->name);
+        }
+        for (int c = 0; c < nctors; c++) {
+            Ctor *k = &ctors[c];
+            if (k->sort != sort || k->defined || k->arity) continue;
+            const char *nm = k->name;
+            size_t n = strlen(nm);
+            if (n >= 2 && nm[0] == '"' && nm[n - 1] == '"') {
+                k->lit = LIT_STRING; k->sval = xstrdup(nm + 1); k->slen = (int)(n - 2); k->sval[n - 2] = 0;
+                continue;
+            }
+            char *end;
+            errno = 0;
+            long long v = strtoll(nm, &end, 10);
+            if (n && !*end && !errno && (isdigit((unsigned char)nm[0]) || (nm[0] == '-' && isdigit((unsigned char)nm[1])))) {
+                char back[32];
+                snprintf(back, sizeof back, "%lld", v);
+                if (strcmp(back, nm)) die("%s: %s is not an integer in its canonical spelling", where, nm);
+                k->lit = LIT_INT; k->ival = v;
+            }
+        }
+        for (int s2 = 0; s2 < nsorts; s2++)
+            if (s2 != sort && sorts[s2].native == RC_REP_ATOMS) die("%s: one atoms sort per module", where);
+        char nm[64];
+        snprintf(nm, sizeof nm, "atoms_%d", sort);
+        so->repname = xstrdup(nm);
+        so->native = RC_REP_ATOMS;
         return;
     }
     if (!strcmp(kind, "word") || !strcmp(kind, "binary") || !strcmp(kind, "slices")) {
@@ -283,6 +337,37 @@ void read_blocks(const char *path) {
             check_label(path, m.name, m.label);
             if (nmemo_rows == 64) die("%s: too many memo rows", path);
             memo_rows[nmemo_rows++] = m;
+            continue;
+        }
+        if (sx_head(x, "atoms-source")) {
+            if (x->n != 5) die("%s: (atoms-source SORT CONS CP NIL)", path);
+            int sort = sort_id(sx_str(x->v[1], "sort"));
+            if (sort < 0 || sorts[sort].native != RC_REP_ATOMS) die("%s: atoms-source: %s is not an atoms sort (its rep row first)", path, x->v[1]->s);
+            static const int want[3] = {2, 1, 0};
+            for (int i = 0; i < 3; i++) {
+                int c = ctor_named(sx_atom(x->v[2 + i], "constructor"), path);
+                if (ctors[c].sort != sort || ctors[c].defined || ctors[c].arity != want[i] || ctors[c].lit)
+                    die("%s: atoms-source: %s is not a data constructor of %s of %d arguments", path, ctors[c].name, sorts[sort].name, want[i]);
+                for (int a = 0; a < ctors[c].arity; a++)
+                    if (ctors[c].asort[a] != sort) die("%s: atoms-source: %s takes an argument of another sort", path, ctors[c].name);
+                sorts[sort].src[i] = c;
+            }
+            sorts[sort].source = true;
+            continue;
+        }
+        if (sx_head(x, "test")) {
+            if (x->n != 6 || x->v[3]->k != SX_LIST || x->v[3]->n != 1) die("%s: (test NAME RELATION (COMPONENT) LABEL WHY)", path);
+            const char *kn = sx_atom(x->v[3]->v[0], "test component");
+            int kind = -1;
+            for (int i = 0; i < TEST_KINDS; i++) if (!strcmp(test_kind_name[i], kn)) kind = i;
+            if (kind < 0) die("%s: unknown test component %s", path, kn);
+            TestRow t = {xstrdup(sx_str(x->v[2], "relation")), kind, kind == TEST_SCALAR || kind == TEST_NON_SCALAR ? 1 : 2, -1,
+                         xstrdup(sx_str(x->v[1], "name")), xstrdup(sx_str(x->v[4], "label")), xstrdup(sx_str(x->v[5], "justification"))};
+            check_label(path, t.name, t.label);
+            for (int i = 0; i < ntest_rows; i++)
+                if (!strcmp(test_rows[i].relation, t.relation)) die("%s: relation %s has two test rows", path, t.relation);
+            if (ntest_rows == 64) die("%s: too many test rows", path);
+            test_rows[ntest_rows++] = t;
             continue;
         }
         bool law = sx_head(x, "law");
@@ -492,6 +577,9 @@ void write_census_blocks(const char *path) {
         fprintf(o, "  %-22s %-26s %5d  %-8s law %s(x, x) = %s; %s\n", laws[i].name ? laws[i].name : "", ctors[laws[i].ctor].name,
                 ctors[laws[i].ctor].nrules, laws[i].label ? laws[i].label : "", ctors[laws[i].ctor].name, ctors[laws[i].result].name,
                 laws[i].why ? laws[i].why : "");
+    for (int i = 0; i < ntest_rows; i++)
+        fprintf(o, "  %-22s %-26s %5s  %-8s (%s) %s\n", test_rows[i].name, test_rows[i].relation, "test", test_rows[i].label,
+                test_kind_name[test_rows[i].kind], test_rows[i].why);
     int nsym = 0;
     for (int s2 = 0; s2 < nsorts; s2++) if (sorts[s2].native) nsym++;
     fprintf(o, "sorts with a native representation: %d\n", nsym);
@@ -504,6 +592,12 @@ void write_block_table(const char *path, const char *mode) {
     if (!o) die("cannot write %s", path);
     for (int s = 0; s < nsorts; s++)
         if (sorts[s].native) fprintf(o, "(rep \"%s\" \"%s\")\n", sorts[s].name, sort_rep(s));
+    for (int s = 0; s < nsorts; s++)
+        if (sorts[s].source) {
+            fprintf(o, "(atoms-source \"%s\"", sorts[s].name);
+            for (int i = 0; i < 3; i++) { fputc(' ', o); fput_quoted(o, ctors[sorts[s].src[i]].name); }
+            fputs(")\n", o);
+        }
     for (int i = 0; i < nnative_ops; i++) {
         char *impl = native_ops[i].comp ? sx_text(native_ops[i].comp) : NULL;
         fprintf(o, "(block \"%s\" \"%s\" ", native_ops[i].name ? native_ops[i].name : "", ctors[native_ops[i].ctor].name);
@@ -518,6 +612,9 @@ void write_block_table(const char *path, const char *mode) {
         write_rule_labels(o, memo_rows[i].ctor);
         fputs(")\n", o);
     }
+    for (int i = 0; i < ntest_rows; i++)
+        fprintf(o, "(test \"%s\" \"%s\" (%s) \"%s\" \"%s\")\n", test_rows[i].name, test_rows[i].relation, test_kind_name[test_rows[i].kind],
+                test_rows[i].label, test_rows[i].why);
     for (int i = 0; i < nlaws; i++) {
         fprintf(o, "(law \"%s\" \"%s\" \"%s\" \"%s\" \"%s\"", laws[i].name ? laws[i].name : "", ctors[laws[i].ctor].name,
                 ctors[laws[i].result].name, laws[i].label ? laws[i].label : "", laws[i].why ? laws[i].why : "");
@@ -525,4 +622,54 @@ void write_block_table(const char *path, const char *mode) {
         fputs(")\n", o);
     }
     fclose(o);
+}
+
+/* ---- test components ----
+ * A test answers the queries of a relation whose every argument is bound, on an atoms sort.  The
+ * analysis (check.c) knows each test's algebra: term-equal is unification, term-different fails on
+ * two identical terms, a test and its complement never both hold on the same arguments, and an
+ * integer test on literals is decided. */
+const char *const test_kind_name[TEST_KINDS] = {"term-equal", "term-different", "int-less", "int-not-less", "int-gap", "int-no-gap",
+                                                "unicode-scalar", "non-unicode-scalar"};
+int test_of(const char *relation, int arity) {
+    for (int i = 0; i < ntest_rows; i++) if (!strcmp(test_rows[i].relation, relation) && test_rows[i].arity == arity) return i;
+    return -1;
+}
+int test_complement(int kind) {
+    static const int comp[TEST_KINDS] = {TEST_DIFFERENT, TEST_EQUAL, TEST_INT_NOT_LESS, TEST_INT_LESS, TEST_INT_NO_GAP, TEST_INT_GAP,
+                                         TEST_NON_SCALAR, TEST_SCALAR};
+    return comp[kind];
+}
+/* an integer test on integers v[0], v[1] (the equality tests are decided by the analysis on terms) */
+bool test_holds_on(int kind, const int64_t *v) {
+    switch (kind) {
+    case TEST_INT_LESS: return v[0] < v[1];
+    case TEST_INT_NOT_LESS: return v[1] <= v[0];
+    case TEST_INT_GAP: return v[0] < INT64_MAX && v[0] + 1 < v[1];
+    case TEST_INT_NO_GAP: return v[0] == INT64_MAX || v[1] <= v[0] + 1;
+    case TEST_SCALAR: return (v[0] >= 0 && v[0] < 0xD800) || (v[0] > 0xDFFF && v[0] <= 0x10FFFF);
+    case TEST_NON_SCALAR: return !((v[0] >= 0 && v[0] < 0xD800) || (v[0] > 0xDFFF && v[0] <= 0x10FFFF));
+    default: return true;
+    }
+}
+/* every test row names a relation the rules query, of the test's arity, on the module's atoms sort */
+void apply_tests(void) {
+    int atoms = -1;
+    for (int s = 0; s < nsorts; s++) if (sorts[s].native == RC_REP_ATOMS) atoms = s;
+    for (int i = 0; i < ntest_rows; i++) {
+        TestRow *t = &test_rows[i];
+        if (atoms < 0) die("test %s: the module has no atoms sort", t->name);
+        t->sort = atoms;
+        bool used = false;
+        for (int r = 0; r < nrules; r++)
+            for (int j = 0; j < rules[r].np; j++) {
+                const Prem *p = &rules[r].p[j];
+                if (!p->relation || strcmp(p->relation, t->relation)) continue;
+                if (p->nrel != t->arity) die("test %s: %s is queried with %d arguments, the test takes %d", t->name, t->relation, p->nrel, t->arity);
+                for (int a = 0; a < p->nrel; a++)
+                    if (p->rel[a]->sort != atoms) die("test %s: argument %d of %s in rule %s is not of the atoms sort", t->name, a, t->relation, rules[r].label);
+                used = true;
+            }
+        if (!used) die("test %s: no rule queries %s", t->name, t->relation);
+    }
 }

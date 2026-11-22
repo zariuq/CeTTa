@@ -43,8 +43,10 @@ def main():
         ((taken $next more-possible) (work-drain $h (- $fuel 1) (union-atom $values $next) $paused))
         ($other $other)))))
 ''']
+    # Before its library is imported, work-new is an unknown name: its
+    # arguments are evaluated and the call stays data.
     expected.extend([["SearchLibraryCase", "0", ["heap:empty"]],
-                     ["SearchLibraryCase", "1", ["work-new", ["+", "1", "1"]]]])
+                     ["SearchLibraryCase", "1", ["work-new", "2"]]])
 
     def add(call, result):
         index = len(expected)
@@ -98,13 +100,15 @@ def main():
     actual = [x for x in parse_forms(result.stdout)
               if isinstance(x, list) and x and x[0] == "SearchLibraryCase"]
     wrong = [i for i, (a, b) in enumerate(zip(actual, expected)) if a != b]
-    # One running query has already declined work-new when the import arrives.
+    # One running query has already read work-new as an unknown name when the
+    # import arrives.  The value it bound stays as it was, and its own code
+    # reaches the library once it is imported.
     cache = subprocess.run([str(args.cetta.resolve()), "--lang", "petta", "-e",
         '!(let $before (work-new (+ 1 1)) (let $u (import! &self (library work)) '
         '($before (let $after (work-new (+ 1 1)) (work-take $after 1)))))'],
         cwd=ROOT, capture_output=True, text=True, timeout=10)
     cache_ok = cache.returncode == 0 and parse_forms(cache.stdout) == [
-        [["work-new", ["+", "1", "1"]], ["taken", ["2"], "more-possible"]]]
+        [["work-new", "2"], ["taken", ["2"], "more-possible"]]]
     receipt = {"passed": result.returncode == 0 and len(actual) == len(expected) and not wrong and cache_ok,
                "checks": len(expected), "answers": len(actual), "mismatches": wrong,
                "late_import_refresh": cache_ok,

@@ -8,7 +8,7 @@ conjunction of two or three patterns sharing variables, a pattern sometimes
 a union of two, (| P1 P2), whose branches bind the same variables and are
 read in turn in the extended profile, while the stable profile reads the
 union as written, a pattern no fact meets; answers that add
-atoms the patterns read, or remove one occurrence per answer. Each
+atoms the patterns read, or remove every occurrence its pattern meets. Each
 program runs the conjunction in three places: at the top of a query, as the
 body of a function the query calls, and in a function whose caller writes
 between its answers.  The model joins the patterns over the facts at the
@@ -163,10 +163,8 @@ def program_and_model(rng):
         if mode == "add":
             final = facts + written
         else:
-            final = list(facts)
-            for fact in written:
-                if fact in final:
-                    final.remove(fact)
+            removed = set(written)
+            final = [fact for fact in facts if fact not in removed]
         return (sorted("(" + " ".join(env[v] for v in variables) + ")"
                        for env in answers),
                 sorted(text(f) for f in final))

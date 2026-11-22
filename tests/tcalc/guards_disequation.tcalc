@@ -1,0 +1,15 @@
+; A guard (check (/= A B)) admits a match whose two sides no solution makes
+; one term: on ground values, term disequality.  It reads no row; it filters
+; the matches of its rule.  Positive: (pair 1 2) and (pair (f 1) (f 2)) pass.
+; Negative: (pair 3 3) and (pair (f 1) (f 1)) do not.  With an unknown, the
+; guard asks every solution: (pair ?a 4) can be made (pair 4 4), so it fails;
+; (pair (g ?b) 5) can never be (pair 5 5), so it passes.
+(store set)
+(step every)
+(pair 1 2)
+(pair 3 3)
+(pair (f 1) (f 2))
+(pair (f 1) (f 1))
+(pair $a 4)
+(pair (g $b) 5)
+(rule apart (read (pair $x $y)) (check (/= $x $y)) (make (apart $x $y)))

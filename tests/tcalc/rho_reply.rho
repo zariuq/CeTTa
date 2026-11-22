@@ -1,0 +1,6 @@
+// profile: step=one
+// A receive in another's body starts waiting when the outer one fires,
+// carrying the value the outer one gave $n; its row is rho_LINE_COLUMN!(1).
+// It then meets the echo, and the reply holds both values.
+ping!(1) | echo!(x) |
+for ($n <- ping) { pong!($n) | for ($m <- echo) { done!($n, $m) } }

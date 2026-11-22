@@ -9,7 +9,7 @@
 #   sh tools/rulec/regen_hol_light_module.sh <Mettapedia checkout>/metta/gslt/module/HOLLightKernel.module
 #
 # CeTTa's own module reader prints the module's core rows (tools/rulec/dump_wire.metta); rulec
-# (tools/rulec/compiler) compiles them (census, decision DAGs, C); rulec_validate checks every DAG
+# (tools/rulec/compiler) compiles them, every judgment a function (--functional) (census, decision DAGs, C); rulec_validate checks every DAG
 # against the rules and the generated dispatch code against the DAGs.  Any failure stops before
 # generated/ changes.  The representations of the sorts and the components that answer judgments are
 # the rows of native/hol_light_module/hol.bindings (see docs/rulec.txt).  Then the instance's names
@@ -34,7 +34,7 @@ $CC -O2 -o "$WORK/rulec_tracecheck" "$ROOT/tools/rulec/rulec_tracecheck.c"
 printf '!(import! &self "%s")\n!(wire:dump "%s" "Kernel")\n' "$ROOT/tools/rulec/dump_wire.metta" "$MODULE" > "$WORK/dump.metta"
 "$CETTA" "$WORK/dump.metta" | grep '^(' > "$WORK/HOLLightKernel.wire"
 SHA=$(sha256sum "$MODULE" | cut -d' ' -f1)
-"$WORK/rulec" "$WORK/HOLLightKernel.wire" \
+"$WORK/rulec" "$WORK/HOLLightKernel.wire" --functional \
   --layers data=not-yes,syntax=bool-ty,kernel=type-of-var,rules=REFL,theory=initial-theory,replay=policy-max-open \
   --census "$WORK/census.txt" --census-tsv "$WORK/census.tsv" --dag "$WORK/HOLLightKernel.dag" \
   --safepoint hl:run --cache-constants --bindings "$ROOT/native/hol_light_module/hol.bindings" \

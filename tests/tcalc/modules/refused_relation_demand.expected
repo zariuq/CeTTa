@@ -1,0 +1,1 @@
+(tcalc:module-refused "a relation named demand or value would read the reading's own rows" (LCons "demand" LNil))

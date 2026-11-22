@@ -1,6 +1,8 @@
 ; Nested observations share revision-checked source arities. An equation
 ; added or removed between children must still change under-application.
 ; Sharing derived storage must also preserve duplicate answer occurrences.
+; PeTTa's remove-atom removes every matching copy, so one removal undoes both
+; additions.
 (= (arity-changing $a $b $c) (three $a $b $c))
 (= (arity-changing-sequence)
    (let* (($before (collapse (arity-changing a b)))

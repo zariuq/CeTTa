@@ -1,0 +1,6 @@
+; A rule with two identical take patterns.  Up to symmetry, the two orders in
+; which they can take the two tokens are one match, not two that clash, so
+; every steps.  (Counted as keys they are two: see two_tokens_keys.)
+(tok)
+(tok)
+(rule pair (take (tok) (tok)) (make (pair)))

@@ -1,0 +1,15 @@
+--- a/examples/remove_atom_result.metta
++++ b/examples/remove_atom_result.metta
+@@ -46,6 +46,9 @@
+-; Memoization still works when a definition exists only in another space.
+-; Skipping legacy function cleanup on an absent &self row duplicates this clause.
++; A removal in the caller's space leaves another space's memoized rule intact.
+ !(import! &self (library lib_memo))
+ !(add-atom &memo-other (= (answer-other $x) $x))
+ !(memoize answer-other)
+-!(test (collapse (answer-other 0)) (0))
++!(test (is-memoized answer-other) True)
++!(test (collapse (answer-other 0)) ((answer-other 0)))
++!(test (remove-atom &self (= (answer-other $x) $x)) False)
++!(test (collapse (eval (answer-other 0) &memo-other)) (0))
++!(test (collapse (eval (answer-other 0) &memo-other)) (0))

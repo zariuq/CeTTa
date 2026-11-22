@@ -27,6 +27,11 @@ not):
 
 A spelling that still uses a name lib_he defines imports lib_he first.
 
+HE's parse answers an Error for a text that is not one atom; PeTTa's raises
+it, and catch answers it as an Error of two fields, as HE's has:
+
+  (parse X) -> (catch (parse X))
+
 Explicit interpretation of held syntax in the current space:
 
   (metta BODY %Undefined% &self) -> (eval BODY)
@@ -421,6 +426,10 @@ def transform(form, dialect: str):
                 left, right, then, otherwise = (transform(item, dialect)
                                                 for item in form[1:])
                 return [Symbol("if"), [Symbol("="), left, right], then, otherwise]
+            if (len(form) == 2 and form[0] == "parse"
+                    and isinstance(form[0], Symbol)):
+                return [Symbol("catch"),
+                        [Symbol("parse"), transform(form[1], dialect)]]
             unwrapped = unwrap_function(form)
             if unwrapped is not None:
                 return transform(unwrapped, dialect)

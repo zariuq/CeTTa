@@ -3,8 +3,9 @@
 ; and who decided it when.  CeTTa's answers are pinned in the .expected file,
 ; so an entry that drifts is noticed; a difference missing from this file is
 ; found only by running both engines.  SWI-PeTTa's answers are those of the
-; pinned in-house snapshot 9b016a39, re-verified 2026-09-29.  An entry
-; leaves this file only when the two engines agree.
+; in-house snapshot 9b016a39, re-verified 2026-09-29; entry 7's is that of
+; stable-fixed 9e8fbb6 (2026-11-19).  An entry leaves this file only when the
+; two engines agree.
 
 (= (twice $x) (* 2 $x))
 (= (boom) (/ 1 0))
@@ -17,7 +18,6 @@
 (= (invoke $f) ($f))
 (= (app1 $f $a) ($f $a))
 (= (safe $x) $x)
-
 ; 1. An error inside a run-time dispatch fails that path alone, whatever the
 ;    exploration order.  SWI-PeTTa's catch discards the alternatives after the
 ;    raising one, so its answer depends on the order: () here.
@@ -25,13 +25,11 @@
 !(let $f alt-a (msort (collapse ($f))))
 ; SWI-PeTTa: (1)
 !(let $f alt-b (msort (collapse ($f))))
-
 ; 2. A dispatch keeps its handler when its caller is specialized.  SWI-PeTTa's
 ;    specializer drops it, and the error reaches the catch:
 ;    (Error (evaluation_error zero_divisor) ...).
 ;    Decided: Zar, 2026-09-26 (goal.md §1.8, preservation).
 !(catch (collapse (invoke boom)))
-
 ; 3. `let` and `let*` reached at run time are data, as `if`, `case` and `quote`
 ;    are in both engines, and running the data later runs the binding.
 ;    SWI-PeTTa registers them as functions without defining one, so it
@@ -46,7 +44,6 @@
 !(let $f let* ($f (($y 1)) 2))
 !(let $f let (let $p ($f $y 1 2) (eval $p)))
 !(let $f let (let $p ($f a b c) (progn (add-atom &self (= (let $a $b $c $d) (user $a $b $c $d))) ($p d))))
-
 ; 4. An import invalidates the specializations of its space, so a specialized
 ;    function sees equations imported after it.  SWI-PeTTa keeps the stale
 ;    specialization: (1) after the import.
@@ -55,27 +52,25 @@
 !(msort (collapse (app1 safe 1)))
 !(import! &self swi_differences_import)
 !(msort (collapse (app1 safe 1)))
-
 ; 5. Retired 2026-11-04: data spelled `(cons h t)` is data in both engines.
 ;    `cons` is a constructor: code builds and splits list cells, a stored
 ;    `(cons a (cons b nil))` is a three-element expression whose head is
 ;    `cons`, and `nil` is a symbol, not the empty list.  Decided by Zar
 ;    (11/04: "do the swi one. It's a bit more homoiconic"); the answers are
 ;    gated in tier_spelled_cells on both routes.
-
 ; 6. Retired 2026-09-29: the pinned reference compares numbers by exact
 ;    value too, so (== 3 3.0) is true and (!= 3 3.0) false in both engines.
 ;    Recorded 2026-09-27 against revision ae66fa8e; retired by Oruži on
 ;    re-verifying every entry against the pinned snapshot.
 
-; 7. `new-space` makes a fresh space.  SWI-PeTTa has no `new-space`, so
-;    (new-space) stays data there and is an Expression.  The extra form costs
-;    SWI-PeTTa programs nothing: a named space such as &work serves wherever
-;    a fresh one would, and a use of `new-space` translates to one.
-;    Decided: Zar, 2026-09-27 ("extras are ok").
-; SWI-PeTTa: Expression
+; 7. `new-space` makes a fresh space, here a Grounded handle.  Since
+;    stable-fixed 2d679ba and c0f088e, SWI-PeTTa's `new-space` answers a
+;    fresh name &space(N), a Symbol naming a space as every other space name
+;    does, and the name can be written again.  Which law CeTTa's handles
+;    follow, and with it whether CeTTa still frees a temporary space no value
+;    holds, is open for a ruling (Zar, 2026-09-27 "extras are ok" predates it).
+; SWI-PeTTa: Symbol
 !(let $s (new-space) (get-metatype $s))
-
 ; 8. An `if` whose branch has goals and a variable for its value keeps that
 ;    variable to the branch.  SWI-PeTTa's translator unifies the `if`'s output
 ;    with the variable itself, so the other branch's value must equal it too:
@@ -86,11 +81,9 @@
 (= (pick $h) (if (> $h 10) (let $c (seven) $h) (pick 20)))
 ; SWI-PeTTa: ()
 !(collapse (pick 1))
-
 ; 9. Retired 2026-09-29: variable spelling is not observable, in answers or
 ;    inside strings (Zar), so CeTTa's $V0 and SWI-PeTTa's $_0 name the same
 ;    answer. Recorded 2026-09-28; retired by Oruži on that decision.
-
 ; 10. A forward declaration does not provide an equation to execute before
 ;     that equation is installed. Preserve the unknown expression, then use
 ;     the equation once it is present. SWI-PeTTa 9b016a39 predeclares the
@@ -102,55 +95,35 @@
 !(before-install)
 (= (installed-later $n) (+ $n 1))
 !(before-install)
-
 ; 11. A binding that would make a term cyclic has no answer: unification
 ;     checks, as it binds a variable, that the variable does not occur in
 ;     its value.  SWI-PeTTa runs with occurs_check=false and builds the
-;     rational tree, so both queries below answer there.  CeTTa reads a
+;     rational tree, so the query below answers there.  CeTTa reads a
 ;     cyclic term that arrives from Prolog as the term it is, but its own
-;     bindings keep terms finite.
+;     bindings keep terms finite (swi_differences_prolog.metta).
 ;     Recorded: Oruži, 2026-09-29 (the check at the bind dates from
 ;     2026-09-22).  The contract is Zar's to set.
 ; SWI-PeTTa: done
 !(let $x (f $x) done)
-; SWI-PeTTa: ok
-!(let* (($_ (translatePredicate (= $c (f $x $c)))) ($x (g $c))) ok)
-
-; 12. A `let` pattern headed by a variable meets its value as a pattern.
-;     SWI-PeTTa's translator runs such a pattern as a run-time dispatch,
-;     whose data answer may not be cyclic, and runs it before the let's
-;     value when that value is computed but after it when the value is a
-;     variable: the query below has no answer there, while the same pattern
-;     over (index-atom $c 2), the same term, has one.  CeTTa answers both.
-;     Recorded: Oruži, 2026-09-29.  The contract is Zar's to set.
-; SWI-PeTTa: no answer.
-!(let $_ (translatePredicate (= $c (a b $c))) (let ($x $y $z) $c (== $z $c)))
-
-; 13. Writing a term that is not a finite tree raises
-;     representation_error(cyclic_term).  SWI-PeTTa's writer never ends on
-;     such a term and runs out of stack, so what its catch gives is a
-;     resource_error whose context describes the host's stack.  Uncaught,
-;     both stop the run with status 2 (tests/petta/rational_terms_text).
-;     Recorded: Oruži, 2026-09-29.  The contract is Zar's to set.
-; SWI-PeTTa: (Error (resource_error stack) (dict stack_overflow ...))
-!(let $_ (translatePredicate (= $c (f $c))) (catch (repr $c)))
-
+; 12. and 13., on cyclic terms SWI's unification builds, are in
+;     swi_differences_prolog.metta.
 ; 14. A call uses the declarations present when it starts, including a
 ;     call whose head is resolved from a variable. SWI's translated caller
 ;     retains its earlier argument/guard plan: a later direct call sees
-;     one signature here, while eval at the same point sees both. A
-;     let-bound head can omit the declaration's guards entirely in SWI.
+;     only the first signature here, so it rejects a value of the second
+;     one, while eval at the same point sees both. A let-bound head can
+;     omit the declaration's guards entirely in SWI.
 ;     These are reference translation bugs; refreshing the call plan on
 ;     declaration-generation changes is a repair candidate.
 ;     Decided: Zar, 2026-10-01, preserve live declarations.
 (: visibility-a VisibilityA)
-(: visibility-a VisibilityB)
+(: visibility-b VisibilityB)
 (: visibility-f (-> VisibilityA %Undefined%))
 (= (visibility-f $x) (Visible $x))
 (= (visibility-caller)
    (progn (add-atom &self (: visibility-f (-> VisibilityB %Undefined%)))
-          (collapse (visibility-f visibility-a))))
-; SWI-PeTTa, both qualified pins: ((Visible visibility-a))
+          (collapse (visibility-f visibility-b))))
+; SWI-PeTTa stable-fixed 9e8fbb6: ()
 !(visibility-caller)
 ; SWI-PeTTa, both qualified pins: ((Visible rejected))
 !(let $f visibility-f (collapse ($f rejected)))
@@ -171,7 +144,6 @@
 !(collapse (visibility-apply visibility-step 1 0))
 ; SWI-PeTTa stable-fixed c3adb86: (rejected)
 !(collapse (foldl visibility-step (1) 0))
-
 ; 15. Rows that repeat one declaration are one declaration.  A call answers
 ;     once for them in both implementations; SWI's get-type lists every row,
 ;     CeTTa's lists the declaration once, so the version a typed relation
@@ -182,7 +154,6 @@
 (: repeated-row (-> Number Number))
 ; SWI-PeTTa: ((-> Number Number) (-> Number Number))
 !(collapse (get-type repeated-row))
-
 ; 16. The atom -inf is the constant minus infinity, the dual of inf: the
 ;     identity of max, as inf is of min.  SWI-PeTTa's reader leaves it an
 ;     atom its arithmetic evaluator rejects ('-inf'/0 is not a function), an
@@ -193,7 +164,6 @@
 !(min -inf 1)
 !(max -inf 1)
 !(< -inf 1)
-
 ; 17. min and max select one of their operands by the numeric order of what
 ;     they stand for: a constant stays itself, integers and floats compare
 ;     exactly, -0.0 is below 0 and 0.0, a NaN operand propagates, and on a tie
@@ -208,7 +178,6 @@
 !(== pi (min pi 4))
 !(min 2 2.0)
 !(max 2.0 2)
-
 ; 18. A constructor field declared _ is unchecked by get-type, as one
 ;     declared %Undefined% is, and as an argument declared _ is unguarded in
 ;     a typed call: _ reads the same to the call protocol and to the type
@@ -225,7 +194,6 @@
 (= (loose-size (LooseBox $x)) 1)
 !(get-type (LooseBox "w"))
 !(collapse (loose-size (LooseBox "w")))
-
 ; 19. Every tabled declaration holds for its relation, whatever relations are
 ;     declared after it: declarations of distinct relations commute, and a
 ;     tabled relation answers each distinct answer of its least fixed point
@@ -244,7 +212,6 @@
 (= (dt-i $x $y) (dt-t $y $x))
 (= (dt-i $x $y) (dt-p $y $x))
 !(collapse (dt-t c1 c0))
-
 ; 20. A conjunctive match answers from its space as the space stood when the
 ;     match was called, whatever its answers add or remove: its answers are
 ;     the join of its patterns over the atoms present at the call, so they
@@ -271,11 +238,3 @@
   (let $answer (match &diff20-times (, (left $x) (right $x)) $x)
     (let $gone (remove-atom &diff20-times (left b))
       (let $new (add-atom &diff20-times (right b)) $answer)))))
-
-; Python boolean interchange (qualified separately by test-python-objects,
-; since this fixture also runs without Python): true/false argument values
-; become Python bool, including in legacy py-call. Janus's default atom
-; conversion makes both truthy strings. Quoted strings remain strings.
-; Upstream repair candidate: encode boolean leaves as Janus boolean terms
-; before invocation, recursively in positional and keyword arguments.
-; Decided: boolean round-trip semantics, Zar's review handoff, 2026-11-06.

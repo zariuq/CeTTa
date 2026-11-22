@@ -7,7 +7,6 @@ import hashlib
 import os
 from pathlib import Path
 import re
-import shlex
 import subprocess
 import sys
 import time
@@ -39,7 +38,8 @@ $(ATOMIC_GATE_ROOT)/unsafe.o: $(ATOMIC_GATE_ROOT)/payload.c $(ATOMIC_GATE_ROOT)/
 \t$(CC) $(CFLAGS) $(DEPFLAGS) -MT "$@" -MF "$(@:.o=.d)" -c -o "$@" "$<"
 """)
     driver = work / "compiler.py"
-    driver.write_text("""import os, pathlib, subprocess, sys, time
+    driver.write_text("#!" + sys.executable + """
+import os, pathlib, subprocess, sys, time
 args = sys.argv[1:]
 if os.environ.get('ATOMIC_GATE_SOURCE') not in args:
     raise SystemExit(subprocess.call(['cc', *args]))
@@ -57,9 +57,16 @@ if os.environ.get('ATOMIC_GATE_FAIL') == '1':
     raise SystemExit(42)
 raise SystemExit(subprocess.call(['cc', *args]))
 """)
+    # The build runs its compiler through one program path (the Cesta wrapper
+    # takes the native compiler as a single command), so the driver is an
+    # executable script.
+    driver.chmod(0o755)
+    # A tag of its own: the driver is another compiler, so the configuration's
+    # compiler stamp and header must not be the default build's, which every
+    # other make in the tree reads.
     command = ["make", "-s", "--no-print-directory", "-f", "Makefile", "-f", str(fixture),
                "ATOMIC_GATE_ROOT=" + str(work), "CFLAGS=-O0 -Wall -Werror -std=c11",
-               "CC=" + shlex.quote(sys.executable) + " " + shlex.quote(str(driver))]
+               "CC=" + str(driver), "CETTA_DEV_TAG=atomic-publication-gate"]
     children: list[tuple[subprocess.Popen, object]] = []
     checks = 0
 

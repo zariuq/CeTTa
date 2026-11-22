@@ -1,0 +1,7 @@
+[()]
+[()]
+[(tf:fired ((checked 2)))]
+[()]
+[(tf:fired ((late 2)))]
+[(tf:fired ((effectful 2)))]
+[(2)]

@@ -17,6 +17,7 @@
 #include "parser_pack_transparent_inline_native_v1.h"
 #include "symbol.h"
 #include "parser.h"
+#include "atom_walk.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -1105,7 +1106,6 @@ static int langdef_operator_compare(const void *left, const void *right) {
     return lhs->arity < rhs->arity ? -1 : lhs->arity > rhs->arity;
 }
 
-enum { LANGDEF_SEMANTIC_QUOTE_DEPTH_V1 = 4096u };
 
 static void langdef_byte_buffer_v1_free(LangDefByteBufferV1 *buffer) {
     if (!buffer)
@@ -1244,72 +1244,93 @@ static bool langdef_semantic_q_list_next_v1(
     return true;
 }
 
-static bool langdef_semantic_render_q_term_v1(
-    LangDefByteBufferV1 *buffer, const Atom *term, uint32_t depth,
-    char *error, size_t error_size) {
-    const Atom *head_symbol;
-    const Atom *arguments;
-    const Atom *argument;
-    bool done;
 
-    if (depth > LANGDEF_SEMANTIC_QUOTE_DEPTH_V1)
-        return set_error(error, error_size,
-                         "quoted semantic term exceeds its depth limit");
+static bool langdef_finite_source_v1(const Atom *term, char *error, size_t error_size) {
+    AtomWalk *walk = atom_walk_new(term, true);
+    if (!walk) return set_error(error, error_size, "out of memory checking finite source syntax");
+    bool ok = false;
+    for (;;) {
+        AtomWalkEvent event;
+        AtomWalkStep step = atom_walk_next(walk, &event);
+        if (step == ATOM_WALK_DONE) { ok = true; break; }
+        if (step == ATOM_WALK_ENTER || step == ATOM_WALK_LEAVE || step == ATOM_WALK_SHARED) continue;
+        set_error(error, error_size, step == ATOM_WALK_RESOURCE
+            ? "out of memory checking finite source syntax" : "source syntax contains a cycle or invalid child");
+        break;
+    }
+    atom_walk_free(walk);
+    return ok;
+}
+
+static bool langdef_semantic_render_q_term_v1(
+    LangDefByteBufferV1 *buffer, const Atom *term,
+    char *error, size_t error_size) {
+    if (!langdef_finite_source_v1(term, error, error_size)) return false;
+    const Atom *inline_tails[32], **tails = inline_tails;
+    size_t len = 0u, capacity = sizeof inline_tails / sizeof inline_tails[0];
+    bool ok = false;
+render:
     if (term && term->kind == ATOM_EXPR && term->expr.len == 2u &&
         atom_is_symbol(term->expr.elems[0], "q-var")) {
         uint32_t index;
         char variable[32];
-        int variable_len;
-        if (!langdef_semantic_q_nat_v1(
-                term->expr.elems[1], &index, error, error_size))
-            return false;
-        variable_len = snprintf(variable, sizeof(variable), "?v%" PRIu32,
-                                index);
-        return variable_len > 0 &&
-               (size_t)variable_len < sizeof(variable) &&
-               langdef_byte_buffer_v1_append(
-                   buffer, variable, (size_t)variable_len,
-                   error, error_size);
+        if (!langdef_semantic_q_nat_v1(term->expr.elems[1], &index, error, error_size)) goto done;
+        int count = snprintf(variable, sizeof variable, "?v%" PRIu32, index);
+        if (count <= 0 || (size_t)count >= sizeof variable ||
+            !langdef_byte_buffer_v1_append(buffer, variable, (size_t)count, error, error_size)) goto done;
+        goto completed;
     }
+    const Atom *head_symbol;
     if (!term || term->kind != ATOM_EXPR || term->expr.len != 3u ||
         !atom_is_symbol(term->expr.elems[0], "q-app") ||
-        !langdef_semantic_q_symbol_v1(
-            term->expr.elems[1], &head_symbol, error, error_size))
-        return false;
-    arguments = term->expr.elems[2];
-    if (!langdef_semantic_q_list_next_v1(
-            &arguments, &argument, &done, error, error_size) ||
-        !langdef_byte_buffer_v1_literal(
-            buffer, "(", error, error_size))
-        return false;
+        !langdef_semantic_q_symbol_v1(term->expr.elems[1], &head_symbol, error, error_size)) goto done;
+    const Atom *arguments = term->expr.elems[2], *argument;
+    bool empty;
+    if (!langdef_semantic_q_list_next_v1(&arguments, &argument, &empty, error, error_size) ||
+        !langdef_byte_buffer_v1_literal(buffer, "(", error, error_size)) goto done;
     {
         char *head = NULL;
         size_t head_len = 0u;
-        bool ok = langdef_semantic_symbol_text_v1(
-            head_symbol, &head, &head_len, error, error_size) &&
-            langdef_byte_buffer_v1_append(
-                buffer, head, head_len, error, error_size);
+        bool written = langdef_semantic_symbol_text_v1(head_symbol, &head, &head_len, error, error_size) &&
+            langdef_byte_buffer_v1_append(buffer, head, head_len, error, error_size);
         free(head);
-        if (!ok)
-            return false;
+        if (!written) goto done;
     }
-    if (done)
-        return langdef_byte_buffer_v1_literal(
-            buffer, ")", error, error_size);
-    for (;;) {
-        if (!langdef_byte_buffer_v1_literal(
-                buffer, " ", error, error_size) ||
-            !langdef_semantic_render_q_term_v1(
-                buffer, argument, depth + 1u, error, error_size))
-            return false;
-        if (!langdef_semantic_q_list_next_v1(
-                &arguments, &argument, &done, error, error_size))
-            return false;
-        if (done)
-            break;
+    if (empty) {
+        if (!langdef_byte_buffer_v1_literal(buffer, ")", error, error_size)) goto done;
+        goto completed;
     }
-    return langdef_byte_buffer_v1_literal(
-        buffer, ")", error, error_size);
+    if (len == capacity) {
+        if (capacity > SIZE_MAX / 2u || capacity * 2u > SIZE_MAX / sizeof(*tails)) goto resource;
+        size_t next_capacity = capacity * 2u;
+        const Atom **next = tails == inline_tails ? malloc(next_capacity * sizeof(*tails))
+            : realloc(tails, next_capacity * sizeof(*tails));
+        if (!next) goto resource;
+        if (tails == inline_tails) memcpy(next, inline_tails, len * sizeof(*tails));
+        tails = next; capacity = next_capacity;
+    }
+    tails[len++] = arguments;
+    if (!langdef_byte_buffer_v1_literal(buffer, " ", error, error_size)) goto done;
+    term = argument;
+    goto render;
+completed:
+    while (len) {
+        if (!langdef_semantic_q_list_next_v1(&tails[len - 1u], &argument, &empty, error, error_size)) goto done;
+        if (!empty) {
+            if (!langdef_byte_buffer_v1_literal(buffer, " ", error, error_size)) goto done;
+            term = argument;
+            goto render;
+        }
+        if (!langdef_byte_buffer_v1_literal(buffer, ")", error, error_size)) goto done;
+        --len;
+    }
+    ok = true;
+    goto done;
+resource:
+    set_error(error, error_size, "out of memory retaining quoted term continuations");
+done:
+    if (tails != inline_tails) free(tails);
+    return ok;
 }
 
 static int langdef_semantic_operator_compare_v1(
@@ -1357,7 +1378,7 @@ static bool langdef_semantic_rule_build_v1(
         !langdef_byte_buffer_v1_literal(
             &output, "\n      (head ", error, error_size) ||
         !langdef_semantic_render_q_term_v1(
-            &output, quoted_rule->expr.elems[2], 0u,
+            &output, quoted_rule->expr.elems[2],
             error, error_size) ||
         !langdef_byte_buffer_v1_literal(
             &output, ")\n      (body", error, error_size))
@@ -1372,7 +1393,7 @@ static bool langdef_semantic_rule_build_v1(
         if (!langdef_byte_buffer_v1_literal(
                 &output, "\n        ", error, error_size) ||
             !langdef_semantic_render_q_term_v1(
-                &output, premise, 0u, error, error_size))
+                &output, premise, error, error_size))
             goto done;
     }
     if (!langdef_byte_buffer_v1_literal(
@@ -2995,8 +3016,6 @@ static bool compile_petta_direct_command_v1(
             entry_modes[entry_mode_count++] = value;
         } else if (strcmp(option, "--target") == 0 && target_name == NULL) {
             target_name = value;
-        } else if (strcmp(option, "--c-prefix") == 0) {
-            cetta_gslt_native_set_prefix_v1(value);
         } else if (strcmp(option, "--out") == 0 && output == NULL) {
             output = value;
         } else {
@@ -3015,6 +3034,7 @@ static bool compile_petta_direct_command_v1(
             target = CETTA_GSLT_DIRECT_TARGET_HE_V1;
         } else if (strcmp(target_name, "c") == 0) {
             target = CETTA_GSLT_DIRECT_TARGET_C_V1;
+            cetta_gslt_rulec_set_output_v1(output);
         } else if (strcmp(target_name, "petta") != 0) {
             set_error(error, error_size,
                       "petta-direct --target must be petta, he or c");
@@ -3127,6 +3147,109 @@ done:
     free(program);
     cetta_language_def_core_v1_free(&admission_language);
     cetta_op_lang_v1_free(&admission_wire);
+    arena_free(&arena);
+    return ok;
+}
+
+/* tcalc-direct: the closed entry residual as a tcalc program read by demand
+ * (gslt_tcalc_direct_v1.c), from the sources, closed entry modes and native
+ * types petta-direct takes; the front end hands its analysis to the tcalc
+ * renderer (CETTA_GSLT_DIRECT_TARGET_TCALC_V1). */
+static bool compile_tcalc_direct_command_v1(
+    int argc, char **argv, size_t *rule_count,
+    char source_digest[65], char artifact_digest[65],
+    char *error, size_t error_size) {
+    const char **sources = NULL;
+    size_t source_count = 0u;
+    const char *composition = NULL;
+    const char *native_types_path = NULL;
+    const char *output = NULL;
+    const char **entry_modes = NULL;
+    size_t entry_mode_count = 0u;
+    Atom **presentations = NULL;
+    Atom *native_type_packet = NULL;
+    Arena arena;
+    uint8_t *program = NULL;
+    size_t program_len = 0u;
+    bool ok = false;
+
+    arena_init(&arena);
+    sources = calloc((size_t)argc, sizeof(*sources));
+    entry_modes = calloc((size_t)argc, sizeof(*entry_modes));
+    if (!sources || !entry_modes) {
+        set_error(error, error_size, "out of memory reading tcalc-direct options");
+        goto done;
+    }
+    for (int index = 2; index < argc; index++) {
+        const char *option = argv[index];
+        const char *value;
+        if (index + 1 >= argc) {
+            set_error(error, error_size, "tcalc-direct option lacks a value");
+            goto done;
+        }
+        value = argv[++index];
+        if (strcmp(option, "--source") == 0) {
+            sources[source_count++] = value;
+        } else if (strcmp(option, "--composition") == 0 && composition == NULL) {
+            composition = value;
+        } else if (strcmp(option, "--native-types") == 0 && native_types_path == NULL) {
+            native_types_path = value;
+        } else if (strcmp(option, "--closed-entry-mode") == 0) {
+            entry_modes[entry_mode_count++] = value;
+        } else if (strcmp(option, "--out") == 0 && output == NULL) {
+            output = value;
+        } else {
+            set_error(error, error_size, "invalid or repeated tcalc-direct option");
+            goto done;
+        }
+    }
+    if ((source_count == 0u) == (composition == NULL) || output == NULL ||
+        entry_mode_count == 0u) {
+        set_error(error, error_size,
+                  "tcalc-direct requires exactly one source list or composition, closed entry modes and an output");
+        goto done;
+    }
+    if (composition != NULL &&
+        !direct_sources_from_composition_v1(
+            composition, &arena, &sources, &source_count,
+            "tcalc-direct", error, error_size))
+        goto done;
+    presentations = calloc(source_count, sizeof(*presentations));
+    if (!presentations) {
+        set_error(error, error_size, "out of memory reading presentations");
+        goto done;
+    }
+    for (size_t index = 0u; index < source_count; index++) {
+        presentations[index] = cetta_langdef_read_single_form(
+            sources[index], &arena, error, error_size);
+        if (presentations[index] == NULL)
+            goto done;
+    }
+    if (native_types_path != NULL) {
+        native_type_packet = cetta_langdef_read_single_form(
+            native_types_path, &arena, error, error_size);
+        if (native_type_packet == NULL)
+            goto done;
+    }
+    if (!(native_type_packet != NULL
+              ? cetta_gslt_petta_direct_native_types_v1(
+                    presentations, source_count, CETTA_GSLT_DIRECT_TARGET_TCALC_V1,
+                    native_type_packet, entry_modes, entry_mode_count, true,
+                    &program, &program_len, rule_count, source_digest,
+                    error, error_size)
+              : cetta_gslt_petta_direct_closed_v1(
+                    presentations, source_count, CETTA_GSLT_DIRECT_TARGET_TCALC_V1,
+                    entry_modes, entry_mode_count, &program, &program_len,
+                    rule_count, source_digest, error, error_size)))
+        goto done;
+    cetta_native_sha256_hex(program, program_len, artifact_digest);
+    ok = write_atomic(output, program, program_len, error, error_size);
+
+done:
+    free(sources);
+    free(entry_modes);
+    free(presentations);
+    free(program);
     arena_free(&arena);
     return ok;
 }
@@ -4953,34 +5076,32 @@ static bool state_transition_symbol_u32(const Atom *term,
 
 static bool state_transition_collect_numerals(
     const Atom *term, StateTransitionNumeralsV1 *numerals,
-    uint32_t depth, char *error, size_t error_size) {
-    uint32_t value;
-    if (!term || depth > 4096u)
-        return set_error(error, error_size,
-                         "state-transition action term is too deep");
-    if (term->kind == ATOM_SYMBOL) {
-        if (!state_transition_symbol_u32(term, &value))
-            return true;
-        return state_transition_numeral_push(
-            numerals, value, error, error_size);
+     char *error, size_t error_size) {
+    AtomWalk *walk = atom_walk_new(term, true);
+    if (!walk) return set_error(error, error_size, "out of memory walking state-transition source");
+    bool ok = false;
+    for (;;) {
+        AtomWalkEvent event;
+        AtomWalkStep step = atom_walk_next(walk, &event);
+        if (step == ATOM_WALK_DONE) { ok = true; break; }
+        if (step == ATOM_WALK_LEAVE || step == ATOM_WALK_SHARED) continue;
+        if (step != ATOM_WALK_ENTER) {
+            set_error(error, error_size, "could not finish state-transition source traversal"); break;
+        }
+        const Atom *node = event.node;
+        uint32_t value;
+        if (node->kind == ATOM_EXPR) continue;
+        if (node->kind != ATOM_SYMBOL && node->kind != ATOM_GROUNDED) {
+            set_error(error, error_size, "state-transition action is not first-order"); break;
+        }
+        if (!state_transition_symbol_u32(node, &value)) {
+            if (node->kind == ATOM_SYMBOL) continue;
+            set_error(error, error_size, "state-transition action contains a non-u32 grounded value"); break;
+        }
+        if (!state_transition_numeral_push(numerals, value, error, error_size)) break;
     }
-    if (term->kind == ATOM_GROUNDED) {
-        if (!state_transition_symbol_u32(term, &value))
-            return set_error(error, error_size,
-                             "state-transition action contains a non-u32 grounded value");
-        return state_transition_numeral_push(
-            numerals, value, error, error_size);
-    }
-    if (term->kind != ATOM_EXPR)
-        return set_error(error, error_size,
-                         "state-transition action is not first-order");
-    for (CettaExprIndex index = 0u; index < term->expr.len; index++) {
-        if (!state_transition_collect_numerals(
-                term->expr.elems[index], numerals, depth + 1u,
-                error, error_size))
-            return false;
-    }
-    return true;
+    atom_walk_free(walk);
+    return ok;
 }
 
 static char *state_transition_peano(uint32_t value,
@@ -5140,10 +5261,10 @@ static bool state_transition_bindings_command(
                 goto done;
             }
             if (!state_transition_collect_numerals(
-                    record->expr.elems[2], &numerals, 0u,
+                    record->expr.elems[2], &numerals,
                     error, error_size) ||
                 !state_transition_collect_numerals(
-                    record->expr.elems[3], &numerals, 0u,
+                    record->expr.elems[3], &numerals,
                     error, error_size))
                 goto done;
         } else if (atom_is_symbol(record->expr.elems[0],
@@ -5176,7 +5297,7 @@ static bool state_transition_bindings_command(
                 goto done;
             }
             if (!state_transition_collect_numerals(
-                    record->expr.elems[3], &numerals, 0u,
+                    record->expr.elems[3], &numerals,
                     error, error_size))
                 goto done;
         } else if (atom_is_symbol(record->expr.elems[0],
@@ -5199,7 +5320,7 @@ static bool state_transition_bindings_command(
                 goto done;
             }
             if (!state_transition_collect_numerals(
-                    record->expr.elems[2], &numerals, 0u,
+                    record->expr.elems[2], &numerals,
                     error, error_size))
                 goto done;
         }
@@ -5483,43 +5604,34 @@ static char *state_occurrence_render_v1(
 
 static bool state_occurrence_collect_literals_v1(
     const Atom *term, LangDefCanonicalAnswerV1 **literals,
-    size_t *literal_len, size_t *literal_cap, uint32_t depth,
+    size_t *literal_len, size_t *literal_cap,
     char *error, size_t error_size) {
-    if (!term || depth > 4096u)
-        return set_error(error, error_size,
-                         "state occurrence literal term is too deep");
-    if (term->kind != ATOM_EXPR)
-        return true;
-    if (term->expr.len == 2u &&
-        atom_is_symbol(term->expr.elems[0], "state-literal-v1")) {
-        char *literal = state_occurrence_render_v1(
-            term->expr.elems[1], error, error_size);
-        size_t literal_size;
-        if (!literal)
-            return false;
-        literal_size = strlen(literal);
-        for (size_t index = 0u; index < *literal_len; index++) {
-            if (strcmp((*literals)[index].text, literal) == 0) {
-                free(literal);
-                return true;
-            }
+    AtomWalk *walk = atom_walk_new(term, true);
+    if (!walk) return set_error(error, error_size, "out of memory walking state occurrence literals");
+    bool ok = false;
+    for (;;) {
+        AtomWalkEvent event;
+        AtomWalkStep step = atom_walk_next(walk, &event);
+        if (step == ATOM_WALK_DONE) { ok = true; break; }
+        if (step == ATOM_WALK_LEAVE || step == ATOM_WALK_SHARED) continue;
+        if (step != ATOM_WALK_ENTER) {
+            set_error(error, error_size, "could not finish state occurrence literal traversal"); break;
         }
-        if (!canonical_answer_push(
-                literals, literal_len, literal_cap,
-                literal, literal_size, error, error_size)) {
-            free(literal);
-            return false;
-        }
-        return true;
+        const Atom *node = event.node;
+        if (node->kind != ATOM_EXPR || node->expr.len != 2u ||
+            !atom_is_symbol(node->expr.elems[0], "state-literal-v1")) continue;
+        atom_walk_prune(walk);
+        char *literal = state_occurrence_render_v1(node->expr.elems[1], error, error_size);
+        if (!literal) break;
+        bool seen = false;
+        for (size_t i = 0u; i < *literal_len; ++i)
+            if (!strcmp((*literals)[i].text, literal)) { seen = true; break; }
+        if (seen) { free(literal); continue; }
+        if (!canonical_answer_push(literals, literal_len, literal_cap, literal,
+                strlen(literal), error, error_size)) { free(literal); break; }
     }
-    for (CettaExprIndex index = 0u; index < term->expr.len; index++) {
-        if (!state_occurrence_collect_literals_v1(
-                term->expr.elems[index], literals,
-                literal_len, literal_cap, depth + 1u,
-                error, error_size))
-            return false;
-    }
-    return true;
+    atom_walk_free(walk);
+    return ok;
 }
 
 static bool state_occurrence_request_push_v1(
@@ -5563,37 +5675,35 @@ static bool state_occurrence_request_push_v1(
 
 static bool state_occurrence_collect_requests_v1(
     const Atom *term, const char *operation,
-    StateOccurrenceRoleListRequestsV1 *requests, uint32_t depth,
+    StateOccurrenceRoleListRequestsV1 *requests,
     char *error, size_t error_size) {
-    if (!term || depth > 4096u)
-        return set_error(error, error_size,
-                         "state occurrence role-list term is too deep");
-    if (term->kind != ATOM_EXPR)
-        return true;
-    if (term->expr.len == 3u &&
-        atom_is_symbol(term->expr.elems[0], "state-role-list-v1")) {
-        char *role;
+    AtomWalk *walk = atom_walk_new(term, true);
+    if (!walk) return set_error(error, error_size, "out of memory walking state occurrence requests");
+    bool ok = false;
+    for (;;) {
+        AtomWalkEvent event;
+        AtomWalkStep step = atom_walk_next(walk, &event);
+        if (step == ATOM_WALK_DONE) { ok = true; break; }
+        if (step == ATOM_WALK_LEAVE || step == ATOM_WALK_SHARED) continue;
+        if (step != ATOM_WALK_ENTER) {
+            set_error(error, error_size, "could not finish state occurrence request traversal"); break;
+        }
+        const Atom *node = event.node;
+        if (node->kind != ATOM_EXPR || node->expr.len != 3u ||
+            !atom_is_symbol(node->expr.elems[0], "state-role-list-v1")) continue;
+        atom_walk_prune(walk);
         uint32_t index;
-        bool ok;
-        if (!state_transition_symbol_u32(term->expr.elems[2], &index))
-            return set_error(error, error_size,
-                             "state occurrence role-list index is not a u32");
-        role = state_occurrence_render_v1(
-            term->expr.elems[1], error, error_size);
-        if (!role)
-            return false;
-        ok = state_occurrence_request_push_v1(
-            requests, operation, role, index, error, error_size);
+        if (!state_transition_symbol_u32(node->expr.elems[2], &index)) {
+            set_error(error, error_size, "state occurrence role-list index is not a u32"); break;
+        }
+        char *role = state_occurrence_render_v1(node->expr.elems[1], error, error_size);
+        if (!role) break;
+        bool added = state_occurrence_request_push_v1(requests, operation, role, index, error, error_size);
         free(role);
-        return ok;
+        if (!added) break;
     }
-    for (CettaExprIndex index = 0u; index < term->expr.len; index++) {
-        if (!state_occurrence_collect_requests_v1(
-                term->expr.elems[index], operation, requests,
-                depth + 1u, error, error_size))
-            return false;
-    }
-    return true;
+    atom_walk_free(walk);
+    return ok;
 }
 
 static bool state_occurrence_parse_values_v1(
@@ -5602,7 +5712,7 @@ static bool state_occurrence_parse_values_v1(
     char **bytes_by_id, bool *seen_id, uint32_t unique_value_len,
     char *error, size_t error_size) {
     const Atom *cursor = list;
-    uint32_t depth = 0u;
+    if (!langdef_finite_source_v1(list, error, error_size)) return false;
     while (!atom_is_symbol((Atom *)cursor,
                            "ParserOccurrenceValuesNilV1")) {
         Atom *value;
@@ -5675,9 +5785,6 @@ static bool state_occurrence_parse_values_v1(
         };
         (*value_len)++;
         cursor = cursor->expr.elems[2];
-        if (++depth > 16u * 1024u * 1024u)
-            return set_error(error, error_size,
-                             "parser occurrence value list is too deep");
     }
     return true;
 }
@@ -5686,7 +5793,7 @@ static bool state_occurrence_parse_empty_roles_v1(
     const Atom *list, StateOccurrenceEmptyRolesV1 *roles,
     char *error, size_t error_size) {
     const Atom *cursor = list;
-    uint32_t depth = 0u;
+    if (!langdef_finite_source_v1(list, error, error_size)) return false;
     while (!atom_is_symbol(
                (Atom *)cursor, "ParserOccurrenceEmptyRolesNilV1")) {
         const char *role;
@@ -5729,11 +5836,6 @@ static bool state_occurrence_parse_empty_roles_v1(
         }
         roles->values[roles->len++] = role;
         cursor = cursor->expr.elems[2];
-        if (++depth > 16u * 1024u * 1024u) {
-            return set_error(
-                error, error_size,
-                "parser occurrence empty-role list is too deep");
-        }
     }
     return true;
 }
@@ -6097,7 +6199,7 @@ static bool state_occurrence_projection_oracle_command_v1(
         Atom *record = state_program.terms[index];
         if (!state_occurrence_collect_literals_v1(
                 record, &literals, &literal_len, &literal_cap,
-                0u, error, error_size))
+                 error, error_size))
             goto done;
         if (record && record->kind == ATOM_EXPR && record->expr.len == 4u &&
             atom_is_symbol(record->expr.elems[0], "state-action-v1")) {
@@ -6106,7 +6208,7 @@ static bool state_occurrence_projection_oracle_command_v1(
             if (!operation ||
                 !state_occurrence_collect_requests_v1(
                     record->expr.elems[3], operation, &requests,
-                    0u, error, error_size)) {
+                     error, error_size)) {
                 free(operation);
                 goto done;
             }
@@ -6724,12 +6826,14 @@ static void usage(const char *program) {
             "  %s equations (--source FILE... | --composition FILE) "
             "--out FILE\n"
             "  %s petta-direct (--source FILE... | --composition FILE) "
-            "[--target petta|he|c [--c-prefix NAME]] "
+            "[--target petta|he|c] "
             "[--entry-mode RELATION:BITS... | "
             "--closed-entry-mode RELATION:BITS...] "
             "[--native-types FILE] "
             "[--admission-language FILE --admission-entry RELATION:TYPE] "
             "[--epilogue FILE] --out FILE\n"
+            "  %s tcalc-direct (--source FILE... | --composition FILE) "
+            "--closed-entry-mode RELATION:BITS... [--native-types FILE] --out FILE\n"
             "  %s rhometta-direct (--source FILE... | --composition FILE) "
             "--target PRESENTATION... "
             "[--entry-rule NAME...] [--epilogue FILE] --out FILE\n"
@@ -6768,7 +6872,7 @@ static void usage(const char *program) {
             program, program, program, program, program, program, program,
             program, program, program, program, program, program, program,
             program, program, program, program, program, program, program,
-            program, program, program);
+            program, program, program, program);
 }
 
 int main(int argc, char **argv) {
@@ -6785,6 +6889,7 @@ int main(int argc, char **argv) {
     bool semantic_gslt_command = false;
     bool petta_direct_command = false;
     bool rhometta_direct_command = false;
+    bool tcalc_direct_command = false;
     bool horn_shape_command = false;
     bool petta_horn_command = false;
     bool petta_horn_check_command = false;
@@ -6800,6 +6905,9 @@ int main(int argc, char **argv) {
     size_t petta_direct_rule_count = 0u;
     char petta_direct_source_digest[65] = {0};
     char petta_direct_artifact_digest[65] = {0};
+    size_t tcalc_direct_rule_count = 0u;
+    char tcalc_direct_source_digest[65] = {0};
+    char tcalc_direct_artifact_digest[65] = {0};
     size_t rhometta_direct_rule_count = 0u;
     size_t rhometta_direct_relation_count = 0u;
     char rhometta_direct_source_digest[65] = {0};
@@ -6828,6 +6936,12 @@ int main(int argc, char **argv) {
         ok = compile_petta_direct_command_v1(
             argc, argv, &petta_direct_rule_count,
             petta_direct_source_digest, petta_direct_artifact_digest,
+            error, sizeof(error));
+    } else if (strcmp(argv[1], "tcalc-direct") == 0) {
+        tcalc_direct_command = true;
+        ok = compile_tcalc_direct_command_v1(
+            argc, argv, &tcalc_direct_rule_count,
+            tcalc_direct_source_digest, tcalc_direct_artifact_digest,
             error, sizeof(error));
     } else if (strcmp(argv[1], "rhometta-direct") == 0) {
         rhometta_direct_command = true;
@@ -6994,6 +7108,11 @@ int main(int argc, char **argv) {
                petta_direct_rule_count,
                petta_direct_source_digest,
                petta_direct_artifact_digest);
+    else if (tcalc_direct_command)
+        printf("(GSLTDirectTcalcV1Summary %zu %s %s)\n",
+               tcalc_direct_rule_count,
+               tcalc_direct_source_digest,
+               tcalc_direct_artifact_digest);
     else if (rhometta_direct_command)
         printf("(GSLTDirectRhoMettaV1Summary %zu %zu %s %s)\n",
                rhometta_direct_rule_count,

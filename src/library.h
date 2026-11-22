@@ -167,6 +167,7 @@ typedef struct CettaLibraryContext {
     pthread_mutex_t nik_runtime_mutex;
     bool nik_runtime_mutex_ready;
     struct CettaNikRuntimeV1 *nik_runtime;
+    struct CettaTmettaRuntime *tmetta_runtime;
     pthread_mutex_t parser_cache_mutex;
     bool parser_cache_mutex_ready;
     struct CettaAuthoredParserV1 *parser_cache;

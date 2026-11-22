@@ -558,23 +558,23 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=1 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-valid-one target=mode relation=fold-contract-valid input=0 functional=relational
 (= (gslt:mode:fold-contract-valid:0)
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
    (quote (gslt:result:fold-contract-valid:0 (fold-one $role)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=2 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-valid-plus target=mode relation=fold-contract-valid input=0 functional=relational
 (= (gslt:mode:fold-contract-valid:0)
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
    (quote (gslt:result:fold-contract-valid:0 (fold-plus $role)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=3 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-valid-star target=mode relation=fold-contract-valid input=0 functional=relational
 (= (gslt:mode:fold-contract-valid:0)
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
    (quote (gslt:result:fold-contract-valid:0 (fold-star $role)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=4 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-valid-seq target=mode relation=fold-contract-valid input=0 functional=relational
 (= (gslt:mode:fold-contract-valid:0)
-   (let (gslt:result:fold-contract-valid:0 $first) (superpose (collapse (gslt:mode:fold-contract-valid:0)))
-   (let (gslt:result:fold-contract-valid:0 $second) (superpose (collapse (gslt:mode:fold-contract-valid:0)))
+   (let (cons fold-contract-valid (cons $first ())) (gslt:fold-contract-valid (fold-contract-valid $first))
+   (let (cons fold-contract-valid (cons $second ())) (gslt:fold-contract-valid (fold-contract-valid $second))
    (quote (gslt:result:fold-contract-valid:0 (fold-seq $first $second))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=5 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-match-none target=mode relation=fold-contract-match input=000 functional=relational
@@ -583,30 +583,30 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=6 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-match-one target=mode relation=fold-contract-match input=000 functional=relational
 (= (gslt:mode:fold-contract-match:000)
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
    (quote (gslt:result:fold-contract-match:000 (fold-one $role) (fold-cons $role $rest) $rest))))
 
 ; gslt-lowered-equation-v1 source-rewrite=7 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-match-plus target=mode relation=fold-contract-match input=000 functional=relational
 (= (gslt:mode:fold-contract-match:000)
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
-   (let (gslt:result:fold-contract-match:100 $input $rest) (superpose (collapse (gslt:mode:fold-contract-match:100 (quote (fold-star $role)))))
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
+   (let (cons fold-contract-match (cons (cons fold-star (cons $role ())) (cons $input (cons $rest ())))) (gslt:fold-contract-match (fold-contract-match (fold-star $role) $input $rest))
    (quote (gslt:result:fold-contract-match:000 (fold-plus $role) (fold-cons $role $input) $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=8 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-match-star-empty target=mode relation=fold-contract-match input=000 functional=relational
 (= (gslt:mode:fold-contract-match:000)
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
    (quote (gslt:result:fold-contract-match:000 (fold-star $role) $input $input))))
 
 ; gslt-lowered-equation-v1 source-rewrite=9 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-match-star-step target=mode relation=fold-contract-match input=000 functional=relational
 (= (gslt:mode:fold-contract-match:000)
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
-   (let (gslt:result:fold-contract-match:100 $input $rest) (superpose (collapse (gslt:mode:fold-contract-match:100 (quote (fold-star $role)))))
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
+   (let (cons fold-contract-match (cons (cons fold-star (cons $role ())) (cons $input (cons $rest ())))) (gslt:fold-contract-match (fold-contract-match (fold-star $role) $input $rest))
    (quote (gslt:result:fold-contract-match:000 (fold-star $role) (fold-cons $role $input) $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=10 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-match-seq target=mode relation=fold-contract-match input=000 functional=relational
 (= (gslt:mode:fold-contract-match:000)
-   (let (gslt:result:fold-contract-match:000 $first $input $middle) (superpose (collapse (gslt:mode:fold-contract-match:000)))
-   (let (gslt:result:fold-contract-match:000 $second $middle $rest) (superpose (collapse (gslt:mode:fold-contract-match:000)))
+   (let (cons fold-contract-match (cons $first (cons $input (cons $middle ())))) (gslt:fold-contract-match (fold-contract-match $first $input $middle))
+   (let (cons fold-contract-match (cons $second (cons $middle (cons $rest ())))) (gslt:fold-contract-match (fold-contract-match $second $middle $rest))
    (quote (gslt:result:fold-contract-match:000 (fold-seq $first $second) $input $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=11 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-role-label target=mode relation=source-fold-role input=0 functional=relational
@@ -883,124 +883,114 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=52 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-one target=mode relation=fold-contract-role input=00 functional=relational
 (= (gslt:mode:fold-contract-role:00)
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
    (quote (gslt:result:fold-contract-role:00 (fold-one $role) $role))))
 
 ; gslt-lowered-equation-v1 source-rewrite=53 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-plus target=mode relation=fold-contract-role input=00 functional=relational
 (= (gslt:mode:fold-contract-role:00)
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
    (quote (gslt:result:fold-contract-role:00 (fold-plus $role) $role))))
 
 ; gslt-lowered-equation-v1 source-rewrite=54 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-star target=mode relation=fold-contract-role input=00 functional=relational
 (= (gslt:mode:fold-contract-role:00)
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
    (quote (gslt:result:fold-contract-role:00 (fold-star $role) $role))))
 
 ; gslt-lowered-equation-v1 source-rewrite=55 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-seq-left target=mode relation=fold-contract-role input=00 functional=relational
 (= (gslt:mode:fold-contract-role:00)
-   (let (gslt:result:fold-contract-role:00 $left $role) (superpose (collapse (gslt:mode:fold-contract-role:00)))
+   (let (cons fold-contract-role (cons $left (cons $role ()))) (gslt:fold-contract-role (fold-contract-role $left $role))
    (quote (gslt:result:fold-contract-role:00 (fold-seq $left $right) $role))))
 
 ; gslt-lowered-equation-v1 source-rewrite=56 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-seq-right target=mode relation=fold-contract-role input=00 functional=relational
 (= (gslt:mode:fold-contract-role:00)
-   (let (gslt:result:fold-contract-role:00 $right $role) (superpose (collapse (gslt:mode:fold-contract-role:00)))
+   (let (cons fold-contract-role (cons $right (cons $role ()))) (gslt:fold-contract-role (fold-contract-role $right $role))
    (quote (gslt:result:fold-contract-role:00 (fold-seq $left $right) $role))))
 
 ; gslt-lowered-equation-v1 source-rewrite=52 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-one target=mode relation=fold-contract-role input=11 functional=relational
-(= (gslt:mode:fold-contract-role:11 $__gslt_input_v1_0_0 $role)
-   (let (cons-atom fold-one (cons-atom $role ())) $__gslt_input_v1_0_0
+(= (gslt:mode:fold-contract-role:11 (cons fold-one (cons $role ())) $role)
    (let gslt:result:source-fold-role:1 (once (gslt:fn:source-fold-role:1 $role))
-   (quote gslt:result:fold-contract-role:11))))
+   (quote gslt:result:fold-contract-role:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=53 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-plus target=mode relation=fold-contract-role input=11 functional=relational
-(= (gslt:mode:fold-contract-role:11 $__gslt_input_v1_0_0 $role)
-   (let (cons-atom fold-plus (cons-atom $role ())) $__gslt_input_v1_0_0
+(= (gslt:mode:fold-contract-role:11 (cons fold-plus (cons $role ())) $role)
    (let gslt:result:source-fold-role:1 (once (gslt:fn:source-fold-role:1 $role))
-   (quote gslt:result:fold-contract-role:11))))
+   (quote gslt:result:fold-contract-role:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=54 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-star target=mode relation=fold-contract-role input=11 functional=relational
-(= (gslt:mode:fold-contract-role:11 $__gslt_input_v1_0_0 $role)
-   (let (cons-atom fold-star (cons-atom $role ())) $__gslt_input_v1_0_0
+(= (gslt:mode:fold-contract-role:11 (cons fold-star (cons $role ())) $role)
    (let gslt:result:source-fold-role:1 (once (gslt:fn:source-fold-role:1 $role))
-   (quote gslt:result:fold-contract-role:11))))
+   (quote gslt:result:fold-contract-role:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=55 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-seq-left target=mode relation=fold-contract-role input=11 functional=relational
-(= (gslt:mode:fold-contract-role:11 $__gslt_input_v1_0_0 $role)
-   (let (cons-atom fold-seq (cons-atom $left (cons-atom $right ()))) $__gslt_input_v1_0_0
-   (let gslt:result:fold-contract-role:11 (superpose (collapse (gslt:mode:fold-contract-role:11 $left $role)))
-   (quote gslt:result:fold-contract-role:11))))
+(= (gslt:mode:fold-contract-role:11 (cons fold-seq (cons $left (cons $right ()))) $role)
+   (let (cons fold-contract-role (cons $left (cons $role ()))) (gslt:fold-contract-role (fold-contract-role $left $role))
+   (quote gslt:result:fold-contract-role:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=56 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-seq-right target=mode relation=fold-contract-role input=11 functional=relational
-(= (gslt:mode:fold-contract-role:11 $__gslt_input_v1_0_0 $role)
-   (let (cons-atom fold-seq (cons-atom $left (cons-atom $right ()))) $__gslt_input_v1_0_0
-   (let gslt:result:fold-contract-role:11 (superpose (collapse (gslt:mode:fold-contract-role:11 $right $role)))
-   (quote gslt:result:fold-contract-role:11))))
+(= (gslt:mode:fold-contract-role:11 (cons fold-seq (cons $left (cons $right ()))) $role)
+   (let (cons fold-contract-role (cons $right (cons $role ()))) (gslt:fold-contract-role (fold-contract-role $right $role))
+   (quote gslt:result:fold-contract-role:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=52 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-one target=mode relation=fold-contract-role input=10 functional=relational
-(= (gslt:mode:fold-contract-role:10 $__gslt_input_v1_0_0)
-   (let (cons-atom fold-one (cons-atom $role ())) $__gslt_input_v1_0_0
+(= (gslt:mode:fold-contract-role:10 (cons fold-one (cons $role ())))
    (let gslt:result:source-fold-role:1 (once (gslt:fn:source-fold-role:1 $role))
-   (quote (gslt:result:fold-contract-role:10 $role)))))
+   (quote (gslt:result:fold-contract-role:10 $role))))
 
 ; gslt-lowered-equation-v1 source-rewrite=53 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-plus target=mode relation=fold-contract-role input=10 functional=relational
-(= (gslt:mode:fold-contract-role:10 $__gslt_input_v1_0_0)
-   (let (cons-atom fold-plus (cons-atom $role ())) $__gslt_input_v1_0_0
+(= (gslt:mode:fold-contract-role:10 (cons fold-plus (cons $role ())))
    (let gslt:result:source-fold-role:1 (once (gslt:fn:source-fold-role:1 $role))
-   (quote (gslt:result:fold-contract-role:10 $role)))))
+   (quote (gslt:result:fold-contract-role:10 $role))))
 
 ; gslt-lowered-equation-v1 source-rewrite=54 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-star target=mode relation=fold-contract-role input=10 functional=relational
-(= (gslt:mode:fold-contract-role:10 $__gslt_input_v1_0_0)
-   (let (cons-atom fold-star (cons-atom $role ())) $__gslt_input_v1_0_0
+(= (gslt:mode:fold-contract-role:10 (cons fold-star (cons $role ())))
    (let gslt:result:source-fold-role:1 (once (gslt:fn:source-fold-role:1 $role))
-   (quote (gslt:result:fold-contract-role:10 $role)))))
+   (quote (gslt:result:fold-contract-role:10 $role))))
 
 ; gslt-lowered-equation-v1 source-rewrite=55 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-seq-left target=mode relation=fold-contract-role input=10 functional=relational
-(= (gslt:mode:fold-contract-role:10 $__gslt_input_v1_0_0)
-   (let (cons-atom fold-seq (cons-atom $left (cons-atom $right ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:fold-contract-role:10 $role) (superpose (collapse (gslt:mode:fold-contract-role:10 $left)))
-   (quote (gslt:result:fold-contract-role:10 $role)))))
+(= (gslt:mode:fold-contract-role:10 (cons fold-seq (cons $left (cons $right ()))))
+   (let (cons fold-contract-role (cons $left (cons $role ()))) (gslt:fold-contract-role (fold-contract-role $left $role))
+   (quote (gslt:result:fold-contract-role:10 $role))))
 
 ; gslt-lowered-equation-v1 source-rewrite=56 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-seq-right target=mode relation=fold-contract-role input=10 functional=relational
-(= (gslt:mode:fold-contract-role:10 $__gslt_input_v1_0_0)
-   (let (cons-atom fold-seq (cons-atom $left (cons-atom $right ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:fold-contract-role:10 $role) (superpose (collapse (gslt:mode:fold-contract-role:10 $right)))
-   (quote (gslt:result:fold-contract-role:10 $role)))))
+(= (gslt:mode:fold-contract-role:10 (cons fold-seq (cons $left (cons $right ()))))
+   (let (cons fold-contract-role (cons $right (cons $role ()))) (gslt:fold-contract-role (fold-contract-role $right $role))
+   (quote (gslt:result:fold-contract-role:10 $role))))
 
 ; gslt-lowered-equation-v1 source-rewrite=57 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-from-node target=mode relation=source-state-operation input=0 functional=relational
 (= (gslt:mode:source-state-operation:0)
-   (let (gslt:result:source-fold-node:000 $node $operation $contract) (superpose (collapse (gslt:mode:source-fold-node:000)))
+   (let (cons source-fold-node (cons $node (cons $operation (cons $contract ())))) (gslt:source-fold-node (source-fold-node $node $operation $contract))
    (quote (gslt:result:source-state-operation:0 $operation))))
 
 ; gslt-lowered-equation-v1 source-rewrite=58 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-from-shift target=mode relation=source-state-operation input=0 functional=relational
 (= (gslt:mode:source-state-operation:0)
-   (let (gslt:result:source-fold-shift:00 $role $operation) (superpose (collapse (gslt:mode:source-fold-shift:00)))
+   (let (cons source-fold-shift (cons $role (cons $operation ()))) (gslt:source-fold-shift (source-fold-shift $role $operation))
    (quote (gslt:result:source-state-operation:0 $operation))))
 
 ; gslt-lowered-equation-v1 source-rewrite=57 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-from-node target=mode relation=source-state-operation input=1 functional=relational
 (= (gslt:mode:source-state-operation:1 $operation)
-   (let (gslt:result:source-fold-node:010 $node $contract) (once (gslt:fn:source-fold-node:010 $operation))
+   (let (cons gslt:result:source-fold-node:010 (cons $node (cons $contract ()))) (once (gslt:fn:source-fold-node:010 $operation))
    (quote gslt:result:source-state-operation:1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=58 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-from-shift target=mode relation=source-state-operation input=1 functional=relational
 (= (gslt:mode:source-state-operation:1 $operation)
-   (let (gslt:result:source-fold-shift:01 $role) (once (gslt:fn:source-fold-shift:01 $operation))
+   (let (cons gslt:result:source-fold-shift:01 (cons $role ())) (once (gslt:fn:source-fold-shift:01 $operation))
    (quote gslt:result:source-state-operation:1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=59 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-role-from-node target=mode relation=source-state-operation-role input=00 functional=relational
 (= (gslt:mode:source-state-operation-role:00)
-   (let (gslt:result:source-fold-node:000 $node $operation $contract) (superpose (collapse (gslt:mode:source-fold-node:000)))
-   (let (gslt:result:fold-contract-role:10 $role) (superpose (collapse (gslt:mode:fold-contract-role:10 $contract)))
+   (let (cons source-fold-node (cons $node (cons $operation (cons $contract ())))) (gslt:source-fold-node (source-fold-node $node $operation $contract))
+   (let (cons fold-contract-role (cons $contract (cons $role ()))) (gslt:fold-contract-role (fold-contract-role $contract $role))
    (quote (gslt:result:source-state-operation-role:00 $operation $role)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=60 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-role-from-shift target=mode relation=source-state-operation-role input=00 functional=relational
 (= (gslt:mode:source-state-operation-role:00)
-   (let (gslt:result:source-fold-shift:00 $role $operation) (superpose (collapse (gslt:mode:source-fold-shift:00)))
+   (let (cons source-fold-shift (cons $role (cons $operation ()))) (gslt:source-fold-shift (source-fold-shift $role $operation))
    (quote (gslt:result:source-state-operation-role:00 $operation $role))))
 
 ; gslt-lowered-equation-v1 source-rewrite=59 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-role-from-node target=mode relation=source-state-operation-role input=11 functional=relational
 (= (gslt:mode:source-state-operation-role:11 $operation $role)
-   (let (gslt:result:source-fold-node:010 $node $contract) (once (gslt:fn:source-fold-node:010 $operation))
-   (let gslt:result:fold-contract-role:11 (superpose (collapse (gslt:mode:fold-contract-role:11 $contract $role)))
+   (let (cons gslt:result:source-fold-node:010 (cons $node (cons $contract ()))) (once (gslt:fn:source-fold-node:010 $operation))
+   (let (cons fold-contract-role (cons $contract (cons $role ()))) (gslt:fold-contract-role (fold-contract-role $contract $role))
    (quote gslt:result:source-state-operation-role:11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=60 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-role-from-shift target=mode relation=source-state-operation-role input=11 functional=relational
@@ -1010,13 +1000,13 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=59 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-role-from-node target=mode relation=source-state-operation-role input=10 functional=relational
 (= (gslt:mode:source-state-operation-role:10 $operation)
-   (let (gslt:result:source-fold-node:010 $node $contract) (once (gslt:fn:source-fold-node:010 $operation))
-   (let (gslt:result:fold-contract-role:10 $role) (superpose (collapse (gslt:mode:fold-contract-role:10 $contract)))
+   (let (cons gslt:result:source-fold-node:010 (cons $node (cons $contract ()))) (once (gslt:fn:source-fold-node:010 $operation))
+   (let (cons fold-contract-role (cons $contract (cons $role ()))) (gslt:fold-contract-role (fold-contract-role $contract $role))
    (quote (gslt:result:source-state-operation-role:10 $role)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=60 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-role-from-shift target=mode relation=source-state-operation-role input=10 functional=relational
 (= (gslt:mode:source-state-operation-role:10 $operation)
-   (let (gslt:result:source-fold-shift:01 $role) (once (gslt:fn:source-fold-shift:01 $operation))
+   (let (cons gslt:result:source-fold-shift:01 (cons $role ())) (once (gslt:fn:source-fold-shift:01 $operation))
    (quote (gslt:result:source-state-operation-role:10 $role))))
 
 ; gslt-lowered-equation-v1 source-rewrite=61 source-presentation=RelationalStateProgramCoreV1 source-rule=state-completed-source-policy-skip target=mode relation=source-state-completed-source-policy input=0 functional=relational
@@ -1053,13 +1043,13 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=65 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operand-valid-input target=mode relation=state-operand-valid input=00 functional=relational
 (= (gslt:mode:state-operand-valid:00)
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
    (quote (gslt:result:state-operand-valid:00 $role state-input-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=66 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operand-valid-literal target=mode relation=state-operand-valid input=00 functional=relational
 (= (gslt:mode:state-operand-valid:00)
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
-   (let (gslt:result:source-state-literal:0 $literal) (superpose (collapse (gslt:mode:source-state-literal:0)))
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
+   (let (cons gslt:result:source-state-literal:0 (cons $literal ())) (superpose (collapse (gslt:mode:source-state-literal:0)))
    (quote (gslt:result:state-operand-valid:00 $role (state-literal-v1 $literal))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=65 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operand-valid-input target=mode relation=state-operand-valid input=11 functional=semidet
@@ -1068,11 +1058,10 @@
    (quote gslt:result:state-operand-valid:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=66 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operand-valid-literal target=mode relation=state-operand-valid input=11 functional=semidet
-(= (gslt:fn:state-operand-valid:11 $role $__gslt_input_v1_0_1)
-   (let (cons-atom state-literal-v1 (cons-atom $literal ())) $__gslt_input_v1_0_1
+(= (gslt:fn:state-operand-valid:11 $role (cons state-literal-v1 (cons $literal ())))
    (let gslt:result:source-fold-role:1 (gslt:fn:source-fold-role:1 $role)
    (let gslt:result:source-state-literal:1 (gslt:fn:source-state-literal:1 $literal)
-   (quote gslt:result:state-operand-valid:11)))))
+   (quote gslt:result:state-operand-valid:11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=65 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operand-valid-input target=mode relation=state-operand-valid input=10 functional=relational
 (= (gslt:mode:state-operand-valid:10 $role)
@@ -1082,7 +1071,7 @@
 ; gslt-lowered-equation-v1 source-rewrite=66 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operand-valid-literal target=mode relation=state-operand-valid input=10 functional=relational
 (= (gslt:mode:state-operand-valid:10 $role)
    (let gslt:result:source-fold-role:1 (once (gslt:fn:source-fold-role:1 $role))
-   (let (gslt:result:source-state-literal:0 $literal) (superpose (collapse (gslt:mode:source-state-literal:0)))
+   (let (cons gslt:result:source-state-literal:0 (cons $literal ())) (superpose (collapse (gslt:mode:source-state-literal:0)))
    (quote (gslt:result:state-operand-valid:10 (state-literal-v1 $literal))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=67 source-presentation=RelationalStateProgramCoreV1 source-rule=state-row-valid-empty target=mode relation=state-row-valid input=111 functional=semidet
@@ -1091,12 +1080,11 @@
    (quote gslt:result:state-row-valid:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=68 source-presentation=RelationalStateProgramCoreV1 source-rule=state-row-valid-cons target=mode relation=state-row-valid input=111 functional=semidet
-(= (gslt:fn:state-row-valid:111 $role $__gslt_input_v1_0_1 $next-length)
-   (let (cons-atom state-row-cons-v1 (cons-atom $operand (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:state-row-valid:111 $role (cons state-row-cons-v1 (cons $operand (cons $rest ()))) $next-length)
    (let gslt:result:state-operand-valid:11 (gslt:fn:state-operand-valid:11 $role $operand)
-   (let (gslt:result:state-row-valid:110 $length) (gslt:fn:state-row-valid:110 $role $rest)
+   (let (cons gslt:result:state-row-valid:110 (cons $length ())) (gslt:fn:state-row-valid:110 $role $rest)
    (let gslt:result:state-row-length-step:11 (gslt:fn:state-row-length-step:11 $length $next-length)
-   (quote gslt:result:state-row-valid:111))))))
+   (quote gslt:result:state-row-valid:111)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=67 source-presentation=RelationalStateProgramCoreV1 source-rule=state-row-valid-empty target=mode relation=state-row-valid input=101 functional=relational
 (= (gslt:mode:state-row-valid:101 $role 0)
@@ -1105,8 +1093,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=68 source-presentation=RelationalStateProgramCoreV1 source-rule=state-row-valid-cons target=mode relation=state-row-valid input=101 functional=relational
 (= (gslt:mode:state-row-valid:101 $role $next-length)
-   (let (gslt:result:state-operand-valid:10 $operand) (superpose (collapse (gslt:mode:state-operand-valid:10 $role)))
-   (let (gslt:result:state-row-valid:100 $rest $length) (superpose (collapse (gslt:mode:state-row-valid:100 $role)))
+   (let (cons gslt:result:state-operand-valid:10 (cons $operand ())) (superpose (collapse (gslt:mode:state-operand-valid:10 $role)))
+   (let (cons gslt:result:state-row-valid:100 (cons $rest (cons $length ()))) (superpose (collapse (gslt:mode:state-row-valid:100 $role)))
    (let gslt:result:state-row-length-step:11 (once (gslt:fn:state-row-length-step:11 $length $next-length))
    (quote (gslt:result:state-row-valid:101 (state-row-cons-v1 $operand $rest)))))))
 
@@ -1116,122 +1104,116 @@
    (quote (gslt:result:state-row-valid:110 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=68 source-presentation=RelationalStateProgramCoreV1 source-rule=state-row-valid-cons target=mode relation=state-row-valid input=110 functional=semidet
-(= (gslt:fn:state-row-valid:110 $role $__gslt_input_v1_0_1)
-   (let (cons-atom state-row-cons-v1 (cons-atom $operand (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:state-row-valid:110 $role (cons state-row-cons-v1 (cons $operand (cons $rest ()))))
    (let gslt:result:state-operand-valid:11 (gslt:fn:state-operand-valid:11 $role $operand)
-   (let (gslt:result:state-row-valid:110 $length) (gslt:fn:state-row-valid:110 $role $rest)
-   (let (gslt:result:state-row-length-step:10 $next-length) (gslt:fn:state-row-length-step:10 $length)
-   (quote (gslt:result:state-row-valid:110 $next-length)))))))
+   (let (cons gslt:result:state-row-valid:110 (cons $length ())) (gslt:fn:state-row-valid:110 $role $rest)
+   (let (cons gslt:result:state-row-length-step:10 (cons $next-length ())) (gslt:fn:state-row-length-step:10 $length)
+   (quote (gslt:result:state-row-valid:110 $next-length))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=69 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-operand-valid-role-at target=mode relation=state-operation-operand-valid input=00 functional=relational
 (= (gslt:mode:state-operation-operand-valid:00)
-   (let (gslt:result:source-state-operation-role:00 $operation $role) (superpose (collapse (gslt:mode:source-state-operation-role:00)))
-   (let (gslt:result:source-state-index:0 $index) (superpose (collapse (gslt:mode:source-state-index:0)))
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
+   (let (cons gslt:result:source-state-index:0 (cons $index ())) (superpose (collapse (gslt:mode:source-state-index:0)))
    (quote (gslt:result:state-operation-operand-valid:00 $operation (state-role-at-v1 $role $index))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=70 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-operand-valid-role-list target=mode relation=state-operation-operand-valid input=00 functional=relational
 (= (gslt:mode:state-operation-operand-valid:00)
-   (let (gslt:result:source-state-operation-role:00 $operation $role) (superpose (collapse (gslt:mode:source-state-operation-role:00)))
-   (let (gslt:result:source-state-index:0 $index) (superpose (collapse (gslt:mode:source-state-index:0)))
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
+   (let (cons gslt:result:source-state-index:0 (cons $index ())) (superpose (collapse (gslt:mode:source-state-index:0)))
    (quote (gslt:result:state-operation-operand-valid:00 $operation (state-role-list-v1 $role $index))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=71 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-operand-valid-input target=mode relation=state-operation-operand-valid input=00 functional=relational
 (= (gslt:mode:state-operation-operand-valid:00)
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
    (quote (gslt:result:state-operation-operand-valid:00 $operation state-input-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=72 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-operand-valid-literal target=mode relation=state-operation-operand-valid input=00 functional=relational
 (= (gslt:mode:state-operation-operand-valid:00)
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
-   (let (gslt:result:source-state-literal:0 $literal) (superpose (collapse (gslt:mode:source-state-literal:0)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons gslt:result:source-state-literal:0 (cons $literal ())) (superpose (collapse (gslt:mode:source-state-literal:0)))
    (quote (gslt:result:state-operation-operand-valid:00 $operation (state-literal-v1 $literal))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=69 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-operand-valid-role-at target=mode relation=state-operation-operand-valid input=11 functional=relational
-(= (gslt:mode:state-operation-operand-valid:11 $operation $__gslt_input_v1_0_1)
-   (let (cons-atom state-role-at-v1 (cons-atom $role (cons-atom $index ()))) $__gslt_input_v1_0_1
-   (let gslt:result:source-state-operation-role:11 (superpose (collapse (gslt:mode:source-state-operation-role:11 $operation $role)))
+(= (gslt:mode:state-operation-operand-valid:11 $operation (cons state-role-at-v1 (cons $role (cons $index ()))))
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
    (let gslt:result:source-state-index:1 (once (gslt:fn:source-state-index:1 $index))
-   (quote gslt:result:state-operation-operand-valid:11)))))
+   (quote gslt:result:state-operation-operand-valid:11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=70 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-operand-valid-role-list target=mode relation=state-operation-operand-valid input=11 functional=relational
-(= (gslt:mode:state-operation-operand-valid:11 $operation $__gslt_input_v1_0_1)
-   (let (cons-atom state-role-list-v1 (cons-atom $role (cons-atom $index ()))) $__gslt_input_v1_0_1
-   (let gslt:result:source-state-operation-role:11 (superpose (collapse (gslt:mode:source-state-operation-role:11 $operation $role)))
+(= (gslt:mode:state-operation-operand-valid:11 $operation (cons state-role-list-v1 (cons $role (cons $index ()))))
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
    (let gslt:result:source-state-index:1 (once (gslt:fn:source-state-index:1 $index))
-   (quote gslt:result:state-operation-operand-valid:11)))))
+   (quote gslt:result:state-operation-operand-valid:11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=71 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-operand-valid-input target=mode relation=state-operation-operand-valid input=11 functional=relational
 (= (gslt:mode:state-operation-operand-valid:11 $operation state-input-v1)
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
    (quote gslt:result:state-operation-operand-valid:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=72 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-operand-valid-literal target=mode relation=state-operation-operand-valid input=11 functional=relational
-(= (gslt:mode:state-operation-operand-valid:11 $operation $__gslt_input_v1_0_1)
-   (let (cons-atom state-literal-v1 (cons-atom $literal ())) $__gslt_input_v1_0_1
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
+(= (gslt:mode:state-operation-operand-valid:11 $operation (cons state-literal-v1 (cons $literal ())))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
    (let gslt:result:source-state-literal:1 (once (gslt:fn:source-state-literal:1 $literal))
-   (quote gslt:result:state-operation-operand-valid:11)))))
+   (quote gslt:result:state-operation-operand-valid:11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=69 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-operand-valid-role-at target=mode relation=state-operation-operand-valid input=10 functional=relational
 (= (gslt:mode:state-operation-operand-valid:10 $operation)
-   (let (gslt:result:source-state-operation-role:10 $role) (superpose (collapse (gslt:mode:source-state-operation-role:10 $operation)))
-   (let (gslt:result:source-state-index:0 $index) (superpose (collapse (gslt:mode:source-state-index:0)))
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
+   (let (cons gslt:result:source-state-index:0 (cons $index ())) (superpose (collapse (gslt:mode:source-state-index:0)))
    (quote (gslt:result:state-operation-operand-valid:10 (state-role-at-v1 $role $index))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=70 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-operand-valid-role-list target=mode relation=state-operation-operand-valid input=10 functional=relational
 (= (gslt:mode:state-operation-operand-valid:10 $operation)
-   (let (gslt:result:source-state-operation-role:10 $role) (superpose (collapse (gslt:mode:source-state-operation-role:10 $operation)))
-   (let (gslt:result:source-state-index:0 $index) (superpose (collapse (gslt:mode:source-state-index:0)))
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
+   (let (cons gslt:result:source-state-index:0 (cons $index ())) (superpose (collapse (gslt:mode:source-state-index:0)))
    (quote (gslt:result:state-operation-operand-valid:10 (state-role-list-v1 $role $index))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=71 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-operand-valid-input target=mode relation=state-operation-operand-valid input=10 functional=relational
 (= (gslt:mode:state-operation-operand-valid:10 $operation)
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
    (quote (gslt:result:state-operation-operand-valid:10 state-input-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=72 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-operand-valid-literal target=mode relation=state-operation-operand-valid input=10 functional=relational
 (= (gslt:mode:state-operation-operand-valid:10 $operation)
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
-   (let (gslt:result:source-state-literal:0 $literal) (superpose (collapse (gslt:mode:source-state-literal:0)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons gslt:result:source-state-literal:0 (cons $literal ())) (superpose (collapse (gslt:mode:source-state-literal:0)))
    (quote (gslt:result:state-operation-operand-valid:10 (state-literal-v1 $literal))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=73 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-row-valid-empty target=mode relation=state-operation-row-valid input=111 functional=relational
 (= (gslt:mode:state-operation-row-valid:111 $operation state-row-nil-v1 0)
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
    (quote gslt:result:state-operation-row-valid:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=74 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-row-valid-cons target=mode relation=state-operation-row-valid input=111 functional=relational
-(= (gslt:mode:state-operation-row-valid:111 $operation $__gslt_input_v1_0_1 $next-length)
-   (let (cons-atom state-row-cons-v1 (cons-atom $operand (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:mode:state-operation-row-valid:111 $operation (cons state-row-cons-v1 (cons $operand (cons $rest ()))) $next-length)
    (let gslt:result:state-operation-operand-valid:11 (superpose (collapse (gslt:mode:state-operation-operand-valid:11 $operation $operand)))
-   (let (gslt:result:state-operation-row-valid:110 $length) (superpose (collapse (gslt:mode:state-operation-row-valid:110 $operation $rest)))
+   (let (cons gslt:result:state-operation-row-valid:110 (cons $length ())) (superpose (collapse (gslt:mode:state-operation-row-valid:110 $operation $rest)))
    (let gslt:result:state-row-length-step:11 (once (gslt:fn:state-row-length-step:11 $length $next-length))
-   (quote gslt:result:state-operation-row-valid:111))))))
+   (quote gslt:result:state-operation-row-valid:111)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=73 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-row-valid-empty target=mode relation=state-operation-row-valid input=101 functional=relational
 (= (gslt:mode:state-operation-row-valid:101 $operation 0)
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
    (quote (gslt:result:state-operation-row-valid:101 state-row-nil-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=74 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-row-valid-cons target=mode relation=state-operation-row-valid input=101 functional=relational
 (= (gslt:mode:state-operation-row-valid:101 $operation $next-length)
-   (let (gslt:result:state-operation-operand-valid:10 $operand) (superpose (collapse (gslt:mode:state-operation-operand-valid:10 $operation)))
-   (let (gslt:result:state-operation-row-valid:100 $rest $length) (superpose (collapse (gslt:mode:state-operation-row-valid:100 $operation)))
+   (let (cons gslt:result:state-operation-operand-valid:10 (cons $operand ())) (superpose (collapse (gslt:mode:state-operation-operand-valid:10 $operation)))
+   (let (cons gslt:result:state-operation-row-valid:100 (cons $rest (cons $length ()))) (superpose (collapse (gslt:mode:state-operation-row-valid:100 $operation)))
    (let gslt:result:state-row-length-step:11 (once (gslt:fn:state-row-length-step:11 $length $next-length))
    (quote (gslt:result:state-operation-row-valid:101 (state-row-cons-v1 $operand $rest)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=73 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-row-valid-empty target=mode relation=state-operation-row-valid input=110 functional=relational
 (= (gslt:mode:state-operation-row-valid:110 $operation state-row-nil-v1)
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
    (quote (gslt:result:state-operation-row-valid:110 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=74 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-row-valid-cons target=mode relation=state-operation-row-valid input=110 functional=relational
-(= (gslt:mode:state-operation-row-valid:110 $operation $__gslt_input_v1_0_1)
-   (let (cons-atom state-row-cons-v1 (cons-atom $operand (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:mode:state-operation-row-valid:110 $operation (cons state-row-cons-v1 (cons $operand (cons $rest ()))))
    (let gslt:result:state-operation-operand-valid:11 (superpose (collapse (gslt:mode:state-operation-operand-valid:11 $operation $operand)))
-   (let (gslt:result:state-operation-row-valid:110 $length) (superpose (collapse (gslt:mode:state-operation-row-valid:110 $operation $rest)))
-   (let (gslt:result:state-row-length-step:10 $next-length) (once (gslt:fn:state-row-length-step:10 $length))
-   (quote (gslt:result:state-operation-row-valid:110 $next-length)))))))
+   (let (cons gslt:result:state-operation-row-valid:110 (cons $length ())) (superpose (collapse (gslt:mode:state-operation-row-valid:110 $operation $rest)))
+   (let (cons gslt:result:state-row-length-step:10 (cons $next-length ())) (once (gslt:fn:state-row-length-step:10 $length))
+   (quote (gslt:result:state-operation-row-valid:110 $next-length))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=75 source-presentation=RelationalStateProgramCoreV1 source-rule=state-source-column-valid-1-0 target=mode relation=state-source-column-valid input=00 functional=relational
 (= (gslt:mode:state-source-column-valid:00)
@@ -1355,307 +1337,289 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=85 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-operand-valid-operation target=mode relation=state-copy-operand-valid input=000 functional=relational
 (= (gslt:mode:state-copy-operand-valid:000)
-   (let (gslt:result:source-state-table-shape:00 $source-arity $source-key-arity) (superpose (collapse (gslt:mode:source-state-table-shape:00)))
-   (let (gslt:result:state-operation-operand-valid:00 $operation $operand) (superpose (collapse (gslt:mode:state-operation-operand-valid:00)))
+   (let (cons source-state-table-shape (cons $source-arity (cons $source-key-arity ()))) (gslt:source-state-table-shape (source-state-table-shape $source-arity $source-key-arity))
+   (let (cons gslt:result:state-operation-operand-valid:00 (cons $operation (cons $operand ()))) (superpose (collapse (gslt:mode:state-operation-operand-valid:00)))
    (quote (gslt:result:state-copy-operand-valid:000 $operation $source-arity $operand)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=86 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-operand-valid-source-column target=mode relation=state-copy-operand-valid input=000 functional=relational
 (= (gslt:mode:state-copy-operand-valid:000)
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
-   (let (gslt:result:state-source-column-valid:00 $source-arity $column) (superpose (collapse (gslt:mode:state-source-column-valid:00)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons state-source-column-valid (cons $source-arity (cons $column ()))) (gslt:state-source-column-valid (state-source-column-valid $source-arity $column))
    (quote (gslt:result:state-copy-operand-valid:000 $operation $source-arity (state-source-column-v1 $column))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=87 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-operand-valid-source-row-index target=mode relation=state-copy-operand-valid input=000 functional=relational
 (= (gslt:mode:state-copy-operand-valid:000)
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
-   (let (gslt:result:source-state-table-shape:00 $source-arity $source-key-arity) (superpose (collapse (gslt:mode:source-state-table-shape:00)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons source-state-table-shape (cons $source-arity (cons $source-key-arity ()))) (gslt:source-state-table-shape (source-state-table-shape $source-arity $source-key-arity))
    (quote (gslt:result:state-copy-operand-valid:000 $operation $source-arity state-source-row-index-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=88 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-operand-valid-source-match-index target=mode relation=state-copy-operand-valid input=000 functional=relational
 (= (gslt:mode:state-copy-operand-valid:000)
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
-   (let (gslt:result:source-state-table-shape:00 $source-arity $source-key-arity) (superpose (collapse (gslt:mode:source-state-table-shape:00)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons source-state-table-shape (cons $source-arity (cons $source-key-arity ()))) (gslt:source-state-table-shape (source-state-table-shape $source-arity $source-key-arity))
    (quote (gslt:result:state-copy-operand-valid:000 $operation $source-arity state-source-match-index-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=85 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-operand-valid-operation target=mode relation=state-copy-operand-valid input=111 functional=relational
 (= (gslt:mode:state-copy-operand-valid:111 $operation $source-arity $operand)
-   (let (gslt:result:source-state-table-shape:10 $source-key-arity) (superpose (collapse (gslt:mode:source-state-table-shape:10 $source-arity)))
+   (let (cons source-state-table-shape (cons $source-arity (cons $source-key-arity ()))) (gslt:source-state-table-shape (source-state-table-shape $source-arity $source-key-arity))
    (let gslt:result:state-operation-operand-valid:11 (superpose (collapse (gslt:mode:state-operation-operand-valid:11 $operation $operand)))
    (quote gslt:result:state-copy-operand-valid:111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=86 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-operand-valid-source-column target=mode relation=state-copy-operand-valid input=111 functional=relational
-(= (gslt:mode:state-copy-operand-valid:111 $operation $source-arity $__gslt_input_v1_0_2)
-   (let (cons-atom state-source-column-v1 (cons-atom $column ())) $__gslt_input_v1_0_2
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
+(= (gslt:mode:state-copy-operand-valid:111 $operation $source-arity (cons state-source-column-v1 (cons $column ())))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
    (let gslt:result:state-source-column-valid:11 (once (gslt:fn:state-source-column-valid:11 $source-arity $column))
-   (quote gslt:result:state-copy-operand-valid:111)))))
+   (quote gslt:result:state-copy-operand-valid:111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=87 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-operand-valid-source-row-index target=mode relation=state-copy-operand-valid input=111 functional=relational
 (= (gslt:mode:state-copy-operand-valid:111 $operation $source-arity state-source-row-index-v1)
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
-   (let (gslt:result:source-state-table-shape:10 $source-key-arity) (superpose (collapse (gslt:mode:source-state-table-shape:10 $source-arity)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons source-state-table-shape (cons $source-arity (cons $source-key-arity ()))) (gslt:source-state-table-shape (source-state-table-shape $source-arity $source-key-arity))
    (quote gslt:result:state-copy-operand-valid:111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=88 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-operand-valid-source-match-index target=mode relation=state-copy-operand-valid input=111 functional=relational
 (= (gslt:mode:state-copy-operand-valid:111 $operation $source-arity state-source-match-index-v1)
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
-   (let (gslt:result:source-state-table-shape:10 $source-key-arity) (superpose (collapse (gslt:mode:source-state-table-shape:10 $source-arity)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons source-state-table-shape (cons $source-arity (cons $source-key-arity ()))) (gslt:source-state-table-shape (source-state-table-shape $source-arity $source-key-arity))
    (quote gslt:result:state-copy-operand-valid:111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=85 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-operand-valid-operation target=mode relation=state-copy-operand-valid input=110 functional=relational
 (= (gslt:mode:state-copy-operand-valid:110 $operation $source-arity)
-   (let (gslt:result:source-state-table-shape:10 $source-key-arity) (superpose (collapse (gslt:mode:source-state-table-shape:10 $source-arity)))
-   (let (gslt:result:state-operation-operand-valid:10 $operand) (superpose (collapse (gslt:mode:state-operation-operand-valid:10 $operation)))
+   (let (cons source-state-table-shape (cons $source-arity (cons $source-key-arity ()))) (gslt:source-state-table-shape (source-state-table-shape $source-arity $source-key-arity))
+   (let (cons gslt:result:state-operation-operand-valid:10 (cons $operand ())) (superpose (collapse (gslt:mode:state-operation-operand-valid:10 $operation)))
    (quote (gslt:result:state-copy-operand-valid:110 $operand)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=86 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-operand-valid-source-column target=mode relation=state-copy-operand-valid input=110 functional=relational
 (= (gslt:mode:state-copy-operand-valid:110 $operation $source-arity)
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
-   (let (gslt:result:state-source-column-valid:10 $column) (superpose (collapse (gslt:mode:state-source-column-valid:10 $source-arity)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons state-source-column-valid (cons $source-arity (cons $column ()))) (gslt:state-source-column-valid (state-source-column-valid $source-arity $column))
    (quote (gslt:result:state-copy-operand-valid:110 (state-source-column-v1 $column))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=87 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-operand-valid-source-row-index target=mode relation=state-copy-operand-valid input=110 functional=relational
 (= (gslt:mode:state-copy-operand-valid:110 $operation $source-arity)
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
-   (let (gslt:result:source-state-table-shape:10 $source-key-arity) (superpose (collapse (gslt:mode:source-state-table-shape:10 $source-arity)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons source-state-table-shape (cons $source-arity (cons $source-key-arity ()))) (gslt:source-state-table-shape (source-state-table-shape $source-arity $source-key-arity))
    (quote (gslt:result:state-copy-operand-valid:110 state-source-row-index-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=88 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-operand-valid-source-match-index target=mode relation=state-copy-operand-valid input=110 functional=relational
 (= (gslt:mode:state-copy-operand-valid:110 $operation $source-arity)
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
-   (let (gslt:result:source-state-table-shape:10 $source-key-arity) (superpose (collapse (gslt:mode:source-state-table-shape:10 $source-arity)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons source-state-table-shape (cons $source-arity (cons $source-key-arity ()))) (gslt:source-state-table-shape (source-state-table-shape $source-arity $source-key-arity))
    (quote (gslt:result:state-copy-operand-valid:110 state-source-match-index-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=89 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-row-valid-empty target=mode relation=state-copy-row-valid input=1111 functional=relational
 (= (gslt:mode:state-copy-row-valid:1111 $operation $source-arity state-row-nil-v1 0)
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
-   (let (gslt:result:source-state-table-shape:10 $source-key-arity) (superpose (collapse (gslt:mode:source-state-table-shape:10 $source-arity)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons source-state-table-shape (cons $source-arity (cons $source-key-arity ()))) (gslt:source-state-table-shape (source-state-table-shape $source-arity $source-key-arity))
    (quote gslt:result:state-copy-row-valid:1111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=90 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-row-valid-cons target=mode relation=state-copy-row-valid input=1111 functional=relational
-(= (gslt:mode:state-copy-row-valid:1111 $operation $source-arity $__gslt_input_v1_0_2 $next-length)
-   (let (cons-atom state-row-cons-v1 (cons-atom $operand (cons-atom $rest ()))) $__gslt_input_v1_0_2
+(= (gslt:mode:state-copy-row-valid:1111 $operation $source-arity (cons state-row-cons-v1 (cons $operand (cons $rest ()))) $next-length)
    (let gslt:result:state-copy-operand-valid:111 (superpose (collapse (gslt:mode:state-copy-operand-valid:111 $operation $source-arity $operand)))
-   (let (gslt:result:state-copy-row-valid:1110 $length) (superpose (collapse (gslt:mode:state-copy-row-valid:1110 $operation $source-arity $rest)))
+   (let (cons gslt:result:state-copy-row-valid:1110 (cons $length ())) (superpose (collapse (gslt:mode:state-copy-row-valid:1110 $operation $source-arity $rest)))
    (let gslt:result:state-row-length-step:11 (once (gslt:fn:state-row-length-step:11 $length $next-length))
-   (quote gslt:result:state-copy-row-valid:1111))))))
+   (quote gslt:result:state-copy-row-valid:1111)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=89 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-row-valid-empty target=mode relation=state-copy-row-valid input=1101 functional=relational
 (= (gslt:mode:state-copy-row-valid:1101 $operation $source-arity 0)
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
-   (let (gslt:result:source-state-table-shape:10 $source-key-arity) (superpose (collapse (gslt:mode:source-state-table-shape:10 $source-arity)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons source-state-table-shape (cons $source-arity (cons $source-key-arity ()))) (gslt:source-state-table-shape (source-state-table-shape $source-arity $source-key-arity))
    (quote (gslt:result:state-copy-row-valid:1101 state-row-nil-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=90 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-row-valid-cons target=mode relation=state-copy-row-valid input=1101 functional=relational
 (= (gslt:mode:state-copy-row-valid:1101 $operation $source-arity $next-length)
-   (let (gslt:result:state-copy-operand-valid:110 $operand) (superpose (collapse (gslt:mode:state-copy-operand-valid:110 $operation $source-arity)))
-   (let (gslt:result:state-copy-row-valid:1100 $rest $length) (superpose (collapse (gslt:mode:state-copy-row-valid:1100 $operation $source-arity)))
+   (let (cons gslt:result:state-copy-operand-valid:110 (cons $operand ())) (superpose (collapse (gslt:mode:state-copy-operand-valid:110 $operation $source-arity)))
+   (let (cons gslt:result:state-copy-row-valid:1100 (cons $rest (cons $length ()))) (superpose (collapse (gslt:mode:state-copy-row-valid:1100 $operation $source-arity)))
    (let gslt:result:state-row-length-step:11 (once (gslt:fn:state-row-length-step:11 $length $next-length))
    (quote (gslt:result:state-copy-row-valid:1101 (state-row-cons-v1 $operand $rest)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=89 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-row-valid-empty target=mode relation=state-copy-row-valid input=1110 functional=relational
 (= (gslt:mode:state-copy-row-valid:1110 $operation $source-arity state-row-nil-v1)
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
-   (let (gslt:result:source-state-table-shape:10 $source-key-arity) (superpose (collapse (gslt:mode:source-state-table-shape:10 $source-arity)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons source-state-table-shape (cons $source-arity (cons $source-key-arity ()))) (gslt:source-state-table-shape (source-state-table-shape $source-arity $source-key-arity))
    (quote (gslt:result:state-copy-row-valid:1110 0)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=90 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-row-valid-cons target=mode relation=state-copy-row-valid input=1110 functional=relational
-(= (gslt:mode:state-copy-row-valid:1110 $operation $source-arity $__gslt_input_v1_0_2)
-   (let (cons-atom state-row-cons-v1 (cons-atom $operand (cons-atom $rest ()))) $__gslt_input_v1_0_2
+(= (gslt:mode:state-copy-row-valid:1110 $operation $source-arity (cons state-row-cons-v1 (cons $operand (cons $rest ()))))
    (let gslt:result:state-copy-operand-valid:111 (superpose (collapse (gslt:mode:state-copy-operand-valid:111 $operation $source-arity $operand)))
-   (let (gslt:result:state-copy-row-valid:1110 $length) (superpose (collapse (gslt:mode:state-copy-row-valid:1110 $operation $source-arity $rest)))
-   (let (gslt:result:state-row-length-step:10 $next-length) (once (gslt:fn:state-row-length-step:10 $length))
-   (quote (gslt:result:state-copy-row-valid:1110 $next-length)))))))
+   (let (cons gslt:result:state-copy-row-valid:1110 (cons $length ())) (superpose (collapse (gslt:mode:state-copy-row-valid:1110 $operation $source-arity $rest)))
+   (let (cons gslt:result:state-row-length-step:10 (cons $next-length ())) (once (gslt:fn:state-row-length-step:10 $length))
+   (quote (gslt:result:state-copy-row-valid:1110 $next-length))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=91 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-require-depth target=mode relation=state-action-valid input=11 functional=relational
-(= (gslt:mode:state-action-valid:11 $operation $__gslt_input_v1_0_1)
-   (let (cons-atom state-require-depth-v1 (cons-atom $depth ())) $__gslt_input_v1_0_1
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
+(= (gslt:mode:state-action-valid:11 $operation (cons state-require-depth-v1 (cons $depth ())))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
    (let gslt:result:source-state-depth:1 (once (gslt:fn:source-state-depth:1 $depth))
-   (quote gslt:result:state-action-valid:11)))))
+   (quote gslt:result:state-action-valid:11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=92 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-push-scope target=mode relation=state-action-valid input=11 functional=relational
 (= (gslt:mode:state-action-valid:11 $operation state-push-scope-v1)
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
    (quote gslt:result:state-action-valid:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=93 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-pop-scope target=mode relation=state-action-valid input=11 functional=relational
 (= (gslt:mode:state-action-valid:11 $operation state-pop-scope-v1)
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
    (quote gslt:result:state-action-valid:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=94 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-noop target=mode relation=state-action-valid input=11 functional=relational
 (= (gslt:mode:state-action-valid:11 $operation state-noop-v1)
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
    (quote gslt:result:state-action-valid:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=95 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-resolve-source target=mode relation=state-action-valid input=11 functional=relational
-(= (gslt:mode:state-action-valid:11 $operation $__gslt_input_v1_0_1)
-   (let (cons-atom state-resolve-source-v1 (cons-atom $role (cons-atom $completed-policy (cons-atom $active-policy ())))) $__gslt_input_v1_0_1
-   (let gslt:result:source-state-operation-role:11 (superpose (collapse (gslt:mode:source-state-operation-role:11 $operation $role)))
+(= (gslt:mode:state-action-valid:11 $operation (cons state-resolve-source-v1 (cons $role (cons $completed-policy (cons $active-policy ())))))
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
    (let gslt:result:source-state-completed-source-policy:1 (once (gslt:fn:source-state-completed-source-policy:1 $completed-policy))
    (let gslt:result:source-state-active-source-policy:1 (once (gslt:fn:source-state-active-source-policy:1 $active-policy))
-   (quote gslt:result:state-action-valid:11))))))
+   (quote gslt:result:state-action-valid:11)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=96 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-insert-each target=mode relation=state-action-valid input=11 functional=relational
-(= (gslt:mode:state-action-valid:11 $operation $__gslt_input_v1_0_1)
-   (let (cons-atom state-insert-each-v1 (cons-atom $role (cons-atom $table (cons-atom $write-policy (cons-atom $row ()))))) $__gslt_input_v1_0_1
-   (let gslt:result:source-state-operation-role:11 (superpose (collapse (gslt:mode:source-state-operation-role:11 $operation $role)))
-   (let (gslt:result:source-state-table:1000 $arity $key-arity $lifetime) (once (gslt:fn:source-state-table:1000 $table))
+(= (gslt:mode:state-action-valid:11 $operation (cons state-insert-each-v1 (cons $role (cons $table (cons $write-policy (cons $row ()))))))
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
+   (let (cons gslt:result:source-state-table:1000 (cons $arity (cons $key-arity (cons $lifetime ())))) (once (gslt:fn:source-state-table:1000 $table))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $arity $key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $lifetime))
    (let gslt:result:source-state-write-policy:1 (once (gslt:fn:source-state-write-policy:1 $write-policy))
    (let gslt:result:state-row-valid:111 (once (gslt:fn:state-row-valid:111 $role $row $arity))
-   (quote gslt:result:state-action-valid:11)))))))))
+   (quote gslt:result:state-action-valid:11))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=97 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-require-each target=mode relation=state-action-valid input=11 functional=relational
-(= (gslt:mode:state-action-valid:11 $operation $__gslt_input_v1_0_1)
-   (let (cons-atom state-require-each-v1 (cons-atom $role (cons-atom $table (cons-atom $row ())))) $__gslt_input_v1_0_1
-   (let gslt:result:source-state-operation-role:11 (superpose (collapse (gslt:mode:source-state-operation-role:11 $operation $role)))
-   (let (gslt:result:source-state-table:1000 $arity $key-arity $lifetime) (once (gslt:fn:source-state-table:1000 $table))
+(= (gslt:mode:state-action-valid:11 $operation (cons state-require-each-v1 (cons $role (cons $table (cons $row ())))))
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
+   (let (cons gslt:result:source-state-table:1000 (cons $arity (cons $key-arity (cons $lifetime ())))) (once (gslt:fn:source-state-table:1000 $table))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $arity $key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $lifetime))
    (let gslt:result:state-row-valid:111 (once (gslt:fn:state-row-valid:111 $role $row $arity))
-   (quote gslt:result:state-action-valid:11))))))))
+   (quote gslt:result:state-action-valid:11)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=98 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-require-each-key-absent target=mode relation=state-action-valid input=11 functional=relational
-(= (gslt:mode:state-action-valid:11 $operation $__gslt_input_v1_0_1)
-   (let (cons-atom state-require-each-key-absent-v1 (cons-atom $role (cons-atom $table (cons-atom $row ())))) $__gslt_input_v1_0_1
-   (let gslt:result:source-state-operation-role:11 (superpose (collapse (gslt:mode:source-state-operation-role:11 $operation $role)))
-   (let (gslt:result:source-state-table:1000 $arity $key-arity $lifetime) (once (gslt:fn:source-state-table:1000 $table))
+(= (gslt:mode:state-action-valid:11 $operation (cons state-require-each-key-absent-v1 (cons $role (cons $table (cons $row ())))))
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
+   (let (cons gslt:result:source-state-table:1000 (cons $arity (cons $key-arity (cons $lifetime ())))) (once (gslt:fn:source-state-table:1000 $table))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $arity $key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $lifetime))
    (let gslt:result:state-row-valid:111 (once (gslt:fn:state-row-valid:111 $role $row $key-arity))
-   (quote gslt:result:state-action-valid:11))))))))
-
-; gslt-lowered-equation-v1 source-rewrite=99 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-insert-unordered-pairs target=mode relation=state-action-valid input=11 functional=relational
-(= (gslt:mode:state-action-valid:11 $operation $__gslt_input_v1_0_1)
-   (let (cons-atom state-insert-unordered-pairs-v1 (cons-atom $role (cons-atom $table (cons-atom $write-policy ())))) $__gslt_input_v1_0_1
-   (let gslt:result:source-state-operation-role:11 (superpose (collapse (gslt:mode:source-state-operation-role:11 $operation $role)))
-   (let (gslt:result:source-state-table:1110 $lifetime) (once (gslt:fn:source-state-table:1110 $table 2 2))
-   (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $lifetime))
-   (let gslt:result:source-state-write-policy:1 (once (gslt:fn:source-state-write-policy:1 $write-policy))
    (quote gslt:result:state-action-valid:11)))))))
 
+; gslt-lowered-equation-v1 source-rewrite=99 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-insert-unordered-pairs target=mode relation=state-action-valid input=11 functional=relational
+(= (gslt:mode:state-action-valid:11 $operation (cons state-insert-unordered-pairs-v1 (cons $role (cons $table (cons $write-policy ())))))
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
+   (let (cons gslt:result:source-state-table:1110 (cons $lifetime ())) (once (gslt:fn:source-state-table:1110 $table 2 2))
+   (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $lifetime))
+   (let gslt:result:source-state-write-policy:1 (once (gslt:fn:source-state-write-policy:1 $write-policy))
+   (quote gslt:result:state-action-valid:11))))))
+
 ; gslt-lowered-equation-v1 source-rewrite=100 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-require-row target=mode relation=state-action-valid input=11 functional=relational
-(= (gslt:mode:state-action-valid:11 $operation $__gslt_input_v1_0_1)
-   (let (cons-atom state-require-row-v1 (cons-atom $table (cons-atom $row ()))) $__gslt_input_v1_0_1
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
-   (let (gslt:result:source-state-table:1000 $arity $key-arity $lifetime) (once (gslt:fn:source-state-table:1000 $table))
+(= (gslt:mode:state-action-valid:11 $operation (cons state-require-row-v1 (cons $table (cons $row ()))))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons gslt:result:source-state-table:1000 (cons $arity (cons $key-arity (cons $lifetime ())))) (once (gslt:fn:source-state-table:1000 $table))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $arity $key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $lifetime))
    (let gslt:result:state-operation-row-valid:111 (superpose (collapse (gslt:mode:state-operation-row-valid:111 $operation $row $arity)))
-   (quote gslt:result:state-action-valid:11))))))))
+   (quote gslt:result:state-action-valid:11)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=101 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-require-row-key-absent target=mode relation=state-action-valid input=11 functional=relational
-(= (gslt:mode:state-action-valid:11 $operation $__gslt_input_v1_0_1)
-   (let (cons-atom state-require-row-key-absent-v1 (cons-atom $table (cons-atom $row ()))) $__gslt_input_v1_0_1
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
-   (let (gslt:result:source-state-table:1000 $arity $key-arity $lifetime) (once (gslt:fn:source-state-table:1000 $table))
+(= (gslt:mode:state-action-valid:11 $operation (cons state-require-row-key-absent-v1 (cons $table (cons $row ()))))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons gslt:result:source-state-table:1000 (cons $arity (cons $key-arity (cons $lifetime ())))) (once (gslt:fn:source-state-table:1000 $table))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $arity $key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $lifetime))
    (let gslt:result:state-operation-row-valid:111 (superpose (collapse (gslt:mode:state-operation-row-valid:111 $operation $row $key-arity)))
-   (quote gslt:result:state-action-valid:11))))))))
+   (quote gslt:result:state-action-valid:11)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=102 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-insert-row target=mode relation=state-action-valid input=11 functional=relational
-(= (gslt:mode:state-action-valid:11 $operation $__gslt_input_v1_0_1)
-   (let (cons-atom state-insert-row-v1 (cons-atom $table (cons-atom $write-policy (cons-atom $row ())))) $__gslt_input_v1_0_1
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
-   (let (gslt:result:source-state-table:1000 $arity $key-arity $lifetime) (once (gslt:fn:source-state-table:1000 $table))
+(= (gslt:mode:state-action-valid:11 $operation (cons state-insert-row-v1 (cons $table (cons $write-policy (cons $row ())))))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons gslt:result:source-state-table:1000 (cons $arity (cons $key-arity (cons $lifetime ())))) (once (gslt:fn:source-state-table:1000 $table))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $arity $key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $lifetime))
    (let gslt:result:source-state-write-policy:1 (once (gslt:fn:source-state-write-policy:1 $write-policy))
    (let gslt:result:state-operation-row-valid:111 (superpose (collapse (gslt:mode:state-operation-row-valid:111 $operation $row $arity)))
-   (quote gslt:result:state-action-valid:11)))))))))
+   (quote gslt:result:state-action-valid:11))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=103 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-insert-each-matching target=mode relation=state-action-valid input=11 functional=relational
-(= (gslt:mode:state-action-valid:11 $operation $__gslt_input_v1_0_1)
-   (let (cons-atom state-insert-each-matching-v1 (cons-atom $role (cons-atom $condition-table (cons-atom $condition-row (cons-atom $target-table (cons-atom $write-policy (cons-atom $target-row ()))))))) $__gslt_input_v1_0_1
-   (let gslt:result:source-state-operation-role:11 (superpose (collapse (gslt:mode:source-state-operation-role:11 $operation $role)))
-   (let (gslt:result:source-state-table:1000 $condition-arity $condition-key-arity $condition-lifetime) (once (gslt:fn:source-state-table:1000 $condition-table))
+(= (gslt:mode:state-action-valid:11 $operation (cons state-insert-each-matching-v1 (cons $role (cons $condition-table (cons $condition-row (cons $target-table (cons $write-policy (cons $target-row ()))))))))
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
+   (let (cons gslt:result:source-state-table:1000 (cons $condition-arity (cons $condition-key-arity (cons $condition-lifetime ())))) (once (gslt:fn:source-state-table:1000 $condition-table))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $condition-arity $condition-key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $condition-lifetime))
    (let gslt:result:state-operation-row-valid:111 (superpose (collapse (gslt:mode:state-operation-row-valid:111 $operation $condition-row $condition-arity)))
-   (let (gslt:result:source-state-table:1000 $target-arity $target-key-arity $target-lifetime) (once (gslt:fn:source-state-table:1000 $target-table))
+   (let (cons gslt:result:source-state-table:1000 (cons $target-arity (cons $target-key-arity (cons $target-lifetime ())))) (once (gslt:fn:source-state-table:1000 $target-table))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $target-arity $target-key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $target-lifetime))
    (let gslt:result:source-state-write-policy:1 (once (gslt:fn:source-state-write-policy:1 $write-policy))
    (let gslt:result:state-operation-row-valid:111 (superpose (collapse (gslt:mode:state-operation-row-valid:111 $operation $target-row $target-arity)))
-   (quote gslt:result:state-action-valid:11)))))))))))))
+   (quote gslt:result:state-action-valid:11))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=104 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-copy-each-row target=mode relation=state-action-valid input=11 functional=relational
-(= (gslt:mode:state-action-valid:11 $operation $__gslt_input_v1_0_1)
-   (let (cons-atom state-copy-each-row-v1 (cons-atom $source-table (cons-atom $target-table (cons-atom $write-policy (cons-atom $target-row ()))))) $__gslt_input_v1_0_1
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
-   (let (gslt:result:source-state-table:1000 $source-arity $source-key-arity $source-lifetime) (once (gslt:fn:source-state-table:1000 $source-table))
+(= (gslt:mode:state-action-valid:11 $operation (cons state-copy-each-row-v1 (cons $source-table (cons $target-table (cons $write-policy (cons $target-row ()))))))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons gslt:result:source-state-table:1000 (cons $source-arity (cons $source-key-arity (cons $source-lifetime ())))) (once (gslt:fn:source-state-table:1000 $source-table))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $source-arity $source-key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $source-lifetime))
-   (let (gslt:result:source-state-table:1000 $target-arity $target-key-arity $target-lifetime) (once (gslt:fn:source-state-table:1000 $target-table))
+   (let (cons gslt:result:source-state-table:1000 (cons $target-arity (cons $target-key-arity (cons $target-lifetime ())))) (once (gslt:fn:source-state-table:1000 $target-table))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $target-arity $target-key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $target-lifetime))
    (let gslt:result:source-state-write-policy:1 (once (gslt:fn:source-state-write-policy:1 $write-policy))
    (let gslt:result:state-copy-row-valid:1111 (superpose (collapse (gslt:mode:state-copy-row-valid:1111 $operation $source-arity $target-row $target-arity)))
-   (quote gslt:result:state-action-valid:11))))))))))))
+   (quote gslt:result:state-action-valid:11)))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=105 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-copy-each-row-matching target=mode relation=state-action-valid input=11 functional=relational
-(= (gslt:mode:state-action-valid:11 $operation $__gslt_input_v1_0_1)
-   (let (cons-atom state-copy-each-row-matching-v1 (cons-atom $source-table (cons-atom $condition-table (cons-atom $condition-row (cons-atom $target-table (cons-atom $write-policy (cons-atom $target-row ()))))))) $__gslt_input_v1_0_1
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
-   (let (gslt:result:source-state-table:1000 $source-arity $source-key-arity $source-lifetime) (once (gslt:fn:source-state-table:1000 $source-table))
+(= (gslt:mode:state-action-valid:11 $operation (cons state-copy-each-row-matching-v1 (cons $source-table (cons $condition-table (cons $condition-row (cons $target-table (cons $write-policy (cons $target-row ()))))))))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons gslt:result:source-state-table:1000 (cons $source-arity (cons $source-key-arity (cons $source-lifetime ())))) (once (gslt:fn:source-state-table:1000 $source-table))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $source-arity $source-key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $source-lifetime))
-   (let (gslt:result:source-state-table:1000 $condition-arity $condition-key-arity $condition-lifetime) (once (gslt:fn:source-state-table:1000 $condition-table))
+   (let (cons gslt:result:source-state-table:1000 (cons $condition-arity (cons $condition-key-arity (cons $condition-lifetime ())))) (once (gslt:fn:source-state-table:1000 $condition-table))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $condition-arity $condition-key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $condition-lifetime))
    (let gslt:result:state-copy-row-valid:1111 (superpose (collapse (gslt:mode:state-copy-row-valid:1111 $operation $source-arity $condition-row $condition-arity)))
-   (let (gslt:result:source-state-table:1000 $target-arity $target-key-arity $target-lifetime) (once (gslt:fn:source-state-table:1000 $target-table))
+   (let (cons gslt:result:source-state-table:1000 (cons $target-arity (cons $target-key-arity (cons $target-lifetime ())))) (once (gslt:fn:source-state-table:1000 $target-table))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $target-arity $target-key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $target-lifetime))
    (let gslt:result:source-state-write-policy:1 (once (gslt:fn:source-state-write-policy:1 $write-policy))
    (let gslt:result:state-copy-row-valid:1111 (superpose (collapse (gslt:mode:state-copy-row-valid:1111 $operation $source-arity $target-row $target-arity)))
-   (quote gslt:result:state-action-valid:11))))))))))))))))
+   (quote gslt:result:state-action-valid:11)))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=107 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-check-proof-normal target=mode relation=state-action-valid input=11 functional=relational
-(= (gslt:mode:state-action-valid:11 $operation $__gslt_input_v1_0_1)
-   (let (cons-atom state-check-proof-normal-v1 (cons-atom $machine (cons-atom $label-role (cons-atom $formula-role (cons-atom $proof-role ()))))) $__gslt_input_v1_0_1
-   (let (gslt:result:source-state-proof-machine:10 $configuration) (once (gslt:fn:source-state-proof-machine:10 $machine))
+(= (gslt:mode:state-action-valid:11 $operation (cons state-check-proof-normal-v1 (cons $machine (cons $label-role (cons $formula-role (cons $proof-role ()))))))
+   (let (cons gslt:result:source-state-proof-machine:10 (cons $configuration ())) (once (gslt:fn:source-state-proof-machine:10 $machine))
    (let gslt:result:state-proof-machine-valid:1 (once (gslt:fn:state-proof-machine-valid:1 $configuration))
-   (let gslt:result:source-state-operation-role:11 (superpose (collapse (gslt:mode:source-state-operation-role:11 $operation $label-role)))
-   (let gslt:result:source-state-operation-role:11 (superpose (collapse (gslt:mode:source-state-operation-role:11 $operation $formula-role)))
-   (let gslt:result:source-state-operation-role:11 (superpose (collapse (gslt:mode:source-state-operation-role:11 $operation $proof-role)))
-   (quote gslt:result:state-action-valid:11))))))))
+   (let (cons source-state-operation-role (cons $operation (cons $label-role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $label-role))
+   (let (cons source-state-operation-role (cons $operation (cons $formula-role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $formula-role))
+   (let (cons source-state-operation-role (cons $operation (cons $proof-role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $proof-role))
+   (quote gslt:result:state-action-valid:11)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=108 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-check-proof-compressed target=mode relation=state-action-valid input=11 functional=relational
-(= (gslt:mode:state-action-valid:11 $operation $__gslt_input_v1_0_1)
-   (let (cons-atom state-check-proof-compressed-v1 (cons-atom $machine (cons-atom $label-role (cons-atom $formula-role (cons-atom $header-role (cons-atom $code-role ())))))) $__gslt_input_v1_0_1
-   (let (gslt:result:source-state-proof-machine:10 $configuration) (once (gslt:fn:source-state-proof-machine:10 $machine))
+(= (gslt:mode:state-action-valid:11 $operation (cons state-check-proof-compressed-v1 (cons $machine (cons $label-role (cons $formula-role (cons $header-role (cons $code-role ())))))))
+   (let (cons gslt:result:source-state-proof-machine:10 (cons $configuration ())) (once (gslt:fn:source-state-proof-machine:10 $machine))
    (let gslt:result:state-proof-machine-valid:1 (once (gslt:fn:state-proof-machine-valid:1 $configuration))
-   (let gslt:result:source-state-operation-role:11 (superpose (collapse (gslt:mode:source-state-operation-role:11 $operation $label-role)))
-   (let gslt:result:source-state-operation-role:11 (superpose (collapse (gslt:mode:source-state-operation-role:11 $operation $formula-role)))
-   (let gslt:result:source-state-operation-role:11 (superpose (collapse (gslt:mode:source-state-operation-role:11 $operation $header-role)))
-   (let gslt:result:source-state-operation-role:11 (superpose (collapse (gslt:mode:source-state-operation-role:11 $operation $code-role)))
-   (quote gslt:result:state-action-valid:11)))))))))
+   (let (cons source-state-operation-role (cons $operation (cons $label-role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $label-role))
+   (let (cons source-state-operation-role (cons $operation (cons $formula-role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $formula-role))
+   (let (cons source-state-operation-role (cons $operation (cons $header-role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $header-role))
+   (let (cons source-state-operation-role (cons $operation (cons $code-role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $code-role))
+   (quote gslt:result:state-action-valid:11))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=106 source-presentation=RelationalStateProgramCoreV1 source-rule=state-proof-machine-valid-stack target=mode relation=state-proof-machine-valid input=1 functional=semidet
-(= (gslt:fn:state-proof-machine-valid:1 $__gslt_input_v1_0_0)
-   (let (cons-atom state-stack-proof-machine-v1 (cons-atom (cons-atom state-proof-tables-v1 (cons-atom $label-kind-table (cons-atom $formula-table (cons-atom $binder-variable-table (cons-atom $mandatory-variable-table (cons-atom $assertion-hypothesis-table (cons-atom $assertion-disjoint-table (cons-atom $active-hypothesis-table (cons-atom $active-disjoint-table (cons-atom $symbol-kind-table ())))))))))) (cons-atom (cons-atom state-proof-kinds-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom $binder-kind ())) (cons-atom (cons-atom state-literal-v1 (cons-atom $matching-kind ())) (cons-atom (cons-atom state-literal-v1 (cons-atom $rule-kind-first ())) (cons-atom (cons-atom state-literal-v1 (cons-atom $rule-kind-second ())) (cons-atom (cons-atom state-literal-v1 (cons-atom $variable-kind ())) (cons-atom (cons-atom state-byte-literal-v1 (cons-atom $unknown-token-byte ())) ()))))))) (cons-atom (cons-atom state-proof-decoder-v1 (cons-atom $terminal-low (cons-atom $terminal-high (cons-atom $continuation-low (cons-atom $continuation-high (cons-atom $save-byte (cons-atom $unknown-byte (cons-atom $terminal-radix (cons-atom $terminal-bias (cons-atom $continuation-radix (cons-atom $continuation-bias (cons-atom $unknown-policy (cons-atom $save-placement (cons-atom $header-policy ())))))))))))))) ())))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-table:1110 $label-kind-life) (gslt:fn:source-state-table:1110 $label-kind-table 2 1)
+(= (gslt:fn:state-proof-machine-valid:1 (cons state-stack-proof-machine-v1 (cons (cons state-proof-tables-v1 (cons $label-kind-table (cons $formula-table (cons $binder-variable-table (cons $mandatory-variable-table (cons $assertion-hypothesis-table (cons $assertion-disjoint-table (cons $active-hypothesis-table (cons $active-disjoint-table (cons $symbol-kind-table ())))))))))) (cons (cons state-proof-kinds-v1 (cons (cons state-literal-v1 (cons $binder-kind ())) (cons (cons state-literal-v1 (cons $matching-kind ())) (cons (cons state-literal-v1 (cons $rule-kind-first ())) (cons (cons state-literal-v1 (cons $rule-kind-second ())) (cons (cons state-literal-v1 (cons $variable-kind ())) (cons (cons state-byte-literal-v1 (cons $unknown-token-byte ())) ()))))))) (cons (cons state-proof-decoder-v1 (cons $terminal-low (cons $terminal-high (cons $continuation-low (cons $continuation-high (cons $save-byte (cons $unknown-byte (cons $terminal-radix (cons $terminal-bias (cons $continuation-radix (cons $continuation-bias (cons $unknown-policy (cons $save-placement (cons $header-policy ())))))))))))))) ())))))
+   (let (cons gslt:result:source-state-table:1110 (cons $label-kind-life ())) (gslt:fn:source-state-table:1110 $label-kind-table 2 1)
    (let gslt:result:source-state-lifetime:1 (gslt:fn:source-state-lifetime:1 $label-kind-life)
-   (let (gslt:result:source-state-table:1110 $formula-life) (gslt:fn:source-state-table:1110 $formula-table 2 1)
+   (let (cons gslt:result:source-state-table:1110 (cons $formula-life ())) (gslt:fn:source-state-table:1110 $formula-table 2 1)
    (let gslt:result:source-state-lifetime:1 (gslt:fn:source-state-lifetime:1 $formula-life)
-   (let (gslt:result:source-state-table:1110 $binder-life) (gslt:fn:source-state-table:1110 $binder-variable-table 2 1)
+   (let (cons gslt:result:source-state-table:1110 (cons $binder-life ())) (gslt:fn:source-state-table:1110 $binder-variable-table 2 1)
    (let gslt:result:source-state-lifetime:1 (gslt:fn:source-state-lifetime:1 $binder-life)
-   (let (gslt:result:source-state-table:1110 $mandatory-life) (gslt:fn:source-state-table:1110 $mandatory-variable-table 2 2)
+   (let (cons gslt:result:source-state-table:1110 (cons $mandatory-life ())) (gslt:fn:source-state-table:1110 $mandatory-variable-table 2 2)
    (let gslt:result:source-state-lifetime:1 (gslt:fn:source-state-lifetime:1 $mandatory-life)
-   (let (gslt:result:source-state-table:1110 $hyp-life) (gslt:fn:source-state-table:1110 $assertion-hypothesis-table 3 2)
+   (let (cons gslt:result:source-state-table:1110 (cons $hyp-life ())) (gslt:fn:source-state-table:1110 $assertion-hypothesis-table 3 2)
    (let gslt:result:source-state-lifetime:1 (gslt:fn:source-state-lifetime:1 $hyp-life)
-   (let (gslt:result:source-state-table:1110 $assertion-dv-life) (gslt:fn:source-state-table:1110 $assertion-disjoint-table 3 3)
+   (let (cons gslt:result:source-state-table:1110 (cons $assertion-dv-life ())) (gslt:fn:source-state-table:1110 $assertion-disjoint-table 3 3)
    (let gslt:result:source-state-lifetime:1 (gslt:fn:source-state-lifetime:1 $assertion-dv-life)
-   (let (gslt:result:source-state-table:1110 $active-hyp-life) (gslt:fn:source-state-table:1110 $active-hypothesis-table 4 1)
+   (let (cons gslt:result:source-state-table:1110 (cons $active-hyp-life ())) (gslt:fn:source-state-table:1110 $active-hypothesis-table 4 1)
    (let gslt:result:source-state-lifetime:1 (gslt:fn:source-state-lifetime:1 $active-hyp-life)
-   (let (gslt:result:source-state-table:1110 $active-dv-life) (gslt:fn:source-state-table:1110 $active-disjoint-table 2 2)
+   (let (cons gslt:result:source-state-table:1110 (cons $active-dv-life ())) (gslt:fn:source-state-table:1110 $active-disjoint-table 2 2)
    (let gslt:result:source-state-lifetime:1 (gslt:fn:source-state-lifetime:1 $active-dv-life)
-   (let (gslt:result:source-state-table:1110 $symbol-life) (gslt:fn:source-state-table:1110 $symbol-kind-table 2 1)
+   (let (cons gslt:result:source-state-table:1110 (cons $symbol-life ())) (gslt:fn:source-state-table:1110 $symbol-kind-table 2 1)
    (let gslt:result:source-state-lifetime:1 (gslt:fn:source-state-lifetime:1 $symbol-life)
    (let gslt:result:source-state-literal:1 (gslt:fn:source-state-literal:1 $binder-kind)
    (let gslt:result:source-state-literal:1 (gslt:fn:source-state-literal:1 $matching-kind)
@@ -1676,11 +1640,11 @@
    (let gslt:result:source-state-proof-unknown-policy:1 (gslt:fn:source-state-proof-unknown-policy:1 $unknown-policy)
    (let gslt:result:source-state-literal:1 (gslt:fn:source-state-literal:1 $save-placement)
    (let gslt:result:source-state-proof-header-hypothesis-policy:1 (gslt:fn:source-state-proof-header-hypothesis-policy:1 $header-policy)
-   (quote gslt:result:state-proof-machine-valid:1))))))))))))))))))))))))))))))))))))))))
+   (quote gslt:result:state-proof-machine-valid:1)))))))))))))))))))))))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=109 source-presentation=RelationalStateProgramCoreV1 source-rule=state-final-action-valid-require-depth target=mode relation=state-final-action-valid input=0 functional=relational
 (= (gslt:mode:state-final-action-valid:0)
-   (let (gslt:result:source-state-depth:0 $depth) (once (gslt:fn:source-state-depth:0))
+   (let (cons gslt:result:source-state-depth:0 (cons $depth ())) (once (gslt:fn:source-state-depth:0))
    (quote (gslt:result:state-final-action-valid:0 (state-require-depth-v1 $depth)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=110 source-presentation=RelationalStateProgramCoreV1 source-rule=state-final-action-valid-noop target=mode relation=state-final-action-valid input=0 functional=relational
@@ -1769,7 +1733,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=206 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-save-immediately-after-use target=mode relation=source-state-literal input=0 functional=relational
 (= (gslt:mode:source-state-literal:0)
-   (let (gslt:result:source-proof-trace-save-placement-v1:0 $save-placement) (once (gslt:fn:source-proof-trace-save-placement-v1:0))
+   (let (cons gslt:result:source-proof-trace-save-placement-v1:0 (cons $save-placement ())) (once (gslt:fn:source-proof-trace-save-placement-v1:0))
    (quote (gslt:result:source-state-literal:0 $save-placement))))
 
 ; gslt-lowered-equation-v1 source-rewrite=119 source-presentation=MetamathSourceStateV1 source-rule=mm-state-literal-constant target=mode relation=source-state-literal input=1 functional=semidet
@@ -2430,37 +2394,32 @@
    (quote (gslt:result:fold-contract-match:100 $input $input)))
 
 ; gslt-lowered-equation-v1 source-rewrite=6 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-match-one target=mode relation=fold-contract-match input=100 functional=relational
-(= (gslt:mode:fold-contract-match:100 $__gslt_input_v1_0_0)
-   (let (cons-atom fold-one (cons-atom $role ())) $__gslt_input_v1_0_0
+(= (gslt:mode:fold-contract-match:100 (cons fold-one (cons $role ())))
    (let gslt:result:source-fold-role:1 (once (gslt:fn:source-fold-role:1 $role))
-   (quote (gslt:result:fold-contract-match:100 (fold-cons $role $rest) $rest)))))
+   (quote (gslt:result:fold-contract-match:100 (fold-cons $role $rest) $rest))))
 
 ; gslt-lowered-equation-v1 source-rewrite=7 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-match-plus target=mode relation=fold-contract-match input=100 functional=relational
-(= (gslt:mode:fold-contract-match:100 $__gslt_input_v1_0_0)
-   (let (cons-atom fold-plus (cons-atom $role ())) $__gslt_input_v1_0_0
+(= (gslt:mode:fold-contract-match:100 (cons fold-plus (cons $role ())))
    (let gslt:result:source-fold-role:1 (once (gslt:fn:source-fold-role:1 $role))
-   (let (gslt:result:fold-contract-match:100 $input $rest) (superpose (collapse (gslt:mode:fold-contract-match:100 (quote (fold-star $role)))))
-   (quote (gslt:result:fold-contract-match:100 (fold-cons $role $input) $rest))))))
+   (let (cons fold-contract-match (cons (cons fold-star (cons $role ())) (cons $input (cons $rest ())))) (gslt:fold-contract-match (fold-contract-match (fold-star $role) $input $rest))
+   (quote (gslt:result:fold-contract-match:100 (fold-cons $role $input) $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=8 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-match-star-empty target=mode relation=fold-contract-match input=100 functional=relational
-(= (gslt:mode:fold-contract-match:100 $__gslt_input_v1_0_0)
-   (let (cons-atom fold-star (cons-atom $role ())) $__gslt_input_v1_0_0
+(= (gslt:mode:fold-contract-match:100 (cons fold-star (cons $role ())))
    (let gslt:result:source-fold-role:1 (once (gslt:fn:source-fold-role:1 $role))
-   (quote (gslt:result:fold-contract-match:100 $input $input)))))
+   (quote (gslt:result:fold-contract-match:100 $input $input))))
 
 ; gslt-lowered-equation-v1 source-rewrite=9 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-match-star-step target=mode relation=fold-contract-match input=100 functional=relational
-(= (gslt:mode:fold-contract-match:100 $__gslt_input_v1_0_0)
-   (let (cons-atom fold-star (cons-atom $role ())) $__gslt_input_v1_0_0
+(= (gslt:mode:fold-contract-match:100 (cons fold-star (cons $role ())))
    (let gslt:result:source-fold-role:1 (once (gslt:fn:source-fold-role:1 $role))
-   (let (gslt:result:fold-contract-match:100 $input $rest) (superpose (collapse (gslt:mode:fold-contract-match:100 (quote (fold-star $role)))))
-   (quote (gslt:result:fold-contract-match:100 (fold-cons $role $input) $rest))))))
+   (let (cons fold-contract-match (cons (cons fold-star (cons $role ())) (cons $input (cons $rest ())))) (gslt:fold-contract-match (fold-contract-match (fold-star $role) $input $rest))
+   (quote (gslt:result:fold-contract-match:100 (fold-cons $role $input) $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=10 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-match-seq target=mode relation=fold-contract-match input=100 functional=relational
-(= (gslt:mode:fold-contract-match:100 $__gslt_input_v1_0_0)
-   (let (cons-atom fold-seq (cons-atom $first (cons-atom $second ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:fold-contract-match:100 $input $middle) (superpose (collapse (gslt:mode:fold-contract-match:100 $first)))
-   (let (gslt:result:fold-contract-match:100 $middle $rest) (superpose (collapse (gslt:mode:fold-contract-match:100 $second)))
-   (quote (gslt:result:fold-contract-match:100 $input $rest))))))
+(= (gslt:mode:fold-contract-match:100 (cons fold-seq (cons $first (cons $second ()))))
+   (let (cons fold-contract-match (cons $first (cons $input (cons $middle ())))) (gslt:fold-contract-match (fold-contract-match $first $input $middle))
+   (let (cons fold-contract-match (cons $second (cons $middle (cons $rest ())))) (gslt:fold-contract-match (fold-contract-match $second $middle $rest))
+   (quote (gslt:result:fold-contract-match:100 $input $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=28 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-node-constant target=mode relation=source-fold-node input=010 functional=semidet
 (= (gslt:fn:source-fold-node:010 mm-declare-constants)
@@ -2509,34 +2468,34 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=68 source-presentation=RelationalStateProgramCoreV1 source-rule=state-row-valid-cons target=mode relation=state-row-valid input=100 functional=relational
 (= (gslt:mode:state-row-valid:100 $role)
-   (let (gslt:result:state-operand-valid:10 $operand) (superpose (collapse (gslt:mode:state-operand-valid:10 $role)))
-   (let (gslt:result:state-row-valid:100 $rest $length) (superpose (collapse (gslt:mode:state-row-valid:100 $role)))
-   (let (gslt:result:state-row-length-step:10 $next-length) (once (gslt:fn:state-row-length-step:10 $length))
+   (let (cons gslt:result:state-operand-valid:10 (cons $operand ())) (superpose (collapse (gslt:mode:state-operand-valid:10 $role)))
+   (let (cons gslt:result:state-row-valid:100 (cons $rest (cons $length ()))) (superpose (collapse (gslt:mode:state-row-valid:100 $role)))
+   (let (cons gslt:result:state-row-length-step:10 (cons $next-length ())) (once (gslt:fn:state-row-length-step:10 $length))
    (quote (gslt:result:state-row-valid:100 (state-row-cons-v1 $operand $rest) $next-length))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=73 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-row-valid-empty target=mode relation=state-operation-row-valid input=100 functional=relational
 (= (gslt:mode:state-operation-row-valid:100 $operation)
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
    (quote (gslt:result:state-operation-row-valid:100 state-row-nil-v1 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=74 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-row-valid-cons target=mode relation=state-operation-row-valid input=100 functional=relational
 (= (gslt:mode:state-operation-row-valid:100 $operation)
-   (let (gslt:result:state-operation-operand-valid:10 $operand) (superpose (collapse (gslt:mode:state-operation-operand-valid:10 $operation)))
-   (let (gslt:result:state-operation-row-valid:100 $rest $length) (superpose (collapse (gslt:mode:state-operation-row-valid:100 $operation)))
-   (let (gslt:result:state-row-length-step:10 $next-length) (once (gslt:fn:state-row-length-step:10 $length))
+   (let (cons gslt:result:state-operation-operand-valid:10 (cons $operand ())) (superpose (collapse (gslt:mode:state-operation-operand-valid:10 $operation)))
+   (let (cons gslt:result:state-operation-row-valid:100 (cons $rest (cons $length ()))) (superpose (collapse (gslt:mode:state-operation-row-valid:100 $operation)))
+   (let (cons gslt:result:state-row-length-step:10 (cons $next-length ())) (once (gslt:fn:state-row-length-step:10 $length))
    (quote (gslt:result:state-operation-row-valid:100 (state-row-cons-v1 $operand $rest) $next-length))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=89 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-row-valid-empty target=mode relation=state-copy-row-valid input=1100 functional=relational
 (= (gslt:mode:state-copy-row-valid:1100 $operation $source-arity)
-   (let gslt:result:source-state-operation:1 (superpose (collapse (gslt:mode:source-state-operation:1 $operation)))
-   (let (gslt:result:source-state-table-shape:10 $source-key-arity) (superpose (collapse (gslt:mode:source-state-table-shape:10 $source-arity)))
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons source-state-table-shape (cons $source-arity (cons $source-key-arity ()))) (gslt:source-state-table-shape (source-state-table-shape $source-arity $source-key-arity))
    (quote (gslt:result:state-copy-row-valid:1100 state-row-nil-v1 0)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=90 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-row-valid-cons target=mode relation=state-copy-row-valid input=1100 functional=relational
 (= (gslt:mode:state-copy-row-valid:1100 $operation $source-arity)
-   (let (gslt:result:state-copy-operand-valid:110 $operand) (superpose (collapse (gslt:mode:state-copy-operand-valid:110 $operation $source-arity)))
-   (let (gslt:result:state-copy-row-valid:1100 $rest $length) (superpose (collapse (gslt:mode:state-copy-row-valid:1100 $operation $source-arity)))
-   (let (gslt:result:state-row-length-step:10 $next-length) (once (gslt:fn:state-row-length-step:10 $length))
+   (let (cons gslt:result:state-copy-operand-valid:110 (cons $operand ())) (superpose (collapse (gslt:mode:state-copy-operand-valid:110 $operation $source-arity)))
+   (let (cons gslt:result:state-copy-row-valid:1100 (cons $rest (cons $length ()))) (superpose (collapse (gslt:mode:state-copy-row-valid:1100 $operation $source-arity)))
+   (let (cons gslt:result:state-row-length-step:10 (cons $next-length ())) (once (gslt:fn:state-row-length-step:10 $length))
    (quote (gslt:result:state-copy-row-valid:1100 (state-row-cons-v1 $operand $rest) $next-length))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=125 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-symbol-kind target=mode relation=source-state-table input=0110 functional=relational
@@ -2694,1525 +2653,1525 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=0 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-valid-none target=relation
 (= (gslt:fold-contract-valid $__gslt_input_v1_0_0)
-   (let (cons-atom fold-contract-valid (cons-atom fold-none ())) $__gslt_input_v1_0_0
+   (let (cons fold-contract-valid (cons fold-none ())) $__gslt_input_v1_0_0
    (quote (fold-contract-valid fold-none))))
 
 ; gslt-lowered-equation-v1 source-rewrite=1 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-valid-one target=relation
 (= (gslt:fold-contract-valid $__gslt_input_v1_0_0)
-   (let (cons-atom fold-contract-valid (cons-atom (cons-atom fold-one (cons-atom $role ())) ())) $__gslt_input_v1_0_0
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
+   (let (cons fold-contract-valid (cons (cons fold-one (cons $role ())) ())) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
    (quote (fold-contract-valid (fold-one $role))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=2 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-valid-plus target=relation
 (= (gslt:fold-contract-valid $__gslt_input_v1_0_0)
-   (let (cons-atom fold-contract-valid (cons-atom (cons-atom fold-plus (cons-atom $role ())) ())) $__gslt_input_v1_0_0
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
+   (let (cons fold-contract-valid (cons (cons fold-plus (cons $role ())) ())) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
    (quote (fold-contract-valid (fold-plus $role))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=3 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-valid-star target=relation
 (= (gslt:fold-contract-valid $__gslt_input_v1_0_0)
-   (let (cons-atom fold-contract-valid (cons-atom (cons-atom fold-star (cons-atom $role ())) ())) $__gslt_input_v1_0_0
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
+   (let (cons fold-contract-valid (cons (cons fold-star (cons $role ())) ())) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
    (quote (fold-contract-valid (fold-star $role))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=4 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-valid-seq target=relation
 (= (gslt:fold-contract-valid $__gslt_input_v1_0_0)
-   (let (cons-atom fold-contract-valid (cons-atom (cons-atom fold-seq (cons-atom $first (cons-atom $second ()))) ())) $__gslt_input_v1_0_0
-   (let (gslt:result:fold-contract-valid:0 $first) (superpose (collapse (gslt:mode:fold-contract-valid:0)))
-   (let (gslt:result:fold-contract-valid:0 $second) (superpose (collapse (gslt:mode:fold-contract-valid:0)))
+   (let (cons fold-contract-valid (cons (cons fold-seq (cons $first (cons $second ()))) ())) $__gslt_input_v1_0_0
+   (let (cons fold-contract-valid (cons $first ())) (gslt:fold-contract-valid (fold-contract-valid $first))
+   (let (cons fold-contract-valid (cons $second ())) (gslt:fold-contract-valid (fold-contract-valid $second))
    (quote (fold-contract-valid (fold-seq $first $second)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=5 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-match-none target=relation
 (= (gslt:fold-contract-match $__gslt_input_v1_0_0)
-   (let (cons-atom fold-contract-match (cons-atom fold-none (cons-atom $input (cons-atom $input ())))) $__gslt_input_v1_0_0
+   (let (cons fold-contract-match (cons fold-none (cons $input (cons $input ())))) $__gslt_input_v1_0_0
    (quote (fold-contract-match fold-none $input $input))))
 
 ; gslt-lowered-equation-v1 source-rewrite=6 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-match-one target=relation
 (= (gslt:fold-contract-match $__gslt_input_v1_0_0)
-   (let (cons-atom fold-contract-match (cons-atom (cons-atom fold-one (cons-atom $role ())) (cons-atom (cons-atom fold-cons (cons-atom $role (cons-atom $rest ()))) (cons-atom $rest ())))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
+   (let (cons fold-contract-match (cons (cons fold-one (cons $role ())) (cons (cons fold-cons (cons $role (cons $rest ()))) (cons $rest ())))) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
    (quote (fold-contract-match (fold-one $role) (fold-cons $role $rest) $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=7 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-match-plus target=relation
 (= (gslt:fold-contract-match $__gslt_input_v1_0_0)
-   (let (cons-atom fold-contract-match (cons-atom (cons-atom fold-plus (cons-atom $role ())) (cons-atom (cons-atom fold-cons (cons-atom $role (cons-atom $input ()))) (cons-atom $rest ())))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
-   (let (gslt:result:fold-contract-match:100 $input $rest) (superpose (collapse (gslt:mode:fold-contract-match:100 (quote (fold-star $role)))))
+   (let (cons fold-contract-match (cons (cons fold-plus (cons $role ())) (cons (cons fold-cons (cons $role (cons $input ()))) (cons $rest ())))) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
+   (let (cons fold-contract-match (cons (cons fold-star (cons $role ())) (cons $input (cons $rest ())))) (gslt:fold-contract-match (fold-contract-match (fold-star $role) $input $rest))
    (quote (fold-contract-match (fold-plus $role) (fold-cons $role $input) $rest))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=8 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-match-star-empty target=relation
 (= (gslt:fold-contract-match $__gslt_input_v1_0_0)
-   (let (cons-atom fold-contract-match (cons-atom (cons-atom fold-star (cons-atom $role ())) (cons-atom $input (cons-atom $input ())))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
+   (let (cons fold-contract-match (cons (cons fold-star (cons $role ())) (cons $input (cons $input ())))) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
    (quote (fold-contract-match (fold-star $role) $input $input)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=9 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-match-star-step target=relation
 (= (gslt:fold-contract-match $__gslt_input_v1_0_0)
-   (let (cons-atom fold-contract-match (cons-atom (cons-atom fold-star (cons-atom $role ())) (cons-atom (cons-atom fold-cons (cons-atom $role (cons-atom $input ()))) (cons-atom $rest ())))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
-   (let (gslt:result:fold-contract-match:100 $input $rest) (superpose (collapse (gslt:mode:fold-contract-match:100 (quote (fold-star $role)))))
+   (let (cons fold-contract-match (cons (cons fold-star (cons $role ())) (cons (cons fold-cons (cons $role (cons $input ()))) (cons $rest ())))) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
+   (let (cons fold-contract-match (cons (cons fold-star (cons $role ())) (cons $input (cons $rest ())))) (gslt:fold-contract-match (fold-contract-match (fold-star $role) $input $rest))
    (quote (fold-contract-match (fold-star $role) (fold-cons $role $input) $rest))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=10 source-presentation=OccurrenceFoldCoreV1 source-rule=fold-contract-match-seq target=relation
 (= (gslt:fold-contract-match $__gslt_input_v1_0_0)
-   (let (cons-atom fold-contract-match (cons-atom (cons-atom fold-seq (cons-atom $first (cons-atom $second ()))) (cons-atom $input (cons-atom $rest ())))) $__gslt_input_v1_0_0
-   (let (gslt:result:fold-contract-match:000 $first $input $middle) (superpose (collapse (gslt:mode:fold-contract-match:000)))
-   (let (gslt:result:fold-contract-match:000 $second $middle $rest) (superpose (collapse (gslt:mode:fold-contract-match:000)))
+   (let (cons fold-contract-match (cons (cons fold-seq (cons $first (cons $second ()))) (cons $input (cons $rest ())))) $__gslt_input_v1_0_0
+   (let (cons fold-contract-match (cons $first (cons $input (cons $middle ())))) (gslt:fold-contract-match (fold-contract-match $first $input $middle))
+   (let (cons fold-contract-match (cons $second (cons $middle (cons $rest ())))) (gslt:fold-contract-match (fold-contract-match $second $middle $rest))
    (quote (fold-contract-match (fold-seq $first $second) $input $rest))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=11 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-role-label target=relation
 (= (gslt:source-fold-role $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-role (cons-atom mm-label ())) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons mm-label ())) $__gslt_input_v1_0_0
    (quote (source-fold-role mm-label))))
 
 ; gslt-lowered-equation-v1 source-rewrite=12 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-role-symbol target=relation
 (= (gslt:source-fold-role $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-role (cons-atom mm-symbol ())) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons mm-symbol ())) $__gslt_input_v1_0_0
    (quote (source-fold-role mm-symbol))))
 
 ; gslt-lowered-equation-v1 source-rewrite=13 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-role-proof-step target=relation
 (= (gslt:source-fold-role $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-role (cons-atom mm-proof-step ())) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons mm-proof-step ())) $__gslt_input_v1_0_0
    (quote (source-fold-role mm-proof-step))))
 
 ; gslt-lowered-equation-v1 source-rewrite=14 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-role-compressed-word target=relation
 (= (gslt:source-fold-role $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-role (cons-atom mm-compressed-word ())) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons mm-compressed-word ())) $__gslt_input_v1_0_0
    (quote (source-fold-role mm-compressed-word))))
 
 ; gslt-lowered-equation-v1 source-rewrite=15 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-role-include-path target=relation
 (= (gslt:source-fold-role $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-role (cons-atom mm-include-path ())) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons mm-include-path ())) $__gslt_input_v1_0_0
    (quote (source-fold-role mm-include-path))))
 
 ; gslt-lowered-equation-v1 source-rewrite=16 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-role-scope-open target=relation
 (= (gslt:source-fold-role $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-role (cons-atom mm-scope-open ())) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons mm-scope-open ())) $__gslt_input_v1_0_0
    (quote (source-fold-role mm-scope-open))))
 
 ; gslt-lowered-equation-v1 source-rewrite=17 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-role-scope-close target=relation
 (= (gslt:source-fold-role $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-role (cons-atom mm-scope-close ())) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons mm-scope-close ())) $__gslt_input_v1_0_0
    (quote (source-fold-role mm-scope-close))))
 
 ; gslt-lowered-equation-v1 source-rewrite=18 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-token-label target=relation
 (= (gslt:source-fold-token $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-token (cons-atom label-token-lexeme (cons-atom mm-label ()))) $__gslt_input_v1_0_0
+   (let (cons source-fold-token (cons label-token-lexeme (cons mm-label ()))) $__gslt_input_v1_0_0
    (quote (source-fold-token label-token-lexeme mm-label))))
 
 ; gslt-lowered-equation-v1 source-rewrite=19 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-token-proof-label target=relation
 (= (gslt:source-fold-token $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-token (cons-atom proof-label-token-lexeme (cons-atom mm-proof-step ()))) $__gslt_input_v1_0_0
+   (let (cons source-fold-token (cons proof-label-token-lexeme (cons mm-proof-step ()))) $__gslt_input_v1_0_0
    (quote (source-fold-token proof-label-token-lexeme mm-proof-step))))
 
 ; gslt-lowered-equation-v1 source-rewrite=20 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-token-unknown-proof target=relation
 (= (gslt:source-fold-token $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-token (cons-atom unknown-proof-lexeme (cons-atom mm-proof-step ()))) $__gslt_input_v1_0_0
+   (let (cons source-fold-token (cons unknown-proof-lexeme (cons mm-proof-step ()))) $__gslt_input_v1_0_0
    (quote (source-fold-token unknown-proof-lexeme mm-proof-step))))
 
 ; gslt-lowered-equation-v1 source-rewrite=21 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-token-symbol target=relation
 (= (gslt:source-fold-token $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-token (cons-atom symbol-token-lexeme (cons-atom mm-symbol ()))) $__gslt_input_v1_0_0
+   (let (cons source-fold-token (cons symbol-token-lexeme (cons mm-symbol ()))) $__gslt_input_v1_0_0
    (quote (source-fold-token symbol-token-lexeme mm-symbol))))
 
 ; gslt-lowered-equation-v1 source-rewrite=22 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-token-compressed target=relation
 (= (gslt:source-fold-token $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-token (cons-atom compressed-token-lexeme (cons-atom mm-compressed-word ()))) $__gslt_input_v1_0_0
+   (let (cons source-fold-token (cons compressed-token-lexeme (cons mm-compressed-word ()))) $__gslt_input_v1_0_0
    (quote (source-fold-token compressed-token-lexeme mm-compressed-word))))
 
 ; gslt-lowered-equation-v1 source-rewrite=23 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-token-include target=relation
 (= (gslt:source-fold-token $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-token (cons-atom include-token-lexeme (cons-atom mm-include-path ()))) $__gslt_input_v1_0_0
+   (let (cons source-fold-token (cons include-token-lexeme (cons mm-include-path ()))) $__gslt_input_v1_0_0
    (quote (source-fold-token include-token-lexeme mm-include-path))))
 
 ; gslt-lowered-equation-v1 source-rewrite=24 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-token-scope-open target=relation
 (= (gslt:source-fold-token $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-token (cons-atom kw-block-open-lexeme (cons-atom mm-scope-open ()))) $__gslt_input_v1_0_0
+   (let (cons source-fold-token (cons kw-block-open-lexeme (cons mm-scope-open ()))) $__gslt_input_v1_0_0
    (quote (source-fold-token kw-block-open-lexeme mm-scope-open))))
 
 ; gslt-lowered-equation-v1 source-rewrite=25 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-token-scope-close target=relation
 (= (gslt:source-fold-token $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-token (cons-atom kw-block-close-lexeme (cons-atom mm-scope-close ()))) $__gslt_input_v1_0_0
+   (let (cons source-fold-token (cons kw-block-close-lexeme (cons mm-scope-close ()))) $__gslt_input_v1_0_0
    (quote (source-fold-token kw-block-close-lexeme mm-scope-close))))
 
 ; gslt-lowered-equation-v1 source-rewrite=26 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-shift-scope-open target=relation
 (= (gslt:source-fold-shift $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-shift (cons-atom mm-scope-open (cons-atom mm-open-scope ()))) $__gslt_input_v1_0_0
+   (let (cons source-fold-shift (cons mm-scope-open (cons mm-open-scope ()))) $__gslt_input_v1_0_0
    (quote (source-fold-shift mm-scope-open mm-open-scope))))
 
 ; gslt-lowered-equation-v1 source-rewrite=27 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-shift-scope-close target=relation
 (= (gslt:source-fold-shift $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-shift (cons-atom mm-scope-close (cons-atom mm-close-scope ()))) $__gslt_input_v1_0_0
+   (let (cons source-fold-shift (cons mm-scope-close (cons mm-close-scope ()))) $__gslt_input_v1_0_0
    (quote (source-fold-shift mm-scope-close mm-close-scope))))
 
 ; gslt-lowered-equation-v1 source-rewrite=28 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-node-constant target=relation
 (= (gslt:source-fold-node $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-node (cons-atom statement_const (cons-atom mm-declare-constants (cons-atom (cons-atom fold-plus (cons-atom mm-symbol ())) ())))) $__gslt_input_v1_0_0
+   (let (cons source-fold-node (cons statement_const (cons mm-declare-constants (cons (cons fold-plus (cons mm-symbol ())) ())))) $__gslt_input_v1_0_0
    (quote (source-fold-node statement_const mm-declare-constants (fold-plus mm-symbol)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=29 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-node-variable target=relation
 (= (gslt:source-fold-node $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-node (cons-atom statement_var (cons-atom mm-declare-variables (cons-atom (cons-atom fold-plus (cons-atom mm-symbol ())) ())))) $__gslt_input_v1_0_0
+   (let (cons source-fold-node (cons statement_var (cons mm-declare-variables (cons (cons fold-plus (cons mm-symbol ())) ())))) $__gslt_input_v1_0_0
    (quote (source-fold-node statement_var mm-declare-variables (fold-plus mm-symbol)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=30 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-node-disjoint target=relation
 (= (gslt:source-fold-node $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-node (cons-atom statement_disjoint (cons-atom mm-declare-disjoint (cons-atom (cons-atom fold-seq (cons-atom (cons-atom fold-one (cons-atom mm-symbol ())) (cons-atom (cons-atom fold-plus (cons-atom mm-symbol ())) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-fold-node (cons statement_disjoint (cons mm-declare-disjoint (cons (cons fold-seq (cons (cons fold-one (cons mm-symbol ())) (cons (cons fold-plus (cons mm-symbol ())) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-fold-node statement_disjoint mm-declare-disjoint (fold-seq (fold-one mm-symbol) (fold-plus mm-symbol))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=31 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-node-floating target=relation
 (= (gslt:source-fold-node $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-node (cons-atom statement_float (cons-atom mm-declare-floating (cons-atom (cons-atom fold-seq (cons-atom (cons-atom fold-one (cons-atom mm-label ())) (cons-atom (cons-atom fold-seq (cons-atom (cons-atom fold-one (cons-atom mm-symbol ())) (cons-atom (cons-atom fold-one (cons-atom mm-symbol ())) ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-fold-node (cons statement_float (cons mm-declare-floating (cons (cons fold-seq (cons (cons fold-one (cons mm-label ())) (cons (cons fold-seq (cons (cons fold-one (cons mm-symbol ())) (cons (cons fold-one (cons mm-symbol ())) ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-fold-node statement_float mm-declare-floating (fold-seq (fold-one mm-label) (fold-seq (fold-one mm-symbol) (fold-one mm-symbol)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=32 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-node-essential target=relation
 (= (gslt:source-fold-node $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-node (cons-atom statement_essential (cons-atom mm-declare-essential (cons-atom (cons-atom fold-seq (cons-atom (cons-atom fold-one (cons-atom mm-label ())) (cons-atom (cons-atom fold-plus (cons-atom mm-symbol ())) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-fold-node (cons statement_essential (cons mm-declare-essential (cons (cons fold-seq (cons (cons fold-one (cons mm-label ())) (cons (cons fold-plus (cons mm-symbol ())) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-fold-node statement_essential mm-declare-essential (fold-seq (fold-one mm-label) (fold-plus mm-symbol))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=33 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-node-axiom target=relation
 (= (gslt:source-fold-node $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-node (cons-atom statement_axiom (cons-atom mm-declare-axiom (cons-atom (cons-atom fold-seq (cons-atom (cons-atom fold-one (cons-atom mm-label ())) (cons-atom (cons-atom fold-plus (cons-atom mm-symbol ())) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-fold-node (cons statement_axiom (cons mm-declare-axiom (cons (cons fold-seq (cons (cons fold-one (cons mm-label ())) (cons (cons fold-plus (cons mm-symbol ())) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-fold-node statement_axiom mm-declare-axiom (fold-seq (fold-one mm-label) (fold-plus mm-symbol))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=34 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-node-theorem-normal target=relation
 (= (gslt:source-fold-node $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-node (cons-atom statement_theorem_normal (cons-atom mm-check-theorem-normal (cons-atom (cons-atom fold-seq (cons-atom (cons-atom fold-one (cons-atom mm-label ())) (cons-atom (cons-atom fold-seq (cons-atom (cons-atom fold-plus (cons-atom mm-symbol ())) (cons-atom (cons-atom fold-plus (cons-atom mm-proof-step ())) ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-fold-node (cons statement_theorem_normal (cons mm-check-theorem-normal (cons (cons fold-seq (cons (cons fold-one (cons mm-label ())) (cons (cons fold-seq (cons (cons fold-plus (cons mm-symbol ())) (cons (cons fold-plus (cons mm-proof-step ())) ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-fold-node statement_theorem_normal mm-check-theorem-normal (fold-seq (fold-one mm-label) (fold-seq (fold-plus mm-symbol) (fold-plus mm-proof-step)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=35 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-node-theorem-compressed target=relation
 (= (gslt:source-fold-node $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-node (cons-atom statement_theorem_compressed (cons-atom mm-check-theorem-compressed (cons-atom (cons-atom fold-seq (cons-atom (cons-atom fold-one (cons-atom mm-label ())) (cons-atom (cons-atom fold-seq (cons-atom (cons-atom fold-plus (cons-atom mm-symbol ())) (cons-atom (cons-atom fold-seq (cons-atom (cons-atom fold-star (cons-atom mm-proof-step ())) (cons-atom (cons-atom fold-plus (cons-atom mm-compressed-word ())) ()))) ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-fold-node (cons statement_theorem_compressed (cons mm-check-theorem-compressed (cons (cons fold-seq (cons (cons fold-one (cons mm-label ())) (cons (cons fold-seq (cons (cons fold-plus (cons mm-symbol ())) (cons (cons fold-seq (cons (cons fold-star (cons mm-proof-step ())) (cons (cons fold-plus (cons mm-compressed-word ())) ()))) ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-fold-node statement_theorem_compressed mm-check-theorem-compressed (fold-seq (fold-one mm-label) (fold-seq (fold-plus mm-symbol) (fold-seq (fold-star mm-proof-step) (fold-plus mm-compressed-word))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=36 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-node-include target=relation
 (= (gslt:source-fold-node $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-node (cons-atom statement_include (cons-atom mm-resolve-include (cons-atom (cons-atom fold-one (cons-atom mm-include-path ())) ())))) $__gslt_input_v1_0_0
+   (let (cons source-fold-node (cons statement_include (cons mm-resolve-include (cons (cons fold-one (cons mm-include-path ())) ())))) $__gslt_input_v1_0_0
    (quote (source-fold-node statement_include mm-resolve-include (fold-one mm-include-path)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=37 source-presentation=MetamathSyntaxFoldV1 source-rule=mm-fold-node-block target=relation
 (= (gslt:source-fold-node $__gslt_input_v1_0_0)
-   (let (cons-atom source-fold-node (cons-atom statement_block (cons-atom mm-complete-block (cons-atom fold-none ())))) $__gslt_input_v1_0_0
+   (let (cons source-fold-node (cons statement_block (cons mm-complete-block (cons fold-none ())))) $__gslt_input_v1_0_0
    (quote (source-fold-node statement_block mm-complete-block fold-none))))
 
 ; gslt-lowered-equation-v1 source-rewrite=38 source-presentation=RelationalStateProgramCoreV1 source-rule=state-table-shape-1-1 target=relation
 (= (gslt:source-state-table-shape $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table-shape (cons-atom 1 (cons-atom 1 ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-table-shape (cons 1 (cons 1 ()))) $__gslt_input_v1_0_0
    (quote (source-state-table-shape 1 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=39 source-presentation=RelationalStateProgramCoreV1 source-rule=state-table-shape-2-1 target=relation
 (= (gslt:source-state-table-shape $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table-shape (cons-atom 2 (cons-atom 1 ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-table-shape (cons 2 (cons 1 ()))) $__gslt_input_v1_0_0
    (quote (source-state-table-shape 2 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=40 source-presentation=RelationalStateProgramCoreV1 source-rule=state-table-shape-2-2 target=relation
 (= (gslt:source-state-table-shape $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table-shape (cons-atom 2 (cons-atom 2 ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-table-shape (cons 2 (cons 2 ()))) $__gslt_input_v1_0_0
    (quote (source-state-table-shape 2 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=41 source-presentation=RelationalStateProgramCoreV1 source-rule=state-table-shape-3-1 target=relation
 (= (gslt:source-state-table-shape $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table-shape (cons-atom 3 (cons-atom 1 ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-table-shape (cons 3 (cons 1 ()))) $__gslt_input_v1_0_0
    (quote (source-state-table-shape 3 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=42 source-presentation=RelationalStateProgramCoreV1 source-rule=state-table-shape-3-2 target=relation
 (= (gslt:source-state-table-shape $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table-shape (cons-atom 3 (cons-atom 2 ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-table-shape (cons 3 (cons 2 ()))) $__gslt_input_v1_0_0
    (quote (source-state-table-shape 3 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=43 source-presentation=RelationalStateProgramCoreV1 source-rule=state-table-shape-3-3 target=relation
 (= (gslt:source-state-table-shape $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table-shape (cons-atom 3 (cons-atom 3 ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-table-shape (cons 3 (cons 3 ()))) $__gslt_input_v1_0_0
    (quote (source-state-table-shape 3 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=44 source-presentation=RelationalStateProgramCoreV1 source-rule=state-table-shape-4-1 target=relation
 (= (gslt:source-state-table-shape $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table-shape (cons-atom 4 (cons-atom 1 ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-table-shape (cons 4 (cons 1 ()))) $__gslt_input_v1_0_0
    (quote (source-state-table-shape 4 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=45 source-presentation=RelationalStateProgramCoreV1 source-rule=state-table-shape-4-2 target=relation
 (= (gslt:source-state-table-shape $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table-shape (cons-atom 4 (cons-atom 2 ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-table-shape (cons 4 (cons 2 ()))) $__gslt_input_v1_0_0
    (quote (source-state-table-shape 4 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=46 source-presentation=RelationalStateProgramCoreV1 source-rule=state-table-shape-4-3 target=relation
 (= (gslt:source-state-table-shape $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table-shape (cons-atom 4 (cons-atom 3 ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-table-shape (cons 4 (cons 3 ()))) $__gslt_input_v1_0_0
    (quote (source-state-table-shape 4 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=47 source-presentation=RelationalStateProgramCoreV1 source-rule=state-table-shape-4-4 target=relation
 (= (gslt:source-state-table-shape $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table-shape (cons-atom 4 (cons-atom 4 ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-table-shape (cons 4 (cons 4 ()))) $__gslt_input_v1_0_0
    (quote (source-state-table-shape 4 4))))
 
 ; gslt-lowered-equation-v1 source-rewrite=48 source-presentation=RelationalStateProgramCoreV1 source-rule=state-row-length-step-0-1 target=relation
 (= (gslt:state-row-length-step $__gslt_input_v1_0_0)
-   (let (cons-atom state-row-length-step (cons-atom 0 (cons-atom 1 ()))) $__gslt_input_v1_0_0
+   (let (cons state-row-length-step (cons 0 (cons 1 ()))) $__gslt_input_v1_0_0
    (quote (state-row-length-step 0 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=49 source-presentation=RelationalStateProgramCoreV1 source-rule=state-row-length-step-1-2 target=relation
 (= (gslt:state-row-length-step $__gslt_input_v1_0_0)
-   (let (cons-atom state-row-length-step (cons-atom 1 (cons-atom 2 ()))) $__gslt_input_v1_0_0
+   (let (cons state-row-length-step (cons 1 (cons 2 ()))) $__gslt_input_v1_0_0
    (quote (state-row-length-step 1 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=50 source-presentation=RelationalStateProgramCoreV1 source-rule=state-row-length-step-2-3 target=relation
 (= (gslt:state-row-length-step $__gslt_input_v1_0_0)
-   (let (cons-atom state-row-length-step (cons-atom 2 (cons-atom 3 ()))) $__gslt_input_v1_0_0
+   (let (cons state-row-length-step (cons 2 (cons 3 ()))) $__gslt_input_v1_0_0
    (quote (state-row-length-step 2 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=51 source-presentation=RelationalStateProgramCoreV1 source-rule=state-row-length-step-3-4 target=relation
 (= (gslt:state-row-length-step $__gslt_input_v1_0_0)
-   (let (cons-atom state-row-length-step (cons-atom 3 (cons-atom 4 ()))) $__gslt_input_v1_0_0
+   (let (cons state-row-length-step (cons 3 (cons 4 ()))) $__gslt_input_v1_0_0
    (quote (state-row-length-step 3 4))))
 
 ; gslt-lowered-equation-v1 source-rewrite=52 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-one target=relation
 (= (gslt:fold-contract-role $__gslt_input_v1_0_0)
-   (let (cons-atom fold-contract-role (cons-atom (cons-atom fold-one (cons-atom $role ())) (cons-atom $role ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
+   (let (cons fold-contract-role (cons (cons fold-one (cons $role ())) (cons $role ()))) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
    (quote (fold-contract-role (fold-one $role) $role)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=53 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-plus target=relation
 (= (gslt:fold-contract-role $__gslt_input_v1_0_0)
-   (let (cons-atom fold-contract-role (cons-atom (cons-atom fold-plus (cons-atom $role ())) (cons-atom $role ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
+   (let (cons fold-contract-role (cons (cons fold-plus (cons $role ())) (cons $role ()))) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
    (quote (fold-contract-role (fold-plus $role) $role)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=54 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-star target=relation
 (= (gslt:fold-contract-role $__gslt_input_v1_0_0)
-   (let (cons-atom fold-contract-role (cons-atom (cons-atom fold-star (cons-atom $role ())) (cons-atom $role ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
+   (let (cons fold-contract-role (cons (cons fold-star (cons $role ())) (cons $role ()))) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
    (quote (fold-contract-role (fold-star $role) $role)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=55 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-seq-left target=relation
 (= (gslt:fold-contract-role $__gslt_input_v1_0_0)
-   (let (cons-atom fold-contract-role (cons-atom (cons-atom fold-seq (cons-atom $left (cons-atom $right ()))) (cons-atom $role ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:fold-contract-role:00 $left $role) (superpose (collapse (gslt:mode:fold-contract-role:00)))
+   (let (cons fold-contract-role (cons (cons fold-seq (cons $left (cons $right ()))) (cons $role ()))) $__gslt_input_v1_0_0
+   (let (cons fold-contract-role (cons $left (cons $role ()))) (gslt:fold-contract-role (fold-contract-role $left $role))
    (quote (fold-contract-role (fold-seq $left $right) $role)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=56 source-presentation=RelationalStateProgramCoreV1 source-rule=state-fold-contract-role-seq-right target=relation
 (= (gslt:fold-contract-role $__gslt_input_v1_0_0)
-   (let (cons-atom fold-contract-role (cons-atom (cons-atom fold-seq (cons-atom $left (cons-atom $right ()))) (cons-atom $role ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:fold-contract-role:00 $right $role) (superpose (collapse (gslt:mode:fold-contract-role:00)))
+   (let (cons fold-contract-role (cons (cons fold-seq (cons $left (cons $right ()))) (cons $role ()))) $__gslt_input_v1_0_0
+   (let (cons fold-contract-role (cons $right (cons $role ()))) (gslt:fold-contract-role (fold-contract-role $right $role))
    (quote (fold-contract-role (fold-seq $left $right) $role)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=57 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-from-node target=relation
 (= (gslt:source-state-operation $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-operation (cons-atom $operation ())) $__gslt_input_v1_0_0
-   (let (gslt:result:source-fold-node:000 $node $operation $contract) (superpose (collapse (gslt:mode:source-fold-node:000)))
+   (let (cons source-state-operation (cons $operation ())) $__gslt_input_v1_0_0
+   (let (cons source-fold-node (cons $node (cons $operation (cons $contract ())))) (gslt:source-fold-node (source-fold-node $node $operation $contract))
    (quote (source-state-operation $operation)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=58 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-from-shift target=relation
 (= (gslt:source-state-operation $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-operation (cons-atom $operation ())) $__gslt_input_v1_0_0
-   (let (gslt:result:source-fold-shift:00 $role $operation) (superpose (collapse (gslt:mode:source-fold-shift:00)))
+   (let (cons source-state-operation (cons $operation ())) $__gslt_input_v1_0_0
+   (let (cons source-fold-shift (cons $role (cons $operation ()))) (gslt:source-fold-shift (source-fold-shift $role $operation))
    (quote (source-state-operation $operation)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=59 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-role-from-node target=relation
 (= (gslt:source-state-operation-role $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-operation-role (cons-atom $operation (cons-atom $role ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-fold-node:000 $node $operation $contract) (superpose (collapse (gslt:mode:source-fold-node:000)))
-   (let (gslt:result:fold-contract-role:10 $role) (superpose (collapse (gslt:mode:fold-contract-role:10 $contract)))
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) $__gslt_input_v1_0_0
+   (let (cons source-fold-node (cons $node (cons $operation (cons $contract ())))) (gslt:source-fold-node (source-fold-node $node $operation $contract))
+   (let (cons fold-contract-role (cons $contract (cons $role ()))) (gslt:fold-contract-role (fold-contract-role $contract $role))
    (quote (source-state-operation-role $operation $role))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=60 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-role-from-shift target=relation
 (= (gslt:source-state-operation-role $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-operation-role (cons-atom $operation (cons-atom $role ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-fold-shift:00 $role $operation) (superpose (collapse (gslt:mode:source-fold-shift:00)))
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) $__gslt_input_v1_0_0
+   (let (cons source-fold-shift (cons $role (cons $operation ()))) (gslt:source-fold-shift (source-fold-shift $role $operation))
    (quote (source-state-operation-role $operation $role)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=61 source-presentation=RelationalStateProgramCoreV1 source-rule=state-completed-source-policy-skip target=relation
 (= (gslt:source-state-completed-source-policy $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-completed-source-policy (cons-atom state-skip-completed-source-v1 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-completed-source-policy (cons state-skip-completed-source-v1 ())) $__gslt_input_v1_0_0
    (quote (source-state-completed-source-policy state-skip-completed-source-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=62 source-presentation=RelationalStateProgramCoreV1 source-rule=state-completed-source-policy-reject target=relation
 (= (gslt:source-state-completed-source-policy $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-completed-source-policy (cons-atom state-reject-completed-source-v1 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-completed-source-policy (cons state-reject-completed-source-v1 ())) $__gslt_input_v1_0_0
    (quote (source-state-completed-source-policy state-reject-completed-source-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=63 source-presentation=RelationalStateProgramCoreV1 source-rule=state-active-source-policy-skip target=relation
 (= (gslt:source-state-active-source-policy $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-active-source-policy (cons-atom state-skip-active-source-v1 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-active-source-policy (cons state-skip-active-source-v1 ())) $__gslt_input_v1_0_0
    (quote (source-state-active-source-policy state-skip-active-source-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=64 source-presentation=RelationalStateProgramCoreV1 source-rule=state-active-source-policy-reject target=relation
 (= (gslt:source-state-active-source-policy $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-active-source-policy (cons-atom state-reject-active-source-v1 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-active-source-policy (cons state-reject-active-source-v1 ())) $__gslt_input_v1_0_0
    (quote (source-state-active-source-policy state-reject-active-source-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=65 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operand-valid-input target=relation
 (= (gslt:state-operand-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-operand-valid (cons-atom $role (cons-atom state-input-v1 ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
+   (let (cons state-operand-valid (cons $role (cons state-input-v1 ()))) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
    (quote (state-operand-valid $role state-input-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=66 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operand-valid-literal target=relation
 (= (gslt:state-operand-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-operand-valid (cons-atom $role (cons-atom (cons-atom state-literal-v1 (cons-atom $literal ())) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
-   (let (gslt:result:source-state-literal:0 $literal) (superpose (collapse (gslt:mode:source-state-literal:0)))
+   (let (cons state-operand-valid (cons $role (cons (cons state-literal-v1 (cons $literal ())) ()))) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
+   (let (cons gslt:result:source-state-literal:0 (cons $literal ())) (superpose (collapse (gslt:mode:source-state-literal:0)))
    (quote (state-operand-valid $role (state-literal-v1 $literal)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=67 source-presentation=RelationalStateProgramCoreV1 source-rule=state-row-valid-empty target=relation
 (= (gslt:state-row-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-row-valid (cons-atom $role (cons-atom state-row-nil-v1 (cons-atom 0 ())))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-fold-role:0 $role) (superpose (collapse (gslt:mode:source-fold-role:0)))
+   (let (cons state-row-valid (cons $role (cons state-row-nil-v1 (cons 0 ())))) $__gslt_input_v1_0_0
+   (let (cons source-fold-role (cons $role ())) (gslt:source-fold-role (source-fold-role $role))
    (quote (state-row-valid $role state-row-nil-v1 0)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=68 source-presentation=RelationalStateProgramCoreV1 source-rule=state-row-valid-cons target=relation
 (= (gslt:state-row-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-row-valid (cons-atom $role (cons-atom (cons-atom state-row-cons-v1 (cons-atom $operand (cons-atom $rest ()))) (cons-atom $next-length ())))) $__gslt_input_v1_0_0
-   (let (gslt:result:state-operand-valid:00 $role $operand) (superpose (collapse (gslt:mode:state-operand-valid:00)))
-   (let (gslt:result:state-row-valid:100 $rest $length) (superpose (collapse (gslt:mode:state-row-valid:100 $role)))
-   (let (gslt:result:state-row-length-step:10 $next-length) (once (gslt:fn:state-row-length-step:10 $length))
+   (let (cons state-row-valid (cons $role (cons (cons state-row-cons-v1 (cons $operand (cons $rest ()))) (cons $next-length ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:state-operand-valid:00 (cons $role (cons $operand ()))) (superpose (collapse (gslt:mode:state-operand-valid:00)))
+   (let (cons gslt:result:state-row-valid:100 (cons $rest (cons $length ()))) (superpose (collapse (gslt:mode:state-row-valid:100 $role)))
+   (let (cons gslt:result:state-row-length-step:10 (cons $next-length ())) (once (gslt:fn:state-row-length-step:10 $length))
    (quote (state-row-valid $role (state-row-cons-v1 $operand $rest) $next-length)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=69 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-operand-valid-role-at target=relation
 (= (gslt:state-operation-operand-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-operation-operand-valid (cons-atom $operation (cons-atom (cons-atom state-role-at-v1 (cons-atom $role (cons-atom $index ()))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation-role:00 $operation $role) (superpose (collapse (gslt:mode:source-state-operation-role:00)))
-   (let (gslt:result:source-state-index:0 $index) (superpose (collapse (gslt:mode:source-state-index:0)))
+   (let (cons state-operation-operand-valid (cons $operation (cons (cons state-role-at-v1 (cons $role (cons $index ()))) ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
+   (let (cons gslt:result:source-state-index:0 (cons $index ())) (superpose (collapse (gslt:mode:source-state-index:0)))
    (quote (state-operation-operand-valid $operation (state-role-at-v1 $role $index)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=70 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-operand-valid-role-list target=relation
 (= (gslt:state-operation-operand-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-operation-operand-valid (cons-atom $operation (cons-atom (cons-atom state-role-list-v1 (cons-atom $role (cons-atom $index ()))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation-role:00 $operation $role) (superpose (collapse (gslt:mode:source-state-operation-role:00)))
-   (let (gslt:result:source-state-index:0 $index) (superpose (collapse (gslt:mode:source-state-index:0)))
+   (let (cons state-operation-operand-valid (cons $operation (cons (cons state-role-list-v1 (cons $role (cons $index ()))) ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
+   (let (cons gslt:result:source-state-index:0 (cons $index ())) (superpose (collapse (gslt:mode:source-state-index:0)))
    (quote (state-operation-operand-valid $operation (state-role-list-v1 $role $index)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=71 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-operand-valid-input target=relation
 (= (gslt:state-operation-operand-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-operation-operand-valid (cons-atom $operation (cons-atom state-input-v1 ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
+   (let (cons state-operation-operand-valid (cons $operation (cons state-input-v1 ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
    (quote (state-operation-operand-valid $operation state-input-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=72 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-operand-valid-literal target=relation
 (= (gslt:state-operation-operand-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-operation-operand-valid (cons-atom $operation (cons-atom (cons-atom state-literal-v1 (cons-atom $literal ())) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
-   (let (gslt:result:source-state-literal:0 $literal) (superpose (collapse (gslt:mode:source-state-literal:0)))
+   (let (cons state-operation-operand-valid (cons $operation (cons (cons state-literal-v1 (cons $literal ())) ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons gslt:result:source-state-literal:0 (cons $literal ())) (superpose (collapse (gslt:mode:source-state-literal:0)))
    (quote (state-operation-operand-valid $operation (state-literal-v1 $literal)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=73 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-row-valid-empty target=relation
 (= (gslt:state-operation-row-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-operation-row-valid (cons-atom $operation (cons-atom state-row-nil-v1 (cons-atom 0 ())))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
+   (let (cons state-operation-row-valid (cons $operation (cons state-row-nil-v1 (cons 0 ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
    (quote (state-operation-row-valid $operation state-row-nil-v1 0)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=74 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-row-valid-cons target=relation
 (= (gslt:state-operation-row-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-operation-row-valid (cons-atom $operation (cons-atom (cons-atom state-row-cons-v1 (cons-atom $operand (cons-atom $rest ()))) (cons-atom $next-length ())))) $__gslt_input_v1_0_0
-   (let (gslt:result:state-operation-operand-valid:00 $operation $operand) (superpose (collapse (gslt:mode:state-operation-operand-valid:00)))
-   (let (gslt:result:state-operation-row-valid:100 $rest $length) (superpose (collapse (gslt:mode:state-operation-row-valid:100 $operation)))
-   (let (gslt:result:state-row-length-step:10 $next-length) (once (gslt:fn:state-row-length-step:10 $length))
+   (let (cons state-operation-row-valid (cons $operation (cons (cons state-row-cons-v1 (cons $operand (cons $rest ()))) (cons $next-length ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:state-operation-operand-valid:00 (cons $operation (cons $operand ()))) (superpose (collapse (gslt:mode:state-operation-operand-valid:00)))
+   (let (cons gslt:result:state-operation-row-valid:100 (cons $rest (cons $length ()))) (superpose (collapse (gslt:mode:state-operation-row-valid:100 $operation)))
+   (let (cons gslt:result:state-row-length-step:10 (cons $next-length ())) (once (gslt:fn:state-row-length-step:10 $length))
    (quote (state-operation-row-valid $operation (state-row-cons-v1 $operand $rest) $next-length)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=75 source-presentation=RelationalStateProgramCoreV1 source-rule=state-source-column-valid-1-0 target=relation
 (= (gslt:state-source-column-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-source-column-valid (cons-atom 1 (cons-atom 0 ()))) $__gslt_input_v1_0_0
+   (let (cons state-source-column-valid (cons 1 (cons 0 ()))) $__gslt_input_v1_0_0
    (quote (state-source-column-valid 1 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=76 source-presentation=RelationalStateProgramCoreV1 source-rule=state-source-column-valid-2-0 target=relation
 (= (gslt:state-source-column-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-source-column-valid (cons-atom 2 (cons-atom 0 ()))) $__gslt_input_v1_0_0
+   (let (cons state-source-column-valid (cons 2 (cons 0 ()))) $__gslt_input_v1_0_0
    (quote (state-source-column-valid 2 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=77 source-presentation=RelationalStateProgramCoreV1 source-rule=state-source-column-valid-2-1 target=relation
 (= (gslt:state-source-column-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-source-column-valid (cons-atom 2 (cons-atom 1 ()))) $__gslt_input_v1_0_0
+   (let (cons state-source-column-valid (cons 2 (cons 1 ()))) $__gslt_input_v1_0_0
    (quote (state-source-column-valid 2 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=78 source-presentation=RelationalStateProgramCoreV1 source-rule=state-source-column-valid-3-0 target=relation
 (= (gslt:state-source-column-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-source-column-valid (cons-atom 3 (cons-atom 0 ()))) $__gslt_input_v1_0_0
+   (let (cons state-source-column-valid (cons 3 (cons 0 ()))) $__gslt_input_v1_0_0
    (quote (state-source-column-valid 3 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=79 source-presentation=RelationalStateProgramCoreV1 source-rule=state-source-column-valid-3-1 target=relation
 (= (gslt:state-source-column-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-source-column-valid (cons-atom 3 (cons-atom 1 ()))) $__gslt_input_v1_0_0
+   (let (cons state-source-column-valid (cons 3 (cons 1 ()))) $__gslt_input_v1_0_0
    (quote (state-source-column-valid 3 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=80 source-presentation=RelationalStateProgramCoreV1 source-rule=state-source-column-valid-3-2 target=relation
 (= (gslt:state-source-column-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-source-column-valid (cons-atom 3 (cons-atom 2 ()))) $__gslt_input_v1_0_0
+   (let (cons state-source-column-valid (cons 3 (cons 2 ()))) $__gslt_input_v1_0_0
    (quote (state-source-column-valid 3 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=81 source-presentation=RelationalStateProgramCoreV1 source-rule=state-source-column-valid-4-0 target=relation
 (= (gslt:state-source-column-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-source-column-valid (cons-atom 4 (cons-atom 0 ()))) $__gslt_input_v1_0_0
+   (let (cons state-source-column-valid (cons 4 (cons 0 ()))) $__gslt_input_v1_0_0
    (quote (state-source-column-valid 4 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=82 source-presentation=RelationalStateProgramCoreV1 source-rule=state-source-column-valid-4-1 target=relation
 (= (gslt:state-source-column-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-source-column-valid (cons-atom 4 (cons-atom 1 ()))) $__gslt_input_v1_0_0
+   (let (cons state-source-column-valid (cons 4 (cons 1 ()))) $__gslt_input_v1_0_0
    (quote (state-source-column-valid 4 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=83 source-presentation=RelationalStateProgramCoreV1 source-rule=state-source-column-valid-4-2 target=relation
 (= (gslt:state-source-column-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-source-column-valid (cons-atom 4 (cons-atom 2 ()))) $__gslt_input_v1_0_0
+   (let (cons state-source-column-valid (cons 4 (cons 2 ()))) $__gslt_input_v1_0_0
    (quote (state-source-column-valid 4 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=84 source-presentation=RelationalStateProgramCoreV1 source-rule=state-source-column-valid-4-3 target=relation
 (= (gslt:state-source-column-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-source-column-valid (cons-atom 4 (cons-atom 3 ()))) $__gslt_input_v1_0_0
+   (let (cons state-source-column-valid (cons 4 (cons 3 ()))) $__gslt_input_v1_0_0
    (quote (state-source-column-valid 4 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=85 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-operand-valid-operation target=relation
 (= (gslt:state-copy-operand-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-copy-operand-valid (cons-atom $operation (cons-atom $source-arity (cons-atom $operand ())))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-table-shape:00 $source-arity $source-key-arity) (superpose (collapse (gslt:mode:source-state-table-shape:00)))
-   (let (gslt:result:state-operation-operand-valid:00 $operation $operand) (superpose (collapse (gslt:mode:state-operation-operand-valid:00)))
+   (let (cons state-copy-operand-valid (cons $operation (cons $source-arity (cons $operand ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-table-shape (cons $source-arity (cons $source-key-arity ()))) (gslt:source-state-table-shape (source-state-table-shape $source-arity $source-key-arity))
+   (let (cons gslt:result:state-operation-operand-valid:00 (cons $operation (cons $operand ()))) (superpose (collapse (gslt:mode:state-operation-operand-valid:00)))
    (quote (state-copy-operand-valid $operation $source-arity $operand))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=86 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-operand-valid-source-column target=relation
 (= (gslt:state-copy-operand-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-copy-operand-valid (cons-atom $operation (cons-atom $source-arity (cons-atom (cons-atom state-source-column-v1 (cons-atom $column ())) ())))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
-   (let (gslt:result:state-source-column-valid:00 $source-arity $column) (superpose (collapse (gslt:mode:state-source-column-valid:00)))
+   (let (cons state-copy-operand-valid (cons $operation (cons $source-arity (cons (cons state-source-column-v1 (cons $column ())) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons state-source-column-valid (cons $source-arity (cons $column ()))) (gslt:state-source-column-valid (state-source-column-valid $source-arity $column))
    (quote (state-copy-operand-valid $operation $source-arity (state-source-column-v1 $column)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=87 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-operand-valid-source-row-index target=relation
 (= (gslt:state-copy-operand-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-copy-operand-valid (cons-atom $operation (cons-atom $source-arity (cons-atom state-source-row-index-v1 ())))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
-   (let (gslt:result:source-state-table-shape:00 $source-arity $source-key-arity) (superpose (collapse (gslt:mode:source-state-table-shape:00)))
+   (let (cons state-copy-operand-valid (cons $operation (cons $source-arity (cons state-source-row-index-v1 ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons source-state-table-shape (cons $source-arity (cons $source-key-arity ()))) (gslt:source-state-table-shape (source-state-table-shape $source-arity $source-key-arity))
    (quote (state-copy-operand-valid $operation $source-arity state-source-row-index-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=88 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-operand-valid-source-match-index target=relation
 (= (gslt:state-copy-operand-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-copy-operand-valid (cons-atom $operation (cons-atom $source-arity (cons-atom state-source-match-index-v1 ())))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
-   (let (gslt:result:source-state-table-shape:00 $source-arity $source-key-arity) (superpose (collapse (gslt:mode:source-state-table-shape:00)))
+   (let (cons state-copy-operand-valid (cons $operation (cons $source-arity (cons state-source-match-index-v1 ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons source-state-table-shape (cons $source-arity (cons $source-key-arity ()))) (gslt:source-state-table-shape (source-state-table-shape $source-arity $source-key-arity))
    (quote (state-copy-operand-valid $operation $source-arity state-source-match-index-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=89 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-row-valid-empty target=relation
 (= (gslt:state-copy-row-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-copy-row-valid (cons-atom $operation (cons-atom $source-arity (cons-atom state-row-nil-v1 (cons-atom 0 ()))))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
-   (let (gslt:result:source-state-table-shape:00 $source-arity $source-key-arity) (superpose (collapse (gslt:mode:source-state-table-shape:00)))
+   (let (cons state-copy-row-valid (cons $operation (cons $source-arity (cons state-row-nil-v1 (cons 0 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons source-state-table-shape (cons $source-arity (cons $source-key-arity ()))) (gslt:source-state-table-shape (source-state-table-shape $source-arity $source-key-arity))
    (quote (state-copy-row-valid $operation $source-arity state-row-nil-v1 0))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=90 source-presentation=RelationalStateProgramCoreV1 source-rule=state-copy-row-valid-cons target=relation
 (= (gslt:state-copy-row-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-copy-row-valid (cons-atom $operation (cons-atom $source-arity (cons-atom (cons-atom state-row-cons-v1 (cons-atom $operand (cons-atom $rest ()))) (cons-atom $next-length ()))))) $__gslt_input_v1_0_0
-   (let (gslt:result:state-copy-operand-valid:000 $operation $source-arity $operand) (superpose (collapse (gslt:mode:state-copy-operand-valid:000)))
-   (let (gslt:result:state-copy-row-valid:1100 $rest $length) (superpose (collapse (gslt:mode:state-copy-row-valid:1100 $operation $source-arity)))
-   (let (gslt:result:state-row-length-step:10 $next-length) (once (gslt:fn:state-row-length-step:10 $length))
+   (let (cons state-copy-row-valid (cons $operation (cons $source-arity (cons (cons state-row-cons-v1 (cons $operand (cons $rest ()))) (cons $next-length ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:state-copy-operand-valid:000 (cons $operation (cons $source-arity (cons $operand ())))) (superpose (collapse (gslt:mode:state-copy-operand-valid:000)))
+   (let (cons gslt:result:state-copy-row-valid:1100 (cons $rest (cons $length ()))) (superpose (collapse (gslt:mode:state-copy-row-valid:1100 $operation $source-arity)))
+   (let (cons gslt:result:state-row-length-step:10 (cons $next-length ())) (once (gslt:fn:state-row-length-step:10 $length))
    (quote (state-copy-row-valid $operation $source-arity (state-row-cons-v1 $operand $rest) $next-length)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=91 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-require-depth target=relation
 (= (gslt:state-action-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-action-valid (cons-atom $operation (cons-atom (cons-atom state-require-depth-v1 (cons-atom $depth ())) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
-   (let (gslt:result:source-state-depth:0 $depth) (once (gslt:fn:source-state-depth:0))
+   (let (cons state-action-valid (cons $operation (cons (cons state-require-depth-v1 (cons $depth ())) ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons gslt:result:source-state-depth:0 (cons $depth ())) (once (gslt:fn:source-state-depth:0))
    (quote (state-action-valid $operation (state-require-depth-v1 $depth)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=92 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-push-scope target=relation
 (= (gslt:state-action-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-action-valid (cons-atom $operation (cons-atom state-push-scope-v1 ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
+   (let (cons state-action-valid (cons $operation (cons state-push-scope-v1 ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
    (quote (state-action-valid $operation state-push-scope-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=93 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-pop-scope target=relation
 (= (gslt:state-action-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-action-valid (cons-atom $operation (cons-atom state-pop-scope-v1 ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
+   (let (cons state-action-valid (cons $operation (cons state-pop-scope-v1 ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
    (quote (state-action-valid $operation state-pop-scope-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=94 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-noop target=relation
 (= (gslt:state-action-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-action-valid (cons-atom $operation (cons-atom state-noop-v1 ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
+   (let (cons state-action-valid (cons $operation (cons state-noop-v1 ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
    (quote (state-action-valid $operation state-noop-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=95 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-resolve-source target=relation
 (= (gslt:state-action-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-action-valid (cons-atom $operation (cons-atom (cons-atom state-resolve-source-v1 (cons-atom $role (cons-atom $completed-policy (cons-atom $active-policy ())))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation-role:00 $operation $role) (superpose (collapse (gslt:mode:source-state-operation-role:00)))
-   (let (gslt:result:source-state-completed-source-policy:0 $completed-policy) (superpose (collapse (gslt:mode:source-state-completed-source-policy:0)))
-   (let (gslt:result:source-state-active-source-policy:0 $active-policy) (superpose (collapse (gslt:mode:source-state-active-source-policy:0)))
+   (let (cons state-action-valid (cons $operation (cons (cons state-resolve-source-v1 (cons $role (cons $completed-policy (cons $active-policy ())))) ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
+   (let (cons source-state-completed-source-policy (cons $completed-policy ())) (gslt:source-state-completed-source-policy (source-state-completed-source-policy $completed-policy))
+   (let (cons source-state-active-source-policy (cons $active-policy ())) (gslt:source-state-active-source-policy (source-state-active-source-policy $active-policy))
    (quote (state-action-valid $operation (state-resolve-source-v1 $role $completed-policy $active-policy))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=96 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-insert-each target=relation
 (= (gslt:state-action-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-action-valid (cons-atom $operation (cons-atom (cons-atom state-insert-each-v1 (cons-atom $role (cons-atom $table (cons-atom $write-policy (cons-atom $row ()))))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation-role:00 $operation $role) (superpose (collapse (gslt:mode:source-state-operation-role:00)))
-   (let (gslt:result:source-state-table:0000 $table $arity $key-arity $lifetime) (superpose (collapse (gslt:mode:source-state-table:0000)))
+   (let (cons state-action-valid (cons $operation (cons (cons state-insert-each-v1 (cons $role (cons $table (cons $write-policy (cons $row ()))))) ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
+   (let (cons gslt:result:source-state-table:0000 (cons $table (cons $arity (cons $key-arity (cons $lifetime ()))))) (superpose (collapse (gslt:mode:source-state-table:0000)))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $arity $key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $lifetime))
-   (let (gslt:result:source-state-write-policy:0 $write-policy) (superpose (collapse (gslt:mode:source-state-write-policy:0)))
-   (let (gslt:result:state-row-valid:101 $row) (superpose (collapse (gslt:mode:state-row-valid:101 $role $arity)))
+   (let (cons gslt:result:source-state-write-policy:0 (cons $write-policy ())) (superpose (collapse (gslt:mode:source-state-write-policy:0)))
+   (let (cons gslt:result:state-row-valid:101 (cons $row ())) (superpose (collapse (gslt:mode:state-row-valid:101 $role $arity)))
    (quote (state-action-valid $operation (state-insert-each-v1 $role $table $write-policy $row)))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=97 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-require-each target=relation
 (= (gslt:state-action-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-action-valid (cons-atom $operation (cons-atom (cons-atom state-require-each-v1 (cons-atom $role (cons-atom $table (cons-atom $row ())))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation-role:00 $operation $role) (superpose (collapse (gslt:mode:source-state-operation-role:00)))
-   (let (gslt:result:source-state-table:0000 $table $arity $key-arity $lifetime) (superpose (collapse (gslt:mode:source-state-table:0000)))
+   (let (cons state-action-valid (cons $operation (cons (cons state-require-each-v1 (cons $role (cons $table (cons $row ())))) ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
+   (let (cons gslt:result:source-state-table:0000 (cons $table (cons $arity (cons $key-arity (cons $lifetime ()))))) (superpose (collapse (gslt:mode:source-state-table:0000)))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $arity $key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $lifetime))
-   (let (gslt:result:state-row-valid:101 $row) (superpose (collapse (gslt:mode:state-row-valid:101 $role $arity)))
+   (let (cons gslt:result:state-row-valid:101 (cons $row ())) (superpose (collapse (gslt:mode:state-row-valid:101 $role $arity)))
    (quote (state-action-valid $operation (state-require-each-v1 $role $table $row))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=98 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-require-each-key-absent target=relation
 (= (gslt:state-action-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-action-valid (cons-atom $operation (cons-atom (cons-atom state-require-each-key-absent-v1 (cons-atom $role (cons-atom $table (cons-atom $row ())))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation-role:00 $operation $role) (superpose (collapse (gslt:mode:source-state-operation-role:00)))
-   (let (gslt:result:source-state-table:0000 $table $arity $key-arity $lifetime) (superpose (collapse (gslt:mode:source-state-table:0000)))
+   (let (cons state-action-valid (cons $operation (cons (cons state-require-each-key-absent-v1 (cons $role (cons $table (cons $row ())))) ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
+   (let (cons gslt:result:source-state-table:0000 (cons $table (cons $arity (cons $key-arity (cons $lifetime ()))))) (superpose (collapse (gslt:mode:source-state-table:0000)))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $arity $key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $lifetime))
-   (let (gslt:result:state-row-valid:101 $row) (superpose (collapse (gslt:mode:state-row-valid:101 $role $key-arity)))
+   (let (cons gslt:result:state-row-valid:101 (cons $row ())) (superpose (collapse (gslt:mode:state-row-valid:101 $role $key-arity)))
    (quote (state-action-valid $operation (state-require-each-key-absent-v1 $role $table $row))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=99 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-insert-unordered-pairs target=relation
 (= (gslt:state-action-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-action-valid (cons-atom $operation (cons-atom (cons-atom state-insert-unordered-pairs-v1 (cons-atom $role (cons-atom $table (cons-atom $write-policy ())))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation-role:00 $operation $role) (superpose (collapse (gslt:mode:source-state-operation-role:00)))
-   (let (gslt:result:source-state-table:0110 $table $lifetime) (superpose (collapse (gslt:mode:source-state-table:0110 2 2)))
+   (let (cons state-action-valid (cons $operation (cons (cons state-insert-unordered-pairs-v1 (cons $role (cons $table (cons $write-policy ())))) ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
+   (let (cons gslt:result:source-state-table:0110 (cons $table (cons $lifetime ()))) (superpose (collapse (gslt:mode:source-state-table:0110 2 2)))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $lifetime))
-   (let (gslt:result:source-state-write-policy:0 $write-policy) (superpose (collapse (gslt:mode:source-state-write-policy:0)))
+   (let (cons gslt:result:source-state-write-policy:0 (cons $write-policy ())) (superpose (collapse (gslt:mode:source-state-write-policy:0)))
    (quote (state-action-valid $operation (state-insert-unordered-pairs-v1 $role $table $write-policy)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=100 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-require-row target=relation
 (= (gslt:state-action-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-action-valid (cons-atom $operation (cons-atom (cons-atom state-require-row-v1 (cons-atom $table (cons-atom $row ()))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
-   (let (gslt:result:source-state-table:0000 $table $arity $key-arity $lifetime) (superpose (collapse (gslt:mode:source-state-table:0000)))
+   (let (cons state-action-valid (cons $operation (cons (cons state-require-row-v1 (cons $table (cons $row ()))) ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons gslt:result:source-state-table:0000 (cons $table (cons $arity (cons $key-arity (cons $lifetime ()))))) (superpose (collapse (gslt:mode:source-state-table:0000)))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $arity $key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $lifetime))
-   (let (gslt:result:state-operation-row-valid:101 $row) (superpose (collapse (gslt:mode:state-operation-row-valid:101 $operation $arity)))
+   (let (cons gslt:result:state-operation-row-valid:101 (cons $row ())) (superpose (collapse (gslt:mode:state-operation-row-valid:101 $operation $arity)))
    (quote (state-action-valid $operation (state-require-row-v1 $table $row))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=101 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-require-row-key-absent target=relation
 (= (gslt:state-action-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-action-valid (cons-atom $operation (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom $table (cons-atom $row ()))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
-   (let (gslt:result:source-state-table:0000 $table $arity $key-arity $lifetime) (superpose (collapse (gslt:mode:source-state-table:0000)))
+   (let (cons state-action-valid (cons $operation (cons (cons state-require-row-key-absent-v1 (cons $table (cons $row ()))) ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons gslt:result:source-state-table:0000 (cons $table (cons $arity (cons $key-arity (cons $lifetime ()))))) (superpose (collapse (gslt:mode:source-state-table:0000)))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $arity $key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $lifetime))
-   (let (gslt:result:state-operation-row-valid:101 $row) (superpose (collapse (gslt:mode:state-operation-row-valid:101 $operation $key-arity)))
+   (let (cons gslt:result:state-operation-row-valid:101 (cons $row ())) (superpose (collapse (gslt:mode:state-operation-row-valid:101 $operation $key-arity)))
    (quote (state-action-valid $operation (state-require-row-key-absent-v1 $table $row))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=102 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-insert-row target=relation
 (= (gslt:state-action-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-action-valid (cons-atom $operation (cons-atom (cons-atom state-insert-row-v1 (cons-atom $table (cons-atom $write-policy (cons-atom $row ())))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
-   (let (gslt:result:source-state-table:0000 $table $arity $key-arity $lifetime) (superpose (collapse (gslt:mode:source-state-table:0000)))
+   (let (cons state-action-valid (cons $operation (cons (cons state-insert-row-v1 (cons $table (cons $write-policy (cons $row ())))) ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons gslt:result:source-state-table:0000 (cons $table (cons $arity (cons $key-arity (cons $lifetime ()))))) (superpose (collapse (gslt:mode:source-state-table:0000)))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $arity $key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $lifetime))
-   (let (gslt:result:source-state-write-policy:0 $write-policy) (superpose (collapse (gslt:mode:source-state-write-policy:0)))
-   (let (gslt:result:state-operation-row-valid:101 $row) (superpose (collapse (gslt:mode:state-operation-row-valid:101 $operation $arity)))
+   (let (cons gslt:result:source-state-write-policy:0 (cons $write-policy ())) (superpose (collapse (gslt:mode:source-state-write-policy:0)))
+   (let (cons gslt:result:state-operation-row-valid:101 (cons $row ())) (superpose (collapse (gslt:mode:state-operation-row-valid:101 $operation $arity)))
    (quote (state-action-valid $operation (state-insert-row-v1 $table $write-policy $row)))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=103 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-insert-each-matching target=relation
 (= (gslt:state-action-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-action-valid (cons-atom $operation (cons-atom (cons-atom state-insert-each-matching-v1 (cons-atom $role (cons-atom $condition-table (cons-atom $condition-row (cons-atom $target-table (cons-atom $write-policy (cons-atom $target-row ()))))))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation-role:00 $operation $role) (superpose (collapse (gslt:mode:source-state-operation-role:00)))
-   (let (gslt:result:source-state-table:0000 $condition-table $condition-arity $condition-key-arity $condition-lifetime) (superpose (collapse (gslt:mode:source-state-table:0000)))
+   (let (cons state-action-valid (cons $operation (cons (cons state-insert-each-matching-v1 (cons $role (cons $condition-table (cons $condition-row (cons $target-table (cons $write-policy (cons $target-row ()))))))) ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation-role (cons $operation (cons $role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $role))
+   (let (cons gslt:result:source-state-table:0000 (cons $condition-table (cons $condition-arity (cons $condition-key-arity (cons $condition-lifetime ()))))) (superpose (collapse (gslt:mode:source-state-table:0000)))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $condition-arity $condition-key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $condition-lifetime))
-   (let (gslt:result:state-operation-row-valid:101 $condition-row) (superpose (collapse (gslt:mode:state-operation-row-valid:101 $operation $condition-arity)))
-   (let (gslt:result:source-state-table:0000 $target-table $target-arity $target-key-arity $target-lifetime) (superpose (collapse (gslt:mode:source-state-table:0000)))
+   (let (cons gslt:result:state-operation-row-valid:101 (cons $condition-row ())) (superpose (collapse (gslt:mode:state-operation-row-valid:101 $operation $condition-arity)))
+   (let (cons gslt:result:source-state-table:0000 (cons $target-table (cons $target-arity (cons $target-key-arity (cons $target-lifetime ()))))) (superpose (collapse (gslt:mode:source-state-table:0000)))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $target-arity $target-key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $target-lifetime))
-   (let (gslt:result:source-state-write-policy:0 $write-policy) (superpose (collapse (gslt:mode:source-state-write-policy:0)))
-   (let (gslt:result:state-operation-row-valid:101 $target-row) (superpose (collapse (gslt:mode:state-operation-row-valid:101 $operation $target-arity)))
+   (let (cons gslt:result:source-state-write-policy:0 (cons $write-policy ())) (superpose (collapse (gslt:mode:source-state-write-policy:0)))
+   (let (cons gslt:result:state-operation-row-valid:101 (cons $target-row ())) (superpose (collapse (gslt:mode:state-operation-row-valid:101 $operation $target-arity)))
    (quote (state-action-valid $operation (state-insert-each-matching-v1 $role $condition-table $condition-row $target-table $write-policy $target-row)))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=104 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-copy-each-row target=relation
 (= (gslt:state-action-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-action-valid (cons-atom $operation (cons-atom (cons-atom state-copy-each-row-v1 (cons-atom $source-table (cons-atom $target-table (cons-atom $write-policy (cons-atom $target-row ()))))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
-   (let (gslt:result:source-state-table:0000 $source-table $source-arity $source-key-arity $source-lifetime) (superpose (collapse (gslt:mode:source-state-table:0000)))
+   (let (cons state-action-valid (cons $operation (cons (cons state-copy-each-row-v1 (cons $source-table (cons $target-table (cons $write-policy (cons $target-row ()))))) ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons gslt:result:source-state-table:0000 (cons $source-table (cons $source-arity (cons $source-key-arity (cons $source-lifetime ()))))) (superpose (collapse (gslt:mode:source-state-table:0000)))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $source-arity $source-key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $source-lifetime))
-   (let (gslt:result:source-state-table:0000 $target-table $target-arity $target-key-arity $target-lifetime) (superpose (collapse (gslt:mode:source-state-table:0000)))
+   (let (cons gslt:result:source-state-table:0000 (cons $target-table (cons $target-arity (cons $target-key-arity (cons $target-lifetime ()))))) (superpose (collapse (gslt:mode:source-state-table:0000)))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $target-arity $target-key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $target-lifetime))
-   (let (gslt:result:source-state-write-policy:0 $write-policy) (superpose (collapse (gslt:mode:source-state-write-policy:0)))
-   (let (gslt:result:state-copy-row-valid:1101 $target-row) (superpose (collapse (gslt:mode:state-copy-row-valid:1101 $operation $source-arity $target-arity)))
+   (let (cons gslt:result:source-state-write-policy:0 (cons $write-policy ())) (superpose (collapse (gslt:mode:source-state-write-policy:0)))
+   (let (cons gslt:result:state-copy-row-valid:1101 (cons $target-row ())) (superpose (collapse (gslt:mode:state-copy-row-valid:1101 $operation $source-arity $target-arity)))
    (quote (state-action-valid $operation (state-copy-each-row-v1 $source-table $target-table $write-policy $target-row))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=105 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-copy-each-row-matching target=relation
 (= (gslt:state-action-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-action-valid (cons-atom $operation (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom $source-table (cons-atom $condition-table (cons-atom $condition-row (cons-atom $target-table (cons-atom $write-policy (cons-atom $target-row ()))))))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-operation:0 $operation) (superpose (collapse (gslt:mode:source-state-operation:0)))
-   (let (gslt:result:source-state-table:0000 $source-table $source-arity $source-key-arity $source-lifetime) (superpose (collapse (gslt:mode:source-state-table:0000)))
+   (let (cons state-action-valid (cons $operation (cons (cons state-copy-each-row-matching-v1 (cons $source-table (cons $condition-table (cons $condition-row (cons $target-table (cons $write-policy (cons $target-row ()))))))) ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-operation (cons $operation ())) (gslt:source-state-operation (source-state-operation $operation))
+   (let (cons gslt:result:source-state-table:0000 (cons $source-table (cons $source-arity (cons $source-key-arity (cons $source-lifetime ()))))) (superpose (collapse (gslt:mode:source-state-table:0000)))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $source-arity $source-key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $source-lifetime))
-   (let (gslt:result:source-state-table:0000 $condition-table $condition-arity $condition-key-arity $condition-lifetime) (superpose (collapse (gslt:mode:source-state-table:0000)))
+   (let (cons gslt:result:source-state-table:0000 (cons $condition-table (cons $condition-arity (cons $condition-key-arity (cons $condition-lifetime ()))))) (superpose (collapse (gslt:mode:source-state-table:0000)))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $condition-arity $condition-key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $condition-lifetime))
-   (let (gslt:result:state-copy-row-valid:1101 $condition-row) (superpose (collapse (gslt:mode:state-copy-row-valid:1101 $operation $source-arity $condition-arity)))
-   (let (gslt:result:source-state-table:0000 $target-table $target-arity $target-key-arity $target-lifetime) (superpose (collapse (gslt:mode:source-state-table:0000)))
+   (let (cons gslt:result:state-copy-row-valid:1101 (cons $condition-row ())) (superpose (collapse (gslt:mode:state-copy-row-valid:1101 $operation $source-arity $condition-arity)))
+   (let (cons gslt:result:source-state-table:0000 (cons $target-table (cons $target-arity (cons $target-key-arity (cons $target-lifetime ()))))) (superpose (collapse (gslt:mode:source-state-table:0000)))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $target-arity $target-key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $target-lifetime))
-   (let (gslt:result:source-state-write-policy:0 $write-policy) (superpose (collapse (gslt:mode:source-state-write-policy:0)))
-   (let (gslt:result:state-copy-row-valid:1101 $target-row) (superpose (collapse (gslt:mode:state-copy-row-valid:1101 $operation $source-arity $target-arity)))
+   (let (cons gslt:result:source-state-write-policy:0 (cons $write-policy ())) (superpose (collapse (gslt:mode:source-state-write-policy:0)))
+   (let (cons gslt:result:state-copy-row-valid:1101 (cons $target-row ())) (superpose (collapse (gslt:mode:state-copy-row-valid:1101 $operation $source-arity $target-arity)))
    (quote (state-action-valid $operation (state-copy-each-row-matching-v1 $source-table $condition-table $condition-row $target-table $write-policy $target-row))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=106 source-presentation=RelationalStateProgramCoreV1 source-rule=state-proof-machine-valid-stack target=relation
 (= (gslt:state-proof-machine-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-proof-machine-valid (cons-atom (cons-atom state-stack-proof-machine-v1 (cons-atom (cons-atom state-proof-tables-v1 (cons-atom $label-kind-table (cons-atom $formula-table (cons-atom $binder-variable-table (cons-atom $mandatory-variable-table (cons-atom $assertion-hypothesis-table (cons-atom $assertion-disjoint-table (cons-atom $active-hypothesis-table (cons-atom $active-disjoint-table (cons-atom $symbol-kind-table ())))))))))) (cons-atom (cons-atom state-proof-kinds-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom $binder-kind ())) (cons-atom (cons-atom state-literal-v1 (cons-atom $matching-kind ())) (cons-atom (cons-atom state-literal-v1 (cons-atom $rule-kind-first ())) (cons-atom (cons-atom state-literal-v1 (cons-atom $rule-kind-second ())) (cons-atom (cons-atom state-literal-v1 (cons-atom $variable-kind ())) (cons-atom (cons-atom state-byte-literal-v1 (cons-atom $unknown-token-byte ())) ()))))))) (cons-atom (cons-atom state-proof-decoder-v1 (cons-atom $terminal-low (cons-atom $terminal-high (cons-atom $continuation-low (cons-atom $continuation-high (cons-atom $save-byte (cons-atom $unknown-byte (cons-atom $terminal-radix (cons-atom $terminal-bias (cons-atom $continuation-radix (cons-atom $continuation-bias (cons-atom $unknown-policy (cons-atom $save-placement (cons-atom $header-policy ())))))))))))))) ())))) ())) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-table:0110 $label-kind-table $label-kind-life) (superpose (collapse (gslt:mode:source-state-table:0110 2 1)))
+   (let (cons state-proof-machine-valid (cons (cons state-stack-proof-machine-v1 (cons (cons state-proof-tables-v1 (cons $label-kind-table (cons $formula-table (cons $binder-variable-table (cons $mandatory-variable-table (cons $assertion-hypothesis-table (cons $assertion-disjoint-table (cons $active-hypothesis-table (cons $active-disjoint-table (cons $symbol-kind-table ())))))))))) (cons (cons state-proof-kinds-v1 (cons (cons state-literal-v1 (cons $binder-kind ())) (cons (cons state-literal-v1 (cons $matching-kind ())) (cons (cons state-literal-v1 (cons $rule-kind-first ())) (cons (cons state-literal-v1 (cons $rule-kind-second ())) (cons (cons state-literal-v1 (cons $variable-kind ())) (cons (cons state-byte-literal-v1 (cons $unknown-token-byte ())) ()))))))) (cons (cons state-proof-decoder-v1 (cons $terminal-low (cons $terminal-high (cons $continuation-low (cons $continuation-high (cons $save-byte (cons $unknown-byte (cons $terminal-radix (cons $terminal-bias (cons $continuation-radix (cons $continuation-bias (cons $unknown-policy (cons $save-placement (cons $header-policy ())))))))))))))) ())))) ())) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-state-table:0110 (cons $label-kind-table (cons $label-kind-life ()))) (superpose (collapse (gslt:mode:source-state-table:0110 2 1)))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $label-kind-life))
-   (let (gslt:result:source-state-table:0110 $formula-table $formula-life) (superpose (collapse (gslt:mode:source-state-table:0110 2 1)))
+   (let (cons gslt:result:source-state-table:0110 (cons $formula-table (cons $formula-life ()))) (superpose (collapse (gslt:mode:source-state-table:0110 2 1)))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $formula-life))
-   (let (gslt:result:source-state-table:0110 $binder-variable-table $binder-life) (superpose (collapse (gslt:mode:source-state-table:0110 2 1)))
+   (let (cons gslt:result:source-state-table:0110 (cons $binder-variable-table (cons $binder-life ()))) (superpose (collapse (gslt:mode:source-state-table:0110 2 1)))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $binder-life))
-   (let (gslt:result:source-state-table:0110 $mandatory-variable-table $mandatory-life) (superpose (collapse (gslt:mode:source-state-table:0110 2 2)))
+   (let (cons gslt:result:source-state-table:0110 (cons $mandatory-variable-table (cons $mandatory-life ()))) (superpose (collapse (gslt:mode:source-state-table:0110 2 2)))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $mandatory-life))
-   (let (gslt:result:source-state-table:0110 $assertion-hypothesis-table $hyp-life) (superpose (collapse (gslt:mode:source-state-table:0110 3 2)))
+   (let (cons gslt:result:source-state-table:0110 (cons $assertion-hypothesis-table (cons $hyp-life ()))) (superpose (collapse (gslt:mode:source-state-table:0110 3 2)))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $hyp-life))
-   (let (gslt:result:source-state-table:0110 $assertion-disjoint-table $assertion-dv-life) (superpose (collapse (gslt:mode:source-state-table:0110 3 3)))
+   (let (cons gslt:result:source-state-table:0110 (cons $assertion-disjoint-table (cons $assertion-dv-life ()))) (superpose (collapse (gslt:mode:source-state-table:0110 3 3)))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $assertion-dv-life))
-   (let (gslt:result:source-state-table:0110 $active-hypothesis-table $active-hyp-life) (superpose (collapse (gslt:mode:source-state-table:0110 4 1)))
+   (let (cons gslt:result:source-state-table:0110 (cons $active-hypothesis-table (cons $active-hyp-life ()))) (superpose (collapse (gslt:mode:source-state-table:0110 4 1)))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $active-hyp-life))
-   (let (gslt:result:source-state-table:0110 $active-disjoint-table $active-dv-life) (superpose (collapse (gslt:mode:source-state-table:0110 2 2)))
+   (let (cons gslt:result:source-state-table:0110 (cons $active-disjoint-table (cons $active-dv-life ()))) (superpose (collapse (gslt:mode:source-state-table:0110 2 2)))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $active-dv-life))
-   (let (gslt:result:source-state-table:0110 $symbol-kind-table $symbol-life) (superpose (collapse (gslt:mode:source-state-table:0110 2 1)))
+   (let (cons gslt:result:source-state-table:0110 (cons $symbol-kind-table (cons $symbol-life ()))) (superpose (collapse (gslt:mode:source-state-table:0110 2 1)))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $symbol-life))
-   (let (gslt:result:source-state-literal:0 $binder-kind) (superpose (collapse (gslt:mode:source-state-literal:0)))
-   (let (gslt:result:source-state-literal:0 $matching-kind) (superpose (collapse (gslt:mode:source-state-literal:0)))
-   (let (gslt:result:source-state-literal:0 $rule-kind-first) (superpose (collapse (gslt:mode:source-state-literal:0)))
-   (let (gslt:result:source-state-literal:0 $rule-kind-second) (superpose (collapse (gslt:mode:source-state-literal:0)))
-   (let (gslt:result:source-state-literal:0 $variable-kind) (superpose (collapse (gslt:mode:source-state-literal:0)))
-   (let (gslt:result:source-state-proof-decoder-number:0 $unknown-token-byte) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
-   (let (gslt:result:source-state-proof-decoder-number:0 $terminal-low) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
-   (let (gslt:result:source-state-proof-decoder-number:0 $terminal-high) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
-   (let (gslt:result:source-state-proof-decoder-number:0 $continuation-low) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
-   (let (gslt:result:source-state-proof-decoder-number:0 $continuation-high) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
-   (let (gslt:result:source-state-proof-decoder-number:0 $save-byte) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
-   (let (gslt:result:source-state-proof-decoder-number:0 $unknown-byte) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
-   (let (gslt:result:source-state-proof-decoder-number:0 $terminal-radix) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
-   (let (gslt:result:source-state-proof-decoder-number:0 $terminal-bias) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
-   (let (gslt:result:source-state-proof-decoder-number:0 $continuation-radix) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
-   (let (gslt:result:source-state-proof-decoder-number:0 $continuation-bias) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
-   (let (gslt:result:source-state-proof-unknown-policy:0 $unknown-policy) (once (gslt:fn:source-state-proof-unknown-policy:0))
-   (let (gslt:result:source-state-literal:0 $save-placement) (superpose (collapse (gslt:mode:source-state-literal:0)))
-   (let (gslt:result:source-state-proof-header-hypothesis-policy:0 $header-policy) (once (gslt:fn:source-state-proof-header-hypothesis-policy:0))
+   (let (cons gslt:result:source-state-literal:0 (cons $binder-kind ())) (superpose (collapse (gslt:mode:source-state-literal:0)))
+   (let (cons gslt:result:source-state-literal:0 (cons $matching-kind ())) (superpose (collapse (gslt:mode:source-state-literal:0)))
+   (let (cons gslt:result:source-state-literal:0 (cons $rule-kind-first ())) (superpose (collapse (gslt:mode:source-state-literal:0)))
+   (let (cons gslt:result:source-state-literal:0 (cons $rule-kind-second ())) (superpose (collapse (gslt:mode:source-state-literal:0)))
+   (let (cons gslt:result:source-state-literal:0 (cons $variable-kind ())) (superpose (collapse (gslt:mode:source-state-literal:0)))
+   (let (cons gslt:result:source-state-proof-decoder-number:0 (cons $unknown-token-byte ())) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
+   (let (cons gslt:result:source-state-proof-decoder-number:0 (cons $terminal-low ())) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
+   (let (cons gslt:result:source-state-proof-decoder-number:0 (cons $terminal-high ())) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
+   (let (cons gslt:result:source-state-proof-decoder-number:0 (cons $continuation-low ())) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
+   (let (cons gslt:result:source-state-proof-decoder-number:0 (cons $continuation-high ())) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
+   (let (cons gslt:result:source-state-proof-decoder-number:0 (cons $save-byte ())) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
+   (let (cons gslt:result:source-state-proof-decoder-number:0 (cons $unknown-byte ())) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
+   (let (cons gslt:result:source-state-proof-decoder-number:0 (cons $terminal-radix ())) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
+   (let (cons gslt:result:source-state-proof-decoder-number:0 (cons $terminal-bias ())) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
+   (let (cons gslt:result:source-state-proof-decoder-number:0 (cons $continuation-radix ())) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
+   (let (cons gslt:result:source-state-proof-decoder-number:0 (cons $continuation-bias ())) (superpose (collapse (gslt:mode:source-state-proof-decoder-number:0)))
+   (let (cons gslt:result:source-state-proof-unknown-policy:0 (cons $unknown-policy ())) (once (gslt:fn:source-state-proof-unknown-policy:0))
+   (let (cons gslt:result:source-state-literal:0 (cons $save-placement ())) (superpose (collapse (gslt:mode:source-state-literal:0)))
+   (let (cons gslt:result:source-state-proof-header-hypothesis-policy:0 (cons $header-policy ())) (once (gslt:fn:source-state-proof-header-hypothesis-policy:0))
    (quote (state-proof-machine-valid (state-stack-proof-machine-v1 (state-proof-tables-v1 $label-kind-table $formula-table $binder-variable-table $mandatory-variable-table $assertion-hypothesis-table $assertion-disjoint-table $active-hypothesis-table $active-disjoint-table $symbol-kind-table) (state-proof-kinds-v1 (state-literal-v1 $binder-kind) (state-literal-v1 $matching-kind) (state-literal-v1 $rule-kind-first) (state-literal-v1 $rule-kind-second) (state-literal-v1 $variable-kind) (state-byte-literal-v1 $unknown-token-byte)) (state-proof-decoder-v1 $terminal-low $terminal-high $continuation-low $continuation-high $save-byte $unknown-byte $terminal-radix $terminal-bias $continuation-radix $continuation-bias $unknown-policy $save-placement $header-policy)))))))))))))))))))))))))))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=107 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-check-proof-normal target=relation
 (= (gslt:state-action-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-action-valid (cons-atom $operation (cons-atom (cons-atom state-check-proof-normal-v1 (cons-atom $machine (cons-atom $label-role (cons-atom $formula-role (cons-atom $proof-role ()))))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-proof-machine:00 $machine $configuration) (once (gslt:fn:source-state-proof-machine:00))
+   (let (cons state-action-valid (cons $operation (cons (cons state-check-proof-normal-v1 (cons $machine (cons $label-role (cons $formula-role (cons $proof-role ()))))) ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-state-proof-machine:00 (cons $machine (cons $configuration ()))) (once (gslt:fn:source-state-proof-machine:00))
    (let gslt:result:state-proof-machine-valid:1 (once (gslt:fn:state-proof-machine-valid:1 $configuration))
-   (let (gslt:result:source-state-operation-role:00 $operation $label-role) (superpose (collapse (gslt:mode:source-state-operation-role:00)))
-   (let (gslt:result:source-state-operation-role:10 $formula-role) (superpose (collapse (gslt:mode:source-state-operation-role:10 $operation)))
-   (let (gslt:result:source-state-operation-role:10 $proof-role) (superpose (collapse (gslt:mode:source-state-operation-role:10 $operation)))
+   (let (cons source-state-operation-role (cons $operation (cons $label-role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $label-role))
+   (let (cons source-state-operation-role (cons $operation (cons $formula-role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $formula-role))
+   (let (cons source-state-operation-role (cons $operation (cons $proof-role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $proof-role))
    (quote (state-action-valid $operation (state-check-proof-normal-v1 $machine $label-role $formula-role $proof-role))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=108 source-presentation=RelationalStateProgramCoreV1 source-rule=state-action-valid-check-proof-compressed target=relation
 (= (gslt:state-action-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-action-valid (cons-atom $operation (cons-atom (cons-atom state-check-proof-compressed-v1 (cons-atom $machine (cons-atom $label-role (cons-atom $formula-role (cons-atom $header-role (cons-atom $code-role ())))))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-proof-machine:00 $machine $configuration) (once (gslt:fn:source-state-proof-machine:00))
+   (let (cons state-action-valid (cons $operation (cons (cons state-check-proof-compressed-v1 (cons $machine (cons $label-role (cons $formula-role (cons $header-role (cons $code-role ())))))) ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-state-proof-machine:00 (cons $machine (cons $configuration ()))) (once (gslt:fn:source-state-proof-machine:00))
    (let gslt:result:state-proof-machine-valid:1 (once (gslt:fn:state-proof-machine-valid:1 $configuration))
-   (let (gslt:result:source-state-operation-role:00 $operation $label-role) (superpose (collapse (gslt:mode:source-state-operation-role:00)))
-   (let (gslt:result:source-state-operation-role:10 $formula-role) (superpose (collapse (gslt:mode:source-state-operation-role:10 $operation)))
-   (let (gslt:result:source-state-operation-role:10 $header-role) (superpose (collapse (gslt:mode:source-state-operation-role:10 $operation)))
-   (let (gslt:result:source-state-operation-role:10 $code-role) (superpose (collapse (gslt:mode:source-state-operation-role:10 $operation)))
+   (let (cons source-state-operation-role (cons $operation (cons $label-role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $label-role))
+   (let (cons source-state-operation-role (cons $operation (cons $formula-role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $formula-role))
+   (let (cons source-state-operation-role (cons $operation (cons $header-role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $header-role))
+   (let (cons source-state-operation-role (cons $operation (cons $code-role ()))) (gslt:source-state-operation-role (source-state-operation-role $operation $code-role))
    (quote (state-action-valid $operation (state-check-proof-compressed-v1 $machine $label-role $formula-role $header-role $code-role)))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=109 source-presentation=RelationalStateProgramCoreV1 source-rule=state-final-action-valid-require-depth target=relation
 (= (gslt:state-final-action-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-final-action-valid (cons-atom (cons-atom state-require-depth-v1 (cons-atom $depth ())) ())) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-depth:0 $depth) (once (gslt:fn:source-state-depth:0))
+   (let (cons state-final-action-valid (cons (cons state-require-depth-v1 (cons $depth ())) ())) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-state-depth:0 (cons $depth ())) (once (gslt:fn:source-state-depth:0))
    (quote (state-final-action-valid (state-require-depth-v1 $depth))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=110 source-presentation=RelationalStateProgramCoreV1 source-rule=state-final-action-valid-noop target=relation
 (= (gslt:state-final-action-valid $__gslt_input_v1_0_0)
-   (let (cons-atom state-final-action-valid (cons-atom state-noop-v1 ())) $__gslt_input_v1_0_0
+   (let (cons state-final-action-valid (cons state-noop-v1 ())) $__gslt_input_v1_0_0
    (quote (state-final-action-valid state-noop-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=111 source-presentation=MetamathSourceStateV1 source-rule=mm-state-lifetime-persistent target=relation
 (= (gslt:source-state-lifetime $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-lifetime (cons-atom state-persistent-v1 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-lifetime (cons state-persistent-v1 ())) $__gslt_input_v1_0_0
    (quote (source-state-lifetime state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=112 source-presentation=MetamathSourceStateV1 source-rule=mm-state-lifetime-scoped target=relation
 (= (gslt:source-state-lifetime $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-lifetime (cons-atom state-scoped-v1 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-lifetime (cons state-scoped-v1 ())) $__gslt_input_v1_0_0
    (quote (source-state-lifetime state-scoped-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=113 source-presentation=MetamathSourceStateV1 source-rule=mm-state-lifetime-transactional target=relation
 (= (gslt:source-state-lifetime $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-lifetime (cons-atom state-transactional-v1 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-lifetime (cons state-transactional-v1 ())) $__gslt_input_v1_0_0
    (quote (source-state-lifetime state-transactional-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=114 source-presentation=MetamathSourceStateV1 source-rule=mm-state-policy-require-absent target=relation
 (= (gslt:source-state-write-policy $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-write-policy (cons-atom state-require-key-absent-v1 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-write-policy (cons state-require-key-absent-v1 ())) $__gslt_input_v1_0_0
    (quote (source-state-write-policy state-require-key-absent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=115 source-presentation=MetamathSourceStateV1 source-rule=mm-state-policy-insert-or-equal target=relation
 (= (gslt:source-state-write-policy $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-write-policy (cons-atom state-insert-or-require-equal-v1 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-write-policy (cons state-insert-or-require-equal-v1 ())) $__gslt_input_v1_0_0
    (quote (source-state-write-policy state-insert-or-require-equal-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=116 source-presentation=MetamathSourceStateV1 source-rule=mm-state-depth-zero target=relation
 (= (gslt:source-state-depth $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-depth (cons-atom 0 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-depth (cons 0 ())) $__gslt_input_v1_0_0
    (quote (source-state-depth 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=117 source-presentation=MetamathSourceStateV1 source-rule=mm-state-index-zero target=relation
 (= (gslt:source-state-index $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-index (cons-atom 0 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-index (cons 0 ())) $__gslt_input_v1_0_0
    (quote (source-state-index 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=118 source-presentation=MetamathSourceStateV1 source-rule=mm-state-index-one target=relation
 (= (gslt:source-state-index $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-index (cons-atom 1 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-index (cons 1 ())) $__gslt_input_v1_0_0
    (quote (source-state-index 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=119 source-presentation=MetamathSourceStateV1 source-rule=mm-state-literal-constant target=relation
 (= (gslt:source-state-literal $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-literal (cons-atom mm-symbol-constant ())) $__gslt_input_v1_0_0
+   (let (cons source-state-literal (cons mm-symbol-constant ())) $__gslt_input_v1_0_0
    (quote (source-state-literal mm-symbol-constant))))
 
 ; gslt-lowered-equation-v1 source-rewrite=120 source-presentation=MetamathSourceStateV1 source-rule=mm-state-literal-variable target=relation
 (= (gslt:source-state-literal $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-literal (cons-atom mm-symbol-variable ())) $__gslt_input_v1_0_0
+   (let (cons source-state-literal (cons mm-symbol-variable ())) $__gslt_input_v1_0_0
    (quote (source-state-literal mm-symbol-variable))))
 
 ; gslt-lowered-equation-v1 source-rewrite=121 source-presentation=MetamathSourceStateV1 source-rule=mm-state-literal-floating target=relation
 (= (gslt:source-state-literal $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-literal (cons-atom mm-label-floating ())) $__gslt_input_v1_0_0
+   (let (cons source-state-literal (cons mm-label-floating ())) $__gslt_input_v1_0_0
    (quote (source-state-literal mm-label-floating))))
 
 ; gslt-lowered-equation-v1 source-rewrite=122 source-presentation=MetamathSourceStateV1 source-rule=mm-state-literal-essential target=relation
 (= (gslt:source-state-literal $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-literal (cons-atom mm-label-essential ())) $__gslt_input_v1_0_0
+   (let (cons source-state-literal (cons mm-label-essential ())) $__gslt_input_v1_0_0
    (quote (source-state-literal mm-label-essential))))
 
 ; gslt-lowered-equation-v1 source-rewrite=123 source-presentation=MetamathSourceStateV1 source-rule=mm-state-literal-axiom target=relation
 (= (gslt:source-state-literal $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-literal (cons-atom mm-label-axiom ())) $__gslt_input_v1_0_0
+   (let (cons source-state-literal (cons mm-label-axiom ())) $__gslt_input_v1_0_0
    (quote (source-state-literal mm-label-axiom))))
 
 ; gslt-lowered-equation-v1 source-rewrite=124 source-presentation=MetamathSourceStateV1 source-rule=mm-state-literal-no-variable target=relation
 (= (gslt:source-state-literal $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-literal (cons-atom mm-no-variable ())) $__gslt_input_v1_0_0
+   (let (cons source-state-literal (cons mm-no-variable ())) $__gslt_input_v1_0_0
    (quote (source-state-literal mm-no-variable))))
 
 ; gslt-lowered-equation-v1 source-rewrite=125 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-symbol-kind target=relation
 (= (gslt:source-state-table $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table (cons-atom mm-state-symbol-kind (cons-atom 2 (cons-atom 1 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-table (cons mm-state-symbol-kind (cons 2 (cons 1 (cons state-persistent-v1 ()))))) $__gslt_input_v1_0_0
    (quote (source-state-table mm-state-symbol-kind 2 1 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=126 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-active-variable target=relation
 (= (gslt:source-state-table $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table (cons-atom mm-state-active-variable (cons-atom 1 (cons-atom 1 (cons-atom state-scoped-v1 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-table (cons mm-state-active-variable (cons 1 (cons 1 (cons state-scoped-v1 ()))))) $__gslt_input_v1_0_0
    (quote (source-state-table mm-state-active-variable 1 1 state-scoped-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=127 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-disjoint-variable target=relation
 (= (gslt:source-state-table $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table (cons-atom mm-state-disjoint-variable (cons-atom 2 (cons-atom 2 (cons-atom state-scoped-v1 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-table (cons mm-state-disjoint-variable (cons 2 (cons 2 (cons state-scoped-v1 ()))))) $__gslt_input_v1_0_0
    (quote (source-state-table mm-state-disjoint-variable 2 2 state-scoped-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=128 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-expression-symbol target=relation
 (= (gslt:source-state-table $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table (cons-atom mm-state-expression-symbol (cons-atom 1 (cons-atom 1 (cons-atom state-scoped-v1 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-table (cons mm-state-expression-symbol (cons 1 (cons 1 (cons state-scoped-v1 ()))))) $__gslt_input_v1_0_0
    (quote (source-state-table mm-state-expression-symbol 1 1 state-scoped-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=129 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-label-kind target=relation
 (= (gslt:source-state-table $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table (cons-atom mm-state-label-kind (cons-atom 2 (cons-atom 1 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-table (cons mm-state-label-kind (cons 2 (cons 1 (cons state-persistent-v1 ()))))) $__gslt_input_v1_0_0
    (quote (source-state-table mm-state-label-kind 2 1 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=130 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-label-name target=relation
 (= (gslt:source-state-table $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table (cons-atom mm-state-label-name (cons-atom 1 (cons-atom 1 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-table (cons mm-state-label-name (cons 1 (cons 1 (cons state-persistent-v1 ()))))) $__gslt_input_v1_0_0
    (quote (source-state-table mm-state-label-name 1 1 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=131 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-active-hypothesis target=relation
 (= (gslt:source-state-table $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table (cons-atom mm-state-active-hypothesis (cons-atom 4 (cons-atom 1 (cons-atom state-scoped-v1 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-table (cons mm-state-active-hypothesis (cons 4 (cons 1 (cons state-scoped-v1 ()))))) $__gslt_input_v1_0_0
    (quote (source-state-table mm-state-active-hypothesis 4 1 state-scoped-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=132 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-active-floating-variable target=relation
 (= (gslt:source-state-table $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table (cons-atom mm-state-active-floating-variable (cons-atom 1 (cons-atom 1 (cons-atom state-scoped-v1 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-table (cons mm-state-active-floating-variable (cons 1 (cons 1 (cons state-scoped-v1 ()))))) $__gslt_input_v1_0_0
    (quote (source-state-table mm-state-active-floating-variable 1 1 state-scoped-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=133 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-floating-variable target=relation
 (= (gslt:source-state-table $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table (cons-atom mm-state-floating-variable (cons-atom 2 (cons-atom 1 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-table (cons mm-state-floating-variable (cons 2 (cons 1 (cons state-persistent-v1 ()))))) $__gslt_input_v1_0_0
    (quote (source-state-table mm-state-floating-variable 2 1 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=134 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-formula target=relation
 (= (gslt:source-state-table $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table (cons-atom mm-state-formula (cons-atom 2 (cons-atom 1 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-table (cons mm-state-formula (cons 2 (cons 1 (cons state-persistent-v1 ()))))) $__gslt_input_v1_0_0
    (quote (source-state-table mm-state-formula 2 1 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=135 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-active-essential-variable target=relation
 (= (gslt:source-state-table $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table (cons-atom mm-state-active-essential-variable (cons-atom 1 (cons-atom 1 (cons-atom state-scoped-v1 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-table (cons mm-state-active-essential-variable (cons 1 (cons 1 (cons state-scoped-v1 ()))))) $__gslt_input_v1_0_0
    (quote (source-state-table mm-state-active-essential-variable 1 1 state-scoped-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=136 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-assertion-mandatory-variable target=relation
 (= (gslt:source-state-table $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table (cons-atom mm-state-assertion-mandatory-variable (cons-atom 2 (cons-atom 2 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-table (cons mm-state-assertion-mandatory-variable (cons 2 (cons 2 (cons state-persistent-v1 ()))))) $__gslt_input_v1_0_0
    (quote (source-state-table mm-state-assertion-mandatory-variable 2 2 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=137 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-assertion-active-hypothesis target=relation
 (= (gslt:source-state-table $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table (cons-atom mm-state-assertion-active-hypothesis (cons-atom 2 (cons-atom 2 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-table (cons mm-state-assertion-active-hypothesis (cons 2 (cons 2 (cons state-persistent-v1 ()))))) $__gslt_input_v1_0_0
    (quote (source-state-table mm-state-assertion-active-hypothesis 2 2 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=138 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-assertion-ordered-hypothesis target=relation
 (= (gslt:source-state-table $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table (cons-atom mm-state-assertion-ordered-hypothesis (cons-atom 3 (cons-atom 2 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-table (cons mm-state-assertion-ordered-hypothesis (cons 3 (cons 2 (cons state-persistent-v1 ()))))) $__gslt_input_v1_0_0
    (quote (source-state-table mm-state-assertion-ordered-hypothesis 3 2 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=139 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-assertion-frame-hypothesis target=relation
 (= (gslt:source-state-table $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table (cons-atom mm-state-assertion-frame-hypothesis (cons-atom 2 (cons-atom 2 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-table (cons mm-state-assertion-frame-hypothesis (cons 2 (cons 2 (cons state-persistent-v1 ()))))) $__gslt_input_v1_0_0
    (quote (source-state-table mm-state-assertion-frame-hypothesis 2 2 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=140 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-assertion-ordered-frame-hypothesis target=relation
 (= (gslt:source-state-table $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table (cons-atom mm-state-assertion-ordered-frame-hypothesis (cons-atom 3 (cons-atom 2 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-table (cons mm-state-assertion-ordered-frame-hypothesis (cons 3 (cons 2 (cons state-persistent-v1 ()))))) $__gslt_input_v1_0_0
    (quote (source-state-table mm-state-assertion-ordered-frame-hypothesis 3 2 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=141 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-assertion-disjoint-left-candidate target=relation
 (= (gslt:source-state-table $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom 3 (cons-atom 3 (cons-atom state-transactional-v1 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-table (cons mm-state-assertion-disjoint-left-candidate (cons 3 (cons 3 (cons state-transactional-v1 ()))))) $__gslt_input_v1_0_0
    (quote (source-state-table mm-state-assertion-disjoint-left-candidate 3 3 state-transactional-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=142 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-assertion-disjoint-variable target=relation
 (= (gslt:source-state-table $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table (cons-atom mm-state-assertion-disjoint-variable (cons-atom 3 (cons-atom 3 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-table (cons mm-state-assertion-disjoint-variable (cons 3 (cons 3 (cons state-persistent-v1 ()))))) $__gslt_input_v1_0_0
    (quote (source-state-table mm-state-assertion-disjoint-variable 3 3 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=143 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-assertion-ordered-disjoint-variable target=relation
 (= (gslt:source-state-table $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-table (cons-atom mm-state-assertion-ordered-disjoint-variable (cons-atom 4 (cons-atom 2 (cons-atom state-persistent-v1 ()))))) $__gslt_input_v1_0_0
+   (let (cons source-state-table (cons mm-state-assertion-ordered-disjoint-variable (cons 4 (cons 2 (cons state-persistent-v1 ()))))) $__gslt_input_v1_0_0
    (quote (source-state-table mm-state-assertion-ordered-disjoint-variable 4 2 state-persistent-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=144 source-presentation=MetamathSourceStateV1 source-rule=mm-state-open-scope target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-open-scope (cons-atom 0 (cons-atom state-push-scope-v1 ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-open-scope (cons 0 (cons state-push-scope-v1 ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-open-scope 0 state-push-scope-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=145 source-presentation=MetamathSourceStateV1 source-rule=mm-state-close-scope target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-close-scope (cons-atom 0 (cons-atom state-pop-scope-v1 ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-close-scope (cons 0 (cons state-pop-scope-v1 ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-close-scope 0 state-pop-scope-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=146 source-presentation=MetamathSourceStateV1 source-rule=mm-state-complete-block target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-complete-block (cons-atom 0 (cons-atom state-noop-v1 ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-complete-block (cons 0 (cons state-noop-v1 ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-complete-block 0 state-noop-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=147 source-presentation=MetamathSourceStateV1 source-rule=mm-state-include-resolve target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-resolve-include (cons-atom 0 (cons-atom (cons-atom state-resolve-source-v1 (cons-atom mm-include-path (cons-atom state-skip-completed-source-v1 (cons-atom state-skip-active-source-v1 ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-resolve-include (cons 0 (cons (cons state-resolve-source-v1 (cons mm-include-path (cons state-skip-completed-source-v1 (cons state-skip-active-source-v1 ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-resolve-include 0 (state-resolve-source-v1 mm-include-path state-skip-completed-source-v1 state-skip-active-source-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=148 source-presentation=MetamathSourceStateV1 source-rule=mm-state-constants-top-level target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-constants (cons-atom 0 (cons-atom (cons-atom state-require-depth-v1 (cons-atom 0 ())) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-constants (cons 0 (cons (cons state-require-depth-v1 (cons 0 ())) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-constants 0 (state-require-depth-v1 0)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=149 source-presentation=MetamathSourceStateV1 source-rule=mm-state-constants-not-labels target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-constants (cons-atom 1 (cons-atom (cons-atom state-require-each-key-absent-v1 (cons-atom mm-symbol (cons-atom mm-state-label-name (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-constants (cons 1 (cons (cons state-require-each-key-absent-v1 (cons mm-symbol (cons mm-state-label-name (cons (cons state-row-cons-v1 (cons state-input-v1 (cons state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-constants 1 (state-require-each-key-absent-v1 mm-symbol mm-state-label-name (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=150 source-presentation=MetamathSourceStateV1 source-rule=mm-state-constants-classify target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-constants (cons-atom 2 (cons-atom (cons-atom state-insert-each-v1 (cons-atom mm-symbol (cons-atom mm-state-symbol-kind (cons-atom state-require-key-absent-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-constant ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-constants (cons 2 (cons (cons state-insert-each-v1 (cons mm-symbol (cons mm-state-symbol-kind (cons state-require-key-absent-v1 (cons (cons state-row-cons-v1 (cons state-input-v1 (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-symbol-constant ())) (cons state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-constants 2 (state-insert-each-v1 mm-symbol mm-state-symbol-kind state-require-key-absent-v1 (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=151 source-presentation=MetamathSourceStateV1 source-rule=mm-state-constants-enable-expression target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-constants (cons-atom 3 (cons-atom (cons-atom state-insert-each-v1 (cons-atom mm-symbol (cons-atom mm-state-expression-symbol (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-constants (cons 3 (cons (cons state-insert-each-v1 (cons mm-symbol (cons mm-state-expression-symbol (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons state-input-v1 (cons state-row-nil-v1 ()))) ()))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-constants 3 (state-insert-each-v1 mm-symbol mm-state-expression-symbol state-insert-or-require-equal-v1 (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=152 source-presentation=MetamathSourceStateV1 source-rule=mm-state-variables-not-labels target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-variables (cons-atom 0 (cons-atom (cons-atom state-require-each-key-absent-v1 (cons-atom mm-symbol (cons-atom mm-state-label-name (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-variables (cons 0 (cons (cons state-require-each-key-absent-v1 (cons mm-symbol (cons mm-state-label-name (cons (cons state-row-cons-v1 (cons state-input-v1 (cons state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-variables 0 (state-require-each-key-absent-v1 mm-symbol mm-state-label-name (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=153 source-presentation=MetamathSourceStateV1 source-rule=mm-state-variables-classify target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-variables (cons-atom 1 (cons-atom (cons-atom state-insert-each-v1 (cons-atom mm-symbol (cons-atom mm-state-symbol-kind (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-variable ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-variables (cons 1 (cons (cons state-insert-each-v1 (cons mm-symbol (cons mm-state-symbol-kind (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons state-input-v1 (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-symbol-variable ())) (cons state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-variables 1 (state-insert-each-v1 mm-symbol mm-state-symbol-kind state-insert-or-require-equal-v1 (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=154 source-presentation=MetamathSourceStateV1 source-rule=mm-state-variables-activate target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-variables (cons-atom 2 (cons-atom (cons-atom state-insert-each-v1 (cons-atom mm-symbol (cons-atom mm-state-active-variable (cons-atom state-require-key-absent-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-variables (cons 2 (cons (cons state-insert-each-v1 (cons mm-symbol (cons mm-state-active-variable (cons state-require-key-absent-v1 (cons (cons state-row-cons-v1 (cons state-input-v1 (cons state-row-nil-v1 ()))) ()))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-variables 2 (state-insert-each-v1 mm-symbol mm-state-active-variable state-require-key-absent-v1 (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=155 source-presentation=MetamathSourceStateV1 source-rule=mm-state-floating-label-not-symbol target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-floating (cons-atom 0 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-floating (cons 0 (cons (cons state-require-row-key-absent-v1 (cons mm-state-symbol-kind (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-floating 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=156 source-presentation=MetamathSourceStateV1 source-rule=mm-state-floating-label-fresh target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-floating (cons-atom 1 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-label-name (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-floating (cons 1 (cons (cons state-require-row-key-absent-v1 (cons mm-state-label-name (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-floating 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=157 source-presentation=MetamathSourceStateV1 source-rule=mm-state-floating-typecode-constant target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-floating (cons-atom 2 (cons-atom (cons-atom state-require-row-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-constant ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-floating (cons 2 (cons (cons state-require-row-v1 (cons mm-state-symbol-kind (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-symbol (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-symbol-constant ())) (cons state-row-nil-v1 ()))) ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-floating 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=158 source-presentation=MetamathSourceStateV1 source-rule=mm-state-floating-variable-active target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-floating (cons-atom 3 (cons-atom (cons-atom state-require-row-v1 (cons-atom mm-state-active-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 1 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-floating (cons 3 (cons (cons state-require-row-v1 (cons mm-state-active-variable (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-symbol (cons 1 ()))) (cons state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-floating 3 (state-require-row-v1 mm-state-active-variable (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=159 source-presentation=MetamathSourceStateV1 source-rule=mm-state-floating-active-unique target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-floating (cons-atom 4 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-active-floating-variable (cons-atom state-require-key-absent-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 1 ()))) (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-floating (cons 4 (cons (cons state-insert-row-v1 (cons mm-state-active-floating-variable (cons state-require-key-absent-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-symbol (cons 1 ()))) (cons state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-floating 4 (state-insert-row-v1 mm-state-active-floating-variable state-require-key-absent-v1 (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=160 source-presentation=MetamathSourceStateV1 source-rule=mm-state-floating-record-active target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-floating (cons-atom 5 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-active-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-floating ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 1 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-list-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-floating (cons 5 (cons (cons state-insert-row-v1 (cons mm-state-active-hypothesis (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-label-floating ())) (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-symbol (cons 1 ()))) (cons (cons state-row-cons-v1 (cons (cons state-role-list-v1 (cons mm-symbol (cons 0 ()))) (cons state-row-nil-v1 ()))) ()))) ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-floating 5 (state-insert-row-v1 mm-state-active-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-floating) (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=161 source-presentation=MetamathSourceStateV1 source-rule=mm-state-floating-enable-expression target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-floating (cons-atom 6 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-expression-symbol (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 1 ()))) (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-floating (cons 6 (cons (cons state-insert-row-v1 (cons mm-state-expression-symbol (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-symbol (cons 1 ()))) (cons state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-floating 6 (state-insert-row-v1 mm-state-expression-symbol state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=162 source-presentation=MetamathSourceStateV1 source-rule=mm-state-floating-register-label-name target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-floating (cons-atom 7 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-name (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-floating (cons 7 (cons (cons state-insert-row-v1 (cons mm-state-label-name (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-floating 7 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=163 source-presentation=MetamathSourceStateV1 source-rule=mm-state-floating-register-label-kind target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-floating (cons-atom 8 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-kind (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-floating ())) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-floating (cons 8 (cons (cons state-insert-row-v1 (cons mm-state-label-kind (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-label-floating ())) (cons state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-floating 8 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-floating) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=164 source-presentation=MetamathSourceStateV1 source-rule=mm-state-floating-record-variable target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-floating (cons-atom 9 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-floating-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 1 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-floating (cons 9 (cons (cons state-insert-row-v1 (cons mm-state-floating-variable (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-symbol (cons 1 ()))) (cons state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-floating 9 (state-insert-row-v1 mm-state-floating-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-at-v1 mm-symbol 1) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=165 source-presentation=MetamathSourceStateV1 source-rule=mm-state-floating-record-formula target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-floating (cons-atom 10 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-formula (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-list-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-floating (cons 10 (cons (cons state-insert-row-v1 (cons mm-state-formula (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-role-list-v1 (cons mm-symbol (cons 0 ()))) (cons state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-floating 10 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=166 source-presentation=MetamathSourceStateV1 source-rule=mm-state-essential-label-not-symbol target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-essential (cons-atom 0 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-essential (cons 0 (cons (cons state-require-row-key-absent-v1 (cons mm-state-symbol-kind (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-essential 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=167 source-presentation=MetamathSourceStateV1 source-rule=mm-state-essential-label-fresh target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-essential (cons-atom 1 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-label-name (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-essential (cons 1 (cons (cons state-require-row-key-absent-v1 (cons mm-state-label-name (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-essential 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=168 source-presentation=MetamathSourceStateV1 source-rule=mm-state-essential-typecode-constant target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-essential (cons-atom 2 (cons-atom (cons-atom state-require-row-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-constant ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-essential (cons 2 (cons (cons state-require-row-v1 (cons mm-state-symbol-kind (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-symbol (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-symbol-constant ())) (cons state-row-nil-v1 ()))) ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-essential 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=169 source-presentation=MetamathSourceStateV1 source-rule=mm-state-essential-symbols-usable target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-essential (cons-atom 3 (cons-atom (cons-atom state-require-each-v1 (cons-atom mm-symbol (cons-atom mm-state-expression-symbol (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-essential (cons 3 (cons (cons state-require-each-v1 (cons mm-symbol (cons mm-state-expression-symbol (cons (cons state-row-cons-v1 (cons state-input-v1 (cons state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-essential 3 (state-require-each-v1 mm-symbol mm-state-expression-symbol (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=170 source-presentation=MetamathSourceStateV1 source-rule=mm-state-essential-record-active target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-essential (cons-atom 4 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-active-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-essential ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-no-variable ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-list-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-essential (cons 4 (cons (cons state-insert-row-v1 (cons mm-state-active-hypothesis (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-label-essential ())) (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-no-variable ())) (cons (cons state-row-cons-v1 (cons (cons state-role-list-v1 (cons mm-symbol (cons 0 ()))) (cons state-row-nil-v1 ()))) ()))) ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-essential 4 (state-insert-row-v1 mm-state-active-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) (state-row-cons-v1 (state-literal-v1 mm-no-variable) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=171 source-presentation=MetamathSourceStateV1 source-rule=mm-state-essential-record-formula target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-essential (cons-atom 5 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-formula (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-list-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-essential (cons 5 (cons (cons state-insert-row-v1 (cons mm-state-formula (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-role-list-v1 (cons mm-symbol (cons 0 ()))) (cons state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-essential 5 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=172 source-presentation=MetamathSourceStateV1 source-rule=mm-state-essential-collect-variables target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-essential (cons-atom 6 (cons-atom (cons-atom state-insert-each-matching-v1 (cons-atom mm-symbol (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-variable ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-active-essential-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-essential (cons 6 (cons (cons state-insert-each-matching-v1 (cons mm-symbol (cons mm-state-symbol-kind (cons (cons state-row-cons-v1 (cons state-input-v1 (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-symbol-variable ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-active-essential-variable (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons state-input-v1 (cons state-row-nil-v1 ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-essential 6 (state-insert-each-matching-v1 mm-symbol mm-state-symbol-kind (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)) mm-state-active-essential-variable state-insert-or-require-equal-v1 (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=173 source-presentation=MetamathSourceStateV1 source-rule=mm-state-essential-register-label-name target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-essential (cons-atom 7 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-name (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-essential (cons 7 (cons (cons state-insert-row-v1 (cons mm-state-label-name (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-essential 7 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=174 source-presentation=MetamathSourceStateV1 source-rule=mm-state-essential-register-label-kind target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-essential (cons-atom 8 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-kind (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-essential ())) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-essential (cons 8 (cons (cons state-insert-row-v1 (cons mm-state-label-kind (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-label-essential ())) (cons state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-essential 8 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=175 source-presentation=MetamathSourceStateV1 source-rule=mm-state-axiom-label-not-symbol target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-axiom (cons-atom 0 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-axiom (cons 0 (cons (cons state-require-row-key-absent-v1 (cons mm-state-symbol-kind (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-axiom 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=176 source-presentation=MetamathSourceStateV1 source-rule=mm-state-axiom-label-fresh target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-axiom (cons-atom 1 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-label-name (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-axiom (cons 1 (cons (cons state-require-row-key-absent-v1 (cons mm-state-label-name (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-axiom 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=177 source-presentation=MetamathSourceStateV1 source-rule=mm-state-axiom-typecode-constant target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-axiom (cons-atom 2 (cons-atom (cons-atom state-require-row-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-constant ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-axiom (cons 2 (cons (cons state-require-row-v1 (cons mm-state-symbol-kind (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-symbol (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-symbol-constant ())) (cons state-row-nil-v1 ()))) ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-axiom 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=178 source-presentation=MetamathSourceStateV1 source-rule=mm-state-axiom-symbols-usable target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-axiom (cons-atom 3 (cons-atom (cons-atom state-require-each-v1 (cons-atom mm-symbol (cons-atom mm-state-expression-symbol (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-axiom (cons 3 (cons (cons state-require-each-v1 (cons mm-symbol (cons mm-state-expression-symbol (cons (cons state-row-cons-v1 (cons state-input-v1 (cons state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-axiom 3 (state-require-each-v1 mm-symbol mm-state-expression-symbol (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=179 source-presentation=MetamathSourceStateV1 source-rule=mm-state-axiom-collect-formula-variables target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-axiom (cons-atom 4 (cons-atom (cons-atom state-insert-each-matching-v1 (cons-atom mm-symbol (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-variable ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-mandatory-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-axiom (cons 4 (cons (cons state-insert-each-matching-v1 (cons mm-symbol (cons mm-state-symbol-kind (cons (cons state-row-cons-v1 (cons state-input-v1 (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-symbol-variable ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-mandatory-variable (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons state-input-v1 (cons state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-axiom 4 (state-insert-each-matching-v1 mm-symbol mm-state-symbol-kind (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)) mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-input-v1 state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=180 source-presentation=MetamathSourceStateV1 source-rule=mm-state-axiom-collect-essential-variables target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-axiom (cons-atom 5 (cons-atom (cons-atom state-copy-each-row-v1 (cons-atom mm-state-active-essential-variable (cons-atom mm-state-assertion-mandatory-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-axiom (cons 5 (cons (cons state-copy-each-row-v1 (cons mm-state-active-essential-variable (cons mm-state-assertion-mandatory-variable (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-axiom 5 (state-copy-each-row-v1 mm-state-active-essential-variable mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=MetamathSourceStateV1 source-rule=mm-state-axiom-order-active-hypotheses target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-axiom (cons-atom 6 (cons-atom (cons-atom state-copy-each-row-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-ordered-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-source-row-index-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-axiom (cons 6 (cons (cons state-copy-each-row-v1 (cons mm-state-active-hypothesis (cons mm-state-assertion-ordered-hypothesis (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons state-source-row-index-v1 (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-axiom 6 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-ordered-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-row-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=182 source-presentation=MetamathSourceStateV1 source-rule=mm-state-axiom-select-essential-frame-hypotheses target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-axiom (cons-atom 7 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-label-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-essential ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-frame-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-axiom (cons 7 (cons (cons state-copy-each-row-matching-v1 (cons mm-state-active-hypothesis (cons mm-state-label-kind (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-label-essential ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-frame-hypothesis (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-axiom 7 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-label-kind (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=183 source-presentation=MetamathSourceStateV1 source-rule=mm-state-axiom-select-floating-frame-hypotheses target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-axiom (cons-atom 8 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-frame-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-axiom (cons 8 (cons (cons state-copy-each-row-matching-v1 (cons mm-state-active-hypothesis (cons mm-state-assertion-mandatory-variable (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 2 ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-frame-hypothesis (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-axiom 8 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=184 source-presentation=MetamathSourceStateV1 source-rule=mm-state-axiom-order-frame-hypotheses target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-axiom (cons-atom 9 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-frame-hypothesis (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-ordered-frame-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-source-match-index-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-axiom (cons 9 (cons (cons state-copy-each-row-matching-v1 (cons mm-state-active-hypothesis (cons mm-state-assertion-frame-hypothesis (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-ordered-frame-hypothesis (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons state-source-match-index-v1 (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-axiom 9 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-frame-hypothesis (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-ordered-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=185 source-presentation=MetamathSourceStateV1 source-rule=mm-state-axiom-select-disjoint-left-mandatory target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-axiom (cons-atom 10 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-disjoint-variable (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 1 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-axiom (cons 10 (cons (cons state-copy-each-row-matching-v1 (cons mm-state-disjoint-variable (cons mm-state-assertion-mandatory-variable (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-disjoint-left-candidate (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 1 ())) (cons state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-axiom 10 (state-copy-each-row-matching-v1 mm-state-disjoint-variable mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-disjoint-left-candidate state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=186 source-presentation=MetamathSourceStateV1 source-rule=mm-state-axiom-select-disjoint-right-mandatory target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-axiom (cons-atom 11 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-disjoint-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 1 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-axiom (cons 11 (cons (cons state-copy-each-row-matching-v1 (cons mm-state-assertion-disjoint-left-candidate (cons mm-state-assertion-mandatory-variable (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 2 ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-disjoint-variable (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 1 ())) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 2 ())) (cons state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-axiom 11 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=187 source-presentation=MetamathSourceStateV1 source-rule=mm-state-axiom-order-disjoint-mandatory target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-axiom (cons-atom 12 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-ordered-disjoint-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-source-match-index-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 1 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-axiom (cons 12 (cons (cons state-copy-each-row-matching-v1 (cons mm-state-assertion-disjoint-left-candidate (cons mm-state-assertion-mandatory-variable (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 2 ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-ordered-disjoint-variable (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons (cons state-row-cons-v1 (cons state-source-match-index-v1 (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 1 ())) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 2 ())) (cons state-row-nil-v1 ()))) ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-axiom 12 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-ordered-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=188 source-presentation=MetamathSourceStateV1 source-rule=mm-state-axiom-record-formula target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-axiom (cons-atom 13 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-formula (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-list-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-axiom (cons 13 (cons (cons state-insert-row-v1 (cons mm-state-formula (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-role-list-v1 (cons mm-symbol (cons 0 ()))) (cons state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-axiom 13 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=189 source-presentation=MetamathSourceStateV1 source-rule=mm-state-axiom-register-label-name target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-axiom (cons-atom 14 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-name (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-axiom (cons 14 (cons (cons state-insert-row-v1 (cons mm-state-label-name (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-axiom 14 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=190 source-presentation=MetamathSourceStateV1 source-rule=mm-state-axiom-register-label-kind target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-axiom (cons-atom 15 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-kind (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-axiom ())) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-axiom (cons 15 (cons (cons state-insert-row-v1 (cons mm-state-label-kind (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-label-axiom ())) (cons state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-axiom 15 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-axiom) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=191 source-presentation=MetamathSourceStateV1 source-rule=mm-state-disjoint-variables-active target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-disjoint (cons-atom 0 (cons-atom (cons-atom state-require-each-v1 (cons-atom mm-symbol (cons-atom mm-state-active-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-disjoint (cons 0 (cons (cons state-require-each-v1 (cons mm-symbol (cons mm-state-active-variable (cons (cons state-row-cons-v1 (cons state-input-v1 (cons state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-disjoint 0 (state-require-each-v1 mm-symbol mm-state-active-variable (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=192 source-presentation=MetamathSourceStateV1 source-rule=mm-state-disjoint-variables-pairwise target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-declare-disjoint (cons-atom 1 (cons-atom (cons-atom state-insert-unordered-pairs-v1 (cons-atom mm-symbol (cons-atom mm-state-disjoint-variable (cons-atom state-insert-or-require-equal-v1 ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-declare-disjoint (cons 1 (cons (cons state-insert-unordered-pairs-v1 (cons mm-symbol (cons mm-state-disjoint-variable (cons state-insert-or-require-equal-v1 ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-declare-disjoint 1 (state-insert-unordered-pairs-v1 mm-symbol mm-state-disjoint-variable state-insert-or-require-equal-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=193 source-presentation=MetamathProofTracePolicyV1 source-rule=mm-proof-trace-save-immediately-after-use-v1 target=relation
 (= (gslt:source-proof-trace-save-placement-v1 $__gslt_input_v1_0_0)
-   (let (cons-atom source-proof-trace-save-placement-v1 (cons-atom state-proof-save-immediately-after-use-v1 ())) $__gslt_input_v1_0_0
+   (let (cons source-proof-trace-save-placement-v1 (cons state-proof-save-immediately-after-use-v1 ())) $__gslt_input_v1_0_0
    (quote (source-proof-trace-save-placement-v1 state-proof-save-immediately-after-use-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=194 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-literal-theorem target=relation
 (= (gslt:source-state-literal $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-literal (cons-atom mm-label-theorem ())) $__gslt_input_v1_0_0
+   (let (cons source-state-literal (cons mm-label-theorem ())) $__gslt_input_v1_0_0
    (quote (source-state-literal mm-label-theorem))))
 
 ; gslt-lowered-equation-v1 source-rewrite=195 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-decoder-number-0 target=relation
 (= (gslt:source-state-proof-decoder-number $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-proof-decoder-number (cons-atom 0 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-proof-decoder-number (cons 0 ())) $__gslt_input_v1_0_0
    (quote (source-state-proof-decoder-number 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=196 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-decoder-number-1 target=relation
 (= (gslt:source-state-proof-decoder-number $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-proof-decoder-number (cons-atom 1 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-proof-decoder-number (cons 1 ())) $__gslt_input_v1_0_0
    (quote (source-state-proof-decoder-number 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=197 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-decoder-number-5 target=relation
 (= (gslt:source-state-proof-decoder-number $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-proof-decoder-number (cons-atom 5 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-proof-decoder-number (cons 5 ())) $__gslt_input_v1_0_0
    (quote (source-state-proof-decoder-number 5))))
 
 ; gslt-lowered-equation-v1 source-rewrite=198 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-decoder-number-20 target=relation
 (= (gslt:source-state-proof-decoder-number $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-proof-decoder-number (cons-atom 20 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-proof-decoder-number (cons 20 ())) $__gslt_input_v1_0_0
    (quote (source-state-proof-decoder-number 20))))
 
 ; gslt-lowered-equation-v1 source-rewrite=199 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-decoder-number-63 target=relation
 (= (gslt:source-state-proof-decoder-number $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-proof-decoder-number (cons-atom 63 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-proof-decoder-number (cons 63 ())) $__gslt_input_v1_0_0
    (quote (source-state-proof-decoder-number 63))))
 
 ; gslt-lowered-equation-v1 source-rewrite=200 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-decoder-number-65 target=relation
 (= (gslt:source-state-proof-decoder-number $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-proof-decoder-number (cons-atom 65 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-proof-decoder-number (cons 65 ())) $__gslt_input_v1_0_0
    (quote (source-state-proof-decoder-number 65))))
 
 ; gslt-lowered-equation-v1 source-rewrite=201 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-decoder-number-84 target=relation
 (= (gslt:source-state-proof-decoder-number $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-proof-decoder-number (cons-atom 84 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-proof-decoder-number (cons 84 ())) $__gslt_input_v1_0_0
    (quote (source-state-proof-decoder-number 84))))
 
 ; gslt-lowered-equation-v1 source-rewrite=202 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-decoder-number-85 target=relation
 (= (gslt:source-state-proof-decoder-number $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-proof-decoder-number (cons-atom 85 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-proof-decoder-number (cons 85 ())) $__gslt_input_v1_0_0
    (quote (source-state-proof-decoder-number 85))))
 
 ; gslt-lowered-equation-v1 source-rewrite=203 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-decoder-number-89 target=relation
 (= (gslt:source-state-proof-decoder-number $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-proof-decoder-number (cons-atom 89 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-proof-decoder-number (cons 89 ())) $__gslt_input_v1_0_0
    (quote (source-state-proof-decoder-number 89))))
 
 ; gslt-lowered-equation-v1 source-rewrite=204 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-decoder-number-90 target=relation
 (= (gslt:source-state-proof-decoder-number $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-proof-decoder-number (cons-atom 90 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-proof-decoder-number (cons 90 ())) $__gslt_input_v1_0_0
    (quote (source-state-proof-decoder-number 90))))
 
 ; gslt-lowered-equation-v1 source-rewrite=205 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-policy-push-unknown-claim target=relation
 (= (gslt:source-state-proof-unknown-policy $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-proof-unknown-policy (cons-atom state-proof-unknown-push-claim-v1 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-proof-unknown-policy (cons state-proof-unknown-push-claim-v1 ())) $__gslt_input_v1_0_0
    (quote (source-state-proof-unknown-policy state-proof-unknown-push-claim-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=206 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-save-immediately-after-use target=relation
 (= (gslt:source-state-literal $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-literal (cons-atom $save-placement ())) $__gslt_input_v1_0_0
-   (let (gslt:result:source-proof-trace-save-placement-v1:0 $save-placement) (once (gslt:fn:source-proof-trace-save-placement-v1:0))
+   (let (cons source-state-literal (cons $save-placement ())) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-proof-trace-save-placement-v1:0 (cons $save-placement ())) (once (gslt:fn:source-proof-trace-save-placement-v1:0))
    (quote (source-state-literal $save-placement)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=207 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-header-nonmandatory-only target=relation
 (= (gslt:source-state-proof-header-hypothesis-policy $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-proof-header-hypothesis-policy (cons-atom state-proof-header-nonmandatory-only-v1 ())) $__gslt_input_v1_0_0
+   (let (cons source-state-proof-header-hypothesis-policy (cons state-proof-header-nonmandatory-only-v1 ())) $__gslt_input_v1_0_0
    (quote (source-state-proof-header-hypothesis-policy state-proof-header-nonmandatory-only-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=208 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-machine target=relation
 (= (gslt:source-state-proof-machine $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-proof-machine (cons-atom mm-stack-proof-machine-v1 (cons-atom (cons-atom state-stack-proof-machine-v1 (cons-atom (cons-atom state-proof-tables-v1 (cons-atom mm-state-label-kind (cons-atom mm-state-formula (cons-atom mm-state-floating-variable (cons-atom mm-state-assertion-mandatory-variable (cons-atom mm-state-assertion-ordered-hypothesis (cons-atom mm-state-assertion-disjoint-variable (cons-atom mm-state-active-hypothesis (cons-atom mm-state-disjoint-variable (cons-atom mm-state-symbol-kind ())))))))))) (cons-atom (cons-atom state-proof-kinds-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-floating ())) (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-essential ())) (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-axiom ())) (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-theorem ())) (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-variable ())) (cons-atom (cons-atom state-byte-literal-v1 (cons-atom 63 ())) ()))))))) (cons-atom (cons-atom state-proof-decoder-v1 (cons-atom 65 (cons-atom 84 (cons-atom 85 (cons-atom 89 (cons-atom 90 (cons-atom 63 (cons-atom 20 (cons-atom 0 (cons-atom 5 (cons-atom 1 (cons-atom state-proof-unknown-push-claim-v1 (cons-atom state-proof-save-immediately-after-use-v1 (cons-atom state-proof-header-nonmandatory-only-v1 ())))))))))))))) ())))) ()))) $__gslt_input_v1_0_0
+   (let (cons source-state-proof-machine (cons mm-stack-proof-machine-v1 (cons (cons state-stack-proof-machine-v1 (cons (cons state-proof-tables-v1 (cons mm-state-label-kind (cons mm-state-formula (cons mm-state-floating-variable (cons mm-state-assertion-mandatory-variable (cons mm-state-assertion-ordered-hypothesis (cons mm-state-assertion-disjoint-variable (cons mm-state-active-hypothesis (cons mm-state-disjoint-variable (cons mm-state-symbol-kind ())))))))))) (cons (cons state-proof-kinds-v1 (cons (cons state-literal-v1 (cons mm-label-floating ())) (cons (cons state-literal-v1 (cons mm-label-essential ())) (cons (cons state-literal-v1 (cons mm-label-axiom ())) (cons (cons state-literal-v1 (cons mm-label-theorem ())) (cons (cons state-literal-v1 (cons mm-symbol-variable ())) (cons (cons state-byte-literal-v1 (cons 63 ())) ()))))))) (cons (cons state-proof-decoder-v1 (cons 65 (cons 84 (cons 85 (cons 89 (cons 90 (cons 63 (cons 20 (cons 0 (cons 5 (cons 1 (cons state-proof-unknown-push-claim-v1 (cons state-proof-save-immediately-after-use-v1 (cons state-proof-header-nonmandatory-only-v1 ())))))))))))))) ())))) ()))) $__gslt_input_v1_0_0
    (quote (source-state-proof-machine mm-stack-proof-machine-v1 (state-stack-proof-machine-v1 (state-proof-tables-v1 mm-state-label-kind mm-state-formula mm-state-floating-variable mm-state-assertion-mandatory-variable mm-state-assertion-ordered-hypothesis mm-state-assertion-disjoint-variable mm-state-active-hypothesis mm-state-disjoint-variable mm-state-symbol-kind) (state-proof-kinds-v1 (state-literal-v1 mm-label-floating) (state-literal-v1 mm-label-essential) (state-literal-v1 mm-label-axiom) (state-literal-v1 mm-label-theorem) (state-literal-v1 mm-symbol-variable) (state-byte-literal-v1 63)) (state-proof-decoder-v1 65 84 85 89 90 63 20 0 5 1 state-proof-unknown-push-claim-v1 state-proof-save-immediately-after-use-v1 state-proof-header-nonmandatory-only-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=209 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-action-floating target=relation
 (= (gslt:source-state-proof-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-proof-action (cons-atom mm-stack-proof-machine-v1 (cons-atom mm-label-floating (cons-atom stack-push-declared-v1 ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-proof-action (cons mm-stack-proof-machine-v1 (cons mm-label-floating (cons stack-push-declared-v1 ())))) $__gslt_input_v1_0_0
    (quote (source-state-proof-action mm-stack-proof-machine-v1 mm-label-floating stack-push-declared-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=210 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-action-essential target=relation
 (= (gslt:source-state-proof-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-proof-action (cons-atom mm-stack-proof-machine-v1 (cons-atom mm-label-essential (cons-atom stack-push-declared-v1 ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-proof-action (cons mm-stack-proof-machine-v1 (cons mm-label-essential (cons stack-push-declared-v1 ())))) $__gslt_input_v1_0_0
    (quote (source-state-proof-action mm-stack-proof-machine-v1 mm-label-essential stack-push-declared-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=211 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-action-axiom target=relation
 (= (gslt:source-state-proof-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-proof-action (cons-atom mm-stack-proof-machine-v1 (cons-atom mm-label-axiom (cons-atom stack-apply-frame-v1 ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-proof-action (cons mm-stack-proof-machine-v1 (cons mm-label-axiom (cons stack-apply-frame-v1 ())))) $__gslt_input_v1_0_0
    (quote (source-state-proof-action mm-stack-proof-machine-v1 mm-label-axiom stack-apply-frame-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=212 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-action-theorem target=relation
 (= (gslt:source-state-proof-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-proof-action (cons-atom mm-stack-proof-machine-v1 (cons-atom mm-label-theorem (cons-atom stack-apply-frame-v1 ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-proof-action (cons mm-stack-proof-machine-v1 (cons mm-label-theorem (cons stack-apply-frame-v1 ())))) $__gslt_input_v1_0_0
    (quote (source-state-proof-action mm-stack-proof-machine-v1 mm-label-theorem stack-apply-frame-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=213 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-normal-label-not-symbol target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-normal (cons-atom 0 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-normal (cons 0 (cons (cons state-require-row-key-absent-v1 (cons mm-state-symbol-kind (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-normal 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=214 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-normal-label-fresh target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-normal (cons-atom 1 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-label-name (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-normal (cons 1 (cons (cons state-require-row-key-absent-v1 (cons mm-state-label-name (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-normal 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=215 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-normal-typecode-constant target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-normal (cons-atom 2 (cons-atom (cons-atom state-require-row-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-constant ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-normal (cons 2 (cons (cons state-require-row-v1 (cons mm-state-symbol-kind (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-symbol (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-symbol-constant ())) (cons state-row-nil-v1 ()))) ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-normal 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=216 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-normal-symbols-usable target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-normal (cons-atom 3 (cons-atom (cons-atom state-require-each-v1 (cons-atom mm-symbol (cons-atom mm-state-expression-symbol (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-normal (cons 3 (cons (cons state-require-each-v1 (cons mm-symbol (cons mm-state-expression-symbol (cons (cons state-row-cons-v1 (cons state-input-v1 (cons state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-normal 3 (state-require-each-v1 mm-symbol mm-state-expression-symbol (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=217 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-normal-collect-formula-variables target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-normal (cons-atom 4 (cons-atom (cons-atom state-insert-each-matching-v1 (cons-atom mm-symbol (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-variable ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-mandatory-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-normal (cons 4 (cons (cons state-insert-each-matching-v1 (cons mm-symbol (cons mm-state-symbol-kind (cons (cons state-row-cons-v1 (cons state-input-v1 (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-symbol-variable ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-mandatory-variable (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons state-input-v1 (cons state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-normal 4 (state-insert-each-matching-v1 mm-symbol mm-state-symbol-kind (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)) mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-input-v1 state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=218 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-normal-collect-essential-variables target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-normal (cons-atom 5 (cons-atom (cons-atom state-copy-each-row-v1 (cons-atom mm-state-active-essential-variable (cons-atom mm-state-assertion-mandatory-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-normal (cons 5 (cons (cons state-copy-each-row-v1 (cons mm-state-active-essential-variable (cons mm-state-assertion-mandatory-variable (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-normal 5 (state-copy-each-row-v1 mm-state-active-essential-variable mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=219 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-normal-snapshot-hypotheses target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-normal (cons-atom 6 (cons-atom (cons-atom state-copy-each-row-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-active-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-normal (cons 6 (cons (cons state-copy-each-row-v1 (cons mm-state-active-hypothesis (cons mm-state-assertion-active-hypothesis (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-normal 6 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-active-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=220 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-normal-order-hypotheses target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-normal (cons-atom 7 (cons-atom (cons-atom state-copy-each-row-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-ordered-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-source-row-index-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-normal (cons 7 (cons (cons state-copy-each-row-v1 (cons mm-state-active-hypothesis (cons mm-state-assertion-ordered-hypothesis (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons state-source-row-index-v1 (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-normal 7 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-ordered-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-row-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=221 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-normal-select-essential-frame-hypotheses target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-normal (cons-atom 8 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-label-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-essential ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-frame-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-normal (cons 8 (cons (cons state-copy-each-row-matching-v1 (cons mm-state-active-hypothesis (cons mm-state-label-kind (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-label-essential ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-frame-hypothesis (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-normal 8 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-label-kind (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=222 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-normal-select-floating-frame-hypotheses target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-normal (cons-atom 9 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-frame-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-normal (cons 9 (cons (cons state-copy-each-row-matching-v1 (cons mm-state-active-hypothesis (cons mm-state-assertion-mandatory-variable (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 2 ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-frame-hypothesis (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-normal 9 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=223 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-normal-order-frame-hypotheses target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-normal (cons-atom 10 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-frame-hypothesis (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-ordered-frame-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-source-match-index-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-normal (cons 10 (cons (cons state-copy-each-row-matching-v1 (cons mm-state-active-hypothesis (cons mm-state-assertion-frame-hypothesis (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-ordered-frame-hypothesis (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons state-source-match-index-v1 (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-normal 10 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-frame-hypothesis (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-ordered-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=224 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-normal-select-disjoint-left-mandatory target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-normal (cons-atom 11 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-disjoint-variable (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 1 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-normal (cons 11 (cons (cons state-copy-each-row-matching-v1 (cons mm-state-disjoint-variable (cons mm-state-assertion-mandatory-variable (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-disjoint-left-candidate (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 1 ())) (cons state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-normal 11 (state-copy-each-row-matching-v1 mm-state-disjoint-variable mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-disjoint-left-candidate state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=225 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-normal-select-disjoint-right-mandatory target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-normal (cons-atom 12 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-disjoint-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 1 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-normal (cons 12 (cons (cons state-copy-each-row-matching-v1 (cons mm-state-assertion-disjoint-left-candidate (cons mm-state-assertion-mandatory-variable (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 2 ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-disjoint-variable (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 1 ())) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 2 ())) (cons state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-normal 12 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=226 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-normal-order-disjoint-mandatory target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-normal (cons-atom 13 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-ordered-disjoint-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-source-match-index-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 1 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-normal (cons 13 (cons (cons state-copy-each-row-matching-v1 (cons mm-state-assertion-disjoint-left-candidate (cons mm-state-assertion-mandatory-variable (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 2 ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-ordered-disjoint-variable (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons (cons state-row-cons-v1 (cons state-source-match-index-v1 (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 1 ())) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 2 ())) (cons state-row-nil-v1 ()))) ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-normal 13 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-ordered-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=227 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-normal-check target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-normal (cons-atom 14 (cons-atom (cons-atom state-check-proof-normal-v1 (cons-atom mm-stack-proof-machine-v1 (cons-atom mm-label (cons-atom mm-symbol (cons-atom mm-proof-step ()))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-normal (cons 14 (cons (cons state-check-proof-normal-v1 (cons mm-stack-proof-machine-v1 (cons mm-label (cons mm-symbol (cons mm-proof-step ()))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-normal 14 (state-check-proof-normal-v1 mm-stack-proof-machine-v1 mm-label mm-symbol mm-proof-step)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=228 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-normal-record-formula target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-normal (cons-atom 15 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-formula (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-list-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-normal (cons 15 (cons (cons state-insert-row-v1 (cons mm-state-formula (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-role-list-v1 (cons mm-symbol (cons 0 ()))) (cons state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-normal 15 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=229 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-normal-register-label-name target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-normal (cons-atom 16 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-name (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-normal (cons 16 (cons (cons state-insert-row-v1 (cons mm-state-label-name (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-normal 16 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=230 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-normal-register-label-kind target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-normal (cons-atom 17 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-kind (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-theorem ())) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-normal (cons 17 (cons (cons state-insert-row-v1 (cons mm-state-label-kind (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-label-theorem ())) (cons state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-normal 17 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-theorem) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=231 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-compressed-label-not-symbol target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-compressed (cons-atom 0 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-compressed (cons 0 (cons (cons state-require-row-key-absent-v1 (cons mm-state-symbol-kind (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-compressed 0 (state-require-row-key-absent-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=232 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-compressed-label-fresh target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-compressed (cons-atom 1 (cons-atom (cons-atom state-require-row-key-absent-v1 (cons-atom mm-state-label-name (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-compressed (cons 1 (cons (cons state-require-row-key-absent-v1 (cons mm-state-label-name (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons state-row-nil-v1 ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-compressed 1 (state-require-row-key-absent-v1 mm-state-label-name (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=233 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-compressed-typecode-constant target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-compressed (cons-atom 2 (cons-atom (cons-atom state-require-row-v1 (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-constant ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-compressed (cons 2 (cons (cons state-require-row-v1 (cons mm-state-symbol-kind (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-symbol (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-symbol-constant ())) (cons state-row-nil-v1 ()))) ()))) ()))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-compressed 2 (state-require-row-v1 mm-state-symbol-kind (state-row-cons-v1 (state-role-at-v1 mm-symbol 0) (state-row-cons-v1 (state-literal-v1 mm-symbol-constant) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=234 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-compressed-symbols-usable target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-compressed (cons-atom 3 (cons-atom (cons-atom state-require-each-v1 (cons-atom mm-symbol (cons-atom mm-state-expression-symbol (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-compressed (cons 3 (cons (cons state-require-each-v1 (cons mm-symbol (cons mm-state-expression-symbol (cons (cons state-row-cons-v1 (cons state-input-v1 (cons state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-compressed 3 (state-require-each-v1 mm-symbol mm-state-expression-symbol (state-row-cons-v1 state-input-v1 state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=235 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-compressed-collect-formula-variables target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-compressed (cons-atom 4 (cons-atom (cons-atom state-insert-each-matching-v1 (cons-atom mm-symbol (cons-atom mm-state-symbol-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-symbol-variable ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-mandatory-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-input-v1 (cons-atom state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-compressed (cons 4 (cons (cons state-insert-each-matching-v1 (cons mm-symbol (cons mm-state-symbol-kind (cons (cons state-row-cons-v1 (cons state-input-v1 (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-symbol-variable ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-mandatory-variable (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons state-input-v1 (cons state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-compressed 4 (state-insert-each-matching-v1 mm-symbol mm-state-symbol-kind (state-row-cons-v1 state-input-v1 (state-row-cons-v1 (state-literal-v1 mm-symbol-variable) state-row-nil-v1)) mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-input-v1 state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=236 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-compressed-collect-essential-variables target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-compressed (cons-atom 5 (cons-atom (cons-atom state-copy-each-row-v1 (cons-atom mm-state-active-essential-variable (cons-atom mm-state-assertion-mandatory-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-compressed (cons 5 (cons (cons state-copy-each-row-v1 (cons mm-state-active-essential-variable (cons mm-state-assertion-mandatory-variable (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-compressed 5 (state-copy-each-row-v1 mm-state-active-essential-variable mm-state-assertion-mandatory-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=237 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-compressed-snapshot-hypotheses target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-compressed (cons-atom 6 (cons-atom (cons-atom state-copy-each-row-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-active-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-compressed (cons 6 (cons (cons state-copy-each-row-v1 (cons mm-state-active-hypothesis (cons mm-state-assertion-active-hypothesis (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-compressed 6 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-active-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=238 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-compressed-order-hypotheses target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-compressed (cons-atom 7 (cons-atom (cons-atom state-copy-each-row-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-ordered-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-source-row-index-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-compressed (cons 7 (cons (cons state-copy-each-row-v1 (cons mm-state-active-hypothesis (cons mm-state-assertion-ordered-hypothesis (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons state-source-row-index-v1 (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) ()))) ()))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-compressed 7 (state-copy-each-row-v1 mm-state-active-hypothesis mm-state-assertion-ordered-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-row-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=239 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-compressed-select-essential-frame-hypotheses target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-compressed (cons-atom 8 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-label-kind (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-essential ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-frame-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-compressed (cons 8 (cons (cons state-copy-each-row-matching-v1 (cons mm-state-active-hypothesis (cons mm-state-label-kind (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-label-essential ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-frame-hypothesis (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-compressed 8 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-label-kind (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-literal-v1 mm-label-essential) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=240 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-compressed-select-floating-frame-hypotheses target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-compressed (cons-atom 9 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-frame-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-compressed (cons 9 (cons (cons state-copy-each-row-matching-v1 (cons mm-state-active-hypothesis (cons mm-state-assertion-mandatory-variable (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 2 ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-frame-hypothesis (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-compressed 9 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=241 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-compressed-order-frame-hypotheses target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-compressed (cons-atom 10 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-active-hypothesis (cons-atom mm-state-assertion-frame-hypothesis (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-ordered-frame-hypothesis (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-source-match-index-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-compressed (cons 10 (cons (cons state-copy-each-row-matching-v1 (cons mm-state-active-hypothesis (cons mm-state-assertion-frame-hypothesis (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-ordered-frame-hypothesis (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons state-source-match-index-v1 (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-compressed 10 (state-copy-each-row-matching-v1 mm-state-active-hypothesis mm-state-assertion-frame-hypothesis (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-ordered-frame-hypothesis state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=242 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-compressed-select-disjoint-left-mandatory target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-compressed (cons-atom 11 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-disjoint-variable (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 1 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-compressed (cons 11 (cons (cons state-copy-each-row-matching-v1 (cons mm-state-disjoint-variable (cons mm-state-assertion-mandatory-variable (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-disjoint-left-candidate (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 1 ())) (cons state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-compressed 11 (state-copy-each-row-matching-v1 mm-state-disjoint-variable mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) state-row-nil-v1)) mm-state-assertion-disjoint-left-candidate state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=243 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-compressed-select-disjoint-right-mandatory target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-compressed (cons-atom 12 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-disjoint-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 1 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-compressed (cons 12 (cons (cons state-copy-each-row-matching-v1 (cons mm-state-assertion-disjoint-left-candidate (cons mm-state-assertion-mandatory-variable (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 2 ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-disjoint-variable (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 1 ())) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 2 ())) (cons state-row-nil-v1 ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-compressed 12 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=244 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-compressed-order-disjoint-mandatory target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-compressed (cons-atom 13 (cons-atom (cons-atom state-copy-each-row-matching-v1 (cons-atom mm-state-assertion-disjoint-left-candidate (cons-atom mm-state-assertion-mandatory-variable (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) (cons-atom mm-state-assertion-ordered-disjoint-variable (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 0 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom state-source-match-index-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 1 ())) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-source-column-v1 (cons-atom 2 ())) (cons-atom state-row-nil-v1 ()))) ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-compressed (cons 13 (cons (cons state-copy-each-row-matching-v1 (cons mm-state-assertion-disjoint-left-candidate (cons mm-state-assertion-mandatory-variable (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 2 ())) (cons state-row-nil-v1 ()))) ()))) (cons mm-state-assertion-ordered-disjoint-variable (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 0 ())) (cons (cons state-row-cons-v1 (cons state-source-match-index-v1 (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 1 ())) (cons (cons state-row-cons-v1 (cons (cons state-source-column-v1 (cons 2 ())) (cons state-row-nil-v1 ()))) ()))) ()))) ()))) ()))))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-compressed 13 (state-copy-each-row-matching-v1 mm-state-assertion-disjoint-left-candidate mm-state-assertion-mandatory-variable (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)) mm-state-assertion-ordered-disjoint-variable state-insert-or-require-equal-v1 (state-row-cons-v1 (state-source-column-v1 0) (state-row-cons-v1 state-source-match-index-v1 (state-row-cons-v1 (state-source-column-v1 1) (state-row-cons-v1 (state-source-column-v1 2) state-row-nil-v1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=245 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-compressed-check target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-compressed (cons-atom 14 (cons-atom (cons-atom state-check-proof-compressed-v1 (cons-atom mm-stack-proof-machine-v1 (cons-atom mm-label (cons-atom mm-symbol (cons-atom mm-proof-step (cons-atom mm-compressed-word ())))))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-compressed (cons 14 (cons (cons state-check-proof-compressed-v1 (cons mm-stack-proof-machine-v1 (cons mm-label (cons mm-symbol (cons mm-proof-step (cons mm-compressed-word ())))))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-compressed 14 (state-check-proof-compressed-v1 mm-stack-proof-machine-v1 mm-label mm-symbol mm-proof-step mm-compressed-word)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=246 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-compressed-record-formula target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-compressed (cons-atom 15 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-formula (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-list-v1 (cons-atom mm-symbol (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-compressed (cons 15 (cons (cons state-insert-row-v1 (cons mm-state-formula (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-role-list-v1 (cons mm-symbol (cons 0 ()))) (cons state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-compressed 15 (state-insert-row-v1 mm-state-formula state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-role-list-v1 mm-symbol 0) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=247 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-compressed-register-label-name target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-compressed (cons-atom 16 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-name (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-compressed (cons 16 (cons (cons state-insert-row-v1 (cons mm-state-label-name (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons state-row-nil-v1 ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-compressed 16 (state-insert-row-v1 mm-state-label-name state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) state-row-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=248 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-compressed-register-label-kind target=relation
 (= (gslt:source-state-action $__gslt_input_v1_0_0)
-   (let (cons-atom source-state-action (cons-atom mm-check-theorem-compressed (cons-atom 17 (cons-atom (cons-atom state-insert-row-v1 (cons-atom mm-state-label-kind (cons-atom state-insert-or-require-equal-v1 (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-role-at-v1 (cons-atom mm-label (cons-atom 0 ()))) (cons-atom (cons-atom state-row-cons-v1 (cons-atom (cons-atom state-literal-v1 (cons-atom mm-label-theorem ())) (cons-atom state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
+   (let (cons source-state-action (cons mm-check-theorem-compressed (cons 17 (cons (cons state-insert-row-v1 (cons mm-state-label-kind (cons state-insert-or-require-equal-v1 (cons (cons state-row-cons-v1 (cons (cons state-role-at-v1 (cons mm-label (cons 0 ()))) (cons (cons state-row-cons-v1 (cons (cons state-literal-v1 (cons mm-label-theorem ())) (cons state-row-nil-v1 ()))) ()))) ())))) ())))) $__gslt_input_v1_0_0
    (quote (source-state-action mm-check-theorem-compressed 17 (state-insert-row-v1 mm-state-label-kind state-insert-or-require-equal-v1 (state-row-cons-v1 (state-role-at-v1 mm-label 0) (state-row-cons-v1 (state-literal-v1 mm-label-theorem) state-row-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=249 source-presentation=RelationalStateProgramCompilerV1 source-rule=compile-relational-state-table-v1 target=relation
 (= (gslt:state-table-v1 $__gslt_input_v1_0_0)
-   (let (cons-atom state-table-v1 (cons-atom $table (cons-atom $arity (cons-atom $key-arity (cons-atom $lifetime ()))))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-table:0000 $table $arity $key-arity $lifetime) (superpose (collapse (gslt:mode:source-state-table:0000)))
+   (let (cons state-table-v1 (cons $table (cons $arity (cons $key-arity (cons $lifetime ()))))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-state-table:0000 (cons $table (cons $arity (cons $key-arity (cons $lifetime ()))))) (superpose (collapse (gslt:mode:source-state-table:0000)))
    (let gslt:result:source-state-table-shape:11 (once (gslt:fn:source-state-table-shape:11 $arity $key-arity))
    (let gslt:result:source-state-lifetime:1 (once (gslt:fn:source-state-lifetime:1 $lifetime))
    (quote (state-table-v1 $table $arity $key-arity $lifetime)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=250 source-presentation=RelationalStateProgramCompilerV1 source-rule=compile-relational-state-action-v1 target=relation
 (= (gslt:state-action-v1 $__gslt_input_v1_0_0)
-   (let (cons-atom state-action-v1 (cons-atom $operation (cons-atom $index (cons-atom $action ())))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-action:000 $operation $index $action) (superpose (collapse (gslt:mode:source-state-action:000)))
+   (let (cons state-action-v1 (cons $operation (cons $index (cons $action ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-state-action:000 (cons $operation (cons $index (cons $action ())))) (superpose (collapse (gslt:mode:source-state-action:000)))
    (let gslt:result:state-action-valid:11 (superpose (collapse (gslt:mode:state-action-valid:11 $operation $action)))
    (quote (state-action-v1 $operation $index $action))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=251 source-presentation=RelationalStateProgramCompilerV1 source-rule=compile-relational-state-proof-machine-v1 target=relation
 (= (gslt:state-proof-machine-v1 $__gslt_input_v1_0_0)
-   (let (cons-atom state-proof-machine-v1 (cons-atom $machine (cons-atom $configuration ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-proof-machine:00 $machine $configuration) (once (gslt:fn:source-state-proof-machine:00))
+   (let (cons state-proof-machine-v1 (cons $machine (cons $configuration ()))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-state-proof-machine:00 (cons $machine (cons $configuration ()))) (once (gslt:fn:source-state-proof-machine:00))
    (let gslt:result:state-proof-machine-valid:1 (once (gslt:fn:state-proof-machine-valid:1 $configuration))
    (quote (state-proof-machine-v1 $machine $configuration))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=252 source-presentation=RelationalStateProgramCompilerV1 source-rule=compile-relational-state-proof-action-v1 target=relation
 (= (gslt:state-proof-action-v1 $__gslt_input_v1_0_0)
-   (let (cons-atom state-proof-action-v1 (cons-atom $machine (cons-atom $source-kind (cons-atom $action ())))) $__gslt_input_v1_0_0
-   (let (gslt:result:source-state-proof-action:000 $machine $source-kind $action) (superpose (collapse (gslt:mode:source-state-proof-action:000)))
+   (let (cons state-proof-action-v1 (cons $machine (cons $source-kind (cons $action ())))) $__gslt_input_v1_0_0
+   (let (cons gslt:result:source-state-proof-action:000 (cons $machine (cons $source-kind (cons $action ())))) (superpose (collapse (gslt:mode:source-state-proof-action:000)))
    (quote (state-proof-action-v1 $machine $source-kind $action)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=253 source-presentation=RelationalStateProgramCompilerV1 source-rule=compile-relational-state-final-action-v1 target=relation
 (= (gslt:state-final-action-v1 $__gslt_input_v1_0_0)
-   (let (cons-atom state-final-action-v1 (cons-atom $index (cons-atom $action ()))) $__gslt_input_v1_0_0
+   (let (cons state-final-action-v1 (cons $index (cons $action ()))) $__gslt_input_v1_0_0
    (let $_ (gslt:source-state-final-action (source-state-final-action $index $action))
-   (let (gslt:result:state-final-action-valid:0 $action) (superpose (collapse (gslt:mode:state-final-action-valid:0)))
+   (let (cons gslt:result:state-final-action-valid:0 (cons $action ())) (superpose (collapse (gslt:mode:state-final-action-valid:0)))
    (quote (state-final-action-v1 $index $action))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=254 source-presentation=RelationalStateProgramInterfaceV1 source-rule=state-program-interface-action-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom source-state-action (cons-atom 3 ()))) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-state-action (cons 3 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-state-action 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=255 source-presentation=RelationalStateProgramInterfaceV1 source-rule=state-program-interface-depth-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom source-state-depth (cons-atom 1 ()))) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-state-depth (cons 1 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-state-depth 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=256 source-presentation=RelationalStateProgramInterfaceV1 source-rule=state-program-interface-final-action-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom source-state-final-action (cons-atom 2 ()))) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-state-final-action (cons 2 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-state-final-action 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=257 source-presentation=RelationalStateProgramInterfaceV1 source-rule=state-program-interface-index-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom source-state-index (cons-atom 1 ()))) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-state-index (cons 1 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-state-index 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=258 source-presentation=RelationalStateProgramInterfaceV1 source-rule=state-program-interface-lifetime-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom source-state-lifetime (cons-atom 1 ()))) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-state-lifetime (cons 1 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-state-lifetime 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=259 source-presentation=RelationalStateProgramInterfaceV1 source-rule=state-program-interface-literal-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom source-state-literal (cons-atom 1 ()))) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-state-literal (cons 1 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-state-literal 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=260 source-presentation=RelationalStateProgramInterfaceV1 source-rule=state-program-interface-proof-decoder-number-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom source-state-proof-decoder-number (cons-atom 1 ()))) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-state-proof-decoder-number (cons 1 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-state-proof-decoder-number 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=261 source-presentation=RelationalStateProgramInterfaceV1 source-rule=state-program-interface-proof-action-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom source-state-proof-action (cons-atom 3 ()))) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-state-proof-action (cons 3 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-state-proof-action 3))))
 
 ; gslt-lowered-equation-v1 source-rewrite=262 source-presentation=RelationalStateProgramInterfaceV1 source-rule=state-program-interface-proof-machine-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom source-state-proof-machine (cons-atom 2 ()))) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-state-proof-machine (cons 2 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-state-proof-machine 2))))
 
 ; gslt-lowered-equation-v1 source-rewrite=263 source-presentation=RelationalStateProgramInterfaceV1 source-rule=state-program-interface-proof-unknown-policy-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom source-state-proof-unknown-policy (cons-atom 1 ()))) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-state-proof-unknown-policy (cons 1 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-state-proof-unknown-policy 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=264 source-presentation=RelationalStateProgramInterfaceV1 source-rule=state-program-interface-proof-header-policy-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom source-state-proof-header-hypothesis-policy (cons-atom 1 ()))) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-state-proof-header-hypothesis-policy (cons 1 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-state-proof-header-hypothesis-policy 1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=265 source-presentation=RelationalStateProgramInterfaceV1 source-rule=state-program-interface-table-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom source-state-table (cons-atom 4 ()))) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-state-table (cons 4 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-state-table 4))))
 
 ; gslt-lowered-equation-v1 source-rewrite=266 source-presentation=RelationalStateProgramInterfaceV1 source-rule=state-program-interface-write-policy-v1 target=relation
 (= (gslt:oslf-external-relation-decl-v1 $__gslt_input_v1_0_0)
-   (let (cons-atom oslf-external-relation-decl-v1 (cons-atom source-state-write-policy (cons-atom 1 ()))) $__gslt_input_v1_0_0
+   (let (cons oslf-external-relation-decl-v1 (cons source-state-write-policy (cons 1 ()))) $__gslt_input_v1_0_0
    (quote (oslf-external-relation-decl-v1 source-state-write-policy 1))))

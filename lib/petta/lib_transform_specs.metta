@@ -1,8 +1,12 @@
 ; One general transform over spaces: its specification, written in ordinary MeTTa.
 ;
-; Each definition here says what the operation means as directly as it can.
-; lib_transform computes the same answers and leaves the same store, and is the
-; library to import.
+; Each definition here gives the authored reference for transform.
+; Under first-firing demand, select the first firing's packet before running
+; its templates. In this written model tfs:run-first takes that demand
+; explicitly. Returning a call to it, or binding its result and returning
+; the binding unchanged, leaves the selected firing the same. A packet that
+; answers nothing leaves tfs:run-first without an answer, so an enclosing
+; once goes on to its other alternatives.
 ;
 ;   (transform SPACE SOURCES TEMPLATE)              instances go to the caller
 ;   (transform SPACE SOURCES TEMPLATE DESTINATION)  instances are routed at the commit
@@ -37,9 +41,11 @@
 ; answers `match` gives.  From the first `all` on, every extension of the branch's
 ; kernel match fires in the branch's one commit, so (, (all p) (all q)) is every
 ; pair, and a `once` after it is part of that extension.  From a `once` before any
-; `all`, the first extension that holds fires alone.  (once (transform ...)) gives
-; the first answer, and a firing without instances gives none, so it may fire more
-; than one branch; a `once` among the sources fires one extension in each branch.
+; `all`, the first extension that holds fires alone.  An enclosing PeTTa `once`
+; requests the first firing from a returned transform with takes or a destination
+; space, and keeps the first answer from its packet; when the packet answers
+; nothing, the `once` goes on to its other alternatives. A `once` among the
+; sources fires one extension in each branch.
 ; A footprint
 ; validates when each taken atom is stored with at least the multiplicity the firing
 ; takes, plus one more copy when the firing also reads that atom.  A read-mode
@@ -88,19 +94,38 @@
 (= (transform $space $sources $template $destination)
    (tfs:run $space $sources $template $destination))
 
+(: tfs:run (-> Atom Atom Atom Atom %Undefined%))
 (= (tfs:run $space $sources $template $destination)
+   (tfs:run-demand $space $sources $template $destination tfs:stream))
+
+(: tfs:run-first (-> Atom Atom Atom Atom %Undefined%))
+(= (tfs:run-first $space $sources $template $destination)
+   (tfs:run-demand $space $sources $template $destination tfs:first-firing))
+
+(= (tfs:run-demand $space $sources $template $destination $demand)
    (let $plain (tfs:normalize (tfs:conjuncts $sources))
      (let $vars (tfs:source-vars $plain ())
        (let $conjuncts (tfs:protect-lets $vars $plain)
          (let $instance (if (== $destination tfs:caller) (tfs:protect-template $vars $template) $template)
-           (let $matches (tfs:proposals $space $conjuncts $instance)
-             (let (tfs:kmatch $guide) (superpose $matches)
-               (let $kc (tfs:guided $conjuncts $guide)
-                 (if (is-space $destination)
-                     (tfs:fire-into $space $kc $instance $destination)
-                     (let $comma (tfs:comma $instance)
-                       (let (tfs:fired $instances) (tfs:fire $space $kc $instance)
-                         (tfs:route $comma $instances $destination))))))))))))
+           (let $comma (tfs:comma $instance)
+             (if (== $demand tfs:first-firing)
+                 (let $packet (once (tfs:fire-packet $space $conjuncts $instance $destination))
+                   (once (tfs:deliver $packet $comma $destination)))
+                 (let $packet (tfs:fire-packet $space $conjuncts $instance $destination)
+                   (tfs:deliver $packet $comma $destination)))))))))
+
+; A successful firing lends one packet, including a packet with no instances.
+(= (tfs:fire-packet $space $conjuncts $instance $destination)
+   (let $matches (tfs:proposals $space $conjuncts $instance)
+     (let (tfs:kmatch $guide) (superpose $matches)
+       (let $kc (tfs:guided $conjuncts $guide)
+         (if (is-space $destination)
+             (let $count (tfs:fire-into $space $kc $instance $destination) (tfs:counted $count))
+             (tfs:fire $space $kc $instance))))))
+
+(= (tfs:deliver (tfs:counted $count) $comma $destination) $count)
+(= (tfs:deliver (tfs:fired $instances) $comma $destination)
+   (tfs:route $comma $instances $destination))
 
 ; The kernel's matches against the store as it is when the transform is called, each
 ; as (tfs:kmatch GUIDE): the atoms its read, take and unique conjuncts matched, in

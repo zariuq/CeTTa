@@ -1,15 +1,33 @@
 (absent false)
-(bare false)
+(bare (instantiation_error Variable))
 (after-bare 5)
 (ground-meets-stored-variable true)
 (equal-variable-copy false)
-(pattern-meets-two true)
+(pattern-meets-two (true Variable))
 (exact true)
-(again true)
-(exhausted false)
-(left 1)
-(self-bare false)
+(again false)
+(left 0)
+(bound-pattern true)
+(body-bare instantiation_error)
+(after-body ())
+(self-bare instantiation_error)
 (self-after 2)
+(unknown-head instantiation_error)
+(unknown-left instantiation_error)
+(unknown-open-head instantiation_error)
+(definition-retained 7)
+(caught-branch instantiation_error)
+(after-caught-branch ())
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
 true
 true
 true

@@ -48,8 +48,14 @@ void write_census(const char *path, const char *tsv) {
     fprintf(o, "rule census of %s, theory %s\n\n", module_name, theory_name);
     fprintf(o, "sorts %d; constructors %d (data %d, judgments %d); rules %d; premises %d\n", nsorts, nctors, ndata, nj, nrules, nprem);
     fprintf(o, "mode: every judgment (in, ..., in) -> out; every premise source has its inputs bound (checked)\n");
-    fprintf(o, "judgments det %d (%d rules), semidet %d (%d rules); groups covering every input %d of %d\n",
-            ndet, ndetrules, nj - ndet, nrulesemi, ncomplete, nj);
+    int nnondet = 0, nnondetrules = 0;
+    for (int c = 0; c < nctors; c++) if (ctors[c].defined && ctors[c].nondet) { nnondet++; nnondetrules += ctors[c].nrules; }
+    if (nnondet)
+        fprintf(o, "judgments det %d (%d rules), semidet %d (%d rules), nondet %d (%d rules); groups covering every input %d of %d\n",
+                ndet, ndetrules, nj - ndet - nnondet, nrulesemi - nnondetrules, nnondet, nnondetrules, ncomplete, nj);
+    else
+        fprintf(o, "judgments det %d (%d rules), semidet %d (%d rules); groups covering every input %d of %d\n",
+                ndet, ndetrules, nj - ndet, nrulesemi, ncomplete, nj);
     int nopen = 0, nopenrules = 0;
     for (int c = 0; c < nctors; c++) if (ctors[c].defined && ctors[c].overlap_open) { nopen++; nopenrules += ctors[c].nrules; }
     fprintf(o, "share of rules in det judgments: %.1f%%; judgments whose determinism is not established (an overlap not shown exclusive): %d (%d rules)\n",
@@ -100,7 +106,7 @@ void write_census(const char *path, const char *tsv) {
     for (int i = 0; i < no && i < 25; i++) {
         Ctor *k = &ctors[order[i]];
         int sw, depth, sz = dag_size(k->dag_root, &sw, &depth);
-        fprintf(o, "  %-32s %5d %5d %8s %6d %6d %8d ", k->name, k->nrules, k->arity, k->det ? "det" : "semidet", sz, sw, depth);
+        fprintf(o, "  %-32s %5d %5d %8s %6d %6d %8d ", k->name, k->nrules, k->arity, k->det ? "det" : k->nondet ? "nondet" : "semidet", sz, sw, depth);
         for (int a = 0; a < k->arity; a++) fprintf(o, "%s%s", a ? "," : "", sorts[k->asort[a]].name);
         fputc('\n', o);
     }
@@ -131,7 +137,13 @@ void write_census(const char *path, const char *tsv) {
     for (int i = 0; i < no; i++) {
         Ctor *k = &ctors[order[i]];
         const char *kind = sort_kind_of_judgment(k);
-        if (kind) fprintf(o, "  %-28s %-9s %3d rules  (%s)\n", k->name, kind, k->nrules, k->det ? "det" : "semidet");
+        if (kind) fprintf(o, "  %-28s %-9s %3d rules  (%s)\n", k->name, kind, k->nrules, k->det ? "det" : k->nondet ? "nondet" : "semidet");
+    }
+    /* the determinism of every judgment, when some may give several results */
+    if (nnondet) {
+        fprintf(o, "\ndeterminism of every judgment (det: one result for every input; semidet: at most one; nondet: any number):\n");
+        for (int c = 0; c < nctors; c++)
+            if (ctors[c].defined) fprintf(o, "  %-48s %-7s %3d rules\n", ctors[c].name, ctors[c].det ? "det" : ctors[c].nondet ? "nondet" : "semidet", ctors[c].nrules);
     }
     /* every overlapping pair and how it is resolved */
     if (noverlap_pairs) {
@@ -151,7 +163,7 @@ void write_census(const char *path, const char *tsv) {
             int sw, depth, sz = dag_size(k->dag_root, &sw, &depth);
             int l = rules[k->rules[0]].layer;
             fprintf(t, "%s\t%s\t%d\t%d\t%s\t%s\t%s\t%d\t%d\t%d\t", k->name, l >= 0 ? layer_name[l] : "-", k->nrules, k->arity,
-                    k->det ? "det" : "semidet", k->complete ? "yes" : "no", k->recursive ? "yes" : "no", sz, sw, depth);
+                    k->det ? "det" : k->nondet ? "nondet" : "semidet", k->complete ? "yes" : "no", k->recursive ? "yes" : "no", sz, sw, depth);
             for (int i = 0; i < k->nrules; i++) fprintf(t, "%s%d", i ? "," : "", k->rules[i]);
             fputc('\n', t);
         }

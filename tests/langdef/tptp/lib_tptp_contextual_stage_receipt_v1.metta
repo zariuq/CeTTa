@@ -1,4 +1,4 @@
-!(import! &self lib_tptp)
+!(import! &self (library lib_tptp))
 
 (= (test:stage-execution
       (TPTP:StageExecutionV1

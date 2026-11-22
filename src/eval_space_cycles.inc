@@ -140,7 +140,9 @@ static _Thread_local SpaceResourceCycleResult g_space_resource_cycle_result;
 
 typedef struct {
     TermUniverse *universe;
-    CettaSharedTransitionGuard transition;
+    /* The census reads every space and state cell this thread lists: a
+     * world-channel section. */
+    CettaGuardSection transition;
     bool entered_scope;
     bool active;
 } SpaceResourceBoundary;
@@ -150,7 +152,7 @@ static void space_resource_boundary_leave(SpaceResourceBoundary *boundary) {
         return;
     term_universe_collection_inhibit_leave(boundary->universe);
     g_space_resource_collection_running = false;
-    cetta_shared_transition_guard_leave(&boundary->transition);
+    cetta_guard_section_close(&boundary->transition);
     if (boundary->entered_scope)
         cetta_shared_transition_scope_leave();
 }
@@ -180,7 +182,7 @@ static SpaceResourceCycleResult space_reclaim_resource_cycles_checked(TermUniver
         .entered_scope = !cetta_shared_transition_scope_active()};
     if (boundary.entered_scope)
         cetta_shared_transition_scope_enter();
-    cetta_shared_transition_guard_enter(&boundary.transition);
+    cetta_world_section_open(&boundary.transition);
     term_universe_collection_inhibit_enter(universe);
     boundary.active = true;
     g_space_resource_collection_running = true;

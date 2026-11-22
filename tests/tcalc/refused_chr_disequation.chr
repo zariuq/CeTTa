@@ -1,0 +1,4 @@
+% A disequation is a guard, never told: tcalc@0.1's knowledge is equations
+% (RuleSyntax/Core.lean), so one in a rule's body is refused at its place.
+p(a).
+r @ p(X) <=> q(X), X \== b.

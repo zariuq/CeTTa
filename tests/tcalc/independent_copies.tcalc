@@ -1,0 +1,7 @@
+; profile: step=one
+; Two copies of a token, and two rules that each take one: the firings select
+; the same row term but take different copies, so they commute.
+(token)
+(token)
+(rule left (take (token)) (make (l)))
+(rule right (take (token)) (make (r)))

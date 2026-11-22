@@ -1,0 +1,5 @@
+; A row that is an unknown can be any row.  A rule that takes (job $j) can
+; take it; the made row keeps what is still unknown.
+(step one)
+$r
+(rule start (take (job $j)) (make (started $j)))

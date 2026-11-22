@@ -1,16 +1,15 @@
 argument
 multi-consumer
-multi-consumer
 argument
 classifier
 classifier
 (Results (Box (+ 2 3)) 6 (Pair 4 7))
-((Seen 6) (Seen (tier-producer)))
+((Seen 6))
 ()
 ()
-((Multi tier-multi-value) (Multi tier-multi-value))
+((Multi tier-multi-value))
 (First First Second)
-(Accepted Accepted Accepted)
+(Accepted)
 (WrappedFirst WrappedFirst WrappedSecond)
 (((-> Number Result) String))
 ()
@@ -25,14 +24,14 @@ classifier
 Number
 ()
 ()
-((+ 6 1) (+ 6 1))
+((+ 6 1))
 20
 ()
-((Changed (+ 2 3)) (Changed 5))
+((Changed 5))
 (FirstDeclaration (+ 1 2))
-(Accepted Accepted)
-(Accepted Accepted Accepted Accepted)
-(Accepted Accepted)
+(Accepted)
+(Accepted)
+(Accepted)
 (Accepted)
 ()
 ()

@@ -10,6 +10,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__has_include)
+#if __has_include(<sys/single_threaded.h>)
+#include <sys/single_threaded.h>
+#define CETTA_HAVE_LIBC_SINGLE_THREADED 1
+#endif
+#endif
 
 typedef struct {
     /* Generation and reference count change atomically together.  Testing a
@@ -273,11 +279,32 @@ static FrameIdentityCell *frame_identity_cell_of(CettaFrameIdentity identity,
     return frame_identity_cell(parts.handle);
 }
 
+/* Process-wide single-threaded check: checked fresh at each short
+ * load-modify-store window that contains no calls (so the sole caller cannot
+ * launch another thread inside the window), and never cached across calls. */
+static inline bool frame_identity_single_threaded(void) {
+#if defined(CETTA_HAVE_LIBC_SINGLE_THREADED)
+    return __builtin_expect(__libc_single_threaded != 0, 1);
+#else
+    return false;
+#endif
+}
+
 bool cetta_frame_identity_retain(CettaFrameIdentity identity) {
     uint32_t generation = 0u;
     FrameIdentityCell *cell = frame_identity_cell_of(identity, &generation);
     if (!cell)
         return false;
+    if (frame_identity_single_threaded()) {
+        uint64_t state = atomic_load_explicit(&cell->state, memory_order_relaxed);
+        uint32_t references = (uint32_t)state;
+        if ((uint32_t)(state >> 32u) != generation || !references)
+            return false;
+        if (references == UINT32_MAX)
+            abort();
+        atomic_store_explicit(&cell->state, state + 1u, memory_order_relaxed);
+        return true;
+    }
     uint64_t state = atomic_load_explicit(&cell->state, memory_order_acquire);
     for (;;) {
         uint32_t references = (uint32_t)state;
@@ -293,10 +320,35 @@ bool cetta_frame_identity_retain(CettaFrameIdentity identity) {
 
 bool cetta_frame_identity_new_slot(CettaFrameIdentity identity,
         uint32_t inventory_size, uint32_t *slot_out) {
-    if (!slot_out || !cetta_frame_identity_retain(identity))
+    if (!slot_out)
         return false;
     uint32_t generation = 0u;
     FrameIdentityCell *cell = frame_identity_cell_of(identity, &generation);
+    if (!cell)
+        return false;
+    if (frame_identity_single_threaded()) {
+        uint64_t state = atomic_load_explicit(&cell->state, memory_order_relaxed);
+        if ((uint32_t)(state >> 32u) != generation || !(uint32_t)state)
+            return false;
+        uint32_t current = atomic_load_explicit(&cell->next_slot, memory_order_relaxed);
+        uint32_t previous = current < inventory_size ? inventory_size : current;
+        if (previous == UINT32_MAX)
+            return false;
+        atomic_store_explicit(&cell->next_slot, previous + 1u, memory_order_relaxed);
+        *slot_out = previous + 1u;
+        return true;
+    }
+    uint64_t state = atomic_load_explicit(&cell->state, memory_order_acquire);
+    for (;;) {
+        uint32_t references = (uint32_t)state;
+        if ((uint32_t)(state >> 32u) != generation || !references)
+            return false;
+        if (references == UINT32_MAX)
+            abort();
+        if (atomic_compare_exchange_weak_explicit(&cell->state, &state, state + 1u,
+                memory_order_acquire, memory_order_relaxed))
+            break;
+    }
     uint32_t current = atomic_load_explicit(&cell->next_slot, memory_order_relaxed);
     bool allocated = false;
     for (;;) {
@@ -337,16 +389,25 @@ void cetta_frame_identity_release(CettaFrameIdentity identity) {
     if (!cell)
         abort();
     uint32_t generation = parts.generation;
-    uint64_t state = atomic_load_explicit(&cell->state, memory_order_acquire);
-    for (;;) {
+    if (frame_identity_single_threaded()) {
+        uint64_t state = atomic_load_explicit(&cell->state, memory_order_relaxed);
         if ((uint32_t)(state >> 32u) != generation || !(uint32_t)state)
             abort();
-        if (atomic_compare_exchange_weak_explicit(&cell->state, &state, state - 1u,
-                memory_order_acq_rel, memory_order_relaxed))
-            break;
+        atomic_store_explicit(&cell->state, state - 1u, memory_order_relaxed);
+        if ((uint32_t)state != 1u)
+            return;
+    } else {
+        uint64_t state = atomic_load_explicit(&cell->state, memory_order_acquire);
+        for (;;) {
+            if ((uint32_t)(state >> 32u) != generation || !(uint32_t)state)
+                abort();
+            if (atomic_compare_exchange_weak_explicit(&cell->state, &state, state - 1u,
+                    memory_order_acq_rel, memory_order_relaxed))
+                break;
+        }
+        if ((uint32_t)state != 1u)
+            return;
     }
-    if ((uint32_t)state != 1u)
-        return;
     if (cell->ledger_counted) {
         cell->ledger_counted = false;
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_FRAME_IDENTITY_FREE);

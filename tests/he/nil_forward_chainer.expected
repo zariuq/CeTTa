@@ -1,0 +1,6 @@
+[()]
+[()]
+[()]
+[()]
+[()]
+[((: a A) (: (ModusPonens ab a) B) (: (ModusPonens bc (ModusPonens ab a)) C))]

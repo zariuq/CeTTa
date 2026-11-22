@@ -5,35 +5,9 @@
 #include <stdint.h>
 #include <stdio.h>
 
-typedef enum {
-    CETTA_LANGUAGE_HE = 0,
-    CETTA_LANGUAGE_MM2 = 1,
-    CETTA_LANGUAGE_PETTA = 2,
-    CETTA_LANGUAGE_AMBIENT = 3,
-    CETTA_LANGUAGE_CALCULATOR = 4,
-    CETTA_LANGUAGE_IMP = 5,
-    CETTA_LANGUAGE_LAMBDA = 6,
-    CETTA_LANGUAGE_METTAFULL_LEGACY = 7,
-    CETTA_LANGUAGE_MINSKYLITE = 8,
-    CETTA_LANGUAGE_MM0LITE = 9,
-    CETTA_LANGUAGE_PYASHCORE = 10,
-    CETTA_LANGUAGE_RHOCALC = 11,
-    CETTA_LANGUAGE_PRIME = 12,
-    CETTA_LANGUAGE_SUBZERO = 13,
-    CETTA_LANGUAGE_ZERO = 14,
-    CETTA_LANGUAGE_GSLT_IL = 15,
-    CETTA_LANGUAGE_ZEROUV = 16,
-    CETTA_LANGUAGE_METTA_INTERACT = 17,
-    CETTA_LANGUAGE_HOL_LIGHT = 18
-} CettaLanguageId;
-
-typedef enum {
-    CETTA_SYNTAX_AUTO = 0,
-    CETTA_SYNTAX_METTA = 1,
-    CETTA_SYNTAX_MRHO = 2,
-    CETTA_SYNTAX_RHO = 3,
-    CETTA_SYNTAX_HOLR = 4
-} CettaSyntaxId;
+/* CettaLanguageId and CettaSyntaxId, and every property of a language, are
+ * declared once, as rows of lib/profiles.data. */
+#include "generated/cetta_profiles.generated.h"
 
 typedef enum {
     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY = 0,
@@ -59,12 +33,15 @@ typedef enum {
 
 typedef struct {
     CettaLanguageId id;
-    const char *name;
-    const char *canonical;
+    const char *canonical;   /* its name; an alias finds the same spec */
     bool implemented;
     const char *note;
+    CettaSyntaxId syntax;    /* the syntax a source is read in by default */
     CettaRelativeModulePolicy relative_module_policy;
     CettaPortableRelationalContract portable_relational_contract;
+    bool embedded_gslt;
+    CettaCallResultPolicy call_result_policy;
+    bool rules_need_named_head;
 } CettaLanguageSpec;
 
 const CettaLanguageSpec *cetta_language_lookup(const char *name);

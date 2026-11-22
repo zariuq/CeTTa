@@ -1,0 +1,9 @@
+; A census asks that the rows a pattern sees be the same rows at every
+; solution.  While the row (item $v) may or may not be (item a), the census of
+; (item a) is undetermined and the rule waits.  Once a rule reads that row as
+; (item b), the census sees exactly one row, and the rule fires.
+(step one)
+(item a) (item $v)
+(token)
+(rule tally (census (item a)) (absent (tallied)) (make (tallied)))
+(rule fix (take (token)) (read (item b)) (make (fixed)))

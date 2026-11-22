@@ -1,0 +1,12 @@
+; A rotating run that is infinite.  From (wait) a step stays or wakes, and from
+; (wake) it sleeps again.  The run is at (wait) at turns 0, 1 and 3.  At turn 3
+; it is back at the configuration of turn 1, (wait) at an odd turn: every
+; successor count met, 2 and 1, divides the 2 turns between, so from there it
+; wakes and sleeps for ever, a cycle.
+(step one)
+(observe run)
+(schedule rotating)
+(wait)
+(rule stay (take (wait)) (make (wait)))
+(rule wake (take (wait)) (make (wake)))
+(rule sleep (take (wake)) (make (wait)))

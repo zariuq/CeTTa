@@ -1,0 +1,5 @@
+; A multiset store with a rule that always fires: every state has a step and
+; the states never repeat, so the budget ends the exploration, said as such.
+(step one)
+(budget 20)
+(rule add (absent (stop)) (make (tick)))

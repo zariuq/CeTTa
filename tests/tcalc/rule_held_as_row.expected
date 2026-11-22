@@ -1,0 +1,3 @@
+(interpretation (version tcalc@0.1) (step one) (ask after-tells) (store set) (matches symmetric) (solver mgu-first-order) (observe outcomes) (budget 100000) (backend c))
+(outcome (: (ModusPonens ab a) B) (: a A) (: ab (→ A B)) (: bc (→ B C)) (rb (: ModusPonens (-> (→ A B) A B))))
+(explored (states 2) (work 2) (finished true) (cycle false))

@@ -1,0 +1,11 @@
+; The program of observe_run_wait.tcalc under the rotating schedule.  The run is
+; at (wait) twice, but not at the same configuration: the first step takes
+; successor 0 of 2, (wait) again; the second takes successor 1 of 2 and wakes,
+; and the run ends.  A state visited again is a cycle only when the pick does
+; not depend on the turn.
+(step one)
+(observe run)
+(schedule rotating)
+(wait)
+(rule stay (take (wait)) (make (wait)))
+(rule wake (take (wait)) (make (wake)))

@@ -1,0 +1,7 @@
+; A count counts occurrences: two copies of (v) satisfy (count 2 (v)) at
+; every solution (JointFirings/Census). bag_rules_count_set: under the set
+; store the copies are one row, and the count fails.
+(step one)
+(v)
+(v)
+(rule two (count 2 (v)) (absent (counted)) (make (counted)))

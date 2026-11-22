@@ -1,0 +1,12 @@
+; A Turing machine as root rewriting (RuleSyntax/Machines/TermRewriting): the
+; configuration is one row, (tm STATE LEFT HEAD RIGHT), with the tape as two
+; lists around the head, the nearer cell first.  Each rule takes the row and
+; makes the next one.  The machine adds one to a binary number with the head
+; on its last digit: 1011 becomes 1100.  One firing for each machine step,
+; and one outcome.
+(step one)
+(tm carry (cons 1 (cons 0 (cons 1 nil))) 1 nil)
+(rule one (take (tm carry (cons $l $left) 1 $right)) (make (tm carry $left $l (cons 0 $right))))
+(rule edge (take (tm carry nil 1 $right)) (make (tm carry nil blank (cons 0 $right))))
+(rule zero (take (tm carry $left 0 $right)) (make (tm done $left 1 $right)))
+(rule blank (take (tm carry $left blank $right)) (make (tm done $left 1 $right)))

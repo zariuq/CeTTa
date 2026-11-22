@@ -1,0 +1,6 @@
+; The rule of self_justifying_guard, its checks asked before its own tells:
+; nothing yet says $x = a, so the check fails, alone or in any bag, and the
+; start is the outcome under every step.
+(ask before-tells)
+(start)
+(rule justify (take (start)) (tell (= $x a)) (check (= $x a)) (make (ok $x)))

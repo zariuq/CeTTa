@@ -1,0 +1,10 @@
+; Counts: (count 3 (v)) holds at exactly three copies, and a racing rule
+; makes a fourth, which disables it. Rho cannot test that exactly three are
+; present (JointFirings/Census; rho_cannot_encode_absence).
+(step one)
+(v)
+(v)
+(v)
+(go)
+(rule three (count 3 (v)) (absent (three)) (make (three)))
+(rule more (take (go)) (make (v)))

@@ -1,0 +1,1 @@
+(tcalc:module-refused "rules the reading does not have" (LCons ("next-any" "a variable used before any read binds it") LNil))

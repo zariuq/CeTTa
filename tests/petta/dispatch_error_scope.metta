@@ -82,7 +82,8 @@
 !(catch (sort-atom (collapse (dynamic-forward (superpose (divide-or-value)) 1))))
 
 ; An Atom-typed position keeps syntax even during specialization. Mixed
-; overloads retain both interpretations through the ordinary call route.
+; overloads, one holding the argument and one evaluating it, evaluate it once,
+; and the call runs once for its value.
 (: syntax-keep (-> Atom %Undefined%))
 (= (syntax-keep $x) $x)
 (: evaluated-keep (-> %Undefined% %Undefined%))

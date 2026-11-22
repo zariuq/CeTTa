@@ -75,12 +75,16 @@ CASES = [
     ('source-plan-call-retirement', 'petta', '(= (known $x) (Pair $x))\n(= (run $x) (known $x))\n!(let $_ (remove-atom &self (= (known $x) (Pair $x))) (run 7))\n', '(known 7)\n', 0),
     ('scope-caller-alternatives', 'petta', '(= (inner) (let $_ (cut) 1))\n(= (inner) 2)\n(= (outer) (let $before (superpose (a b)) (Pair $before (inner))))\n!(outer)\n', '(Pair a 1)\n(Pair b 1)\n', 0),
     ('scope-earlier-subgoal-and-later-duplicates', 'petta', '(= (inner) (superpose (1 2)))\n(= (outer) (let $x (inner) (let $_ (cut) (let $later (superpose (7 7)) (Pair $x $later)))))\n(= (outer) discarded)\n!(outer)\n', '(Pair 1 7)\n(Pair 1 7)\n', 0),
-    ('scope-handler-transparency', 'petta', '(= (outer) (catch (let $_ (cut) (/ 1 0))))\n(= (outer) 9)\n!(let $answers (collapse (outer)) (size-atom $answers))\n', '1\n', 0),
+    # catch calls its body as Prolog's catch/3 does: a cut inside commits
+    # the body's choices, never the clause that wrote the catch, so the
+    # caught error and the second equation both answer.
+    ('scope-handler-delimits-cut', 'petta', '(= (outer) (catch (let $_ (cut) (/ 1 0))))\n(= (outer) 9)\n!(let $answers (collapse (outer)) (size-atom $answers))\n', '2\n', 0),
     ('scope-committed-failure', 'petta', '(= (outer) (let $_ (println! entered) (let $_ (cut) (empty))))\n(= (outer) (println! forbidden))\n!(collapse (outer))\n', 'entered\n()\n', 0),
     ('scope-cut-shaped-data', 'petta', '(= (outer) (let $v (quote (cut)) (let $_ $v 1)))\n(= (outer) 2)\n!(collapse (outer))\n', '(1 2)\n', 0),
     ('scope-once-restores-caller-scope', 'petta', '(= (outer) (let $x (once (superpose (1 2))) (let $_ (cut) $x)))\n(= (outer) 9)\n!(collapse (outer))\n', '(1)\n', 0),
     ('scope-callee-return-restores-scope', 'petta', '(= (inner) (superpose (1 2)))\n(= (outer) (let $x (inner) (let $_ (cut) $x)))\n(= (outer) 9)\n!(collapse (outer))\n', '(1)\n', 0),
     ('scope-handled-error-keeps-new-choices', 'petta', '(= (outer) (let $_ (catch (/ 1 0)) (superpose (7 7))))\n(= (outer) 9)\n!(collapse (outer))\n', '(7 7 9)\n', 0),
+    ('scope-match-space-refusal', 'petta', '(= (find-in $s) (match $s 7 found))\n(= (checked-find-in $s) (if (is-space $s) (match $s 7 found) (match $s 7 found)))\n!(let (Error instantiation_error $source) (catch (find-in $s)) invalid)\n!(let (Error instantiation_error $source) (catch (checked-find-in $s)) invalid)\n!(let $empty (new-space) (collapse (find-in $empty)))\n', 'invalid\ninvalid\n()\n', 0),
     ('invocation-captured-data', 'petta', '(= (transport $a $b $c) (Bundle $a $b $c))\n!(let $p (transport (quote (println! forbidden))) ($p 7 9))\n', '(Bundle (println! forbidden) 7 9)\n', 0),
     ('forcing-meaning', 'petta', '(= (pass $x) $x)\n!(let $c (quote (pass (+ 1 2))) (eval $c))\n!(let $c (quote (pass (+ 1 2))) (reduce $c))\n', '3\n(+ 1 2)\n', 0),
     ('forcing-effects', 'petta', '(= (pass $x) $x)\n(= (tick) (let $_ (println! tick) 7))\n!(let $c (quote (pass (tick))) (eval $c))\n!(let $c (quote (pass (tick))) (reduce $c))\n', 'tick\n7\n(tick)\n', 0),
@@ -103,6 +107,12 @@ CASES = [
     ('result-demand-prebound', 'petta', '(= (result-loop $n) (Right (result-loop (+ $n 1))))\n(= (result-consumer $n) (let $x (quote (Left 7)) (let $x (result-loop $n) accepted)))\n!(result-consumer 0)\n', '', 0),
     ('result-demand-variable-observation', 'petta', '(= (observe $x) (let (Pair False 7) (Pair (is-var $x) $x) accepted))\n!(observe $x)\n', 'accepted\n', 0),
     ('result-demand-retained-alternatives', 'petta', '(= (result-project $n $v) (if (> $n 0) a $v))\n(= (result-choice $n $ignored) (if (> $n 0) (let a (result-choice 1 $free) (s $n)) a))\n(= (result-choice $n $ignored) (let (k2 a a) (result-project (- $n 1) (k2 a a)) a))\n!(result-choice 2 $any)\n', '(s 2)\n', 0),
+    ('result-demand-branch-live-prefix', 'petta',
+     '(= (branch-choice $n) (if (> $n 0) (let $_ (add-atom &self (= (branch-result $x) a)) (branch-result $n)) (branch-result $n)))\n'
+     '!(let a (branch-choice 1) fired)\n!(branch-result 2)\n', 'fired\na\n', 0),
+    ('result-demand-branch-live-condition', 'petta',
+     '(= (branch-choice $n) (if (let $_ (add-atom &self (= (branch-result $x) a)) True) (branch-result $n) nope))\n'
+     '!(let a (branch-choice 1) fired)\n!(branch-result 2)\n', 'fired\na\n', 0),
     ('result-demand-duplicates', 'petta', '(= (result-loop $n) (Right (result-loop (+ $n 1))))\n(= (result-producer $n) (Right (result-loop $n)))\n(= (result-producer $n) (Left 7))\n(= (result-producer $n) (Left 7))\n(= (result-consumer $n) (let (Left $x) (result-producer $n) $x))\n!(result-consumer 0)\n', '7\n7\n', 0),
     ('result-demand-argument-effect', 'petta', '(= (argument-tick $n) (let $_ (println! argument) $n))\n(= (result-producer $n) (Right (println! forbidden-body)))\n(= (result-consumer) (let (Left $x) (result-producer (argument-tick 0)) $x))\n!(result-consumer)\n', 'argument\n', 0),
     ('nested-choice-activation-owner', 'petta', '(= (choose $n) (if (> $n 0) (empty) (superpose ((let $ignored (collapse $n) nil) (s $n)))))\n(= (choose $n) 3)\n!(choose 0)\n', 'nil\n(s 0)\n3\n', 0),

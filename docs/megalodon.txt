@@ -220,19 +220,22 @@ This runs the whole suite, which needs no Megalodon:
 - the kernel's unit tests;
 - the reader and elaboration fixtures, with Megalodon's recorded output;
 - the verdict fixtures, with reports written from the verdict rules;
-- the GSLT presentations' fixtures, module by module, in both engines,
-  refusals compared by Megalodon's message;
-- the traced build of the reader, which must read as the ordinary one;
+- focused GSLT reader controls in both engines, including scope, end of
+  input, lexical refusal and a malformed term;
+- the traced build of the reader on those controls, which must read as the
+  ordinary one;
 - the C target's fixtures;
 - the MeTTa tests, in the HE and PeTTa lanes.
 
-The targets below compare with a Megalodon checkout (its examples and its
-binary):
+The application showcases are opt-in and do not gate the tests:
 
-  make test-megalodon-elab-corpus MEGALODON_ROOT=DIR
-  make test-megalodon-megaauto-corpus MEGALODON_ROOT=DIR
-  make test-megalodon-source-corpus MEGALODON_ROOT=DIR
-  make test-megalodon-gslt-corpus MEGALODON_ROOT=DIR
+  make showcase-megalodon-reader [MEGALODON_SHOWCASE_INPUT=example.mg]
+  make showcase-megalodon-gslt-fixtures
+  make showcase-megalodon-langdef
+  make showcase-megalodon-elab-corpus MEGALODON_ROOT=DIR
+  make showcase-megalodon-megaauto-corpus MEGALODON_ROOT=DIR
+  make showcase-megalodon-source-corpus MEGALODON_ROOT=DIR
+  make showcase-megalodon-gslt-corpus MEGALODON_ROOT=DIR
 
 - elab-corpus checks every example document with both tools and compares
   every row, proofs and identities included. The kernel admits every
@@ -253,7 +256,12 @@ kernel under a work budget. No mutant may be accepted.
 Performance
 -----------
 
-  make bench-megalodon MEGALODON_ROOT=DIR [MEGALODON_BENCH_BIN=BIN]
+  make test-megalodon-scaling
+
+That gate checks work growth on generated workloads. To explore complete
+documents against an external Megalodon checkout, request the showcase:
+
+  make showcase-megalodon-corpus-timings MEGALODON_ROOT=DIR [MEGALODON_BENCH_BIN=BIN]
 
 Both tools check every example document, one process at a time, and do the
 same work. In checking, mg-check's kernel also rechecks every proof.

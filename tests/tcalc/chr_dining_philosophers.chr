@@ -1,0 +1,8 @@
+% The dining philosophers (dining_philosophers.tcalc) in CHR notation: a fork is
+% taken with the philosopher's state, and a deadlock is an outcome.
+:- step(one).
+fork(1). fork(2).
+thinking(a, 1, 2). thinking(b, 2, 1).
+left  @ thinking(P, L, R), fork(L) <=> holding(P, L, R).
+right @ holding(P, L, R), fork(R) <=> eating(P, L, R).
+done  @ eating(P, L, R) <=> fork(L), fork(R), fed(P).

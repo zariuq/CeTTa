@@ -1,0 +1,10 @@
+; Not steps after the first: a multiset store.  Under step every, copy's
+; match reads (a), which is there from the start, and each step makes one
+; more copy of (b): in a multiset store a firing that makes a row again is a
+; step.  Meeting only the matches that read a fresh row would stop after one
+; copy, so this program's steps meet every match, until the budget is spent.
+(store multiset)
+(step every)
+(budget 4)
+(a)
+(rule copy (read (a)) (make (b)))

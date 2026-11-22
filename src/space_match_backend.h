@@ -57,18 +57,18 @@ static inline bool space_engine_supports_exec(SpaceEngine engine) {
 typedef struct SpacePinnedOccurrences SpacePinnedOccurrences;
 
 typedef struct {
-    DiscNode *match_trie;
-    bool match_trie_dirty;
+    _Atomic(DiscNode *) match_trie;
+    _Atomic bool match_trie_dirty;
     CettaCount match_trie_stale_occurrences;
     /* Cursors on the current pinned view; its trie is not rebuilt or freed
      * while any remain. */
     /* Cold flat queries can consume the encoded sequence before a full
      * trie is worth retaining. Repeated scans exhaust this startup allowance. */
-    uint8_t cold_flat_scans;
+    _Atomic uint8_t cold_flat_scans;
     /* The head a count over variables last scanned: a second count of it
      * builds the head index, a first one only scans. */
-    SymbolId head_count_scanned;
-    uint32_t match_trie_pins;
+    _Atomic SymbolId head_count_scanned;
+    _Atomic uint32_t match_trie_pins;
     SpacePinnedOccurrences *pinned;
     /* Views a removal by marks froze and that are still read (space.c,
      * "Frozen views"); the serial of the last such removal; and, by row, the
@@ -91,15 +91,15 @@ typedef struct {
     CettaCount path_rent;
     /* The rows of each head and length (space_path_index.h), and the
      * retired ones cursors pinned to the current view still read. */
-    CettaSpaceHeadIndex *head_index;
+    _Atomic(CettaSpaceHeadIndex *) head_index;
     CettaSpaceHeadIndex *stale_head_indexes;
-    SubstTree *stree;
-    bool stree_dirty;
+    _Atomic(SubstTree *) stree;
+    _Atomic bool stree_dirty;
     CettaCount stree_stale_occurrences;
     /* Candidates the match trie has answered for substitution queries
      * while no substitution tree exists; the tree is built once they reach
      * the space's length. */
-    CettaCount stree_rent;
+    _Atomic CettaCount stree_rent;
 } SpaceMatchNativeState;
 
 /* Refutation-only encoded scan before retaining a complete cold trie. The

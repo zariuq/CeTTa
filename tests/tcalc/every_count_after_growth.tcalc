@@ -1,0 +1,10 @@
+; Not steps after the first: a count reads the whole state.  Under step every
+; over a set store, done's match reads (p 1), which is there from the start,
+; but its count of (q 2) holds only once grow has made (q 2).  Meeting only the
+; matches that read a fresh row would never fire done, so this program's steps
+; meet every match.
+(store set)
+(step every)
+(p 1)
+(rule grow (read (p $x)) (make (q 2)))
+(rule done (read (p $x)) (count 1 (q 2)) (make (done $x)))

@@ -75,6 +75,27 @@ static bool native_space(const Space *s) {
 static Space *source_at(const CettaNativeQuery *q, size_t i) {
     return q->sources ? q->sources[i] : q->source;
 }
+
+/* A plan reads its program, its query's sources and its effect's target
+ * together: their guards are taken at one instant, before any is read. */
+static void proof_spaces_open(CettaGuardSection *section, Space *program,
+                              Space *const *sources, size_t count,
+                              Space *source, Space *target) {
+    section->held = false;
+    if (!cetta_shared_transition_scope_active())
+        return;
+    const Space *spaces[CETTA_PROOF_SOURCE_MAX + 3u];
+    CettaGuardMode modes[CETTA_PROOF_SOURCE_MAX + 3u];
+    size_t n = 0u;
+    spaces[n++] = program;
+    spaces[n++] = source;
+    spaces[n++] = target;
+    for (size_t i = 0u; sources && i < count && i < CETTA_PROOF_SOURCE_MAX; i++)
+        spaces[n++] = sources[i];
+    for (size_t i = 0u; i < n; i++)
+        modes[i] = CETTA_GUARD_READ;
+    space_guard_section_enter_spaces(section, spaces, modes, n);
+}
 static CettaProofSourceBinding capture(Space *s, void **hold) {
     *hold = space_lifetime_pin ? space_lifetime_pin(s) : NULL;
     return (CettaProofSourceBinding){
@@ -134,7 +155,10 @@ CettaProofProducerStatus cetta_proof_producer_prepare(
     uint64_t source_root, uint32_t source_position,
     const CettaProofProducerLayout *layout,
     CettaProofProducerPlan **out, CettaProofProducerReason *why) {
-    CETTA_SCOPED_SHARED_TRANSITION(guard);
+    __attribute__((cleanup(cetta_guard_section_close))) CettaGuardSection guard;
+    proof_spaces_open(&guard, program, q && q->sources ? q->sources : NULL,
+                      q ? q->pattern_count : 0u, q ? q->source : NULL,
+                      q && q->effects && q->effect_count ? q->effects[0].target : NULL);
     if (why) *why = CETTA_PROOF_REASON_NONE;
     if (!out || !q || !q->patterns || !q->pattern_count ||
         q->pattern_count > CETTA_PROOF_SOURCE_MAX ||
@@ -281,7 +305,8 @@ const Atom *cetta_proof_producer_label(const CettaProofProducerPlan *plan) {
 }
 bool cetta_proof_producer_is_current(const CettaProofProducerPlan *plan,
     Space *program, Space *const *sources, size_t count, Space *target) {
-    CETTA_SCOPED_SHARED_TRANSITION(guard);
+    __attribute__((cleanup(cetta_guard_section_close))) CettaGuardSection guard;
+    proof_spaces_open(&guard, program, sources, count, NULL, target);
     if (!plan || !program || !sources || count != plan->description.source_count ||
         !space_program_token_matches_live_space(plan->description.program, program) ||
         !current_binding(&plan->description.target, target)) return false;

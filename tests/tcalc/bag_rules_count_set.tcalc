@@ -1,0 +1,6 @@
+; profile: store=set
+; bag_rules_count under the set store: one row (v), so (count 2 (v)) fails.
+(step one)
+(v)
+(v)
+(rule two (count 2 (v)) (absent (counted)) (make (counted)))

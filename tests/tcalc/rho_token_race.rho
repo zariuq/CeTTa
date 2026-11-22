@@ -1,0 +1,7 @@
+// profile: step=one
+// Two receives that fire once (<-) race for one datum.  A receive that fires
+// once is in the store until it fires, as in f1r3lang, so the one that loses
+// is still waiting at the end: the row rho_LINE_COLUMN!().
+token!(1) |
+for ($x <- token) { got!(a, $x) } |
+for ($x <- token) { got!(b, $x) }

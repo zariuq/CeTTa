@@ -1,0 +1,19 @@
+-- theory: Calc
+-- A relation named "demand": its rows would be the reading's own demand rows, so its query would read
+-- the calls asked instead of the relation (g(a) would get the value a, which the module does not give).
+-- The reading refuses the module.
+Module ClashDemand {
+  Theory Calc() {
+    Empty
+    Types {
+      Node;
+    }
+    Terms {
+      "n:a". |- "a" : Node;
+      "n:g". x:Node |- "g" x : Node;
+    }
+    Rewrites {
+      "g-r". x:Node, y:Node | "demand"(y) |- "n:g"(x) ~> y;
+    }
+  }
+}

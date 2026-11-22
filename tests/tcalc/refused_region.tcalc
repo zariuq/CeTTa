@@ -1,0 +1,4 @@
+; A region names rules of the program.
+(region nosuch)
+(a)
+(rule r (take (a)) (make (b)))

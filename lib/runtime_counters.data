@@ -1319,4 +1319,32 @@
   (1159 SPACE_ENTRY_OPEN "space-entry-open")
   (1160 SPACE_ENTRY_JOURNAL_WRITE "space-entry-journal-write")
   (1161 SPACE_ENTRY_CORRECTED_READ "space-entry-corrected-read")
-  (1162 SPACE_ENTRY_LOST "space-entry-lost")))
+  (1162 SPACE_ENTRY_LOST "space-entry-lost")
+  (1163 TRANSFORM_DIRECT_FIRING "transform-direct-firing")
+  (1164 TRANSFORM_TCALC_DECISION "transform-tcalc-decision")
+  (1165 TRANSFORM_TCALC_FIRING "transform-tcalc-firing")
+  (1166 TRANSFORM_TCALC_FALLBACK "transform-tcalc-fallback")
+  (1167 TRANSFORM_TCALC_REJECTED "transform-tcalc-rejected")
+  (1168 TRANSFORM_TCALC_SCAN_ROW "transform-tcalc-scan-row")
+  (1169 TRANSFORM_TCALC_IMPORT_ROW "transform-tcalc-import-row")
+  (1170 TRANSFORM_TCALC_LOWERED_NODE "transform-tcalc-lowered-node")
+  (1171 TRANSFORM_TCALC_CODE_HIT "transform-tcalc-code-hit")
+  (1172 TRANSFORM_TCALC_CODE_MISS "transform-tcalc-code-miss")
+  ; the rho lane's structural order: pairs of nodes compared, and nodes hashed.
+  (1173 RHO_ORDER_VISIT "rho-order-visit")
+  (1174 RHO_HASH_VISIT "rho-hash-visit")
+  ; a space's rows read for a pattern (space_occurrence_cursor_init, or a
+  ; read begun again from its start): the reads opened, and the rows they
+  ; offer to be unified with the pattern.  Rows per read is the work an index
+  ; leaves to unification.
+  (1175 SPACE_OCCURRENCE_CURSOR_OPEN "space-occurrence-cursor-open")
+  (1176 SPACE_OCCURRENCE_CURSOR_ROW "space-occurrence-cursor-row")
+  ; The compiled open tier's work: equation bodies it enters, and the
+  ; expression nodes of host terms it admits on entry.
+  (1177 OPEN_EQUATION_ACTIVATION "open-equation-activation")
+  (1178 OPEN_EQUATION_TERM_ADMISSION_NODE "open-equation-term-admission-node")
+  ; A native space's reads of its substitution tree: the rows the tree
+  ; selects for a query, and the named rows a reader matches against its
+  ; query, each renamed apart for that use.
+  (1179 MATCH_NATIVE_SUBST_TREE_ROW "match-native-subst-tree-row")
+  (1180 MATCH_NATIVE_ROW_REMATCH "match-native-row-rematch")))

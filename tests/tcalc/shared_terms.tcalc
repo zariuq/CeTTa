@@ -1,0 +1,11 @@
+; Terms are shared.  Each firing of double binds the open unknown to
+; (pair $x $x), so the kept term doubles as a tree, (pair X X) with X itself
+; (pair Y Y), while it grows by one node as stored.  After thirty firings it
+; has 2^30 leaves.  Every walk over a term meets each shared subterm once, so
+; the run takes thirty small steps, not 2^30.
+(step one)
+(keep $t)
+(open $t)
+(fuel (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s z)))))))))))))))))))))))))))))))
+(rule double (take (open (pair $x $x)) (fuel (s $n))) (make (open $x) (fuel $n)))
+(rule stop (take (keep $k) (fuel z)) (make (done)))

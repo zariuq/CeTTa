@@ -1,0 +1,44 @@
+(plans one
+  (enter 0
+    (probe 0 (relation B 2) (rows))
+    (unify 0)
+    (probe 1 (relation A 2) (rows))
+    (unify 1)
+    (check 0)
+    (make 0))
+  (enter 1
+    (probe 1 (relation A 2) (rows))
+    (unify 1)
+    (check 0)
+    (probe 0 (relation B 2) (rows))
+    (unify 0)
+    (make 0))
+  (every
+    (probe 1 (relation A 2) (rows))
+    (unify 1)
+    (check 0)
+    (probe 0 (relation B 2) (rows))
+    (unify 0)
+    (make 0)))
+(plans both
+  (enter 0
+    (probe 0 (relation B 2) (rows))
+    (unify 0)
+    (probe 1 (relation A 2) (rows))
+    (unify 1)
+    (check 0)
+    (make 0))
+  (enter 1
+    (probe 1 (relation A 2) (rows))
+    (unify 1)
+    (probe 0 (relation B 2) (rows))
+    (unify 0)
+    (check 0)
+    (make 0))
+  (every
+    (probe 0 (relation B 2) (rows))
+    (unify 0)
+    (probe 1 (relation A 2) (rows))
+    (unify 1)
+    (check 0)
+    (make 0)))

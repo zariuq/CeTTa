@@ -4419,3 +4419,14 @@ T *rc_resume(void) {
     T *v_ = p134(rc_roots[0], rc_roots[1], rc_roots[2], rc_roots[3]);
     return v_;
 }
+void rc_solve(int judgment, T **a, const RcK *k) {
+    (void)a; (void)k;
+    switch (judgment) {
+    default: {
+        T *r_ = rc_call(judgment, a);
+        if (r_ == RC_STOPPED) rc_refinement_fail("rc_solve: the run stopped at the safepoint (rc_call and rc_resume run one)");
+        if (r_) k->fn(k, r_);
+        return;
+    }
+    }
+}

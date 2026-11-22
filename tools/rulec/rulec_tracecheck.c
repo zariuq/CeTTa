@@ -36,7 +36,7 @@ static void die(const char *f, ...) { va_list a; va_start(a, f); fputs("rulec_tr
 static char *cname[MAXC]; static int nc;
 static int rhead[MAXC], rnp[MAXC], *rcall[MAXC]; static char *rlabel[MAXC]; static int nr;
 /* the rules as read: premise sources (NULL for a relation query) and right sides, as text */
-static char *rpremise[MAXC][64], *rrhs[MAXC]; static int rnprem[MAXC];
+static char **rpremise[MAXC], *rrhs[MAXC]; static int rnprem[MAXC];
 static bool judgment[MAXC];
 static int ctor(const char *s) { for (int i = 0; i < nc; i++) if (!strcmp(cname[i], s)) return i; return -1; }
 
@@ -111,12 +111,17 @@ int main(int argc, char **argv) {
             p = skip_form(p);                              /* variables */
             p = skip_ws(p);
             /* premises: (LCons PREMISE REST) ... LNil; kept as text until the judgments are known */
-            int n = 0;
+            int n = 0, pcap = 0;
             const char *q = p;
+            rpremise[nr] = NULL;
             while (!strncmp(skip_ws(q), "(LCons ", 7)) {
                 q = skip_ws(q) + 7;
                 q = skip_ws(q);
-                if (n == 64) die("more than 64 premises");
+                if (n == pcap) {
+                    pcap = pcap ? 2 * pcap : 8;
+                    rpremise[nr] = realloc(rpremise[nr], (size_t)pcap * sizeof *rpremise[nr]);
+                    if (!rpremise[nr]) die("out of memory");
+                }
                 if (!strncmp(q, "(RelationQuery ", 15)) { rpremise[nr][n++] = NULL; q = skip_form(q); continue; }
                 if (strncmp(q, "(Congruence ", 12)) die("unexpected premise form");
                 const char *src = skip_ws(q + 12);

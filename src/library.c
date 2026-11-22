@@ -8,6 +8,7 @@
 #include "native/native_modules.h"
 #include "library_transform.h"
 #include "nik_runtime.h"
+#include "tmetta.h"
 #include "parser.h"
 #include "petta_search_machine.h"
 #include "petta_runtime.h"
@@ -639,7 +640,7 @@ bool cetta_library_context_try_init_for_language_profile(CettaLibraryContext *ct
     if (ctx->petta_program &&
         (language_id == CETTA_LANGUAGE_HE ||
          language_id == CETTA_LANGUAGE_PETTA))
-        (void)petta_program_enable_callability_refresh(ctx->petta_program);
+        (void)petta_program_enable_plan_revalidation(ctx->petta_program);
     if (ctx->petta_program && cetta_profile_uses_petta_typing(profile)) {
         (void)petta_program_enable_analysis(ctx->petta_program);
     }
@@ -674,6 +675,8 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
     /* Retained computations and parser handles borrow session resources.
      * Retire them before releasing spaces, programs and matching caches. */
     cetta_native_handle_cleanup_all(ctx);
+    cetta_tmetta_runtime_free(ctx->tmetta_runtime);
+    ctx->tmetta_runtime = NULL;
     eval_named_mutex_registry_free(ctx);
     ctx->top_module_space = NULL;
     ctx->top_module_registry = NULL;
@@ -892,6 +895,7 @@ static void cetta_library_petta_admission_advance(
     ctx->petta_admission_revision =
         ctx->petta_admission_revision == UINT64_MAX
             ? 1u : ctx->petta_admission_revision + 1u;
+    space_global_mutation_epoch_advance();
 }
 
 static void cetta_library_petta_translator_rule_advance(
@@ -1003,6 +1007,11 @@ static void cetta_library_petta_memo_sync(CettaLibraryContext *ctx);
 uint64_t cetta_library_petta_admission_revision(CettaLibraryContext *ctx) {
     if (!ctx)
         return 0u;
+    uint64_t instance = symbol_table_instance_id(g_symbols);
+    if (ctx->petta_translator_symbol_table_instance == instance &&
+        ctx->petta_tabled_symbol_table_instance == instance &&
+        ctx->petta_memo.symbol_table_instance == instance)
+        return ctx->petta_admission_revision;
     cetta_library_petta_translator_rule_sync(ctx);
     cetta_library_petta_tabled_relation_sync(ctx);
     cetta_library_petta_memo_sync(ctx);
@@ -3734,6 +3743,10 @@ static bool resolve_relative_module_candidate_for_language(
 
 static bool build_library_path(CettaLibraryContext *ctx, const char *name,
                                char *out, size_t out_sz);
+static bool resolve_library_member_candidate(
+    CettaLibraryContext *ctx, const char *member,
+    char *canonical_path, size_t canonical_path_size,
+    CettaModuleFormat *format, char *reason, size_t reason_size);
 
 static bool parse_module_spec(const char *spec, CettaModuleSpec *out,
                               Arena *eval_arena, Atom **error_out) {
@@ -4080,18 +4093,27 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
         }
         return true;
     }
-    case CETTA_MODULE_SPEC_STDLIB:
+    case CETTA_MODULE_SPEC_STDLIB: {
         if (!cetta_module_policy_allows(&ctx->session.module_policy,
                                           CETTA_MODULE_PROVIDER_STDLIB)) {
             *error_out = atom_symbol(eval_arena, "stdlib module imports disabled");
             return false;
         }
         plan->provider_kind = CETTA_MODULE_PROVIDER_STDLIB_FILE;
-        if (!build_library_path(ctx, spec->path_or_member, candidate, sizeof(candidate))) {
-            *error_out = atom_symbol(eval_arena, "library file not found");
+        if (!module_provider_visible(ctx, plan->provider_kind)) {
+            *error_out = atom_symbol(eval_arena, "module provider disabled");
             return false;
         }
-        break;
+        char reason[160] = {0};
+        if (!resolve_library_member_candidate(ctx, spec->path_or_member,
+                plan->canonical_path, sizeof(plan->canonical_path),
+                &plan->format, reason, sizeof(reason))) {
+            *error_out = atom_symbol(eval_arena,
+                reason[0] ? reason : "library file not found");
+            return false;
+        }
+        return true;
+    }
     }
 
     if (!module_provider_visible(ctx, plan->provider_kind)) {
@@ -4972,7 +4994,7 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
             return lts_rho_transitions_error(
                 a, args, nargs, atom_symbol(a, "IncorrectNumberOfArguments"));
         }
-        if (!rhocalc_process_well_formed(args[0])) {
+        if (!rhocalc_process_well_formed(args[0], RHOCALC_SEMANTIC_PROFILE_STRICT_CORE)) {
             detail = rhocalc_last_validation_error();
             return lts_rho_transitions_error(
                 a, args, nargs,
@@ -5018,7 +5040,7 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
             return lts_rho_cost_steps_error(
                 a, args, nargs, atom_symbol(a, "IncorrectNumberOfArguments"));
         }
-        if (!rhocalc_process_well_formed_with_semantic_profile(
+        if (!rhocalc_process_well_formed(
                 args[0], RHOCALC_SEMANTIC_PROFILE_COST)) {
             detail = rhocalc_last_validation_error();
             return lts_rho_cost_steps_error(
@@ -5043,7 +5065,7 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
             return lts_rho_cost_causal_trace_error(
                 a, args, nargs, atom_symbol(a, "IncorrectNumberOfArguments"));
         }
-        if (!rhocalc_process_well_formed_with_semantic_profile(
+        if (!rhocalc_process_well_formed(
                 args[0], RHOCALC_SEMANTIC_PROFILE_COST)) {
             detail = rhocalc_last_validation_error();
             return lts_rho_cost_causal_trace_error(
@@ -5088,7 +5110,7 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
                 atom_string(
                     a, "expected a nonnegative integer search bound"));
         }
-        if (!rhocalc_process_well_formed_with_semantic_profile(
+        if (!rhocalc_process_well_formed(
                 args[2], RHOCALC_SEMANTIC_PROFILE_COST)) {
             detail = rhocalc_last_validation_error();
             return lts_rho_cost_causal_prefix_error(
@@ -5148,7 +5170,7 @@ static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
             return library_signature_error(
                 a, head, args, nargs, "expected one rhometta process");
         }
-        if (!rhocalc_process_well_formed_with_eval_payloads(args[0])) {
+        if (!rhocalc_process_well_formed(args[0], RHOCALC_SEMANTIC_PROFILE_RHOMETTA)) {
             detail = rhocalc_last_validation_error();
             return atom_error(
                 a, library_call_expr(a, head, args, nargs),
@@ -5177,7 +5199,7 @@ static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
             return library_signature_error(
                 a, head, args, nargs, "expected one rhometta process");
         }
-        if (!rhocalc_process_well_formed_with_eval_payloads(args[0])) {
+        if (!rhocalc_process_well_formed(args[0], RHOCALC_SEMANTIC_PROFILE_RHOMETTA)) {
             detail = rhocalc_last_validation_error();
             return atom_error(
                 a, library_call_expr(a, head, args, nargs),
@@ -5201,7 +5223,7 @@ static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
 
     if (head->sym_id == g_builtin_syms.lib_rhometta_run_canonical) {
         RhoRuntimeProfile profile = {
-            .scheduler_policy = RHO_SCHEDULER_CANONICAL,
+            .scheduler_policy = RUN_SCHEDULE_CANONICAL,
             .reduction_limit = 100000u,
             .thread_count = 1u,
             .threaded = false,
@@ -5211,15 +5233,16 @@ static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
             return library_signature_error(
                 a, head, args, nargs, "expected one rhometta process");
         }
-        if (!rhocalc_process_well_formed_with_eval_payloads(args[0])) {
+        if (!rhocalc_process_well_formed(args[0], RHOCALC_SEMANTIC_PROFILE_RHOMETTA)) {
             detail = rhocalc_last_validation_error();
             return atom_error(
                 a, library_call_expr(a, head, args, nargs),
                 atom_string(a, detail ? detail
                                       : "expected rhometta process"));
         }
-        if (!rhocalc_reduce_to_quiescence_with_eval_context(
-                a, args[0], &profile, &eval_context, &reduction)) {
+        if (!rhocalc_reduce_to_quiescence(
+                a, args[0], RHOCALC_SEMANTIC_PROFILE_RHOMETTA, &profile, &eval_context,
+                &reduction)) {
             if (payload_failure == RHOCALC_PAYLOAD_FAILURE_OWNED_EXPORT_ALIASED)
                 return atom_error(a, atom_symbol(a, "rhometta:eval"),
                                   atom_symbol(a, "PayloadOwnedExportAliased"));
@@ -10101,7 +10124,7 @@ static bool transform_native_head(SymbolId head) {
     if (!name)
         return true;
     static const char *const operations[] = {
-        "transform", "tf:run", "tf:split", "tf:propose", "tf:inst",
+        "transform", "tf:run", "tf:split", "tf:propose",
         "tf:fire", "tf:fire-into", "tf:cand", "tf:fired", "tf:cs",
     };
     for (size_t i = 0u; i < sizeof operations / sizeof operations[0]; i++)
@@ -11781,6 +11804,7 @@ static bool library_import_native(CettaLibraryContext *ctx, const char *name,
 #endif
 
     ctx->active_mask |= import_bit;
+    space_global_mutation_epoch_advance();
     memset(&parsed_spec, 0, sizeof(parsed_spec));
     parsed_spec.kind = CETTA_MODULE_SPEC_STDLIB;
     snprintf(parsed_spec.raw_spec, sizeof(parsed_spec.raw_spec), "%s", import_name);
@@ -11794,8 +11818,10 @@ static bool library_import_native(CettaLibraryContext *ctx, const char *name,
                              &plan, eval_arena, error_out) ||
         !execute_import_plan(ctx, &plan, eval_arena, persistent_arena,
                              registry, fuel, NULL, error_out)) {
-        if (!previously_active)
+        if (!previously_active) {
             ctx->active_mask &= ~import_bit;
+            space_global_mutation_epoch_advance();
+        }
         return false;
     }
     if (import_bit == CETTA_LIBRARY_IO && !ctx->io_runtime)
@@ -12301,21 +12327,24 @@ bool cetta_library_import_error_is_missing_module(Atom *error) {
 static bool resolve_library_member_candidate(
     CettaLibraryContext *ctx, const char *member,
     char *canonical_path, size_t canonical_path_size,
-    CettaModuleFormat *format) {
+    CettaModuleFormat *format, char *reason, size_t reason_size) {
     char candidate[PATH_MAX];
-    char reason[160];
-
-    if (!ctx || !member ||
-        !cetta_module_policy_allows(
-            &ctx->session.module_policy,
-            CETTA_MODULE_PROVIDER_STDLIB) ||
-        !build_library_path(
-            ctx, member, candidate, sizeof(candidate))) {
+    if (!member)
         return false;
-    }
+    /* Both the descriptor and import plan use the same installed file.
+     * A written .py suffix selects the foreign loader. An unqualified
+     * member receives the ordinary .metta completion. */
+    bool python = path_has_suffix(member, ".py");
+    const char *suffix = python || path_has_suffix(member, ".metta")
+        ? "" : ".metta";
+    if (!build_library_resource_path(ctx, member, suffix, candidate, sizeof(candidate)))
+        return false;
+    if (python)
+        return cetta_foreign_resolve_candidate(candidate, canonical_path,
+            canonical_path_size, format, reason, reason_size);
     return resolve_module_candidate_with_format(
         ctx, candidate, canonical_path, canonical_path_size,
-        format, reason, sizeof(reason));
+        format, reason, reason_size);
 }
 
 static bool resolve_standard_library_reference(
@@ -12336,7 +12365,7 @@ static bool resolve_standard_library_reference(
     }
     if (resolve_library_member_candidate(
             ctx, member, canonical_path,
-            canonical_path_size, &format)) {
+            canonical_path_size, &format, NULL, 0u)) {
         return true;
     }
 
@@ -12424,6 +12453,7 @@ static bool import_standard_library_reference(
     /* PeTTa's import! keeps an authored .metta extension and supplies a
      * missing one, so `X` and `X.metta` name the same library member. */
     char stem[PATH_MAX];
+    const char *registered_name = member;
     size_t member_length = strlen(member);
     size_t suffix_length = strlen(".metta");
     if (member_length > suffix_length &&
@@ -12431,15 +12461,15 @@ static bool import_standard_library_reference(
         path_has_suffix(member, ".metta")) {
         memcpy(stem, member, member_length - suffix_length);
         stem[member_length - suffix_length] = '\0';
-        member = stem;
+        registered_name = stem;
     }
 
     /* Native libraries activate a capability as well as loading their source
      * presentation.  Pure source libraries use the ordinary standard-library
      * reference below and therefore need no entry in the native mask. */
-    if (cetta_library_lookup(member)) {
+    if (cetta_library_lookup(registered_name)) {
         return cetta_library_import(
-            ctx, member, space, eval_arena,
+            ctx, registered_name, space, eval_arena,
             persistent_arena, registry, fuel, error_out);
     }
 

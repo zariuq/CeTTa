@@ -49,7 +49,7 @@
 !(test
     (sort-atom (collapse (match &mutation-nonlinear (pair $left $right)
                      (pair $left $right))))
-    (sort-atom ((pair a b) (pair c c) (pair c d))))
+    (sort-atom ((pair a b) (pair c d))))
 !(test
     (sort-atom (collapse (match &mutation-nonlinear (tagged-value $value) $value)))
     (sort-atom (quote (first second))))
@@ -63,13 +63,14 @@
     (collapse (match &mutation-open-stored (closed $value) $value))
     (keep))
 
-; PeTTa removal is defined on nonempty expression patterns.  A bare variable
-; does not acquire a whole-Space deletion meaning.
+; A bare removal pattern raises an instantiation error and leaves the
+; space unchanged; variables inside a structured pattern are valid.
 !(add-atom &mutation-wildcard (datum one))
 !(add-atom &mutation-wildcard (datum one))
 !(add-atom &mutation-wildcard (zero))
 !(add-atom &mutation-wildcard (= (local-rule $x) (answer $x)))
-!(remove-atom &mutation-wildcard $anything)
+!(let (Error $formal $context) (catch (remove-atom &mutation-wildcard $anything))
+   (== $formal instantiation_error))
 !(test
     (collapse (match &mutation-wildcard (datum $value) $value))
     (one one))

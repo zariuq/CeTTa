@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: f0c5d30ee6a35559414b1d9f757bf2b2c3aa020b81c2fb49449e23cda3b840c9
+ * Source SHA-256: f9a0c8e0966d4c787bb43c8a057301e44df95cca64cbc55457579408d25fa1e1
  */
 
 #include <stdbool.h>
@@ -852,6 +852,8 @@ static inline uint32_t cetta_invocation_plan_key(CettaInvocationPlan plan) {
     X(petta_last, 1u, CETTA_INVOCATION_LIST_UNARY, 0u, 1u) \
     X(reverse, 1u, CETTA_INVOCATION_LIST_UNARY, 0u, 1u) \
     X(petta_msort, 1u, CETTA_INVOCATION_LIST_UNARY, 0u, 1u) \
+    X(petta_sort, 1u, CETTA_INVOCATION_LIST_UNARY, 0u, 1u) \
+    X(petta_sort, 3u, CETTA_INVOCATION_LIST_UNARY, 0u, 3u) \
     X(sort_atom, 1u, CETTA_INVOCATION_LIST_UNARY, 0u, 1u)
 
 #define CETTA_PETTA_INVOCATION_FORM_ROWS(X)     X(PETTA_FORM_PREDICATE, 1u, CETTA_INVOCATION_PREDICATE_VALUE, 0u, 1u) \

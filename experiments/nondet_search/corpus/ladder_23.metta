@@ -1,0 +1,7 @@
+(= (child (a $i)) (a (+ $i 1)))
+(= (child (a $i)) (b (+ $i 1)))
+(= (child (b $i)) (a (+ $i 1)))
+(= (child (b $i)) (b (+ $i 1)))
+(= (reach $x $t $d) (if (== $d 0) (if (== $x $t) 1 (empty)) (let $y (child $x) (reach $y $t (- $d 1)))))
+(= (main) (reach (a 0) (a 23) 23))
+!(size-atom (collapse (main)))

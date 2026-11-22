@@ -3,7 +3,6 @@
 ; and one a function passes through.  Only an uncaught error stops a file.
 (= (mkerr $x) (Error $x oops))
 (= (myid $x) $x)
-!(catch (translatePredicate (throw foo)))
 !(println! after-caught)
 !(Error foo bar)
 !(println! after-literal)

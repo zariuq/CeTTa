@@ -24,7 +24,8 @@ typedef enum {
     PETTA_FORM_ID,
     PETTA_FORM_APPEND,
     PETTA_FORM_CONS,
-    PETTA_FORM_INT_ADD,
+    /* PeTTa's CLP(FD) functions and reified comparisons (petta_clpfd.h). */
+    PETTA_FORM_INTEGER_CONSTRAINT,
     PETTA_FORM_STREAM_UNIQUE,
     PETTA_FORM_STREAM_ALPHA_UNIQUE,
     PETTA_FORM_STREAM_UNION,
@@ -385,6 +386,18 @@ Atom *petta_semantics_sort_unique_value(Arena *arena, Atom *value,
                                         bool *type_error);
 /* Whether `head` is `sort`, whose one-argument call is SWI's sort/2. */
 bool petta_semantics_is_sort(SymbolId head);
+/* PeTTa's `sort` of three values, SWI's sort/4: (sort Key Order List).
+ * Key 0 sorts the elements themselves; a positive Key N, or a list of
+ * them, sorts by argument N of each element as SWI sees PeTTa's terms (an
+ * expression (h t...) is the list cell '[|]'(h, (t...)), so argument 1 is
+ * h and argument 2 the rest).  Order @< and @> keep the first of the
+ * elements with equal keys, @=< and @>= keep them all; each sort is
+ * stable, by the standard order of terms.  The sorted list, or NULL with
+ * *raised set to SWI's error in context system:sort/4; NULL with *raised
+ * NULL where SWI fails (a key too large for a tagged integer, or a key
+ * list holding a non-key) or memory runs out. */
+Atom *petta_semantics_sort_keyed(Arena *arena, Atom *key, Atom *order,
+                                 Atom *list, Atom **raised);
 /* The errors the reference raises, as its catch gives them: Prolog's
  * error(Formal, Context) reads (Error Formal Context), and an unbound
  * context is a fresh variable.
@@ -440,6 +453,10 @@ Atom *petta_semantics_static_procedure_error(
 Atom *petta_semantics_state_existence_error(Arena *arena, Atom *name);
 Atom *petta_semantics_instantiation_error(
     Arena *arena, const char *module, const char *name, int64_t arity);
+/* Public removal needs a bound atom and, for an equation, a bound function
+ * name. Other variables in a removal pattern remain valid selectors. */
+Atom *petta_semantics_remove_pattern_error(Arena *arena, Atom *pattern);
+Atom *petta_semantics_space_operand_error(Arena *arena, Atom *location);
 /* What (Predicate V) gives for the value V of its argument, the reference's
  * 'Predicate'([F|Args], T) :- T =.. [F|Args]: a list whose first element is
  * a symbol names that compound, and a list of one element names the element.
@@ -531,22 +548,28 @@ PeTTaObservedEquality petta_semantics_observed_equal(Atom *left, Atom *right);
 bool petta_semantics_value_contains_observable_open_cons(
     const Atom *value);
 bool petta_semantics_contains_cons_constraint(const Atom *atom);
-/* A structural index query for a resolved logical pattern. Closed spines
- * become flat expressions. Remaining carriers use a private wildcard to
- * request every occurrence; that wildcard is never a unification pattern.
+/* A structural index query for a resolved logical pattern. Closed spines,
+ * at any depth, become the flat expressions they spell, so a key built as
+ * cons cells selects the rows the same flat key selects. A spine that is
+ * not closed is a private wildcard at its own place, and the rest of the
+ * pattern still selects; that wildcard is never a unification pattern.
  * `exact` distinguishes equivalent queries from complete approximations. */
 Atom *petta_semantics_match_index_pattern(
     Arena *arena, Atom *pattern, bool *exact);
 /*
  * Conservative equation-index discriminator for PeTTa list patterns.
  *
- * `false` is a proof that `pattern` cannot match `value` because an aligned
- * `(cons Head Tail)` constraint faces a rigid empty or non-expression
- * value.  `true` means possible or unknown; in particular, variables and
- * structurally ambiguous applications are never rejected.
+ * `false` is a proof that `pattern` cannot match `value`: an aligned
+ * `(cons Head Tail)` constraint faces a rigid empty or non-expression value,
+ * a literal element of a cons spine differs from the element it meets, or a
+ * spine closed by () has another length than the expression.  `true` means
+ * possible or unknown; in particular, variables and structurally ambiguous
+ * applications are never rejected.
  *
- * Positive example: `(f (cons $x $xs))` may match `(f (a b))`.
- * Negative example: `(f (cons $x $xs))` cannot match `(f ())`.
+ * Positive examples: `(f (cons $x $xs))` may match `(f (a b))`, and
+ * `(f (cons C (cons $x ())))` may match `(f (C a))`.
+ * Negative examples: `(f (cons $x $xs))` cannot match `(f ())`, and
+ * `(f (cons C (cons $x ())))` cannot match `(f (D a))` or `(f (C a b))`.
  */
 bool petta_semantics_cons_pattern_may_match(
     const Atom *pattern, const Atom *value);
@@ -559,6 +582,11 @@ bool petta_semantics_match_cons_constraint(
  * not acquire list-pattern meaning during matching. */
 bool petta_semantics_match_lowered_head(
     Arena *arena, Atom *head, Atom *value, BindingsBuilder *builder);
+/* Match two values with their own lexical coordinates. Neither operand's
+ * public spelling is a pattern constructor. */
+bool petta_semantics_match_list_values(
+    Arena *arena, BindingValue left, BindingValue right,
+    BindingsBuilder *builder);
 /* Same match as freshening the head with this epoch first. Observed
  * structure stays borrowed; retaining source syntax uses the eager match. */
 bool petta_semantics_match_lowered_head_epoch(
@@ -627,6 +655,12 @@ int petta_semantics_order_ends(PeTTaOrderStep left, const Atom *left_end,
 bool petta_semantics_term_compare_expression_boundary(
     bool nonempty, const Atom *leaf, int *ordering);
 Atom *petta_semantics_msort(Arena *arena, Atom *list);
+
+/* Stable sort of structural keys made from scalar leaves, variables and
+ * finite expressions. Compare node kinds before their contents. */
+bool cetta_term_compare_structural(const Atom *left, const Atom *right,
+                                   int *ordering);
+Atom *cetta_term_msort_structural(Arena *arena, Atom *keys);
 
 /*
  * Stable first-occurrence deduplication modulo alpha equivalence.  Keys use

@@ -1,0 +1,22 @@
+-- theory: Calc
+-- Two rules for one call that give different values.  The left sides overlap and nothing makes the
+-- premises exclusive: rulec compiles the judgment nondet, and the reading by demand gives the call
+-- both values, which is how a run shows that a judgment is not a function.
+Module Choice {
+  Theory Calc() {
+    Empty
+    Types {
+      Coin; Side;
+    }
+    Terms {
+      "c:coin". |- "coin" : Coin;
+      "c:heads". |- "heads" : Side;
+      "c:tails". |- "tails" : Side;
+      "c:toss". x:Coin |- "toss" x : Side;
+    }
+    Rewrites {
+      "toss-heads". x:Coin |- "c:toss"(x) ~> "c:heads"();
+      "toss-tails". x:Coin |- "c:toss"(x) ~> "c:tails"();
+    }
+  }
+}

@@ -1,0 +1,26 @@
+; The sieve of Eratosthenes to 10, on unary numbers: tcalc@0.1 has no
+; arithmetic.  A cursor (cursor P AT C R) walks from P towards 10: AT is where
+; it stands, C how far its next multiple of P is, and R how far 10 is.  Each
+; number to 5 has a cursor, which strikes its multiples.  Under every the
+; cursors walk at once, one position a step.  The cursor of P reaches M at
+; step M - P, so no two cursors strike one row in one step, and a cursor
+; passes a row another has struck.  The outcome is the primes to 10.
+(step every)
+(num (s (s z)))
+(num (s (s (s z))))
+(num (s (s (s (s z)))))
+(num (s (s (s (s (s z))))))
+(num (s (s (s (s (s (s z)))))))
+(num (s (s (s (s (s (s (s z))))))))
+(num (s (s (s (s (s (s (s (s z)))))))))
+(num (s (s (s (s (s (s (s (s (s z))))))))))
+(num (s (s (s (s (s (s (s (s (s (s z)))))))))))
+(cursor (s (s z)) (s (s z)) (s (s z)) (s (s (s (s (s (s (s (s z)))))))))
+(cursor (s (s (s z))) (s (s (s z))) (s (s (s z))) (s (s (s (s (s (s (s z))))))))
+(cursor (s (s (s (s z)))) (s (s (s (s z)))) (s (s (s (s z)))) (s (s (s (s (s (s z)))))))
+(cursor (s (s (s (s (s z))))) (s (s (s (s (s z))))) (s (s (s (s (s z))))) (s (s (s (s (s z))))))
+(rule walk (take (cursor $p $at (s (s $c)) (s $r))) (make (cursor $p (s $at) (s $c) $r)))
+(rule strike (take (cursor $p $at (s z) (s $r)) (num (s $at))) (make (cursor $p (s $at) $p $r)))
+(rule pass (take (cursor $p $at (s z) (s $r))) (absent (num (s $at)))
+  (make (cursor $p (s $at) $p $r)))
+(rule stop (take (cursor $p $at $c z)))

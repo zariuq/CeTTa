@@ -2,6 +2,7 @@
 #include "parser.h"
 #include "petta_semantics.h"
 #include "prepared_pure_machine.h"
+#include "gc_budget.h"
 #include "symbol.h"
 #include <assert.h>
 #include <math.h>
@@ -96,6 +97,7 @@ int main(void) {
         "(= (allocate $n) (if (== $n 0) End (Box $n (allocate (- $n 1)))))",
         "(= (after-allocation $n $x) (let $derived (+ $x 0.25) (let $unused (allocate $n) (+ (* $derived 0.5) 1.0))))",
         "(= (private-list-equality $left $right) (== $left $right))",
+        "(= (transient-budget-loop $n $sum $held) (if (== $n 0) (Pair $sum $held) (transient-budget-loop (- $n 1) (+ $sum $n) $held)))",
     };
     for (size_t i=0u; i<sizeof(equations)/sizeof(*equations); i++)
         assert(space_admit_atom(&space, &source, read_atom(&source, equations[i])));
@@ -129,6 +131,23 @@ int main(void) {
     assert(cetta_prepared_pure_program_execute_closed(program,&scratch,65536u,&result));
     assert(result->ground.gkind==GV_FLOAT && result->ground.fval==1.625);
     cetta_prepared_pure_program_free(program);
+    /* A constructor in the plan is not evidence that its intermediates
+     * survive. The small live graph fits the sampling nursery even when
+     * the configured fresh-allocation budget is much larger. */
+    Arena transient;
+    arena_init(&transient);
+    arena_set_hashcons(&transient, NULL);
+    program = compile(&space, &source, "(transient-budget-loop 100000 0 (Box 11))");
+    assert(program);
+    assert(cetta_prepared_pure_program_execute_closed(
+        program, &transient, 256u * ARENA_BLOCK_SIZE, &result));
+    assert(atom_eq(result, read_atom(&source, "(Pair 5000050000 (Box 11))")));
+    size_t nursery = cetta_gc_nursery_budget(256u * ARENA_BLOCK_SIZE, 0u);
+    size_t transient_bytes = arena_accounted_live_bytes(&transient);
+    assert(transient_bytes < 2u * nursery);
+    printf("PreparedSurvivorBudget accounted=%zu sample=%zu\n", transient_bytes, nursery);
+    cetta_prepared_pure_program_free(program);
+    arena_free(&transient);
     Atom *a = atom_symbol(&source, "list-a"), *b = atom_symbol(&source, "list-b");
     Atom *cell = petta_semantics_open_cons_value(&source, a,
         petta_semantics_open_cons_value(&source, b, atom_unit(&source)));

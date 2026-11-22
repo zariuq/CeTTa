@@ -1,0 +1,7 @@
+; Two read patterns may select one occurrence: Core.lean's shapes ask the
+; taken occurrences to be distinct, not the read ones. The row (p 1) alone
+; gives (two 1 1); with (p 2) every pair of the two rows is read.
+(step one)
+(p 1)
+(p 2)
+(rule both (read (p $x) (p $y)) (absent (two $x $y)) (make (two $x $y)))

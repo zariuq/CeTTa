@@ -8,11 +8,11 @@
 !(add-atom &removal-source (go a))
 !(add-atom &removal-source (go a))
 !(add-atom &removal-source (go a))
-; Equal witnesses remain separate operations, also in a batched query.
+; Each witness requests removal of every matching copy, also in a batched query.
 !(removed (collapse (match &removal-source (go $key)
     (let $_removed (remove-atom &removal-target (target $key)) done))))
 !(left (size-atom (collapse (get-atoms &removal-target))))
-; Removing one equation must retain the other equation's program entry.
+; Removing an equation removes its duplicate definitions and program entries.
 (= (remaining-copy) yes)
 (= (remaining-copy) yes)
 !(remove-atom &self (= (remaining-copy) yes))

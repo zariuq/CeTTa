@@ -175,6 +175,10 @@ typedef struct {
      * every read saw the rows the query began with.  Otherwise it
      * declines, having made none. */
     uint64_t afresh;
+    /* Request the read-only instance of the shared firing protocol. A
+     * ground native world, plain first-order data and no effect/guard/filter
+     * are required; other queries retain the ordinary realization. */
+    bool read_protocol;
 } CettaNativeQuery;
 
 typedef enum {
@@ -191,6 +195,8 @@ typedef struct {
     /* Unless the query counts only, the expression of the answers,
      * allocated in the caller's arena. */
     Atom *collection;
+    bool read_protocol;
+    bool protocol_mismatch;
 } CettaNativeQueryResult;
 
 /* Run the query.  Patterns and templates have the caller's bindings

@@ -1,0 +1,9 @@
+; The program of two_tokens_every, its matches counted as keys: the rows a
+; match selects for its patterns, in order.  Taking the two tokens in either
+; order is one commit and two keys.  every must commit both keys, which take
+; the same rows, so it has no step; unique sees two matches.  The other
+; disciplines step as before.
+(matches keys)
+(tok)
+(tok)
+(rule pair (take (tok) (tok)) (make (pair)))

@@ -9,7 +9,9 @@
 #include "match.h"
 #include "native_sha256.h"
 #include "parser.h"
+#include "petta_arithmetic.h"
 #include "petta_numeric.h"
+#include "petta_prelude.h"
 #include "space.h"
 #include "term_graph.h"
 #if CETTA_BUILD_WITH_GMP
@@ -143,6 +145,44 @@ static bool petta_repra_push_char(
             .kind = PETTA_REPRA_CHAR,
             .character = character,
         });
+}
+
+/* A cell whose tail is not a list, an unbound tail included, is Prolog's
+ * partial list: term_to_atom writes [H1,...,Hn|T].  Pushes the elements, the
+ * bar and the tail; the opening bracket is the caller's. */
+static bool petta_repra_push_partial_list(
+    PettaRepraStack *stack, Atom *cell) {
+    PeTTaLogicalListCursor cursor;
+    petta_semantics_logical_list_cursor_init(&cursor, cell);
+    Atom **items = NULL;
+    size_t count = 0u, capacity = 0u;
+    Atom *item = NULL;
+    PeTTaLogicalListStep step;
+    while ((step = petta_semantics_logical_list_cursor_next(&cursor, &item)) ==
+           PETTA_LOGICAL_LIST_ITEM) {
+        if (count == capacity) {
+            capacity = capacity ? capacity * 2u : 8u;
+            items = cetta_realloc(items, sizeof(*items) * capacity);
+        }
+        items[count++] = item;
+    }
+    /* A list end would have closed the cell into a list value. */
+    bool ok = step == PETTA_LOGICAL_LIST_INVALID && cursor.rest && count > 0u &&
+              petta_repra_push(stack, (PettaRepraAction){
+                  .kind = PETTA_REPRA_CHAR, .character = ']'}) &&
+              petta_repra_push(stack, (PettaRepraAction){
+                  .kind = PETTA_REPRA_ATOM, .atom = cursor.rest}) &&
+              petta_repra_push(stack, (PettaRepraAction){
+                  .kind = PETTA_REPRA_CHAR, .character = '|'});
+    for (size_t index = count; ok && index > 0u; index--) {
+        ok = petta_repra_push(stack, (PettaRepraAction){
+                 .kind = PETTA_REPRA_ATOM, .atom = items[index - 1u]}) &&
+             (index == 1u ||
+              petta_repra_push(stack, (PettaRepraAction){
+                  .kind = PETTA_REPRA_CHAR, .character = ','}));
+    }
+    free(items);
+    return ok;
 }
 
 static bool petta_repra_plain_identifier(const char *text) {
@@ -435,7 +475,8 @@ static bool petta_repra_render(
                     petta_semantics_materialize_closed_logical_list(
                         arena, atom);
                 if (!materialized) {
-                    ok = false;
+                    sb_append_char(output, '[');
+                    ok = petta_repra_push_partial_list(&stack, atom);
                     break;
                 }
                 /* Cells ending in a list close to a list value, which is
@@ -703,9 +744,15 @@ bool grounded_op_is_library_native(SymbolId head) {
 bool is_grounded_op(SymbolId id) {
     if (id == SYMBOL_ID_NONE)
         return false;
-    extern bool eval_current_python_object_head(SymbolId) __attribute__((weak));
-    if (eval_current_python_object_head && eval_current_python_object_head(id))
-        return true;
+    extern uint32_t cetta_foreign_objects_any_enabled __attribute__((weak));
+    if (!(&cetta_foreign_objects_any_enabled) ||
+        __builtin_expect(
+            __atomic_load_n(&cetta_foreign_objects_any_enabled, __ATOMIC_ACQUIRE) != 0u,
+            0)) {
+        extern bool eval_current_python_object_head(SymbolId) __attribute__((weak));
+        if (eval_current_python_object_head && eval_current_python_object_head(id))
+            return true;
+    }
     /* Standalone PeTTa implements its standard inequality in C. With SWI,
      * its library owns the operation, including permitted redefinitions.
      * Other dialects retain their own interpretation of this spelling. */
@@ -785,7 +832,15 @@ bool is_grounded_op(SymbolId id) {
         if (typing_op)
             capabilities |= GROUNDED_OP_CACHE_DEPENDENT_TYPING;
     }
-    if (petta_semantics_form(id) == PETTA_FORM_REPRA)
+    /* PeTTa's prelude defines repra, exp and the functions over SWI's
+     * predicates in petta_prelude.h; other dialects do not. */
+    if (petta_semantics_form(id) == PETTA_FORM_REPRA ||
+        id == g_builtin_syms.petta_exp ||
+        id == g_builtin_syms.petta_unifiable ||
+        id == g_builtin_syms.petta_atom_concat ||
+        id == g_builtin_syms.petta_atom_chars ||
+        id == g_builtin_syms.petta_copy_term ||
+        id == g_builtin_syms.petta_term_hash)
         capabilities |= GROUNDED_OP_CACHE_PETTA;
 
 classified:
@@ -1402,16 +1457,9 @@ static Atom *make_numeric(Arena *a, double val, bool any_float) {
     return atom_float(a, val);
 }
 
-bool petta_libpl_evaluate_arithmetic(
-    Arena *arena, const char *functor, Atom **args, uint32_t nargs,
-    CettaCallOutcome *out) __attribute__((weak));
-bool petta_libpl_compare_arithmetic(
-    Arena *arena, const char *relation, Atom **args,
-    CettaCallOutcome *out) __attribute__((weak));
-bool petta_libpl_prefer_rationals(void) __attribute__((weak));
-
-/* The functor PeTTa's metta.pl evaluates a MeTTa arithmetic head with. */
-static const char *grounded_petta_prolog_functor(SymbolId head_id) {
+/* The SWI function PeTTa's metta.pl evaluates a MeTTa arithmetic head
+ * with (`R is A op B`, `Out is sqrt(A)`, ...). */
+static const char *grounded_petta_function(SymbolId head_id) {
     if (head_id == g_builtin_syms.op_plus) return "+";
     if (head_id == g_builtin_syms.op_minus) return "-";
     if (head_id == g_builtin_syms.op_mul) return "*";
@@ -1430,19 +1478,18 @@ static const char *grounded_petta_prolog_functor(SymbolId head_id) {
     if (head_id == g_builtin_syms.acos_math) return "acos";
     if (head_id == g_builtin_syms.tan_math) return "tan";
     if (head_id == g_builtin_syms.atan_math) return "atan";
+    if (head_id == g_builtin_syms.petta_exp) return "exp";
     return NULL;
 }
 
-/* PeTTa arithmetic off the native fast path goes to the embedded Prolog's
- * is/2, so its value, the float flags in force and any error are exactly
- * SWI-PeTTa's: with a functor the whole operation, without one a single
- * operand.  An error is/2 raises is raised here too.  NULL when no
- * embedded Prolog is available. */
-static Atom *grounded_petta_prolog_is(Arena *a, const char *functor,
-                                      Atom **args, uint32_t nargs) {
+/* PeTTa arithmetic off the native fast path is SWI's is/2, evaluated by
+ * petta_arithmetic.c: with a function the whole operation, without one a
+ * single operand, so its value, the float flags in force and any error are
+ * SWI-PeTTa's.  An error is/2 raises is raised here too. */
+static Atom *grounded_petta_is(Arena *a, const char *function,
+                               Atom **args, uint32_t nargs) {
     CettaCallOutcome out = cetta_call_failure();
-    if (!petta_libpl_evaluate_arithmetic ||
-        !petta_libpl_evaluate_arithmetic(a, functor, args, nargs, &out))
+    if (!petta_arithmetic_evaluate(a, function, args, nargs, &out))
         return NULL;
     if (out.kind == CETTA_CALL_RAISED)
         g_grounded_raised = true;
@@ -1450,11 +1497,11 @@ static Atom *grounded_petta_prolog_is(Arena *a, const char *functor,
         ? out.term : NULL;
 }
 
-static Atom *grounded_petta_prolog_operation(Arena *a, SymbolId head_id,
-                                             Atom **args, uint32_t nargs) {
-    const char *functor = grounded_petta_prolog_functor(head_id);
-    return functor && grounded_current_language_is_petta()
-        ? grounded_petta_prolog_is(a, functor, args, nargs) : NULL;
+static Atom *grounded_petta_operation(Arena *a, SymbolId head_id,
+                                      Atom **args, uint32_t nargs) {
+    const char *function = grounded_petta_function(head_id);
+    return function && grounded_current_language_is_petta()
+        ? grounded_petta_is(a, function, args, nargs) : NULL;
 }
 
 /* SWI checks each float result against its float flags: an infinite,
@@ -1464,16 +1511,16 @@ static bool grounded_float_result_is_exceptional(double value) {
 }
 
 static bool grounded_petta_prefers_rationals(void) {
-    return grounded_current_language_is_petta() && petta_libpl_prefer_rationals &&
-           petta_libpl_prefer_rationals();
+    return grounded_current_language_is_petta() &&
+           petta_arithmetic_flags().prefer_rationals;
 }
 
 static Atom *grounded_division_by_zero(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head && head->kind == ATOM_SYMBOL) {
-        Atom *prolog = grounded_petta_prolog_operation(
+        Atom *petta = grounded_petta_operation(
             a, head->sym_id, args, nargs);
-        if (prolog)
-            return prolog;
+        if (petta)
+            return petta;
     }
     return grounded_raise(a, head, args, nargs,
                           atom_symbol(a, "DivisionByZero"));
@@ -3305,68 +3352,34 @@ static inline __attribute__((always_inline)) Atom *grounded_math_function(
 
 /* PeTTa's log-math is log(X) / log(Base), which is/2 evaluates left to
  * right. */
-static Atom *grounded_petta_prolog_log(Arena *a, Atom **args) {
+static Atom *grounded_petta_log(Arena *a, Atom **args) {
     Atom *parts[2];
-    parts[0] = grounded_petta_prolog_is(a, "log", &args[1], 1u);
+    parts[0] = grounded_petta_is(a, "log", &args[1], 1u);
     if (!parts[0] || atom_is_error(parts[0]))
         return parts[0];
-    parts[1] = grounded_petta_prolog_is(a, "log", &args[0], 1u);
+    parts[1] = grounded_petta_is(a, "log", &args[0], 1u);
     if (!parts[1] || atom_is_error(parts[1]))
         return parts[1];
-    return grounded_petta_prolog_is(a, "/", parts, 2u);
+    return grounded_petta_is(a, "/", parts, 2u);
 }
 
-/* Whether a PeTTa math function is off the native path: an error, an
- * exceptional float, a rational argument, or an integer to a negative
- * integer power, whose value depends on prefer_rationals.  A power outside
- * the 32-bit range keeps the native answer rather than ask Prolog for an
- * enormous integer. */
-static bool grounded_petta_math_needs_prolog(SymbolId head_id, Atom **args,
-                                             uint32_t nargs, Atom *native) {
-    bool binary = head_id == g_builtin_syms.pow_math ||
-                  head_id == g_builtin_syms.log_math;
-    if (head_id == g_builtin_syms.isnan_math ||
-        head_id == g_builtin_syms.isinf_math || nargs != (binary ? 2u : 1u))
-        return false;
-    if (head_id == g_builtin_syms.pow_math &&
-        args[1]->kind == ATOM_GROUNDED &&
-        (args[1]->ground.gkind == GV_BIGINT ||
-         (args[1]->ground.gkind == GV_INT &&
-          (args[1]->ground.ival > INT32_MAX ||
-           args[1]->ground.ival < INT32_MIN))))
-        return false;
-    if (atom_is_error(native))
-        return true;
-    if (native->kind == ATOM_GROUNDED && native->ground.gkind == GV_FLOAT &&
-        grounded_float_result_is_exceptional(native->ground.fval))
-        return true;
-    for (uint32_t i = 0u; i < nargs; i++) {
-        if (args[i]->kind == ATOM_GROUNDED &&
-            args[i]->ground.gkind == GV_RATIONAL)
-            return true;
-    }
-    if (head_id == g_builtin_syms.pow_math) {
-        NumArg base = {0};
-        return args[1]->kind == ATOM_GROUNDED &&
-               args[1]->ground.gkind == GV_INT && args[1]->ground.ival < 0 &&
-               get_numeric_arg(args[0], &base) && !base.is_float &&
-               !base.is_rational;
-    }
-    return false;
-}
-
-/* PeTTa's metta.pl evaluates each math function with is/2 too, so off the
- * native path the embedded Prolog evaluates it: its value, the float flags
- * in force and any error are then SWI-PeTTa's. */
-static Atom *grounded_petta_math_result(Arena *a, SymbolId head_id,
-                                        Atom **args, uint32_t nargs,
-                                        Atom *native) {
-    if (!grounded_petta_math_needs_prolog(head_id, args, nargs, native))
-        return native;
-    Atom *prolog = head_id == g_builtin_syms.log_math
-        ? grounded_petta_prolog_log(a, args)
-        : grounded_petta_prolog_operation(a, head_id, args, nargs);
-    return prolog ? prolog : native;
+/* PeTTa's math functions and exp are metta.pl's `Out is F(A)` behind
+ * arith_arg/1: SWI's is/2 throughout, with its float flags and errors.
+ * NULL for any other head or arity. */
+static Atom *grounded_petta_math(Arena *a, SymbolId head_id, Atom **args,
+                                 uint32_t nargs) {
+    if (head_id == g_builtin_syms.log_math)
+        return nargs == 2u ? grounded_petta_log(a, args) : NULL;
+    if (head_id == g_builtin_syms.op_plus ||
+        head_id == g_builtin_syms.op_minus ||
+        head_id == g_builtin_syms.op_mul ||
+        head_id == g_builtin_syms.op_div ||
+        head_id == g_builtin_syms.op_mod)
+        return NULL;
+    const char *function = grounded_petta_function(head_id);
+    uint32_t arity = head_id == g_builtin_syms.pow_math ? 2u : 1u;
+    return function && nargs == arity
+        ? grounded_petta_is(a, function, args, nargs) : NULL;
 }
 
 bool grounded_op_is_sequence_constructor(SymbolId id) {
@@ -3887,12 +3900,23 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         return atom_unit(a);
     }
 
+    if (grounded_current_language_is_petta()) {
+        Atom *math = grounded_petta_math(a, head_id, args, nargs);
+        if (math)
+            return math;
+        if (petta_prelude_function(head_id, nargs)) {
+            bool raised = false;
+            Atom *value = petta_prelude_apply(a, head_id, args, nargs,
+                                              &raised);
+            if (raised)
+                g_grounded_raised = true;
+            return value;
+        }
+    }
     {
         Atom *math = grounded_math_function(a, head, head_id, args, nargs);
         if (math)
-            return grounded_current_language_is_petta()
-                ? grounded_petta_math_result(a, head_id, args, nargs, math)
-                : math;
+            return math;
     }
 
     if (head_id == g_builtin_syms.max_atom || head_id == g_builtin_syms.min_atom) {
@@ -4292,18 +4316,16 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
     bool nb_ok = get_numeric_arg(args[1], &nb);
     if (petta && is_arith && (!na_ok || !nb_ok)) {
         /* SWI evaluates an operand such as pi or e, and raises its own
-         * error for one it cannot evaluate. */
-        Atom *prolog = grounded_petta_prolog_operation(
-            a, head_id, args, nargs);
-        if (prolog)
-            return prolog;
+         * error for one it cannot evaluate: a non-numeric operand of
+         * PeTTa's arithmetic is an exception, never an inert expression. */
+        Atom *value = grounded_petta_operation(a, head_id, args, nargs);
+        if (value)
+            return value;
         for (uint32_t i = 0u; i < 2u; i++) {
             if (i == 0u ? na_ok : nb_ok)
                 continue;
-            Atom *value = grounded_petta_prolog_is(a, NULL, &args[i], 1u);
-            if (!value)
-                break;
-            if (atom_is_error(value))
+            value = grounded_petta_is(a, NULL, &args[i], 1u);
+            if (!value || atom_is_error(value))
                 return value;
             if (i == 0u)
                 na_ok = get_numeric_arg(value, &na);
@@ -4312,24 +4334,9 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         }
     }
     if (is_arith && (!na_ok || !nb_ok)) {
-        /*
-         * PeTTa's arithmetic predicates are SWI `is` relations: once called,
-         * a non-numeric operand is an exception rather than an inert
-         * expression.  The PeTTa catch delimiter observes the corresponding
-         * Error value.  HE and Prime retain their established
-         * "unknown stays unevaluated" behavior for symbols and variables.
-         */
+        /* HE and Prime keep an unknown symbol or variable operand
+         * unevaluated. */
         Atom *bad_arg = !na_ok ? args[0] : args[1];
-        bool petta_strict =
-            eval_current_language_id &&
-            eval_current_language_id() == CETTA_LANGUAGE_PETTA;
-        if (petta_strict) {
-            Atom *error =
-                petta_semantics_arithmetic_operand_error(a, bad_arg);
-            if (error)
-                g_grounded_raised = true;
-            return error;
-        }
         if (bad_arg->kind == ATOM_GROUNDED) {
             return grounded_bad_arg_type(a, head, args, nargs,
                                          !na_ok ? 1 : 2,
@@ -4367,10 +4374,9 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
     }
     if (petta && head_id == g_builtin_syms.op_mod &&
         (na.is_rational || nb.is_rational || na.is_float || nb.is_float)) {
-        Atom *prolog = grounded_petta_prolog_operation(
-            a, head_id, args, nargs);
-        if (prolog)
-            return prolog;
+        Atom *value = grounded_petta_operation(a, head_id, args, nargs);
+        if (value)
+            return value;
     }
     if (head_id == g_builtin_syms.op_mod &&
         (na.is_rational || nb.is_rational) &&
@@ -4442,10 +4448,9 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
                     ? na.val * nb.val
                     : na.val / nb.val;
         if (grounded_float_result_is_exceptional(value)) {
-            Atom *prolog = grounded_petta_prolog_operation(
-                a, head_id, args, nargs);
-            if (prolog)
-                return prolog;
+            Atom *checked = grounded_petta_operation(a, head_id, args, nargs);
+            if (checked)
+                return checked;
         }
         return atom_float(a, value);
     }
@@ -4480,15 +4485,13 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
     if (head_id == g_builtin_syms.op_lt || head_id == g_builtin_syms.op_gt ||
         head_id == g_builtin_syms.op_le || head_id == g_builtin_syms.op_ge) {
         /* mpq_get_d truncates, whereas SWI rounds a rational in a mixed
-         * float comparison, and comparison overflow differs from is/2.
-         * Let the host comparison retain those rules and flags. */
+         * float comparison to the nearest float (petta_arithmetic.c). */
         if (petta && fl && (na.is_rational || nb.is_rational)) {
             const char *relation = head_id == g_builtin_syms.op_lt ? "<"
                 : head_id == g_builtin_syms.op_gt ? ">"
                 : head_id == g_builtin_syms.op_le ? "=<" : ">=";
             CettaCallOutcome out = cetta_call_failure();
-            if (!petta_libpl_compare_arithmetic ||
-                !petta_libpl_compare_arithmetic(a, relation, args, &out))
+            if (!petta_arithmetic_compare(a, relation, args, &out))
                 return NULL;
             if (out.kind == CETTA_CALL_RAISED)
                 g_grounded_raised = true;

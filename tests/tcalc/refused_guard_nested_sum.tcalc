@@ -1,0 +1,5 @@
+; An operand of < or <= may be a sum of two integers, (+ A B), and a summand
+; is no sum.
+(step one)
+(a 1)
+(rule r (take (a $x)) (check (< (+ (+ $x 1) 1) 5)) (make (b $x)))

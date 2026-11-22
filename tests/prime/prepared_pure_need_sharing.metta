@@ -27,9 +27,12 @@
 ; User-defined suspension wrappers are deliberately outside the generated
 ; total-integer normalization fragment.  This ladder therefore exercises
 ; ephemeron collection and update-path compression rather than eager GMP
-; normalization, while keeping the observable result compact.
+; normalization, while keeping the observable result compact.  Its values
+; start beyond a machine word, so forcing the ladder allocates several
+; one-megabyte nurseries and some collection meets live update cells
+; wherever the schedule places it.
 (= (sharing:delay-loop $n $value)
    (if (== $n 0)
        $value
        (sharing:delay-loop (- $n 1) (sharing:inc $value))))
-!(< (sharing:delay-loop 40000 0) 0)
+!(< (sharing:delay-loop 80000 9223372036854775807) 0)

@@ -1,0 +1,5 @@
+; profile: step=one;backend=x86-flat
+; The flat decider compares whole words: a pattern with a local inside a nested
+; term is not a flat firing, and the backend says which rule it cannot decide.
+(add (s z) z)
+(rule move (take (add (s $a) $b)) (make (add $a (s $b))))

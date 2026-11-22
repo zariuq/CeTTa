@@ -1,0 +1,10 @@
+; A sliding puzzle on a board of two rows of three: the blank trades places
+; with a neighbouring tile. Exploration visits each reachable board once, so
+; the explored states are the 6!/2 = 360 boards of the start's parity; every
+; board can move, so there is no outcome and the run is a cycle. On the 3x3
+; board the same two rules visit 9!/2 = 181,440 boards.
+(step one)
+(at p1 t1) (at p2 t2) (at p3 t3) (at p4 t4) (at p5 t5) (at p6 blank)
+(adj p1 p2) (adj p2 p3) (adj p4 p5) (adj p5 p6) (adj p1 p4) (adj p2 p5) (adj p3 p6)
+(rule slide (take (at $p blank) (at $q $t)) (read (adj $p $q)) (make (at $p $t) (at $q blank)))
+(rule slide-back (take (at $p blank) (at $q $t)) (read (adj $q $p)) (make (at $p $t) (at $q blank)))

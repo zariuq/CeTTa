@@ -1,0 +1,10 @@
+; profile: step=one
+; Two firings that select different rows yet do not commute: the rows share
+; an unknown, and each rule tells it a different value (the SharedUnknown
+; control of JointFirings/Independent).  After either, the other is refused,
+; so each order is an outcome of its own.  Negative example for the lookup of
+; independent firings, which needs states of fixed terms.
+(left $x)
+(right $x)
+(rule five (take (left $v)) (tell (= $v 5)) (make (five $v)))
+(rule six (take (right $v)) (tell (= $v 6)) (make (six $v)))

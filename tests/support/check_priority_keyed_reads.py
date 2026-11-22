@@ -228,6 +228,10 @@ def program(rng, profile, steps, grow, variables, lang):
         roll = rng.random()
         if not atoms or roll < grow:
             atom = random_atom(rng, variables)
+            if lang == "petta" and is_var(atom):
+                # PeTTa adds no bare variable: its add-atom raises, as
+                # assertz does.
+                continue
             atoms.append(atom)
             atoms.sort(key=KEY)
             lines.append("!(add-atom &p %s)" % show(atom))

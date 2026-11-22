@@ -1,0 +1,9 @@
+; Three searches of R, by its first argument, its first two, its first three:
+; one index serves them, read at levels 1, 2 and 3.  A search by the second
+; argument alone needs an index of its own.
+(step every)
+(store set)
+(rule s1 (read (Q1 $a) (R $a $b $c $v)) (make (S1 $v)))
+(rule s2 (read (Q2 $a $b) (R $a $b $c $v)) (make (S2 $v)))
+(rule s3 (read (Q3 $a $b $c) (R $a $b $c $v)) (make (S3 $v)))
+(rule t (read (P $b) (R $a $b $c $v)) (make (T $v)))

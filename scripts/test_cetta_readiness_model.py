@@ -581,6 +581,7 @@ def check_petta_reference_identity() -> None:
         'petta_reference_check', ROOT / 'tools/check_petta_release_reference.py')
     checker = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(checker)
+    contract = json.loads((ROOT / 'langdef/petta/reference.json').read_text())
     with tempfile.TemporaryDirectory(prefix='readiness-petta-', dir=ROOT / 'runtime') as tmp:
         root = Path(tmp)
         contents = {'run.sh': '#!/bin/sh\n', 'src/eval.pl': 'eval(value).\n',
@@ -590,73 +591,73 @@ def check_petta_reference_identity() -> None:
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
-        contract = {'reference_commit': 'e' * 40,
-                    'reference_files': {p: hashlib.sha256(s.encode()).hexdigest()
-                                        for p, s in contents.items()}}
         identity = checker.check_reference(root, contract)
         require(identity['source_kind'] == 'snapshot' and
                 identity['checkout_commit'] is None and
-                identity['reference_commit'] == contract['reference_commit'] and
+                not identity['aligned'] and
+                identity['last_alignment'] == contract['last_alignment'] and
                 identity['files'] == 5 and identity['examples'] == 1,
                 'reference snapshot inherited enclosing Git identity')
+        require(any('snapshot names no commit' in item
+                    for item in identity['alignment_work']),
+                'a snapshot was not reported as unknown alignment')
         report_pass('reference snapshot identity excludes its enclosing repository')
-        with patch.object(checker.subprocess, 'run', return_value=
-                          subprocess.CompletedProcess([], 0, str(root), '')), \
-             patch.object(checker.subprocess, 'check_output', return_value='0' * 40):
-            try:
-                checker.check_reference(root, contract)
-            except ValueError:
-                report_pass('a checkout cannot use snapshot admission to hide a wrong commit')
-            else:
-                raise AssertionError('reference accepted an unpinned checkout')
+        other = '0' * 40
+
+        def checkout_git(reference, *arguments):
+            if arguments[:1] == ('rev-parse',):
+                return str(root) if arguments[1] == '--show-toplevel' else other
+            return None
+        with patch.object(checker, 'git', side_effect=checkout_git):
+            moved = checker.check_reference(root, contract)
+        require(moved['source_kind'] == 'checkout' and
+                moved['checkout_commit'] == other and not moved['aligned'] and
+                any('is not in this checkout' in item
+                    for item in moved['alignment_work']),
+                'a checkout at another commit was not reported as alignment work')
+        report_pass('a checkout at another commit is alignment work, not a failure')
         for name, text in [('src/eval.pl', 'eval(wrong).\n'),
                            ('lib/injected.metta', '(Injected)\n')]:
             path = root / name
             path.write_text(text)
-            try:
-                checker.check_reference(root, contract)
-            except ValueError:
-                report_pass('reference rejects altered or added source: ' + name)
-            else:
-                raise AssertionError('reference accepted altered or added source')
+            changed = checker.check_reference(root, contract)
+            require(changed['source_manifest_sha256'] !=
+                    identity['source_manifest_sha256'],
+                    'reference manifest ignored altered or added source: ' + name)
             if name in contents:
                 path.write_text(contents[name])
-        # The additional source belongs to this temporary negative fixture.
-        # A successful checker process is still required at readiness entry.
+            else:
+                path.unlink()
+        report_pass('the reference manifest names altered and added source')
         with patch('cetta_main_readiness.subprocess.run', return_value=
-                   subprocess.CompletedProcess([], 1, '', 'wrong reference')):
+                   subprocess.CompletedProcess([], 1, '', 'inconsistent record')):
             try:
                 petta_oracle_identity(ROOT, root)
             except RuntimeError:
-                report_pass('readiness rejects a failed oracle validation')
+                report_pass('readiness rejects a failed oracle check')
             else:
-                raise AssertionError('readiness ignored oracle validation failure')
-        actual_contract = json.loads((ROOT / 'langdef/petta/reference.json').read_text())
-        qualified = dict(identity, reference_commit=actual_contract['reference_commit'],
-                         files=len(actual_contract['reference_files']),
-                         examples=actual_contract['example_count'],
-                         source_manifest_sha256=hashlib.sha256(json.dumps(
-                             actual_contract['reference_files'], sort_keys=True,
-                             separators=(',', ':')).encode()).hexdigest())
+                raise AssertionError('readiness ignored oracle check failure')
         with patch('cetta_main_readiness.subprocess.run', return_value=
-                   subprocess.CompletedProcess([], 0, json.dumps(qualified), '')):
-            require(petta_oracle_identity(ROOT, root) == qualified,
-                    'readiness replaced the validated oracle identity')
-        bad = dict(qualified, reference_commit='0' * 40)
+                   subprocess.CompletedProcess([], 0, json.dumps(moved), '')):
+            require(petta_oracle_identity(ROOT, root) == moved,
+                    'readiness replaced the checked oracle identity')
+        report_pass('readiness keeps the oracle identity and its alignment work')
+        bad = dict(moved, last_alignment=dict(contract['last_alignment'],
+                                              commit='0' * 40))
         with patch('cetta_main_readiness.subprocess.run', return_value=
                    subprocess.CompletedProcess([], 0, json.dumps(bad), '')):
             try:
                 petta_oracle_identity(ROOT, root)
             except RuntimeError:
-                report_pass('readiness rejects a mismatched oracle receipt')
+                report_pass('readiness rejects an identity of another alignment record')
             else:
-                raise AssertionError('readiness accepted the wrong oracle commit')
+                raise AssertionError('readiness accepted another alignment record')
         with patch('cetta_main_readiness.calibration_subject', return_value={'source': 'fixed'}):
-            before = {'tier': 'exhaustive', 'petta_oracle': qualified}
-            after = dict(before, petta_oracle=dict(qualified, source_manifest_sha256='0' * 64))
+            before = {'tier': 'exhaustive', 'petta_oracle': moved}
+            after = dict(before, petta_oracle=dict(moved, source_manifest_sha256='0' * 64))
             require(source_identity(before) != source_identity(after),
                     'oracle source drift disappeared from tier identity')
-        report_pass('tier source identity retains the validated oracle manifest')
+        report_pass('tier source identity retains the oracle manifest')
 
 
 def main() -> int:
@@ -673,8 +674,10 @@ def main() -> int:
     )
     report_pass(f"readiness manifest {len(manifest['properties'])} properties")
     report_pass(f"readiness source anchors {len(anchors)} resolved")
-    reference = json.loads((ROOT / 'langdef/petta/reference.json').read_text())
-    upstream = next(name for name in reference['reference_files'] if WORD.search(name))
+    observations = json.loads(
+        (ROOT / 'tests/petta/corrected_stable_observations.json').read_text())
+    upstream = next(item['source'] for item in observations['observations']
+                    if WORD.search(item['source']))
     ledger = Path('tests/petta/corrected_stable_observations.json')
     field = json.dumps('source') + ': ' + json.dumps(upstream) + ','
     require(pinned_reference_field(ledger, field), 'pinned external identity was rejected')
@@ -1159,19 +1162,19 @@ def main() -> int:
     require("main-readiness-rho-adaptive" in routine_targets and "bench-heavy" in exhaustive_targets,
             "consolidation replaced a historical regression gate")
     report_pass("both tiers retain historical gates and require consolidation timing")
-    petta_oracle_targets = {
-        "test-petta-corpus-differential",
+    petta_corpus_targets = {
+        "test-petta-corpus-manifest",
         "test-petta-native-core-no-libpl",
     }
     require(
-        petta_oracle_targets.isdisjoint(routine_targets),
-        "external PeTTa oracle differentials burden the routine developer tier",
+        petta_corpus_targets.isdisjoint(routine_targets),
+        "the PeTTa corpus gate burdens the routine developer tier",
     )
     require(
-        petta_oracle_targets <= exhaustive_targets,
-        "exhaustive readiness omits a PeTTa oracle differential",
+        petta_corpus_targets <= exhaustive_targets,
+        "exhaustive readiness omits a PeTTa corpus gate",
     )
-    report_pass("PeTTa oracle differentials are exhaustive-only merge gates")
+    report_pass("PeTTa corpus gates are exhaustive-only merge gates")
 
     routine_ladder = "main-readiness-space-ladders"
     stress_ladder = "main-readiness-space-ladders-exhaustive"

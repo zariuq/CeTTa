@@ -10,12 +10,13 @@
         (match &implicit-space (item $x) (item $x))))
     ((item 1) (item 1) (item 2)))
 
-; Removing one occurrence preserves the other copy in this bag.
+; A removal removes every occurrence its pattern matches, the copies of one
+; atom included.
 !(remove-atom &implicit-space (item 1))
 !(test
     (collapse
       (match &implicit-space (item $x) (item $x)))
-    ((item 1) (item 2)))
+    ((item 2)))
 
 ; A negative query on an existing namespace has no answers.
 !(test

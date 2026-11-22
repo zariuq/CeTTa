@@ -1,0 +1,5 @@
+; Addition by rules over unary numbers: move one successor at a time from the
+; first summand to the second.  One outcome under every step.
+(add (s (s (s z))) (s (s z)))
+(rule move (take (add (s $a) $b)) (make (add $a (s $b))))
+(rule finish (take (add z $b)) (make (sum $b)))

@@ -1,0 +1,17 @@
+; A guarded join under step every over a set store: the program only reads
+; and makes, and its guards only filter matches, so the steps after the first
+; meet only the matches that read a row the step before made.  Its outcome
+; and count of states are those of meeting every match.  (reach x y): a path
+; from x to y over edges that rise; (cycle-free x) cannot be derived, since
+; the guard keeps every path rising.
+(store set)
+(step every)
+(edge 1 2)
+(edge 2 3)
+(edge 3 1)
+(edge 3 4)
+(edge 4 4)
+(rule hop (read (edge $x $y)) (check (< $x $y)) (make (reach $x $y)))
+(rule join (read (reach $x $y) (edge $y $z)) (check (< $y $z)) (make (reach $x $z)))
+(rule back (read (reach $x $y)) (check (<= $y $x)) (make (cycle-free $x)))
+(rule other (read (reach $x $y) (reach $x $z)) (check (/= $y $z)) (make (fork $x $y $z)))

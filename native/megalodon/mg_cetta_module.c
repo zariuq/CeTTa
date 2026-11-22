@@ -2149,135 +2149,162 @@ static bool op_check_evidence(const Call *c) {
 
 /* ── Megalodon syntax read by the compiled GSLT presentations ─────────── */
 
-/* A reading as an atom: constructors become expressions or symbols, integers
- * integers.  Iterative: readings nest as deeply as the text they read. */
-/* A span as the list it reads, (CONS (cp N) ... NIL), built from its end. */
-static Atom *gslt_span_atom(Arena *a, const GnProgramV1 *p, const GnVal *v) {
-    const GnSpanTailV1 *t = gn_span_tail(v);
-    size_t n = 0;
-    for (size_t pos = (size_t)v->i; pos < t->end; n++) {
-        uint32_t c;
-        pos += gn_utf8_next(v->src, pos, &c);
-    }
-    uint32_t *scalars = arena_alloc(a, (n ? n : 1u) * sizeof *scalars);
-    n = 0;
-    for (size_t pos = (size_t)v->i; pos < t->end; n++)
-        pos += gn_utf8_next(v->src, pos, &scalars[n]);
-    Atom *cons = atom_symbol(a, p->ops[t->cons - GN_FIRST_OP].name);
-    Atom *cp = atom_symbol(a, p->ops[p->op_cp - GN_FIRST_OP].name);
-    Atom *list = atom_symbol(a, p->ops[t->nil - GN_FIRST_OP].name);
-    while (n--) {
-        Atom *scalar[2] = {cp, atom_int(a, scalars[n])};
-        Atom *cell[3] = {cons, atom_expr(a, scalar, 2u), list};
-        list = atom_expr(a, cell, 3u);
-    }
-    return list;
-}
-
-static Atom *gslt_atom(Arena *a, GnCtx *cx, const GnVal *root) {
-    typedef struct {
-        const GnVal *v;
-        uint32_t k;
-        Atom **kids;
-    } Frame;
-    const GnProgramV1 *p = gn_ctx_program(cx);
-    Frame *st = NULL;
-    size_t len = 0, cap = 0;
-    Atom *result = NULL;
-#define GSLT_PUSH(val) do { \
-        if (len == cap) { \
-            cap = cap ? cap * 2u : 64u; \
-            Frame *g = realloc(st, cap * sizeof *g); \
-            if (!g) { free(st); return NULL; } \
-            st = g; \
-        } \
-        st[len++] = (Frame){(val), 0u, NULL}; \
-    } while (0)
-    GSLT_PUSH(root);
-    while (len) {
-        Frame *f = &st[len - 1u];
-        const GnVal *v = f->v;
-        Atom *done = NULL;
-        if (v->op == GN_INT) {
-            done = atom_int(a, v->i);
-        } else if (v->op == GN_CURSOR) {
-            done = atom_symbol(a, "Megalodon.unread-input");
-        } else if (v->op == GN_SPAN) {
-            done = gslt_span_atom(a, p, v);
-        } else if (v->n == 0u) {
-            done = atom_symbol(a, p->ops[v->op - GN_FIRST_OP].name);
-        } else if (!f->kids) {
-            f->kids = arena_alloc(a, sizeof(Atom *) * (v->n + 1u));
-            f->kids[0] = atom_symbol(a, p->ops[v->op - GN_FIRST_OP].name);
-            GSLT_PUSH(v->kid[0]);
-            continue;
-        } else if (f->k < v->n) {
-            GSLT_PUSH(v->kid[f->k]);
-            continue;
-        } else {
-            done = atom_expr(a, f->kids, v->n + 1u);
-        }
-        len--;
-        if (!len) {
-            result = done;
-            break;
-        }
-        Frame *parent = &st[len - 1u];
-        parent->kids[++parent->k] = done;
-        if (parent->k < parent->v->n) {
-            GSLT_PUSH(parent->v->kid[parent->k]);
-        }
-    }
-#undef GSLT_PUSH
-    free(st);
-    return result;
-}
+/* A reading kept past its step, in pre-order: each node a leaf (an integer, a
+ * string, a symbol, the input not read yet) or an application followed by its
+ * children; names in one text buffer.  Made on the reading's thread; made
+ * into atoms on the caller's (atoms are the caller's). */
+typedef struct {
+    MgGsltNodeKind kind;
+    int64_t integer;
+    size_t name, len, arity;   /* name: offset in the text buffer */
+} GsltNode;
 
 typedef struct {
     MgDeepCall call;          /* first: the worker hands back this */
     char (*paths)[4096];      /* the signatures, then the file */
     size_t n;
     bool items;
-    GnCtx *cx;                /* the readings' values */
-    GnSourceV1 *src;          /* tokens: the file's scalars */
-    MgSource *source;         /* items: the reader, which owns cx */
-    char **bytes;             /* items: each file, borrowed by the reader */
-    GnVal **readings;
+    MgSource *source;         /* items: the reader */
+    char **bytes;             /* each file, borrowed by the reader */
+    GsltNode *nodes;          /* the readings, one after another */
+    size_t nnodes, nodecap;
+    size_t *readings;         /* where each reading starts in nodes */
     size_t len, cap;
+    char *text;
+    size_t textlen, textcap;
     bool nomem, unreadable;
     MgGsltReadStatus status;
     char message[512];
 } GsltJob;
 
-static void gslt_collect(void *ctx, GnVal *v) {
+static bool gslt_grow(void **p, size_t *cap, size_t need, size_t size) {
+    if (need <= *cap)
+        return true;
+    size_t cap2 = *cap ? *cap : 1024u;
+    while (cap2 < need)
+        cap2 *= 2u;
+    void *g = realloc(*p, cap2 * size);
+    if (!g)
+        return false;
+    *p = g;
+    *cap = cap2;
+    return true;
+}
+
+/* a reading kept: its values end with the step that built it */
+static void gslt_collect(void *ctx, const MgGsltValue *v) {
     GsltJob *j = ctx;
     if (j->nomem)
         return;
-    if (j->len == j->cap) {
-        size_t cap = j->cap ? j->cap * 2u : 1024u;
-        GnVal **g = realloc(j->readings, cap * sizeof *g);
-        if (!g) {
-            j->nomem = true;
-            return;
-        }
-        j->readings = g;
-        j->cap = cap;
+    if (!gslt_grow((void **)&j->readings, &j->cap, j->len + 1u, sizeof *j->readings)) {
+        j->nomem = true;
+        return;
     }
-    j->readings[j->len++] = gn_keep_result(j->cx, v);
+    j->readings[j->len++] = j->nnodes;
+    typedef struct { const MgGsltValue *v; size_t next, arity; } Frame;
+    Frame *st = NULL;
+    size_t depth = 0, cap = 0;
+    const MgGsltValue *todo = v;
+    while (todo || depth) {
+        if (todo) {
+            MgGsltNode n;
+            mg_gslt_node(todo, &n);
+            if (!gslt_grow((void **)&j->nodes, &j->nodecap, j->nnodes + 1u, sizeof *j->nodes) ||
+                !gslt_grow((void **)&j->text, &j->textcap, j->textlen + n.len + 1u, 1u)) {
+                j->nomem = true;
+                break;
+            }
+            bool apply = n.kind == MG_GSLT_APPLY && n.arity;
+            j->nodes[j->nnodes++] = (GsltNode){n.kind, n.integer, j->textlen, n.len, apply ? n.arity : 0u};
+            memcpy(j->text + j->textlen, n.name ? n.name : "", n.len);
+            j->textlen += n.len;
+            if (apply) {
+                if (!gslt_grow((void **)&st, &cap, depth + 1u, sizeof *st)) {
+                    j->nomem = true;
+                    break;
+                }
+                st[depth++] = (Frame){todo, 0u, n.arity};
+            }
+            todo = NULL;
+        }
+        if (depth) {
+            Frame *f = &st[depth - 1u];
+            if (f->next < f->arity)
+                todo = mg_gslt_child(f->v, f->next++);
+            else
+                depth--;
+        }
+    }
+    free(st);
+}
+
+/* Reading I as an atom: applications become expressions (one of no
+ * constructor, name "", has its head among its children), symbols and
+ * nullary constructors symbols, integers integers, strings strings, the input
+ * not read yet the symbol Megalodon.unread-input. */
+static Atom *gslt_atom(Arena *a, const GsltJob *j, size_t i) {
+    typedef struct { Atom **kids; size_t have, arity; bool head; } Frame;
+    Frame *st = NULL;
+    size_t depth = 0, cap = 0;
+    Atom *result = NULL;
+    for (size_t k = j->readings[i];; k++) {
+        const GsltNode *n = &j->nodes[k];
+        const char *name = j->text + n->name;
+        Atom *done = NULL;
+        if (n->kind == MG_GSLT_APPLY && n->arity) {
+            if (!gslt_grow((void **)&st, &cap, depth + 1u, sizeof *st)) {
+                free(st);
+                return NULL;
+            }
+            bool head = n->len != 0u;
+            st[depth] = (Frame){arena_alloc(a, sizeof(Atom *) * (n->arity + 1u)), head ? 1u : 0u, n->arity + (head ? 1u : 0u), head};
+            if (head) {
+                char *s = arena_alloc(a, n->len + 1u);
+                memcpy(s, name, n->len);
+                s[n->len] = '\0';
+                st[depth].kids[0] = atom_symbol(a, s);
+            }
+            depth++;
+            continue;
+        }
+        if (n->kind == MG_GSLT_INT) {
+            done = atom_int(a, n->integer);
+        } else if (n->kind == MG_GSLT_UNREAD) {
+            done = atom_symbol(a, "Megalodon.unread-input");
+        } else if (n->kind == MG_GSLT_STRING) {
+            done = atom_string_n(a, name, n->len);
+        } else {
+            char *s = arena_alloc(a, n->len + 1u);
+            memcpy(s, name, n->len);
+            s[n->len] = '\0';
+            done = atom_symbol(a, s);
+        }
+        while (depth) {
+            Frame *f = &st[depth - 1u];
+            f->kids[f->have++] = done;
+            if (f->have < f->arity)
+                break;
+            done = atom_expr(a, f->kids, (CettaExprLen)f->arity);
+            depth--;
+        }
+        if (!depth) {
+            result = done;
+            break;
+        }
+    }
+    free(st);
+    return result;
 }
 
 static void gslt_read_tokens(GsltJob *j) {
-    if (!(j->src = mg_gslt_source_load(j->paths[j->n - 1u]))) {
-        j->unreadable = true;
+    size_t len;
+    if (!(j->bytes = calloc(1u, sizeof *j->bytes)) || !(j->bytes[0] = mg_gslt_file_bytes(j->paths[j->n - 1u], &len))) {
+        j->unreadable = j->bytes != NULL;
+        j->nomem = j->bytes == NULL;
         return;
     }
-    if (!(j->cx = mg_gslt_reader_context())) {
-        j->nomem = true;
-        return;
-    }
-    if (!GN_TRY(j->cx, j->status = mg_gslt_read_tokens(j->cx, j->src, gslt_collect, j)))
-        j->nomem = true;
-    else if (j->status == MG_GSLT_READ_ERROR)
+    j->status = mg_gslt_read_tokens(j->bytes[0], len, gslt_collect, j);
+    if (j->status == MG_GSLT_READ_ERROR)
         snprintf(j->message, sizeof j->message, "%s", MG_GSLT_LEXING_FAILURE);
 }
 
@@ -2299,7 +2326,6 @@ static void gslt_read_items(GsltJob *j) {
                 j->nomem = true;
                 return;
             }
-            j->cx = mg_source_context(j->source);
         } else {
             mg_source_set_input(j->source, j->bytes[f], len);
         }
@@ -2354,16 +2380,14 @@ static bool op_gslt_read(const Call *c, bool items) {
         elems[0] = atom_symbol(c->a, items ? "Megalodon.items" : "Megalodon.tokens");
         bool all = true;
         for (size_t i = 0; all && i < j.len; i++)
-            all = (elems[i + 1u] = gslt_atom(c->a, j.cx, j.readings[i])) != NULL;
-        result = all ? value(c, atom_expr(c->a, elems, j.len + 1u))
+            all = (elems[i + 1u] = gslt_atom(c->a, &j, i)) != NULL;
+        result = all ? value(c, atom_expr(c->a, elems, (CettaExprLen)(j.len + 1u)))
                      : raise_kind(c, "MegalodonResource", "no-memory");
     }
     free(j.readings);
-    if (j.source)
-        mg_source_free(j.source);
-    else
-        gn_ctx_free(j.cx);
-    mg_gslt_source_free(j.src);
+    free(j.nodes);
+    free(j.text);
+    mg_source_free(j.source);
     for (size_t f = 0; j.bytes && f < n; f++)
         free(j.bytes[f]);
     free(j.bytes);

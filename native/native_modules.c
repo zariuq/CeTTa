@@ -19,7 +19,9 @@
 #include "lib_parse_inference_native.h"
 #include "lib_parse_native_grammar.h"
 #include "native/langdef_module.h"
+#include "native/tptp_module.h"
 #include "native/hol_light/hol_cetta_module.h"
+#include "native/tcalc/tcalc_cetta_module.h"
 #include "native/hol_light_module/holm_cetta_module.h"
 #include "native/megalodon_module/mgm_instance.h"
 #include "native/mm0/mm0_cetta_module.h"
@@ -1249,6 +1251,18 @@ static bool langdef_module_call(CettaLibraryContext *ctx, Space *space,
     return true;
 }
 
+/* A TPTP native answers data as a langdef native does: a read, a printed
+ * text, a reader or a refusal, as a completed value. */
+static bool tptp_module_call(CettaLibraryContext *ctx, Space *space,
+                             Arena *a, Atom *head, Atom **args,
+                             uint32_t nargs, CettaCallOutcome *out) {
+    Atom *result = cetta_tptp_module_dispatch(ctx, space, a, head, args, nargs);
+    if (!result)
+        return false;
+    *out = cetta_call_completed_value(result);
+    return true;
+}
+
 static bool hol_module_call(CettaLibraryContext *ctx, Space *space,
                             Arena *arena, Atom *head, Atom **args,
                             uint32_t nargs, CettaCallOutcome *out) {
@@ -1285,6 +1299,19 @@ static bool mm0_module_call(CettaLibraryContext *ctx, Space *space,
     return true;
 }
 
+/* Every operation of the module speaks the term language. */
+static bool native_module_every_operation(const Atom *head) {
+    (void)head;
+    return true;
+}
+
+/* langdef's text operations answer codepoint sequences. */
+static bool langdef_text_operation(const Atom *head) {
+    return atom_is_symbol((Atom *)head, "__cetta_lib_langdef_codepoints_symbol") ||
+           atom_is_symbol((Atom *)head, "__cetta_lib_langdef_codepoints_string") ||
+           atom_is_symbol((Atom *)head, "__cetta_lib_langdef_symbol_codepoints");
+}
+
 static const CettaNativeBuiltinModule g_native_modules[] = {
     {"binary", CETTA_NATIVE_IMPORT_BINARY, NULL, "binary:", cetta_binary_module_call, NULL},
     {"heap", CETTA_NATIVE_IMPORT_HEAP, NULL, "heap:", cetta_heap_module_call, NULL},
@@ -1293,8 +1320,10 @@ static const CettaNativeBuiltinModule g_native_modules[] = {
     {"work", CETTA_NATIVE_IMPORT_WORK, NULL, "work:", cetta_work_module_call,
      "work-new work-take work-budget work-cancel work-record work-route work-count work-exists"},
     {"gparse", CETTA_NATIVE_IMPORT_GPARSE, gparse_dispatch, NULL, NULL, NULL},
-    /* Language definitions and parser trees retain their authored constructors. */
-    {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, NULL, NULL, langdef_module_call, NULL},
+    /* Language definitions and parser trees retain their authored
+     * constructors; its text operations answer PeTTa sequences. */
+    {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, NULL, NULL, langdef_module_call, NULL,
+     langdef_text_operation},
     {"pat", CETTA_NATIVE_IMPORT_PAT, NULL, "pat:", cetta_pattern_module_call, NULL},
     {"lib_transform", CETTA_NATIVE_IMPORT_TRANSFORM, NULL, "tf:", cetta_eval_transform_module_call,
      "tf:run tf:split tf:propose tf:inst tf:fire tf:fire-into"},
@@ -1305,6 +1334,13 @@ static const CettaNativeBuiltinModule g_native_modules[] = {
     {"seal", CETTA_NATIVE_IMPORT_SEAL, NULL, "__cetta_lib_seal_", cetta_seal_module_call, NULL},
     {"megalodon", CETTA_NATIVE_IMPORT_MEGALODON, NULL, "__cetta_lib_megalodon_",
      cetta_megalodon_module_call, NULL},
+    /* Keyed by name: no bit of the import mask, which has none free; the
+     * module answers once lib/tcalc.metta is imported (native_module_loaded). */
+    {"tcalc", 0u, NULL, "__cetta_lib_tcalc_", cetta_tcalc_module_call, NULL},
+    /* Keyed by name too: it answers once lib/tptp.metta is imported.  Its
+     * values are CeTTa's term language, as langdef's are. */
+    {"tptp", 0u, NULL, "__cetta_lib_tptp_", tptp_module_call, NULL,
+     native_module_every_operation},
 #if CETTA_BUILD_WITH_DURABLE
     {"supervise", CETTA_NATIVE_IMPORT_SUPERVISE, cetta_supervise_dispatch, "__cetta_lib_supervise_", NULL, NULL},
 #endif
@@ -1434,10 +1470,11 @@ bool cetta_native_module_call_active(struct CettaLibraryContext *ctx,
             !native_module_loaded(ctx, mod))
             continue;
         bool petta_terms = mod->term_language && native_module_petta_lane();
+        bool petta_answers = petta_terms && mod->term_language(head);
         Atom **module_args = petta_terms
             ? native_module_term_arguments(a, args, nargs) : args;
         if (mod->call && mod->call(ctx, space, a, head, module_args, nargs, out)) {
-            if (petta_terms)
+            if (petta_answers)
                 native_module_petta_outcome(a, out);
             return true;
         }
@@ -1445,7 +1482,7 @@ bool cetta_native_module_call_active(struct CettaLibraryContext *ctx,
             ? mod->dispatch(ctx, space, a, head, module_args, nargs) : NULL;
         if (result) {
             *out = cetta_call_value(
-                petta_terms ? native_module_petta_value(a, result) : result);
+                petta_answers ? native_module_petta_value(a, result) : result);
             return true;
         }
     }

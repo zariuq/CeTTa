@@ -1,0 +1,14 @@
+; A pattern whose argument is an expression, (call (f $n $x)) with $n bound,
+; meets the rows whose argument unifies with it, and only those, however rows
+; are looked up: (call (f 1 a)), and (call (f $u c)), whose unknown is then 1;
+; never (call (f 2 b)), (call (g 1 a)), (call (f 1)) or (call 5).
+(store set)
+(step every)
+(want 1)
+(call (f 1 a))
+(call (f 2 b))
+(call (g 1 a))
+(call (f 1))
+(call 5)
+(call (f $u c))
+(rule pick (read (want $n) (call (f $n $x))) (make (got $n $x)))

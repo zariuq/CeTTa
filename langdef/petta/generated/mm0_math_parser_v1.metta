@@ -987,185 +987,164 @@
    (quote (gslt:result:MM0DelimiterClassPutV1:1110 (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $scalar $addition) MM0MathClassTableNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=16 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-class-put-merge-v1 target=mode relation=MM0DelimiterClassPutV1 input=1110 functional=semidet
-(= (gslt:fn:MM0DelimiterClassPutV1:1110 $scalar $addition $__gslt_input_v1_0_2)
-   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $scalar (cons-atom $existing ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0DelimiterClassMergeV1:110 $merged) (gslt:fn:MM0DelimiterClassMergeV1:110 $existing $addition)
-   (quote (gslt:result:MM0DelimiterClassPutV1:1110 (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $scalar $merged) $rest))))))
+(= (gslt:fn:MM0DelimiterClassPutV1:1110 $scalar $addition (cons MM0MathClassTableConsV1 (cons (cons MM0MathClassEntryV1 (cons $scalar (cons $existing ()))) (cons $rest ()))))
+   (let (cons gslt:result:MM0DelimiterClassMergeV1:110 (cons $merged ())) (gslt:fn:MM0DelimiterClassMergeV1:110 $existing $addition)
+   (quote (gslt:result:MM0DelimiterClassPutV1:1110 (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $scalar $merged) $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=17 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-class-put-tail-v1 target=mode relation=MM0DelimiterClassPutV1 input=1110 functional=semidet
-(= (gslt:fn:MM0DelimiterClassPutV1:1110 $scalar $addition $__gslt_input_v1_0_2)
-   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $other (cons-atom $class ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_2
+(= (gslt:fn:MM0DelimiterClassPutV1:1110 $scalar $addition (cons MM0MathClassTableConsV1 (cons (cons MM0MathClassEntryV1 (cons $other (cons $class ()))) (cons $rest ()))))
    (let $_ (gslt:different (different $scalar $other))
-   (let (gslt:result:MM0DelimiterClassPutV1:1110 $updated) (gslt:fn:MM0DelimiterClassPutV1:1110 $scalar $addition $rest)
-   (quote (gslt:result:MM0DelimiterClassPutV1:1110 (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $other $class) $updated)))))))
+   (let (cons gslt:result:MM0DelimiterClassPutV1:1110 (cons $updated ())) (gslt:fn:MM0DelimiterClassPutV1:1110 $scalar $addition $rest)
+   (quote (gslt:result:MM0DelimiterClassPutV1:1110 (MM0MathClassTableConsV1 (MM0MathClassEntryV1 $other $class) $updated))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=18 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-characters-fold-nil-v1 target=mode relation=MM0DelimiterCharactersFoldV1 input=1110 functional=semidet
 (= (gslt:fn:MM0DelimiterCharactersFoldV1:1110 nil $class $table)
    (quote (gslt:result:MM0DelimiterCharactersFoldV1:1110 $table)))
 
 ; gslt-lowered-equation-v1 source-rewrite=19 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-characters-fold-space-v1 target=mode relation=MM0DelimiterCharactersFoldV1 input=1110 functional=semidet
-(= (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $__gslt_input_v1_0_0 $class $before)
-   (let (cons-atom cons (cons-atom (cons-atom cp (cons-atom 32 ())) (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0DelimiterCharactersFoldV1:1110 $after) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $rest $class $before)
-   (quote (gslt:result:MM0DelimiterCharactersFoldV1:1110 $after)))))
+(= (gslt:fn:MM0DelimiterCharactersFoldV1:1110 (cons cons (cons (cons cp (cons 32 ())) (cons $rest ()))) $class $before)
+   (let (cons gslt:result:MM0DelimiterCharactersFoldV1:1110 (cons $after ())) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $rest $class $before)
+   (quote (gslt:result:MM0DelimiterCharactersFoldV1:1110 $after))))
 
 ; gslt-lowered-equation-v1 source-rewrite=20 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-characters-fold-newline-v1 target=mode relation=MM0DelimiterCharactersFoldV1 input=1110 functional=semidet
-(= (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $__gslt_input_v1_0_0 $class $before)
-   (let (cons-atom cons (cons-atom (cons-atom cp (cons-atom 10 ())) (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0DelimiterCharactersFoldV1:1110 $after) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $rest $class $before)
-   (quote (gslt:result:MM0DelimiterCharactersFoldV1:1110 $after)))))
+(= (gslt:fn:MM0DelimiterCharactersFoldV1:1110 (cons cons (cons (cons cp (cons 10 ())) (cons $rest ()))) $class $before)
+   (let (cons gslt:result:MM0DelimiterCharactersFoldV1:1110 (cons $after ())) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $rest $class $before)
+   (quote (gslt:result:MM0DelimiterCharactersFoldV1:1110 $after))))
 
 ; gslt-lowered-equation-v1 source-rewrite=21 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-characters-fold-scalar-v1 target=mode relation=MM0DelimiterCharactersFoldV1 input=1110 functional=semidet
-(= (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $__gslt_input_v1_0_0 $class $before)
-   (let (cons-atom cons (cons-atom $scalar (cons-atom $rest ()))) $__gslt_input_v1_0_0
+(= (gslt:fn:MM0DelimiterCharactersFoldV1:1110 (cons cons (cons $scalar (cons $rest ()))) $class $before)
    (let $_ (gslt:different (different $scalar (cp 32)))
    (let $_ (gslt:different (different $scalar (cp 10)))
    (let gslt:result:MM0DelimiterScalarV1:1 (gslt:fn:MM0DelimiterScalarV1:1 $scalar)
-   (let (gslt:result:MM0DelimiterClassPutV1:1110 $next) (gslt:fn:MM0DelimiterClassPutV1:1110 $scalar $class $before)
-   (let (gslt:result:MM0DelimiterCharactersAfterScalarV1:1110 $after) (gslt:fn:MM0DelimiterCharactersAfterScalarV1:1110 $rest $class $next)
-   (quote (gslt:result:MM0DelimiterCharactersFoldV1:1110 $after)))))))))
+   (let (cons gslt:result:MM0DelimiterClassPutV1:1110 (cons $next ())) (gslt:fn:MM0DelimiterClassPutV1:1110 $scalar $class $before)
+   (let (cons gslt:result:MM0DelimiterCharactersAfterScalarV1:1110 (cons $after ())) (gslt:fn:MM0DelimiterCharactersAfterScalarV1:1110 $rest $class $next)
+   (quote (gslt:result:MM0DelimiterCharactersFoldV1:1110 $after))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=22 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-characters-after-scalar-nil-v1 target=mode relation=MM0DelimiterCharactersAfterScalarV1 input=1110 functional=semidet
 (= (gslt:fn:MM0DelimiterCharactersAfterScalarV1:1110 nil $class $table)
    (quote (gslt:result:MM0DelimiterCharactersAfterScalarV1:1110 $table)))
 
 ; gslt-lowered-equation-v1 source-rewrite=23 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-characters-after-scalar-space-v1 target=mode relation=MM0DelimiterCharactersAfterScalarV1 input=1110 functional=semidet
-(= (gslt:fn:MM0DelimiterCharactersAfterScalarV1:1110 $__gslt_input_v1_0_0 $class $before)
-   (let (cons-atom cons (cons-atom (cons-atom cp (cons-atom 32 ())) (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0DelimiterCharactersFoldV1:1110 $after) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $rest $class $before)
-   (quote (gslt:result:MM0DelimiterCharactersAfterScalarV1:1110 $after)))))
+(= (gslt:fn:MM0DelimiterCharactersAfterScalarV1:1110 (cons cons (cons (cons cp (cons 32 ())) (cons $rest ()))) $class $before)
+   (let (cons gslt:result:MM0DelimiterCharactersFoldV1:1110 (cons $after ())) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $rest $class $before)
+   (quote (gslt:result:MM0DelimiterCharactersAfterScalarV1:1110 $after))))
 
 ; gslt-lowered-equation-v1 source-rewrite=24 source-presentation=MM0TextualSourceFoldV1 source-rule=mm0-delimiter-characters-after-scalar-newline-v1 target=mode relation=MM0DelimiterCharactersAfterScalarV1 input=1110 functional=semidet
-(= (gslt:fn:MM0DelimiterCharactersAfterScalarV1:1110 $__gslt_input_v1_0_0 $class $before)
-   (let (cons-atom cons (cons-atom (cons-atom cp (cons-atom 10 ())) (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0DelimiterCharactersFoldV1:1110 $after) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $rest $class $before)
-   (quote (gslt:result:MM0DelimiterCharactersAfterScalarV1:1110 $after)))))
+(= (gslt:fn:MM0DelimiterCharactersAfterScalarV1:1110 (cons cons (cons (cons cp (cons 10 ())) (cons $rest ()))) $class $before)
+   (let (cons gslt:result:MM0DelimiterCharactersFoldV1:1110 (cons $after ())) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $rest $class $before)
+   (quote (gslt:result:MM0DelimiterCharactersAfterScalarV1:1110 $after))))
 
 ; gslt-lowered-equation-v1 source-rewrite=31 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-option-presence-absent-v1 target=mode relation=MM0OptionPresenceV1 input=10 functional=semidet
 (= (gslt:fn:MM0OptionPresenceV1:10 none)
    (quote (gslt:result:MM0OptionPresenceV1:10 MM0ModifierAbsentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=32 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-option-presence-present-v1 target=mode relation=MM0OptionPresenceV1 input=10 functional=semidet
-(= (gslt:fn:MM0OptionPresenceV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom some (cons-atom $source ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0OptionPresenceV1:10 MM0ModifierPresentV1))))
+(= (gslt:fn:MM0OptionPresenceV1:10 (cons some (cons $source ())))
+   (quote (gslt:result:MM0OptionPresenceV1:10 MM0ModifierPresentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=33 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-identifier-scalars-v1 target=mode relation=MM0IdentifierScalarsV1 input=10 functional=semidet
-(= (gslt:fn:MM0IdentifierScalarsV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom node (cons-atom mm0-identifier (cons-atom (cons-atom pair (cons-atom $first (cons-atom $rest ()))) ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0IdentifierScalarsV1:10 (cons $first $rest)))))
+(= (gslt:fn:MM0IdentifierScalarsV1:10 (cons node (cons mm0-identifier (cons (cons pair (cons $first (cons $rest ()))) ()))))
+   (quote (gslt:result:MM0IdentifierScalarsV1:10 (cons $first $rest))))
 
 ; gslt-lowered-equation-v1 source-rewrite=35 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-lookup-missing-v1 target=mode relation=MM0SortLookupV1 input=110 functional=semidet
 (= (gslt:fn:MM0SortLookupV1:110 $name MM0SortEntriesNilV1)
    (quote (gslt:result:MM0SortLookupV1:110 MM0SortMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=36 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-lookup-found-v1 target=mode relation=MM0SortLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0SortLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom MM0SortEntriesConsV1 (cons-atom (cons-atom MM0SortEntryV1 (cons-atom $name (cons-atom $modifiers (cons-atom $firstPosition ())))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0SortLookupV1:110 (MM0SortFoundV1 $modifiers $firstPosition)))))
+(= (gslt:fn:MM0SortLookupV1:110 $name (cons MM0SortEntriesConsV1 (cons (cons MM0SortEntryV1 (cons $name (cons $modifiers (cons $firstPosition ())))) (cons $rest ()))))
+   (quote (gslt:result:MM0SortLookupV1:110 (MM0SortFoundV1 $modifiers $firstPosition))))
 
 ; gslt-lowered-equation-v1 source-rewrite=37 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-lookup-tail-v1 target=mode relation=MM0SortLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0SortLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom MM0SortEntriesConsV1 (cons-atom (cons-atom MM0SortEntryV1 (cons-atom $other (cons-atom $modifiers (cons-atom $firstPosition ())))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:MM0SortLookupV1:110 $name (cons MM0SortEntriesConsV1 (cons (cons MM0SortEntryV1 (cons $other (cons $modifiers (cons $firstPosition ())))) (cons $rest ()))))
    (let $_ (gslt:different (different $name $other))
-   (let (gslt:result:MM0SortLookupV1:110 $result) (gslt:fn:MM0SortLookupV1:110 $name $rest)
-   (quote (gslt:result:MM0SortLookupV1:110 $result))))))
+   (let (cons gslt:result:MM0SortLookupV1:110 (cons $result ())) (gslt:fn:MM0SortLookupV1:110 $name $rest)
+   (quote (gslt:result:MM0SortLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=38 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-entries-append-nil-v1 target=mode relation=MM0SortEntriesAppendV1 input=110 functional=semidet
 (= (gslt:fn:MM0SortEntriesAppendV1:110 MM0SortEntriesNilV1 $entry)
    (quote (gslt:result:MM0SortEntriesAppendV1:110 (MM0SortEntriesConsV1 $entry MM0SortEntriesNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=39 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-entries-append-cons-v1 target=mode relation=MM0SortEntriesAppendV1 input=110 functional=semidet
-(= (gslt:fn:MM0SortEntriesAppendV1:110 $__gslt_input_v1_0_0 $entry)
-   (let (cons-atom MM0SortEntriesConsV1 (cons-atom $head (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0SortEntriesAppendV1:110 $after) (gslt:fn:MM0SortEntriesAppendV1:110 $rest $entry)
-   (quote (gslt:result:MM0SortEntriesAppendV1:110 (MM0SortEntriesConsV1 $head $after))))))
+(= (gslt:fn:MM0SortEntriesAppendV1:110 (cons MM0SortEntriesConsV1 (cons $head (cons $rest ()))) $entry)
+   (let (cons gslt:result:MM0SortEntriesAppendV1:110 (cons $after ())) (gslt:fn:MM0SortEntriesAppendV1:110 $rest $entry)
+   (quote (gslt:result:MM0SortEntriesAppendV1:110 (MM0SortEntriesConsV1 $head $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=49 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-name-lookup-missing-v1 target=mode relation=MM0NameLookupV1 input=110 functional=semidet
 (= (gslt:fn:MM0NameLookupV1:110 $name nil)
    (quote (gslt:result:MM0NameLookupV1:110 MM0NameMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=50 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-name-lookup-found-v1 target=mode relation=MM0NameLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0NameLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom cons (cons-atom $name (cons-atom $rest ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0NameLookupV1:110 MM0NameFoundV1))))
+(= (gslt:fn:MM0NameLookupV1:110 $name (cons cons (cons $name (cons $rest ()))))
+   (quote (gslt:result:MM0NameLookupV1:110 MM0NameFoundV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=51 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-name-lookup-tail-v1 target=mode relation=MM0NameLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0NameLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom cons (cons-atom $other (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:MM0NameLookupV1:110 $name (cons cons (cons $other (cons $rest ()))))
    (let $_ (gslt:different (different $name $other))
-   (let (gslt:result:MM0NameLookupV1:110 $result) (gslt:fn:MM0NameLookupV1:110 $name $rest)
-   (quote (gslt:result:MM0NameLookupV1:110 $result))))))
+   (let (cons gslt:result:MM0NameLookupV1:110 (cons $result ())) (gslt:fn:MM0NameLookupV1:110 $name $rest)
+   (quote (gslt:result:MM0NameLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=52 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-list-append-nil-v1 target=mode relation=MM0ListAppendV1 input=110 functional=semidet
 (= (gslt:fn:MM0ListAppendV1:110 nil $right)
    (quote (gslt:result:MM0ListAppendV1:110 $right)))
 
 ; gslt-lowered-equation-v1 source-rewrite=53 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-list-append-cons-v1 target=mode relation=MM0ListAppendV1 input=110 functional=semidet
-(= (gslt:fn:MM0ListAppendV1:110 $__gslt_input_v1_0_0 $right)
-   (let (cons-atom cons (cons-atom $head (cons-atom $left ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0ListAppendV1:110 $after) (gslt:fn:MM0ListAppendV1:110 $left $right)
-   (quote (gslt:result:MM0ListAppendV1:110 (cons $head $after))))))
+(= (gslt:fn:MM0ListAppendV1:110 (cons cons (cons $head (cons $left ()))) $right)
+   (let (cons gslt:result:MM0ListAppendV1:110 (cons $after ())) (gslt:fn:MM0ListAppendV1:110 $left $right)
+   (quote (gslt:result:MM0ListAppendV1:110 (cons $head $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=54 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-declaration-lookup-missing-v1 target=mode relation=MM0DeclarationLookupV1 input=110 functional=semidet
 (= (gslt:fn:MM0DeclarationLookupV1:110 $name MM0DeclarationEntriesNilV1)
    (quote (gslt:result:MM0DeclarationLookupV1:110 MM0DeclarationMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=55 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-declaration-lookup-found-v1 target=mode relation=MM0DeclarationLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0DeclarationLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom MM0DeclarationEntriesConsV1 (cons-atom (cons-atom MM0TermEntryV1 (cons-atom $name (cons-atom $signature (cons-atom $firstPosition (cons-atom $source ()))))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0DeclarationLookupV1:110 (MM0DeclarationFoundV1 MM0TermDeclarationV1 $firstPosition)))))
+(= (gslt:fn:MM0DeclarationLookupV1:110 $name (cons MM0DeclarationEntriesConsV1 (cons (cons MM0TermEntryV1 (cons $name (cons $signature (cons $firstPosition (cons $source ()))))) (cons $rest ()))))
+   (quote (gslt:result:MM0DeclarationLookupV1:110 (MM0DeclarationFoundV1 MM0TermDeclarationV1 $firstPosition))))
 
 ; gslt-lowered-equation-v1 source-rewrite=56 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-declaration-lookup-tail-v1 target=mode relation=MM0DeclarationLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0DeclarationLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom MM0DeclarationEntriesConsV1 (cons-atom (cons-atom MM0TermEntryV1 (cons-atom $other (cons-atom $signature (cons-atom $firstPosition (cons-atom $source ()))))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:MM0DeclarationLookupV1:110 $name (cons MM0DeclarationEntriesConsV1 (cons (cons MM0TermEntryV1 (cons $other (cons $signature (cons $firstPosition (cons $source ()))))) (cons $rest ()))))
    (let $_ (gslt:different (different $name $other))
-   (let (gslt:result:MM0DeclarationLookupV1:110 $result) (gslt:fn:MM0DeclarationLookupV1:110 $name $rest)
-   (quote (gslt:result:MM0DeclarationLookupV1:110 $result))))))
+   (let (cons gslt:result:MM0DeclarationLookupV1:110 (cons $result ())) (gslt:fn:MM0DeclarationLookupV1:110 $name $rest)
+   (quote (gslt:result:MM0DeclarationLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=57 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-declaration-entries-append-nil-v1 target=mode relation=MM0DeclarationEntriesAppendV1 input=110 functional=semidet
 (= (gslt:fn:MM0DeclarationEntriesAppendV1:110 MM0DeclarationEntriesNilV1 $entry)
    (quote (gslt:result:MM0DeclarationEntriesAppendV1:110 (MM0DeclarationEntriesConsV1 $entry MM0DeclarationEntriesNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=58 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-declaration-entries-append-cons-v1 target=mode relation=MM0DeclarationEntriesAppendV1 input=110 functional=semidet
-(= (gslt:fn:MM0DeclarationEntriesAppendV1:110 $__gslt_input_v1_0_0 $entry)
-   (let (cons-atom MM0DeclarationEntriesConsV1 (cons-atom $head (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0DeclarationEntriesAppendV1:110 $after) (gslt:fn:MM0DeclarationEntriesAppendV1:110 $rest $entry)
-   (quote (gslt:result:MM0DeclarationEntriesAppendV1:110 (MM0DeclarationEntriesConsV1 $head $after))))))
+(= (gslt:fn:MM0DeclarationEntriesAppendV1:110 (cons MM0DeclarationEntriesConsV1 (cons $head (cons $rest ()))) $entry)
+   (let (cons gslt:result:MM0DeclarationEntriesAppendV1:110 (cons $after ())) (gslt:fn:MM0DeclarationEntriesAppendV1:110 $rest $entry)
+   (quote (gslt:result:MM0DeclarationEntriesAppendV1:110 (MM0DeclarationEntriesConsV1 $head $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=60 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-resolve-type-v1 target=mode relation=MM0ResolveTypeV1 input=11110 functional=semidet
 (= (gslt:fn:MM0ResolveTypeV1:11110 $position $termName $sorts $typeAst)
-   (let (gslt:result:MM0TypeAstV1:100 $sortName $dependencies) (gslt:fn:MM0TypeAstV1:100 $typeAst)
-   (let (gslt:result:MM0SortLookupV1:110 $lookup) (gslt:fn:MM0SortLookupV1:110 $sortName $sorts)
-   (let (gslt:result:MM0ResolveTypeAfterLookupV1:11110 $result) (gslt:fn:MM0ResolveTypeAfterLookupV1:11110 $position $termName (quote (MM0TypeV1 $sortName $dependencies)) $lookup)
+   (let (cons gslt:result:MM0TypeAstV1:100 (cons $sortName (cons $dependencies ()))) (gslt:fn:MM0TypeAstV1:100 $typeAst)
+   (let (cons gslt:result:MM0SortLookupV1:110 (cons $lookup ())) (gslt:fn:MM0SortLookupV1:110 $sortName $sorts)
+   (let (cons gslt:result:MM0ResolveTypeAfterLookupV1:11110 (cons $result ())) (gslt:fn:MM0ResolveTypeAfterLookupV1:11110 $position $termName (quote (MM0TypeV1 $sortName $dependencies)) $lookup)
    (quote (gslt:result:MM0ResolveTypeV1:11110 $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=61 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-resolve-type-found-v1 target=mode relation=MM0ResolveTypeAfterLookupV1 input=11110 functional=semidet
-(= (gslt:fn:MM0ResolveTypeAfterLookupV1:11110 $position $termName $type $__gslt_input_v1_0_3)
-   (let (cons-atom MM0SortFoundV1 (cons-atom $modifiers (cons-atom $sortPosition ()))) $__gslt_input_v1_0_3
-   (quote (gslt:result:MM0ResolveTypeAfterLookupV1:11110 (MM0CheckAcceptedV1 (MM0ResolvedTypeV1 $type $modifiers))))))
+(= (gslt:fn:MM0ResolveTypeAfterLookupV1:11110 $position $termName $type (cons MM0SortFoundV1 (cons $modifiers (cons $sortPosition ()))))
+   (quote (gslt:result:MM0ResolveTypeAfterLookupV1:11110 (MM0CheckAcceptedV1 (MM0ResolvedTypeV1 $type $modifiers)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=62 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-resolve-type-missing-v1 target=mode relation=MM0ResolveTypeAfterLookupV1 input=11110 functional=semidet
-(= (gslt:fn:MM0ResolveTypeAfterLookupV1:11110 $position $termName $__gslt_input_v1_0_2 MM0SortMissingV1)
-   (let (cons-atom MM0TypeV1 (cons-atom $sortName (cons-atom $dependencies ()))) $__gslt_input_v1_0_2
-   (quote (gslt:result:MM0ResolveTypeAfterLookupV1:11110 (MM0CheckRefusedV1 (MM0RefusedUnknownSortV1 $position $termName $sortName))))))
+(= (gslt:fn:MM0ResolveTypeAfterLookupV1:11110 $position $termName (cons MM0TypeV1 (cons $sortName (cons $dependencies ()))) MM0SortMissingV1)
+   (quote (gslt:result:MM0ResolveTypeAfterLookupV1:11110 (MM0CheckRefusedV1 (MM0RefusedUnknownSortV1 $position $termName $sortName)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=63 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-dependencies-nil-v1 target=mode relation=MM0ValidateDependenciesV1 input=11110 functional=semidet
 (= (gslt:fn:MM0ValidateDependenciesV1:11110 $position $termName $boundNames nil)
    (quote (gslt:result:MM0ValidateDependenciesV1:11110 (MM0CheckAcceptedV1 nil))))
 
 ; gslt-lowered-equation-v1 source-rewrite=64 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-dependencies-cons-v1 target=mode relation=MM0ValidateDependenciesV1 input=11110 functional=semidet
-(= (gslt:fn:MM0ValidateDependenciesV1:11110 $position $termName $boundNames $__gslt_input_v1_0_3)
-   (let (cons-atom cons (cons-atom $identifier (cons-atom $rest ()))) $__gslt_input_v1_0_3
-   (let (gslt:result:MM0IdentifierScalarsV1:10 $name) (gslt:fn:MM0IdentifierScalarsV1:10 $identifier)
-   (let (gslt:result:MM0NameLookupV1:110 $lookup) (gslt:fn:MM0NameLookupV1:110 $name $boundNames)
-   (let (gslt:result:MM0ValidateDependencyAfterLookupV1:1111110 $result) (gslt:fn:MM0ValidateDependencyAfterLookupV1:1111110 $position $termName $boundNames $rest $name $lookup)
-   (quote (gslt:result:MM0ValidateDependenciesV1:11110 $result)))))))
+(= (gslt:fn:MM0ValidateDependenciesV1:11110 $position $termName $boundNames (cons cons (cons $identifier (cons $rest ()))))
+   (let (cons gslt:result:MM0IdentifierScalarsV1:10 (cons $name ())) (gslt:fn:MM0IdentifierScalarsV1:10 $identifier)
+   (let (cons gslt:result:MM0NameLookupV1:110 (cons $lookup ())) (gslt:fn:MM0NameLookupV1:110 $name $boundNames)
+   (let (cons gslt:result:MM0ValidateDependencyAfterLookupV1:1111110 (cons $result ())) (gslt:fn:MM0ValidateDependencyAfterLookupV1:1111110 $position $termName $boundNames $rest $name $lookup)
+   (quote (gslt:result:MM0ValidateDependenciesV1:11110 $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=65 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-dependency-found-v1 target=mode relation=MM0ValidateDependencyAfterLookupV1 input=1111110 functional=semidet
 (= (gslt:fn:MM0ValidateDependencyAfterLookupV1:1111110 $position $termName $boundNames $rest $name MM0NameFoundV1)
-   (let (gslt:result:MM0ValidateDependenciesV1:11110 $restResult) (gslt:fn:MM0ValidateDependenciesV1:11110 $position $termName $boundNames $rest)
-   (let (gslt:result:MM0PrependDependencyV1:110 $result) (gslt:fn:MM0PrependDependencyV1:110 $name $restResult)
+   (let (cons gslt:result:MM0ValidateDependenciesV1:11110 (cons $restResult ())) (gslt:fn:MM0ValidateDependenciesV1:11110 $position $termName $boundNames $rest)
+   (let (cons gslt:result:MM0PrependDependencyV1:110 (cons $result ())) (gslt:fn:MM0PrependDependencyV1:110 $name $restResult)
    (quote (gslt:result:MM0ValidateDependencyAfterLookupV1:1111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=66 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-dependency-missing-v1 target=mode relation=MM0ValidateDependencyAfterLookupV1 input=1111110 functional=semidet
@@ -1173,126 +1152,105 @@
    (quote (gslt:result:MM0ValidateDependencyAfterLookupV1:1111110 (MM0CheckRefusedV1 (MM0RefusedUnknownDependencyV1 $position $termName $name)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=67 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-prepend-dependency-accepted-v1 target=mode relation=MM0PrependDependencyV1 input=110 functional=semidet
-(= (gslt:fn:MM0PrependDependencyV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom $rest ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0PrependDependencyV1:110 (MM0CheckAcceptedV1 (cons $name $rest))))))
+(= (gslt:fn:MM0PrependDependencyV1:110 $name (cons MM0CheckAcceptedV1 (cons $rest ())))
+   (quote (gslt:result:MM0PrependDependencyV1:110 (MM0CheckAcceptedV1 (cons $name $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=68 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-prepend-dependency-refused-v1 target=mode relation=MM0PrependDependencyV1 input=110 functional=semidet
-(= (gslt:fn:MM0PrependDependencyV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0PrependDependencyV1:110 (MM0CheckRefusedV1 $reason)))))
+(= (gslt:fn:MM0PrependDependencyV1:110 $name (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0PrependDependencyV1:110 (MM0CheckRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=69 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-bound-type-v1 target=mode relation=MM0ValidateBoundTypeV1 input=11110 functional=semidet
 (= (gslt:fn:MM0ValidateBoundTypeV1:11110 $position $termName $sorts $typeAst)
-   (let (gslt:result:MM0ResolveTypeV1:11110 $resolved) (gslt:fn:MM0ResolveTypeV1:11110 $position $termName $sorts $typeAst)
-   (let (gslt:result:MM0ValidateBoundTypeAfterResolveV1:1110 $result) (gslt:fn:MM0ValidateBoundTypeAfterResolveV1:1110 $position $termName $resolved)
+   (let (cons gslt:result:MM0ResolveTypeV1:11110 (cons $resolved ())) (gslt:fn:MM0ResolveTypeV1:11110 $position $termName $sorts $typeAst)
+   (let (cons gslt:result:MM0ValidateBoundTypeAfterResolveV1:1110 (cons $result ())) (gslt:fn:MM0ValidateBoundTypeAfterResolveV1:1110 $position $termName $resolved)
    (quote (gslt:result:MM0ValidateBoundTypeV1:11110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=70 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-bound-type-resolve-refused-v1 target=mode relation=MM0ValidateBoundTypeAfterResolveV1 input=1110 functional=semidet
-(= (gslt:fn:MM0ValidateBoundTypeAfterResolveV1:1110 $position $termName $__gslt_input_v1_0_2)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_2
-   (quote (gslt:result:MM0ValidateBoundTypeAfterResolveV1:1110 (MM0CheckRefusedV1 $reason)))))
+(= (gslt:fn:MM0ValidateBoundTypeAfterResolveV1:1110 $position $termName (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0ValidateBoundTypeAfterResolveV1:1110 (MM0CheckRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=71 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-bound-type-dependencies-v1 target=mode relation=MM0ValidateBoundTypeAfterResolveV1 input=1110 functional=semidet
-(= (gslt:fn:MM0ValidateBoundTypeAfterResolveV1:1110 $position $termName $__gslt_input_v1_0_2)
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom (cons-atom MM0ResolvedTypeV1 (cons-atom (cons-atom MM0TypeV1 (cons-atom $sortName (cons-atom (cons-atom cons (cons-atom $dependency (cons-atom $rest ()))) ()))) (cons-atom $modifiers ()))) ())) $__gslt_input_v1_0_2
-   (quote (gslt:result:MM0ValidateBoundTypeAfterResolveV1:1110 (MM0CheckRefusedV1 (MM0RefusedBoundDependenciesV1 $position $termName (cons $dependency $rest)))))))
+(= (gslt:fn:MM0ValidateBoundTypeAfterResolveV1:1110 $position $termName (cons MM0CheckAcceptedV1 (cons (cons MM0ResolvedTypeV1 (cons (cons MM0TypeV1 (cons $sortName (cons (cons cons (cons $dependency (cons $rest ()))) ()))) (cons $modifiers ()))) ())))
+   (quote (gslt:result:MM0ValidateBoundTypeAfterResolveV1:1110 (MM0CheckRefusedV1 (MM0RefusedBoundDependenciesV1 $position $termName (cons $dependency $rest))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=72 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-bound-type-strict-v1 target=mode relation=MM0ValidateBoundTypeAfterResolveV1 input=1110 functional=semidet
-(= (gslt:fn:MM0ValidateBoundTypeAfterResolveV1:1110 $position $termName $__gslt_input_v1_0_2)
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom (cons-atom MM0ResolvedTypeV1 (cons-atom (cons-atom MM0TypeV1 (cons-atom $sortName (cons-atom nil ()))) (cons-atom (cons-atom MM0SortModifiersV1 (cons-atom $pure (cons-atom MM0ModifierPresentV1 (cons-atom $provable (cons-atom $free ()))))) ()))) ())) $__gslt_input_v1_0_2
-   (quote (gslt:result:MM0ValidateBoundTypeAfterResolveV1:1110 (MM0CheckRefusedV1 (MM0RefusedStrictBoundSortV1 $position $termName $sortName))))))
+(= (gslt:fn:MM0ValidateBoundTypeAfterResolveV1:1110 $position $termName (cons MM0CheckAcceptedV1 (cons (cons MM0ResolvedTypeV1 (cons (cons MM0TypeV1 (cons $sortName (cons nil ()))) (cons (cons MM0SortModifiersV1 (cons $pure (cons MM0ModifierPresentV1 (cons $provable (cons $free ()))))) ()))) ())))
+   (quote (gslt:result:MM0ValidateBoundTypeAfterResolveV1:1110 (MM0CheckRefusedV1 (MM0RefusedStrictBoundSortV1 $position $termName $sortName)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=73 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-bound-type-accepted-v1 target=mode relation=MM0ValidateBoundTypeAfterResolveV1 input=1110 functional=semidet
-(= (gslt:fn:MM0ValidateBoundTypeAfterResolveV1:1110 $position $termName $__gslt_input_v1_0_2)
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom (cons-atom MM0ResolvedTypeV1 (cons-atom (cons-atom MM0TypeV1 (cons-atom $sortName (cons-atom nil ()))) (cons-atom (cons-atom MM0SortModifiersV1 (cons-atom $pure (cons-atom MM0ModifierAbsentV1 (cons-atom $provable (cons-atom $free ()))))) ()))) ())) $__gslt_input_v1_0_2
-   (quote (gslt:result:MM0ValidateBoundTypeAfterResolveV1:1110 (MM0CheckAcceptedV1 (MM0TypeV1 $sortName nil))))))
+(= (gslt:fn:MM0ValidateBoundTypeAfterResolveV1:1110 $position $termName (cons MM0CheckAcceptedV1 (cons (cons MM0ResolvedTypeV1 (cons (cons MM0TypeV1 (cons $sortName (cons nil ()))) (cons (cons MM0SortModifiersV1 (cons $pure (cons MM0ModifierAbsentV1 (cons $provable (cons $free ()))))) ()))) ())))
+   (quote (gslt:result:MM0ValidateBoundTypeAfterResolveV1:1110 (MM0CheckAcceptedV1 (MM0TypeV1 $sortName nil)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=74 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-regular-type-v1 target=mode relation=MM0ValidateRegularTypeV1 input=111110 functional=semidet
 (= (gslt:fn:MM0ValidateRegularTypeV1:111110 $position $termName $sorts $boundNames $typeAst)
-   (let (gslt:result:MM0ResolveTypeV1:11110 $resolved) (gslt:fn:MM0ResolveTypeV1:11110 $position $termName $sorts $typeAst)
-   (let (gslt:result:MM0ValidateRegularTypeAfterResolveV1:11110 $result) (gslt:fn:MM0ValidateRegularTypeAfterResolveV1:11110 $position $termName $boundNames $resolved)
+   (let (cons gslt:result:MM0ResolveTypeV1:11110 (cons $resolved ())) (gslt:fn:MM0ResolveTypeV1:11110 $position $termName $sorts $typeAst)
+   (let (cons gslt:result:MM0ValidateRegularTypeAfterResolveV1:11110 (cons $result ())) (gslt:fn:MM0ValidateRegularTypeAfterResolveV1:11110 $position $termName $boundNames $resolved)
    (quote (gslt:result:MM0ValidateRegularTypeV1:111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=75 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-regular-type-resolve-refused-v1 target=mode relation=MM0ValidateRegularTypeAfterResolveV1 input=11110 functional=semidet
-(= (gslt:fn:MM0ValidateRegularTypeAfterResolveV1:11110 $position $termName $boundNames $__gslt_input_v1_0_3)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_3
-   (quote (gslt:result:MM0ValidateRegularTypeAfterResolveV1:11110 (MM0CheckRefusedV1 $reason)))))
+(= (gslt:fn:MM0ValidateRegularTypeAfterResolveV1:11110 $position $termName $boundNames (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0ValidateRegularTypeAfterResolveV1:11110 (MM0CheckRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=76 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-regular-type-resolved-v1 target=mode relation=MM0ValidateRegularTypeAfterResolveV1 input=11110 functional=semidet
-(= (gslt:fn:MM0ValidateRegularTypeAfterResolveV1:11110 $position $termName $boundNames $__gslt_input_v1_0_3)
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom (cons-atom MM0ResolvedTypeV1 (cons-atom (cons-atom MM0TypeV1 (cons-atom $sortName (cons-atom $dependencies ()))) (cons-atom $modifiers ()))) ())) $__gslt_input_v1_0_3
-   (let (gslt:result:MM0ValidateDependenciesV1:11110 $dependencyResult) (gslt:fn:MM0ValidateDependenciesV1:11110 $position $termName $boundNames $dependencies)
-   (let (gslt:result:MM0RegularTypeAfterDependenciesV1:110 $result) (gslt:fn:MM0RegularTypeAfterDependenciesV1:110 (quote (MM0TypeV1 $sortName $dependencies)) $dependencyResult)
-   (quote (gslt:result:MM0ValidateRegularTypeAfterResolveV1:11110 $result))))))
+(= (gslt:fn:MM0ValidateRegularTypeAfterResolveV1:11110 $position $termName $boundNames (cons MM0CheckAcceptedV1 (cons (cons MM0ResolvedTypeV1 (cons (cons MM0TypeV1 (cons $sortName (cons $dependencies ()))) (cons $modifiers ()))) ())))
+   (let (cons gslt:result:MM0ValidateDependenciesV1:11110 (cons $dependencyResult ())) (gslt:fn:MM0ValidateDependenciesV1:11110 $position $termName $boundNames $dependencies)
+   (let (cons gslt:result:MM0RegularTypeAfterDependenciesV1:110 (cons $result ())) (gslt:fn:MM0RegularTypeAfterDependenciesV1:110 (quote (MM0TypeV1 $sortName $dependencies)) $dependencyResult)
+   (quote (gslt:result:MM0ValidateRegularTypeAfterResolveV1:11110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=77 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-regular-type-dependencies-accepted-v1 target=mode relation=MM0RegularTypeAfterDependenciesV1 input=110 functional=semidet
-(= (gslt:fn:MM0RegularTypeAfterDependenciesV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom MM0TypeV1 (cons-atom $sortName (cons-atom $oldDependencies ()))) $__gslt_input_v1_0_0
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom $dependencies ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0RegularTypeAfterDependenciesV1:110 (MM0CheckAcceptedV1 (MM0TypeV1 $sortName $dependencies)))))))
+(= (gslt:fn:MM0RegularTypeAfterDependenciesV1:110 (cons MM0TypeV1 (cons $sortName (cons $oldDependencies ()))) (cons MM0CheckAcceptedV1 (cons $dependencies ())))
+   (quote (gslt:result:MM0RegularTypeAfterDependenciesV1:110 (MM0CheckAcceptedV1 (MM0TypeV1 $sortName $dependencies)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=78 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-regular-type-dependencies-refused-v1 target=mode relation=MM0RegularTypeAfterDependenciesV1 input=110 functional=semidet
-(= (gslt:fn:MM0RegularTypeAfterDependenciesV1:110 $type $__gslt_input_v1_0_1)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0RegularTypeAfterDependenciesV1:110 (MM0CheckRefusedV1 $reason)))))
+(= (gslt:fn:MM0RegularTypeAfterDependenciesV1:110 $type (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0RegularTypeAfterDependenciesV1:110 (MM0CheckRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=79 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-return-type-v1 target=mode relation=MM0ValidateReturnTypeV1 input=111110 functional=semidet
 (= (gslt:fn:MM0ValidateReturnTypeV1:111110 $position $termName $sorts $boundNames $typeAst)
-   (let (gslt:result:MM0ResolveTypeV1:11110 $resolved) (gslt:fn:MM0ResolveTypeV1:11110 $position $termName $sorts $typeAst)
-   (let (gslt:result:MM0ValidateReturnTypeAfterResolveV1:11110 $result) (gslt:fn:MM0ValidateReturnTypeAfterResolveV1:11110 $position $termName $boundNames $resolved)
+   (let (cons gslt:result:MM0ResolveTypeV1:11110 (cons $resolved ())) (gslt:fn:MM0ResolveTypeV1:11110 $position $termName $sorts $typeAst)
+   (let (cons gslt:result:MM0ValidateReturnTypeAfterResolveV1:11110 (cons $result ())) (gslt:fn:MM0ValidateReturnTypeAfterResolveV1:11110 $position $termName $boundNames $resolved)
    (quote (gslt:result:MM0ValidateReturnTypeV1:111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=80 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-return-type-resolve-refused-v1 target=mode relation=MM0ValidateReturnTypeAfterResolveV1 input=11110 functional=semidet
-(= (gslt:fn:MM0ValidateReturnTypeAfterResolveV1:11110 $position $termName $boundNames $__gslt_input_v1_0_3)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_3
-   (quote (gslt:result:MM0ValidateReturnTypeAfterResolveV1:11110 (MM0CheckRefusedV1 $reason)))))
+(= (gslt:fn:MM0ValidateReturnTypeAfterResolveV1:11110 $position $termName $boundNames (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0ValidateReturnTypeAfterResolveV1:11110 (MM0CheckRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=81 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-return-type-resolved-v1 target=mode relation=MM0ValidateReturnTypeAfterResolveV1 input=11110 functional=semidet
-(= (gslt:fn:MM0ValidateReturnTypeAfterResolveV1:11110 $position $termName $boundNames $__gslt_input_v1_0_3)
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom (cons-atom MM0ResolvedTypeV1 (cons-atom (cons-atom MM0TypeV1 (cons-atom $sortName (cons-atom $dependencies ()))) (cons-atom $modifiers ()))) ())) $__gslt_input_v1_0_3
-   (let (gslt:result:MM0ValidateDependenciesV1:11110 $dependencyResult) (gslt:fn:MM0ValidateDependenciesV1:11110 $position $termName $boundNames $dependencies)
-   (let (gslt:result:MM0ReturnTypeAfterDependenciesV1:11110 $result) (gslt:fn:MM0ReturnTypeAfterDependenciesV1:11110 $position $termName (quote (MM0ResolvedTypeV1 (MM0TypeV1 $sortName $dependencies) $modifiers)) $dependencyResult)
-   (quote (gslt:result:MM0ValidateReturnTypeAfterResolveV1:11110 $result))))))
+(= (gslt:fn:MM0ValidateReturnTypeAfterResolveV1:11110 $position $termName $boundNames (cons MM0CheckAcceptedV1 (cons (cons MM0ResolvedTypeV1 (cons (cons MM0TypeV1 (cons $sortName (cons $dependencies ()))) (cons $modifiers ()))) ())))
+   (let (cons gslt:result:MM0ValidateDependenciesV1:11110 (cons $dependencyResult ())) (gslt:fn:MM0ValidateDependenciesV1:11110 $position $termName $boundNames $dependencies)
+   (let (cons gslt:result:MM0ReturnTypeAfterDependenciesV1:11110 (cons $result ())) (gslt:fn:MM0ReturnTypeAfterDependenciesV1:11110 $position $termName (quote (MM0ResolvedTypeV1 (MM0TypeV1 $sortName $dependencies) $modifiers)) $dependencyResult)
+   (quote (gslt:result:MM0ValidateReturnTypeAfterResolveV1:11110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=82 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-return-type-pure-v1 target=mode relation=MM0ReturnTypeAfterDependenciesV1 input=11110 functional=semidet
-(= (gslt:fn:MM0ReturnTypeAfterDependenciesV1:11110 $position $termName $__gslt_input_v1_0_2 $__gslt_input_v1_0_3)
-   (let (cons-atom MM0ResolvedTypeV1 (cons-atom (cons-atom MM0TypeV1 (cons-atom $sortName (cons-atom $oldDependencies ()))) (cons-atom (cons-atom MM0SortModifiersV1 (cons-atom MM0ModifierPresentV1 (cons-atom $strict (cons-atom $provable (cons-atom $free ()))))) ()))) $__gslt_input_v1_0_2
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom $dependencies ())) $__gslt_input_v1_0_3
-   (quote (gslt:result:MM0ReturnTypeAfterDependenciesV1:11110 (MM0CheckRefusedV1 (MM0RefusedPureTermTargetV1 $position $termName $sortName)))))))
+(= (gslt:fn:MM0ReturnTypeAfterDependenciesV1:11110 $position $termName (cons MM0ResolvedTypeV1 (cons (cons MM0TypeV1 (cons $sortName (cons $oldDependencies ()))) (cons (cons MM0SortModifiersV1 (cons MM0ModifierPresentV1 (cons $strict (cons $provable (cons $free ()))))) ()))) (cons MM0CheckAcceptedV1 (cons $dependencies ())))
+   (quote (gslt:result:MM0ReturnTypeAfterDependenciesV1:11110 (MM0CheckRefusedV1 (MM0RefusedPureTermTargetV1 $position $termName $sortName)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=83 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-return-type-accepted-v1 target=mode relation=MM0ReturnTypeAfterDependenciesV1 input=11110 functional=semidet
-(= (gslt:fn:MM0ReturnTypeAfterDependenciesV1:11110 $position $termName $__gslt_input_v1_0_2 $__gslt_input_v1_0_3)
-   (let (cons-atom MM0ResolvedTypeV1 (cons-atom (cons-atom MM0TypeV1 (cons-atom $sortName (cons-atom $oldDependencies ()))) (cons-atom (cons-atom MM0SortModifiersV1 (cons-atom MM0ModifierAbsentV1 (cons-atom $strict (cons-atom $provable (cons-atom $free ()))))) ()))) $__gslt_input_v1_0_2
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom $dependencies ())) $__gslt_input_v1_0_3
-   (quote (gslt:result:MM0ReturnTypeAfterDependenciesV1:11110 (MM0CheckAcceptedV1 (MM0TypeV1 $sortName $dependencies)))))))
+(= (gslt:fn:MM0ReturnTypeAfterDependenciesV1:11110 $position $termName (cons MM0ResolvedTypeV1 (cons (cons MM0TypeV1 (cons $sortName (cons $oldDependencies ()))) (cons (cons MM0SortModifiersV1 (cons MM0ModifierAbsentV1 (cons $strict (cons $provable (cons $free ()))))) ()))) (cons MM0CheckAcceptedV1 (cons $dependencies ())))
+   (quote (gslt:result:MM0ReturnTypeAfterDependenciesV1:11110 (MM0CheckAcceptedV1 (MM0TypeV1 $sortName $dependencies)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=84 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-return-type-dependencies-refused-v1 target=mode relation=MM0ReturnTypeAfterDependenciesV1 input=11110 functional=semidet
-(= (gslt:fn:MM0ReturnTypeAfterDependenciesV1:11110 $position $termName $resolved $__gslt_input_v1_0_3)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_3
-   (quote (gslt:result:MM0ReturnTypeAfterDependenciesV1:11110 (MM0CheckRefusedV1 $reason)))))
+(= (gslt:fn:MM0ReturnTypeAfterDependenciesV1:11110 $position $termName $resolved (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0ReturnTypeAfterDependenciesV1:11110 (MM0CheckRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=85 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-prepend-binder-accepted-v1 target=mode relation=MM0PrependBinderV1 input=110 functional=semidet
-(= (gslt:fn:MM0PrependBinderV1:110 $binder $__gslt_input_v1_0_1)
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom (cons-atom MM0BinderSequenceV1 (cons-atom $binders (cons-atom $boundNames (cons-atom $allNames ())))) ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0PrependBinderV1:110 (MM0CheckAcceptedV1 (MM0BinderSequenceV1 (cons $binder $binders) $boundNames $allNames))))))
+(= (gslt:fn:MM0PrependBinderV1:110 $binder (cons MM0CheckAcceptedV1 (cons (cons MM0BinderSequenceV1 (cons $binders (cons $boundNames (cons $allNames ())))) ())))
+   (quote (gslt:result:MM0PrependBinderV1:110 (MM0CheckAcceptedV1 (MM0BinderSequenceV1 (cons $binder $binders) $boundNames $allNames)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=86 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-prepend-binder-refused-v1 target=mode relation=MM0PrependBinderV1 input=110 functional=semidet
-(= (gslt:fn:MM0PrependBinderV1:110 $binder $__gslt_input_v1_0_1)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0PrependBinderV1:110 (MM0CheckRefusedV1 $reason)))))
+(= (gslt:fn:MM0PrependBinderV1:110 $binder (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0PrependBinderV1:110 (MM0CheckRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=87 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-bound-names-nil-v1 target=mode relation=MM0ValidateBoundNamesV1 input=1111110 functional=semidet
 (= (gslt:fn:MM0ValidateBoundNamesV1:1111110 $position $termName nil $type $boundNames $allNames)
    (quote (gslt:result:MM0ValidateBoundNamesV1:1111110 (MM0CheckAcceptedV1 (MM0BinderSequenceV1 nil $boundNames $allNames)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=88 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-bound-names-cons-v1 target=mode relation=MM0ValidateBoundNamesV1 input=1111110 functional=semidet
-(= (gslt:fn:MM0ValidateBoundNamesV1:1111110 $position $termName $__gslt_input_v1_0_2 $type $boundNames $allNames)
-   (let (cons-atom cons (cons-atom $identifier (cons-atom $rest ()))) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0IdentifierScalarsV1:10 $name) (gslt:fn:MM0IdentifierScalarsV1:10 $identifier)
-   (let (gslt:result:MM0NameLookupV1:110 $lookup) (gslt:fn:MM0NameLookupV1:110 $name $allNames)
-   (let (gslt:result:MM0ValidateBoundNameAfterLookupV1:111111110 $result) (gslt:fn:MM0ValidateBoundNameAfterLookupV1:111111110 $position $termName $rest $type $boundNames $allNames $name $lookup)
-   (quote (gslt:result:MM0ValidateBoundNamesV1:1111110 $result)))))))
+(= (gslt:fn:MM0ValidateBoundNamesV1:1111110 $position $termName (cons cons (cons $identifier (cons $rest ()))) $type $boundNames $allNames)
+   (let (cons gslt:result:MM0IdentifierScalarsV1:10 (cons $name ())) (gslt:fn:MM0IdentifierScalarsV1:10 $identifier)
+   (let (cons gslt:result:MM0NameLookupV1:110 (cons $lookup ())) (gslt:fn:MM0NameLookupV1:110 $name $allNames)
+   (let (cons gslt:result:MM0ValidateBoundNameAfterLookupV1:111111110 (cons $result ())) (gslt:fn:MM0ValidateBoundNameAfterLookupV1:111111110 $position $termName $rest $type $boundNames $allNames $name $lookup)
+   (quote (gslt:result:MM0ValidateBoundNamesV1:1111110 $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=89 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-bound-name-duplicate-v1 target=mode relation=MM0ValidateBoundNameAfterLookupV1 input=111111110 functional=semidet
 (= (gslt:fn:MM0ValidateBoundNameAfterLookupV1:111111110 $position $termName $rest $type $boundNames $allNames $name MM0NameFoundV1)
@@ -1300,8 +1258,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=90 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-bound-name-fresh-v1 target=mode relation=MM0ValidateBoundNameAfterLookupV1 input=111111110 functional=semidet
 (= (gslt:fn:MM0ValidateBoundNameAfterLookupV1:111111110 $position $termName $rest $type $boundNames $allNames $name MM0NameMissingV1)
-   (let (gslt:result:MM0ValidateBoundNamesV1:1111110 $restResult) (gslt:fn:MM0ValidateBoundNamesV1:1111110 $position $termName $rest $type (quote (cons $name $boundNames)) (quote (cons $name $allNames)))
-   (let (gslt:result:MM0PrependBinderV1:110 $result) (gslt:fn:MM0PrependBinderV1:110 (quote (MM0BinderV1 MM0BoundBinderKindV1 (MM0NamedBinderV1 $name) $type)) $restResult)
+   (let (cons gslt:result:MM0ValidateBoundNamesV1:1111110 (cons $restResult ())) (gslt:fn:MM0ValidateBoundNamesV1:1111110 $position $termName $rest $type (quote (cons $name $boundNames)) (quote (cons $name $allNames)))
+   (let (cons gslt:result:MM0PrependBinderV1:110 (cons $result ())) (gslt:fn:MM0PrependBinderV1:110 (quote (MM0BinderV1 MM0BoundBinderKindV1 (MM0NamedBinderV1 $name) $type)) $restResult)
    (quote (gslt:result:MM0ValidateBoundNameAfterLookupV1:111111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=91 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-regular-names-nil-v1 target=mode relation=MM0ValidateRegularNamesV1 input=1111110 functional=semidet
@@ -1309,19 +1267,17 @@
    (quote (gslt:result:MM0ValidateRegularNamesV1:1111110 (MM0CheckAcceptedV1 (MM0BinderSequenceV1 nil $boundNames $allNames)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=92 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-regular-name-anonymous-v1 target=mode relation=MM0ValidateRegularNamesV1 input=1111110 functional=semidet
-(= (gslt:fn:MM0ValidateRegularNamesV1:1111110 $position $termName $__gslt_input_v1_0_2 $type $boundNames $allNames)
-   (let (cons-atom cons (cons-atom (cons-atom node (cons-atom mm0-anonymous (cons-atom $source ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0ValidateRegularNamesV1:1111110 $restResult) (gslt:fn:MM0ValidateRegularNamesV1:1111110 $position $termName $rest $type $boundNames $allNames)
-   (let (gslt:result:MM0PrependBinderV1:110 $result) (gslt:fn:MM0PrependBinderV1:110 (quote (MM0BinderV1 MM0RegularBinderKindV1 MM0AnonymousBinderV1 $type)) $restResult)
-   (quote (gslt:result:MM0ValidateRegularNamesV1:1111110 $result))))))
+(= (gslt:fn:MM0ValidateRegularNamesV1:1111110 $position $termName (cons cons (cons (cons node (cons mm0-anonymous (cons $source ()))) (cons $rest ()))) $type $boundNames $allNames)
+   (let (cons gslt:result:MM0ValidateRegularNamesV1:1111110 (cons $restResult ())) (gslt:fn:MM0ValidateRegularNamesV1:1111110 $position $termName $rest $type $boundNames $allNames)
+   (let (cons gslt:result:MM0PrependBinderV1:110 (cons $result ())) (gslt:fn:MM0PrependBinderV1:110 (quote (MM0BinderV1 MM0RegularBinderKindV1 MM0AnonymousBinderV1 $type)) $restResult)
+   (quote (gslt:result:MM0ValidateRegularNamesV1:1111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=93 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-regular-name-named-v1 target=mode relation=MM0ValidateRegularNamesV1 input=1111110 functional=semidet
-(= (gslt:fn:MM0ValidateRegularNamesV1:1111110 $position $termName $__gslt_input_v1_0_2 $type $boundNames $allNames)
-   (let (cons-atom cons (cons-atom (cons-atom node (cons-atom mm0-identifier (cons-atom $identifierPayload ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0IdentifierScalarsV1:10 $name) (gslt:fn:MM0IdentifierScalarsV1:10 (quote (node mm0-identifier $identifierPayload)))
-   (let (gslt:result:MM0NameLookupV1:110 $lookup) (gslt:fn:MM0NameLookupV1:110 $name $allNames)
-   (let (gslt:result:MM0ValidateRegularNameAfterLookupV1:111111110 $result) (gslt:fn:MM0ValidateRegularNameAfterLookupV1:111111110 $position $termName $rest $type $boundNames $allNames $name $lookup)
-   (quote (gslt:result:MM0ValidateRegularNamesV1:1111110 $result)))))))
+(= (gslt:fn:MM0ValidateRegularNamesV1:1111110 $position $termName (cons cons (cons (cons node (cons mm0-identifier (cons $identifierPayload ()))) (cons $rest ()))) $type $boundNames $allNames)
+   (let (cons gslt:result:MM0IdentifierScalarsV1:10 (cons $name ())) (gslt:fn:MM0IdentifierScalarsV1:10 (quote (node mm0-identifier $identifierPayload)))
+   (let (cons gslt:result:MM0NameLookupV1:110 (cons $lookup ())) (gslt:fn:MM0NameLookupV1:110 $name $allNames)
+   (let (cons gslt:result:MM0ValidateRegularNameAfterLookupV1:111111110 (cons $result ())) (gslt:fn:MM0ValidateRegularNameAfterLookupV1:111111110 $position $termName $rest $type $boundNames $allNames $name $lookup)
+   (quote (gslt:result:MM0ValidateRegularNamesV1:1111110 $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=94 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-regular-name-duplicate-v1 target=mode relation=MM0ValidateRegularNameAfterLookupV1 input=111111110 functional=semidet
 (= (gslt:fn:MM0ValidateRegularNameAfterLookupV1:111111110 $position $termName $rest $type $boundNames $allNames $name MM0NameFoundV1)
@@ -1329,221 +1285,184 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=95 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-regular-name-fresh-v1 target=mode relation=MM0ValidateRegularNameAfterLookupV1 input=111111110 functional=semidet
 (= (gslt:fn:MM0ValidateRegularNameAfterLookupV1:111111110 $position $termName $rest $type $boundNames $allNames $name MM0NameMissingV1)
-   (let (gslt:result:MM0ValidateRegularNamesV1:1111110 $restResult) (gslt:fn:MM0ValidateRegularNamesV1:1111110 $position $termName $rest $type $boundNames (quote (cons $name $allNames)))
-   (let (gslt:result:MM0PrependBinderV1:110 $result) (gslt:fn:MM0PrependBinderV1:110 (quote (MM0BinderV1 MM0RegularBinderKindV1 (MM0NamedBinderV1 $name) $type)) $restResult)
+   (let (cons gslt:result:MM0ValidateRegularNamesV1:1111110 (cons $restResult ())) (gslt:fn:MM0ValidateRegularNamesV1:1111110 $position $termName $rest $type $boundNames (quote (cons $name $allNames)))
+   (let (cons gslt:result:MM0PrependBinderV1:110 (cons $result ())) (gslt:fn:MM0PrependBinderV1:110 (quote (MM0BinderV1 MM0RegularBinderKindV1 (MM0NamedBinderV1 $name) $type)) $restResult)
    (quote (gslt:result:MM0ValidateRegularNameAfterLookupV1:111111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=96 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-bound-binder-group-v1 target=mode relation=MM0ValidateBinderGroupV1 input=1111110 functional=semidet
-(= (gslt:fn:MM0ValidateBinderGroupV1:1111110 $position $termName $sorts $__gslt_input_v1_0_3 $boundNames $allNames)
-   (let (cons-atom node (cons-atom mm0-type-binder-bound (cons-atom (cons-atom pair (cons-atom $names (cons-atom $typeAst ()))) ()))) $__gslt_input_v1_0_3
-   (let (gslt:result:MM0ValidateBoundTypeV1:11110 $typeResult) (gslt:fn:MM0ValidateBoundTypeV1:11110 $position $termName $sorts $typeAst)
-   (let (gslt:result:MM0ValidateBoundGroupAfterTypeV1:1111110 $result) (gslt:fn:MM0ValidateBoundGroupAfterTypeV1:1111110 $position $termName $names $boundNames $allNames $typeResult)
-   (quote (gslt:result:MM0ValidateBinderGroupV1:1111110 $result))))))
+(= (gslt:fn:MM0ValidateBinderGroupV1:1111110 $position $termName $sorts (cons node (cons mm0-type-binder-bound (cons (cons pair (cons $names (cons $typeAst ()))) ()))) $boundNames $allNames)
+   (let (cons gslt:result:MM0ValidateBoundTypeV1:11110 (cons $typeResult ())) (gslt:fn:MM0ValidateBoundTypeV1:11110 $position $termName $sorts $typeAst)
+   (let (cons gslt:result:MM0ValidateBoundGroupAfterTypeV1:1111110 (cons $result ())) (gslt:fn:MM0ValidateBoundGroupAfterTypeV1:1111110 $position $termName $names $boundNames $allNames $typeResult)
+   (quote (gslt:result:MM0ValidateBinderGroupV1:1111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=97 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-regular-binder-group-v1 target=mode relation=MM0ValidateBinderGroupV1 input=1111110 functional=semidet
-(= (gslt:fn:MM0ValidateBinderGroupV1:1111110 $position $termName $sorts $__gslt_input_v1_0_3 $boundNames $allNames)
-   (let (cons-atom node (cons-atom mm0-type-binder-regular (cons-atom (cons-atom pair (cons-atom $names (cons-atom $typeAst ()))) ()))) $__gslt_input_v1_0_3
-   (let (gslt:result:MM0ValidateRegularTypeV1:111110 $typeResult) (gslt:fn:MM0ValidateRegularTypeV1:111110 $position $termName $sorts $boundNames $typeAst)
-   (let (gslt:result:MM0ValidateRegularGroupAfterTypeV1:1111110 $result) (gslt:fn:MM0ValidateRegularGroupAfterTypeV1:1111110 $position $termName $names $boundNames $allNames $typeResult)
-   (quote (gslt:result:MM0ValidateBinderGroupV1:1111110 $result))))))
+(= (gslt:fn:MM0ValidateBinderGroupV1:1111110 $position $termName $sorts (cons node (cons mm0-type-binder-regular (cons (cons pair (cons $names (cons $typeAst ()))) ()))) $boundNames $allNames)
+   (let (cons gslt:result:MM0ValidateRegularTypeV1:111110 (cons $typeResult ())) (gslt:fn:MM0ValidateRegularTypeV1:111110 $position $termName $sorts $boundNames $typeAst)
+   (let (cons gslt:result:MM0ValidateRegularGroupAfterTypeV1:1111110 (cons $result ())) (gslt:fn:MM0ValidateRegularGroupAfterTypeV1:1111110 $position $termName $names $boundNames $allNames $typeResult)
+   (quote (gslt:result:MM0ValidateBinderGroupV1:1111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=98 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-bound-group-type-refused-v1 target=mode relation=MM0ValidateBoundGroupAfterTypeV1 input=1111110 functional=semidet
-(= (gslt:fn:MM0ValidateBoundGroupAfterTypeV1:1111110 $position $termName $names $boundNames $allNames $__gslt_input_v1_0_5)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_5
-   (quote (gslt:result:MM0ValidateBoundGroupAfterTypeV1:1111110 (MM0CheckRefusedV1 $reason)))))
+(= (gslt:fn:MM0ValidateBoundGroupAfterTypeV1:1111110 $position $termName $names $boundNames $allNames (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0ValidateBoundGroupAfterTypeV1:1111110 (MM0CheckRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=99 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-bound-group-type-accepted-v1 target=mode relation=MM0ValidateBoundGroupAfterTypeV1 input=1111110 functional=semidet
-(= (gslt:fn:MM0ValidateBoundGroupAfterTypeV1:1111110 $position $termName $names $boundNames $allNames $__gslt_input_v1_0_5)
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom $type ())) $__gslt_input_v1_0_5
-   (let (gslt:result:MM0ValidateBoundNamesV1:1111110 $result) (gslt:fn:MM0ValidateBoundNamesV1:1111110 $position $termName $names $type $boundNames $allNames)
-   (quote (gslt:result:MM0ValidateBoundGroupAfterTypeV1:1111110 $result)))))
+(= (gslt:fn:MM0ValidateBoundGroupAfterTypeV1:1111110 $position $termName $names $boundNames $allNames (cons MM0CheckAcceptedV1 (cons $type ())))
+   (let (cons gslt:result:MM0ValidateBoundNamesV1:1111110 (cons $result ())) (gslt:fn:MM0ValidateBoundNamesV1:1111110 $position $termName $names $type $boundNames $allNames)
+   (quote (gslt:result:MM0ValidateBoundGroupAfterTypeV1:1111110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=100 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-regular-group-type-refused-v1 target=mode relation=MM0ValidateRegularGroupAfterTypeV1 input=1111110 functional=semidet
-(= (gslt:fn:MM0ValidateRegularGroupAfterTypeV1:1111110 $position $termName $names $boundNames $allNames $__gslt_input_v1_0_5)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_5
-   (quote (gslt:result:MM0ValidateRegularGroupAfterTypeV1:1111110 (MM0CheckRefusedV1 $reason)))))
+(= (gslt:fn:MM0ValidateRegularGroupAfterTypeV1:1111110 $position $termName $names $boundNames $allNames (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0ValidateRegularGroupAfterTypeV1:1111110 (MM0CheckRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=101 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-regular-group-type-accepted-v1 target=mode relation=MM0ValidateRegularGroupAfterTypeV1 input=1111110 functional=semidet
-(= (gslt:fn:MM0ValidateRegularGroupAfterTypeV1:1111110 $position $termName $names $boundNames $allNames $__gslt_input_v1_0_5)
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom $type ())) $__gslt_input_v1_0_5
-   (let (gslt:result:MM0ValidateRegularNamesV1:1111110 $result) (gslt:fn:MM0ValidateRegularNamesV1:1111110 $position $termName $names $type $boundNames $allNames)
-   (quote (gslt:result:MM0ValidateRegularGroupAfterTypeV1:1111110 $result)))))
+(= (gslt:fn:MM0ValidateRegularGroupAfterTypeV1:1111110 $position $termName $names $boundNames $allNames (cons MM0CheckAcceptedV1 (cons $type ())))
+   (let (cons gslt:result:MM0ValidateRegularNamesV1:1111110 (cons $result ())) (gslt:fn:MM0ValidateRegularNamesV1:1111110 $position $termName $names $type $boundNames $allNames)
+   (quote (gslt:result:MM0ValidateRegularGroupAfterTypeV1:1111110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=102 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-explicit-binders-nil-v1 target=mode relation=MM0ValidateExplicitBindersV1 input=1111110 functional=semidet
 (= (gslt:fn:MM0ValidateExplicitBindersV1:1111110 $position $termName $sorts nil $boundNames $allNames)
    (quote (gslt:result:MM0ValidateExplicitBindersV1:1111110 (MM0CheckAcceptedV1 (MM0BinderSequenceV1 nil $boundNames $allNames)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=103 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-explicit-binders-cons-v1 target=mode relation=MM0ValidateExplicitBindersV1 input=1111110 functional=semidet
-(= (gslt:fn:MM0ValidateExplicitBindersV1:1111110 $position $termName $sorts $__gslt_input_v1_0_3 $boundNames $allNames)
-   (let (cons-atom cons (cons-atom $group (cons-atom $rest ()))) $__gslt_input_v1_0_3
-   (let (gslt:result:MM0ValidateBinderGroupV1:1111110 $groupResult) (gslt:fn:MM0ValidateBinderGroupV1:1111110 $position $termName $sorts $group $boundNames $allNames)
-   (let (gslt:result:MM0ValidateExplicitAfterGroupV1:111110 $result) (gslt:fn:MM0ValidateExplicitAfterGroupV1:111110 $position $termName $sorts $rest $groupResult)
-   (quote (gslt:result:MM0ValidateExplicitBindersV1:1111110 $result))))))
+(= (gslt:fn:MM0ValidateExplicitBindersV1:1111110 $position $termName $sorts (cons cons (cons $group (cons $rest ()))) $boundNames $allNames)
+   (let (cons gslt:result:MM0ValidateBinderGroupV1:1111110 (cons $groupResult ())) (gslt:fn:MM0ValidateBinderGroupV1:1111110 $position $termName $sorts $group $boundNames $allNames)
+   (let (cons gslt:result:MM0ValidateExplicitAfterGroupV1:111110 (cons $result ())) (gslt:fn:MM0ValidateExplicitAfterGroupV1:111110 $position $termName $sorts $rest $groupResult)
+   (quote (gslt:result:MM0ValidateExplicitBindersV1:1111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=104 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-explicit-group-refused-v1 target=mode relation=MM0ValidateExplicitAfterGroupV1 input=111110 functional=semidet
-(= (gslt:fn:MM0ValidateExplicitAfterGroupV1:111110 $position $termName $sorts $rest $__gslt_input_v1_0_4)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_4
-   (quote (gslt:result:MM0ValidateExplicitAfterGroupV1:111110 (MM0CheckRefusedV1 $reason)))))
+(= (gslt:fn:MM0ValidateExplicitAfterGroupV1:111110 $position $termName $sorts $rest (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0ValidateExplicitAfterGroupV1:111110 (MM0CheckRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=105 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-explicit-group-accepted-v1 target=mode relation=MM0ValidateExplicitAfterGroupV1 input=111110 functional=semidet
-(= (gslt:fn:MM0ValidateExplicitAfterGroupV1:111110 $position $termName $sorts $rest $__gslt_input_v1_0_4)
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom (cons-atom MM0BinderSequenceV1 (cons-atom $groupBinders (cons-atom $boundNames (cons-atom $allNames ())))) ())) $__gslt_input_v1_0_4
-   (let (gslt:result:MM0ValidateExplicitBindersV1:1111110 $restResult) (gslt:fn:MM0ValidateExplicitBindersV1:1111110 $position $termName $sorts $rest $boundNames $allNames)
-   (let (gslt:result:MM0ConcatBinderSequenceV1:110 $result) (gslt:fn:MM0ConcatBinderSequenceV1:110 $groupBinders $restResult)
-   (quote (gslt:result:MM0ValidateExplicitAfterGroupV1:111110 $result))))))
+(= (gslt:fn:MM0ValidateExplicitAfterGroupV1:111110 $position $termName $sorts $rest (cons MM0CheckAcceptedV1 (cons (cons MM0BinderSequenceV1 (cons $groupBinders (cons $boundNames (cons $allNames ())))) ())))
+   (let (cons gslt:result:MM0ValidateExplicitBindersV1:1111110 (cons $restResult ())) (gslt:fn:MM0ValidateExplicitBindersV1:1111110 $position $termName $sorts $rest $boundNames $allNames)
+   (let (cons gslt:result:MM0ConcatBinderSequenceV1:110 (cons $result ())) (gslt:fn:MM0ConcatBinderSequenceV1:110 $groupBinders $restResult)
+   (quote (gslt:result:MM0ValidateExplicitAfterGroupV1:111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=106 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-concat-binder-sequence-accepted-v1 target=mode relation=MM0ConcatBinderSequenceV1 input=110 functional=semidet
-(= (gslt:fn:MM0ConcatBinderSequenceV1:110 $left $__gslt_input_v1_0_1)
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom (cons-atom MM0BinderSequenceV1 (cons-atom $right (cons-atom $boundNames (cons-atom $allNames ())))) ())) $__gslt_input_v1_0_1
-   (let (gslt:result:MM0ListAppendV1:110 $binders) (gslt:fn:MM0ListAppendV1:110 $left $right)
-   (quote (gslt:result:MM0ConcatBinderSequenceV1:110 (MM0CheckAcceptedV1 (MM0BinderSequenceV1 $binders $boundNames $allNames)))))))
+(= (gslt:fn:MM0ConcatBinderSequenceV1:110 $left (cons MM0CheckAcceptedV1 (cons (cons MM0BinderSequenceV1 (cons $right (cons $boundNames (cons $allNames ())))) ())))
+   (let (cons gslt:result:MM0ListAppendV1:110 (cons $binders ())) (gslt:fn:MM0ListAppendV1:110 $left $right)
+   (quote (gslt:result:MM0ConcatBinderSequenceV1:110 (MM0CheckAcceptedV1 (MM0BinderSequenceV1 $binders $boundNames $allNames))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=107 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-concat-binder-sequence-refused-v1 target=mode relation=MM0ConcatBinderSequenceV1 input=110 functional=semidet
-(= (gslt:fn:MM0ConcatBinderSequenceV1:110 $left $__gslt_input_v1_0_1)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0ConcatBinderSequenceV1:110 (MM0CheckRefusedV1 $reason)))))
+(= (gslt:fn:MM0ConcatBinderSequenceV1:110 $left (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0ConcatBinderSequenceV1:110 (MM0CheckRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=108 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-arrow-return-v1 target=mode relation=MM0ValidateArrowTypeV1 input=111110 functional=semidet
-(= (gslt:fn:MM0ValidateArrowTypeV1:111110 $position $termName $sorts $boundNames $__gslt_input_v1_0_4)
-   (let (cons-atom node (cons-atom mm0-arrow-type (cons-atom (cons-atom pair (cons-atom $typeAst (cons-atom none ()))) ()))) $__gslt_input_v1_0_4
-   (let (gslt:result:MM0ValidateReturnTypeV1:111110 $returnResult) (gslt:fn:MM0ValidateReturnTypeV1:111110 $position $termName $sorts $boundNames $typeAst)
-   (let (gslt:result:MM0ReturnTailV1:10 $result) (gslt:fn:MM0ReturnTailV1:10 $returnResult)
-   (quote (gslt:result:MM0ValidateArrowTypeV1:111110 $result))))))
+(= (gslt:fn:MM0ValidateArrowTypeV1:111110 $position $termName $sorts $boundNames (cons node (cons mm0-arrow-type (cons (cons pair (cons $typeAst (cons none ()))) ()))))
+   (let (cons gslt:result:MM0ValidateReturnTypeV1:111110 (cons $returnResult ())) (gslt:fn:MM0ValidateReturnTypeV1:111110 $position $termName $sorts $boundNames $typeAst)
+   (let (cons gslt:result:MM0ReturnTailV1:10 (cons $result ())) (gslt:fn:MM0ReturnTailV1:10 $returnResult)
+   (quote (gslt:result:MM0ValidateArrowTypeV1:111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=109 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-arrow-argument-v1 target=mode relation=MM0ValidateArrowTypeV1 input=111110 functional=semidet
-(= (gslt:fn:MM0ValidateArrowTypeV1:111110 $position $termName $sorts $boundNames $__gslt_input_v1_0_4)
-   (let (cons-atom node (cons-atom mm0-arrow-type (cons-atom (cons-atom pair (cons-atom $typeAst (cons-atom (cons-atom some (cons-atom $tail ())) ()))) ()))) $__gslt_input_v1_0_4
-   (let (gslt:result:MM0ValidateRegularTypeV1:111110 $typeResult) (gslt:fn:MM0ValidateRegularTypeV1:111110 $position $termName $sorts $boundNames $typeAst)
-   (let (gslt:result:MM0ValidateArrowAfterRegularV1:1111110 $result) (gslt:fn:MM0ValidateArrowAfterRegularV1:1111110 $position $termName $sorts $boundNames $tail $typeResult)
-   (quote (gslt:result:MM0ValidateArrowTypeV1:111110 $result))))))
+(= (gslt:fn:MM0ValidateArrowTypeV1:111110 $position $termName $sorts $boundNames (cons node (cons mm0-arrow-type (cons (cons pair (cons $typeAst (cons (cons some (cons $tail ())) ()))) ()))))
+   (let (cons gslt:result:MM0ValidateRegularTypeV1:111110 (cons $typeResult ())) (gslt:fn:MM0ValidateRegularTypeV1:111110 $position $termName $sorts $boundNames $typeAst)
+   (let (cons gslt:result:MM0ValidateArrowAfterRegularV1:1111110 (cons $result ())) (gslt:fn:MM0ValidateArrowAfterRegularV1:1111110 $position $termName $sorts $boundNames $tail $typeResult)
+   (quote (gslt:result:MM0ValidateArrowTypeV1:111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=110 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-arrow-regular-refused-v1 target=mode relation=MM0ValidateArrowAfterRegularV1 input=1111110 functional=semidet
-(= (gslt:fn:MM0ValidateArrowAfterRegularV1:1111110 $position $termName $sorts $boundNames $tail $__gslt_input_v1_0_5)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_5
-   (quote (gslt:result:MM0ValidateArrowAfterRegularV1:1111110 (MM0CheckRefusedV1 $reason)))))
+(= (gslt:fn:MM0ValidateArrowAfterRegularV1:1111110 $position $termName $sorts $boundNames $tail (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0ValidateArrowAfterRegularV1:1111110 (MM0CheckRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=111 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-arrow-regular-accepted-v1 target=mode relation=MM0ValidateArrowAfterRegularV1 input=1111110 functional=semidet
-(= (gslt:fn:MM0ValidateArrowAfterRegularV1:1111110 $position $termName $sorts $boundNames $tail $__gslt_input_v1_0_5)
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom $type ())) $__gslt_input_v1_0_5
-   (let (gslt:result:MM0ValidateArrowTypeV1:111110 $tailResult) (gslt:fn:MM0ValidateArrowTypeV1:111110 $position $termName $sorts $boundNames $tail)
-   (let (gslt:result:MM0PrependArrowBinderV1:110 $result) (gslt:fn:MM0PrependArrowBinderV1:110 $type $tailResult)
-   (quote (gslt:result:MM0ValidateArrowAfterRegularV1:1111110 $result))))))
+(= (gslt:fn:MM0ValidateArrowAfterRegularV1:1111110 $position $termName $sorts $boundNames $tail (cons MM0CheckAcceptedV1 (cons $type ())))
+   (let (cons gslt:result:MM0ValidateArrowTypeV1:111110 (cons $tailResult ())) (gslt:fn:MM0ValidateArrowTypeV1:111110 $position $termName $sorts $boundNames $tail)
+   (let (cons gslt:result:MM0PrependArrowBinderV1:110 (cons $result ())) (gslt:fn:MM0PrependArrowBinderV1:110 $type $tailResult)
+   (quote (gslt:result:MM0ValidateArrowAfterRegularV1:1111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=112 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-prepend-arrow-binder-accepted-v1 target=mode relation=MM0PrependArrowBinderV1 input=110 functional=semidet
-(= (gslt:fn:MM0PrependArrowBinderV1:110 $type $__gslt_input_v1_0_1)
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom (cons-atom MM0TermTailV1 (cons-atom $binders (cons-atom $returnType ()))) ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0PrependArrowBinderV1:110 (MM0CheckAcceptedV1 (MM0TermTailV1 (cons (MM0BinderV1 MM0RegularBinderKindV1 MM0AnonymousBinderV1 $type) $binders) $returnType))))))
+(= (gslt:fn:MM0PrependArrowBinderV1:110 $type (cons MM0CheckAcceptedV1 (cons (cons MM0TermTailV1 (cons $binders (cons $returnType ()))) ())))
+   (quote (gslt:result:MM0PrependArrowBinderV1:110 (MM0CheckAcceptedV1 (MM0TermTailV1 (cons (MM0BinderV1 MM0RegularBinderKindV1 MM0AnonymousBinderV1 $type) $binders) $returnType)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=113 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-prepend-arrow-binder-refused-v1 target=mode relation=MM0PrependArrowBinderV1 input=110 functional=semidet
-(= (gslt:fn:MM0PrependArrowBinderV1:110 $type $__gslt_input_v1_0_1)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0PrependArrowBinderV1:110 (MM0CheckRefusedV1 $reason)))))
+(= (gslt:fn:MM0PrependArrowBinderV1:110 $type (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0PrependArrowBinderV1:110 (MM0CheckRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=114 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-return-tail-accepted-v1 target=mode relation=MM0ReturnTailV1 input=10 functional=semidet
-(= (gslt:fn:MM0ReturnTailV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom $returnType ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0ReturnTailV1:10 (MM0CheckAcceptedV1 (MM0TermTailV1 nil $returnType))))))
+(= (gslt:fn:MM0ReturnTailV1:10 (cons MM0CheckAcceptedV1 (cons $returnType ())))
+   (quote (gslt:result:MM0ReturnTailV1:10 (MM0CheckAcceptedV1 (MM0TermTailV1 nil $returnType)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=115 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-return-tail-refused-v1 target=mode relation=MM0ReturnTailV1 input=10 functional=semidet
-(= (gslt:fn:MM0ReturnTailV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0ReturnTailV1:10 (MM0CheckRefusedV1 $reason)))))
+(= (gslt:fn:MM0ReturnTailV1:10 (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0ReturnTailV1:10 (MM0CheckRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=116 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-term-signature-v1 target=mode relation=MM0ValidateTermSignatureV1 input=111110 functional=semidet
 (= (gslt:fn:MM0ValidateTermSignatureV1:111110 $position $termName $sorts $explicitBinders $arrowType)
-   (let (gslt:result:MM0ValidateExplicitBindersV1:1111110 $binderResult) (gslt:fn:MM0ValidateExplicitBindersV1:1111110 $position $termName $sorts $explicitBinders nil nil)
-   (let (gslt:result:MM0ValidateTermAfterBindersV1:111110 $result) (gslt:fn:MM0ValidateTermAfterBindersV1:111110 $position $termName $sorts $arrowType $binderResult)
+   (let (cons gslt:result:MM0ValidateExplicitBindersV1:1111110 (cons $binderResult ())) (gslt:fn:MM0ValidateExplicitBindersV1:1111110 $position $termName $sorts $explicitBinders nil nil)
+   (let (cons gslt:result:MM0ValidateTermAfterBindersV1:111110 (cons $result ())) (gslt:fn:MM0ValidateTermAfterBindersV1:111110 $position $termName $sorts $arrowType $binderResult)
    (quote (gslt:result:MM0ValidateTermSignatureV1:111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=117 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-term-binders-refused-v1 target=mode relation=MM0ValidateTermAfterBindersV1 input=111110 functional=semidet
-(= (gslt:fn:MM0ValidateTermAfterBindersV1:111110 $position $termName $sorts $arrowType $__gslt_input_v1_0_4)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_4
-   (quote (gslt:result:MM0ValidateTermAfterBindersV1:111110 (MM0CheckRefusedV1 $reason)))))
+(= (gslt:fn:MM0ValidateTermAfterBindersV1:111110 $position $termName $sorts $arrowType (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0ValidateTermAfterBindersV1:111110 (MM0CheckRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=118 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-validate-term-binders-accepted-v1 target=mode relation=MM0ValidateTermAfterBindersV1 input=111110 functional=semidet
-(= (gslt:fn:MM0ValidateTermAfterBindersV1:111110 $position $termName $sorts $arrowType $__gslt_input_v1_0_4)
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom (cons-atom MM0BinderSequenceV1 (cons-atom $explicitBinders (cons-atom $boundNames (cons-atom $allNames ())))) ())) $__gslt_input_v1_0_4
-   (let (gslt:result:MM0ValidateArrowTypeV1:111110 $tailResult) (gslt:fn:MM0ValidateArrowTypeV1:111110 $position $termName $sorts $boundNames $arrowType)
-   (let (gslt:result:MM0CombineTermSignatureV1:110 $result) (gslt:fn:MM0CombineTermSignatureV1:110 $explicitBinders $tailResult)
-   (quote (gslt:result:MM0ValidateTermAfterBindersV1:111110 $result))))))
+(= (gslt:fn:MM0ValidateTermAfterBindersV1:111110 $position $termName $sorts $arrowType (cons MM0CheckAcceptedV1 (cons (cons MM0BinderSequenceV1 (cons $explicitBinders (cons $boundNames (cons $allNames ())))) ())))
+   (let (cons gslt:result:MM0ValidateArrowTypeV1:111110 (cons $tailResult ())) (gslt:fn:MM0ValidateArrowTypeV1:111110 $position $termName $sorts $boundNames $arrowType)
+   (let (cons gslt:result:MM0CombineTermSignatureV1:110 (cons $result ())) (gslt:fn:MM0CombineTermSignatureV1:110 $explicitBinders $tailResult)
+   (quote (gslt:result:MM0ValidateTermAfterBindersV1:111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=119 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-combine-term-signature-accepted-v1 target=mode relation=MM0CombineTermSignatureV1 input=110 functional=semidet
-(= (gslt:fn:MM0CombineTermSignatureV1:110 $explicitBinders $__gslt_input_v1_0_1)
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom (cons-atom MM0TermTailV1 (cons-atom $arrowBinders (cons-atom $returnType ()))) ())) $__gslt_input_v1_0_1
-   (let (gslt:result:MM0ListAppendV1:110 $binders) (gslt:fn:MM0ListAppendV1:110 $explicitBinders $arrowBinders)
-   (quote (gslt:result:MM0CombineTermSignatureV1:110 (MM0CheckAcceptedV1 (MM0TermSignatureV1 $binders $returnType)))))))
+(= (gslt:fn:MM0CombineTermSignatureV1:110 $explicitBinders (cons MM0CheckAcceptedV1 (cons (cons MM0TermTailV1 (cons $arrowBinders (cons $returnType ()))) ())))
+   (let (cons gslt:result:MM0ListAppendV1:110 (cons $binders ())) (gslt:fn:MM0ListAppendV1:110 $explicitBinders $arrowBinders)
+   (quote (gslt:result:MM0CombineTermSignatureV1:110 (MM0CheckAcceptedV1 (MM0TermSignatureV1 $binders $returnType))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=120 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-combine-term-signature-refused-v1 target=mode relation=MM0CombineTermSignatureV1 input=110 functional=semidet
-(= (gslt:fn:MM0CombineTermSignatureV1:110 $explicitBinders $__gslt_input_v1_0_1)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0CombineTermSignatureV1:110 (MM0CheckRefusedV1 $reason)))))
+(= (gslt:fn:MM0CombineTermSignatureV1:110 $explicitBinders (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0CombineTermSignatureV1:110 (MM0CheckRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=122 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-term-step-v1 target=mode relation=MM0TermStepV1 input=1110 functional=semidet
-(= (gslt:fn:MM0TermStepV1:1110 $position $statement $__gslt_input_v1_0_2)
-   (let (cons-atom MM0TextualEnvironmentV1 (cons-atom $sorts (cons-atom $declarations ()))) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0TermStatementV1:1000 $name $binders $arrowType) (gslt:fn:MM0TermStatementV1:1000 $statement)
-   (let (gslt:result:MM0DeclarationLookupV1:110 $lookup) (gslt:fn:MM0DeclarationLookupV1:110 $name $declarations)
-   (let (gslt:result:MM0TermStepAfterLookupV1:1111110 $result) (gslt:fn:MM0TermStepAfterLookupV1:1111110 $position $name $binders $arrowType (quote (MM0TextualEnvironmentV1 $sorts $declarations)) $lookup)
-   (quote (gslt:result:MM0TermStepV1:1110 $result)))))))
+(= (gslt:fn:MM0TermStepV1:1110 $position $statement (cons MM0TextualEnvironmentV1 (cons $sorts (cons $declarations ()))))
+   (let (cons gslt:result:MM0TermStatementV1:1000 (cons $name (cons $binders (cons $arrowType ())))) (gslt:fn:MM0TermStatementV1:1000 $statement)
+   (let (cons gslt:result:MM0DeclarationLookupV1:110 (cons $lookup ())) (gslt:fn:MM0DeclarationLookupV1:110 $name $declarations)
+   (let (cons gslt:result:MM0TermStepAfterLookupV1:1111110 (cons $result ())) (gslt:fn:MM0TermStepAfterLookupV1:1111110 $position $name $binders $arrowType (quote (MM0TextualEnvironmentV1 $sorts $declarations)) $lookup)
+   (quote (gslt:result:MM0TermStepV1:1110 $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=123 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-term-step-redeclared-v1 target=mode relation=MM0TermStepAfterLookupV1 input=1111110 functional=semidet
-(= (gslt:fn:MM0TermStepAfterLookupV1:1111110 $position $name $binders $arrowType $before $__gslt_input_v1_0_5)
-   (let (cons-atom MM0DeclarationFoundV1 (cons-atom $kind (cons-atom $firstPosition ()))) $__gslt_input_v1_0_5
-   (quote (gslt:result:MM0TermStepAfterLookupV1:1111110 (MM0TextualStepRefusedV1 (MM0RefusedTermRedeclarationV1 $position $name $firstPosition) $before (MM0RefusedTermRedeclarationV1 $position $name $firstPosition))))))
+(= (gslt:fn:MM0TermStepAfterLookupV1:1111110 $position $name $binders $arrowType $before (cons MM0DeclarationFoundV1 (cons $kind (cons $firstPosition ()))))
+   (quote (gslt:result:MM0TermStepAfterLookupV1:1111110 (MM0TextualStepRefusedV1 (MM0RefusedTermRedeclarationV1 $position $name $firstPosition) $before (MM0RefusedTermRedeclarationV1 $position $name $firstPosition)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=124 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-term-step-fresh-v1 target=mode relation=MM0TermStepAfterLookupV1 input=1111110 functional=semidet
-(= (gslt:fn:MM0TermStepAfterLookupV1:1111110 $position $name $binders $arrowType $__gslt_input_v1_0_4 MM0DeclarationMissingV1)
-   (let (cons-atom MM0TextualEnvironmentV1 (cons-atom $sorts (cons-atom $declarations ()))) $__gslt_input_v1_0_4
-   (let (gslt:result:MM0ValidateTermSignatureV1:111110 $signatureResult) (gslt:fn:MM0ValidateTermSignatureV1:111110 $position $name $sorts $binders $arrowType)
-   (let (gslt:result:MM0TermStepAfterSignatureV1:11110 $result) (gslt:fn:MM0TermStepAfterSignatureV1:11110 $position $name (quote (MM0TextualEnvironmentV1 $sorts $declarations)) $signatureResult)
-   (quote (gslt:result:MM0TermStepAfterLookupV1:1111110 $result))))))
+(= (gslt:fn:MM0TermStepAfterLookupV1:1111110 $position $name $binders $arrowType (cons MM0TextualEnvironmentV1 (cons $sorts (cons $declarations ()))) MM0DeclarationMissingV1)
+   (let (cons gslt:result:MM0ValidateTermSignatureV1:111110 (cons $signatureResult ())) (gslt:fn:MM0ValidateTermSignatureV1:111110 $position $name $sorts $binders $arrowType)
+   (let (cons gslt:result:MM0TermStepAfterSignatureV1:11110 (cons $result ())) (gslt:fn:MM0TermStepAfterSignatureV1:11110 $position $name (quote (MM0TextualEnvironmentV1 $sorts $declarations)) $signatureResult)
+   (quote (gslt:result:MM0TermStepAfterLookupV1:1111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=125 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-term-step-signature-refused-v1 target=mode relation=MM0TermStepAfterSignatureV1 input=11110 functional=semidet
-(= (gslt:fn:MM0TermStepAfterSignatureV1:11110 $position $name $before $__gslt_input_v1_0_3)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_3
-   (quote (gslt:result:MM0TermStepAfterSignatureV1:11110 (MM0TextualStepRefusedV1 $reason $before $reason)))))
+(= (gslt:fn:MM0TermStepAfterSignatureV1:11110 $position $name $before (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0TermStepAfterSignatureV1:11110 (MM0TextualStepRefusedV1 $reason $before $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=126 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-term-step-signature-accepted-v1 target=mode relation=MM0TermStepAfterSignatureV1 input=11110 functional=semidet
-(= (gslt:fn:MM0TermStepAfterSignatureV1:11110 $position $name $__gslt_input_v1_0_2 $__gslt_input_v1_0_3)
-   (let (cons-atom MM0TextualEnvironmentV1 (cons-atom $sorts (cons-atom $declarations ()))) $__gslt_input_v1_0_2
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom $signature ())) $__gslt_input_v1_0_3
-   (let (gslt:result:MM0DeclarationEntriesAppendV1:110 $afterDeclarations) (gslt:fn:MM0DeclarationEntriesAppendV1:110 $declarations (quote (MM0TermEntryV1 $name $signature $position MM0RuntimeTextualSourceV1)))
-   (quote (gslt:result:MM0TermStepAfterSignatureV1:11110 (MM0TextualStepAcceptedV1 (MM0TextualEnvironmentV1 $sorts $afterDeclarations) (MM0DeclaredTermV1 $position $name $signature))))))))
+(= (gslt:fn:MM0TermStepAfterSignatureV1:11110 $position $name (cons MM0TextualEnvironmentV1 (cons $sorts (cons $declarations ()))) (cons MM0CheckAcceptedV1 (cons $signature ())))
+   (let (cons gslt:result:MM0DeclarationEntriesAppendV1:110 (cons $afterDeclarations ())) (gslt:fn:MM0DeclarationEntriesAppendV1:110 $declarations (quote (MM0TermEntryV1 $name $signature $position MM0RuntimeTextualSourceV1)))
+   (quote (gslt:result:MM0TermStepAfterSignatureV1:11110 (MM0TextualStepAcceptedV1 (MM0TextualEnvironmentV1 $sorts $afterDeclarations) (MM0DeclaredTermV1 $position $name $signature))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=127 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-textual-step-sort-v1 target=mode relation=MM0TextualStepV1 input=1110 functional=semidet
-(= (gslt:fn:MM0TextualStepV1:1110 $position $__gslt_input_v1_0_1 $__gslt_input_v1_0_2)
-   (let (cons-atom node (cons-atom mm0-sort-statement (cons-atom $payload ()))) $__gslt_input_v1_0_1
-   (let (cons-atom MM0TextualEnvironmentV1 (cons-atom $sorts (cons-atom $declarations ()))) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0SortStepV1:111000 $outcome $afterSorts $historyEntry) (gslt:fn:MM0SortStepV1:111000 $position (quote (node mm0-sort-statement $payload)) $sorts)
-   (let (gslt:result:MM0TextualSortOutcomeV1:11110 $result) (gslt:fn:MM0TextualSortOutcomeV1:11110 $outcome $afterSorts $historyEntry (quote (MM0TextualEnvironmentV1 $sorts $declarations)))
-   (quote (gslt:result:MM0TextualStepV1:1110 $result)))))))
-
-; gslt-lowered-equation-v1 source-rewrite=130 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-textual-step-term-v1 target=mode relation=MM0TextualStepV1 input=1110 functional=semidet
-(= (gslt:fn:MM0TextualStepV1:1110 $position $__gslt_input_v1_0_1 $before)
-   (let (cons-atom node (cons-atom mm0-term-statement (cons-atom $payload ()))) $__gslt_input_v1_0_1
-   (let (gslt:result:MM0TermStepV1:1110 $result) (gslt:fn:MM0TermStepV1:1110 $position (quote (node mm0-term-statement $payload)) $before)
+(= (gslt:fn:MM0TextualStepV1:1110 $position (cons node (cons mm0-sort-statement (cons $payload ()))) (cons MM0TextualEnvironmentV1 (cons $sorts (cons $declarations ()))))
+   (let (cons gslt:result:MM0SortStepV1:111000 (cons $outcome (cons $afterSorts (cons $historyEntry ())))) (gslt:fn:MM0SortStepV1:111000 $position (quote (node mm0-sort-statement $payload)) $sorts)
+   (let (cons gslt:result:MM0TextualSortOutcomeV1:11110 (cons $result ())) (gslt:fn:MM0TextualSortOutcomeV1:11110 $outcome $afterSorts $historyEntry (quote (MM0TextualEnvironmentV1 $sorts $declarations)))
    (quote (gslt:result:MM0TextualStepV1:1110 $result)))))
 
+; gslt-lowered-equation-v1 source-rewrite=130 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-textual-step-term-v1 target=mode relation=MM0TextualStepV1 input=1110 functional=semidet
+(= (gslt:fn:MM0TextualStepV1:1110 $position (cons node (cons mm0-term-statement (cons $payload ()))) $before)
+   (let (cons gslt:result:MM0TermStepV1:1110 (cons $result ())) (gslt:fn:MM0TermStepV1:1110 $position (quote (node mm0-term-statement $payload)) $before)
+   (quote (gslt:result:MM0TextualStepV1:1110 $result))))
+
 ; gslt-lowered-equation-v1 source-rewrite=128 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-textual-sort-outcome-accepted-v1 target=mode relation=MM0TextualSortOutcomeV1 input=11110 functional=semidet
-(= (gslt:fn:MM0TextualSortOutcomeV1:11110 MM0AcceptedV1 $afterSorts $historyEntry $__gslt_input_v1_0_3)
-   (let (cons-atom MM0TextualEnvironmentV1 (cons-atom $sorts (cons-atom $declarations ()))) $__gslt_input_v1_0_3
-   (quote (gslt:result:MM0TextualSortOutcomeV1:11110 (MM0TextualStepAcceptedV1 (MM0TextualEnvironmentV1 $afterSorts $declarations) $historyEntry)))))
+(= (gslt:fn:MM0TextualSortOutcomeV1:11110 MM0AcceptedV1 $afterSorts $historyEntry (cons MM0TextualEnvironmentV1 (cons $sorts (cons $declarations ()))))
+   (quote (gslt:result:MM0TextualSortOutcomeV1:11110 (MM0TextualStepAcceptedV1 (MM0TextualEnvironmentV1 $afterSorts $declarations) $historyEntry))))
 
 ; gslt-lowered-equation-v1 source-rewrite=129 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-textual-sort-outcome-refused-v1 target=mode relation=MM0TextualSortOutcomeV1 input=11110 functional=semidet
-(= (gslt:fn:MM0TextualSortOutcomeV1:11110 $__gslt_input_v1_0_0 $sorts $historyEntry $__gslt_input_v1_0_3)
-   (let (cons-atom MM0RefusedSortRedeclarationV1 (cons-atom $position (cons-atom $name (cons-atom $oldModifiers (cons-atom $newModifiers ()))))) $__gslt_input_v1_0_0
-   (let (cons-atom MM0TextualEnvironmentV1 (cons-atom $sorts (cons-atom $declarations ()))) $__gslt_input_v1_0_3
-   (quote (gslt:result:MM0TextualSortOutcomeV1:11110 (MM0TextualStepRefusedV1 (MM0RefusedSortRedeclarationV1 $position $name $oldModifiers $newModifiers) (MM0TextualEnvironmentV1 $sorts $declarations) $historyEntry))))))
+(= (gslt:fn:MM0TextualSortOutcomeV1:11110 (cons MM0RefusedSortRedeclarationV1 (cons $position (cons $name (cons $oldModifiers (cons $newModifiers ()))))) $sorts $historyEntry (cons MM0TextualEnvironmentV1 (cons $sorts (cons $declarations ()))))
+   (quote (gslt:result:MM0TextualSortOutcomeV1:11110 (MM0TextualStepRefusedV1 (MM0RefusedSortRedeclarationV1 $position $name $oldModifiers $newModifiers) (MM0TextualEnvironmentV1 $sorts $declarations) $historyEntry))))
 
 ; gslt-lowered-equation-v1 source-rewrite=136 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-whitespace-space-v1 target=mode relation=MM0MathAllowedWhitespaceV1 input=1 functional=semidet
-(= (gslt:fn:MM0MathAllowedWhitespaceV1:1 $__gslt_input_v1_0_0)
-   (let (cons-atom cp (cons-atom 32 ())) $__gslt_input_v1_0_0
-   (quote gslt:result:MM0MathAllowedWhitespaceV1:1)))
+(= (gslt:fn:MM0MathAllowedWhitespaceV1:1 (cons cp (cons 32 ())))
+   (quote gslt:result:MM0MathAllowedWhitespaceV1:1))
 
 ; gslt-lowered-equation-v1 source-rewrite=137 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-whitespace-newline-v1 target=mode relation=MM0MathAllowedWhitespaceV1 input=1 functional=semidet
-(= (gslt:fn:MM0MathAllowedWhitespaceV1:1 $__gslt_input_v1_0_0)
-   (let (cons-atom cp (cons-atom 10 ())) $__gslt_input_v1_0_0
-   (quote gslt:result:MM0MathAllowedWhitespaceV1:1)))
+(= (gslt:fn:MM0MathAllowedWhitespaceV1:1 (cons cp (cons 10 ())))
+   (quote gslt:result:MM0MathAllowedWhitespaceV1:1))
 
 ; gslt-lowered-equation-v1 source-rewrite=138 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-entry-ordinary-v1 target=mode relation=MM0MathClassEntryValidV1 input=11 functional=semidet
 (= (gslt:fn:MM0MathClassEntryValidV1:11 $scalar MM0MathOrdinaryV1)
@@ -1571,71 +1490,63 @@
    (quote gslt:result:MM0MathClassTableNotMemberV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=144 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-table-not-member-cons-v1 target=mode relation=MM0MathClassTableNotMemberV1 input=11 functional=semidet
-(= (gslt:fn:MM0MathClassTableNotMemberV1:11 $scalar $__gslt_input_v1_0_1)
-   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $other (cons-atom $class ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:MM0MathClassTableNotMemberV1:11 $scalar (cons MM0MathClassTableConsV1 (cons (cons MM0MathClassEntryV1 (cons $other (cons $class ()))) (cons $rest ()))))
    (let $_ (gslt:different (different $scalar $other))
    (let gslt:result:MM0MathClassTableNotMemberV1:11 (gslt:fn:MM0MathClassTableNotMemberV1:11 $scalar $rest)
-   (quote gslt:result:MM0MathClassTableNotMemberV1:11)))))
+   (quote gslt:result:MM0MathClassTableNotMemberV1:11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=145 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-table-valid-nil-v1 target=mode relation=MM0MathClassTableValidV1 input=1 functional=semidet
 (= (gslt:fn:MM0MathClassTableValidV1:1 MM0MathClassTableNilV1)
    (quote gslt:result:MM0MathClassTableValidV1:1))
 
 ; gslt-lowered-equation-v1 source-rewrite=146 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-table-valid-cons-v1 target=mode relation=MM0MathClassTableValidV1 input=1 functional=semidet
-(= (gslt:fn:MM0MathClassTableValidV1:1 $__gslt_input_v1_0_0)
-   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $scalar (cons-atom $class ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_0
+(= (gslt:fn:MM0MathClassTableValidV1:1 (cons MM0MathClassTableConsV1 (cons (cons MM0MathClassEntryV1 (cons $scalar (cons $class ()))) (cons $rest ()))))
    (let gslt:result:MM0MathClassEntryValidV1:11 (gslt:fn:MM0MathClassEntryValidV1:11 $scalar $class)
    (let gslt:result:MM0MathClassTableNotMemberV1:11 (gslt:fn:MM0MathClassTableNotMemberV1:11 $scalar $rest)
    (let gslt:result:MM0MathClassTableValidV1:1 (gslt:fn:MM0MathClassTableValidV1:1 $rest)
-   (quote gslt:result:MM0MathClassTableValidV1:1))))))
+   (quote gslt:result:MM0MathClassTableValidV1:1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=147 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-find-head-v1 target=mode relation=MM0MathClassFindV1 input=111 functional=semidet
-(= (gslt:fn:MM0MathClassFindV1:111 $scalar $__gslt_input_v1_0_1 $class)
-   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $scalar (cons-atom $class ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
-   (quote gslt:result:MM0MathClassFindV1:111)))
+(= (gslt:fn:MM0MathClassFindV1:111 $scalar (cons MM0MathClassTableConsV1 (cons (cons MM0MathClassEntryV1 (cons $scalar (cons $class ()))) (cons $rest ()))) $class)
+   (quote gslt:result:MM0MathClassFindV1:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=148 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-find-tail-v1 target=mode relation=MM0MathClassFindV1 input=111 functional=semidet
-(= (gslt:fn:MM0MathClassFindV1:111 $scalar $__gslt_input_v1_0_1 $found)
-   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $other (cons-atom $class ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:MM0MathClassFindV1:111 $scalar (cons MM0MathClassTableConsV1 (cons (cons MM0MathClassEntryV1 (cons $other (cons $class ()))) (cons $rest ()))) $found)
    (let $_ (gslt:different (different $scalar $other))
    (let gslt:result:MM0MathClassFindV1:111 (gslt:fn:MM0MathClassFindV1:111 $scalar $rest $found)
-   (quote gslt:result:MM0MathClassFindV1:111)))))
+   (quote gslt:result:MM0MathClassFindV1:111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=149 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-lookup-default-v1 target=mode relation=MM0MathClassLookupV1 input=111 functional=semidet
 (= (gslt:fn:MM0MathClassLookupV1:111 $scalar MM0MathClassTableNilV1 MM0MathOrdinaryV1)
    (quote gslt:result:MM0MathClassLookupV1:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=150 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-lookup-head-v1 target=mode relation=MM0MathClassLookupV1 input=111 functional=semidet
-(= (gslt:fn:MM0MathClassLookupV1:111 $scalar $__gslt_input_v1_0_1 $class)
-   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $scalar (cons-atom $class ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
-   (quote gslt:result:MM0MathClassLookupV1:111)))
+(= (gslt:fn:MM0MathClassLookupV1:111 $scalar (cons MM0MathClassTableConsV1 (cons (cons MM0MathClassEntryV1 (cons $scalar (cons $class ()))) (cons $rest ()))) $class)
+   (quote gslt:result:MM0MathClassLookupV1:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=151 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-lookup-tail-v1 target=mode relation=MM0MathClassLookupV1 input=111 functional=semidet
-(= (gslt:fn:MM0MathClassLookupV1:111 $scalar $__gslt_input_v1_0_1 $found)
-   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $other (cons-atom $class ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:MM0MathClassLookupV1:111 $scalar (cons MM0MathClassTableConsV1 (cons (cons MM0MathClassEntryV1 (cons $other (cons $class ()))) (cons $rest ()))) $found)
    (let $_ (gslt:different (different $scalar $other))
    (let gslt:result:MM0MathClassLookupV1:111 (gslt:fn:MM0MathClassLookupV1:111 $scalar $rest $found)
-   (quote gslt:result:MM0MathClassLookupV1:111)))))
+   (quote gslt:result:MM0MathClassLookupV1:111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=149 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-lookup-default-v1 target=mode relation=MM0MathClassLookupV1 input=110 functional=semidet
 (= (gslt:fn:MM0MathClassLookupV1:110 $scalar MM0MathClassTableNilV1)
    (quote (gslt:result:MM0MathClassLookupV1:110 MM0MathOrdinaryV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=150 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-lookup-head-v1 target=mode relation=MM0MathClassLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0MathClassLookupV1:110 $scalar $__gslt_input_v1_0_1)
-   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $scalar (cons-atom $class ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0MathClassLookupV1:110 $class))))
+(= (gslt:fn:MM0MathClassLookupV1:110 $scalar (cons MM0MathClassTableConsV1 (cons (cons MM0MathClassEntryV1 (cons $scalar (cons $class ()))) (cons $rest ()))))
+   (quote (gslt:result:MM0MathClassLookupV1:110 $class)))
 
 ; gslt-lowered-equation-v1 source-rewrite=151 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-class-lookup-tail-v1 target=mode relation=MM0MathClassLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0MathClassLookupV1:110 $scalar $__gslt_input_v1_0_1)
-   (let (cons-atom MM0MathClassTableConsV1 (cons-atom (cons-atom MM0MathClassEntryV1 (cons-atom $other (cons-atom $class ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:MM0MathClassLookupV1:110 $scalar (cons MM0MathClassTableConsV1 (cons (cons MM0MathClassEntryV1 (cons $other (cons $class ()))) (cons $rest ()))))
    (let $_ (gslt:different (different $scalar $other))
-   (let (gslt:result:MM0MathClassLookupV1:110 $found) (gslt:fn:MM0MathClassLookupV1:110 $scalar $rest)
-   (quote (gslt:result:MM0MathClassLookupV1:110 $found))))))
+   (let (cons gslt:result:MM0MathClassLookupV1:110 (cons $found ())) (gslt:fn:MM0MathClassLookupV1:110 $scalar $rest)
+   (quote (gslt:result:MM0MathClassLookupV1:110 $found)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=152 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-reverse-scalars-v1 target=mode relation=MM0MathReverseScalarsV1 input=10 functional=semidet
 (= (gslt:fn:MM0MathReverseScalarsV1:10 $input)
-   (let (gslt:result:MM0MathReverseScalarsAccV1:110 $output) (gslt:fn:MM0MathReverseScalarsAccV1:110 $input MM0MathScalarsNilV1)
+   (let (cons gslt:result:MM0MathReverseScalarsAccV1:110 (cons $output ())) (gslt:fn:MM0MathReverseScalarsAccV1:110 $input MM0MathScalarsNilV1)
    (quote (gslt:result:MM0MathReverseScalarsV1:10 $output))))
 
 ; gslt-lowered-equation-v1 source-rewrite=153 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-reverse-scalars-acc-nil-v1 target=mode relation=MM0MathReverseScalarsAccV1 input=110 functional=semidet
@@ -1643,14 +1554,13 @@
    (quote (gslt:result:MM0MathReverseScalarsAccV1:110 $accumulator)))
 
 ; gslt-lowered-equation-v1 source-rewrite=154 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-reverse-scalars-acc-cons-v1 target=mode relation=MM0MathReverseScalarsAccV1 input=110 functional=semidet
-(= (gslt:fn:MM0MathReverseScalarsAccV1:110 $__gslt_input_v1_0_0 $accumulator)
-   (let (cons-atom MM0MathScalarsConsV1 (cons-atom $scalar (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0MathReverseScalarsAccV1:110 $output) (gslt:fn:MM0MathReverseScalarsAccV1:110 $rest (quote (MM0MathScalarsConsV1 $scalar $accumulator)))
-   (quote (gslt:result:MM0MathReverseScalarsAccV1:110 $output)))))
+(= (gslt:fn:MM0MathReverseScalarsAccV1:110 (cons MM0MathScalarsConsV1 (cons $scalar (cons $rest ()))) $accumulator)
+   (let (cons gslt:result:MM0MathReverseScalarsAccV1:110 (cons $output ())) (gslt:fn:MM0MathReverseScalarsAccV1:110 $rest (quote (MM0MathScalarsConsV1 $scalar $accumulator)))
+   (quote (gslt:result:MM0MathReverseScalarsAccV1:110 $output))))
 
 ; gslt-lowered-equation-v1 source-rewrite=155 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-reverse-tokens-v1 target=mode relation=MM0MathReverseTokensV1 input=10 functional=semidet
 (= (gslt:fn:MM0MathReverseTokensV1:10 $input)
-   (let (gslt:result:MM0MathReverseTokensAccV1:110 $output) (gslt:fn:MM0MathReverseTokensAccV1:110 $input MM0MathTokensNilV1)
+   (let (cons gslt:result:MM0MathReverseTokensAccV1:110 (cons $output ())) (gslt:fn:MM0MathReverseTokensAccV1:110 $input MM0MathTokensNilV1)
    (quote (gslt:result:MM0MathReverseTokensV1:10 $output))))
 
 ; gslt-lowered-equation-v1 source-rewrite=156 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-reverse-tokens-acc-nil-v1 target=mode relation=MM0MathReverseTokensAccV1 input=110 functional=semidet
@@ -1658,270 +1568,237 @@
    (quote (gslt:result:MM0MathReverseTokensAccV1:110 $accumulator)))
 
 ; gslt-lowered-equation-v1 source-rewrite=157 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-reverse-tokens-acc-cons-v1 target=mode relation=MM0MathReverseTokensAccV1 input=110 functional=semidet
-(= (gslt:fn:MM0MathReverseTokensAccV1:110 $__gslt_input_v1_0_0 $accumulator)
-   (let (cons-atom MM0MathTokensConsV1 (cons-atom $token (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0MathReverseTokensAccV1:110 $output) (gslt:fn:MM0MathReverseTokensAccV1:110 $rest (quote (MM0MathTokensConsV1 $token $accumulator)))
-   (quote (gslt:result:MM0MathReverseTokensAccV1:110 $output)))))
+(= (gslt:fn:MM0MathReverseTokensAccV1:110 (cons MM0MathTokensConsV1 (cons $token (cons $rest ()))) $accumulator)
+   (let (cons gslt:result:MM0MathReverseTokensAccV1:110 (cons $output ())) (gslt:fn:MM0MathReverseTokensAccV1:110 $rest (quote (MM0MathTokensConsV1 $token $accumulator)))
+   (quote (gslt:result:MM0MathReverseTokensAccV1:110 $output))))
 
 ; gslt-lowered-equation-v1 source-rewrite=158 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-lexer-flush-empty-v1 target=mode relation=MM0MathLexerFlushV1 input=10 functional=semidet
-(= (gslt:fn:MM0MathLexerFlushV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom MM0MathLexerStateV1 (cons-atom MM0MathScalarsNilV1 (cons-atom $tokens ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0MathLexerFlushV1:10 (MM0MathLexerStateV1 MM0MathScalarsNilV1 $tokens)))))
+(= (gslt:fn:MM0MathLexerFlushV1:10 (cons MM0MathLexerStateV1 (cons MM0MathScalarsNilV1 (cons $tokens ()))))
+   (quote (gslt:result:MM0MathLexerFlushV1:10 (MM0MathLexerStateV1 MM0MathScalarsNilV1 $tokens))))
 
 ; gslt-lowered-equation-v1 source-rewrite=159 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-lexer-flush-nonempty-v1 target=mode relation=MM0MathLexerFlushV1 input=10 functional=semidet
-(= (gslt:fn:MM0MathLexerFlushV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom MM0MathLexerStateV1 (cons-atom (cons-atom MM0MathScalarsConsV1 (cons-atom $head (cons-atom $tail ()))) (cons-atom $tokens ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0MathReverseScalarsV1:10 $forward) (gslt:fn:MM0MathReverseScalarsV1:10 (quote (MM0MathScalarsConsV1 $head $tail)))
-   (quote (gslt:result:MM0MathLexerFlushV1:10 (MM0MathLexerStateV1 MM0MathScalarsNilV1 (MM0MathTokensConsV1 (MM0MathTokenV1 $forward) $tokens)))))))
+(= (gslt:fn:MM0MathLexerFlushV1:10 (cons MM0MathLexerStateV1 (cons (cons MM0MathScalarsConsV1 (cons $head (cons $tail ()))) (cons $tokens ()))))
+   (let (cons gslt:result:MM0MathReverseScalarsV1:10 (cons $forward ())) (gslt:fn:MM0MathReverseScalarsV1:10 (quote (MM0MathScalarsConsV1 $head $tail)))
+   (quote (gslt:result:MM0MathLexerFlushV1:10 (MM0MathLexerStateV1 MM0MathScalarsNilV1 (MM0MathTokensConsV1 (MM0MathTokenV1 $forward) $tokens))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=160 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-lexer-step-ordinary-v1 target=mode relation=MM0MathLexerStepV1 input=1110 functional=semidet
-(= (gslt:fn:MM0MathLexerStepV1:1110 MM0MathOrdinaryV1 $scalar $__gslt_input_v1_0_2)
-   (let (cons-atom MM0MathLexerStateV1 (cons-atom $current (cons-atom $tokens ()))) $__gslt_input_v1_0_2
-   (quote (gslt:result:MM0MathLexerStepV1:1110 (MM0MathLexerStateV1 (MM0MathScalarsConsV1 $scalar $current) $tokens)))))
+(= (gslt:fn:MM0MathLexerStepV1:1110 MM0MathOrdinaryV1 $scalar (cons MM0MathLexerStateV1 (cons $current (cons $tokens ()))))
+   (quote (gslt:result:MM0MathLexerStepV1:1110 (MM0MathLexerStateV1 (MM0MathScalarsConsV1 $scalar $current) $tokens))))
 
 ; gslt-lowered-equation-v1 source-rewrite=161 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-lexer-step-whitespace-v1 target=mode relation=MM0MathLexerStepV1 input=1110 functional=semidet
 (= (gslt:fn:MM0MathLexerStepV1:1110 MM0MathWhitespaceV1 $scalar $before)
-   (let (gslt:result:MM0MathLexerFlushV1:10 $after) (gslt:fn:MM0MathLexerFlushV1:10 $before)
+   (let (cons gslt:result:MM0MathLexerFlushV1:10 (cons $after ())) (gslt:fn:MM0MathLexerFlushV1:10 $before)
    (quote (gslt:result:MM0MathLexerStepV1:1110 $after))))
 
 ; gslt-lowered-equation-v1 source-rewrite=162 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-lexer-step-left-v1 target=mode relation=MM0MathLexerStepV1 input=1110 functional=semidet
-(= (gslt:fn:MM0MathLexerStepV1:1110 MM0MathLeftDelimiterV1 $scalar $__gslt_input_v1_0_2)
-   (let (cons-atom MM0MathLexerStateV1 (cons-atom $current (cons-atom $tokens ()))) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0MathLexerFlushV1:10 $after) (gslt:fn:MM0MathLexerFlushV1:10 (quote (MM0MathLexerStateV1 (MM0MathScalarsConsV1 $scalar $current) $tokens)))
-   (quote (gslt:result:MM0MathLexerStepV1:1110 $after)))))
+(= (gslt:fn:MM0MathLexerStepV1:1110 MM0MathLeftDelimiterV1 $scalar (cons MM0MathLexerStateV1 (cons $current (cons $tokens ()))))
+   (let (cons gslt:result:MM0MathLexerFlushV1:10 (cons $after ())) (gslt:fn:MM0MathLexerFlushV1:10 (quote (MM0MathLexerStateV1 (MM0MathScalarsConsV1 $scalar $current) $tokens)))
+   (quote (gslt:result:MM0MathLexerStepV1:1110 $after))))
 
 ; gslt-lowered-equation-v1 source-rewrite=163 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-lexer-step-right-v1 target=mode relation=MM0MathLexerStepV1 input=1110 functional=semidet
 (= (gslt:fn:MM0MathLexerStepV1:1110 MM0MathRightDelimiterV1 $scalar $before)
-   (let (gslt:result:MM0MathLexerFlushV1:10 (cons-atom MM0MathLexerStateV1 (cons-atom MM0MathScalarsNilV1 (cons-atom $tokens ())))) (gslt:fn:MM0MathLexerFlushV1:10 $before)
+   (let (cons gslt:result:MM0MathLexerFlushV1:10 (cons (cons MM0MathLexerStateV1 (cons MM0MathScalarsNilV1 (cons $tokens ()))) ())) (gslt:fn:MM0MathLexerFlushV1:10 $before)
    (quote (gslt:result:MM0MathLexerStepV1:1110 (MM0MathLexerStateV1 (MM0MathScalarsConsV1 $scalar MM0MathScalarsNilV1) $tokens)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=164 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-lexer-step-both-v1 target=mode relation=MM0MathLexerStepV1 input=1110 functional=semidet
 (= (gslt:fn:MM0MathLexerStepV1:1110 MM0MathBothDelimiterV1 $scalar $before)
-   (let (gslt:result:MM0MathLexerFlushV1:10 (cons-atom MM0MathLexerStateV1 (cons-atom MM0MathScalarsNilV1 (cons-atom $tokens ())))) (gslt:fn:MM0MathLexerFlushV1:10 $before)
+   (let (cons gslt:result:MM0MathLexerFlushV1:10 (cons (cons MM0MathLexerStateV1 (cons MM0MathScalarsNilV1 (cons $tokens ()))) ())) (gslt:fn:MM0MathLexerFlushV1:10 $before)
    (quote (gslt:result:MM0MathLexerStepV1:1110 (MM0MathLexerStateV1 MM0MathScalarsNilV1 (MM0MathTokensConsV1 (MM0MathTokenV1 (MM0MathScalarsConsV1 $scalar MM0MathScalarsNilV1)) $tokens))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=165 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-lexer-finish-v1 target=mode relation=MM0MathLexerFinishV1 input=10 functional=semidet
 (= (gslt:fn:MM0MathLexerFinishV1:10 $state)
-   (let (gslt:result:MM0MathLexerFlushV1:10 (cons-atom MM0MathLexerStateV1 (cons-atom MM0MathScalarsNilV1 (cons-atom $reverseTokens ())))) (gslt:fn:MM0MathLexerFlushV1:10 $state)
-   (let (gslt:result:MM0MathReverseTokensV1:10 $tokens) (gslt:fn:MM0MathReverseTokensV1:10 $reverseTokens)
+   (let (cons gslt:result:MM0MathLexerFlushV1:10 (cons (cons MM0MathLexerStateV1 (cons MM0MathScalarsNilV1 (cons $reverseTokens ()))) ())) (gslt:fn:MM0MathLexerFlushV1:10 $state)
+   (let (cons gslt:result:MM0MathReverseTokensV1:10 (cons $tokens ())) (gslt:fn:MM0MathReverseTokensV1:10 $reverseTokens)
    (quote (gslt:result:MM0MathLexerFinishV1:10 $tokens)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=166 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-lexer-loop-nil-v1 target=mode relation=MM0MathLexerLoopV1 input=1110 functional=semidet
 (= (gslt:fn:MM0MathLexerLoopV1:1110 $table MM0MathScalarsNilV1 $state)
-   (let (gslt:result:MM0MathLexerFinishV1:10 $tokens) (gslt:fn:MM0MathLexerFinishV1:10 $state)
+   (let (cons gslt:result:MM0MathLexerFinishV1:10 (cons $tokens ())) (gslt:fn:MM0MathLexerFinishV1:10 $state)
    (quote (gslt:result:MM0MathLexerLoopV1:1110 $tokens))))
 
 ; gslt-lowered-equation-v1 source-rewrite=167 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-math-lexer-loop-cons-v1 target=mode relation=MM0MathLexerLoopV1 input=1110 functional=semidet
-(= (gslt:fn:MM0MathLexerLoopV1:1110 $table $__gslt_input_v1_0_1 $state)
-   (let (cons-atom MM0MathScalarsConsV1 (cons-atom $scalar (cons-atom $rest ()))) $__gslt_input_v1_0_1
-   (let (gslt:result:MM0MathClassLookupV1:110 $class) (gslt:fn:MM0MathClassLookupV1:110 $scalar $table)
-   (let (gslt:result:MM0MathLexerStepV1:1110 $next) (gslt:fn:MM0MathLexerStepV1:1110 $class $scalar $state)
-   (let (gslt:result:MM0MathLexerLoopV1:1110 $tokens) (gslt:fn:MM0MathLexerLoopV1:1110 $table $rest $next)
-   (quote (gslt:result:MM0MathLexerLoopV1:1110 $tokens)))))))
+(= (gslt:fn:MM0MathLexerLoopV1:1110 $table (cons MM0MathScalarsConsV1 (cons $scalar (cons $rest ()))) $state)
+   (let (cons gslt:result:MM0MathClassLookupV1:110 (cons $class ())) (gslt:fn:MM0MathClassLookupV1:110 $scalar $table)
+   (let (cons gslt:result:MM0MathLexerStepV1:1110 (cons $next ())) (gslt:fn:MM0MathLexerStepV1:1110 $class $scalar $state)
+   (let (cons gslt:result:MM0MathLexerLoopV1:1110 (cons $tokens ())) (gslt:fn:MM0MathLexerLoopV1:1110 $table $rest $next)
+   (quote (gslt:result:MM0MathLexerLoopV1:1110 $tokens))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=168 source-presentation=MM0SecondaryLexerV1 source-rule=mm0-secondary-lex-v1 target=mode relation=MM0SecondaryLexV1 input=110 functional=semidet
 (= (gslt:fn:MM0SecondaryLexV1:110 $table $scalars)
    (let gslt:result:MM0MathClassTableValidV1:1 (gslt:fn:MM0MathClassTableValidV1:1 $table)
    (let gslt:result:MM0MathClassFindV1:111 (gslt:fn:MM0MathClassFindV1:111 (quote (cp 32)) $table MM0MathWhitespaceV1)
    (let gslt:result:MM0MathClassFindV1:111 (gslt:fn:MM0MathClassFindV1:111 (quote (cp 10)) $table MM0MathWhitespaceV1)
-   (let (gslt:result:MM0MathLexerLoopV1:1110 $tokens) (gslt:fn:MM0MathLexerLoopV1:1110 $table $scalars (quote (MM0MathLexerStateV1 MM0MathScalarsNilV1 MM0MathTokensNilV1)))
+   (let (cons gslt:result:MM0MathLexerLoopV1:1110 (cons $tokens ())) (gslt:fn:MM0MathLexerLoopV1:1110 $table $scalars (quote (MM0MathLexerStateV1 MM0MathScalarsNilV1 MM0MathTokensNilV1)))
    (quote (gslt:result:MM0SecondaryLexV1:110 $tokens)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=169 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-precedence-number-v1 target=mode relation=MM0PrecedenceFromAstV1 input=11 functional=semidet
-(= (gslt:fn:MM0PrecedenceFromAstV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom node (cons-atom mm0-number (cons-atom (cons-atom pair (cons-atom $first (cons-atom $rest ()))) ()))) $__gslt_input_v1_0_0
-   (let (cons-atom MM0FinitePrecedenceV1 (cons-atom (cons-atom cons (cons-atom $first (cons-atom $rest ()))) ())) $__gslt_input_v1_0_1
-   (quote gslt:result:MM0PrecedenceFromAstV1:11))))
+(= (gslt:fn:MM0PrecedenceFromAstV1:11 (cons node (cons mm0-number (cons (cons pair (cons $first (cons $rest ()))) ()))) (cons MM0FinitePrecedenceV1 (cons (cons cons (cons $first (cons $rest ()))) ())))
+   (quote gslt:result:MM0PrecedenceFromAstV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=170 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-precedence-max-v1 target=mode relation=MM0PrecedenceFromAstV1 input=11 functional=semidet
-(= (gslt:fn:MM0PrecedenceFromAstV1:11 $__gslt_input_v1_0_0 MM0MaximumPrecedenceV1)
-   (let (cons-atom cons (cons-atom (cons-atom cp (cons-atom 109 ())) (cons-atom (cons-atom cons (cons-atom (cons-atom cp (cons-atom 97 ())) (cons-atom (cons-atom cons (cons-atom (cons-atom cp (cons-atom 120 ())) (cons-atom nil ()))) ()))) ()))) $__gslt_input_v1_0_0
-   (quote gslt:result:MM0PrecedenceFromAstV1:11)))
+(= (gslt:fn:MM0PrecedenceFromAstV1:11 (cons cons (cons (cons cp (cons 109 ())) (cons (cons cons (cons (cons cp (cons 97 ())) (cons (cons cons (cons (cons cp (cons 120 ())) (cons nil ()))) ()))) ()))) MM0MaximumPrecedenceV1)
+   (quote gslt:result:MM0PrecedenceFromAstV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=169 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-precedence-number-v1 target=mode relation=MM0PrecedenceFromAstV1 input=10 functional=semidet
-(= (gslt:fn:MM0PrecedenceFromAstV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom node (cons-atom mm0-number (cons-atom (cons-atom pair (cons-atom $first (cons-atom $rest ()))) ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0PrecedenceFromAstV1:10 (MM0FinitePrecedenceV1 (cons $first $rest))))))
+(= (gslt:fn:MM0PrecedenceFromAstV1:10 (cons node (cons mm0-number (cons (cons pair (cons $first (cons $rest ()))) ()))))
+   (quote (gslt:result:MM0PrecedenceFromAstV1:10 (MM0FinitePrecedenceV1 (cons $first $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=170 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-precedence-max-v1 target=mode relation=MM0PrecedenceFromAstV1 input=10 functional=semidet
-(= (gslt:fn:MM0PrecedenceFromAstV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom cons (cons-atom (cons-atom cp (cons-atom 109 ())) (cons-atom (cons-atom cons (cons-atom (cons-atom cp (cons-atom 97 ())) (cons-atom (cons-atom cons (cons-atom (cons-atom cp (cons-atom 120 ())) (cons-atom nil ()))) ()))) ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0PrecedenceFromAstV1:10 MM0MaximumPrecedenceV1))))
+(= (gslt:fn:MM0PrecedenceFromAstV1:10 (cons cons (cons (cons cp (cons 109 ())) (cons (cons cons (cons (cons cp (cons 97 ())) (cons (cons cons (cons (cons cp (cons 120 ())) (cons nil ()))) ()))) ()))))
+   (quote (gslt:result:MM0PrecedenceFromAstV1:10 MM0MaximumPrecedenceV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=171 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-list-length-nil-v1 target=mode relation=MM0ListLengthV1 input=10 functional=semidet
 (= (gslt:fn:MM0ListLengthV1:10 nil)
    (quote (gslt:result:MM0ListLengthV1:10 NatZeroV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=172 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-list-length-cons-v1 target=mode relation=MM0ListLengthV1 input=10 functional=semidet
-(= (gslt:fn:MM0ListLengthV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom cons (cons-atom $head (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0ListLengthV1:10 $length) (gslt:fn:MM0ListLengthV1:10 $rest)
-   (quote (gslt:result:MM0ListLengthV1:10 (NatSuccV1 $length))))))
+(= (gslt:fn:MM0ListLengthV1:10 (cons cons (cons $head (cons $rest ()))))
+   (let (cons gslt:result:MM0ListLengthV1:10 (cons $length ())) (gslt:fn:MM0ListLengthV1:10 $rest)
+   (quote (gslt:result:MM0ListLengthV1:10 (NatSuccV1 $length)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=173 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-token-list-length-nil-v1 target=mode relation=MM0MathTokenListLengthV1 input=10 functional=semidet
 (= (gslt:fn:MM0MathTokenListLengthV1:10 MM0MathTokensNilV1)
    (quote (gslt:result:MM0MathTokenListLengthV1:10 NatZeroV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=174 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-token-list-length-cons-v1 target=mode relation=MM0MathTokenListLengthV1 input=10 functional=semidet
-(= (gslt:fn:MM0MathTokenListLengthV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom MM0MathTokensConsV1 (cons-atom $head (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0MathTokenListLengthV1:10 $length) (gslt:fn:MM0MathTokenListLengthV1:10 $rest)
-   (quote (gslt:result:MM0MathTokenListLengthV1:10 (NatSuccV1 $length))))))
+(= (gslt:fn:MM0MathTokenListLengthV1:10 (cons MM0MathTokensConsV1 (cons $head (cons $rest ()))))
+   (let (cons gslt:result:MM0MathTokenListLengthV1:10 (cons $length ())) (gslt:fn:MM0MathTokenListLengthV1:10 $rest)
+   (quote (gslt:result:MM0MathTokenListLengthV1:10 (NatSuccV1 $length)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=175 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-scalars-from-list-nil-v1 target=mode relation=MM0MathScalarsFromListV1 input=10 functional=semidet
 (= (gslt:fn:MM0MathScalarsFromListV1:10 nil)
    (quote (gslt:result:MM0MathScalarsFromListV1:10 MM0MathScalarsNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=176 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-scalars-from-list-cons-v1 target=mode relation=MM0MathScalarsFromListV1 input=10 functional=semidet
-(= (gslt:fn:MM0MathScalarsFromListV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom cons (cons-atom $scalar (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0MathScalarsFromListV1:10 $after) (gslt:fn:MM0MathScalarsFromListV1:10 $rest)
-   (quote (gslt:result:MM0MathScalarsFromListV1:10 (MM0MathScalarsConsV1 $scalar $after))))))
+(= (gslt:fn:MM0MathScalarsFromListV1:10 (cons cons (cons $scalar (cons $rest ()))))
+   (let (cons gslt:result:MM0MathScalarsFromListV1:10 (cons $after ())) (gslt:fn:MM0MathScalarsFromListV1:10 $rest)
+   (quote (gslt:result:MM0MathScalarsFromListV1:10 (MM0MathScalarsConsV1 $scalar $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=177 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-term-signature-lookup-missing-v1 target=mode relation=MM0TermSignatureLookupV1 input=110 functional=semidet
 (= (gslt:fn:MM0TermSignatureLookupV1:110 $name MM0DeclarationEntriesNilV1)
    (quote (gslt:result:MM0TermSignatureLookupV1:110 MM0TermSignatureMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=178 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-term-signature-lookup-found-v1 target=mode relation=MM0TermSignatureLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0TermSignatureLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom MM0DeclarationEntriesConsV1 (cons-atom (cons-atom MM0TermEntryV1 (cons-atom $name (cons-atom $signature (cons-atom $position (cons-atom $source ()))))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0TermSignatureLookupV1:110 (MM0TermSignatureFoundV1 $signature $position)))))
+(= (gslt:fn:MM0TermSignatureLookupV1:110 $name (cons MM0DeclarationEntriesConsV1 (cons (cons MM0TermEntryV1 (cons $name (cons $signature (cons $position (cons $source ()))))) (cons $rest ()))))
+   (quote (gslt:result:MM0TermSignatureLookupV1:110 (MM0TermSignatureFoundV1 $signature $position))))
 
 ; gslt-lowered-equation-v1 source-rewrite=179 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-term-signature-lookup-tail-v1 target=mode relation=MM0TermSignatureLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0TermSignatureLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom MM0DeclarationEntriesConsV1 (cons-atom (cons-atom MM0TermEntryV1 (cons-atom $other (cons-atom $signature (cons-atom $position (cons-atom $source ()))))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:MM0TermSignatureLookupV1:110 $name (cons MM0DeclarationEntriesConsV1 (cons (cons MM0TermEntryV1 (cons $other (cons $signature (cons $position (cons $source ()))))) (cons $rest ()))))
    (let $_ (gslt:different (different $name $other))
-   (let (gslt:result:MM0TermSignatureLookupV1:110 $result) (gslt:fn:MM0TermSignatureLookupV1:110 $name $rest)
-   (quote (gslt:result:MM0TermSignatureLookupV1:110 $result))))))
+   (let (cons gslt:result:MM0TermSignatureLookupV1:110 (cons $result ())) (gslt:fn:MM0TermSignatureLookupV1:110 $name $rest)
+   (quote (gslt:result:MM0TermSignatureLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=180 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-constant-lookup-missing-v1 target=mode relation=MM0ConstantLookupV1 input=110 functional=semidet
 (= (gslt:fn:MM0ConstantLookupV1:110 $token MM0ConstantEntriesNilV1)
    (quote (gslt:result:MM0ConstantLookupV1:110 MM0ConstantMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=181 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-constant-lookup-found-v1 target=mode relation=MM0ConstantLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0ConstantLookupV1:110 $token $__gslt_input_v1_0_1)
-   (let (cons-atom MM0ConstantEntriesConsV1 (cons-atom (cons-atom MM0ConstantEntryV1 (cons-atom $token (cons-atom $precedence (cons-atom $position ())))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0ConstantLookupV1:110 (MM0ConstantFoundV1 $precedence $position)))))
+(= (gslt:fn:MM0ConstantLookupV1:110 $token (cons MM0ConstantEntriesConsV1 (cons (cons MM0ConstantEntryV1 (cons $token (cons $precedence (cons $position ())))) (cons $rest ()))))
+   (quote (gslt:result:MM0ConstantLookupV1:110 (MM0ConstantFoundV1 $precedence $position))))
 
 ; gslt-lowered-equation-v1 source-rewrite=182 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-constant-lookup-tail-v1 target=mode relation=MM0ConstantLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0ConstantLookupV1:110 $token $__gslt_input_v1_0_1)
-   (let (cons-atom MM0ConstantEntriesConsV1 (cons-atom (cons-atom MM0ConstantEntryV1 (cons-atom $other (cons-atom $precedence (cons-atom $position ())))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:MM0ConstantLookupV1:110 $token (cons MM0ConstantEntriesConsV1 (cons (cons MM0ConstantEntryV1 (cons $other (cons $precedence (cons $position ())))) (cons $rest ()))))
    (let $_ (gslt:different (different $token $other))
-   (let (gslt:result:MM0ConstantLookupV1:110 $result) (gslt:fn:MM0ConstantLookupV1:110 $token $rest)
-   (quote (gslt:result:MM0ConstantLookupV1:110 $result))))))
+   (let (cons gslt:result:MM0ConstantLookupV1:110 (cons $result ())) (gslt:fn:MM0ConstantLookupV1:110 $token $rest)
+   (quote (gslt:result:MM0ConstantLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=183 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-constant-append-nil-v1 target=mode relation=MM0ConstantEntriesAppendV1 input=110 functional=semidet
 (= (gslt:fn:MM0ConstantEntriesAppendV1:110 MM0ConstantEntriesNilV1 $entry)
    (quote (gslt:result:MM0ConstantEntriesAppendV1:110 (MM0ConstantEntriesConsV1 $entry MM0ConstantEntriesNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=184 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-constant-append-cons-v1 target=mode relation=MM0ConstantEntriesAppendV1 input=110 functional=semidet
-(= (gslt:fn:MM0ConstantEntriesAppendV1:110 $__gslt_input_v1_0_0 $entry)
-   (let (cons-atom MM0ConstantEntriesConsV1 (cons-atom $head (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0ConstantEntriesAppendV1:110 $after) (gslt:fn:MM0ConstantEntriesAppendV1:110 $rest $entry)
-   (quote (gslt:result:MM0ConstantEntriesAppendV1:110 (MM0ConstantEntriesConsV1 $head $after))))))
+(= (gslt:fn:MM0ConstantEntriesAppendV1:110 (cons MM0ConstantEntriesConsV1 (cons $head (cons $rest ()))) $entry)
+   (let (cons gslt:result:MM0ConstantEntriesAppendV1:110 (cons $after ())) (gslt:fn:MM0ConstantEntriesAppendV1:110 $rest $entry)
+   (quote (gslt:result:MM0ConstantEntriesAppendV1:110 (MM0ConstantEntriesConsV1 $head $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=185 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-prefix-lookup-missing-v1 target=mode relation=MM0PrefixLookupV1 input=110 functional=semidet
 (= (gslt:fn:MM0PrefixLookupV1:110 $token MM0PrefixEntriesNilV1)
    (quote (gslt:result:MM0PrefixLookupV1:110 MM0PrefixMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=186 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-prefix-lookup-found-v1 target=mode relation=MM0PrefixLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0PrefixLookupV1:110 $token $__gslt_input_v1_0_1)
-   (let (cons-atom MM0PrefixEntriesConsV1 (cons-atom (cons-atom MM0PrefixNotationEntryV1 (cons-atom $token (cons-atom $term (cons-atom $arity (cons-atom $precedence (cons-atom $position ())))))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0PrefixLookupV1:110 (MM0PrefixFoundV1 $position)))))
+(= (gslt:fn:MM0PrefixLookupV1:110 $token (cons MM0PrefixEntriesConsV1 (cons (cons MM0PrefixNotationEntryV1 (cons $token (cons $term (cons $arity (cons $precedence (cons $position ())))))) (cons $rest ()))))
+   (quote (gslt:result:MM0PrefixLookupV1:110 (MM0PrefixFoundV1 $position))))
 
 ; gslt-lowered-equation-v1 source-rewrite=187 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-prefix-lookup-tail-v1 target=mode relation=MM0PrefixLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0PrefixLookupV1:110 $token $__gslt_input_v1_0_1)
-   (let (cons-atom MM0PrefixEntriesConsV1 (cons-atom (cons-atom MM0PrefixNotationEntryV1 (cons-atom $other (cons-atom $term (cons-atom $arity (cons-atom $precedence (cons-atom $position ())))))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:MM0PrefixLookupV1:110 $token (cons MM0PrefixEntriesConsV1 (cons (cons MM0PrefixNotationEntryV1 (cons $other (cons $term (cons $arity (cons $precedence (cons $position ())))))) (cons $rest ()))))
    (let $_ (gslt:different (different $token $other))
-   (let (gslt:result:MM0PrefixLookupV1:110 $result) (gslt:fn:MM0PrefixLookupV1:110 $token $rest)
-   (quote (gslt:result:MM0PrefixLookupV1:110 $result))))))
+   (let (cons gslt:result:MM0PrefixLookupV1:110 (cons $result ())) (gslt:fn:MM0PrefixLookupV1:110 $token $rest)
+   (quote (gslt:result:MM0PrefixLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=188 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-prefix-append-nil-v1 target=mode relation=MM0PrefixEntriesAppendV1 input=110 functional=semidet
 (= (gslt:fn:MM0PrefixEntriesAppendV1:110 MM0PrefixEntriesNilV1 $entry)
    (quote (gslt:result:MM0PrefixEntriesAppendV1:110 (MM0PrefixEntriesConsV1 $entry MM0PrefixEntriesNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=189 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-prefix-append-cons-v1 target=mode relation=MM0PrefixEntriesAppendV1 input=110 functional=semidet
-(= (gslt:fn:MM0PrefixEntriesAppendV1:110 $__gslt_input_v1_0_0 $entry)
-   (let (cons-atom MM0PrefixEntriesConsV1 (cons-atom $head (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0PrefixEntriesAppendV1:110 $after) (gslt:fn:MM0PrefixEntriesAppendV1:110 $rest $entry)
-   (quote (gslt:result:MM0PrefixEntriesAppendV1:110 (MM0PrefixEntriesConsV1 $head $after))))))
+(= (gslt:fn:MM0PrefixEntriesAppendV1:110 (cons MM0PrefixEntriesConsV1 (cons $head (cons $rest ()))) $entry)
+   (let (cons gslt:result:MM0PrefixEntriesAppendV1:110 (cons $after ())) (gslt:fn:MM0PrefixEntriesAppendV1:110 $rest $entry)
+   (quote (gslt:result:MM0PrefixEntriesAppendV1:110 (MM0PrefixEntriesConsV1 $head $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=190 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-infix-lookup-missing-v1 target=mode relation=MM0InfixLookupV1 input=111 functional=semidet
 (= (gslt:fn:MM0InfixLookupV1:111 $token MM0InfixEntriesNilV1 MM0InfixMissingV1)
    (quote gslt:result:MM0InfixLookupV1:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=191 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-infix-lookup-found-v1 target=mode relation=MM0InfixLookupV1 input=111 functional=semidet
-(= (gslt:fn:MM0InfixLookupV1:111 $token $__gslt_input_v1_0_1 $__gslt_input_v1_0_2)
-   (let (cons-atom MM0InfixEntriesConsV1 (cons-atom (cons-atom MM0InfixNotationEntryV1 (cons-atom $token (cons-atom $term (cons-atom $associativity (cons-atom $precedence (cons-atom $position ())))))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
-   (let (cons-atom MM0InfixFoundV1 (cons-atom $position ())) $__gslt_input_v1_0_2
-   (quote gslt:result:MM0InfixLookupV1:111))))
+(= (gslt:fn:MM0InfixLookupV1:111 $token (cons MM0InfixEntriesConsV1 (cons (cons MM0InfixNotationEntryV1 (cons $token (cons $term (cons $associativity (cons $precedence (cons $position ())))))) (cons $rest ()))) (cons MM0InfixFoundV1 (cons $position ())))
+   (quote gslt:result:MM0InfixLookupV1:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=192 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-infix-lookup-tail-v1 target=mode relation=MM0InfixLookupV1 input=111 functional=semidet
-(= (gslt:fn:MM0InfixLookupV1:111 $token $__gslt_input_v1_0_1 $result)
-   (let (cons-atom MM0InfixEntriesConsV1 (cons-atom (cons-atom MM0InfixNotationEntryV1 (cons-atom $other (cons-atom $term (cons-atom $associativity (cons-atom $precedence (cons-atom $position ())))))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:MM0InfixLookupV1:111 $token (cons MM0InfixEntriesConsV1 (cons (cons MM0InfixNotationEntryV1 (cons $other (cons $term (cons $associativity (cons $precedence (cons $position ())))))) (cons $rest ()))) $result)
    (let $_ (gslt:different (different $token $other))
    (let gslt:result:MM0InfixLookupV1:111 (gslt:fn:MM0InfixLookupV1:111 $token $rest $result)
-   (quote gslt:result:MM0InfixLookupV1:111)))))
+   (quote gslt:result:MM0InfixLookupV1:111))))
 
 ; gslt-lowered-equation-v1 source-rewrite=190 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-infix-lookup-missing-v1 target=mode relation=MM0InfixLookupV1 input=110 functional=semidet
 (= (gslt:fn:MM0InfixLookupV1:110 $token MM0InfixEntriesNilV1)
    (quote (gslt:result:MM0InfixLookupV1:110 MM0InfixMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=191 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-infix-lookup-found-v1 target=mode relation=MM0InfixLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0InfixLookupV1:110 $token $__gslt_input_v1_0_1)
-   (let (cons-atom MM0InfixEntriesConsV1 (cons-atom (cons-atom MM0InfixNotationEntryV1 (cons-atom $token (cons-atom $term (cons-atom $associativity (cons-atom $precedence (cons-atom $position ())))))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0InfixLookupV1:110 (MM0InfixFoundV1 $position)))))
+(= (gslt:fn:MM0InfixLookupV1:110 $token (cons MM0InfixEntriesConsV1 (cons (cons MM0InfixNotationEntryV1 (cons $token (cons $term (cons $associativity (cons $precedence (cons $position ())))))) (cons $rest ()))))
+   (quote (gslt:result:MM0InfixLookupV1:110 (MM0InfixFoundV1 $position))))
 
 ; gslt-lowered-equation-v1 source-rewrite=192 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-infix-lookup-tail-v1 target=mode relation=MM0InfixLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0InfixLookupV1:110 $token $__gslt_input_v1_0_1)
-   (let (cons-atom MM0InfixEntriesConsV1 (cons-atom (cons-atom MM0InfixNotationEntryV1 (cons-atom $other (cons-atom $term (cons-atom $associativity (cons-atom $precedence (cons-atom $position ())))))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:MM0InfixLookupV1:110 $token (cons MM0InfixEntriesConsV1 (cons (cons MM0InfixNotationEntryV1 (cons $other (cons $term (cons $associativity (cons $precedence (cons $position ())))))) (cons $rest ()))))
    (let $_ (gslt:different (different $token $other))
-   (let (gslt:result:MM0InfixLookupV1:110 $result) (gslt:fn:MM0InfixLookupV1:110 $token $rest)
-   (quote (gslt:result:MM0InfixLookupV1:110 $result))))))
+   (let (cons gslt:result:MM0InfixLookupV1:110 (cons $result ())) (gslt:fn:MM0InfixLookupV1:110 $token $rest)
+   (quote (gslt:result:MM0InfixLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=193 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-infix-append-nil-v1 target=mode relation=MM0InfixEntriesAppendV1 input=110 functional=semidet
 (= (gslt:fn:MM0InfixEntriesAppendV1:110 MM0InfixEntriesNilV1 $entry)
    (quote (gslt:result:MM0InfixEntriesAppendV1:110 (MM0InfixEntriesConsV1 $entry MM0InfixEntriesNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=194 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-infix-append-cons-v1 target=mode relation=MM0InfixEntriesAppendV1 input=110 functional=semidet
-(= (gslt:fn:MM0InfixEntriesAppendV1:110 $__gslt_input_v1_0_0 $entry)
-   (let (cons-atom MM0InfixEntriesConsV1 (cons-atom $head (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0InfixEntriesAppendV1:110 $after) (gslt:fn:MM0InfixEntriesAppendV1:110 $rest $entry)
-   (quote (gslt:result:MM0InfixEntriesAppendV1:110 (MM0InfixEntriesConsV1 $head $after))))))
+(= (gslt:fn:MM0InfixEntriesAppendV1:110 (cons MM0InfixEntriesConsV1 (cons $head (cons $rest ()))) $entry)
+   (let (cons gslt:result:MM0InfixEntriesAppendV1:110 (cons $after ())) (gslt:fn:MM0InfixEntriesAppendV1:110 $rest $entry)
+   (quote (gslt:result:MM0InfixEntriesAppendV1:110 (MM0InfixEntriesConsV1 $head $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=198 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-constant-v1 target=mode relation=MM0NotationConstantV1 input=110 functional=semidet
-(= (gslt:fn:MM0NotationConstantV1:110 $delimiterTable $__gslt_input_v1_0_1)
-   (let (cons-atom node (cons-atom mm0-math-string (cons-atom $scalars ()))) $__gslt_input_v1_0_1
-   (let (gslt:result:MM0MathScalarsFromListV1:10 $mathScalars) (gslt:fn:MM0MathScalarsFromListV1:10 $scalars)
-   (let (gslt:result:MM0SecondaryLexV1:110 $tokens) (gslt:fn:MM0SecondaryLexV1:110 $delimiterTable $mathScalars)
-   (let (gslt:result:MM0NotationConstantClassV1:110 $result) (gslt:fn:MM0NotationConstantClassV1:110 $tokens $scalars)
-   (quote (gslt:result:MM0NotationConstantV1:110 $result)))))))
+(= (gslt:fn:MM0NotationConstantV1:110 $delimiterTable (cons node (cons mm0-math-string (cons $scalars ()))))
+   (let (cons gslt:result:MM0MathScalarsFromListV1:10 (cons $mathScalars ())) (gslt:fn:MM0MathScalarsFromListV1:10 $scalars)
+   (let (cons gslt:result:MM0SecondaryLexV1:110 (cons $tokens ())) (gslt:fn:MM0SecondaryLexV1:110 $delimiterTable $mathScalars)
+   (let (cons gslt:result:MM0NotationConstantClassV1:110 (cons $result ())) (gslt:fn:MM0NotationConstantClassV1:110 $tokens $scalars)
+   (quote (gslt:result:MM0NotationConstantV1:110 $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=199 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-constant-class-single-v1 target=mode relation=MM0NotationConstantClassV1 input=110 functional=semidet
-(= (gslt:fn:MM0NotationConstantClassV1:110 $__gslt_input_v1_0_0 $source)
-   (let (cons-atom MM0MathTokensConsV1 (cons-atom (cons-atom MM0MathTokenV1 (cons-atom $token ())) (cons-atom MM0MathTokensNilV1 ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0NotationTokenAllowedV1:10 $result) (gslt:fn:MM0NotationTokenAllowedV1:10 $token)
-   (quote (gslt:result:MM0NotationConstantClassV1:110 $result)))))
+(= (gslt:fn:MM0NotationConstantClassV1:110 (cons MM0MathTokensConsV1 (cons (cons MM0MathTokenV1 (cons $token ())) (cons MM0MathTokensNilV1 ()))) $source)
+   (let (cons gslt:result:MM0NotationTokenAllowedV1:10 (cons $result ())) (gslt:fn:MM0NotationTokenAllowedV1:10 $token)
+   (quote (gslt:result:MM0NotationConstantClassV1:110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=200 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-constant-class-empty-v1 target=mode relation=MM0NotationConstantClassV1 input=110 functional=semidet
 (= (gslt:fn:MM0NotationConstantClassV1:110 MM0MathTokensNilV1 $source)
    (quote (gslt:result:MM0NotationConstantClassV1:110 (MM0CheckRefusedV1 (MM0RefusedNotationConstantTokenCountV1 $source NatZeroV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=201 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-constant-class-many-v1 target=mode relation=MM0NotationConstantClassV1 input=110 functional=semidet
-(= (gslt:fn:MM0NotationConstantClassV1:110 $__gslt_input_v1_0_0 $source)
-   (let (cons-atom MM0MathTokensConsV1 (cons-atom $first (cons-atom (cons-atom MM0MathTokensConsV1 (cons-atom $second (cons-atom $rest ()))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0MathTokenListLengthV1:10 $count) (gslt:fn:MM0MathTokenListLengthV1:10 (quote (MM0MathTokensConsV1 $first (MM0MathTokensConsV1 $second $rest))))
-   (quote (gslt:result:MM0NotationConstantClassV1:110 (MM0CheckRefusedV1 (MM0RefusedNotationConstantTokenCountV1 $source $count)))))))
+(= (gslt:fn:MM0NotationConstantClassV1:110 (cons MM0MathTokensConsV1 (cons $first (cons (cons MM0MathTokensConsV1 (cons $second (cons $rest ()))) ()))) $source)
+   (let (cons gslt:result:MM0MathTokenListLengthV1:10 (cons $count ())) (gslt:fn:MM0MathTokenListLengthV1:10 (quote (MM0MathTokensConsV1 $first (MM0MathTokensConsV1 $second $rest))))
+   (quote (gslt:result:MM0NotationConstantClassV1:110 (MM0CheckRefusedV1 (MM0RefusedNotationConstantTokenCountV1 $source $count))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=202 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-token-left-paren-v1 target=mode relation=MM0NotationTokenAllowedV1 input=10 functional=semidet
-(= (gslt:fn:MM0NotationTokenAllowedV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom MM0MathScalarsConsV1 (cons-atom (cons-atom cp (cons-atom 40 ())) (cons-atom MM0MathScalarsNilV1 ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0NotationTokenAllowedV1:10 (MM0CheckRefusedV1 (MM0RefusedNotationParenthesisV1 (cp 40) MM0LeftParenthesisV1))))))
+(= (gslt:fn:MM0NotationTokenAllowedV1:10 (cons MM0MathScalarsConsV1 (cons (cons cp (cons 40 ())) (cons MM0MathScalarsNilV1 ()))))
+   (quote (gslt:result:MM0NotationTokenAllowedV1:10 (MM0CheckRefusedV1 (MM0RefusedNotationParenthesisV1 (cp 40) MM0LeftParenthesisV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=203 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-token-right-paren-v1 target=mode relation=MM0NotationTokenAllowedV1 input=10 functional=semidet
-(= (gslt:fn:MM0NotationTokenAllowedV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom MM0MathScalarsConsV1 (cons-atom (cons-atom cp (cons-atom 41 ())) (cons-atom MM0MathScalarsNilV1 ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0NotationTokenAllowedV1:10 (MM0CheckRefusedV1 (MM0RefusedNotationParenthesisV1 (cp 41) MM0RightParenthesisV1))))))
+(= (gslt:fn:MM0NotationTokenAllowedV1:10 (cons MM0MathScalarsConsV1 (cons (cons cp (cons 41 ())) (cons MM0MathScalarsNilV1 ()))))
+   (quote (gslt:result:MM0NotationTokenAllowedV1:10 (MM0CheckRefusedV1 (MM0RefusedNotationParenthesisV1 (cp 41) MM0RightParenthesisV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=204 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-token-allowed-v1 target=mode relation=MM0NotationTokenAllowedV1 input=10 functional=semidet
 (= (gslt:fn:MM0NotationTokenAllowedV1:10 $token)
@@ -1930,31 +1807,26 @@
    (quote (gslt:result:MM0NotationTokenAllowedV1:10 (MM0CheckAcceptedV1 $token))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=205 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-prepare-prefix-v1 target=mode relation=MM0PrepareSimpleNotationV1 input=11111110 functional=semidet
-(= (gslt:fn:MM0PrepareSimpleNotationV1:11111110 $position MM0PrefixNotationKindV1 $termName $__gslt_input_v1_0_3 $delimiterTable $constantAst $precedenceAst)
-   (let (cons-atom MM0TermSignatureV1 (cons-atom $binders (cons-atom $returnType ()))) $__gslt_input_v1_0_3
-   (let (gslt:result:MM0ListLengthV1:10 $arity) (gslt:fn:MM0ListLengthV1:10 $binders)
-   (let (gslt:result:MM0PrecedenceFromAstV1:10 $precedence) (gslt:fn:MM0PrecedenceFromAstV1:10 $precedenceAst)
-   (let (gslt:result:MM0NotationConstantV1:110 $constantResult) (gslt:fn:MM0NotationConstantV1:110 $delimiterTable $constantAst)
-   (let (gslt:result:MM0PreparePrefixAfterConstantV1:1111110 $result) (gslt:fn:MM0PreparePrefixAfterConstantV1:1111110 $position $termName $arity $precedence $delimiterTable $constantResult)
-   (quote (gslt:result:MM0PrepareSimpleNotationV1:11111110 $result))))))))
-
-; gslt-lowered-equation-v1 source-rewrite=208 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-prepare-infix-v1 target=mode relation=MM0PrepareSimpleNotationV1 input=11111110 functional=semidet
-(= (gslt:fn:MM0PrepareSimpleNotationV1:11111110 $position $__gslt_input_v1_0_1 $termName $__gslt_input_v1_0_3 $delimiterTable $constantAst $precedenceAst)
-   (let (cons-atom MM0InfixNotationKindV1 (cons-atom $associativity ())) $__gslt_input_v1_0_1
-   (let (cons-atom MM0TermSignatureV1 (cons-atom $binders (cons-atom $returnType ()))) $__gslt_input_v1_0_3
-   (let (gslt:result:MM0ListLengthV1:10 $arity) (gslt:fn:MM0ListLengthV1:10 $binders)
-   (let (gslt:result:MM0PrepareInfixAfterArityV1:11111110 $result) (gslt:fn:MM0PrepareInfixAfterArityV1:11111110 $position $termName $associativity $arity $constantAst $precedenceAst $delimiterTable)
+(= (gslt:fn:MM0PrepareSimpleNotationV1:11111110 $position MM0PrefixNotationKindV1 $termName (cons MM0TermSignatureV1 (cons $binders (cons $returnType ()))) $delimiterTable $constantAst $precedenceAst)
+   (let (cons gslt:result:MM0ListLengthV1:10 (cons $arity ())) (gslt:fn:MM0ListLengthV1:10 $binders)
+   (let (cons gslt:result:MM0PrecedenceFromAstV1:10 (cons $precedence ())) (gslt:fn:MM0PrecedenceFromAstV1:10 $precedenceAst)
+   (let (cons gslt:result:MM0NotationConstantV1:110 (cons $constantResult ())) (gslt:fn:MM0NotationConstantV1:110 $delimiterTable $constantAst)
+   (let (cons gslt:result:MM0PreparePrefixAfterConstantV1:1111110 (cons $result ())) (gslt:fn:MM0PreparePrefixAfterConstantV1:1111110 $position $termName $arity $precedence $delimiterTable $constantResult)
    (quote (gslt:result:MM0PrepareSimpleNotationV1:11111110 $result)))))))
 
+; gslt-lowered-equation-v1 source-rewrite=208 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-prepare-infix-v1 target=mode relation=MM0PrepareSimpleNotationV1 input=11111110 functional=semidet
+(= (gslt:fn:MM0PrepareSimpleNotationV1:11111110 $position (cons MM0InfixNotationKindV1 (cons $associativity ())) $termName (cons MM0TermSignatureV1 (cons $binders (cons $returnType ()))) $delimiterTable $constantAst $precedenceAst)
+   (let (cons gslt:result:MM0ListLengthV1:10 (cons $arity ())) (gslt:fn:MM0ListLengthV1:10 $binders)
+   (let (cons gslt:result:MM0PrepareInfixAfterArityV1:11111110 (cons $result ())) (gslt:fn:MM0PrepareInfixAfterArityV1:11111110 $position $termName $associativity $arity $constantAst $precedenceAst $delimiterTable)
+   (quote (gslt:result:MM0PrepareSimpleNotationV1:11111110 $result)))))
+
 ; gslt-lowered-equation-v1 source-rewrite=206 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-prepare-prefix-constant-accepted-v1 target=mode relation=MM0PreparePrefixAfterConstantV1 input=1111110 functional=semidet
-(= (gslt:fn:MM0PreparePrefixAfterConstantV1:1111110 $position $termName $arity $precedence $delimiterTable $__gslt_input_v1_0_5)
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom $token ())) $__gslt_input_v1_0_5
-   (quote (gslt:result:MM0PreparePrefixAfterConstantV1:1111110 (MM0CheckAcceptedV1 (MM0PreparedSimpleNotationV1 $token $precedence (MM0PrefixNotationEntryV1 $token $termName $arity $precedence $position)))))))
+(= (gslt:fn:MM0PreparePrefixAfterConstantV1:1111110 $position $termName $arity $precedence $delimiterTable (cons MM0CheckAcceptedV1 (cons $token ())))
+   (quote (gslt:result:MM0PreparePrefixAfterConstantV1:1111110 (MM0CheckAcceptedV1 (MM0PreparedSimpleNotationV1 $token $precedence (MM0PrefixNotationEntryV1 $token $termName $arity $precedence $position))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=207 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-prepare-prefix-constant-refused-v1 target=mode relation=MM0PreparePrefixAfterConstantV1 input=1111110 functional=semidet
-(= (gslt:fn:MM0PreparePrefixAfterConstantV1:1111110 $position $termName $arity $precedence $delimiterTable $__gslt_input_v1_0_5)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_5
-   (quote (gslt:result:MM0PreparePrefixAfterConstantV1:1111110 (MM0CheckRefusedV1 $reason)))))
+(= (gslt:fn:MM0PreparePrefixAfterConstantV1:1111110 $position $termName $arity $precedence $delimiterTable (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0PreparePrefixAfterConstantV1:1111110 (MM0CheckRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=209 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-prepare-infix-arity-refused-v1 target=mode relation=MM0PrepareInfixAfterArityV1 input=11111110 functional=semidet
 (= (gslt:fn:MM0PrepareInfixAfterArityV1:11111110 $position $termName $associativity $arity $constantAst $precedenceAst $delimiterTable)
@@ -1962,393 +1834,316 @@
    (quote (gslt:result:MM0PrepareInfixAfterArityV1:11111110 (MM0CheckRefusedV1 (MM0RefusedInfixArityV1 $position $termName $arity))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=210 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-prepare-infix-max-refused-v1 target=mode relation=MM0PrepareInfixAfterArityV1 input=11111110 functional=semidet
-(= (gslt:fn:MM0PrepareInfixAfterArityV1:11111110 $position $termName $associativity $__gslt_input_v1_0_3 $constantAst $precedenceAst $delimiterTable)
-   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) $__gslt_input_v1_0_3
+(= (gslt:fn:MM0PrepareInfixAfterArityV1:11111110 $position $termName $associativity (cons NatSuccV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ())) $constantAst $precedenceAst $delimiterTable)
    (let gslt:result:MM0PrecedenceFromAstV1:11 (gslt:fn:MM0PrecedenceFromAstV1:11 $precedenceAst MM0MaximumPrecedenceV1)
-   (quote (gslt:result:MM0PrepareInfixAfterArityV1:11111110 (MM0CheckRefusedV1 (MM0RefusedInfixMaximumPrecedenceV1 $position $termName)))))))
+   (quote (gslt:result:MM0PrepareInfixAfterArityV1:11111110 (MM0CheckRefusedV1 (MM0RefusedInfixMaximumPrecedenceV1 $position $termName))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=211 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-prepare-infix-finite-v1 target=mode relation=MM0PrepareInfixAfterArityV1 input=11111110 functional=semidet
-(= (gslt:fn:MM0PrepareInfixAfterArityV1:11111110 $position $termName $associativity $__gslt_input_v1_0_3 $constantAst $precedenceAst $delimiterTable)
-   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) ())) $__gslt_input_v1_0_3
-   (let (gslt:result:MM0PrecedenceFromAstV1:10 (cons-atom MM0FinitePrecedenceV1 (cons-atom $precedence ()))) (gslt:fn:MM0PrecedenceFromAstV1:10 $precedenceAst)
-   (let (gslt:result:MM0NotationConstantV1:110 $constantResult) (gslt:fn:MM0NotationConstantV1:110 $delimiterTable $constantAst)
-   (let (gslt:result:MM0PrepareInfixAfterConstantV1:111110 $result) (gslt:fn:MM0PrepareInfixAfterConstantV1:111110 $position $termName $associativity $precedence $constantResult)
-   (quote (gslt:result:MM0PrepareInfixAfterArityV1:11111110 $result)))))))
+(= (gslt:fn:MM0PrepareInfixAfterArityV1:11111110 $position $termName $associativity (cons NatSuccV1 (cons (cons NatSuccV1 (cons NatZeroV1 ())) ())) $constantAst $precedenceAst $delimiterTable)
+   (let (cons gslt:result:MM0PrecedenceFromAstV1:10 (cons (cons MM0FinitePrecedenceV1 (cons $precedence ())) ())) (gslt:fn:MM0PrecedenceFromAstV1:10 $precedenceAst)
+   (let (cons gslt:result:MM0NotationConstantV1:110 (cons $constantResult ())) (gslt:fn:MM0NotationConstantV1:110 $delimiterTable $constantAst)
+   (let (cons gslt:result:MM0PrepareInfixAfterConstantV1:111110 (cons $result ())) (gslt:fn:MM0PrepareInfixAfterConstantV1:111110 $position $termName $associativity $precedence $constantResult)
+   (quote (gslt:result:MM0PrepareInfixAfterArityV1:11111110 $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=212 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-prepare-infix-constant-accepted-v1 target=mode relation=MM0PrepareInfixAfterConstantV1 input=111110 functional=semidet
-(= (gslt:fn:MM0PrepareInfixAfterConstantV1:111110 $position $termName $associativity $precedence $__gslt_input_v1_0_4)
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom $token ())) $__gslt_input_v1_0_4
-   (quote (gslt:result:MM0PrepareInfixAfterConstantV1:111110 (MM0CheckAcceptedV1 (MM0PreparedSimpleNotationV1 $token (MM0FinitePrecedenceV1 $precedence) (MM0InfixNotationEntryV1 $token $termName $associativity (MM0FinitePrecedenceV1 $precedence) $position)))))))
+(= (gslt:fn:MM0PrepareInfixAfterConstantV1:111110 $position $termName $associativity $precedence (cons MM0CheckAcceptedV1 (cons $token ())))
+   (quote (gslt:result:MM0PrepareInfixAfterConstantV1:111110 (MM0CheckAcceptedV1 (MM0PreparedSimpleNotationV1 $token (MM0FinitePrecedenceV1 $precedence) (MM0InfixNotationEntryV1 $token $termName $associativity (MM0FinitePrecedenceV1 $precedence) $position))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=213 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-prepare-infix-constant-refused-v1 target=mode relation=MM0PrepareInfixAfterConstantV1 input=111110 functional=semidet
-(= (gslt:fn:MM0PrepareInfixAfterConstantV1:111110 $position $termName $associativity $precedence $__gslt_input_v1_0_4)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_4
-   (quote (gslt:result:MM0PrepareInfixAfterConstantV1:111110 (MM0CheckRefusedV1 $reason)))))
+(= (gslt:fn:MM0PrepareInfixAfterConstantV1:111110 $position $termName $associativity $precedence (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0PrepareInfixAfterConstantV1:111110 (MM0CheckRefusedV1 $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=214 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-install-prefix-v1 target=mode relation=MM0InstallSimpleNotationV1 input=11101 functional=semidet
-(= (gslt:fn:MM0InstallSimpleNotationV1:11101 $position $__gslt_input_v1_0_1 $__gslt_input_v1_0_2 $source)
-   (let (cons-atom MM0PreparedSimpleNotationV1 (cons-atom $token (cons-atom $precedence (cons-atom (cons-atom MM0PrefixNotationEntryV1 (cons-atom $token (cons-atom $term (cons-atom $arity (cons-atom $precedence (cons-atom $position ())))))) ())))) $__gslt_input_v1_0_1
-   (let (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom $infixes ()))))) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0ConstantLookupV1:110 $constantLookup) (gslt:fn:MM0ConstantLookupV1:110 $token $constants)
-   (let (gslt:result:MM0PrefixLookupV1:110 $prefixLookup) (gslt:fn:MM0PrefixLookupV1:110 $token $prefixes)
-   (let (gslt:result:MM0InstallPrefixFromLookupsV1:111110 $result) (gslt:fn:MM0InstallPrefixFromLookupsV1:111110 $position (quote (MM0PreparedSimpleNotationV1 $token $precedence (MM0PrefixNotationEntryV1 $token $term $arity $precedence $position))) (quote (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $infixes)) $constantLookup $prefixLookup)
-   (quote (gslt:result:MM0InstallSimpleNotationV1:11101 $result))))))))
+(= (gslt:fn:MM0InstallSimpleNotationV1:11101 $position (cons MM0PreparedSimpleNotationV1 (cons $token (cons $precedence (cons (cons MM0PrefixNotationEntryV1 (cons $token (cons $term (cons $arity (cons $precedence (cons $position ())))))) ())))) (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons $infixes ()))))) $source)
+   (let (cons gslt:result:MM0ConstantLookupV1:110 (cons $constantLookup ())) (gslt:fn:MM0ConstantLookupV1:110 $token $constants)
+   (let (cons gslt:result:MM0PrefixLookupV1:110 (cons $prefixLookup ())) (gslt:fn:MM0PrefixLookupV1:110 $token $prefixes)
+   (let (cons gslt:result:MM0InstallPrefixFromLookupsV1:111110 (cons $result ())) (gslt:fn:MM0InstallPrefixFromLookupsV1:111110 $position (quote (MM0PreparedSimpleNotationV1 $token $precedence (MM0PrefixNotationEntryV1 $token $term $arity $precedence $position))) (quote (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $infixes)) $constantLookup $prefixLookup)
+   (quote (gslt:result:MM0InstallSimpleNotationV1:11101 $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=215 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-install-infix-v1 target=mode relation=MM0InstallSimpleNotationV1 input=11101 functional=semidet
-(= (gslt:fn:MM0InstallSimpleNotationV1:11101 $position $__gslt_input_v1_0_1 $__gslt_input_v1_0_2 $source)
-   (let (cons-atom MM0PreparedSimpleNotationV1 (cons-atom $token (cons-atom $precedence (cons-atom (cons-atom MM0InfixNotationEntryV1 (cons-atom $token (cons-atom $term (cons-atom $associativity (cons-atom $precedence (cons-atom $position ())))))) ())))) $__gslt_input_v1_0_1
-   (let (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom $infixes ()))))) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0ConstantLookupV1:110 $constantLookup) (gslt:fn:MM0ConstantLookupV1:110 $token $constants)
-   (let (gslt:result:MM0InfixLookupV1:110 $infixLookup) (gslt:fn:MM0InfixLookupV1:110 $token $infixes)
-   (let (gslt:result:MM0InstallInfixFromLookupsV1:111110 $result) (gslt:fn:MM0InstallInfixFromLookupsV1:111110 $position (quote (MM0PreparedSimpleNotationV1 $token $precedence (MM0InfixNotationEntryV1 $token $term $associativity $precedence $position))) (quote (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $infixes)) $constantLookup $infixLookup)
-   (quote (gslt:result:MM0InstallSimpleNotationV1:11101 $result))))))))
+(= (gslt:fn:MM0InstallSimpleNotationV1:11101 $position (cons MM0PreparedSimpleNotationV1 (cons $token (cons $precedence (cons (cons MM0InfixNotationEntryV1 (cons $token (cons $term (cons $associativity (cons $precedence (cons $position ())))))) ())))) (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons $infixes ()))))) $source)
+   (let (cons gslt:result:MM0ConstantLookupV1:110 (cons $constantLookup ())) (gslt:fn:MM0ConstantLookupV1:110 $token $constants)
+   (let (cons gslt:result:MM0InfixLookupV1:110 (cons $infixLookup ())) (gslt:fn:MM0InfixLookupV1:110 $token $infixes)
+   (let (cons gslt:result:MM0InstallInfixFromLookupsV1:111110 (cons $result ())) (gslt:fn:MM0InstallInfixFromLookupsV1:111110 $position (quote (MM0PreparedSimpleNotationV1 $token $precedence (MM0InfixNotationEntryV1 $token $term $associativity $precedence $position))) (quote (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $infixes)) $constantLookup $infixLookup)
+   (quote (gslt:result:MM0InstallSimpleNotationV1:11101 $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=216 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-install-prefix-new-constant-v1 target=mode relation=MM0InstallPrefixFromLookupsV1 input=111110 functional=semidet
-(= (gslt:fn:MM0InstallPrefixFromLookupsV1:111110 $position $__gslt_input_v1_0_1 $__gslt_input_v1_0_2 MM0ConstantMissingV1 MM0PrefixMissingV1)
-   (let (cons-atom MM0PreparedSimpleNotationV1 (cons-atom $token (cons-atom $precedence (cons-atom (cons-atom MM0PrefixNotationEntryV1 (cons-atom $token (cons-atom $term (cons-atom $arity (cons-atom $precedence (cons-atom $position ())))))) ())))) $__gslt_input_v1_0_1
-   (let (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom $infixes ()))))) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0ConstantEntriesAppendV1:110 $afterConstants) (gslt:fn:MM0ConstantEntriesAppendV1:110 $constants (quote (MM0ConstantEntryV1 $token $precedence $position)))
-   (let (gslt:result:MM0PrefixEntriesAppendV1:110 $afterPrefixes) (gslt:fn:MM0PrefixEntriesAppendV1:110 $prefixes (quote (MM0PrefixNotationEntryV1 $token $term $arity $precedence $position)))
-   (quote (gslt:result:MM0InstallPrefixFromLookupsV1:111110 (MM0NotationStepAcceptedV1 (MM0NotationEnvironmentV1 $delimiters $afterConstants $afterPrefixes $infixes) (MM0DeclaredSimpleNotationV1 $position $term MM0PrefixNotationKindV1 $token)))))))))
+(= (gslt:fn:MM0InstallPrefixFromLookupsV1:111110 $position (cons MM0PreparedSimpleNotationV1 (cons $token (cons $precedence (cons (cons MM0PrefixNotationEntryV1 (cons $token (cons $term (cons $arity (cons $precedence (cons $position ())))))) ())))) (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons $infixes ()))))) MM0ConstantMissingV1 MM0PrefixMissingV1)
+   (let (cons gslt:result:MM0ConstantEntriesAppendV1:110 (cons $afterConstants ())) (gslt:fn:MM0ConstantEntriesAppendV1:110 $constants (quote (MM0ConstantEntryV1 $token $precedence $position)))
+   (let (cons gslt:result:MM0PrefixEntriesAppendV1:110 (cons $afterPrefixes ())) (gslt:fn:MM0PrefixEntriesAppendV1:110 $prefixes (quote (MM0PrefixNotationEntryV1 $token $term $arity $precedence $position)))
+   (quote (gslt:result:MM0InstallPrefixFromLookupsV1:111110 (MM0NotationStepAcceptedV1 (MM0NotationEnvironmentV1 $delimiters $afterConstants $afterPrefixes $infixes) (MM0DeclaredSimpleNotationV1 $position $term MM0PrefixNotationKindV1 $token)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=217 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-install-prefix-existing-constant-v1 target=mode relation=MM0InstallPrefixFromLookupsV1 input=111110 functional=semidet
-(= (gslt:fn:MM0InstallPrefixFromLookupsV1:111110 $position $__gslt_input_v1_0_1 $__gslt_input_v1_0_2 $__gslt_input_v1_0_3 MM0PrefixMissingV1)
-   (let (cons-atom MM0PreparedSimpleNotationV1 (cons-atom $token (cons-atom $precedence (cons-atom (cons-atom MM0PrefixNotationEntryV1 (cons-atom $token (cons-atom $term (cons-atom $arity (cons-atom $precedence (cons-atom $position ())))))) ())))) $__gslt_input_v1_0_1
-   (let (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom $infixes ()))))) $__gslt_input_v1_0_2
-   (let (cons-atom MM0ConstantFoundV1 (cons-atom $precedence (cons-atom $constantPosition ()))) $__gslt_input_v1_0_3
-   (let (gslt:result:MM0PrefixEntriesAppendV1:110 $afterPrefixes) (gslt:fn:MM0PrefixEntriesAppendV1:110 $prefixes (quote (MM0PrefixNotationEntryV1 $token $term $arity $precedence $position)))
-   (quote (gslt:result:MM0InstallPrefixFromLookupsV1:111110 (MM0NotationStepAcceptedV1 (MM0NotationEnvironmentV1 $delimiters $constants $afterPrefixes $infixes) (MM0DeclaredSimpleNotationV1 $position $term MM0PrefixNotationKindV1 $token)))))))))
+(= (gslt:fn:MM0InstallPrefixFromLookupsV1:111110 $position (cons MM0PreparedSimpleNotationV1 (cons $token (cons $precedence (cons (cons MM0PrefixNotationEntryV1 (cons $token (cons $term (cons $arity (cons $precedence (cons $position ())))))) ())))) (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons $infixes ()))))) (cons MM0ConstantFoundV1 (cons $precedence (cons $constantPosition ()))) MM0PrefixMissingV1)
+   (let (cons gslt:result:MM0PrefixEntriesAppendV1:110 (cons $afterPrefixes ())) (gslt:fn:MM0PrefixEntriesAppendV1:110 $prefixes (quote (MM0PrefixNotationEntryV1 $token $term $arity $precedence $position)))
+   (quote (gslt:result:MM0InstallPrefixFromLookupsV1:111110 (MM0NotationStepAcceptedV1 (MM0NotationEnvironmentV1 $delimiters $constants $afterPrefixes $infixes) (MM0DeclaredSimpleNotationV1 $position $term MM0PrefixNotationKindV1 $token))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=220 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-install-prefix-precedence-conflict-v1 target=mode relation=MM0InstallPrefixFromLookupsV1 input=111110 functional=semidet
-(= (gslt:fn:MM0InstallPrefixFromLookupsV1:111110 $position $__gslt_input_v1_0_1 $__gslt_input_v1_0_2 $__gslt_input_v1_0_3 $prefixLookup)
-   (let (cons-atom MM0PreparedSimpleNotationV1 (cons-atom $token (cons-atom $newPrecedence (cons-atom (cons-atom MM0PrefixNotationEntryV1 (cons-atom $token (cons-atom $term (cons-atom $arity (cons-atom $newPrecedence (cons-atom $position ())))))) ())))) $__gslt_input_v1_0_1
-   (let (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom $infixes ()))))) $__gslt_input_v1_0_2
-   (let (cons-atom MM0ConstantFoundV1 (cons-atom $oldPrecedence (cons-atom $constantPosition ()))) $__gslt_input_v1_0_3
+(= (gslt:fn:MM0InstallPrefixFromLookupsV1:111110 $position (cons MM0PreparedSimpleNotationV1 (cons $token (cons $newPrecedence (cons (cons MM0PrefixNotationEntryV1 (cons $token (cons $term (cons $arity (cons $newPrecedence (cons $position ())))))) ())))) (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons $infixes ()))))) (cons MM0ConstantFoundV1 (cons $oldPrecedence (cons $constantPosition ()))) $prefixLookup)
    (let $_ (gslt:different (different $oldPrecedence $newPrecedence))
-   (quote (gslt:result:MM0InstallPrefixFromLookupsV1:111110 (MM0NotationStepRefusedV1 (MM0RefusedNotationPrecedenceConflictV1 $position $token $oldPrecedence $newPrecedence) (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $infixes) (MM0RefusedNotationPrecedenceConflictV1 $position $token $oldPrecedence $newPrecedence)))))))))
+   (quote (gslt:result:MM0InstallPrefixFromLookupsV1:111110 (MM0NotationStepRefusedV1 (MM0RefusedNotationPrecedenceConflictV1 $position $token $oldPrecedence $newPrecedence) (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $infixes) (MM0RefusedNotationPrecedenceConflictV1 $position $token $oldPrecedence $newPrecedence))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=222 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-install-prefix-redeclared-v1 target=mode relation=MM0InstallPrefixFromLookupsV1 input=111110 functional=semidet
-(= (gslt:fn:MM0InstallPrefixFromLookupsV1:111110 $position $__gslt_input_v1_0_1 $__gslt_input_v1_0_2 $__gslt_input_v1_0_3 $__gslt_input_v1_0_4)
-   (let (cons-atom MM0PreparedSimpleNotationV1 (cons-atom $token (cons-atom $precedence (cons-atom (cons-atom MM0PrefixNotationEntryV1 (cons-atom $token (cons-atom $term (cons-atom $arity (cons-atom $precedence (cons-atom $position ())))))) ())))) $__gslt_input_v1_0_1
-   (let (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom $infixes ()))))) $__gslt_input_v1_0_2
-   (let (cons-atom MM0ConstantFoundV1 (cons-atom $precedence (cons-atom $constantPosition ()))) $__gslt_input_v1_0_3
-   (let (cons-atom MM0PrefixFoundV1 (cons-atom $firstPosition ())) $__gslt_input_v1_0_4
-   (quote (gslt:result:MM0InstallPrefixFromLookupsV1:111110 (MM0NotationStepRefusedV1 (MM0RefusedNotationRedeclarationV1 $position $token $firstPosition) (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $infixes) (MM0RefusedNotationRedeclarationV1 $position $token $firstPosition)))))))))
+(= (gslt:fn:MM0InstallPrefixFromLookupsV1:111110 $position (cons MM0PreparedSimpleNotationV1 (cons $token (cons $precedence (cons (cons MM0PrefixNotationEntryV1 (cons $token (cons $term (cons $arity (cons $precedence (cons $position ())))))) ())))) (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons $infixes ()))))) (cons MM0ConstantFoundV1 (cons $precedence (cons $constantPosition ()))) (cons MM0PrefixFoundV1 (cons $firstPosition ())))
+   (quote (gslt:result:MM0InstallPrefixFromLookupsV1:111110 (MM0NotationStepRefusedV1 (MM0RefusedNotationRedeclarationV1 $position $token $firstPosition) (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $infixes) (MM0RefusedNotationRedeclarationV1 $position $token $firstPosition)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=218 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-install-infix-new-constant-v1 target=mode relation=MM0InstallInfixFromLookupsV1 input=111110 functional=semidet
-(= (gslt:fn:MM0InstallInfixFromLookupsV1:111110 $position $__gslt_input_v1_0_1 $__gslt_input_v1_0_2 MM0ConstantMissingV1 MM0InfixMissingV1)
-   (let (cons-atom MM0PreparedSimpleNotationV1 (cons-atom $token (cons-atom $precedence (cons-atom (cons-atom MM0InfixNotationEntryV1 (cons-atom $token (cons-atom $term (cons-atom $associativity (cons-atom $precedence (cons-atom $position ())))))) ())))) $__gslt_input_v1_0_1
-   (let (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom $infixes ()))))) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0ConstantEntriesAppendV1:110 $afterConstants) (gslt:fn:MM0ConstantEntriesAppendV1:110 $constants (quote (MM0ConstantEntryV1 $token $precedence $position)))
-   (let (gslt:result:MM0InfixEntriesAppendV1:110 $afterInfixes) (gslt:fn:MM0InfixEntriesAppendV1:110 $infixes (quote (MM0InfixNotationEntryV1 $token $term $associativity $precedence $position)))
-   (quote (gslt:result:MM0InstallInfixFromLookupsV1:111110 (MM0NotationStepAcceptedV1 (MM0NotationEnvironmentV1 $delimiters $afterConstants $prefixes $afterInfixes) (MM0DeclaredSimpleNotationV1 $position $term (MM0InfixNotationKindV1 $associativity) $token)))))))))
+(= (gslt:fn:MM0InstallInfixFromLookupsV1:111110 $position (cons MM0PreparedSimpleNotationV1 (cons $token (cons $precedence (cons (cons MM0InfixNotationEntryV1 (cons $token (cons $term (cons $associativity (cons $precedence (cons $position ())))))) ())))) (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons $infixes ()))))) MM0ConstantMissingV1 MM0InfixMissingV1)
+   (let (cons gslt:result:MM0ConstantEntriesAppendV1:110 (cons $afterConstants ())) (gslt:fn:MM0ConstantEntriesAppendV1:110 $constants (quote (MM0ConstantEntryV1 $token $precedence $position)))
+   (let (cons gslt:result:MM0InfixEntriesAppendV1:110 (cons $afterInfixes ())) (gslt:fn:MM0InfixEntriesAppendV1:110 $infixes (quote (MM0InfixNotationEntryV1 $token $term $associativity $precedence $position)))
+   (quote (gslt:result:MM0InstallInfixFromLookupsV1:111110 (MM0NotationStepAcceptedV1 (MM0NotationEnvironmentV1 $delimiters $afterConstants $prefixes $afterInfixes) (MM0DeclaredSimpleNotationV1 $position $term (MM0InfixNotationKindV1 $associativity) $token)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=219 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-install-infix-existing-constant-v1 target=mode relation=MM0InstallInfixFromLookupsV1 input=111110 functional=semidet
-(= (gslt:fn:MM0InstallInfixFromLookupsV1:111110 $position $__gslt_input_v1_0_1 $__gslt_input_v1_0_2 $__gslt_input_v1_0_3 MM0InfixMissingV1)
-   (let (cons-atom MM0PreparedSimpleNotationV1 (cons-atom $token (cons-atom $precedence (cons-atom (cons-atom MM0InfixNotationEntryV1 (cons-atom $token (cons-atom $term (cons-atom $associativity (cons-atom $precedence (cons-atom $position ())))))) ())))) $__gslt_input_v1_0_1
-   (let (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom $infixes ()))))) $__gslt_input_v1_0_2
-   (let (cons-atom MM0ConstantFoundV1 (cons-atom $precedence (cons-atom $constantPosition ()))) $__gslt_input_v1_0_3
-   (let (gslt:result:MM0InfixEntriesAppendV1:110 $afterInfixes) (gslt:fn:MM0InfixEntriesAppendV1:110 $infixes (quote (MM0InfixNotationEntryV1 $token $term $associativity $precedence $position)))
-   (quote (gslt:result:MM0InstallInfixFromLookupsV1:111110 (MM0NotationStepAcceptedV1 (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $afterInfixes) (MM0DeclaredSimpleNotationV1 $position $term (MM0InfixNotationKindV1 $associativity) $token)))))))))
+(= (gslt:fn:MM0InstallInfixFromLookupsV1:111110 $position (cons MM0PreparedSimpleNotationV1 (cons $token (cons $precedence (cons (cons MM0InfixNotationEntryV1 (cons $token (cons $term (cons $associativity (cons $precedence (cons $position ())))))) ())))) (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons $infixes ()))))) (cons MM0ConstantFoundV1 (cons $precedence (cons $constantPosition ()))) MM0InfixMissingV1)
+   (let (cons gslt:result:MM0InfixEntriesAppendV1:110 (cons $afterInfixes ())) (gslt:fn:MM0InfixEntriesAppendV1:110 $infixes (quote (MM0InfixNotationEntryV1 $token $term $associativity $precedence $position)))
+   (quote (gslt:result:MM0InstallInfixFromLookupsV1:111110 (MM0NotationStepAcceptedV1 (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $afterInfixes) (MM0DeclaredSimpleNotationV1 $position $term (MM0InfixNotationKindV1 $associativity) $token))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=221 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-install-infix-precedence-conflict-v1 target=mode relation=MM0InstallInfixFromLookupsV1 input=111110 functional=semidet
-(= (gslt:fn:MM0InstallInfixFromLookupsV1:111110 $position $__gslt_input_v1_0_1 $__gslt_input_v1_0_2 $__gslt_input_v1_0_3 $infixLookup)
-   (let (cons-atom MM0PreparedSimpleNotationV1 (cons-atom $token (cons-atom $newPrecedence (cons-atom (cons-atom MM0InfixNotationEntryV1 (cons-atom $token (cons-atom $term (cons-atom $associativity (cons-atom $newPrecedence (cons-atom $position ())))))) ())))) $__gslt_input_v1_0_1
-   (let (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom $infixes ()))))) $__gslt_input_v1_0_2
-   (let (cons-atom MM0ConstantFoundV1 (cons-atom $oldPrecedence (cons-atom $constantPosition ()))) $__gslt_input_v1_0_3
+(= (gslt:fn:MM0InstallInfixFromLookupsV1:111110 $position (cons MM0PreparedSimpleNotationV1 (cons $token (cons $newPrecedence (cons (cons MM0InfixNotationEntryV1 (cons $token (cons $term (cons $associativity (cons $newPrecedence (cons $position ())))))) ())))) (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons $infixes ()))))) (cons MM0ConstantFoundV1 (cons $oldPrecedence (cons $constantPosition ()))) $infixLookup)
    (let $_ (gslt:different (different $oldPrecedence $newPrecedence))
-   (quote (gslt:result:MM0InstallInfixFromLookupsV1:111110 (MM0NotationStepRefusedV1 (MM0RefusedNotationPrecedenceConflictV1 $position $token $oldPrecedence $newPrecedence) (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $infixes) (MM0RefusedNotationPrecedenceConflictV1 $position $token $oldPrecedence $newPrecedence)))))))))
+   (quote (gslt:result:MM0InstallInfixFromLookupsV1:111110 (MM0NotationStepRefusedV1 (MM0RefusedNotationPrecedenceConflictV1 $position $token $oldPrecedence $newPrecedence) (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $infixes) (MM0RefusedNotationPrecedenceConflictV1 $position $token $oldPrecedence $newPrecedence))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=223 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-install-infix-redeclared-v1 target=mode relation=MM0InstallInfixFromLookupsV1 input=111110 functional=semidet
-(= (gslt:fn:MM0InstallInfixFromLookupsV1:111110 $position $__gslt_input_v1_0_1 $__gslt_input_v1_0_2 $__gslt_input_v1_0_3 $__gslt_input_v1_0_4)
-   (let (cons-atom MM0PreparedSimpleNotationV1 (cons-atom $token (cons-atom $precedence (cons-atom (cons-atom MM0InfixNotationEntryV1 (cons-atom $token (cons-atom $term (cons-atom $associativity (cons-atom $precedence (cons-atom $position ())))))) ())))) $__gslt_input_v1_0_1
-   (let (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom $infixes ()))))) $__gslt_input_v1_0_2
-   (let (cons-atom MM0ConstantFoundV1 (cons-atom $precedence (cons-atom $constantPosition ()))) $__gslt_input_v1_0_3
-   (let (cons-atom MM0InfixFoundV1 (cons-atom $firstPosition ())) $__gslt_input_v1_0_4
-   (quote (gslt:result:MM0InstallInfixFromLookupsV1:111110 (MM0NotationStepRefusedV1 (MM0RefusedNotationRedeclarationV1 $position $token $firstPosition) (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $infixes) (MM0RefusedNotationRedeclarationV1 $position $token $firstPosition)))))))))
+(= (gslt:fn:MM0InstallInfixFromLookupsV1:111110 $position (cons MM0PreparedSimpleNotationV1 (cons $token (cons $precedence (cons (cons MM0InfixNotationEntryV1 (cons $token (cons $term (cons $associativity (cons $precedence (cons $position ())))))) ())))) (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons $infixes ()))))) (cons MM0ConstantFoundV1 (cons $precedence (cons $constantPosition ()))) (cons MM0InfixFoundV1 (cons $firstPosition ())))
+   (quote (gslt:result:MM0InstallInfixFromLookupsV1:111110 (MM0NotationStepRefusedV1 (MM0RefusedNotationRedeclarationV1 $position $token $firstPosition) (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $infixes) (MM0RefusedNotationRedeclarationV1 $position $token $firstPosition)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=224 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-step-delimiter-both-v1 target=mode relation=MM0NotationStepV1 input=11110 functional=semidet
-(= (gslt:fn:MM0NotationStepV1:11110 $position $__gslt_input_v1_0_1 $__gslt_input_v1_0_2 $declarations)
-   (let (cons-atom node (cons-atom mm0-delimiter-statement (cons-atom (cons-atom pair (cons-atom (cons-atom node (cons-atom mm0-math-string (cons-atom $both ()))) (cons-atom none ()))) ()))) $__gslt_input_v1_0_1
-   (let (cons-atom MM0NotationEnvironmentV1 (cons-atom $before (cons-atom $constants (cons-atom $prefixes (cons-atom $infixes ()))))) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0DelimiterCharactersFoldV1:1110 $after) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $both MM0MathBothDelimiterV1 $before)
-   (quote (gslt:result:MM0NotationStepV1:11110 (MM0NotationStepAcceptedV1 (MM0NotationEnvironmentV1 $after $constants $prefixes $infixes) (MM0DeclaredDelimitersV1 $position MM0BothDelimitersV1))))))))
+(= (gslt:fn:MM0NotationStepV1:11110 $position (cons node (cons mm0-delimiter-statement (cons (cons pair (cons (cons node (cons mm0-math-string (cons $both ()))) (cons none ()))) ()))) (cons MM0NotationEnvironmentV1 (cons $before (cons $constants (cons $prefixes (cons $infixes ()))))) $declarations)
+   (let (cons gslt:result:MM0DelimiterCharactersFoldV1:1110 (cons $after ())) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $both MM0MathBothDelimiterV1 $before)
+   (quote (gslt:result:MM0NotationStepV1:11110 (MM0NotationStepAcceptedV1 (MM0NotationEnvironmentV1 $after $constants $prefixes $infixes) (MM0DeclaredDelimitersV1 $position MM0BothDelimitersV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=225 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-step-delimiter-left-right-v1 target=mode relation=MM0NotationStepV1 input=11110 functional=semidet
-(= (gslt:fn:MM0NotationStepV1:11110 $position $__gslt_input_v1_0_1 $__gslt_input_v1_0_2 $declarations)
-   (let (cons-atom node (cons-atom mm0-delimiter-statement (cons-atom (cons-atom pair (cons-atom (cons-atom node (cons-atom mm0-math-string (cons-atom $left ()))) (cons-atom (cons-atom some (cons-atom (cons-atom node (cons-atom mm0-math-string (cons-atom $right ()))) ())) ()))) ()))) $__gslt_input_v1_0_1
-   (let (cons-atom MM0NotationEnvironmentV1 (cons-atom $before (cons-atom $constants (cons-atom $prefixes (cons-atom $infixes ()))))) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0DelimiterCharactersFoldV1:1110 $middle) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $left MM0MathLeftDelimiterV1 $before)
-   (let (gslt:result:MM0DelimiterCharactersFoldV1:1110 $after) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $right MM0MathRightDelimiterV1 $middle)
-   (quote (gslt:result:MM0NotationStepV1:11110 (MM0NotationStepAcceptedV1 (MM0NotationEnvironmentV1 $after $constants $prefixes $infixes) (MM0DeclaredDelimitersV1 $position MM0LeftRightDelimitersV1)))))))))
+(= (gslt:fn:MM0NotationStepV1:11110 $position (cons node (cons mm0-delimiter-statement (cons (cons pair (cons (cons node (cons mm0-math-string (cons $left ()))) (cons (cons some (cons (cons node (cons mm0-math-string (cons $right ()))) ())) ()))) ()))) (cons MM0NotationEnvironmentV1 (cons $before (cons $constants (cons $prefixes (cons $infixes ()))))) $declarations)
+   (let (cons gslt:result:MM0DelimiterCharactersFoldV1:1110 (cons $middle ())) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $left MM0MathLeftDelimiterV1 $before)
+   (let (cons gslt:result:MM0DelimiterCharactersFoldV1:1110 (cons $after ())) (gslt:fn:MM0DelimiterCharactersFoldV1:1110 $right MM0MathRightDelimiterV1 $middle)
+   (quote (gslt:result:MM0NotationStepV1:11110 (MM0NotationStepAcceptedV1 (MM0NotationEnvironmentV1 $after $constants $prefixes $infixes) (MM0DeclaredDelimitersV1 $position MM0LeftRightDelimitersV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=226 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-step-simple-v1 target=mode relation=MM0NotationStepV1 input=11110 functional=semidet
-(= (gslt:fn:MM0NotationStepV1:11110 $position $statement $__gslt_input_v1_0_2 $declarations)
-   (let (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom $infixes ()))))) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0SimpleNotationStatementV1:10000 $kind $termName $constantAst $precedenceAst) (gslt:fn:MM0SimpleNotationStatementV1:10000 $statement)
-   (let (gslt:result:MM0TermSignatureLookupV1:110 $lookup) (gslt:fn:MM0TermSignatureLookupV1:110 $termName $declarations)
-   (let (gslt:result:MM0NotationStepAfterTermLookupV1:11111110 $result) (gslt:fn:MM0NotationStepAfterTermLookupV1:11111110 $position $kind $termName $constantAst $precedenceAst (quote (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $infixes)) $lookup)
-   (quote (gslt:result:MM0NotationStepV1:11110 $result)))))))
+(= (gslt:fn:MM0NotationStepV1:11110 $position $statement (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons $infixes ()))))) $declarations)
+   (let (cons gslt:result:MM0SimpleNotationStatementV1:10000 (cons $kind (cons $termName (cons $constantAst (cons $precedenceAst ()))))) (gslt:fn:MM0SimpleNotationStatementV1:10000 $statement)
+   (let (cons gslt:result:MM0TermSignatureLookupV1:110 (cons $lookup ())) (gslt:fn:MM0TermSignatureLookupV1:110 $termName $declarations)
+   (let (cons gslt:result:MM0NotationStepAfterTermLookupV1:11111110 (cons $result ())) (gslt:fn:MM0NotationStepAfterTermLookupV1:11111110 $position $kind $termName $constantAst $precedenceAst (quote (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $infixes)) $lookup)
+   (quote (gslt:result:MM0NotationStepV1:11110 $result))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=227 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-step-unknown-term-v1 target=mode relation=MM0NotationStepAfterTermLookupV1 input=11111110 functional=semidet
 (= (gslt:fn:MM0NotationStepAfterTermLookupV1:11111110 $position $kind $termName $constantAst $precedenceAst $before MM0TermSignatureMissingV1)
    (quote (gslt:result:MM0NotationStepAfterTermLookupV1:11111110 (MM0NotationStepRefusedV1 (MM0RefusedUnknownNotationTermV1 $position $termName) $before (MM0RefusedUnknownNotationTermV1 $position $termName)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=228 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-step-found-term-v1 target=mode relation=MM0NotationStepAfterTermLookupV1 input=11111110 functional=semidet
-(= (gslt:fn:MM0NotationStepAfterTermLookupV1:11111110 $position $kind $termName $constantAst $precedenceAst $__gslt_input_v1_0_5 $__gslt_input_v1_0_6)
-   (let (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom $infixes ()))))) $__gslt_input_v1_0_5
-   (let (cons-atom MM0TermSignatureFoundV1 (cons-atom $signature (cons-atom $termPosition ()))) $__gslt_input_v1_0_6
-   (let (gslt:result:MM0PrepareSimpleNotationV1:11111110 $prepared) (gslt:fn:MM0PrepareSimpleNotationV1:11111110 $position $kind $termName $signature $delimiters $constantAst $precedenceAst)
-   (let (gslt:result:MM0NotationStepAfterPrepareV1:1110 $result) (gslt:fn:MM0NotationStepAfterPrepareV1:1110 $position (quote (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $infixes)) $prepared)
-   (quote (gslt:result:MM0NotationStepAfterTermLookupV1:11111110 $result)))))))
+(= (gslt:fn:MM0NotationStepAfterTermLookupV1:11111110 $position $kind $termName $constantAst $precedenceAst (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons $infixes ()))))) (cons MM0TermSignatureFoundV1 (cons $signature (cons $termPosition ()))))
+   (let (cons gslt:result:MM0PrepareSimpleNotationV1:11111110 (cons $prepared ())) (gslt:fn:MM0PrepareSimpleNotationV1:11111110 $position $kind $termName $signature $delimiters $constantAst $precedenceAst)
+   (let (cons gslt:result:MM0NotationStepAfterPrepareV1:1110 (cons $result ())) (gslt:fn:MM0NotationStepAfterPrepareV1:1110 $position (quote (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $infixes)) $prepared)
+   (quote (gslt:result:MM0NotationStepAfterTermLookupV1:11111110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=229 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-step-prepare-refused-v1 target=mode relation=MM0NotationStepAfterPrepareV1 input=1110 functional=semidet
-(= (gslt:fn:MM0NotationStepAfterPrepareV1:1110 $position $before $__gslt_input_v1_0_2)
-   (let (cons-atom MM0CheckRefusedV1 (cons-atom $reason ())) $__gslt_input_v1_0_2
-   (quote (gslt:result:MM0NotationStepAfterPrepareV1:1110 (MM0NotationStepRefusedV1 $reason $before $reason)))))
+(= (gslt:fn:MM0NotationStepAfterPrepareV1:1110 $position $before (cons MM0CheckRefusedV1 (cons $reason ())))
+   (quote (gslt:result:MM0NotationStepAfterPrepareV1:1110 (MM0NotationStepRefusedV1 $reason $before $reason))))
 
 ; gslt-lowered-equation-v1 source-rewrite=230 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-step-prepare-accepted-v1 target=mode relation=MM0NotationStepAfterPrepareV1 input=1110 functional=semidet
-(= (gslt:fn:MM0NotationStepAfterPrepareV1:1110 $position $before $__gslt_input_v1_0_2)
-   (let (cons-atom MM0CheckAcceptedV1 (cons-atom $prepared ())) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0InstallSimpleNotationV1:11101 $result) (gslt:fn:MM0InstallSimpleNotationV1:11101 $position $prepared $before MM0RuntimeTextualSourceV1)
-   (quote (gslt:result:MM0NotationStepAfterPrepareV1:1110 $result)))))
+(= (gslt:fn:MM0NotationStepAfterPrepareV1:1110 $position $before (cons MM0CheckAcceptedV1 (cons $prepared ())))
+   (let (cons gslt:result:MM0InstallSimpleNotationV1:11101 (cons $result ())) (gslt:fn:MM0InstallSimpleNotationV1:11101 $position $prepared $before MM0RuntimeTextualSourceV1)
+   (quote (gslt:result:MM0NotationStepAfterPrepareV1:1110 $result))))
 
 ; gslt-lowered-equation-v1 source-rewrite=231 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-source-statement-class-sort-v1 target=mode relation=MM0StatementClassV1 input=10 functional=semidet
-(= (gslt:fn:MM0StatementClassV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom node (cons-atom mm0-sort-statement (cons-atom $payload ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0StatementClassV1:10 MM0TextualStatementV1))))
+(= (gslt:fn:MM0StatementClassV1:10 (cons node (cons mm0-sort-statement (cons $payload ()))))
+   (quote (gslt:result:MM0StatementClassV1:10 MM0TextualStatementV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=232 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-source-statement-class-term-v1 target=mode relation=MM0StatementClassV1 input=10 functional=semidet
-(= (gslt:fn:MM0StatementClassV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom node (cons-atom mm0-term-statement (cons-atom $payload ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0StatementClassV1:10 MM0TextualStatementV1))))
+(= (gslt:fn:MM0StatementClassV1:10 (cons node (cons mm0-term-statement (cons $payload ()))))
+   (quote (gslt:result:MM0StatementClassV1:10 MM0TextualStatementV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=233 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-source-statement-class-delimiter-v1 target=mode relation=MM0StatementClassV1 input=10 functional=semidet
-(= (gslt:fn:MM0StatementClassV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom node (cons-atom mm0-delimiter-statement (cons-atom $payload ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0StatementClassV1:10 MM0NotationStatementV1))))
+(= (gslt:fn:MM0StatementClassV1:10 (cons node (cons mm0-delimiter-statement (cons $payload ()))))
+   (quote (gslt:result:MM0StatementClassV1:10 MM0NotationStatementV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=234 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-source-statement-class-simple-notation-v1 target=mode relation=MM0StatementClassV1 input=10 functional=semidet
-(= (gslt:fn:MM0StatementClassV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom node (cons-atom mm0-simple-notation-statement (cons-atom $payload ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0StatementClassV1:10 MM0NotationStatementV1))))
+(= (gslt:fn:MM0StatementClassV1:10 (cons node (cons mm0-simple-notation-statement (cons $payload ()))))
+   (quote (gslt:result:MM0StatementClassV1:10 MM0NotationStatementV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=235 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-source-step-dispatch-v1 target=mode relation=MM0SourceStepV1 input=1110 functional=semidet
 (= (gslt:fn:MM0SourceStepV1:1110 $position $statement $before)
-   (let (gslt:result:MM0StatementClassV1:10 $class) (gslt:fn:MM0StatementClassV1:10 $statement)
-   (let (gslt:result:MM0SourceStepByClassV1:11110 $result) (gslt:fn:MM0SourceStepByClassV1:11110 $position $statement $before $class)
+   (let (cons gslt:result:MM0StatementClassV1:10 (cons $class ())) (gslt:fn:MM0StatementClassV1:10 $statement)
+   (let (cons gslt:result:MM0SourceStepByClassV1:11110 (cons $result ())) (gslt:fn:MM0SourceStepByClassV1:11110 $position $statement $before $class)
    (quote (gslt:result:MM0SourceStepV1:1110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=236 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-source-step-textual-accepted-v1 target=mode relation=MM0SourceStepByClassV1 input=11110 functional=semidet
-(= (gslt:fn:MM0SourceStepByClassV1:11110 $position $statement $__gslt_input_v1_0_2 MM0TextualStatementV1)
-   (let (cons-atom MM0SourceStateV1 (cons-atom $textual (cons-atom $notation ()))) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0TextualStepV1:1110 (cons-atom MM0TextualStepAcceptedV1 (cons-atom $afterTextual (cons-atom $historyEntry ())))) (gslt:fn:MM0TextualStepV1:1110 $position $statement $textual)
-   (quote (gslt:result:MM0SourceStepByClassV1:11110 (MM0SourceStepAcceptedV1 (MM0SourceStateV1 $afterTextual $notation) $historyEntry))))))
+(= (gslt:fn:MM0SourceStepByClassV1:11110 $position $statement (cons MM0SourceStateV1 (cons $textual (cons $notation ()))) MM0TextualStatementV1)
+   (let (cons gslt:result:MM0TextualStepV1:1110 (cons (cons MM0TextualStepAcceptedV1 (cons $afterTextual (cons $historyEntry ()))) ())) (gslt:fn:MM0TextualStepV1:1110 $position $statement $textual)
+   (quote (gslt:result:MM0SourceStepByClassV1:11110 (MM0SourceStepAcceptedV1 (MM0SourceStateV1 $afterTextual $notation) $historyEntry)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=237 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-source-step-textual-refused-v1 target=mode relation=MM0SourceStepByClassV1 input=11110 functional=semidet
-(= (gslt:fn:MM0SourceStepByClassV1:11110 $position $statement $__gslt_input_v1_0_2 MM0TextualStatementV1)
-   (let (cons-atom MM0SourceStateV1 (cons-atom $textual (cons-atom $notation ()))) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0TextualStepV1:1110 (cons-atom MM0TextualStepRefusedV1 (cons-atom $reason (cons-atom $textual (cons-atom $historyEntry ()))))) (gslt:fn:MM0TextualStepV1:1110 $position $statement $textual)
-   (quote (gslt:result:MM0SourceStepByClassV1:11110 (MM0SourceStepRefusedV1 $reason (MM0SourceStateV1 $textual $notation) $historyEntry))))))
+(= (gslt:fn:MM0SourceStepByClassV1:11110 $position $statement (cons MM0SourceStateV1 (cons $textual (cons $notation ()))) MM0TextualStatementV1)
+   (let (cons gslt:result:MM0TextualStepV1:1110 (cons (cons MM0TextualStepRefusedV1 (cons $reason (cons $textual (cons $historyEntry ())))) ())) (gslt:fn:MM0TextualStepV1:1110 $position $statement $textual)
+   (quote (gslt:result:MM0SourceStepByClassV1:11110 (MM0SourceStepRefusedV1 $reason (MM0SourceStateV1 $textual $notation) $historyEntry)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=238 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-source-step-notation-accepted-v1 target=mode relation=MM0SourceStepByClassV1 input=11110 functional=semidet
-(= (gslt:fn:MM0SourceStepByClassV1:11110 $position $statement $__gslt_input_v1_0_2 MM0NotationStatementV1)
-   (let (cons-atom MM0SourceStateV1 (cons-atom (cons-atom MM0TextualEnvironmentV1 (cons-atom $sorts (cons-atom $declarations ()))) (cons-atom $notation ()))) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0NotationStepV1:11110 (cons-atom MM0NotationStepAcceptedV1 (cons-atom $afterNotation (cons-atom $historyEntry ())))) (gslt:fn:MM0NotationStepV1:11110 $position $statement $notation $declarations)
-   (quote (gslt:result:MM0SourceStepByClassV1:11110 (MM0SourceStepAcceptedV1 (MM0SourceStateV1 (MM0TextualEnvironmentV1 $sorts $declarations) $afterNotation) $historyEntry))))))
+(= (gslt:fn:MM0SourceStepByClassV1:11110 $position $statement (cons MM0SourceStateV1 (cons (cons MM0TextualEnvironmentV1 (cons $sorts (cons $declarations ()))) (cons $notation ()))) MM0NotationStatementV1)
+   (let (cons gslt:result:MM0NotationStepV1:11110 (cons (cons MM0NotationStepAcceptedV1 (cons $afterNotation (cons $historyEntry ()))) ())) (gslt:fn:MM0NotationStepV1:11110 $position $statement $notation $declarations)
+   (quote (gslt:result:MM0SourceStepByClassV1:11110 (MM0SourceStepAcceptedV1 (MM0SourceStateV1 (MM0TextualEnvironmentV1 $sorts $declarations) $afterNotation) $historyEntry)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=239 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-source-step-notation-refused-v1 target=mode relation=MM0SourceStepByClassV1 input=11110 functional=semidet
-(= (gslt:fn:MM0SourceStepByClassV1:11110 $position $statement $__gslt_input_v1_0_2 MM0NotationStatementV1)
-   (let (cons-atom MM0SourceStateV1 (cons-atom (cons-atom MM0TextualEnvironmentV1 (cons-atom $sorts (cons-atom $declarations ()))) (cons-atom $notation ()))) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0NotationStepV1:11110 (cons-atom MM0NotationStepRefusedV1 (cons-atom $reason (cons-atom $notation (cons-atom $historyEntry ()))))) (gslt:fn:MM0NotationStepV1:11110 $position $statement $notation $declarations)
-   (quote (gslt:result:MM0SourceStepByClassV1:11110 (MM0SourceStepRefusedV1 $reason (MM0SourceStateV1 (MM0TextualEnvironmentV1 $sorts $declarations) $notation) $historyEntry))))))
+(= (gslt:fn:MM0SourceStepByClassV1:11110 $position $statement (cons MM0SourceStateV1 (cons (cons MM0TextualEnvironmentV1 (cons $sorts (cons $declarations ()))) (cons $notation ()))) MM0NotationStatementV1)
+   (let (cons gslt:result:MM0NotationStepV1:11110 (cons (cons MM0NotationStepRefusedV1 (cons $reason (cons $notation (cons $historyEntry ())))) ())) (gslt:fn:MM0NotationStepV1:11110 $position $statement $notation $declarations)
+   (quote (gslt:result:MM0SourceStepByClassV1:11110 (MM0SourceStepRefusedV1 $reason (MM0SourceStateV1 (MM0TextualEnvironmentV1 $sorts $declarations) $notation) $historyEntry)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=245 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-parse-all-v1 target=mode relation=GSLTPrattParseAllV1 input=1110 functional=relational
 (= (gslt:mode:GSLTPrattParseAllV1:1110 $environment $scope $tokens)
-   (let (gslt:result:GSLTPrattMinimumV1:10 $minimum) (once (gslt:fn:GSLTPrattMinimumV1:10 $environment))
-   (let (gslt:result:GSLTPrattParseV1:111101 $tree) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111101 $environment $scope $minimum $tokens GSLTPrattTokensNilV1)))
+   (let (cons gslt:result:GSLTPrattMinimumV1:10 (cons $minimum ())) (once (gslt:fn:GSLTPrattMinimumV1:10 $environment))
+   (let (cons gslt:result:GSLTPrattParseV1:111101 (cons $tree ())) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111101 $environment $scope $minimum $tokens GSLTPrattTokensNilV1)))
    (quote (gslt:result:GSLTPrattParseAllV1:1110 $tree)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=246 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-parse-identifier-v1 target=mode relation=GSLTPrattParseV1 input=111101 functional=relational
-(= (gslt:mode:GSLTPrattParseV1:111101 $environment $scope $minimum $__gslt_input_v1_0_3 $rest)
-   (let (cons-atom GSLTPrattTokensConsV1 (cons-atom $token (cons-atom $tail ()))) $__gslt_input_v1_0_3
-   (let (gslt:result:GSLTPrattIdentifierV1:11100 $identifier $arity) (superpose (collapse (gslt:mode:GSLTPrattIdentifierV1:11100 $environment $scope $token)))
-   (let (gslt:result:GSLTPrattParseIdentifierArityV1:11111101 $tree) (superpose (collapse (gslt:mode:GSLTPrattParseIdentifierArityV1:11111101 $environment $scope $minimum $identifier $arity $tail $rest)))
-   (quote (gslt:result:GSLTPrattParseV1:111101 $tree))))))
+(= (gslt:mode:GSLTPrattParseV1:111101 $environment $scope $minimum (cons GSLTPrattTokensConsV1 (cons $token (cons $tail ()))) $rest)
+   (let (cons gslt:result:GSLTPrattIdentifierV1:11100 (cons $identifier (cons $arity ()))) (superpose (collapse (gslt:mode:GSLTPrattIdentifierV1:11100 $environment $scope $token)))
+   (let (cons gslt:result:GSLTPrattParseIdentifierArityV1:11111101 (cons $tree ())) (superpose (collapse (gslt:mode:GSLTPrattParseIdentifierArityV1:11111101 $environment $scope $minimum $identifier $arity $tail $rest)))
+   (quote (gslt:result:GSLTPrattParseV1:111101 $tree)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=249 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-parse-prefix-v1 target=mode relation=GSLTPrattParseV1 input=111101 functional=relational
-(= (gslt:mode:GSLTPrattParseV1:111101 $environment $scope $minimum $__gslt_input_v1_0_3 $rest)
-   (let (cons-atom GSLTPrattTokensConsV1 (cons-atom $token (cons-atom $tail ()))) $__gslt_input_v1_0_3
-   (let (gslt:result:GSLTPrattPrefixV1:11000 $constructor $arity $precedence) (once (gslt:fn:GSLTPrattPrefixV1:11000 $environment $token))
+(= (gslt:mode:GSLTPrattParseV1:111101 $environment $scope $minimum (cons GSLTPrattTokensConsV1 (cons $token (cons $tail ()))) $rest)
+   (let (cons gslt:result:GSLTPrattPrefixV1:11000 (cons $constructor (cons $arity (cons $precedence ())))) (once (gslt:fn:GSLTPrattPrefixV1:11000 $environment $token))
    (let gslt:result:GSLTPrattAtLeastV1:11 (once (gslt:fn:GSLTPrattAtLeastV1:11 $precedence $minimum))
-   (let (gslt:result:GSLTPrattParsePrefixArgumentsV1:1111100 $arguments $afterArguments) (superpose (collapse (gslt:mode:GSLTPrattParsePrefixArgumentsV1:1111100 $environment $scope $precedence $arity $tail)))
-   (let (gslt:result:GSLTPrattParseTailV1:1111101 $tree) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum (quote (GSLTPrattApplicationV1 $constructor $arguments)) $afterArguments $rest)))
-   (quote (gslt:result:GSLTPrattParseV1:111101 $tree))))))))
+   (let (cons gslt:result:GSLTPrattParsePrefixArgumentsV1:1111100 (cons $arguments (cons $afterArguments ()))) (superpose (collapse (gslt:mode:GSLTPrattParsePrefixArgumentsV1:1111100 $environment $scope $precedence $arity $tail)))
+   (let (cons gslt:result:GSLTPrattParseTailV1:1111101 (cons $tree ())) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum (quote (GSLTPrattApplicationV1 $constructor $arguments)) $afterArguments $rest)))
+   (quote (gslt:result:GSLTPrattParseV1:111101 $tree)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=250 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-parse-group-v1 target=mode relation=GSLTPrattParseV1 input=111101 functional=relational
-(= (gslt:mode:GSLTPrattParseV1:111101 $environment $scope $minimum $__gslt_input_v1_0_3 $rest)
-   (let (cons-atom GSLTPrattTokensConsV1 (cons-atom $open (cons-atom $tail ()))) $__gslt_input_v1_0_3
-   (let (gslt:result:GSLTPrattGroupV1:110 $close) (once (gslt:fn:GSLTPrattGroupV1:110 $environment $open))
-   (let (gslt:result:GSLTPrattMinimumV1:10 $innerMinimum) (once (gslt:fn:GSLTPrattMinimumV1:10 $environment))
-   (let (gslt:result:GSLTPrattParseV1:111100 $inside (cons-atom GSLTPrattTokensConsV1 (cons-atom $close (cons-atom $afterClose ())))) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $innerMinimum $tail)))
-   (let (gslt:result:GSLTPrattParseTailV1:1111101 $tree) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum $inside $afterClose $rest)))
-   (quote (gslt:result:GSLTPrattParseV1:111101 $tree))))))))
+(= (gslt:mode:GSLTPrattParseV1:111101 $environment $scope $minimum (cons GSLTPrattTokensConsV1 (cons $open (cons $tail ()))) $rest)
+   (let (cons gslt:result:GSLTPrattGroupV1:110 (cons $close ())) (once (gslt:fn:GSLTPrattGroupV1:110 $environment $open))
+   (let (cons gslt:result:GSLTPrattMinimumV1:10 (cons $innerMinimum ())) (once (gslt:fn:GSLTPrattMinimumV1:10 $environment))
+   (let (cons gslt:result:GSLTPrattParseV1:111100 (cons $inside (cons (cons GSLTPrattTokensConsV1 (cons $close (cons $afterClose ()))) ()))) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $innerMinimum $tail)))
+   (let (cons gslt:result:GSLTPrattParseTailV1:1111101 (cons $tree ())) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum $inside $afterClose $rest)))
+   (quote (gslt:result:GSLTPrattParseV1:111101 $tree)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=247 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-identifier-zero-v1 target=mode relation=GSLTPrattParseIdentifierArityV1 input=11111101 functional=relational
 (= (gslt:mode:GSLTPrattParseIdentifierArityV1:11111101 $environment $scope $minimum $identifier NatZeroV1 $tokens $rest)
-   (let (gslt:result:GSLTPrattParseTailV1:1111101 $tree) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum (quote (GSLTPrattIdentifierApplicationV1 $identifier GSLTPrattArgumentsNilV1)) $tokens $rest)))
+   (let (cons gslt:result:GSLTPrattParseTailV1:1111101 (cons $tree ())) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum (quote (GSLTPrattIdentifierApplicationV1 $identifier GSLTPrattArgumentsNilV1)) $tokens $rest)))
    (quote (gslt:result:GSLTPrattParseIdentifierArityV1:11111101 $tree))))
 
 ; gslt-lowered-equation-v1 source-rewrite=248 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-identifier-successor-v1 target=mode relation=GSLTPrattParseIdentifierArityV1 input=11111101 functional=relational
-(= (gslt:mode:GSLTPrattParseIdentifierArityV1:11111101 $environment $scope $minimum $identifier $__gslt_input_v1_0_4 $tokens $rest)
-   (let (cons-atom NatSuccV1 (cons-atom $remaining ())) $__gslt_input_v1_0_4
-   (let (gslt:result:GSLTPrattApplicationPrecedenceV1:10 $applicationPrecedence) (once (gslt:fn:GSLTPrattApplicationPrecedenceV1:10 $environment))
+(= (gslt:mode:GSLTPrattParseIdentifierArityV1:11111101 $environment $scope $minimum $identifier (cons NatSuccV1 (cons $remaining ())) $tokens $rest)
+   (let (cons gslt:result:GSLTPrattApplicationPrecedenceV1:10 (cons $applicationPrecedence ())) (once (gslt:fn:GSLTPrattApplicationPrecedenceV1:10 $environment))
    (let gslt:result:GSLTPrattAtLeastV1:11 (once (gslt:fn:GSLTPrattAtLeastV1:11 $applicationPrecedence $minimum))
-   (let (gslt:result:GSLTPrattParseIdentifierArgumentsV1:111100 $arguments $afterArguments) (superpose (collapse (gslt:mode:GSLTPrattParseIdentifierArgumentsV1:111100 $environment $scope (quote (NatSuccV1 $remaining)) $tokens)))
-   (let (gslt:result:GSLTPrattParseTailV1:1111101 $tree) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum (quote (GSLTPrattIdentifierApplicationV1 $identifier $arguments)) $afterArguments $rest)))
-   (quote (gslt:result:GSLTPrattParseIdentifierArityV1:11111101 $tree))))))))
+   (let (cons gslt:result:GSLTPrattParseIdentifierArgumentsV1:111100 (cons $arguments (cons $afterArguments ()))) (superpose (collapse (gslt:mode:GSLTPrattParseIdentifierArgumentsV1:111100 $environment $scope (quote (NatSuccV1 $remaining)) $tokens)))
+   (let (cons gslt:result:GSLTPrattParseTailV1:1111101 (cons $tree ())) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum (quote (GSLTPrattIdentifierApplicationV1 $identifier $arguments)) $afterArguments $rest)))
+   (quote (gslt:result:GSLTPrattParseIdentifierArityV1:11111101 $tree)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=256 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-tail-nil-v1 target=mode relation=GSLTPrattParseTailV1 input=1111101 functional=relational
 (= (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum $current GSLTPrattTokensNilV1 GSLTPrattTokensNilV1)
    (quote (gslt:result:GSLTPrattParseTailV1:1111101 $current)))
 
 ; gslt-lowered-equation-v1 source-rewrite=257 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-tail-stop-non-infix-v1 target=mode relation=GSLTPrattParseTailV1 input=1111101 functional=relational
-(= (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum $current $__gslt_input_v1_0_4 $__gslt_input_v1_0_6)
-   (let (cons-atom GSLTPrattTokensConsV1 (cons-atom $token (cons-atom $tail ()))) $__gslt_input_v1_0_4
-   (let (cons-atom GSLTPrattTokensConsV1 (cons-atom $token (cons-atom $tail ()))) $__gslt_input_v1_0_6
+(= (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum $current (cons GSLTPrattTokensConsV1 (cons $token (cons $tail ()))) (cons GSLTPrattTokensConsV1 (cons $token (cons $tail ()))))
    (let gslt:result:GSLTPrattNotInfixV1:11 (once (gslt:fn:GSLTPrattNotInfixV1:11 $environment $token))
-   (quote (gslt:result:GSLTPrattParseTailV1:1111101 $current))))))
+   (quote (gslt:result:GSLTPrattParseTailV1:1111101 $current))))
 
 ; gslt-lowered-equation-v1 source-rewrite=258 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-tail-stop-bound-v1 target=mode relation=GSLTPrattParseTailV1 input=1111101 functional=relational
-(= (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum $current $__gslt_input_v1_0_4 $__gslt_input_v1_0_6)
-   (let (cons-atom GSLTPrattTokensConsV1 (cons-atom $token (cons-atom $tail ()))) $__gslt_input_v1_0_4
-   (let (cons-atom GSLTPrattTokensConsV1 (cons-atom $token (cons-atom $tail ()))) $__gslt_input_v1_0_6
-   (let (gslt:result:GSLTPrattInfixV1:11000 $constructor $association $precedence) (once (gslt:fn:GSLTPrattInfixV1:11000 $environment $token))
+(= (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum $current (cons GSLTPrattTokensConsV1 (cons $token (cons $tail ()))) (cons GSLTPrattTokensConsV1 (cons $token (cons $tail ()))))
+   (let (cons gslt:result:GSLTPrattInfixV1:11000 (cons $constructor (cons $association (cons $precedence ())))) (once (gslt:fn:GSLTPrattInfixV1:11000 $environment $token))
    (let gslt:result:GSLTPrattNotAtLeastV1:11 (once (gslt:fn:GSLTPrattNotAtLeastV1:11 $precedence $minimum))
-   (quote (gslt:result:GSLTPrattParseTailV1:1111101 $current)))))))
+   (quote (gslt:result:GSLTPrattParseTailV1:1111101 $current)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=259 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-tail-left-v1 target=mode relation=GSLTPrattParseTailV1 input=1111101 functional=relational
-(= (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum $current $__gslt_input_v1_0_4 $rest)
-   (let (cons-atom GSLTPrattTokensConsV1 (cons-atom $token (cons-atom $tail ()))) $__gslt_input_v1_0_4
-   (let (gslt:result:GSLTPrattInfixV1:11010 $constructor $precedence) (once (gslt:fn:GSLTPrattInfixV1:11010 $environment $token GSLTPrattLeftAssociativeV1))
+(= (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum $current (cons GSLTPrattTokensConsV1 (cons $token (cons $tail ()))) $rest)
+   (let (cons gslt:result:GSLTPrattInfixV1:11010 (cons $constructor (cons $precedence ()))) (once (gslt:fn:GSLTPrattInfixV1:11010 $environment $token GSLTPrattLeftAssociativeV1))
    (let gslt:result:GSLTPrattAtLeastV1:11 (once (gslt:fn:GSLTPrattAtLeastV1:11 $precedence $minimum))
-   (let (gslt:result:GSLTPrattParseV1:111100 $right $afterRight) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111100 $environment $scope (quote (GSLTPrattStrictMinimumV1 $precedence)) $tail)))
-   (let (gslt:result:GSLTPrattParseTailV1:1111101 $tree) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum (quote (GSLTPrattApplicationV1 $constructor (GSLTPrattArgumentsConsV1 $current (GSLTPrattArgumentsConsV1 $right GSLTPrattArgumentsNilV1)))) $afterRight $rest)))
-   (quote (gslt:result:GSLTPrattParseTailV1:1111101 $tree))))))))
+   (let (cons gslt:result:GSLTPrattParseV1:111100 (cons $right (cons $afterRight ()))) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111100 $environment $scope (quote (GSLTPrattStrictMinimumV1 $precedence)) $tail)))
+   (let (cons gslt:result:GSLTPrattParseTailV1:1111101 (cons $tree ())) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum (quote (GSLTPrattApplicationV1 $constructor (GSLTPrattArgumentsConsV1 $current (GSLTPrattArgumentsConsV1 $right GSLTPrattArgumentsNilV1)))) $afterRight $rest)))
+   (quote (gslt:result:GSLTPrattParseTailV1:1111101 $tree)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=260 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-tail-right-v1 target=mode relation=GSLTPrattParseTailV1 input=1111101 functional=relational
-(= (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum $current $__gslt_input_v1_0_4 $rest)
-   (let (cons-atom GSLTPrattTokensConsV1 (cons-atom $token (cons-atom $tail ()))) $__gslt_input_v1_0_4
-   (let (gslt:result:GSLTPrattInfixV1:11010 $constructor $precedence) (once (gslt:fn:GSLTPrattInfixV1:11010 $environment $token GSLTPrattRightAssociativeV1))
+(= (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum $current (cons GSLTPrattTokensConsV1 (cons $token (cons $tail ()))) $rest)
+   (let (cons gslt:result:GSLTPrattInfixV1:11010 (cons $constructor (cons $precedence ()))) (once (gslt:fn:GSLTPrattInfixV1:11010 $environment $token GSLTPrattRightAssociativeV1))
    (let gslt:result:GSLTPrattAtLeastV1:11 (once (gslt:fn:GSLTPrattAtLeastV1:11 $precedence $minimum))
-   (let (gslt:result:GSLTPrattParseV1:111100 $right $afterRight) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $precedence $tail)))
-   (let (gslt:result:GSLTPrattParseTailV1:1111101 $tree) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum (quote (GSLTPrattApplicationV1 $constructor (GSLTPrattArgumentsConsV1 $current (GSLTPrattArgumentsConsV1 $right GSLTPrattArgumentsNilV1)))) $afterRight $rest)))
-   (quote (gslt:result:GSLTPrattParseTailV1:1111101 $tree))))))))
+   (let (cons gslt:result:GSLTPrattParseV1:111100 (cons $right (cons $afterRight ()))) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $precedence $tail)))
+   (let (cons gslt:result:GSLTPrattParseTailV1:1111101 (cons $tree ())) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111101 $environment $scope $minimum (quote (GSLTPrattApplicationV1 $constructor (GSLTPrattArgumentsConsV1 $current (GSLTPrattArgumentsConsV1 $right GSLTPrattArgumentsNilV1)))) $afterRight $rest)))
+   (quote (gslt:result:GSLTPrattParseTailV1:1111101 $tree)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=261 source-presentation=MM0MathParserV1 source-rule=mm0-math-tokens-to-pratt-nil-v1 target=mode relation=MM0MathTokensToPrattV1 input=10 functional=semidet
 (= (gslt:fn:MM0MathTokensToPrattV1:10 MM0MathTokensNilV1)
    (quote (gslt:result:MM0MathTokensToPrattV1:10 GSLTPrattTokensNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=262 source-presentation=MM0MathParserV1 source-rule=mm0-math-tokens-to-pratt-cons-v1 target=mode relation=MM0MathTokensToPrattV1 input=10 functional=semidet
-(= (gslt:fn:MM0MathTokensToPrattV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom MM0MathTokensConsV1 (cons-atom $token (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0MathTokensToPrattV1:10 $after) (gslt:fn:MM0MathTokensToPrattV1:10 $rest)
-   (quote (gslt:result:MM0MathTokensToPrattV1:10 (GSLTPrattTokensConsV1 $token $after))))))
+(= (gslt:fn:MM0MathTokensToPrattV1:10 (cons MM0MathTokensConsV1 (cons $token (cons $rest ()))))
+   (let (cons gslt:result:MM0MathTokensToPrattV1:10 (cons $after ())) (gslt:fn:MM0MathTokensToPrattV1:10 $rest)
+   (quote (gslt:result:MM0MathTokensToPrattV1:10 (GSLTPrattTokensConsV1 $token $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=263 source-presentation=MM0MathParserV1 source-rule=mm0-decimal-digit-zero-v1 target=mode relation=MM0DecimalDigitValueV1 input=10 functional=semidet
-(= (gslt:fn:MM0DecimalDigitValueV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom cp (cons-atom 48 ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0DecimalDigitValueV1:10 NatZeroV1))))
+(= (gslt:fn:MM0DecimalDigitValueV1:10 (cons cp (cons 48 ())))
+   (quote (gslt:result:MM0DecimalDigitValueV1:10 NatZeroV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=264 source-presentation=MM0MathParserV1 source-rule=mm0-decimal-digit-one-v1 target=mode relation=MM0DecimalDigitValueV1 input=10 functional=semidet
-(= (gslt:fn:MM0DecimalDigitValueV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom cp (cons-atom 49 ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0DecimalDigitValueV1:10 (NatSuccV1 NatZeroV1)))))
+(= (gslt:fn:MM0DecimalDigitValueV1:10 (cons cp (cons 49 ())))
+   (quote (gslt:result:MM0DecimalDigitValueV1:10 (NatSuccV1 NatZeroV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=265 source-presentation=MM0MathParserV1 source-rule=mm0-decimal-digit-two-v1 target=mode relation=MM0DecimalDigitValueV1 input=10 functional=semidet
-(= (gslt:fn:MM0DecimalDigitValueV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom cp (cons-atom 50 ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0DecimalDigitValueV1:10 (NatSuccV1 (NatSuccV1 NatZeroV1))))))
+(= (gslt:fn:MM0DecimalDigitValueV1:10 (cons cp (cons 50 ())))
+   (quote (gslt:result:MM0DecimalDigitValueV1:10 (NatSuccV1 (NatSuccV1 NatZeroV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=266 source-presentation=MM0MathParserV1 source-rule=mm0-decimal-digit-three-v1 target=mode relation=MM0DecimalDigitValueV1 input=10 functional=semidet
-(= (gslt:fn:MM0DecimalDigitValueV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom cp (cons-atom 51 ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0DecimalDigitValueV1:10 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
+(= (gslt:fn:MM0DecimalDigitValueV1:10 (cons cp (cons 51 ())))
+   (quote (gslt:result:MM0DecimalDigitValueV1:10 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=267 source-presentation=MM0MathParserV1 source-rule=mm0-decimal-digit-four-v1 target=mode relation=MM0DecimalDigitValueV1 input=10 functional=semidet
-(= (gslt:fn:MM0DecimalDigitValueV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom cp (cons-atom 52 ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0DecimalDigitValueV1:10 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))
+(= (gslt:fn:MM0DecimalDigitValueV1:10 (cons cp (cons 52 ())))
+   (quote (gslt:result:MM0DecimalDigitValueV1:10 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=268 source-presentation=MM0MathParserV1 source-rule=mm0-decimal-digit-five-v1 target=mode relation=MM0DecimalDigitValueV1 input=10 functional=semidet
-(= (gslt:fn:MM0DecimalDigitValueV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom cp (cons-atom 53 ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0DecimalDigitValueV1:10 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))
+(= (gslt:fn:MM0DecimalDigitValueV1:10 (cons cp (cons 53 ())))
+   (quote (gslt:result:MM0DecimalDigitValueV1:10 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=269 source-presentation=MM0MathParserV1 source-rule=mm0-decimal-digit-six-v1 target=mode relation=MM0DecimalDigitValueV1 input=10 functional=semidet
-(= (gslt:fn:MM0DecimalDigitValueV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom cp (cons-atom 54 ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0DecimalDigitValueV1:10 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))
+(= (gslt:fn:MM0DecimalDigitValueV1:10 (cons cp (cons 54 ())))
+   (quote (gslt:result:MM0DecimalDigitValueV1:10 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=270 source-presentation=MM0MathParserV1 source-rule=mm0-decimal-digit-seven-v1 target=mode relation=MM0DecimalDigitValueV1 input=10 functional=semidet
-(= (gslt:fn:MM0DecimalDigitValueV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom cp (cons-atom 55 ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0DecimalDigitValueV1:10 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))
+(= (gslt:fn:MM0DecimalDigitValueV1:10 (cons cp (cons 55 ())))
+   (quote (gslt:result:MM0DecimalDigitValueV1:10 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=271 source-presentation=MM0MathParserV1 source-rule=mm0-decimal-digit-eight-v1 target=mode relation=MM0DecimalDigitValueV1 input=10 functional=semidet
-(= (gslt:fn:MM0DecimalDigitValueV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom cp (cons-atom 56 ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0DecimalDigitValueV1:10 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))
+(= (gslt:fn:MM0DecimalDigitValueV1:10 (cons cp (cons 56 ())))
+   (quote (gslt:result:MM0DecimalDigitValueV1:10 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=272 source-presentation=MM0MathParserV1 source-rule=mm0-decimal-digit-nine-v1 target=mode relation=MM0DecimalDigitValueV1 input=10 functional=semidet
-(= (gslt:fn:MM0DecimalDigitValueV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom cp (cons-atom 57 ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0DecimalDigitValueV1:10 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))
+(= (gslt:fn:MM0DecimalDigitValueV1:10 (cons cp (cons 57 ())))
+   (quote (gslt:result:MM0DecimalDigitValueV1:10 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=273 source-presentation=MM0MathParserV1 source-rule=mm0-decimal-length-nil-v1 target=mode relation=MM0DecimalLengthV1 input=10 functional=semidet
 (= (gslt:fn:MM0DecimalLengthV1:10 nil)
    (quote (gslt:result:MM0DecimalLengthV1:10 NatZeroV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=274 source-presentation=MM0MathParserV1 source-rule=mm0-decimal-length-cons-v1 target=mode relation=MM0DecimalLengthV1 input=10 functional=semidet
-(= (gslt:fn:MM0DecimalLengthV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom cons (cons-atom $digit (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0DecimalLengthV1:10 $length) (gslt:fn:MM0DecimalLengthV1:10 $rest)
-   (quote (gslt:result:MM0DecimalLengthV1:10 (NatSuccV1 $length))))))
+(= (gslt:fn:MM0DecimalLengthV1:10 (cons cons (cons $digit (cons $rest ()))))
+   (let (cons gslt:result:MM0DecimalLengthV1:10 (cons $length ())) (gslt:fn:MM0DecimalLengthV1:10 $rest)
+   (quote (gslt:result:MM0DecimalLengthV1:10 (NatSuccV1 $length)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=275 source-presentation=MM0MathParserV1 source-rule=mm0-nat-compare-zero-zero-v1 target=mode relation=MM0NatCompareV1 input=110 functional=semidet
 (= (gslt:fn:MM0NatCompareV1:110 NatZeroV1 NatZeroV1)
    (quote (gslt:result:MM0NatCompareV1:110 MM0EqualV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=276 source-presentation=MM0MathParserV1 source-rule=mm0-nat-compare-zero-succ-v1 target=mode relation=MM0NatCompareV1 input=110 functional=semidet
-(= (gslt:fn:MM0NatCompareV1:110 NatZeroV1 $__gslt_input_v1_0_1)
-   (let (cons-atom NatSuccV1 (cons-atom $right ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0NatCompareV1:110 MM0LessV1))))
+(= (gslt:fn:MM0NatCompareV1:110 NatZeroV1 (cons NatSuccV1 (cons $right ())))
+   (quote (gslt:result:MM0NatCompareV1:110 MM0LessV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=277 source-presentation=MM0MathParserV1 source-rule=mm0-nat-compare-succ-zero-v1 target=mode relation=MM0NatCompareV1 input=110 functional=semidet
-(= (gslt:fn:MM0NatCompareV1:110 $__gslt_input_v1_0_0 NatZeroV1)
-   (let (cons-atom NatSuccV1 (cons-atom $left ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0NatCompareV1:110 MM0GreaterV1))))
+(= (gslt:fn:MM0NatCompareV1:110 (cons NatSuccV1 (cons $left ())) NatZeroV1)
+   (quote (gslt:result:MM0NatCompareV1:110 MM0GreaterV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=278 source-presentation=MM0MathParserV1 source-rule=mm0-nat-compare-succ-succ-v1 target=mode relation=MM0NatCompareV1 input=110 functional=semidet
-(= (gslt:fn:MM0NatCompareV1:110 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom NatSuccV1 (cons-atom $left ())) $__gslt_input_v1_0_0
-   (let (cons-atom NatSuccV1 (cons-atom $right ())) $__gslt_input_v1_0_1
-   (let (gslt:result:MM0NatCompareV1:110 $order) (gslt:fn:MM0NatCompareV1:110 $left $right)
-   (quote (gslt:result:MM0NatCompareV1:110 $order))))))
+(= (gslt:fn:MM0NatCompareV1:110 (cons NatSuccV1 (cons $left ())) (cons NatSuccV1 (cons $right ())))
+   (let (cons gslt:result:MM0NatCompareV1:110 (cons $order ())) (gslt:fn:MM0NatCompareV1:110 $left $right)
+   (quote (gslt:result:MM0NatCompareV1:110 $order))))
 
 ; gslt-lowered-equation-v1 source-rewrite=279 source-presentation=MM0MathParserV1 source-rule=mm0-decimal-lex-equal-v1 target=mode relation=MM0DecimalLexCompareV1 input=111 functional=semidet
 (= (gslt:fn:MM0DecimalLexCompareV1:111 nil nil MM0EqualV1)
    (quote gslt:result:MM0DecimalLexCompareV1:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=280 source-presentation=MM0MathParserV1 source-rule=mm0-decimal-lex-cons-v1 target=mode relation=MM0DecimalLexCompareV1 input=111 functional=semidet
-(= (gslt:fn:MM0DecimalLexCompareV1:111 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1 $order)
-   (let (cons-atom cons (cons-atom $leftDigit (cons-atom $leftRest ()))) $__gslt_input_v1_0_0
-   (let (cons-atom cons (cons-atom $rightDigit (cons-atom $rightRest ()))) $__gslt_input_v1_0_1
-   (let (gslt:result:MM0DecimalDigitValueV1:10 $leftValue) (gslt:fn:MM0DecimalDigitValueV1:10 $leftDigit)
-   (let (gslt:result:MM0DecimalDigitValueV1:10 $rightValue) (gslt:fn:MM0DecimalDigitValueV1:10 $rightDigit)
-   (let (gslt:result:MM0NatCompareV1:110 $digitOrder) (gslt:fn:MM0NatCompareV1:110 $leftValue $rightValue)
+(= (gslt:fn:MM0DecimalLexCompareV1:111 (cons cons (cons $leftDigit (cons $leftRest ()))) (cons cons (cons $rightDigit (cons $rightRest ()))) $order)
+   (let (cons gslt:result:MM0DecimalDigitValueV1:10 (cons $leftValue ())) (gslt:fn:MM0DecimalDigitValueV1:10 $leftDigit)
+   (let (cons gslt:result:MM0DecimalDigitValueV1:10 (cons $rightValue ())) (gslt:fn:MM0DecimalDigitValueV1:10 $rightDigit)
+   (let (cons gslt:result:MM0NatCompareV1:110 (cons $digitOrder ())) (gslt:fn:MM0NatCompareV1:110 $leftValue $rightValue)
    (let gslt:result:MM0DecimalLexAfterDigitV1:1111 (gslt:fn:MM0DecimalLexAfterDigitV1:1111 $digitOrder $leftRest $rightRest $order)
-   (quote gslt:result:MM0DecimalLexCompareV1:111))))))))
+   (quote gslt:result:MM0DecimalLexCompareV1:111))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=281 source-presentation=MM0MathParserV1 source-rule=mm0-decimal-lex-after-less-v1 target=mode relation=MM0DecimalLexAfterDigitV1 input=1111 functional=semidet
 (= (gslt:fn:MM0DecimalLexAfterDigitV1:1111 MM0LessV1 $left $right MM0LessV1)
@@ -2365,9 +2160,9 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=284 source-presentation=MM0MathParserV1 source-rule=mm0-decimal-compare-v1 target=mode relation=MM0DecimalCompareV1 input=111 functional=semidet
 (= (gslt:fn:MM0DecimalCompareV1:111 $left $right $order)
-   (let (gslt:result:MM0DecimalLengthV1:10 $leftLength) (gslt:fn:MM0DecimalLengthV1:10 $left)
-   (let (gslt:result:MM0DecimalLengthV1:10 $rightLength) (gslt:fn:MM0DecimalLengthV1:10 $right)
-   (let (gslt:result:MM0NatCompareV1:110 $lengthOrder) (gslt:fn:MM0NatCompareV1:110 $leftLength $rightLength)
+   (let (cons gslt:result:MM0DecimalLengthV1:10 (cons $leftLength ())) (gslt:fn:MM0DecimalLengthV1:10 $left)
+   (let (cons gslt:result:MM0DecimalLengthV1:10 (cons $rightLength ())) (gslt:fn:MM0DecimalLengthV1:10 $right)
+   (let (cons gslt:result:MM0NatCompareV1:110 (cons $lengthOrder ())) (gslt:fn:MM0NatCompareV1:110 $leftLength $rightLength)
    (let gslt:result:MM0DecimalCompareAfterLengthV1:1111 (gslt:fn:MM0DecimalCompareAfterLengthV1:1111 $lengthOrder $left $right $order)
    (quote gslt:result:MM0DecimalCompareV1:111))))))
 
@@ -2401,435 +2196,358 @@
    (quote gslt:result:GSLTPrattAtLeastV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=292 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-at-least-maximum-finite-v1 target=mode relation=GSLTPrattAtLeastV1 input=11 functional=semidet
-(= (gslt:fn:GSLTPrattAtLeastV1:11 MM0MaximumPrecedenceV1 $__gslt_input_v1_0_1)
-   (let (cons-atom MM0FinitePrecedenceV1 (cons-atom $minimum ())) $__gslt_input_v1_0_1
-   (quote gslt:result:GSLTPrattAtLeastV1:11)))
+(= (gslt:fn:GSLTPrattAtLeastV1:11 MM0MaximumPrecedenceV1 (cons MM0FinitePrecedenceV1 (cons $minimum ())))
+   (quote gslt:result:GSLTPrattAtLeastV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=293 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-at-least-maximum-strict-finite-v1 target=mode relation=GSLTPrattAtLeastV1 input=11 functional=semidet
-(= (gslt:fn:GSLTPrattAtLeastV1:11 MM0MaximumPrecedenceV1 $__gslt_input_v1_0_1)
-   (let (cons-atom GSLTPrattStrictMinimumV1 (cons-atom (cons-atom MM0FinitePrecedenceV1 (cons-atom $minimum ())) ())) $__gslt_input_v1_0_1
-   (quote gslt:result:GSLTPrattAtLeastV1:11)))
+(= (gslt:fn:GSLTPrattAtLeastV1:11 MM0MaximumPrecedenceV1 (cons GSLTPrattStrictMinimumV1 (cons (cons MM0FinitePrecedenceV1 (cons $minimum ())) ())))
+   (quote gslt:result:GSLTPrattAtLeastV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=294 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-at-least-finite-equal-v1 target=mode relation=GSLTPrattAtLeastV1 input=11 functional=semidet
-(= (gslt:fn:GSLTPrattAtLeastV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom MM0FinitePrecedenceV1 (cons-atom $precedence ())) $__gslt_input_v1_0_0
-   (let (cons-atom MM0FinitePrecedenceV1 (cons-atom $minimum ())) $__gslt_input_v1_0_1
+(= (gslt:fn:GSLTPrattAtLeastV1:11 (cons MM0FinitePrecedenceV1 (cons $precedence ())) (cons MM0FinitePrecedenceV1 (cons $minimum ())))
    (let gslt:result:MM0DecimalCompareV1:111 (gslt:fn:MM0DecimalCompareV1:111 $precedence $minimum MM0EqualV1)
-   (quote gslt:result:GSLTPrattAtLeastV1:11)))))
+   (quote gslt:result:GSLTPrattAtLeastV1:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=295 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-at-least-finite-greater-v1 target=mode relation=GSLTPrattAtLeastV1 input=11 functional=semidet
-(= (gslt:fn:GSLTPrattAtLeastV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom MM0FinitePrecedenceV1 (cons-atom $precedence ())) $__gslt_input_v1_0_0
-   (let (cons-atom MM0FinitePrecedenceV1 (cons-atom $minimum ())) $__gslt_input_v1_0_1
+(= (gslt:fn:GSLTPrattAtLeastV1:11 (cons MM0FinitePrecedenceV1 (cons $precedence ())) (cons MM0FinitePrecedenceV1 (cons $minimum ())))
    (let gslt:result:MM0DecimalCompareV1:111 (gslt:fn:MM0DecimalCompareV1:111 $precedence $minimum MM0GreaterV1)
-   (quote gslt:result:GSLTPrattAtLeastV1:11)))))
+   (quote gslt:result:GSLTPrattAtLeastV1:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=296 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-at-least-finite-strict-v1 target=mode relation=GSLTPrattAtLeastV1 input=11 functional=semidet
-(= (gslt:fn:GSLTPrattAtLeastV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom MM0FinitePrecedenceV1 (cons-atom $precedence ())) $__gslt_input_v1_0_0
-   (let (cons-atom GSLTPrattStrictMinimumV1 (cons-atom (cons-atom MM0FinitePrecedenceV1 (cons-atom $minimum ())) ())) $__gslt_input_v1_0_1
+(= (gslt:fn:GSLTPrattAtLeastV1:11 (cons MM0FinitePrecedenceV1 (cons $precedence ())) (cons GSLTPrattStrictMinimumV1 (cons (cons MM0FinitePrecedenceV1 (cons $minimum ())) ())))
    (let gslt:result:MM0DecimalCompareV1:111 (gslt:fn:MM0DecimalCompareV1:111 $precedence $minimum MM0GreaterV1)
-   (quote gslt:result:GSLTPrattAtLeastV1:11)))))
+   (quote gslt:result:GSLTPrattAtLeastV1:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=297 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-not-at-least-finite-maximum-v1 target=mode relation=GSLTPrattNotAtLeastV1 input=11 functional=semidet
-(= (gslt:fn:GSLTPrattNotAtLeastV1:11 $__gslt_input_v1_0_0 MM0MaximumPrecedenceV1)
-   (let (cons-atom MM0FinitePrecedenceV1 (cons-atom $precedence ())) $__gslt_input_v1_0_0
-   (quote gslt:result:GSLTPrattNotAtLeastV1:11)))
+(= (gslt:fn:GSLTPrattNotAtLeastV1:11 (cons MM0FinitePrecedenceV1 (cons $precedence ())) MM0MaximumPrecedenceV1)
+   (quote gslt:result:GSLTPrattNotAtLeastV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=298 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-not-at-least-finite-less-v1 target=mode relation=GSLTPrattNotAtLeastV1 input=11 functional=semidet
-(= (gslt:fn:GSLTPrattNotAtLeastV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom MM0FinitePrecedenceV1 (cons-atom $precedence ())) $__gslt_input_v1_0_0
-   (let (cons-atom MM0FinitePrecedenceV1 (cons-atom $minimum ())) $__gslt_input_v1_0_1
+(= (gslt:fn:GSLTPrattNotAtLeastV1:11 (cons MM0FinitePrecedenceV1 (cons $precedence ())) (cons MM0FinitePrecedenceV1 (cons $minimum ())))
    (let gslt:result:MM0DecimalCompareV1:111 (gslt:fn:MM0DecimalCompareV1:111 $precedence $minimum MM0LessV1)
-   (quote gslt:result:GSLTPrattNotAtLeastV1:11)))))
-
-; gslt-lowered-equation-v1 source-rewrite=299 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-not-at-least-finite-strict-less-v1 target=mode relation=GSLTPrattNotAtLeastV1 input=11 functional=semidet
-(= (gslt:fn:GSLTPrattNotAtLeastV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom MM0FinitePrecedenceV1 (cons-atom $precedence ())) $__gslt_input_v1_0_0
-   (let (cons-atom GSLTPrattStrictMinimumV1 (cons-atom (cons-atom MM0FinitePrecedenceV1 (cons-atom $minimum ())) ())) $__gslt_input_v1_0_1
-   (let gslt:result:MM0DecimalCompareV1:111 (gslt:fn:MM0DecimalCompareV1:111 $precedence $minimum MM0LessV1)
-   (quote gslt:result:GSLTPrattNotAtLeastV1:11)))))
-
-; gslt-lowered-equation-v1 source-rewrite=300 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-not-at-least-finite-strict-equal-v1 target=mode relation=GSLTPrattNotAtLeastV1 input=11 functional=semidet
-(= (gslt:fn:GSLTPrattNotAtLeastV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom MM0FinitePrecedenceV1 (cons-atom $precedence ())) $__gslt_input_v1_0_0
-   (let (cons-atom GSLTPrattStrictMinimumV1 (cons-atom (cons-atom MM0FinitePrecedenceV1 (cons-atom $minimum ())) ())) $__gslt_input_v1_0_1
-   (let gslt:result:MM0DecimalCompareV1:111 (gslt:fn:MM0DecimalCompareV1:111 $precedence $minimum MM0EqualV1)
-   (quote gslt:result:GSLTPrattNotAtLeastV1:11)))))
-
-; gslt-lowered-equation-v1 source-rewrite=301 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-not-at-least-finite-strict-maximum-v1 target=mode relation=GSLTPrattNotAtLeastV1 input=11 functional=semidet
-(= (gslt:fn:GSLTPrattNotAtLeastV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom MM0FinitePrecedenceV1 (cons-atom $precedence ())) $__gslt_input_v1_0_0
-   (let (cons-atom GSLTPrattStrictMinimumV1 (cons-atom MM0MaximumPrecedenceV1 ())) $__gslt_input_v1_0_1
-   (quote gslt:result:GSLTPrattNotAtLeastV1:11))))
-
-; gslt-lowered-equation-v1 source-rewrite=302 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-not-at-least-maximum-strict-maximum-v1 target=mode relation=GSLTPrattNotAtLeastV1 input=11 functional=semidet
-(= (gslt:fn:GSLTPrattNotAtLeastV1:11 MM0MaximumPrecedenceV1 $__gslt_input_v1_0_1)
-   (let (cons-atom GSLTPrattStrictMinimumV1 (cons-atom MM0MaximumPrecedenceV1 ())) $__gslt_input_v1_0_1
    (quote gslt:result:GSLTPrattNotAtLeastV1:11)))
 
+; gslt-lowered-equation-v1 source-rewrite=299 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-not-at-least-finite-strict-less-v1 target=mode relation=GSLTPrattNotAtLeastV1 input=11 functional=semidet
+(= (gslt:fn:GSLTPrattNotAtLeastV1:11 (cons MM0FinitePrecedenceV1 (cons $precedence ())) (cons GSLTPrattStrictMinimumV1 (cons (cons MM0FinitePrecedenceV1 (cons $minimum ())) ())))
+   (let gslt:result:MM0DecimalCompareV1:111 (gslt:fn:MM0DecimalCompareV1:111 $precedence $minimum MM0LessV1)
+   (quote gslt:result:GSLTPrattNotAtLeastV1:11)))
+
+; gslt-lowered-equation-v1 source-rewrite=300 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-not-at-least-finite-strict-equal-v1 target=mode relation=GSLTPrattNotAtLeastV1 input=11 functional=semidet
+(= (gslt:fn:GSLTPrattNotAtLeastV1:11 (cons MM0FinitePrecedenceV1 (cons $precedence ())) (cons GSLTPrattStrictMinimumV1 (cons (cons MM0FinitePrecedenceV1 (cons $minimum ())) ())))
+   (let gslt:result:MM0DecimalCompareV1:111 (gslt:fn:MM0DecimalCompareV1:111 $precedence $minimum MM0EqualV1)
+   (quote gslt:result:GSLTPrattNotAtLeastV1:11)))
+
+; gslt-lowered-equation-v1 source-rewrite=301 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-not-at-least-finite-strict-maximum-v1 target=mode relation=GSLTPrattNotAtLeastV1 input=11 functional=semidet
+(= (gslt:fn:GSLTPrattNotAtLeastV1:11 (cons MM0FinitePrecedenceV1 (cons $precedence ())) (cons GSLTPrattStrictMinimumV1 (cons MM0MaximumPrecedenceV1 ())))
+   (quote gslt:result:GSLTPrattNotAtLeastV1:11))
+
+; gslt-lowered-equation-v1 source-rewrite=302 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-not-at-least-maximum-strict-maximum-v1 target=mode relation=GSLTPrattNotAtLeastV1 input=11 functional=semidet
+(= (gslt:fn:GSLTPrattNotAtLeastV1:11 MM0MaximumPrecedenceV1 (cons GSLTPrattStrictMinimumV1 (cons MM0MaximumPrecedenceV1 ())))
+   (quote gslt:result:GSLTPrattNotAtLeastV1:11))
+
 ; gslt-lowered-equation-v1 source-rewrite=308 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-not-infix-v1 target=mode relation=GSLTPrattNotInfixV1 input=11 functional=semidet
-(= (gslt:fn:GSLTPrattNotInfixV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom MM0MathEnvironmentV1 (cons-atom $declarations (cons-atom (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom $infixes ()))))) ()))) $__gslt_input_v1_0_0
-   (let (cons-atom MM0MathTokenV1 (cons-atom $token ())) $__gslt_input_v1_0_1
+(= (gslt:fn:GSLTPrattNotInfixV1:11 (cons MM0MathEnvironmentV1 (cons $declarations (cons (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons $infixes ()))))) ()))) (cons MM0MathTokenV1 (cons $token ())))
    (let gslt:result:MM0InfixLookupV1:111 (gslt:fn:MM0InfixLookupV1:111 $token $infixes MM0InfixMissingV1)
-   (quote gslt:result:GSLTPrattNotInfixV1:11)))))
+   (quote gslt:result:GSLTPrattNotInfixV1:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=309 source-presentation=MM0MathParserV1 source-rule=mm0-math-scalars-match-name-nil-v1 target=mode relation=MM0MathScalarsMatchNameV1 input=11 functional=semidet
 (= (gslt:fn:MM0MathScalarsMatchNameV1:11 MM0MathScalarsNilV1 nil)
    (quote gslt:result:MM0MathScalarsMatchNameV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=310 source-presentation=MM0MathParserV1 source-rule=mm0-math-scalars-match-name-cons-v1 target=mode relation=MM0MathScalarsMatchNameV1 input=11 functional=semidet
-(= (gslt:fn:MM0MathScalarsMatchNameV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom MM0MathScalarsConsV1 (cons-atom $scalar (cons-atom $scalars ()))) $__gslt_input_v1_0_0
-   (let (cons-atom cons (cons-atom $scalar (cons-atom $name ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:MM0MathScalarsMatchNameV1:11 (cons MM0MathScalarsConsV1 (cons $scalar (cons $scalars ()))) (cons cons (cons $scalar (cons $name ()))))
    (let gslt:result:MM0MathScalarsMatchNameV1:11 (gslt:fn:MM0MathScalarsMatchNameV1:11 $scalars $name)
-   (quote gslt:result:MM0MathScalarsMatchNameV1:11)))))
+   (quote gslt:result:MM0MathScalarsMatchNameV1:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=311 source-presentation=MM0MathParserV1 source-rule=mm0-math-scalars-different-name-left-nil-v1 target=mode relation=MM0MathScalarsDifferentNameV1 input=11 functional=semidet
-(= (gslt:fn:MM0MathScalarsDifferentNameV1:11 MM0MathScalarsNilV1 $__gslt_input_v1_0_1)
-   (let (cons-atom cons (cons-atom $right (cons-atom $rightRest ()))) $__gslt_input_v1_0_1
-   (quote gslt:result:MM0MathScalarsDifferentNameV1:11)))
+(= (gslt:fn:MM0MathScalarsDifferentNameV1:11 MM0MathScalarsNilV1 (cons cons (cons $right (cons $rightRest ()))))
+   (quote gslt:result:MM0MathScalarsDifferentNameV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=312 source-presentation=MM0MathParserV1 source-rule=mm0-math-scalars-different-name-right-nil-v1 target=mode relation=MM0MathScalarsDifferentNameV1 input=11 functional=semidet
-(= (gslt:fn:MM0MathScalarsDifferentNameV1:11 $__gslt_input_v1_0_0 nil)
-   (let (cons-atom MM0MathScalarsConsV1 (cons-atom $left (cons-atom $leftRest ()))) $__gslt_input_v1_0_0
-   (quote gslt:result:MM0MathScalarsDifferentNameV1:11)))
+(= (gslt:fn:MM0MathScalarsDifferentNameV1:11 (cons MM0MathScalarsConsV1 (cons $left (cons $leftRest ()))) nil)
+   (quote gslt:result:MM0MathScalarsDifferentNameV1:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=313 source-presentation=MM0MathParserV1 source-rule=mm0-math-scalars-different-name-head-v1 target=mode relation=MM0MathScalarsDifferentNameV1 input=11 functional=semidet
-(= (gslt:fn:MM0MathScalarsDifferentNameV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom MM0MathScalarsConsV1 (cons-atom $left (cons-atom $leftRest ()))) $__gslt_input_v1_0_0
-   (let (cons-atom cons (cons-atom $right (cons-atom $rightRest ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:MM0MathScalarsDifferentNameV1:11 (cons MM0MathScalarsConsV1 (cons $left (cons $leftRest ()))) (cons cons (cons $right (cons $rightRest ()))))
    (let $_ (gslt:different (different $left $right))
-   (quote gslt:result:MM0MathScalarsDifferentNameV1:11)))))
+   (quote gslt:result:MM0MathScalarsDifferentNameV1:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=314 source-presentation=MM0MathParserV1 source-rule=mm0-math-scalars-different-name-tail-v1 target=mode relation=MM0MathScalarsDifferentNameV1 input=11 functional=semidet
-(= (gslt:fn:MM0MathScalarsDifferentNameV1:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom MM0MathScalarsConsV1 (cons-atom $same (cons-atom $leftRest ()))) $__gslt_input_v1_0_0
-   (let (cons-atom cons (cons-atom $same (cons-atom $rightRest ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:MM0MathScalarsDifferentNameV1:11 (cons MM0MathScalarsConsV1 (cons $same (cons $leftRest ()))) (cons cons (cons $same (cons $rightRest ()))))
    (let gslt:result:MM0MathScalarsDifferentNameV1:11 (gslt:fn:MM0MathScalarsDifferentNameV1:11 $leftRest $rightRest)
-   (quote gslt:result:MM0MathScalarsDifferentNameV1:11)))))
+   (quote gslt:result:MM0MathScalarsDifferentNameV1:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=315 source-presentation=MM0MathParserV1 source-rule=mm0-math-scope-token-lookup-missing-v1 target=mode relation=MM0MathScopeTokenLookupV1 input=110 functional=relational
 (= (gslt:mode:MM0MathScopeTokenLookupV1:110 $scalars MM0MathScopeNilV1)
    (quote (gslt:result:MM0MathScopeTokenLookupV1:110 MM0MathScopeMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=316 source-presentation=MM0MathParserV1 source-rule=mm0-math-scope-token-lookup-found-v1 target=mode relation=MM0MathScopeTokenLookupV1 input=110 functional=relational
-(= (gslt:mode:MM0MathScopeTokenLookupV1:110 $scalars $__gslt_input_v1_0_1)
-   (let (cons-atom MM0MathScopeConsV1 (cons-atom $name (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:mode:MM0MathScopeTokenLookupV1:110 $scalars (cons MM0MathScopeConsV1 (cons $name (cons $rest ()))))
    (let gslt:result:MM0MathScalarsMatchNameV1:11 (once (gslt:fn:MM0MathScalarsMatchNameV1:11 $scalars $name))
-   (quote (gslt:result:MM0MathScopeTokenLookupV1:110 (MM0MathScopeTokenFoundV1 $name))))))
+   (quote (gslt:result:MM0MathScopeTokenLookupV1:110 (MM0MathScopeTokenFoundV1 $name)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=317 source-presentation=MM0MathParserV1 source-rule=mm0-math-scope-token-lookup-tail-v1 target=mode relation=MM0MathScopeTokenLookupV1 input=110 functional=relational
-(= (gslt:mode:MM0MathScopeTokenLookupV1:110 $scalars $__gslt_input_v1_0_1)
-   (let (cons-atom MM0MathScopeConsV1 (cons-atom $other (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:mode:MM0MathScopeTokenLookupV1:110 $scalars (cons MM0MathScopeConsV1 (cons $other (cons $rest ()))))
    (let gslt:result:MM0MathScalarsDifferentNameV1:11 (once (gslt:fn:MM0MathScalarsDifferentNameV1:11 $scalars $other))
-   (let (gslt:result:MM0MathScopeTokenLookupV1:110 $result) (superpose (collapse (gslt:mode:MM0MathScopeTokenLookupV1:110 $scalars $rest)))
-   (quote (gslt:result:MM0MathScopeTokenLookupV1:110 $result))))))
+   (let (cons gslt:result:MM0MathScopeTokenLookupV1:110 (cons $result ())) (superpose (collapse (gslt:mode:MM0MathScopeTokenLookupV1:110 $scalars $rest)))
+   (quote (gslt:result:MM0MathScopeTokenLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=318 source-presentation=MM0MathParserV1 source-rule=mm0-math-binder-count-nil-v1 target=mode relation=MM0MathBinderCountV1 input=10 functional=semidet
 (= (gslt:fn:MM0MathBinderCountV1:10 nil)
    (quote (gslt:result:MM0MathBinderCountV1:10 NatZeroV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=319 source-presentation=MM0MathParserV1 source-rule=mm0-math-binder-count-cons-v1 target=mode relation=MM0MathBinderCountV1 input=10 functional=semidet
-(= (gslt:fn:MM0MathBinderCountV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom cons (cons-atom $binder (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0MathBinderCountV1:10 $count) (gslt:fn:MM0MathBinderCountV1:10 $rest)
-   (quote (gslt:result:MM0MathBinderCountV1:10 (NatSuccV1 $count))))))
+(= (gslt:fn:MM0MathBinderCountV1:10 (cons cons (cons $binder (cons $rest ()))))
+   (let (cons gslt:result:MM0MathBinderCountV1:10 (cons $count ())) (gslt:fn:MM0MathBinderCountV1:10 $rest)
+   (quote (gslt:result:MM0MathBinderCountV1:10 (NatSuccV1 $count)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=325 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-parentheses-v1 target=mode relation=GSLTPrattGroupV1 input=110 functional=semidet
-(= (gslt:fn:GSLTPrattGroupV1:110 $environment $__gslt_input_v1_0_1)
-   (let (cons-atom MM0MathTokenV1 (cons-atom (cons-atom MM0MathScalarsConsV1 (cons-atom (cons-atom cp (cons-atom 40 ())) (cons-atom MM0MathScalarsNilV1 ()))) ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:GSLTPrattGroupV1:110 (MM0MathTokenV1 (MM0MathScalarsConsV1 (cp 41) MM0MathScalarsNilV1))))))
+(= (gslt:fn:GSLTPrattGroupV1:110 $environment (cons MM0MathTokenV1 (cons (cons MM0MathScalarsConsV1 (cons (cons cp (cons 40 ())) (cons MM0MathScalarsNilV1 ()))) ())))
+   (quote (gslt:result:GSLTPrattGroupV1:110 (MM0MathTokenV1 (MM0MathScalarsConsV1 (cp 41) MM0MathScalarsNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=326 source-presentation=MM0MathParserV1 source-rule=mm0-runtime-math-parse-v1 target=mode relation=MM0RuntimeMathParseV1 input=1110 functional=relational
-(= (gslt:mode:MM0RuntimeMathParseV1:1110 $__gslt_input_v1_0_0 $scope $scalars)
-   (let (cons-atom MM0SourceStateV1 (cons-atom (cons-atom MM0TextualEnvironmentV1 (cons-atom $sorts (cons-atom $declarations ()))) (cons-atom (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom $infixes ()))))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0SecondaryLexV1:110 $mathTokens) (once (gslt:fn:MM0SecondaryLexV1:110 $delimiters $scalars))
-   (let (gslt:result:MM0MathTokensToPrattV1:10 $prattTokens) (once (gslt:fn:MM0MathTokensToPrattV1:10 $mathTokens))
-   (let (gslt:result:GSLTPrattParseAllV1:1110 $tree) (superpose (collapse (gslt:mode:GSLTPrattParseAllV1:1110 (quote (MM0MathEnvironmentV1 $declarations (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $infixes))) $scope $prattTokens)))
-   (quote (gslt:result:MM0RuntimeMathParseV1:1110 $tree)))))))
+(= (gslt:mode:MM0RuntimeMathParseV1:1110 (cons MM0SourceStateV1 (cons (cons MM0TextualEnvironmentV1 (cons $sorts (cons $declarations ()))) (cons (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons $infixes ()))))) ()))) $scope $scalars)
+   (let (cons gslt:result:MM0SecondaryLexV1:110 (cons $mathTokens ())) (once (gslt:fn:MM0SecondaryLexV1:110 $delimiters $scalars))
+   (let (cons gslt:result:MM0MathTokensToPrattV1:10 (cons $prattTokens ())) (once (gslt:fn:MM0MathTokensToPrattV1:10 $mathTokens))
+   (let (cons gslt:result:GSLTPrattParseAllV1:1110 (cons $tree ())) (superpose (collapse (gslt:mode:GSLTPrattParseAllV1:1110 (quote (MM0MathEnvironmentV1 $declarations (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $infixes))) $scope $prattTokens)))
+   (quote (gslt:result:MM0RuntimeMathParseV1:1110 $tree))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=244 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-source-environment-from-ast-v1 target=mode relation=MM0SourceEnvironmentFromAstV1 input=1000 functional=semidet
-(= (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 $__gslt_input_v1_0_0)
-   (let (cons-atom node (cons-atom mm0-file (cons-atom $statements ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0SourceFoldV1:111000 $outcome $state $history) (gslt:fn:MM0SourceFoldV1:111000 $statements NatZeroV1 (quote (MM0SourceStateV1 (MM0TextualEnvironmentV1 MM0SortEntriesNilV1 MM0DeclarationEntriesNilV1) (MM0NotationEnvironmentV1 (MM0MathClassTableConsV1 (MM0MathClassEntryV1 (cp 32) MM0MathWhitespaceV1) (MM0MathClassTableConsV1 (MM0MathClassEntryV1 (cp 10) MM0MathWhitespaceV1) MM0MathClassTableNilV1)) MM0ConstantEntriesNilV1 MM0PrefixEntriesNilV1 MM0InfixEntriesNilV1))))
-   (quote (gslt:result:MM0SourceEnvironmentFromAstV1:1000 $outcome $state $history)))))
+(= (gslt:fn:MM0SourceEnvironmentFromAstV1:1000 (cons node (cons mm0-file (cons $statements ()))))
+   (let (cons gslt:result:MM0SourceFoldV1:111000 (cons $outcome (cons $state (cons $history ())))) (gslt:fn:MM0SourceFoldV1:111000 $statements NatZeroV1 (quote (MM0SourceStateV1 (MM0TextualEnvironmentV1 MM0SortEntriesNilV1 MM0DeclarationEntriesNilV1) (MM0NotationEnvironmentV1 (MM0MathClassTableConsV1 (MM0MathClassEntryV1 (cp 32) MM0MathWhitespaceV1) (MM0MathClassTableConsV1 (MM0MathClassEntryV1 (cp 10) MM0MathWhitespaceV1) MM0MathClassTableNilV1)) MM0ConstantEntriesNilV1 MM0PrefixEntriesNilV1 MM0InfixEntriesNilV1))))
+   (quote (gslt:result:MM0SourceEnvironmentFromAstV1:1000 $outcome $state $history))))
 
 ; gslt-lowered-equation-v1 source-rewrite=34 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-statement-v1 target=mode relation=MM0SortStatementV1 input=100 functional=semidet
-(= (gslt:fn:MM0SortStatementV1:100 $__gslt_input_v1_0_0)
-   (let (cons-atom node (cons-atom mm0-sort-statement (cons-atom (cons-atom pair (cons-atom $pure (cons-atom (cons-atom pair (cons-atom $strict (cons-atom (cons-atom pair (cons-atom $provable (cons-atom (cons-atom pair (cons-atom $free (cons-atom $identifier ()))) ()))) ()))) ()))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0OptionPresenceV1:10 $pureFlag) (gslt:fn:MM0OptionPresenceV1:10 $pure)
-   (let (gslt:result:MM0OptionPresenceV1:10 $strictFlag) (gslt:fn:MM0OptionPresenceV1:10 $strict)
-   (let (gslt:result:MM0OptionPresenceV1:10 $provableFlag) (gslt:fn:MM0OptionPresenceV1:10 $provable)
-   (let (gslt:result:MM0OptionPresenceV1:10 $freeFlag) (gslt:fn:MM0OptionPresenceV1:10 $free)
-   (let (gslt:result:MM0IdentifierScalarsV1:10 $name) (gslt:fn:MM0IdentifierScalarsV1:10 $identifier)
-   (quote (gslt:result:MM0SortStatementV1:100 $name (MM0SortModifiersV1 $pureFlag $strictFlag $provableFlag $freeFlag))))))))))
+(= (gslt:fn:MM0SortStatementV1:100 (cons node (cons mm0-sort-statement (cons (cons pair (cons $pure (cons (cons pair (cons $strict (cons (cons pair (cons $provable (cons (cons pair (cons $free (cons $identifier ()))) ()))) ()))) ()))) ()))))
+   (let (cons gslt:result:MM0OptionPresenceV1:10 (cons $pureFlag ())) (gslt:fn:MM0OptionPresenceV1:10 $pure)
+   (let (cons gslt:result:MM0OptionPresenceV1:10 (cons $strictFlag ())) (gslt:fn:MM0OptionPresenceV1:10 $strict)
+   (let (cons gslt:result:MM0OptionPresenceV1:10 (cons $provableFlag ())) (gslt:fn:MM0OptionPresenceV1:10 $provable)
+   (let (cons gslt:result:MM0OptionPresenceV1:10 (cons $freeFlag ())) (gslt:fn:MM0OptionPresenceV1:10 $free)
+   (let (cons gslt:result:MM0IdentifierScalarsV1:10 (cons $name ())) (gslt:fn:MM0IdentifierScalarsV1:10 $identifier)
+   (quote (gslt:result:MM0SortStatementV1:100 $name (MM0SortModifiersV1 $pureFlag $strictFlag $provableFlag $freeFlag)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=43 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-step-v1 target=mode relation=MM0SortStepV1 input=111000 functional=semidet
 (= (gslt:fn:MM0SortStepV1:111000 $position $statement $before)
-   (let (gslt:result:MM0SortStatementV1:100 $name $modifiers) (gslt:fn:MM0SortStatementV1:100 $statement)
-   (let (gslt:result:MM0SortLookupV1:110 $lookup) (gslt:fn:MM0SortLookupV1:110 $name $before)
-   (let (gslt:result:MM0SortApplyV1:11111000 $outcome $after $historyEntry) (gslt:fn:MM0SortApplyV1:11111000 $position $name $modifiers $lookup $before)
+   (let (cons gslt:result:MM0SortStatementV1:100 (cons $name (cons $modifiers ()))) (gslt:fn:MM0SortStatementV1:100 $statement)
+   (let (cons gslt:result:MM0SortLookupV1:110 (cons $lookup ())) (gslt:fn:MM0SortLookupV1:110 $name $before)
+   (let (cons gslt:result:MM0SortApplyV1:11111000 (cons $outcome (cons $after (cons $historyEntry ())))) (gslt:fn:MM0SortApplyV1:11111000 $position $name $modifiers $lookup $before)
    (quote (gslt:result:MM0SortStepV1:111000 $outcome $after $historyEntry))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=59 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-type-ast-v1 target=mode relation=MM0TypeAstV1 input=100 functional=semidet
-(= (gslt:fn:MM0TypeAstV1:100 $__gslt_input_v1_0_0)
-   (let (cons-atom node (cons-atom mm0-type (cons-atom (cons-atom pair (cons-atom $sortIdentifier (cons-atom $dependencyIdentifiers ()))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0IdentifierScalarsV1:10 $sortName) (gslt:fn:MM0IdentifierScalarsV1:10 $sortIdentifier)
-   (quote (gslt:result:MM0TypeAstV1:100 $sortName $dependencyIdentifiers)))))
+(= (gslt:fn:MM0TypeAstV1:100 (cons node (cons mm0-type (cons (cons pair (cons $sortIdentifier (cons $dependencyIdentifiers ()))) ()))))
+   (let (cons gslt:result:MM0IdentifierScalarsV1:10 (cons $sortName ())) (gslt:fn:MM0IdentifierScalarsV1:10 $sortIdentifier)
+   (quote (gslt:result:MM0TypeAstV1:100 $sortName $dependencyIdentifiers))))
 
 ; gslt-lowered-equation-v1 source-rewrite=121 source-presentation=MM0TermEnvironmentV1 source-rule=mm0-term-statement-v1 target=mode relation=MM0TermStatementV1 input=1000 functional=semidet
-(= (gslt:fn:MM0TermStatementV1:1000 $__gslt_input_v1_0_0)
-   (let (cons-atom node (cons-atom mm0-term-statement (cons-atom (cons-atom pair (cons-atom $identifier (cons-atom (cons-atom pair (cons-atom $binders (cons-atom $arrowType ()))) ()))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0IdentifierScalarsV1:10 $name) (gslt:fn:MM0IdentifierScalarsV1:10 $identifier)
-   (quote (gslt:result:MM0TermStatementV1:1000 $name $binders $arrowType)))))
+(= (gslt:fn:MM0TermStatementV1:1000 (cons node (cons mm0-term-statement (cons (cons pair (cons $identifier (cons (cons pair (cons $binders (cons $arrowType ()))) ()))) ()))))
+   (let (cons gslt:result:MM0IdentifierScalarsV1:10 (cons $name ())) (gslt:fn:MM0IdentifierScalarsV1:10 $identifier)
+   (quote (gslt:result:MM0TermStatementV1:1000 $name $binders $arrowType))))
 
 ; gslt-lowered-equation-v1 source-rewrite=195 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-simple-statement-prefix-v1 target=mode relation=MM0SimpleNotationStatementV1 input=10000 functional=semidet
-(= (gslt:fn:MM0SimpleNotationStatementV1:10000 $__gslt_input_v1_0_0)
-   (let (cons-atom node (cons-atom mm0-simple-notation-statement (cons-atom (cons-atom pair (cons-atom (cons-atom node (cons-atom mm0-prefix-kind (cons-atom $keyword ()))) (cons-atom (cons-atom pair (cons-atom $identifier (cons-atom (cons-atom pair (cons-atom $constant (cons-atom $precedence ()))) ()))) ()))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0IdentifierScalarsV1:10 $termName) (gslt:fn:MM0IdentifierScalarsV1:10 $identifier)
-   (quote (gslt:result:MM0SimpleNotationStatementV1:10000 MM0PrefixNotationKindV1 $termName $constant $precedence)))))
+(= (gslt:fn:MM0SimpleNotationStatementV1:10000 (cons node (cons mm0-simple-notation-statement (cons (cons pair (cons (cons node (cons mm0-prefix-kind (cons $keyword ()))) (cons (cons pair (cons $identifier (cons (cons pair (cons $constant (cons $precedence ()))) ()))) ()))) ()))))
+   (let (cons gslt:result:MM0IdentifierScalarsV1:10 (cons $termName ())) (gslt:fn:MM0IdentifierScalarsV1:10 $identifier)
+   (quote (gslt:result:MM0SimpleNotationStatementV1:10000 MM0PrefixNotationKindV1 $termName $constant $precedence))))
 
 ; gslt-lowered-equation-v1 source-rewrite=196 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-simple-statement-infixl-v1 target=mode relation=MM0SimpleNotationStatementV1 input=10000 functional=semidet
-(= (gslt:fn:MM0SimpleNotationStatementV1:10000 $__gslt_input_v1_0_0)
-   (let (cons-atom node (cons-atom mm0-simple-notation-statement (cons-atom (cons-atom pair (cons-atom (cons-atom node (cons-atom mm0-infixl-kind (cons-atom $keyword ()))) (cons-atom (cons-atom pair (cons-atom $identifier (cons-atom (cons-atom pair (cons-atom $constant (cons-atom $precedence ()))) ()))) ()))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0IdentifierScalarsV1:10 $termName) (gslt:fn:MM0IdentifierScalarsV1:10 $identifier)
-   (quote (gslt:result:MM0SimpleNotationStatementV1:10000 (MM0InfixNotationKindV1 MM0LeftAssociativeV1) $termName $constant $precedence)))))
+(= (gslt:fn:MM0SimpleNotationStatementV1:10000 (cons node (cons mm0-simple-notation-statement (cons (cons pair (cons (cons node (cons mm0-infixl-kind (cons $keyword ()))) (cons (cons pair (cons $identifier (cons (cons pair (cons $constant (cons $precedence ()))) ()))) ()))) ()))))
+   (let (cons gslt:result:MM0IdentifierScalarsV1:10 (cons $termName ())) (gslt:fn:MM0IdentifierScalarsV1:10 $identifier)
+   (quote (gslt:result:MM0SimpleNotationStatementV1:10000 (MM0InfixNotationKindV1 MM0LeftAssociativeV1) $termName $constant $precedence))))
 
 ; gslt-lowered-equation-v1 source-rewrite=197 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-notation-simple-statement-infixr-v1 target=mode relation=MM0SimpleNotationStatementV1 input=10000 functional=semidet
-(= (gslt:fn:MM0SimpleNotationStatementV1:10000 $__gslt_input_v1_0_0)
-   (let (cons-atom node (cons-atom mm0-simple-notation-statement (cons-atom (cons-atom pair (cons-atom (cons-atom node (cons-atom mm0-infixr-kind (cons-atom $keyword ()))) (cons-atom (cons-atom pair (cons-atom $identifier (cons-atom (cons-atom pair (cons-atom $constant (cons-atom $precedence ()))) ()))) ()))) ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0IdentifierScalarsV1:10 $termName) (gslt:fn:MM0IdentifierScalarsV1:10 $identifier)
-   (quote (gslt:result:MM0SimpleNotationStatementV1:10000 (MM0InfixNotationKindV1 MM0RightAssociativeV1) $termName $constant $precedence)))))
+(= (gslt:fn:MM0SimpleNotationStatementV1:10000 (cons node (cons mm0-simple-notation-statement (cons (cons pair (cons (cons node (cons mm0-infixr-kind (cons $keyword ()))) (cons (cons pair (cons $identifier (cons (cons pair (cons $constant (cons $precedence ()))) ()))) ()))) ()))))
+   (let (cons gslt:result:MM0IdentifierScalarsV1:10 (cons $termName ())) (gslt:fn:MM0IdentifierScalarsV1:10 $identifier)
+   (quote (gslt:result:MM0SimpleNotationStatementV1:10000 (MM0InfixNotationKindV1 MM0RightAssociativeV1) $termName $constant $precedence))))
 
 ; gslt-lowered-equation-v1 source-rewrite=256 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-tail-nil-v1 target=mode relation=GSLTPrattParseTailV1 input=1111100 functional=relational
 (= (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum $current GSLTPrattTokensNilV1)
    (quote (gslt:result:GSLTPrattParseTailV1:1111100 $current GSLTPrattTokensNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=257 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-tail-stop-non-infix-v1 target=mode relation=GSLTPrattParseTailV1 input=1111100 functional=relational
-(= (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum $current $__gslt_input_v1_0_4)
-   (let (cons-atom GSLTPrattTokensConsV1 (cons-atom $token (cons-atom $tail ()))) $__gslt_input_v1_0_4
+(= (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum $current (cons GSLTPrattTokensConsV1 (cons $token (cons $tail ()))))
    (let gslt:result:GSLTPrattNotInfixV1:11 (once (gslt:fn:GSLTPrattNotInfixV1:11 $environment $token))
-   (quote (gslt:result:GSLTPrattParseTailV1:1111100 $current (GSLTPrattTokensConsV1 $token $tail))))))
+   (quote (gslt:result:GSLTPrattParseTailV1:1111100 $current (GSLTPrattTokensConsV1 $token $tail)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=258 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-tail-stop-bound-v1 target=mode relation=GSLTPrattParseTailV1 input=1111100 functional=relational
-(= (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum $current $__gslt_input_v1_0_4)
-   (let (cons-atom GSLTPrattTokensConsV1 (cons-atom $token (cons-atom $tail ()))) $__gslt_input_v1_0_4
-   (let (gslt:result:GSLTPrattInfixV1:11000 $constructor $association $precedence) (once (gslt:fn:GSLTPrattInfixV1:11000 $environment $token))
+(= (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum $current (cons GSLTPrattTokensConsV1 (cons $token (cons $tail ()))))
+   (let (cons gslt:result:GSLTPrattInfixV1:11000 (cons $constructor (cons $association (cons $precedence ())))) (once (gslt:fn:GSLTPrattInfixV1:11000 $environment $token))
    (let gslt:result:GSLTPrattNotAtLeastV1:11 (once (gslt:fn:GSLTPrattNotAtLeastV1:11 $precedence $minimum))
-   (quote (gslt:result:GSLTPrattParseTailV1:1111100 $current (GSLTPrattTokensConsV1 $token $tail)))))))
+   (quote (gslt:result:GSLTPrattParseTailV1:1111100 $current (GSLTPrattTokensConsV1 $token $tail))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=259 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-tail-left-v1 target=mode relation=GSLTPrattParseTailV1 input=1111100 functional=relational
-(= (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum $current $__gslt_input_v1_0_4)
-   (let (cons-atom GSLTPrattTokensConsV1 (cons-atom $token (cons-atom $tail ()))) $__gslt_input_v1_0_4
-   (let (gslt:result:GSLTPrattInfixV1:11010 $constructor $precedence) (once (gslt:fn:GSLTPrattInfixV1:11010 $environment $token GSLTPrattLeftAssociativeV1))
+(= (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum $current (cons GSLTPrattTokensConsV1 (cons $token (cons $tail ()))))
+   (let (cons gslt:result:GSLTPrattInfixV1:11010 (cons $constructor (cons $precedence ()))) (once (gslt:fn:GSLTPrattInfixV1:11010 $environment $token GSLTPrattLeftAssociativeV1))
    (let gslt:result:GSLTPrattAtLeastV1:11 (once (gslt:fn:GSLTPrattAtLeastV1:11 $precedence $minimum))
-   (let (gslt:result:GSLTPrattParseV1:111100 $right $afterRight) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111100 $environment $scope (quote (GSLTPrattStrictMinimumV1 $precedence)) $tail)))
-   (let (gslt:result:GSLTPrattParseTailV1:1111100 $tree $rest) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum (quote (GSLTPrattApplicationV1 $constructor (GSLTPrattArgumentsConsV1 $current (GSLTPrattArgumentsConsV1 $right GSLTPrattArgumentsNilV1)))) $afterRight)))
-   (quote (gslt:result:GSLTPrattParseTailV1:1111100 $tree $rest))))))))
+   (let (cons gslt:result:GSLTPrattParseV1:111100 (cons $right (cons $afterRight ()))) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111100 $environment $scope (quote (GSLTPrattStrictMinimumV1 $precedence)) $tail)))
+   (let (cons gslt:result:GSLTPrattParseTailV1:1111100 (cons $tree (cons $rest ()))) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum (quote (GSLTPrattApplicationV1 $constructor (GSLTPrattArgumentsConsV1 $current (GSLTPrattArgumentsConsV1 $right GSLTPrattArgumentsNilV1)))) $afterRight)))
+   (quote (gslt:result:GSLTPrattParseTailV1:1111100 $tree $rest)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=260 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-tail-right-v1 target=mode relation=GSLTPrattParseTailV1 input=1111100 functional=relational
-(= (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum $current $__gslt_input_v1_0_4)
-   (let (cons-atom GSLTPrattTokensConsV1 (cons-atom $token (cons-atom $tail ()))) $__gslt_input_v1_0_4
-   (let (gslt:result:GSLTPrattInfixV1:11010 $constructor $precedence) (once (gslt:fn:GSLTPrattInfixV1:11010 $environment $token GSLTPrattRightAssociativeV1))
+(= (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum $current (cons GSLTPrattTokensConsV1 (cons $token (cons $tail ()))))
+   (let (cons gslt:result:GSLTPrattInfixV1:11010 (cons $constructor (cons $precedence ()))) (once (gslt:fn:GSLTPrattInfixV1:11010 $environment $token GSLTPrattRightAssociativeV1))
    (let gslt:result:GSLTPrattAtLeastV1:11 (once (gslt:fn:GSLTPrattAtLeastV1:11 $precedence $minimum))
-   (let (gslt:result:GSLTPrattParseV1:111100 $right $afterRight) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $precedence $tail)))
-   (let (gslt:result:GSLTPrattParseTailV1:1111100 $tree $rest) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum (quote (GSLTPrattApplicationV1 $constructor (GSLTPrattArgumentsConsV1 $current (GSLTPrattArgumentsConsV1 $right GSLTPrattArgumentsNilV1)))) $afterRight)))
-   (quote (gslt:result:GSLTPrattParseTailV1:1111100 $tree $rest))))))))
+   (let (cons gslt:result:GSLTPrattParseV1:111100 (cons $right (cons $afterRight ()))) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $precedence $tail)))
+   (let (cons gslt:result:GSLTPrattParseTailV1:1111100 (cons $tree (cons $rest ()))) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum (quote (GSLTPrattApplicationV1 $constructor (GSLTPrattArgumentsConsV1 $current (GSLTPrattArgumentsConsV1 $right GSLTPrattArgumentsNilV1)))) $afterRight)))
+   (quote (gslt:result:GSLTPrattParseTailV1:1111100 $tree $rest)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=322 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-identifier-v1 target=mode relation=GSLTPrattIdentifierV1 input=11100 functional=relational
-(= (gslt:mode:GSLTPrattIdentifierV1:11100 $__gslt_input_v1_0_0 $scope $__gslt_input_v1_0_2)
-   (let (cons-atom MM0MathEnvironmentV1 (cons-atom $declarations (cons-atom $notation ()))) $__gslt_input_v1_0_0
-   (let (cons-atom MM0MathTokenV1 (cons-atom $scalars ())) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0MathScopeTokenLookupV1:110 $scopeResult) (superpose (collapse (gslt:mode:MM0MathScopeTokenLookupV1:110 $scalars $scope)))
-   (let (gslt:result:MM0MathIdentifierAfterScopeV1:11100 $name $arity) (superpose (collapse (gslt:mode:MM0MathIdentifierAfterScopeV1:11100 $scopeResult $declarations $scalars)))
-   (quote (gslt:result:GSLTPrattIdentifierV1:11100 $name $arity)))))))
+(= (gslt:mode:GSLTPrattIdentifierV1:11100 (cons MM0MathEnvironmentV1 (cons $declarations (cons $notation ()))) $scope (cons MM0MathTokenV1 (cons $scalars ())))
+   (let (cons gslt:result:MM0MathScopeTokenLookupV1:110 (cons $scopeResult ())) (superpose (collapse (gslt:mode:MM0MathScopeTokenLookupV1:110 $scalars $scope)))
+   (let (cons gslt:result:MM0MathIdentifierAfterScopeV1:11100 (cons $name (cons $arity ()))) (superpose (collapse (gslt:mode:MM0MathIdentifierAfterScopeV1:11100 $scopeResult $declarations $scalars)))
+   (quote (gslt:result:GSLTPrattIdentifierV1:11100 $name $arity)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=303 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-prefix-head-v1 target=mode relation=GSLTPrattPrefixV1 input=11000 functional=semidet
-(= (gslt:fn:GSLTPrattPrefixV1:11000 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom MM0MathEnvironmentV1 (cons-atom $declarations (cons-atom (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom (cons-atom MM0PrefixEntriesConsV1 (cons-atom (cons-atom MM0PrefixNotationEntryV1 (cons-atom $token (cons-atom $term (cons-atom $arity (cons-atom $precedence (cons-atom $position ())))))) (cons-atom $rest ()))) (cons-atom $infixes ()))))) ()))) $__gslt_input_v1_0_0
-   (let (cons-atom MM0MathTokenV1 (cons-atom $token ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:GSLTPrattPrefixV1:11000 $term $arity $precedence)))))
+(= (gslt:fn:GSLTPrattPrefixV1:11000 (cons MM0MathEnvironmentV1 (cons $declarations (cons (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons (cons MM0PrefixEntriesConsV1 (cons (cons MM0PrefixNotationEntryV1 (cons $token (cons $term (cons $arity (cons $precedence (cons $position ())))))) (cons $rest ()))) (cons $infixes ()))))) ()))) (cons MM0MathTokenV1 (cons $token ())))
+   (quote (gslt:result:GSLTPrattPrefixV1:11000 $term $arity $precedence)))
 
 ; gslt-lowered-equation-v1 source-rewrite=304 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-prefix-tail-v1 target=mode relation=GSLTPrattPrefixV1 input=11000 functional=semidet
-(= (gslt:fn:GSLTPrattPrefixV1:11000 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom MM0MathEnvironmentV1 (cons-atom $declarations (cons-atom (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom (cons-atom MM0PrefixEntriesConsV1 (cons-atom (cons-atom MM0PrefixNotationEntryV1 (cons-atom $other (cons-atom $headTerm (cons-atom $headArity (cons-atom $headPrecedence (cons-atom $position ())))))) (cons-atom $rest ()))) (cons-atom $infixes ()))))) ()))) $__gslt_input_v1_0_0
-   (let (cons-atom MM0MathTokenV1 (cons-atom $token ())) $__gslt_input_v1_0_1
+(= (gslt:fn:GSLTPrattPrefixV1:11000 (cons MM0MathEnvironmentV1 (cons $declarations (cons (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons (cons MM0PrefixEntriesConsV1 (cons (cons MM0PrefixNotationEntryV1 (cons $other (cons $headTerm (cons $headArity (cons $headPrecedence (cons $position ())))))) (cons $rest ()))) (cons $infixes ()))))) ()))) (cons MM0MathTokenV1 (cons $token ())))
    (let $_ (gslt:different (different $token $other))
-   (let (gslt:result:GSLTPrattPrefixV1:11000 $term $arity $precedence) (gslt:fn:GSLTPrattPrefixV1:11000 (quote (MM0MathEnvironmentV1 $declarations (MM0NotationEnvironmentV1 $delimiters $constants $rest $infixes))) (quote (MM0MathTokenV1 $token)))
-   (quote (gslt:result:GSLTPrattPrefixV1:11000 $term $arity $precedence)))))))
+   (let (cons gslt:result:GSLTPrattPrefixV1:11000 (cons $term (cons $arity (cons $precedence ())))) (gslt:fn:GSLTPrattPrefixV1:11000 (quote (MM0MathEnvironmentV1 $declarations (MM0NotationEnvironmentV1 $delimiters $constants $rest $infixes))) (quote (MM0MathTokenV1 $token)))
+   (quote (gslt:result:GSLTPrattPrefixV1:11000 $term $arity $precedence)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=251 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-prefix-arguments-zero-v1 target=mode relation=GSLTPrattParsePrefixArgumentsV1 input=1111100 functional=relational
 (= (gslt:mode:GSLTPrattParsePrefixArgumentsV1:1111100 $environment $scope $precedence NatZeroV1 $tokens)
    (quote (gslt:result:GSLTPrattParsePrefixArgumentsV1:1111100 GSLTPrattArgumentsNilV1 $tokens)))
 
 ; gslt-lowered-equation-v1 source-rewrite=252 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-prefix-arguments-one-v1 target=mode relation=GSLTPrattParsePrefixArgumentsV1 input=1111100 functional=relational
-(= (gslt:mode:GSLTPrattParsePrefixArgumentsV1:1111100 $environment $scope $precedence $__gslt_input_v1_0_3 $tokens)
-   (let (cons-atom NatSuccV1 (cons-atom NatZeroV1 ())) $__gslt_input_v1_0_3
-   (let (gslt:result:GSLTPrattParseV1:111100 $argument $rest) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $precedence $tokens)))
-   (quote (gslt:result:GSLTPrattParsePrefixArgumentsV1:1111100 (GSLTPrattArgumentsConsV1 $argument GSLTPrattArgumentsNilV1) $rest)))))
+(= (gslt:mode:GSLTPrattParsePrefixArgumentsV1:1111100 $environment $scope $precedence (cons NatSuccV1 (cons NatZeroV1 ())) $tokens)
+   (let (cons gslt:result:GSLTPrattParseV1:111100 (cons $argument (cons $rest ()))) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $precedence $tokens)))
+   (quote (gslt:result:GSLTPrattParsePrefixArgumentsV1:1111100 (GSLTPrattArgumentsConsV1 $argument GSLTPrattArgumentsNilV1) $rest))))
 
 ; gslt-lowered-equation-v1 source-rewrite=253 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-prefix-arguments-many-v1 target=mode relation=GSLTPrattParsePrefixArgumentsV1 input=1111100 functional=relational
-(= (gslt:mode:GSLTPrattParsePrefixArgumentsV1:1111100 $environment $scope $precedence $__gslt_input_v1_0_3 $tokens)
-   (let (cons-atom NatSuccV1 (cons-atom (cons-atom NatSuccV1 (cons-atom $remaining ())) ())) $__gslt_input_v1_0_3
-   (let (gslt:result:GSLTPrattMaximumV1:10 $maximum) (once (gslt:fn:GSLTPrattMaximumV1:10 $environment))
-   (let (gslt:result:GSLTPrattParseV1:111100 $argument $afterArgument) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $maximum $tokens)))
-   (let (gslt:result:GSLTPrattParsePrefixArgumentsV1:1111100 $arguments $rest) (superpose (collapse (gslt:mode:GSLTPrattParsePrefixArgumentsV1:1111100 $environment $scope $precedence (quote (NatSuccV1 $remaining)) $afterArgument)))
-   (quote (gslt:result:GSLTPrattParsePrefixArgumentsV1:1111100 (GSLTPrattArgumentsConsV1 $argument $arguments) $rest)))))))
+(= (gslt:mode:GSLTPrattParsePrefixArgumentsV1:1111100 $environment $scope $precedence (cons NatSuccV1 (cons (cons NatSuccV1 (cons $remaining ())) ())) $tokens)
+   (let (cons gslt:result:GSLTPrattMaximumV1:10 (cons $maximum ())) (once (gslt:fn:GSLTPrattMaximumV1:10 $environment))
+   (let (cons gslt:result:GSLTPrattParseV1:111100 (cons $argument (cons $afterArgument ()))) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $maximum $tokens)))
+   (let (cons gslt:result:GSLTPrattParsePrefixArgumentsV1:1111100 (cons $arguments (cons $rest ()))) (superpose (collapse (gslt:mode:GSLTPrattParsePrefixArgumentsV1:1111100 $environment $scope $precedence (quote (NatSuccV1 $remaining)) $afterArgument)))
+   (quote (gslt:result:GSLTPrattParsePrefixArgumentsV1:1111100 (GSLTPrattArgumentsConsV1 $argument $arguments) $rest))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=246 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-parse-identifier-v1 target=mode relation=GSLTPrattParseV1 input=111100 functional=relational
-(= (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $minimum $__gslt_input_v1_0_3)
-   (let (cons-atom GSLTPrattTokensConsV1 (cons-atom $token (cons-atom $tail ()))) $__gslt_input_v1_0_3
-   (let (gslt:result:GSLTPrattIdentifierV1:11100 $identifier $arity) (superpose (collapse (gslt:mode:GSLTPrattIdentifierV1:11100 $environment $scope $token)))
-   (let (gslt:result:GSLTPrattParseIdentifierArityV1:11111100 $tree $rest) (superpose (collapse (gslt:mode:GSLTPrattParseIdentifierArityV1:11111100 $environment $scope $minimum $identifier $arity $tail)))
-   (quote (gslt:result:GSLTPrattParseV1:111100 $tree $rest))))))
+(= (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $minimum (cons GSLTPrattTokensConsV1 (cons $token (cons $tail ()))))
+   (let (cons gslt:result:GSLTPrattIdentifierV1:11100 (cons $identifier (cons $arity ()))) (superpose (collapse (gslt:mode:GSLTPrattIdentifierV1:11100 $environment $scope $token)))
+   (let (cons gslt:result:GSLTPrattParseIdentifierArityV1:11111100 (cons $tree (cons $rest ()))) (superpose (collapse (gslt:mode:GSLTPrattParseIdentifierArityV1:11111100 $environment $scope $minimum $identifier $arity $tail)))
+   (quote (gslt:result:GSLTPrattParseV1:111100 $tree $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=249 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-parse-prefix-v1 target=mode relation=GSLTPrattParseV1 input=111100 functional=relational
-(= (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $minimum $__gslt_input_v1_0_3)
-   (let (cons-atom GSLTPrattTokensConsV1 (cons-atom $token (cons-atom $tail ()))) $__gslt_input_v1_0_3
-   (let (gslt:result:GSLTPrattPrefixV1:11000 $constructor $arity $precedence) (once (gslt:fn:GSLTPrattPrefixV1:11000 $environment $token))
+(= (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $minimum (cons GSLTPrattTokensConsV1 (cons $token (cons $tail ()))))
+   (let (cons gslt:result:GSLTPrattPrefixV1:11000 (cons $constructor (cons $arity (cons $precedence ())))) (once (gslt:fn:GSLTPrattPrefixV1:11000 $environment $token))
    (let gslt:result:GSLTPrattAtLeastV1:11 (once (gslt:fn:GSLTPrattAtLeastV1:11 $precedence $minimum))
-   (let (gslt:result:GSLTPrattParsePrefixArgumentsV1:1111100 $arguments $afterArguments) (superpose (collapse (gslt:mode:GSLTPrattParsePrefixArgumentsV1:1111100 $environment $scope $precedence $arity $tail)))
-   (let (gslt:result:GSLTPrattParseTailV1:1111100 $tree $rest) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum (quote (GSLTPrattApplicationV1 $constructor $arguments)) $afterArguments)))
-   (quote (gslt:result:GSLTPrattParseV1:111100 $tree $rest))))))))
+   (let (cons gslt:result:GSLTPrattParsePrefixArgumentsV1:1111100 (cons $arguments (cons $afterArguments ()))) (superpose (collapse (gslt:mode:GSLTPrattParsePrefixArgumentsV1:1111100 $environment $scope $precedence $arity $tail)))
+   (let (cons gslt:result:GSLTPrattParseTailV1:1111100 (cons $tree (cons $rest ()))) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum (quote (GSLTPrattApplicationV1 $constructor $arguments)) $afterArguments)))
+   (quote (gslt:result:GSLTPrattParseV1:111100 $tree $rest)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=250 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-parse-group-v1 target=mode relation=GSLTPrattParseV1 input=111100 functional=relational
-(= (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $minimum $__gslt_input_v1_0_3)
-   (let (cons-atom GSLTPrattTokensConsV1 (cons-atom $open (cons-atom $tail ()))) $__gslt_input_v1_0_3
-   (let (gslt:result:GSLTPrattGroupV1:110 $close) (once (gslt:fn:GSLTPrattGroupV1:110 $environment $open))
-   (let (gslt:result:GSLTPrattMinimumV1:10 $innerMinimum) (once (gslt:fn:GSLTPrattMinimumV1:10 $environment))
-   (let (gslt:result:GSLTPrattParseV1:111100 $inside (cons-atom GSLTPrattTokensConsV1 (cons-atom $close (cons-atom $afterClose ())))) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $innerMinimum $tail)))
-   (let (gslt:result:GSLTPrattParseTailV1:1111100 $tree $rest) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum $inside $afterClose)))
-   (quote (gslt:result:GSLTPrattParseV1:111100 $tree $rest))))))))
+(= (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $minimum (cons GSLTPrattTokensConsV1 (cons $open (cons $tail ()))))
+   (let (cons gslt:result:GSLTPrattGroupV1:110 (cons $close ())) (once (gslt:fn:GSLTPrattGroupV1:110 $environment $open))
+   (let (cons gslt:result:GSLTPrattMinimumV1:10 (cons $innerMinimum ())) (once (gslt:fn:GSLTPrattMinimumV1:10 $environment))
+   (let (cons gslt:result:GSLTPrattParseV1:111100 (cons $inside (cons (cons GSLTPrattTokensConsV1 (cons $close (cons $afterClose ()))) ()))) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $innerMinimum $tail)))
+   (let (cons gslt:result:GSLTPrattParseTailV1:1111100 (cons $tree (cons $rest ()))) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum $inside $afterClose)))
+   (quote (gslt:result:GSLTPrattParseV1:111100 $tree $rest)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=254 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-identifier-arguments-zero-v1 target=mode relation=GSLTPrattParseIdentifierArgumentsV1 input=111100 functional=relational
 (= (gslt:mode:GSLTPrattParseIdentifierArgumentsV1:111100 $environment $scope NatZeroV1 $tokens)
    (quote (gslt:result:GSLTPrattParseIdentifierArgumentsV1:111100 GSLTPrattArgumentsNilV1 $tokens)))
 
 ; gslt-lowered-equation-v1 source-rewrite=255 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-identifier-arguments-successor-v1 target=mode relation=GSLTPrattParseIdentifierArgumentsV1 input=111100 functional=relational
-(= (gslt:mode:GSLTPrattParseIdentifierArgumentsV1:111100 $environment $scope $__gslt_input_v1_0_2 $tokens)
-   (let (cons-atom NatSuccV1 (cons-atom $remaining ())) $__gslt_input_v1_0_2
-   (let (gslt:result:GSLTPrattMaximumV1:10 $maximum) (once (gslt:fn:GSLTPrattMaximumV1:10 $environment))
-   (let (gslt:result:GSLTPrattParseV1:111100 $argument $afterArgument) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $maximum $tokens)))
-   (let (gslt:result:GSLTPrattParseIdentifierArgumentsV1:111100 $arguments $rest) (superpose (collapse (gslt:mode:GSLTPrattParseIdentifierArgumentsV1:111100 $environment $scope $remaining $afterArgument)))
-   (quote (gslt:result:GSLTPrattParseIdentifierArgumentsV1:111100 (GSLTPrattArgumentsConsV1 $argument $arguments) $rest)))))))
+(= (gslt:mode:GSLTPrattParseIdentifierArgumentsV1:111100 $environment $scope (cons NatSuccV1 (cons $remaining ())) $tokens)
+   (let (cons gslt:result:GSLTPrattMaximumV1:10 (cons $maximum ())) (once (gslt:fn:GSLTPrattMaximumV1:10 $environment))
+   (let (cons gslt:result:GSLTPrattParseV1:111100 (cons $argument (cons $afterArgument ()))) (superpose (collapse (gslt:mode:GSLTPrattParseV1:111100 $environment $scope $maximum $tokens)))
+   (let (cons gslt:result:GSLTPrattParseIdentifierArgumentsV1:111100 (cons $arguments (cons $rest ()))) (superpose (collapse (gslt:mode:GSLTPrattParseIdentifierArgumentsV1:111100 $environment $scope $remaining $afterArgument)))
+   (quote (gslt:result:GSLTPrattParseIdentifierArgumentsV1:111100 (GSLTPrattArgumentsConsV1 $argument $arguments) $rest))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=305 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-infix-head-left-v1 target=mode relation=GSLTPrattInfixV1 input=11000 functional=semidet
-(= (gslt:fn:GSLTPrattInfixV1:11000 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom MM0MathEnvironmentV1 (cons-atom $declarations (cons-atom (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom (cons-atom MM0InfixEntriesConsV1 (cons-atom (cons-atom MM0InfixNotationEntryV1 (cons-atom $token (cons-atom $term (cons-atom MM0LeftAssociativeV1 (cons-atom $precedence (cons-atom $position ())))))) (cons-atom $rest ()))) ()))))) ()))) $__gslt_input_v1_0_0
-   (let (cons-atom MM0MathTokenV1 (cons-atom $token ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:GSLTPrattInfixV1:11000 $term GSLTPrattLeftAssociativeV1 $precedence)))))
+(= (gslt:fn:GSLTPrattInfixV1:11000 (cons MM0MathEnvironmentV1 (cons $declarations (cons (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons (cons MM0InfixEntriesConsV1 (cons (cons MM0InfixNotationEntryV1 (cons $token (cons $term (cons MM0LeftAssociativeV1 (cons $precedence (cons $position ())))))) (cons $rest ()))) ()))))) ()))) (cons MM0MathTokenV1 (cons $token ())))
+   (quote (gslt:result:GSLTPrattInfixV1:11000 $term GSLTPrattLeftAssociativeV1 $precedence)))
 
 ; gslt-lowered-equation-v1 source-rewrite=306 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-infix-head-right-v1 target=mode relation=GSLTPrattInfixV1 input=11000 functional=semidet
-(= (gslt:fn:GSLTPrattInfixV1:11000 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom MM0MathEnvironmentV1 (cons-atom $declarations (cons-atom (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom (cons-atom MM0InfixEntriesConsV1 (cons-atom (cons-atom MM0InfixNotationEntryV1 (cons-atom $token (cons-atom $term (cons-atom MM0RightAssociativeV1 (cons-atom $precedence (cons-atom $position ())))))) (cons-atom $rest ()))) ()))))) ()))) $__gslt_input_v1_0_0
-   (let (cons-atom MM0MathTokenV1 (cons-atom $token ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:GSLTPrattInfixV1:11000 $term GSLTPrattRightAssociativeV1 $precedence)))))
+(= (gslt:fn:GSLTPrattInfixV1:11000 (cons MM0MathEnvironmentV1 (cons $declarations (cons (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons (cons MM0InfixEntriesConsV1 (cons (cons MM0InfixNotationEntryV1 (cons $token (cons $term (cons MM0RightAssociativeV1 (cons $precedence (cons $position ())))))) (cons $rest ()))) ()))))) ()))) (cons MM0MathTokenV1 (cons $token ())))
+   (quote (gslt:result:GSLTPrattInfixV1:11000 $term GSLTPrattRightAssociativeV1 $precedence)))
 
 ; gslt-lowered-equation-v1 source-rewrite=307 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-infix-tail-v1 target=mode relation=GSLTPrattInfixV1 input=11000 functional=semidet
-(= (gslt:fn:GSLTPrattInfixV1:11000 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom MM0MathEnvironmentV1 (cons-atom $declarations (cons-atom (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom (cons-atom MM0InfixEntriesConsV1 (cons-atom (cons-atom MM0InfixNotationEntryV1 (cons-atom $other (cons-atom $headTerm (cons-atom $headAssociation (cons-atom $headPrecedence (cons-atom $position ())))))) (cons-atom $rest ()))) ()))))) ()))) $__gslt_input_v1_0_0
-   (let (cons-atom MM0MathTokenV1 (cons-atom $token ())) $__gslt_input_v1_0_1
+(= (gslt:fn:GSLTPrattInfixV1:11000 (cons MM0MathEnvironmentV1 (cons $declarations (cons (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons (cons MM0InfixEntriesConsV1 (cons (cons MM0InfixNotationEntryV1 (cons $other (cons $headTerm (cons $headAssociation (cons $headPrecedence (cons $position ())))))) (cons $rest ()))) ()))))) ()))) (cons MM0MathTokenV1 (cons $token ())))
    (let $_ (gslt:different (different $token $other))
-   (let (gslt:result:GSLTPrattInfixV1:11000 $term $association $precedence) (gslt:fn:GSLTPrattInfixV1:11000 (quote (MM0MathEnvironmentV1 $declarations (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $rest))) (quote (MM0MathTokenV1 $token)))
-   (quote (gslt:result:GSLTPrattInfixV1:11000 $term $association $precedence)))))))
+   (let (cons gslt:result:GSLTPrattInfixV1:11000 (cons $term (cons $association (cons $precedence ())))) (gslt:fn:GSLTPrattInfixV1:11000 (quote (MM0MathEnvironmentV1 $declarations (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $rest))) (quote (MM0MathTokenV1 $token)))
+   (quote (gslt:result:GSLTPrattInfixV1:11000 $term $association $precedence)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=305 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-infix-head-left-v1 target=mode relation=GSLTPrattInfixV1 input=11010 functional=semidet
-(= (gslt:fn:GSLTPrattInfixV1:11010 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1 GSLTPrattLeftAssociativeV1)
-   (let (cons-atom MM0MathEnvironmentV1 (cons-atom $declarations (cons-atom (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom (cons-atom MM0InfixEntriesConsV1 (cons-atom (cons-atom MM0InfixNotationEntryV1 (cons-atom $token (cons-atom $term (cons-atom MM0LeftAssociativeV1 (cons-atom $precedence (cons-atom $position ())))))) (cons-atom $rest ()))) ()))))) ()))) $__gslt_input_v1_0_0
-   (let (cons-atom MM0MathTokenV1 (cons-atom $token ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:GSLTPrattInfixV1:11010 $term $precedence)))))
+(= (gslt:fn:GSLTPrattInfixV1:11010 (cons MM0MathEnvironmentV1 (cons $declarations (cons (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons (cons MM0InfixEntriesConsV1 (cons (cons MM0InfixNotationEntryV1 (cons $token (cons $term (cons MM0LeftAssociativeV1 (cons $precedence (cons $position ())))))) (cons $rest ()))) ()))))) ()))) (cons MM0MathTokenV1 (cons $token ())) GSLTPrattLeftAssociativeV1)
+   (quote (gslt:result:GSLTPrattInfixV1:11010 $term $precedence)))
 
 ; gslt-lowered-equation-v1 source-rewrite=306 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-infix-head-right-v1 target=mode relation=GSLTPrattInfixV1 input=11010 functional=semidet
-(= (gslt:fn:GSLTPrattInfixV1:11010 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1 GSLTPrattRightAssociativeV1)
-   (let (cons-atom MM0MathEnvironmentV1 (cons-atom $declarations (cons-atom (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom (cons-atom MM0InfixEntriesConsV1 (cons-atom (cons-atom MM0InfixNotationEntryV1 (cons-atom $token (cons-atom $term (cons-atom MM0RightAssociativeV1 (cons-atom $precedence (cons-atom $position ())))))) (cons-atom $rest ()))) ()))))) ()))) $__gslt_input_v1_0_0
-   (let (cons-atom MM0MathTokenV1 (cons-atom $token ())) $__gslt_input_v1_0_1
-   (quote (gslt:result:GSLTPrattInfixV1:11010 $term $precedence)))))
+(= (gslt:fn:GSLTPrattInfixV1:11010 (cons MM0MathEnvironmentV1 (cons $declarations (cons (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons (cons MM0InfixEntriesConsV1 (cons (cons MM0InfixNotationEntryV1 (cons $token (cons $term (cons MM0RightAssociativeV1 (cons $precedence (cons $position ())))))) (cons $rest ()))) ()))))) ()))) (cons MM0MathTokenV1 (cons $token ())) GSLTPrattRightAssociativeV1)
+   (quote (gslt:result:GSLTPrattInfixV1:11010 $term $precedence)))
 
 ; gslt-lowered-equation-v1 source-rewrite=307 source-presentation=MM0MathParserV1 source-rule=mm0-pratt-infix-tail-v1 target=mode relation=GSLTPrattInfixV1 input=11010 functional=semidet
-(= (gslt:fn:GSLTPrattInfixV1:11010 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1 $association)
-   (let (cons-atom MM0MathEnvironmentV1 (cons-atom $declarations (cons-atom (cons-atom MM0NotationEnvironmentV1 (cons-atom $delimiters (cons-atom $constants (cons-atom $prefixes (cons-atom (cons-atom MM0InfixEntriesConsV1 (cons-atom (cons-atom MM0InfixNotationEntryV1 (cons-atom $other (cons-atom $headTerm (cons-atom $headAssociation (cons-atom $headPrecedence (cons-atom $position ())))))) (cons-atom $rest ()))) ()))))) ()))) $__gslt_input_v1_0_0
-   (let (cons-atom MM0MathTokenV1 (cons-atom $token ())) $__gslt_input_v1_0_1
+(= (gslt:fn:GSLTPrattInfixV1:11010 (cons MM0MathEnvironmentV1 (cons $declarations (cons (cons MM0NotationEnvironmentV1 (cons $delimiters (cons $constants (cons $prefixes (cons (cons MM0InfixEntriesConsV1 (cons (cons MM0InfixNotationEntryV1 (cons $other (cons $headTerm (cons $headAssociation (cons $headPrecedence (cons $position ())))))) (cons $rest ()))) ()))))) ()))) (cons MM0MathTokenV1 (cons $token ())) $association)
    (let $_ (gslt:different (different $token $other))
-   (let (gslt:result:GSLTPrattInfixV1:11010 $term $precedence) (gslt:fn:GSLTPrattInfixV1:11010 (quote (MM0MathEnvironmentV1 $declarations (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $rest))) (quote (MM0MathTokenV1 $token)) $association)
-   (quote (gslt:result:GSLTPrattInfixV1:11010 $term $precedence)))))))
+   (let (cons gslt:result:GSLTPrattInfixV1:11010 (cons $term (cons $precedence ()))) (gslt:fn:GSLTPrattInfixV1:11010 (quote (MM0MathEnvironmentV1 $declarations (MM0NotationEnvironmentV1 $delimiters $constants $prefixes $rest))) (quote (MM0MathTokenV1 $token)) $association)
+   (quote (gslt:result:GSLTPrattInfixV1:11010 $term $precedence)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=240 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-source-fold-nil-v1 target=mode relation=MM0SourceFoldV1 input=111000 functional=semidet
 (= (gslt:fn:MM0SourceFoldV1:111000 nil $position $state)
    (quote (gslt:result:MM0SourceFoldV1:111000 MM0AcceptedV1 $state MM0SourceHistoryNilV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=241 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-source-fold-cons-v1 target=mode relation=MM0SourceFoldV1 input=111000 functional=semidet
-(= (gslt:fn:MM0SourceFoldV1:111000 $__gslt_input_v1_0_0 $position $before)
-   (let (cons-atom cons (cons-atom $statement (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:MM0SourceStepV1:1110 $stepResult) (gslt:fn:MM0SourceStepV1:1110 $position $statement $before)
-   (let (gslt:result:MM0SourceFoldAfterStepV1:111000 $outcome $after $history) (gslt:fn:MM0SourceFoldAfterStepV1:111000 $rest (quote (NatSuccV1 $position)) $stepResult)
-   (quote (gslt:result:MM0SourceFoldV1:111000 $outcome $after $history))))))
+(= (gslt:fn:MM0SourceFoldV1:111000 (cons cons (cons $statement (cons $rest ()))) $position $before)
+   (let (cons gslt:result:MM0SourceStepV1:1110 (cons $stepResult ())) (gslt:fn:MM0SourceStepV1:1110 $position $statement $before)
+   (let (cons gslt:result:MM0SourceFoldAfterStepV1:111000 (cons $outcome (cons $after (cons $history ())))) (gslt:fn:MM0SourceFoldAfterStepV1:111000 $rest (quote (NatSuccV1 $position)) $stepResult)
+   (quote (gslt:result:MM0SourceFoldV1:111000 $outcome $after $history)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=40 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-apply-missing-v1 target=mode relation=MM0SortApplyV1 input=11111000 functional=semidet
 (= (gslt:fn:MM0SortApplyV1:11111000 $position $name $modifiers MM0SortMissingV1 $before)
-   (let (gslt:result:MM0SortEntriesAppendV1:110 $after) (gslt:fn:MM0SortEntriesAppendV1:110 $before (quote (MM0SortEntryV1 $name $modifiers $position)))
+   (let (cons gslt:result:MM0SortEntriesAppendV1:110 (cons $after ())) (gslt:fn:MM0SortEntriesAppendV1:110 $before (quote (MM0SortEntryV1 $name $modifiers $position)))
    (quote (gslt:result:MM0SortApplyV1:11111000 MM0AcceptedV1 $after (MM0DeclaredSortV1 $position $name $modifiers)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=41 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-apply-existing-equal-v1 target=mode relation=MM0SortApplyV1 input=11111000 functional=semidet
-(= (gslt:fn:MM0SortApplyV1:11111000 $position $name $modifiers $__gslt_input_v1_0_3 $state)
-   (let (cons-atom MM0SortFoundV1 (cons-atom $modifiers (cons-atom $firstPosition ()))) $__gslt_input_v1_0_3
-   (quote (gslt:result:MM0SortApplyV1:11111000 MM0AcceptedV1 $state (MM0ReusedSortV1 $position $name $firstPosition)))))
+(= (gslt:fn:MM0SortApplyV1:11111000 $position $name $modifiers (cons MM0SortFoundV1 (cons $modifiers (cons $firstPosition ()))) $state)
+   (quote (gslt:result:MM0SortApplyV1:11111000 MM0AcceptedV1 $state (MM0ReusedSortV1 $position $name $firstPosition))))
 
 ; gslt-lowered-equation-v1 source-rewrite=42 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-apply-existing-different-v1 target=mode relation=MM0SortApplyV1 input=11111000 functional=semidet
-(= (gslt:fn:MM0SortApplyV1:11111000 $position $name $newModifiers $__gslt_input_v1_0_3 $state)
-   (let (cons-atom MM0SortFoundV1 (cons-atom $oldModifiers (cons-atom $firstPosition ()))) $__gslt_input_v1_0_3
+(= (gslt:fn:MM0SortApplyV1:11111000 $position $name $newModifiers (cons MM0SortFoundV1 (cons $oldModifiers (cons $firstPosition ()))) $state)
    (let $_ (gslt:different (different $newModifiers $oldModifiers))
-   (quote (gslt:result:MM0SortApplyV1:11111000 (MM0RefusedSortRedeclarationV1 $position $name $oldModifiers $newModifiers) $state (MM0RefusedSortRedeclarationV1 $position $name $oldModifiers $newModifiers))))))
+   (quote (gslt:result:MM0SortApplyV1:11111000 (MM0RefusedSortRedeclarationV1 $position $name $oldModifiers $newModifiers) $state (MM0RefusedSortRedeclarationV1 $position $name $oldModifiers $newModifiers)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=323 source-presentation=MM0MathParserV1 source-rule=mm0-math-identifier-scope-v1 target=mode relation=MM0MathIdentifierAfterScopeV1 input=11100 functional=relational
-(= (gslt:mode:MM0MathIdentifierAfterScopeV1:11100 $__gslt_input_v1_0_0 $declarations $scalars)
-   (let (cons-atom MM0MathScopeTokenFoundV1 (cons-atom $name ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0MathIdentifierAfterScopeV1:11100 $name NatZeroV1))))
+(= (gslt:mode:MM0MathIdentifierAfterScopeV1:11100 (cons MM0MathScopeTokenFoundV1 (cons $name ())) $declarations $scalars)
+   (quote (gslt:result:MM0MathIdentifierAfterScopeV1:11100 $name NatZeroV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=324 source-presentation=MM0MathParserV1 source-rule=mm0-math-identifier-term-v1 target=mode relation=MM0MathIdentifierAfterScopeV1 input=11100 functional=relational
 (= (gslt:mode:MM0MathIdentifierAfterScopeV1:11100 MM0MathScopeMissingV1 $declarations $scalars)
-   (let (gslt:result:MM0MathTermTokenArityLookupV1:1100 $name $arity) (superpose (collapse (gslt:mode:MM0MathTermTokenArityLookupV1:1100 $scalars $declarations)))
+   (let (cons gslt:result:MM0MathTermTokenArityLookupV1:1100 (cons $name (cons $arity ()))) (superpose (collapse (gslt:mode:MM0MathTermTokenArityLookupV1:1100 $scalars $declarations)))
    (quote (gslt:result:MM0MathIdentifierAfterScopeV1:11100 $name $arity))))
 
 ; gslt-lowered-equation-v1 source-rewrite=247 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-identifier-zero-v1 target=mode relation=GSLTPrattParseIdentifierArityV1 input=11111100 functional=relational
 (= (gslt:mode:GSLTPrattParseIdentifierArityV1:11111100 $environment $scope $minimum $identifier NatZeroV1 $tokens)
-   (let (gslt:result:GSLTPrattParseTailV1:1111100 $tree $rest) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum (quote (GSLTPrattIdentifierApplicationV1 $identifier GSLTPrattArgumentsNilV1)) $tokens)))
+   (let (cons gslt:result:GSLTPrattParseTailV1:1111100 (cons $tree (cons $rest ()))) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum (quote (GSLTPrattIdentifierApplicationV1 $identifier GSLTPrattArgumentsNilV1)) $tokens)))
    (quote (gslt:result:GSLTPrattParseIdentifierArityV1:11111100 $tree $rest))))
 
 ; gslt-lowered-equation-v1 source-rewrite=248 source-presentation=GSLTDynamicPrattV1 source-rule=gslt-pratt-identifier-successor-v1 target=mode relation=GSLTPrattParseIdentifierArityV1 input=11111100 functional=relational
-(= (gslt:mode:GSLTPrattParseIdentifierArityV1:11111100 $environment $scope $minimum $identifier $__gslt_input_v1_0_4 $tokens)
-   (let (cons-atom NatSuccV1 (cons-atom $remaining ())) $__gslt_input_v1_0_4
-   (let (gslt:result:GSLTPrattApplicationPrecedenceV1:10 $applicationPrecedence) (once (gslt:fn:GSLTPrattApplicationPrecedenceV1:10 $environment))
+(= (gslt:mode:GSLTPrattParseIdentifierArityV1:11111100 $environment $scope $minimum $identifier (cons NatSuccV1 (cons $remaining ())) $tokens)
+   (let (cons gslt:result:GSLTPrattApplicationPrecedenceV1:10 (cons $applicationPrecedence ())) (once (gslt:fn:GSLTPrattApplicationPrecedenceV1:10 $environment))
    (let gslt:result:GSLTPrattAtLeastV1:11 (once (gslt:fn:GSLTPrattAtLeastV1:11 $applicationPrecedence $minimum))
-   (let (gslt:result:GSLTPrattParseIdentifierArgumentsV1:111100 $arguments $afterArguments) (superpose (collapse (gslt:mode:GSLTPrattParseIdentifierArgumentsV1:111100 $environment $scope (quote (NatSuccV1 $remaining)) $tokens)))
-   (let (gslt:result:GSLTPrattParseTailV1:1111100 $tree $rest) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum (quote (GSLTPrattIdentifierApplicationV1 $identifier $arguments)) $afterArguments)))
-   (quote (gslt:result:GSLTPrattParseIdentifierArityV1:11111100 $tree $rest))))))))
+   (let (cons gslt:result:GSLTPrattParseIdentifierArgumentsV1:111100 (cons $arguments (cons $afterArguments ()))) (superpose (collapse (gslt:mode:GSLTPrattParseIdentifierArgumentsV1:111100 $environment $scope (quote (NatSuccV1 $remaining)) $tokens)))
+   (let (cons gslt:result:GSLTPrattParseTailV1:1111100 (cons $tree (cons $rest ()))) (superpose (collapse (gslt:mode:GSLTPrattParseTailV1:1111100 $environment $scope $minimum (quote (GSLTPrattIdentifierApplicationV1 $identifier $arguments)) $afterArguments)))
+   (quote (gslt:result:GSLTPrattParseIdentifierArityV1:11111100 $tree $rest)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=242 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-source-fold-after-accepted-v1 target=mode relation=MM0SourceFoldAfterStepV1 input=111000 functional=semidet
-(= (gslt:fn:MM0SourceFoldAfterStepV1:111000 $rest $position $__gslt_input_v1_0_2)
-   (let (cons-atom MM0SourceStepAcceptedV1 (cons-atom $next (cons-atom $historyEntry ()))) $__gslt_input_v1_0_2
-   (let (gslt:result:MM0SourceFoldV1:111000 $outcome $after $history) (gslt:fn:MM0SourceFoldV1:111000 $rest $position $next)
-   (quote (gslt:result:MM0SourceFoldAfterStepV1:111000 $outcome $after (MM0SourceHistoryConsV1 $historyEntry $history))))))
+(= (gslt:fn:MM0SourceFoldAfterStepV1:111000 $rest $position (cons MM0SourceStepAcceptedV1 (cons $next (cons $historyEntry ()))))
+   (let (cons gslt:result:MM0SourceFoldV1:111000 (cons $outcome (cons $after (cons $history ())))) (gslt:fn:MM0SourceFoldV1:111000 $rest $position $next)
+   (quote (gslt:result:MM0SourceFoldAfterStepV1:111000 $outcome $after (MM0SourceHistoryConsV1 $historyEntry $history)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=243 source-presentation=MM0NotationEnvironmentV1 source-rule=mm0-source-fold-after-refused-v1 target=mode relation=MM0SourceFoldAfterStepV1 input=111000 functional=semidet
-(= (gslt:fn:MM0SourceFoldAfterStepV1:111000 $rest $position $__gslt_input_v1_0_2)
-   (let (cons-atom MM0SourceStepRefusedV1 (cons-atom $reason (cons-atom $state (cons-atom $historyEntry ())))) $__gslt_input_v1_0_2
-   (quote (gslt:result:MM0SourceFoldAfterStepV1:111000 $reason $state (MM0SourceHistoryConsV1 $historyEntry MM0SourceHistoryNilV1)))))
+(= (gslt:fn:MM0SourceFoldAfterStepV1:111000 $rest $position (cons MM0SourceStepRefusedV1 (cons $reason (cons $state (cons $historyEntry ())))))
+   (quote (gslt:result:MM0SourceFoldAfterStepV1:111000 $reason $state (MM0SourceHistoryConsV1 $historyEntry MM0SourceHistoryNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=320 source-presentation=MM0MathParserV1 source-rule=mm0-math-term-token-arity-found-v1 target=mode relation=MM0MathTermTokenArityLookupV1 input=1100 functional=relational
-(= (gslt:mode:MM0MathTermTokenArityLookupV1:1100 $scalars $__gslt_input_v1_0_1)
-   (let (cons-atom MM0DeclarationEntriesConsV1 (cons-atom (cons-atom MM0TermEntryV1 (cons-atom $name (cons-atom (cons-atom MM0TermSignatureV1 (cons-atom $binders (cons-atom $returnType ()))) (cons-atom $firstPosition (cons-atom $source ()))))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:mode:MM0MathTermTokenArityLookupV1:1100 $scalars (cons MM0DeclarationEntriesConsV1 (cons (cons MM0TermEntryV1 (cons $name (cons (cons MM0TermSignatureV1 (cons $binders (cons $returnType ()))) (cons $firstPosition (cons $source ()))))) (cons $rest ()))))
    (let gslt:result:MM0MathScalarsMatchNameV1:11 (once (gslt:fn:MM0MathScalarsMatchNameV1:11 $scalars $name))
-   (let (gslt:result:MM0MathBinderCountV1:10 $arity) (once (gslt:fn:MM0MathBinderCountV1:10 $binders))
-   (quote (gslt:result:MM0MathTermTokenArityLookupV1:1100 $name $arity))))))
+   (let (cons gslt:result:MM0MathBinderCountV1:10 (cons $arity ())) (once (gslt:fn:MM0MathBinderCountV1:10 $binders))
+   (quote (gslt:result:MM0MathTermTokenArityLookupV1:1100 $name $arity)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=321 source-presentation=MM0MathParserV1 source-rule=mm0-math-term-token-arity-tail-v1 target=mode relation=MM0MathTermTokenArityLookupV1 input=1100 functional=relational
-(= (gslt:mode:MM0MathTermTokenArityLookupV1:1100 $scalars $__gslt_input_v1_0_1)
-   (let (cons-atom MM0DeclarationEntriesConsV1 (cons-atom (cons-atom MM0TermEntryV1 (cons-atom $other (cons-atom $signature (cons-atom $firstPosition (cons-atom $source ()))))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:mode:MM0MathTermTokenArityLookupV1:1100 $scalars (cons MM0DeclarationEntriesConsV1 (cons (cons MM0TermEntryV1 (cons $other (cons $signature (cons $firstPosition (cons $source ()))))) (cons $rest ()))))
    (let gslt:result:MM0MathScalarsDifferentNameV1:11 (once (gslt:fn:MM0MathScalarsDifferentNameV1:11 $scalars $other))
-   (let (gslt:result:MM0MathTermTokenArityLookupV1:1100 $name $arity) (superpose (collapse (gslt:mode:MM0MathTermTokenArityLookupV1:1100 $scalars $rest)))
-   (quote (gslt:result:MM0MathTermTokenArityLookupV1:1100 $name $arity))))))
+   (let (cons gslt:result:MM0MathTermTokenArityLookupV1:1100 (cons $name (cons $arity ()))) (superpose (collapse (gslt:mode:MM0MathTermTokenArityLookupV1:1100 $scalars $rest)))
+   (quote (gslt:result:MM0MathTermTokenArityLookupV1:1100 $name $arity)))))
 
 
 ; gslt-lowered-entry-v1 gslt:entry:MM0RuntimeMathParseV1:1110

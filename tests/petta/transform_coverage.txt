@@ -16,13 +16,18 @@ Gates.
   make test-petta-transform                 native, lib_transform_swi, lib_transform_specs on CeTTa
   make test-transform-swi-differential      the same programs on SWI-PeTTa as well, four ways
   make test-petta-by-transform[-swi]        the laws of tests/petta/petta_by_transform.metta
-  make test-petta-transform-only[-swi]      the programs of tests/petta/transform_only/
-  make test-petta-transform-only-corpus     a directory of example programs, with its list of known exceptions
-  make test-petta-transform-only-corpus-full   the same with binding, branching and choice rewritten too
-  make test-petta-transform-only-corpus-swi    the same directory through the round trip on SWI-PeTTa
-  make test-petta-machine[-swi]             the checks of tests/petta/petta_machine.metta and seeded expressions
   make test-petta-step-rules[-swi]          the checks of tests/petta/step_rules.metta
   make test-petta-step-rules-reference      random firings against the C reference step
+
+Showcases (not test or benchmark prerequisites).
+
+  make showcase-petta-transform-only[-swi]     the whole-program rewriting fixtures
+  make showcase-petta-transform-only-corpus    a directory of example programs
+  make showcase-petta-transform-only-corpus-full    also rewrite binding, branching and choice
+  make showcase-petta-transform-only-corpus-swi     the corpus round trip on SWI-PeTTa
+  make showcase-petta-self-interpretation       direct evaluation and the machine on the same small programs
+  make showcase-petta-self-interpretation-compare   the extended cases and seeded expressions
+  make showcase-petta-self-interpretation-swi       the comparison on SWI-PeTTa
 
 A row names the form and the test that holds it, or says why there is none.
 
@@ -66,8 +71,8 @@ A row names the form and the test that holds it, or says why there is none.
                                   reference for this reason); CeTTa agrees with the reference.
 
 
-2. transform's surface in plain PeTTa (lib_transform_specs.metta)
------------------------------------------------------------------
+2. transform's conjuncts and rules in plain PeTTa (lib_transform_specs.metta)
+-----------------------------------------------------------------------------
 
   conjunct or rule                         test
   read, take, absent, unique, collect,     tests/petta/transform_*.metta; the seeded classes
@@ -166,7 +171,7 @@ A row names the form and the test that holds it, or says why there is none.
                              transform_only therefore leaves once to the host in every mode.  On the
                              machine of transform rules once is small steps and runs one
                              alternative (check once-runs-one-alternative of
-                             tests/petta/petta_machine.metta).
+                             showcase/petta/self_interpretation_cases.metta).
   held code                  a form written with one transform holds its expression and its body as
                              data, so a value inside the expression is evaluated again and a pattern
                              the host would evaluate (a list read by head and tail) is matched as
@@ -202,8 +207,8 @@ A row names the form and the test that holds it, or says why there is none.
                              points above it; collapse keeps its answers in a row of its own, which
                              outlives backtracking; case offers its value to the rows in order; cut
                              takes the choice points made since the clause was entered.  Checks of
-                             tests/petta/petta_machine.metta and seeded expressions answer as the
-                             host, in order (make test-petta-machine, test-petta-machine-swi).  It
+                             showcase/petta/self_interpretation_cases.metta and seeded expressions answer as
+                             the host, in order (the optional self-interpretation comparison). It
                              covers literals, if (with or without an else), let, let*, chain,
                              superpose and hyperpose (of a written list, or of a variable), empty,
                              quote, eval, data, calls of the program's equations, patterns with

@@ -1,0 +1,6 @@
+; A rule and a copy of it with its unknowns renamed are one rule: a program is
+; a set of rules up to the names of their unknowns.  So every eats the one
+; token, as it would with the rule written once, and unique sees one match.
+(tok 1)
+(rule eat (take (tok $x)) (make (ate $x)))
+(rule eat-again (take (tok $y)) (make (ate $y)))

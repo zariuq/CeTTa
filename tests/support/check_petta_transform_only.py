@@ -26,7 +26,6 @@ import argparse
 import concurrent.futures
 import glob
 import os
-import resource
 import signal
 import sys
 import tempfile
@@ -44,11 +43,9 @@ def run(binary, path, timeout, cwd=None):
     """Run one program.  TIMEOUT bounds the processor time the program may use,
     so that the verdict does not depend on what else the machine is doing; a
     wall-clock bound several times as long stops a program that waits."""
-    def limit():
-        resource.setrlimit(resource.RLIMIT_CPU, (timeout, timeout + 5))
     code, out, err = swi_lane.run_group([binary, "--lang", "petta", path], cwd or ROOT, timeout * 6,
                                         env=dict(os.environ, CETTA_PETTA_SEARCH_MACHINE="1"),
-                                        limit=limit)
+                                        cpu_seconds=timeout)
     if code in (-signal.SIGXCPU, -signal.SIGKILL):
         return 124, "", "timeout"
     return code, out, err
@@ -193,10 +190,8 @@ def run_on_swi(swi, source, timeout, work, name):
     path = os.path.join(work, name + ".metta")
     with open(path, "w") as stream:
         stream.write(source)
-    def limit():
-        resource.setrlimit(resource.RLIMIT_CPU, (timeout, timeout + 5))
     code, out, err = swi_lane.run_group(["sh", "run.sh", path, "--silent"], swi, timeout * 6,
-                                        limit=limit)
+                                        cpu_seconds=timeout)
     if code in (-signal.SIGXCPU, -signal.SIGKILL, 128 + signal.SIGXCPU, 128 + signal.SIGKILL):
         return 124, "", "timeout"
     return code, out, err

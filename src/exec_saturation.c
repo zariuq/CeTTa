@@ -4,6 +4,9 @@
 #include "match.h"
 #include "stats.h"
 #include "symbol.h"
+#include "transform_core.h"
+#include "u64_index.h"
+#include "var_index.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -149,7 +152,6 @@ bool cetta_exec_directive_read(Atom *directive, CettaExecDirective *rule) {
         !atom_is_symbol(directive->expr.elems[0], "exec") ||
         !exec_saturation_tuple(directive->expr.elems[2], &rule->patterns,
                                &rule->npatterns) ||
-        rule->npatterns == 0u ||
         !exec_saturation_tuple(directive->expr.elems[3], &rule->templates,
                                &rule->ntemplates))
         return false;
@@ -170,6 +172,118 @@ bool cetta_exec_directive_read(Atom *directive, CettaExecDirective *rule) {
             return false;
     }
     return true;
+}
+
+typedef struct {
+    Atom **variables;
+    uint32_t length;
+    size_t capacity;
+    CettaVarIndex index;
+    bool reading;
+    bool failed;
+} ExecSaturationLicense;
+
+/* A deliberately recognizable first-order data signature. Private views,
+ * executable constructors and mutable/opaque leaves retain their existing
+ * realization. Every produced variable must occur in a read. */
+static bool exec_saturation_refuses_node(const Atom *atom, void *context) {
+    ExecSaturationLicense *license = context;
+    if (atom->kind == ATOM_EXPR) {
+        if (atom_is_carrier(atom) || atom_petta_value_representation(atom) != PETTA_VALUE_ORDINARY)
+            return true;
+        return atom->expr.len &&
+            (atom->expr.elems[0]->kind != ATOM_SYMBOL ||
+             symbol_id_is_builtin(atom->expr.elems[0]->sym_id));
+    }
+    if (atom->kind == ATOM_GROUNDED)
+        return atom->ground.gkind != GV_INT && atom->ground.gkind != GV_BOOL &&
+            atom->ground.gkind != GV_STRING;
+    if (atom->kind != ATOM_VAR)
+        return false;
+    if (cetta_var_index_find_atom(&license->index, license->variables,
+                                  license->length, atom->var_id) != UINT32_MAX)
+        return false;
+    if (!license->reading)
+        return true;
+    if (license->length == UINT32_MAX) {
+        license->failed = true;
+        return true;
+    }
+    if (license->length == license->capacity) {
+        size_t capacity = license->capacity ? license->capacity * 2u : 16u;
+        if (capacity < license->capacity || capacity > SIZE_MAX / sizeof(Atom *)) {
+            license->failed = true;
+            return true;
+        }
+        Atom **variables = realloc(license->variables, capacity * sizeof(*variables));
+        if (!variables) { license->failed = true; return true; }
+        license->variables = variables;
+        license->capacity = capacity;
+    }
+    license->variables[license->length++] = (Atom *)atom;
+    if (!cetta_var_index_note_atom(&license->index, license->variables, license->length)) {
+        license->failed = true;
+        return true;
+    }
+    return false;
+}
+
+static bool exec_saturation_licensed_term(ExecSaturationLicense *license, Atom *term) {
+    bool complete = false;
+    bool refused = atom_graph_any_checked(term, exec_saturation_refuses_node,
+                                           NULL, license, SIZE_MAX, &complete);
+    return complete && !refused && !license->failed;
+}
+
+/* SetStoreSyntax.Propagates and a ground seed, on a fixed native set world.
+ * The existing no-take/no-tell exec grammar supplies positive reads only.
+ * This is an admission recognizer, not a proof of the C implementation. */
+static bool exec_saturation_set_license(Space *facts,
+                                        const CettaExecDirective *rules, CettaExprLen nrules) {
+    if (!space_is_set(facts) || facts->module_own_view || facts->overlay_base || facts->imported_len || facts->dep_count ||
+        facts->match_backend.kind != SPACE_ENGINE_NATIVE || !space_contains_only_exact_atoms(facts))
+        return false;
+    ExecSaturationLicense license = {0};
+    bool accepted = true;
+    CettaCount length = space_length64(facts);
+    for (CettaIndex i = 0u; accepted && i < length; i++) {
+        Atom *row = space_get_at64(facts, i);
+        accepted = row && !atom_has_vars(row) && exec_saturation_licensed_term(&license, row);
+    }
+    for (CettaExprLen i = 0u; accepted && i < nrules; i++) {
+        license.length = 0u;
+        license.reading = true;
+        for (CettaExprLen j = 0u; accepted && j < rules[i].npatterns; j++)
+            accepted = exec_saturation_licensed_term(&license, rules[i].patterns[j]);
+        license.reading = false;
+        for (CettaExprLen j = 0u; accepted && j < rules[i].ntemplates; j++)
+            accepted = exec_saturation_licensed_term(&license, rules[i].templates[j]);
+    }
+    cetta_var_index_free(&license.index);
+    free(license.variables);
+    return accepted;
+}
+
+static SymbolId exec_saturation_head(Atom *term) {
+    if (term->kind == ATOM_SYMBOL) return term->sym_id;
+    if (term->kind == ATOM_EXPR && term->expr.len && term->expr.elems[0]->kind == ATOM_SYMBOL)
+        return term->expr.elems[0]->sym_id;
+    return SYMBOL_ID_NONE;
+}
+
+/* A disjoint constructor head cannot be a new premise. Unknown heads and
+ * empty-premise rules are always retained; the actual delta queries still
+ * enumerate every hot instance, including its duplicate derivations. */
+static bool exec_saturation_hot_rule(const CettaExecDirective *rule,
+                                     const CettaU64Index *heads) {
+    if (!rule->npatterns) return true;
+    for (CettaExprLen j = 0u; j < rule->npatterns; j++) {
+        SymbolId head = exec_saturation_head(rule->patterns[j]);
+        uint32_t ignored;
+        if (head == SYMBOL_ID_NONE || cetta_u64_index_find(heads, head, &ignored))
+            return true;
+    }
+    return false;
 }
 
 bool cetta_exec_saturation_admitted(Space *program, Atom *call, Space *facts) {
@@ -209,6 +323,13 @@ static bool exec_saturation_push(ExecSaturationAtoms *list, Atom *atom) {
 bool cetta_exec_directive_rows(Space *facts, Space *delta, Arena *a,
                                const CettaExecDirective *rule,
                                CettaExecRowVisit visit, void *context) {
+    if (rule->npatterns == 0u) {
+        Bindings unit;
+        bindings_init(&unit);
+        bool completed = visit(context, rule, &unit);
+        bindings_free(&unit);
+        return completed;
+    }
     if (!delta) {
         BindingSet rows;
         binding_set_init(&rows);
@@ -289,6 +410,12 @@ CettaExecSaturationOutcome cetta_exec_saturate(
     for (CettaExprLen i = 0u; i < nrules; i++)
         if (!cetta_exec_directive_read(directives->expr.elems[i], &rules[i]))
             return CETTA_EXEC_SATURATION_DECLINED;
+    bool licensed = host->set_membership_publication &&
+        cetta_transform_engine() == CETTA_TRANSFORM_ENGINE_TCALC &&
+        exec_saturation_set_license(facts, rules, nrules);
+    if (getenv("CETTA_TRANSFORM_TRACE"))
+        fprintf(stderr, "[transform] saturate (engine %s) (fast-path %s) (observer completed-set)\n",
+                licensed ? "tcalc" : "direct", licensed ? "bulk-set semi-naive" : "none");
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_EXEC_SATURATION_ADMITTED);
 
     ExecSaturationAtoms proposals = {0}, added = {0};
@@ -306,11 +433,29 @@ CettaExecSaturationOutcome cetta_exec_saturate(
                 space_add(&delta, added.items[i]);
         }
         ExecSaturationProposer proposer = {a, &proposals};
+        CettaU64Index heads = {0};
+        bool indexed = licensed && !first;
+        for (size_t i = 0u; indexed && i < added.len; i++) {
+            SymbolId head = exec_saturation_head(added.items[i]);
+            if (head == SYMBOL_ID_NONE) { indexed = false; break; }
+            CettaGsltU32IndexInsertResultV1 inserted = cetta_u64_index_insert(&heads, head, 0u);
+            indexed = inserted == CETTA_GSLT_U32_INDEX_INSERTED_V1 ||
+                inserted == CETTA_GSLT_U32_INDEX_DUPLICATE_V1;
+        }
         bool ok = true;
-        for (CettaExprLen i = 0u; ok && i < nrules; i++)
+        uint64_t cold = 0u;
+        for (CettaExprLen i = 0u; ok && i < nrules; i++) {
+            if (indexed && !exec_saturation_hot_rule(&rules[i], &heads)) {
+                cold++;
+                continue;
+            }
             ok = cetta_exec_directive_rows(facts, first ? NULL : &delta, a,
                                            &rules[i], exec_saturation_propose,
                                            &proposer);
+        }
+        cetta_u64_index_free(&heads);
+        if (licensed && getenv("CETTA_TRANSFORM_TRACE"))
+            fprintf(stderr, "[transform] saturation round (cold-rules %llu)\n", (unsigned long long)cold);
         if (delta_live) {
             space_free(&delta);
             delta_live = false;

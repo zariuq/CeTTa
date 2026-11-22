@@ -1,0 +1,10 @@
+; Absence: a request is served only while (busy) is absent, and a racing
+; rule makes (busy). Adding a row disables a firing, which rho's reduction
+; cannot (ConsensusNumbers.rho_cannot_encode_absence; RhoCalculus/Weaknesses:
+; rho_no_encoding_of_disableable; ReflectiveCalculus/Encodings/Strict:
+; strict_separation). Two outcomes: served, or blocked for good.
+(step one)
+(req)
+(go)
+(rule serve (take (req)) (absent (busy)) (make (served)))
+(rule block (take (go)) (make (busy)))

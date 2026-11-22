@@ -38,6 +38,8 @@
 #include "term_domain.h"
 #include "native_handle.h"
 #include "native/hol_light/hol_cli.h"
+#include "native/tcalc/tcalc_cli.h"
+#include "native/kernel/kernel.h"
 #include "lang.h"
 #include "compile.h"
 #include "cetta_stdlib.h"
@@ -48,6 +50,7 @@
 #include "mm2_lower.h"
 #include "mork_space_bridge_runtime.h"
 #include "rhocalc_core.h"
+#include "runner.h"
 #include "rhocalc_syntax.h"
 #include "stats.h"
 #include "native/langdef_module.h"
@@ -1535,6 +1538,10 @@ static bool endpoint_resolve(CettaCliEndpoint *endpoint, const char *role,
         fprintf(stderr, "note: %s\n", endpoint->lang->note);
         return false;
     }
+    /* tcalc reads its own profile, a tuple of axis settings (see
+     * native/tcalc/tcalc_cli.h); its versions are rows like the others. */
+    if (endpoint->lang->id == CETTA_LANGUAGE_TCALC)
+        return endpoint_resolve_version(endpoint, role);
     if (endpoint->profile_name) {
         if (!cetta_language_has_named_profiles(endpoint->lang->id)) {
             fprintf(stderr, "error: %s language '%s' has no named profiles\n",
@@ -1596,18 +1603,9 @@ rhocalc_semantic_profile_for_endpoint(const CettaCliEndpoint *endpoint) {
     }
 }
 
-static bool rho_scheduler_policy_from_name(const char *name,
-                                           RhoSchedulerPolicy *out) {
-    if (!name || !out) return false;
-    if (strcmp(name, "canonical") == 0) {
-        *out = RHO_SCHEDULER_CANONICAL;
-        return true;
-    }
-    if (strcmp(name, "rotating") == 0) {
-        *out = RHO_SCHEDULER_ROTATING;
-        return true;
-    }
-    return false;
+/* The schedules are the runner's, shared with tcalc (lib/runner_axes.data). */
+static bool rho_scheduler_policy_from_name(const char *name, RunSchedule *out) {
+    return name && out && run_schedule_from_name(name, strlen(name), out);
 }
 
 static bool main_rhometta_form_named(Atom *atom, const char *name,
@@ -1761,7 +1759,7 @@ static int run_rhocalc_cli(const char *filename,
             Atom *candidate = evaluated_process
                 ? evaluated.items[process_index] : process;
         RhoReductionResult reduction = {0};
-        if (!rhocalc_reduce_to_quiescence_with_semantic_profile_and_eval_context(
+        if (!rhocalc_reduce_to_quiescence(
                 &arena, candidate, semantic_profile, profile,
                 eval_context_ptr, &reduction)) {
             const char *detail = rhocalc_last_validation_error();
@@ -1870,8 +1868,7 @@ static int run_rhocalc_translation(const char *filename,
         goto done;
     }
     for (int i = 0; i < n; i++) {
-        if (!rhocalc_process_well_formed_with_semantic_profile(atoms[i],
-                                                               input_profile)) {
+        if (!rhocalc_process_well_formed(atoms[i], input_profile)) {
             const char *detail = rhocalc_last_validation_error();
             if (input_profile == RHOCALC_SEMANTIC_PROFILE_STRICT_CORE) {
                 fprintf(stderr, "error: invalid rhocalc core process");
@@ -1901,10 +1898,10 @@ done:
 }
 
 static void print_usage(FILE *out) {
-    fputs("usage: cetta [--lang <name>] [--syntax <metta|mrho|rho|holr>] <file>\n", out);
+    fputs("usage: cetta [--lang <name>] [--syntax <metta|mrho|rho|holr|tcalc|chr>] <file>\n", out);
     fputs("       note: without --lang, cetta runs corrected stable petta\n", out);
     fputs("       cetta [options] -- <file>           # filenames beginning with a dash\n", out);
-    fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
+    fputs("       cetta -e|--expr '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta --repl [--lang petta --profile extended] # multiline source; :cancel / :quit\n", out);
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
     fputs("       cetta --lang petta --profile extended --syntax <cstyle|pystyle|rhostyle|sexpr> <file> # read by a GSLT presentation compiled at build time\n", out);
@@ -1919,6 +1916,12 @@ static void print_usage(FILE *out) {
     fputs("       cetta --lang prime@0.0.1 <file.metta> # frozen Prime draft\n", out);
     fputs("       cetta --lang hol-light [--profile <standard|open|sealed>] <proof.holr>\n", out);
     fputs("       note: hol aliases hol-light; HOLR is a checked proof stream, not OCaml source\n", out);
+    fputs("       cetta --lang tcalc[@0.1] [--profile 'step=one;ask=after-tells;store=multiset;matches=symmetric;budget=N'] <file.tcalc>\n", out);
+    fputs("       cetta --lang tcalc [--syntax <tcalc|rho|chr>] <file.tcalc|file.rho|file.chr> # tcalc's own, f1r3lang or CHR notation\n", out);
+    fputs("       cetta --translate --lang tcalc [--syntax S] --lang tcalc --syntax <tcalc|rho|chr> <file> # the program in another notation\n", out);
+    fputs("       note: tcalc is a moving target, a family of transform steps that differ in a few choices; a run prints\n"
+          "             the point of the family it computed (its interpretation) before its outcomes, and with no step\n"
+          "             named runs every step\n", out);
     fputs("       cetta --lang petta <file.metta> # corrected stable PeTTa\n", out);
     fputs("       cetta --lang petta --profile ai <file.metta> # sealed sorts: declarations type answers, not held calls\n", out);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
@@ -1935,6 +1938,7 @@ static void print_usage(FILE *out) {
 #endif
     fputs("       note: repeated --lang under --translate means source then target endpoint\n", out);
     fputs("       note: --lang petta consumes consecutive .metta files in order\n", out);
+    fputs("       --source-origin N PATH gives input document N its logical origin (zero based)\n", out);
     fputs("       note: other languages run one file; remaining arguments are available through system:args\n", out);
     fputs("       cetta --help | -h                    # print this usage summary\n", out);
     fputs("       cetta --version | -v                 # print binary version and build mode\n", out);
@@ -1942,6 +1946,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --compile-stdlib <file.metta>     # emit precompiled stdlib blob to stdout\n", out);
     fputs("       cetta --count-only <file.metta>        # print result counts only\n", out);
     fputs("       cetta --run-report <path> <file>      # native query report as JSON\n", out);
+    fputs("       cetta --run-observation <path> <file> # typed answers and host effects as JSONL\n", out);
     fputs("       cetta --diagnostic-details           # include bounded private exception text in run reports\n", out);
     fputs("       cetta --run-contract <file>           # require completed queries and passing tests\n", out);
     fputs("       cetta --quiet <file.metta>              # hide pure [()] success clutter\n", out);
@@ -1962,6 +1967,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --lang mm2 [--steps <n>] <file.mm2> # upstream MORK ABI\n", out);
     fputs("       cetta --lang mm2 --profile gslt [--space-engine <native|pathmap>] [--steps <n>] <file.mm2>\n", out);
     fputs("       cetta --space-engine <name> <file.metta>\n", out);
+    fputs("       cetta --kernel <c|x86|hybrid> [--kernel-stats] <file>\n", out);
     fputs("       cetta --space-match-backend <name> <file.metta>   # alias for --space-engine\n", out);
     fputs("       cetta --lang <zero|subzero|gslt-il|zerouv|metta-interact> --gslt-realization <horn-reference|compiled-worklist> <file.metta>\n", out);
     fputs("       cetta --lang zero <file.metta> # direct (eval subject) and (zero-query pattern template) requests; ! is not Zero syntax\n", out);
@@ -2890,7 +2896,41 @@ static const GSLTPresentationTablesV1 *main_presentation_select(const char *spec
     return NULL;
 }
 
+
+/* A physical document can retain the origin of the source it realizes.
+ * The input ordinal names a code document, never a later script argument. */
+typedef struct { const char **paths; size_t len; } MainSourceOrigins;
+typedef enum {
+    MAIN_SOURCE_ORIGIN_ADDED, MAIN_SOURCE_ORIGIN_INVALID, MAIN_SOURCE_ORIGIN_CAPACITY
+} MainSourceOriginStatus;
+static void main_source_origins_free(MainSourceOrigins *origins) {
+    free(origins->paths);
+}
+static MainSourceOriginStatus main_source_origin_add(MainSourceOrigins *origins, int argc,
+    const char *index, const char *path) {
+    if (!index || !*index || *index == '-' || !path || !*path)
+        return MAIN_SOURCE_ORIGIN_INVALID;
+    char *end = NULL;
+    errno = 0;
+    unsigned long long ordinal = strtoull(index, &end, 10);
+    if (errno || !end || *end || ordinal >= (unsigned long long)argc)
+        return MAIN_SOURCE_ORIGIN_INVALID;
+    if (!origins->paths) {
+        origins->paths = calloc((size_t)argc, sizeof(*origins->paths));
+        if (!origins->paths) return MAIN_SOURCE_ORIGIN_CAPACITY;
+        origins->len = (size_t)argc;
+    }
+    origins->paths[(size_t)ordinal] = path;
+    return MAIN_SOURCE_ORIGIN_ADDED;
+}
+static const char *main_source_origin(const MainSourceOrigins *origins,
+    size_t ordinal, const char *physical) {
+    return ordinal < origins->len && origins->paths[ordinal]
+        ? origins->paths[ordinal] : physical;
+}
+
 static int cetta_main(int argc, char **argv) {
+    __attribute__((cleanup(main_source_origins_free))) MainSourceOrigins source_origins = {0};
     /* Frame identity diagnostics: a bound on live identities, to reach their
      * exhaustion without holding millions of them, and a refusal point, to
      * meet a refusal wherever one is minted. */
@@ -2956,6 +2996,7 @@ static int cetta_main(int argc, char **argv) {
     bool repl_mode = false;
     bool compile_stdlib_mode = false;
     const char *run_report_path = NULL;
+    const char *run_observation_path = NULL;
     bool run_contract = false;
     bool diagnostic_details = false;
     RunCli *run_cli = NULL;
@@ -2971,6 +3012,9 @@ static int cetta_main(int argc, char **argv) {
     const char *prime_rewrite_frontier = NULL;
     bool eval_hashcons = false;
     bool list_profiles = false;
+    bool kernel_selected = false;
+    bool kernel_stats_requested = false;
+    CettaKernelMode explicit_kernel = CETTA_KERNEL_C;
     bool translate_mode = false;
     uint32_t lang_occurrences = 0;
     bool prefer_rationals_cli = false;
@@ -2980,7 +3024,7 @@ static int cetta_main(int argc, char **argv) {
     bool num_threads_requested = false;
     uint32_t rho_reduction_limit = CETTA_RHOCALC_DEFAULT_REDUCTION_LIMIT;
     bool rho_reduction_limit_requested = false;
-    RhoSchedulerPolicy rho_scheduler = RHO_SCHEDULER_CANONICAL;
+    RunSchedule rho_scheduler = RUN_SCHEDULE_CANONICAL;
     bool rho_scheduler_requested = false;
     uint64_t mm2_step_limit = CETTA_MM2_DEFAULT_RUN_STEPS;
     SpaceEngine space_engine = SPACE_ENGINE_NATIVE;
@@ -2995,6 +3039,19 @@ static int cetta_main(int argc, char **argv) {
     current_endpoint = &source_endpoint;
 
     for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--source-origin") == 0) {
+            MainSourceOriginStatus added = argc - i <= 2 ? MAIN_SOURCE_ORIGIN_INVALID
+                : main_source_origin_add(&source_origins, argc, argv[i + 1], argv[i + 2]);
+            if (added != MAIN_SOURCE_ORIGIN_ADDED) {
+                fprintf(stderr, added == MAIN_SOURCE_ORIGIN_CAPACITY
+                    ? "error: could not allocate source origin metadata\n"
+                    : "error: --source-origin expects a document index and an origin\n");
+                free(inline_buf);
+                return added == MAIN_SOURCE_ORIGIN_CAPACITY ? 1 : 2;
+            }
+            i += 2;
+            continue;
+        }
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             print_usage(stdout);
             return 0;
@@ -3011,6 +3068,38 @@ static int cetta_main(int argc, char **argv) {
             strcmp(argv[i], "--list-space-match-backends") == 0) {
             space_match_backend_print_inventory(stdout);
             return 0;
+        }
+        if (strcmp(argv[i], "--kernel") == 0 || strncmp(argv[i], "--kernel=", 9u) == 0) {
+            const char *name = argv[i] + 9;
+            if (strcmp(argv[i], "--kernel") == 0) {
+                if (++i >= argc) { fputs("error: --kernel needs c, x86 or hybrid\n", stderr); return 2; }
+                name = argv[i];
+            }
+            CettaKernelMode mode;
+            char why[256] = {0};
+            if (!cetta_kernel_mode(name, &mode)) {
+                fprintf(stderr, "error: kernel '%s': expected c, x86 or hybrid\n", name);
+                return 2;
+            }
+            if (kernel_selected && explicit_kernel != mode) {
+                fputs("error: conflicting explicit kernel selections\n", stderr);
+                return 2;
+            }
+            if (!cetta_kernel_select(mode, why, sizeof why)) {
+                fprintf(stderr, "error: kernel '%s': %s\n", name, why);
+                return 2;
+            }
+            kernel_selected = true;
+            explicit_kernel = mode;
+            continue;
+        }
+        if (strcmp(argv[i], "--kernel-stats") == 0) {
+            if (!kernel_stats_requested) {
+                cetta_kernel_enable_stats();
+                if (atexit(cetta_kernel_print_stats) != 0) return 1;
+                kernel_stats_requested = true;
+            }
+            continue;
         }
         if (strcmp(argv[i], "--list-profiles") == 0) {
             list_profiles = true;
@@ -3035,6 +3124,11 @@ static int cetta_main(int argc, char **argv) {
         if (strcmp(argv[i], "--run-report") == 0) {
             if (++i >= argc) { fputs("error: --run-report requires a path\n", stderr); return 1; }
             run_report_path = argv[i];
+            continue;
+        }
+        if (strcmp(argv[i], "--run-observation") == 0) {
+            if (++i >= argc) { fputs("error: --run-observation requires a path\n", stderr); return 1; }
+            run_observation_path = argv[i];
             continue;
         }
         if (strcmp(argv[i], "--diagnostic-details") == 0) {
@@ -3361,7 +3455,7 @@ static int cetta_main(int argc, char **argv) {
             import_mode_overridden = true;
             continue;
         }
-        if (strcmp(argv[i], "-e") == 0) {
+        if (strcmp(argv[i], "-e") == 0 || strcmp(argv[i], "--expr") == 0) {
             if (i + 1 >= argc) {
                 print_usage(stderr);
                 return 1;
@@ -3443,17 +3537,24 @@ static int cetta_main(int argc, char **argv) {
         return 2;
     }
 
-    if (diagnostic_details && !run_contract && !run_report_path) {
+    if (diagnostic_details && !run_contract && !run_report_path && !run_observation_path) {
         fputs("error: --diagnostic-details requires --run-report or --run-contract\n", stderr);
         free(inline_buf); return 1;
     }
-    if ((run_contract || run_report_path) &&
+    if ((run_contract || run_report_path || run_observation_path) &&
         (translate_mode || compile_mode || compile_stdlib_mode ||
          source_endpoint.langdef_manifest_path[0] ||
          (source_endpoint.lang && source_endpoint.lang->id != CETTA_LANGUAGE_HE &&
           source_endpoint.lang->id != CETTA_LANGUAGE_PETTA))) {
         fputs("error: run reporting requires direct document execution\n", stderr);
         free(inline_buf); return 1;
+    }
+    if (run_contract || run_report_path || run_observation_path) {
+        int parent_status = 1;
+        if (!cetta_run_guard_launch(run_report_path, &parent_status)) {
+            free(inline_buf);
+            return parent_status;
+        }
     }
     if (source_endpoint.langdef_manifest_path[0]) {
         bool unsupported_option =
@@ -3504,6 +3605,17 @@ static int cetta_main(int argc, char **argv) {
         }
         script_arg_start = petta_file_arg_end;
     }
+
+    size_t origin_documents = filename ?
+        (petta_file_arg_cursor >= 0 ? (size_t)(petta_file_arg_end - filename_arg_index) : 1u) : 0u;
+    for (size_t ordinal = origin_documents; ordinal < source_origins.len; ++ordinal) {
+        if (source_origins.paths[ordinal]) {
+            fprintf(stderr, "error: source origin index %zu has no input document\n", ordinal);
+            free(inline_buf);
+            return 2;
+        }
+    }
+    script_path = main_source_origin(&source_origins, 0u, script_path);
     if (gslt_realization_requested &&
         !cetta_language_uses_embedded_gslt(source_endpoint.lang->id)) {
         fprintf(stderr,
@@ -3594,6 +3706,13 @@ static int cetta_main(int argc, char **argv) {
             free(inline_buf);
             return 2;
         }
+        if (source_endpoint.lang->id == CETTA_LANGUAGE_TCALC &&
+            target_endpoint.lang->id == CETTA_LANGUAGE_TCALC) {
+            int tcalc_rc = cetta_tcalc_translate_file(filename, cetta_syntax_name(syntax),
+                                                      cetta_syntax_name(output_syntax));
+            free(inline_buf);
+            return tcalc_rc;
+        }
         if (source_endpoint.lang->id != CETTA_LANGUAGE_RHOCALC ||
             target_endpoint.lang->id != CETTA_LANGUAGE_RHOCALC) {
             fprintf(stderr, "error: --translate currently supports only rhocalc endpoints\n");
@@ -3606,6 +3725,22 @@ static int cetta_main(int argc, char **argv) {
                                     syntax, output_syntax);
         free(inline_buf);
         return translate_rc;
+    }
+
+    if (lang->id == CETTA_LANGUAGE_TCALC) {
+        if (inline_text || compile_mode || compile_stdlib_mode || num_threads_requested ||
+            rho_reduction_limit_requested || rho_scheduler_requested || petta_strict || petta_strict_det ||
+            import_mode_overridden || eval_hashcons || prefer_rationals_cli || space_engine_requested ||
+            gslt_realization_requested || langdef_proof_execution_requested ||
+            mm2_step_limit != CETTA_MM2_DEFAULT_RUN_STEPS) {
+            fputs("error: tcalc reads a program file; evaluator-specific options do not apply\n", stderr);
+            free(inline_buf);
+            return 2;
+        }
+        int tcalc_rc = cetta_tcalc_run_file(filename, source_endpoint.profile_name,
+                                            source_endpoint.version_name, cetta_syntax_name(syntax));
+        free(inline_buf);
+        return tcalc_rc;
     }
 
     if (lang->id == CETTA_LANGUAGE_HOL_LIGHT) {
@@ -3734,9 +3869,13 @@ static int cetta_main(int argc, char **argv) {
     CettaGsltLanguage *gslt_language = NULL;
     CettaMainCleanup cleanup = {0};
     bool lang_is_mm2 = strcmp(lang->canonical, "mm2") == 0;
-    if (run_contract || run_report_path) {
+    if (run_contract || run_report_path || run_observation_path) {
         run_cli = run_cli_begin();
         if (!run_cli) { fputs("error: could not allocate run report\n", stderr); free(inline_buf); return 1; }
+        if (run_observation_path && !run_cli_open_observation(run_cli, run_observation_path)) {
+            fputs("error: could not open run observation\n", stderr);
+            run_cli_free(run_cli); free(inline_buf); return 1;
+        }
     }
     char document_reader_error[512] = {0};
     bool he_source_fault = false;
@@ -4704,6 +4843,7 @@ petta_next_slice:
                         (size_t)eval_outcome_fault_count(&detailed),
                         detailed.steps_spent);
             } else if (g_count_only || run_cli ||
+                       lang->id == CETTA_LANGUAGE_TMETTA ||
                        lang->id == CETTA_LANGUAGE_PETTA ||
                        (lang->id == CETTA_LANGUAGE_HE && fuel_override_requested &&
                         fuel_override >= 0) ||
@@ -4821,8 +4961,10 @@ petta_next_slice:
                         petta_answer_without_text = true;
                 }
             }
-            if (!petta_uncaught_error)
+            if (!petta_uncaught_error) {
                 run_cli_answers(run_cli, results->len);
+                run_cli_observe_answers(run_cli, results->items, results->len);
+            }
             if (petta_uncaught_error) {
                 run_cli_query_stop(run_cli, RUN_REPORT_STOP_FAULT);
                 Atom *exception = NULL;
@@ -4979,9 +5121,10 @@ petta_document_complete:
         petta_file_arg_cursor + 1 < petta_file_arg_end) {
         petta_file_arg_cursor++;
         filename = argv[petta_file_arg_cursor];
-        script_path = filename;
+        script_path = main_source_origin(&source_origins,
+            (size_t)(petta_file_arg_cursor - filename_arg_index), filename);
         cetta_library_context_set_script_path(&runtime.libraries, script_path);
-        cetta_library_context_note_document_file(&runtime.libraries, &runtime.space, filename);
+        cetta_library_context_note_document_file(&runtime.libraries, &runtime.space, script_path);
 
         free(atom_ids);
         atom_ids = NULL;
@@ -5078,5 +5221,5 @@ int main(int argc,char **argv) {
     if (!getenv("MALLOC_MMAP_THRESHOLD_"))
         (void)mallopt(M_MMAP_THRESHOLD, 1 << 20);
 #endif
-    return cetta_run_guard(argc,argv,cetta_main);
+    return cetta_run_guard_finish(cetta_main(argc,argv));
 }

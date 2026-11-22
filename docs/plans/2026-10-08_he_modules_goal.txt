@@ -1,0 +1,19 @@
+/goal Finish and qualify CeTTa's HE module behavior from the Opt baseline, one coherent step at a time. Stop at the module milestone.
+
+Work in /home/aimama/aihub/hyperon/cetta-prime-nik-20260811 from Opt 1775a4b8. Read docs/plans/2026-10-08_he_modules_decisions.txt first. Draw tested ideas and fixtures from archived 06c16aaf, adapting them to the baseline.
+
+Deliver import!, include, bind!, mod-space!, print-mods!, module-space-no-deps, register-module! and git-module!, together with module initialization, export, per-importer naming and dependency-space behavior. Include nested and Python-provided modules.
+
+Carry forward the call-guard design: compact language-specific policies over shared lookup, matching, bindings, ownership and existing evaluator continuations. Preserve HE and PeTTa's distinct type and evaluation demands. Keep module identity, defining context and lexical binding explicit; share mechanisms without merging dialect meanings. Reuse the existing direct execution and accelerated query paths.
+
+Linking is transitive and deduplicated by module identity; naming is lexical and happens for each importer. Distinguish initialization, export and invocation. Successful imports provide the complete intended interface. Failed publication exposes no partial importer links or tokens. Completed external effects remain observable; cleanup never replays them. Preserve successful children and retained callbacks according to the established profile contract, restoring nested context after success or failure. Check repeated imports, failures, source changes, collisions, cycles, diamonds, reentrancy, sessions and teardown.
+
+he-compat follows the identified fixed HE fork on module cases, including fresh failed-initialization retries and cleanup of children loaded by a failed parent, as approved on 2026-10-09. Preserve pinned HE 0.2.10 observations as records of its defects. he and extended retain their agreed failure-memory and source-change retry policy. Preserve agreed include/profile extensions. Keep compatibility differences named and tested.
+
+Module views preserve own-before-imported priority where required, module-identity deduplication and answer multiplicity. Listing, counting and mutation retain their own-only contracts; module-space-no-deps exposes only the module's own storage. Compare bags by value and multiplicity; preserve required list, token-selection and effect order. Keep live observations current under mutation using the existing revision and lifetime mechanisms.
+
+Proceed through: (1) reproduce reference/cost controls in the worktree; (2) complete the operations and lifecycle; (3) complete naming and dependency views; (4) qualify the combined state. Verify each coherent change before the next; report at meaningful checkpoints and reuse valid evidence.
+
+Finish with module cases matching identified references/profile contracts, public HE and upstream scripts checked case by case, PeTTa/Prime/Rho preserved, and module sanitizer/ownership checks passing. Record source and binary identities. Preserve normal/light-C --lang he and Python module support. Require no performance reductions against pinned Opt on representative whole programs and module workloads. Investigate flags using the baseline's variability and valid workload modes. Use no invented percentage allowance or arbitrary default search limits.
+
+Kernel built-in operation-value conversion, native-call/compiler optimization, Unicode/regex/number redesign and broader formalization remain separate projects. Small supporting fixes needed by module behavior belong here; explain their purpose and test them. If a larger prerequisite emerges, identify it and continue independent module work rather than expanding this goal. Git remains Zar's; keep build and scratch artifacts within the worktree.

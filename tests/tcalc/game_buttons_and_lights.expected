@@ -1,0 +1,3 @@
+(interpretation (version tcalc@0.1) (step every) (ask after-tells) (store set) (region all) (matches symmetric) (solver mgu-first-order) (observe outcomes) (budget 100000) (backend c))
+(outcome (does robot b) (goal robot 0) (next 4) (next p) (successor 1 2) (successor 2 3) (successor 3 4) (successor 4 5) (successor 5 6) (successor 6 7) (true 3) (true q))
+(explored (states 2) (work 2) (finished true) (cycle false))

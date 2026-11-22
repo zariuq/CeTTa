@@ -1,0 +1,6 @@
+% profile: step=one
+% Two CHR rules race for one constraint.  CHR rules persist, so nothing is
+% left waiting (compare rho_token_race.rho, whose receives fire once).
+token(1).
+first  @ token(X) <=> got(a, X).
+second @ token(X) <=> got(b, X).

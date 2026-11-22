@@ -1,0 +1,296 @@
+{
+  "schema": "cetta-gslt-coverage-v1",
+  "description": "Source-driven inventory and open qualification obligations. Recipes identify checks; they do not certify all members of a family or close an obligation.",
+  "source_roots": [
+    "langdef",
+    "experiments/gslt2parse_foundation/presentations"
+  ],
+  "producer_inputs": [
+    {
+      "directory": "src",
+      "suffixes": [
+        ".c",
+        ".h",
+        ".inc"
+      ]
+    },
+    {
+      "directory": "tools",
+      "suffixes": [
+        ".py",
+        ".c",
+        ".h",
+        ".sh",
+        ".json"
+      ]
+    },
+    {
+      "directory": "experiments/gslt2parse_foundation/native",
+      "suffixes": [
+        ".c",
+        ".h"
+      ]
+    },
+    {
+      "directory": "native",
+      "suffixes": [
+        ".c",
+        ".h"
+      ]
+    },
+    {
+      "directory": "tests/langdef/gslt_c",
+      "suffixes": [
+        "*"
+      ]
+    },
+    {
+      "directory": "tests/megalodon/source_reader",
+      "suffixes": [
+        "*"
+      ]
+    }
+  ],
+  "constructs": [
+    {
+      "id": "pattern.bound-variable",
+      "description": "Bound indices and scope transport",
+      "status": "open"
+    },
+    {
+      "id": "pattern.free-variable",
+      "description": "Repeated variables, sharing and fresh source scopes",
+      "status": "open"
+    },
+    {
+      "id": "pattern.application",
+      "description": "Free constructors of arbitrary declared arity",
+      "status": "open"
+    },
+    {
+      "id": "pattern.lambda",
+      "description": "Single binding with capture-avoiding transport",
+      "status": "open"
+    },
+    {
+      "id": "pattern.multi-lambda",
+      "description": "Multiple binders and their declared dependencies",
+      "status": "open"
+    },
+    {
+      "id": "pattern.substitution",
+      "description": "Explicit capture-avoiding substitution",
+      "status": "open"
+    },
+    {
+      "id": "pattern.vector",
+      "description": "Ordered collections and rest patterns",
+      "status": "open"
+    },
+    {
+      "id": "pattern.bag",
+      "description": "Unordered collections with occurrence multiplicity",
+      "status": "open"
+    },
+    {
+      "id": "pattern.set",
+      "description": "Declared extensional collections",
+      "status": "open"
+    },
+    {
+      "id": "premise.freshness",
+      "description": "Fresh names and openings",
+      "status": "open"
+    },
+    {
+      "id": "premise.congruence",
+      "description": "Equation-relative premise solving",
+      "status": "open"
+    },
+    {
+      "id": "premise.scoped-step",
+      "description": "Premise-local binding contexts",
+      "status": "open"
+    },
+    {
+      "id": "premise.relation-query",
+      "description": "Declared relational modes and interpretations",
+      "status": "open"
+    },
+    {
+      "id": "premise.for-all",
+      "description": "Quantified collection premises",
+      "status": "open"
+    },
+    {
+      "id": "equation.authored",
+      "description": "Unoriented authored equations and resumable congruence search",
+      "status": "open"
+    },
+    {
+      "id": "equation.conditional",
+      "description": "Conditions and occurrence substitutions of equations",
+      "status": "open"
+    },
+    {
+      "id": "rewrite.authority",
+      "description": "Declared authority frames and endpoint transport",
+      "status": "open"
+    },
+    {
+      "id": "search.retained",
+      "description": "Declared search behavior, cycles and starvation controls",
+      "status": "open"
+    },
+    {
+      "id": "search.resources",
+      "description": "Explicit unfinished outcomes and retained resumption",
+      "status": "open"
+    },
+    {
+      "id": "primitive.interpretations",
+      "description": "Effective presentations and declared primitive interpretations",
+      "status": "open"
+    },
+    {
+      "id": "primitive.value-kinds",
+      "description": "Distinct scalar, opaque and compound value kinds",
+      "status": "open"
+    },
+    {
+      "id": "interface.quotation",
+      "description": "Quotation, data constructors and activation",
+      "status": "open"
+    },
+    {
+      "id": "interface.documents",
+      "description": "Imports, ordered documents and intervening effects",
+      "status": "open"
+    },
+    {
+      "id": "interface.guest-space",
+      "description": "Private bookkeeping outside the observable guest Space",
+      "status": "open"
+    },
+    {
+      "id": "package.datalog",
+      "description": "Public Lean-free Datalog package and MeTTa execution",
+      "status": "open"
+    },
+    {
+      "id": "package.chr",
+      "description": "Public CHR package and occurrence-exact Space transformations",
+      "status": "open"
+    },
+    {
+      "id": "machine.production-table",
+      "description": "Computed, unique and collect conditions over non-ground stores",
+      "status": "open"
+    },
+    {
+      "id": "compiler.structural-evidence",
+      "description": "Checked emissions connected to operational correspondence",
+      "status": "open"
+    },
+    {
+      "id": "observation.occurrences",
+      "description": "Answer multiplicity and declared stream or bag order",
+      "status": "open"
+    },
+    {
+      "id": "observation.effects",
+      "description": "Effect order, faults, completion and divergence distinctions",
+      "status": "open"
+    },
+    {
+      "id": "growth.realization",
+      "description": "Constructed realization for executable finite presentations",
+      "status": "open"
+    },
+    {
+      "id": "growth.coherence",
+      "description": "Identities, composition, equations and stage transport",
+      "status": "open"
+    },
+    {
+      "id": "growth.finite-support",
+      "description": "Finite-support factorization in the presentation category",
+      "status": "open"
+    },
+    {
+      "id": "growth.retained-execution",
+      "description": "Compatible growth with retained stage identities",
+      "status": "open"
+    },
+    {
+      "id": "growth.snapshot-relative",
+      "description": "No promotion of finite-stage absence to growing-theory absence",
+      "status": "open"
+    }
+  ],
+  "production_recipes": {
+    "tests/petta": [
+      "test-gslt-empty-relations-v1",
+      "test-gslt-relational-premises-v1",
+      "test-gslt-proof-value-boundary-v1",
+      "test-gslt-compiler-walks-v1",
+      "test-gslt-compiler-depth-v1"
+    ],
+    "langdef/bnf": [
+      "test-plain-bnf-denotation-v1",
+      "test-plain-bnf-name-index-v1"
+    ],
+    "langdef/metamath": [
+      "test-metamath-row-actions-direct-petta-v1",
+      "test-metamath-insert-each-matching-direct-petta-v1",
+      "test-metamath-copy-actions-direct-petta-v1",
+      "test-metamath-cogslt-petta-state-bootstrap-direct-v1",
+      "test-metamath-cogslt-petta-state-transition-direct-v1",
+      "test-metamath-cogslt-petta-proof-bootstrap-direct-v1",
+      "test-metamath-cogslt-petta-proof-trace-direct-v1",
+      "test-metamath-cogslt-petta-direct-outcome-driver-v1"
+    ],
+    "langdef/mm0": [
+      "test-mm0-cogslt-secondary-lexer-v1",
+      "test-mm0-cogslt-live-syntax-fold-v1",
+      "test-mm0-cogslt-runtime-live-syntax-v1",
+      "test-mm0-cogslt-sort-environment-v1",
+      "test-mm0-cogslt-term-environment-v1",
+      "test-mm0-cogslt-notation-environment-v1",
+      "test-mm0-cogslt-math-parser-v1",
+      "test-mm0-cogslt-expression-environment-v1",
+      "test-mm0-cogslt-assertion-environment-v1"
+    ],
+    "langdef/gslt-il": [
+      "test-gslt-il-petta-v1"
+    ],
+    "langdef/metta-interact": [
+      "test-metta-interact-petta-v1"
+    ],
+    "langdef/lang": [
+      "test-lang-chr",
+      "test-lang-library-datalog"
+    ],
+    "experiments/gslt2parse_foundation/presentations/canaries": [
+      "test-gslt-petta-direct-v1",
+      "test-gslt-petta-entries-v1",
+      "test-gslt-petta-static-calls-v1"
+    ],
+    "tests/langdef": [
+      "test-gslt-c-direct-v1"
+    ],
+    "langdef/zero": [
+      "test-mettazero-petta-v1"
+    ],
+    "langdef/zerouv": [
+      "test-zerouv-petta-v1"
+    ],
+    "langdef/megalodon": [
+      "test-megalodon-gslt",
+      "test-megalodon-gslt-native"
+    ]
+  },
+  "presentation_scans": [
+    "tests"
+  ]
+}

@@ -1,0 +1,1 @@
+The foreign call returns a String and repr serializes that String as parseable MeTTa; check the value and the repr round trip.

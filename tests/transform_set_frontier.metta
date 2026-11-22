@@ -1,0 +1,47 @@
+!(import! &self ../lib/lib_exec.metta)
+!(bind! &kb (new-space set))
+!(add-atom &kb (edge a b))
+!(add-atom &kb (edge b c))
+!(add-atom &kb (edge c d))
+!(add-atom &kb (unrelated retained))
+!(exec:saturate &kb
+   ((exec base (, (edge $x $y)) (, (path $x $y)))
+    (exec trans (, (path $x $y) (edge $y $z)) (, (path $x $z)))
+    (exec cold (, (missing $x)) (, (unused $x)))
+    (exec empty (,) (, (seed fixed)))))
+!(let $rows (collapse (get-atoms &kb)) (let $n (size-atom $rows) (println! (closure-size $n))))
+!(let $rows (collapse (match &kb (path $x $y) hit)) (let $n (size-atom $rows) (println! (paths $n))))
+!(let $rows (collapse (match &kb (path a d) hit)) (let $n (size-atom $rows) (println! (long-path $n))))
+!(let $rows (collapse (match &kb (seed fixed) hit)) (let $n (size-atom $rows) (println! (empty-premise $n))))
+!(let $rows (collapse (get-atoms &kb)) (let $ordered (sort-atom $rows) (println! (closure $ordered))))
+
+!(bind! &empty (new-space set))
+!(exec:saturate &empty
+   ((exec start (,) (, (start-value)))
+    (exec next (, (start-value)) (, (next-value)))))
+!(let $rows (collapse (get-atoms &empty)) (let $ordered (sort-atom $rows) (println! (empty-closure $ordered))))
+
+!(bind! &bag (new-space))
+!(add-atom &bag (edge a b))
+!(exec:saturate &bag ((exec bag (, (edge $x $y)) (, (bag-result $x $y)))))
+!(let $rows (collapse (match &bag (bag-result $x $y) hit)) (let $n (size-atom $rows) (println! (bag $n))))
+
+!(bind! &open (new-space set))
+!(add-atom &open (edge $unknown b))
+!(exec:saturate &open ((exec open (, (edge a b)) (, (open-result a)))))
+!(let $rows (collapse (match &open (open-result a) hit)) (let $n (size-atom $rows) (println! (open-row $n))))
+
+!(bind! &unbound (new-space set))
+!(add-atom &unbound (edge a b))
+!(exec:saturate &unbound ((exec unbound (, (edge $x $y)) (, (unbound-result $new)))))
+!(let $rows (collapse (match &unbound (unbound-result $x) hit)) (let $n (size-atom $rows) (println! (unbound-output $n))))
+
+!(bind! &wild (new-space set))
+!(add-atom &wild (original a))
+!(exec:saturate &wild ((exec wild (, ($head a)) (, (head-result $head)))))
+!(let $rows (collapse (match &wild (head-result original) hit)) (let $n (size-atom $rows) (println! (variable-head $n))))
+
+!(bind! &mutable (new-space set))
+!(let $value (new-space) (add-atom &mutable (cell $value)))
+!(exec:saturate &mutable ((exec mutable (, (cell $x)) (, (cell-result $x)))))
+!(let $rows (collapse (match &mutable (cell-result $x) hit)) (let $n (size-atom $rows) (println! (mutable $n))))

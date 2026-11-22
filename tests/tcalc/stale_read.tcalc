@@ -1,0 +1,5 @@
+; A firing never reads a row it takes.  The rule reads some (p $x) and takes
+; (p 2): reading (p 2) while taking it is not enabled, so the only match reads
+; (p 1).  No discipline can see the value it removes.
+(p 1) (p 2)
+(rule look-and-remove (read (p $x)) (take (p 2)) (make (saw $x)))

@@ -275,6 +275,68 @@ void cetta_ld_pattern_v1_free(CettaLdPatternV1 *pattern) {
     ld_pattern_free(pattern);
 }
 
+/* A decimal natural below bound; a numeral too long for 64 bits is not. */
+static bool ld_decimal_below(const char *decimal, uint64_t bound) {
+    uint64_t value = 0u;
+
+    if (!decimal || !*decimal)
+        return false;
+    for (; *decimal; decimal++) {
+        if (*decimal < '0' || *decimal > '9' ||
+            value > (UINT64_MAX - (uint64_t)(*decimal - '0')) / 10u)
+            return false;
+        value = value * 10u + (uint64_t)(*decimal - '0');
+    }
+    return value < bound;
+}
+
+static bool ld_pattern_list_well_scoped(const CettaLdPatternListV1 *list,
+                                        uint64_t binders) {
+    for (uint32_t index = 0u; index < list->len; index++)
+        if (!cetta_ld_pattern_v1_well_scoped(&list->items[index], binders))
+            return false;
+    return true;
+}
+
+bool cetta_ld_pattern_v1_well_scoped(const CettaLdPatternV1 *pattern,
+                                     uint64_t binders) {
+    uint64_t arity = 0u;
+    const char *digit;
+
+    if (!pattern)
+        return false;
+    switch (pattern->kind) {
+    case CETTA_LD_PATTERN_BVAR_V1:
+        return ld_decimal_below(pattern->as.bvar_decimal, binders);
+    case CETTA_LD_PATTERN_FVAR_V1:
+        return true;
+    case CETTA_LD_PATTERN_APPLY_V1:
+        return ld_pattern_list_well_scoped(&pattern->as.apply.arguments, binders);
+    case CETTA_LD_PATTERN_LAMBDA_V1:
+        return binders < UINT64_MAX &&
+               cetta_ld_pattern_v1_well_scoped(pattern->as.lambda.body, binders + 1u);
+    case CETTA_LD_PATTERN_MULTI_LAMBDA_V1:
+        digit = pattern->as.multi_lambda.arity_decimal;
+        if (!digit || !*digit)
+            return false;
+        for (; *digit; digit++) {
+            if (*digit < '0' || *digit > '9' ||
+                arity > (UINT64_MAX - binders - (uint64_t)(*digit - '0')) / 10u)
+                return false;
+            arity = arity * 10u + (uint64_t)(*digit - '0');
+        }
+        return cetta_ld_pattern_v1_well_scoped(pattern->as.multi_lambda.body,
+                                               binders + arity);
+    case CETTA_LD_PATTERN_SUBST_V1:
+        return binders < UINT64_MAX &&
+               cetta_ld_pattern_v1_well_scoped(pattern->as.subst.body, binders + 1u) &&
+               cetta_ld_pattern_v1_well_scoped(pattern->as.subst.replacement, binders);
+    case CETTA_LD_PATTERN_COLLECTION_V1:
+        return ld_pattern_list_well_scoped(&pattern->as.collection.elements, binders);
+    }
+    return false;
+}
+
 static void ld_premise_list_free(CettaLdPremiseListV1 *list) {
     uint32_t index;
 

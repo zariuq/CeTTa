@@ -127,12 +127,14 @@ static void foreign_drain_released_with_gil(void) {
 }
 
 void cetta_foreign_drain_releases(void) {
-    __attribute__((cleanup(cetta_host_foreign_leave))) CettaHostForeignScope host = {0};
-    cetta_host_foreign_enter(&host);
     (void)pthread_mutex_lock(&g_foreign_records_mutex);
     bool pending = g_foreign_released != NULL;
     (void)pthread_mutex_unlock(&g_foreign_records_mutex);
-    if (!pending || !Py_IsInitialized())
+    if (!pending)
+        return;
+    __attribute__((cleanup(cetta_host_foreign_leave))) CettaHostForeignScope host = {0};
+    cetta_host_foreign_enter(&host);
+    if (!Py_IsInitialized())
         return;
     PyGILState_STATE state = PyGILState_Ensure();
     foreign_drain_released_with_gil();

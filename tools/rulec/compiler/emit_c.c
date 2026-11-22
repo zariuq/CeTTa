@@ -177,6 +177,8 @@ void emit_tgt_match(FILE *o, const Pat *p, const char *e, int judgment) {
          * values may differ as words (byte strings as slices) */
         if (cur_eqv && cur_eqv[p->var] && sorts[p->sort].native == RC_REP_SLICES)
             fprintf(o, "        if (!rc_value_equal(%d, %s, v%d)) %s\n", p->sort, e, p->var, fail_target_act);
+        else if (cur_eqv && cur_eqv[p->var] && sorts[p->sort].native == RC_REP_ATOMS)
+            fprintf(o, "        if (!rc_atoms_equal(%s, v%d)) %s\n", e, p->var, fail_target_act);
         else if (cur_eqv && cur_eqv[p->var]) fprintf(o, "        if (!rc_term_equal(%s, v%d)) %s\n", e, p->var, fail_target_act);
         else if (var_used[p->var]) fprintf(o, "        T *v%d = %s;\n", p->var, e);
         return;
@@ -207,6 +209,12 @@ void emit_params(FILE *o, int arity) {
     if (!arity) fputs("void", o);
     for (int a = 0; a < arity; a++) fprintf(o, "%sT *a%d", a ? ", " : "", a);
     fputc(')', o);
+}
+/* the parameters of a nondet procedure: the arguments and the success continuation */
+void emit_params_k(FILE *o, int arity) {
+    fputc('(', o);
+    for (int a = 0; a < arity; a++) fprintf(o, "T *a%d, ", a);
+    fputs("const RcK *k_)", o);
 }
 
 /* the path of variable v in a left side */
@@ -337,6 +345,12 @@ static void emit_rule_code(FILE *o, int c, const Rule *r, bool shared, bool tria
     for (int j = 0; j < r->np; j++) {
         Prem *p = &r->p[j];
         occ_upto = j;
+        if (p->relation && p->test >= 0) {
+            fprintf(o, "        if (!rc_test_%d(", p->test);
+            for (int a = 0; a < p->nrel; a++) { if (a) fputs(", ", o); emit_build(o, p->rel[a]); }
+            fprintf(o, ")) %s\n", fail_row_act);
+            continue;
+        }
         if (p->relation) {
             /* a query of a relation whose rows the host supplies; every argument is bound (a test) */
             if (p->binds) die("rule %s: a relation query that binds a variable is not compiled", r->label);
@@ -446,7 +460,21 @@ static void emit_trial_leaf(FILE *o, int c, int leaf) {
     fputs("    }\n", o);
 }
 
+static void void_unread_args(FILE *o, const char *body, int arity);
+static void emit_rules_body_to(FILE *o, int c);
+/* the body of judgment c's procedure (its DAG and rules), after a (void) for each argument it never
+ * names */
 void emit_rules_body(FILE *o, int c) {
+    char *body = NULL; size_t blen = 0;
+    FILE *b = open_memstream(&body, &blen);
+    if (!b) die("out of memory");
+    emit_rules_body_to(b, c);
+    fclose(b);
+    void_unread_args(o, body, ctors[c].arity);
+    fputs(body, o);
+    free(body);
+}
+static void emit_rules_body_to(FILE *o, int c) {
     Ctor *k = &ctors[c];
     char lab[64], e[8192];
     bool *seen = xcalloc((size_t)nnodes, 1);
@@ -494,7 +522,7 @@ static int relation_id(const char *name) {
 void emit_relation_table(FILE *o) {
     fprintf(o, "\n/* relations the rules query (rows supplied by the host through rc_relation_hook) */\n"
                "const int rc_nrelations = %d;\nconst char *const rc_relation_names[] = {", nrelation_names);
-    for (int i = 0; i < nrelation_names; i++) fprintf(o, "%s\"%s\"", i ? ", " : "", relation_names[i]);
+    for (int i = 0; i < nrelation_names; i++) { fputs(i ? ", " : "", o); fput_cstring(o, relation_names[i]); }
     fprintf(o, "%s};\n", nrelation_names ? "" : "0");
 }
 
@@ -514,8 +542,240 @@ static void emit_law_wrapper(FILE *o, int c, int law, const char *next) {
             no_musttail ? "" : "RC_TAIL ", c, next);
 }
 
+/* ---- procedures that may give several results (nondet) ----
+ * p<J>(args, k_) passes each result to its success continuation k_ (k_->fn(k_, value)) and returns 0.
+ * Its decision DAG is compiled as a det procedure's; a leaf of several rules tries every one of them in
+ * turn, each rule's results being results.  A rule's premises run in written order.  A call of a nondet
+ * judgment gets a continuation that runs the rest of the rule on each of the callee's results: a
+ * function k<J>_<rule>_<premise> whose object carries, after its RcK, the outer continuation and the
+ * variables the rest reads.  A last premise whose target is the right side passes k_ on (a guaranteed
+ * tail call where it may recur).  These procedures record no trace events: a trace is one derivation. */
+static FILE *nd_side;      /* the continuation functions of the procedure being written */
+/* the variables bound before premise m (by the left side and the targets of earlier premises) */
+static void nd_bound_before(const Rule *r, int m, bool *bound) {
+    int *cnt = xcalloc((size_t)(r->nv ? r->nv : 1), sizeof(int));
+    pat_vars(r->lhs, cnt);
+    for (int j = 0; j < m && j < r->np; j++) {
+        if (r->p[j].relation) { for (int a = 0; a < r->p[j].nrel; a++) pat_vars(r->p[j].rel[a], cnt); }
+        else pat_vars(r->p[j].tgt, cnt);
+    }
+    for (int v = 0; v < r->nv; v++) bound[v] = cnt[v] > 0;
+    free(cnt);
+}
+/* the variables read from premise m on: arguments of calls and queries, variables a target compares
+ * (bound before it), the right side */
+static void nd_used_from(const Rule *r, int m, bool *used) {
+    int *cnt = xcalloc((size_t)(r->nv ? r->nv : 1), sizeof(int));
+    for (int j = m; j < r->np; j++) {
+        if (r->p[j].relation) { for (int a = 0; a < r->p[j].nrel; a++) pat_vars(r->p[j].rel[a], cnt); continue; }
+        pat_vars(r->p[j].src, cnt);
+        for (int v = 0; r->p[j].eqv && v < r->nv; v++) if (r->p[j].eqv[v]) cnt[v]++;
+    }
+    pat_vars(r->rhs, cnt);
+    for (int v = 0; v < r->nv; v++) used[v] = cnt[v] > 0;
+    free(cnt);
+}
+/* the variables a continuation of premise j carries: bound before the premise, compared by its target
+ * or read after it (its arguments are built before the call, in the caller) */
+static void nd_carried(const Rule *r, int j, bool *carried) {
+    bool *used = xcalloc((size_t)(r->nv ? r->nv : 1), 1);
+    nd_bound_before(r, j, carried);
+    nd_used_from(r, j + 1, used);
+    for (int v = 0; v < r->nv; v++) carried[v] = carried[v] && (used[v] || (r->p[j].eqv && r->p[j].eqv[v]));
+    free(used);
+}
+static void nd_args(FILE *o, const Pat *src) {
+    for (int a = 0; a < src->n; a++) { if (a) fputs(", ", o); emit_build(o, src->k[a]); }
+}
+static void nd_set_fail(const char *fail) {
+    snprintf(fail_target_act, sizeof fail_target_act, "%s", fail);
+    snprintf(fail_call_act, sizeof fail_call_act, "%s", fail);
+    snprintf(fail_row_act, sizeof fail_row_act, "%s", fail);
+}
+/* the code of rule r of nondet judgment c from premise j on: the premises, then the result given to
+ * k_.  fail is what a failure does; in_proc: the code is in the procedure (int, may return a call),
+ * else in a continuation (void); may_tail: nothing follows it there.  Returns whether the code ended
+ * in a return. */
+static bool nd_rest(FILE *o, int c, const Rule *r, int j, const char *fail, bool in_proc, bool may_tail);
+static void nd_continuation(int c, const Rule *r, int j, char *name, size_t cap) {
+    snprintf(name, cap, "k%d_%d_%d", c, r->id, j);
+    bool *carried = xcalloc((size_t)(r->nv ? r->nv : 1), 1);
+    nd_carried(r, j, carried);
+    char *body = NULL; size_t blen = 0;
+    FILE *b = open_memstream(&body, &blen);
+    if (!b) die("out of memory");
+    fprintf(b, "static void %s_fn(const RcK *s_, T *t%d) {\n    const struct %s *e_ = (const struct %s *)(const void *)s_;\n"
+               "    const RcK *k_ = e_->k_;\n", name, j, name, name);
+    for (int v = 0; v < r->nv; v++) if (carried[v]) fprintf(b, "    T *v%d = e_->v%d;\n", v, v);
+    fprintf(b, "    (void)t%d;\n", j);
+    nd_set_fail("return;");
+    cur_eqv = r->p[j].eqv;
+    char tv[16];
+    snprintf(tv, sizeof tv, "t%d", j);
+    emit_tgt_match(b, r->p[j].tgt, tv, c);
+    cur_eqv = NULL;
+    nd_rest(b, c, r, j + 1, "return;", false, true);
+    fputs("}\n", b);
+    fclose(b);
+    fprintf(nd_side, "struct %s { RcK k; const RcK *k_;", name);
+    for (int v = 0; v < r->nv; v++) if (carried[v]) fprintf(nd_side, " T *v%d;", v);
+    fprintf(nd_side, " };\n%s", body);
+    free(body); free(carried);
+}
+static bool nd_rest(FILE *o, int c, const Rule *r, int j, const char *fail, bool in_proc, bool may_tail) {
+    for (; j < r->np; j++) {
+        const Prem *p = &r->p[j];
+        nd_set_fail(fail);
+        if (p->relation && p->test >= 0) {
+            fprintf(o, "        if (!rc_test_%d(", p->test);
+            for (int a = 0; a < p->nrel; a++) { if (a) fputs(", ", o); emit_build(o, p->rel[a]); }
+            fprintf(o, ")) %s\n", fail);
+            continue;
+        }
+        if (p->relation) {
+            if (p->binds) die("rule %s: a relation query that binds a variable is not compiled", r->label);
+            fprintf(o, "        { T *q_[] = {");
+            for (int a = 0; a < p->nrel; a++) { if (a) fputs(", ", o); emit_build(o, p->rel[a]); }
+            fprintf(o, "%s}; if (!rc_relation_holds(%d, %d, q_)) %s }\n", p->nrel ? "" : "0", relation_id(p->relation), p->nrel, fail);
+            continue;
+        }
+        int callee = p->src->ctor;
+        if (ctors[callee].nondet) {
+            if (j == r->np - 1 && r->tail) {
+                /* the callee's results are the rule's: k_ is passed on */
+                const Ctor *k = &ctors[c];
+                int caller_slots = k->arity + 1 > 6 ? k->arity + 1 - 6 : 0, callee_slots = ctors[callee].arity + 1 > 6 ? ctors[callee].arity + 1 - 6 : 0;
+                bool must = !no_musttail && callee_slots <= caller_slots && ctors[callee].scc == k->scc;
+                if (in_proc && may_tail) {
+                    fprintf(o, "        %sreturn p%d(", must ? "RC_TAIL " : "", callee);
+                    nd_args(o, p->src);
+                    fprintf(o, "%sk_);\n", p->src->n ? ", " : "");
+                    return true;
+                }
+                fprintf(o, "        p%d(", callee);
+                nd_args(o, p->src);
+                fprintf(o, "%sk_);\n", p->src->n ? ", " : "");
+                return false;
+            }
+            char name[64];
+            nd_continuation(c, r, j, name, sizeof name);
+            bool *carried = xcalloc((size_t)(r->nv ? r->nv : 1), 1);
+            nd_carried(r, j, carried);
+            fprintf(o, "        struct %s e%d_ = {{%s_fn}, k_", name, j, name);
+            for (int v = 0; v < r->nv; v++) if (carried[v]) fprintf(o, ", v%d", v);
+            fprintf(o, "};\n        p%d(", callee);
+            nd_args(o, p->src);
+            fprintf(o, "%s&e%d_.k);\n", p->src->n ? ", " : "", j);
+            free(carried);
+            return false;
+        }
+        fprintf(o, "        T *t%d = ", j);
+        emit_call_open(o, callee);
+        fprintf(o, "p%d(", callee);
+        nd_args(o, p->src);
+        fputc(')', o);
+        emit_call_close(o);
+        fprintf(o, ";\n        if (!t%d) %s\n", j, fail);
+        char tv[16];
+        snprintf(tv, sizeof tv, "t%d", j);
+        cur_eqv = p->eqv;
+        emit_tgt_match(o, p->tgt, tv, c);
+        cur_eqv = NULL;
+    }
+    fputs("        k_->fn(k_, ", o);
+    emit_build(o, r->rhs);
+    fputs(");\n", o);
+    return false;
+}
+/* rule r in the procedure: its left side's variables bound, then nd_rest */
+static bool nd_rule(FILE *o, int c, const Rule *r, const char *fail, bool may_tail) {
+    var_used = xcalloc((size_t)(r->nv ? r->nv : 1), 1);
+    bool *used = xcalloc((size_t)(r->nv ? r->nv : 1), 1);
+    nd_used_from(r, 0, used);
+    memcpy(var_used, used, (size_t)r->nv);
+    free(used);
+    occ_rule = NULL;
+    for (int a = 0; a < ctors[c].arity; a++) {
+        char arg[16];
+        snprintf(arg, sizeof arg, "a%d", a);
+        emit_lhs_bind(o, r->lhs->k[a], arg);
+    }
+    fprintf(o, "        RC_COUNT_RULE(%d);\n", r->id);
+    tmpno = 0;
+    bool ended = nd_rest(o, c, r, 0, fail, true, may_tail);
+    free(var_used);
+    var_used = NULL;
+    return ended;
+}
+static void emit_nondet_proc(FILE *o, int c) {
+    Ctor *k = &ctors[c];
+    char lab[64], e[8192];
+    char *code = NULL; size_t clen = 0;
+    FILE *b = open_memstream(&code, &clen);
+    char *side = NULL; size_t slen = 0;
+    nd_side = open_memstream(&side, &slen);
+    if (!b || !nd_side) die("out of memory");
+    bool *seen = xcalloc((size_t)nnodes, 1);
+    int *order = xmalloc((size_t)nnodes * sizeof(int)), no = 0;
+    dag_reach(k->dag_root, seen, order, &no);
+    bool fail_used = nodes[k->dag_root].kind == N_FAIL;
+    fprintf(b, "    goto %s;\n", target_label(k->dag_root, lab, sizeof lab));
+    for (int i = 0; i < no; i++) {
+        Node *x = &nodes[order[i]];
+        if (x->kind != N_SWITCH) continue;
+        occ_expr(e, sizeof e, x->occ);
+        Occ *oc = &occs[x->occ];
+        fprintf(b, "n%d: switch (RC_TAG_%s(%s)) {", order[i], sort_rep(oc->s[oc->len - 1]), e);
+        for (int j = 0; j < x->ncase; j++) {
+            fprintf(b, " case %d: goto %s;", x->cctor[j], target_label(x->cchild[j], lab, sizeof lab));
+            if (nodes[x->cchild[j]].kind == N_FAIL) fail_used = true;
+        }
+        fprintf(b, " default: goto %s; }\n", x->dflt >= 0 ? target_label(x->dflt, lab, sizeof lab) : "f");
+        if (x->dflt < 0 || nodes[x->dflt].kind == N_FAIL) fail_used = true;
+    }
+    bool *alone = xcalloc((size_t)(nrules ? nrules : 1), 1);
+    for (int i = 0; i < no; i++) if (nodes[order[i]].kind == N_LEAF && nodes[order[i]].ncand == 1) alone[nodes[order[i]].rule] = true;
+    for (int i = 0; i < k->nrules; i++) {
+        Rule *r = &rules[k->rules[i]];
+        if (!alone[r->id]) continue;
+        fprintf(b, "r%d: { /* %s */\n", r->id, r->label);
+        if (!nd_rule(b, c, r, "return 0;", true)) fputs("        return 0;\n", b);
+        fputs("    }\n", b);
+    }
+    /* a leaf of several rules: every one is tried; each one's end (a failure, or its results given)
+     * goes on to the next */
+    for (int i = 0; i < no; i++) {
+        Node *x = &nodes[order[i]];
+        if (x->kind != N_LEAF || x->ncand < 2) continue;
+        fprintf(b, "l%d: {\n", order[i]);
+        for (int q = 0; q < x->ncand; q++) {
+            const Rule *r = &rules[x->cand[q]];
+            bool last = q == x->ncand - 1;
+            char next[48];
+            if (last) snprintf(next, sizeof next, "return 0;");
+            else snprintf(next, sizeof next, "goto c%d_%d;", order[i], q + 1);
+            if (q == 0) fprintf(b, "    { /* %s */\n", r->label);
+            else fprintf(b, "    c%d_%d: { /* %s */\n", order[i], q, r->label);
+            if (!nd_rule(b, c, r, next, last)) fprintf(b, "        %s\n", next);
+            fputs("    }\n", b);
+        }
+        fputs("    }\n", b);
+    }
+    if (fail_used) fputs("f:  return 0;\n", b);
+    fclose(b);
+    fclose(nd_side);
+    nd_side = NULL;
+    fprintf(o, "\n/* %s: %d rule%s, nondet */\n%s", k->name, k->nrules, k->nrules == 1 ? "" : "s", side);
+    fprintf(o, "static int p%d", c); emit_params_k(o, k->arity); fputs(" {\n", o);
+    void_unread_args(o, code, k->arity);
+    fputs(code, o);
+    fputs("}\n", o);
+    free(code); free(side); free(alone); free(seen); free(order);
+}
+
 void emit_proc(FILE *o, int c) {
     Ctor *k = &ctors[c];
+    if (k->nondet) { emit_nondet_proc(o, c); return; }
     int nop = native_op_of(c);
     fprintf(o, "\n/* %s: %d rule%s, %s%s */\n", k->name, k->nrules, k->nrules == 1 ? "" : "s", k->det ? "det" : "semidet",
             nop >= 0 ? "; native operation" : "");
@@ -628,10 +888,120 @@ void emit_proc(FILE *o, int c) {
     fputs("}\n", o);
 }
 
+/* `(void)aN;` for each argument the body never names (a procedure whose rules ignore an argument) */
+static void void_unread_args(FILE *o, const char *body, int arity) {
+    for (int a = 0; a < arity; a++) {
+        char id[16];
+        int n = snprintf(id, sizeof id, "a%d", a);
+        bool named = false;
+        for (const char *p = strstr(body, id); p && !named; p = strstr(p + 1, id))
+            named = (p == body || !(isalnum((unsigned char)p[-1]) || p[-1] == '_')) && !(isalnum((unsigned char)p[n]) || p[n] == '_');
+        if (!named) fprintf(o, "    (void)a%d;\n", a);
+    }
+}
+
 void c_ident(char *out, size_t cap, const char *name) {
     size_t i = 0;
     for (const char *p = name; *p && i + 2 < cap; p++) out[i++] = isalnum((unsigned char)*p) ? *p : '_';
     out[i] = 0;
+}
+
+
+/* a C string literal of n bytes (octal escapes for everything but plain printable characters) */
+static void c_bytes_literal(FILE *o, const char *b, int n) {
+    fputc('"', o);
+    for (int i = 0; i < n; i++) {
+        unsigned char ch = (unsigned char)b[i];
+        if (ch >= 32 && ch < 127 && ch != '"' && ch != '\\' && ch != '?') fputc(ch, o);
+        else fprintf(o, "\\%03o", ch);
+    }
+    fputc('"', o);
+}
+static void c_int64(FILE *o, int64_t v) {
+    if (v == INT64_MIN) fputs("(-INT64_C(9223372036854775807) - 1)", o);
+    else fprintf(o, "INT64_C(%lld)", (long long)v);
+}
+/* the views of an atoms sort (rc_atoms.h): an integer is read as its literal's constructor, or INT; a
+ * string as its literal's, or STRING; a byte string tagged SYMBOL or a heap term by its tag */
+static void emit_atoms_views(FILE *o, int s) {
+    const char *nm = sorts[s].repname;
+    int ic = sorts[s].rp[0], sc = sorts[s].rp[1];
+    fprintf(o, "/* %s: MeTTa atoms (rc_atoms.h); %s, %s, %s and %s stand for the other integers, strings, symbols and expressions */\n",
+            sorts[s].name, ctors[ic].name, ctors[sc].name, ctors[sorts[s].rp[2]].name, ctors[sorts[s].rp[3]].name);
+    fprintf(o, "static inline uint16_t rc_int_tag_%d(int64_t v) {\n    switch (v) {\n", s);
+    for (int c = 0; c < nctors; c++) {
+        if (ctors[c].sort != s || ctors[c].lit != LIT_INT) continue;
+        fputs("    case ", o); c_int64(o, ctors[c].ival); fprintf(o, ": return %d;\n", c);
+    }
+    fprintf(o, "    default: return %d;\n    }\n}\n", ic);
+    fprintf(o, "static inline uint16_t rc_string_tag_%d(T *x) {\n    (void)x;\n", s);
+    for (int c = 0; c < nctors; c++) {
+        if (ctors[c].sort != s || ctors[c].lit != LIT_STRING) continue;
+        fprintf(o, "    if (x->n == %d && !memcmp(rc_bytes(x), ", ctors[c].slen);
+        c_bytes_literal(o, ctors[c].sval, ctors[c].slen);
+        fprintf(o, ", %d)) return %d;\n", ctors[c].slen, c);
+    }
+    fprintf(o, "    return %d;\n}\n", sc);
+    fprintf(o, "static inline uint16_t RC_TAG_%s(T *x) {\n"
+               "    if (((uintptr_t)x & 7u) == 0u) {\n"
+               "        int64_t v_;\n"
+               "        if (!(x->flags & RC_FLAG_BYTES)) return x->tag;\n"
+               "        if (x->tag == %d) return rc_string_tag_%d(x);\n"
+               "        if (rc_atoms_int_of(x, %d, &v_)) return rc_int_tag_%d(v_);\n"
+               "        return x->tag;\n"
+               "    }\n", nm, sc, s, ic, s);
+    if (sorts[s].source) fprintf(o, "    if (rc_atoms_is_cursor(x)) return %d;\n", sorts[s].src[0]);
+    fprintf(o, "    return rc_int_tag_%d(RC_ATOMS_INT(x));\n}\n", s);
+    if (sorts[s].source)
+        fprintf(o, "static inline T *RC_KID_%s(T *x, int i) {\n"
+                   "    if (rc_atoms_is_cursor(x)) return i ? rc_atoms_cursor_tail(x) : rc_atoms_cursor_head(x);\n"
+                   "    return x->k[i];\n}\n", nm);
+    else fprintf(o, "#define RC_KID_%s(x, i) ((x)->k[(i)])\n", nm);
+    for (int c = 0; c < nctors; c++) {
+        if (ctors[c].sort != s || ctors[c].lit != LIT_STRING) continue;
+        int pad = (ctors[c].slen + 8) & ~7;
+        fprintf(o, "static _Alignas(8) struct { TH h; uint8_t b[%d]; } rc_lit_%d = {{%d, RC_SPACE_STATIC, RC_FLAG_BYTES, %d}, ", pad, c, sc, ctors[c].slen);
+        c_bytes_literal(o, ctors[c].sval, ctors[c].slen);
+        fputs("};\n", o);
+    }
+    fprintf(o, "static inline T *RC_NUL_%s(int c) {\n    switch (c) {\n", nm);
+    for (int c = 0; c < nctors; c++) {
+        if (ctors[c].sort != s) continue;
+        if (ctors[c].lit == LIT_INT) { fprintf(o, "    case %d: return rc_atoms_int(%d, ", c, ic); c_int64(o, ctors[c].ival); fputs(");\n", o); }
+        else if (ctors[c].lit == LIT_STRING) fprintf(o, "    case %d: return (T *)(void *)&rc_lit_%d;\n", c, c);
+    }
+    fputs("    default: return RC_NUL_symbolic(c);\n    }\n}\n", o);
+    for (int n = 1; n <= 8; n++) {
+        fprintf(o, "#define RC_MK%d_%s(c", n, nm);
+        for (int i = 0; i < n; i++) fprintf(o, ", x%d", i);
+        fprintf(o, ") rc_mk%d((c)", n);
+        for (int i = 0; i < n; i++) fprintf(o, ", (x%d)", i);
+        fputs(")\n", o);
+    }
+    fprintf(o, "#define RC_MKV_%s(c, n, k) rc_mkv((c), (n), (k))\n", nm);
+}
+/* a test row's glue: the component on the query's arguments (rc_atoms.h) */
+static void emit_test_glue(FILE *o) {
+    for (int i = 0; i < ntest_rows; i++) {
+        const TestRow *t = &test_rows[i];
+        int ic = sorts[t->sort].rp[0];
+        fprintf(o, "\n/* test %s: %s answered by %s */\nstatic inline bool rc_test_%d(T *a0%s) {\n", t->name, t->relation, test_kind_name[t->kind],
+                i, t->arity == 2 ? ", T *a1" : "");
+        switch (t->kind) {
+        case TEST_EQUAL: fputs("    return rc_atoms_equal(a0, a1);\n", o); break;
+        case TEST_DIFFERENT: fputs("    return !rc_atoms_equal(a0, a1);\n", o); break;
+        case TEST_SCALAR: case TEST_NON_SCALAR:
+            fprintf(o, "    int64_t x_;\n    if (!rc_atoms_int_of(a0, %d, &x_)) return false;\n"
+                       "    bool s_ = (x_ >= 0 && x_ < 0xD800) || (x_ > 0xDFFF && x_ <= 0x10FFFF);\n    return %ss_;\n", ic, t->kind == TEST_SCALAR ? "" : "!");
+            break;
+        default: {
+            const char *cmp = t->kind == TEST_INT_LESS ? "x_ < y_" : t->kind == TEST_INT_NOT_LESS ? "y_ <= x_"
+                            : t->kind == TEST_INT_GAP ? "x_ < INT64_MAX && x_ + 1 < y_" : "x_ == INT64_MAX || y_ <= x_ + 1";
+            fprintf(o, "    int64_t x_, y_;\n    return rc_atoms_int_of(a0, %d, &x_) && rc_atoms_int_of(a1, %d, &y_) && (%s);\n", ic, ic, cmp);
+        }
+        }
+        fputs("}\n", o);
+    }
 }
 
 void emit_views(FILE *o) {
@@ -646,6 +1016,7 @@ void emit_views(FILE *o) {
     }
     if (any_bn) fprintf(o, "#include \"%src_bignat.h\"\n", component_prefix);
     if (any_sl) fprintf(o, "#include \"%src_slices.h\"\n", component_prefix);
+    for (int s = 0; s < nsorts; s++) if (sorts[s].native == RC_REP_ATOMS) fprintf(o, "#include \"%src_atoms.h\"\n", component_prefix);
     for (int s = 0; s < nsorts; s++) {
         int rep = sorts[s].native;
         if (rep == RC_REP_RECORDS) {
@@ -705,6 +1076,8 @@ void emit_views(FILE *o) {
                        "    (void)c;\n    unsigned bit = b == RC_NUL_symbolic(%d);\n"
                        "    if (!bit && rc_bn_is_zero(n)) rc_refinement_fail(\"%s %s %s is not a canonical numeral\");\n"
                        "    return rc_bn_shl1_or(n, bit);\n}\n", nm, b1, ctors[nb].name, ctors[b0].name, ctors[z].name);
+        } else if (rep == RC_REP_ATOMS) {
+            emit_atoms_views(o, s);
         } else if (rep == RC_REP_SLICES) {
             const char *nm = sorts[s].repname;
             int nl = sorts[s].rp[0], cs = sorts[s].rp[1];
@@ -767,9 +1140,11 @@ void emit_c(const char *path, const char *hpath, const char *wire_path) {
         fputs("#ifdef RC_CHECK_NATIVE\n#define RC_BLOCK_INLINE\n#else\n#define RC_BLOCK_INLINE inline __attribute__((always_inline))\n#endif\n", o);
     for (int c = 0; c < nctors; c++) {
         if (!ctors[c].defined) continue;
+        if (ctors[c].nondet) { fprintf(o, "static int p%d", c); emit_params_k(o, ctors[c].arity); fputs(";\n", o); continue; }
         fprintf(o, "static %sT *p%d", native_op_of(c) >= 0 ? "RC_BLOCK_INLINE " : "", c); emit_params(o, ctors[c].arity); fputs(";\n", o);
     }
     emit_component_glue(o);
+    emit_test_glue(o);
     for (int c = 0; c < nctors; c++) if (ctors[c].defined) emit_proc(o, c);
     /* tables */
     emit_relation_table(o);
@@ -791,7 +1166,7 @@ void emit_c(const char *path, const char *hpath, const char *wire_path) {
     }
     fputs("};\n", o);
     fprintf(o, "const int rc_nmemo = %d;\nconst char *const rc_memo_name[] = {", nmemo_rows);
-    for (int i = 0; i < nmemo_rows; i++) fprintf(o, "%s\"%s\"", i ? ", " : "", ctors[memo_rows[i].ctor].name);
+    for (int i = 0; i < nmemo_rows; i++) { fputs(i ? ", " : "", o); fput_cstring(o, ctors[memo_rows[i].ctor].name); }
     fputs(nmemo_rows ? "};\n" : "\"\"};\n", o);
     /* a host's access to module data in the representation each sort was given: build a value of a
      * data constructor, read a value's constructor and children */
@@ -880,7 +1255,7 @@ void emit_c(const char *path, const char *hpath, const char *wire_path) {
                 fprintf(o, "    if (at == cap) return " RCW_FULL ";\n    b[at].ctor = -2; b[at].v = 0; b[at].p = %s; b[at].n = (uint32_t)%s;\n    return at + 1;\n}\n", dp, ln);
                 continue;
             }
-            if (r == RC_REP_RECORDS || r == RC_REP_TABLE) {
+            if (r == RC_REP_RECORDS || r == RC_REP_TABLE || r == RC_REP_ATOMS) {
                 fputs("    (void)x; (void)b; (void)at; (void)cap;\n    return " RCW_FULL ";\n}\n", o);
                 continue;
             }
@@ -910,7 +1285,8 @@ void emit_c(const char *path, const char *hpath, const char *wire_path) {
                 if (ctors[c].arity == 0) nil = c; else if (ctors[c].arity == 2 && ctors[c].asort[1] == st) cons = c;
             }
             if (sorts[st].ndata != 2 || nil < 0 || cons < 0 || sorts[st].native == RC_REP_RECORDS ||
-                sorts[st].native == RC_REP_TABLE || sorts[st].native == RC_REP_SLICES || sorts[st].native == RC_REP_BYTES)
+                sorts[st].native == RC_REP_TABLE || sorts[st].native == RC_REP_SLICES || sorts[st].native == RC_REP_BYTES ||
+                sorts[st].native == RC_REP_ATOMS)
                 continue;
             const char *rr = sort_rep(st);
             fprintf(o, "    case %d: {\n        size_t at = 0;\n        for (T *x = *cursor; RC_TAG_%s(x) == %d; x = RC_KID_%s(x, 1)) {\n"
@@ -927,9 +1303,14 @@ void emit_c(const char *path, const char *hpath, const char *wire_path) {
     {
         int maxar = 1;
         for (int c = 0; c < nctors; c++) if (!ctors[c].defined && ctors[c].arity > maxar) maxar = ctors[c].arity;
+        /* an atoms sort holds values of any sort of the module's atoms: equality as atoms */
+        char atoms_eq[160] = "";
+        for (int st = 0; st < nsorts; st++)
+            if (sorts[st].native == RC_REP_ATOMS) snprintf(atoms_eq, sizeof atoms_eq, "    if (sort == %d) return rc_atoms_equal(a, b);\n", st);
         fprintf(o, "extern const uint8_t rc_ctor_arity[];\nextern const uint16_t rc_ctor_asort_off[], rc_ctor_asort[];\n"
                    "bool rc_value_equal(int sort, T *a, T *b) {\n"
                    "    T *ka[%d], *kb[%d];\n"
+                   "%s"
                    "    for (;;) {\n"
                    "        if (a == b) return true;\n"
                    "        if (!a || !b) return false;\n"
@@ -940,10 +1321,12 @@ void emit_c(const char *path, const char *hpath, const char *wire_path) {
                    "        const uint16_t *as = &rc_ctor_asort[rc_ctor_asort_off[ca]];\n"
                    "        for (int i = 0; i + 1 < n; i++) if (!rc_value_equal(as[i], ka[i], kb[i])) return false;\n"
                    "        sort = as[n - 1]; a = ka[n - 1]; b = kb[n - 1];\n"
-                   "    }\n}\n", maxar, maxar);
+                   "    }\n}\n", maxar, maxar, atoms_eq);
     }
     /* the components' parameters */
     fputs("void rc_components_init(void) {\n", o);
+    for (int st = 0; st < nsorts; st++)
+        if (sorts[st].source) fprintf(o, "    rc_atoms_source_ctors(%d, %d, %d);\n", sorts[st].src[0], sorts[st].src[1], sorts[st].src[2]);
     for (int s = 0; s < nsorts; s++) {
         if (sorts[s].native == RC_REP_BYTES) {
             fputs("    static const uint16_t nib[16] = {", o);
@@ -956,15 +1339,16 @@ void emit_c(const char *path, const char *hpath, const char *wire_path) {
     fputs("}\n", o);
     fprintf(o, "\nconst int rc_nctors = %d, rc_nrules = %d, rc_nsorts = %d, rc_nnative_ops = %d;\n", nctors, nrules, nsorts, nnative_ops);
     fputs("const char *const rc_sort_name[] = {", o);
-    for (int s = 0; s < nsorts; s++) fprintf(o, "%s\"%s\"", s ? ", " : "", sorts[s].name);
+    for (int s = 0; s < nsorts; s++) { fputs(s ? ", " : "", o); fput_cstring(o, sorts[s].name); }
     fputs("};\nconst char *const rc_ctor_name[] = {\n", o);
-    for (int c = 0; c < nctors; c++) fprintf(o, "    \"%s\",\n", ctors[c].name);
+    for (int c = 0; c < nctors; c++) { fputs("    ", o); fput_cstring(o, ctors[c].name); fputs(",\n", o); }
     fputs("};\nconst uint8_t rc_ctor_arity[] = {", o);
     for (int c = 0; c < nctors; c++) fprintf(o, "%s%d", c ? "," : "", ctors[c].arity);
     fputs("};\nconst uint16_t rc_ctor_sort[] = {", o);
     for (int c = 0; c < nctors; c++) fprintf(o, "%s%d", c ? "," : "", ctors[c].sort);
     fputs("};\nconst uint8_t rc_ctor_judgment[] = {", o);
-    for (int c = 0; c < nctors; c++) fprintf(o, "%s%d", c ? "," : "", ctors[c].defined ? (ctors[c].det ? 2 : 1) : 0);
+    /* 0 data, 1 semidet, 2 det, 3 nondet */
+    for (int c = 0; c < nctors; c++) fprintf(o, "%s%d", c ? "," : "", ctors[c].defined ? (ctors[c].det ? 2 : ctors[c].nondet ? 3 : 1) : 0);
     fputs("};\nconst uint16_t rc_ctor_asort_off[] = {", o);
     { int off = 1; /* rc_ctor_asort[0] is a placeholder */
       for (int c = 0; c < nctors; c++) { fprintf(o, "%s%d", c ? "," : "", off); off += ctors[c].arity; } }
@@ -973,22 +1357,22 @@ void emit_c(const char *path, const char *hpath, const char *wire_path) {
     fputs("};\nconst uint8_t rc_sort_rep[] = {", o);
     for (int s = 0; s < nsorts; s++) fprintf(o, "%s%s", s ? "," : "", rep_id_name[sorts[s].native]);
     fputs("};\nconst char *const rc_rule_label[] = {\n", o);
-    for (int i = 0; i < nrules; i++) fprintf(o, "    \"%s\",\n", rules[i].label);
+    for (int i = 0; i < nrules; i++) { fputs("    ", o); fput_cstring(o, rules[i].label); fputs(",\n", o); }
     fputs("};\nconst uint16_t rc_rule_head[] = {", o);
     for (int i = 0; i < nrules; i++) fprintf(o, "%s%d", i ? "," : "", rules[i].head);
     fputs("};\nconst int8_t rc_rule_layer[] = {", o);
     for (int i = 0; i < nrules; i++) fprintf(o, "%s%d", i ? "," : "", rules[i].layer);
     fprintf(o, "};\nconst int rc_nlayers = %d;\nconst char *const rc_layer_name[] = {", nlayers);
-    for (int l = 0; l < nlayers; l++) fprintf(o, "%s\"%s\"", l ? ", " : "", layer_name[l]);
+    for (int l = 0; l < nlayers; l++) { fputs(l ? ", " : "", o); fput_cstring(o, layer_name[l]); }
     fputs(nlayers ? "};\n" : "\"\"};\n", o);
     fputs("const char *const rc_native_op_block[] = {", o);
-    for (int i = 0; i < nnative_ops; i++) fprintf(o, "%s\"%s\"", i ? ", " : "", native_ops[i].name ? native_ops[i].name : "");
+    for (int i = 0; i < nnative_ops; i++) { fputs(i ? ", " : "", o); fput_cstring(o, native_ops[i].name ? native_ops[i].name : ""); }
     fputs(nnative_ops ? "};\n" : "\"\"};\n", o);
     fputs("const char *const rc_native_op_label[] = {", o);
-    for (int i = 0; i < nnative_ops; i++) fprintf(o, "%s\"%s\"", i ? ", " : "", native_ops[i].label ? native_ops[i].label : "");
+    for (int i = 0; i < nnative_ops; i++) { fputs(i ? ", " : "", o); fput_cstring(o, native_ops[i].label ? native_ops[i].label : ""); }
     fputs(nnative_ops ? "};\n" : "\"\"};\n", o);
     fputs("const char *const rc_law_label[] = {", o);
-    for (int i = 0; i < nlaws; i++) fprintf(o, "%s\"%s\"", i ? ", " : "", laws[i].label ? laws[i].label : "");
+    for (int i = 0; i < nlaws; i++) { fputs(i ? ", " : "", o); fput_cstring(o, laws[i].label ? laws[i].label : ""); }
     fputs(nlaws ? "};\n" : "\"\"};\n", o);
     /* constants are kept per run: a run that changes the native store resets them */
     fputs("void rc_reset_constants(void) {\n", o);
@@ -999,25 +1383,33 @@ void emit_c(const char *path, const char *hpath, const char *wire_path) {
                 fprintf(o, "    p%d_done = 0;\n", c);
     fputs("}\n", o);
     fputs("const char *const rc_native_op_name[] = {", o);
-    for (int i = 0; i < nnative_ops; i++) fprintf(o, "%s\"%s\"", i ? ", " : "", ctors[native_ops[i].ctor].name);
+    for (int i = 0; i < nnative_ops; i++) { fputs(i ? ", " : "", o); fput_cstring(o, ctors[native_ops[i].ctor].name); }
     fputs(nnative_ops ? "};\n" : "\"\"};\n", o);
     fputs("const char *const rc_law_name[] = {", o);
-    for (int i = 0; i < nlaws; i++) fprintf(o, "%s\"%s\"", i ? ", " : "", ctors[laws[i].ctor].name);
+    for (int i = 0; i < nlaws; i++) { fputs(i ? ", " : "", o); fput_cstring(o, ctors[laws[i].ctor].name); }
     fputs(nlaws ? "};\n" : "\"\"};\n", o);
     fputs("const char *const rc_law_justification[] = {", o);
-    for (int i = 0; i < nlaws; i++) fprintf(o, "%s\"%s\"", i ? ", " : "", laws[i].why ? laws[i].why : "");
+    for (int i = 0; i < nlaws; i++) { fputs(i ? ", " : "", o); fput_cstring(o, laws[i].why ? laws[i].why : ""); }
     fputs(nlaws ? "};\n" : "\"\"};\n", o);
     fprintf(o, "const int rc_nlaws = %d;\n", nlaws);
     fputs("const char *const rc_native_op_justification[] = {", o);
-    for (int i = 0; i < nnative_ops; i++) fprintf(o, "%s\"%s\"", i ? ", " : "", native_ops[i].why ? native_ops[i].why : "");
+    for (int i = 0; i < nnative_ops; i++) { fputs(i ? ", " : "", o); fput_cstring(o, native_ops[i].why ? native_ops[i].why : ""); }
     fputs(nnative_ops ? "};\n" : "\"\"};\n", o);
     /* entry: call a judgment by id with an argument vector; a run that stops at the safepoint
      * (RC_STOPPED) keeps its frames, and rc_resume continues it: it leaves the frames above
      * rc_stop_mark to the host (who stops a run takes what it wants from them and applies the rest,
      * rc_pend_apply) */
-    fputs("\nstatic T *rc_enter(int judgment, T **a) {\n    switch (judgment) {\n", o);
+    bool call_reads = false;
+    for (int c = 0; c < nctors; c++) if (ctors[c].defined && !ctors[c].nondet && ctors[c].arity) call_reads = true;
+    fputs("\nstatic T *rc_enter(int judgment, T **a) {\n", o);
+    if (!call_reads) fputs("    (void)a;\n", o);
+    fputs("    switch (judgment) {\n", o);
     for (int c = 0; c < nctors; c++) {
         if (!ctors[c].defined) continue;
+        if (ctors[c].nondet) {
+            fprintf(o, "    case %d: rc_refinement_fail(\"rc_call: a judgment that may give several results (rc_solve gives every one)\");\n", c);
+            continue;
+        }
         fprintf(o, "    case %d: return p%d(", c, c);
         for (int a = 0; a < ctors[c].arity; a++) fprintf(o, "%sa[%d]", a ? ", " : "", a);
         fputs(");\n", o);
@@ -1035,6 +1427,22 @@ void emit_c(const char *path, const char *hpath, const char *wire_path) {
         for (int a = 0; a < ctors[safepoint_ctor].arity; a++) fprintf(o, "%src_roots[%d]", a ? ", " : "", a);
         fputs(");\n    return v_;\n}\n", o);
     } else fputs("    return (T *)0;\n}\n", o);
+    /* every result of a judgment, each passed to k */
+    fputs("void rc_solve(int judgment, T **a, const RcK *k) {\n    (void)a; (void)k;\n    switch (judgment) {\n", o);
+    for (int c = 0; c < nctors; c++) {
+        if (!ctors[c].defined) continue;
+        if (ctors[c].nondet) {
+            fprintf(o, "    case %d: p%d(", c, c);
+            for (int a = 0; a < ctors[c].arity; a++) fprintf(o, "a[%d], ", a);
+            fputs("k); return;\n", o);
+            continue;
+        }
+    }
+    /* any other judgment through the entry: the frames its run leaves are applied; a run stopped at the
+     * safepoint has no result yet (a host that stops runs enters them by rc_call or rc_start) */
+    fputs("    default: {\n        T *r_ = rc_call(judgment, a);\n"
+          "        if (r_ == RC_STOPPED) rc_refinement_fail(\"rc_solve: the run stopped at the safepoint (rc_call and rc_resume run one)\");\n"
+          "        if (r_) k->fn(k, r_);\n        return;\n    }\n    }\n}\n", o);
     fclose(o);
     if (hpath) {
         FILE *h = fopen(hpath, "w");
@@ -1064,7 +1472,8 @@ void emit_c(const char *path, const char *hpath, const char *wire_path) {
               "bool rc_value_u64(int sort, T *x, uint64_t *v);\nbool rc_value_bytes(int sort, T *x, const uint8_t **p, size_t *n);\n"
               "T *rc_value_of_u64(int sort, uint64_t v);\nT *rc_value_of_bytes(int sort, const uint8_t *p, size_t n);\n"
               "size_t rc_value_items(int sort, T *x, RcItem *buf, size_t cap);\nsize_t rc_list_items(int sort, T **cursor, RcItem *buf, size_t cap);\n"
-              "T *rc_call(int judgment, T **a);\nT *rc_start(int judgment, T **a);\n#endif\n", h);
+              "T *rc_call(int judgment, T **a);\nT *rc_start(int judgment, T **a);\n"
+              "void rc_solve(int judgment, T **a, const RcK *k);\n#endif\n", h);
         fclose(h);
     }
 }

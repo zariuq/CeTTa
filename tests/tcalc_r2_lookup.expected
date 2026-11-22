@@ -1,0 +1,4 @@
+(stored-row ((3 (term a))))
+(missing-row ())
+(proof-row (((term b) 4)))
+(missing-proof-row ())

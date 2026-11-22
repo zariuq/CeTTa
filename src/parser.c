@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "parser.h"
+#include "atom_walk.h"
 #include "string_literal.h"
 #include "utf8.h"
 #include "raw_source_region.h"
@@ -21,8 +22,41 @@
 #endif
 
 #ifndef CETTA_PARSE_DEPTH_LIMIT
-#define CETTA_PARSE_DEPTH_LIMIT 4096
+#define CETTA_PARSE_DEPTH_LIMIT (-1)
 #endif
+
+/* Negative allowances are unbounded. An exhausted explicit allowance never
+ * becomes unbounded when a caller asks for its child's allowance. */
+static int parser_child_depth(int depth) {
+    return depth > 0 ? depth - 1 : depth;
+}
+
+typedef bool (*ParserSyntaxNodeObserver)(const Atom *node, void *context);
+
+/* A bounded observation is path-dependent and visits every occurrence.
+ * Without that allowance, shared subgraphs need only one observation. */
+static AtomWalkStep parser_walk_syntax(Atom *root, int depth,
+    ParserSyntaxNodeObserver observe, void *context) {
+    AtomWalk *walk = atom_walk_new(root, depth < 0);
+    if (!walk)
+        return ATOM_WALK_RESOURCE;
+    AtomWalkStep step;
+    for (;;) {
+        AtomWalkEvent event;
+        step = atom_walk_next(walk, &event);
+        if (step != ATOM_WALK_ENTER && step != ATOM_WALK_LEAVE &&
+            step != ATOM_WALK_SHARED)
+            break;
+        if (step == ATOM_WALK_ENTER &&
+            ((depth >= 0 && event.depth >= (size_t)depth) ||
+             (observe && !observe(event.node, context)))) {
+            step = ATOM_WALK_RESOURCE;
+            break;
+        }
+    }
+    atom_walk_free(walk);
+    return step;
+}
 
 #ifndef CETTA_UNIVERSAL_NAME_MUTATION
 #define CETTA_UNIVERSAL_NAME_MUTATION 0
@@ -347,7 +381,7 @@ static size_t parser_decode_string_body(const char *text, size_t start,
 }
 
 bool parser_text_well_formed_n(const char *text, size_t text_len) {
-    int depth = 0;
+    size_t depth = 0u;
     bool token_boundary = true;
     size_t bounded_length = text_len == PARSER_TEXT_NUL_TERMINATED ? strlen(text) : text_len;
     for (size_t i = 0; parser_more(text, text_len, i); i++) {
@@ -375,15 +409,18 @@ bool parser_text_well_formed_n(const char *text, size_t text_len) {
             continue;
         }
         if (text[i] == '(') {
+            if (depth == SIZE_MAX)
+                return false;
             depth++;
-            if (depth > CETTA_PARSE_DEPTH_LIMIT)
+            if (CETTA_PARSE_DEPTH_LIMIT >= 0 && depth > (size_t)CETTA_PARSE_DEPTH_LIMIT)
                 return false;
             token_boundary = true;
             continue;
         }
         if (text[i] == ')') {
+            if (!depth)
+                return false;
             depth--;
-            if (depth < 0) return false;
         }
         token_boundary = isspace((unsigned char)text[i]) || text[i] == '[' || text[i] == ']' || text[i] == ')';
     }
@@ -1050,19 +1087,19 @@ typedef struct {
     Atom *source;
     AtomId *children;
     CettaExprIndex next;
-    uint32_t depth;
+    int depth;
 } ParserProjectionFrame;
 
 static AtomId parser_project_atom_id_scoped(
-    ParserHostProjectionV1 *projection, Atom *atom, uint32_t depth) {
+    ParserHostProjectionV1 *projection, Atom *atom, int depth) {
     ParserProjectionFrame inline_frames[32];
     ParserProjectionFrame *frames = inline_frames;
     size_t len = 0u, cap = sizeof inline_frames / sizeof inline_frames[0];
     AtomId result = CETTA_ATOM_ID_NONE;
-    if (!projection)
+    if (!projection || parser_walk_syntax(atom, depth, NULL, NULL) != ATOM_WALK_DONE)
         return result;
     for (;;) {
-        if (!atom || !depth)
+        if (!atom || depth == 0)
             goto fail;
         if (atom->kind != ATOM_EXPR) {
             result = parser_project_atom_leaf(projection, atom);
@@ -1090,7 +1127,7 @@ static AtomId parser_project_atom_id_scoped(
                 goto fail;
             frames[len++] = (ParserProjectionFrame){atom, children, 0u, depth};
             atom = atom->expr.elems[0];
-            depth--;
+            depth = parser_child_depth(depth);
             continue;
         }
         if (result == CETTA_ATOM_ID_NONE)
@@ -1100,7 +1137,7 @@ static AtomId parser_project_atom_id_scoped(
             frame->children[frame->next++] = result;
             if (frame->next < frame->source->expr.len) {
                 atom = frame->source->expr.elems[frame->next];
-                depth = frame->depth - 1u;
+                depth = parser_child_depth(frame->depth);
                 break;
             }
             result = parser_host_projection_v1_expression(
@@ -1376,8 +1413,8 @@ static const ParserReadBackend g_parser_atom_backend = {.ids = false};
 
 /* One grammar driver serves borrowed atoms and persistent IDs. Prefix forms
  * retain the original atom-valued name interpretation before publication to
- * the requesting backend. The declared depth budget belongs to the syntax,
- * independently of native call depth, and every unfinished buffer is owned
+ * the requesting backend. An optional caller depth allowance is
+ * independent of native call depth, and every unfinished buffer is owned
  * by exactly one frame. */
 static ParserReadValue parser_read_scoped(
     TermUniverse *universe, Arena *arena, const char *text, size_t text_len,
@@ -1396,12 +1433,12 @@ static ParserReadValue parser_read_scoped(
         goto fail;
 
 read_node:
-    if (depth <= 0)
+    if (depth == 0)
         goto fail;
     skip_whitespace_and_comments(text, text_len, pos);
 
 read_trimmed_node:
-    if (depth <= 0)
+    if (depth == 0)
         goto fail;
     if (!parser_more(text, text_len, *pos))
         goto fail;
@@ -1437,7 +1474,7 @@ read_trimmed_node:
             if (!parser_read_push(&stack, frame))
                 goto fail;
             backend = &g_parser_atom_backend;
-            depth--;
+            depth = parser_child_depth(depth);
             goto read_node;
         }
         if (token == '(' || (g_list_syntax_enabled && token == '[')) {
@@ -1520,12 +1557,12 @@ read_container:
             (*pos)++;
             backend = frame->backend;
             in_list = true;
-            depth = frame->depth - 1;
+            depth = parser_child_depth(frame->depth);
             goto read_node;
         }
         backend = frame->backend;
         in_list = frame->kind != PARSER_READ_EXPRESSION;
-        depth = frame->depth - 1;
+        depth = parser_child_depth(frame->depth);
         /* The container has already consumed this child's delimiters. */
         goto read_trimmed_node;
     }
@@ -1695,12 +1732,6 @@ static ParserRenderVar *parser_render_var_find(ParserRenderContext *ctx,
     return NULL;
 }
 
-typedef struct {
-    Atom *source;
-    CettaExprIndex next;
-    int depth;
-} ParserSyntaxWalkFrame;
-
 static bool parser_render_record_var(ParserRenderContext *ctx, Atom *atom) {
     if (parser_render_var_find(ctx, atom->var_id))
         return true;
@@ -1723,57 +1754,14 @@ static bool parser_render_record_var(ParserRenderContext *ctx, Atom *atom) {
     return true;
 }
 
+static bool parser_render_observe_var(const Atom *atom, void *context) {
+    return atom->kind != ATOM_VAR ||
+        parser_render_record_var(context, (Atom *)atom);
+}
+
 static bool parser_render_collect_vars(ParserRenderContext *ctx, Atom *atom,
                                        int depth) {
-    ParserSyntaxWalkFrame inline_frames[32];
-    ParserSyntaxWalkFrame *frames = inline_frames;
-    size_t len = 0u, cap = sizeof inline_frames / sizeof inline_frames[0];
-    bool ok = false;
-    for (;;) {
-        if (!atom || depth <= 0)
-            goto done;
-        if (atom->kind == ATOM_VAR) {
-            if (!parser_render_record_var(ctx, atom))
-                goto done;
-        } else if (atom->kind == ATOM_EXPR && atom->expr.len) {
-            if (len == cap) {
-                if (cap > SIZE_MAX / 2u || cap * 2u > SIZE_MAX / sizeof(*frames))
-                    goto done;
-                size_t next_cap = cap * 2u;
-                ParserSyntaxWalkFrame *next = frames == inline_frames
-                    ? malloc(sizeof(*next) * next_cap)
-                    : realloc(frames, sizeof(*next) * next_cap);
-                if (!next)
-                    goto done;
-                if (frames == inline_frames)
-                    memcpy(next, inline_frames, sizeof(*next) * len);
-                frames = next;
-                cap = next_cap;
-            }
-            frames[len++] = (ParserSyntaxWalkFrame){atom, 0u, depth};
-            atom = atom->expr.elems[0];
-            depth--;
-            continue;
-        }
-        while (len) {
-            ParserSyntaxWalkFrame *frame = &frames[len - 1u];
-            if (++frame->next < frame->source->expr.len) {
-                atom = frame->source->expr.elems[frame->next];
-                depth = frame->depth - 1;
-                break;
-            }
-            len--;
-        }
-        if (!len) {
-            ok = true;
-            break;
-        }
-    }
-
-done:
-    if (frames != inline_frames)
-        free(frames);
-    return ok;
+    return parser_walk_syntax(atom, depth, parser_render_observe_var, ctx) == ATOM_WALK_DONE;
 }
 
 static bool parser_render_var_same_presentation(const ParserRenderVar *a,
@@ -1873,7 +1861,7 @@ static bool parser_render_form(FILE *out, ParserRenderContext *ctx, Atom *atom,
         return false;
 
 render_node:
-    if (!atom || depth <= 0)
+    if (!atom || depth == 0)
         goto done;
     {
         ParserRenderFrame frame = {.mode = mode, .depth = depth, .close = ""};
@@ -1975,7 +1963,7 @@ render_node:
         if (frame.single && !*frame.close) {
             atom = frame.single;
             mode = frame.mode;
-            depth--;
+            depth = parser_child_depth(depth);
             goto render_node;
         }
         if (len == cap) {
@@ -2002,7 +1990,7 @@ unwind:
             atom = frame->single;
             frame->single = NULL;
             mode = frame->mode;
-            depth = frame->depth - 1;
+            depth = parser_child_depth(frame->depth);
             goto render_node;
         }
         if (frame->next < frame->end) {
@@ -2011,7 +1999,7 @@ unwind:
                     ? " | " : " ", out);
             atom = frame->source->expr.elems[frame->next++];
             mode = frame->mode;
-            depth = frame->depth - 1;
+            depth = parser_child_depth(frame->depth);
             goto render_node;
         }
         fputs(frame->close, out);

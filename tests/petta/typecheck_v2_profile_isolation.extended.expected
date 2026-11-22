@@ -1,4 +1,4 @@
-(: p s t)
+(the Marker (: p s t))
 (make-list a b)
 (a b)
-(evidence kb proof)
+(brand ContextualEvidence (evidence kb proof))

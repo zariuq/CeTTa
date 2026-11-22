@@ -1,0 +1,3 @@
+coin
+witness
+(rule pay (take coin) (read witness) (make paid))

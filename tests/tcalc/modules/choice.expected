@@ -1,0 +1,3 @@
+(interpretation (version tcalc@0.1) (step every) (ask after-tells) (store set) (region all) (matches symmetric) (solver mgu-first-order) (observe outcomes) (budget 100000) (backend c))
+(outcome (demand (c:toss (c:coin))) (value (c:toss (c:coin)) (c:heads)) (value (c:toss (c:coin)) (c:tails)))
+(explored (states 2) (work 2) (finished true) (cycle false))

@@ -1,0 +1,7 @@
+; The same, but the first row is read as (p b): the unknown is b, the row is
+; (q b), and the guard never fires.
+(step one)
+(p $u)
+(q $u)
+(rule fix (read (p b)) (absent (fixed)) (make (fixed)))
+(rule guard (absent (q b)) (absent (guarded)) (make (guarded)))

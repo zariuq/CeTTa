@@ -1,0 +1,7 @@
+; Two increments of one counter.  Each firing takes the counter's row, so two
+; firings cannot both read the old value: no step loses an update.  The bags
+; of both members are never enabled (they would take one row twice), and every
+; has no step at all, since both matches need the same row.
+(inc x) (inc y)
+(count z)
+(rule bump (take (inc $i) (count $n)) (make (count (s $n)) (bumped $i)))

@@ -1,0 +1,6 @@
+; Written in the order of a cross product (A, C, B): the plan of no entry
+; meets A, then B by its first argument, then C by the value B binds, a
+; fully keyed lookup; each entry plan starts from its pattern's delta rows.
+(step every)
+(store set)
+(rule join (read (A $x) (C $y) (B $x $y)) (make (D $x $y)))

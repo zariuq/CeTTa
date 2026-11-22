@@ -129,6 +129,8 @@ typedef struct EvalOutcome {
        answers were raised and not caught, and whether any was. */
     bool petta_raise_known;
     bool petta_raised_error;
+    /* tmetta: an arena-owned handle to the incomplete evaluation, if retained. */
+    Atom *frontier;
 } EvalOutcome;
 
 typedef enum {
@@ -214,6 +216,10 @@ bool eval_current_builtin_allowed(const char *name) __attribute__((weak));
  * a name (its profile does, or a library it imports enables it). */
 bool eval_builtin_symbol_is_clean_extension(SymbolId head) __attribute__((weak));
 bool eval_current_builtin_symbol_allowed(SymbolId head) __attribute__((weak));
+/* The native modules the active session has imported.  The names a PeTTa
+ * session offers come from its profile, which does not change, and from
+ * these modules, so they change only when this mask does. */
+uint64_t eval_current_module_mask(void) __attribute__((weak));
 bool eval_current_pattern_module_enabled(void) __attribute__((weak));
 uint32_t eval_current_pattern_control_arity(SymbolId head) __attribute__((weak));
 uint32_t eval_current_pattern_operation_arity(SymbolId head) __attribute__((weak));
@@ -322,6 +328,9 @@ bool eval_payload_track_scratch_state(StateCell *cell);
  * frees the ones not bound in the registry (registry-bound ones are freed by
  * the registry teardown pass). */
 void eval_track_new_space(Space *space);
+/* Construct the existing arena-held ordinary Space value for language
+ * adapters. Copies retain the same managed Space lifetime. */
+Atom *eval_new_managed_space(Space *source, Arena *arena);
 typedef struct CettaEvalResources CettaEvalResources;
 typedef struct CettaEvalGc CettaEvalGc;
 CettaEvalGc *eval_resources_collector(CettaEvalResources *);
@@ -408,7 +417,6 @@ static inline void rb_set_add(ResultBindSet *rbs, Atom *atom, Bindings *b) {
 }
 static inline void rb_set_free(ResultBindSet *rbs) { outcome_set_free(rbs); }
 
-bool cetta_petta_profile_admits_arrow_modes(void);
 bool cetta_petta_profile_admits_typecheck_ops(void);
 bool cetta_petta_profile_admits_native_typecheck_v2(void);
 bool cetta_petta_data_op_applies(SymbolId head, CettaExprLen nargs);

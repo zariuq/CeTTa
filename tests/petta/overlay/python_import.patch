@@ -1,0 +1,7 @@
+--- a/examples/python_import.metta
++++ b/examples/python_import.metta
+@@ -3,2 +3,3 @@
+-!(test (repr (py-call (python_import_file.greet "PeTTa User"))) "Hello, PeTTa User from Python!")
++!(test (py-call (python_import_file.greet "PeTTa User")) "Hello, PeTTa User from Python!")
++!(test (sread (repr (py-call (python_import_file.greet "PeTTa User")))) "Hello, PeTTa User from Python!")
+ !(test (py-call (python_import_file.add 10 20)) 30)

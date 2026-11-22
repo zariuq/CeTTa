@@ -1,0 +1,97 @@
+{
+  "format": "CettaSharedKernelCoverageV1",
+  "status": "experimental functional integration; performance and full parity acceptance remain open",
+  "default": "c",
+  "modes": {
+    "c": "independent C matching and graph/session algorithms",
+    "x86": "linked p1 images and direct resident batch assembly with host administrative services",
+    "hybrid": "currently retains prepared and general C algorithms; native admission requires repeatable improvement over equally prepared C"
+  },
+  "consumers": [
+    {
+      "name": "ordinary matching",
+      "source": "src/match.c",
+      "operations": [
+        "simple_match and builder",
+        "match_types and builder",
+        "decoded BindingValue matching",
+        "epoch and activation views",
+        "linear and tree plans",
+        "exclusive rule frames",
+        "stored candidate ids",
+        "positional linear admission"
+      ],
+      "native_path": "policy and observation images; admitted shared-DAG solver",
+      "ownership": "complete context words, checked binding APIs and caller rollback",
+      "evidence": [
+        "tests/kernel_match_frames.c",
+        "tests/kernel_match_patterns.c",
+        "tests/kernel_match_numeric.c",
+        "tests/kernel_match_lookup.c",
+        "tests/test_native_kernel_dag.c"
+      ]
+    },
+    {
+      "name": "tcalc",
+      "source": "native/tcalc/tcalc_core.c",
+      "operations": [
+        "exploration and successor generation",
+        "tc_decide host protocol",
+        "tell/guard timing",
+        "joint firings and current step disciplines",
+        "scoped make bundles",
+        "cached positive flat rule plans over ground states at step one",
+        "indexed resident tuple batches with private result blocks"
+      ],
+      "native_path": "direct borrowed TcNode/item/row batches on the admitted profile; scalar/policy composition and complete DAG solving otherwise; generic and linear native constructors",
+      "ownership": "native/tcalc/tcalc_core.cesta and closed callback interface",
+      "evidence": [
+        "tests/check_native_kernel_modes.py",
+        "tests/tcalc/tcalc_kernel_decide_test.c",
+        "tests/tcalc/modules/run.sh",
+        "tests/test_native_kernel_batch.c",
+        "tests/check_native_kernel_batch_corpus.py"
+      ]
+    },
+    {
+      "name": "transform",
+      "source": "src/transform_core.c",
+      "operations": [
+        "indexed source reads",
+        "private matching and output preparation",
+        "occurrence revalidation",
+        "one host commit",
+        "terminal handling after effects"
+      ],
+      "native_path": "shared matching/observation and eligible term-carrier firing protocol",
+      "evidence": [
+        "tests/support/check_transform_he_boundaries.py",
+        "tests/support/check_transform_guard_reference.py",
+        "tests/support/check_transform_take_differential.py",
+        "tests/test_kernel_transform_errors.c"
+      ]
+    }
+  ],
+  "host_services": [
+    "allocation and custody",
+    "space indexes and candidate cursors",
+    "grounded and closed-value observations",
+    "checked binding publication and cycle admission",
+    "final store publication",
+    "evaluator control and libraries"
+  ],
+  "strict_native_exclusions": [
+    {
+      "source": "src/native_query.c",
+      "reason": "relation-specialized matching/emit implementation is C",
+      "route": "decline before effects and retain the indexed general consumer"
+    }
+  ],
+  "remaining_acceptance": [
+    "general contextual plan reuse under stable owner-generation and retirement; append-only TcProgram flat plans are retained",
+    "resident nested/scoped matching and dynamically bound head indexes beyond the current flat ground profile",
+    "complete audit of optimized evaluator/kernel boundaries",
+    "module-scale native performance and further qualified hybrid admission",
+    "separate formal refinement and consumer theorems"
+  ]
+}

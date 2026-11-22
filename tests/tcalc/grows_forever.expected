@@ -1,0 +1,2 @@
+(interpretation (version tcalc@0.1) (step one) (ask after-tells) (store multiset) (matches symmetric) (solver mgu-first-order) (observe outcomes) (budget 20) (backend c))
+(explored (states 21) (work 20) (finished false) (cycle false))

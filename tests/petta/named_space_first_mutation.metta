@@ -4,8 +4,9 @@
 !(add-atom &first-remove (item 1))
 !(add-atom &first-remove (item 1))
 !(test (collapse (match &first-remove (item $x) $x)) (1 1))
+; Ordinary PeTTa removal clears every matching occurrence.
 !(remove-atom &first-remove (item $x))
-!(test (collapse (match &first-remove $x $x)) ((item 1)))
+!(test (collapse (match &first-remove $x $x)) ())
 !(remove-atom &first-remove (item $x))
 !(test (collapse (match &first-remove $x $x)) ())
 

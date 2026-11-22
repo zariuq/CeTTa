@@ -34,7 +34,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "gslt_native_runtime_v1.h"
+#include "mg_gslt_reader.h"
 #include "mg_core.h"
 #include "mg_elab.h"
 #include "mg_library.h"
@@ -344,7 +344,7 @@ int main(int argc, char **argv) {
     if (verbose) {
         printf("%s\nwork: the costliest theorem took %llu units (budget %llu)\n", summary,
                (unsigned long long)most_work, (unsigned long long)options.theorem_work);
-        printf("reading: %llu relation calls\n", (unsigned long long)gn_calls());
+        printf("reading: %llu work units\n", (unsigned long long)mg_gslt_reader_work());
         printf("elaboration: %llu conversions\n", (unsigned long long)mg_elab_conversion_steps(e));
     }
     int status;

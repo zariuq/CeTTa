@@ -1,0 +1,1 @@
+add-unique-item-or-empty is defined nowhere, so the start board is never marked seen and is counted twice; mark it with the loop's own add-unique-or-fail &dup and expect the 9!/2 = 181440 reachable boards

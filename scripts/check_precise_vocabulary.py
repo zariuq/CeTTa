@@ -56,13 +56,16 @@ SKIP_SUFFIXES = {
 }
 WORD = re.compile(r"surface", re.IGNORECASE)
 
-# Preserve the real upstream identifier. This does not exempt either file,
-# other JSON fields, nearby prose, or a different upstream spelling.
+# Preserve the real upstream identifier in the observation ledger's source
+# field and in the corpus manifest's entry for that example. This does not
+# exempt either file, other JSON fields, nearby prose, or a different
+# upstream spelling.
 PINNED_REFERENCE_FIELDS = {
-    Path("langdef/petta/reference.json"): re.compile(
-        r'\s*"examples/import_error_surface\.metta":\s*"[0-9a-f]{64}",?\s*'),
     Path("tests/petta/corrected_stable_observations.json"): re.compile(
         r'\s*"source":\s*"examples/import_error_surface\.metta",?\s*'),
+    Path("tests/petta/corpus/manifest.json"): re.compile(
+        r'\s*\{"name":\s*"import_error_surface\.metta",\s*"mode":\s*"[a-z-]+",'
+        r'\s*"timeout":\s*[0-9]+\},?\s*'),
 }
 
 

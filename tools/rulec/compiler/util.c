@@ -3,6 +3,7 @@
 
 /* ------------------------------------------------------------------ utilities */
 
+jmp_buf *rulec_die_jump;
 void die(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -10,7 +11,31 @@ void die(const char *fmt, ...) {
     vfprintf(stderr, fmt, ap);
     fputc('\n', stderr);
     va_end(ap);
+    if (rulec_die_jump) longjmp(*rulec_die_jump, 1);
     exit(2);
+}
+
+/* a string of the S-expression files rulec writes: quoted, " and \ escaped */
+void fput_quoted(FILE *o, const char *s) {
+    fputc('"', o);
+    for (; *s; s++) {
+        if (*s == '"' || *s == '\\') fputc('\\', o);
+        if (*s == '\n') { fputs("\\n", o); continue; }
+        fputc(*s, o);
+    }
+    fputc('"', o);
+}
+
+/* a C string literal: " \ and control bytes escaped */
+void fput_cstring(FILE *o, const char *s) {
+    fputc('"', o);
+    for (; *s; s++) {
+        unsigned char c = (unsigned char)*s;
+        if (c == '"' || c == '\\') { fputc('\\', o); fputc(c, o); }
+        else if (c < 32 || c == 127) fprintf(o, "\\%03o", c);
+        else fputc(c, o);
+    }
+    fputc('"', o);
 }
 
 void *xmalloc(size_t n) { void *p = malloc(n ? n : 1); if (!p) die("out of memory"); return p; }

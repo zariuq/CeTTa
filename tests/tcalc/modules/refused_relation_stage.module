@@ -1,0 +1,18 @@
+-- theory: Calc
+-- A relation named like a stage of a rule (rule r's first stage is r/1): its rows would be read as
+-- that stage's rows.  The reading refuses the rule.
+Module ClashStage {
+  Theory Calc() {
+    Empty
+    Types {
+      Node;
+    }
+    Terms {
+      "n:a". |- "a" : Node;
+      "n:g". x:Node |- "g" x : Node;
+    }
+    Rewrites {
+      "r". x:Node, y:Node | "r/1"(x, y) |- "n:g"(x) ~> y;
+    }
+  }
+}

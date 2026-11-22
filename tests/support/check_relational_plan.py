@@ -42,6 +42,9 @@ def main():
                         f"!{expression}\n!(remove-atom &self (r 0 0 99))\n!{expression}\n", True, None),
             "open-row": ("(r $a $b 99)\n" + f"!{expression}\n", True, None),
             "whole-variable-row": ("!(add-atom &self $whole)\n" + f"!{expression}\n", False, None),
+            "whole-variable-batch": ("!(let $rows ($whole) (add-atoms &self $rows))\n" +
+                                     f"!{expression}\n", False, None),
+            "whole-variable-reduct": ("!(add-reduct &self $whole)\n" + f"!{expression}\n", False, None),
             "numeric-equality": ("(r 0.0 0 99)\n" + f"!{expression}\n", False, None),
             "branching": ("(= (two-values) (superpose (1 2)))\n"
                           f"!{count_expression(language, pattern, '(two-values)')}\n", False, "128"),
@@ -60,6 +63,19 @@ def main():
         for name, (suffix, admitted, expected) in cases.items():
             path = out / f"{name}-{language}.metta"
             path.write_text(declarations(factors) + suffix)
+            if language == "petta" and name in ("whole-variable-row", "whole-variable-batch",
+                                                "whole-variable-reduct"):
+                # PeTTa adds no bare variable: add-atom, add-atoms and
+                # add-reduct raise, as assertz does, on either path, so no
+                # count ever meets such a row.
+                for reference in (False, True):
+                    refused = run(binary, language, path, reference, False,
+                                  allow_incomplete=True)
+                    assert refused.returncode != 0 and refused.stdout == "" and \
+                        "instantiation_error" in refused.stderr and \
+                        "(/ assertz 1)" in refused.stderr, (name, language, reference, refused)
+                records.append({"case": name, "language": language, "refused": True})
+                continue
             actual = run(binary, language, path, False, args.stats)
             reference = run(binary, language, path, True, False)
             assert actual.stdout == reference.stdout, (name, language, actual, reference)

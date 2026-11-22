@@ -6,8 +6,8 @@ import sys
 source_path, kind, output_path = sys.argv[1:]
 source = Path(source_path).read_text()
 mutations = {
-    "copies": ("uint64_t copies =\n            made->removal || made->insert || space_is_set(made->target)\n            ? 1u : weight;",
-               "uint64_t copies =\n            made->removal || made->insert || space_is_set(made->target)\n            ? 1u : 1u;"),
+    "copies": ('uint64_t copies =\n            made->insert || (!made->removal && space_is_set(made->target))\n            ? 1u : weight;',
+        'uint64_t copies =\n            made->insert || (!made->removal && space_is_set(made->target))\n            ? 1u : 1u;'),
     "collected-copies": ("for (uint64_t copy = 0u; copy < weight; copy++)\n        run->items",
                          "for (uint64_t copy = 0u; copy < 1u; copy++)\n        run->items"),
     "instance-slot": ("                                       TermUniverse *universe,\n                                       const AtomId *values) {\n    const NativeQueryNode *node = &template->nodes[(*position)++];\n    switch (node->kind) {\n    case NATIVE_QUERY_NODE_CONSTANT:\n        return node->id;\n    case NATIVE_QUERY_NODE_VARIABLE:\n        return values[node->slot];",
@@ -44,10 +44,10 @@ mutations = {
                         "            met = (left == right) != (op == CETTA_NATIVE_FILTER_ALIKE);"),
     # An order of integers read the other way, and a value that is not an
     # integer compared as one.
-    "order-flipped": ("                (op == CETTA_NATIVE_FILTER_LESS);",
-                      "                (op != CETTA_NATIVE_FILTER_LESS);"),
-    "order-unchecked": ("            if (tu_kind(run->universe, left) != ATOM_GROUNDED ||\n                tu_ground_kind(run->universe, left) != GV_INT ||\n                tu_kind(run->universe, right) != ATOM_GROUNDED ||\n                tu_ground_kind(run->universe, right) != GV_INT)\n                return false;",
-                        "            if (false)\n                return false;"),
+    "order-flipped": ('met = op == CETTA_NATIVE_FILTER_LESS ? left < right\n',
+        'met = op == CETTA_NATIVE_FILTER_LESS ? !(left < right)\n'),
+    "order-unchecked": ('            if (!native_query_operand_int(&run->filters[2u * filter],\n                                          query->filters[filter].left_as,\n                                          run->universe, values, &left) ||\n                !native_query_operand_int(&run->filters[2u * filter + 1u],\n                                          query->filters[filter].right_as,\n                                          run->universe, values, &right))\n                return false;\n',
+        '            (void)native_query_operand_int(&run->filters[2u * filter],\n                                           query->filters[filter].left_as,\n                                           run->universe, values, &left);\n            (void)native_query_operand_int(&run->filters[2u * filter + 1u],\n                                           query->filters[filter].right_as,\n                                           run->universe, values, &right);\n'),
     # The filters skipped where a guard is read too.
     "conjunction-filter-ignored": ("    for (size_t filter = 0u; filter < run->filter_count; filter++) {",
                                    "    for (size_t filter = 0u; !run->guard && filter < run->filter_count; filter++) {"),

@@ -810,7 +810,9 @@ static bool dense_diagonal_visit(void *context, const AtomId *values,
     assert(x >= 0 && (size_t)x < visit->expected && x == z && weight == 1u);
     if (!visit->projected)
         assert(tu_int(visit->universe, values[1]) == x);
-    assert((size_t)x == visit->expected - 1u - visit->count);
+    /* Keys are numbered as the rows are read, and a stack reads its newest
+     * rows first: those of x = 0, added last, so the answers ascend. */
+    assert((size_t)x == visit->count);
     assert(!visit->seen[x]);
     visit->seen[x] = true;
     visit->count++;
@@ -941,20 +943,22 @@ static void dense_sparse_order(TermUniverse *universe, Arena *arena) {
         Atom *family = parse(arena, reverse
             ? "(, (order-r $x $y) (order-s $z $y) (order-t $z $x))"
             : "(, (order-r $x $y) (order-s $y $z) (order-t $x $z))");
+        /* The stack reads its newest order-r rows first, those of x = 0
+         * and y = 0, so the keys ascend with the integers. */
         DensePairVisit expected = {.universe = universe};
-        for (size_t x = n; x; x--) {
-            for (size_t y = n; y; y--) {
-                for (size_t z = n; z; z--) {
-                    size_t a = reverse ? z - 1u : x - 1u;
-                    size_t b = reverse ? x - 1u : z - 1u;
-                    size_t c = reverse ? z - 1u : y - 1u;
-                    size_t d = reverse ? y - 1u : z - 1u;
+        for (size_t x = 0u; x < n; x++) {
+            for (size_t y = 0u; y < n; y++) {
+                for (size_t z = 0u; z < n; z++) {
+                    size_t a = reverse ? z : x;
+                    size_t b = reverse ? x : z;
+                    size_t c = reverse ? z : y;
+                    size_t d = reverse ? y : z;
                     if ((b == a || b == (a + 1u) % n) &&
                         (d == c || d == (c + 1u) % n)) {
                         assert(expected.length < 1024u);
-                        expected.triples[expected.length][0] = (int64_t)(x - 1u);
-                        expected.triples[expected.length][1] = (int64_t)(y - 1u);
-                        expected.triples[expected.length++][2] = (int64_t)(z - 1u);
+                        expected.triples[expected.length][0] = (int64_t)x;
+                        expected.triples[expected.length][1] = (int64_t)y;
+                        expected.triples[expected.length++][2] = (int64_t)z;
                     }
                 }
             }

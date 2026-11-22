@@ -3941,7 +3941,8 @@ static bool pposlf_native_type_vm_v1_collect_deterministic_tail(
         copy = arena_alloc(&search->survivor, sizeof(*copy));
         goal = pposlf_native_type_vm_v1_evacuate_atom(
             &search->scratch, session, source->goal);
-        if (!copy || (source->goal && !goal))
+        if (!copy || (source->goal && !goal) ||
+            !arena_retain_frame_identity(&search->survivor, source->epoch))
             goto done;
         *copy = *source;
         copy->goal = goal;
@@ -4944,6 +4945,16 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
                         bindings_builder_bindings(&search->bindings))) {
                     pposlf_native_type_vm_v1_rollback_search_branch(
                         search, frame);
+                    continue;
+                }
+                /* The body goals name this activation's identity after the
+                 * scope ends; the scratch arena holding them owns it until a
+                 * reset reclaims them. */
+                if (!arena_retain_frame_identity(&search->scratch, epoch)) {
+                    pposlf_native_type_vm_v1_rollback_search_branch(
+                        search, frame);
+                    frame->saw_resource = true;
+                    frame->stage = PPOSLF_NATIVE_SEARCH_EXTERNAL_V1;
                     continue;
                 }
             }

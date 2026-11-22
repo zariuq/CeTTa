@@ -1915,7 +1915,18 @@ static const PettaSemanticFormCase petta_semantic_form_cases[] = {
     {"id", PETTA_FORM_ID},
     {"append", PETTA_FORM_APPEND},
     {"cons", PETTA_FORM_CONS},
-    {"#+", PETTA_FORM_INT_ADD},
+    {"#+", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#-", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#*", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#div", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#//", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#mod", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#min", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#max", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#<", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#>", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#=", PETTA_FORM_INTEGER_CONSTRAINT},
+    {"#\\=", PETTA_FORM_INTEGER_CONSTRAINT},
     {"unique", PETTA_FORM_STREAM_UNIQUE},
     {"union", PETTA_FORM_STREAM_UNION},
     {"intersection", PETTA_FORM_STREAM_INTERSECTION},
@@ -2191,6 +2202,57 @@ static void test_deep_typecheck_source_rewrites(
     AtomId deep_marker = test_nest_unary_id(
         universe, box, marker, DEEP_FINITE_DEPTH);
     AtomId document[1] = {deep_marker};
+    /* Extended reads `brand` as data: even a deep marker stays as written. */
+    cetta_petta_prepare_document_forms(
+        universe, document, 1);
+    assert(document[0] == deep_marker);
+
+    AtomId target_elems[2] = {box, leaf};
+    AtomId target = tu_expr_from_ids(
+        universe, target_elems, 2u);
+    AtomId as_elems[3] = {at, variable, target};
+    AtomId as_pattern = tu_expr_from_ids(
+        universe, as_elems, 3u);
+    /* Nor is an alias head under a marker an alias there. */
+    AtomId marked_at_elems[3] = {brand, type, at};
+    AtomId marked_at = tu_expr_from_ids(universe, marked_at_elems, 3u);
+    AtomId marked_as_elems[3] = {marked_at, variable, target};
+    AtomId marked_as = tu_expr_from_ids(universe, marked_as_elems, 3u);
+    AtomId marked_match_elems[4] = {match, space, marked_as, body};
+    AtomId marked_match = tu_expr_from_ids(universe, marked_match_elems, 4u);
+    document[0] = marked_match;
+    cetta_petta_prepare_document_forms(universe, document, 1);
+    assert(document[0] == marked_match);
+
+    /* Quoted code stays literal, but a match pattern headed by quote
+     * still follows the alias-pattern grammar. */
+    AtomId quote_as_elems[2] = {quote, as_pattern};
+    AtomId quote_as = tu_expr_from_ids(universe, quote_as_elems, 2u);
+    AtomId quoted_match_elems[4] = {match, space, quote_as, body};
+    AtomId quoted_match = tu_expr_from_ids(universe, quoted_match_elems, 4u);
+    AtomId quote_code_elems[2] = {quote, quoted_match};
+    AtomId quote_code = tu_expr_from_ids(universe, quote_code_elems, 2u);
+    document[0] = quote_code;
+    cetta_petta_prepare_document_forms(universe, document, 1);
+    assert(document[0] == quote_code);
+
+    AtomId quote_target_elems[2] = {quote, target};
+    AtomId quote_target = tu_expr_from_ids(universe, quote_target_elems, 2u);
+    document[0] = quoted_match;
+    cetta_petta_prepare_document_forms(universe, document, 1);
+    assert(tu_child(universe, document[0], 2u) == quote_target);
+    assert(tu_head_sym(universe, tu_child(universe, document[0], 3u)) ==
+           g_builtin_syms.let);
+
+#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
+    /* The typecheck profiles erase `brand` at ingestion, without a C
+     * recursion over the marker's depth. */
+    CettaLibraryContext typed = {0};
+    cetta_eval_session_init(
+        &typed.session, CETTA_LANGUAGE_PETTA,
+        cetta_profile_petta_typecheck_v2());
+    eval_set_library_context(&typed);
+    document[0] = deep_marker;
     cetta_petta_prepare_document_forms(
         universe, document, 1);
     assert(test_descend_unary_id(
@@ -2209,48 +2271,22 @@ static void test_deep_typecheck_source_rewrites(
         universe, document, 1);
     assert(document[0] == deep_quoted_marker);
 
-    AtomId target_elems[2] = {box, leaf};
-    AtomId target = tu_expr_from_ids(
-        universe, target_elems, 2u);
-    AtomId as_elems[3] = {at, variable, target};
-    AtomId as_pattern = tu_expr_from_ids(
-        universe, as_elems, 3u);
     /* An alias head can itself survive marker erasure. Its summary must
      * describe the rewritten source rather than only the written head. */
-    AtomId marked_at_elems[3] = {brand, type, at};
-    AtomId marked_at = tu_expr_from_ids(universe, marked_at_elems, 3u);
-    AtomId marked_as_elems[3] = {marked_at, variable, target};
-    AtomId marked_as = tu_expr_from_ids(universe, marked_as_elems, 3u);
-    AtomId marked_match_elems[4] = {match, space, marked_as, body};
-    document[0] = tu_expr_from_ids(universe, marked_match_elems, 4u);
+    document[0] = marked_match;
     cetta_petta_prepare_document_forms(universe, document, 1);
     assert(tu_child(universe, document[0], 2u) == target);
     assert(tu_head_sym(universe, tu_child(universe, document[0], 3u)) ==
            g_builtin_syms.let);
 
-    /* Quoted code stays literal, but a match pattern headed by quote
-     * still follows the alias-pattern grammar. */
-    AtomId quote_as_elems[2] = {quote, as_pattern};
-    AtomId quote_as = tu_expr_from_ids(universe, quote_as_elems, 2u);
-    AtomId quoted_match_elems[4] = {match, space, quote_as, body};
-    AtomId quoted_match = tu_expr_from_ids(universe, quoted_match_elems, 4u);
-    AtomId quote_code_elems[2] = {quote, quoted_match};
-    AtomId quote_code = tu_expr_from_ids(universe, quote_code_elems, 2u);
-    document[0] = quote_code;
+    AtomId outer_marker_elems[3] = {brand, type, quoted_match};
+    document[0] = tu_expr_from_ids(universe, outer_marker_elems, 3u);
     cetta_petta_prepare_document_forms(universe, document, 1);
-    assert(document[0] == quote_code);
-
-    AtomId quote_target_elems[2] = {quote, target};
-    AtomId quote_target = tu_expr_from_ids(universe, quote_target_elems, 2u);
-    for (unsigned marked = 0u; marked < 2u; marked++) {
-        AtomId outer_marker_elems[3] = {brand, type, quoted_match};
-        document[0] = marked
-            ? tu_expr_from_ids(universe, outer_marker_elems, 3u) : quoted_match;
-        cetta_petta_prepare_document_forms(universe, document, 1);
-        assert(tu_child(universe, document[0], 2u) == quote_target);
-        assert(tu_head_sym(universe, tu_child(universe, document[0], 3u)) ==
-               g_builtin_syms.let);
-    }
+    assert(tu_child(universe, document[0], 2u) == quote_target);
+    assert(tu_head_sym(universe, tu_child(universe, document[0], 3u)) ==
+           g_builtin_syms.let);
+    eval_set_library_context(&context);
+#endif
 
     AtomId deep_as_pattern = test_nest_unary_id(
         universe, box, as_pattern, DEEP_FINITE_DEPTH);
@@ -16137,10 +16173,13 @@ int main(int argc, char **argv) {
         &space, &answers,
         "(let (#+ 7 35) 41 impossible)",
         NULL, 0u);
+    /* CLP(FD) integers are unbounded: a sum past the machine word is the
+     * big integer, as SWI's answers. */
+    const char *sum_wide[] = {"9223372036854775808"};
     expect_answers(
         &space, &answers,
         "(#+ 9223372036854775807 1)",
-        NULL, 0u);
+        sum_wide, 1u);
 
     const char *equal_true_false[] = {"true", "false"};
     expect_answers(

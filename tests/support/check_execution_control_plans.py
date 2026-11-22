@@ -78,7 +78,7 @@ def main():
         raise AssertionError(('invalid variadic sequence was admitted', after))
     assert set(spec.implicit_operations) == {'return-value', 'construct', 'invoke'}
     assert len(spec.fold_control_heads) == 5
-    assert len(spec.invocation_heads) == 10 and len(spec.invocation_forms) == 10
+    assert len(spec.invocation_heads) == 12 and len(spec.invocation_forms) == 10
     invocation = '(invocation-head member 2 relational-member 0 2)'
     predicate = '(invocation-form petta predicate 1 predicate-value 0 1)'
     operation = '(invocation-operation host)'

@@ -1,0 +1,3 @@
+// new makes a name that no other term equals; tcalc@0.1 has unknowns, which a
+// match may decide, and no such names.  The program is refused at new.
+new x in { x!(1) }

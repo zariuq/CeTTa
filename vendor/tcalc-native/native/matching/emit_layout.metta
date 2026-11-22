@@ -1,0 +1,11 @@
+; State words for native graph instantiation.
+(= (ne:h nodes) 0) (= (ne:h variables) 1) (= (ne:h edges) 2)
+(= (ne:h output-cap) 3) (= (ne:h output-count) 4)
+(= (ne:h edge-cap) 5) (= (ne:h edge-count) 6)
+(= (ne:h stack-cap) 7) (= (ne:h sp) 8)
+(= (ne:h memo-count) 9) (= (ne:h index) 10) (= (ne:h phase) 11)
+(= (ne:h last) 12) (= (ne:h source) 13)
+(= (ne:h kind) 14) (= (ne:h a) 15) (= (ne:h b) 16) (= (ne:h c) 17)
+(= (ne:h peak) 18) (= (ne:h expanded) 19)
+(= (ne:cap) 4294967295)
+(= (ne:visiting) 18446744073709551615)

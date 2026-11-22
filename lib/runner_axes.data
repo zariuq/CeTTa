@@ -1,0 +1,10 @@
+(cesta-tables/1
+  ; The choices of a run that the rho and tcalc lanes share: which successor each step of one run
+  ; takes.  Each lane lists its successors in a canonical order of its own; the schedule picks from
+  ; that list.
+  (Table Schedules
+    (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
+    (Key id) (Unique code) (Unique spelling) (Dense id)
+    (Rows
+      (Row 0 CANONICAL "canonical" "each step to the first successor in the canonical order")
+      (Row 1 ROTATING "rotating" "the n-th step to the n-th successor in that order, counted round"))))

@@ -629,4 +629,5 @@ size_t rc_value_items(int sort, T *x, RcItem *buf, size_t cap);
 size_t rc_list_items(int sort, T **cursor, RcItem *buf, size_t cap);
 T *rc_call(int judgment, T **a);
 T *rc_start(int judgment, T **a);
+void rc_solve(int judgment, T **a, const RcK *k);
 #endif

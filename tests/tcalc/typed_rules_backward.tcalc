@@ -1,0 +1,31 @@
+; Backward chaining.  A goal is a row whose proof is an unknown of the state.
+; A rule's conclusion meets the goal and tells the proof's shape; its
+; premises become goals, sharing the unknowns they have in common.  The
+; answer row shares the goal's unknown, so an outcome shows the proof found.
+
+(answer $proof)
+(goal (S (S Z)) (: $proof C))
+
+(: a A)
+(: ab (→ A B))
+(: bc (→ B C))
+
+; a goal met by a known proof: reading it decides the goal's unknowns
+(rule known
+  (take (goal $depth $judgement))
+  (read $judgement))
+
+; modus ponens read backwards, one depth down: its premise $p is a fresh
+; unknown both new goals share
+(rule ModusPonens
+  (take (goal (S $depth) (: $proof $q)))
+  (tell (= $proof (ModusPonens $f $x)))
+  (make (goal $depth (: $f (→ $p $q))) (goal $depth (: $x $p))))
+
+; proved when no goal is left
+(rule proved
+  (take (answer $proof))
+  (absent (goal $depth $judgement))
+  (make (proved $proof)))
+
+(step one)

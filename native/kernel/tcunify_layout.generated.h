@@ -1,0 +1,42 @@
+/* Generated from tcunify_layout.metta by export_pair.py. */
+#ifndef CETTA_KERNEL_TCUNIFY_LAYOUT_H
+#define CETTA_KERNEL_TCUNIFY_LAYOUT_H
+enum {
+    TU_F_PHASE=0,
+    TU_F_FLOOR=1,
+    TU_F_WLEN=2,
+    TU_F_TLEN=3,
+    TU_F_WCAP=4,
+    TU_F_TCAP=5,
+    TU_F_EPOCH=6,
+    TU_F_NEED=7,
+    TU_F_A=8,
+    TU_F_ABASE=9,
+    TU_F_B=10,
+    TU_F_BBASE=11,
+    TU_F_AK=12,
+    TU_F_BK=13,
+    TU_F_PVAR=14,
+    TU_F_PVBASE=15,
+    TU_F_PT=16,
+    TU_F_PTBASE=17,
+    TU_F_PINDEX=18,
+    TU_F_PLOCAL=19,
+    TU_F_CLOSED=20,
+    TU_F_DSTART=21,
+    TU_F_DTOP=22,
+    TU_F_DFROM=23,
+    TU_F_ASTART=24,
+    TU_F_BSTART=25,
+    TU_R_SOLVED=0,
+    TU_R_REFUTED=1,
+    TU_R_ROOM=2,
+    TU_R_CLOSE=3,
+    TU_R_YIELD=4,
+    TU_R_FAULT=5,
+    TU_N_WORK=1,
+    TU_N_TRAIL=2,
+    TU_N_EPOCH=3,
+    TU_FACTS=26
+};
+#endif

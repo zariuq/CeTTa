@@ -1,0 +1,85 @@
+Native document observations
+============================
+
+  ./cetta --lang petta --run-observation events.jsonl program.metta
+
+The optional observation file is separate from the program's Space and output.
+Normal answer display and explicit output remain available. --run-report may
+also be supplied for the existing query counts, verdicts and fault report.
+
+The JSONL protocol begins with a versioned header. Each executed top-level
+query has begin, answer/effect and end events. A final event accounts for the
+whole document, including queries skipped after an interrupted or faulty query.
+An absent final event is an incomplete observation, even if the process exits 0.
+Guard activation follows CeTTa's option parser; CLI-looking guest arguments do
+not activate reporting or choose an observation destination.
+
+Answers
+-------
+
+Answers are ordered occurrences in the evaluator's returned query frontier.
+Duplicates remain duplicates. An empty frontier has no answer events. It is
+different from a frontier whose terminal records interruption or a fault.
+The protocol does not assert when individual answers were yielded inside an
+evaluation, or their interleaving with effects inside that evaluation.
+
+Each answer is a flat preorder token stream. An expression token carries its
+arity. Symbols and strings carry hex-encoded bytes, preserving their different
+kinds, NUL, Unicode and arbitrary string bytes. Integers, f64 bit patterns,
+Booleans, big integers, rationals and internal value tags have distinct tokens.
+In particular, a Boolean and a symbol with the same display stay distinct;
+a list and a nullary compound do not become equal because they print alike.
+Variable slots are assigned by first occurrence over the document, using the
+complete runtime identity. Sharing is preserved across answers and queries;
+variable spelling does not determine identity. Printing and decoding do not
+recurse once per term depth.
+
+An opaque value without an observation codec produces an unobserved token and
+values_complete=false. Its display or memory address is not a replacement for
+its value. This does not reject that value in the guest language. It prevents
+an observer from claiming equality without an adequate interpretation.
+
+Effects and completion
+----------------------
+
+Effect events carry the current query, output channel and exact bytes passed
+through the current thread's host services. Adjacent chunks on one channel
+denote one byte stream; callback chunk boundaries are not semantic events.
+The header names this scope as thread-host-services. Foreign activity is
+recorded explicitly and requires its own declared effect interpretation.
+Uninstrumented foreign I/O and other threads are not certified by this scope.
+
+The final event carries the existing document contract status, unsettled query
+count, framing status and value-codec completeness. Consumers must check all of
+these. A matching answer prefix, two equally failed runs or an unobserved opaque
+value cannot establish successful composition. Output or observation I/O failure
+does not produce a successful completed receipt.
+
+When a child terminates before its process receipt, --run-report records an
+unfinalized process outcome with dialect_exit=null. A signal retains its number and the process exit
+status is 128 plus that number. A raw exit with the same integer is still a
+receipt failure. Query details are unavailable in this report: queries is an
+empty array, query_details_available is false, and declared queries remain
+uncertified. No zero-answer frontier is inferred. The composition checker
+keeps processor-allowance exhaustion and other physical interruptions pending.
+
+The GSLT composition checker maps each original query to its retained machine
+turns outside the guest's Space. It compares native values, multiplicity, query
+boundaries and the scoped effect streams. Administrative answers are excluded
+by that explicit query map; administrative effects are refused as unqualified.
+The retained-run status has its own administrative query. Guest data headed by
+pm:no-end, pm:uncaught or Error is not mistaken for that status. Display streams
+are retained as bytes, so invalid UTF-8 in output does not prevent comparison.
+The checker neither reserves a printed marker nor removes matching guest text.
+This execution check is separate from compiler correspondence, observation-law
+and infinite-execution proofs.
+
+Source document origins
+
+--source-origin N PATH supplies the logical origin of input document N, counted
+from zero. The reader takes bytes from the positional file. Relative imports,
+entry-directory metadata and loaded-file identity use the origin. Later entries
+for the same document override earlier entries. Script arguments retain their
+order and content; explicit repeated input documents retain their executions.
+The invocation replayer uses each recorded argument's original spelling here,
+so a generated physical file continues to realize the original source module.

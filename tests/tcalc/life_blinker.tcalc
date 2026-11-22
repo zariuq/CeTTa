@@ -1,0 +1,42 @@
+; Conway's game of life on a 5 by 5 torus, one generation a step under every.
+; A live cell is (on (c X Y)); each live cell also makes one (lit C) row for
+; each of its eight neighbours C, so a cell's live neighbours are counted by
+; (count K (lit C)).  The (succ A B) rows give the neighbours.  In one step
+; every lit row is taken, and each cell live in the next generation makes its
+; lit rows anew, so each member counts the generation the step starts from.
+; A blinker turns from vertical to horizontal and back: one run, a cycle, and
+; no outcome.
+(step every)
+(observe run)
+(succ 0 1)
+(succ 1 2)
+(succ 2 3)
+(succ 3 4)
+(succ 4 0)
+(seed (c 2 1))
+(seed (c 2 2))
+(seed (c 2 3))
+(rule seed (take (seed (c $x $y)))
+  (read (succ $xm $x) (succ $x $xp) (succ $ym $y) (succ $y $yp))
+  (make (on (c $x $y)) (lit (c $xm $ym)) (lit (c $xm $y)) (lit (c $xm $yp)) (lit (c $x $ym))
+        (lit (c $x $yp)) (lit (c $xp $ym)) (lit (c $xp $y)) (lit (c $xp $yp))))
+(rule clear (take (lit $cell)))
+(rule birth (read (succ $xm $x) (succ $x $xp) (succ $ym $y) (succ $y $yp))
+  (count 3 (lit (c $x $y))) (absent (on (c $x $y)))
+  (make (on (c $x $y)) (lit (c $xm $ym)) (lit (c $xm $y)) (lit (c $xm $yp)) (lit (c $x $ym))
+        (lit (c $x $yp)) (lit (c $xp $ym)) (lit (c $xp $y)) (lit (c $xp $yp))))
+(rule survive2 (read (on (c $x $y)) (succ $xm $x) (succ $x $xp) (succ $ym $y) (succ $y $yp))
+  (count 2 (lit (c $x $y)))
+  (make (lit (c $xm $ym)) (lit (c $xm $y)) (lit (c $xm $yp)) (lit (c $x $ym))
+        (lit (c $x $yp)) (lit (c $xp $ym)) (lit (c $xp $y)) (lit (c $xp $yp))))
+(rule survive3 (read (on (c $x $y)) (succ $xm $x) (succ $x $xp) (succ $ym $y) (succ $y $yp))
+  (count 3 (lit (c $x $y)))
+  (make (lit (c $xm $ym)) (lit (c $xm $y)) (lit (c $xm $yp)) (lit (c $x $ym))
+        (lit (c $x $yp)) (lit (c $xp $ym)) (lit (c $xp $y)) (lit (c $xp $yp))))
+(rule die0 (take (on $cell)) (count 0 (lit $cell)))
+(rule die1 (take (on $cell)) (count 1 (lit $cell)))
+(rule die4 (take (on $cell)) (count 4 (lit $cell)))
+(rule die5 (take (on $cell)) (count 5 (lit $cell)))
+(rule die6 (take (on $cell)) (count 6 (lit $cell)))
+(rule die7 (take (on $cell)) (count 7 (lit $cell)))
+(rule die8 (take (on $cell)) (count 8 (lit $cell)))

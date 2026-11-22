@@ -1,0 +1,25 @@
+; Buttons and Lights from the IGGP benchmark, in its own game description:
+; each clause (<= HEAD BODY...) is one rule that reads its body and makes its
+; head, and GDL's (not (true X)) is (absent (true X)): known absent. One state
+; of an episode is its (true X) rows and the move (does robot M); a step under
+; every derives the next state's (next X) rows, the goal and termination.
+(store set)
+(step every)
+(true q) (true 3) (does robot b)
+(successor 1 2) (successor 2 3) (successor 3 4) (successor 4 5) (successor 5 6) (successor 6 7)
+(rule next-p-a (read (does robot a)) (absent (true p)) (make (next p)))
+(rule next-p-b (read (does robot b) (true q)) (make (next p)))
+(rule next-p-c (read (does robot c) (true p)) (make (next p)))
+(rule next-q-a (read (does robot a) (true q)) (make (next q)))
+(rule next-q-b (read (does robot b) (true p)) (make (next q)))
+(rule next-q-c (read (does robot c) (true r)) (make (next q)))
+(rule next-r-a (read (does robot a) (true r)) (make (next r)))
+(rule next-r-b (read (does robot b) (true r)) (make (next r)))
+(rule next-r-c (read (does robot c) (true q)) (make (next r)))
+(rule next-step (read (true $x) (successor $x $y)) (make (next $y)))
+(rule goal-100 (read (true p) (true q) (true r)) (make (goal robot 100)))
+(rule goal-0-p (absent (true p)) (make (goal robot 0)))
+(rule goal-0-q (absent (true q)) (make (goal robot 0)))
+(rule goal-0-r (absent (true r)) (make (goal robot 0)))
+(rule terminal-lights (read (true p) (true q) (true r)) (make terminal))
+(rule terminal-time (read (true 7)) (make terminal))

@@ -1,0 +1,8 @@
+; profile: step=one;store=set
+; In a set store two firings need not commute: plant makes the row spend
+; takes.  Planted first, the token is there already and spend takes it;
+; spent first, plant makes it again.  The two orders end at different states.
+(seed)
+(token)
+(rule plant (take (seed)) (make (token)))
+(rule spend (take (token)) (make (spent)))

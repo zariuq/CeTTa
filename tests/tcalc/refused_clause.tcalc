@@ -1,0 +1,3 @@
+; A clause is one the calculus knows; a guard is written as a check.
+(a)
+(rule r (take (a)) (guard (= 1 1)) (make (b)))

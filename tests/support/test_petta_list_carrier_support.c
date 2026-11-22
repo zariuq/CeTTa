@@ -77,8 +77,14 @@ int main(void) {
     uint32_t clear = bindings_builder_save(builder);
     assert(bindings_builder_add_var_fresh(builder, x, y));
     uint32_t alias = bindings_builder_save(builder);
+    Bindings *current = (Bindings *)bindings_builder_bindings(builder);
+    BindingValue reached;
+    assert(petta_value_single_variable(current, binding_value_from_atom(single), &reached) ==
+           PETTA_SINGLE_VARIABLE_UNBOUND);
     check(&machine, binding_value_from_atom(single), false);
     assert(bindings_builder_add_var_fresh(builder, y, cell));
+    assert(petta_value_single_variable(current, binding_value_from_atom(single), &reached) ==
+           PETTA_SINGLE_VARIABLE_BOUND && reached.skeleton == cell);
     check(&machine, binding_value_from_atom(single), true);
     check(&machine, binding_value_from_atom(multiple), true);
     bindings_builder_rollback(builder, alias);
@@ -96,6 +102,36 @@ int main(void) {
     check(&machine, binding_value_from_context(single, first), true);
     check(&machine, binding_value_from_context(single, second), false);
     check(&machine, binding_value_from_persistent_context(single, first), true);
+    assert(petta_value_single_variable(current, binding_value_from_context(single, first), &reached) ==
+           PETTA_SINGLE_VARIABLE_BOUND && reached.skeleton == cell);
+    assert(petta_value_single_variable(current, binding_value_from_context(single, second), &reached) ==
+           PETTA_SINGLE_VARIABLE_UNBOUND);
+
+    /* Sharing the cell skeleton doesn't identify the two lexical slots.
+     * Match a bound head with an independent open head, then contradict it. */
+    Atom *scoped_cell = petta_semantics_open_cons_value(&source, x, atom_unit(&source));
+    BindingValue from_first = binding_value_from_context(scoped_cell, first);
+    BindingValue from_second = binding_value_from_context(scoped_cell, second);
+    uint32_t scoped_mark = bindings_builder_save(builder);
+    assert(petta_semantics_match_list_values(
+        &source, from_first, from_second, builder));
+    Bindings *bound = (Bindings *)bindings_builder_bindings(builder);
+    BindingValue second_head = bindings_lookup_context_id(bound, from_second, x->var_id);
+    assert(second_head.skeleton == cell);
+    bindings_builder_rollback(builder, scoped_mark);
+    Atom *other = atom_var_with_id(&source, "second-x", var_epoch_id(x->var_id, second));
+    assert(bindings_builder_add_var_fresh(builder, other, leaf));
+    assert(!petta_semantics_match_list_values(
+        &source, from_first, from_second, builder));
+    bindings_builder_rollback(builder, scoped_mark);
+
+    /* The same written `cons` is a constructor in an authored pattern
+     * and merely data in a value-to-value comparison. */
+    Atom *written = atom_expr3(&source, atom_symbol(&source, "cons"), leaf, atom_unit(&source));
+    Atom *one = atom_expr(&source, &leaf, 1u);
+    assert(petta_semantics_match_cons_constraint(&source, written, one, builder));
+    assert(!petta_semantics_match_list_values(
+        &source, binding_value_from_atom(written), binding_value_from_atom(one), builder));
 
     for (unsigned trial=0; trial<2000; trial++) {
         uint32_t mark = bindings_builder_save(builder);

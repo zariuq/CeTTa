@@ -4,24 +4,24 @@
   ; transform and tcalc are moving targets: a family of transform steps that differ in these choices,
   ; and each run is one point of that family.
   ; The petta dialect's conjunction value (one-state) is the merged engine's behaviour, chosen as the
-  ; default and not ruled; its removal value (one) is Zar's ruling of 13 November 2026.
+  ; default and not ruled. Public PeTTa removal selects every unifying row.
   (Table Steps
     (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
     (Key id) (Unique code) (Unique spelling) (Dense id)
     (Rows
       (Row 0 ONE "one" "one match (RuleSyntax/JointFirings/Singletons)")
-      (Row 1 ROUND "round" "a joint bag whose members run in every order to its result")
+      (Row 1 ROUND "round" "a bag whose members run in every order to its result (SetStoreDisciplines: SerialRound, at set-represented states)")
       (Row 2 SYNCHRONOUS "synchronous" "each member enabled on its own (Bags: Bag.AdmitsSnapshot)")
-      (Row 3 JOINT "joint" "the members enabled as one commit (Bags: Bag.Admits)")
+      (Row 3 BAG "bag" "the members enabled as one commit (Bags: Bag.Admits; Discipline.joint in SetStoreDisciplines)")
       (Row 4 EVERY "every" "every match of the region at once (Every: Bag.AdmitsEvery)")
-      (Row 5 MAXIMAL "maximal" "a joint bag no further match can join (Maximal)")
-      (Row 6 UNIQUE "unique" "the one match there is; more than one is reported")))
+      (Row 5 MAXIMAL "maximal" "a bag no admitted bag strictly contains (Maximal)")
+      (Row 6 UNIQUE "unique" "the one match there is (Unique: Bag.AdmitsUnique); reporting more than one is the lane's, not Lean's")))
   (Table Asks
     (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
     (Key id) (Unique code) (Unique spelling) (Dense id)
     (Rows
       (Row 0 AFTER_TELLS "after-tells" "checks at every solution of the information with the tells (Core.lean)")
-      (Row 1 BEFORE_TELLS "before-tells" "checks of the knowledge and the matching only (proposal P1)")))
+      (Row 1 BEFORE_TELLS "before-tells" "checks of the knowledge and the matching only (AskTiming: Firing.AdmitsBeforeTells); every, maximal and unique count the matches admitted so, reading (b) (AskTimingInstances: AdmitsEveryBeforeTells and its maximal and unique analogues)")))
   (Table Stores
     (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
     (Key id) (Unique code) (Unique spelling) (Dense id)
@@ -36,6 +36,12 @@
       (Row 1 KEYS "keys" "a match is its rule and the rows selected for its patterns, in order (JointFirings: Member.key); decides every and unique only")))
   ; The choices of CeTTa's transform beside the shared ones above. transform and tcalc are moving
   ; targets: a family of transform steps that differ in these choices; each run is one point of it.
+  (Table Engines
+    (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
+    (Key id) (Unique code) (Unique spelling) (Dense id)
+    (Rows
+      (Row 0 DIRECT "direct" "the Space firing walker and host commit")
+      (Row 1 TCALC "tcalc" "the shared tcalc firing protocol over the selected Space interface; other forms retain the direct path")))
   (Table Axes
     (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text)
              (Column values Text))
@@ -48,13 +54,14 @@
       (Row 4 REMOVAL "removal" "how many copies remove-atom removes" "Removals")
       (Row 5 CONJUNCTION "conjunction" "the state the legs of a conjunction read" "Conjunctions")
       (Row 6 BRANCH_TIMING "branch-timing" "when a transform branch fires" "BranchTimings")
-      (Row 7 COMMA "comma" "how a comma nested in a conjunction is read" "Commas")))
+      (Row 7 COMMA "comma" "how a comma nested in a conjunction is read" "Commas")
+      (Row 8 ENGINE "engine" "the realization that decides an admitted firing" "Engines")))
   (Table Removals
     (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
     (Key id) (Unique code) (Unique spelling) (Dense id)
     (Rows
-      (Row 0 ONE "one" "remove-atom of an atom held several times removes one copy (Zar's ruling, 13 November 2026; HE)")
-      (Row 1 EVERY "every" "remove-atom removes every copy (the SWI-PeTTa host)")))
+      (Row 0 ONE "one" "remove-atom of an atom held several times removes one copy (HE)")
+      (Row 1 EVERY "every" "remove-atom removes every unifying row (PeTTa)")))
   (Table Conjunctions
     (Columns (Column id Nat) (Column code Identifier) (Column spelling Text) (Column definition Text))
     (Key id) (Unique code) (Unique spelling) (Dense id)
@@ -89,7 +96,7 @@
       (Row 1 "petta" "ask" "after-tells")
       (Row 2 "petta" "store" "multiset")
       (Row 3 "petta" "matches" "keys")
-      (Row 4 "petta" "removal" "one")
+      (Row 4 "petta" "removal" "every")
       (Row 5 "petta" "conjunction" "one-state")
       (Row 6 "petta" "branch-timing" "when-asked")
       (Row 7 "petta-swi" "step" "one")
@@ -108,5 +115,8 @@
       (Row 20 "he" "branch-timing" "when-asked")
       (Row 21 "petta" "comma" "associative")
       (Row 22 "petta-swi" "comma" "literal-inner")
-      (Row 23 "he" "comma" "associative")))
+      (Row 23 "he" "comma" "associative")
+      (Row 24 "he" "engine" "direct")
+      (Row 25 "petta" "engine" "direct")
+      (Row 26 "petta-swi" "engine" "direct")))
 )

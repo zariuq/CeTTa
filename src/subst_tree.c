@@ -27,8 +27,8 @@ void snode_free(SubstNode *n) {
         for (uint32_t i = 0; i < n->nsym; i++) snode_free(n->sym[i].child);
         free(n->sym);
     }
-    for (uint32_t i = 0; i < n->nvars; i++) snode_free(n->vars[i].child);
-    free(n->vars);
+    for (uint32_t i = 0; i < n->nslots; i++) snode_free(n->slots[i].child);
+    free(n->slots);
     for (uint32_t i = 0; i < n->nexpr; i++) snode_free(n->expr[i].child);
     free(n->expr);
     if (n->int_hashed) {
@@ -41,9 +41,6 @@ void snode_free(SubstNode *n) {
         for (uint32_t i = 0; i < n->nints; i++) snode_free(n->ints[i].child);
         free(n->ints);
     }
-    for (CettaIndex i = 0u; i < n->nleaves; i++)
-        if (n->leaves[i].owns_identity)
-            cetta_frame_identity_release(n->leaves[i].epoch);
     free(n->leaves);
     free(n);
 }
@@ -57,7 +54,7 @@ static CettaCount snode_transport_stable_coordinates(
     CettaIndex write = 0u;
     CettaCount removed = 0u;
     for (CettaIndex read = 0u; read < node->nleaves; read++) {
-        CettaIndex source = node->leaves[read].idx;
+        CettaIndex source = node->leaves[read];
         if (source >= source_len) {
             fputs("CeTTa: clean substitution index contains an invalid "
                   "occurrence coordinate\n", stderr);
@@ -65,14 +62,10 @@ static CettaCount snode_transport_stable_coordinates(
         }
         CettaIndex target = source_to_target[source];
         if (target == UINT64_MAX) {
-            if (node->leaves[read].owns_identity)
-                cetta_frame_identity_release(node->leaves[read].epoch);
             removed++;
             continue;
         }
-        node->leaves[write] = node->leaves[read];
-        node->leaves[write].idx = target;
-        write++;
+        node->leaves[write++] = target;
     }
     node->nleaves = write;
     *retained += write;
@@ -92,9 +85,9 @@ static CettaCount snode_transport_stable_coordinates(
                 node->sym[i].child, source_to_target, source_len, retained);
         }
     }
-    for (uint32_t i = 0u; i < node->nvars; i++) {
+    for (uint32_t i = 0u; i < node->nslots; i++) {
         removed += snode_transport_stable_coordinates(
-            node->vars[i].child, source_to_target, source_len, retained);
+            node->slots[i].child, source_to_target, source_len, retained);
     }
     for (uint32_t i = 0u; i < node->nexpr; i++) {
         removed += snode_transport_stable_coordinates(
@@ -353,24 +346,77 @@ static SubstNode *snode_get_sym(SubstNode *n, SymbolId key) {
     return child;
 }
 
-static SubstNode *snode_get_var(SubstNode *n, VarId var_id,
-                                SymbolId spelling, Atom *name_key) {
-    for (uint32_t i = 0; i < n->nvars; i++)
-        if (var_id_eq(n->vars[i].var_id, var_id)) return n->vars[i].child;
-    if (n->nvars >= n->cvars) {
-        uint32_t capacity = n->cvars ? n->cvars * 2u : 4u;
-        void *grown = cetta_realloc(n->vars, sizeof(n->vars[0]) * capacity);
+static SubstNode *snode_get_slot(SubstNode *n, uint32_t edge) {
+    for (uint32_t i = 0; i < n->nslots; i++)
+        if (n->slots[i].edge == edge) return n->slots[i].child;
+    if (n->nslots >= n->cslots) {
+        uint32_t capacity = n->cslots ? n->cslots * 2u : 4u;
+        void *grown = cetta_realloc(n->slots, sizeof(n->slots[0]) * capacity);
         if (!grown) return NULL;
-        n->vars = grown; n->cvars = capacity;
+        n->slots = grown; n->cslots = capacity;
     }
     SubstNode *child = snode_new();
     if (!child) return NULL;
-    n->vars[n->nvars].var_id = var_id;
-    n->vars[n->nvars].spelling = spelling;
-    n->vars[n->nvars].name_key = name_key;
-    n->vars[n->nvars].child = child;
-    n->nvars++;
+    n->slots[n->nslots].edge = edge;
+    n->slots[n->nslots].child = child;
+    n->nslots++;
     return child;
+}
+
+/* A row's variables by slot: the number of a variable is the order of its
+ * first occurrence, in the order the walk reads the row.  A row's first
+ * variables are kept inline, so most insertions allocate nothing. */
+enum { SNODE_SLOT_NAMES_INLINE = 16u };
+
+typedef struct {
+    VarId *vars;            /* inline_vars until a row has more variables */
+    uint32_t len, cap;
+    VarId inline_vars[SNODE_SLOT_NAMES_INLINE];
+} SnodeSlotNames;
+
+static void snode_slot_names_init(SnodeSlotNames *names) {
+    names->vars = names->inline_vars;
+    names->len = 0u;
+    names->cap = SNODE_SLOT_NAMES_INLINE;
+}
+
+static void snode_slot_names_free(SnodeSlotNames *names) {
+    if (names->vars != names->inline_vars)
+        free(names->vars);
+    snode_slot_names_init(names);
+}
+
+/* The edge of an occurrence of VAR_ID: the slot k again if the row has
+ * numbered it k, else a new slot, which numbers it next. */
+static bool snode_slot_edge(SnodeSlotNames *names, VarId var_id,
+                            uint32_t *edge) {
+    for (uint32_t k = 0u; k < names->len; k++) {
+        if (var_id_eq(names->vars[k], var_id)) {
+            *edge = k + 1u;
+            return true;
+        }
+    }
+    if (names->len == names->cap) {
+        uint32_t capacity = names->cap * 2u;
+        bool inline_names = names->vars == names->inline_vars;
+        VarId *grown = cetta_realloc(inline_names ? NULL : names->vars,
+                                     sizeof(*grown) * capacity);
+        if (!grown)
+            return false;
+        if (inline_names)
+            memcpy(grown, names->inline_vars, sizeof(*grown) * names->len);
+        names->vars = grown;
+        names->cap = capacity;
+    }
+    names->vars[names->len++] = var_id;
+    *edge = SNODE_SLOT_NEW;
+    return true;
+}
+
+static SubstNode *snode_get_var(SubstNode *n, SnodeSlotNames *names,
+                                VarId var_id) {
+    uint32_t edge = SNODE_SLOT_NEW;
+    return snode_slot_edge(names, var_id, &edge) ? snode_get_slot(n, edge) : NULL;
 }
 
 static SubstNode *snode_get_expr(SubstNode *n, CettaExprLen arity) {
@@ -418,7 +464,7 @@ static SubstNode *snode_get_int(SubstNode *n, int64_t val) {
     return child;
 }
 
-static void snode_add_leaf(SubstNode *n, CettaIndex idx, CettaFrameIdentity epoch) {
+static void snode_add_leaf(SubstNode *n, CettaIndex idx) {
     if (!n) return;
     if (n->nleaves >= n->cleaves) {
         uint32_t capacity = n->cleaves ? n->cleaves * 2u : 4u;
@@ -426,10 +472,7 @@ static void snode_add_leaf(SubstNode *n, CettaIndex idx, CettaFrameIdentity epoc
         if (!grown) return;
         n->leaves = grown; n->cleaves = capacity;
     }
-    n->leaves[n->nleaves].idx = idx;
-    n->leaves[n->nleaves].epoch = epoch;
-    n->leaves[n->nleaves].owns_identity = cetta_frame_identity_retain(epoch);
-    n->nleaves++;
+    n->leaves[n->nleaves++] = idx;
 }
 
 /* Set once any bigint or rational is filed under its text. */
@@ -437,18 +480,15 @@ static _Atomic bool g_st_exact_number_keys;
 
 /* ── Insertion ─────────────────────────────────────────────────────────── */
 
-/* The node for a value this tree does not discriminate: a variable that the
- * verifying match, not the tree, decides. */
+/* The node for a value this tree does not discriminate: a placeholder edge,
+ * which the verifying match, not the tree, decides. */
 static SubstNode *snode_get_grounded_placeholder(SubstNode *node) {
-    return snode_get_var(node,
-                         g_var_intern ? var_intern(g_var_intern,
-                                                   g_builtin_syms.grounded_placeholder)
-                                      : fresh_var_id(),
-                         g_builtin_syms.grounded_placeholder, NULL);
+    return snode_get_slot(node, SNODE_SLOT_PLACEHOLDER);
 }
 
 static SubstNode *snode_insert_atom(SubstNode *node, Atom *a, unsigned depth,
-                                    CettaIndexExpansionBudget *budget) {
+                                    CettaIndexExpansionBudget *budget,
+                                    SnodeSlotNames *names) {
     if (!node || !a) return NULL;
     if (a->kind == ATOM_EXPR &&
         !cetta_index_expand_expression(budget, depth, a->expr.len))
@@ -456,7 +496,7 @@ static SubstNode *snode_insert_atom(SubstNode *node, Atom *a, unsigned depth,
     switch (a->kind) {
     case ATOM_SYMBOL: return snode_get_sym(node, a->sym_id);
     case ATOM_VAR:
-        return snode_get_var(node, a->var_id, a->sym_id, a->name_key);
+        return snode_get_var(node, names, a->var_id);
     case ATOM_GROUNDED:
         if (a->ground.gkind == GV_INT) return snode_get_int(node, a->ground.ival);
         if (a->ground.gkind == GV_STRING || a->ground.gkind == GV_BIGINT ||
@@ -474,11 +514,7 @@ static SubstNode *snode_insert_atom(SubstNode *node, Atom *a, unsigned depth,
                                          : atom_rational_cstr(a));
             return snode_get_sym(node, string_id);
         }
-        return snode_get_var(node,
-                             g_var_intern ? var_intern(g_var_intern,
-                                                       g_builtin_syms.grounded_placeholder)
-                                          : fresh_var_id(),
-                             g_builtin_syms.grounded_placeholder, NULL);
+        return snode_get_grounded_placeholder(node);
     case ATOM_EXPR: {
         /* A list pattern meets lists of many lengths: like an unindexed
          * grounded value it is a placeholder here, and the verifying match
@@ -487,7 +523,8 @@ static SubstNode *snode_insert_atom(SubstNode *node, Atom *a, unsigned depth,
             return snode_get_grounded_placeholder(node);
         SubstNode *cur = snode_get_expr(node, a->expr.len);
         for (CettaExprIndex i = 0; i < a->expr.len; i++)
-            cur = snode_insert_atom(cur, a->expr.elems[i], depth + 1u, budget);
+            cur = snode_insert_atom(cur, a->expr.elems[i], depth + 1u, budget,
+                                    names);
         return cur;
     }
     }
@@ -497,7 +534,8 @@ static SubstNode *snode_insert_atom(SubstNode *node, Atom *a, unsigned depth,
 static SubstNode *snode_insert_atom_id(SubstNode *node,
                                        const TermUniverse *universe,
                                        AtomId atom_id, unsigned depth,
-                                       CettaIndexExpansionBudget *budget) {
+                                       CettaIndexExpansionBudget *budget,
+                                       SnodeSlotNames *names) {
     if (!node || !universe || atom_id == CETTA_ATOM_ID_NONE ||
         !tu_hdr(universe, atom_id)) {
         return NULL;
@@ -510,19 +548,8 @@ static SubstNode *snode_insert_atom_id(SubstNode *node,
     switch (tu_kind(universe, atom_id)) {
     case ATOM_SYMBOL:
         return snode_get_sym(node, tu_sym(universe, atom_id));
-    case ATOM_VAR: {
-        AtomId name_key_id = tu_var_name_key_id(universe, atom_id);
-        if (name_key_id == CETTA_ATOM_ID_NONE) {
-            return snode_get_var(node, tu_var_id(universe, atom_id),
-                                 tu_sym(universe, atom_id), NULL);
-        }
-        Atom *name_key = term_universe_get_atom(
-            (TermUniverse *)universe, name_key_id);
-        return name_key
-            ? snode_get_var(node, tu_var_id(universe, atom_id),
-                            SYMBOL_ID_NONE, name_key)
-            : NULL;
-    }
+    case ATOM_VAR:
+        return snode_get_var(node, names, tu_var_id(universe, atom_id));
     case ATOM_GROUNDED:
         if (tu_ground_kind(universe, atom_id) == GV_INT)
             return snode_get_int(node, tu_int(universe, atom_id));
@@ -545,11 +572,7 @@ static SubstNode *snode_insert_atom_id(SubstNode *node,
                           : tu_rational_cstr(universe, atom_id));
             return snode_get_sym(node, string_id);
         }
-        return snode_get_var(node,
-                             g_var_intern ? var_intern(g_var_intern,
-                                                       g_builtin_syms.grounded_placeholder)
-                                          : fresh_var_id(),
-                             g_builtin_syms.grounded_placeholder, NULL);
+        return snode_get_grounded_placeholder(node);
     case ATOM_EXPR: {
         if (tu_arity(universe, atom_id) > 0u &&
             tu_internal_tag(universe, tu_child(universe, atom_id, 0u)) ==
@@ -558,7 +581,8 @@ static SubstNode *snode_insert_atom_id(SubstNode *node,
         SubstNode *cur = snode_get_expr(node, tu_arity(universe, atom_id));
         for (CettaExprIndex i = 0; i < tu_arity(universe, atom_id); i++) {
             AtomId child_id = tu_child(universe, atom_id, i);
-            cur = snode_insert_atom_id(cur, universe, child_id, depth + 1u, budget);
+            cur = snode_insert_atom_id(cur, universe, child_id, depth + 1u,
+                                       budget, names);
             if (!cur)
                 return NULL;
         }
@@ -636,36 +660,35 @@ void stree_bucket_free(SubstBucket *bucket) {
     bucket->count = 0;
 }
 
+/* A row is filed by its position alone, whether or not it has variables:
+ * its consumer renames it apart for each use, so the tree holds no frame
+ * identity for it. */
 void stree_bucket_insert(SubstBucket *bucket, Atom *atom, CettaIndex atom_idx) {
-    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
-    /* Ground rows have no variables to standardize apart. Retaining one
-     * activation identity per such row makes a large fact index consume the
-     * finite frame inventory without introducing any variable scope. */
-    CettaFrameIdentity epoch = CETTA_FRAME_IDENTITY_NONE;
-    if (atom_has_vars(atom) && !cetta_frame_identity_scope_try(&frame_identity_scope, &epoch))
-        return;
     if (!bucket->root) bucket->root = snode_new();
     CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
-    SubstNode *leaf = snode_insert_atom(bucket->root, atom, 0u, &budget);
-    snode_add_leaf(leaf, atom_idx, epoch);
+    SnodeSlotNames names;
+    snode_slot_names_init(&names);
+    SubstNode *leaf = snode_insert_atom(bucket->root, atom, 0u, &budget, &names);
+    snode_slot_names_free(&names);
+    snode_add_leaf(leaf, atom_idx);
     bucket->count++;
 }
 
 bool stree_bucket_insert_id(SubstBucket *bucket, const TermUniverse *universe,
                             AtomId atom_id, CettaIndex atom_idx) {
-                                CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     if (!bucket || !universe || atom_id == CETTA_ATOM_ID_NONE)
-        return false;
-    CettaFrameIdentity epoch = CETTA_FRAME_IDENTITY_NONE;
-    if (tu_has_vars(universe, atom_id) && !cetta_frame_identity_scope_try(&frame_identity_scope, &epoch))
         return false;
     if (!bucket->root)
         bucket->root = snode_new();
     CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
-    SubstNode *leaf = snode_insert_atom_id(bucket->root, universe, atom_id, 0u, &budget);
+    SnodeSlotNames names;
+    snode_slot_names_init(&names);
+    SubstNode *leaf = snode_insert_atom_id(bucket->root, universe, atom_id, 0u,
+                                           &budget, &names);
+    snode_slot_names_free(&names);
     if (!leaf)
         return false;
-    snode_add_leaf(leaf, atom_idx, epoch);
+    snode_add_leaf(leaf, atom_idx);
     bucket->count++;
     return true;
 }
@@ -703,7 +726,12 @@ static SubstNode *stree_leaf_node_id(SubstTree *t, const TermUniverse *universe,
         return NULL;
     *bucket_out = bucket;
     CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
-    return snode_insert_atom_id(bucket->root, universe, atom_id, 0u, &budget);
+    SnodeSlotNames names;
+    snode_slot_names_init(&names);
+    SubstNode *leaf = snode_insert_atom_id(bucket->root, universe, atom_id, 0u,
+                                           &budget, &names);
+    snode_slot_names_free(&names);
+    return leaf;
 }
 
 bool stree_remove_id(SubstTree *t, const TermUniverse *universe,
@@ -711,10 +739,8 @@ bool stree_remove_id(SubstTree *t, const TermUniverse *universe,
     SubstBucket *bucket = NULL;
     SubstNode *leaf = stree_leaf_node_id(t, universe, atom_id, &bucket);
     for (CettaIndex i = 0u; leaf && i < leaf->nleaves; i++) {
-        if (leaf->leaves[i].idx != idx)
+        if (leaf->leaves[i] != idx)
             continue;
-        if (leaf->leaves[i].owns_identity)
-            cetta_frame_identity_release(leaf->leaves[i].epoch);
         leaf->leaves[i] = leaf->leaves[--leaf->nleaves];
         bucket->count--;
         return true;
@@ -727,9 +753,9 @@ bool stree_relabel_id(SubstTree *t, const TermUniverse *universe,
     SubstBucket *bucket = NULL;
     SubstNode *leaf = stree_leaf_node_id(t, universe, atom_id, &bucket);
     for (CettaIndex i = 0u; leaf && i < leaf->nleaves; i++) {
-        if (leaf->leaves[i].idx != from)
+        if (leaf->leaves[i] != from)
             continue;
-        leaf->leaves[i].idx = to;
+        leaf->leaves[i] = to;
         return true;
     }
     return false;
@@ -758,48 +784,26 @@ void smset_free(SubstMatchSet *s) {
     s->cap = 1;
 }
 
-static void smset_push_move(SubstMatchSet *s, CettaIndex atom_idx, CettaFrameIdentity epoch,
-                            Bindings *b) {
-    if (s->len >= s->cap) {
-        CettaIndex next_cap = s->cap ? s->cap * 2 : 8;
-        size_t next_bytes = sizeof(SubstMatch) * (size_t)next_cap;
-        if (s->items == s->inline_items) {
-            SubstMatch *next = cetta_malloc(next_bytes);
-            if (s->len > 0)
-                memcpy(next, s->items, sizeof(SubstMatch) * (size_t)s->len);
-            s->items = next;
-        } else {
-            s->items = cetta_realloc(s->items, next_bytes);
-        }
-        cetta_runtime_stats_add(
-            CETTA_RUNTIME_COUNTER_QUERY_SUBST_MATCHSET_HEAP_BYTES,
-            (uint64_t)next_bytes);
-        s->cap = next_cap;
-    }
-    s->items[s->len].atom_idx = atom_idx;
-    s->items[s->len].epoch = epoch;
-    s->items[s->len].owns_identity = cetta_frame_identity_retain(epoch);
-    bindings_move(&s->items[s->len].bindings, b);
-    s->items[s->len].exact = false;
-    s->len++;
-}
-
 /* ── Retrieval ─────────────────────────────────────────────────────────── *
  *
- * Phase 1 strategy (simple, correct, no continuation-passing):
- *
- * Use the SubstTree as a BETTER DiscNode — the tree walk filters
- * candidates and produces INDEXED-SIDE variable bindings. But for
- * query-side variables, we still fall back to extracting sub-atoms
- * from the original atom at leaf time.
- *
- * This already eliminates rename_vars (epoch-tagging instead) and
- * produces partial bindings during the walk (no separate match_atoms
- * for indexed variables). The remaining match_atoms work is only for
- * query variables hitting indexed expressions — resolved at the leaf.
- *
- * Phase 2 would eliminate even that by doing the full walk without
- * any leaf-time extraction.                                              */
+ * The walk follows the flattened query through the tree.  A symbol, an
+ * integer or an arity must agree with the indexed term; a query variable
+ * skips one indexed subterm and keeps nothing; a placeholder meets any query
+ * subterm.  A new slot keeps the query subterm it meets, and the slot met
+ * again unifies that subterm with the one it meets now, in a table of the
+ * query's own variables: every equation the walk imposes holds under any
+ * unifier of the query with the row renamed apart, so the walk loses no row
+ * that unifies.  The leaves the walk reaches are the selected rows.  The
+ * table only decides the walk: its bindings never leave it, since every
+ * consumer matches each selected row again, renamed apart for that use (the
+ * complete check, occurs included).                                      */
+
+/* The positions a walk selects: the caller's growable vector. */
+typedef struct {
+    CettaIndex **items;
+    CettaIndex *len;
+    CettaIndex *cap;
+} StreeRows;
 
 /* Flat token for depth-first query encoding */
 typedef struct {
@@ -809,40 +813,50 @@ typedef struct {
     Atom *original;
 } FlatToken;
 
-/* Forward declarations for mutual recursion */
-static void st_flat_walk(SubstNode *node, FlatToken *flat, CettaIndex nflat,
-                         CettaIndex idx, BindingsBuilder *bb, Arena *a,
-                         Atom **atoms, SubstMatchSet *out);
-static void st_flat_skip(SubstNode *node, CettaIndex remaining,
-                         FlatToken *flat, CettaIndex nflat, CettaIndex resume_idx,
-                         BindingsBuilder *bb, Arena *a, Atom **atoms,
-                         SubstMatchSet *out);
+/* A walk: the flattened query, the query subterm each slot numbered on the
+ * current path first met (NULL where it met none, under a query variable),
+ * and the table that unifies what a slot meets again, which holds the
+ * query's variables only. */
+enum { STREE_WALK_INLINE_SLOTS = 16u };
 
-/* Collect leaves: epoch-tag variable names, check occurs, push results */
-static void st_collect(SubstNode *node, BindingsBuilder *bb, Arena *a,
-                       Atom **atoms, SubstMatchSet *out) {
-    (void)atoms;
-    (void)a;
-    const Bindings *current = bindings_builder_bindings(bb);
-    for (CettaIndex li = 0; li < node->nleaves; li++) {
-        Bindings tagged;
-        if (!bindings_clone(&tagged, current))
-            continue;
-        CettaFrameIdentity epoch = node->leaves[li].epoch;
-        /* Epoch-tag indexed-side variable ids */
-        if (!bindings_prepare_logical_write(&tagged)) {
-            bindings_free(&tagged);
-            continue;
-        }
-        for (uint32_t bi = 0; bi < tagged.len; bi++) {
-            tagged.entries[bi].var_id =
-                var_epoch_id(tagged.entries[bi].var_id, epoch);
-        }
-        if (bindings_invalidate_after_key_rewrite(&tagged) &&
-            !bindings_has_loop(&tagged))
-            smset_push_move(out, node->leaves[li].idx, epoch, &tagged);
-        bindings_free(&tagged);
+typedef struct {
+    FlatToken *flat;
+    CettaIndex nflat;
+    Atom **slot_value;      /* slot_inline until a path numbers more slots */
+    uint32_t nslot, cslot;
+    Atom *slot_inline[STREE_WALK_INLINE_SLOTS];
+    BindingsBuilder bb;
+    Arena *a;
+    StreeRows out;
+} StreeWalk;
+
+/* Forward declarations for mutual recursion */
+static void st_flat_walk(SubstNode *node, CettaIndex idx, StreeWalk *w);
+static void st_flat_skip(SubstNode *node, CettaIndex remaining,
+                         CettaIndex resume_idx, StreeWalk *w);
+
+/* Collect leaves: the rows filed under a node the whole query reached. */
+static void st_collect(SubstNode *node, StreeRows *out) {
+    if (node->nleaves == 0u)
+        return;
+    if (node->nleaves > *out->cap - *out->len) {
+        CettaIndex need = *out->len + node->nleaves;
+        CettaIndex next_cap = *out->cap ? *out->cap : 16u;
+        while (next_cap < need)
+            next_cap *= 2u;
+        size_t next_bytes = sizeof(CettaIndex) * (size_t)next_cap;
+        CettaIndex *next = cetta_realloc(*out->items, next_bytes);
+        if (!next)
+            return;
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_QUERY_SUBST_MATCHSET_HEAP_BYTES,
+            (uint64_t)next_bytes);
+        *out->items = next;
+        *out->cap = next_cap;
     }
+    memcpy(*out->items + *out->len, node->leaves,
+           sizeof(CettaIndex) * (size_t)node->nleaves);
+    *out->len += node->nleaves;
 }
 
 /* ── Flat-sequence retrieval ──────────────────────────────────────────── */
@@ -928,14 +942,11 @@ static CettaIndex flatten_atom(Atom *a, FlatToken *buf, CettaIndex pos) {
     return pos;
 }
 
-/* Float facts sit on a variable branch.  An integer fact sits on its
+/* Float facts sit on a placeholder edge.  An integer fact sits on its
  * integer branch, so an HE float query also follows every integer key
- * that promotes equal to it.  PeTTa stays on the variable branch only. */
+ * that promotes equal to it.  PeTTa stays on the placeholder edge only. */
 static void st_follow_he_float_ints(SubstNode *node, double fval,
-                                   FlatToken *flat, CettaIndex nflat,
-                                   CettaIndex idx, BindingsBuilder *bb,
-                                   Arena *a, Atom **atoms,
-                                   SubstMatchSet *out) {
+                                    CettaIndex idx, StreeWalk *w) {
     int64_t exact = 0;
     CettaHeFloatIntBranches mode = cetta_he_float_int_branches(fval, &exact);
     if (!node || mode == CETTA_HE_FLOAT_INTS_NONE)
@@ -953,7 +964,7 @@ static void st_follow_he_float_ints(SubstNode *node, double fval,
             }
         }
         if (match)
-            st_flat_walk(match, flat, nflat, idx + 1, bb, a, atoms, out);
+            st_flat_walk(match, idx + 1, w);
         return;
     }
     if (node->int_hashed) {
@@ -965,25 +976,21 @@ static void st_follow_he_float_ints(SubstNode *node, double fval,
             if (cetta_he_promoted_kind_equal(
                     GV_FLOAT, 0, fval, GV_INT,
                     node->int_ht.entries[i].val, 0.0))
-                st_flat_walk(child, flat, nflat, idx + 1, bb, a, atoms, out);
+                st_flat_walk(child, idx + 1, w);
         }
         return;
     }
     for (uint32_t i = 0u; i < node->nints; i++) {
         if (cetta_he_promoted_kind_equal(
                 GV_FLOAT, 0, fval, GV_INT, node->ints[i].val, 0.0))
-            st_flat_walk(node->ints[i].child, flat, nflat, idx + 1,
-                         bb, a, atoms, out);
+            st_flat_walk(node->ints[i].child, idx + 1, w);
     }
 }
 
 /* A bigint or rational fact sits on the symbol branch of its text, so an HE
  * float query also follows the branch of its own exact value, if one exists. */
 static void st_follow_he_float_exact_key(SubstNode *node, double fval,
-                                         FlatToken *flat, CettaIndex nflat,
-                                         CettaIndex idx, BindingsBuilder *bb,
-                                         Arena *a, Atom **atoms,
-                                         SubstMatchSet *out) {
+                                         CettaIndex idx, StreeWalk *w) {
     if (!atomic_load_explicit(&g_st_exact_number_keys, memory_order_acquire) ||
         (node->nsym == 0u && !node->sym_hashed))
         return;
@@ -997,187 +1004,191 @@ static void st_follow_he_float_exact_key(SubstNode *node, double fval,
     if (node->sym_hashed) {
         SubstNode *match = sym_ht_get(&node->sym_ht, key);
         if (match)
-            st_flat_walk(match, flat, nflat, idx + 1, bb, a, atoms, out);
+            st_flat_walk(match, idx + 1, w);
         return;
     }
     for (uint32_t i = 0; i < node->nsym; i++)
         if (node->sym[i].key == key)
-            st_flat_walk(node->sym[i].child, flat, nflat, idx + 1,
-                         bb, a, atoms, out);
+            st_flat_walk(node->sym[i].child, idx + 1, w);
 }
 
-static bool st_bind_indexed_var(BindingsBuilder *bb, Arena *a,
-                                VarId var_id, SymbolId spelling,
-                                Atom *name_key, Atom *value) {
-    /* A placeholder stands for a value the tree does not discriminate; it
-     * binds nothing, and one atom may hold several.  The verifying match
-     * decides it. */
-    if (spelling == g_builtin_syms.grounded_placeholder && !name_key)
-        return true;
-    Atom *var = atom_var_with_presentation(
-        a, spelling, name_key, var_id);
-    return var && bindings_builder_add_var_fresh(bb, var, value);
+/* Number the next slot on this path, which first met VALUE. */
+static bool st_push_slot(StreeWalk *w, Atom *value) {
+    if (w->nslot == w->cslot) {
+        uint32_t capacity = w->cslot * 2u;
+        bool inline_table = w->slot_value == w->slot_inline;
+        Atom **grown = cetta_realloc(inline_table ? NULL : w->slot_value,
+                                     sizeof(*grown) * capacity);
+        if (!grown)
+            return false;
+        if (inline_table)
+            memcpy(grown, w->slot_inline, sizeof(*grown) * w->nslot);
+        w->slot_value = grown;
+        w->cslot = capacity;
+    }
+    w->slot_value[w->nslot++] = value;
+    return true;
 }
 
-/* Walk flat token sequence through the tree. idx = current position in flat[].
-   When idx == nflat, we've matched the full query — collect leaves. */
-static void st_flat_walk(SubstNode *node, FlatToken *flat, CettaIndex nflat,
-                         CettaIndex idx, BindingsBuilder *bb, Arena *a,
-                         Atom **atoms, SubstMatchSet *out) {
+/* Follow the slot edge EDGE to CHILD where it meets VALUE, the query subterm
+ * at this position (NULL under a query variable), and walk on from NEXT. */
+static void st_follow_slot(SubstNode *child, uint32_t edge, Atom *value,
+                           CettaIndex next, StreeWalk *w) {
+    if (edge == SNODE_SLOT_PLACEHOLDER) {
+        st_flat_walk(child, next, w);
+        return;
+    }
+    if (edge == SNODE_SLOT_NEW) {
+        if (!st_push_slot(w, value))
+            return;
+        st_flat_walk(child, next, w);
+        w->nslot--;
+        return;
+    }
+    uint32_t k = edge - 1u;
+    if (k >= w->nslot)
+        return;
+    Atom *first = w->slot_value[k];
+    if (!first || !value) {
+        /* Nothing to compare yet: the slot keeps what it meets first. */
+        w->slot_value[k] = first ? first : value;
+        st_flat_walk(child, next, w);
+        w->slot_value[k] = first;
+        return;
+    }
+#ifdef STREE_MUTANT_IGNORE_REPEATED_SLOTS
+    /* The unit test's mutant: a walk that never compares a repeated slot
+     * selects every row that unifies and more; the test must tell. */
+    st_flat_walk(child, next, w);
+#else
+    uint32_t mark = bindings_builder_save(&w->bb);
+    if (match_atoms_builder(first, value, &w->bb, w->a))
+        st_flat_walk(child, next, w);
+    bindings_builder_rollback(&w->bb, mark);
+#endif
+}
+
+/* The index of the token after the subterm that starts at IDX. */
+static CettaIndex st_subterm_end(const StreeWalk *w, CettaIndex idx) {
+    CettaIndex end = idx + 1;
+    CettaIndex depth = w->flat[idx].kind == FT_EXPR ? w->flat[idx].arity : 0u;
+    while (depth > 0 && end < w->nflat) {
+        if (w->flat[end].kind == FT_EXPR) depth += w->flat[end].arity;
+        depth--;
+        end++;
+    }
+    return end;
+}
+
+/* Walk the flat query through the tree from IDX.  When IDX reaches the end,
+ * the whole query has met the node: collect its leaves. */
+static void st_flat_walk(SubstNode *node, CettaIndex idx, StreeWalk *w) {
     if (!node) return;
-    if (idx == nflat) {
-        st_collect(node, bb, a, atoms, out);
+    if (idx == w->nflat) {
+        st_collect(node, &w->out);
         return;
     }
 
-    FlatToken *tok = &flat[idx];
+    FlatToken *tok = &w->flat[idx];
 
     switch (tok->kind) {
     case FT_SYM:
         if (node->sym_hashed) {
             SubstNode *match = sym_ht_get(&node->sym_ht, tok->sym_id);
             if (match)
-                st_flat_walk(match, flat, nflat, idx+1, bb, a, atoms, out);
+                st_flat_walk(match, idx + 1, w);
         } else {
             for (uint32_t i = 0; i < node->nsym; i++)
                 if (node->sym[i].key == tok->sym_id)
-                    st_flat_walk(node->sym[i].child, flat, nflat, idx+1,
-                                 bb, a, atoms, out);
+                    st_flat_walk(node->sym[i].child, idx + 1, w);
         }
-        /* Indexed variable matches query symbol */
-        for (uint32_t i = 0; i < node->nvars; i++) {
-            uint32_t mark = bindings_builder_save(bb);
-            if (st_bind_indexed_var(
-                    bb, a, node->vars[i].var_id, node->vars[i].spelling,
-                    node->vars[i].name_key, tok->original)) {
-                st_flat_walk(node->vars[i].child, flat, nflat, idx+1,
-                             bb, a, atoms, out);
-            }
-            bindings_builder_rollback(bb, mark);
-        }
+        for (uint32_t i = 0; i < node->nslots; i++)
+            st_follow_slot(node->slots[i].child, node->slots[i].edge,
+                           tok->original, idx + 1, w);
         break;
 
     case FT_VAR:
-        /* Query variable matches ANY indexed sub-term.
-           Skip one sub-term in the trie, then resume flat walk at idx+1 */
-        {
-            if (node->sym_hashed) {
-                uint32_t cap = node->sym_ht.mask + 1;
-                for (uint32_t i = 0; i < cap; i++)
-                    if (node->sym_ht.entries[i].key != SYMBOL_ID_NONE)
-                        st_flat_walk(node->sym_ht.entries[i].child, flat, nflat, idx+1,
-                                     bb, a, atoms, out);
-            } else {
-                for (uint32_t i = 0; i < node->nsym; i++)
-                    st_flat_walk(node->sym[i].child, flat, nflat, idx+1,
-                                 bb, a, atoms, out);
-            }
-            for (uint32_t i = 0; i < node->nvars; i++)
-                st_flat_walk(node->vars[i].child, flat, nflat, idx+1,
-                             bb, a, atoms, out);
-            if (node->int_hashed) {
-                uint32_t cap = node->int_ht.mask + 1;
-                for (uint32_t i = 0; i < cap; i++)
-                    if (node->int_ht.entries[i].child)
-                        st_flat_walk(node->int_ht.entries[i].child, flat, nflat,
-                                     idx+1, bb, a, atoms, out);
-            } else {
-                for (uint32_t i = 0; i < node->nints; i++)
-                    st_flat_walk(node->ints[i].child, flat, nflat, idx+1,
-                                 bb, a, atoms, out);
-            }
-            /* Expression branches: skip arity MORE tokens after arity branch */
-            for (uint32_t i = 0; i < node->nexpr; i++)
-                st_flat_skip(node->expr[i].child, node->expr[i].arity,
-                             flat, nflat, idx+1, bb, a, atoms, out);
+        /* A query variable meets any indexed subterm: skip one, keep
+         * nothing, and resume the walk at idx+1. */
+        if (node->sym_hashed) {
+            uint32_t cap = node->sym_ht.mask + 1;
+            for (uint32_t i = 0; i < cap; i++)
+                if (node->sym_ht.entries[i].key != SYMBOL_ID_NONE)
+                    st_flat_walk(node->sym_ht.entries[i].child, idx + 1, w);
+        } else {
+            for (uint32_t i = 0; i < node->nsym; i++)
+                st_flat_walk(node->sym[i].child, idx + 1, w);
         }
+        for (uint32_t i = 0; i < node->nslots; i++)
+            st_follow_slot(node->slots[i].child, node->slots[i].edge,
+                           NULL, idx + 1, w);
+        if (node->int_hashed) {
+            uint32_t cap = node->int_ht.mask + 1;
+            for (uint32_t i = 0; i < cap; i++)
+                if (node->int_ht.entries[i].child)
+                    st_flat_walk(node->int_ht.entries[i].child, idx + 1, w);
+        } else {
+            for (uint32_t i = 0; i < node->nints; i++)
+                st_flat_walk(node->ints[i].child, idx + 1, w);
+        }
+        /* An expression: skip its arity's subterms after the arity branch. */
+        for (uint32_t i = 0; i < node->nexpr; i++)
+            st_flat_skip(node->expr[i].child, node->expr[i].arity, idx + 1, w);
         break;
 
     case FT_INT:
         if (node->int_hashed) {
             SubstNode *match = int_ht_get(&node->int_ht, tok->ival);
             if (match)
-                st_flat_walk(match, flat, nflat, idx+1, bb, a, atoms, out);
+                st_flat_walk(match, idx + 1, w);
         } else {
             for (uint32_t i = 0; i < node->nints; i++)
                 if (node->ints[i].val == tok->ival)
-                    st_flat_walk(node->ints[i].child, flat, nflat, idx+1,
-                                 bb, a, atoms, out);
+                    st_flat_walk(node->ints[i].child, idx + 1, w);
         }
-        for (uint32_t i = 0; i < node->nvars; i++) {
-            uint32_t mark = bindings_builder_save(bb);
-            if (st_bind_indexed_var(
-                    bb, a, node->vars[i].var_id, node->vars[i].spelling,
-                    node->vars[i].name_key, tok->original)) {
-                st_flat_walk(node->vars[i].child, flat, nflat, idx+1,
-                             bb, a, atoms, out);
-            }
-            bindings_builder_rollback(bb, mark);
-        }
+        for (uint32_t i = 0; i < node->nslots; i++)
+            st_follow_slot(node->slots[i].child, node->slots[i].edge,
+                           tok->original, idx + 1, w);
         break;
 
     case FT_EXPR:
-        /* Match arity, continue with children (already flat in the sequence) */
+        /* The arity must agree; its subterms follow in the flat sequence. */
         for (uint32_t i = 0; i < node->nexpr; i++)
             if (node->expr[i].arity == tok->arity)
-                st_flat_walk(node->expr[i].child, flat, nflat, idx+1,
-                             bb, a, atoms, out);
-        /* Indexed variable matches query expression: bind it, skip the expression tokens */
-        for (uint32_t i = 0; i < node->nvars; i++) {
-            uint32_t mark = bindings_builder_save(bb);
-            if (st_bind_indexed_var(
-                    bb, a, node->vars[i].var_id, node->vars[i].spelling,
-                    node->vars[i].name_key, tok->original)) {
-                /* Skip past all tokens of this expression */
-                CettaIndex skip_end = idx + 1;
-                CettaIndex depth = tok->arity;
-                while (depth > 0 && skip_end < nflat) {
-                    if (flat[skip_end].kind == FT_EXPR) depth += flat[skip_end].arity;
-                    depth--;
-                    skip_end++;
-                }
-                st_flat_walk(node->vars[i].child, flat, nflat, skip_end,
-                             bb, a, atoms, out);
-            }
-            bindings_builder_rollback(bb, mark);
+                st_flat_walk(node->expr[i].child, idx + 1, w);
+        /* A slot meets the whole expression: skip its tokens. */
+        if (node->nslots) {
+            CettaIndex end = st_subterm_end(w, idx);
+            for (uint32_t i = 0; i < node->nslots; i++)
+                st_follow_slot(node->slots[i].child, node->slots[i].edge,
+                               tok->original, end, w);
         }
         break;
 
     case FT_GROUNDED_OTHER:
-        /* Treat as wildcard — match any indexed variable */
-        for (uint32_t i = 0; i < node->nvars; i++) {
-            uint32_t mark = bindings_builder_save(bb);
-            if (st_bind_indexed_var(
-                    bb, a, node->vars[i].var_id, node->vars[i].spelling,
-                    node->vars[i].name_key, tok->original)) {
-                st_flat_walk(node->vars[i].child, flat, nflat, idx+1,
-                             bb, a, atoms, out);
-            }
-            bindings_builder_rollback(bb, mark);
-        }
+        /* A value the tree does not discriminate meets the slots. */
+        for (uint32_t i = 0; i < node->nslots; i++)
+            st_follow_slot(node->slots[i].child, node->slots[i].edge,
+                           tok->original, idx + 1, w);
         if (tok->original &&
             tok->original->kind == ATOM_GROUNDED &&
             tok->original->ground.gkind == GV_FLOAT)
         {
-            st_follow_he_float_ints(
-                node, tok->original->ground.fval, flat, nflat, idx,
-                bb, a, atoms, out);
-            st_follow_he_float_exact_key(
-                node, tok->original->ground.fval, flat, nflat, idx,
-                bb, a, atoms, out);
+            st_follow_he_float_ints(node, tok->original->ground.fval, idx, w);
+            st_follow_he_float_exact_key(node, tok->original->ground.fval,
+                                         idx, w);
         }
         break;
     }
 }
 
-/* Skip `remaining` indexed sub-terms in the flat walk, then resume */
+/* Skip REMAINING indexed subterms under a query variable, then resume the
+ * walk at RESUME_IDX.  Slots numbered inside them met no query subterm. */
 static void st_flat_skip(SubstNode *node, CettaIndex remaining,
-                         FlatToken *flat, CettaIndex nflat, CettaIndex resume_idx,
-                         BindingsBuilder *bb, Arena *a, Atom **atoms,
-                         SubstMatchSet *out) {
+                         CettaIndex resume_idx, StreeWalk *w) {
     if (!node) return;
     if (remaining == 0) {
-        st_flat_walk(node, flat, nflat, resume_idx, bb, a, atoms, out);
+        st_flat_walk(node, resume_idx, w);
         return;
     }
     if (node->sym_hashed) {
@@ -1185,35 +1196,41 @@ static void st_flat_skip(SubstNode *node, CettaIndex remaining,
         for (uint32_t i = 0; i < cap; i++)
             if (node->sym_ht.entries[i].key != SYMBOL_ID_NONE)
                 st_flat_skip(node->sym_ht.entries[i].child, remaining - 1,
-                             flat, nflat, resume_idx, bb, a, atoms, out);
+                             resume_idx, w);
     } else {
         for (uint32_t i = 0; i < node->nsym; i++)
-            st_flat_skip(node->sym[i].child, remaining - 1,
-                         flat, nflat, resume_idx, bb, a, atoms, out);
+            st_flat_skip(node->sym[i].child, remaining - 1, resume_idx, w);
     }
-    for (uint32_t i = 0; i < node->nvars; i++)
-        st_flat_skip(node->vars[i].child, remaining - 1,
-                     flat, nflat, resume_idx, bb, a, atoms, out);
+    for (uint32_t i = 0; i < node->nslots; i++) {
+        if (node->slots[i].edge == SNODE_SLOT_NEW) {
+            if (!st_push_slot(w, NULL))
+                continue;
+            st_flat_skip(node->slots[i].child, remaining - 1, resume_idx, w);
+            w->nslot--;
+        } else {
+            st_flat_skip(node->slots[i].child, remaining - 1, resume_idx, w);
+        }
+    }
     if (node->int_hashed) {
         uint32_t cap = node->int_ht.mask + 1;
         for (uint32_t i = 0; i < cap; i++)
             if (node->int_ht.entries[i].child)
                 st_flat_skip(node->int_ht.entries[i].child, remaining - 1,
-                             flat, nflat, resume_idx, bb, a, atoms, out);
+                             resume_idx, w);
     } else {
         for (uint32_t i = 0; i < node->nints; i++)
-            st_flat_skip(node->ints[i].child, remaining - 1,
-                         flat, nflat, resume_idx, bb, a, atoms, out);
+            st_flat_skip(node->ints[i].child, remaining - 1, resume_idx, w);
     }
     for (uint32_t i = 0; i < node->nexpr; i++)
         st_flat_skip(node->expr[i].child, remaining - 1 + node->expr[i].arity,
-                     flat, nflat, resume_idx, bb, a, atoms, out);
+                     resume_idx, w);
 }
 
 /* ── Bucket-level query ────────────────────────────────────────────────── */
 
 void stree_query_bucket(SubstBucket *bucket, Arena *a, Atom *query,
-                        Atom **space_atoms, SubstMatchSet *out) {
+                        CettaIndex **rows, CettaIndex *nrows,
+                        CettaIndex *crows) {
     if (!bucket->root || bucket->count == 0) return;
     CettaIndex nflat = 0;
     if (!flat_token_count(query, &nflat) || nflat == 0)
@@ -1223,12 +1240,21 @@ void stree_query_bucket(SubstBucket *bucket, Arena *a, Atom *query,
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_SUBST_FLAT_HEAP_BYTES,
                             (uint64_t)flat_bytes);
     flatten_atom(query, flat, 0);
-    BindingsBuilder bb;
-    if (!bindings_builder_init(&bb, NULL)) {
+    StreeWalk w = {
+        .flat = flat,
+        .nflat = nflat,
+        .cslot = STREE_WALK_INLINE_SLOTS,
+        .a = a,
+        .out = {.items = rows, .len = nrows, .cap = crows},
+    };
+    w.slot_value = w.slot_inline;
+    if (!bindings_builder_init(&w.bb, NULL)) {
         free(flat);
         return;
     }
-    st_flat_walk(bucket->root, flat, nflat, 0, &bb, a, space_atoms, out);
-    bindings_builder_free(&bb);
+    st_flat_walk(bucket->root, 0, &w);
+    bindings_builder_free(&w.bb);
+    if (w.slot_value != w.slot_inline)
+        free(w.slot_value);
     free(flat);
 }

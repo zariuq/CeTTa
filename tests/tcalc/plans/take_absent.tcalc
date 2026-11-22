@@ -1,0 +1,5 @@
+; Step one: a take, a read and an absence.  The absence reads its pattern's
+; rows by the probe of its check, keyed by the token the take binds, and is
+; decided as soon as the take is met.
+(step one)
+(rule move (take (at $p)) (read (edge $p $q)) (absent (blocked $p)) (make (at $q)))

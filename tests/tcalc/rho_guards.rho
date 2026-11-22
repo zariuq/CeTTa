@@ -1,0 +1,7 @@
+// profile: step=one
+// The guards of a receive: $x != $y is tcalc's /=, $x < $y and $x <= $y order
+// integers.  A pair passes when its sides differ and the first is below the
+// second, or when the first is at most 0.
+pair!(1, 2) | pair!(2, 2) | pair!(3, 1) | pair!(0, 0) |
+for ($x, $y <= pair where $x != $y and $x < $y) { rising!($x, $y) } |
+for ($x, $y <= pair where $x <= 0) { low!($x) }

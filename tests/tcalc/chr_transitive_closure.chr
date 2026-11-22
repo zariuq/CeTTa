@@ -1,0 +1,8 @@
+% Transitive closure (transitive_closure.tcalc) in CHR notation.  Propagation
+% rules read their heads.  CHR fires a propagation rule once per match by its
+% propagation history; here the set store plays that part, since a firing
+% that makes only rows already present is no step.
+:- store(set).
+edge(a, b). edge(b, c). edge(c, d).
+base @ edge(X, Y) ==> path(X, Y).
+step @ path(X, Y), edge(Y, Z) ==> path(X, Z).

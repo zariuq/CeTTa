@@ -1,0 +1,7 @@
+(cesta-export/1 (header CETTA_TCALC_AXES_ENUMS_GENERATED_H) (profile c11)
+ (table-enum "../../lib/transform_axes.data" Steps (enum TcStep) (prefix TC_STEP_) (id id) (name code) (count TC_STEP_COUNT))
+ (table-enum "../../lib/transform_axes.data" Asks (enum TcAsk) (prefix TC_ASK_) (id id) (name code) (count TC_ASK_COUNT))
+ (table-enum "../../lib/transform_axes.data" Stores (enum TcStore) (prefix TC_STORE_) (id id) (name code) (count TC_STORE_COUNT))
+ (table-enum "../../lib/transform_axes.data" Matches (enum TcMatches) (prefix TC_MATCHES_) (id id) (name code) (count TC_MATCHES_COUNT))
+ (table-enum "tcalc_axes.data" Backends (enum TcBackend) (prefix TC_BACKEND_) (id id) (name code) (count TC_BACKEND_COUNT))
+ (table-enum "tcalc_axes.data" Observes (enum TcObserve) (prefix TC_OBSERVE_) (id id) (name code) (count TC_OBSERVE_COUNT)))

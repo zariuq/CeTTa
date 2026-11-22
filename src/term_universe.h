@@ -2,6 +2,7 @@
 #define CETTA_TERM_UNIVERSE_H
 
 #include "atom.h"
+#include "shared_transition.h"
 #include <stddef.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -388,6 +389,18 @@ struct TermUniverse {
     uint64_t diag_atom_id_capacity_override;
     uint64_t diag_logical_atom_id_base_override;
 #endif
+    /* Concurrent use (shared_transition.h).  Interning is monotone: inside a
+     * concurrent scope an operation that adds to the universe, decodes into
+     * it or searches its tables holds this leaf lock, and the readers of
+     * stored terms (record headers, scalar fields, decoded atoms) take no
+     * lock.  Those readers reach the entries, the record pool and the
+     * decoded pages through pointers published after their contents; an
+     * array grown while any thread is in a concurrent scope is replaced and
+     * its old copy kept in `retired` until no thread is in one, so a reader
+     * holding the old copy reads what it held. */
+    CettaLeafRwLock concurrent;
+    void **retired;
+    size_t retired_len, retired_cap;
 };
 
 /* A process-local capability for one stored root in one TermUniverse
@@ -492,6 +505,33 @@ static inline size_t term_universe_entry_offset(const TermEntry *entry) {
     return (size_t)entry->record * CETTA_TERM_ENTRY_ALIGN;
 }
 
+static inline const TermEntry *tu_entry_at(const TermUniverse *universe,
+                                           size_t idx) {
+    return &universe->entries[idx];
+}
+
+static inline TermEntry *tu_entry_mut(TermUniverse *universe, size_t idx) {
+    return &universe->entries[idx];
+}
+
+static inline const uint8_t *tu_record_ptr(const TermUniverse *universe,
+                                           uint32_t record) {
+    return universe->blob_pool + ((size_t)record * CETTA_TERM_ENTRY_ALIGN);
+}
+
+static inline uint8_t *tu_record_ptr_mut(TermUniverse *universe,
+                                         uint32_t record) {
+    return universe->blob_pool + ((size_t)record * CETTA_TERM_ENTRY_ALIGN);
+}
+
+static inline bool tu_entry_has_blob_at(const TermUniverse *universe,
+                                        AtomId id) {
+    if (!universe || id >= __atomic_load_n(&universe->len, __ATOMIC_ACQUIRE))
+        return false;
+    return __atomic_load_n(&universe->entries, __ATOMIC_ACQUIRE)[id].record !=
+           CETTA_TERM_ENTRY_BLOB_NONE;
+}
+
 _Static_assert(sizeof(AtomId) == 8, "AtomId must remain 64-bit");
 _Static_assert(sizeof(TermEntry) == 8, "a term entry is eight bytes");
 _Static_assert(CETTA_ATOM_ID_NONE == UINT64_MAX, "AtomId sentinel must stay all-ones");
@@ -584,11 +624,16 @@ static inline void term_universe_release(TermUniverse *universe, AtomId id) {
         term_universe_release_counted(universe, id);
 }
 #else
-/* An id is its entry's index here.  A count that saturates, or a release
- * that reaches zero, takes the general path. */
+/* An id is its entry's index here.  A count that saturates, a release
+ * that reaches zero, or an active concurrent scope takes the general path. */
 static inline void term_universe_hold(TermUniverse *universe, AtomId id) {
-    if (!universe || !universe->counting || id == CETTA_ATOM_ID_NONE ||
-        id >= universe->len)
+    if (!universe || !universe->counting || id == CETTA_ATOM_ID_NONE)
+        return;
+    if (CETTA_COORDINATION_ACTIVE()) {
+        term_universe_hold_counted(universe, id);
+        return;
+    }
+    if (id >= universe->len)
         return;
     uint16_t count = universe->counts[id];
     if (count >= UINT16_MAX - 1u) {
@@ -598,8 +643,13 @@ static inline void term_universe_hold(TermUniverse *universe, AtomId id) {
     universe->counts[id] = (uint16_t)(count + 1u);
 }
 static inline void term_universe_release(TermUniverse *universe, AtomId id) {
-    if (!universe || !universe->counting || id == CETTA_ATOM_ID_NONE ||
-        id >= universe->len)
+    if (!universe || !universe->counting || id == CETTA_ATOM_ID_NONE)
+        return;
+    if (CETTA_COORDINATION_ACTIVE()) {
+        term_universe_release_counted(universe, id);
+        return;
+    }
+    if (id >= universe->len)
         return;
     uint16_t count = universe->counts[id];
     if (count <= 1u || count == UINT16_MAX) {
@@ -705,6 +755,9 @@ AtomId term_universe_store_atom_id(TermUniverse *universe, Arena *fallback,
 AtomId term_universe_store_atom_id_from_source_arena(
     TermUniverse *universe, Arena *fallback, const Arena *source_arena,
     Atom *src);
+/* Store a scoped value with its qualified VarIds intact. */
+AtomId term_universe_store_scoped_atom_id(TermUniverse *universe,
+    const Arena *source_arena, Atom *src);
 AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src);
 /* The entry the view `atom` was read from (term_universe_view_atom), while
  * the universe's instance and epochs are those it was read under, else
@@ -760,6 +813,11 @@ Atom *term_universe_decoded_atom_at(const TermUniverse *universe, AtomId id);
  * take apart (tu_plain_expr), or one nested too deep. */
 Atom *term_universe_view_atom(const TermUniverse *universe, Arena *dst,
                               AtomId id);
+/* The same view for a reader that may never have the entry decoded and
+ * kept for it, however often it reads: a strict space, which keeps nothing
+ * beyond its order.  A decode already kept is still the universe's atom. */
+Atom *term_universe_view_atom_rented(const TermUniverse *universe, Arena *dst,
+                                     AtomId id);
 Atom *term_universe_copy_atom(const TermUniverse *universe, Arena *dst,
                               AtomId id);
 /* Read ordinary symbol leaves while copying a form. The callback's meaning
@@ -801,23 +859,42 @@ SymbolId term_universe_head_sym_unrecorded(const TermUniverse *universe,
 #if defined(__GNUC__)
 __attribute__((always_inline))
 #endif
-static inline const CettaTermHdr *tu_hdr(const TermUniverse *universe,
-                                         AtomId id) {
+static inline const CettaTermHdr *tu_hdr_read(const TermUniverse *universe,
+                                              AtomId id, bool held) {
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS || \
     CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
+    (void)held;
     return term_universe_hdr_checked(universe, id);
 #else
-    /* The sentinel id is past every universe's length. */
-    if (!universe || id >= universe->len)
+    /* The sentinel id is past every universe's length.  Unlocked readers
+     * observe len, then entries, then blob_pool with acquire ordering;
+     * callers holding TU_SECTION read them directly. */
+    if (held) {
+        if (!universe || id >= universe->len)
+            return NULL;
+        uint32_t rec = universe->entries[id].record;
+        if (rec == CETTA_TERM_ENTRY_BLOB_NONE || !universe->blob_pool)
+            return NULL;
+        return (const CettaTermHdr *)(universe->blob_pool +
+                                      (size_t)rec * CETTA_TERM_ENTRY_ALIGN);
+    }
+    if (!universe || id >= __atomic_load_n(&universe->len, __ATOMIC_ACQUIRE))
         return NULL;
-    const TermEntry *entry = &universe->entries[id];
-    size_t off = term_universe_entry_offset(entry);
-    if (entry->record == CETTA_TERM_ENTRY_BLOB_NONE || !universe->blob_pool ||
-        off > universe->blob_len ||
-        sizeof(CettaTermHdr) > universe->blob_len - off)
+    uint32_t rec =
+        __atomic_load_n(&universe->entries, __ATOMIC_ACQUIRE)[id].record;
+    if (rec == CETTA_TERM_ENTRY_BLOB_NONE)
         return NULL;
-    return (const CettaTermHdr *)(universe->blob_pool + off);
+    const uint8_t *pool =
+        __atomic_load_n(&universe->blob_pool, __ATOMIC_ACQUIRE);
+    if (!pool)
+        return NULL;
+    return (const CettaTermHdr *)(pool + (size_t)rec * CETTA_TERM_ENTRY_ALIGN);
 #endif
+}
+
+static inline const CettaTermHdr *tu_hdr(const TermUniverse *universe,
+                                         AtomId id) {
+    return tu_hdr_read(universe, id, false);
 }
 
 static inline AtomKind tu_kind(const TermUniverse *universe, AtomId id) {
@@ -916,17 +993,30 @@ bool tu_has_vars(const TermUniverse *universe, AtomId id);
 /* The record header of `id`, an id read from a record or from a space's
  * rows, which name this universe's entries: only an entry without a record
  * has none.  Checked as tu_hdr checks in builds with collection checks. */
-static inline const CettaTermHdr *tu_hdr_stored(const TermUniverse *universe,
-                                                AtomId id) {
+static inline const CettaTermHdr *tu_hdr_stored_read(
+    const TermUniverse *universe, AtomId id, bool held) {
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS ||     CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
+    (void)held;
     return term_universe_hdr_checked(universe, id);
 #else
-    const TermEntry *entry = &universe->entries[id];
-    return entry->record != CETTA_TERM_ENTRY_BLOB_NONE
-        ? (const CettaTermHdr *)(universe->blob_pool +
-                                 term_universe_entry_offset(entry))
-        : NULL;
+    if (!universe)
+        return NULL;
+    const TermEntry *entries = held
+        ? universe->entries
+        : __atomic_load_n(&universe->entries, __ATOMIC_ACQUIRE);
+    uint32_t rec = entries[id].record;
+    if (rec == CETTA_TERM_ENTRY_BLOB_NONE)
+        return NULL;
+    const uint8_t *pool = held
+        ? universe->blob_pool
+        : __atomic_load_n(&universe->blob_pool, __ATOMIC_ACQUIRE);
+    return (const CettaTermHdr *)(pool + (size_t)rec * CETTA_TERM_ENTRY_ALIGN);
 #endif
+}
+
+static inline const CettaTermHdr *tu_hdr_stored(const TermUniverse *universe,
+                                                AtomId id) {
+    return tu_hdr_stored_read(universe, id, false);
 }
 
 /* The value of the integer whose record header is `hdr`: its eight bytes

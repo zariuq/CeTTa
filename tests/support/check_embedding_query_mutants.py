@@ -12,6 +12,7 @@ def main():
     for option in ("cc", "cppflags", "cflags", "ldflags"):
         parser.add_argument("--" + option, required=True)
     parser.add_argument("--objects", nargs="+", required=True)
+    parser.add_argument("--only-prefix", default="")
     args = parser.parse_args()
     compiler = shlex.split(args.cc)
     flags = shlex.split(args.cppflags) + shlex.split(args.cflags) + ["-Iinclude"]
@@ -85,6 +86,44 @@ def main():
          "if (!result || atom_head_symbol_id(result) != g_builtin_syms.return_text || !he_instruction_complete_function_return(frame, item, result))",
          "integer(value) == 11 && mixed.pulls == 2u"),
     ]
+    cases += [
+        ("petta-provider-input-bindings", "src/petta_search_machine.c",
+         "roots, 3u, &captured) && petta_copy_binding_atoms(&captured, &machine->heap, copy)",
+         "roots, 2u, &captured) && petta_copy_binding_atoms(&captured, &machine->heap, copy)",
+         'bound && atom_is_symbol(bound, "a")'),
+        ("petta-provider-delayed-packet", "src/petta_search_machine.c",
+         "image.delayed = ok && roots[1] ? atom_deep_copy_session_copy(copy, roots[1]) : NULL;",
+         "image.delayed = NULL;",
+         "step == CETTA_QUERY_ANSWER && result->count == 1u"),
+        ("petta-provider-incomplete-cause", "src/petta_search_machine.c",
+         "machine->host.record_completion(machine->host.context, machine->entered_completion);",
+         "(void)machine;",
+         "provider query did not advance"),
+        ("petta-provider-completed-data", "src/petta_search_machine.c",
+         "packet.kind == CETTA_CALL_VALUE &&\n                    packet.result_form == CETTA_CALL_RESULT_EXPRESSION",
+         "packet.kind == CETTA_CALL_VALUE",
+         "term->kind == ATOM_EXPR && term->expr.len == 1u"),
+        ("petta-provider-owned-constraint", "src/petta_search_machine.c",
+         "return petta_machine_start_foreign_provider(machine, ready, destination,\n                    goal.barrier, failure);",
+         'return petta_machine_unify(machine, atom_symbol(&machine->heap, "true"), destination);',
+         "allowed ? answer"),
+    ]
+    # A candidate's captured plan is revalidated against the program clock
+    # when reached (P-DEF-4), so planning its body afresh is the same
+    # projection: no mutant that drops the capture can differ in answers.
+    cases += [
+        ("petta-source-output-opaque", "src/petta_search_machine.c",
+         "if (!projected)\n        return true;\n    *pattern = atom_deep_copy(arena, projected);",
+         "if (!projected) { *pattern = atom_unit(arena); return *pattern != NULL; }\n    *pattern = atom_deep_copy(arena, projected);",
+         "state == expected"),
+        ("petta-source-output-authored-builtin", "src/petta_search_machine.c",
+         "petta_machine_builtin_output_is_open(machine, source, plan)) {",
+         "(false && petta_machine_builtin_output_is_open(machine, source, plan))) {",
+         "state == expected"),
+    ]
+    cases = [case for case in cases if case[0].startswith(args.only_prefix)]
+    if not cases:
+        raise RuntimeError("no mutation matches the requested prefix")
     baseline = Path("src/eval.c").read_text()
     with tempfile.TemporaryDirectory(prefix="embedding-query-mutants-", dir="runtime") as directory:
         root = Path(directory)
@@ -93,7 +132,8 @@ def main():
             if body.count(before) != 1:
                 raise RuntimeError(f"{name}: expected exactly one source anchor")
             changed = body.replace(before, after)
-            if source != "src/eval.c":
+            unit = Path(source).stem if Path(source).suffix == ".c" else "eval"
+            if Path(source).suffix != ".c":
                 anchor = '#include "' + Path(source).name + '"'
                 if baseline.count(anchor) != 1:
                     raise RuntimeError(f"{name}: expected one include")
@@ -105,9 +145,9 @@ def main():
                 control = Path("tests/support/test_he_retained_execution.c").read_text()
                 variant.write_text(control.replace('#include "../../src/eval.c"', changed))
             subprocess.run(compiler + flags + ["-c", str(variant), "-o", str(obj)], check=True)
-            objects = [path for path in args.objects if not Path(path).name.startswith("eval.")]
+            objects = [path for path in args.objects if not Path(path).name.startswith(unit + ".")]
             if len(objects) != len(args.objects) - 1:
-                raise RuntimeError(f"{name}: expected one evaluator object")
+                raise RuntimeError(f"{name}: expected one {unit} object")
             callback = name.startswith("callback-")
             consumer = [] if retirement else ["tests/test_embedding_callbacks.c", "src/embedding.c"] if callback else ["tests/support/test_embedding_query.c"]
             subprocess.run(compiler + flags + [*consumer, str(obj),

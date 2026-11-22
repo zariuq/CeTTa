@@ -1,0 +1,22 @@
+; Guards (check (< A B)) and (check (<= A B)) order integers, and fail on any
+; side that is no integer: here the symbol a and the string "1".  A side
+; written (+ A B) is the exact sum of two integers, so 9223372036854775807 + 1
+; is above every 64-bit integer, not wrapped below.  Positive: (lt 1 2),
+; (le 2 2), (succ-gap 1 3), (big 9223372036854775807 0).  Negative: (lt 2 1),
+; (lt 2 2), (le 3 2), (succ-gap 1 2), (lt a 1), (lt "1" 2), and (big ...)
+; must not pass as below 0.
+(store set)
+(step every)
+(n 1 2)
+(n 2 1)
+(n 2 2)
+(n 3 2)
+(n 1 3)
+(n a 1)
+(n "1" 2)
+(n 9223372036854775807 0)
+(rule lt (read (n $x $y)) (check (< $x $y)) (make (lt $x $y)))
+(rule le (read (n $x $y)) (check (<= $x $y)) (make (le $x $y)))
+(rule succ-gap (read (n $x $y)) (check (< (+ $x 1) $y)) (make (succ-gap $x $y)))
+(rule big (read (n $x $y)) (check (< $y (+ $x 1))) (make (big $x $y)))
+(rule wrapped (read (n $x $y)) (check (< (+ $x 1) $y)) (check (= $y 0)) (make (wrapped $x)))

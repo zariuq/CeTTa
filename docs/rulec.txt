@@ -2,7 +2,8 @@ rulec: compiling rule modules to C through generic components
 ===========================================================
 
 rulec reads a rule module (the core rows that CeTTa's module reader prints: TypeDecl,
-GrammarRuleV2, ScopedRewriteRuleV1) and compiles every judgment of the module into a C procedure.
+GrammarRuleV2, ScopedRewriteRuleV1; or that a front end writes, as the direct GSLT compilers' C
+target does, section 8) and compiles every judgment of the module into a C procedure.
 The module stays the specification.  A binding table may give sorts a native representation and
 may answer judgments by generic components; the rules of every bound judgment stay compiled, as
 the contract, the check, and what another back end can compile instead.
@@ -20,10 +21,12 @@ The wire is the module's core rows, printed by tools/rulec/dump_wire.metta with 
 reader.  rulec builds two layers:
 
   signature   sorts; constructors with argument sorts and a result sort.
-  procedures  every symbol that heads a left side is a judgment; its rules are its dispatch group.
+  procedures  every symbol that heads a left side, or that a row (Judgment NAME) declares, is a
+              judgment; its rules are its dispatch group (a judgment without rules has no result).
               A rule is   "label". vars | premises |- J(patterns) ~> right side ;
               a premise is a call  K(arguments) ~> target, or a query  R(arguments)  of a
-              relation whose rows the host supplies.
+              relation whose rows the host supplies, or that the binding table answers by a test
+              component (section 6).
 
 Functional form.  A right side (or a premise's argument) may contain calls: (J (K x) y) ~> (L (M z)).
 rulec reads them call by value, as premises in A-normal form: every nested call becomes a premise
@@ -43,18 +46,31 @@ are never used; each overlapping pair gets a class, listed in the census:
                          overlap is resolved and no relation query binds a variable);
   exclusive-by-evaluated-guards
                          the premises of both rules, evaluated under the unifier, cannot all hold:
-                         a call has no result, or its value clashes with its target.  A call's
-                         value is what every rule that may apply to it gives (its premises
-                         evaluated the same way); unknown when they differ, when a rule's result
-                         keeps a variable of its own, or at a bound on depth and work;
-  unresolved             neither: the build stops.
-Relations (several answers) are a rule with a relation query that binds a variable; such a query is
-not compiled yet (a query with every argument bound is a test, compiled).
+                         a call has no result, or its value clashes with its target, or the tests
+                         met cannot all hold (a term-equal test unifies its arguments; a
+                         term-different test of two identical terms, an integer test on literals
+                         that does not hold, and a test and its complement on identical arguments
+                         cannot hold).  A call's value is what every rule that may apply to it
+                         gives (its premises evaluated the same way); unknown when they differ, when
+                         a rule's result keeps a variable of its own, or at a bound on depth and
+                         work; failing that, the same after saturation: two premises (of either
+                         rule) calling one single-valued judgment on arguments identical so far
+                         have equal results, so their targets are unified, and a clash makes the
+                         pair exclusive (exclusive-by-targets);
+  unresolved             neither: the judgment may give several answers (nondet, below); with
+                         --functional the build stops.
+A relation query that binds a variable is not compiled (a query with every argument bound is a test,
+compiled).
 
-Modes and determinism.  Every judgment is used in the mode (in, ..., in) -> out.  A judgment is
-det when its group covers every input and every premise calls a det judgment with a target that
-cannot fail (greatest fixpoint); otherwise semidet (at most one result: every overlap resolved).
-The census (--census) lists each judgment's rules, class, coverage, DAG size and layer.
+Modes and determinism.  Every judgment is used in the mode (in, ..., in) -> out, and its determinism
+is inferred.  It is nondet (any number of results) when it has an overlap not shown exclusive, a
+relation query that binds, or a premise calling a nondet judgment: a fixpoint, since the classes of
+overlaps are computed with the nondet judgments known so far (a single-valued callee is what the
+target arguments need) and again until the set is stable.  Otherwise it is det when its group covers
+every input and every premise calls a det judgment with a target that cannot fail (greatest
+fixpoint), and semidet (at most one result) when not.  The census (--census) lists each judgment's
+rules, class, coverage, DAG size and layer, and the determinism of every judgment when some are
+nondet.  --functional requires every judgment det or semidet (the kernel modules are compiled so).
 
 
 2. Decision DAGs and the validator
@@ -67,8 +83,10 @@ constructors the path tested) is excluded there, "(excluded ...)" in the DAG; th
 pairwise exclusive.  The DAG is written as data (--dag).  rulec_validate is separate code: it
 enumerates every path of every DAG and checks that each switch is exhaustive, that a leaf's rules
 match every input reaching it, that every other rule's left side is contradicted by the path or
-its premises are excluded on the path, that the rules of a shared leaf are pairwise exclusive, and
-that every rule is reached; its evaluation of premises is its own.  It also parses the generated C
+its premises are excluded on the path, that the rules of a shared leaf are pairwise exclusive (but
+for a judgment the DAG file marks nondet, which tries them all), that a judgment not so marked calls
+none that is and queries no relation for unknowns, and that every rule is reached; its evaluation
+of premises, tests and saturation are its own.  It also parses the generated C
 and checks every switch line, rule block and trial block against the DAG.
 
 
@@ -80,7 +98,8 @@ premises in written order, each target matched, the right side built.  A last pr
 is the right side is a tail call, guaranteed (musttail) where it may recur (the callee in the
 caller's component of the call graph) or enters or leaves the safepoint; elsewhere the C compiler may
 inline the callee.  A call with no rule, or a target that does
-not match, fails (no result): the relational reading of the rules.  A leaf with several (pairwise
+not match, fails (no result): the relational reading of the rules.  A query answered by a test is
+the component's condition, inline.  A leaf with several (pairwise
 exclusive) rules tries them in turn, a failure moving on to the next; a first premise that is the
 same call in all of them is made once; only the last may tail call.  A relation query with every
 argument bound calls the host (rc_relation_hook; no host, no rows).
@@ -99,6 +118,20 @@ returns RC_STOPPED to the host's entry with its state kept (the safepoint's argu
 the frames above rc_stop_mark), and rc_resume continues it.  When it ends, rc_resume leaves the
 frames to the host, who takes what it wants from them and applies the rest (rc_pend_apply): a reader
 that streams its records (section 7).
+Nondet procedures (any number of results) are Mercury's model_non with success continuations:
+p<J>(args, k_) gives each result to its continuation, k_->fn(k_, value), and returns 0.  Its DAG is
+compiled as a det procedure's; a leaf of several rules tries every one in turn, each rule's results
+being results.  A call of a nondet judgment gets a continuation that runs the rest of the rule on each
+of the callee's results: a function k<J>_<rule>_<premise> whose object carries, after its RcK, the
+outer continuation and the variables the rest reads.  A last premise whose target is the right side
+passes k_ on (a guaranteed tail call where it may recur).  det and semidet procedures are compiled
+as before; a nondet judgment is never memoised, answered by a block or a law, or the safepoint.  Hosts
+read every result of any judgment with rc_solve(judgment, args, k); rc_call is for judgments of at
+most one result.  Nondet procedures record no trace events (a trace is one derivation).
+A nondet judgment does not reach the safepoint either (rulec refuses a module where one does): its
+continuations keep terms on the C stack, and below the safepoint no frame holds one.  rc_solve enters
+a judgment of at most one result as rc_call does, the frames its run leaves applied; a run that stops
+at the safepoint is no result (rc_solve refuses it; rc_call and rc_resume run one).
 
 Runtime (rc_rt.h).  A heap term is a header and its children; a nullary constructor one static
 header.  Allocation bumps a pointer.  At the safepoint judgment (--safepoint J: the entry of a fold,
@@ -109,7 +142,13 @@ against 4 and 16 MiB), and the old space is copied when it has doubled.  The you
 are kept from run to run up to a bound (rc_runtime_retain; 256 MiB unless the host sets another), so
 a run that fills as much as an earlier one writes memory already mapped.  Values outside the heap
 are immediates (low bit set) and foreign pointers (tagged 2, 4, 6) of a native store, which the
-copying collector neither moves nor scans; tag 6 is a host's promise (section 4).
+copying collector neither moves nor scans; tag 6 is a host's promise (section 4).  Byte strings on
+the heap are objects whose payload is bytes, told apart by their tags.  The heap is one per process,
+or one per thread in an instance that defines RC_THREAD_HEAP; a host that keeps several runs alive
+saves and loads each one's heap (rc_heap_swap, rc_heap_free), with it the safepoint's roots, the
+pending frames and the host's root slots, and keeps a run's state across its steps by a safepoint of
+its own (rc_roots, rc_safepoint), which keeps what the roots reach.  The stop and promise hooks are
+the host's (per thread with RC_THREAD_HEAP): it sets them before it works in a run.
 
 Constants (--cache-constants): a judgment of no arguments is evaluated once, made static, and so
 is a ground term of a right side or of a call's arguments (no variable, at least one child; only
@@ -165,8 +204,20 @@ id), RC_KID_<rep>(x, i), RC_NUL_<rep>(c), RC_MK<n>_<rep>(c, ...).  Kinds:
                             run's input (an immediate start << 31 | end) or an interned string
                             (rc_slices.h); the input is given with rc_bytes_input; one such sort per
                             module; never compared by identity, never held across calls
+  atoms INT STRING SYMBOL EXPRESSION
+                            MeTTa atoms (rc_atoms.h): constructor applications as heap terms,
+                            integers as immediates (beyond 62 bits a tagged byte string), strings and
+                            other symbols as tagged byte strings, other expressions as heap terms
+                            tagged EXPRESSION; a nullary constructor named by a decimal integer or a
+                            quoted string stands for that literal (the view reads an integer or a
+                            string as its literal's constructor), and the four named stand for the
+                            atoms that are none of the sort's constructors; equality is structural;
+                            one atoms sort per module.  (atoms-source SORT CONS CP NIL) makes the
+                            run's source (rc_atoms_set_source) a value: the list (CONS (CP n) ...)
+                            ending in NIL of its scalars, read through cursors (position << 3 | 2)
+                            decoded as they are read
 
-The per-sort kinds (word, binary, slices) name their views after the sort (RC_TAG_word_<sort id>...).
+The per-sort kinds (word, binary, slices, atoms) name their views after the sort (RC_TAG_word_<sort id>...).
 The kinds are one list, rc_rep.h, shared by rulec, the generated code and the hosts: the generated
 table rc_sort_rep gives each sort's kind by its constant (RC_REP_INTERN ...), never by number.
 
@@ -215,6 +266,8 @@ parameters of a binding row (constructor ids).  Nothing in it depends on a parti
   rc_slices   byte strings as slices of the run's input or interned strings: the view moves a slice
               (no copy), cons extends a slice backward when the input's previous byte is the one
               added, take and drop cut slices; equality by content.
+  rc_atoms    MeTTa atoms (the atoms representation): integers, tagged byte strings, structural
+              equality, the source's cursors, and the tests of section 6.
 
 A refinement violation (a value a representation cannot hold, a table used after its update, a
 store out of memory) goes to rc_fail_hook when a host sets one (CeTTa answers an error value), and
@@ -227,7 +280,9 @@ otherwise stops the process with status 5.  It is never a silent difference.
 rulec --bindings FILE.  One row per line, S-expressions:
 
   (rep SORT KIND PARAM...)
+  (atoms-source SORT CONS CP NIL)
   (block NAME JUDGMENT COMPONENT LABEL JUSTIFICATION)
+  (test NAME RELATION COMPONENT LABEL JUSTIFICATION)
   (memo NAME JUDGMENT LABEL JUSTIFICATION)
   (law NAME JUDGMENT RESULT LABEL JUSTIFICATION)
 
@@ -258,6 +313,12 @@ or a string naming a C function a back end binds by hand.  rulec checks each com
 against the judgment (arities, sorts, representations, constructor parameters) and generates its
 glue (rc_bind_<k>).
 
+test: the relation's queries, every argument bound, are answered by a component on the atoms sort:
+(term-equal), (term-different) (the two values are, are not, the same atom), (int-less) a < b,
+(int-not-less) b <= a, (int-gap) a + 1 < b, (int-no-gap) b <= a + 1 (integers; no other value passes
+either), (unicode-scalar), (non-unicode-scalar) (an integer that is, is not, a Unicode scalar value).
+A test and its complement never both hold on the same arguments, which the overlap analysis uses.
+
 memo: the judgment's results are kept per arguments (all arguments and the result of interned,
 immediate or nullary-only sorts; the judgment must not reach the safepoint).  law: J(x, x) gives the
 nullary constructor RESULT without running J's rules; rulec requires J to cover every input.  A law
@@ -284,8 +345,11 @@ rules'.  Calls made while check mode runs some rules are counted apart (nested).
 7. Using it
 -----------
 
-  rulec WIRE --bindings B --safepoint J --cache-constants --dag D --census C --emit F.c --emit-h F.h
+  rulec WIRE --bindings B --safepoint J --cache-constants --functional --dag D --census C --emit F.c --emit-h F.h
   rulec_validate WIRE D F.c
+
+rulec_main (tools/rulec/compiler/main.c) is the same compiler as a library: langdef-compile links it
+(one relocatable object whose only global name is rulec_main) for the GSLT C target.
 
 Generated code includes rc_rt.h and the component headers (--include-rt, --component-prefix set
 their paths).  A host calls rc_runtime_init, rc_components_init once, rc_call(judgment, args), and
@@ -361,3 +425,34 @@ To add a component: a header in native/rule_components with the contract and the
 a COMPONENT kind in rulec's bindings.c (the shape check) and emit_c.c (the glue), a line in this
 file.  Keep it generic: parameters come from the signature and the row, never from a module's
 names.
+
+
+8. GSLT relations (the direct compilers' C target)
+---------------------------------------------------
+
+langdef-compile petta-direct --target c reads a GSLT composition with the direct front end (its
+rules, the binding modes its analysis selects, its operators; native/gslt_petta_direct_v1.c, shared
+with the PeTTa, HE and tcalc targets) and writes the selected modes of a closed entry residual as a
+rule module (native/gslt_rulec_direct_v1.c), which rulec compiles: OUT is the C file, OUT.wire,
+OUT.bindings, OUT.dag and OUT.census the module, its binding table, its DAGs and its census, for
+rulec_validate and readers.
+
+The module has one data sort, Term, of every atom (rep atoms); its constructors are named as atoms
+are spelled: (OP N) an application of OP to N arguments, a symbol's name, an integer's digits, a
+string in quotes, and "other integer", "other string", "other symbol", "other expression".  When the
+composition has langdef's source list (cons (cp N) ...) ending in nil, the run's source is a value of
+Term (atoms-source).  Each selected mode R:BITS is a judgment R:BITS of its inputs (declared with
+(Judgment R:BITS)), whose result is its one output (Term), the tuple "R:BITS answer" of its outputs,
+or yes (sort Unit).  A rule L of R read in mode R:BITS is the rule "L:BITS": the head's input patterns
+as the left side, the body's goals as premises in written order (a relation goal called in the mode
+its arguments' groundness selects, its outputs the target; a ground relation's goal a query that the
+binding table answers by a test: different, the ground integer relations), the head's outputs as the
+right side.  A variable met again in a left side, or twice in one target, is a fresh variable tested
+equal to it (gslt:same, term-equal).
+
+Hosts: tests/support/gslt_c_answers_v1.c includes a compiled program with the runtime and runs calls
+(recorded answers, or calls printed as the PeTTa target's entries collapse them); the Megalodon
+reader (native/megalodon/mg_reader_instance.c) is an instance of the runtime with a thread's heap per
+reading, its state kept between steps by its own safepoint, the file read through the source's
+cursors.  Gates: test-gslt-c-direct-v1 (the plain-BNF admission program against PeTTa's recorded
+answers; tests/langdef/gslt_c fixtures against the PeTTa target), test-megalodon-gslt-native.

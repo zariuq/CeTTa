@@ -3,7 +3,7 @@
 ; than derivation verification: the duplicate-node control below is admitted
 ; as well-sorted data, but is not called a verified proof.
 
-!(import! &self lib_tptp)
+!(import! &self (library lib_tptp))
 !(import! &self fs)
 
 (= (example:read-one $path)

@@ -1,0 +1,6 @@
+(cesta-export/1 (header CETTA_RUNNER_LISTS_GENERATED_H) (profile gnu11)
+ (include <stddef.h>)
+ (include <stdint.h>)
+ (use "../vendor/cesta/macros/Worklists.module" Growable)
+ (function run_push_u32 Push (element uint32_t) (count size_t)
+   (doc "Append one state or position of an exploration; 1, or 0 with the list unchanged.")))

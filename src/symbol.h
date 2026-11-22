@@ -663,6 +663,14 @@ static inline SymbolSpelling symbol_spelling(
     X(petta_with_mutex, "with_mutex") \
     X(petta_min, "min") \
     X(petta_max, "max") \
+    X(petta_exp, "exp") \
+    X(petta_implies, "implies") \
+    X(petta_unifiable, "=?") \
+    X(petta_atom_concat, "atom_concat") \
+    X(petta_atom_chars, "atom_chars") \
+    X(petta_copy_term, "copy_term") \
+    X(petta_term_hash, "term_hash") \
+    X(petta_sort, "sort") \
     X(type_colon_of, "type:of") \
     X(type_colon_check, "type:check") \
     X(type_colon_analyze, "type:analyze") \
@@ -1006,19 +1014,6 @@ void *symbol_canonical_atom(const SymbolTable *st, SymbolId id);
  * table does not hold.  The table frees the published atom. */
 void *symbol_publish_canonical_atom(SymbolTable *st, SymbolId id, void *atom);
 bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text);
-
-
-/* PeTTa's determinism-annotated arrows are written `-[mode]->`.  The mode is
-   a syntactic property of the arrow symbol; whether it carries authority is a
-   language/profile decision made by the caller. */
-typedef enum {
-    CETTA_PETTA_ARROW_MODE_NONE = 0,
-    CETTA_PETTA_ARROW_MODE_DET,
-    CETTA_PETTA_ARROW_MODE_NONDET,
-    CETTA_PETTA_ARROW_MODE_OTHER,
-} CettaPettaArrowMode;
-
-CettaPettaArrowMode cetta_petta_arrow_mode(SymbolId id);
 
 #include "native_memory.h"
 #endif /* CETTA_SYMBOL_H */

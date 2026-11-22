@@ -20,7 +20,7 @@ from cetta_readiness_model import terminate_process_session
 SCHEMA = "cetta.candidate-readiness.v1"
 INPUT_DIRS = {"src", "include", "native", "lib", "langdef", "python", "tests",
               "scripts", "tools", "rust", "experiments", "benchmarks", "examples",
-              "specs", "vendor", "showcase", "repos"}
+              "specs", "vendor", "showcase", "repos", "mk"}
 INPUT_FILES = {"Makefile", "setup.py", "setup.cfg", "pyproject.toml", "MANIFEST.in",
                "VERSION", "Cargo.toml", "Cargo.lock"}
 

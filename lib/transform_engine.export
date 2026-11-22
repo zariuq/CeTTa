@@ -1,0 +1,2 @@
+(cesta-export/1 (header CETTA_TRANSFORM_ENGINE_GENERATED_H) (profile c11)
+ (table-enum "transform_axes.data" Engines (enum CettaTransformEngine) (prefix CETTA_TRANSFORM_ENGINE_) (id id) (name code) (count CETTA_TRANSFORM_ENGINE_COUNT)))

@@ -1,0 +1,10 @@
+// profile: step=one
+// A join that persists (<=): a buyer and a seller trade when the guard finds
+// their prices equal and no halt present.  The market's open flag is read
+// (<<-), not taken.  A receive here may mix the modes, each bind taking or
+// reading its own row; f1r3lang gives every bind the mode of the first.
+open!(market) |
+buy!(alice, 3) | sell!(bob, 3) | sell!(carol, 4) |
+for ($b, $p <= buy & $s, $q <= sell & $m <<- open where $p == $q and absent(halt!())) {
+  trade!($b, $s, $p)
+}

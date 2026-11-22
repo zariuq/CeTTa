@@ -370,6 +370,8 @@ static void runtime_add_builtin_type_decls(Space *space, Arena *arena,
 
 bool cetta_runtime_load_prelude(Space *space, Arena *arena,
                                 CettaLanguageId language, const CettaProfile *profile) {
+    if (language != CETTA_LANGUAGE_PETTA && arena && arena->hashcons)
+        hashcons_reserve(arena->hashcons, 4096u);
     if (language == CETTA_LANGUAGE_HE && !he_library_tables_init()) return false;
     if (language == CETTA_LANGUAGE_PETTA) {
         const char *fallback = getenv("CETTA_PETTA_HE_STDLIB_FALLBACK");

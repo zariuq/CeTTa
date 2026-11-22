@@ -1,0 +1,7 @@
+--- a/examples/python.metta
++++ b/examples/python.metta
+@@ -14,3 +14,3 @@
+ ;Verify py-call on methods of strings and numbers (see #188)
+-!(test (py-call (.upper "abc")) ABC)
++!(test (py-call (.upper "abc")) "ABC")
+ !(test (py-call (.__add__ 5 3)) 8)

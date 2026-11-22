@@ -25,7 +25,9 @@ space, a bag or a set and sharing variables, are joined natively as one
 conjunction; where an effect may change a row a later one of them reads,
 which it reads afresh, the run makes its effects only if none met such a
 read, a removal included that takes a row holding a variable which a
-pattern reads, though the two fix different atoms.  Variables are read outside
+pattern reads, though the two fix different atoms, and an addition the
+body makes into the inner match's space that a later outer row's read of
+it meets.  Variables are read outside
 the construct that binds them: a let's or a case clause's variable that
 the pattern binds first or an if branch reads, a let's variable read after
 the let or passed in by a caller, a collected match's variables read by
@@ -189,17 +191,11 @@ def effect(rng, bound):
         data = "(edge " + " ".join(rng.choice(bound) for _ in range(2)) + ")"
         if space == "&self":
             kind = "remove-atom"
+    if kind == "add-atom" and data.startswith("$"):
+        # A bound variable may be bound to an open row's variable, and PeTTa
+        # adds no bare variable: its add-atom raises, as assertz does.
+        data = f"(r {data} k)"
     return f"({kind} {space} {data})"
-
-
-def contained_effect(rng, bound):
-    """An effect that never adds a bare variable to the matched space: bound
-    to an open row's variable, it would be a row every later pattern reads,
-    and the ordinary run would grow without bound."""
-    made = effect(rng, bound)
-    if made.startswith("(add-atom &self $"):
-        made = f"(add-atom &self (r {made[len('(add-atom &self '):-1]} k))"
-    return made
 
 
 def effects(rng, bound):
@@ -291,11 +287,11 @@ def program(rng):
     bodies = random.Random(nodes * 15485863 + len(lines))
     for _ in range(bodies.randrange(0, 3)):
         pattern, bound = conjunction(bodies, nodes)
-        body = contained_effect(bodies, bound if bodies.random() < 0.6 else [])
+        body = effect(bodies, bound if bodies.random() < 0.6 else [])
         if bodies.random() < 0.5:
-            template = f"(let $u {contained_effect(bodies, bound)} {body})"
+            template = f"(let $u {effect(bodies, bound)} {body})"
         else:
-            binders = " ".join(f"($e{i} {contained_effect(bodies, bound)})"
+            binders = " ".join(f"($e{i} {effect(bodies, bound)})"
                                for i in range(bodies.randrange(2, 4)))
             template = f"(let* ({binders}) {body})"
         lines.append(f"!(let $h (collapse (match &self {pattern} {template})) (sort-atom $h))")
@@ -331,7 +327,7 @@ def program(rng):
             text = " ".join(legs)
             pattern = legs[0] if len(legs) == 1 else "(, " + text + ")"
             bound = sorted(v for v in VARIABLES if v in text)
-            template = (contained_effect(nested, bound) if nested.random() < 0.4
+            template = (effect(nested, bound) if nested.random() < 0.4
                         else data_template(nested, bound))
             lines.append(f"!(let $h (collapse (match &self {pattern} {template})) (sort-atom $h))")
     # Matches inside matches, over the matched space, a bag or a set,
@@ -354,7 +350,7 @@ def program(rng):
                 head = "edge" if space == "&self" else "r"
                 levels.append((space, f"({head} {first} {second})"))
                 bound = sorted(set(bound) | {second})
-            template = (contained_effect(inner, bound) if inner.random() < 0.5
+            template = (effect(inner, bound) if inner.random() < 0.5
                         else data_template(inner, bound))
             for space, pattern in reversed(levels):
                 template = f"(match {space} {pattern} {template})"
@@ -377,12 +373,30 @@ def program(rng):
                 rows.append("(br (pair $z 1))")
             lines += [f"!(add-atom {space} {row})" for row in rows]
             read, removed = bridge.sample(range(nodes + 2), 2)
-            effect = f"(remove-atom {space} (br {removed}))"
+            removal = f"(remove-atom {space} (br {removed}))"
             if nested_form:
-                match = f"(match &self (edge $x $y) (match {space} (br {read}) {effect}))"
+                match = f"(match &self (edge $x $y) (match {space} (br {read}) {removal}))"
             else:
-                match = f"(match &self (, (edge $x $y) (br {read})) {effect})"
+                match = f"(match &self (, (edge $x $y) (br {read})) {removal})"
             lines.append(f"!(let $h (collapse {match}) (sort-atom $h))")
+    # A match inside a match whose body adds the row a later read of the
+    # inner match meets: the inner match is read for each outer row after
+    # the rows before it made their effects, so what one row adds the next
+    # reads, along the edges.  The additions go to the inner match's space,
+    # never the outer one's, so the run ends.  Their own random stream
+    # leaves the programs above as they were.
+    grow = random.Random(nodes * 3010349 + len(lines))
+    if grow.random() < 0.5:
+        for _ in range(grow.randrange(1, 3)):
+            space = grow.choice(("&b", "&s"))
+            for _ in range(grow.randrange(1, 3)):
+                lines.append(f"!(add-atom {space} (g {value(grow, nodes)} k))")
+            body = f"(add-atom {space} (g $y $w))"
+            if grow.random() < 0.5:
+                body = f"(let $_ {body} (seen $x $y $w))"
+            match = f"(match &self (edge $x $y) (match {space} (g $x $w) {body}))"
+            lines.append(f"!(let $h (collapse {match}) (sort-atom $h))")
+            lines.append(f"!(let $h (collapse (match {space} (g $a $b) ($a $b))) (sort-atom $h))")
     # Calls of a function of one equation that branches on an absence,
     # inside matches: a native join with a guard, unless an effect may
     # change a row the guard reads, the function has another equation or a
@@ -1028,6 +1042,10 @@ def program(rng):
                 template = distinct.choice(bound)
             pat, spread = "$a", distinct.choice(("(add-atom &u $a)", "(seen $a)",
                                                  "(add-atom &u (w $a))"))
+            if template.startswith("$") and spread == "(add-atom &u $a)":
+                # an element may be an open row's variable, and PeTTa adds no
+                # bare variable: its add-atom raises, as assertz does
+                spread = "(add-atom &u (w $a))"
             if template.startswith("(pr ") and distinct.random() < 0.2:
                 parts = template[4:-1].split()
                 pat = "(pr " + " ".join(f"$p{i}" for i in range(len(parts))) + ")"
@@ -1064,12 +1082,12 @@ def program(rng):
                                  "(lreach $b)"), live.randrange(1, 5)):
             lines.append(f"!(let $h (collapse (match &self (edge $a $b) {call})) (sort-atom $h))")
         for index in range(live.randrange(1, 4)):
-            effect, call = live.choice((
+            change, call = live.choice((
                 ("(add-atom &self (= (lf $b) (lextra $b)))", "(lf $b)"),
                 ("(add-atom &self (= (lf $a) (lagain $a)))", "(lf $a)"),
                 ("(add-atom &self (= (lg $b) (lback $b)))", "(lg $b)")))
             lines.append(f"!(let $h (collapse (match &self (edge $a $b) "
-                         f"(let $u {effect} {call}))) (sort-atom $h))")
+                         f"(let $u {change} {call}))) (sort-atom $h))")
         lines.append("!(let $h (collapse (match &self (edge $a $b) (lf (ltwo)))) (sort-atom $h))")
         lines.append("!(let $h (collapse (lf 1)) (sort-atom $h))")
         lines.append("!(let $h (collapse (lg 1)) (sort-atom $h))")

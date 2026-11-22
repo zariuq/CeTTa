@@ -1,0 +1,13 @@
+; The positive of loom_balanced: with only the solar reactions enabled, no two
+; reactions compete for a row, and the one outcome is star-lantern.
+(step one)
+(essence ember) (essence dew) (essence seed) (essence echo)
+(enabled solar-starter) (enabled solar-middle) (enabled solar-terminal)
+(rule solar-starter (read (enabled solar-starter)) (take (essence ember) (essence dew)) (make (essence mist)))
+(rule solar-middle (read (enabled solar-middle)) (take (essence mist) (essence seed)) (make (artifact sun-bloom)))
+(rule solar-terminal (read (enabled solar-terminal)) (take (artifact sun-bloom) (essence echo)) (make (artifact star-lantern)))
+(rule lunar-starter (read (enabled lunar-starter)) (take (essence dew) (essence echo)) (make (essence dream-mist)))
+(rule lunar-middle (read (enabled lunar-middle)) (take (essence dream-mist) (essence seed)) (make (artifact moon-veil)))
+(rule lunar-terminal (read (enabled lunar-terminal)) (take (artifact moon-veil) (essence spark)) (make (artifact star-lantern)))
+(rule decoy-chorus (read (enabled decoy-chorus)) (take (essence seed) (essence echo)) (make (artifact chorus)))
+(rule decoy-ash (read (enabled decoy-ash)) (take (essence ember) (essence spark)) (make (artifact ash)))

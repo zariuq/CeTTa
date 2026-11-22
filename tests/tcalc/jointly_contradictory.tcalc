@@ -1,0 +1,10 @@
+; Three matches whose tells agree two by two but not all three together:
+; (pair a ?) and (pair ? b) meet at (pair a b), (pair a ?) and (pair ? ?) with
+; one value twice at (pair a a), the last two at (pair b b); all three would
+; need a = b.  Each pair is a bag and an outcome; the three never fire.
+(step bag)
+(x $u)
+(a) (b) (c)
+(rule ta (take (a)) (read (x $v)) (tell (= $v (pair a $y))) (make (did a)))
+(rule tb (take (b)) (read (x $v)) (tell (= $v (pair $x b))) (make (did b)))
+(rule tc (take (c)) (read (x $v)) (tell (= $v (pair $z $z))) (make (did c)))

@@ -160,7 +160,7 @@
     (rule state-proof-sequence-nil-v1
       (head
         (StateProofSequenceV1
-          ?owner ?values ProofSequenceNilV1))
+          ?owner ?values (ProofSequenceNilV1)))
       (body
         (ValuesViewV1 ?values ValuesEmptyViewV1)))
     (rule state-proof-sequence-cons-v1
@@ -607,7 +607,7 @@
     (rule state-proof-build-apartness-nil-v1
       (head
         (StateProofBuildApartnessV1
-          ?owner ?assertion EntriesNilV1 ProofAssertionListNilV1))
+          ?owner ?assertion EntriesNilV1 (ProofAssertionListNilV1)))
       (body))
     (rule state-proof-build-apartness-cons-v1
       (head

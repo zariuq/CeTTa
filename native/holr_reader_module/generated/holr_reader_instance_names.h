@@ -20,6 +20,7 @@
 #define rc_bytes_cons hrm_rc_bytes_cons
 #define rc_bytes_init hrm_rc_bytes_init
 #define rc_bytes_input hrm_rc_bytes_input
+#define rc_bytes_new hrm_rc_bytes_new
 #define rc_bytes_nil hrm_rc_bytes_nil
 #define rc_bytes_snoc hrm_rc_bytes_snoc
 #define rc_byte_term hrm_rc_byte_term
@@ -35,10 +36,13 @@
 #define rc_ctor_rank hrm_rc_ctor_rank
 #define rc_ctor_slots hrm_rc_ctor_slots
 #define rc_ctor_sort hrm_rc_ctor_sort
+#define rc_empty_bytes hrm_rc_empty_bytes
 #define rc_extra_roots_hook hrm_rc_extra_roots_hook
 #define rc_fail_hook hrm_rc_fail_hook
 #define rc_foreign_hook hrm_rc_foreign_hook
 #define rc_free_statics hrm_rc_free_statics
+#define rc_heap_free hrm_rc_heap_free
+#define rc_heap_swap hrm_rc_heap_swap
 #define rc_hlim hrm_rc_hlim
 #define rc_hp hrm_rc_hp
 #define rc_intern_active hrm_rc_intern_active
@@ -114,6 +118,7 @@
 #define rc_sl_equal hrm_rc_sl_equal
 #define rc_sl_len hrm_rc_sl_len
 #define rc_sl_take_big hrm_rc_sl_take_big
+#define rc_solve hrm_rc_solve
 #define rc_sort_name hrm_rc_sort_name
 #define rc_sort_order hrm_rc_sort_order
 #define rc_sort_rep hrm_rc_sort_rep

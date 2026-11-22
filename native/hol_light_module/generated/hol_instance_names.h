@@ -7,6 +7,7 @@
 #define rc_bytes_cmp hlm_rc_bytes_cmp
 #define rc_bytes_cons hlm_rc_bytes_cons
 #define rc_bytes_init hlm_rc_bytes_init
+#define rc_bytes_new hlm_rc_bytes_new
 #define rc_bytes_nil hlm_rc_bytes_nil
 #define rc_bytes_snoc hlm_rc_bytes_snoc
 #define rc_byte_term hlm_rc_byte_term
@@ -22,6 +23,7 @@
 #define rc_ctor_rank hlm_rc_ctor_rank
 #define rc_ctor_slots hlm_rc_ctor_slots
 #define rc_ctor_sort hlm_rc_ctor_sort
+#define rc_empty_bytes hlm_rc_empty_bytes
 #define rc_extra_roots_hook hlm_rc_extra_roots_hook
 #define rc_fail_hook hlm_rc_fail_hook
 #define rc_feed_begin hlm_rc_feed_begin
@@ -30,6 +32,8 @@
 #define rc_feed_stats hlm_rc_feed_stats
 #define rc_foreign_hook hlm_rc_foreign_hook
 #define rc_free_statics hlm_rc_free_statics
+#define rc_heap_free hlm_rc_heap_free
+#define rc_heap_swap hlm_rc_heap_swap
 #define rc_hlim hlm_rc_hlim
 #define rc_hp hlm_rc_hp
 #define rc_intern_active hlm_rc_intern_active
@@ -102,6 +106,7 @@
 #define rc_safepoint hlm_rc_safepoint
 #define rc_set_remove hlm_rc_set_remove
 #define rc_set_union hlm_rc_set_union
+#define rc_solve hlm_rc_solve
 #define rc_sort_name hlm_rc_sort_name
 #define rc_sort_order hlm_rc_sort_order
 #define rc_sort_rep hlm_rc_sort_rep

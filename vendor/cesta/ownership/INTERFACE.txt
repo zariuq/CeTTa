@@ -51,9 +51,16 @@ body destroys is refused. Condition-false exits and break exits carry their
 own resulting facts to the code following the loop; a break cannot weaken the
 invariant used to check a continuing path.
 
-A local pointer creates a lexical loan. A reborrow suspends its parent's
-overlapping range. Distinct record fields can be used independently. A parent
-becomes available again when its child scope ends. Shared loans can coexist.
+A local pointer creates a loan. A reborrow suspends its parent's overlapping
+range. Distinct record fields can be used independently. Shared loans can
+coexist. A loan ends when its variable leaves scope, or at its last use: after
+the last declaration or statement of the variable's own block that names the
+variable. The name occurs nowhere else, because a jump back within a block is
+refused and an enclosing loop enters the block again only after its scope has
+ended. The earlier end also requires the loan to be the variable's alone: no
+other variable, output or stored field holds it, and no live loan derives from
+it or reaches the variable's own storage. A parent becomes available again when
+its child's loan ends.
 
 Borrowed returns name an input index, optional member path and nullability:
 
@@ -163,6 +170,193 @@ Owned dynamic inputs, owning buffer results and owning nested views still
 require allocation-extent contracts and remain refused by this profile.
 Ordinary reference fields use the contracts below.
 
+COUNTED BUFFERS
+
+  (record Table (field cells (owns heap nullable) (count used)))
+  (function last (buffer 0))
+  (foreign push_u (grows 0)
+    (obligation "Appends one value, moving the buffer to a larger allocation of the heap family when full."))
+
+A counted field is a pointer member that is null or starts one complete
+allocation of plain-data elements; (count FIELD) names the integer member of
+the same record that counts the elements in use. Plain-data elements hold no
+pointer, view or capability. (buffer INDEX) says the same of a pointer
+parameter, which may be null for an empty buffer. Neither form gives
+ownership: an owning field keeps its family, and an owned buffer parameter
+or result still needs an allocation-extent contract.
+
+A function that reaches a counted field through a record it does not take,
+or that has a buffer parameter, receives the buffer as a whole input, as for
+a view. Its elements are reached natively, as those of an inline array: a
+dynamic subscript, a member of an element and an offset pointer each borrow
+the whole buffer. Native ownership does not discharge the numeric bounds: the
+program retains its explicit guards against the count. A buffer is null only
+while its count is zero, so the guard that bounds an index is also its null
+test, and an element access needs no other; a buffer known to be null is
+refused. A borrowed result that points into a counted buffer borrows the
+whole buffer (whole-viewed) and is never null.
+
+(element INDEX) is the boundary for a function that receives one selected
+element rather than the complete buffer:
+
+  (function read_cell (element 0))
+  (function keep_cell (element 0) (returns-borrow 0))
+
+The argument may be one exact object or a non-null pointer derived from a
+declared counted buffer. The caller retains the complete buffer as the
+lifetime origin; the callee can reach exactly one complete element, with
+read or write permission derived from its C parameter type. A selected
+element cannot be nullable, owned, released, resized, reallocated, used as an
+output slot or retained through that parameter. Its type must be complete
+plain data, so reference-bearing elements need their own declared container
+interface. Passing the pointer onward requires another element, buffer or
+view boundary: an ordinary fixed-pointee signature cannot erase its origin.
+
+The program's explicit index guard remains the only numeric bounds evidence.
+Cesta does not infer a bound from (element INDEX). The emitted ownership plan
+uses the existing whole-view unit for the retained origin, while native
+analysis checks the selected object's actual byte extent. Thus independent
+admission needs no element-specific semantic constructor. A non-null borrowed
+result retains the original buffer origin; it does not create an independently
+bounded allocation.
+
+A record result, or a record field a function stores through a parameter,
+follows the same rule field by field. A pointer field that receives a whole
+input must be counted or be a view, and its shape is whole-viewed:
+
+  (record Window (field cells (borrow read nullable) (count n)))
+  (function window (returns-record ((cells) (borrow 0 cells))))
+
+An uncounted pointer field cannot hold a whole buffer, since a reader of the
+record could not tell how many elements it reaches.
+
+(grows INDEX) names a pointer-to-pointer parameter that receives the address
+of a counted field; the callee may move the buffer to a larger allocation of
+the same family. The call takes the whole buffer exclusively, so a pointer
+into the buffer that is live across the call is refused. The buffer stays one
+logical allocation: the plan records the growth as an exclusive access before
+the call and lends the buffer whole for writing. A growth is admitted for a
+buffer reached as a whole input; a buffer first allocated inside the function,
+in a local record or by a dynamic allocation, needs an allocation-extent
+contract.
+
+(grows INDEX FAMILY) also names the buffer's allocator family, and lets the
+callee's own body be checked: it sees the slot as a record of one counted
+field of that family, so *slot reads and stores that field, and a release or
+reallocation of the buffer followed by a store of fresh storage is the growth
+of fresh storage above. A caller passes a buffer of that family.
+(reallocates INDEX FAMILY) names a function-pointer parameter as the family's
+reallocation interface, the (resize NAME) of its allocator: a call through
+the parameter is a call to NAME, and a caller passes NAME itself.
+
+  (function push (grows 1 heap) (reallocates 0 heap))
+  static int push(void *(*resize)(void *, size_t), unsigned **buffer,
+                  size_t *length, size_t *capacity, unsigned value);
+
+__builtin_add_overflow, __builtin_sub_overflow and __builtin_mul_overflow
+read their two operands and write the integer object their third argument
+addresses, as an assignment does; they retain nothing. A variable that holds
+nothing on one side of a join (never written, or moved) and no release
+authority on the other cannot be read after the join. The check does not
+follow flags: a variable written only where a flag is set cannot be read
+later under the same flag, so such a variable is initialized where it is
+declared.
+
+An output parameter points to plain data the callee writes:
+
+  (function find (initializes 1 when-true))
+  (function get (initializes 0))
+
+`(initializes I)` says the object parameter I points to is written before
+every return; `(initializes I when-true)` before every return of a value other
+than the constant 0. A checked function is held to it: a read of the object, or
+a compound assignment to it, before a whole write is refused, and so is a
+return that comes before the write. An unchecked or foreign function states it
+with its obligation. A caller may lend uninitialized storage `&x` as exactly
+that argument and no other way. Nothing is initialized while the arguments are
+evaluated, so `put(&x, x)` still reads `x` uninitialized. After the call `x` is
+initialized when it is always written; otherwise on the edge where the call's
+value is not 0 (`if (find(k, &x))`, or `!find(k, &x)` under `||`). A call in a
+short-circuit operand is refined only on the edges where it ran. The plan is
+unchanged: the argument is a write loan of `x`'s storage, and initialization is
+a fact about C that the ownership model does not track, as at joins.
+
+A conditional expression `c ? a : b` of pointer type has one lifetime origin:
+null on one side takes the other side's origin, nullable; equal origins stay
+that origin. Static storage lives as long as the program, and a pointer to
+const is not written through, so a conditional to const whose one side points
+into static storage and whose other side is a borrow keeps the borrow's
+origin: `return o->row ? o->row + i : no_items;` returns a borrow of `o`. The
+plan names the borrow on both paths, which claims more aliasing than the static
+path has and authorizes only reads. A writable result (a string literal is
+`char[]` in C, but not writable) or an owned side still needs one origin.
+
+Plans with counted buffers use cesta-ownership/4: their roots are whole
+inputs, interpreted at every caller extent by OwnershipViewExtents.
+
+A dynamic allocation, one whose extent is not a constant (malloc(n * size),
+calloc(n, size)), is one owned logical buffer: a heap root of one unit whose
+elements are reached as a counted buffer's are. It is released, transferred
+or refused like any owner. Its elements must be plain data, which is checked
+where an element is reached. An allocator may name several allocation
+interfaces of one family:
+
+  (allocator heap (malloc calloc) free (obligation "..."))
+
+One parameter is a byte extent; two are a count of elements and their size,
+whose product is the extent. A (buffer INDEX) parameter of type void * is a
+buffer of bytes, as memset and memcmp take:
+
+  (foreign memset (buffer 0) (returns-borrow 0) (obligation "..."))
+
+A null owner owns nothing. On the edge of a test that finds an allocation
+null (if (!p), if (p == NULL)), the owner is known null: it keeps its release
+authority, so it joins with the edge that found it non-null as one nullable
+owner, and a later release accounts for it once. If it leaves scope or returns
+still known null, the plan discharges the authority there, since nothing was
+allocated, instead of reporting a leak; the plan records it as (null-owner
+HOLDER FAMILY), which ends the authority without a release:
+
+  unsigned *a = malloc(n * sizeof *a);
+  if (!a) return 0;              /* nothing to release: admitted */
+
+Only the null edge is discharged: an allocation that leaves scope on the edge
+that found it non-null is a leak, as before. An owner moved on one edge and
+known null on the other does not join; the null edge should return.
+
+A buffer held for writing can be given fresh storage: an owning counted
+field of a record the function does not take, which it reaches as a whole
+input lent for writing.  Its storage is released (free) or moved (the
+family's reallocation interface), and fresh storage of the family is stored
+back into the field:
+
+  (allocator heap (malloc calloc) free (resize realloc) (obligation "..."))
+
+  unsigned *fresh = calloc(cap, sizeof *fresh);      unsigned *moved = realloc(t->cells, bytes);
+  if (!fresh) return 0;                              if (!moved) return 0;
+  ... copy t->cells into fresh ...                   t->cells = moved;
+  free(t->cells);
+  t->cells = fresh;
+
+From the release or reallocation until the store, the buffer is suspended:
+no pointer into it may be live when its storage goes, nothing reaches it
+until fresh storage is stored back, and no return leaves it suspended.  The
+plan records the release as (vacate BUFFER FAMILY), which passes the storage
+to the call as released.  The store keeps the buffer's identity for every
+caller and consumes the fresh allocation's sole release authority; the plan
+records it as one event, (replace BUFFER FRESH FAMILY), which Lean admits
+only for a whole input lent for writing, with exclusive access, and after
+its storage was vacated to the same family.  A reallocation known null moved
+nothing (a null owner owns nothing), so the suspension ends with it, which
+the plan records as (restore BUFFER) on that edge: the failure path, whether
+it returns at once or keeps a flag, is admitted.  Lean restores only storage
+that a reallocation received; storage given to the release never comes back.
+A buffer lent only for reading cannot have its storage replaced.  (resize
+NAME) declares a reallocation interface of two parameters, an old pointer
+and a byte extent: it releases the old storage, as the family's release
+does, and returns fresh storage, as its allocations do; its contract records
+the first parameter as (resized FAMILY).
+
 REFERENCE FIELDS
 
   (record Reader (field item (borrow read)))
@@ -193,7 +387,28 @@ this rule. Native ownership does not discharge dynamic numeric bounds: retain
 the appropriate explicit guards or use checked bounded byte operations.
 
 Calls carry the field permissions as well as the containing record's loan.
-A const record parameter lends its fields for reading. Relational field
+A const record parameter lends its fields for reading.
+
+The frame rule: an internal function's interface carries only the fields it
+reaches, in its body or through the functions it calls; the caller keeps the
+others for the call's duration, untouched. The same holds for a borrowed
+record's own storage: the interface carries the byte ranges of the pointee
+that the function reaches, each read or written, and a call lends the callee
+those parts alone, so a live loan on another part of the record does not stand
+in its way. In the plan each part is an input of its own. The check surveys
+the bodies starting from interfaces that hold only what contracts name, in
+rounds that visit callees first, each call lending what is known so far to be
+reached, until no body reaches more; it then checks every body again with
+these interfaces, so a reach the survey missed is refused there, not admitted.
+A function another unit may call, an unchecked or foreign function, and a
+callback's implementation keep every field and the whole pointee. A field a
+contract names (a postcondition, a take, a returned path, a grown slot) stays
+in the interface, and a parameter lends its whole pointee when a contract names
+its storage: a result borrowed from that storage itself, a store, an output, a
+growth, a release, or a field postcondition. Examples:
+ownership/examples/Frame.cesta and ownership/examples/FrameBytes.cesta.
+
+Relational field
 postconditions describe replacement or consumption through a record pointer:
 
   (function item (returns-borrow 0 item))
@@ -259,6 +474,68 @@ and becomes nullable. Dereferencing it requires a non-null guard. This rule
 does not permit an optional owning-pointer copy; ownership needs an explicit
 branch with a checked move. Returning a nullable pointer into a local object
 is still refused.
+
+RECORD CUSTODY AND ERASED BOUNDARIES
+
+Whole-record effects state one repeated rule instead of listing its fields:
+
+  (function destroy (takes-record 0))
+  (function renew (updates-record 0))
+
+(takes-record I) consumes every direct or inline-nested owning field of the
+writable record parameter. Every owner must actually be released or handed
+on by the body. (updates-record I) permits those owning fields to be released
+and replaced, and requires a valid field result on every return path. For a
+counted owning field the caller retains the buffer identity while the callee
+may replace its storage; an uncounted owner is transferred and returned.
+Neither form hides missing cleanup, partial initialization or a failure path.
+
+A declared nonnull pointer field can expose the reference record behind it:
+
+  (function inspect (pointee 0 inner))
+  (function renew-inner (updates-pointee 0 inner))
+
+(pointee I FIELD) includes the pointed record's declared reference fields in
+the interface. (updates-pointee I FIELD) additionally permits its owning
+fields to be replaced under the same postcondition rules. Nested field paths
+in preserves-field, stores-field and updates-field cross a pointer only where
+one of these pointee contracts, or (pointee) on the record field declaration,
+made that boundary explicit. Nullable or imprecise pointees are refused.
+
+An owned pointer result can declare the fields of the allocated record:
+
+  (function make-box (returns-own heap nullable)
+    (returns-pointee ((item) (owns heap))))
+
+returns-pointee is the pointer-result counterpart of returns-record. It lists
+every reference field of the owned pointee. A null outer result owns no nested
+fields; a nonnull result must establish every listed field, including each
+owning authority, before publication.
+
+Three contracts make native representation boundaries explicit:
+
+  (function relay (opaque 0))
+  (function visit (context 0 Context))
+  (function pass-header (shallow 0))
+
+(opaque I) is a typed native handle. Checked code may retain its exact C type,
+test it for null when declared nullable, and forward it only to another opaque
+or typed foreign boundary; it cannot inspect, cast, index or manufacture the
+private representation. Its logical loan is shared: mutation hidden behind a
+native callback is part of that callback's obligation, not permission to
+dereference the handle in checked code. A stores result derived from an opaque
+input preserves this shared opaque custody even when the C carrier is void *.
+
+(context I TYPE) says a void-pointer parameter names one exact complete TYPE
+object. The checked body may recover that type and its declared fields, with
+read/write permission derived from the C parameter. Calls must supply an exact
+object of TYPE; an unrelated object with the same size is refused.
+
+(shallow I) lends only the bytes of one nonnull declared reference record,
+without following any pointer fields. It is useful for a native boundary that
+copies or identifies a handle header but does not reach its referents. It is
+not an escape from field declarations: following a field under shallow is
+refused.
 
 OPAQUE CAPABILITIES
 
@@ -369,6 +646,19 @@ resource signature. A nonnull result may satisfy a nullable result; arguments,
 origins, extents, access rights, allocation families and record postconditions
 remain exact. An unchecked body is not a checked callback implementation.
 
+An opaque cursor can be opened into a local pointer slot and then forwarded
+through other opaque callbacks:
+
+  (callback Open (field Ops open) (opaque 0) (stores 1 0))
+  (callback Next (field Ops next) (opaque 0))
+  (callback Close (field Ops close) (opaque 0))
+
+The stored cursor retains the store handle's lifetime and opaque provenance;
+it does not acquire permission to inspect that storage. The native obligations
+state the provider's pin, advance and close behavior. The checked caller still
+has to close on every path on which the protocol requires it; sanitizer and
+protocol controls test provider allocation, invalidation and close behavior.
+
 An open interface cannot flow into a closed whitelist merely because its
 prototype agrees. Entry-supplied callbacks remain named native obligations;
 their C types do not establish arbitrary context invariants or imply that all
@@ -411,10 +701,21 @@ Overwriting or leaving an owner behind fails at compile time. Destruction is
 explicit C code; the checker does not silently insert a deallocator.
 
 This native profile admits constant allocation extents, including sizeof of
-a complete record. Dynamic byte storage remains in checked-c/1 modules; their
-interaction with native ownership currently needs a contracted native boundary.
+a complete record, and dynamic extents for plain-data buffers. A dynamic
+allocation is one logical whole-buffer unit; explicit C guards still establish
+its numeric element bounds. Dynamically sized reference-bearing storage needs
+a declared record/container interface rather than an invented byte layout.
 A failed nullable allocation must also follow a
 valid cleanup path; release(null) is part of the allocator contract above.
+
+A record known null owns no fields. Where an owned record parameter that
+admits null, (owns I FAMILY) with (nullable I), is null, its owning fields are
+null owners as well, so a release written as `if (t) release(t)` or
+`if (!t) return; release(t);` accounts for every field on both paths. A caller
+lends null for each owning field of a null record, and hands a record that may
+be null to such a parameter with the fields it would hold; a parameter that
+does not admit null still needs a precise non-null record. Example:
+ownership/examples/NullableRecord.cesta.
 
 GLOBAL STATE
 

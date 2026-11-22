@@ -1,0 +1,7 @@
+; profile: store=set
+; bag_rules_take_two_copies under the set store: the two copies are one row,
+; and two take patterns, which need two distinct occurrences, find no match.
+(step one)
+(tok)
+(tok)
+(rule pair (take (tok) (tok)) (make (pair)))

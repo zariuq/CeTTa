@@ -3,7 +3,7 @@
 ; semantic promotion additionally requires an authenticated official-DAG
 ; compiler, calculus service, and composition theorem.
 
-!(import! &self lib_tptp)
+!(import! &self (library lib_tptp))
 !(import! &self ../../langdef/tptp/generated/official_ground_resolution_word_canary_v1.metta)
 
 (= (example:trace-count (TPTP:VerificationWordTracesNilV1)) 0)

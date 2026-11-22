@@ -26,7 +26,7 @@ Module Worklists {
           (_Static_assert (">" (cast (TypeArgument count) ("-" 1)) 0)
             "\"worklist count must be unsigned\"")
           (var (TypeArgument count) (LocalRef "ordinary" next_capacity))
-          (var (TypeArgument count) (LocalRef "ordinary" bytes))
+          (var (TypeArgument count) (LocalRef "ordinary" bytes) 0)
           (var (TypeArgument element) ("*" (LocalRef "ordinary" replacement)))
           (var int (LocalRef "ordinary" accepted) 1)
           ("if" ("||" ("==" ("&" (Argument length)) ("&" (Argument capacity)))

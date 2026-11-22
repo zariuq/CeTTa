@@ -98,7 +98,7 @@ fallback:
 bool cetta_key_factorize_call(Space *space, Arena *arena, Atom *head, Atom **args,
     uint32_t nargs, CettaCallOutcome *out) {
     if (!atom_is_symbol(head, CETTA_COLLECTION_KEYS_HEAD)) return false;
-    CETTA_SCOPED_SHARED_TRANSITION(key_encoding_read);
+    CETTA_SCOPED_SPACE_OBSERVE(key_encoding_read, space);
     NameKeyTable *table = NULL;
     NameId *codes = NULL;
     size_t *firsts = NULL;

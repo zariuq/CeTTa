@@ -263,7 +263,7 @@ const GSLTDirectPeTTaReaderV1Plan petta_reader_direct_v1_plan = {
     .form_syntax_digest = "d974dc0e8f68ce1ccfa1948a26e215d1226b78b14a0f097e1bef2467a0558523",
     .form_class_digest = "b648099c04b6f5485c1fe55cf0ab87568d0b2199fddb6acbcede0a17cdf19cb3",
     .projection_digest = "f524eeaf4afe0818a3c867242ad9e408de7badcfe03c4b4caed3d72753ccb031",
-    .compiler_digest = "c4343be1a400ffde98f146412545f74c1bd371de798af40d60f980eb9fb6ef8b",
+    .compiler_digest = "9ad036172a0486fe629414c1e9ba761671bacfeb1f331e954e27f05ef727fee6",
     .composition_digest = "8aa7c012c4a24b57bb8109afa8eb7f9c7a2ec166c790986b0c3730265536133d",
     .profile = "cetta-petta-v1",
     .splitter_blank = &petta_reader_direct_v1_class_2_petta_splitter_blank_scalar,
@@ -295,7 +295,7 @@ const GSLTDirectPeTTaReaderV1Plan petta_reader_direct_v1_plan = {
     .list_token_first = NULL,
     .list_token = NULL,
     .list_token_boundary = NULL,
-    .depth_limit = UINT32_C(4096),
+    .depth_limit = GSLT_DIRECT_PETTA_DEPTH_UNBOUNDED_V1,
 };
 
 const char *petta_reader_direct_v1_program_digest(void) {

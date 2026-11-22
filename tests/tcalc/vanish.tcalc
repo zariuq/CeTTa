@@ -1,0 +1,4 @@
+; The only row is taken and nothing is made: the outcome is the empty state.
+(step one)
+(spark)
+(rule fade (take (spark)))

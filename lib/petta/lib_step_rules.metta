@@ -172,6 +172,20 @@
 
 ;; ---- information --------------------------------------------------------------------
 
+; A trial keeps the caller's variables private to collapse. Every retained
+; disequation must remain consistent with the proposed match.
+(= (step:apart-consistent $pairs)
+   (if (== $pairs ()) True
+     (let ($pair $more) (decons-atom $pairs)
+       (let (step:apart $left $right) $pair
+         (and (not (== $left $right)) (step:apart-consistent $more))))))
+
+(= (step:may-unify $apart $left $right)
+   (not (== (collapse
+     (let (quote $left) $right (if (step:apart-consistent $apart) True (empty)))) ())))
+
+
+
 ; Each pattern unified with the label of its occurrence.  No answer when one
 ; does not unify.
 (= (step:solve-uses $present $uses)
@@ -196,58 +210,60 @@
          (if (== $left $right) step:violated
            (let $tail (step:still-apart $more)
              (if (== $tail step:violated) step:violated
-               (if (=? $left $right) (cons-atom $pair $tail) $tail))))))))
+               (if (step:may-unify () $left $right) (cons-atom $pair $tail) $tail))))))))
 
 ;; ---- guards -------------------------------------------------------------------------
 
 ; How many labels are the pattern at every solution, and whether another could
-; be at some solution: (step:tally SURE POSSIBLE).
-(= (step:tally $pattern $labels $sure $possible)
+; be at some solution compatible with the retained disequations:
+; (step:tally SURE POSSIBLE).
+(= (step:tally $apart $pattern $labels $sure $possible)
    (if (== $labels ()) (step:tally $sure $possible)
      (let ($label $more) (decons-atom $labels)
        (let $read (step:read-label $label)
          (if (== $read $pattern)
-             (step:tally $pattern $more (+ $sure 1) $possible)
-             (if (=? $read $pattern)
-                 (step:tally $pattern $more $sure (+ $possible 1))
-                 (step:tally $pattern $more $sure $possible)))))))
+             (step:tally $apart $pattern $more (+ $sure 1) $possible)
+             (if (step:may-unify $apart $read $pattern)
+                 (step:tally $apart $pattern $more $sure (+ $possible 1))
+                 (step:tally $apart $pattern $more $sure $possible)))))))
 
 ; A label is an instance of the pattern at every solution when meeting the
 ; pattern leaves the label as it was; it may be one at some solution when the
 ; two unify at all: (step:tally SURE POSSIBLE) again.
-(= (step:met $label $pattern) (let $pattern $label $label))
+(= (step:met $apart $label $pattern)
+   (let (quote $pattern) $label (if (step:apart-consistent $apart) $label (empty))))
 
-(= (step:region-tally $pattern $labels $sure $possible)
+(= (step:region-tally $apart $pattern $labels $sure $possible)
    (if (== $labels ()) (step:tally $sure $possible)
      (let ($label $more) (decons-atom $labels)
        (let $read (step:read-label $label)
-         (let $met (collapse (step:met $read $pattern))
+         (let $met (collapse (step:met $apart $read $pattern))
            (if (== $met ())
-               (step:region-tally $pattern $more $sure $possible)
+               (step:region-tally $apart $pattern $more $sure $possible)
                (if (=alpha (car-atom $met) $read)
-                   (step:region-tally $pattern $more (+ $sure 1) $possible)
-                   (step:region-tally $pattern $more $sure (+ $possible 1)))))))))
+                   (step:region-tally $apart $pattern $more (+ $sure 1) $possible)
+                   (step:region-tally $apart $pattern $more $sure (+ $possible 1)))))))))
 
-(= (step:guard-holds $labels $guard)
+(= (step:guard-holds $labels $apart $guard)
    (case $guard
      (((step:equal $a $b) (== $a $b))
       ((step:absent $pattern)
-        (let (step:tally $sure $possible) (step:tally $pattern $labels 0 0)
+        (let (step:tally $sure $possible) (step:tally $apart $pattern $labels 0 0)
           (and (== $sure 0) (== $possible 0))))
       ((step:count $pattern $number)
-        (let (step:tally $sure $possible) (step:tally $pattern $labels 0 0)
+        (let (step:tally $sure $possible) (step:tally $apart $pattern $labels 0 0)
           (and (== $sure $number) (== $possible 0))))
       ((step:region $pattern $number)
-        (let (step:tally $sure $possible) (step:region-tally $pattern $labels 0 0)
+        (let (step:tally $sure $possible) (step:region-tally $apart $pattern $labels 0 0)
           (and (== $sure $number) (== $possible 0))))
       ((step:when $expression) (== (eval $expression) True))
       ($other False))))
 
 ; step:hold, or the first guard that does not.
-(= (step:guards $labels $guards)
+(= (step:guards $labels $apart $guards)
    (if (== $guards ()) step:hold
      (let ($guard $more) (decons-atom $guards)
-       (if (step:guard-holds $labels $guard) (step:guards $labels $more) (step:guard $guard)))))
+       (if (step:guard-holds $labels $apart $guard) (step:guards $labels $apart $more) (step:guard $guard)))))
 
 ;; ---- the firing ---------------------------------------------------------------------
 
@@ -280,7 +296,7 @@
                   ($_tells (step:solve-tells $tells))
                   ($open (step:still-apart (step:append $told $apart))))
              (if (== $open step:violated) (step:refused unsolvable)
-               (let $verdict (step:guards (step:labels $present) $guards)
+               (let $verdict (step:guards (step:labels $present) $open $guards)
                  (if (== $verdict step:hold)
                      (let* (($kept (step:remove-taken $present $taken))
                             ($new (step:made $next $makes))

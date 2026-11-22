@@ -1,0 +1,10 @@
+; Two philosophers, two forks.  Each takes the fork on the left first, then
+; the one on the right.  One order of firings deadlocks: each holds one fork,
+; and no rule can fire.  The deadlock is an outcome.
+(step one)
+(fork 1) (fork 2)
+(thinking a 1 2)
+(thinking b 2 1)
+(rule left (take (thinking $p $l $r) (fork $l)) (make (holding $p $l $r)))
+(rule right (take (holding $p $l $r) (fork $r)) (make (eating $p $l $r)))
+(rule done (take (eating $p $l $r)) (make (fork $l) (fork $r) (fed $p)))

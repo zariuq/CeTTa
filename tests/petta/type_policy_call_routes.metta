@@ -100,8 +100,10 @@
 !(cr-same via-body-partial (collapse (cr-pair (+ 1 2) (+ 1 3)))
           (collapse (cr-body-partial 1)))
 
-; Each declaration is an alternative that evaluates its own arguments: the
-; Number one evaluates this argument, the Atom one holds it.
+; A call runs its body once for each tuple of argument values, whatever
+; the number of declarations that accept it: one of the two holds this
+; argument and the other evaluates it, so it is evaluated, once, and both
+; accept the value.
 !(cr-same via-chains (collapse (cr-two (+ 1 2)))
           (collapse (let $f (cr-fetch two) ($f (+ 1 2)))))
 !(cr-same via-chains-nondeterministic (collapse (cr-two (superpose (1 2))))
@@ -112,8 +114,9 @@
 !(cr-same via-lambda-chains (collapse (cr-two (+ 1 2)))
           (collapse (let $g (|-> ($f) ($f (+ 1 2))) ($g cr-two))))
 
-; A head that is itself an expression runs with its arguments, as one
-; tuple, before the callee is known; the callee's checks still apply.
+; A head computed by a call runs with its arguments, as one tuple, before
+; the callee is known; the callee's checks still apply.  (A written partial
+; head, such as ((cr-pair a) b), continues its partial application instead.)
 !(collapse ((cr-fetch raw) (+ 1 2)))
 !(collapse ((cr-fetch id) (cr-wrong)))
 

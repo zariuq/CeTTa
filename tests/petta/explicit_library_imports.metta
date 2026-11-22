@@ -4,7 +4,9 @@
 !(test (__cetta_lib_str starts-with "abc" "a")
        (quote (__cetta_lib_str starts-with "abc" "a")))
 !(test (import! &self ()) true)
-!(test (collapse (import! &self (str 42))) ())
+; A descriptor naming no module raises, as a module that fails to load does,
+; and imports nothing.
+!(test (car-atom (catch (import! &self (str 42)))) Error)
 !(test (str:starts-with "abc" "a") (quote (str:starts-with "abc" "a")))
 !(test (import! &self (str json)) true)
 !(test (str:starts-with "abc" "a") true)

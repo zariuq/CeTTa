@@ -1,142 +1,72 @@
+/* lang.c - the languages of --lang, read from their rows in lib/profiles.data
+ * (src/generated/cetta_profiles.generated.h).  Adding a language, an alias or
+ * a syntax is adding a row there. */
 #include "lang.h"
 #include <ctype.h>
 #include <string.h>
 
-static bool path_has_suffix(const char *path, const char *suffix) {
-    size_t path_len;
-    size_t suffix_len;
-    if (!path || !suffix) return false;
-    path_len = strlen(path);
-    suffix_len = strlen(suffix);
-    if (suffix_len > path_len) return false;
-    return strcmp(path + (path_len - suffix_len), suffix) == 0;
-}
+#define LANGUAGE_SPEC(code, name, implemented, note, syntax, relational, gslt, destination, \
+                      named_head) \
+    {code, name, implemented, note, syntax, CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, \
+     (relational) ? CETTA_PORTABLE_RELATIONAL_EAGER_STRUCTURAL_EQUATIONS_V1 \
+                  : CETTA_PORTABLE_RELATIONAL_NONE, \
+     gslt, (destination) ? CETTA_CALL_RESULT_BY_DESTINATION : CETTA_CALL_RESULT_BY_VALUE, \
+     named_head},
+static const CettaLanguageSpec CETTA_LANGUAGES[] = {CETTA_LANGUAGE_ROWS(LANGUAGE_SPEC)};
+#undef LANGUAGE_SPEC
 
-static const CettaLanguageSpec CETTA_LANGUAGES[] = {
-    {CETTA_LANGUAGE_HOL_LIGHT, "hol-light", "hol-light", true,
-     "Native HOL Light kernel; checked HOLR proof streams",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_HOL_LIGHT, "hol", "hol-light", true,
-     "Alias for the native HOL Light kernel",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_HE, "he", "he", true, "Current direct MeTTa/HE evaluator",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_EAGER_STRUCTURAL_EQUATIONS_V1},
-    {CETTA_LANGUAGE_HE, "mettahe", "he", true, "Current direct MeTTa/HE evaluator",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_EAGER_STRUCTURAL_EQUATIONS_V1},
-    {CETTA_LANGUAGE_PRIME, "prime", "prime", true,
-     "Frozen MeTTa-Prime 0.0.1 draft",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_PRIME, "metta-prime", "prime", true,
-     "Alias for the frozen MeTTa-Prime 0.0.1 draft",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_SUBZERO, "subzero", "subzero", true,
-     "Generated free-bag Subzero candidate",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_SUBZERO, "metta-subzero", "subzero", true,
-     "Alias for the generated Subzero candidate",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_ZERO, "zero", "zero", true,
-     "Generated query-first MeTTa Zero candidate",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_ZERO, "metta-zero", "zero", true,
-     "Alias for the generated query-first MeTTa Zero candidate",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_GSLT_IL, "gslt-il", "gslt-il", true,
-     "Experimental generated MeTTa-facing indexed GSLT metalanguage",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_ZEROUV, "zerouv", "zerouv", true,
-     "Experimental productive and recurrent MeTTa candidate",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_METTA_INTERACT, "metta-interact", "metta-interact", true,
-     "Experimental proof-relevant interaction and cost language",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_MM2, "mm2", "mm2", true,
-     "Direct MM2 lowering plus MORK-backed execution for pure program files",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_PETTA, "petta", "petta", true,
-     "Corrected stable PeTTa, the default language (petta@1.1 is typed)",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_AMBIENT, "ambient", "ambient", false,
-     "Planned port from mettail-rust inventory",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_CALCULATOR, "calculator", "calculator", false,
-     "Planned port from mettail-rust inventory",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_IMP, "imp", "imp", false, "Planned port from mettail-rust inventory",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_LAMBDA, "lambda", "lambda", false,
-     "Planned port from mettail-rust inventory",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_METTAFULL_LEGACY, "mettafull-legacy", "mettafull-legacy", false,
-     "Planned port from mettail-rust inventory",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_MINSKYLITE, "minskylite", "minskylite", false,
-     "Planned port from mettail-rust inventory",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_MM0LITE, "mm0lite", "mm0lite", false,
-     "Planned port from mettail-rust inventory",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_PYASHCORE, "pyashcore", "pyashcore", false,
-     "Planned port from mettail-rust inventory",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-    {CETTA_LANGUAGE_RHOCALC, "rhocalc", "rhocalc", true,
-     "Strict-core rho-calculus reducer to quiescence",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
-     CETTA_PORTABLE_RELATIONAL_NONE},
-};
+#define LANGUAGE_ALIAS(name, language) {name, language},
+static const struct { const char *name; CettaLanguageId language; } CETTA_LANGUAGE_ALIASES[] = {
+    CETTA_LANGUAGE_ALIAS_ROWS(LANGUAGE_ALIAS)};
+#undef LANGUAGE_ALIAS
+
+#define SYNTAX_NAME(code, name) {code, name},
+static const struct { CettaSyntaxId syntax; const char *name; } CETTA_SYNTAXES[] = {
+    CETTA_SYNTAX_ROWS(SYNTAX_NAME)};
+#undef SYNTAX_NAME
+
+/* The syntaxes a language reads besides its default, and the path suffix that
+ * selects each ("" selects none). */
+#define LANGUAGE_SYNTAX(language, syntax, suffix) {language, syntax, suffix},
+static const struct {
+    CettaLanguageId language; CettaSyntaxId syntax; const char *suffix;
+} CETTA_LANGUAGE_SYNTAXES[] = {CETTA_LANGUAGE_SYNTAX_ROWS(LANGUAGE_SYNTAX)};
+#undef LANGUAGE_SYNTAX
+
+#define COUNT(table) (sizeof(table) / sizeof((table)[0]))
 
 static bool ascii_ieq(const char *lhs, const char *rhs) {
     while (*lhs && *rhs) {
-        if (tolower((unsigned char)*lhs) != tolower((unsigned char)*rhs)) {
-            return false;
-        }
+        if (tolower((unsigned char)*lhs) != tolower((unsigned char)*rhs)) return false;
         lhs++;
         rhs++;
     }
     return *lhs == '\0' && *rhs == '\0';
 }
 
+static bool path_has_suffix(const char *path, const char *suffix) {
+    if (!path || !suffix || !*suffix) return false;
+    size_t path_len = strlen(path), suffix_len = strlen(suffix);
+    return suffix_len <= path_len && strcmp(path + (path_len - suffix_len), suffix) == 0;
+}
+
 const CettaLanguageSpec *cetta_language_lookup(const char *name) {
-    size_t count = sizeof(CETTA_LANGUAGES) / sizeof(CETTA_LANGUAGES[0]);
-    for (size_t i = 0; i < count; i++) {
-        if (ascii_ieq(CETTA_LANGUAGES[i].name, name)) {
-            return &CETTA_LANGUAGES[i];
-        }
-    }
+    if (!name) return NULL;
+    for (size_t i = 0; i < COUNT(CETTA_LANGUAGES); i++)
+        if (ascii_ieq(CETTA_LANGUAGES[i].canonical, name)) return &CETTA_LANGUAGES[i];
+    for (size_t i = 0; i < COUNT(CETTA_LANGUAGE_ALIASES); i++)
+        if (ascii_ieq(CETTA_LANGUAGE_ALIASES[i].name, name))
+            return cetta_language_from_id(CETTA_LANGUAGE_ALIASES[i].language);
     return NULL;
 }
 
+/* The rows are written in the order of their ids, so a language is found at
+ * its id; the evaluator asks these properties on its hot paths. */
 const CettaLanguageSpec *cetta_language_from_id(CettaLanguageId id) {
-    size_t count = sizeof(CETTA_LANGUAGES) / sizeof(CETTA_LANGUAGES[0]);
-    for (size_t i = 0; i < count; i++) {
-        if (CETTA_LANGUAGES[i].id == id &&
-            strcmp(CETTA_LANGUAGES[i].name, CETTA_LANGUAGES[i].canonical) == 0) {
-            return &CETTA_LANGUAGES[i];
-        }
-    }
+    if ((size_t)id < COUNT(CETTA_LANGUAGES) && CETTA_LANGUAGES[id].id == id)
+        return &CETTA_LANGUAGES[id];
+    for (size_t i = 0; i < COUNT(CETTA_LANGUAGES); i++)   /* a row written out of order */
+        if (CETTA_LANGUAGES[i].id == id) return &CETTA_LANGUAGES[i];
     return NULL;
 }
 
@@ -146,162 +76,106 @@ const char *cetta_language_canonical_name(CettaLanguageId id) {
 }
 
 const char *cetta_syntax_name(CettaSyntaxId syntax) {
-    switch (syntax) {
-    case CETTA_SYNTAX_AUTO:
-        return "auto";
-    case CETTA_SYNTAX_METTA:
-        return "metta";
-    case CETTA_SYNTAX_MRHO:
-        return "mrho";
-    case CETTA_SYNTAX_RHO:
-        return "rho";
-    case CETTA_SYNTAX_HOLR:
-        return "holr";
-    }
+    for (size_t i = 0; i < COUNT(CETTA_SYNTAXES); i++)
+        if (CETTA_SYNTAXES[i].syntax == syntax) return CETTA_SYNTAXES[i].name;
     return "unknown-syntax";
 }
 
 bool cetta_syntax_from_name(const char *name, CettaSyntaxId *out_syntax) {
     if (!name) return false;
-    if (ascii_ieq(name, "holr")) {
-        if (out_syntax) *out_syntax = CETTA_SYNTAX_HOLR;
-        return true;
-    }
-    if (ascii_ieq(name, "auto")) {
-        if (out_syntax) *out_syntax = CETTA_SYNTAX_AUTO;
-        return true;
-    }
-    if (ascii_ieq(name, "metta")) {
-        if (out_syntax) *out_syntax = CETTA_SYNTAX_METTA;
-        return true;
-    }
-    if (ascii_ieq(name, "mrho")) {
-        if (out_syntax) *out_syntax = CETTA_SYNTAX_MRHO;
-        return true;
-    }
-    if (ascii_ieq(name, "rho")) {
-        if (out_syntax) *out_syntax = CETTA_SYNTAX_RHO;
-        return true;
-    }
+    for (size_t i = 0; i < COUNT(CETTA_SYNTAXES); i++)
+        if (ascii_ieq(CETTA_SYNTAXES[i].name, name)) {
+            if (out_syntax) *out_syntax = CETTA_SYNTAXES[i].syntax;
+            return true;
+        }
     return false;
 }
 
 CettaSyntaxId cetta_syntax_default_for_language(CettaLanguageId id) {
-    if (id == CETTA_LANGUAGE_HOL_LIGHT) return CETTA_SYNTAX_HOLR;
-    return id == CETTA_LANGUAGE_RHOCALC ? CETTA_SYNTAX_MRHO
-                                        : CETTA_SYNTAX_METTA;
+    const CettaLanguageSpec *spec = cetta_language_from_id(id);
+    return spec ? spec->syntax : CETTA_SYNTAX_METTA;
 }
 
 CettaSyntaxId cetta_syntax_infer_for_path(CettaLanguageId id, const char *path) {
-    if (id == CETTA_LANGUAGE_RHOCALC && path_has_suffix(path, ".rho")) {
-        return CETTA_SYNTAX_RHO;
-    }
-    if (id == CETTA_LANGUAGE_RHOCALC && path_has_suffix(path, ".mrho")) {
-        return CETTA_SYNTAX_MRHO;
-    }
+    for (size_t i = 0; i < COUNT(CETTA_LANGUAGE_SYNTAXES); i++)
+        if (CETTA_LANGUAGE_SYNTAXES[i].language == id &&
+            path_has_suffix(path, CETTA_LANGUAGE_SYNTAXES[i].suffix))
+            return CETTA_LANGUAGE_SYNTAXES[i].syntax;
     return cetta_syntax_default_for_language(id);
 }
 
 bool cetta_language_supports_syntax(CettaLanguageId id, CettaSyntaxId syntax) {
-    if (syntax == CETTA_SYNTAX_AUTO) return true;
-    if (id == CETTA_LANGUAGE_HOL_LIGHT) return syntax == CETTA_SYNTAX_HOLR;
-    if (id == CETTA_LANGUAGE_RHOCALC) {
-        return syntax == CETTA_SYNTAX_MRHO ||
-               syntax == CETTA_SYNTAX_RHO ||
-               syntax == CETTA_SYNTAX_METTA;
-    }
-    return syntax == CETTA_SYNTAX_METTA;
+    if (syntax == CETTA_SYNTAX_AUTO || syntax == cetta_syntax_default_for_language(id)) return true;
+    for (size_t i = 0; i < COUNT(CETTA_LANGUAGE_SYNTAXES); i++)
+        if (CETTA_LANGUAGE_SYNTAXES[i].language == id && CETTA_LANGUAGE_SYNTAXES[i].syntax == syntax)
+            return true;
+    return false;
 }
 
 bool cetta_language_uses_embedded_gslt(CettaLanguageId id) {
-    return id == CETTA_LANGUAGE_SUBZERO ||
-           id == CETTA_LANGUAGE_ZERO ||
-           id == CETTA_LANGUAGE_GSLT_IL ||
-           id == CETTA_LANGUAGE_ZEROUV ||
-           id == CETTA_LANGUAGE_METTA_INTERACT;
+    const CettaLanguageSpec *spec = cetta_language_from_id(id);
+    return spec && spec->embedded_gslt;
 }
 
 const char *cetta_relative_module_policy_name(CettaRelativeModulePolicy policy) {
     switch (policy) {
-    case CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY:
-        return "relative";
-    case CETTA_RELATIVE_MODULE_POLICY_ANCESTOR_WALK:
-        return "ancestor-walk";
-    case CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY:
-        return "upstream";
+    case CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY: return "relative";
+    case CETTA_RELATIVE_MODULE_POLICY_ANCESTOR_WALK: return "ancestor-walk";
+    case CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY: return "upstream";
     }
     return "unknown";
 }
 
 bool cetta_relative_module_policy_from_name(const char *name,
                                             CettaRelativeModulePolicy *out_policy) {
-    if (!name) {
-        return false;
-    }
-    if (ascii_ieq(name, "relative") || ascii_ieq(name, "current-dir") ||
-        ascii_ieq(name, "script-dir")) {
-        if (out_policy) {
-            *out_policy = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
+    static const struct { const char *name; CettaRelativeModulePolicy policy; } names[] = {
+        {"relative", CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY},
+        {"current-dir", CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY},
+        {"script-dir", CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY},
+        {"ancestor-walk", CETTA_RELATIVE_MODULE_POLICY_ANCESTOR_WALK},
+        {"walk", CETTA_RELATIVE_MODULE_POLICY_ANCESTOR_WALK},
+        {"upstream", CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY},
+        {"working-dir", CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY},
+        {"cwd", CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY},
+    };
+    if (!name) return false;
+    for (size_t i = 0; i < COUNT(names); i++)
+        if (ascii_ieq(names[i].name, name)) {
+            if (out_policy) *out_policy = names[i].policy;
+            return true;
         }
-        return true;
-    }
-    if (ascii_ieq(name, "ancestor-walk") || ascii_ieq(name, "walk")) {
-        if (out_policy) {
-            *out_policy = CETTA_RELATIVE_MODULE_POLICY_ANCESTOR_WALK;
-        }
-        return true;
-    }
-    if (ascii_ieq(name, "upstream") || ascii_ieq(name, "working-dir") ||
-        ascii_ieq(name, "cwd")) {
-        if (out_policy) {
-            *out_policy = CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY;
-        }
-        return true;
-    }
     return false;
 }
 
 CettaRelativeModulePolicy cetta_language_relative_module_policy(CettaLanguageId id) {
     const CettaLanguageSpec *spec = cetta_language_from_id(id);
-    if (!spec) {
-        return CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
-    }
-    return spec->relative_module_policy;
+    return spec ? spec->relative_module_policy : CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
 }
 
 CettaPortableRelationalContract
 cetta_language_portable_relational_contract(CettaLanguageId id) {
     const CettaLanguageSpec *spec = cetta_language_from_id(id);
-    return spec ? spec->portable_relational_contract
-                : CETTA_PORTABLE_RELATIONAL_NONE;
+    return spec ? spec->portable_relational_contract : CETTA_PORTABLE_RELATIONAL_NONE;
 }
 
 CettaCallResultPolicy cetta_language_call_result_policy(CettaLanguageId id) {
-    return id == CETTA_LANGUAGE_PETTA ? CETTA_CALL_RESULT_BY_DESTINATION
-                                    : CETTA_CALL_RESULT_BY_VALUE;
+    const CettaLanguageSpec *spec = cetta_language_from_id(id);
+    return spec ? spec->call_result_policy : CETTA_CALL_RESULT_BY_VALUE;
 }
 
 bool cetta_language_rules_need_named_head(CettaLanguageId id) {
-    return id == CETTA_LANGUAGE_PETTA;
+    const CettaLanguageSpec *spec = cetta_language_from_id(id);
+    return spec && spec->rules_need_named_head;
 }
 
+/* The implemented languages, then the planned ones, each in the table's order. */
 void cetta_language_print_inventory(FILE *out) {
-    size_t count = sizeof(CETTA_LANGUAGES) / sizeof(CETTA_LANGUAGES[0]);
-    const char *last_canonical = NULL;
-
     fputs("cetta language inventory (--lang driver/front-end):\n", out);
-    for (size_t i = 0; i < count; i++) {
-        const CettaLanguageSpec *spec = &CETTA_LANGUAGES[i];
-        if (last_canonical && strcmp(last_canonical, spec->canonical) == 0) {
-            continue;
+    for (int implemented = 1; implemented >= 0; implemented--)
+        for (size_t i = 0; i < COUNT(CETTA_LANGUAGES); i++) {
+            const CettaLanguageSpec *spec = &CETTA_LANGUAGES[i];
+            if (spec->implemented != (bool)implemented) continue;
+            fprintf(out, "  %-16s %s  %s\n", spec->canonical,
+                    spec->implemented ? "implemented" : "planned", spec->note);
         }
-        fprintf(
-            out,
-            "  %-16s %s  %s\n",
-            spec->canonical,
-            spec->implemented ? "implemented" : "planned",
-            spec->note
-        );
-        last_canonical = spec->canonical;
-    }
 }

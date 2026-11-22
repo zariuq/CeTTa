@@ -1,5 +1,7 @@
 ; A get-type equation added after a typed call was prepared gives its value a
-; second type answer from then on, and removing it takes the answer away.
+; second type answer from then on, and removing it takes the answer away.  A
+; ground value meets a closed type by the first answer of its guard, so the
+; call runs once either way.
 (: inc (-> Number Number))
 (= (inc $x) (+ $x 1))
 (= (loop $n $acc) (if (== $n 0) $acc (loop (- $n 1) (inc $acc))))

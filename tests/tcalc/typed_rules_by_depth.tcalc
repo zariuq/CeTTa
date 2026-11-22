@@ -1,0 +1,24 @@
+; Forward chaining over typed rules, on the knowledge base of the forward
+; chaining test of the DTL chainer (trueagi-io/chaining, dtl/tests).  A row
+; (: PROOF PROPOSITION) is a proof; a rule is read off its type, here
+; (-> (→ $p $q) $p $q): its premises are read, its conclusion is made, and the
+; proof made is the rule applied to the proofs read.
+
+(: a A)
+(: ab (→ A B))
+(: bc (→ B C))
+
+(rule ModusPonens
+  (read (: $f (→ $p $q)) (: $x $p))
+  (make (: (ModusPonens $f $x) $q)))
+
+(rule Deduction
+  (read (: $f (→ $p $q)) (: $g (→ $q $r)))
+  (make (: (Deduction $f $g) (→ $p $r))))
+
+; one step: every rule at every match at once, so the n-th state holds
+; the proofs of depth n; a proof already known adds nothing, and the run
+; ends when a step would add none
+(step every)
+(store set)
+(observe run)

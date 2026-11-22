@@ -21,6 +21,8 @@
 #ifndef CETTA_EVAL_GC_H
 #define CETTA_EVAL_GC_H
 
+#include "gc_budget.h"
+
 typedef struct {
     Atom **items;
     size_t len;
@@ -88,6 +90,7 @@ typedef struct CettaEvalGc {
     bool enabled;
     uint32_t external_owner_depth;
     size_t imprecise_lexical_roots;
+    size_t root_frame_count;
     size_t budget_bytes;
     uint64_t collections;
     uint64_t reclaimed_bytes;
@@ -136,6 +139,7 @@ static void eval_gc_init_once(void) {
     g_eval_gc.region_depth = 0u;
     g_eval_gc.external_owner_depth = 0u;
     g_eval_gc.imprecise_lexical_roots = 0u;
+    g_eval_gc.root_frame_count = 0u;
 
     eval_gc_init_survivor_arena(&g_eval_gc.survivor);
     g_eval_gc.ready = true;
@@ -195,20 +199,27 @@ static void eval_gc_region_leave(EvalGcRegionGuard *guard) {
  * collection can evacuate every pointer into the current survivor semispace,
  * rather than retaining all prior survivor generations until form exit.
  */
-static void eval_gc_root_frame_link(EvalGcRootFrame *frame,
-                                    CettaEvalGcFrameKind kind) {
+static inline EvalGc *eval_gc_current_ptr(void) {
+    return g_eval_gc_current ? g_eval_gc_current : &g_eval_gc_fallback;
+}
+
+static inline void eval_gc_root_frame_link(EvalGcRootFrame *frame,
+                                           CettaEvalGcFrameKind kind) {
     if (!frame)
         return;
-    if (!g_eval_gc.ready)
+    EvalGc *gc = eval_gc_current_ptr();
+    if (__builtin_expect(!gc->ready, 0))
         eval_gc_init_once();
     assert(!frame->linked);
     frame->kind = kind;
-    frame->previous = g_eval_gc.roots;
+    frame->previous = gc->roots;
     frame->linked = true;
     frame->precise_suspension = false;
-    g_eval_gc.roots = frame;
+    gc->roots = frame;
+    assert(gc->root_frame_count < SIZE_MAX);
+    gc->root_frame_count++;
     if (kind == CETTA_EVAL_GC_FRAME_LEXICAL)
-        g_eval_gc.imprecise_lexical_roots++;
+        gc->imprecise_lexical_roots++;
 }
 
 static void eval_gc_root_frame_enter(EvalGcRootFrame *frame,
@@ -794,22 +805,29 @@ static inline void eval_gc_external_owner_guard_leave(
     }
 }
 
-static void eval_gc_root_frame_leave(EvalGcRootFrame *frame) {
+static void eval_gc_root_frame_unlink_non_top(EvalGc *gc,
+                                              EvalGcRootFrame *frame) {
+    EvalGcRootFrame *newer = gc->roots;
+    while (newer && newer->previous != frame)
+        newer = newer->previous;
+    if (newer)
+        newer->previous = frame->previous;
+}
+
+static inline void eval_gc_root_frame_leave(EvalGcRootFrame *frame) {
     if (!frame || !frame->linked)
         return;
-    if (g_eval_gc.roots == frame) {
-        g_eval_gc.roots = frame->previous;
-    } else {
-        EvalGcRootFrame *newer = g_eval_gc.roots;
-        while (newer && newer->previous != frame)
-            newer = newer->previous;
-        if (newer)
-            newer->previous = frame->previous;
-    }
+    EvalGc *gc = eval_gc_current_ptr();
+    assert(gc->root_frame_count > 0u);
+    gc->root_frame_count--;
+    if (__builtin_expect(gc->roots == frame, 1))
+        gc->roots = frame->previous;
+    else
+        eval_gc_root_frame_unlink_non_top(gc, frame);
     if (frame->kind == CETTA_EVAL_GC_FRAME_LEXICAL &&
         !frame->precise_suspension) {
-        assert(g_eval_gc.imprecise_lexical_roots > 0u);
-        g_eval_gc.imprecise_lexical_roots--;
+        assert(gc->imprecise_lexical_roots > 0u);
+        gc->imprecise_lexical_roots--;
     }
     frame->previous = NULL;
     frame->linked = false;
@@ -819,8 +837,12 @@ static inline bool eval_gc_can_collect_arena(const Arena *arena) {
     /* Hash-cons entries own their interned atoms on the heap.  Eligible eval
        children are interned before they can appear inside an interned parent,
        so resetting the eval arena does not leave hash-cons entries pointing
-       into reclaimed eval blocks. */
-    return arena != NULL;
+       into reclaimed eval blocks.
+       The persistent arena outlives the evaluation, and what it holds is not
+       reached from the evaluator's roots: the term universe's decoded atoms,
+       promoted results and state.  A caller that evaluates in its persistent
+       arena therefore evaluates in an arena no collection may reset. */
+    return arena != NULL && arena != eval_current_persistent_arena();
 }
 
 static inline bool eval_gc_root_chain_is_precise(
@@ -837,6 +859,15 @@ static inline bool eval_gc_root_chain_is_precise(
     return g_eval_gc.imprecise_lexical_roots == current_imprecise;
 }
 
+static inline size_t eval_gc_retained_work(size_t private_survivors) {
+    size_t survivors = arena_accounted_live_bytes(&g_eval_gc.survivor);
+    if (private_survivors > survivors)
+        survivors = private_survivors;
+    size_t roots = cetta_gc_budget_product(g_eval_gc.root_frame_count,
+        sizeof(EvalGcRootFrame));
+    return cetta_gc_budget_add(survivors, roots);
+}
+
 static inline bool eval_gc_safe_point(const Arena *arena,
                                       const EvalGcRootFrame *frame,
                                       size_t os_len,
@@ -851,7 +882,8 @@ static inline bool eval_gc_safe_point(const Arena *arena,
      */
     if (!eval_gc_enabled() || !eval_gc_can_collect_arena(arena) ||
         g_eval_gc.region_arena != arena ||
-        live_above_anchor < g_eval_gc.budget_bytes) {
+        live_above_anchor < cetta_gc_collection_budget(
+            g_eval_gc.budget_bytes, eval_gc_retained_work(0u))) {
         return false;
     }
     cetta_runtime_stats_inc(
@@ -879,10 +911,11 @@ static inline bool eval_gc_safe_point(const Arena *arena,
 
 /* A copying collector must not recopy a growing live graph after every fixed
  * quantum of fresh allocation.  Requiring at least one survivor-graph's worth
- * of fresh allocation in addition to the configured nursery quantum gives
+ * of fresh allocation in addition to the survival-sized nursery gives
  * the usual semispace amortization: as the continuation grows, collection
- * intervals grow with it.  Callers that do not retain a multi-root survivor
- * graph pass zero. */
+ * intervals grow with it. A caller's private survivor graph and the shared
+ * evacuation arena both contribute a floor. The configured quantum caps
+ * fresh nursery headroom; it never caps a retained graph. */
 static inline bool eval_gc_budget_reached_with_floor(
     const Arena *arena, ArenaMark anchor, size_t survivor_floor_bytes) {
     if (!eval_gc_enabled() || !eval_gc_can_collect_arena(arena))
@@ -893,11 +926,8 @@ static inline bool eval_gc_budget_reached_with_floor(
         accounted_live >= accounted_anchor
             ? accounted_live - accounted_anchor
             : 0u;
-    size_t effective_budget = g_eval_gc.budget_bytes;
-    if (survivor_floor_bytes > SIZE_MAX - effective_budget)
-        effective_budget = SIZE_MAX;
-    else
-        effective_budget += survivor_floor_bytes;
+    size_t effective_budget = cetta_gc_collection_budget(
+        g_eval_gc.budget_bytes, eval_gc_retained_work(survivor_floor_bytes));
     return live_above_anchor >= effective_budget;
 }
 

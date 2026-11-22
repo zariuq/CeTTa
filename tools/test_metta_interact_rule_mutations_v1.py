@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 
 from test_gslt_language_rule_mutations_v1 import rule_names, without_rule
+import gslt_relation_executor_v1 as executor
 
 
 class GateFailure(RuntimeError):
@@ -17,7 +18,7 @@ class GateFailure(RuntimeError):
 
 def run_harness(
     harness: Path,
-    chart: Path,
+    execution: list[str],
     quote_match: Path,
     core: Path,
     sequence: Path,
@@ -26,8 +27,7 @@ def run_harness(
         [
             "python3",
             str(harness),
-            "--chart",
-            str(chart),
+            *execution,
             "--quote-match",
             str(quote_match),
             "--core",
@@ -44,19 +44,20 @@ def run_harness(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--harness", type=Path, required=True)
-    parser.add_argument("--chart", type=Path, required=True)
+    parser.add_argument("--chart", type=Path)
+    executor.add_arguments(parser)
     parser.add_argument("--quote-match", type=Path, required=True)
     parser.add_argument("--core", type=Path, required=True)
     parser.add_argument("--sequence", type=Path, required=True)
     arguments = parser.parse_args()
 
     harness = arguments.harness.resolve()
-    chart = arguments.chart.resolve()
+    execution = executor.command_arguments(arguments)
     quote_match = arguments.quote_match.resolve()
     original_core = arguments.core.resolve()
     original_sequence = arguments.sequence.resolve()
     baseline = run_harness(
-        harness, chart, quote_match, original_core, original_sequence
+        harness, execution, quote_match, original_core, original_sequence
     )
     if baseline.returncode != 0:
         raise GateFailure(
@@ -84,7 +85,7 @@ def main() -> int:
                     mutation if source_name == "sequence" else original_sequence
                 )
                 result = run_harness(
-                    harness, chart, quote_match, core, sequence
+                    harness, execution, quote_match, core, sequence
                 )
                 if result.returncode == 0:
                     survivors.append(f"{source_name}:{rule_name}")
@@ -104,6 +105,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (GateFailure, OSError) as error:
+    except (GateFailure, executor.ExecutorFailure, OSError) as error:
         print(f"FAIL: {error}")
         raise SystemExit(1)

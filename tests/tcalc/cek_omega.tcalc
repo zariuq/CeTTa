@@ -1,0 +1,13 @@
+; The machine of cek_machine on omega, (lam (app (var z) (var z))) applied to
+; itself.  The machine returns to a configuration it has been in, so the run
+; is reported as a cycle, and there is no outcome.  A divergence that never
+; repeats a configuration would instead run to the end of the budget.
+(step one)
+(cek (app (lam (app (var z) (var z))) (lam (app (var z) (var z)))) nil halt)
+(rule found (take (cek (var z) (cons $v $env) $k)) (make (ret $v $k)))
+(rule look (take (cek (var (s $n)) (cons $v $env) $k)) (make (cek (var $n) $env $k)))
+(rule close (take (cek (lam $body) $env $k)) (make (ret (closure $body $env) $k)))
+(rule apply (take (cek (app $f $a) $env $k)) (make (cek $f $env (arg $a $env $k))))
+(rule argument (take (ret $v (arg $a $env $k))) (make (cek $a $env (call $v $k))))
+(rule call (take (ret $v (call (closure $body $env) $k))) (make (cek $body (cons $v $env) $k)))
+(rule halt (take (ret $v halt)) (make (value $v)))

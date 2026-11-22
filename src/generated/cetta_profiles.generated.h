@@ -4,9 +4,43 @@
 
 #include <stdint.h>
 
-#if defined(CettaProfileId) || defined(CettaLanguageVersionId) || defined(CETTA_LANGUAGE_ID_ROWS) || defined(CETTA_PROFILE_BEFORE_ROWS) || defined(CETTA_PROFILE_TYPING_ROWS) || defined(CETTA_PROFILE_AFTER_ROWS) || defined(CETTA_PROFILE_HOL_ROWS)
+#if defined(CettaLanguageId) || defined(CettaSyntaxId) || defined(CettaProfileId) || defined(CettaLanguageVersionId) || defined(CETTA_SYNTAX_ROWS) || defined(CETTA_LANGUAGE_ROWS) || defined(CETTA_LANGUAGE_ALIAS_ROWS) || defined(CETTA_LANGUAGE_SYNTAX_ROWS) || defined(CETTA_PROFILE_BEFORE_ROWS) || defined(CETTA_PROFILE_TYPING_ROWS) || defined(CETTA_PROFILE_AFTER_ROWS) || defined(CETTA_PROFILE_HOL_ROWS)
 #error an exported name is defined as a preprocessor macro
 #endif
+typedef enum {
+    CETTA_LANGUAGE_HE = 0,
+    CETTA_LANGUAGE_MM2 = 1,
+    CETTA_LANGUAGE_PETTA = 2,
+    CETTA_LANGUAGE_AMBIENT = 3,
+    CETTA_LANGUAGE_CALCULATOR = 4,
+    CETTA_LANGUAGE_IMP = 5,
+    CETTA_LANGUAGE_LAMBDA = 6,
+    CETTA_LANGUAGE_METTAFULL_LEGACY = 7,
+    CETTA_LANGUAGE_MINSKYLITE = 8,
+    CETTA_LANGUAGE_MM0LITE = 9,
+    CETTA_LANGUAGE_PYASHCORE = 10,
+    CETTA_LANGUAGE_RHOCALC = 11,
+    CETTA_LANGUAGE_PRIME = 12,
+    CETTA_LANGUAGE_SUBZERO = 13,
+    CETTA_LANGUAGE_ZERO = 14,
+    CETTA_LANGUAGE_GSLT_IL = 15,
+    CETTA_LANGUAGE_ZEROUV = 16,
+    CETTA_LANGUAGE_METTA_INTERACT = 17,
+    CETTA_LANGUAGE_HOL_LIGHT = 18,
+    CETTA_LANGUAGE_TCALC = 19,
+    CETTA_LANGUAGE_TMETTA = 20,
+} CettaLanguageId;
+
+typedef enum {
+    CETTA_SYNTAX_AUTO = 0,
+    CETTA_SYNTAX_METTA = 1,
+    CETTA_SYNTAX_MRHO = 2,
+    CETTA_SYNTAX_RHO = 3,
+    CETTA_SYNTAX_HOLR = 4,
+    CETTA_SYNTAX_TCALC = 5,
+    CETTA_SYNTAX_CHR = 6,
+} CettaSyntaxId;
+
 typedef enum {
     CETTA_PROFILE_HE_FORMAL = 0,
     CETTA_PROFILE_HE_COMPAT = 1,
@@ -16,6 +50,8 @@ typedef enum {
     CETTA_PROFILE_PETTA_EXTENDED = 7,
     CETTA_PROFILE_PETTA_1_1_C = 15,
     CETTA_PROFILE_PETTA_AI = 19,
+    CETTA_PROFILE_TMETTA_NATIVE = 20,
+    CETTA_PROFILE_TMETTA_EAGER = 21,
     CETTA_PROFILE_PETTA_TYPECHECK_V2 = 8,
     CETTA_PROFILE_PETTA_TYPECHECK_V3 = 13,
     CETTA_PROFILE_RHOCALC_STRICT_CORE = 4,
@@ -37,28 +73,55 @@ typedef enum {
     CETTA_LANGUAGE_VERSION_PRIME_0_0_1 = 3,
     CETTA_LANGUAGE_VERSION_HE_0_2_10 = 4,
     CETTA_LANGUAGE_VERSION_PETTA_1_1_C = 5,
+    CETTA_LANGUAGE_VERSION_TCALC_0_1 = 7,
+    CETTA_LANGUAGE_VERSION_TMETTA_0_1 = 8,
 } CettaLanguageVersionId;
 
-#define CETTA_LANGUAGE_ID_ROWS(cesta_table_apply_0) \
-    cesta_table_apply_0(CETTA_LANGUAGE_HE, UINT64_C(0)) \
-    cesta_table_apply_0(CETTA_LANGUAGE_MM2, UINT64_C(1)) \
-    cesta_table_apply_0(CETTA_LANGUAGE_PETTA, UINT64_C(2)) \
-    cesta_table_apply_0(CETTA_LANGUAGE_AMBIENT, UINT64_C(3)) \
-    cesta_table_apply_0(CETTA_LANGUAGE_CALCULATOR, UINT64_C(4)) \
-    cesta_table_apply_0(CETTA_LANGUAGE_IMP, UINT64_C(5)) \
-    cesta_table_apply_0(CETTA_LANGUAGE_LAMBDA, UINT64_C(6)) \
-    cesta_table_apply_0(CETTA_LANGUAGE_METTAFULL_LEGACY, UINT64_C(7)) \
-    cesta_table_apply_0(CETTA_LANGUAGE_MINSKYLITE, UINT64_C(8)) \
-    cesta_table_apply_0(CETTA_LANGUAGE_MM0LITE, UINT64_C(9)) \
-    cesta_table_apply_0(CETTA_LANGUAGE_PYASHCORE, UINT64_C(10)) \
-    cesta_table_apply_0(CETTA_LANGUAGE_RHOCALC, UINT64_C(11)) \
-    cesta_table_apply_0(CETTA_LANGUAGE_PRIME, UINT64_C(12)) \
-    cesta_table_apply_0(CETTA_LANGUAGE_SUBZERO, UINT64_C(13)) \
-    cesta_table_apply_0(CETTA_LANGUAGE_ZERO, UINT64_C(14)) \
-    cesta_table_apply_0(CETTA_LANGUAGE_GSLT_IL, UINT64_C(15)) \
-    cesta_table_apply_0(CETTA_LANGUAGE_ZEROUV, UINT64_C(16)) \
-    cesta_table_apply_0(CETTA_LANGUAGE_METTA_INTERACT, UINT64_C(17)) \
-    cesta_table_apply_0(CETTA_LANGUAGE_HOL_LIGHT, UINT64_C(18))
+#define CETTA_SYNTAX_ROWS(cesta_table_apply_0) \
+    cesta_table_apply_0(CETTA_SYNTAX_AUTO, "auto") \
+    cesta_table_apply_0(CETTA_SYNTAX_METTA, "metta") \
+    cesta_table_apply_0(CETTA_SYNTAX_MRHO, "mrho") \
+    cesta_table_apply_0(CETTA_SYNTAX_RHO, "rho") \
+    cesta_table_apply_0(CETTA_SYNTAX_HOLR, "holr") \
+    cesta_table_apply_0(CETTA_SYNTAX_TCALC, "tcalc") \
+    cesta_table_apply_0(CETTA_SYNTAX_CHR, "chr")
+
+#define CETTA_LANGUAGE_ROWS(cesta_table_apply_0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_HE, "he", 1, "Current direct MeTTa/HE evaluator", CETTA_SYNTAX_METTA, 1, 0, 0, 0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_MM2, "mm2", 1, "Direct MM2 lowering plus MORK-backed execution for pure program files", CETTA_SYNTAX_METTA, 0, 0, 0, 0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_PETTA, "petta", 1, "Corrected stable PeTTa, the default language (petta@1.1 is typed)", CETTA_SYNTAX_METTA, 0, 0, 1, 1) \
+    cesta_table_apply_0(CETTA_LANGUAGE_AMBIENT, "ambient", 0, "Planned port from mettail-rust inventory", CETTA_SYNTAX_METTA, 0, 0, 0, 0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_CALCULATOR, "calculator", 0, "Planned port from mettail-rust inventory", CETTA_SYNTAX_METTA, 0, 0, 0, 0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_IMP, "imp", 0, "Planned port from mettail-rust inventory", CETTA_SYNTAX_METTA, 0, 0, 0, 0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_LAMBDA, "lambda", 0, "Planned port from mettail-rust inventory", CETTA_SYNTAX_METTA, 0, 0, 0, 0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_METTAFULL_LEGACY, "mettafull-legacy", 0, "Planned port from mettail-rust inventory", CETTA_SYNTAX_METTA, 0, 0, 0, 0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_MINSKYLITE, "minskylite", 0, "Planned port from mettail-rust inventory", CETTA_SYNTAX_METTA, 0, 0, 0, 0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_MM0LITE, "mm0lite", 0, "Planned port from mettail-rust inventory", CETTA_SYNTAX_METTA, 0, 0, 0, 0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_PYASHCORE, "pyashcore", 0, "Planned port from mettail-rust inventory", CETTA_SYNTAX_METTA, 0, 0, 0, 0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_RHOCALC, "rhocalc", 1, "Strict-core rho-calculus reducer to quiescence", CETTA_SYNTAX_MRHO, 0, 0, 0, 0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_PRIME, "prime", 1, "Frozen MeTTa-Prime 0.0.1 draft", CETTA_SYNTAX_METTA, 0, 0, 0, 0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_SUBZERO, "subzero", 1, "Generated free-bag Subzero candidate", CETTA_SYNTAX_METTA, 0, 1, 0, 0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_ZERO, "zero", 1, "Generated query-first MeTTa Zero candidate", CETTA_SYNTAX_METTA, 0, 1, 0, 0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_GSLT_IL, "gslt-il", 1, "Experimental generated MeTTa-facing indexed GSLT metalanguage", CETTA_SYNTAX_METTA, 0, 1, 0, 0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_ZEROUV, "zerouv", 1, "Experimental productive and recurrent MeTTa candidate", CETTA_SYNTAX_METTA, 0, 1, 0, 0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_METTA_INTERACT, "metta-interact", 1, "Experimental proof-relevant interaction and cost language", CETTA_SYNTAX_METTA, 0, 1, 0, 0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_HOL_LIGHT, "hol-light", 1, "Native HOL Light kernel; checked HOLR proof streams", CETTA_SYNTAX_HOLR, 0, 0, 0, 0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_TCALC, "tcalc", 1, "The transform calculus, a moving target: a program's outcomes under each stated interpretation", CETTA_SYNTAX_TCALC, 0, 0, 0, 0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_TMETTA, "tmetta", 1, "Transform-native MeTTa with explicit activation and constrained answer bags", CETTA_SYNTAX_METTA, 0, 0, 0, 0)
+
+#define CETTA_LANGUAGE_ALIAS_ROWS(cesta_table_apply_0) \
+    cesta_table_apply_0("hol", CETTA_LANGUAGE_HOL_LIGHT) \
+    cesta_table_apply_0("mettahe", CETTA_LANGUAGE_HE) \
+    cesta_table_apply_0("metta-prime", CETTA_LANGUAGE_PRIME) \
+    cesta_table_apply_0("metta-subzero", CETTA_LANGUAGE_SUBZERO) \
+    cesta_table_apply_0("metta-zero", CETTA_LANGUAGE_ZERO)
+
+#define CETTA_LANGUAGE_SYNTAX_ROWS(cesta_table_apply_0) \
+    cesta_table_apply_0(CETTA_LANGUAGE_RHOCALC, CETTA_SYNTAX_MRHO, ".mrho") \
+    cesta_table_apply_0(CETTA_LANGUAGE_RHOCALC, CETTA_SYNTAX_RHO, ".rho") \
+    cesta_table_apply_0(CETTA_LANGUAGE_RHOCALC, CETTA_SYNTAX_METTA, "") \
+    cesta_table_apply_0(CETTA_LANGUAGE_TCALC, CETTA_SYNTAX_RHO, ".rho") \
+    cesta_table_apply_0(CETTA_LANGUAGE_TCALC, CETTA_SYNTAX_CHR, ".chr")
 
 #define CETTA_PROFILE_BEFORE_ROWS(cesta_table_apply_0) \
     cesta_table_apply_0(CETTA_PROFILE_HE_FORMAL_VALUE, CETTA_PROFILE_HE_FORMAL, CETTA_LANGUAGE_HE, "he", "Hyperon Experimental 0.2.10 with CeTTa's deliberate differences; the default.", 1, 0, 0, 0, CETTA_LANGUAGE_VERSION_HE_0_2_10) \
@@ -68,7 +131,9 @@ typedef enum {
     cesta_table_apply_0(CETTA_PROFILE_PRIME_DEFAULT_VALUE, CETTA_PROFILE_PRIME_DEFAULT, CETTA_LANGUAGE_PRIME, "prime-default", "Frozen MeTTa-Prime 0.0.1 draft policy.", 0, 1, 1, 0, CETTA_LANGUAGE_VERSION_PRIME_0_0_1) \
     cesta_table_apply_0(CETTA_PROFILE_PETTA_EXTENDED_VALUE, CETTA_PROFILE_PETTA_EXTENDED, CETTA_LANGUAGE_PETTA, "extended", "Corrected stable PeTTa plus labeled shared CeTTa extensions.", 0, 1, 0, 0, CETTA_LANGUAGE_VERSION_PETTA_STABLE) \
     cesta_table_apply_0(CETTA_PROFILE_PETTA_1_1_C_VALUE, CETTA_PROFILE_PETTA_1_1_C, CETTA_LANGUAGE_PETTA, "petta@1.1.c", "PeTTa's typed line with declarations as call contracts: a failed check raises on every route.", 0, 0, 0, 0, CETTA_LANGUAGE_VERSION_PETTA_1_1_C) \
-    cesta_table_apply_0(CETTA_PROFILE_PETTA_AI_VALUE, CETTA_PROFILE_PETTA_AI, CETTA_LANGUAGE_PETTA, "ai", "Corrected stable PeTTa with sealed sorts: a function's declaration types its calls' answers, never an unevaluated application of it.", 0, 0, 0, 0, CETTA_LANGUAGE_VERSION_PETTA_STABLE)
+    cesta_table_apply_0(CETTA_PROFILE_PETTA_AI_VALUE, CETTA_PROFILE_PETTA_AI, CETTA_LANGUAGE_PETTA, "ai", "Corrected stable PeTTa with sealed sorts: a function's declaration types its calls' answers, never an unevaluated application of it.", 0, 0, 0, 0, CETTA_LANGUAGE_VERSION_PETTA_STABLE) \
+    cesta_table_apply_0(CETTA_PROFILE_TMETTA_NATIVE_VALUE, CETTA_PROFILE_TMETTA_NATIVE, CETTA_LANGUAGE_TMETTA, "native", "Data-preserving arguments, explicit activation, constrained bag collection", 0, 0, 0, 0, CETTA_LANGUAGE_VERSION_TMETTA_0_1) \
+    cesta_table_apply_0(CETTA_PROFILE_TMETTA_EAGER_VALUE, CETTA_PROFILE_TMETTA_EAGER, CETTA_LANGUAGE_TMETTA, "eager", "Value-first arguments computed once, with explicit holding overrides", 0, 0, 0, 0, CETTA_LANGUAGE_VERSION_TMETTA_0_1)
 
 #define CETTA_PROFILE_TYPING_ROWS(cesta_table_apply_0) \
     cesta_table_apply_0(CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE, CETTA_PROFILE_PETTA_TYPECHECK_V2, CETTA_LANGUAGE_PETTA, "typecheck-v2", "PeTTa with native Roman-compatible residual type checking.", 0, 1, 0, 0, CETTA_LANGUAGE_VERSION_PETTA_1_1) \

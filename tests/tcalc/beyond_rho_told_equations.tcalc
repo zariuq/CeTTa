@@ -1,0 +1,7 @@
+; Told equations: a firing tells $v = 5 about the unknown of (x $u). Only
+; then is (x 6) known absent, and the guard fires; before, the row could be
+; (x 6). Rho has names, not unknowns with knowledge (JointFirings/Knowledge).
+(step one)
+(x $u)
+(rule set (read (x $v)) (absent (told)) (tell (= $v 5)) (make (told)))
+(rule guard (absent (x 6)) (absent (guarded)) (make (guarded)))

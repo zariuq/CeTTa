@@ -63,25 +63,22 @@ def petta_oracle_identity(root: Path, reference: Path) -> dict[str, Any]:
         cwd=root, capture_output=True, text=True, check=False,
     )
     if result.returncode:
-        raise RuntimeError('pinned PeTTa oracle validation failed: ' + result.stderr.strip())
+        raise RuntimeError('PeTTa oracle check failed: ' + result.stderr.strip())
+    # The oracle is stable-fixed as it is: its differences from the record of
+    # the last alignment travel with the evidence as alignment work.
     try:
         identity = json.loads(result.stdout)
         contract = json.loads((root / 'langdef/petta/reference.json').read_text())
-        expected_manifest = hashlib.sha256(json.dumps(
-            contract['reference_files'], sort_keys=True, separators=(',', ':')
-        ).encode()).hexdigest()
-        if (identity['schema'] != 'cetta.petta-reference-identity.v1' or
-                identity['reference_commit'] != contract['reference_commit'] or
-                identity['files'] != len(contract['reference_files']) or
-                identity['examples'] != contract['example_count'] or
-                identity['source_manifest_sha256'] != expected_manifest or
+        if (identity['schema'] != 'cetta.petta-reference-identity.v2' or
+                identity['last_alignment'] != contract['last_alignment'] or
                 identity['source_kind'] not in ('checkout', 'snapshot') or
-                identity['checkout_commit'] != (
-                    contract['reference_commit']
-                    if identity['source_kind'] == 'checkout' else None)):
-            raise ValueError('reference identity differs from the pinned contract')
+                (identity['checkout_commit'] is None) !=
+                    (identity['source_kind'] == 'snapshot') or
+                not isinstance(identity['alignment_work'], list) or
+                not isinstance(identity['source_manifest_sha256'], str)):
+            raise ValueError('oracle identity does not answer the alignment record')
     except (ValueError, KeyError, TypeError) as exc:
-        raise RuntimeError('invalid pinned PeTTa oracle identity') from exc
+        raise RuntimeError('invalid PeTTa oracle identity') from exc
     return identity
 
 
@@ -590,7 +587,7 @@ def readiness_commands(tier: str) -> list[list[str]]:
         ]
     if tier == "exhaustive":
         return common + [
-            ["make", "BUILD=main", "test-petta-corpus-differential"],
+            ["make", "BUILD=main", "test-petta-corpus-manifest"],
             ["make", "BUILD=main", "test-petta-native-core-no-libpl"],
             ["make", "BUILD=main", "test-eval-gc-asan-full-differential"],
             ["make", "BUILD=main", "test-main-readiness-model"],
@@ -742,7 +739,7 @@ def main() -> int:
         petta_oracle = os.environ.get("PETTA_ORACLE_ROOT", "")
         if not petta_oracle:
             print(
-                "FAIL: set PETTA_ORACLE_ROOT to the pinned PeTTa checkout; "
+                "FAIL: set PETTA_ORACLE_ROOT to a PeTTa stable-fixed checkout; "
                 "the exhaustive dialect differential may not be skipped",
                 file=sys.stderr,
             )
@@ -880,7 +877,7 @@ def main() -> int:
         ),
         "petta_oracle": initial_artifact['petta_oracle'],
         "petta_oracle_commit": (
-            initial_artifact['petta_oracle']['reference_commit']
+            initial_artifact['petta_oracle']['checkout_commit']
             if initial_artifact['petta_oracle'] is not None else None),
         "performance_baseline": {
             key: value

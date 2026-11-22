@@ -897,6 +897,35 @@ static bool ground_term_pattern_leaf(LdGroundTermContextV1 *context,
     return true;
 }
 
+/* Whether a constructor of a builtin carrier is nullary with a label that is
+ * one of the carrier's own leaves: any text for String, canonical decimal
+ * int64 text for Integer. */
+static bool ground_term_carrier_leaf_label(const CettaLdTypeDeclV1 *type,
+                                           const CettaLdGrammarRuleV1 *rule) {
+    char text[32];
+    char canonical[32];
+    char *end = NULL;
+    intmax_t parsed;
+
+    if (rule->param_len != 0u)
+        return false;
+    if (type->carrier == CETTA_LD_CARRIER_BUILTIN_STRING_V1)
+        return true;
+    if (type->carrier != CETTA_LD_CARRIER_BUILTIN_INT_V1 ||
+        rule->label.len == 0u || rule->label.len >= sizeof(text) ||
+        !rule->label.bytes || memchr(rule->label.bytes, '\0', rule->label.len))
+        return false;
+    memcpy(text, rule->label.bytes, rule->label.len);
+    text[rule->label.len] = '\0';
+    errno = 0;
+    parsed = strtoimax(text, &end, 10);
+    return errno != ERANGE && end && *end == '\0' &&
+           parsed >= INT64_MIN && parsed <= INT64_MAX &&
+           snprintf(canonical, sizeof(canonical), "%" PRId64, (int64_t)parsed) ==
+               (int)rule->label.len &&
+           memcmp(canonical, text, rule->label.len) == 0;
+}
+
 static bool ground_term_to_pattern_at(
     LdGroundTermContextV1 *context,
     const CettaLdTypeDeclV1 *expected_type,
@@ -913,6 +942,33 @@ static bool ground_term_to_pattern_at(
         return ground_term_fail(
             context, CETTA_LD_GROUND_TERM_V1_NON_GROUND_TERM,
             "MeTTa variables are not ground LanguageDef constructor terms");
+    /* A constructor admitted at a builtin carrier encodes only as the leaf
+     * its label is. */
+    if (expected_type->carrier != CETTA_LD_CARRIER_AST_V1 &&
+        term->kind == ATOM_EXPR && term->expr.len > 0u && term->expr.elems &&
+        term->expr.elems[0] && term->expr.elems[0]->kind == ATOM_SYMBOL) {
+        const LdGroundTermRuleIndexEntryV1 *selected;
+
+        if (term->expr.len - 1u > UINT32_MAX)
+            return ground_term_fail(
+                context, CETTA_LD_GROUND_TERM_V1_RESOURCE_LIMIT,
+                "constructor arity exceeds the LanguageDef wire limit");
+        selected = ground_term_select_rule(
+            context, expected_type, term->expr.elems[0]->sym_id,
+            (uint32_t)(term->expr.len - 1u), depth);
+        if (!selected)
+            return false;
+        if (!ground_term_carrier_leaf_label(expected_type, selected->rule))
+            return ground_term_fail(
+                context, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+                "builtin-plus-constructor carrier needs a tagged Pattern interpretation");
+        if (!ground_term_pattern_leaf(context, &result,
+                                      selected->rule->label.bytes,
+                                      selected->rule->label.len))
+            return false;
+        *out = result;
+        return true;
+    }
     switch (expected_type->carrier) {
     case CETTA_LD_CARRIER_AST_V1: {
         const LdGroundTermRuleIndexEntryV1 *selected;
@@ -1308,14 +1364,19 @@ static bool ground_term_type_supports_pattern_codec(
                 goto done;
             if (rule->result_type != type)
                 continue;
-            /* Admission permits constructors in builtin carriers too. The
-             * untagged leaf codec cannot distinguish a nullary constructor
-             * from a string with the same text; do not claim a full codec. */
+            /* Admission permits constructors in builtin carriers too.  A
+             * nullary one whose label is a leaf of the carrier is that leaf:
+             * its Pattern is the leaf, read back as the builtin value.  Any
+             * other would share the untagged leaves of the carrier's values
+             * and needs a tagged Pattern interpretation. */
             if (type->carrier != CETTA_LD_CARRIER_AST_V1) {
-                (void)ground_term_fail(
-                    context, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
-                    "builtin-plus-constructor carrier needs a tagged Pattern interpretation");
-                goto done;
+                if (!ground_term_carrier_leaf_label(type, rule->rule)) {
+                    (void)ground_term_fail(
+                        context, CETTA_LD_GROUND_TERM_V1_UNSUPPORTED_PROFILE,
+                        "builtin-plus-constructor carrier needs a tagged Pattern interpretation");
+                    goto done;
+                }
+                continue;
             }
             if (!rule->constructor_profile) {
                 (void)ground_term_fail(

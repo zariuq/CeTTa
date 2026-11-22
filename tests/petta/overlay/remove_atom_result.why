@@ -1,0 +1,1 @@
+Equation calls use their evaluation space; check memoized replay in the defining space and that a removal in the caller's space has no effect there.

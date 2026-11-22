@@ -34,9 +34,10 @@
 #   METAMATH_MMLEAN4_BIN_V1    its built binary.
 #
 # Reference implementations
-#   PETTA_ORACLE_ROOT,         SWI-PeTTa at the corrected-stable revision that
-#   PETTA_REFERENCE_ROOT       tools/check_petta_release_reference.py pins (the
-#                              stable-fixed branch of PeTTa).
+#   PETTA_ORACLE_ROOT,         SWI-PeTTa's stable-fixed branch as it is (run with
+#   PETTA_REFERENCE_ROOT       the SWI-Prolog langdef/petta/reference.json records);
+#                              tools/check_petta_release_reference.py lists its
+#                              differences from the last alignment as work.
 #   GSLT2PARSE_PETTA_ROOT      SWI-PeTTa's stable-fixed branch at the revision
 #                              tools/test_petta_parser_authority_v1.py pins
 #                              (c3adb86), as a checkout or a source snapshot
@@ -81,6 +82,9 @@
 #   METAMATH_SET_MM_V1         The canonical set.mm (the metamath/set.mm
 #                              repository).
 #   METAMATH_TEST_ROOT_V1      The metamath-test conformance corpus.
+#   PETTA_CORPUS_ROOT          The base of the PeTTa example corpus: a checkout
+#                              or snapshot of upstream PeTTa or of its
+#                              stable-fixed branch; by default PETTA_ORACLE_ROOT.
 #   HOPPER_TABLE1_ROOT,        The pinned Hopper, IGGP and infcontrol checkouts
 #   IGGP_ROOT, INFCONTROL_REPO the ILP benchmark gates compare against.
 #   *_MEMORY_BENCH_SOURCE      A program or Metamath source for a memory
@@ -210,13 +214,13 @@
 
 .PHONY: qualify-tptp-external-prover-fixtures-v1
 
-.PHONY: test-metamath-cogslt-generated-relational-corpus-oracle-v1
+.PHONY: showcase-metamath-relational-oracle
 
-.PHONY: test-metamath-cogslt-corpus-differential-v1 \
-		test-metamath-cogslt-corpus-differential-core-v1
+.PHONY: showcase-metamath-corpus-differential \
+		showcase-metamath-corpus-differential-core
 
-.PHONY: test-metamath-cogslt-set-mm-v1 \
-	test-metamath-cogslt-set-mm-core-v1
+.PHONY: showcase-metamath-set-mm \
+	showcase-metamath-set-mm-core
 
 .PHONY: test-metamath-cogslt-petta-proof-trace-horn-oracle-v1
 
@@ -224,17 +228,17 @@
 
 .PHONY: test-petta-finite-horn-runtime-oracle-v1
 
-.PHONY: bench-metamath-cogslt-petta-direct-program-memory-v1 \
-		bench-metamath-cogslt-petta-direct-program-memory-core-v1
+.PHONY: showcase-metamath-petta-memory \
+		showcase-metamath-petta-memory-core
 
-.PHONY: bench-metamath-direct-petta-reference-memory-v1
+.PHONY: showcase-metamath-verifier-memory
 
-.PHONY: bench-metamath-verifier-memory-v1
+.PHONY: showcase-metamath-compiled-verifier-memory
 
 .PHONY: test-metamath-cogslt-petta-direct-swi-compat-v1
 
-.PHONY: probe-metamath-cogslt-petta-direct-corpus-v1 \
-		probe-metamath-cogslt-petta-direct-corpus-core-v1
+.PHONY: showcase-metamath-petta-corpus \
+		showcase-metamath-petta-corpus-core
 
 .PHONY: benchmark-metamath-state-transition-direct-closed-petta-v1
 
@@ -323,7 +327,7 @@ benchmark-metamath-state-transition-direct-closed-petta-v1: \
 		'((MetamathStateTransitionDirectEntryModeRepeatedV1 RefusedKeyPresentV1 RollbackSequenceZeroV1))'; \
 	printf '%s\n' 'c.Petta and SWI PeTTa produced both expected observations.'
 
-probe-metamath-cogslt-petta-direct-corpus-v1:
+showcase-metamath-petta-corpus:
 	@$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 \
 		BIN=$(METAMATH_COGSLT_CORE_BIN_V1) \
 		METAMATH_TEST_ROOT_V1="$(METAMATH_TEST_ROOT_V1)" \
@@ -331,10 +335,12 @@ probe-metamath-cogslt-petta-direct-corpus-v1:
 		METAMATH_DIRECT_PETTA_CORPUS_LIMIT_V1="$(METAMATH_DIRECT_PETTA_CORPUS_LIMIT_V1)" \
 		METAMATH_DIRECT_PETTA_CORPUS_FILTER_V1="$(METAMATH_DIRECT_PETTA_CORPUS_FILTER_V1)" \
 		METAMATH_DIRECT_PETTA_CORPUS_STAGE_TIMEOUT_V1="$(METAMATH_DIRECT_PETTA_CORPUS_STAGE_TIMEOUT_V1)" \
-		probe-metamath-cogslt-petta-direct-corpus-core-v1
+		showcase-metamath-petta-corpus-core
 
-probe-metamath-cogslt-petta-direct-corpus-core-v1: \
-		test-metamath-cogslt-petta-direct-outcome-driver-core-v1 \
+showcase-metamath-petta-corpus-core: $(BIN) \
+		$(METAMATH_STATE_PROOF_BRIDGE_DIRECT_PROGRAM_V1) \
+		$(METAMATH_STATE_PROOF_OCCURRENCE_OUTCOME_QUERY_V1) \
+		$(METAMATH_DIRECT_RUNTIME_MANIFEST_V1) $(LANGDEF_DIRECT_PETTA_OUTCOME_DRIVER_V1) \
 		$(LANGDEF_DIRECT_PETTA_CORPUS_DRIVER_V1)
 	@if [[ -z "$(strip $(METAMATH_TEST_ROOT_V1))" ]]; then \
 		echo 'set METAMATH_TEST_ROOT_V1 to the conformance corpus checkout'; \
@@ -399,7 +405,7 @@ test-metamath-cogslt-petta-direct-swi-compat-v1: \
 	done; \
 	printf '%s\n' '(MetamathCoGSLTDirectSWIPeTTaCompatV1Summary 3 0)'
 
-bench-metamath-verifier-memory-v1:
+showcase-metamath-compiled-verifier-memory:
 	@if [[ -z "$(strip $(METAMATH_VERIFIER_MEMORY_BENCH_SOURCE))" || \
 		! -f "$(METAMATH_VERIFIER_MEMORY_BENCH_SOURCE)" ]]; then \
 		echo 'set METAMATH_VERIFIER_MEMORY_BENCH_SOURCE to a Metamath source'; \
@@ -409,7 +415,7 @@ bench-metamath-verifier-memory-v1:
 		tools/benchmark_metamath_verifier_memory_v1.sh \
 		"$(METAMATH_VERIFIER_MEMORY_BENCH_SOURCE)"
 
-bench-metamath-direct-petta-reference-memory-v1: \
+showcase-metamath-verifier-memory: \
 		$(LANGDEF_DIRECT_PETTA_OUTCOME_DRIVER_V1) \
 		$(METAMATH_STATE_PROOF_BRIDGE_DIRECT_PROGRAM_V1) \
 		$(METAMATH_STATE_PROOF_OCCURRENCE_OUTCOME_QUERY_V1) \
@@ -431,15 +437,15 @@ bench-metamath-direct-petta-reference-memory-v1: \
 		tools/benchmark_metamath_verifier_memory_v1.sh \
 		"$(METAMATH_VERIFIER_MEMORY_BENCH_SOURCE)"
 
-bench-metamath-cogslt-petta-direct-program-memory-v1:
+showcase-metamath-petta-memory:
 	@$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 \
 		BIN=$(METAMATH_COGSLT_CORE_BIN_V1) \
 		METAMATH_DIRECT_PETTA_MEMORY_BENCH_SOURCE="$(METAMATH_DIRECT_PETTA_MEMORY_BENCH_SOURCE)" \
 		METAMATH_DIRECT_PETTA_MEMORY_BENCH_STATS="$(METAMATH_DIRECT_PETTA_MEMORY_BENCH_STATS)" \
 		PETTA_PROGRAM_MEMORY_BENCH_TIMEOUT="$(PETTA_PROGRAM_MEMORY_BENCH_TIMEOUT)" \
-		bench-metamath-cogslt-petta-direct-program-memory-core-v1
+		showcase-metamath-petta-memory-core
 
-bench-metamath-cogslt-petta-direct-program-memory-core-v1: \
+showcase-metamath-petta-memory-core: \
 		$(LANGDEF_DIRECT_PETTA_OUTCOME_DRIVER_V1) \
 		$(METAMATH_STATE_PROOF_BRIDGE_DIRECT_PROGRAM_V1) \
 		$(METAMATH_STATE_PROOF_OCCURRENCE_OUTCOME_QUERY_V1) \
@@ -673,14 +679,14 @@ test-metamath-cogslt-petta-horn-oracle-v1:
 		GSLT2PARSE_PETTA_ROOT="$(GSLT2PARSE_PETTA_ROOT)" \
 		test-metamath-cogslt-petta-horn-oracle-core-v1
 
-test-metamath-cogslt-set-mm-v1:
+showcase-metamath-set-mm:
 	@$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 \
 		BIN=$(METAMATH_COGSLT_CORE_BIN_V1) \
 		GSLT2PARSE_COMPILER_ROOT="$(GSLT2PARSE_COMPILER_ROOT)" \
 		METAMATH_SET_MM_V1="$(METAMATH_SET_MM_V1)" \
-		test-metamath-cogslt-set-mm-core-v1
+		showcase-metamath-set-mm-core
 
-test-metamath-cogslt-set-mm-core-v1: test-metamath-cogslt-langdef-v1
+showcase-metamath-set-mm-core: test-metamath-cogslt-langdef-v1
 	@if [[ "$(ENABLE_PYTHON)" != 0 || "$(LIB_PROLOG_ENABLED)" != 0 ]]; then \
 		echo 'the Metamath set.mm gate requires the C-only core build'; \
 		exit 1; \
@@ -720,16 +726,16 @@ test-metamath-cogslt-set-mm-core-v1: test-metamath-cogslt-langdef-v1
 	printf '%s\n' \
 		'(MetamathCoGSLTSetMmV1Summary 1 1 0 "$(METAMATH_SET_MM_SHA256_V1)" $(METAMATH_SET_MM_IMPORT_COUNT_V1))'
 
-test-metamath-cogslt-corpus-differential-v1:
+showcase-metamath-corpus-differential:
 	@$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 \
 		BIN=$(METAMATH_COGSLT_CORE_BIN_V1) \
 		GSLT2PARSE_COMPILER_ROOT="$(GSLT2PARSE_COMPILER_ROOT)" \
 		METAMATH_TEST_ROOT_V1="$(METAMATH_TEST_ROOT_V1)" \
 		METAMATH_MMLEAN4_ROOT_V1="$(METAMATH_MMLEAN4_ROOT_V1)" \
 		METAMATH_MMLEAN4_BIN_V1="$(METAMATH_MMLEAN4_BIN_V1)" \
-		test-metamath-cogslt-corpus-differential-core-v1
+		showcase-metamath-corpus-differential-core
 
-test-metamath-cogslt-corpus-differential-core-v1: \
+showcase-metamath-corpus-differential-core: \
 		test-metamath-cogslt-langdef-v1 \
 		$(LANGDEF_IMPORT_VERDICT_DRIVER_V1)
 	@if [[ "$(ENABLE_PYTHON)" != 0 || "$(LIB_PROLOG_ENABLED)" != 0 ]]; then \
@@ -858,7 +864,7 @@ test-metamath-cogslt-corpus-differential-core-v1: \
 	printf '%s\n' \
 		'(MetamathCoGSLTCorpusDifferentialV1Summary $(METAMATH_TEST_CASE_COUNT_V1) $(METAMATH_TEST_CASE_COUNT_V1) $(METAMATH_TEST_CASE_COUNT_V1) $(METAMATH_TEST_CASE_COUNT_V1) 0 0 "$(METAMATH_TEST_COMMIT_V1)" "$(METAMATH_MMLEAN4_COMMIT_V1)")'
 
-test-metamath-cogslt-generated-relational-corpus-oracle-v1: \
+showcase-metamath-relational-oracle: \
 		test-metamath-cogslt-langdef-v1 \
 		$(LANGDEF_PROOF_VERDICT_DRIVER_V1)
 	@if [[ -z "$(strip $(METAMATH_TEST_ROOT_V1))" ]]; then \
@@ -1238,26 +1244,81 @@ qualify-prepared-scalar-lean:
 		Mettapedia.GSLT.Dynamics.PartialRegionPlan; \
 	lake env lean -DwarningAsError=true Mettapedia/Machines/ScalarTreeRegion.lean
 
-probe-petta-corpus-manifest: test-petta-corpus-manifest-unit
-	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" ]]; then \
-		echo 'set PETTA_ORACLE_ROOT to the pinned PeTTa oracle checkout'; \
-		exit 1; \
-	fi
-	@PYTHONDONTWRITEBYTECODE=1 \
-		python3 scripts/petta_corpus_manifest.py verify \
-		--petta-dir "$(PETTA_ORACLE_ROOT)" \
-		--manifest "$(PETTA_CORPUS_MANIFEST)"
+# The PeTTa example corpus (scripts/petta_corpus_manifest.py).  Every example
+# of the PeTTa base runs on CeTTa and must meet its own oracle: a self-checking
+# example passes iff its own assertions pass; any other example matches its
+# golden in tests/petta/golden.  The base (PETTA_CORPUS_ROOT, a checkout or a
+# snapshot) is never edited; corrections to it are overlays in
+# tests/petta/overlay, a .patch beside a one-line .why.
+#
+#   make test-petta-corpus-manifest   the gate
+#   make petta-corpus-accept          rerun, rewrite goldens and classification,
+#                                     print the diff for review
+#   make petta-corpus-sync            move to the checkout's commit
+#                                     (PETTA_CORPUS_BASE=upstream|stable-fixed),
+#                                     retire overlays the base now contains,
+#                                     name those that no longer apply, accept
+#   make petta-corpus-swi-report      optional: list SWI-PeTTa divergences for
+#                                     a person to classify; never a gate
+#   make petta-corpus-export-overlay PETTA_CORPUS_OVERLAY=<example>
+#                                     write one overlay as a patch for the
+#                                     stable-fixed queue
+#
+# PETTA_CORPUS_EXCLUDE names optional capabilities to skip (git, lib-prolog);
+# PETTA_CORPUS_BASE_COMMIT gives the commit of a snapshot without git files.
+PETTA_CORPUS_ROOT ?= $(PETTA_ORACLE_ROOT)
+PETTA_CORPUS_BASE ?= upstream
+PETTA_CORPUS_BASE_COMMIT ?=
+PETTA_CORPUS_EXCLUDE ?=
+PETTA_CORPUS_WORK ?= runtime/petta-corpus
+PETTA_CORPUS_OVERLAY ?=
+PETTA_CORPUS_EXPORT ?= $(PETTA_CORPUS_WORK)/export
+PETTA_CORPUS_TOOL = PYTHONDONTWRITEBYTECODE=1 CETTA_PETTA_SEARCH_MACHINE=1 \
+	python3 scripts/petta_corpus_manifest.py
+PETTA_CORPUS_RUN_FLAGS = --petta-dir "$(PETTA_CORPUS_ROOT)" \
+	--manifest "$(PETTA_CORPUS_MANIFEST)" --cetta "./$(BIN)"
+PETTA_CORPUS_EXCLUDE_FLAGS = \
+	$(foreach capability,$(PETTA_CORPUS_EXCLUDE),--exclude-capability $(capability))
 
-test-petta-corpus-manifest: test-petta-corpus-manifest-unit
-	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" ]]; then \
-		echo 'set PETTA_ORACLE_ROOT to the pinned PeTTa oracle checkout'; \
+.PHONY: petta-corpus-root petta-corpus-accept petta-corpus-sync \
+	petta-corpus-swi-report petta-corpus-export-overlay
+petta-corpus-root:
+	@if [[ -z "$(strip $(PETTA_CORPUS_ROOT))" ]]; then \
+		echo 'set PETTA_CORPUS_ROOT (or PETTA_ORACLE_ROOT) to a PeTTa checkout or snapshot'; \
 		exit 1; \
 	fi
-	@PYTHONDONTWRITEBYTECODE=1 \
-		python3 scripts/petta_corpus_manifest.py verify \
-		--petta-dir "$(PETTA_ORACLE_ROOT)" \
-		--manifest "$(PETTA_CORPUS_MANIFEST)" \
-		--require-complete
+
+probe-petta-corpus-manifest: test-petta-corpus-manifest-unit petta-corpus-root $(BIN)
+	@$(PETTA_CORPUS_TOOL) compare $(PETTA_CORPUS_RUN_FLAGS) \
+		--out "$(PETTA_CORPUS_WORK)/probe" $(PETTA_CORPUS_EXCLUDE_FLAGS)
+
+test-petta-corpus-manifest: test-petta-corpus-manifest-unit petta-corpus-root $(BIN)
+	@$(PETTA_CORPUS_TOOL) compare $(PETTA_CORPUS_RUN_FLAGS) \
+		--out "$(PETTA_CORPUS_WORK)/test" $(PETTA_CORPUS_EXCLUDE_FLAGS) \
+		--require-complete --require-match
+
+petta-corpus-accept: petta-corpus-root $(BIN)
+	@$(PETTA_CORPUS_TOOL) accept $(PETTA_CORPUS_RUN_FLAGS) \
+		--out "$(PETTA_CORPUS_WORK)/accept" $(PETTA_CORPUS_EXCLUDE_FLAGS)
+
+petta-corpus-sync: petta-corpus-root $(BIN)
+	@$(PETTA_CORPUS_TOOL) sync $(PETTA_CORPUS_RUN_FLAGS) \
+		--out "$(PETTA_CORPUS_WORK)/sync" $(PETTA_CORPUS_EXCLUDE_FLAGS) \
+		--base "$(PETTA_CORPUS_BASE)" \
+		$(if $(strip $(PETTA_CORPUS_BASE_COMMIT)),--base-commit "$(PETTA_CORPUS_BASE_COMMIT)")
+
+petta-corpus-swi-report: petta-corpus-root $(BIN)
+	@$(PETTA_CORPUS_TOOL) swi-report $(PETTA_CORPUS_RUN_FLAGS) \
+		--out "$(PETTA_CORPUS_WORK)/swi-report"
+
+petta-corpus-export-overlay: petta-corpus-root
+	@if [[ -z "$(strip $(PETTA_CORPUS_OVERLAY))" ]]; then \
+		echo 'set PETTA_CORPUS_OVERLAY to the example whose overlay to export'; \
+		exit 1; \
+	fi
+	@PYTHONDONTWRITEBYTECODE=1 python3 scripts/petta_corpus_manifest.py \
+		export-overlay --name "$(PETTA_CORPUS_OVERLAY)" \
+		--out "$(PETTA_CORPUS_EXPORT)" --petta-dir "$(PETTA_CORPUS_ROOT)"
 
 test-prime-nik-megalodon-term-v1: \
 		$(BIN) \
@@ -2579,8 +2640,8 @@ MEGALODON_REFERENCE_DIR ?= $(MEGALODON_TEST_DIR)/sexprinfo-ref/examples
 
 # The source reader against oracles built from Megalodon's sources, on every
 # example, each read after its signature (source_reader_includes.tsv).
-.PHONY: test-megalodon-source-corpus
-test-megalodon-source-corpus: $(MG_SOURCE_DUMP)
+.PHONY: showcase-megalodon-source-corpus
+showcase-megalodon-source-corpus: $(MG_SOURCE_DUMP)
 	@if [[ -z "$(strip $(MEGALODON_ROOT))" ]]; then \
 		echo 'set MEGALODON_ROOT to a Megalodon checkout with its examples'; exit 2; \
 	fi
@@ -2594,8 +2655,8 @@ test-megalodon-source-corpus: $(MG_SOURCE_DUMP)
 # MEGALODON_GSLT_CORPUS_ENGINES='native cetta' also CeTTa's PeTTa lane
 # running the same presentations, which takes much longer.
 MEGALODON_GSLT_CORPUS_ENGINES ?= native
-.PHONY: test-megalodon-gslt-corpus
-test-megalodon-gslt-corpus: $(MG_GSLT_NATIVE) $(BIN) $(MEGALODON_GSLT_PROGRAM)
+.PHONY: showcase-megalodon-gslt-corpus
+showcase-megalodon-gslt-corpus: $(MG_GSLT_NATIVE) $(BIN) $(MEGALODON_GSLT_PROGRAM)
 	@if [[ -z "$(strip $(MEGALODON_ROOT))" ]]; then \
 		echo 'set MEGALODON_ROOT to a Megalodon checkout with its examples'; exit 2; \
 	fi
@@ -2618,8 +2679,8 @@ test-megalodon-gslt-corpus: $(MG_GSLT_NATIVE) $(BIN) $(MEGALODON_GSLT_PROGRAM)
 # tests/megalodon/corpus_checks.tsv checks it): every row compared, proofs
 # included; each declaration and proof is also admitted by the native kernel
 # (-kernel), which must accept them all.
-.PHONY: test-megalodon-elab-corpus
-test-megalodon-elab-corpus: $(MG_SEXPRINFO)
+.PHONY: showcase-megalodon-elab-corpus
+showcase-megalodon-elab-corpus: $(MG_SEXPRINFO)
 	@if [[ -z "$(strip $(MEGALODON_ROOT))" ]]; then \
 		echo 'set MEGALODON_ROOT to a Megalodon checkout with its examples and binary'; exit 2; \
 	fi
@@ -2637,8 +2698,8 @@ test-megalodon-elab-corpus: $(MG_SEXPRINFO)
 # megaauto fixture's own signature, and over the August 2022 Egal preamble,
 # whose set functions are definitions that head normalization unfolds.
 MEGAAUTO_SEARCH_ROUNDS ?= 100
-.PHONY: test-megalodon-megaauto-corpus
-test-megalodon-megaauto-corpus: $(MG_SEXPRINFO)
+.PHONY: showcase-megalodon-megaauto-corpus
+showcase-megalodon-megaauto-corpus: $(MG_SEXPRINFO)
 	@if [[ -z "$(strip $(MEGALODON_ROOT))" ]]; then \
 		echo 'set MEGALODON_ROOT to a Megalodon checkout with its examples and binary'; exit 2; \
 	fi
@@ -2661,8 +2722,8 @@ test-megalodon-megaauto-corpus: $(MG_SEXPRINFO)
 # -sexprinfo against mg-sexprinfo.  Then native aby on Megalodon's hammer
 # example: the aby steps proved by search, each proof kernel-checked.
 MEGALODON_BENCH_BIN ?= $(MEGALODON_BIN)
-.PHONY: bench-megalodon
-bench-megalodon: $(MG_CHECK) $(MG_SEXPRINFO)
+.PHONY: showcase-megalodon-corpus-timings
+showcase-megalodon-corpus-timings: $(MG_CHECK) $(MG_SEXPRINFO)
 	@if [[ -z "$(strip $(MEGALODON_ROOT))" ]]; then \
 		echo 'set MEGALODON_ROOT to a Megalodon checkout with its examples and binary'; exit 2; \
 	fi
@@ -2704,8 +2765,8 @@ test-transform-swi-differential: $(BIN) lib/petta/lib_transform_specs.metta lib/
 # PeTTa: each must pass, rewritten, every test it passes as written, except the
 # programs listed with their reasons in tests/support/petta_transform_only_corpus_known.txt.
 # Programs that do not run as written on CeTTa are not counted.
-.PHONY: test-petta-transform-only-corpus
-test-petta-transform-only-corpus: $(BIN) lib/petta/transform_only.metta lib/petta/lib_petta_by_transform.metta \
+.PHONY: showcase-petta-transform-only-corpus
+showcase-petta-transform-only-corpus: $(BIN) lib/petta/transform_only.metta lib/petta/lib_petta_by_transform.metta \
 		lib/petta/lib_transform_specs.metta tests/support/check_petta_transform_only.py \
 		tests/support/petta_transform_only_corpus_known.txt
 	@if [[ -z "$(strip $(PETTA_EXAMPLES_ROOT))" || ! -d "$(PETTA_EXAMPLES_ROOT)" ]]; then \
@@ -2717,8 +2778,8 @@ test-petta-transform-only-corpus: $(BIN) lib/petta/transform_only.metta lib/pett
 
 # The same corpus with binding, branching and choice rewritten too: let, if, case
 # and superpose as calls of generated functions.
-.PHONY: test-petta-transform-only-corpus-full
-test-petta-transform-only-corpus-full: $(BIN) lib/petta/transform_only.metta lib/petta/lib_petta_by_transform.metta \
+.PHONY: showcase-petta-transform-only-corpus-full
+showcase-petta-transform-only-corpus-full: $(BIN) lib/petta/transform_only.metta lib/petta/lib_petta_by_transform.metta \
 		lib/petta/lib_transform_specs.metta tests/support/check_petta_transform_only.py \
 		tests/support/petta_transform_only_corpus_full_known.txt
 	@if [[ -z "$(strip $(PETTA_EXAMPLES_ROOT))" || ! -d "$(PETTA_EXAMPLES_ROOT)" ]]; then \
@@ -2728,10 +2789,10 @@ test-petta-transform-only-corpus-full: $(BIN) lib/petta/transform_only.metta lib
 		--lane specs --timeout 120 --require-all --also binding branching choice \
 		--known tests/support/petta_transform_only_corpus_full_known.txt
 
-# The fixtures of test-petta-transform-only on SWI-PeTTa: the program as written
+# The fixtures of showcase-petta-transform-only on SWI-PeTTa: the program as written
 # and the rewritten program both run there, with transform written in PeTTa.
-.PHONY: test-petta-transform-only-swi
-test-petta-transform-only-swi: $(BIN) lib/petta/transform_only.metta lib/petta/lib_petta_by_transform.metta \
+.PHONY: showcase-petta-transform-only-swi
+showcase-petta-transform-only-swi: $(BIN) lib/petta/transform_only.metta lib/petta/lib_petta_by_transform.metta \
 		lib/petta/lib_transform_specs.metta tests/support/check_petta_transform_only.py \
 		tests/support/petta_transform_only_swi_known.txt $(wildcard tests/petta/transform_only/*.metta)
 	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" || ! -x "$(PETTA_ORACLE_ROOT)/run.sh" ]]; then \
@@ -2743,8 +2804,8 @@ test-petta-transform-only-swi: $(BIN) lib/petta/transform_only.metta lib/petta/l
 
 # The same on SWI-PeTTa with let, if, case and superpose rewritten into calls of
 # generated functions.
-.PHONY: test-petta-transform-only-swi-full
-test-petta-transform-only-swi-full: $(BIN) lib/petta/transform_only.metta lib/petta/lib_petta_by_transform.metta \
+.PHONY: showcase-petta-transform-only-swi-full
+showcase-petta-transform-only-swi-full: $(BIN) lib/petta/transform_only.metta lib/petta/lib_petta_by_transform.metta \
 		lib/petta/lib_transform_specs.metta tests/support/check_petta_transform_only.py \
 		tests/support/petta_transform_only_swi_full_known.txt $(wildcard tests/petta/transform_only/*.metta)
 	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" || ! -x "$(PETTA_ORACLE_ROOT)/run.sh" ]]; then \
@@ -2758,8 +2819,8 @@ test-petta-transform-only-swi-full: $(BIN) lib/petta/transform_only.metta lib/pe
 # The example corpus through the round trip on SWI-PeTTa: each program as written
 # and rewritten both run there, with transform written in PeTTa; the programs that
 # do not pass are listed with their reasons.
-.PHONY: test-petta-transform-only-corpus-swi
-test-petta-transform-only-corpus-swi: $(BIN) lib/petta/transform_only.metta lib/petta/lib_petta_by_transform.metta \
+.PHONY: showcase-petta-transform-only-corpus-swi
+showcase-petta-transform-only-corpus-swi: $(BIN) lib/petta/transform_only.metta lib/petta/lib_petta_by_transform.metta \
 		lib/petta/lib_transform_specs.metta tests/support/check_petta_transform_only.py \
 		tests/support/petta_transform_only_corpus_swi_known.txt
 	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" || ! -x "$(PETTA_ORACLE_ROOT)/run.sh" ]]; then \
@@ -2772,20 +2833,20 @@ test-petta-transform-only-corpus-swi: $(BIN) lib/petta/transform_only.metta lib/
 		--lane swi --swi "$(PETTA_ORACLE_ROOT)" --timeout 120 --require-all \
 		--known tests/support/petta_transform_only_corpus_swi_known.txt
 
-# The machine of transform rules on SWI-PeTTa as well.
-.PHONY: test-petta-machine-swi
-test-petta-machine-swi: $(BIN) lib/petta/petta_machine.metta tests/petta/petta_machine.metta \
-		tests/support/check_petta_machine.py
+# The self-interpreter on SWI-PeTTa as well.
+.PHONY: showcase-petta-self-interpretation-swi
+showcase-petta-self-interpretation-swi: $(BIN) lib/petta/petta_machine.metta \
+		showcase/petta/self_interpretation_cases.metta showcase/petta/compare_self_interpretation.py
 	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" || ! -x "$(PETTA_ORACLE_ROOT)/run.sh" ]]; then \
 		echo 'set PETTA_ORACLE_ROOT to a SWI-PeTTa checkout with executable run.sh'; exit 2; \
 	fi
-	@python3 tests/support/check_petta_machine.py ./$(BIN) --swi "$(PETTA_ORACLE_ROOT)"
+	@python3 showcase/petta/compare_self_interpretation.py ./$(BIN) --swi "$(PETTA_ORACLE_ROOT)"
 
 # Run production gates unchanged and record their invocations, not a joined
 # source file. A failed source gate is a failure even if both executions of
-# its program happen to fail alike. The comparison currently observes printed
-# term structure; native value-kind/effect qualification remains a separate
-# obligation and is reported by the checker.
+# its program happen to fail alike. Compare native query frontiers and scoped
+# host-service effects; unobserved values or foreign effects stay unqualified.
+# Yield timing and the semantic correspondence remain separate obligations.
 ifneq ($(strip $(CETTA_GSLT_RECORD_DIR)),)
 .PHONY: gslt-record-execution-v1
 gslt-record-execution-v1:
@@ -2799,56 +2860,33 @@ $(METAMATH_PROOF_PLAN_DIRECT_V1) \
 $(METAMATH_PROOF_REFLECTION_DIRECT_V1): gslt-record-execution-v1
 endif
 
-GSLT_PETTA_DIRECT_GATES_V1 = \
-	test-gslt-petta-direct-v1 \
-	test-gslt-petta-entries-v1 \
-	test-gslt-petta-static-calls-v1 \
-	test-metamath-row-actions-direct-petta-v1 \
-	test-metamath-insert-each-matching-direct-petta-v1 \
-	test-metamath-copy-actions-direct-petta-v1 \
-	test-metamath-cogslt-petta-state-bootstrap-direct-v1 \
-	test-metamath-cogslt-petta-state-transition-direct-v1 \
-	test-metamath-cogslt-petta-proof-bootstrap-direct-v1 \
-	test-metamath-cogslt-petta-proof-trace-direct-v1 \
-	test-mm0-cogslt-secondary-lexer-v1 \
-	test-mm0-cogslt-live-syntax-fold-v1 \
-	test-mm0-cogslt-runtime-live-syntax-v1 \
-	test-mm0-cogslt-sort-environment-v1 \
-	test-mm0-cogslt-term-environment-v1 \
-	test-mm0-cogslt-notation-environment-v1 \
-	test-mm0-cogslt-math-parser-v1 \
-	test-mm0-cogslt-expression-environment-v1 \
-	test-mm0-cogslt-assertion-environment-v1 \
-	test-plain-bnf-denotation-v1 \
-	test-plain-bnf-name-index-v1
+# Replay is an explicit demonstration over already recorded inputs. It does
+# not launch the test suite to produce a corpus and does not gate readiness.
+GSLT_SHOWCASE_LANE ?= native
+.PHONY: showcase-gslt-petta-replay showcase-petta-registration
+showcase-gslt-petta-replay:
+	@test -n "$(strip $(GSLT_SHOWCASE_INPUT))" || \
+		{ echo 'set GSLT_SHOWCASE_INPUT to a directory of recorded invocations'; exit 2; }
+	@python3 showcase/petta/replay_gslt.py \
+		--corpus "$(GSLT_SHOWCASE_INPUT)" --lane "$(GSLT_SHOWCASE_LANE)" \
+		--keep runtime/showcase/gslt-petta-replay/"$(GSLT_SHOWCASE_LANE)"
 
-GSLT_COMPOSITION_WORK_V1 ?= runtime/gslt-through-transform-$(BUILD_OBJ_TAG)
-GSLT_COMPOSITION_LANE_V1 ?= native
-
-.PHONY: test-gslt-petta-through-transform
-test-gslt-petta-through-transform: $(BIN) lib/petta/petta_machine.metta \
-		tests/support/check_gslt_through_machine.py tests/support/record_petta_direct_run.sh \
-		tests/support/gslt_invocation.py tests/support/check_gslt_gate_corpus.py
-	+@python3 tests/support/check_gslt_gate_corpus.py ./$(BIN) \
-		--make '$(MAKE)' --work '$(GSLT_COMPOSITION_WORK_V1)' \
-		--lane '$(GSLT_COMPOSITION_LANE_V1)' \
-		--gates $(GSLT_PETTA_DIRECT_GATES_V1)
-
-.PHONY: test-gslt-petta-through-transform-reference
-test-gslt-petta-through-transform-reference: test-gslt-petta-through-transform
-	+@$(MAKE) --no-print-directory test-gslt-petta-through-transform GSLT_COMPOSITION_LANE_V1=specs
+showcase-petta-registration: $(BIN) lib/petta/petta_machine.metta lib/petta/lib_transform_specs.metta
+	@python3 showcase/petta/registration.py $(BIN) --work runtime/showcase/petta-registration
 
 .PHONY: test-gslt-petta-direct-sanitizers-v1
 test-gslt-petta-direct-sanitizers-v1:
 	+@$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_SANITIZERS=1 \
 		test-gslt-petta-direct-v1 test-gslt-invocation
 
-.PHONY: test-gslt-petta-qualification
-test-gslt-petta-qualification:
-	+@$(MAKE) --no-print-directory test-gslt-petta-direct-sanitizers-v1
-	+@$(MAKE) --no-print-directory test-gslt-petta-through-transform-reference
-
-test-all: test-gslt-petta-qualification
+# Check the compiler and concrete runtime observations without a guest
+# interpreter. Generator mutation tests remain in the comprehensive tier.
+.PHONY: test-gslt-petta-regression-v1
+test-gslt-petta-regression-v1: test-gslt-petta-direct-v1 \
+		test-gslt-empty-relations-v1 test-gslt-relational-premises-v1 \
+		test-gslt-proof-value-boundary-v1 test-gslt-invocation
+test-all: test-gslt-petta-regression-v1
+test-comprehensive: test-gslt-il-petta-mutations-v1 test-metta-interact-petta-mutations-v1
 
 # PeTTa's forms written with transform, on SWI-PeTTa as well: every law of
 # test-petta-by-transform holds there with transform written in PeTTa.

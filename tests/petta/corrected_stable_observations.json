@@ -1,6 +1,6 @@
 {
-  "schema": "petta-observation-classification-v1",
-  "reference_commit": "e1db30d56854f081fd3bd1d2cb4b524c49f46dd3",
+  "schema": "petta-observation-classification-v2",
+  "classified_at": "e1db30d56854f081fd3bd1d2cb4b524c49f46dd3",
   "scope": "Observations behind the former eleven-file disagreement report; not a file allowlist or conformance score.",
   "observations": [
     {
@@ -135,18 +135,18 @@
       "source": "examples/test_add_primitive.metta",
       "source_sha256": "009a4d2b1169223cf592d76dc8e7a4a94b592d69aec7cab5dd720856391fea61",
       "observation": "mutation/match with an unbound space demands Prolog instantiation_error",
-      "classification": "unresolved_semantics",
-      "rule": "OPEN unbound space operations",
-      "assessment": "Preserve provisional behavior. The exact host exception is not an approved new contract."
+      "classification": "confirmed_cetta_defect",
+      "rule": "P-SPACE-1/4/5 concrete location",
+      "assessment": "An unbound location raises a catchable instantiation_error. A named location can still be logically empty."
     },
     {
       "id": "whole-variable-mutation",
       "source": "examples/unbound_atom_not_equation.metta",
       "source_sha256": "5eb4cd2f123e89a9cc74326f42304c9789a2789a9e72cd29c9118ed49e132570",
       "observation": "bare variable removal, variable-head equation removal and adding a whole variable",
-      "classification": "unresolved_semantics",
-      "rule": "OPEN whole-variable mutation",
-      "assessment": "Preserve provisional behavior and distinguish identified-space open patterns from an unidentified mutation target."
+      "classification": "confirmed_cetta_defect",
+      "rule": "P-SPACE-1/5 concrete mutation operand",
+      "assessment": "Bare-variable addition or removal and removal of an equation with an unknown head raise instantiation_error. Open data patterns remain admissible."
     },
     {
       "id": "invalid-equation-heads",

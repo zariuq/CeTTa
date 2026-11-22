@@ -1,0 +1,1 @@
+error: 6:39: a guard reads a variable that no take or read pattern of its rule binds: $y

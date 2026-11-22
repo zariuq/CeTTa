@@ -1,0 +1,5 @@
+(= (sel (Cons $x $xs)) (Pair $x $xs))
+(= (sel (Cons $x $xs)) (let (Pair $y $ys) (sel $xs) (Pair $y (Cons $x $ys))))
+(= (upto $n) (if (== $n 0) Nil (Cons $n (upto (- $n 1)))))
+(= (magic) (let (Pair $a $r1) (sel (upto 9)) (let (Pair $b $r2) (sel $r1) (let (Pair $c $r3) (sel $r2) (if (== (+ $a (+ $b $c)) 15) (let (Pair $d $r4) (sel $r3) (let (Pair $e $r5) (sel $r4) (let (Pair $f $r6) (sel $r5) (if (== (+ $d (+ $e $f)) 15) (let (Pair $g $r7) (sel $r6) (let (Pair $h $r8) (sel $r7) (let (Pair $i $r9) (sel $r8) (if (and (== (+ $g (+ $h $i)) 15) (and (== (+ $a (+ $d $g)) 15) (and (== (+ $b (+ $e $h)) 15) (and (== (+ $c (+ $f $i)) 15) (and (== (+ $a (+ $e $i)) 15) (== (+ $c (+ $e $g)) 15)))))) (Sq $a $b $c $d $e $f $g $h $i) (empty))))) (empty))))) (empty))))))
+!(size-atom (collapse (magic)))
