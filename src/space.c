@@ -68,6 +68,16 @@ static _Thread_local uint64_t
     g_space_match_backend_contextual_query_slot_limit_override = 0;
 static _Thread_local CettaCount g_query_results_capacity_limit_override = 0;
 static _Atomic uint64_t g_space_next_instance_id = 1u;
+static _Atomic uint64_t g_space_next_display_serial = 1u;
+
+uint64_t space_next_display_serial(void) {
+    return atomic_fetch_add_explicit(&g_space_next_display_serial, 1u,
+                                     memory_order_relaxed);
+}
+
+uint64_t space_generated_name_serial(const void *space) {
+    return space ? ((const Space *)space)->display_serial : 0u;
+}
 static _Atomic uint64_t g_space_next_prefix_epoch = 1u;
 _Atomic uint64_t cetta_space_global_mutation_epoch = 0u;
 /* Starts at one: a decision stamped zero was made under no program. */
@@ -13030,6 +13040,7 @@ bool space_try_init_with_universe(Space *s, TermUniverse *universe) {
     s->dense_from_first = false;
     s->order = NULL;
     s->journal = NULL;
+    s->display_serial = 0u;
     space_native_storage_init_empty(s, universe);
     s->instance_id = space_fresh_instance_id();
     s->revision = 0;
@@ -16774,6 +16785,7 @@ bool registry_try_init(Registry *r) {
     r->entries = r->inline_entries;
     r->len = 0;
     r->word_len = 0;
+    r->space_spelled_len = 0;
     r->cap = (uint32_t)(sizeof(r->inline_entries) /
                         sizeof(r->inline_entries[0]));
     r->name_keys = name_key_table_new(32u);
@@ -16805,6 +16817,7 @@ void registry_free(Registry *r) {
     r->entries = r->inline_entries;
     r->len = 0;
     r->word_len = 0;
+    r->space_spelled_len = 0;
     r->cap = (uint32_t)(sizeof(r->inline_entries) /
                         sizeof(r->inline_entries[0]));
     r->name_keys = NULL;
@@ -16929,8 +16942,11 @@ void registry_bind_id(Registry *r, SymbolId key, Atom *value) {
     r->entries[r->len].value = value;
     registry_index_insert(r, r->len);
     r->len++;
-    if (symbol_bytes(g_symbols, key)[0] != '&')
+    const char *spelling = symbol_bytes(g_symbols, key);
+    if (spelling[0] != '&')
         r->word_len++;
+    else if (strncmp(spelling, "&space(", 7u) == 0)
+        r->space_spelled_len++;
 }
 
 Atom *registry_lookup_id_hinted(Registry *r, SymbolId key, uint32_t *hint) {

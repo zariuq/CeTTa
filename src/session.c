@@ -12,10 +12,6 @@
 
 CETTA_PROFILE_BEFORE_ROWS(CETTA_DEFINE_PROFILE)
 
-#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
-CETTA_PROFILE_TYPING_ROWS(CETTA_DEFINE_PROFILE)
-#endif
-
 CETTA_PROFILE_AFTER_ROWS(CETTA_DEFINE_PROFILE)
 
 #undef CETTA_DEFINE_PROFILE
@@ -224,27 +220,6 @@ const CettaProfile *cetta_profile_petta_extended(void) {
     return &CETTA_PROFILE_PETTA_EXTENDED_VALUE;
 }
 
-#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
-const CettaProfile *cetta_profile_petta_typecheck_v2(void) {
-    return &CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE;
-}
-
-const CettaProfile *cetta_profile_petta_typecheck_v3(void) {
-    return &CETTA_PROFILE_PETTA_TYPECHECK_V3_VALUE;
-}
-#endif
-
-bool cetta_profile_uses_petta_typing(const CettaProfile *profile) {
-    if (!profile)
-        return false;
-#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
-    return profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V2 ||
-        profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V3;
-#else
-    return false;
-#endif
-}
-
 bool cetta_profile_is_petta_1_1_c(const CettaProfile *profile) {
     return profile && profile->id == CETTA_PROFILE_PETTA_1_1_C;
 }
@@ -255,22 +230,19 @@ bool cetta_profile_is_petta_ai(const CettaProfile *profile) {
 
 bool cetta_language_version_petta_typed_line(
     const CettaLanguageVersion *version) {
-    return version && (version->id == CETTA_LANGUAGE_VERSION_PETTA_1_1 ||
-                       version->id == CETTA_LANGUAGE_VERSION_PETTA_1_1_C);
+    return version && version->id == CETTA_LANGUAGE_VERSION_PETTA_1_1_C;
 }
 
-/* Corrected stable PeTTa uses the audited stable libraries. PeTTa 1.1
- * reads the typed libraries of PeTTa's main line first (typecheck/), and
- * runs under its checker unless a program names another 1.1 profile.
- * PeTTa 1.1.c keeps 1.0.6's type language and libraries, takes the typed
- * line's evaluation and module laws, and runs declarations as contracts. */
+/* Corrected stable PeTTa uses the audited stable libraries.  PeTTa 1.1.c
+ * keeps stable's type language and libraries, takes the typed line's
+ * evaluation and module laws, and runs declarations as contracts.  Older
+ * and upstream PeTTa versions (1.0.6, upstream 1.1 with its checker, the
+ * 1.2 typed line) are not registered: running their programs is a
+ * compatibility question, never a reference this registry conforms to. */
 static const CettaLanguageVersion CETTA_LANGUAGE_VERSIONS[] = {
     {CETTA_LANGUAGE_VERSION_PETTA_STABLE, CETTA_LANGUAGE_PETTA, "stable-fixed",
      NULL, NULL, "Corrected stable PeTTa; the default",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, true, .is_default = true},
-    {CETTA_LANGUAGE_VERSION_PETTA_1_1, CETTA_LANGUAGE_PETTA, "1.1",
-     "typecheck-v2", "typecheck", "PeTTa's typed language",
-     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, true, .is_default = false},
     {CETTA_LANGUAGE_VERSION_PETTA_1_1_C, CETTA_LANGUAGE_PETTA, "1.1.c",
      "petta@1.1.c", NULL, "PeTTa's typed line with declarations as call contracts",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, true, .is_default = false},
@@ -385,16 +357,6 @@ const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId languag
         }
     }
     if (language_id == CETTA_LANGUAGE_PETTA) {
-#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
-        if (cetta_profile_name_matches(
-                name, &CETTA_PROFILE_PETTA_TYPECHECK_V3_VALUE)) {
-            return &CETTA_PROFILE_PETTA_TYPECHECK_V3_VALUE;
-        }
-        if (cetta_profile_name_matches(
-                name, &CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE)) {
-            return &CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE;
-        }
-#endif
         if (cetta_profile_name_matches(
                 name, &CETTA_PROFILE_PETTA_EXTENDED_VALUE) ||
             strcmp(name, "petta-extended") == 0) {
@@ -454,13 +416,6 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
     case CETTA_PROFILE_HOL_OPEN:
     case CETTA_PROFILE_HOL_SEALED:
         return 0;
-    case CETTA_PROFILE_PETTA_TYPECHECK_V2:
-    case CETTA_PROFILE_PETTA_TYPECHECK_V3:
-#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
-        return CETTA_PROFILE_MASK_PETTA_EXTENDED;
-#else
-        return 0u;
-#endif
     case CETTA_PROFILE_PETTA_EXTENDED:
         return CETTA_PROFILE_MASK_PETTA_EXTENDED;
     case CETTA_PROFILE_PETTA_1_1_C:
@@ -530,14 +485,6 @@ void cetta_profile_print_inventory_for_language(FILE *out,
         fprintf(out, "%s\t%s\n",
                 CETTA_PROFILE_PETTA_AI_VALUE.name,
                 CETTA_PROFILE_PETTA_AI_VALUE.note);
-#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
-        fprintf(out, "%s\t%s\n",
-                CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE.name,
-                CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE.note);
-        fprintf(out, "%s\t%s\n",
-                CETTA_PROFILE_PETTA_TYPECHECK_V3_VALUE.name,
-                CETTA_PROFILE_PETTA_TYPECHECK_V3_VALUE.note);
-#endif
         return;
     }
     if (language_id == CETTA_LANGUAGE_ZERO) {

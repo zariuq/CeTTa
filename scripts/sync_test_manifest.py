@@ -206,6 +206,13 @@ PRIME_TEST_NOTES = {
     "tests/prime/relational_first_demand.metta": (
         "Prime root first-answer demand, fallback, and nested-search regression"
     ),
+    "tests/prime/let_result_survives_collection.metta": (
+        "Prime let keeps a collected call's answer across mixed-lifetime Need paths"
+    ),
+    "tests/prime/typed_call_routes.metta": (
+        "Prime typed-call answers, errors and effects on every call route and "
+        "execution tier"
+    ),
     "tests/prime/system_timed_force.metta": (
         "Prime explicit suspension timing and multiplicity regression"
     ),

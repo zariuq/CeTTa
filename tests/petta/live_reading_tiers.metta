@@ -116,3 +116,21 @@
 !(RemovedBeforeAlternative (collapse (alt93)))
 (= (readd96) (let $u (add-atom &self (= (t96 $x) back)) (t96 2)))
 !(Readded (readd96))
+
+; A removed function's call, compiled while it was one, is data over its
+; arguments' values, as a data occurrence written after the removal is.
+(= (arg94) (t94b 1))
+(= (t94b $x) v)
+(= (f94 $x) ok)
+(= (caller94) (Called (f94 (arg94))))
+!(CalledBefore (caller94))
+!(remove-atom &self (= (f94 $x) ok))
+!(CalledAfter (caller94))
+
+; A builtin's output is the builtin's own while the current program holds
+; no authored alternative of it and nothing before the occurrence can change
+; the program: a demanded output refutes the recursive alternative before
+; its body runs, on every profile.
+(= (nat98) Z)
+(= (nat98) (let $n (nat98) (S $n)))
+!(Nat (let Z (nat98) yes))

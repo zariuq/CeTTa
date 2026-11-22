@@ -120,7 +120,21 @@ PettaTypeArgument petta_type_call_argument(const PettaTypeCall *call,
     } else {
         result.demand = petta_type_demand(result.formal);
     }
+    if (call->variable_types_unchecked &&
+        result.demand == PETTA_TYPE_TRANSLATE_AND_GUARD &&
+        result.formal && result.formal->kind == ATOM_VAR)
+        result.demand = PETTA_TYPE_TRANSLATE;
     return result;
+}
+
+void petta_type_calls_leave_variable_types_unchecked(PettaTypeCall *calls,
+                                                     uint32_t count) {
+    for (uint32_t index = 0u; calls && index < count; index++) {
+        calls[index].variable_types_unchecked = true;
+        if (calls[index].result_type &&
+            calls[index].result_type->kind == ATOM_VAR)
+            calls[index].guard_result = false;
+    }
 }
 
 uint32_t petta_type_unique_signatures(Atom **types, uint32_t count) {

@@ -6589,11 +6589,19 @@ Atom *atom_expression_type(Arena *a){ return atom_symbol_id(a, g_builtin_syms.ex
 Atom *atom_grounded_type(Arena *a)  { return atom_symbol_id(a, g_builtin_syms.grounded); }
 Atom *atom_list_type(Arena *a)      { return atom_symbol_id(a, g_builtin_syms.list_type); }
 
+bool atom_is_generated_space_name(const Atom *atom) {
+    return atom && atom->kind == ATOM_GROUNDED &&
+           atom->ground.gkind == GV_SPACE && space_generated_name_serial &&
+           space_generated_name_serial(atom->ground.ptr) != 0u;
+}
+
 SymbolId atom_meta_type_id(const Atom *atom) {
     switch (atom->kind) {
     case ATOM_SYMBOL:   return g_builtin_syms.symbol;
     case ATOM_VAR:      return g_builtin_syms.variable;
-    case ATOM_GROUNDED: return g_builtin_syms.grounded;
+    case ATOM_GROUNDED:
+        return atom_is_generated_space_name(atom)
+            ? g_builtin_syms.symbol : g_builtin_syms.grounded;
     case ATOM_EXPR:
         return atom_is_list(atom) || atom_is_list_rest(atom)
                    ? g_builtin_syms.list_type : g_builtin_syms.expression;
@@ -6605,7 +6613,9 @@ Atom *get_meta_type(Arena *a, Atom *atom) {
     switch (atom->kind) {
     case ATOM_SYMBOL:   return atom_symbol_type(a);
     case ATOM_VAR:      return atom_variable_type(a);
-    case ATOM_GROUNDED: return atom_grounded_type(a);
+    case ATOM_GROUNDED:
+        return atom_is_generated_space_name(atom)
+            ? atom_symbol_type(a) : atom_grounded_type(a);
     case ATOM_EXPR:
         return atom_is_list(atom) || atom_is_list_rest(atom)
                    ? atom_list_type(a) : atom_expression_type(a);
@@ -9275,11 +9285,16 @@ static void atom_print_mode(
             break;
         }
         case GV_SPACE: {
-            /* An HE module space prints by its name, as upstream's does. */
+            /* An HE module space prints by its name, as upstream's does, and
+             * a space new-space made in PeTTa by its generated name. */
             const char *module_name = space_module_display_name
                 ? space_module_display_name(a->ground.ptr) : NULL;
+            uint64_t serial = space_generated_name_serial
+                ? space_generated_name_serial(a->ground.ptr) : 0u;
             if (module_name)
                 fprintf(out, "ModuleSpace(GroundingSpace-%s)", module_name);
+            else if (serial)
+                fprintf(out, "&space(%" PRIu64 ")", serial);
             else
                 fprintf(out, "<space %p>", a->ground.ptr);
             break;

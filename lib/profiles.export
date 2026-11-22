@@ -8,6 +8,5 @@
  (table-rows "profiles.data" LanguageAliases (macro CETTA_LANGUAGE_ALIAS_ROWS) (columns name language))
  (table-rows "profiles.data" LanguageSyntaxes (macro CETTA_LANGUAGE_SYNTAX_ROWS) (columns language syntax suffix))
  (table-rows "profiles.data" Profiles (macro CETTA_PROFILE_BEFORE_ROWS) (columns object code language name note he extensions dependent rust version) (where group before))
- (table-rows "profiles.data" Profiles (macro CETTA_PROFILE_TYPING_ROWS) (columns object code language name note he extensions dependent rust version) (where group typing))
  (table-rows "profiles.data" Profiles (macro CETTA_PROFILE_AFTER_ROWS) (columns object code language name note he extensions dependent rust version) (where group after))
  (table-rows "profiles.data" Profiles (macro CETTA_PROFILE_HOL_ROWS) (columns object code language name note he extensions dependent rust version) (where group hol)))

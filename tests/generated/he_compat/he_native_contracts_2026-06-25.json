@@ -893,22 +893,6 @@
           "rust_he_compat_semantics": false
         },
         {
-          "enable_cetta_extensions": true,
-          "enable_dependent_telescope": false,
-          "he_compatible_builtin": false,
-          "name": "typecheck-v2",
-          "note": "PeTTa with native Roman-compatible residual type checking.",
-          "rust_he_compat_semantics": false
-        },
-        {
-          "enable_cetta_extensions": true,
-          "enable_dependent_telescope": false,
-          "he_compatible_builtin": false,
-          "name": "typecheck-v3",
-          "note": "PeTTa with native v3 judgments and coherent typecheck-v2 delegation.",
-          "rust_he_compat_semantics": false
-        },
-        {
           "enable_cetta_extensions": false,
           "enable_dependent_telescope": false,
           "he_compatible_builtin": false,

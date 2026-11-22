@@ -50,22 +50,6 @@ AUTHORITIES = (
         32,
     ),
     ExpectedAuthority(
-        ROOT / "langdef/petta/generated/typecheck_v2_guard_v1.metta",
-        "petta-typecheck-v2-guard",
-        "petta",
-        ("PTEstablished", "PTRefuted", "PTUndetermined", "PTIncomplete"),
-        "PTUndetermined",
-        116,
-    ),
-    ExpectedAuthority(
-        ROOT / "langdef/petta/generated/typecheck_v2_boundary_core_v1.metta",
-        "petta-typecheck-v2-boundary-core-v1",
-        "petta",
-        ("PTEstablished", "PTRefuted", "PTUndetermined", "PTIncomplete"),
-        "PTUndetermined",
-        59,
-    ),
-    ExpectedAuthority(
         ROOT / "langdef/prime/generated/closed_formation_v1.metta",
         "prime-closed-formation-v1",
         "prime",

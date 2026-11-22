@@ -1,0 +1,9 @@
+continued
+(Kept (Error written value))
+(Kept (Error made value))
+(Kept (Error bound value))
+((Error (literal_type_mismatch (Error written value) Number) typecheck))
+((Error (literal_type_mismatch (Error made value) Number) typecheck))
+((Error (literal_type_mismatch (Error bound value) Number) typecheck))
+(1 (Error (literal_type_mismatch (Error made value) Number) typecheck))
+true

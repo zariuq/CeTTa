@@ -95,7 +95,7 @@ def main():
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     checks = sum(check_host(args.cetta.resolve(), host, args.output.resolve())
-                 for host in ("he", "petta", "petta-1.1", "prime"))
+                 for host in ("he", "petta", "petta-1.1.c", "prime"))
     print(f"(RegexFastpathsPublicV1Summary {checks} 0)")
 
 

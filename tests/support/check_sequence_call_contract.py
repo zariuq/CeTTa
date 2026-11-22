@@ -110,7 +110,7 @@ def main():
     args.out.mkdir(parents=True, exist_ok=False)
     profiles = [('petta', ['--lang', 'petta'], True, False),
                 ('petta-extended', ['--lang', 'petta', '--profile', 'extended'], True, False),
-                ('petta11', ['--lang', 'petta@1.1'], True, True),
+                ('petta11c', ['--lang', 'petta@1.1.c'], True, True),
                 ('he', ['--lang', 'he'], False, False),
                 ('he-compat', ['--lang', 'he', '--profile', 'he-compat'], False, False),
                 ('he-extended', ['--lang', 'he', '--profile', 'extended'], False, False)]

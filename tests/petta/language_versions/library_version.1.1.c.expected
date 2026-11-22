@@ -1,2 +1,5 @@
 true
-(if-error-number 5 0)
+5
+0
+(Error (literal_type_mismatch "five" Number) typecheck)
+true

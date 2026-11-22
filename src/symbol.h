@@ -656,8 +656,6 @@ static inline SymbolSpelling symbol_spelling(
     X(empty_form, "empty") \
     X(petta_member, "member") \
     X(petta_last, "last") \
-    X(petta_the, "the") \
-    X(petta_make_list, "make-list") \
     X(petta_msort, "msort") \
     X(petta_transaction, "transaction") \
     X(petta_with_mutex, "with_mutex") \

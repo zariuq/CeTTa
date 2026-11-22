@@ -26,7 +26,7 @@ def main():
                 "(a?)*", "(?<word>[a-z]+)", "[a--b]", "(a)(b)\\12", "(?<=([ab]+)([bc]+))$",
                 "|".join(f"keyword{i:05d}" for i in range(256)), "(", "[", "a{", "a\\"]
     checks = 0
-    for host in ("he", "petta", "petta-1.1", "prime"):
+    for host in ("he", "petta", "petta-1.1.c", "prime"):
         program = '!(import! &self langdef)\n'
         for index, pattern in enumerate(patterns):
             program += "!" + lets([

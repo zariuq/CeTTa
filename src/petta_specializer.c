@@ -231,10 +231,14 @@ typedef struct {
     bool used;
 } PettaNamedArityCacheSlot;
 
+/* What the program says about symbols (callability, named arities): it
+ * reads the space's equations and declarations and the registries of
+ * builtins, imports and foreign functions, so it is the program's while the
+ * program clock (space_global_program_epoch) has not moved. */
 struct PettaSpecializerSemanticCache {
     Space *space;
     uint64_t space_instance;
-    SpaceProgramToken program;
+    uint64_t program_epoch;
     const SymbolTable *symbols;
     uint64_t symbol_table_instance;
     bool mixed_index;
@@ -247,10 +251,18 @@ struct PettaSpecializerSemanticCache {
         named_arity[PETTA_NAMED_ARITY_CACHE_SLOTS];
 };
 
-/* Relevance reads equations and callable declarations only, so the program
- * token, not every data mutation, qualifies a stored fact. */
+/* The program a relevance fact was read from: the space, and the program
+ * clock when it was read.  Relevance reads equations, declarations and
+ * callability, never data, so a data mutation leaves a stored fact live and
+ * every program change retires it. */
 typedef struct {
-    SpaceProgramToken program;
+    const Space *space;
+    uint64_t space_instance;
+    uint64_t program_epoch;
+} PettaRelevanceProgram;
+
+typedef struct {
+    PettaRelevanceProgram program;
     uint64_t symbol_table_instance;
     SymbolId source;
     PettaRelationRelevance relevance;
@@ -963,19 +975,19 @@ petta_semantic_cache_prepare(
     if (!space || !g_symbols)
         return NULL;
     uint64_t space_instance = space_instance_id(space);
-    SpaceProgramToken program = space_program_token(space);
+    uint64_t program_epoch = space_global_program_epoch();
     uint64_t symbol_table_instance =
         symbol_table_instance_id(g_symbols);
     if (g_petta_semantic_cache.space != space ||
         g_petta_semantic_cache.space_instance != space_instance ||
-        !space_program_token_eq(g_petta_semantic_cache.program, program) ||
+        g_petta_semantic_cache.program_epoch != program_epoch ||
         g_petta_semantic_cache.symbols != g_symbols ||
         g_petta_semantic_cache.symbol_table_instance !=
             symbol_table_instance) {
         g_petta_semantic_cache.generation++;
         g_petta_semantic_cache.space = space;
         g_petta_semantic_cache.space_instance = space_instance;
-        g_petta_semantic_cache.program = program;
+        g_petta_semantic_cache.program_epoch = program_epoch;
         g_petta_semantic_cache.symbols = g_symbols;
         g_petta_semantic_cache.symbol_table_instance =
             symbol_table_instance;
@@ -1112,14 +1124,27 @@ static PeTTaNamedArity petta_specializer_named_arity(
     return slot->arity;
 }
 
+static PettaRelevanceProgram petta_relevance_program(const Space *space) {
+    return (PettaRelevanceProgram){
+        .space = space,
+        .space_instance = space ? space_instance_id(space) : 0u,
+        .program_epoch = space_global_program_epoch(),
+    };
+}
+
+static bool petta_relevance_program_eq(PettaRelevanceProgram left,
+                                       PettaRelevanceProgram right) {
+    return left.space == right.space &&
+           left.space_instance == right.space_instance &&
+           left.program_epoch == right.program_epoch;
+}
+
 static size_t petta_relation_relevance_cache_index(
-    SpaceProgramToken program, SymbolId source) {
+    PettaRelevanceProgram program, SymbolId source) {
     uint64_t mixed =
         ((uint64_t)(uintptr_t)program.space >> 4u) ^
-        (program.instance_id * UINT64_C(0x9e3779b97f4a7c15)) ^
-        (program.equation_revision * UINT64_C(0xbf58476d1ce4e5b9)) ^
-        (program.declaration_revision * UINT64_C(0xd6e8feb86659fd93)) ^
-        (program.base_dependency_epoch * UINT64_C(0xa0761d6478bd642f)) ^
+        (program.space_instance * UINT64_C(0x9e3779b97f4a7c15)) ^
+        (program.program_epoch * UINT64_C(0xbf58476d1ce4e5b9)) ^
         ((uint64_t)source * UINT64_C(0x94d049bb133111eb));
     mixed ^= mixed >> 30u;
     mixed *= UINT64_C(0xbf58476d1ce4e5b9);
@@ -1143,14 +1168,14 @@ static void petta_relation_relevance_cache_touch(size_t bank, size_t way) {
 
 static bool petta_relation_relevance_cache_matches(
     const PettaRelationRelevanceCacheSlot *slot, uint64_t generation,
-    SpaceProgramToken program, uint64_t symbol_instance, SymbolId source) {
+    PettaRelevanceProgram program, uint64_t symbol_instance, SymbolId source) {
     return slot->generation == generation && slot->source == source &&
            slot->symbol_table_instance == symbol_instance &&
-           space_program_token_eq(slot->program, program);
+           petta_relevance_program_eq(slot->program, program);
 }
 
 static bool petta_relation_relevance_cache_lookup(
-    SpaceProgramToken program, SymbolId source,
+    PettaRelevanceProgram program, SymbolId source,
     PettaRelationRelevance *relevance) {
     if (relevance)
         *relevance = PETTA_RELATION_RELEVANCE_UNKNOWN;
@@ -1175,7 +1200,7 @@ static bool petta_relation_relevance_cache_lookup(
 }
 
 static void petta_relation_relevance_cache_store(
-    SpaceProgramToken program, SymbolId source,
+    PettaRelevanceProgram program, SymbolId source,
     PettaRelationRelevance relevance) {
     if (!program.space || source == SYMBOL_ID_NONE || !g_symbols ||
         (relevance != PETTA_RELATION_RELEVANCE_IRRELEVANT &&
@@ -1744,7 +1769,7 @@ petta_relation_specialization_relevance(
         source == SYMBOL_ID_NONE) {
         return PETTA_RELATION_RELEVANCE_UNKNOWN;
     }
-    SpaceProgramToken program = space_program_token(context->space);
+    PettaRelevanceProgram program = petta_relevance_program(context->space);
     PettaRelationRelevance cached =
         PETTA_RELATION_RELEVANCE_UNKNOWN;
     if (petta_relation_relevance_cache_lookup(program, source, &cached))
@@ -1805,8 +1830,8 @@ petta_relation_specialization_relevance(
     }
 
     if (ok && source_has_equation &&
-        space_program_token_eq(
-            space_program_token(context->space), program)) {
+        petta_relevance_program_eq(
+            petta_relevance_program(context->space), program)) {
         /* Two least fixed points over the explored forwards (fixpoint.h):
          * `possible` treats unreadable bodies as relevant; `certain` asks
          * whether relevance holds without them. */
@@ -1846,8 +1871,8 @@ petta_relation_specialization_relevance(
         free(certain);
     }
     if (ok && source_has_equation &&
-        space_program_token_eq(
-            space_program_token(context->space), program)) {
+        petta_relevance_program_eq(
+            petta_relevance_program(context->space), program)) {
         for (size_t index = 0u; index < len; index++) {
             PettaRelationRelevance relevance =
                 nodes[index].certain
@@ -1881,7 +1906,7 @@ static bool petta_specializer_relation_factor(
         PettaRelationRelevance *relevance) {
     *relevance = PETTA_RELATION_RELEVANCE_UNKNOWN;
     if (petta_relation_relevance_cache_lookup(
-            space_program_token(space), source, relevance))
+            petta_relevance_program(space), source, relevance))
         return true;
     PettaSpecializerContext context = {
         .space = space,
@@ -3774,8 +3799,7 @@ static bool petta_specializer_callee_raises_nothing(
         if (heads->items[index] == head)
             return true;
     }
-    if (depth > 64u || cetta_petta_profile_admits_native_typecheck_v2() ||
-        !petta_symbol_vector_push_unique(heads, head))
+    if (depth > 64u || !petta_symbol_vector_push_unique(heads, head))
         return false;
     /* Every equation the cursor offers for the head may run, one whose
      * head is not a symbol included. */
@@ -4601,7 +4625,7 @@ static bool petta_specializer_analyze_call(
             PETTA_RELATION_RELEVANCE_UNKNOWN;
         bool relation_cached =
             petta_relation_relevance_cache_lookup(
-                space_program_token(context->space), source,
+                petta_relevance_program(context->space), source,
                 &relation_relevance);
         if (!relation_cached) {
             relation_relevance =
@@ -5022,7 +5046,7 @@ static void petta_specializer_invalidate(
     Space *space, SymbolId source, bool open_equation) {
     /* Any equation or type mutation can make a nested symbol callable, so the
      * relation-level negative cache is discarded wholesale.  Ordinary data
-     * additions never reach this path, and the program-token key
+     * additions never reach this path, and the program-clock key
      * independently prevents stale reuse. */
     petta_relation_relevance_cache_clear();
     uint64_t instance = space_instance_id(space);

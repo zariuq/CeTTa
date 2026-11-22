@@ -96,3 +96,19 @@
 
 ;(= (prog1 (cons $x $xs)) $x)
 ;(= (progn (rcons $xs $x)) $x)
+
+;Error handling
+
+(: checked-number (-> %Undefined% Number))
+(= (checked-number $value) $value)
+
+(: checked-bool (-> %Undefined% Bool))
+(= (checked-bool $value) $value)
+
+(: if-error-number (-> %Undefined% Number Number))
+(= (if-error-number $value $fallback)
+   (if (= $value (cons Error $_)) $fallback (checked-number $value)))
+
+(: if-error-bool (-> %Undefined% Bool Bool))
+(= (if-error-bool $value $fallback)
+   (if (= $value (cons Error $_)) $fallback (checked-bool $value)))

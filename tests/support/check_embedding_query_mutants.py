@@ -52,8 +52,8 @@ def main():
          "outcome_set_delay_last(frame->target, NULL);",
          "packet.kind == CETTA_CALL_SUSPENDED && packet.delayed"),
         ("callback-he-read-ahead", "src/eval_he_canonical.inc",
-         "if (he_retained_execution_active() && cetta_foreign_provider_callable(head)) {",
-         "if (false && he_retained_execution_active() && cetta_foreign_provider_callable(head)) {",
+         "if (he_retained_execution_active() && cetta_foreign_provider_callable_at(frame->space, head)) {",
+         "if (false && he_retained_execution_active() && cetta_foreign_provider_callable_at(frame->space, head)) {",
          "stream.opens == 1u && stream.pulls == 1u"),
         ("callback-raised-is-cancelled", "src/eval.c",
          "if (eval_cancel_check()) completion = CETTA_EVAL_INCOMPLETE_CANCELLED;",
@@ -108,18 +108,21 @@ def main():
          'return petta_machine_unify(machine, atom_symbol(&machine->heap, "true"), destination);',
          "allowed ? answer"),
     ]
+    # A query projects its output through the plan it captured.  Replacing
+    # that plan by one made from the current program is an equivalent
+    # mutant: every occurrence is decided when it is reached, against the
+    # current program (P-DEF-4), so both plans project alike, and no case
+    # can reject it.
     cases += [
-        ("petta-source-output-captured-plan", "src/eval_query.inc",
-         "const PettaPlanNode *plan = captured_plan ? captured_plan : owned && query->library->petta_program &&",
-         "(void)captured_plan;\n    const PettaPlanNode *plan = owned && query->library->petta_program &&",
-         "state == expected"),
         ("petta-source-output-opaque", "src/petta_search_machine.c",
          "if (!projected)\n        return true;\n    *pattern = atom_deep_copy(arena, projected);",
          "if (!projected) { *pattern = atom_unit(arena); return *pattern != NULL; }\n    *pattern = atom_deep_copy(arena, projected);",
          "state == expected"),
         ("petta-source-output-authored-builtin", "src/petta_search_machine.c",
-         "if (petta_machine_builtin_output_is_open(machine, source, plan)) {",
-         "if (false && petta_machine_builtin_output_is_open(machine, source, plan)) {",
+         "petta_machine_builtin_output_is_open(machine, source, plan,\n"
+         "                                                 preceded)) {",
+         "(false && petta_machine_builtin_output_is_open(machine, source, plan,\n"
+         "                                                 preceded))) {",
          "state == expected"),
     ]
     cases = [case for case in cases if case[0].startswith(args.only_prefix)]

@@ -41,7 +41,7 @@ def main():
     output = arguments.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     checks = 0
-    for host in ("he", "petta", "petta-1.1", "prime"):
+    for host in ("he", "petta", "petta-1.1.c", "prime"):
         queries = []
         cases = [("single", r"\12", declaration(), "numeric"),
                  ("product", r"\12\34\56\78", declaration(), "numeric"),

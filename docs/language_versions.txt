@@ -13,8 +13,11 @@ Unversioned language names retain their existing defaults.
                  where he differs, used to run Rust's own tests), extended
                  and he-prime.
   petta          Corrected stable PeTTa; extended remains an explicit profile.
-                 petta@stable-fixed names this same current contract. The
-                 historical 1.0.6 endpoint is no longer registered. Imports
+                 petta@stable-fixed names this same current contract. Older
+                 and upstream versions (1.0.6, upstream 1.1 with its checker,
+                 the 1.2 typed line) are not registered: running their
+                 programs is a compatibility question, never a reference this
+                 registry conforms to. Imports
                  resolve from their source file, handle cycles, and expose
                  catchable loading failures independently of typed checking.
   petta --profile ai
@@ -27,10 +30,15 @@ Unversioned language names retain their existing defaults.
                  whose declared result has another head path than a required
                  type may be rejected without running it in the pure
                  fragment. Every other rule is stable's.
-  petta@1.1      Typed PeTTa; typecheck-v2 remains its default checker and
-                 typecheck-v3 is selected explicitly when built in.
   petta@1.1.c    PeTTa's typed line with declarations as call contracts; the
-                 version is its profile's name.
+                 version is its profile's name.  A typed call runs as it does
+                 in the default contract; only a failed check is classified
+                 differently: where one declaration governs the call, its
+                 check commits to its first answer and raises the language's
+                 type error when it has none.  The former petta@1.1 contract
+                 and its typecheck-v2 and typecheck-v3 checker profiles are
+                 retired; the verdicts of the checker they followed remain
+                 as the typed acceptance suite (tests/petta/typed_acceptance).
   prime@0.0.1    The frozen local Prime draft, not the evolving Prime runtime.
 
 An explicit version does not install equations, load a module or change

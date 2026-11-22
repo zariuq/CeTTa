@@ -135,7 +135,7 @@ static void check_artifact_catalog(Arena *arena) {
 static void check_admission_cache_invalidation(Arena *arena) {
     Space space;
     space_init(&space);
-    SpaceProgramToken program = space_program_token(&space);
+    PettaRelevanceProgram program = petta_relevance_program(&space);
     SymbolId source = atom_symbol(arena, "cache-generation-source")->sym_id;
     Atom *head = atom_symbol_id(arena, source);
     Atom *equation = atom_expr3(

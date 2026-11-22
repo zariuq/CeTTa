@@ -403,14 +403,11 @@ Atom *petta_semantics_list_error(Arena *arena, SymbolId operation,
 Atom *petta_semantics_syntax_error(Arena *arena, const char *text);
 /* PeTTa 1.1 raises this on car-atom of the empty expression. */
 Atom *petta_semantics_empty_head_error(Arena *arena);
-/* The typecheck errors the reference's guards throw at run time, in context
+/* The type error the reference's guards throw at run time, in context
  * typecheck: literal_type_mismatch(Value, Type) where a value does not have
- * the type a declaration requires, and no_matching_overload(Function) where
- * no declared overload of a call applies to its arguments. */
+ * the type a declaration requires. */
 Atom *petta_semantics_type_mismatch_error(Arena *arena, Atom *value,
                                           Atom *type);
-Atom *petta_semantics_no_matching_overload_error(Arena *arena,
-                                                 Atom *function);
 /* Whether `error` is a call contract's: literal_type_mismatch(Value, Type)
  * in context typecheck. */
 bool petta_semantics_contract_error(Atom *error);

@@ -20,6 +20,10 @@ typedef struct {
     Atom *result_type;
     bool guard_result;
     bool hold_result;
+    /* The profile's reading of the declaration: a position whose declared
+     * type is a bare variable is translated and never checked (petta@1.1.c's
+     * call contracts).  Set by petta_type_calls_leave_variable_types_unchecked. */
+    bool variable_types_unchecked;
     /* Compact literal modes for the leading word of arguments. Larger
      * arities classify the remaining literal domains without a language
      * limit. These fields contain no borrowed pointers or binding state. */
@@ -45,6 +49,10 @@ bool petta_type_call_compile(Atom *signature, PettaTypeCall *call);
  * The activation owns every term and mode; it does not borrow cache storage. */
 bool petta_type_call_instantiate(Arena *arena, const PettaTypeCall *source,
                                  PettaTypeCall *call);
+/* Read CALLS as call contracts read them: a domain or range that is a bare
+ * type variable is not checked, so two such positions are not compared. */
+void petta_type_calls_leave_variable_types_unchecked(PettaTypeCall *calls,
+                                                     uint32_t count);
 /* argument is a one-based signature index in 1..call->arity. */
 PettaTypeArgument petta_type_call_argument(const PettaTypeCall *call,
                                            CettaExprIndex argument,

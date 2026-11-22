@@ -179,8 +179,6 @@ ENABLE_JSON_GSLT ?= 1
 CETTA_EMCC ?= emcc
 CETTA_BROWSER ?= google-chrome
 CETTA_BROWSER_NODE ?= node
-ENABLE_PETTA_TYPECHECK_V2 ?= 1
-ENABLE_PETTA_TYPECHECK_CENSUS ?= 0
 ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS ?= 0
 CETTA_PROC_FORK_SPAWN ?= 0
 PRIME_NEED_ALGEBRA_CHECKS := 109
@@ -228,17 +226,6 @@ $(error CETTA_PROC_FORK_SPAWN must be 0 or 1)
 endif
 ifneq ($(filter $(ENABLE_PIC),0 1),$(ENABLE_PIC))
 $(error ENABLE_PIC must be 0 or 1)
-endif
-ifneq ($(filter $(ENABLE_PETTA_TYPECHECK_V2),0 1),$(ENABLE_PETTA_TYPECHECK_V2))
-$(error ENABLE_PETTA_TYPECHECK_V2 must be 0 or 1)
-endif
-ifneq ($(filter $(ENABLE_PETTA_TYPECHECK_CENSUS),0 1),$(ENABLE_PETTA_TYPECHECK_CENSUS))
-$(error ENABLE_PETTA_TYPECHECK_CENSUS must be 0 or 1)
-endif
-ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
-ifeq ($(ENABLE_PETTA_TYPECHECK_V2),0)
-$(error ENABLE_PETTA_TYPECHECK_CENSUS=1 requires ENABLE_PETTA_TYPECHECK_V2=1)
-endif
 endif
 ifneq ($(filter $(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS),0 1),$(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS))
 $(error ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS must be 0 or 1)
@@ -638,12 +625,6 @@ endif
 ifeq ($(ENABLE_PYTHON),1)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).python-config-$(PYTHON_CONFIG_ID)
 endif
-ifeq ($(ENABLE_PETTA_TYPECHECK_V2),0)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).no-petta-typecheck-v2
-endif
-ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).petta-typecheck-census
-endif
 ifeq ($(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS),1)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).langdef-diagnostics
 endif
@@ -803,17 +784,7 @@ JSON_GSLT_RUNTIME_SRC = \
 	native/json_value_v1.c \
 	native/json_cst_value_v1.c
 endif
-PETTA_TYPECHECK_V2_SRC =
-PETTA_TYPECHECK_CENSUS_SRC =
-ifeq ($(ENABLE_PETTA_TYPECHECK_V2),1)
-PETTA_TYPECHECK_V2_SRC = src/petta_typecheck.c \
-	src/generated/petta_typecheck_v2_source_binding_v1.generated.c \
-	src/generated/petta_typecheck_v2_boundary_core_source_binding_v1.generated.c
-endif
-ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
-PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
-endif
-SRC = src/symbol.c src/scalar_trie.c src/atom.c src/state_cell.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c src/raw_source_region.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_builtin_registry.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/fixpoint.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/term_domain.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/answer_storage.c src/fold_algebra.c src/native_fold.c src/exec_saturation.c src/transform_core.c src/library_presentation.c src/support_view.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_macro_expansion.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c src/foreign_provider.c src/runtime_prelude.c src/runtime_session.c
+SRC = src/symbol.c src/scalar_trie.c src/atom.c src/state_cell.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c src/raw_source_region.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_builtin_registry.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c src/petta_specializer.c src/fixpoint.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/term_domain.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/answer_storage.c src/fold_algebra.c src/native_fold.c src/exec_saturation.c src/transform_core.c src/library_presentation.c src/support_view.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_macro_expansion.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c src/foreign_provider.c src/runtime_prelude.c src/runtime_session.c
 SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/run_observation.c src/error_presentation.c src/run_guard.c
 SRC += src/library_proc.c
 SRC += src/library_fs.c
@@ -870,7 +841,6 @@ SRC += src/gslt_language_manifest_v1.c
 SRC += src/gslt_support_profile_v1.c
 SRC += src/library_io.c
 SRC += $(JSON_GSLT_RUNTIME_SRC)
-SRC += $(PETTA_TYPECHECK_CENSUS_SRC)
 SRC += \
 	src/gslt_rigid_coordinate_dispatch_v1.c \
 	src/gslt_peano_add_specialization_v1.c \
@@ -1119,20 +1089,6 @@ PETTA_SEARCH_MACHINE_TEST_OBJ = runtime/bootstrap/test_petta_search_machine.$(BU
 PETTA_SEARCH_MACHINE_TEST_BIN = runtime/test_petta_search_machine-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 NATIVE_QUERY_PROJECTION_TEST_BIN = runtime/test_native_query_projection-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 PETTA_SEARCH_MACHINE_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
-PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_SRC = tests/support/test_petta_typecheck_v2_guard_langdef.c
-PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_OBJ = runtime/bootstrap/test_petta_typecheck_v2_guard_langdef.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_BIN = runtime/test_petta_typecheck_v2_guard_langdef-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
-PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_TEST_SRC = tests/support/test_petta_typecheck_v2_fragment_runtime.c
-PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_TEST_OBJ = runtime/bootstrap/test_petta_typecheck_v2_fragment_runtime.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_TEST_BIN = runtime/test_petta_typecheck_v2_fragment_runtime-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
-PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_MANIFEST = langdef/petta/typecheck_v2_fragment_runtime_v1.metta
-PETTA_TYPECHECK_V2_FRAGMENT_PROVIDER_CATALOG_V1 = langdef/petta/typecheck_v2_fragment_provider_catalog_v1.metta
-PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_GENERATED_H = src/generated/petta_typecheck_v2_fragment_v1.generated.h
-PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_GENERATED_C = src/generated/petta_typecheck_v2_fragment_v1.generated.c
-PETTA_TYPECHECK_V2_FRAGMENT_PROVIDER_CATALOG_V1_GENERATED_H = src/generated/petta_typecheck_v2_fragment_provider_catalog_v1.generated.h
-PETTA_TYPECHECK_V2_FRAGMENT_PROVIDER_CATALOG_V1_GENERATED_C = src/generated/petta_typecheck_v2_fragment_provider_catalog_v1.generated.c
 PETTA_TYPECHECK_V3_CORE_LANGDEF_V1 = langdef/petta/typecheck_v3_core_v1.metta
 PETTA_TYPECHECK_V3_CORE_LEAN_V1 ?= ../../Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/PeTTa/TypecheckV3Core.lean
 PETTA_TYPECHECK_V3_SEAM_LEAN_V1 ?= ../../Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/PeTTa/TypecheckV3Seam.lean
@@ -1142,15 +1098,6 @@ PETTA_TYPECHECK_V3_CORE_RUNTIME_V1_GENERATED_H = src/generated/petta_typecheck_v
 PETTA_TYPECHECK_V3_CORE_RUNTIME_V1_GENERATED_C = src/generated/petta_typecheck_v3_core_v1.generated.c
 PETTA_TYPECHECK_V3_CORE_PROVIDER_CATALOG_V1_GENERATED_H = src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.h
 PETTA_TYPECHECK_V3_CORE_PROVIDER_CATALOG_V1_GENERATED_C = src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c
-PETTA_TYPECHECK_V3_H5_MATRIX_V1 = langdef/petta/generated/typecheck_v3_h5_matrix_v1.json
-PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_SRC = tests/support/test_petta_typecheck_v3_core_langdef.c
-PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_OBJ = runtime/bootstrap/test_petta_typecheck_v3_core_langdef.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_BIN = runtime/test_petta_typecheck_v3_core_langdef-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
-PETTA_TYPECHECK_V3_FILE_RUNNER_SRC = tests/support/petta_typecheck_v3_file.c
-PETTA_TYPECHECK_V3_FILE_RUNNER_OBJ = runtime/bootstrap/petta_typecheck_v3_file.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PETTA_TYPECHECK_V3_FILE_RUNNER_BIN = runtime/petta_typecheck_v3_file-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-PETTA_TYPECHECK_V3_FILE_RUNNER_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 PETTA_ANALYSIS_CARDINALITY_TEST_SRC = tests/support/test_petta_analysis_cardinality.c
 PETTA_ANALYSIS_CARDINALITY_TEST_BIN = runtime/test_petta_analysis_cardinality-$(BUILD_CANON)
 PETTA_ANALYSIS_VERDICT_TEST_SRC = tests/support/test_petta_analysis_verdict.c
@@ -2501,13 +2448,10 @@ MM0_RUNTIME_LIVE_SYNTAX_NEGATIVE_V1 = \
 CETTA_PETTA_DIRECT_RUN_V1 = env CETTA_PETTA_SEARCH_MACHINE=1 \
 	$(CETTA_BIN_INVOKE) --lang petta
 PETTA_CORPUS_MANIFEST = tests/petta/corpus/manifest.json
-PETTA_TYPECHECK_V2_MANIFEST = tests/petta/typecheck_v2_acceptance_manifest.json
-PETTA_TYPECHECK_V2_OMISSION_BIN = runtime/cetta-$(BUILD_CANON)-no-petta-typecheck-v2
 PETTA_NATIVE_CORE_RESULTS ?= runtime/petta-corpus-native-core-no-libpl
 PETTA_CHAINER_ROOT ?=
 PETTA_CHAINER_COMPAT_MANIFEST = tests/petta/chainer_compat/manifest.json
 PETTA_CHAINER_COMPAT_RESULTS ?= runtime/petta-chainer-compat
-PETTA_CHAINER_SPACE_ENGINE ?= native
 MATCH_DECISION_LANE_TIMEOUT ?= 60
 GSLT2PARSE_HE_ROOT ?=
 GSLT2PARSE_HE_GENERATED_C_OUTPUT ?=
@@ -3475,6 +3419,8 @@ PRIME_EXAMPLE_TESTS = \
 	examples/prime/context_tutorial.metta
 PRIME_PRACTICAL_TESTS = \
 	tests/prime/authored_frontier_chaining.metta \
+	tests/prime/typed_call_routes.metta \
+	tests/prime/let_result_survives_collection.metta \
 	tests/prime/practical/typed_pln_chainer.metta \
 	tests/prime/practical/atp_guided_inhabitation.metta \
 	tests/prime/practical/atp_direct_example.metta \
@@ -6630,7 +6576,6 @@ test-compare-answers: $(BIN) tests/support/compare_answers.py \
 
 # Programs whose answers depend on what spaces know by keys no row holds,
 # run collecting at every safe point: they must answer as without collection.
-TERM_UNIVERSE_COLLECTION_TYPED_PROGRAMS = collection_inferred_signatures
 TERM_UNIVERSE_COLLECTION_PROGRAMS = collection_set_space_variants \
 	collection_process_calculus
 
@@ -6823,7 +6768,7 @@ test-term-universe-collection-mutants: tests/support/mutate_term_universe_counts
 	echo "PASS: the counting checks reject the hold, release, cascade and reuse mutants"
 
 test-term-universe-collection: $(TERM_UNIVERSE_COLLECTION_TEST_BIN) $(BIN) \
-		$(foreach t,$(TERM_UNIVERSE_COLLECTION_PROGRAMS) $(TERM_UNIVERSE_COLLECTION_TYPED_PROGRAMS),tests/petta/$(t).metta tests/petta/$(t).expected)
+		$(foreach t,$(TERM_UNIVERSE_COLLECTION_PROGRAMS),tests/petta/$(t).metta tests/petta/$(t).expected)
 	@$(call cetta_exec,./$(TERM_UNIVERSE_COLLECTION_TEST_BIN))
 	@set -eu; for t in $(TERM_UNIVERSE_COLLECTION_PROGRAMS); do \
 		answers=$$(CETTA_TERM_UNIVERSE_COLLECTION=reclaim-every \
@@ -6835,17 +6780,7 @@ test-term-universe-collection: $(TERM_UNIVERSE_COLLECTION_TEST_BIN) $(BIN) \
 			exit 1; \
 		fi; \
 	done; \
-	for t in $(TERM_UNIVERSE_COLLECTION_TYPED_PROGRAMS); do \
-		answers=$$(CETTA_TERM_UNIVERSE_COLLECTION=reclaim-every \
-			$(CETTA_BIN_INVOKE) --profile typecheck-v3 --lang petta \
-			tests/petta/$$t.metta 2>&1); \
-		if [ "$$answers" != "$$(cat tests/petta/$$t.expected)" ]; then \
-			echo "FAIL: $$t, collecting at every safe point"; \
-			diff tests/petta/$$t.expected <(printf '%s\n' "$$answers"); \
-			exit 1; \
-		fi; \
-	done; \
-	echo "PASS: set spaces and inferred signatures answer alike collecting at every safe point"
+	echo "PASS: set spaces and process programs answer alike collecting at every safe point"
 
 $(TERM_UNIVERSE_STORE_ABI_TEST_BIN): private CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1 -DCETTA_RUNTIME_STATS_IMPL=1
 $(TERM_UNIVERSE_STORE_ABI_TEST_BIN): tests/test_term_universe_store_abi.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c $(SPACE_STANDALONE_DEPS) $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) src/cetta_stdlib.c $(BUILD_CONFIG_HEADER)
@@ -7041,8 +6976,6 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(PETTA_COMPILED_READER_TEST_OBJ:.o=.d) \
 	$(PETTA_SEARCH_MACHINE_TEST_OBJ:.o=.d) \
 	$(PETTA_SPECIALIZER_PREPARE_TEST_OBJ:.o=.d) \
-	$(PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_OBJ:.o=.d) \
-	$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_TEST_OBJ:.o=.d) \
 	$(PRIME_COMPILED_READER_TEST_OBJ:.o=.d) \
 	$(HE_COMPILED_READER_BENCH_OBJ:.o=.d) \
 	$(PRIME_DELAYED_AMBIGUITY_TEST_OBJ:.o=.d) \
@@ -7073,7 +7006,7 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 # dependency files are nevertheless authoritative: omitting them can retain
 # an ABI-stale object after a shared header changes.  Restrict the wildcard to
 # the active configuration tag so unrelated build variants remain isolated.
-# The tag's own variants (runtime stats, typecheck censuses) are included:
+# The tag's own variants (runtime stats) are included:
 # their objects link into the same tool paths, so a variant object left stale
 # by a header change would be relinked into those tools.
 AUXILIARY_DEPS = $(wildcard runtime/bootstrap/*.$(BUILD_OBJ_TAG).d \
@@ -7137,8 +7070,6 @@ $(BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_HTTP_PROVIDER_CURL %s\n' "$(HTTP_PROVIDER_CURL)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN %s\n' "$(HTTP_PROVIDER_EMSCRIPTEN)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_HTTP_CONFIG_ID "%s"\n' "$(HTTP_CONFIG_ID)" >> "$$tmp_cfg"; \
-	printf '#define CETTA_BUILD_WITH_PETTA_TYPECHECK_V2 %s\n' "$(ENABLE_PETTA_TYPECHECK_V2)" >> "$$tmp_cfg"; \
-	printf '#define CETTA_BUILD_WITH_PETTA_TYPECHECK_CENSUS %s\n' "$(ENABLE_PETTA_TYPECHECK_CENSUS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS %s\n' "$(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_STATS %s\n' "$(ENABLE_RUNTIME_STATS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_TIMING %s\n' "$(ENABLE_RUNTIME_TIMING)" >> "$$tmp_cfg"; \
@@ -7174,8 +7105,6 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_HTTP_PROVIDER_CURL %s\n' "$(HTTP_PROVIDER_CURL)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN %s\n' "$(HTTP_PROVIDER_EMSCRIPTEN)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_HTTP_CONFIG_ID "%s"\n' "$(HTTP_CONFIG_ID)" >> "$$tmp_cfg"; \
-	printf '#define CETTA_BUILD_WITH_PETTA_TYPECHECK_V2 %s\n' "$(ENABLE_PETTA_TYPECHECK_V2)" >> "$$tmp_cfg"; \
-	printf '#define CETTA_BUILD_WITH_PETTA_TYPECHECK_CENSUS 0\n' >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS %s\n' "$(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_STATS 0\n' >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_TIMING 0\n' >> "$$tmp_cfg"; \
@@ -7573,53 +7502,10 @@ $(PETTA_SPECIALIZER_PREPARE_TEST_OBJ): $(PETTA_SPECIALIZER_PREPARE_TEST_SRC) $(B
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
-$(PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_BIN): $(PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_OBJ) $(PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@set -eu; \
-	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-petta-typecheck-v2-guard-langdef.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
-	mv "$$tmp_out" $@
 
-$(PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_BIN): \
-		$(PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_OBJ) \
-		$(PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_LINK_OBJ) \
-		$(BRIDGE_DEPS)
-	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@set -eu; \
-	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-petta-typecheck-v3-core-langdef.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
-	mv "$$tmp_out" $@
 
-$(PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_OBJ): \
-		$(PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_SRC) \
-		src/petta_typecheck_v3.h \
-		src/petta_typecheck_v3_decision_v1.h \
-		$(PETTA_TYPECHECK_V3_CORE_RUNTIME_V1_GENERATED_H) \
-		$(PETTA_TYPECHECK_V3_CORE_PROVIDER_CATALOG_V1_GENERATED_H) \
-		$(BUILD_CONFIG_HEADER)
-	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
-$(PETTA_TYPECHECK_V3_FILE_RUNNER_BIN): \
-		$(PETTA_TYPECHECK_V3_FILE_RUNNER_OBJ) \
-		$(PETTA_TYPECHECK_V3_FILE_RUNNER_LINK_OBJ) \
-		$(BRIDGE_DEPS)
-	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@set -eu; \
-	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/petta-typecheck-v3-file.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
-	mv "$$tmp_out" $@
 
-$(PETTA_TYPECHECK_V3_FILE_RUNNER_OBJ): \
-		$(PETTA_TYPECHECK_V3_FILE_RUNNER_SRC) \
-		src/petta_typecheck_v3.h \
-		src/petta_typecheck_v3_decision_v1.h \
-		$(BUILD_CONFIG_HEADER)
-	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
 $(PETTA_TYPECHECK_V3_CORE_RUNTIME_V1_GENERATED_H) \
 $(PETTA_TYPECHECK_V3_CORE_RUNTIME_V1_GENERATED_C) &: FORCE \
@@ -7655,63 +7541,7 @@ $(PETTA_TYPECHECK_V3_CORE_PROVIDER_CATALOG_V1_GENERATED_C) &: \
 	cmp -s "$$catalog_stage/catalog.c" $(PETTA_TYPECHECK_V3_CORE_PROVIDER_CATALOG_V1_GENERATED_C) || mv "$$catalog_stage/catalog.c" $(PETTA_TYPECHECK_V3_CORE_PROVIDER_CATALOG_V1_GENERATED_C); \
 	rm -f "$${catalog_stage:?}"/*; rmdir "$$catalog_stage"
 
-$(PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_OBJ): $(PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_SRC) $(BUILD_CONFIG_HEADER)
-	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
-$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_GENERATED_H) \
-$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_GENERATED_C) &: \
-		$(GSLT_LANGUAGE_GENERATOR_V1) \
-		tools/gslt2parse_schema_v1.py \
-		$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_MANIFEST) \
-		langdef/petta/generated/typecheck_v2_guard_v1.metta \
-		langdef/petta/generated/typecheck_v2_boundary_core_v1.metta
-	@python3 $(GSLT_LANGUAGE_GENERATOR_V1) \
-		--manifest $(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_MANIFEST) \
-		--profile typecheck-v2 \
-		--source-root langdef \
-		--header $(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_GENERATED_H) \
-		--source $(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_GENERATED_C) \
-		--symbol cetta_petta_typecheck_v2_fragment_v1 \
-		--header-include generated/petta_typecheck_v2_fragment_v1.generated.h
-
-$(PETTA_TYPECHECK_V2_FRAGMENT_PROVIDER_CATALOG_V1_GENERATED_H) \
-$(PETTA_TYPECHECK_V2_FRAGMENT_PROVIDER_CATALOG_V1_GENERATED_C) &: \
-		$(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
-		tools/gslt2parse_schema_v1.py \
-		$(PETTA_TYPECHECK_V2_FRAGMENT_PROVIDER_CATALOG_V1) \
-		$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_MANIFEST) \
-		$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_GENERATED_H) \
-		$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_GENERATED_C)
-	@python3 $(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
-		--catalog $(PETTA_TYPECHECK_V2_FRAGMENT_PROVIDER_CATALOG_V1) \
-		--language-manifest $(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_MANIFEST) \
-		--source-root langdef \
-		--header $(PETTA_TYPECHECK_V2_FRAGMENT_PROVIDER_CATALOG_V1_GENERATED_H) \
-		--source $(PETTA_TYPECHECK_V2_FRAGMENT_PROVIDER_CATALOG_V1_GENERATED_C) \
-		--symbol cetta_petta_typecheck_v2_fragment_provider_catalog_v1 \
-		--header-include generated/petta_typecheck_v2_fragment_provider_catalog_v1.generated.h
-
-$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_TEST_BIN): \
-		$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_TEST_OBJ) \
-		$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_GENERATED_C) \
-		$(PETTA_TYPECHECK_V2_FRAGMENT_PROVIDER_CATALOG_V1_GENERATED_C) \
-		$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_TEST_LINK_OBJ) \
-		$(BRIDGE_DEPS)
-	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@set -eu; \
-	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-petta-typecheck-v2-fragment-runtime.XXXXXX"); \
-	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
-	mv "$$tmp_out" $@
-
-$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_TEST_OBJ): \
-		$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_TEST_SRC) \
-		$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_GENERATED_H) \
-		$(PETTA_TYPECHECK_V2_FRAGMENT_PROVIDER_CATALOG_V1_GENERATED_H) \
-		$(BUILD_CONFIG_HEADER)
-	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
 .PHONY: test-petta-specializer-prepare
 test-petta-specializer-prepare: $(PETTA_SPECIALIZER_PREPARE_TEST_BIN)
@@ -18550,7 +18380,6 @@ clean:
 test-clean-rebuild:
 	@$(MAKE) clean
 	@$(MAKE) -s -j2
-	@$(MAKE) -s test-petta-typecheck-v2-isolation-stats
 
 promote-runtime: $(BIN)
 	@BUILD=$(BUILD_CANON) \
@@ -18847,7 +18676,7 @@ NORMAL_TEST_TARGETS := \
 	test-support-views \
 	test-smt-library \
 	test-support-view-differential \
-	test-petta-callability-refresh \
+	test-petta-plan-revalidation \
 	test-petta-add-atoms-batch-v1 \
 	test-petta-tier-composition \
 	test-evaluator-tax-routes \
@@ -18940,7 +18769,7 @@ test-lean: test-plain-bnf-semantic-generated-artifact-current-v1
 test-all: test-plain-bnf-reader-v1
 test-all: test-plain-bnf-denotation-v1
 
-test-all: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-language-def-ground-term-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-arena-frame-identity-ownership test-name-space test-arena-identity-names test-arena-block-growth test-delay-service test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-collection test-space-dense test-petta-slices test-count-footprint test-compare-answers test-stable-occurrence-transport test-shared-space-concurrent-index test-parallel-executor-lifecycle test-stable-occurrence-realization-tournament test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1 test-decl-langdef-v1
+test-all: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-language-def-ground-term-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-arena-frame-identity-ownership test-name-space test-arena-identity-names test-arena-block-growth test-delay-service test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-collection test-space-dense test-petta-slices test-count-footprint test-compare-answers test-stable-occurrence-transport test-shared-space-concurrent-index test-parallel-executor-lifecycle test-stable-occurrence-realization-tournament test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1 test-decl-langdef-v1
 test-asymptotic: test-term-universe-plateau
 test-asymptotic: test-space-dense-scaling
 test-asymptotic: test-stdlib-growth-memory-regression
@@ -22847,7 +22676,8 @@ test-prime-relational-plan: $(BIN)
 	fi; \
 	for relational_case in \
 		tests/prime/relational_first_demand.metta \
-		tests/prime/authored_frontier_chaining.metta; do \
+		tests/prime/authored_frontier_chaining.metta \
+		tests/prime/typed_call_routes.metta; do \
 		relational_expected=$$(cat "$${relational_case%.metta}.expected"); \
 		relational_canonical=$$(CETTA_PRIME_RELATIONAL_PLAN_REFERENCE=1 \
 			$(CETTA_BIN_INVOKE) --lang prime "$$relational_case" 2>&1); \
@@ -23867,6 +23697,7 @@ test-prime: test-prime-fast-fixtures
 
 .PHONY: test-prime-fast-fixtures
 test-prime-fast-fixtures: test-prime-capability-opening
+test-prime-fast-fixtures: test-prime-collection-keeps-let
 .PHONY: test-prime-normal-fixtures
 test-prime-normal-fixtures: $(BIN) test-prime-capability-opening
 	@pass=0; fail=0; \
@@ -23892,6 +23723,24 @@ test-prime-normal-fixtures: $(BIN) test-prime-capability-opening
 	echo "Prime normal gate: $$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
 .PHONY: test-prime-capability-opening
+# A let in a function body keeps the answer of a call whose evaluation
+# collects the heap, while the active Need path mixes lifetimes.  The answer
+# is the same with collection off, at the default budget and at the smallest.
+.PHONY: test-prime-collection-keeps-let
+test-prime-collection-keeps-let: $(BIN)
+	@set -eu; \
+	file=tests/prime/let_result_survives_collection.metta; \
+	expected=$$(cat "$${file%.metta}.expected"); \
+	for setting in CETTA_GC=0 CETTA_GC=1 CETTA_GC_BUDGET_MB=1; do \
+		actual=$$(env $$setting timeout 60 $(CETTA_BIN_INVOKE) --lang prime "$$file" 2>&1); \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: $$file under $$setting"; \
+			diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: a let keeps a collected call's answer with collection off, on and at the smallest budget"
+
 test-prime-capability-opening: $(BIN) $(PRIME_CAPABILITY_OPEN_TEST_BIN)
 	@$(call cetta_exec,./$(PRIME_CAPABILITY_OPEN_TEST_BIN))
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_prime_capability_opening.py --cetta "$(abspath $(BIN))"
@@ -25915,55 +25764,7 @@ test-petta-match-existence-fusion: $(BIN) tests/support/check_case_first_prefix.
 	done
 	@echo "PASS: PeTTa ground exact existence fusion and decline boundaries"
 
-.PHONY: test-petta-type-langdef-source-binding-v1
-test-petta-type-langdef-source-binding-v1:
-	@python3 tools/gslt2parse_schema_v1.py \
-		langdef/petta/generated/typecheck_v2_guard_v1.metta >/dev/null
-	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
-	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/petta-type-binding.XXXXXX"); \
-	trap 'rm -f "$$tmpdir/binding.h" "$$tmpdir/binding.c" "$$tmpdir/binding-normalized.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
-	python3 tools/generate_nik_direct_source_binding_v1.py \
-		--presentation langdef/petta/generated/typecheck_v2_guard_v1.metta \
-		--symbol-prefix petta_typecheck_v2 \
-		--authority-symbol petta_typecheck_v2_direct_authority_v1 \
-		--authority-header petta_typecheck.h \
-		--semantic-scope petta.typecheck-v2.guard-core \
-		--coverage fragment \
-		--header-output "$$tmpdir/binding.h" \
-		--source-output "$$tmpdir/binding.c"; \
-	sed 's#generated/binding.h#generated/petta_typecheck_v2_source_binding_v1.generated.h#' \
-		"$$tmpdir/binding.c" > "$$tmpdir/binding-normalized.c"; \
-	cmp -s "$$tmpdir/binding.h" \
-		src/generated/petta_typecheck_v2_source_binding_v1.generated.h; \
-	cmp -s "$$tmpdir/binding-normalized.c" \
-		src/generated/petta_typecheck_v2_source_binding_v1.generated.c; \
-	rm -f "$$tmpdir/binding-normalized.c"; \
-	echo "PASS: PeTTa type langdef source binding is valid and deterministic"
 
-.PHONY: test-petta-boundary-langdef-source-binding-v1
-test-petta-boundary-langdef-source-binding-v1:
-	@python3 tools/gslt2parse_schema_v1.py \
-		langdef/petta/generated/typecheck_v2_boundary_core_v1.metta >/dev/null
-	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
-	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/petta-boundary-binding.XXXXXX"); \
-	trap 'rm -f "$$tmpdir/binding.h" "$$tmpdir/binding.c" "$$tmpdir/binding-normalized.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
-	python3 tools/generate_nik_direct_source_binding_v1.py \
-		--presentation langdef/petta/generated/typecheck_v2_boundary_core_v1.metta \
-		--symbol-prefix petta_typecheck_v2_boundary_core \
-		--authority-symbol petta_typecheck_v2_direct_authority_v1 \
-		--authority-header petta_typecheck.h \
-		--semantic-scope petta.typecheck-v2.direct-boundary-requirement-core \
-		--coverage fragment \
-		--header-output "$$tmpdir/binding.h" \
-		--source-output "$$tmpdir/binding.c"; \
-	sed 's#generated/binding.h#generated/petta_typecheck_v2_boundary_core_source_binding_v1.generated.h#' \
-		"$$tmpdir/binding.c" > "$$tmpdir/binding-normalized.c"; \
-	cmp -s "$$tmpdir/binding.h" \
-		src/generated/petta_typecheck_v2_boundary_core_source_binding_v1.generated.h; \
-	cmp -s "$$tmpdir/binding-normalized.c" \
-		src/generated/petta_typecheck_v2_boundary_core_source_binding_v1.generated.c; \
-	rm -f "$$tmpdir/binding-normalized.c"; \
-	echo "PASS: PeTTa residual boundary langdef source binding is valid and deterministic"
 
 .PHONY: test-petta-fresh-frame-occurs-check
 test-petta-fresh-frame-occurs-check: $(BIN)
@@ -27240,7 +27041,7 @@ test-petta-named-arity-source-cache: $(BIN)
 	done; \
 	echo "PASS: shared source-arity cache preserves mutation, partial calls and duplicates"
 
-test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-controller test-controller-diversity test-petta-machine-trace-config test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-fresh-frame-occurs-check test-petta-equation-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-activation-admission-cache test-petta-activation-scalar-if test-petta-match-region-hole test-petta-binding-region-hole test-petta-rule-frame-region test-petta-deterministic-region-scalability test-petta-body-resume-segment test-petta-match-decision-tree-repository test-petta-match-decision-shape-receipt test-petta-activation-anonymous-hole test-petta-activation-scalar-argument-segment test-petta-activation-pure-data-segment test-petta-match-decision-equality test-match-closed-expression-decision test-petta-translation-time-callability test-petta-tabled-shared-and-runtime test-petta-tabled-lattice
+test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-controller test-controller-diversity test-petta-machine-trace-config test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-fresh-frame-occurs-check test-petta-equation-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-activation-admission-cache test-petta-activation-scalar-if test-petta-match-region-hole test-petta-binding-region-hole test-petta-rule-frame-region test-petta-deterministic-region-scalability test-petta-body-resume-segment test-petta-match-decision-tree-repository test-petta-match-decision-shape-receipt test-petta-activation-anonymous-hole test-petta-activation-scalar-argument-segment test-petta-activation-pure-data-segment test-petta-match-decision-equality test-match-closed-expression-decision test-petta-translation-time-callability test-petta-tabled-shared-and-runtime test-petta-tabled-lattice
 	@env -u CETTA_PETTA_EQUATION_BODY_ACTIVATION \
 		-u CETTA_PETTA_EQUATION_BODY_ACTIVATION_REFERENCE \
 		./$(PETTA_SEARCH_MACHINE_TEST_BIN)
@@ -27554,24 +27355,20 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 			<(printf '%s\n' "$$result") | head -40; \
 		exit 1; \
 	fi; \
-	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
-		tests/petta/typecheck_v2_profile_isolation.metta 2>&1); \
-	expected=$$(cat tests/petta/typecheck_v2_profile_isolation.default.expected); \
-	if [ "$$result" != "$$expected" ]; then \
-		echo "FAIL: typecheck-v2 operations leaked into default PeTTa"; \
-		diff <(printf '%s\n' "$$expected") \
-			<(printf '%s\n' "$$result") | head -40; \
-		exit 1; \
-	fi; \
-	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
-		--profile extended tests/petta/typecheck_v2_profile_isolation.metta 2>&1); \
-	expected=$$(cat tests/petta/typecheck_v2_profile_isolation.extended.expected); \
-	if [ "$$result" != "$$expected" ]; then \
-		echo "FAIL: typecheck-v2 operations leaked into extended PeTTa"; \
-		diff <(printf '%s\n' "$$expected") \
-			<(printf '%s\n' "$$result") | head -40; \
-		exit 1; \
-	fi; \
+	for profile in default extended; do \
+		for machine in 0 1; do \
+			flag=$$([ $$profile = extended ] && echo --profile extended); \
+			result=$$(CETTA_PETTA_SEARCH_MACHINE=$$machine ./$(BIN) --lang petta \
+				$$flag tests/petta/typing_forms_stay_data.metta 2>&1); \
+			expected=$$(cat tests/petta/typing_forms_stay_data.$$profile.expected); \
+			if [ "$$result" != "$$expected" ]; then \
+				echo "FAIL: a typing form is not data ($$profile, machine $$machine)"; \
+				diff <(printf '%s\n' "$$expected") \
+					<(printf '%s\n' "$$result") | head -40; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
 	for profile in "" "--profile extended"; do \
 		for machine in 0 1; do \
 			result=$$(CETTA_PETTA_SEARCH_MACHINE=$$machine ./$(BIN) --lang petta \
@@ -27585,15 +27382,6 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 			fi; \
 		done; \
 	done; \
-	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
-		--profile typecheck-v2 tests/petta/typecheck_v2_profile_isolation.metta 2>&1); \
-	expected=$$(cat tests/petta/typecheck_v2_profile_isolation.typecheck-v2.expected); \
-	if [ "$$result" != "$$expected" ]; then \
-		echo "FAIL: typecheck-v2 profile operations are inactive"; \
-		diff <(printf '%s\n' "$$expected") \
-			<(printf '%s\n' "$$result") | head -40; \
-		exit 1; \
-	fi; \
 	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 		tests/petta/list_set_exact.metta 2>&1); \
 	expected=$$(cat tests/petta/list_set_exact.expected); \
@@ -29237,7 +29025,7 @@ test-petta-live-reading: $(BIN) tests/petta/live_reading.metta tests/petta/live_
 	expected=$$(cat tests/petta/$$fixture.expected); \
 	for machine in 0 1; do for profile in default extended; do \
 		flags=; if [ $$profile = extended ]; then flags="--profile extended"; fi; \
-		actual=$$(CETTA_PETTA_SEARCH_MACHINE=$$machine ./$(BIN) --lang petta $$flags \
+		actual=$$(CETTA_PETTA_SEARCH_MACHINE=$$machine timeout 120 ./$(BIN) --lang petta $$flags \
 			tests/petta/$$fixture.metta 2>&1); \
 		if [[ "$$actual" != "$$expected" ]]; then \
 			echo "FAIL: $$fixture (machine $$machine, $$profile)"; \
@@ -29246,6 +29034,111 @@ test-petta-live-reading: $(BIN) tests/petta/live_reading.metta tests/petta/live_
 		fi; \
 	done; done; done; \
 	echo "PASS: an occurrence is decided when it is reached, on every tier, both routes and both profiles"
+
+# A demanded output meets a builtin's occurrence as it will be reached: the
+# builtin's own output while the program holds no authored alternative of it
+# and no goal before it can change the program, and open when a goal before
+# it installs one, which the extended profile then runs.  On the tier and in
+# the machine, both search routes and both profiles.
+.PHONY: test-petta-builtin-output-demand
+test-petta-semantics: test-petta-builtin-output-demand
+test-petta-builtin-output-demand: $(BIN) tests/petta/builtin_output_demand.metta \
+		tests/petta/builtin_output_demand.expected \
+		tests/petta/builtin_output_demand.extended.expected
+	@set -eu; \
+	for profile in default extended; do \
+		flags=; suffix=; \
+		if [ $$profile = extended ]; then flags="--profile extended"; suffix=.extended; fi; \
+		expected=$$(cat tests/petta/builtin_output_demand$$suffix.expected); \
+		for machine in 0 1; do for reference in "" 1; do \
+			actual=$$(CETTA_PETTA_SEARCH_MACHINE=$$machine CETTA_OPEN_EQUATIONS_REFERENCE=$$reference \
+				timeout 120 ./$(BIN) --lang petta $$flags tests/petta/builtin_output_demand.metta 2>&1); \
+			if [[ "$$actual" != "$$expected" ]]; then \
+				echo "FAIL: builtin output demand (machine $$machine, reference '$$reference', $$profile)"; \
+				diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; done; \
+	done; \
+	echo "PASS: a builtin's demanded output is decided by the program its occurrence will be reached under, on every route and both profiles"
+
+# A space new-space makes has a generated name: it prints as &space(N), its
+# metatype is Symbol and typed calls take it as one, but the name is the
+# space's identity, not its text.  The text built again is an ordinary
+# symbol that refuses access to the space while it lives and after it is
+# collected and its memory reused; held names keep their spaces alive.  On
+# the tier and in the machine, both search routes, under the default
+# collection budget and the smallest one.
+.PHONY: test-petta-generated-space-names
+test-petta-semantics: test-petta-generated-space-names
+
+# A typed call runs its body once per tuple of argument values, and every
+# applicable declaration admits its results, in every PeTTa profile; call
+# contracts differ only in classifying a refused check as an error.
+.PHONY: test-petta-typed-call-admission test-petta-error-value-arguments
+test-petta-typed-call-admission: $(BIN) tests/petta/typed_call_admission.metta \
+		tests/petta/typed_call_admission.expected \
+		tests/petta/typed_call_admission.1.1.c.expected
+	@set -eu; \
+	for lane in default extended ai 1.1.c; do \
+		case $$lane in \
+			default) flags="--lang petta"; expected=typed_call_admission.expected;; \
+			1.1.c) flags="--lang petta@1.1.c"; expected=typed_call_admission.1.1.c.expected;; \
+			*) flags="--lang petta --profile $$lane"; expected=typed_call_admission.expected;; \
+		esac; \
+		for machine in 0 1; do \
+			for reference in "" 1; do \
+				actual=$$(CETTA_PETTA_SEARCH_MACHINE=$$machine CETTA_OPEN_EQUATIONS_REFERENCE=$$reference \
+					./$(BIN) $$flags tests/petta/typed_call_admission.metta 2>&1); \
+				if [ "$$actual" != "$$(cat tests/petta/$$expected)" ]; then \
+					echo "FAIL: typed call admission ($$lane, machine $$machine, reference $${reference:-0})"; \
+					diff <(cat tests/petta/$$expected) <(printf '%s\n' "$$actual") | head -20; \
+					exit 1; \
+				fi; \
+			done; \
+		done; \
+	done; \
+	echo 'PASS: typed calls run once per argument tuple and admit by every applicable declaration, in every PeTTa profile'
+test-petta-semantics: test-petta-typed-call-admission
+# An (Error ...) value is an ordinary argument: a typed call judges it by its
+# declared type, in every profile, on both machine routes (P-ERR-1).
+test-petta-error-value-arguments: $(BIN) tests/petta/error_value_arguments.metta \
+		tests/petta/error_value_arguments.expected \
+		tests/petta/error_value_arguments.1.1.c.expected
+	@set -eu; \
+	for lane in default extended ai 1.1.c; do \
+		case $$lane in \
+			default) flags="--lang petta"; expected=error_value_arguments.expected;; \
+			1.1.c) flags="--lang petta@1.1.c"; expected=error_value_arguments.1.1.c.expected;; \
+			*) flags="--lang petta --profile $$lane"; expected=error_value_arguments.expected;; \
+		esac; \
+		for machine in 0 1; do \
+			actual=$$(CETTA_PETTA_SEARCH_MACHINE=$$machine \
+				./$(BIN) $$flags tests/petta/error_value_arguments.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/$$expected)" ]; then \
+				echo "FAIL: Error value arguments ($$lane, machine $$machine)"; \
+				diff <(cat tests/petta/$$expected) <(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo 'PASS: an Error value is an ordinary argument, judged by its declared type, in every PeTTa profile'
+test-petta-semantics: test-petta-error-value-arguments
+test-petta-generated-space-names: $(BIN) tests/petta/generated_space_names.metta \
+		tests/petta/generated_space_names.expected \
+		tests/petta/fixtures/generated_space_module.metta
+	@set -eu; \
+	for machine in 0 1; do for reference in "" 1; do for budget in "" 1; do \
+		actual=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=$$budget CETTA_PETTA_SEARCH_MACHINE=$$machine \
+			CETTA_OPEN_EQUATIONS_REFERENCE=$$reference timeout 120 ./$(BIN) --lang petta \
+			tests/petta/generated_space_names.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/generated_space_names.expected)" ]; then \
+			echo "FAIL: generated space names (machine $$machine, reference '$$reference', budget '$$budget')"; \
+			diff <(cat tests/petta/generated_space_names.expected) <(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; done; done; \
+	echo "PASS: a generated space name is the space's identity, not its text, on every route and collection budget"
 
 .PHONY: test-petta-profile-boundary test-petta-semantics \
 	test-petta-semantics-differential
@@ -33612,7 +33505,7 @@ test-petta-semantic-oracles: $(BIN)
 	echo "PASS: PeTTa relational control, stream bags, list length, parse-as-data, implicit spaces, shared sequencing, named state, alpha uniqueness, metatype and typed-failure policy, uncaught-error exit, library descriptors, and stable term order"
 
 .PHONY: test-petta-corpus-manifest-unit probe-petta-corpus-manifest test-petta-corpus-manifest test-petta-corpus-native-core test-petta-native-core-no-libpl
-.PHONY: test-petta-analysis-cardinality test-petta-analysis-verdict test-petta-analysis-boundary test-petta-analysis-arrow-mode test-petta-typecheck-v2-census-codegen refresh-petta-typecheck-v2-census-catalog test-petta-typecheck-v3-intake-v1 refresh-petta-typecheck-v3-intake-v1 test-petta-typecheck-v3-h5-matrix-v1 refresh-petta-typecheck-v3-h5-matrix-v1 test-petta-typecheck-v3-core-parity-v1 test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-core-generation-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile probe-petta-typecheck-v3-corpus-v1 test-petta-typecheck-v3-corpus-v1 test-petta-typecheck-v2 test-petta-typecheck-v2-guard-langdef-v1 test-petta-typecheck-v2-guard-langdef-mutations-v1 test-petta-typecheck-v2-fragment-generation-v1 test-petta-typecheck-v2-fragment-runtime-v1 test-petta-typecheck-v2-inferred-value-mutations test-petta-typecheck-v2-census test-petta-typecheck-v2-census-omission test-petta-typecheck-v2-manifest test-petta-typecheck-v2-isolation-stats test-petta-typecheck-v2-omission test-petta-nik-admission-boundary-controls test-petta-nik-typed-chaining test-petta-nik-typed-space-query
+.PHONY: test-petta-analysis-cardinality test-petta-analysis-verdict test-petta-analysis-boundary test-petta-analysis-arrow-mode test-petta-typecheck-v3-core-parity-v1 test-petta-typecheck-v3-core-generation-v1
 test-petta-analysis-cardinality: $(PETTA_ANALYSIS_CARDINALITY_TEST_BIN)
 	@./$(PETTA_ANALYSIS_CARDINALITY_TEST_BIN)
 
@@ -33625,44 +33518,22 @@ test-petta-analysis-boundary: $(PETTA_ANALYSIS_BOUNDARY_TEST_BIN)
 test-petta-analysis-arrow-mode: $(PETTA_ANALYSIS_ARROW_MODE_TEST_BIN)
 	@./$(PETTA_ANALYSIS_ARROW_MODE_TEST_BIN)
 
-test-petta-typecheck-v2-census-codegen:
-	@python3 tools/test_petta_typecheck_v2_census_v1.py
-	@python3 tools/generate_petta_typecheck_v2_census_v1.py \
-		--witness-ledger tests/petta/typecheck_v2_semantic_witnesses.json \
-		--output src/petta_typecheck_census.h --check
 
-refresh-petta-typecheck-v2-census-catalog:
-	@python3 tools/generate_petta_typecheck_v2_census_v1.py \
-		--witness-ledger tests/petta/typecheck_v2_semantic_witnesses.json \
-		--output src/petta_typecheck_census.h
 
-test-petta-typecheck-v3-intake-v1:
-	@python3 tools/test_petta_typecheck_v3_intake_v1.py
-	@python3 tools/generate_petta_typecheck_v3_intake_v1.py \
-		--manifest tests/petta/typecheck_v2_acceptance_manifest.json \
-		--witness-ledger tests/petta/typecheck_v2_semantic_witnesses.json \
-		--presentation langdef/petta/generated/typecheck_v2_guard_v1.metta \
-		--presentation langdef/petta/generated/typecheck_v2_boundary_core_v1.metta \
-		--output langdef/petta/generated/typecheck_v3_intake_v1.json --check
 
-refresh-petta-typecheck-v3-intake-v1:
-	@python3 tools/generate_petta_typecheck_v3_intake_v1.py \
-		--manifest tests/petta/typecheck_v2_acceptance_manifest.json \
-		--witness-ledger tests/petta/typecheck_v2_semantic_witnesses.json \
-		--presentation langdef/petta/generated/typecheck_v2_guard_v1.metta \
-		--presentation langdef/petta/generated/typecheck_v2_boundary_core_v1.metta \
-		--output langdef/petta/generated/typecheck_v3_intake_v1.json
 
-test-petta-typecheck-v3-h5-matrix-v1:
-	@python3 tools/test_petta_typecheck_v3_h5_matrix_v1.py
-	@python3 tools/generate_petta_typecheck_v3_h5_matrix_v1.py \
-		--intake langdef/petta/generated/typecheck_v3_intake_v1.json \
-		--output $(PETTA_TYPECHECK_V3_H5_MATRIX_V1) --check
 
-refresh-petta-typecheck-v3-h5-matrix-v1:
-	@python3 tools/generate_petta_typecheck_v3_h5_matrix_v1.py \
-		--intake langdef/petta/generated/typecheck_v3_intake_v1.json \
-		--output $(PETTA_TYPECHECK_V3_H5_MATRIX_V1)
+
+# Roman's typed PeTTa corpus with his checker's verdicts at a pinned
+# revision, the acceptance target for a checker of PeTTa's typed line.  Its
+# sources must be the ones the verdicts were recorded for, and every program
+# the checker accepts must run under PeTTa on both routes of the machine.
+.PHONY: test-petta-typed-acceptance
+test-petta-typed-acceptance: $(BIN)
+	@test -n "$(PETTA_TYPED_REFERENCE_ROOT)" || \
+		(echo 'set PETTA_TYPED_REFERENCE_ROOT to a checkout of the oracle revision in tests/petta/typed_acceptance/manifest.json' >&2; exit 2)
+	@PYTHONDONTWRITEBYTECODE=1 python3 tests/support/check_typed_acceptance.py \
+		--cetta "./$(BIN)" --reference "$(PETTA_TYPED_REFERENCE_ROOT)"
 
 test-petta-typecheck-v3-core-parity-v1:
 	@python3 tools/test_petta_typecheck_v3_core_parity_v1.py \
@@ -33670,79 +33541,10 @@ test-petta-typecheck-v3-core-parity-v1:
 		--lean-seam $(PETTA_TYPECHECK_V3_SEAM_LEAN_V1) \
 		--langdef $(PETTA_TYPECHECK_V3_CORE_LANGDEF_V1)
 
-test-petta-typecheck-v3-core-langdef-v1: \
-		test-petta-typecheck-v3-core-generation-v1 \
-		test-petta-typecheck-v3-h5-matrix-v1 \
-		$(PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_BIN)
-	@"$(PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_BIN)" \
-		$(PETTA_TYPECHECK_V3_CORE_LANGDEF_V1)
 
-test-petta-typecheck-v3-file-runner-v1: \
-		test-petta-typecheck-v3-core-generation-v1 \
-		$(PETTA_TYPECHECK_V3_FILE_RUNNER_BIN)
-	@positive=$$("$(PETTA_TYPECHECK_V3_FILE_RUNNER_BIN)" strict \
-		tests/petta/typecheck_v2_repros/45_arrow_det_fits_semidet.metta); \
-	printf '%s\n' "$$positive" | grep -Fq $$'PettaTypecheckV3FileV1\testablished\t'; \
-	negative=$$("$(PETTA_TYPECHECK_V3_FILE_RUNNER_BIN)" strict \
-		tests/petta/typecheck_v2_repros/49_arrow_component_mismatch.metta); \
-	printf '%s\n' "$$negative" | grep -Fq $$'PettaTypecheckV3FileV1\trefuted\tshape\tV3Consistent\t'; \
-	open=$$("$(PETTA_TYPECHECK_V3_FILE_RUNNER_BIN)" strict \
-		tests/petta/typecheck_v2_repros/03_unsupported_equation_rhs_number.metta); \
-	printf '%s\n' "$$open" | grep -Fq $$'PettaTypecheckV3FileV1\tundetermined\t'; \
-	echo 'PASS: whole-file v3 runner preserves established, refuted, and open outcomes'
 
-test-petta-typecheck-v3-profile: $(BIN)
-	@set -e; \
-	"./$(BIN)" --lang petta --profile typecheck-v3 \
-		tests/petta/typecheck_v2_repros/45_arrow_det_fits_semidet.metta \
-		>/dev/null 2>&1; \
-	set +e; \
-	native=$$("./$(BIN)" --lang petta --profile typecheck-v3 \
-		tests/petta/typecheck_v2_repros/49_arrow_component_mismatch.metta \
-		2>&1); native_rc=$$?; \
-	legacy=$$("./$(BIN)" --lang petta --profile typecheck-v3 \
-		tests/petta/typecheck_v2_repros/03_unsupported_equation_rhs_number.metta \
-		2>&1); legacy_rc=$$?; \
-	"./$(BIN)" --lang petta --profile extended \
-		tests/petta/typecheck_v2_repros/49_arrow_component_mismatch.metta \
-		>/dev/null 2>&1; extended_rc=$$?; \
-	set -e; \
-	[ $$native_rc -eq 2 ]; \
-	printf '%s\n' "$$native" | grep -Fq 'native-agreement'; \
-	[ $$legacy_rc -eq 2 ]; \
-	printf '%s\n' "$$legacy" | grep -Fq 'legacy-v2'; \
-	[ $$extended_rc -eq 0 ]; \
-	"./$(BIN)" --lang petta --list-profiles | \
-		grep -Fq $$'typecheck-v3\t'; \
-	echo 'PASS: typecheck-v3 profile routes whole blocks and remains isolated'
 
-probe-petta-typecheck-v3-corpus-v1: test-petta-typecheck-v3-file-runner-v1
-	@test -n "$(PETTA_TYPECHECK_REFERENCE_ROOT)" || \
-		(echo 'set PETTA_TYPECHECK_REFERENCE_ROOT to the compatibility checkout' >&2; exit 2)
-	@receipt=$$(mktemp -d runtime/typecheck-v3-corpus-probe.XXXXXX); \
-	python3 scripts/petta_typecheck_v3_corpus.py \
-		--runner "$(PETTA_TYPECHECK_V3_FILE_RUNNER_BIN)" \
-		--manifest "$(PETTA_TYPECHECK_V2_MANIFEST)" \
-		--h5-matrix "$(PETTA_TYPECHECK_V3_H5_MATRIX_V1)" \
-		--reference-root "$(PETTA_TYPECHECK_REFERENCE_ROOT)" \
-		--output-dir "$$receipt"; \
-	status=$$?; \
-	echo "typecheck-v3 corpus probe receipt: $$receipt"; \
-	exit $$status
 
-test-petta-typecheck-v3-corpus-v1: test-petta-typecheck-v3-file-runner-v1
-	@test -n "$(PETTA_TYPECHECK_REFERENCE_ROOT)" || \
-		(echo 'set PETTA_TYPECHECK_REFERENCE_ROOT to the compatibility checkout' >&2; exit 2)
-	@receipt=$$(mktemp -d runtime/typecheck-v3-corpus.XXXXXX); \
-	python3 scripts/petta_typecheck_v3_corpus.py \
-		--runner "$(PETTA_TYPECHECK_V3_FILE_RUNNER_BIN)" \
-		--manifest "$(PETTA_TYPECHECK_V2_MANIFEST)" \
-		--h5-matrix "$(PETTA_TYPECHECK_V3_H5_MATRIX_V1)" \
-		--reference-root "$(PETTA_TYPECHECK_REFERENCE_ROOT)" \
-		--output-dir "$$receipt" --require-resolved; \
-	status=$$?; \
-	echo "typecheck-v3 corpus receipt: $$receipt"; \
-	exit $$status
 
 test-petta-typecheck-v3-core-generation-v1: \
 		$(PETTA_TYPECHECK_V3_CORE_RUNTIME_V1_GENERATED_H) \
@@ -33760,538 +33562,6 @@ test-petta-typecheck-v3-core-generation-v1: \
 		--header-include generated/petta_typecheck_v3_core_v1.generated.h
 	@$(MAKE) --no-print-directory test-gslt-provider-catalog-native-v1 GSLT_PROVIDER_CATALOG_TEST_CLIENT=petta
 
-test-petta-typecheck-v2-guard-langdef-v1: $(PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_BIN) test-petta-type-langdef-source-binding-v1
-	@"$(PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_BIN)" \
-		langdef/petta/generated/typecheck_v2_guard_v1.metta
-
-test-petta-typecheck-v2-fragment-generation-v1: \
-		$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_GENERATED_H) \
-		$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_GENERATED_C) \
-		$(PETTA_TYPECHECK_V2_FRAGMENT_PROVIDER_CATALOG_V1_GENERATED_H) \
-		$(PETTA_TYPECHECK_V2_FRAGMENT_PROVIDER_CATALOG_V1_GENERATED_C)
-	@python3 tools/test_gslt_language_generation_v1.py \
-		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
-		--manifest $(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_MANIFEST) \
-		--profile typecheck-v2 \
-		--source-root langdef \
-		--header $(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_GENERATED_H) \
-		--source $(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_GENERATED_C) \
-		--symbol cetta_petta_typecheck_v2_fragment_v1 \
-		--header-include generated/petta_typecheck_v2_fragment_v1.generated.h
-	@python3 $(GSLT_PROVIDER_CATALOG_GENERATION_TEST_V1) \
-		--generator $(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
-		--catalog $(PETTA_TYPECHECK_V2_FRAGMENT_PROVIDER_CATALOG_V1) \
-		--language-manifest $(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_MANIFEST) \
-		--source-root langdef \
-		--header $(PETTA_TYPECHECK_V2_FRAGMENT_PROVIDER_CATALOG_V1_GENERATED_H) \
-		--source $(PETTA_TYPECHECK_V2_FRAGMENT_PROVIDER_CATALOG_V1_GENERATED_C) \
-		--symbol cetta_petta_typecheck_v2_fragment_provider_catalog_v1 \
-		--header-include generated/petta_typecheck_v2_fragment_provider_catalog_v1.generated.h
-
-test-petta-typecheck-v2-fragment-runtime-v1: \
-		test-petta-typecheck-v2-fragment-generation-v1 \
-		$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_TEST_BIN)
-	@"$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_TEST_BIN)"
-
-test-petta-typecheck-v2-guard-langdef-mutations-v1: $(PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_BIN)
-	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
-	mutation_dir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/petta-typecheck-v2-guard-mutations.XXXXXX"); \
-	trap 'rm -f "$$mutation_dir"/*.metta "$$mutation_dir"/*.out; rmdir "$$mutation_dir"' EXIT INT TERM; \
-	for mutation in actual-union-existential drop-alias-left drop-alias-right \
-			overlap-actual-union-universal drop-overlap-alias-left \
-			drop-overlap-alias-right drop-overlap-forward \
-			drop-overlap-reverse drop-mode-det-semidet \
-			semidet-admits-nondet drop-mode-effect arrow-ignores-mode \
-			arrow-ignores-components dynamic-enters-newtype \
-			drop-newtype-representation \
-			newtype-wildcard-representation-universal \
-			newtype-direction-reversed collapse-newtype-identity \
-			drop-expression-effect-foldall \
-			drop-expression-effect-collapse \
-			drop-expression-result-type-known \
-			drop-expression-result-type-collapse \
-			drop-expression-result-type-foldall-empty \
-			drop-expression-effect-once-det \
-			drop-expression-effect-once-semidet \
-			drop-expression-effect-once-nondet; do \
-		mutant="$$mutation_dir/$$mutation.metta"; \
-		output="$$mutation_dir/$$mutation.out"; \
-		python3 scripts/mutate_petta_typecheck_v2_guard_langdef.py \
-			"$$mutation" \
-			langdef/petta/generated/typecheck_v2_guard_v1.metta \
-			"$$mutant"; \
-		if "$(PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_BIN)" \
-				"$$mutant" >"$$output" 2>&1; then \
-			echo "FAIL: PeTTa typecheck-v2 guard mutation survived: $$mutation"; \
-			exit 1; \
-		fi; \
-	done; \
-	grep -Fq 'one matching actual-union member cannot hide a mismatch' \
-		"$$mutation_dir/actual-union-existential.out"; \
-	grep -Fq 'an actual alias is transparent to compatibility' \
-		"$$mutation_dir/drop-alias-left.out"; \
-	grep -Fq 'a required alias is transparent to compatibility' \
-		"$$mutation_dir/drop-alias-right.out"; \
-	grep -Fq 'actual-union ascription has an existential overlap witness' \
-		"$$mutation_dir/overlap-actual-union-universal.out"; \
-	grep -Fq 'an actual alias is transparent to ascription overlap' \
-		"$$mutation_dir/drop-overlap-alias-left.out"; \
-	grep -Fq 'a required alias is transparent to ascription overlap' \
-		"$$mutation_dir/drop-overlap-alias-right.out"; \
-	grep -Fq 'forward compatibility remains an explicit overlap witness' \
-		"$$mutation_dir/drop-overlap-forward.out"; \
-	grep -Fq 'reverse compatibility remains an explicit overlap witness' \
-		"$$mutation_dir/drop-overlap-reverse.out"; \
-	grep -Fq 'a deterministic arrow fits a semideterministic slot' \
-		"$$mutation_dir/drop-mode-det-semidet.out"; \
-	grep -Fq 'a nondeterministic arrow cannot satisfy a semideterministic slot' \
-		"$$mutation_dir/semidet-admits-nondet.out"; \
-	grep -Fq 'an effect-polymorphic slot accepts an actual mode' \
-		"$$mutation_dir/drop-mode-effect.out"; \
-	grep -Fq 'arrow consistency rejects an incompatible mode direction' \
-		"$$mutation_dir/arrow-ignores-mode.out"; \
-	grep -Fq 'matching arrow modes cannot conceal an incompatible result' \
-		"$$mutation_dir/arrow-ignores-components.out"; \
-	grep -Fq 'an unknown actual cannot introduce a newtype brand' \
-		"$$mutation_dir/dynamic-enters-newtype.out"; \
-	grep -Fq 'a concrete newtype eliminates through its representation' \
-		"$$mutation_dir/drop-newtype-representation.out"; \
-	grep -Fq 'a wildcard newtype representation grants no concrete compatibility' \
-		"$$mutation_dir/newtype-wildcard-representation-universal.out"; \
-	grep -Fq 'a representation does not implicitly introduce its newtype' \
-		"$$mutation_dir/newtype-direction-reversed.out"; \
-	grep -Fq 'distinct newtypes remain incompatible despite equal representations' \
-		"$$mutation_dir/collapse-newtype-identity.out"; \
-	grep -Fq 'v2 consumes foldall generator multiplicity into one result' \
-		"$$mutation_dir/drop-expression-effect-foldall.out"; \
-	grep -Fq 'collapse collects any generator into one result' \
-		"$$mutation_dir/drop-expression-effect-collapse.out"; \
-	grep -Fq 'collapse preserves a known element type beneath its list result' \
-		"$$mutation_dir/drop-expression-result-type-known.out"; \
-	grep -Fq 'collapse retains its list result when the element remains unknown' \
-		"$$mutation_dir/drop-expression-result-type-collapse.out"; \
-	grep -Fq 'an empty foldall returns the initializer result type' \
-		"$$mutation_dir/drop-expression-result-type-foldall-empty.out"; \
-	grep -Fq 'once preserves a deterministic inner expression' \
-		"$$mutation_dir/drop-expression-effect-once-det.out"; \
-	grep -Fq 'once preserves a semideterministic inner expression' \
-		"$$mutation_dir/drop-expression-effect-once-semidet.out"; \
-	grep -Fq 'once caps nondeterminism at one optional result' \
-		"$$mutation_dir/drop-expression-effect-once-nondet.out"; \
-	echo 'PASS: union, alias, ascription, arrow-mode, collection, foldall, once, and newtype semantic mutations are killed'
-
-test-petta-typecheck-v2-inferred-value-mutations: $(BIN)
-	@set -eu; \
-	mutation_dir=$$(mktemp -d runtime/petta-typecheck-v2-inferred-value-mutations.XXXXXX); \
-	trap 'rm -f "$$mutation_dir"/*; rmdir "$$mutation_dir"' EXIT INT TERM; \
-	set +e; \
-	./$(BIN) --lang petta --profile typecheck-v2 --strict \
-		tests/petta/typecheck_v2_repros/78_inferred_canonical_arrow_preserved.metta \
-		>"$$mutation_dir/baseline-singleton.out" \
-		2>"$$mutation_dir/baseline-singleton.err"; \
-	baseline_singleton=$$?; \
-	./$(BIN) --lang petta --profile typecheck-v2 --strict \
-		tests/petta/typecheck_v2_repros/80_inferred_ambiguous_symbol_widens_unknown.metta \
-		>"$$mutation_dir/baseline-ambiguous.out" \
-		2>"$$mutation_dir/baseline-ambiguous.err"; \
-	baseline_ambiguous=$$?; \
-		./$(BIN) --lang petta --profile typecheck-v2 --strict \
-			tests/petta/typecheck_v2_repros/82_inferred_function_is_not_explicit_value_evidence.metta \
-			>"$$mutation_dir/baseline-inferred.out" \
-			2>"$$mutation_dir/baseline-inferred.err"; \
-		baseline_inferred=$$?; \
-		./$(BIN) --lang petta --profile typecheck-v2 --strict \
-			tests/petta/typecheck_v2_repros/74_inferred_superpose_result_widens_unknown.metta \
-			>"$$mutation_dir/baseline-publication.out" \
-			2>"$$mutation_dir/baseline-publication.err"; \
-		baseline_publication=$$?; \
-		set -e; \
-		if [ "$$baseline_singleton" -ne 0 ] || \
-		   [ "$$baseline_ambiguous" -ne 2 ] || \
-		   [ "$$baseline_inferred" -ne 2 ] || \
-		   [ "$$baseline_publication" -ne 2 ]; then \
-		echo 'FAIL: inferred-value mutation baselines drifted'; exit 1; \
-	fi; \
-	base_objects='$(filter-out src/petta_typecheck.$(BUILD_OBJ_TAG).o src/petta_typecheck.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ))'; \
-		for specification in \
-			'drop-singleton:78_inferred_canonical_arrow_preserved:2' \
-			'first-ambiguous:80_inferred_ambiguous_symbol_widens_unknown:0' \
-			'promote-inferred:82_inferred_function_is_not_explicit_value_evidence:0' \
-			'preserve-unrecognized-output:74_inferred_superpose_result_widens_unknown:0'; do \
-		mutation=$${specification%%:*}; \
-		remainder=$${specification#*:}; \
-		fixture=$${remainder%%:*}; \
-		expected_status=$${remainder##*:}; \
-		python3 scripts/mutate_petta_typecheck_v2_inferred_values.py \
-			"$$mutation" src/petta_typecheck.c \
-			"$$mutation_dir/petta_typecheck-$$mutation.c"; \
-		$(CC) $(CPPFLAGS) $(CFLAGS) \
-			-c "$$mutation_dir/petta_typecheck-$$mutation.c" \
-			-o "$$mutation_dir/petta_typecheck-$$mutation.o"; \
-		$(CC) $$base_objects \
-			"$$mutation_dir/petta_typecheck-$$mutation.o" \
-			-o "$$mutation_dir/cetta-$$mutation" $(LDFLAGS); \
-		set +e; \
-		"$$mutation_dir/cetta-$$mutation" --lang petta \
-			--profile typecheck-v2 --strict \
-			"tests/petta/typecheck_v2_repros/$$fixture.metta" \
-			>"$$mutation_dir/$$mutation.out" \
-			2>"$$mutation_dir/$$mutation.err"; \
-		mutant_status=$$?; \
-		set -e; \
-		if [ "$$mutant_status" -ne "$$expected_status" ]; then \
-			echo "FAIL: inferred-value mutation did not expose its predicted defect: $$mutation"; \
-			sed -n '1,12p' "$$mutation_dir/$$mutation.err"; \
-			exit 1; \
-		fi; \
-	done; \
-		echo 'PASS: singleton, ambiguity, inferred-evidence, and output-publication mutations are killed'
-
-test-petta-typecheck-v2-census: test-petta-typecheck-v2-census-codegen
-ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
-	@test -n "$(PETTA_TYPECHECK_REFERENCE_ROOT)" || \
-		(echo 'set PETTA_TYPECHECK_REFERENCE_ROOT to the pinned Roman checkout' >&2; exit 2)
-	@PYTHONDONTWRITEBYTECODE=1 \
-		python3 tests/petta/test_typecheck_v2_semantic_census.py
-	@$(MAKE) -s BUILD=$(BUILD_CANON) \
-		ENABLE_PETTA_TYPECHECK_CENSUS=1 $(BIN)
-	@receipt=$$(mktemp -d runtime/typecheck-v2-census.XXXXXX); \
-		python3 scripts/petta_typecheck_v2_corpus.py \
-			--cetta ./$(BIN) \
-			--manifest "$(PETTA_TYPECHECK_V2_MANIFEST)" \
-			--reference-root "$(PETTA_TYPECHECK_REFERENCE_ROOT)" \
-			--output-dir "$$receipt" \
-			--census-output "$$receipt/census.json" \
-			--census-langdef langdef/petta/generated/typecheck_v2_guard_v1.metta \
-			--census-witnesses tests/petta/typecheck_v2_semantic_witnesses.json \
-			--require-census-complete; \
-		status=$$?; \
-		echo "typecheck-v2 semantic census receipt: $$receipt"; \
-		exit $$status
-	@python3 tools/test_petta_typecheck_v2_semantic_census.py \
-		--cetta ./$(BIN) \
-		--fixture tests/petta/search_machine_equation_slot_admission.metta \
-		--expected tests/petta/search_machine_equation_slot_admission.expected
-else
-	@$(MAKE) -s BUILD=$(BUILD_CANON) \
-		ENABLE_PETTA_TYPECHECK_CENSUS=1 \
-		PETTA_TYPECHECK_REFERENCE_ROOT="$(PETTA_TYPECHECK_REFERENCE_ROOT)" $@
-endif
-
-test-petta-typecheck-v2-census-omission:
-ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),0)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) $(BIN)
-	@if nm -g "$(BIN)" | grep -Fq 'petta_typecheck_census'; then \
-		echo 'FAIL: production binary exports PeTTa typecheck census symbols'; \
-		exit 1; \
-	fi
-	@if strings "$(BIN)" | grep -Fq 'CETTA_PETTA_TYPECHECK_CENSUS_V'; then \
-		echo 'FAIL: production binary retains PeTTa typecheck census records'; \
-		exit 1; \
-	fi
-	@echo 'PASS: PeTTa semantic census is physically absent from production builds'
-else
-	@$(MAKE) -s BUILD=$(BUILD_CANON) \
-		ENABLE_PETTA_TYPECHECK_CENSUS=0 $@
-endif
-
-test-petta-typecheck-v2-manifest:
-	@test -n "$(PETTA_TYPECHECK_REFERENCE_ROOT)" || \
-		(echo 'set PETTA_TYPECHECK_REFERENCE_ROOT to the pinned Roman checkout' >&2; exit 2)
-	@python3 scripts/petta_typecheck_v2_corpus.py \
-		--manifest "$(PETTA_TYPECHECK_V2_MANIFEST)" \
-		--reference-root "$(PETTA_TYPECHECK_REFERENCE_ROOT)" \
-		--validate-only
-
-test-petta-typecheck-v2: $(BIN) $(PETTA_SEARCH_MACHINE_TEST_BIN) test-petta-analysis-cardinality test-petta-analysis-verdict test-petta-analysis-boundary test-petta-analysis-arrow-mode test-petta-typecheck-v2-census-codegen test-petta-typecheck-v3-intake-v1 test-petta-typecheck-v2-guard-langdef-v1 test-petta-typecheck-v2-guard-langdef-mutations-v1 test-petta-typecheck-v2-fragment-runtime-v1 test-petta-typecheck-v2-inferred-value-mutations test-petta-typecheck-v2-census-omission test-petta-typecheck-v2-manifest test-petta-typecheck-v2-isolation-stats test-petta-typecheck-v2-omission test-petta-nik-admission-boundary-controls test-petta-nik-typed-chaining test-petta-nik-typed-space-query
-	@./$(PETTA_SEARCH_MACHINE_TEST_BIN)
-	@CETTA_BIN=./$(BIN) scripts/test_petta_typecheck_v2.sh
-	@receipt=$$(mktemp -d runtime/typecheck-v2-acceptance.XXXXXX); \
-		python3 scripts/petta_typecheck_v2_corpus.py \
-			--cetta ./$(BIN) \
-			--manifest "$(PETTA_TYPECHECK_V2_MANIFEST)" \
-			--reference-root "$(PETTA_TYPECHECK_REFERENCE_ROOT)" \
-			--output-dir "$$receipt"; \
-		status=$$?; \
-		echo "typecheck-v2 acceptance receipt: $$receipt"; \
-		exit $$status
-
-test-petta-typecheck-v2-isolation-stats:
-ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
-	@set -e; \
-	ordinary_out=runtime/typecheck-v2-isolation-ordinary.out; \
-	ordinary_err=runtime/typecheck-v2-isolation-ordinary.err; \
-	typed_out=runtime/typecheck-v2-isolation-typed.out; \
-	typed_err=runtime/typecheck-v2-isolation-typed.err; \
-	typed_dispatch_out=runtime/typecheck-v2-typed-dispatch.out; \
-	typed_dispatch_err=runtime/typecheck-v2-typed-dispatch.err; \
-	authority_out=runtime/typecheck-v2-authority-reuse.out; \
-	authority_err=runtime/typecheck-v2-authority-reuse.err; \
-	relocation_out=runtime/typecheck-v2-obligation-relocation.out; \
-	relocation_err=runtime/typecheck-v2-obligation-relocation.err; \
-	classifier_out=runtime/typecheck-v2-classifier-reestablish.out; \
-	classifier_err=runtime/typecheck-v2-classifier-reestablish.err; \
-	classifier_invalidation_out=runtime/typecheck-v2-classifier-invalidation.out; \
-	classifier_invalidation_err=runtime/typecheck-v2-classifier-invalidation.err; \
-	boundary_plan_out=runtime/typecheck-v2-boundary-plan.out; \
-	boundary_plan_err=runtime/typecheck-v2-boundary-plan.err; \
-	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
-		tests/petta/search_machine_catch_cons.metta \
-		>"$$ordinary_out" 2>"$$ordinary_err"; \
-	cmp -s tests/petta/search_machine_catch_cons.expected "$$ordinary_out"; \
-	grep -Fqx 'runtime-counter petta-typecheck-boundary-entry 0' \
-		"$$ordinary_err"; \
-	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
-		--profile typecheck-v2 \
-		-e '(: f (-> Number Number)) (= (f $$x) $$x) !(f 1)' \
-		>"$$typed_out" 2>"$$typed_err"; \
-	grep -Fqx '1' "$$typed_out"; \
-	grep -Eq '^runtime-counter petta-typecheck-boundary-entry [1-9][0-9]*$$' \
-		"$$typed_err"; \
-	grep -Fqx 'runtime-counter petta-typed-dispatch-signature-refuted 0' \
-		"$$typed_err"; \
-	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
-		--profile typecheck-v2 \
-		tests/petta/typecheck_v2_repros/27_overload_mismatch_prunes_branch.metta \
-		>"$$typed_dispatch_out" 2>"$$typed_dispatch_err"; \
-	grep -Eq '^runtime-counter petta-typed-dispatch-signature-refuted [1-9][0-9]*$$' \
-		"$$typed_dispatch_err"; \
-	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
-		--profile typecheck-v2 \
-		tests/petta/typecheck_v2_repros/11_stale_obligation_nonconflicting_addition.metta \
-		>"$$authority_out" 2>"$$authority_err"; \
-	cmp -s \
-		tests/petta/typecheck_v2_repros/11_stale_obligation_nonconflicting_addition.expected \
-		"$$authority_out"; \
-	grep -Eq '^runtime-counter petta-type-obligation-cache-hit [1-9][0-9]*$$' \
-		"$$authority_err"; \
-	CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_MACHINE_STATS=1 \
-		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
-		--profile typecheck-v2 \
-		tests/petta/typecheck_v2_repros/18_obligation_deterministic_heap_relocation.metta \
-		>"$$relocation_out" 2>"$$relocation_err"; \
-	cmp -s \
-		tests/petta/typecheck_v2_repros/18_obligation_deterministic_heap_relocation.expected \
-		"$$relocation_out"; \
-	grep -Eq '^PETTA_MACHINE_STATS .* heap_collections=[1-9][0-9]* ' \
-		"$$relocation_err"; \
-	grep -Eq '^runtime-counter petta-type-obligation-cache-hit [1-9][0-9]*$$' \
-		"$$relocation_err"; \
-	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
-		--profile typecheck-v2 \
-		tests/petta/typecheck_v2_repros/38_deferred_runtime_classifier_reestablish.metta \
-		>"$$classifier_out" 2>"$$classifier_err"; \
-	cmp -s \
-		tests/petta/typecheck_v2_repros/38_deferred_runtime_classifier_reestablish.expected \
-		"$$classifier_out"; \
-	grep -Eq '^runtime-counter petta-type-obligation-guard-scheduled ([2-9]|[1-9][0-9]+)$$' \
-		"$$classifier_err"; \
-	grep -Eq '^runtime-counter petta-type-obligation-guard-established ([2-9]|[1-9][0-9]+)$$' \
-		"$$classifier_err"; \
-	status=0; \
-	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
-		--profile typecheck-v2 \
-		tests/petta/typecheck_v2_repros/37_deferred_runtime_classifier_space_mutation.metta \
-		>"$$classifier_invalidation_out" 2>"$$classifier_invalidation_err" \
-		|| status=$$?; \
-	test "$$status" -eq 2; \
-	test ! -s "$$classifier_invalidation_out"; \
-	grep -Fq -f \
-		tests/petta/typecheck_v2_repros/37_deferred_runtime_classifier_space_mutation.expected \
-		"$$classifier_invalidation_err"; \
-	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
-		--profile typecheck-v2 \
-		-e '(: f (-> Number Number)) (= (f $$x) $$x) (: twice (-> Number Number)) (= (twice $$x) (+ (f $$x) (f $$x))) !(twice 1)' \
-		>"$$boundary_plan_out" 2>"$$boundary_plan_err"; \
-	grep -Fqx '2' "$$boundary_plan_out"; \
-	grep -Eq '^runtime-counter petta-typecheck-boundary-plan-cache-hit [1-9][0-9]*$$' \
-		"$$boundary_plan_err"; \
-	grep -Eq '^runtime-counter petta-typecheck-boundary-plan-cache-miss [1-9][0-9]*$$' \
-		"$$boundary_plan_err"; \
-	grep -Eq '^runtime-counter petta-typecheck-boundary-plan-all-none [1-9][0-9]*$$' \
-		"$$boundary_plan_err"; \
-	echo 'PASS: typecheck-v2 boundary isolation and relational authority reuse are counter-proven'
-else
-	@echo 'INFO: typecheck-v2 isolation counter requires runtime stats; re-running with ENABLE_RUNTIME_STATS=1'
-	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
-endif
-
-test-petta-nik-admission-boundary-controls:
-ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
-	@set -e; \
-	static_out=runtime/petta-nik-static-admission.out; \
-	static_err=runtime/petta-nik-static-admission.err; \
-	gradual_out=runtime/petta-nik-gradual-boundary.out; \
-	gradual_err=runtime/petta-nik-gradual-boundary.err; \
-	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
-		--profile typecheck-v2 \
-		benchmarks/nik/petta_static_admission_chain.metta \
-		>"$$static_out" 2>"$$static_err"; \
-	cmp -s benchmarks/nik/petta_static_admission_chain.expected \
-		"$$static_out"; \
-	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
-		--profile typecheck-v2 \
-		benchmarks/nik/petta_gradual_boundary_chain.metta \
-		>"$$gradual_out" 2>"$$gradual_err"; \
-	cmp -s "$$static_out" "$$gradual_out"; \
-	counter() { \
-		awk -v name="$$2" \
-			'$$1 == "runtime-counter" && $$2 == name { print $$3; found=1 } END { if (!found) exit 1 }' \
-			"$$1"; \
-	}; \
-	for receipt in "$$static_err" "$$gradual_err"; do \
-		attempts=$$(counter "$$receipt" petta-typecheck-declaration-admission-attempt) || exit 1; \
-		accepted=$$(counter "$$receipt" petta-typecheck-declaration-admission-accepted) || exit 1; \
-		refuted=$$(counter "$$receipt" petta-typecheck-declaration-admission-refuted) || exit 1; \
-		faults=$$(counter "$$receipt" petta-typecheck-declaration-admission-fault) || exit 1; \
-		test "$$attempts" -eq $$((accepted + refuted + faults)); \
-		test "$$accepted" -gt 0; \
-	done; \
-	static_boundaries=$$(counter "$$static_err" petta-typecheck-boundary-entry) || exit 1; \
-	gradual_boundaries=$$(counter "$$gradual_err" petta-typecheck-boundary-entry) || exit 1; \
-	gradual_hits=$$(counter "$$gradual_err" petta-type-obligation-cache-hit) || exit 1; \
-	gradual_misses=$$(counter "$$gradual_err" petta-type-obligation-cache-miss) || exit 1; \
-	test "$$gradual_boundaries" -gt "$$static_boundaries"; \
-	test $$((gradual_hits + gradual_misses)) -gt 0; \
-	echo "PASS: static and gradual PeTTa NIK controls agree, admission receipts partition, and the static interior crosses fewer boundaries ($$static_boundaries versus $$gradual_boundaries)"
-else
-	@echo 'INFO: PeTTa NIK admission controls require runtime stats; re-running with ENABLE_RUNTIME_STATS=1'
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
-endif
-
-test-petta-nik-typed-chaining:
-ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
-	@set -e; \
-	optimized_out=runtime/petta-nik-typed-chaining.out; \
-	optimized_err=runtime/petta-nik-typed-chaining.err; \
-	reference_out=runtime/petta-nik-typed-chaining-reference.out; \
-	reference_err=runtime/petta-nik-typed-chaining-reference.err; \
-	CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_MACHINE_STATS=1 \
-		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
-		--profile typecheck-v2 \
-		benchmarks/nik/petta_typed_chaining.metta \
-		>"$$optimized_out" 2>"$$optimized_err"; \
-	cmp -s benchmarks/nik/petta_typed_chaining.expected \
-		"$$optimized_out"; \
-	CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_MACHINE_STATS=1 \
-		CETTA_NIK_TYPED_APPLICABILITY=0 \
-		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
-		--profile typecheck-v2 \
-		benchmarks/nik/petta_typed_chaining.metta \
-		>"$$reference_out" 2>"$$reference_err"; \
-	cmp -s "$$optimized_out" "$$reference_out"; \
-	optimized_refuted=$$(sed -n \
-		's/^runtime-counter petta-typed-dispatch-signature-refuted \([0-9][0-9]*\)$$/\1/p' \
-		"$$optimized_err"); \
-	reference_refuted=$$(sed -n \
-		's/^runtime-counter petta-typed-dispatch-signature-refuted \([0-9][0-9]*\)$$/\1/p' \
-		"$$reference_err"); \
-	test -n "$$optimized_refuted"; \
-	test -n "$$reference_refuted"; \
-	test "$$optimized_refuted" -gt 0; \
-	test "$$reference_refuted" -eq 0; \
-	optimized_transitions=$$(sed -n \
-		's/^PETTA_MACHINE_STATS transitions=\([0-9][0-9]*\) .*/\1/p' \
-		"$$optimized_err"); \
-	reference_transitions=$$(sed -n \
-		's/^PETTA_MACHINE_STATS transitions=\([0-9][0-9]*\) .*/\1/p' \
-		"$$reference_err"); \
-	test -n "$$optimized_transitions"; \
-	test -n "$$reference_transitions"; \
-	test "$$reference_transitions" -ge \
-		$$((optimized_transitions * 3)); \
-	echo "PASS: PeTTa direct typing preserves answers, refutes inapplicable branches, and cuts transitions by at least 3x ($$optimized_transitions versus $$reference_transitions)"
-else
-	@echo 'INFO: PeTTa typed-chaining control requires runtime stats; re-running with ENABLE_RUNTIME_STATS=1'
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
-endif
-
-test-petta-nik-typed-space-query:
-ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
-	@set -e; \
-	indexed_out=runtime/petta-nik-typed-space-query.out; \
-	indexed_err=runtime/petta-nik-typed-space-query.err; \
-	scan_out=runtime/petta-nik-typed-space-query-scan.out; \
-	scan_err=runtime/petta-nik-typed-space-query-scan.err; \
-	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
-		--profile typecheck-v2 \
-		benchmarks/nik/petta_type_space_query.metta \
-		>"$$indexed_out" 2>"$$indexed_err"; \
-	cmp -s benchmarks/nik/petta_type_space_query.expected \
-		"$$indexed_out"; \
-	CETTA_TYPE_SPACE_INDEX=0 \
-		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
-		--profile typecheck-v2 \
-		benchmarks/nik/petta_type_space_query.metta \
-		>"$$scan_out" 2>"$$scan_err"; \
-	cmp -s "$$indexed_out" "$$scan_out"; \
-	grep -Eq '^runtime-counter declared-type-indexed-lookup [1-9][0-9]*$$' \
-		"$$indexed_err"; \
-	grep -Fqx 'runtime-counter declared-type-full-scan-row 0' \
-		"$$indexed_err"; \
-	grep -Fqx 'runtime-counter declared-type-indexed-lookup 0' \
-		"$$scan_err"; \
-	indexed_rows=$$(sed -n \
-		's/^runtime-counter declared-type-indexed-row \([0-9][0-9]*\)$$/\1/p' \
-		"$$indexed_err"); \
-	scan_rows=$$(sed -n \
-		's/^runtime-counter declared-type-full-scan-row \([0-9][0-9]*\)$$/\1/p' \
-		"$$scan_err"); \
-	test -n "$$indexed_rows"; \
-	test -n "$$scan_rows"; \
-	test "$$scan_rows" -gt $$((indexed_rows * 1000)); \
-	echo "PASS: PeTTa typed-space indexing preserves answers while reducing declaration rows by over 1000x ($$indexed_rows versus $$scan_rows)"
-else
-	@echo 'INFO: PeTTa typed-space control requires runtime stats; re-running with ENABLE_RUNTIME_STATS=1'
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
-endif
-
-test-petta-typecheck-v2-omission:
-	@$(MAKE) --no-print-directory \
-		BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=0 ENABLE_SANITIZERS=0 \
-		ENABLE_PETTA_TYPECHECK_V2=0 \
-		BIN="$(PETTA_TYPECHECK_V2_OMISSION_BIN)" all
-	@set -e; \
-		binary="$(PETTA_TYPECHECK_V2_OMISSION_BIN)"; \
-		if nm -g "$$binary" | \
-			grep -Eiv 'cetta_petta_typecheck_v3_' | \
-			grep -Eiq 'petta_typecheck|typecheck_v2_analysis|profile_petta_typecheck'; then \
-			echo 'FAIL: disabled build still exports typecheck-v2 symbols'; \
-			exit 1; \
-		fi; \
-		profiles=$$("$$binary" --lang petta --list-profiles 2>&1); \
-		if printf '%s\n' "$$profiles" | grep -Fq 'typecheck-v2'; then \
-			echo 'FAIL: disabled build still advertises typecheck-v2'; \
-			exit 1; \
-		fi; \
-		if printf '%s\n' "$$profiles" | grep -Fq 'typecheck-v3'; then \
-			echo 'FAIL: disabled build advertises the v2-dependent typecheck-v3 profile'; \
-			exit 1; \
-		fi; \
-		if "$$binary" --help 2>&1 | grep -Fq 'typecheck-v2'; then \
-			echo 'FAIL: disabled build help still exposes typecheck-v2'; \
-			exit 1; \
-		fi; \
-		if "$$binary" --help 2>&1 | grep -Fq 'typecheck-v3'; then \
-			echo 'FAIL: disabled build help exposes the v2-dependent typecheck-v3 profile'; \
-			exit 1; \
-		fi; \
-		ordinary=$$(printf '!(+ 20 22)\n' | \
-			"$$binary" --lang petta /dev/stdin); \
-		test "$$ordinary" = 42; \
-		status=0; \
-		"$$binary" --lang petta --profile typecheck-v2 \
-			tests/petta/typecheck_v2_profile_isolation.metta \
-			>runtime/typecheck-v2-omission.out \
-			2>runtime/typecheck-v2-omission.err || status=$$?; \
-		test "$$status" -eq 2; \
-		grep -Fq "unknown source profile 'typecheck-v2'" \
-			runtime/typecheck-v2-omission.err; \
-		echo 'PASS: typecheck-v2 is physically absent when disabled'
 
 test-petta-corpus-manifest-unit:
 	@PYTHONDONTWRITEBYTECODE=1 \
@@ -34299,55 +33569,19 @@ test-petta-corpus-manifest-unit:
 	@PYTHONDONTWRITEBYTECODE=1 \
 		python3 tests/petta/test_machine_profile.py
 
-.PHONY: test-petta-chainer-manifest-unit test-petta-chainer-compat test-petta-typecheck-v2-chainer test-petta-typecheck-v3-chainer
+.PHONY: test-petta-chainer-manifest-unit test-petta-chainer-compat
 test-petta-chainer-manifest-unit:
 	@PYTHONDONTWRITEBYTECODE=1 \
 		python3 tests/petta/test_chainer_compat_manifest.py
 
 # Retired: the pinned PeTTaChainer revision relies on extended PeTTa erasing
 # `brand` and `the`, which extended no longer does.  The native CeTTa
-# chainer's own tests replace it.  The typecheck-profile chainer gates below
-# keep the shared script and manifest.
+# chainer's own tests replace it.  The script and its manifest stay, checked
+# by test-petta-chainer-manifest-unit, for a run of the pinned chainer.
 test-petta-chainer-compat:
 	@echo 'RETIRED: test-petta-chainer-compat; the native CeTTa chainer tests replace it'
 
-test-petta-typecheck-v2-chainer: $(BIN) test-petta-chainer-manifest-unit
-	@if [[ -z "$(strip $(PETTA_CHAINER_ROOT))" ]]; then \
-		echo 'set PETTA_CHAINER_ROOT to a PeTTaChainer Git checkout'; \
-		exit 1; \
-	fi
-	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" ]]; then \
-		echo 'set PETTA_ORACLE_ROOT to the pinned PeTTa checkout'; \
-		exit 1; \
-	fi
-	@CETTA_PETTA_SEARCH_MACHINE=1 PYTHONDONTWRITEBYTECODE=1 \
-		python3 scripts/petta_chainer_compat.py \
-		--cetta "./$(BIN)" \
-		--chainer-repo "$(PETTA_CHAINER_ROOT)" \
-		--petta-root "$(PETTA_ORACLE_ROOT)" \
-		--manifest "$(PETTA_CHAINER_COMPAT_MANIFEST)" \
-		--out "$(PETTA_CHAINER_COMPAT_RESULTS)-typecheck-v2" \
-		--profile typecheck-v2
 
-test-petta-typecheck-v3-chainer: $(BIN) test-petta-chainer-manifest-unit
-	@if [[ -z "$(strip $(PETTA_CHAINER_ROOT))" ]]; then \
-		echo 'set PETTA_CHAINER_ROOT to a PeTTaChainer Git checkout'; \
-		exit 1; \
-	fi
-	@if [[ -z "$(strip $(PETTA_ORACLE_ROOT))" ]]; then \
-		echo 'set PETTA_ORACLE_ROOT to the pinned PeTTa checkout'; \
-		exit 1; \
-	fi
-	@CETTA_PETTA_SEARCH_MACHINE=1 PYTHONDONTWRITEBYTECODE=1 \
-		python3 scripts/petta_chainer_compat.py \
-		--cetta "./$(BIN)" \
-		--chainer-repo "$(PETTA_CHAINER_ROOT)" \
-		--petta-root "$(PETTA_ORACLE_ROOT)" \
-		--manifest "$(PETTA_CHAINER_COMPAT_MANIFEST)" \
-		--out "$(PETTA_CHAINER_COMPAT_RESULTS)-typecheck-v3" \
-		--profile typecheck-v3 \
-		--chainer-working-tree \
-		--reference
 
 
 
@@ -37185,7 +36419,7 @@ test-petta-pathmap-match-snapshot: $(BIN)
 	engines="native"; \
 	if [ "$(ENABLE_PATHMAP_SPACE)" = 1 ]; then engines="native pathmap"; fi; \
 	for engine in $$engines; do \
-		for profile in extended typecheck-v2 typecheck-v3; do \
+		for profile in extended; do \
 			for index in '' 0 1; do \
 				actual=$$(CETTA_PATHMAP_QUERY_INDEX="$$index" \
 					$(CETTA_BIN_INVOKE) --lang petta --profile "$$profile" \
@@ -41825,8 +41059,6 @@ TRACKED_GENERATED_V1 = \
 	$(METTAZERO_EMIT_COMPILATION_CERTIFICATE_V1) \
 	$(METTAZERO_INTERACT_COMPILATION_CERTIFICATE_V1) \
 	$(MM2_GSLT_PROFILE_GENERATED_C) \
-	$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_GENERATED_C) \
-	$(PETTA_TYPECHECK_V2_FRAGMENT_PROVIDER_CATALOG_V1_GENERATED_C) \
 	$(PETTA_TYPECHECK_V3_CORE_RUNTIME_V1_GENERATED_C) \
 	$(PETTA_TYPECHECK_V3_CORE_PROVIDER_CATALOG_V1_GENERATED_C) \
 	$(PRIME_NIK_RUNTIME_GENERATED_C) \
@@ -44010,8 +43242,6 @@ NIK_TYPE_LANGDEFS_V1 = \
 	langdef/he/generated/typing_consistency_core_v1.metta \
 	langdef/he/generated/profiled_type_inference_core_v1.metta \
 	langdef/he/generated/typing_closed_ground_core_v1.metta \
-	langdef/petta/generated/typecheck_v2_guard_v1.metta \
-	langdef/petta/generated/typecheck_v2_boundary_core_v1.metta \
 	langdef/prime/generated/closed_formation_v1.metta \
 	langdef/prime/generated/native_ground_judgments_v1.metta \
 	langdef/prime/generated/elaborated_dependent_formation_core_v1.metta \
@@ -44033,14 +43263,13 @@ test-nik-type-langdef-composition-v1: test-nik-type-langdef-native-parity-v1
 	@python3 tools/gslt2parse_schema_v1.py \
 		$(NIK_TYPE_LANGDEFS_V1) \
 		>/dev/null
-	@echo "PASS: HE, PeTTa, and Prime type presentations compose"
+	@echo "PASS: HE and Prime type presentations compose"
 
 .PHONY: test-nik-type-info-plumbing-v1
 test-nik-type-info-plumbing-v1: \
 	test-nik-type-langdef-composition-v1 \
 	test-he-contract-suite \
 	test-petta-search-machine \
-	test-petta-typecheck-v2 \
 	test-prime \
 	test-prime-need-algebra
 	@echo "PASS: direct NIK type info-plumbing qualification"
@@ -49362,9 +48591,9 @@ test-petta-program-rule-rows: $(BIN)
 	echo 'PASS: a program reads rules among facts, a rule added while running, and a rule holding a space'
 
 
-# PeTTa's current stable contract and its opt-in typed line. The default
-# libraries follow the pinned corrected stable reference; typed libraries
-# remain in lib/petta/typecheck/.
+# PeTTa's current stable contract and its opt-in typed line (1.1.c).  Every
+# version reads the libraries that follow the pinned corrected stable
+# reference, with their recorded adaptations.
 # Each case runs one fixture under the arguments given and must exit as
 # given, with the phrase in its output.  The library a version reads is
 # compared exactly.
@@ -49392,7 +48621,7 @@ test-petta-language-versions: $(BIN)
 			failures=$$((failures + 1)); \
 		fi; \
 	done < $$dir/cases.tsv; \
-	for version in stable-fixed 1.1 1.1.c; do \
+	for version in stable-fixed 1.1.c; do \
 		output=$$(timeout 60 $(CETTA_BIN_INVOKE) --lang petta@$$version \
 			$$dir/library_version.metta 2>&1); \
 		if [ "$$output" != "$$(cat $$dir/library_version.$$version.expected)" ]; then \
@@ -49401,7 +48630,7 @@ test-petta-language-versions: $(BIN)
 		fi; \
 	done; \
 	[ $$failures -eq 0 ]; \
-	echo 'PASS: current stable and opt-in typed PeTTa select their checkers and libraries; typed closures, residual obligations and PeTTa diagnostics'
+	echo 'PASS: current stable and typed-line PeTTa select their contracts and libraries; typed closures, imports and PeTTa diagnostics'
 
 # Two PeTTa runtime regressions: a declared constructor in a typed space's
 # match pattern is literal structure, and a specialization chosen through a
@@ -49497,23 +48726,23 @@ test-sequence-call-contract: $(BIN)
 	@python3 tests/support/check_sequence_call_contract.py $(BIN) \
 		--out runtime/sequence-call-contract-$$(date +%s%N)
 
-PETTA_CALLABILITY_REFRESH_TEST_OBJ = runtime/bootstrap/test_petta_callability_refresh.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PETTA_CALLABILITY_REFRESH_TEST_BIN = runtime/test_petta_callability_refresh-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
--include $(PETTA_CALLABILITY_REFRESH_TEST_OBJ:.o=.d)
+PETTA_PLAN_REVALIDATION_TEST_OBJ = runtime/bootstrap/test_petta_plan_revalidation.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PETTA_PLAN_REVALIDATION_TEST_BIN = runtime/test_petta_plan_revalidation-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+-include $(PETTA_PLAN_REVALIDATION_TEST_OBJ:.o=.d)
 
-$(PETTA_CALLABILITY_REFRESH_TEST_OBJ): tests/support/test_petta_callability_refresh.c $(BUILD_CONFIG_HEADER)
+$(PETTA_PLAN_REVALIDATION_TEST_OBJ): tests/support/test_petta_plan_revalidation.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
-$(PETTA_CALLABILITY_REFRESH_TEST_BIN): $(PETTA_CALLABILITY_REFRESH_TEST_OBJ) $(PETTA_SEARCH_MACHINE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+$(PETTA_PLAN_REVALIDATION_TEST_BIN): $(PETTA_PLAN_REVALIDATION_TEST_OBJ) $(PETTA_SEARCH_MACHINE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-.PHONY: test-petta-callability-refresh
-test-all: test-petta-callability-refresh
-test-petta-callability-refresh: $(BIN) $(PETTA_CALLABILITY_REFRESH_TEST_BIN)
-	@$(call cetta_exec,./$(PETTA_CALLABILITY_REFRESH_TEST_BIN))
-	@python3 tests/support/check_petta_callability_refresh.py ./$(BIN) --lib-prolog $(LIB_PROLOG_ENABLED)
+.PHONY: test-petta-plan-revalidation
+test-all: test-petta-plan-revalidation
+test-petta-plan-revalidation: $(BIN) $(PETTA_PLAN_REVALIDATION_TEST_BIN)
+	@$(call cetta_exec,./$(PETTA_PLAN_REVALIDATION_TEST_BIN))
+	@python3 tests/support/check_petta_plan_revalidation.py ./$(BIN) --lib-prolog $(LIB_PROLOG_ENABLED)
 
 .PHONY: test-borrowed-query-views
 BORROWED_QUERY_VIEW_TEST_OBJ = runtime/bootstrap/test_borrowed_query_view.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
@@ -49555,18 +48784,7 @@ test-petta-search-machine: test-petta-plan-owner
 test-petta-plan-owner: $(PETTA_PLAN_OWNER_TEST_BIN)
 	@$(call cetta_exec,./$(PETTA_PLAN_OWNER_TEST_BIN))
 
-.PHONY: test-petta-signature-lifetime
-PETTA_SIGNATURE_LIFETIME_TEST_OBJ = runtime/bootstrap/test_petta_signature_lifetime.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PETTA_SIGNATURE_LIFETIME_TEST_BIN = runtime/test_petta_signature_lifetime-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
--include $(PETTA_SIGNATURE_LIFETIME_TEST_OBJ:.o=.d)
-$(PETTA_SIGNATURE_LIFETIME_TEST_OBJ): tests/support/test_petta_signature_lifetime.c src/petta_program.h src/space.h $(BUILD_CONFIG_HEADER)
-	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
-$(PETTA_SIGNATURE_LIFETIME_TEST_BIN): $(PETTA_SIGNATURE_LIFETIME_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-test-petta-signature-lifetime: $(PETTA_SIGNATURE_LIFETIME_TEST_BIN)
-	@$(call cetta_exec,./$(PETTA_SIGNATURE_LIFETIME_TEST_BIN))
-test-all: test-petta-signature-lifetime
+test-all: test-petta-analysis-cardinality test-petta-analysis-verdict test-petta-analysis-boundary test-petta-analysis-arrow-mode test-petta-typecheck-v3-core-generation-v1
 
 PETTA_PLAN_KEY_TEST_BIN = runtime/test_petta_plan_key-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 PETTA_PLAN_KEY_TEST_OBJS = $(filter-out src/petta_program.%,$(FALLBACK_EVAL_TEST_LINK_OBJ))
@@ -51021,6 +50239,30 @@ $(RHOMETTA_MANAGED_STATE_TEST_BIN): $(RHOMETTA_MANAGED_STATE_TEST_OBJ) $(RHOMETT
 test-rhometta-managed-state-lifetime: $(RHOMETTA_MANAGED_STATE_TEST_BIN)
 	@$(call cetta_exec,./$(RHOMETTA_MANAGED_STATE_TEST_BIN))
 test-all: test-rhometta-managed-state-lifetime
+
+# A collection never resets the arena that outlives the evaluation.  The
+# RhoMeTTa command line evaluates each command in its persistent arena, where
+# the space keeps the equations it has read; a command that reads stored
+# equations and then collects leaves them readable by the commands after it.
+# Under the default collection budget and under the smallest one.
+.PHONY: test-rhometta-collection-persistent-arena
+test-all: test-rhometta-collection-persistent-arena
+test-rhometta-collection-persistent-arena: $(BIN) \
+		tests/rhometta/collection_keeps_persistent_arena.metta \
+		tests/rhometta/collection_keeps_persistent_arena.expected
+	@set -eu; \
+	for budget in "" 1; do \
+		actual=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=$$budget timeout 120 $(CETTA_BIN_INVOKE) \
+			--lang rhocalc --profile rhometta --syntax metta \
+			tests/rhometta/collection_keeps_persistent_arena.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/rhometta/collection_keeps_persistent_arena.expected)" ]; then \
+			echo "FAIL: a collection reset the persistent arena (budget '$$budget')"; \
+			diff <(cat tests/rhometta/collection_keeps_persistent_arena.expected) \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: a collection leaves the persistent arena, and the equations read before it, intact"
 -include $(RHOMETTA_MANAGED_STATE_TEST_OBJ:.o=.d) $(RHOMETTA_MANAGED_STATE_CORE_OBJ:.o=.d)
 
 MANAGED_RESOURCE_CYCLES_TEST_OBJ = runtime/bootstrap/test_managed_resource_cycles.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o

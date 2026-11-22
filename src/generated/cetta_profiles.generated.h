@@ -4,7 +4,7 @@
 
 #include <stdint.h>
 
-#if defined(CettaLanguageId) || defined(CettaSyntaxId) || defined(CettaProfileId) || defined(CettaLanguageVersionId) || defined(CETTA_SYNTAX_ROWS) || defined(CETTA_LANGUAGE_ROWS) || defined(CETTA_LANGUAGE_ALIAS_ROWS) || defined(CETTA_LANGUAGE_SYNTAX_ROWS) || defined(CETTA_PROFILE_BEFORE_ROWS) || defined(CETTA_PROFILE_TYPING_ROWS) || defined(CETTA_PROFILE_AFTER_ROWS) || defined(CETTA_PROFILE_HOL_ROWS)
+#if defined(CettaLanguageId) || defined(CettaSyntaxId) || defined(CettaProfileId) || defined(CettaLanguageVersionId) || defined(CETTA_SYNTAX_ROWS) || defined(CETTA_LANGUAGE_ROWS) || defined(CETTA_LANGUAGE_ALIAS_ROWS) || defined(CETTA_LANGUAGE_SYNTAX_ROWS) || defined(CETTA_PROFILE_BEFORE_ROWS) || defined(CETTA_PROFILE_AFTER_ROWS) || defined(CETTA_PROFILE_HOL_ROWS)
 #error an exported name is defined as a preprocessor macro
 #endif
 typedef enum {
@@ -52,8 +52,6 @@ typedef enum {
     CETTA_PROFILE_PETTA_AI = 19,
     CETTA_PROFILE_TMETTA_NATIVE = 20,
     CETTA_PROFILE_TMETTA_EAGER = 21,
-    CETTA_PROFILE_PETTA_TYPECHECK_V2 = 8,
-    CETTA_PROFILE_PETTA_TYPECHECK_V3 = 13,
     CETTA_PROFILE_RHOCALC_STRICT_CORE = 4,
     CETTA_PROFILE_RHOCALC_COST = 5,
     CETTA_PROFILE_RHOCALC_RHOMETTA = 14,
@@ -69,7 +67,6 @@ typedef enum {
 typedef enum {
     CETTA_LANGUAGE_VERSION_NONE = 0,
     CETTA_LANGUAGE_VERSION_PETTA_STABLE = 6,
-    CETTA_LANGUAGE_VERSION_PETTA_1_1 = 2,
     CETTA_LANGUAGE_VERSION_PRIME_0_0_1 = 3,
     CETTA_LANGUAGE_VERSION_HE_0_2_10 = 4,
     CETTA_LANGUAGE_VERSION_PETTA_1_1_C = 5,
@@ -89,7 +86,7 @@ typedef enum {
 #define CETTA_LANGUAGE_ROWS(cesta_table_apply_0) \
     cesta_table_apply_0(CETTA_LANGUAGE_HE, "he", 1, "Current direct MeTTa/HE evaluator", CETTA_SYNTAX_METTA, 1, 0, 0, 0) \
     cesta_table_apply_0(CETTA_LANGUAGE_MM2, "mm2", 1, "Direct MM2 lowering plus MORK-backed execution for pure program files", CETTA_SYNTAX_METTA, 0, 0, 0, 0) \
-    cesta_table_apply_0(CETTA_LANGUAGE_PETTA, "petta", 1, "Corrected stable PeTTa, the default language (petta@1.1 is typed)", CETTA_SYNTAX_METTA, 0, 0, 1, 1) \
+    cesta_table_apply_0(CETTA_LANGUAGE_PETTA, "petta", 1, "Corrected stable PeTTa, the default language (petta@1.1.c is its typed line)", CETTA_SYNTAX_METTA, 0, 0, 1, 1) \
     cesta_table_apply_0(CETTA_LANGUAGE_AMBIENT, "ambient", 0, "Planned port from mettail-rust inventory", CETTA_SYNTAX_METTA, 0, 0, 0, 0) \
     cesta_table_apply_0(CETTA_LANGUAGE_CALCULATOR, "calculator", 0, "Planned port from mettail-rust inventory", CETTA_SYNTAX_METTA, 0, 0, 0, 0) \
     cesta_table_apply_0(CETTA_LANGUAGE_IMP, "imp", 0, "Planned port from mettail-rust inventory", CETTA_SYNTAX_METTA, 0, 0, 0, 0) \
@@ -134,10 +131,6 @@ typedef enum {
     cesta_table_apply_0(CETTA_PROFILE_PETTA_AI_VALUE, CETTA_PROFILE_PETTA_AI, CETTA_LANGUAGE_PETTA, "ai", "Corrected stable PeTTa with sealed sorts: a function's declaration types its calls' answers, never an unevaluated application of it.", 0, 0, 0, 0, CETTA_LANGUAGE_VERSION_PETTA_STABLE) \
     cesta_table_apply_0(CETTA_PROFILE_TMETTA_NATIVE_VALUE, CETTA_PROFILE_TMETTA_NATIVE, CETTA_LANGUAGE_TMETTA, "native", "Data-preserving arguments, explicit activation, constrained bag collection", 0, 0, 0, 0, CETTA_LANGUAGE_VERSION_TMETTA_0_1) \
     cesta_table_apply_0(CETTA_PROFILE_TMETTA_EAGER_VALUE, CETTA_PROFILE_TMETTA_EAGER, CETTA_LANGUAGE_TMETTA, "eager", "Value-first arguments computed once, with explicit holding overrides", 0, 0, 0, 0, CETTA_LANGUAGE_VERSION_TMETTA_0_1)
-
-#define CETTA_PROFILE_TYPING_ROWS(cesta_table_apply_0) \
-    cesta_table_apply_0(CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE, CETTA_PROFILE_PETTA_TYPECHECK_V2, CETTA_LANGUAGE_PETTA, "typecheck-v2", "PeTTa with native Roman-compatible residual type checking.", 0, 1, 0, 0, CETTA_LANGUAGE_VERSION_PETTA_1_1) \
-    cesta_table_apply_0(CETTA_PROFILE_PETTA_TYPECHECK_V3_VALUE, CETTA_PROFILE_PETTA_TYPECHECK_V3, CETTA_LANGUAGE_PETTA, "typecheck-v3", "PeTTa with native v3 judgments and coherent typecheck-v2 delegation.", 0, 1, 0, 0, CETTA_LANGUAGE_VERSION_PETTA_1_1)
 
 #define CETTA_PROFILE_AFTER_ROWS(cesta_table_apply_0) \
     cesta_table_apply_0(CETTA_PROFILE_RHOCALC_STRICT_CORE_VALUE, CETTA_PROFILE_RHOCALC_STRICT_CORE, CETTA_LANGUAGE_RHOCALC, "strict-core", "Strict-core rho-calculus without cost-layer extensions.", 0, 0, 0, 0, CETTA_LANGUAGE_VERSION_NONE) \

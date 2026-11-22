@@ -22,8 +22,7 @@ def main():
     args = parser.parse_args()
     binary = args.binary.resolve()
     modes = [("he", profile) for profile in ("he", "he-compat", "extended")]
-    modes += [("petta", profile) for profile in
-              ("extended", "typecheck-v2", "typecheck-v3")]
+    modes += [("petta", "extended")]
     runs = 0
     for language, profile in modes:
         for engine in args.engines:

@@ -1775,6 +1775,13 @@ char *atom_to_string(Arena *a, Atom *atom);
    without one prints every space by address. */
 const char *space_module_display_name(const void *space)
     __attribute__((weak));
+/* The number N of a space's generated name &space(N), or 0 when it has none
+   (space.c).  A space with a generated name is presented as a name: it
+   prints as &space(N), and its metatype is Symbol. */
+uint64_t space_generated_name_serial(const void *space)
+    __attribute__((weak));
+/* Whether ATOM is a space presented by its generated name. */
+bool atom_is_generated_space_name(const Atom *atom);
 /* An arena that makes an atom of a space holds the space, when the space lives
    only while held (ArenaHeldResources), as it holds a foreign record.  Weak:
    the evaluator supplies it, and a binary without one holds no space. */

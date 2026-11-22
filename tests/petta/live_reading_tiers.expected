@@ -34,3 +34,7 @@
 (RemovedThroughVariable (t96 1))
 (RemovedBeforeAlternative (gone (rm93 1)))
 (Readded back)
+(CalledBefore (Called ok))
+true
+(CalledAfter (Called (f94 v)))
+(Nat yes)

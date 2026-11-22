@@ -23,8 +23,6 @@
 #include "generated/zero_interact_provider_catalog_v1.generated.h"
 #include "generated/zerouv_language_v1.generated.h"
 #include "petta_compiled_reader.h"
-#include "petta_typecheck.h"
-#include "petta_typecheck_v3.h"
 #include "lib_prolog.h"
 #include "prime_compiled_reader.h"
 #include "space.h"
@@ -188,26 +186,6 @@ static bool result_set_has_error(ResultSet *rs) {
         if (atom_is_error(rs->items[i])) return true;
     }
     return false;
-}
-
-static bool result_set_petta_typecheck_error(
-    ResultSet *results, int *exit_code, const char **diagnostic) {
-#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
-    if (!results)
-        return false;
-    for (uint32_t index = 0u; index < results->len; index++) {
-        if (petta_typecheck_error_view(
-                results->items[index], exit_code, diagnostic)) {
-            return true;
-        }
-    }
-    return false;
-#else
-    (void)results;
-    (void)exit_code;
-    (void)diagnostic;
-    return false;
-#endif
 }
 
 static bool result_set_all_empty(ResultSet *rs,
@@ -1924,11 +1902,6 @@ static void print_usage(FILE *out) {
           "             named runs every step\n", out);
     fputs("       cetta --lang petta <file.metta> # corrected stable PeTTa\n", out);
     fputs("       cetta --lang petta --profile ai <file.metta> # sealed sorts: declarations type answers, not held calls\n", out);
-#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
-    fputs("       cetta --lang petta@1.1 [--strict|--strict-det] <file.metta>\n", out);
-    fputs("       cetta --lang petta --profile typecheck-v2 [--strict|--strict-det] <file.metta>\n", out);
-    fputs("       cetta --lang petta --profile typecheck-v3 [--strict|--strict-det] <file.metta>\n", out);
-#endif
     fputs("       cetta [--lang rhocalc --profile <strict-core|cost|rhometta>] [--syntax <metta|mrho|rho>] <file>\n", out);
     fputs("       cetta [--lang <name>] [--import-mode <upstream|relative|ancestor-walk>] <file.metta>\n", out);
 #if CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS
@@ -2495,87 +2468,12 @@ static bool main_document_exec_at(
 typedef enum {
     MAIN_PETTA_BLOCK_LOAD_FAILED = 0,
     MAIN_PETTA_BLOCK_LOAD_OK,
-    MAIN_PETTA_BLOCK_LOAD_TYPE_REJECTED,
     MAIN_PETTA_BLOCK_LOAD_DEFINITION_REJECTED,
 } MainPettaBlockLoadResult;
 
-static MainPettaBlockLoadResult main_petta_check_forms(
-    CettaLibraryContext *libraries, Space *space, Registry *registry,
-    TermUniverse *universe, AtomId *atom_ids, int atom_count,
-    PettaTypecheckPolicy typecheck_policy,
-    bool declaration_admission) {
-#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
-    if (atom_count <= 0)
-        return MAIN_PETTA_BLOCK_LOAD_OK;
-    Atom **forms = cetta_malloc(
-        sizeof(*forms) * (size_t)atom_count);
-    if (!forms)
-        return MAIN_PETTA_BLOCK_LOAD_FAILED;
-    for (int index = 0; index < atom_count; index++)
-        forms[index] = term_universe_get_atom(universe, atom_ids[index]);
-    bool use_v3 = libraries && libraries->session.profile &&
-        libraries->session.profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V3;
-    PettaTypecheckBlockResult checked = {0};
-    CettaPettaTypecheckV3CompatibilityResult checked_v3 = {0};
-    bool judged = use_v3
-        ? cetta_petta_typecheck_v3_compatibility_block(
-              libraries->petta_typecheck_v3, libraries->petta_program,
-              space, registry, forms, (size_t)atom_count,
-              typecheck_policy, declaration_admission, &checked_v3)
-        : declaration_admission
-            ? petta_typecheck_declaration_admission_selected(
-                  libraries ? libraries->petta_program : NULL,
-                  space, registry, forms, (size_t)atom_count,
-                  typecheck_policy, &checked)
-            : petta_typecheck_declaration_block_selected(
-                  libraries ? libraries->petta_program : NULL,
-                  space, registry, forms, (size_t)atom_count,
-                  typecheck_policy, &checked);
-    PettaTypecheckVerdict verdict = use_v3
-        ? checked_v3.verdict : checked.verdict;
-    const char *diagnostic = use_v3
-        ? checked_v3.diagnostic : checked.diagnostic;
-    free(forms);
-    if (!judged) {
-        fprintf(
-            stderr, "PeTTa typechecker fault: %s\n",
-            diagnostic[0]
-                ? diagnostic : "declaration analysis failed");
-        return MAIN_PETTA_BLOCK_LOAD_FAILED;
-    }
-    if (verdict == PETTA_TYPECHECK_REFUTED) {
-        fprintf(
-            stderr, "PeTTa type error: %s\n",
-            diagnostic[0]
-                ? diagnostic : "declaration block rejected");
-        return MAIN_PETTA_BLOCK_LOAD_TYPE_REJECTED;
-    }
-    return MAIN_PETTA_BLOCK_LOAD_OK;
-#else
-    (void)libraries;
-    (void)space;
-    (void)registry;
-    (void)universe;
-    (void)atom_ids;
-    (void)atom_count;
-    (void)typecheck_policy;
-    (void)declaration_admission;
-    return MAIN_PETTA_BLOCK_LOAD_OK;
-#endif
-}
-
 static MainPettaBlockLoadResult main_petta_load_declaration_block(
     CettaLibraryContext *libraries, Space *space, Registry *registry,
-    TermUniverse *universe, AtomId *atom_ids,
-    int atom_count, bool typecheck,
-    PettaTypecheckPolicy typecheck_policy) {
-    if (typecheck && atom_count > 0) {
-        MainPettaBlockLoadResult checked = main_petta_check_forms(
-            libraries, space, registry, universe, atom_ids, atom_count,
-            typecheck_policy, true);
-        if (checked != MAIN_PETTA_BLOCK_LOAD_OK)
-            return checked;
-    }
+    TermUniverse *universe, AtomId *atom_ids, int atom_count) {
     cetta_petta_prepare_document_forms(
         universe, atom_ids, atom_count);
     PettaDeclarationBlock *block =
@@ -2621,16 +2519,6 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
         ok = petta_program_note_add(
             libraries ? libraries->petta_program : NULL,
             space, source, plan);
-    }
-    if (ok && typecheck) {
-#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
-        petta_typecheck_inferred_signatures_rebase_selected(
-            libraries ? libraries->petta_program : NULL,
-            space, typecheck_policy);
-#else
-        petta_program_inferred_signatures_rebase(
-            libraries ? libraries->petta_program : NULL, space);
-#endif
     }
     arena_free(&diagnostic_arena);
     petta_program_declaration_block_free(block);
@@ -3007,8 +2895,6 @@ static int cetta_main(int argc, char **argv) {
     bool langdef_proof_execution_requested = false;
     bool emit_prime_need_trace = false;
     bool prime_need_trace_failed = false;
-    bool petta_strict = false;
-    bool petta_strict_det = false;
     const char *prime_rewrite_frontier = NULL;
     bool eval_hashcons = false;
     bool list_profiles = false;
@@ -3224,15 +3110,6 @@ static int cetta_main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--emit-prime-need-trace") == 0) {
             emit_prime_need_trace = true;
-            continue;
-        }
-        if (strcmp(argv[i], "--strict") == 0) {
-            petta_strict = true;
-            continue;
-        }
-        if (strcmp(argv[i], "--strict-det") == 0) {
-            petta_strict = true;
-            petta_strict_det = true;
             continue;
         }
         if (strcmp(argv[i], "--prime-rewrite-frontier") == 0) {
@@ -3560,7 +3437,7 @@ static int cetta_main(int argc, char **argv) {
         bool unsupported_option =
             translate_mode || compile_mode || compile_stdlib_mode ||
             list_profiles || source_endpoint.syntax != CETTA_SYNTAX_AUTO ||
-            import_mode_overridden || petta_strict || petta_strict_det ||
+            import_mode_overridden ||
             emit_prime_need_trace || prime_rewrite_frontier ||
             prefer_rationals_cli || eval_hashcons ||
             fuel_override_requested ||
@@ -3623,25 +3500,6 @@ static int cetta_main(int argc, char **argv) {
                 "GSLT language (zero, subzero, gslt-il, zerouv, or metta-interact)\n");
         return 2;
     }
-
-    if ((petta_strict || petta_strict_det) &&
-        (lang->id != CETTA_LANGUAGE_PETTA ||
-         !cetta_profile_uses_petta_typing(profile))) {
-        fprintf(
-            stderr,
-#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
-            "error: --strict and --strict-det require --lang petta with a typecheck profile\n");
-#else
-            "error: --strict and --strict-det are not valid for the selected language profile\n");
-#endif
-        free(inline_buf);
-        return 2;
-    }
-    PettaTypecheckPolicy petta_typecheck_policy = petta_strict_det
-        ? PETTA_TYPECHECK_POLICY_STRICT_DET
-        : petta_strict
-            ? PETTA_TYPECHECK_POLICY_STRICT
-            : PETTA_TYPECHECK_POLICY_DEFAULT;
 
     atom_print_set_raw_string_bytes(lang->id == CETTA_LANGUAGE_PRIME);
 
@@ -3729,7 +3587,7 @@ static int cetta_main(int argc, char **argv) {
 
     if (lang->id == CETTA_LANGUAGE_TCALC) {
         if (inline_text || compile_mode || compile_stdlib_mode || num_threads_requested ||
-            rho_reduction_limit_requested || rho_scheduler_requested || petta_strict || petta_strict_det ||
+            rho_reduction_limit_requested || rho_scheduler_requested ||
             import_mode_overridden || eval_hashcons || prefer_rationals_cli || space_engine_requested ||
             gslt_realization_requested || langdef_proof_execution_requested ||
             mm2_step_limit != CETTA_MM2_DEFAULT_RUN_STEPS) {
@@ -3745,7 +3603,7 @@ static int cetta_main(int argc, char **argv) {
 
     if (lang->id == CETTA_LANGUAGE_HOL_LIGHT) {
         if (inline_text || compile_mode || compile_stdlib_mode || num_threads_requested ||
-            rho_reduction_limit_requested || rho_scheduler_requested || petta_strict || petta_strict_det ||
+            rho_reduction_limit_requested || rho_scheduler_requested ||
             import_mode_overridden || eval_hashcons || prefer_rationals_cli || space_engine_requested ||
             gslt_realization_requested || langdef_proof_execution_requested ||
             mm2_step_limit != CETTA_MM2_DEFAULT_RUN_STEPS) {
@@ -3986,20 +3844,6 @@ static int cetta_main(int argc, char **argv) {
     cetta_library_context_set_exec_path(&runtime.libraries, argv[0]);
     cetta_library_context_set_script_path(&runtime.libraries, script_path);
     cetta_library_context_set_cli_args(&runtime.libraries, argc, argv, script_arg_start);
-    if (cetta_profile_uses_petta_typing(profile)) {
-        const char *policy_name = petta_typecheck_policy ==
-                PETTA_TYPECHECK_POLICY_STRICT_DET
-            ? "strict-det"
-            : petta_typecheck_policy == PETTA_TYPECHECK_POLICY_STRICT
-                ? "strict" : "default";
-        if (!cetta_eval_session_record_generic_setting(
-                &runtime.libraries.session, "petta-typecheck-policy",
-                CETTA_EVAL_OPTION_VALUE_SYMBOL, policy_name, 0)) {
-            fprintf(stderr, "error: could not configure PeTTa typechecking\n");
-            rc = 1;
-            goto cleanup;
-        }
-    }
     if (import_mode_overridden) {
         cetta_eval_session_set_relative_module_policy(&runtime.libraries.session, import_mode);
     }
@@ -4269,7 +4113,6 @@ static int cetta_main(int argc, char **argv) {
         bool sliced = !presented && !print_syntax &&
             lang->id == CETTA_LANGUAGE_PETTA && !document_text &&
             !compile_mode && !run_cli &&
-            !(profile && cetta_profile_uses_petta_typing(profile)) &&
             main_petta_open_slices(&cleanup, filename);
         if (!presented)
         n = sliced ? 0
@@ -4626,20 +4469,6 @@ process_petta_document:
                 if (main_document_exec_at(
                         cetta_library_context_universe(&runtime.libraries), atom_ids,
                         n, pi, NULL, &exec_width)) {
-                    if (profile &&
-                        cetta_profile_uses_petta_typing(profile)) {
-                        MainPettaBlockLoadResult checked =
-                            main_petta_check_forms(
-                                &runtime.libraries, &runtime.space, &runtime.registry,
-                                cetta_library_context_universe(&runtime.libraries), atom_ids + pi,
-                                exec_width, petta_typecheck_policy, false);
-                        if (checked != MAIN_PETTA_BLOCK_LOAD_OK) {
-                            rc = checked ==
-                                    MAIN_PETTA_BLOCK_LOAD_TYPE_REJECTED
-                                ? 2 : 1;
-                            goto cleanup;
-                        }
-                    }
                     pi += exec_width;
                     continue;
                 }
@@ -4654,9 +4483,7 @@ process_petta_document:
                     main_petta_load_declaration_block(
                         &runtime.libraries, &runtime.space, &runtime.registry,
                         cetta_library_context_universe(&runtime.libraries), atom_ids + pi,
-                        block_end - pi,
-                        cetta_profile_uses_petta_typing(profile),
-                        petta_typecheck_policy);
+                        block_end - pi);
                 if (loaded != MAIN_PETTA_BLOCK_LOAD_OK) {
                     if (loaded == MAIN_PETTA_BLOCK_LOAD_FAILED) {
                         fprintf(
@@ -4763,18 +4590,6 @@ petta_next_slice:
                 cetta_library_context_universe(&runtime.libraries), atom_ids, n, i,
                 &payload_id, &exec_width)) {
             if (!run_cli_query_begin(run_cli)) { rc=1; goto cleanup; }
-            if (lang->id == CETTA_LANGUAGE_PETTA && profile &&
-                cetta_profile_uses_petta_typing(profile)) {
-                MainPettaBlockLoadResult checked = main_petta_check_forms(
-                    &runtime.libraries, &runtime.space, &runtime.registry,
-                    cetta_library_context_universe(&runtime.libraries), atom_ids + i, exec_width,
-                    petta_typecheck_policy, false);
-                if (checked != MAIN_PETTA_BLOCK_LOAD_OK) {
-                    rc = checked == MAIN_PETTA_BLOCK_LOAD_TYPE_REJECTED
-                        ? 2 : 1;
-                    goto cleanup;
-                }
-            }
             if (lang->id == CETTA_LANGUAGE_PETTA) {
                 cetta_petta_prepare_document_forms(
                     cetta_library_context_universe(&runtime.libraries), atom_ids + i,
@@ -4886,28 +4701,6 @@ petta_next_slice:
                 if (runtime.libraries.session.process_control.answer_policy ==
                         CETTA_EXIT_PUBLISH_PRIOR_ANSWERS)
                     goto publish_answers;
-                goto cleanup;
-            }
-            int typecheck_exit_code = 0;
-            const char *typecheck_diagnostic = NULL;
-            if (lang->id == CETTA_LANGUAGE_PETTA &&
-                result_set_petta_typecheck_error(
-                    results, &typecheck_exit_code,
-                    &typecheck_diagnostic)) {
-                fprintf(
-                    stderr, "%s: %s\n",
-                    typecheck_exit_code == 2
-                        ? "PeTTa type error"
-                        : "PeTTa typechecker fault",
-                    typecheck_diagnostic
-                        ? typecheck_diagnostic
-                        : "runtime analysis judgment failed");
-                rc = typecheck_exit_code;
-                if (detailed_initialized)
-                    eval_outcome_free(&detailed);
-                else
-                    result_set_free(&rs);
-                prime_need_trace_printer_free(&trace);
                 goto cleanup;
             }
             if (detailed_initialized && !emit_prime_need_trace &&
@@ -5050,9 +4843,7 @@ petta_next_slice:
                 main_petta_load_declaration_block(
                     &runtime.libraries, &runtime.space, &runtime.registry,
                     cetta_library_context_universe(&runtime.libraries), atom_ids + i,
-                    block_end - i,
-                    cetta_profile_uses_petta_typing(profile),
-                    petta_typecheck_policy);
+                    block_end - i);
             if (loaded != MAIN_PETTA_BLOCK_LOAD_OK) {
                 if (loaded == MAIN_PETTA_BLOCK_LOAD_FAILED) {
                     fprintf(

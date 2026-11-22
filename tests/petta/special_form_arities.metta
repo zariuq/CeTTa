@@ -20,3 +20,18 @@
 !(case (once (superpose (1 2))) ((1 kept) (2 kept)))
 !(let $f (cons-atom case (1)) (g $f))
 !(let $f (cons-atom sealed (a)) (eval $f))
+; A function application among such an application's arguments runs, as in
+; bare position: plain PeTTa has no `unify`, and `catch`, `translatePredicate`,
+; `quote` and `hyperpose` are read with one argument.
+(= (arg72) (t72b 1))
+(= (t72b $x) v)
+!(Demanded (unify (arg72) v))
+!(Demanded (unify (arg72) v yes no))
+!(unify (arg72) v yes no)
+!(g (catch (arg72) v))
+!(g (translatePredicate (arg72) v))
+!(Demanded (quote (arg72) v))
+!(quote (arg72) v)
+!(Demanded (quote (arg72)))
+!(Demanded (hyperpose (arg72) v))
+!(hyperpose (arg72) v)

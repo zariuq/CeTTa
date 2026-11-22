@@ -598,7 +598,7 @@ def main():
         "elided-group": dict(outcome="match", groups=[[0, 0]]),
         "elided-suffix": dict(outcome="match", groups=[[0, 1], [0, 1]]),
     }
-    for host in ("he", "petta", "petta-1.1", "prime"):
+    for host in ("he", "petta", "petta-1.1.c", "prime"):
         library = ROOT / ("lib/petta/lib_module.metta" if host.startswith("petta") else "lib/lib_module.metta")
         program = "!(import! &self re)\n!(import! &self str)\n!(import! &self " + text(str(library)) + ")\n" + "\n".join(queries) + "\n"
         values = run(args.cetta.resolve(), host, args.output.resolve(), "workflow", program)

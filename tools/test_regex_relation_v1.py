@@ -171,7 +171,7 @@ def main():
     args = parser.parse_args()
     output = args.output.resolve(); output.mkdir(parents=True, exist_ok=True)
     count = 0; capabilities = {}
-    for host in ("he", "petta", "petta-1.1", "prime"):
+    for host in ("he", "petta", "petta-1.1.c", "prime"):
         passed, capabilities[host] = check_host(args.cetta.resolve(), host, output)
         count += passed
     (output / "capabilities.json").write_text(json.dumps(capabilities, indent=2) + "\n")

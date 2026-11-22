@@ -7,7 +7,6 @@
 #include "match_decision.h"
 #include "nik_direct_authority.h"
 #include "open_equation_machine.h"
-#include "petta_analysis.h"
 #include "petta_program.h"
 #include "petta_semantics.h"
 #include "petta_specializer.h"
@@ -69,12 +68,6 @@ typedef enum {
     PETTA_MACHINE_FOLD_INTERRUPTED,
 } PettaMachineFoldResult;
 
-typedef enum {
-    PETTA_MACHINE_BOUNDARY_ACCEPTED = 0,
-    PETTA_MACHINE_BOUNDARY_REFUTED,
-    PETTA_MACHINE_BOUNDARY_FAULT,
-} PettaMachineBoundaryResult;
-
 /* Admission concerns only the ordinary relational control path for a
  * revision-pinned Space and a known query head/arity.  It does not assert
  * determinism and never suppresses equation alternatives. */
@@ -84,55 +77,12 @@ typedef enum {
     PETTA_MACHINE_SPACE_QUERY_INVALIDATED,
 } PettaMachineSpaceQueryAdmission;
 
-/* Language-owned analyses are installed explicitly on a machine instance.
- * The machine must not consult ambient profile state to decide whether a
- * semantic analysis participates in evaluation. */
-typedef enum {
-    PETTA_MACHINE_ANALYSIS_NONE = 0u,
-    PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS = 1u << 0,
-} PettaMachineAnalysisCapability;
-
-/* Exact, provider-defined mutable authority consulted by semantic analyses
- * in addition to the root Space.  The machine compares this vector but does
- * not interpret its components. */
+/* Exact, provider-defined mutable authority a host reports in addition to
+ * the root Space (PettaMachineHost's callability and answer authority).
+ * The machine compares this vector but does not interpret its components. */
 #define PETTA_MACHINE_AUTHORITY_WORD_CAPACITY \
     CETTA_NIK_DIRECT_AUTHORITY_TOKEN_WORD_CAPACITY
 typedef CettaNikDirectAuthorityTokenV1 PettaMachineAuthorityToken;
-
-/* Optional language-owned analysis provider.  Semantic authority identity,
- * physical realization identity, revision, ABI, and policy are part of every
- * admitted-judgment key before mutable authority words are appended.  A new
- * realization therefore cannot reuse its predecessor's facts until an
- * explicit qualification step permits that replacement.
- */
-typedef struct {
-    const CettaNikDirectAuthorityV1 *authority;
-    uint32_t capabilities;
-    uint32_t (*policy_identity)(void *host_context);
-    bool (*mutable_authority_token)(
-        void *host_context, PettaMachineAuthorityToken *token);
-    bool (*judge_value)(
-        void *host_context, Space *space, Arena *scratch,
-        Atom *value, Atom *requirement,
-        PettaAnalysisCallableFn callable, void *callable_context,
-        PettaAnalysisResult *result);
-    bool (*type_has_runtime_classifier)(
-        void *host_context, Space *space, Atom *requirement);
-    /* The errors the language raises at run time: `value` does not satisfy
-     * `requirement`, or no declared overload of `function` applies to a
-     * call.  The machine raises them as any error, so catch delimits them
-     * and only an uncaught one ends the run. */
-    Atom *(*type_error_atom)(
-        void *host_context, Arena *arena, Atom *value, Atom *requirement,
-        PettaAnalysisReason reason);
-    Atom *(*overload_error_atom)(
-        void *host_context, Arena *arena, Atom *function);
-    const char *(*reason_name)(
-        void *host_context, PettaAnalysisReason reason);
-    PettaMachineBoundaryResult (*validate_ready_call)(
-        void *host_context, Space *space, Atom *call,
-        char *diagnostic, size_t diagnostic_size);
-} PettaAnalysisService;
 
 /*
  * Session-owned answer table for opt-in PeTTa tabling and memoization.
@@ -258,7 +208,6 @@ typedef struct {
 
 typedef struct {
     void *context;
-    const PettaAnalysisService *analysis;
     /* The semantic consumer contract remains separate from its derived
      * control plan: changing the contraction algebra cannot manufacture
      * scheduling or branch-storage authority.  NULL preserves exact ordered
@@ -313,6 +262,11 @@ typedef struct {
      * A fault occurrence returns from this application, rather than becoming
      * a field in its constructed value. */
     bool eager_argument_faults;
+    /* A language whose declared-type applications follow a non-PeTTa typing
+     * protocol (such as Prime's gradual/DTT BadArgType/BadType semantics)
+     * declines declared-type applications rather than running PeTTa's
+     * silent-failure type-guard protocol or constructing them unchecked. */
+    bool decline_declared_typed_calls;
     /* PeTTa's collections are findall: an error raised while collecting
      * aborts the collection and propagates, as an exception does in
      * SWI-PeTTa.  Other dialects keep a raised error as an occurrence. */
@@ -350,7 +304,7 @@ typedef struct {
      * answers of a body and all of them; otherwise they are the host's. */
     bool bounded_collections;
     /* Explicit dependent domains belong to the active language profile,
-     * not to the shared declaration cache or residual-type analysis. */
+     * not to the shared declaration cache. */
     bool dependent_type_domains;
     /* The 1.1 PeTTa law: car-atom of () raises; earlier versions return (). */
     bool raises_empty_car;
@@ -1013,9 +967,6 @@ PettaMachineStep petta_machine_next(
  * here is neutral metadata, not a certificate that the machine exhausted. */
 CettaEvalCompletion petta_machine_entered_completion(const PettaMachine *machine);
 
-/* A native typecheck-v2 refutation is semantic, not ordinary search
- * exhaustion.  The evaluator reads this diagnostic only after the machine
- * terminates and turns it into the profile's process-level rejection. */
 /* Work of a table store since a root machine leased it.  Forwarding: a
  * table whose generator ends in a call of a complete table delivers that
  * table's answers through an edge.  Membership index work of answer merges:
@@ -1042,10 +993,6 @@ typedef struct {
 
 bool petta_machine_table_stats(
     const PettaMachine *machine, PettaTableStats *stats);
-
-const char *petta_machine_typecheck_diagnostic(
-    const PettaMachine *machine);
-int petta_machine_typecheck_exit_code(const PettaMachine *machine);
 
 /* True when the last answer is an Error that was raised and not caught,
  * rather than an Error value. */
@@ -1210,7 +1157,6 @@ typedef struct {
     uint64_t deterministic_root_atom_bytes_promoted;
     uint64_t deterministic_query_atom_bytes_promoted;
     uint64_t deterministic_visible_atom_bytes_promoted;
-    uint64_t deterministic_type_atom_bytes_promoted;
     uint64_t deterministic_goal_atom_bytes_promoted;
     uint64_t deterministic_goal_context_bytes_promoted;
     uint64_t deterministic_goal_first_bytes_promoted;

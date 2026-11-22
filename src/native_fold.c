@@ -431,10 +431,6 @@ static bool native_fold_from_moments(
 static CettaNativeFoldRoute native_fold_route(
     Space *space, Arena *arena, Atom *function, Atom *generator, Atom *init,
     Atom **answer) {
-    /* A typed profile checks each step application; the native fold has no
-     * such evidence, so it runs only where steps are untyped. */
-    if (eval_petta_steps_are_typed && eval_petta_steps_are_typed())
-        return CETTA_NATIVE_FOLD_NOT_ADMITTED;
     if (!space || !arena || !function || !generator || !init || !answer ||
         init->kind != ATOM_GROUNDED || init->ground.gkind != GV_INT ||
         generator->kind != ATOM_EXPR || generator->expr.len != 4u ||
@@ -551,7 +547,6 @@ bool cetta_native_fold_counts_answers(Space *space, Arena *arena,
                                       Atom *function, Atom *initial) {
     CettaFoldStep fold;
     return !native_fold_arith_reference_forced() &&
-           !(eval_petta_steps_are_typed && eval_petta_steps_are_typed()) &&
            space && arena && function && initial &&
            initial->kind == ATOM_GROUNDED && initial->ground.gkind == GV_INT &&
            native_fold_step_admitted(space, arena, function, &fold) &&

@@ -13,3 +13,13 @@ one
 kept
 (Clause (case 1))
 (sealed a)
+(Demanded (unify v v))
+(Demanded (unify v v yes no))
+(unify v v yes no)
+(Clause (catch v v))
+(Clause (translatePredicate v v))
+(Demanded (quote v v))
+(quote v v)
+(Demanded (arg72))
+(Demanded (hyperpose v v))
+(hyperpose v v)

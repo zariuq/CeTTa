@@ -321,14 +321,27 @@ static void captured_source_outputs(void) {
     cetta_engine_config_t extended = {sizeof(extended), CETTA_EMBED_ABI_VERSION,
         "petta", "extended", NULL};
     assert(cetta_embed_engine_new(&extended, &engine) == CETTA_OK);
+    /* The extended profile permits an authored alternative of `once`.  While
+     * the program holds none and nothing runs before the occurrence, the
+     * occurrence will run the builtin alone, and the output is the
+     * builtin's, as on the default profile (P-DEF-4).  Once the program
+     * holds an alternative, the output is open. */
     cetta_embed_result_release(document(engine, "(= (open-shape) (once (Box fixed)))"));
     PettaCandidateSnapshotLease open = query_source_candidate(engine, "open-shape");
     assert(open.items[0].rhs_plan->output == PETTA_PLAN_OUTPUT_CHILD);
     query = query_new_candidate(engine, &open);
-    assert(!query_project_output(&query, CETTA_QUERY_OUTPUT_OPAQUE));
+    shape = query_project_output(&query, CETTA_QUERY_OUTPUT_PATTERN);
+    const char *fixed = "(Box fixed)";
+    assert(cetta_embed_parse(engine, fixed, strlen(fixed), &raw) == CETTA_OK);
+    assert(atom_eq(shape->value, raw->value));
+    cetta_embed_atom_release(shape); cetta_embed_atom_release(raw);
     answer = next(&query, 1u);
     assert(answer && answer->value->kind == ATOM_EXPR && answer->value->expr.len == 2u);
     cetta_embed_atom_release(answer);
+    query_close(&query);
+    cetta_embed_result_release(document(engine, "(= (once $x) authored)"));
+    query = query_new_candidate(engine, &open);
+    assert(!query_project_output(&query, CETTA_QUERY_OUTPUT_OPAQUE));
     query_close(&query);
     petta_program_candidate_snapshot_lease_release(&open);
     cetta_embed_engine_release(engine);

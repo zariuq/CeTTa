@@ -237,13 +237,10 @@ bool eval_type_stamp_atom_epoch(const Space *space, const Atom *atom,
                                 uint32_t *arena, uint64_t *epoch)
     __attribute__((weak));
 CettaLanguageId eval_current_language_id(void) __attribute__((weak));
-/* Whether the active PeTTa profile checks each step application (the
- * typecheck profiles): native folds have no such evidence. */
-bool eval_petta_steps_are_typed(void) __attribute__((weak));
 /* The error a minimal instruction answers for arguments outside `expected`:
  * (Error <call> "expected: <expected>, found: <call>"). */
 Atom *cetta_call_signature_error(Arena *a, Atom *call, const char *expected);
-/* Whether the running PeTTa version is of the typed line (1.1, 1.1.c). */
+/* Whether the running PeTTa version is of the typed line (1.1.c). */
 bool eval_current_petta_typed_line(void) __attribute__((weak));
 /* Whether the program extends a classifier PeTTa's typed-call guard
  * evaluates (get-type, get-metatype) with an equation at its one-input arity
@@ -417,9 +414,8 @@ static inline void rb_set_add(ResultBindSet *rbs, Atom *atom, Bindings *b) {
 }
 static inline void rb_set_free(ResultBindSet *rbs) { outcome_set_free(rbs); }
 
-bool cetta_petta_profile_admits_typecheck_ops(void);
-bool cetta_petta_profile_admits_native_typecheck_v2(void);
-bool cetta_petta_data_op_applies(SymbolId head, CettaExprLen nargs);
+bool cetta_petta_profile_admits_data_and_as_patterns(void);
+bool cetta_petta_data_op_applies(SymbolId head);
 void cetta_petta_prepare_document_forms(
     TermUniverse *universe, AtomId *atom_ids, int atom_count);
 bool cetta_petta_source_head_resolves_in_engine(SymbolId head, CettaExprLen nargs);

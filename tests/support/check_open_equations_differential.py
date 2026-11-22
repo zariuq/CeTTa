@@ -1150,7 +1150,7 @@ PETTA_FIXED = [
    (case $xs ((End 0) ((Link $head $tail) (+ 1 (overloaded-length $tail))))))
 (= (wrapped-overloaded-length $xs) (overloaded-length $xs))
 !(collapse (wrapped-overloaded-length (Link a (Link b End))))
-""", "(2 2 2 2 2 2 2 2)\n"),
+""", "(2)\n"),
     ("""(: alias-length (-> Atom %Undefined%))
 (= (alias-length $xs)
    (case $xs ((End 0) ((Link $head $xs) (+ 1 (alias-length $xs))))))

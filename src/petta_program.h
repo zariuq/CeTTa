@@ -3,7 +3,6 @@
 
 #include "atom.h"
 #include "gslt_ground_dense_term_v1.h"
-#include "nik_direct_authority.h"
 #include "match.h"
 #include "space.h"
 #include "petta_type_policy.h"
@@ -439,10 +438,6 @@ bool petta_program_type_calls(PettaProgram *program, Space *space, Atom *head,
                               CettaExprLen supplied, Arena *arena,
                               PettaTypeCall **calls, uint32_t *count,
                               bool *hold_body);
-/* Optional language-owned catalog for analyses.  Ordinary PeTTa leaves this
- * disabled and therefore allocates no annotation or inferred-fact state. */
-bool petta_program_enable_analysis(PettaProgram *program);
-bool petta_program_analysis_enabled(const PettaProgram *program);
 bool petta_program_is_equation(Atom *atom);
 /* True exactly when adding atom can change the program-owned equation or
  * declaration catalog.  Ordinary data remains solely a Space occurrence. */
@@ -695,78 +690,6 @@ bool petta_program_revision_view_source_candidate_lease(
 bool petta_program_equation_snapshot(
     PettaProgram *program, Space *space,
     Atom ***equations, size_t *equation_count);
-
-/*
- * Inferred function signatures are checker-private derived facts.  They are
- * never inserted into the user-visible Space (and therefore never affect
- * get-type or matching), but they survive declaration blocks so later source
- * directives can use the same inferred type.  Every lookup is pinned to the
- * exact Space revision; a successful checked source transition rebases the
- * derived facts after publishing its atoms.
- */
-bool petta_program_inferred_signatures_current(
-    PettaProgram *program, Space *space);
-bool petta_program_inferred_signatures_current_under_authority(
-    PettaProgram *program, Space *space,
-    const CettaNikDirectAuthorityStampV1 *authority);
-bool petta_program_inferred_signature_lookup(
-    PettaProgram *program, Space *space,
-    SymbolId head, CettaExprLen arity,
-    Arena *arena, Atom **signature_out);
-bool petta_program_inferred_signature_lookup_under_authority(
-    PettaProgram *program, Space *space,
-    const CettaNikDirectAuthorityStampV1 *authority,
-    SymbolId head, CettaExprLen arity,
-    Arena *arena, Atom **signature_out);
-bool petta_program_inferred_signatures_lookup(
-    PettaProgram *program, Space *space,
-    SymbolId head, CettaExprLen arity,
-    Arena *arena, Atom ***signatures_out, size_t *count_out);
-bool petta_program_inferred_signatures_lookup_under_authority(
-    PettaProgram *program, Space *space,
-    const CettaNikDirectAuthorityStampV1 *authority,
-    SymbolId head, CettaExprLen arity,
-    Arena *arena, Atom ***signatures_out, size_t *count_out);
-void petta_program_inferred_signatures_reset(
-    PettaProgram *program, Space *space);
-void petta_program_inferred_signatures_reset_under_authority(
-    PettaProgram *program, Space *space,
-    const CettaNikDirectAuthorityStampV1 *authority);
-bool petta_program_inferred_signature_put(
-    PettaProgram *program, Space *space,
-    SymbolId head, CettaExprLen arity, Atom *signature);
-bool petta_program_inferred_signature_put_under_authority(
-    PettaProgram *program, Space *space,
-    const CettaNikDirectAuthorityStampV1 *authority,
-    SymbolId head, CettaExprLen arity, Atom *signature);
-void petta_program_inferred_signature_remove_head(
-    PettaProgram *program, Space *space, SymbolId head);
-void petta_program_inferred_signatures_rebase(
-    PettaProgram *program, Space *space);
-void petta_program_inferred_signatures_rebase_under_authority(
-    PettaProgram *program, Space *space,
-    const CettaNikDirectAuthorityStampV1 *authority);
-
-/* Explicit type declarations remain visible to the checker across PeTTa
- * module boundaries even when the runtime module interface exports equations
- * without copying transitive annotation atoms into the caller's Space.
- * Returned types are fresh copies owned by `arena`; the caller owns only the
- * pointer array. */
-/* Alias, Newtype, Foreign and SpaceOf declarations compete for one
- * source-ordered meaning. Ordinary value and arrow declarations do not. */
-bool petta_program_type_is_exclusive_kind(const Atom *type);
-
-uint32_t petta_program_declared_types(
-    PettaProgram *program, Atom *subject,
-    Arena *arena, Atom ***types_out);
-
-/* Whole-catalog view of every live type annotation, in space and
- * declaration order.  Subject-local lookup answers ordinary call typing;
- * this exists for the judgments that genuinely quantify over all
- * declarations, such as constructor exhaustiveness.  The caller owns only
- * the pointer array; the annotation atoms remain program-owned. */
-bool petta_program_type_annotation_snapshot(
-    PettaProgram *program, Atom ***annotations_out, size_t *count_out);
 
 bool petta_program_candidate_snapshot_profiled(
     PettaProgram *program, Space *space, SymbolId head,

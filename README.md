@@ -82,18 +82,19 @@ implementation, and a program is written for one of them.
 
 | `--lang` | Language | Profiles (`--profile`) |
 |---|---|---|
-| `petta` (default) | Corrected stable PeTTa | `extended` adds CeTTa's labeled extensions; `typecheck-v2` and `typecheck-v3` add opt-in native type checking (`petta@1.1`); `petta@1.1.c` is the typed line with declarations as call contracts |
+| `petta` (default) | Corrected stable PeTTa | `extended` adds CeTTa's labeled extensions; `ai` adds sealed sorts; `petta@1.1.c` is the typed line with declarations as call contracts |
 | `he` | Hyperon Experimental MeTTa 0.2.10, in CeTTa's fork | `he` (default) is the fork with its deliberate differences; `he-compat` keeps the Rust implementation's behavior where `he` differs; `extended` adds CeTTa's labeled extensions; `he-prime` adds dependent binders and typed inhabitation search |
 | `prime` | Experimental local Prime adapter, very much a work in progress | Frozen compatibility endpoint `prime@0.0.1` |
 | `hol-light` | the HOL Light kernel, checking HOLR proof streams | `standard` (default), `open`, `sealed` |
 | `rhocalc` | the reflective higher-order rho-calculus | `strict-core`, `cost`, `rhometta` |
 | `mm2` | MM2 programs, lowered directly and run on MORK | `gslt` |
 
-`--lang <name>@<version>` names a contract: `petta@stable-fixed`, `petta@1.1`
-(typed PeTTa), `petta@1.1.c`, `he@0.2.10` (the Hyperon Experimental release
-CeTTa's HE forks; every HE profile) and `prime@0.0.1`. See
-[the language contracts](docs/language_versions.txt). The historical
-`petta@1.0.6` selector is retired; old commits retain that reference.
+`--lang <name>@<version>` names a contract: `petta@stable-fixed`,
+`petta@1.1.c` (PeTTa's typed line), `he@0.2.10` (the Hyperon Experimental
+release CeTTa's HE forks; every HE profile) and `prime@0.0.1`. See
+[the language contracts](docs/language_versions.txt). Older and upstream
+PeTTa versions (`petta@1.0.6`, upstream 1.1 with its checker) are not
+registered; old commits retain those references.
 
 Prime in this tree is very WIP. For active Prime exploration, use
 [`godelclaw/CeTTa`, branch `cetta-ours`](https://github.com/godelclaw/CeTTa/tree/cetta-ours),

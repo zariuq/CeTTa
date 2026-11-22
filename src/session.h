@@ -46,7 +46,7 @@ typedef enum {
         CETTA_PROFILE_MASK_HE_EXTENDED |
         CETTA_PROFILE_MASK_HE_PRIME,
     /* Plain --lang petta is the reference-compatible dialect.  Its named
-       extended/typechecking profiles add CeTTa capabilities explicitly. */
+       extended profile adds CeTTa capabilities explicitly. */
     CETTA_PROFILE_MASK_PETTA_BASE = 1u << 4,
     CETTA_PROFILE_MASK_PETTA_EXTENDED = 1u << 5,
     CETTA_PROFILE_MASK_PETTA_BASE_FORMS =
@@ -263,11 +263,6 @@ const CettaProfile *cetta_profile_he_extended(void);
 const CettaProfile *cetta_profile_he_prime(void);
 const CettaProfile *cetta_profile_prime_default(void);
 const CettaProfile *cetta_profile_petta_extended(void);
-#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
-const CettaProfile *cetta_profile_petta_typecheck_v2(void);
-const CettaProfile *cetta_profile_petta_typecheck_v3(void);
-#endif
-bool cetta_profile_uses_petta_typing(const CettaProfile *profile);
 /* Whether `profile` is petta@1.1.c, which runs declarations as call contracts:
  * a check commits to its first answer, a failed one raises the language's
  * type error, a position whose declared type is a variable is not checked,

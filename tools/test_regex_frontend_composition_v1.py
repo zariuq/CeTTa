@@ -104,7 +104,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     corpus = patterns(args.count, args.seed)
     checks = programs = failures = 0
-    for host in ("he", "petta", "petta-1.1", "prime"):
+    for host in ("he", "petta", "petta-1.1.c", "prime"):
         program = "!(import! &self re)\n" + STAGED
         for index, pattern in enumerate(corpus):
             literal = json.dumps(pattern, ensure_ascii=False)

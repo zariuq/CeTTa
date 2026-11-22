@@ -1,6 +1,6 @@
 ; Counts over a pattern or a conjunction count the facts the space keeps in
-; relations beside its rows, and a stored variable, which matches every
-; pattern, as ordinary search does.
+; relations beside its rows, and rows holding variables, which meet every
+; pattern they unify with, as ordinary search does.
 (edge 1 2)
 (edge 2 3)
 (edge 3 4)
@@ -26,11 +26,14 @@
              (pad $m))
        done))
 !(pad 2100)
-; A stored variable meets each pattern once.
-!(add-atom &self $v)
+; A row holding variables meets each pattern it unifies with, once.
+!(add-atom &self (edge $r $s))
 !(foldall (|-> ($i $acc) (+ $acc $i)) (match &self (edge $x $y) 2) 1)
 !(foldall (|-> ($i $acc) (+ $acc $i)) (match &self (, (edge $x $y) (edge $y $z)) 1) 0)
 !(size-atom (collapse (match &self (edge $x $y) t)))
-; A stored variable in a conjunction one of whose patterns meets a relation:
-; the cursors count it.
+; A row holding variables beside a head's relation, alone and in a
+; conjunction: the cursors count it with the relation's facts.
+!(add-atom &self (link $p $q))
+!(foldall (|-> ($i $acc) (+ $acc $i)) (match &self (link $x $y) 1) 0)
 !(foldall (|-> ($i $acc) (+ $acc $i)) (match &self (, (link $x $y) (edge $y $z)) 1) 0)
+!(foldall (|-> ($i $acc) (+ $acc $i)) (match &self (, (link $x $y) (link $y $z)) 1) 0)

@@ -280,10 +280,6 @@ static bool eval_work_start_general_reopened(EvalWork *work, Arena *scratch,
     if (space_has_dependencies(space) ||
         work->language == CETTA_LANGUAGE_PRIME)
         return false;
-#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
-    if (cetta_petta_profile_admits_native_typecheck_v2())
-        return false;
-#endif
     bool he = work->language == CETTA_LANGUAGE_HE;
     if (he) {
         if (!he_shared_execution_candidate(space, source, NULL,
@@ -336,7 +332,7 @@ static bool eval_work_start_general_reopened(EvalWork *work, Arena *scratch,
         return false;
     *work->context = (PettaEvalMachineContext){
         .fuel = work->fuel,
-        .data_ops = cetta_petta_profile_admits_typecheck_ops(),
+        .data_ops = cetta_petta_profile_admits_data_and_as_patterns(),
         .controller_policy = frontier
             ? (strategy == EVAL_WORK_FIFO ? CETTA_SEARCH_CONTROLLER_FIFO
                                           : CETTA_SEARCH_CONTROLLER_RATIO)
@@ -375,7 +371,7 @@ static bool eval_work_start_general_reopened(EvalWork *work, Arena *scratch,
     }
     work->host = petta_eval_machine_host(
         work->context, work->fuel, false, portable, frontier,
-        source_output_constraints, false, eval_work_match_semantics(work));
+        source_output_constraints, eval_work_match_semantics(work));
     work->host.match_decisions = petta_eval_session_decisions(
         g_library_context, space);
     work->host.export_variables = work->export_variables;

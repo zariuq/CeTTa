@@ -74,8 +74,8 @@ check("(= (hold $x) (data $x))\n!(hold (quote (data a b)))", "((data a b))\n", "
 for profile in (None, "extended"):
     check("(= (last-value $xs) (car-atom (reverse $xs)))\n"
           "!(last-value (range 1 30000))", "30000\n", profile)
-check((root / "tests/petta/typecheck_v2_profile_isolation.metta").read_text(),
-      (root / "tests/petta/typecheck_v2_profile_isolation.extended.expected").read_text(),
+check((root / "tests/petta/typing_forms_stay_data.metta").read_text(),
+      (root / "tests/petta/typing_forms_stay_data.extended.expected").read_text(),
       "extended")
 
 # Typed lists enter the same equation engine as tuples, while retaining

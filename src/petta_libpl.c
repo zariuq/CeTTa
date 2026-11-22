@@ -2833,7 +2833,20 @@ static bool petta_libpl_to_term(
     }
     case GV_TERM_GRAPH:
         return petta_libpl_graph_to_term(atom, output, variables, depth);
-    case GV_SPACE:
+    case GV_SPACE: {
+        /* A space new-space made crosses as the text of its name, as the
+         * reference's names are atoms; text that comes back is a symbol,
+         * never the space. */
+        uint64_t serial = space_generated_name_serial
+            ? space_generated_name_serial(atom->ground.ptr) : 0u;
+        if (!serial)
+            return false;
+        char text[48];
+        int length = snprintf(text, sizeof(text), "&space(%" PRIu64 ")",
+                              serial);
+        return length > 0 &&
+               petta_libpl_put_utf8(output, PL_ATOM, text, (size_t)length);
+    }
     case GV_STATE:
     case GV_CAPTURE:
     case GV_BINDINGS:

@@ -582,7 +582,8 @@ bool petta_semantics_special_form_reads(SymbolId head, CettaExprLen nargs) {
         return nargs == 2u;
     if (head == g_builtin_syms.let || head == g_builtin_syms.chain)
         return nargs == 3u;
-    if (head == g_builtin_syms.collapse || head == g_builtin_syms.once)
+    if (head == g_builtin_syms.collapse || head == g_builtin_syms.once ||
+        head == g_builtin_syms.quote || head == g_builtin_syms.hyperpose)
         return nargs == 1u;
     return true;
 }
@@ -1301,15 +1302,6 @@ bool petta_semantics_contract_error(Atom *error) {
     return formal->kind == ATOM_EXPR && formal->expr.len == 3u &&
         atom_is_symbol(formal->expr.elems[0], "literal_type_mismatch") &&
         atom_is_symbol(error->expr.elems[2], "typecheck");
-}
-
-Atom *petta_semantics_no_matching_overload_error(Arena *arena,
-                                                 Atom *function) {
-    if (!arena || !function)
-        return NULL;
-    Atom *head = atom_symbol(arena, "no_matching_overload");
-    Atom *formal = head ? atom_expr2(arena, head, function) : NULL;
-    return petta_error_term(arena, formal, atom_symbol(arena, "typecheck"));
 }
 
 Atom *petta_semantics_missing_import_error(Arena *arena, Atom *file) {

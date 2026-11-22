@@ -827,8 +827,14 @@ static inline bool eval_gc_can_collect_arena(const Arena *arena) {
     /* Hash-cons entries own their interned atoms on the heap.  Eligible eval
        children are interned before they can appear inside an interned parent,
        so resetting the eval arena does not leave hash-cons entries pointing
-       into reclaimed eval blocks. */
-    return arena != NULL;
+       into reclaimed eval blocks.
+       The persistent arena outlives every evaluation, and much of what it
+       holds is reached from no root the collector knows: the term universe
+       decodes stored atoms into it and keeps them, and it holds promoted
+       results and state.  A caller that evaluates in its persistent arena
+       (the RhoMeTTa command line and its payloads do) evaluates in an arena
+       that no collection may reset. */
+    return arena != NULL && arena != eval_current_persistent_arena();
 }
 
 static inline bool eval_gc_root_chain_is_precise(
@@ -866,10 +872,13 @@ static inline bool eval_gc_safe_point(const Arena *arena,
      * lexical ancestor has registered its remaining live carriers through
      * generated root frames; explicit machines have complete frame scanners.
      */
-    if (!eval_gc_enabled() || !eval_gc_can_collect_arena(arena) ||
+    /* The arena test reads the current persistent arena, so it comes after
+     * the cheap tests that turn down almost every safe point. */
+    if (!eval_gc_enabled() || !arena ||
         g_eval_gc.region_arena != arena ||
         live_above_anchor < cetta_gc_collection_budget(
-            g_eval_gc.budget_bytes, eval_gc_retained_work(0u))) {
+            g_eval_gc.budget_bytes, eval_gc_retained_work(0u)) ||
+        !eval_gc_can_collect_arena(arena)) {
         return false;
     }
     cetta_runtime_stats_inc(
@@ -904,7 +913,7 @@ static inline bool eval_gc_safe_point(const Arena *arena,
  * fresh nursery headroom; it never caps a retained graph. */
 static inline bool eval_gc_budget_reached_with_floor(
     const Arena *arena, ArenaMark anchor, size_t survivor_floor_bytes) {
-    if (!eval_gc_enabled() || !eval_gc_can_collect_arena(arena))
+    if (!eval_gc_enabled() || !arena)
         return false;
     size_t accounted_live = arena_accounted_live_bytes(arena);
     size_t accounted_anchor = arena_mark_accounted_live_bytes(anchor);
@@ -914,7 +923,10 @@ static inline bool eval_gc_budget_reached_with_floor(
             : 0u;
     size_t effective_budget = cetta_gc_collection_budget(
         g_eval_gc.budget_bytes, eval_gc_retained_work(survivor_floor_bytes));
-    return live_above_anchor >= effective_budget;
+    /* The arena test reads the current persistent arena: only when the
+     * budget is reached. */
+    return live_above_anchor >= effective_budget &&
+           eval_gc_can_collect_arena(arena);
 }
 
 static inline bool eval_gc_budget_reached(const Arena *arena,

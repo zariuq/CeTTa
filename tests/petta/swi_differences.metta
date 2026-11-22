@@ -69,14 +69,18 @@
 ;    Recorded 2026-09-27 against revision ae66fa8e; retired by Oruži on
 ;    re-verifying every entry against the pinned snapshot.
 
-; 7. `new-space` makes a fresh space, here a Grounded handle.  Since
-;    stable-fixed 2d679ba and c0f088e, SWI-PeTTa's `new-space` answers a
-;    fresh name &space(N), a Symbol naming a space as every other space name
-;    does, and the name can be written again.  Which law CeTTa's handles
-;    follow, and with it whether CeTTa still frees a temporary space no value
-;    holds, is open for a ruling (Zar, 2026-09-27 "extras are ok" predates it).
-; SWI-PeTTa: Symbol
-!(let $s (new-space) (get-metatype $s))
+; 7. `new-space` makes a fresh space with a generated name: it prints as
+;    &space(N), its metatype is Symbol, and typed calls take it as one, as in
+;    SWI-PeTTa.  The name is the space's identity, not its text.  Text that
+;    spells it again, built or read, is an ordinary symbol: it names a space
+;    of its own once written to and never reaches the generated one.  A
+;    program reaches a space only through a name it was given, so a space no
+;    value holds is collected without any answer showing it.  SWI-PeTTa's
+;    names are text, so its spelled text reaches the space, which persists.
+; SWI-PeTTa: (1)
+!(let* (($s (new-space)) ($_ (add-atom $s (row 1))) ($t (repr $s))
+        ($spelled (atom_concat $t "")))
+   (collapse (match $spelled (row $x) $x)))
 
 ; 8. An `if` whose branch has goals and a variable for its value keeps that
 ;    variable to the branch.  SWI-PeTTa's translator unifies the `if`'s output

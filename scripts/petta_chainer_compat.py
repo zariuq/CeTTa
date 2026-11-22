@@ -310,7 +310,7 @@ def main() -> int:
     parser.add_argument("--out", default="runtime/petta-chainer-compat")
     parser.add_argument(
         "--profile",
-        choices=("extended", "typecheck-v2", "typecheck-v3"),
+        choices=("extended",),
         default="extended",
     )
     parser.add_argument(

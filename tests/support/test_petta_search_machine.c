@@ -2,8 +2,6 @@
 
 #include "open_equation_machine.h"
 #include "eval.h"
-#include "generated/petta_typecheck_v2_boundary_core_source_binding_v1.generated.h"
-#include "generated/petta_typecheck_v2_source_binding_v1.generated.h"
 #include "grounded.h"
 #include "he_typing.h"
 #include "library.h"
@@ -19,7 +17,6 @@
 #include "stats.h"
 #include "petta_semantics.h"
 #include "petta_type_policy.h"
-#include "petta_typecheck.h"
 #include "symbol.h"
 #include "variant_shape.h"
 #include "term_graph.h"
@@ -1384,7 +1381,6 @@ static void test_library_context_initialization(void) {
         assert(context->petta_open_programs_free == NULL);
         assert(context->petta_match_decisions == NULL);
         assert(context->petta_match_decisions_free == NULL);
-        assert(context->petta_trusted_library_import_depth == 0u);
         cetta_library_context_free(context);
     }
     free(context);
@@ -2125,7 +2121,7 @@ static AtomId test_descend_unary_id(
     return cursor;
 }
 
-static void test_deep_typecheck_source_rewrites(
+static void test_deep_source_rewrites(
     TermUniverse *universe) {
     enum { DEEP_FINITE_DEPTH = 4096 };
     SymbolId box_symbol = symbol_intern_cstr(
@@ -2232,50 +2228,6 @@ static void test_deep_typecheck_source_rewrites(
     assert(tu_child(universe, document[0], 2u) == quote_target);
     assert(tu_head_sym(universe, tu_child(universe, document[0], 3u)) ==
            g_builtin_syms.let);
-
-#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
-    /* The typecheck profiles erase `brand` at ingestion, without a C
-     * recursion over the marker's depth. */
-    CettaLibraryContext typed = {0};
-    cetta_eval_session_init(
-        &typed.session, CETTA_LANGUAGE_PETTA,
-        cetta_profile_petta_typecheck_v2());
-    eval_set_library_context(&typed);
-    document[0] = deep_marker;
-    cetta_petta_prepare_document_forms(
-        universe, document, 1);
-    assert(test_descend_unary_id(
-               universe, document[0], box,
-               DEEP_FINITE_DEPTH) == leaf);
-
-    /* Quotation is an explicit semantic boundary: even at the same depth,
-     * its marker payload remains literal. */
-    AtomId quote_elems[2] = {quote, marker};
-    AtomId quoted_marker = tu_expr_from_ids(
-        universe, quote_elems, 2u);
-    AtomId deep_quoted_marker = test_nest_unary_id(
-        universe, box, quoted_marker, DEEP_FINITE_DEPTH);
-    document[0] = deep_quoted_marker;
-    cetta_petta_prepare_document_forms(
-        universe, document, 1);
-    assert(document[0] == deep_quoted_marker);
-
-    /* An alias head can itself survive marker erasure. Its summary must
-     * describe the rewritten source rather than only the written head. */
-    document[0] = marked_match;
-    cetta_petta_prepare_document_forms(universe, document, 1);
-    assert(tu_child(universe, document[0], 2u) == target);
-    assert(tu_head_sym(universe, tu_child(universe, document[0], 3u)) ==
-           g_builtin_syms.let);
-
-    AtomId outer_marker_elems[3] = {brand, type, quoted_match};
-    document[0] = tu_expr_from_ids(universe, outer_marker_elems, 3u);
-    cetta_petta_prepare_document_forms(universe, document, 1);
-    assert(tu_child(universe, document[0], 2u) == quote_target);
-    assert(tu_head_sym(universe, tu_child(universe, document[0], 3u)) ==
-           g_builtin_syms.let);
-    eval_set_library_context(&context);
-#endif
 
     AtomId deep_as_pattern = test_nest_unary_id(
         universe, box, as_pattern, DEEP_FINITE_DEPTH);
@@ -3412,66 +3364,6 @@ static void test_deep_callable_detection(
     petta_machine_destroy(&machine);
 }
 
-static void test_deep_functional_match_pattern(
-    Space *space, Arena *persistent, Arena *answers) {
-    enum { DEEP_FINITE_DEPTH = 4096 };
-    add_equation(
-        space, persistent,
-        "(: &self (SpaceOf Atom))");
-    add_equation(
-        space, persistent,
-        "(: deep-pattern-id (-[det]-> Atom Atom))");
-    add_equation(
-        space, persistent,
-        "(= (deep-pattern-id $value) $value)");
-
-    Atom *stored_box = atom_symbol(
-        persistent, "deep-functional-pattern-box");
-    Atom *stored_leaf = atom_symbol(
-        persistent, "deep-functional-pattern-leaf");
-    Atom *stored = test_nest_unary(
-        persistent, stored_box, stored_leaf,
-        DEEP_FINITE_DEPTH);
-    assert(stored_box && stored_leaf && stored);
-    space_add(space, stored);
-
-    Atom *box = atom_symbol(
-        answers, "deep-functional-pattern-box");
-    Atom *leaf = atom_symbol(
-        answers, "deep-functional-pattern-leaf");
-    Atom *det_head = atom_symbol(
-        answers, "deep-pattern-id");
-    Atom *det_call = atom_expr2(answers, det_head, leaf);
-    Atom *pattern = test_nest_unary(
-        answers, box, det_call, DEEP_FINITE_DEPTH);
-    Atom *match_head = atom_symbol_id(
-        answers, g_builtin_syms.match);
-    Atom *self = atom_symbol(answers, "&self");
-    Atom *truth = atom_symbol(answers, "true");
-    Atom *match_items[] = {
-        match_head, self, pattern, truth,
-    };
-    Atom *query = atom_expr(answers, match_items, 4u);
-    assert(box && leaf && det_head && det_call && pattern);
-    assert(match_head && self && truth && query);
-
-    PettaMachine machine;
-    assert(petta_machine_init(
-        &machine, space, answers, query, NULL, NULL));
-    Atom *answer = NULL;
-    Bindings environment;
-    assert(petta_machine_next(
-               &machine, &answer, &environment) ==
-           PETTA_MACHINE_STEP_ANSWER);
-    assert(atom_alpha_eq(answer, truth));
-    bindings_free(&environment);
-    assert(petta_machine_next(
-               &machine, &answer, &environment) ==
-           PETTA_MACHINE_STEP_EXHAUSTED);
-    bindings_free(&environment);
-    petta_machine_destroy(&machine);
-}
-
 static void format_nary_application(
     char *buffer, size_t capacity, const char *head,
     const char *argument_prefix, size_t argument_count) {
@@ -3489,215 +3381,6 @@ static void format_nary_application(
     }
     written = snprintf(buffer + used, capacity - used, ")");
     assert(written == 1);
-}
-
-static void expect_value_type(
-    Space *space, Arena *arena, const char *value_source,
-    const char *type_source, PettaTypecheckVerdict verdict) {
-    Atom *value = parse_one(arena, value_source);
-    Atom *required = parse_one(arena, type_source);
-    PettaTypecheckResult result;
-    assert(value && required);
-    assert(petta_typecheck_value(
-        space, arena, value, required, NULL, &result));
-    assert(result.fault == PETTA_TYPECHECK_FAULT_NONE);
-    if (result.verdict != verdict) {
-        fprintf(stderr,
-                "value-type mismatch in test: %s : %s expected=%s actual=%s reason=%s\n",
-                value_source, type_source,
-                petta_typecheck_verdict_name(verdict),
-                petta_typecheck_verdict_name(result.verdict),
-                petta_typecheck_reason_name(result.reason));
-    }
-    assert(result.verdict == verdict);
-}
-
-static void expect_type_compatibility(
-    Space *space, Arena *arena, const char *actual_source,
-    const char *required_source, PettaTypecheckVerdict verdict) {
-    Atom *actual = parse_one(arena, actual_source);
-    Atom *required = parse_one(arena, required_source);
-    PettaTypecheckResult result;
-    assert(actual && required);
-    assert(petta_typecheck_types(
-        space, arena, actual, required, &result));
-    assert(result.fault == PETTA_TYPECHECK_FAULT_NONE);
-    if (result.verdict != verdict) {
-        fprintf(stderr,
-                "type-compat mismatch in test: %s <= %s expected=%s actual=%s reason=%s\n",
-                actual_source, required_source,
-                petta_typecheck_verdict_name(verdict),
-                petta_typecheck_verdict_name(result.verdict),
-                petta_typecheck_reason_name(result.reason));
-    }
-    assert(result.verdict == verdict);
-}
-
-static PettaTypecheckCallable test_typecheck_callable(
-    void *context, Atom *value, CettaExprLen arity) {
-    (void)value;
-    bool callable = context && *(const bool *)context;
-    return callable && arity == 1u
-        ? PETTA_TYPECHECK_CALLABLE_YES
-        : PETTA_TYPECHECK_CALLABLE_NO;
-}
-
-static void test_native_residual_typecheck(
-    Space *space, Arena *persistent, Arena *scratch) {
-    add_equation(space, persistent, "(: ScoreAlias (Alias Number))");
-    add_equation(space, persistent,
-               "(: NominalA (Newtype %Undefined%))");
-    add_equation(space, persistent,
-               "(: NominalB (Newtype %Undefined%))");
-    add_equation(space, persistent,
-               "(: ScoreBrand (Newtype Number))");
-    add_equation(space, persistent,
-               "(: NominalCycle (Newtype NominalCycle))");
-    add_equation(space, persistent, "(: AliasCycleA (Alias AliasCycleB))");
-    add_equation(space, persistent, "(: AliasCycleB (Alias AliasCycleA))");
-    add_equation(space, persistent, "(: mixed-value (| Number String))");
-    add_equation(space, persistent, "(: numeric-value (| Number Number))");
-    add_equation(space, persistent,
-               "(: callable-value (-> Number Number))");
-    add_equation(space, persistent,
-               "(: det-callable-value (-[det]-> Number Number))");
-
-    expect_value_type(space, scratch, "1", "Number",
-                      PETTA_TYPECHECK_ESTABLISHED);
-    expect_value_type(space, scratch, "1", "String",
-                      PETTA_TYPECHECK_REFUTED);
-    expect_value_type(space, scratch, "$open", "Number",
-                      PETTA_TYPECHECK_UNDETERMINED);
-    expect_value_type(space, scratch, "(1 2 3)", "(List Number)",
-                      PETTA_TYPECHECK_ESTABLISHED);
-    expect_value_type(space, scratch, "(1 \"bad\" 3)", "(List Number)",
-                      PETTA_TYPECHECK_REFUTED);
-    expect_value_type(space, scratch, "(Pair 1 \"ok\")",
-                      "(Pair Number String)",
-                      PETTA_TYPECHECK_ESTABLISHED);
-    expect_value_type(space, scratch, "(Pair 1 False)",
-                      "(Pair Number String)",
-                      PETTA_TYPECHECK_REFUTED);
-    expect_value_type(space, scratch, "(2 \"first\")",
-                      "(Number String)",
-                      PETTA_TYPECHECK_ESTABLISHED);
-    expect_value_type(space, scratch, "((8 9) \"nested\")",
-                      "((Number Number) String)",
-                      PETTA_TYPECHECK_ESTABLISHED);
-    expect_value_type(space, scratch, "1", "(| String Number)",
-                      PETTA_TYPECHECK_ESTABLISHED);
-    expect_value_type(space, scratch, "1", "(| String Bool)",
-                      PETTA_TYPECHECK_REFUTED);
-    expect_value_type(space, scratch, "mixed-value", "Number",
-                      PETTA_TYPECHECK_REFUTED);
-    expect_value_type(space, scratch, "numeric-value", "Number",
-                      PETTA_TYPECHECK_ESTABLISHED);
-    expect_value_type(space, scratch, "1", "ScoreAlias",
-                      PETTA_TYPECHECK_ESTABLISHED);
-    expect_value_type(space, scratch, "\"bad\"", "ScoreAlias",
-                      PETTA_TYPECHECK_REFUTED);
-    expect_value_type(space, scratch, "1", "ScoreBrand",
-                      PETTA_TYPECHECK_ESTABLISHED);
-    expect_value_type(space, scratch, "\"bad\"", "ScoreBrand",
-                      PETTA_TYPECHECK_REFUTED);
-    expect_value_type(space, scratch, "1", "NominalCycle",
-                      PETTA_TYPECHECK_UNDETERMINED);
-
-    bool callable = true;
-    PettaTypecheckHooks callable_hooks = {
-        .context = &callable,
-        .callable = test_typecheck_callable,
-    };
-    PettaTypecheckResult arrow_result;
-    assert(petta_typecheck_value(
-        space, scratch, parse_one(scratch, "callable-value"),
-        parse_one(scratch, "(-> Number Number)"),
-        &callable_hooks, &arrow_result));
-    assert(arrow_result.verdict == PETTA_TYPECHECK_ESTABLISHED);
-    assert(petta_typecheck_value(
-        space, scratch, parse_one(scratch, "det-callable-value"),
-        parse_one(scratch, "(-> Number Number)"),
-        &callable_hooks, &arrow_result));
-    assert(arrow_result.verdict == PETTA_TYPECHECK_ESTABLISHED);
-    callable = false;
-    assert(petta_typecheck_value(
-        space, scratch, parse_one(scratch, "callable-value"),
-        parse_one(scratch, "(-> Number Number)"),
-        &callable_hooks, &arrow_result));
-    assert(arrow_result.verdict == PETTA_TYPECHECK_REFUTED);
-    assert(arrow_result.reason == PETTA_TYPECHECK_REASON_NONCALLABLE);
-
-    Atom *indexed_value = parse_one(scratch, "1");
-    Atom *indexed_type = parse_one(scratch, "ScoreAlias");
-    PettaTypecheckResult indexed_result;
-    assert(petta_typecheck_value(
-        space, scratch, indexed_value, indexed_type,
-        NULL, &indexed_result));
-    assert(indexed_result.verdict == PETTA_TYPECHECK_ESTABLISHED);
-    assert(indexed_result.declaration_lookup_cost.indexed_lookups > 0u);
-    assert(indexed_result.declaration_lookup_cost.full_space_rows_examined ==
-           0u);
-    assert(indexed_result.declaration_lookup_cost.indexed_rows_examined <
-           space_length64(space));
-
-    expect_type_compatibility(space, scratch, "NominalA", "NominalA",
-                              PETTA_TYPECHECK_ESTABLISHED);
-    expect_type_compatibility(space, scratch, "NominalA", "NominalB",
-                              PETTA_TYPECHECK_REFUTED);
-    expect_type_compatibility(space, scratch, "%Undefined%", "NominalA",
-                              PETTA_TYPECHECK_REFUTED);
-    expect_type_compatibility(space, scratch, "NominalA", "%Undefined%",
-                              PETTA_TYPECHECK_ESTABLISHED);
-    expect_type_compatibility(space, scratch, "NominalA", "Number",
-                              PETTA_TYPECHECK_REFUTED);
-    expect_type_compatibility(space, scratch, "ScoreBrand", "Number",
-                              PETTA_TYPECHECK_ESTABLISHED);
-    expect_type_compatibility(space, scratch, "ScoreBrand", "String",
-                              PETTA_TYPECHECK_REFUTED);
-    expect_type_compatibility(space, scratch, "Number", "ScoreBrand",
-                              PETTA_TYPECHECK_REFUTED);
-    expect_type_compatibility(
-        space, scratch, "ScoreBrand", "(| String ScoreBrand)",
-        PETTA_TYPECHECK_ESTABLISHED);
-    expect_type_compatibility(space, scratch, "AliasCycleA", "Number",
-                              PETTA_TYPECHECK_UNDETERMINED);
-    expect_type_compatibility(
-        space, scratch,
-        "(-[det]-> Number Number)",
-        "(-[semidet]-> Number Number)",
-        PETTA_TYPECHECK_ESTABLISHED);
-    expect_type_compatibility(
-        space, scratch,
-        "(-[semidet]-> Number Number)",
-        "(-[det]-> Number Number)",
-        PETTA_TYPECHECK_REFUTED);
-    expect_type_compatibility(
-        space, scratch,
-        "(-[nondet]-> Number Number)",
-        "(-> Number Number)",
-        PETTA_TYPECHECK_ESTABLISHED);
-    expect_type_compatibility(
-        space, scratch,
-        "(-[det]-> Number Number)",
-        "(-[nondet]-> Number Number)",
-        PETTA_TYPECHECK_ESTABLISHED);
-    expect_type_compatibility(
-        space, scratch,
-        "(-[det]-> Number Number)",
-        "(-[$effect]-> Number Number)",
-        PETTA_TYPECHECK_ESTABLISHED);
-    expect_type_compatibility(
-        space, scratch,
-        "(-[det]-> Number String)",
-        "(-[det]-> Number Number)",
-        PETTA_TYPECHECK_REFUTED);
-
-    PettaTypecheckResult malformed;
-    assert(!petta_typecheck_value(
-        space, scratch, parse_one(scratch, "1"),
-        parse_one(scratch, "()"), NULL, &malformed));
-    assert(malformed.fault == PETTA_TYPECHECK_FAULT_MALFORMED_TYPE);
-    assert(malformed.verdict == PETTA_TYPECHECK_UNDETERMINED);
 }
 
 static Atom *add_indexed_program_equation(
@@ -5210,68 +4893,6 @@ static bool test_program_equation_snapshot_lease(
         context, space, head, lease, stats);
 }
 
-static void test_elaborated_functional_pattern_plan(
-    TermUniverse *universe, Arena *persistent, Arena *answers) {
-    Space space;
-    memset(&space, 0xa5, sizeof space);
-    space_init_with_universe(&space, universe);
-    PettaProgram *program = petta_program_new();
-    assert(program);
-    const char *equations[] = {
-        "(: &self (SpaceOf Atom))",
-        "(: plan-alias (-[det]-> $a $b $a))",
-        "(= (plan-alias $value $pattern) (let $value $pattern $value))",
-        "(function-plan-row 1 one)",
-        "(function-plan-row 1 one)",
-        "(function-plan-row 2 two)",
-    };
-    for (size_t index = 0u; index < sizeof equations / sizeof equations[0]; index++)
-        add_compiled_program_equation(program, &space, persistent, equations[index]);
-    PettaMachineHost host = {
-        .context = program,
-        .candidate_snapshot_lease = test_program_equation_snapshot_lease,
-    };
-    const struct {
-        const char *query;
-        const char *answer;
-        size_t count;
-    } cases[] = {
-        {"(match &self (plan-alias $whole (function-plan-row 1 $label)) $whole)",
-         "(function-plan-row 1 one)", 2u},
-        {"(match &self (function-plan-row 1 (plan-alias $label one)) $label)",
-         "one", 2u},
-        {"(match &self (plan-alias $whole (function-plan-row 3 missing)) $whole)",
-         NULL, 0u},
-    };
-    for (size_t index = 0u; index < sizeof cases / sizeof cases[0]; index++) {
-        Atom *query = parse_one(answers, cases[index].query);
-        const PettaPlanNode *plan = petta_program_plan_current(program, query);
-        assert(query && plan);
-        Atom *expected = cases[index].answer
-            ? parse_one(answers, cases[index].answer) : NULL;
-        PettaMachine machine;
-        assert(petta_machine_init_with_plan(
-            &machine, &space, answers, query, plan, NULL, &host));
-        for (size_t result = 0u; result < cases[index].count; result++) {
-            Atom *answer = NULL;
-            Bindings environment;
-            assert(petta_machine_next(&machine, &answer, &environment) ==
-                   PETTA_MACHINE_STEP_ANSWER);
-            assert(atom_alpha_eq(answer, expected));
-            bindings_free(&environment);
-        }
-        Atom *answer = NULL;
-        Bindings environment;
-        assert(petta_machine_next(&machine, &answer, &environment) ==
-               PETTA_MACHINE_STEP_EXHAUSTED);
-        bindings_free(&environment);
-        petta_machine_destroy(&machine);
-    }
-    petta_program_free(program);
-    space_free(&space);
-    puts("PASS: elaborated functional patterns discard stale template plans and preserve duplicates and refusal");
-}
-
 typedef struct {
     PettaProgram *program;
     bool replaced_cons_fact_with_unknown;
@@ -6266,6 +5887,9 @@ static void test_constructor_slot_frame_plans(
     bindings_free(&environment);
     petta_machine_destroy(&machine);
 
+    /* A call planned while its head had an equation, reached after the
+     * last one was removed, is data over its arguments' values, as PeTTa's
+     * runtime dispatcher reifies it: the argument runs, the body does not. */
     assert(petta_machine_init_with_plan(
         &machine, &execution_space, answers,
         stale_query, stale_query_plan, NULL,
@@ -6274,7 +5898,8 @@ static void test_constructor_slot_frame_plans(
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_ANSWER);
-    assert(atom_alpha_eq(answer, stale_query));
+    assert(atom_alpha_eq(answer,
+                         parse_one(answers, "(stale-machine-call 3)")));
     bindings_free(&environment);
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
@@ -8014,13 +7639,12 @@ static void test_program_revision_view_transport(
          " occurrences and falls back safely after mutation");
 }
 
-static void test_program_analysis_sidecar_interop(
-    TermUniverse *universe, Arena *persistent, Arena *scratch) {
+static void test_program_annotation_rows(
+    TermUniverse *universe, Arena *persistent) {
     Space shared_space;
     space_init_with_universe(&shared_space, universe);
     PettaProgram *program = petta_program_new();
     assert(program);
-    assert(!petta_program_analysis_enabled(program));
 
     Atom *ordinary_annotation = add_indexed_program_equation(
         program, &shared_space, persistent,
@@ -8035,42 +7659,9 @@ static void test_program_analysis_sidecar_interop(
     assert(atom_eq(space_get_at64(&shared_space, 1u), code_shaped) &&
         atom_eq(space_get_at64(&shared_space, 2u), duplicate));
 
-    Atom **types = NULL;
-    assert(petta_program_declared_types(
-               program, ordinary_annotation->expr.elems[1],
-               scratch, &types) == 0u);
-    free(types);
-
-    assert(petta_program_enable_analysis(program));
-    assert(petta_program_analysis_enabled(program));
-    assert(space_length64(&shared_space) == 3u &&
-        atom_eq(space_get_at64(&shared_space, 1u), parse_one(scratch, "(sidecar-row (+ 1 2))")) &&
-        atom_eq(space_get_at64(&shared_space, 2u), parse_one(scratch, "(sidecar-row (+ 1 2))")));
-    types = NULL;
-    assert(petta_program_declared_types(
-               program, ordinary_annotation->expr.elems[1],
-               scratch, &types) == 1u);
-    assert(atom_alpha_eq(
-        types[0], parse_one(scratch, "OrdinarySharedType")));
-    free(types);
-
-    Atom *typed_annotation = add_indexed_program_equation(
-        program, &shared_space, persistent,
-        "(: typed-shared-value TypedSharedType)");
-    assert(space_length64(&shared_space) == 4u);
-    assert(space_get_at64(&shared_space, 0u) == ordinary_annotation);
-    assert(space_get_at64(&shared_space, 3u) == typed_annotation);
-    types = NULL;
-    assert(petta_program_declared_types(
-               program, typed_annotation->expr.elems[1],
-               scratch, &types) == 1u);
-    assert(atom_alpha_eq(
-        types[0], parse_one(scratch, "TypedSharedType")));
-    free(types);
-
     petta_program_free(program);
     space_free(&shared_space);
-    puts("PASS: semantic-ledger analysis sidecar preserves source rows and duplicate occurrences");
+    puts("PASS: program annotations preserve source rows and duplicate occurrences");
 }
 
 static void test_typed_data_purity_boundary(
@@ -8292,9 +7883,12 @@ static void expect_answers(
     const char *const *expected_sources, size_t expected_count) {
     Atom *query = parse_one(arena, query_source);
     assert(query);
+    /* PeTTa's host reading (petta_eval_machine_host): typed calls take the
+     * joint protocol. */
+    PettaMachineHost host = {.forms_are_written_syntax = true};
     PettaMachine machine;
     assert(petta_machine_init(
-        &machine, space, arena, query, NULL, NULL));
+        &machine, space, arena, query, NULL, &host));
 
     for (size_t index = 0u; index < expected_count; index++) {
         Atom *answer = NULL;
@@ -8998,6 +8592,8 @@ static PettaMachineHost resume_contract_host(
         ResumeContractProbe *probe, Arena *arena, Atom *visible) {
     return (PettaMachineHost){
         .context = probe,
+        /* PeTTa's typed calls: the joint protocol. */
+        .forms_are_written_syntax = true,
         .permit_transition = resume_contract_permit,
         .classify = resume_contract_classify,
         .evaluate = resume_contract_effect,
@@ -9551,6 +9147,8 @@ static void test_table_hash_domains(Arena *owner) {
                 assert(table);
                 PettaMachineHost host = {
                     .context = &probe,
+                    /* PeTTa's typed calls: the joint protocol. */
+                    .forms_are_written_syntax = true,
                     .tabled_relation_contains = memoized ? NULL : table_probe_contains,
                     .memoized_relation_contains = memoized ? table_probe_contains : NULL,
                     .shared_table = table,
@@ -10692,7 +10290,6 @@ static void test_deterministic_heap_collection(
         stats.deterministic_root_atom_bytes_promoted ==
         stats.deterministic_query_atom_bytes_promoted +
             stats.deterministic_visible_atom_bytes_promoted +
-            stats.deterministic_type_atom_bytes_promoted +
             stats.deterministic_goal_atom_bytes_promoted);
     assert(
         stats.deterministic_goal_atom_bytes_promoted ==
@@ -11451,84 +11048,6 @@ static void test_terminal_match_count_fold(
     petta_machine_destroy(&machine);
 }
 
-static PettaMachineBoundaryResult test_analysis_boundary_accept(
-    void *context, Space *space, Atom *call,
-    char *diagnostic, size_t diagnostic_size) {
-    (void)context;
-    (void)space;
-    (void)call;
-    if (diagnostic && diagnostic_size > 0u)
-        diagnostic[0] = '\0';
-    return PETTA_MACHINE_BOUNDARY_ACCEPTED;
-}
-
-typedef struct {
-    uint64_t calls;
-    bool mutate_during_first_judgment;
-} TestAnalysisAuthority;
-
-static bool test_analysis_authority_token(
-    void *opaque, PettaMachineAuthorityToken *token) {
-    TestAnalysisAuthority *authority = opaque;
-    if (!authority || !token)
-        return false;
-    authority->calls++;
-    uint64_t revision =
-        authority->mutate_during_first_judgment &&
-        authority->calls >= 3u ? 2u : 1u;
-    *token = (PettaMachineAuthorityToken){
-        .words = {UINT64_C(7), revision},
-        .length = 2u,
-    };
-    return true;
-}
-
-static uint32_t test_analysis_policy_identity(void *opaque) {
-    (void)opaque;
-    return 0u;
-}
-
-static bool test_analysis_judge_value(
-    void *opaque, Space *space, Arena *scratch,
-    Atom *value, Atom *requirement,
-    PettaAnalysisCallableFn callable, void *callable_context,
-    PettaAnalysisResult *result) {
-    (void)opaque;
-    PettaTypecheckHooks hooks = {
-        .context = callable_context,
-        .callable = callable,
-    };
-    return petta_typecheck_value(
-        space, scratch, value, requirement, &hooks, result);
-}
-
-static bool test_analysis_has_runtime_classifier(
-    void *opaque, Space *space, Atom *requirement) {
-    (void)opaque;
-    return petta_typecheck_type_has_runtime_classifier(
-        space, requirement);
-}
-
-static Atom *test_analysis_type_error_atom(
-    void *opaque, Arena *arena, Atom *value, Atom *requirement,
-    PettaAnalysisReason reason) {
-    (void)opaque;
-    (void)reason;
-    return petta_semantics_type_mismatch_error(arena, value, requirement);
-}
-
-static Atom *test_analysis_overload_error_atom(
-    void *opaque, Arena *arena, Atom *function) {
-    (void)opaque;
-    return petta_semantics_no_matching_overload_error(arena, function);
-}
-
-static const char *test_analysis_reason_name(
-    void *opaque, PettaAnalysisReason reason) {
-    (void)opaque;
-    return petta_typecheck_reason_name(reason);
-}
-
 static const CettaNikDirectAuthorityV1 test_direct_authority = {
     .alias = "TEST-ANALYSIS",
     .system_id = "test.analysis",
@@ -11538,78 +11057,8 @@ static const CettaNikDirectAuthorityV1 test_direct_authority = {
     .realization_abi = 1u,
 };
 
-static const PettaAnalysisService test_analysis_service = {
-    .authority = &test_direct_authority,
-    .capabilities = PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
-    .policy_identity = test_analysis_policy_identity,
-    .mutable_authority_token = test_analysis_authority_token,
-    .judge_value = test_analysis_judge_value,
-    .type_has_runtime_classifier =
-        test_analysis_has_runtime_classifier,
-    .type_error_atom = test_analysis_type_error_atom,
-    .overload_error_atom = test_analysis_overload_error_atom,
-    .reason_name = test_analysis_reason_name,
-    .validate_ready_call = test_analysis_boundary_accept,
-};
-
-static PettaMachineHostMode preparation_error_classify(
-        void *context, Space *space, Atom *expression) {
-    (void)context;
-    (void)space;
-    return atom_is_error(expression)
-        ? PETTA_MACHINE_HOST_READY_OVERRIDE : PETTA_MACHINE_HOST_NONE;
-}
-
-static bool preparation_error_evaluate(
-        void *context, Space *space, Arena *arena, Atom *expression,
-        const Bindings *environment, OutcomeSet *outcomes,
-        CettaCallOutcome *end, const CettaDelayView *delay) {
-    (void)context;
-    (void)space;
-    (void)arena;
-    (void)environment;
-    (void)outcomes;
-    (void)delay;
-    assert(atom_is_error(expression));
-    *end = cetta_call_raised(expression);
-    return true;
-}
-
-static void test_preparation_installation_contract(
-        TermUniverse *universe, Arena *syntax, Arena *answers) {
-    Space space;
-    space_init_with_universe(&space, universe);
-    space_add(&space, parse_one(syntax,
-        "(: preparation-native-error (-> (| Number (Error $detail $context)) Number))"));
-    space_add(&space, parse_one(syntax,
-        "(= (preparation-native-error $value) 7)"));
-    TestAnalysisAuthority authority = {0};
-    PettaMachineHost host = {
-        .context = &authority,
-        .analysis = &test_analysis_service,
-        .classify_may_override = true,
-        .classify = preparation_error_classify,
-        .evaluate = preparation_error_evaluate,
-    };
-    Atom *query = parse_one(answers,
-        "(preparation-native-error (Error payload context))");
-    PettaMachine machine;
-    assert(query && petta_machine_init(&machine, &space, answers, query, NULL, &host));
-    Atom *answer = NULL;
-    Bindings environment;
-    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_ANSWER);
-    assert(atom_eq(answer, atom_int(answers, 7)));
-    bindings_free(&environment);
-    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_EXHAUSTED);
-    bindings_free(&environment);
-    petta_machine_destroy(&machine);
-    space_free(&space);
-    puts("PASS: native typed preparation installs Error-as-data authority before argument evaluation");
-}
-
 static void test_direct_authority_identity_contract(void) {
-    CettaNikDirectAuthorityV1 authority =
-        *test_analysis_service.authority;
+    CettaNikDirectAuthorityV1 authority = test_direct_authority;
     assert(cetta_nik_direct_authority_v1_is_valid(&authority));
 
     CettaNikDirectAuthorityStampV1 stamp;
@@ -11707,552 +11156,6 @@ static void test_direct_authority_identity_contract(void) {
     invalid = authority;
     invalid.system_id = NULL;
     assert(!cetta_nik_direct_authority_v1_is_valid(&invalid));
-}
-
-static void test_direct_source_binding_contract(void) {
-    const CettaNikDirectSourceBindingV1 *binding =
-        &petta_typecheck_v2_source_binding_v1;
-    assert(cetta_nik_direct_source_binding_v1_is_valid(binding));
-    assert(binding->authority ==
-        &petta_typecheck_v2_direct_authority_v1);
-    assert(strcmp(binding->schema_id, "finite-horn-gslt-v1") == 0);
-    assert(strcmp(
-        binding->presentation_id, "petta-typecheck-v2-guard") == 0);
-    assert(strcmp(
-        binding->semantic_scope,
-        "petta.typecheck-v2.guard-core") == 0);
-    assert(binding->coverage ==
-        CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT);
-    assert(binding->coverage !=
-        CETTA_NIK_DIRECT_SOURCE_COMPLETE_PRESENTATION);
-
-    CettaNikDirectSourceBindingV1 invalid = *binding;
-    invalid.semantic_scope = "";
-    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
-    invalid = *binding;
-    invalid.source_sha256 = "short";
-    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
-    invalid = *binding;
-    invalid.package_sha256 =
-        "EF8FBACD54E350DC0A25A965A457137714F06AEBBD1FD4756FFBB0838A8F84E2";
-    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
-    invalid = *binding;
-    invalid.coverage = (CettaNikDirectSourceCoverageV1)0;
-    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
-    invalid = *binding;
-    invalid.authority = NULL;
-    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
-
-    const CettaNikDirectSourceBindingV1 *boundary_binding =
-        &petta_typecheck_v2_boundary_core_source_binding_v1;
-    assert(cetta_nik_direct_source_binding_v1_is_valid(
-        boundary_binding));
-    assert(boundary_binding->authority == binding->authority);
-    assert(strcmp(
-        boundary_binding->presentation_id,
-        "petta-typecheck-v2-boundary-core-v1") == 0);
-    assert(strcmp(
-        boundary_binding->semantic_scope,
-        "petta.typecheck-v2.direct-boundary-requirement-core") == 0);
-    assert(boundary_binding->coverage ==
-        CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT);
-    invalid = *boundary_binding;
-    invalid.presentation_id = "";
-    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
-}
-
-static void add_boundary_signature(
-    Space *space, Arena *arena, const char *head) {
-    char source[256];
-    int length = snprintf(
-        source, sizeof(source),
-        "(: %s (-[det]-> (List Atom) Atom))", head);
-    assert(length > 0 && (size_t)length < sizeof(source));
-    Atom *signature = parse_one(arena, source);
-    assert(signature);
-    space_add(space, signature);
-}
-
-static PettaTypecheckBoundaryRequirement boundary_requirement_for(
-    PettaProgram *program, Space *space, const char *head) {
-    PettaTypecheckBoundaryRequirement requirement =
-        PETTA_TYPECHECK_BOUNDARY_NONE;
-    SymbolId head_id = symbol_intern_cstr(g_symbols, head);
-    assert(head_id != SYMBOL_ID_NONE);
-    assert(petta_typecheck_call_boundary_requirement(
-        program, space, head_id, 1u, 0u, &requirement));
-    return requirement;
-}
-
-static void test_boundary_requirement_calculus(
-    TermUniverse *universe, Arena *arena) {
-    PettaProgram *program = petta_program_new();
-    assert(program);
-    Space space;
-    space_init_with_universe(&space, universe);
-
-    add_boundary_signature(&space, arena, "boundary-list");
-    add_compiled_program_equation(
-        program, &space, arena,
-        "(= (boundary-list $items) (length $items))");
-    assert(boundary_requirement_for(
-               program, &space, "boundary-list") ==
-           PETTA_TYPECHECK_BOUNDARY_PROPER_LIST);
-
-    add_boundary_signature(&space, arena, "boundary-bool");
-    add_compiled_program_equation(
-        program, &space, arena,
-        "(= (boundary-bool $value) (not $value))");
-    assert(boundary_requirement_for(
-               program, &space, "boundary-bool") ==
-           PETTA_TYPECHECK_BOUNDARY_NONVAR);
-
-    add_compiled_program_equation(
-        program, &space, arena,
-        "(= (boundary-car-open $items) (car-atom $items))");
-    assert(boundary_requirement_for(
-               program, &space, "boundary-car-open") ==
-           PETTA_TYPECHECK_BOUNDARY_NONE);
-
-    add_compiled_program_equation(
-        program, &space, arena,
-        "(= (boundary-list-open $items) (length $items))");
-    assert(boundary_requirement_for(
-               program, &space, "boundary-list-open") ==
-           PETTA_TYPECHECK_BOUNDARY_NONE);
-
-    add_boundary_signature(&space, arena, "boundary-guarded-list");
-    add_compiled_program_equation(
-        program, &space, arena,
-        "(= (boundary-guarded-list $items)"
-        "   (if (is-expr $items) (length $items) fallback))");
-    assert(boundary_requirement_for(
-               program, &space, "boundary-guarded-list") ==
-           PETTA_TYPECHECK_BOUNDARY_NONE);
-
-    add_boundary_signature(&space, arena, "boundary-guarded-car");
-    add_compiled_program_equation(
-        program, &space, arena,
-        "(= (boundary-guarded-car $items)"
-        "   (if (== $items ()) fallback (car-atom $items)))");
-    assert(boundary_requirement_for(
-               program, &space, "boundary-guarded-car") ==
-           PETTA_TYPECHECK_BOUNDARY_NONE);
-
-    add_boundary_signature(&space, arena, "boundary-joined");
-    add_compiled_program_equation(
-        program, &space, arena,
-        "(= (boundary-joined $items)"
-        "   (and $items (length $items)))");
-    assert(boundary_requirement_for(
-               program, &space, "boundary-joined") ==
-           PETTA_TYPECHECK_BOUNDARY_PROPER_LIST);
-
-    add_boundary_signature(&space, arena, "boundary-mutation");
-    add_compiled_program_equation(
-        program, &space, arena,
-        "(= (boundary-mutation $items) unchanged)");
-    assert(boundary_requirement_for(
-               program, &space, "boundary-mutation") ==
-           PETTA_TYPECHECK_BOUNDARY_NONE);
-    Atom *mutation_equation = add_compiled_program_equation(
-        program, &space, arena,
-        "(= (boundary-mutation $items) (length $items))");
-    assert(boundary_requirement_for(
-               program, &space, "boundary-mutation") ==
-           PETTA_TYPECHECK_BOUNDARY_PROPER_LIST);
-    assert(space_remove(&space, mutation_equation));
-    petta_program_note_remove_one(program, &space, mutation_equation);
-    assert(boundary_requirement_for(
-               program, &space, "boundary-mutation") ==
-           PETTA_TYPECHECK_BOUNDARY_NONE);
-
-    space_free(&space);
-    petta_program_free(program);
-}
-
-static void test_inferred_signature_authority_provenance(
-    TermUniverse *universe, Arena *arena) {
-    PettaProgram *program = petta_program_new();
-    assert(program);
-    assert(petta_program_enable_analysis(program));
-    Space space;
-    space_init_with_universe(&space, universe);
-
-    CettaNikDirectAuthorityStampV1 first;
-    assert(cetta_nik_direct_authority_v1_stamp(
-        &test_direct_authority, 1u, &first));
-    CettaNikDirectAuthorityV1 replacement_authority =
-        test_direct_authority;
-    replacement_authority.realization_identity++;
-    CettaNikDirectAuthorityStampV1 replacement;
-    assert(cetta_nik_direct_authority_v1_stamp(
-        &replacement_authority, 1u, &replacement));
-    CettaNikDirectAuthorityStampV1 other_policy;
-    assert(cetta_nik_direct_authority_v1_stamp(
-        &test_direct_authority, 2u, &other_policy));
-    CettaNikDirectAuthorityV1 revised_authority =
-        test_direct_authority;
-    revised_authority.authority_revision++;
-    CettaNikDirectAuthorityStampV1 revised;
-    assert(cetta_nik_direct_authority_v1_stamp(
-        &revised_authority, 1u, &revised));
-
-    Atom *signature = parse_one(arena, "(-> Number Number)");
-    Atom *head = parse_one(arena, "typed-head");
-    assert(signature && head && head->kind == ATOM_SYMBOL);
-    petta_program_inferred_signatures_reset_under_authority(
-        program, &space, &first);
-    assert(petta_program_inferred_signature_put_under_authority(
-        program, &space, &first, head->sym_id, 1u, signature));
-    assert(petta_program_inferred_signatures_current_under_authority(
-        program, &space, &first));
-    assert(!petta_program_inferred_signatures_current_under_authority(
-        program, &space, &replacement));
-    assert(!petta_program_inferred_signatures_current_under_authority(
-        program, &space, &other_policy));
-    assert(!petta_program_inferred_signatures_current_under_authority(
-        program, &space, &revised));
-    assert(!petta_program_inferred_signatures_current(
-        program, &space));
-
-    Atom *copy = NULL;
-    assert(petta_program_inferred_signature_lookup_under_authority(
-        program, &space, &first, head->sym_id, 1u, arena, &copy));
-    assert(copy && atom_alpha_eq(copy, signature));
-    copy = NULL;
-    assert(!petta_program_inferred_signature_lookup_under_authority(
-        program, &space, &replacement,
-        head->sym_id, 1u, arena, &copy));
-    assert(!copy);
-
-    space_add(&space, parse_one(arena, "authority-mutation"));
-    assert(!petta_program_inferred_signatures_current_under_authority(
-        program, &space, &first));
-    petta_program_inferred_signatures_rebase_under_authority(
-        program, &space, &replacement);
-    assert(!petta_program_inferred_signatures_current_under_authority(
-        program, &space, &first));
-    petta_program_inferred_signatures_rebase_under_authority(
-        program, &space, &first);
-    assert(petta_program_inferred_signatures_current_under_authority(
-        program, &space, &first));
-
-    petta_program_inferred_signatures_reset(program, &space);
-    assert(petta_program_inferred_signature_put(
-        program, &space, head->sym_id, 1u, signature));
-    assert(petta_program_inferred_signatures_current(program, &space));
-    assert(!petta_program_inferred_signatures_current_under_authority(
-        program, &space, &first));
-
-    space_free(&space);
-    petta_program_free(program);
-}
-
-static void assert_typecheck_block_results_equal(
-    const PettaTypecheckBlockResult *left,
-    const PettaTypecheckBlockResult *right) {
-    assert(left && right);
-    assert(left->verdict == right->verdict);
-    assert(left->fault == right->fault);
-    assert(left->declarations_seen == right->declarations_seen);
-    assert(left->equations_checked == right->equations_checked);
-    assert(strcmp(left->diagnostic, right->diagnostic) == 0);
-}
-
-static void test_declaration_authority_parity(
-    TermUniverse *universe, Arena *arena) {
-    PettaProgram *legacy_program = petta_program_new();
-    PettaProgram *authority_program = petta_program_new();
-    PettaProgram *selected_program = petta_program_new();
-    assert(legacy_program && authority_program && selected_program);
-    Space legacy_space;
-    Space authority_space;
-    Space selected_space;
-    space_init_with_universe(&legacy_space, universe);
-    space_init_with_universe(&authority_space, universe);
-    space_init_with_universe(&selected_space, universe);
-
-    Atom *positive[] = {
-        parse_one(arena, "(: typed-id (-> Number Number))"),
-        parse_one(arena, "(= (typed-id $x) $x)"),
-    };
-    assert(positive[0] && positive[1]);
-    PettaTypecheckBlockResult legacy_positive;
-    PettaTypecheckBlockResult authority_positive;
-    bool legacy_judged = petta_typecheck_declaration_block(
-        legacy_program, &legacy_space, NULL,
-        positive, 2u, PETTA_TYPECHECK_POLICY_DEFAULT,
-        &legacy_positive);
-    bool authority_judged =
-        petta_typecheck_declaration_block_under_authority(
-            &petta_typecheck_v2_direct_authority_v1,
-            authority_program, &authority_space, NULL,
-            positive, 2u, PETTA_TYPECHECK_POLICY_DEFAULT,
-            &authority_positive);
-    assert(legacy_judged == authority_judged);
-    assert_typecheck_block_results_equal(
-        &legacy_positive, &authority_positive);
-    assert(authority_positive.verdict == PETTA_TYPECHECK_ESTABLISHED);
-
-    Atom *negative[] = {
-        parse_one(arena, "(: typed-bad (-> Number Number))"),
-        parse_one(arena, "(= (typed-bad $x) True)"),
-    };
-    assert(negative[0] && negative[1]);
-    PettaTypecheckBlockResult legacy_negative;
-    PettaTypecheckBlockResult authority_negative;
-    legacy_judged = petta_typecheck_declaration_block(
-        legacy_program, &legacy_space, NULL,
-        negative, 2u, PETTA_TYPECHECK_POLICY_DEFAULT,
-        &legacy_negative);
-    authority_judged =
-        petta_typecheck_declaration_block_under_authority(
-            &petta_typecheck_v2_direct_authority_v1,
-            authority_program, &authority_space, NULL,
-            negative, 2u, PETTA_TYPECHECK_POLICY_DEFAULT,
-            &authority_negative);
-    assert(legacy_judged == authority_judged);
-    assert_typecheck_block_results_equal(
-        &legacy_negative, &authority_negative);
-    assert(authority_negative.verdict == PETTA_TYPECHECK_REFUTED);
-
-    /* Declaring an admission boundary changes observability only: the direct
-     * negative judgment and diagnostic remain byte-for-byte identical. */
-    PettaTypecheckBlockResult admission_negative;
-    assert(petta_typecheck_declaration_admission_under_authority(
-        &petta_typecheck_v2_direct_authority_v1,
-        authority_program, &authority_space, NULL,
-        negative, 2u, PETTA_TYPECHECK_POLICY_DEFAULT,
-        &admission_negative));
-    assert_typecheck_block_results_equal(
-        &authority_negative, &admission_negative);
-
-    CettaNikDirectAuthorityV1 invalid =
-        petta_typecheck_v2_direct_authority_v1;
-    invalid.realization_identity = 0u;
-    PettaTypecheckBlockResult invalid_result;
-    assert(!petta_typecheck_declaration_block_under_authority(
-        &invalid, authority_program, &authority_space, NULL,
-        positive, 2u, PETTA_TYPECHECK_POLICY_DEFAULT,
-        &invalid_result));
-    assert(invalid_result.fault == PETTA_TYPECHECK_FAULT_INVALID_ARGUMENT);
-    assert(!petta_typecheck_declaration_admission_under_authority(
-        &invalid, authority_program, &authority_space, NULL,
-        positive, 2u, PETTA_TYPECHECK_POLICY_DEFAULT,
-        &invalid_result));
-    assert(invalid_result.fault == PETTA_TYPECHECK_FAULT_INVALID_ARGUMENT);
-
-    /* The qualified alternative is now the production selection.  An
-     * inferred fact must therefore be visible only under its exact direct
-     * authority and policy, never through the unqualified legacy index. */
-    Atom *selected_forms[] = {
-        parse_one(arena, "(= (selected-id 1) 2)"),
-    };
-    assert(selected_forms[0]);
-    PettaTypecheckBlockResult selected_result;
-    assert(petta_typecheck_declaration_admission_selected(
-        selected_program, &selected_space, NULL,
-        selected_forms, 1u, PETTA_TYPECHECK_POLICY_DEFAULT,
-        &selected_result));
-    assert(selected_result.verdict == PETTA_TYPECHECK_ESTABLISHED);
-    CettaNikDirectAuthorityStampV1 selected_stamp;
-    assert(cetta_nik_direct_authority_v1_stamp(
-        &petta_typecheck_v2_direct_authority_v1,
-        (uint32_t)PETTA_TYPECHECK_POLICY_DEFAULT,
-        &selected_stamp));
-    assert(petta_program_inferred_signatures_current_under_authority(
-        selected_program, &selected_space, &selected_stamp));
-    assert(!petta_program_inferred_signatures_current(
-        selected_program, &selected_space));
-    Atom *selected_head = parse_one(arena, "selected-id");
-    Atom *selected_signature = NULL;
-    assert(selected_head && selected_head->kind == ATOM_SYMBOL);
-    assert(petta_program_inferred_signature_lookup_under_authority(
-        selected_program, &selected_space, &selected_stamp,
-        selected_head->sym_id, 1u, arena, &selected_signature));
-    assert(selected_signature);
-
-    space_free(&selected_space);
-    space_free(&authority_space);
-    space_free(&legacy_space);
-    petta_program_free(selected_program);
-    petta_program_free(authority_program);
-    petta_program_free(legacy_program);
-}
-
-static void test_analysis_capability_contract(
-    Space *space, Arena *answers) {
-    Atom *query = parse_one(answers, "1");
-    assert(query);
-    PettaMachine machine;
-    TestAnalysisAuthority authority = {0};
-
-    PettaMachineHost callback_without_capability = {
-        .context = &authority,
-        .analysis = &(const PettaAnalysisService){
-            .authority = &test_direct_authority,
-            .capabilities = PETTA_MACHINE_ANALYSIS_NONE,
-            .policy_identity = test_analysis_policy_identity,
-            .mutable_authority_token = test_analysis_authority_token,
-            .validate_ready_call = test_analysis_boundary_accept,
-        },
-    };
-    assert(!petta_machine_init(
-        &machine, space, answers, query, NULL,
-        &callback_without_capability));
-
-    PettaMachineHost capability_without_boundary = {
-        .context = &authority,
-        .analysis = &(const PettaAnalysisService){
-            .authority = &test_direct_authority,
-            .capabilities = PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
-            .policy_identity = test_analysis_policy_identity,
-            .mutable_authority_token = test_analysis_authority_token,
-            .judge_value = test_analysis_judge_value,
-            .type_has_runtime_classifier =
-                test_analysis_has_runtime_classifier,
-            .type_error_atom = test_analysis_type_error_atom,
-            .overload_error_atom = test_analysis_overload_error_atom,
-            .reason_name = test_analysis_reason_name,
-        },
-    };
-    assert(!petta_machine_init(
-        &machine, space, answers, query, NULL,
-        &capability_without_boundary));
-
-    PettaMachineHost capability_without_authority = {
-        .analysis = &(const PettaAnalysisService){
-            .capabilities = PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
-            .policy_identity = test_analysis_policy_identity,
-            .judge_value = test_analysis_judge_value,
-            .type_has_runtime_classifier =
-                test_analysis_has_runtime_classifier,
-            .type_error_atom = test_analysis_type_error_atom,
-            .overload_error_atom = test_analysis_overload_error_atom,
-            .reason_name = test_analysis_reason_name,
-            .validate_ready_call = test_analysis_boundary_accept,
-        },
-    };
-    assert(!petta_machine_init(
-        &machine, space, answers, query, NULL,
-        &capability_without_authority));
-
-    PettaMachineHost complete = {
-        .context = &authority,
-        .analysis = &test_analysis_service,
-    };
-    assert(petta_machine_init(
-        &machine, space, answers, query, NULL, &complete));
-    petta_machine_destroy(&machine);
-}
-
-static void test_analysis_authority_retry(
-    Space *space, Arena *answers) {
-    Atom *query = parse_one(
-        answers,
-        "(let $typed (the Number $x)"
-        "     (let 1 $x $typed))");
-    assert(query);
-    TestAnalysisAuthority authority = {
-        .mutate_during_first_judgment = true,
-    };
-    PettaMachineHost host = {
-        .context = &authority,
-        .analysis = &test_analysis_service,
-    };
-    PettaMachine machine;
-    assert(petta_machine_init(
-        &machine, space, answers, query, NULL, &host));
-    Atom *answer = NULL;
-    Bindings environment;
-    bindings_init(&environment);
-    assert(petta_machine_next(
-               &machine, &answer, &environment) ==
-           PETTA_MACHINE_STEP_ANSWER);
-    assert(answer && answer->kind == ATOM_GROUNDED &&
-           answer->ground.gkind == GV_INT &&
-           answer->ground.ival == 1);
-    assert(authority.calls >= 5u);
-    bindings_free(&environment);
-    petta_machine_destroy(&machine);
-}
-
-static void test_relational_obligation_guard_gc(
-    Space *space, Arena *persistent, Arena *answers) {
-    add_equation(
-        space, persistent,
-        "(= (get-type foo) RuntimeOnly)");
-    add_equation(
-        space, persistent,
-        "(= (guard-drain ()) done)");
-    add_equation(
-        space, persistent,
-        "(= (guard-drain (cons $head $tail))"
-        "   (guard-drain $tail))");
-
-    enum { ITEM_COUNT = 8192 };
-    Atom **items = cetta_malloc(
-        ITEM_COUNT * sizeof(*items));
-    Atom *item = atom_symbol(answers, "guard-item");
-    assert(item);
-    for (size_t index = 0u; index < ITEM_COUNT; index++)
-        items[index] = item;
-    Atom *list = atom_expr(answers, items, ITEM_COUNT);
-    free(items);
-    assert(list);
-
-    Atom *let_head = atom_symbol(answers, "let");
-    Atom *the_head = atom_symbol(answers, "the");
-    Atom *drain_head = atom_symbol(answers, "guard-drain");
-    Atom *runtime_only = atom_symbol(answers, "RuntimeOnly");
-    Atom *foo = atom_symbol(answers, "foo");
-    Atom *value = atom_var_with_id(
-        answers, "guard-value", fresh_var_id());
-    Atom *typed = atom_var_with_id(
-        answers, "guard-typed", fresh_var_id());
-    Atom *ignored = atom_var_with_id(
-        answers, "guard-ignored", fresh_var_id());
-    assert(let_head && the_head && drain_head && runtime_only && foo &&
-           value && typed && ignored);
-
-    Atom *ascription_items[] = {the_head, runtime_only, value};
-    Atom *ascription = atom_expr(answers, ascription_items, 3u);
-    Atom *drain_items[] = {drain_head, list};
-    Atom *drain = atom_expr(answers, drain_items, 2u);
-    Atom *after_drain_items[] = {let_head, ignored, drain, typed};
-    Atom *after_drain = atom_expr(answers, after_drain_items, 4u);
-    Atom *bind_items[] = {let_head, foo, value, after_drain};
-    Atom *bind = atom_expr(answers, bind_items, 4u);
-    Atom *query_items[] = {let_head, typed, ascription, bind};
-    Atom *query = atom_expr(answers, query_items, 4u);
-    assert(ascription && drain && after_drain && bind && query);
-
-    TestAnalysisAuthority authority = {0};
-    PettaMachineHost host = {
-        .context = &authority,
-        .analysis = &test_analysis_service,
-    };
-    PettaMachine machine;
-    assert(petta_machine_init(
-        &machine, space, answers, query, NULL, &host));
-    Atom *answer = NULL;
-    Bindings environment;
-    bindings_init(&environment);
-    assert(petta_machine_next(
-               &machine, &answer, &environment) ==
-           PETTA_MACHINE_STEP_ANSWER);
-    assert(atom_alpha_eq(answer, foo));
-    bindings_free(&environment);
-    PettaMachineStats stats;
-    assert(petta_machine_stats(&machine, &stats));
-    assert(stats.deterministic_heap_collections > 0u);
-    assert(stats.deterministic_heap_bytes_promoted > 0u);
-    assert(petta_machine_next(
-               &machine, &answer, &environment) ==
-           PETTA_MACHINE_STEP_EXHAUSTED);
-    bindings_free(&environment);
-    petta_machine_destroy(&machine);
 }
 
 typedef struct {
@@ -15885,7 +14788,7 @@ int main(int argc, char **argv) {
     if (collection_only)
         goto release_owners;
     if (ledger_only) {
-        test_program_analysis_sidecar_interop(&universe, &persistent, &answers);
+        test_program_annotation_rows(&universe, &persistent);
         goto release_owners;
     }
     if (segments_only) {
@@ -15910,7 +14813,6 @@ int main(int argc, char **argv) {
     if (arity_only) {
         test_type_call_arity(&answers);
         test_type_call_facts(&answers);
-        test_preparation_installation_contract(&universe, &persistent, &answers);
         goto release_owners;
     }
     if (worker_only) {
@@ -15972,18 +14874,8 @@ int main(int argc, char **argv) {
     test_worker_session_decisions(&answers);
     test_plain_scalar_truth_dispatch(&answers);
     test_typing_operator_identity();
-    test_analysis_capability_contract(&space, &answers);
-    test_preparation_installation_contract(&universe, &persistent, &answers);
     test_direct_authority_identity_contract();
-    test_direct_source_binding_contract();
     test_sequence_projection_views(&persistent);
-    test_boundary_requirement_calculus(&universe, &persistent);
-    test_inferred_signature_authority_provenance(
-        &universe, &answers);
-    test_declaration_authority_parity(&universe, &answers);
-    test_analysis_authority_retry(&space, &answers);
-    test_relational_obligation_guard_gc(
-        &space, &persistent, &answers);
     test_controller_batch_ranker();
     test_continuation_hub_atomic_reclamation();
     test_observation_frozen_environment(&answers);
@@ -16001,12 +14893,8 @@ int main(int argc, char **argv) {
     test_act_profile_memory();
     test_act_incremental_compression();
 
-    test_native_residual_typecheck(
-        &space, &persistent, &answers);
-
     test_constructor_slot_frame_plans(
         &universe, &persistent, &answers);
-    test_elaborated_functional_pattern_plan(&universe, &persistent, &answers);
     test_unknown_cons_fact_falls_back(
         &universe, &persistent, &answers);
     test_alpha_reconciled_slot_authority(
@@ -16026,8 +14914,7 @@ int main(int argc, char **argv) {
         &universe, &persistent);
     test_program_revision_view_transport(
         &universe, &persistent);
-    test_program_analysis_sidecar_interop(
-        &universe, &persistent, &answers);
+    test_program_annotation_rows(&universe, &persistent);
     test_typed_data_purity_boundary(
         &universe, &persistent);
     test_compiled_module_view_callability(&universe, &persistent);
@@ -16039,7 +14926,7 @@ int main(int argc, char **argv) {
         &universe, &persistent, &answers);
     test_match_decision_verification_receipt_revision(
         &universe, &persistent, &answers);
-    test_deep_typecheck_source_rewrites(&universe);
+    test_deep_source_rewrites(&universe);
     test_shared_value_observation();
     test_improper_value_observation();
     test_deep_cons_semantics(&answers);
@@ -16061,8 +14948,6 @@ int main(int argc, char **argv) {
         &space, &persistent, &answers);
     test_root_context_identity_import(&space, &persistent, &answers);
     test_specializer_capacity_fallback(
-        &space, &persistent, &answers);
-    test_deep_functional_match_pattern(
         &space, &persistent, &answers);
     test_deterministic_equation_elision(
         &space, &persistent, &answers);

@@ -1,0 +1,22 @@
+(Shown Symbol true () true)
+(Distinct false true)
+(Forged Symbol false ())
+(Planted () (2))
+true
+burned
+true
+(Collected ())
+(Written (5))
+true
+true
+true
+burned
+(Held (6))
+(Closure (7))
+(Composed ((8)))
+(Bag (9))
+(Pending (10 11))
+(Imported (1 2))
+true
+&space(17)
+&space(18)

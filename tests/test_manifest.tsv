@@ -76,6 +76,7 @@ tests/prime/conformance/unbounded_search.metta	prime	metta		any	native	test-prim
 tests/prime/first_class_contexts.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/function_faults.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/if_atom_data_boundary.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/let_result_survives_collection.metta	prime	metta		any	native	test-prime	golden	Prime let keeps a collected call's answer across mixed-lifetime Need paths
 tests/prime/native_hyp_path.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_application.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_demand_modes.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
@@ -113,6 +114,7 @@ tests/prime/rule_machine_revision_identity.metta	prime	metta		any	native	test-pr
 tests/prime/rule_machine_stale_program.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/search_controller_frontier.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/system_timed_force.metta	prime	metta		any	native	test-prime	golden	Prime explicit suspension timing and multiplicity regression
+tests/prime/typed_call_routes.metta	prime	metta		any	native	test-prime	golden	Prime typed-call answers, errors and effects on every call route and execution tier
 tests/prime_02_completion_resources.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/spec_include_unit.metta	he	metta	extended	main	native	test	golden	-
 tests/spec_mod_space_missing.metta	he	metta	extended	main	native	test	golden	-

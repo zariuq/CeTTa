@@ -15,9 +15,7 @@ def main():
     args = parser.parse_args()
     binary, fixtures = args.cetta.resolve(), args.fixtures.resolve()
     profiles = [(['--lang', 'petta'], False),
-                (['--lang', 'petta@1.1'], True),
-                (['--lang', 'petta', '--profile', 'typecheck-v2'], True),
-                (['--lang', 'petta', '--profile', 'typecheck-v3'], True)]
+                (['--lang', 'petta@1.1.c'], True)]
     observations = 0
     for options, modern in profiles:
         expected = {
@@ -41,7 +39,7 @@ def main():
                     raise AssertionError((options, machine, case, actual, wanted))
                 observations += 1
             if modern:
-                run = subprocess.run([str(binary), *options, '--strict',
+                run = subprocess.run([str(binary), *options,
                                       str(fixtures / 'empty_car_uncaught.metta')],
                                      cwd=fixtures, env=environment,
                                      capture_output=True, text=True, timeout=30)

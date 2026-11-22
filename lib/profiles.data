@@ -22,7 +22,7 @@
     (Rows
       (Row CETTA_LANGUAGE_HE 0 "he" true "Current direct MeTTa/HE evaluator" CETTA_SYNTAX_METTA true false false false)
       (Row CETTA_LANGUAGE_MM2 1 "mm2" true "Direct MM2 lowering plus MORK-backed execution for pure program files" CETTA_SYNTAX_METTA false false false false)
-      (Row CETTA_LANGUAGE_PETTA 2 "petta" true "Corrected stable PeTTa, the default language (petta@1.1 is typed)" CETTA_SYNTAX_METTA false false true true)
+      (Row CETTA_LANGUAGE_PETTA 2 "petta" true "Corrected stable PeTTa, the default language (petta@1.1.c is its typed line)" CETTA_SYNTAX_METTA false false true true)
       (Row CETTA_LANGUAGE_AMBIENT 3 "ambient" false "Planned port from mettail-rust inventory" CETTA_SYNTAX_METTA false false false false)
       (Row CETTA_LANGUAGE_CALCULATOR 4 "calculator" false "Planned port from mettail-rust inventory" CETTA_SYNTAX_METTA false false false false)
       (Row CETTA_LANGUAGE_IMP 5 "imp" false "Planned port from mettail-rust inventory" CETTA_SYNTAX_METTA false false false false)
@@ -66,7 +66,6 @@
     (Rows
       (Row CETTA_LANGUAGE_VERSION_NONE 0)
       (Row CETTA_LANGUAGE_VERSION_PETTA_STABLE 6)
-      (Row CETTA_LANGUAGE_VERSION_PETTA_1_1 2)
       (Row CETTA_LANGUAGE_VERSION_PRIME_0_0_1 3)
       (Row CETTA_LANGUAGE_VERSION_HE_0_2_10 4)
       (Row CETTA_LANGUAGE_VERSION_PETTA_1_1_C 5)
@@ -90,8 +89,6 @@
       (Row 19 CETTA_PROFILE_PETTA_AI CETTA_PROFILE_PETTA_AI_VALUE CETTA_LANGUAGE_PETTA "ai" "Corrected stable PeTTa with sealed sorts: a function's declaration types its calls' answers, never an unevaluated application of it." false false false false CETTA_LANGUAGE_VERSION_PETTA_STABLE before)
       (Row 20 CETTA_PROFILE_TMETTA_NATIVE CETTA_PROFILE_TMETTA_NATIVE_VALUE CETTA_LANGUAGE_TMETTA "native" "Data-preserving arguments, explicit activation, constrained bag collection" false false false false CETTA_LANGUAGE_VERSION_TMETTA_0_1 before)
       (Row 21 CETTA_PROFILE_TMETTA_EAGER CETTA_PROFILE_TMETTA_EAGER_VALUE CETTA_LANGUAGE_TMETTA "eager" "Value-first arguments computed once, with explicit holding overrides" false false false false CETTA_LANGUAGE_VERSION_TMETTA_0_1 before)
-      (Row 8 CETTA_PROFILE_PETTA_TYPECHECK_V2 CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE CETTA_LANGUAGE_PETTA "typecheck-v2" "PeTTa with native Roman-compatible residual type checking." false true false false CETTA_LANGUAGE_VERSION_PETTA_1_1 typing)
-      (Row 13 CETTA_PROFILE_PETTA_TYPECHECK_V3 CETTA_PROFILE_PETTA_TYPECHECK_V3_VALUE CETTA_LANGUAGE_PETTA "typecheck-v3" "PeTTa with native v3 judgments and coherent typecheck-v2 delegation." false true false false CETTA_LANGUAGE_VERSION_PETTA_1_1 typing)
       (Row 4 CETTA_PROFILE_RHOCALC_STRICT_CORE CETTA_PROFILE_RHOCALC_STRICT_CORE_VALUE CETTA_LANGUAGE_RHOCALC "strict-core" "Strict-core rho-calculus without cost-layer extensions." false false false false CETTA_LANGUAGE_VERSION_NONE after)
       (Row 5 CETTA_PROFILE_RHOCALC_COST CETTA_PROFILE_RHOCALC_COST_VALUE CETTA_LANGUAGE_RHOCALC "cost" "Meredith cost-accounted rho extension (ground-signature token-gated slice)." false false false false CETTA_LANGUAGE_VERSION_NONE after)
       (Row 14 CETTA_PROFILE_RHOCALC_RHOMETTA CETTA_PROFILE_RHOCALC_RHOMETTA_VALUE CETTA_LANGUAGE_RHOCALC "rhometta" "Rho-calculus with inert MeTTa values and transactional COMM-time payload evaluation." false true false false CETTA_LANGUAGE_VERSION_NONE after)

@@ -1286,6 +1286,13 @@ static bool mm0_module_call(CettaLibraryContext *ctx, Space *space,
     return true;
 }
 
+/* The operations answering PeTTa values: langdef's text <-> codepoints. */
+static bool langdef_text_operation(const Atom *head) {
+    return atom_is_symbol((Atom *)head, "__cetta_lib_langdef_codepoints_symbol") ||
+           atom_is_symbol((Atom *)head, "__cetta_lib_langdef_codepoints_string") ||
+           atom_is_symbol((Atom *)head, "__cetta_lib_langdef_symbol_codepoints");
+}
+
 static const CettaNativeBuiltinModule g_native_modules[] = {
     {"binary", CETTA_NATIVE_IMPORT_BINARY, NULL, "binary:", cetta_binary_module_call, NULL},
     {"heap", CETTA_NATIVE_IMPORT_HEAP, NULL, "heap:", cetta_heap_module_call, NULL},
@@ -1294,8 +1301,10 @@ static const CettaNativeBuiltinModule g_native_modules[] = {
     {"work", CETTA_NATIVE_IMPORT_WORK, NULL, "work:", cetta_work_module_call,
      "work-new work-take work-budget work-cancel work-record work-route work-count work-exists"},
     {"gparse", CETTA_NATIVE_IMPORT_GPARSE, gparse_dispatch, NULL, NULL, NULL},
-    /* Language definitions and parser trees retain their authored constructors. */
-    {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, NULL, NULL, langdef_module_call, NULL},
+    /* Language definitions and parser trees retain their authored
+     * constructors; its text operations answer PeTTa sequences. */
+    {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, NULL, NULL, langdef_module_call, NULL,
+     langdef_text_operation},
     {"pat", CETTA_NATIVE_IMPORT_PAT, NULL, "pat:", cetta_pattern_module_call, NULL},
     {"lib_transform", CETTA_NATIVE_IMPORT_TRANSFORM, NULL, "tf:", cetta_eval_transform_module_call,
      "tf:run tf:split tf:propose tf:inst tf:fire tf:fire-into"},
@@ -1438,10 +1447,11 @@ bool cetta_native_module_call_active(struct CettaLibraryContext *ctx,
             !native_module_loaded(ctx, mod))
             continue;
         bool petta_terms = mod->term_language && native_module_petta_lane();
+        bool petta_answers = petta_terms && mod->term_language(head);
         Atom **module_args = petta_terms
             ? native_module_term_arguments(a, args, nargs) : args;
         if (mod->call && mod->call(ctx, space, a, head, module_args, nargs, out)) {
-            if (petta_terms)
+            if (petta_answers)
                 native_module_petta_outcome(a, out);
             return true;
         }
@@ -1449,7 +1459,7 @@ bool cetta_native_module_call_active(struct CettaLibraryContext *ctx,
             ? mod->dispatch(ctx, space, a, head, module_args, nargs) : NULL;
         if (result) {
             *out = cetta_call_value(
-                petta_terms ? native_module_petta_value(a, result) : result);
+                petta_answers ? native_module_petta_value(a, result) : result);
             return true;
         }
     }

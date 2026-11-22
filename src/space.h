@@ -378,6 +378,11 @@ typedef struct Space {
     /* The atoms added and removed while a reader reads the space as it
        stood when it began (space.c, "Entry reads"); NULL while none does. */
     struct SpaceJournal *journal;
+    /* The number N of the name &space(N) a PeTTa program sees for a space
+       new-space made, or 0 for a space with no generated name.  The name is
+       the space's identity, not its text: text spelled the same is another
+       symbol.  Given once, from a counter no collection resets. */
+    uint64_t display_serial;
 } Space;
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
@@ -397,6 +402,9 @@ static inline Space *space_mutation_target(Space *s) {
     return s && s->module_own_view ? (Space *)s->overlay_base : s;
 }
 void space_init(Space *s);
+/* The next number for a generated space name, &space(N): numbers are never
+   reused, and no collection changes which one comes next. */
+uint64_t space_next_display_serial(void);
 /* Mark the current contents as imported-module atoms.  False, leaving the
    space unchanged, for an overlay or a stack, queue or hash space. */
 bool space_mark_imported_prefix(Space *s);
@@ -1587,6 +1595,9 @@ typedef struct {
     /* Bindings not beginning with `&`. HE reads both kinds as tokens;
        other dialects retain their own named-space evaluation policy. */
     uint32_t word_len;
+    /* Bindings of names spelled as a generated space name, &space(...): while
+       there are none, no generated number can be a name in use. */
+    uint32_t space_spelled_len;
     RegistryEntry inline_entries[16];
     NameKeyTable *name_keys;
     /* Open-addressed entry index. Slots store entry-index + 1; zero is empty.

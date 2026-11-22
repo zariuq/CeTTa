@@ -2976,24 +2976,32 @@ static bool oem_build_typed_protocol(OemCompile *compile,
                                      const OemLocalSource *local,
                                      uint32_t *out);
 
+/* The declarations of a call of HEAD on SUPPLIED arguments, as the host's
+ * profile reads them. */
+static bool oem_type_calls(const CettaOpenEquationHost *host,
+                           PettaProgram *petta, Space *space, Atom *head,
+                           CettaExprLen supplied, Arena *arena,
+                           PettaTypeCall **calls, uint32_t *count,
+                           bool *hold_body) {
+    bool found = petta_program_type_calls(petta, space, head, supplied, arena,
+                                          calls, count, hold_body);
+    if (found && host && host->call_contracts)
+        petta_type_calls_leave_variable_types_unchecked(*calls, *count);
+    return found;
+}
+
 /* A single signature whose domains require only raw retention or ordinary
  * translation and whose result has no guard has no rejecting branch. Its
  * preparation remains semantically relevant; its one-alternative dispatch
  * does not. */
-static bool oem_identity_typed_protocol(const OemCompile *compile,
-                                        const PettaTypeCall *call,
+static bool oem_identity_typed_protocol(const PettaTypeCall *call,
                                         bool hold_body) {
-    if (!call || hold_body)
-        return false;
-    bool contracts = compile->host->call_contracts;
-    if (call->guard_result &&
-        !(contracts && call->result_type->kind == ATOM_VAR))
+    if (!call || hold_body || call->guard_result)
         return false;
     for (CettaExprIndex index = 0u; index < call->arity; index++) {
         PettaTypeArgument requirement =
             petta_type_call_argument(call, index + 1u, false);
-        if (requirement.demand == PETTA_TYPE_TRANSLATE_AND_GUARD &&
-            !(contracts && requirement.formal->kind == ATOM_VAR))
+        if (requirement.demand == PETTA_TYPE_TRANSLATE_AND_GUARD)
             return false;
     }
     return true;
@@ -3008,12 +3016,11 @@ static bool oem_literal_types_intrinsic(const OemCompile *compile);
  * (petta_machine_schedule_joint_typed_call).  It does for one declaration
  * whose guards and result guard are closed types over the intrinsic type
  * relation, where a guard answers a value at most once.  Any other typed
- * call is the host's.  Call contracts keep their own protocol. */
+ * call is the host's. */
 static bool oem_typed_call_per_declaration(const OemCompile *compile,
                                            const PettaTypeCall *calls,
                                            uint32_t count) {
-    if (!compile->host->declared_builtin_protocol ||
-        compile->host->call_contracts)
+    if (!compile->host->declared_builtin_protocol)
         return true;
     if (count != 1u || !oem_literal_types_intrinsic(compile))
         return false;
@@ -3049,7 +3056,7 @@ static bool oem_build_typed_call(OemCompile *compile, Atom *expr,
     PettaTypeCall *calls = NULL;
     uint32_t count = 0u;
     bool hold_body = false;
-    if (!petta_program_type_calls(compile->petta, program->space,
+    if (!oem_type_calls(compile->host, compile->petta, program->space,
             expr->expr.elems[0], expr->expr.len - 1u, &program->atoms,
             &calls, &count, &hold_body))
         return oem_reject(compile, "type family unavailable");
@@ -3119,7 +3126,7 @@ static bool oem_build_typed_call(OemCompile *compile, Atom *expr,
                                       program->trusted_relation, out);
     }
     if (count == 1u &&
-        oem_identity_typed_protocol(compile, &calls[0], hold_body)) {
+        oem_identity_typed_protocol(&calls[0], hold_body)) {
         OemLocalSource direct = {
             .rhs = expr, .plan = plan, .contract = calls[0], .typed = true,
             .identity_typed = true,
@@ -3319,6 +3326,20 @@ static bool oem_builtin_source(const OemCompile *compile, const Atom *expr,
         petta_program_head_is_intrinsic(expr->expr.elems[0]->sym_id);
 }
 
+/* Whether a builtin source occurrence's output may be an authored
+ * alternative's: the current program holds one (a recorded read, so one
+ * installed later fails revalidation), or a goal that may change the program
+ * runs before the occurrence is reached (P-DEF-4).  Otherwise the occurrence
+ * will run the builtin alone, and its output is the builtin's. */
+static bool oem_builtin_output_open(OemCompile *compile, const Atom *expr,
+                                    const PettaPlanNode *plan, bool preceded) {
+    if (!oem_builtin_source(compile, expr, plan))
+        return false;
+    return preceded || compile->host->builtin_equations(
+        compile->host->context, compile->program->space,
+        expr->expr.elems[0]->sym_id, expr->expr.len - 1u);
+}
+
 static bool oem_build_value_native(OemCompile *compile, Atom *expr,
                                    const PettaPlanNode *plan, uint32_t depth,
                                    uint32_t *out);
@@ -3419,9 +3440,9 @@ static bool oem_build_declared_builtin(OemCompile *compile, Atom *expr,
     PettaTypeCall *calls = NULL;
     uint32_t count = 0u;
     bool hold_body = false;
-    bool planned = petta_program_type_calls(compile->petta, program->space,
-        expr->expr.elems[0], arity, &program->atoms, &calls, &count,
-        &hold_body);
+    bool planned = oem_type_calls(compile->host, compile->petta,
+        program->space, expr->expr.elems[0], arity, &program->atoms, &calls,
+        &count, &hold_body);
     PettaTypeCall call = planned && count == 1u ? calls[0] : (PettaTypeCall){0};
     free(calls);
     if (!planned || count != 1u || hold_body || call.arity != arity ||
@@ -3442,9 +3463,7 @@ static bool oem_build_declared_builtin(OemCompile *compile, Atom *expr,
     uint32_t steps = 0u;
     uint32_t guards = 0u;
     uint32_t guard_index = 0u;
-    bool contracts = compile->host->call_contracts;
-    bool guard_result = call.guard_result &&
-        !(contracts && call.result_type->kind == ATOM_VAR);
+    bool guard_result = call.guard_result;
     bool literals_intrinsic = oem_literal_types_intrinsic(compile);
     /* With every argument a variable or a literal, no argument changes the
      * program between the entry's check and a guard. */
@@ -3457,8 +3476,7 @@ static bool oem_build_declared_builtin(OemCompile *compile, Atom *expr,
     for (uint32_t index = 0u; ok && index < arity; index++) {
         PettaTypeArgument requirement =
             petta_type_call_argument(&call, index + 1u, false);
-        if (requirement.demand == PETTA_TYPE_TRANSLATE_AND_GUARD &&
-            !(contracts && requirement.formal->kind == ATOM_VAR))
+        if (requirement.demand == PETTA_TYPE_TRANSLATE_AND_GUARD)
             formals[guards++] = requirement.formal;
     }
     if (ok && guard_result)
@@ -3487,10 +3505,10 @@ static bool oem_build_declared_builtin(OemCompile *compile, Atom *expr,
             requirement.formal->kind == ATOM_SYMBOL &&
             petta_type_literal_proves(source, requirement.formal);
         if (ok && requirement.demand == PETTA_TYPE_TRANSLATE_AND_GUARD &&
-            !(contracts && requirement.formal->kind == ATOM_VAR) && proved)
+            proved)
             guard_index++;
         if (ok && requirement.demand == PETTA_TYPE_TRANSLATE_AND_GUARD &&
-            !(contracts && requirement.formal->kind == ATOM_VAR) && !proved) {
+            !proved) {
             OemNode guard = {
                 .kind = OEM_N_HOST, .value = ready.exposed,
                 .host_fast = OEM_HOST_TYPE_ACCEPT,
@@ -3946,8 +3964,7 @@ static bool oem_build_value_native(OemCompile *compile, Atom *expr,
      * the host makes when the call runs (petta_machine_try_staged_typed_call). */
     if (!undefined && oem_apply_call(expr, plan) &&
         expr->expr.elems[0]->kind == ATOM_EXPR &&
-        compile->host && compile->host->declared_builtin_protocol &&
-        !compile->host->call_contracts) {
+        compile->host && compile->host->declared_builtin_protocol) {
         Atom *innermost = expr->expr.elems[0];
         while (innermost->kind == ATOM_EXPR && innermost->expr.len > 0u &&
                innermost->expr.elems[0]->kind == ATOM_EXPR)
@@ -5168,7 +5185,7 @@ static bool oem_known_output(OemCompile *compile, Atom *expr,
     if (depth > OEM_MAX_DEPTH)
         return oem_reject(compile, "expression too deep");
     while (plan && plan->output == PETTA_PLAN_OUTPUT_CHILD) {
-        if (oem_builtin_source(compile, expr, plan)) {
+        if (oem_builtin_output_open(compile, expr, plan, preceded)) {
             *kind_out = root ? OEM_OUTPUT_OPEN : OEM_OUTPUT_TEMPLATE;
             return root || oem_hole(compile, template_out);
         }
@@ -5186,7 +5203,7 @@ static bool oem_known_output(OemCompile *compile, Atom *expr,
         return oem_reject(compile, "output child");
     if (!plan || plan->output == PETTA_PLAN_OUTPUT_OPAQUE ||
         (preceded && plan->role == PETTA_PLAN_DATA) ||
-        oem_builtin_source(compile, expr, plan)) {
+        oem_builtin_output_open(compile, expr, plan, preceded)) {
         *kind_out = root ? OEM_OUTPUT_OPEN : OEM_OUTPUT_TEMPLATE;
         return root || oem_hole(compile, template_out);
     }
@@ -5588,17 +5605,12 @@ static bool oem_build_typed_protocol(OemCompile *compile,
     uint32_t count = 0u;
     uint32_t guards = 0u;
     uint32_t guard_index = 0u;
-    /* Under call contracts a position whose declared type is a variable has
-     * no guard: every value has a type it could take there. */
-    bool contracts = compile->host->call_contracts;
-    bool guard_result = local->contract.guard_result &&
-        !(contracts && local->contract.result_type->kind == ATOM_VAR);
+    bool guard_result = local->contract.guard_result;
     bool literals_intrinsic = oem_literal_types_intrinsic(compile);
     for (uint32_t index = 0u; ok && index < arity; index++) {
         PettaTypeArgument requirement = petta_type_call_argument(
             &local->contract, index + 1u, false);
-        if (requirement.demand == PETTA_TYPE_TRANSLATE_AND_GUARD &&
-            !(contracts && requirement.formal->kind == ATOM_VAR))
+        if (requirement.demand == PETTA_TYPE_TRANSLATE_AND_GUARD)
             formals[guards++] = requirement.formal;
     }
     if (ok && guard_result)
@@ -5623,8 +5635,7 @@ static bool oem_build_typed_protocol(OemCompile *compile,
             .kind = OEM_N_VALUE, .exposed = compile->nodes[argument].exposed,
         };
         ok = oem_node(compile, ready, &operands[index]);
-        if (ok && requirement.demand == PETTA_TYPE_TRANSLATE_AND_GUARD &&
-            !(contracts && requirement.formal->kind == ATOM_VAR)) {
+        if (ok && requirement.demand == PETTA_TYPE_TRANSLATE_AND_GUARD) {
             OemNode guard = {
                 .kind = OEM_N_HOST, .value = ready.exposed,
                 .host_fast = local->overload ? OEM_HOST_TYPE_MATCH
@@ -6889,13 +6900,12 @@ static bool oem_algebraic_recursive_protocol(
     uint32_t count = 0u;
     bool hold_body = false;
     Atom *name = atom_symbol_id(&scratch, head);
-    bool available = name && petta_program_type_calls(
-        petta, program->space, name, arity, &scratch,
+    bool available = name && oem_type_calls(
+        host, petta, program->space, name, arity, &scratch,
         &calls, &count, &hold_body);
-    OemCompile compile = {.host = host};
     bool admitted = available && !hold_body &&
         (count == 0u || (count == 1u && calls[0].arity == arity &&
-            oem_identity_typed_protocol(&compile, &calls[0], hold_body)));
+            oem_identity_typed_protocol(&calls[0], hold_body)));
     free(calls);
     arena_free(&scratch);
     return admitted;
@@ -7988,12 +7998,6 @@ typedef struct {
     uint32_t cell;
 } OemExported;
 
-/* Whether a named space declares a `SpaceOf` schema. */
-typedef struct {
-    SymbolId name;
-    bool schema;
-} OemSchemaEntry;
-
 typedef struct {
     Atom *left;
     Atom *right;
@@ -8348,11 +8352,6 @@ struct CettaOpenEquationCursor {
     /* The host's spelling of false and true, made once for the cursor, in
      * `names`: an answer or a host goal that holds one holds a copy. */
     Atom *truths[2];
-    /* Named spaces' schemas, known while `schema_epoch` is
-     * `authority_epoch + 1`. */
-    OemSchemaEntry *schemas;
-    uint32_t schema_len, schema_cap;
-    uint64_t schema_epoch;
     CettaOpenEquationStats stats;
 };
 
@@ -10281,39 +10280,6 @@ typedef struct {
     uint32_t depth;
 } OemEntry;
 
-/* Whether the named space `reference` declares a `SpaceOf` schema, which
- * elaborates a match's pattern in equation search.  Declarations are host
- * authorities, so an answer holds until the authority epoch moves. */
-static bool oem_space_has_schema(CettaOpenEquationCursor *cursor, Space *root,
-                                 Atom *reference) {
-    if (cursor->schema_epoch != cursor->authority_epoch + 1u) {
-        cursor->schema_len = 0u;
-        cursor->schema_epoch = cursor->authority_epoch + 1u;
-    }
-    for (uint32_t index = 0u; index < cursor->schema_len; index++) {
-        if (cursor->schemas[index].name == reference->sym_id)
-            return cursor->schemas[index].schema;
-    }
-    Atom **types = NULL;
-    uint32_t count = space_get_declared_types(root, &cursor->region,
-                                              reference, &types);
-    bool found = false;
-    for (uint32_t index = 0u; index < count && !found; index++) {
-        Atom *type = types[index];
-        const char *head = type && type->kind == ATOM_EXPR &&
-                type->expr.len == 2u &&
-                type->expr.elems[0]->kind == ATOM_SYMBOL
-            ? symbol_bytes(g_symbols, type->expr.elems[0]->sym_id) : NULL;
-        found = head && strcmp(head, "SpaceOf") == 0;
-    }
-    free(types);
-    if (oem_reserve((void **)&cursor->schemas, &cursor->schema_cap,
-                    cursor->schema_len + 1u, sizeof(*cursor->schemas)))
-        cursor->schemas[cursor->schema_len++] =
-            (OemSchemaEntry){.name = reference->sym_id, .schema = found};
-    return found;
-}
-
 /* Whether a row may unify with a match's resolved pattern: false only when
  * a position both terms fix differs.  A variable on either side, or a depth
  * past the check, is left to unification, so a row that unifies is never
@@ -11464,10 +11430,9 @@ static inline __attribute__((always_inline)) OemRun oem_match_step_mode(
     if (reference->kind == ATOM_SYMBOL) {
         if (!space && reference->sym_id == g_builtin_syms.self)
             space = program->space;
-        /* A symbol that names no space names a predicate; a schema
-         * elaborates the pattern.  Both are equation search's. */
-        if (!space ||
-            oem_space_has_schema(cursor, program->space, reference)) {
+        /* A symbol that names no space names a predicate, which is
+         * equation search's. */
+        if (!space) {
             return oem_match_host_step(cursor, program, pc, locals,
                                         local_count, cont, depth, step, reference);
         }
@@ -13744,8 +13709,8 @@ static uint32_t oem_template_child(const CettaOpenEquationProgram *program,
  * whether the space S has a row matching P, as the search machine answers
  * it where the space proves that ground matching is structural membership
  * (space_match_exists_ground_exact).  A template that is no value when the
- * step runs (with variables, the empty expression, Empty, an error), a named
- * space with a schema, a symbol naming no space, a pattern with variables
+ * step runs (with variables, the empty expression, Empty, an error), a
+ * symbol naming no space, a pattern with variables
  * and a space that cannot prove it are the host's, which answers the goal
  * whole. */
 static __attribute__((noinline)) OemRun oem_exists_step(
@@ -13797,8 +13762,7 @@ static __attribute__((noinline)) OemRun oem_exists_step(
     if (reference->kind == ATOM_SYMBOL) {
         if (!space && reference->sym_id == g_builtin_syms.self)
             space = program->space;
-        if (!space ||
-            oem_space_has_schema(cursor, program->space, reference))
+        if (!space)
             return OEM_RUN_DECLINED;
     }
     if (!space || atom_has_vars(pattern))
@@ -15403,8 +15367,8 @@ static bool oem_entry_facts_hold(CettaOpenEquationCursor *cursor,
                                   entry->version.instances[i]);
             break;
         case PETTA_CONTRACT_ENTRY_UNINTERPRETED_SPACE: {
-            /* The space as the version's match will resolve it; a schema
-             * or a name for no space sends that match to equation search. */
+            /* The space as the version's match will resolve it; a name for
+             * no space sends that match to equation search. */
             Atom *value = oem_deref(cursor, args[i]);
             Space *data = cursor->runtime.resolve_space
                 ? cursor->runtime.resolve_space(cursor->runtime.context,
@@ -15412,8 +15376,6 @@ static bool oem_entry_facts_hold(CettaOpenEquationCursor *cursor,
                                                 &cursor->region, value)
                 : NULL;
             admitted = data && data != program->space &&
-                !(value->kind == ATOM_SYMBOL &&
-                  oem_space_has_schema(cursor, program->space, value)) &&
                 petta_contract_memo_space(cursor->contract_memo,
                                           program->space, data);
             break;
@@ -15430,7 +15392,6 @@ static bool oem_entry_facts_hold(CettaOpenEquationCursor *cursor,
                                             name)
             : NULL;
         admitted = data && data != program->space &&
-            !oem_space_has_schema(cursor, program->space, name) &&
             petta_contract_memo_space(cursor->contract_memo, program->space,
                                       data);
         if (!admitted)
@@ -22069,7 +22030,6 @@ void cetta_open_equation_cursor_close(CettaOpenEquationCursor *cursor) {
     free(cursor->space_rows);
     free(cursor->space_row_keys);
     free(cursor->space_row_parts);
-    free(cursor->schemas);
     free(cursor->host_vars);
     free(cursor->pairs);
     free(cursor->walk);

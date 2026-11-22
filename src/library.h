@@ -138,7 +138,6 @@ struct PettaMachineTable;
 struct CettaPettaTokenSpaceClauseRegistry;
 
 struct CettaNikRuntimeV1;
-struct CettaPettaTypecheckV3;
 struct CettaPettaRuntimeState;
 struct CettaIoRuntime;
 struct CettaJsonLibraryRuntimeV1;
@@ -197,7 +196,6 @@ typedef struct CettaLibraryContext {
     CettaPettaLibraryPathRelation petta_library_paths;
     CettaImportedFile *imported_files;
     uint32_t imported_file_len, imported_file_cap;
-    uint32_t petta_trusted_library_import_depth;
     /* Set while an he-compat include that met a syntax fault keeps the
        statements it had already read. */
     bool include_fault_keeps_prefix;
@@ -287,7 +285,6 @@ typedef struct CettaLibraryContext {
     bool prime_relational_plan_enabled;
     struct CettaPettaRuntimeState *petta_runtime;
     PettaProgram *petta_program;
-    struct CettaPettaTypecheckV3 *petta_typecheck_v3;
     struct CettaPettaTokenSpaceClauseRegistry *
         petta_token_space_clause_registry;
     CettaLibPrologRuntime *lib_prolog;

@@ -1,6 +1,0 @@
-3
-(eval (quote (+ 1 2)))
-(+ 4 5)
-"bob"
-Error
-3

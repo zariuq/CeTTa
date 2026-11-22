@@ -109,7 +109,7 @@
     {"name": "nars_direct.metta", "mode": "self-check", "timeout": 60},
     {"name": "nars_tuffy.metta", "mode": "self-check", "timeout": 60},
     {"name": "nestedcons.metta", "mode": "self-check", "timeout": 60},
-    {"name": "new_space.metta", "mode": "self-check", "timeout": 60, "failing": "exit 1: error: observation incomplete: host-failure"},
+    {"name": "new_space.metta", "mode": "self-check", "timeout": 60},
     {"name": "newtons_method.metta", "mode": "self-check", "timeout": 60},
     {"name": "nilbc.metta", "mode": "self-check", "timeout": 60},
     {"name": "once.metta", "mode": "self-check", "timeout": 60},
