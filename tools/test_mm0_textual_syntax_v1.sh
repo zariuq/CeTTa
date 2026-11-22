@@ -3,11 +3,13 @@ set -euo pipefail
 
 usage() {
     printf '%s\n' \
-        'usage: test_mm0_textual_syntax_v1.sh --binary PATH --mm0-root PATH [--timeout SECONDS]'
+        'usage: test_mm0_textual_syntax_v1.sh --binary PATH [--scaling | --show-file FILE | --mm0-root PATH] [--timeout SECONDS]'
 }
 
 binary=
 mm0_root=
+show_file=
+scaling=0
 case_timeout=15
 
 while (($#)); do
@@ -22,6 +24,15 @@ while (($#)); do
             mm0_root=$2
             shift 2
             ;;
+        --show-file)
+            (($# >= 2)) || { usage >&2; exit 2; }
+            show_file=$2
+            shift 2
+            ;;
+        --scaling)
+            scaling=1
+            shift
+            ;;
         --timeout)
             (($# >= 2)) || { usage >&2; exit 2; }
             case_timeout=$2
@@ -34,7 +45,7 @@ while (($#)); do
     esac
 done
 
-[[ -n "$binary" && -x "$binary" && -n "$mm0_root" ]] || {
+[[ -n "$binary" && -x "$binary" ]] || {
     usage >&2
     exit 2
 }
@@ -76,16 +87,19 @@ guard_source_digest=$(awk -F '\t' '$1 == "source-digest" { print $2; exit }' "$g
     exit 1
 }
 
+run_parser() {
+    timeout "$case_timeout" "$binary" \
+        "$pack" "$lexical_nfa" "$guard_nfa" "$guard_evidence" \
+        "$guarded_nfa" "$1" "$regular_compiler_digest" "$guarded_compiler_digest"
+}
+
 run_case() {
     local input=$1
     local expected=$2
     local output status gll glr
 
     set +e
-    output=$(timeout "$case_timeout" "$binary" \
-        "$pack" "$lexical_nfa" "$guard_nfa" "$guard_evidence" \
-        "$guarded_nfa" "$input" \
-        "$regular_compiler_digest" "$guarded_compiler_digest" 2>&1)
+    output=$(run_parser "$input" 2>&1)
     status=$?
     set -e
     if ((status != 0)); then
@@ -96,11 +110,16 @@ run_case() {
 
     gll=$(awk -F '\t' '$1 == "gll-decision" { print $2 }' <<<"$output")
     glr=$(awk -F '\t' '$1 == "glr-decision" { print $2 }' <<<"$output")
-    if [[ "$gll" != "$expected" || "$glr" != "$expected" ]]; then
+    if [[ "$gll" != "$expected" || "$glr" != "$expected" ]] ||
+        ! grep -Fxq $'gll-outcome\tcompleted' <<<"$output" ||
+        ! grep -Fxq $'glr-outcome\tcompleted' <<<"$output"; then
         printf '%s\n' "$output" >&2
         printf 'MM0 textual syntax disagreement for %s: expected %s\n' \
             "$input" "$expected" >&2
         return 1
+    fi
+    if [[ "${3:-}" == work ]]; then
+        awk -F '\t' '$1 == "final-parse-work-items" { print $2 }' <<<"$output"
     fi
 }
 
@@ -109,10 +128,7 @@ run_semantic_discriminants() {
     local output status gll glr tag count
 
     set +e
-    output=$(timeout "$case_timeout" "$binary" \
-        "$pack" "$lexical_nfa" "$guard_nfa" "$guard_evidence" \
-        "$guarded_nfa" "$input" \
-        "$regular_compiler_digest" "$guarded_compiler_digest" 2>&1)
+    output=$(run_parser "$input" 2>&1)
     status=$?
     set -e
     if ((status != 0)); then
@@ -142,6 +158,43 @@ run_semantic_discriminants() {
         fi
     done
 }
+
+if [[ -n "$show_file" ]]; then
+    run_parser "$show_file" | awk -F '\t' '
+        $1 ~ /^(gll|glr)-(outcome|decision|result)$/ || $1 == "final-parse-work-items"'
+    exit
+fi
+
+if ((scaling)); then
+    mkdir -p "$root/runtime/qualification"
+    input=$(mktemp "$root/runtime/qualification/mm0-parser-scaling.XXXXXX")
+    trap 'rm -f "$input"' EXIT
+    work=()
+    for size in 4 8 16; do
+        for ((i = 0; i < size; ++i)); do
+            printf 'sort s%04d;\n' "$i"
+        done >"$input"
+        count=$(run_case "$input" accepted work)
+        [[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]] || {
+            echo 'MM0 parser did not report its work count' >&2
+            exit 1
+        }
+        work+=("$count")
+    done
+    printf 'MM0 parser work items for 4, 8, 16 declarations: %s\n' "${work[*]}"
+    # Distinct top-level declarations have a fixed-size grammar per item.
+    # A 20% allowance leaves room for batching; quadratic growth fails.
+    ((work[0] < work[1] && work[1] < work[2] &&
+      10 * (work[2] - work[1]) <= 24 * (work[1] - work[0])))
+    exit
+fi
+
+if [[ -z "$mm0_root" ]]; then
+    run_semantic_discriminants
+    run_case "$root/tests/langdef/mm0/textual_missing_terminator.mm0" rejected
+    printf '%s\n' '(MM0TextualSyntaxV1Summary 1 1 22 5 0)'
+    exit
+fi
 
 # The upstream groups classify full verification, not the parser alone.
 mkdir -p "$root/runtime/qualification"

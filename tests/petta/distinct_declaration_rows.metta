@@ -1,5 +1,5 @@
-; Distinct rows are typed alternatives: a call answers once for each row
-; that admits it, through a variable too.
+; Distinct rows are distinct declarations: a call that several of them admit
+; runs once for its tuple of argument values, through a variable too.
 (: g2 (-> Number Number))
 (: g2 (-> $t $t))
 (= (g2 $x) (+ $x 1))

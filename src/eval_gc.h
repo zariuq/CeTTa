@@ -199,22 +199,27 @@ static void eval_gc_region_leave(EvalGcRegionGuard *guard) {
  * collection can evacuate every pointer into the current survivor semispace,
  * rather than retaining all prior survivor generations until form exit.
  */
-static void eval_gc_root_frame_link(EvalGcRootFrame *frame,
-                                    CettaEvalGcFrameKind kind) {
+static inline EvalGc *eval_gc_current_ptr(void) {
+    return g_eval_gc_current ? g_eval_gc_current : &g_eval_gc_fallback;
+}
+
+static inline void eval_gc_root_frame_link(EvalGcRootFrame *frame,
+                                           CettaEvalGcFrameKind kind) {
     if (!frame)
         return;
-    if (!g_eval_gc.ready)
+    EvalGc *gc = eval_gc_current_ptr();
+    if (__builtin_expect(!gc->ready, 0))
         eval_gc_init_once();
     assert(!frame->linked);
     frame->kind = kind;
-    frame->previous = g_eval_gc.roots;
+    frame->previous = gc->roots;
     frame->linked = true;
     frame->precise_suspension = false;
-    g_eval_gc.roots = frame;
-    assert(g_eval_gc.root_frame_count < SIZE_MAX);
-    g_eval_gc.root_frame_count++;
+    gc->roots = frame;
+    assert(gc->root_frame_count < SIZE_MAX);
+    gc->root_frame_count++;
     if (kind == CETTA_EVAL_GC_FRAME_LEXICAL)
-        g_eval_gc.imprecise_lexical_roots++;
+        gc->imprecise_lexical_roots++;
 }
 
 static void eval_gc_root_frame_enter(EvalGcRootFrame *frame,
@@ -800,24 +805,29 @@ static inline void eval_gc_external_owner_guard_leave(
     }
 }
 
-static void eval_gc_root_frame_leave(EvalGcRootFrame *frame) {
+static void eval_gc_root_frame_unlink_non_top(EvalGc *gc,
+                                              EvalGcRootFrame *frame) {
+    EvalGcRootFrame *newer = gc->roots;
+    while (newer && newer->previous != frame)
+        newer = newer->previous;
+    if (newer)
+        newer->previous = frame->previous;
+}
+
+static inline void eval_gc_root_frame_leave(EvalGcRootFrame *frame) {
     if (!frame || !frame->linked)
         return;
-    assert(g_eval_gc.root_frame_count > 0u);
-    g_eval_gc.root_frame_count--;
-    if (g_eval_gc.roots == frame) {
-        g_eval_gc.roots = frame->previous;
-    } else {
-        EvalGcRootFrame *newer = g_eval_gc.roots;
-        while (newer && newer->previous != frame)
-            newer = newer->previous;
-        if (newer)
-            newer->previous = frame->previous;
-    }
+    EvalGc *gc = eval_gc_current_ptr();
+    assert(gc->root_frame_count > 0u);
+    gc->root_frame_count--;
+    if (__builtin_expect(gc->roots == frame, 1))
+        gc->roots = frame->previous;
+    else
+        eval_gc_root_frame_unlink_non_top(gc, frame);
     if (frame->kind == CETTA_EVAL_GC_FRAME_LEXICAL &&
         !frame->precise_suspension) {
-        assert(g_eval_gc.imprecise_lexical_roots > 0u);
-        g_eval_gc.imprecise_lexical_roots--;
+        assert(gc->imprecise_lexical_roots > 0u);
+        gc->imprecise_lexical_roots--;
     }
     frame->previous = NULL;
     frame->linked = false;

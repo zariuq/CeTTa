@@ -1184,7 +1184,10 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
   [CETTA_RUNTIME_COUNTER_RHO_HASH_VISIT] = "rho-hash-visit",
   [CETTA_RUNTIME_COUNTER_SPACE_OCCURRENCE_CURSOR_OPEN] = "space-occurrence-cursor-open",
   [CETTA_RUNTIME_COUNTER_SPACE_OCCURRENCE_CURSOR_ROW] = "space-occurrence-cursor-row",
+  [CETTA_RUNTIME_COUNTER_OPEN_EQUATION_ACTIVATION] = "open-equation-activation",
+  [CETTA_RUNTIME_COUNTER_OPEN_EQUATION_TERM_ADMISSION_NODE] = "open-equation-term-admission-node",
+  [CETTA_RUNTIME_COUNTER_MATCH_NATIVE_SUBST_TREE_ROW] = "match-native-subst-tree-row",
+  [CETTA_RUNTIME_COUNTER_MATCH_NATIVE_ROW_REMATCH] = "match-native-row-rematch",
 };
 
 #endif
-

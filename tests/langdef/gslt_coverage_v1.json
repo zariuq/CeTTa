@@ -230,7 +230,6 @@
   ],
   "production_recipes": {
     "tests/petta": [
-      "test-gslt-machine-registration-v1",
       "test-gslt-empty-relations-v1",
       "test-gslt-relational-premises-v1",
       "test-gslt-proof-value-boundary-v1",

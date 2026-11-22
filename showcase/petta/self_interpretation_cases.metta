@@ -1,3 +1,4 @@
+; Extended PeTTa self-interpretation cases for compare_self_interpretation.py.
 !(import! &self (library lib_transform))
 !(import! &self (library petta_machine))
 
@@ -521,8 +522,8 @@
 !(check an-argument-of-type-atom-does-not-run (quiet (println! SHOULD-NOT-RUN)))
 !(check an-expression-value-has-the-type-expression (exprs (tag a)))
 !(check a-body-is-answered-as-written-for-the-type-atom (held-body 6))
-!(check two-declarations-are-two-alternatives (collapse (mixed-body 6)))
-!(check each-declaration-evaluates-the-argument-for-itself (collapse (two-ways (+ 1 2))))
+!(check two-declarations-that-admit-a-call-run-it-once (collapse (mixed-body 6)))
+!(check an-argument-one-declaration-holds-is-evaluated-once (collapse (two-ways (+ 1 2))))
 !(check a-number-has-the-type-number (num-id 5))
 !(check a-symbol-with-a-declared-type (by-kind K1in))
 !(check the-second-declaration-admits-the-call (by-kind K2in))
@@ -841,9 +842,10 @@
     (collapse (collapse (superpose (found))))
     "(collapse (match &self (= (double $x) $body) found))")
 
-; Declared rows.  Each distinct row of a name is an alternative of its call, in
-; the order declared, and delivers each argument by its own parameter: as
-; written to a parameter typed Atom, evaluated and checked otherwise.
+; Declared rows.  A call that several distinct rows of a name admit runs once
+; for its tuple of argument values, in whatever order the rows were declared;
+; an argument is held as written only when every row types it Atom, and is
+; otherwise evaluated once and checked by each row that checks it.
 (: two-rows (-> Number Number))
 (: two-rows (-> $t $t))
 (: held-or-not (-> Atom Atom))
@@ -866,9 +868,9 @@
               (= (held-or-not $x) $x)
               (= (not-or-held $x) $x)
               (= (number-only $x) $x)))
-!(check each-distinct-row-answers (two-rows 1))
-!(check each-row-delivers-by-its-own-demand (held-or-not (+ 1 2)))
-!(check rows-answer-in-the-order-declared (not-or-held (+ 1 2)))
+!(check distinct-rows-that-admit-a-call-run-it-once (two-rows 1))
+!(check an-argument-one-row-holds-is-evaluated-once (held-or-not (+ 1 2)))
+!(check the-order-of-rows-changes-no-answer (not-or-held (+ 1 2)))
 !(check an-argument-of-another-type-gives-no-answer (number-only (superpose (1 a 2))))
 
 ; A request under once.  The operand of once that is an application by the

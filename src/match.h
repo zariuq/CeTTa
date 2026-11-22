@@ -673,6 +673,15 @@ bool bindings_exclusive_frame_publish_slots(
     BindingsExclusiveFrame *frame, BindingsBuilder *builder);
 uint64_t bindings_builder_frame_write_boundary(
     const BindingsBuilder *builder);
+/* Open an activation's frame: register SCHEMA as the complete frame of
+ * EPOCH and mark its write boundary at BOUNDARY, the write clock
+ * (bindings_builder_frame_write_boundary) when the activation began.  The
+ * activation's dense frames then read every binding it made, the bindings
+ * of its head included.  A schema without variables opens no frame.
+ * REF_OUT, when given, names the opened frame. */
+bool bindings_builder_open_activation_frame(
+    BindingsBuilder *builder, BindingsFrameSchema *schema,
+    CettaFrameIdentity epoch, uint64_t boundary, BindingsFrameRef *ref_out);
 bool bindings_exclusive_frame_has_external_writes(
     const BindingsExclusiveFrame *frame);
 bool bindings_exclusive_frame_aliases_normalized(

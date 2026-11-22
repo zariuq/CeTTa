@@ -134,9 +134,7 @@ CASES = (
   (resolve-name (quote (descriptor (change-state! name_effect 1))))
   (new-space))))
 !(get-state name_effect)
-!(collapse (match
-  (resolve-name (quote (descriptor (change-state! name_effect 1)))) (key $x) $x))
-""", ["true", "()", "0", "()"]),
+""", ["true", "()", "0"]),
     ("repeated transaction retirement leaves following plans live",
      SPACES + """(= (retire $n) (if (== $n 0) done
   (let $_ (transaction (let $s (space-union (get-state &left) (get-state &right))
@@ -197,6 +195,19 @@ def main():
                     f"FAIL: {name}, reference={reference}, exit={result.returncode}; "
                     f"actual={actual!r}, expected={expected!r}; {result.stderr}")
             print(f"PASS: {name}, reference={reference}")
+        # The descriptor names no space: a PeTTa space operand must be an
+        # atom, so a read through it is refused, its data still unevaluated.
+        result = run_source(binary, """!(bind! name_effect (new-state 0))
+!(collapse (match
+  (resolve-name (quote (descriptor (change-state! name_effect 1)))) (key $x) $x))
+""", env)
+        refusal = "(type_error atom (resolve-name (descriptor (change-state! name_effect 1))))"
+        if result.returncode == 0 or result.stdout.strip() or refusal not in result.stderr:
+            raise SystemExit(
+                f"FAIL: a read through an unbound PeTTa descriptor name, reference={reference}, "
+                f"exit={result.returncode}; {result.stdout!r}; {result.stderr!r}")
+        print(f"PASS: a read through an unbound PeTTa descriptor name is refused, "
+              f"reference={reference}")
     structural = """!(bind! (resolve-name (quote (tag one))) (new-space))
 !(add-atom (resolve-name (quote (tag one))) (key 5))
 !(collapse (match (resolve-name (quote (tag one))) (key $x) $x))

@@ -630,9 +630,11 @@ class CorpusTests(unittest.TestCase):
         self.assertEqual((self.examples / "tile.metta").read_text(), TILE)
         self.assertEqual(CORPUS.dump_manifest(manifest), self.manifest.read_text())
 
-    def test_the_gate_passes_then_names_every_drift(self) -> None:
+    def test_the_gate_rejects_recorded_failures_and_names_drift(self) -> None:
         self.sync()
-        summary, output = self.compare()
+        with self.assertRaisesRegex(RuntimeError, "1 example"):
+            self.compare()
+        summary, output = self.compare(require_match=False)
         self.assertEqual(summary["counts"], {"PASS": 3, "XFAIL": 1}, output)
         _, verify_output = quiet(
             CORPUS.verify_manifest, self.base, self.manifest, True,
@@ -660,11 +662,11 @@ class CorpusTests(unittest.TestCase):
         self.assertEqual(status, 0, output)
         self.assertIn("-done", output)
         self.assertIn("+changed", output)
-        self.assertEqual(self.compare()[0]["counts"], {"PASS": 3, "XFAIL": 1})
+        self.assertEqual(self.compare(require_match=False)[0]["counts"], {"PASS": 3, "XFAIL": 1})
         self.set_head("stable-fixed", COMMIT_B)
         with self.assertRaisesRegex(RuntimeError, "petta-corpus-sync"):
             self.accept()
-        _, output = self.compare()
+        _, output = self.compare(require_match=False)
         self.assertIn("NOTE: the base checkout is at bbbbbbbbbbbb", output)
 
     def test_sync_retires_an_overlay_the_base_now_contains(self) -> None:
@@ -680,7 +682,7 @@ class CorpusTests(unittest.TestCase):
         self.assertEqual(
             CORPUS.load_manifest(self.manifest)["base"], f"stable-fixed@{COMMIT_B}"
         )
-        self.assertEqual(self.compare()[0]["counts"], {"PASS": 3, "XFAIL": 1})
+        self.assertEqual(self.compare(require_match=False)[0]["counts"], {"PASS": 3, "XFAIL": 1})
 
     def test_sync_names_an_overlay_that_no_longer_applies(self) -> None:
         self.sync()
@@ -730,7 +732,7 @@ class CorpusTests(unittest.TestCase):
         status, _ = self.accept()
         self.assertEqual(status, 0)
         self.assertEqual(self.entries()["probe.metta"]["mode"], "negative")
-        self.assertEqual(self.compare()[0]["counts"], {"PASS": 4, "XFAIL": 1})
+        self.assertEqual(self.compare(require_match=False)[0]["counts"], {"PASS": 4, "XFAIL": 1})
         self.write_example("probe.metta", "!(assertEqual 1 1)\n")
         _, output = self.compare(require_match=False)
         self.assertIn("probe.metta: expected exit 1", output)

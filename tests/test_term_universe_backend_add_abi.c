@@ -1667,15 +1667,26 @@ static void test_byte_backed_rematch_delay(TermUniverse *universe, Arena *scratc
     space_free(&space);
 }
 
-static void test_subst_tree_live_branch_builder_witness(Arena *scratch) {
+static bool test_rows_are(const CettaIndex *rows, CettaIndex nrows,
+                          CettaIndex first, CettaIndex second) {
+    return nrows == 2u &&
+           ((rows[0] == first && rows[1] == second) ||
+            (rows[0] == second && rows[1] == first));
+}
+
+static void test_subst_tree_selects_rows(Arena *scratch) {
+    /* The tree only selects rows.  Its walk binds an indexed variable to
+     * the query term it meets, so a repeated variable must meet terms that
+     * unify; the rows it reaches are named by position, without bindings
+     * and without copying any. */
     SubstBucket bucket;
-    SubstMatchSet matches;
+    CettaIndex *rows = NULL;
+    CettaIndex nrows = 0u, crows = 0u;
+    Atom *repeated = var(scratch, "z", var_id_from_base(4103));
     Atom *query = expr3(scratch, sym(scratch, "pair"),
                         sym(scratch, "A"), sym(scratch, "B"));
 
     stree_bucket_init(&bucket);
-    smset_init(&matches);
-
     stree_bucket_insert(
         &bucket,
         expr3(scratch, sym(scratch, "pair"),
@@ -1686,89 +1697,97 @@ static void test_subst_tree_live_branch_builder_witness(Arena *scratch) {
         expr3(scratch, sym(scratch, "pair"),
               var(scratch, "y", var_id_from_base(4102)), sym(scratch, "C")),
         1);
+    stree_bucket_insert(
+        &bucket, expr3(scratch, sym(scratch, "pair"), repeated, repeated), 2);
 
+    /* (pair $y C) differs at C, and the repeated $z meets A and B. */
     reset_test_counters();
-    stree_query_bucket(&bucket, scratch, query, NULL, &matches);
+    stree_query_bucket(&bucket, scratch, query, &rows, &nrows, &crows);
+    assert(nrows == 1u && rows[0] == 0u);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_BINDINGS_CLONE) == 0);
 
-    assert(matches.len == 1);
-    assert(matches.items[0].atom_idx == 0);
-    assert(bindings_has_bound_values(&matches.items[0].bindings));
-    assert(test_counter(CETTA_RUNTIME_COUNTER_BINDINGS_CLONE) == 1);
-    /* Contextual variables live in their frame slots, not generic rows. */
-    BindingValue value = bindings_lookup_value_id(&matches.items[0].bindings,
-        var_epoch_id(var_id_from_base(4101u), matches.items[0].epoch));
-    assert(value.skeleton && atom_is_symbol_id(value.skeleton,
-        symbol_intern_cstr(g_symbols, "A")));
-    assert(!bindings_lookup_value_id(&matches.items[0].bindings,
-        var_epoch_id(var_id_from_base(4102u), matches.items[0].epoch)).skeleton);
+    /* A query variable meets any indexed term and binds nothing: the
+     * repeated $z then meets C alone.  Each consumer's match decides. */
+    nrows = 0u;
+    stree_query_bucket(
+        &bucket, scratch,
+        expr3(scratch, sym(scratch, "pair"),
+              var(scratch, "q", var_id_from_base(4104)), sym(scratch, "C")),
+        &rows, &nrows, &crows);
+    assert(test_rows_are(rows, nrows, 1u, 2u));
 
-    smset_free(&matches);
+    /* A walk appends its rows: several walks share one vector, as a
+     * space's query gathers the rows of several buckets. */
+    nrows = 0u;
+    stree_query_bucket(&bucket, scratch, query, &rows, &nrows, &crows);
+    stree_query_bucket(&bucket, scratch, query, &rows, &nrows, &crows);
+    assert(nrows == 2u && rows[0] == 0u && rows[1] == 0u);
+
+    free(rows);
     stree_bucket_free(&bucket);
 }
 
-static void test_subst_tree_ground_identity_capacity_bounded(
+static void test_subst_tree_rows_hold_no_identity_bounded(
         TermUniverse *universe, Arena *scratch) {
-    /* More occurrences than the live frame inventory: ground facts must not
-     * need variable identities, and duplicate occurrences must remain rows.
-     * The caller bounds the inventory to 2^16 handles. */
+    /* More occurrences than the live frame inventory, which the caller
+     * bounds to 2^16 handles: no row, ground or open, holds a frame
+     * identity, so every occurrence is filed, no acquisition is refused,
+     * and a reader still finds the inventory free.  Duplicate occurrences
+     * remain rows, and two occurrences of one open row stay two rows: their
+     * scopes are kept apart by each reader's renaming. */
     const CettaIndex count = ((CettaIndex)1u << 16) + 1u;
     Atom *ground = atom_int(scratch, 71819);
     Atom *open = var(scratch, "index-open", var_id_from_base(4171u));
     AtomId ground_id = term_universe_store_atom_id(universe, NULL, ground);
     AtomId open_id = term_universe_store_atom_id(universe, NULL, open);
     assert(ground_id != CETTA_ATOM_ID_NONE && open_id != CETTA_ATOM_ID_NONE);
+    uint64_t refusals = cetta_frame_identity_exhaustions();
     for (unsigned via_id = 0; via_id < 2u; via_id++) {
-        SubstBucket bucket;
-        stree_bucket_init(&bucket);
-        for (CettaIndex i = 0; i < count; i++) {
-            if (via_id)
-                assert(stree_bucket_insert_id(&bucket, universe, ground_id, i));
-            else
-                stree_bucket_insert(&bucket, ground, i);
-        }
-        assert(bucket.count == count);
-        assert(bucket.root->nints == 1u);
-        const SubstNode *leaf = bucket.root->ints[0].child;
-        assert(leaf->nleaves == count);
-        for (CettaIndex i = 0; i < count; i++) {
-            assert(leaf->leaves[i].idx == i);
-            assert(cetta_frame_identity_is_none(leaf->leaves[i].epoch));
-            assert(!leaf->leaves[i].owns_identity);
-        }
-        stree_bucket_free(&bucket);
+        for (unsigned is_open = 0; is_open < 2u; is_open++) {
+            SubstBucket bucket;
+            stree_bucket_init(&bucket);
+            for (CettaIndex i = 0; i < count; i++) {
+                if (via_id)
+                    assert(stree_bucket_insert_id(
+                        &bucket, universe, is_open ? open_id : ground_id, i));
+                else
+                    stree_bucket_insert(&bucket, is_open ? open : ground, i);
+            }
+            assert(bucket.count == count);
+            assert((is_open ? bucket.root->nslots : bucket.root->nints) == 1u);
+            const SubstNode *leaf = is_open ? bucket.root->slots[0].child
+                                            : bucket.root->ints[0].child;
+            assert(leaf->nleaves == count);
+            for (CettaIndex i = 0; i < count; i++)
+                assert(leaf->leaves[i] == i);
+            assert(cetta_frame_identity_exhaustions() == refusals);
+            CettaFrameIdentity probe = CETTA_FRAME_IDENTITY_NONE;
+            assert(cetta_frame_identity_acquire(&probe));
+            cetta_frame_identity_release(probe);
 
-        /* The optimization must not merge the scopes of two open rows. */
-        stree_bucket_init(&bucket);
-        for (CettaIndex i = 0; i < 2u; i++) {
-            if (via_id)
-                assert(stree_bucket_insert_id(&bucket, universe, open_id, i));
-            else
-                stree_bucket_insert(&bucket, open, i);
+            /* The ground query the rows meet selects every occurrence. */
+            CettaIndex *rows = NULL;
+            CettaIndex nrows = 0u, crows = 0u;
+            stree_query_bucket(&bucket, scratch, ground, &rows, &nrows, &crows);
+            assert(nrows == count);
+            for (CettaIndex i = 0; i < count; i++)
+                assert(rows[i] == i);
+            free(rows);
+            stree_bucket_free(&bucket);
         }
-        assert(bucket.root->nvars == 1u);
-        leaf = bucket.root->vars[0].child;
-        assert(leaf->nleaves == 2u);
-        assert(!cetta_frame_identity_eq(leaf->leaves[0].epoch, leaf->leaves[1].epoch));
-        assert(leaf->leaves[0].owns_identity && leaf->leaves[1].owns_identity);
-        CettaFrameIdentity epochs[2] = {
-            leaf->leaves[0].epoch, leaf->leaves[1].epoch
-        };
-        stree_bucket_free(&bucket);
-        assert(!cetta_frame_identity_retain(epochs[0]));
-        assert(!cetta_frame_identity_retain(epochs[1]));
     }
 }
 
 /* In a child, so that bounding the handle table leaves the rest of the
  * suite's identities alone. */
-static void test_subst_tree_ground_identity_capacity(TermUniverse *universe,
-                                                     Arena *scratch) {
+static void test_subst_tree_rows_hold_no_identity(TermUniverse *universe,
+                                                  Arena *scratch) {
     fflush(NULL);
     pid_t child = fork();
     assert(child >= 0);
     if (child == 0) {
         cetta_frame_identity_limit_handles(1u << 16);
-        test_subst_tree_ground_identity_capacity_bounded(universe, scratch);
+        test_subst_tree_rows_hold_no_identity_bounded(universe, scratch);
         _exit(0);
     }
     int status = 0;
@@ -1809,13 +1828,12 @@ static void test_subst_tree_adversarial_int_fanout(Arena *scratch) {
     assert(max_run < SNODE_HASH_THRESHOLD);
 
     for (uint32_t i = 0; i < KEY_COUNT; i++) {
-        SubstMatchSet matches;
-        smset_init(&matches);
+        CettaIndex *rows = NULL;
+        CettaIndex nrows = 0u, crows = 0u;
         stree_query_bucket(&bucket, scratch, atom_int(scratch, keys[i]),
-                           NULL, &matches);
-        assert(matches.len == 1);
-        assert(matches.items[0].atom_idx == i);
-        smset_free(&matches);
+                           &rows, &nrows, &crows);
+        assert(nrows == 1u && rows[0] == i);
+        free(rows);
     }
     stree_bucket_free(&bucket);
 }
@@ -2763,8 +2781,8 @@ int main(void) {
     test_native_conjunction_count_fold();
     test_imported_chunk_switchback_regression(&universe, &scratch);
     test_byte_backed_rematch_delay(&universe, &scratch);
-    test_subst_tree_live_branch_builder_witness(&scratch);
-    test_subst_tree_ground_identity_capacity(&universe, &scratch);
+    test_subst_tree_selects_rows(&scratch);
+    test_subst_tree_rows_hold_no_identity(&universe, &scratch);
     test_subst_tree_adversarial_int_fanout(&scratch);
     test_parser_direct_add_boundary(&universe, &scratch);
     test_bridge_structural_import_boundary(&universe, &scratch);

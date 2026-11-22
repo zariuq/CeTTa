@@ -90,6 +90,15 @@ typedef struct TmProgram {
 struct CettaTmettaRuntime {
     TmProgram *cached_program;
     pthread_mutex_t mutex;
+    /* The capture world: identities that stored rows keep, in their own
+     * namespace, and the knowledge committed about them. */
+    CettaFrameIdentityScope capture_scope;
+    CettaFrameIdentity capture_epoch;
+    Arena knowledge;
+    Bindings captures;
+    /* The complete schema of an opened frame of k slots, indexed by k. */
+    BindingsFrameSchema **slot_schemas;
+    uint32_t slot_schema_cap;
 };
 
 typedef struct TmScope {

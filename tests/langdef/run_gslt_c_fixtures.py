@@ -139,6 +139,18 @@ def main():
                         failed += 1
                         print("FAIL %s: PeTTa compilation exited %d: %s" % (name, done.returncode, done.stderr))
                         continue
+                    if name == "nondet_relations":
+                        definitions = [f for f in read_forms(program.read_text())
+                                       if isinstance(f, list) and len(f) == 3
+                                       and f[0] == "=" and isinstance(f[1], list)]
+                        # Member forwards its recursive result; Append must
+                        # still construct the left result's new prefix.
+                        for relation, forwarded in (("Member:01", True), ("Append:001", False)):
+                            head = "gslt:mode:" + relation
+                            bodies = [f[2] for f in definitions if f[1][:1] == [head]]
+                            actual = any(isinstance(b, list) and b[:1] == [head] for b in bodies)
+                            if len(bodies) != 2 or actual != forwarded:
+                                raise AssertionError(f"unexpected self-result forwarding for {relation}")
                     lines = [program.read_text()]
                     for entry, inputs in spelled:
                         values = read_forms(inputs)

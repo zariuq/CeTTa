@@ -7,7 +7,7 @@ File-data inputs are declared separately and remain opaque during code replay.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import fcntl
 import hashlib
 import json
@@ -239,6 +239,14 @@ def read_record(path):
     return record
 
 
+def require_completed(record):
+    """Unfinished programs and failed producer gates are not replay evidence."""
+    if record["process"].get("state") != "exited" or record["process"].get("returncode") != 0:
+        raise ValueError("source invocation did not complete successfully")
+    if record.get("source_gate") and record.get("source_gate_status") != 0:
+        raise ValueError("source gate did not complete successfully")
+
+
 @contextmanager
 def restored_inputs(path):
     """Restore only missing generated inputs, never replace a live source file."""
@@ -249,12 +257,79 @@ def restored_inputs(path):
             yield restored
 
 
+def declared_inputs(record):
+    """Each input a replay of RECORD reads, with the state it must find: its
+    digest, or None where it must be absent."""
+    return {source["path"]: None if source.get("kind") == "absent" else source["sha256"]
+            for source in record["sources"] + record["dependencies"] + record.get("data_inputs", [])}
+
+
+def replay_batches(paths):
+    """PATHS, records, grouped for replays that run side by side: the records
+    of a batch agree on the state of every input any of them declares, so
+    what one's restoration writes is what each other one reads.  A record
+    that cannot be read goes alone."""
+    batches = []
+    for path in paths:
+        try:
+            needs = declared_inputs(read_record(Path(path).resolve()))
+        except (OSError, ValueError, KeyError):
+            batches.append(dict(paths=[path], needs=None))
+            continue
+        for batch in batches:
+            if batch["needs"] is not None and all(
+                    batch["needs"].get(name, state) == state for name, state in needs.items()):
+                break
+        else:
+            batch = dict(paths=[], needs={})
+            batches.append(batch)
+        batch["paths"].append(path)
+        batch["needs"].update(needs)
+    return [batch["paths"] for batch in batches]
+
+
 @contextmanager
-def _restored_record_inputs(path, record):
+def restored_batch(paths):
+    """Restore the missing generated inputs of several records at once, for
+    replays that run side by side, under one hold of each context's lock.
+
+    Yields each path's record, or the error that refused it, in order.  Every
+    restored input stays until the batch ends.  The records must agree on
+    their inputs (replay_batches).
+    """
+    paths = [Path(path).resolve() for path in paths]
+    records = []
+    for path in paths:
+        try:
+            records.append(read_record(path))
+        except (OSError, ValueError) as error:
+            records.append(error)
+    roots = sorted({record["import_context"]["root"]
+                    for record in records if isinstance(record, dict)})
+    with ExitStack() as stack:
+        for root in roots:
+            stack.enter_context(_context_lock(Path(root), exclusive=True))
+        identities = {root: _context_identity(Path(root)) for root in roots}
+        restored = []
+        for path, record in zip(paths, records):
+            if not isinstance(record, dict):
+                restored.append(record)
+                continue
+            try:
+                restored.append(stack.enter_context(_restored_record_inputs(
+                    path, record, identities[record["import_context"]["root"]])))
+            except (OSError, ValueError) as error:
+                restored.append(error)
+        yield restored
+
+
+@contextmanager
+def _restored_record_inputs(path, record, current=None):
     context = record["import_context"]
     if record["unresolved_imports"]:
         raise ValueError("invocation has imports without captured resolution")
-    current = _context_identity(Path(context["root"]))
+    if current is None:
+        current = _context_identity(Path(context["root"]))
     if current["sha256"] != context["sha256"]:
         before, after = dict(context.get("files", [])), dict(current["files"])
         changed = sorted(path for path in before.keys() | after.keys()

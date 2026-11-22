@@ -154,30 +154,52 @@ MEGALODON_GSLT_READER_DEPS = $(MEGALODON_GSLT_NATIVE_C) $(MEGALODON_GSLT_READER_
 	native/rule_runtime/rc_rt.c native/rule_runtime/rc_rt.h \
 	native/rule_components/rc_atoms.c native/rule_components/rc_atoms.h
 
+# The ordinary, stats and sanitizer builds can all need these files. Build
+# and validate privately: nobody reads a compiler's temporary output or an
+# unprefixed probe header. Each published file is complete. A failed or
+# interrupted make must not delete a sibling make's published result.
+.PRECIOUS: $(MEGALODON_GSLT_PROGRAM) $(MEGALODON_GSLT_NATIVE_C) $(MEGALODON_GSLT_READER_NAMES)
+
 $(MEGALODON_GSLT_PROGRAM): $(GSLT_GROUND_RELATIONS_V1) $(CETTA_PETTA_GROUND_RELATIONS_V1) \
-		$(MEGALODON_GSLT_SOURCES) $(LANGDEF_COMPILER_V1_BIN) | $(MEGALODON_TEST_DIR)
+		$(MEGALODON_GSLT_SOURCES) $(LANGDEF_COMPILER_V1_BIN) native/megalodon/test.mk | $(MEGALODON_TEST_DIR)
+	@set -eu; \
+	work=$$(mktemp -d "$(dir $@).reader.XXXXXX"); \
+	trap 'rm -rf -- "$$work"' EXIT; \
 	$(LANGDEF_COMPILER_V1_BIN) petta-direct \
 		--source $(GSLT_GROUND_RELATIONS_V1) \
 		--source $(CETTA_PETTA_GROUND_RELATIONS_V1) \
 		$(foreach source,$(MEGALODON_GSLT_SOURCES),--source $(source)) \
-		$(MEGALODON_GSLT_ENTRY_MODES) --out $@ >/dev/null
+		$(MEGALODON_GSLT_ENTRY_MODES) --out "$$work/$(notdir $@)" >/dev/null; \
+	mv -- "$$work/$(notdir $@)" "$@"
 
 $(MEGALODON_GSLT_NATIVE_C): $(GSLT_GROUND_RELATIONS_V1) $(CETTA_PETTA_GROUND_RELATIONS_V1) \
-		$(MEGALODON_GSLT_SOURCES) $(LANGDEF_COMPILER_V1_BIN) $(RULEC_VALIDATE_BIN)
+		$(MEGALODON_GSLT_SOURCES) $(LANGDEF_COMPILER_V1_BIN) $(RULEC_VALIDATE_BIN) native/megalodon/test.mk
 	@mkdir -p $(dir $@)
+	@set -eu; \
+	work=$$(mktemp -d "$(dir $@).reader.XXXXXX"); \
+	trap 'rm -rf -- "$$work"' EXIT; \
+	out="$$work/$(notdir $@)"; \
 	$(LANGDEF_COMPILER_V1_BIN) petta-direct --target c \
 		--source $(GSLT_GROUND_RELATIONS_V1) \
 		--source $(CETTA_PETTA_GROUND_RELATIONS_V1) \
 		$(foreach source,$(MEGALODON_GSLT_SOURCES),--source $(source)) \
-		$(MEGALODON_GSLT_ENTRY_MODES) --out $@.new >/dev/null
-	$(RULEC_VALIDATE_BIN) $@.new.wire $@.new.dag $@.new >/dev/null
-	@for f in wire dag census bindings; do mv $@.new.$$f $@.$$f; done
-	@mv $@.new $@
+		$(MEGALODON_GSLT_ENTRY_MODES) --out "$$out" >/dev/null; \
+	$(RULEC_VALIDATE_BIN) "$$out.wire" "$$out.dag" "$$out" >/dev/null; \
+	for f in wire dag census bindings; do test -f "$$out.$$f"; done; \
+	for f in wire dag census bindings; do mv -- "$$out.$$f" "$@.$$f"; done; \
+	mv -- "$$out" "$@"
 
-$(MEGALODON_GSLT_READER_NAMES): native/megalodon/mg_reader_instance.c $(filter-out $(MEGALODON_GSLT_READER_NAMES),$(MEGALODON_GSLT_READER_DEPS))
+$(MEGALODON_GSLT_READER_NAMES): native/megalodon/mg_reader_instance.c tools/rulec/instance_names.sh native/megalodon/test.mk \
+		$(filter-out $(MEGALODON_GSLT_READER_NAMES),$(MEGALODON_GSLT_READER_DEPS))
 	@mkdir -p $(dir $@)
-	@sh tools/rulec/instance_names.sh native/megalodon/mg_reader_instance.c $@ mgr_ "$(MEGALODON_GSLT_READER_API)" \
-		-O0 -std=c11 -D_GNU_SOURCE -pthread -I. -Inative/megalodon >/dev/null || { rm -f $@; exit 1; }
+	@set -eu; \
+	work=$$(mktemp -d "$(dir $@).reader.XXXXXX"); \
+	trap 'rm -rf -- "$$work"' EXIT; \
+	mkdir -p "$$work/$(dir $@)"; \
+	cp "$(MEGALODON_GSLT_NATIVE_C)" "$$work/$(MEGALODON_GSLT_NATIVE_C)"; \
+	sh tools/rulec/instance_names.sh native/megalodon/mg_reader_instance.c "$$work/$@" mgr_ "$(MEGALODON_GSLT_READER_API)" \
+		-O0 -std=c11 -D_GNU_SOURCE -pthread -I"$$work" -I. -Inative/megalodon >/dev/null; \
+	mv -- "$$work/$@" "$@"
 
 $(foreach variant,o stage0.o runtime-stats.o,native/megalodon/mg_reader_instance.$(BUILD_OBJ_TAG).$(variant)): \
 		$(MEGALODON_GSLT_READER_DEPS)
@@ -190,17 +212,27 @@ $(MG_GSLT_NATIVE): tests/megalodon/mg_gslt_native.c $(MEGALODON_GSLT_READER_SRC)
 # The reader on the fixtures, tokens and items, as Megalodon reads them; and
 # its traces (--trace): each step's derivation checked by rulec_tracecheck
 # against the module's rules, the readings equal to those of a run without.
+MEGALODON_GSLT_BOUNDARY_INPUTS = $(addprefix tests/megalodon/source_reader/, \
+	positive_scoped_forms.mg eof_inside_item.mg neg_set_without_bound.mg neg_unlexable_char.mg)
+MEGALODON_GSLT_NATIVE_INPUTS = $(MEGALODON_GSLT_BOUNDARY_INPUTS) \
+	$(wildcard tests/langdef/megalodon/bytes_*.mg)
 .PHONY: test-megalodon-gslt-native
 test-megalodon-gslt-native: $(MG_GSLT_NATIVE) $(RULEC_TRACECHECK_BIN)
 	@for mode in tokens items; do \
 		python3 tests/megalodon/compare_gslt_reader.py --engine native --native $(MG_GSLT_NATIVE) \
 			--mode $$mode --expected --work $(MEGALODON_TEST_DIR)/gslt-native-$$mode \
-			tests/megalodon/source_reader/*.mg || exit 1; \
+			$(MEGALODON_GSLT_NATIVE_INPUTS) || exit 1; \
 	done
 	@python3 tests/megalodon/check_gslt_trace.py $(MG_GSLT_NATIVE) $(RULEC_TRACECHECK_BIN) \
-		$(MEGALODON_GSLT_NATIVE_C).wire $(MEGALODON_TEST_DIR)/gslt-trace tests/megalodon/source_reader/*.mg
+		$(MEGALODON_GSLT_NATIVE_C).wire $(MEGALODON_TEST_DIR)/gslt-trace $(MEGALODON_GSLT_BOUNDARY_INPUTS)
 
-test-megalodon-gslt: $(BIN) $(MEGALODON_GSLT_PROGRAM)
+.PHONY: showcase-megalodon-reader showcase-megalodon-gslt-fixtures
+MEGALODON_SHOWCASE_INPUT ?= showcase/gslt/scoped_notation.mg
+showcase-megalodon-reader: $(MG_GSLT_NATIVE)
+	@$(MG_GSLT_NATIVE) --items "$(MEGALODON_SHOWCASE_INPUT)"
+
+showcase-megalodon-gslt-fixtures: MEGALODON_GSLT_BOUNDARY_INPUTS = $(wildcard tests/megalodon/source_reader/*.mg)
+test-megalodon-gslt showcase-megalodon-gslt-fixtures: $(BIN) $(MEGALODON_GSLT_PROGRAM)
 	@python3 tools/generate_megalodon_gslt_v1.py --check
 	@$(LANGDEF_COMPILER_V1_BIN) validate --manifest langdef/megalodon/langdef.metta
 	@if grep 'gslt-binding-mode' $(MEGALODON_GSLT_PROGRAM) | grep -q 'functional=relational'; then \
@@ -209,7 +241,7 @@ test-megalodon-gslt: $(BIN) $(MEGALODON_GSLT_PROGRAM)
 	@for mode in tokens items; do \
 		python3 tests/megalodon/compare_gslt_reader.py --cetta "$(abspath $(BIN))" \
 			--program $(MEGALODON_GSLT_PROGRAM) --mode $$mode --expected \
-			--work $(MEGALODON_TEST_DIR)/gslt-$$mode tests/megalodon/source_reader/*.mg || exit 1; \
+			--work $(MEGALODON_TEST_DIR)/$@-$$mode $(MEGALODON_GSLT_BOUNDARY_INPUTS) || exit 1; \
 	done
 
 # The syntax presentations module by module (tests/langdef/megalodon/,
@@ -222,8 +254,8 @@ test-megalodon-gslt: $(BIN) $(MEGALODON_GSLT_PROGRAM)
 # source as UTF-8 text, so they run on the compiled reader only.
 MEGALODON_LANGDEF_DIR = tests/langdef/megalodon
 MEGALODON_LANGDEF_MODULES = lexical notation term proof document whole_file
-.PHONY: test-langdef-megalodon
-test-langdef-megalodon: $(BIN) $(MEGALODON_GSLT_PROGRAM) $(MG_GSLT_NATIVE)
+.PHONY: showcase-megalodon-langdef
+showcase-megalodon-langdef: $(BIN) $(MEGALODON_GSLT_PROGRAM) $(MG_GSLT_NATIVE)
 	@for mode in tokens items; do \
 		out=$$(python3 tests/megalodon/compare_gslt_reader.py --engine native --native $(MG_GSLT_NATIVE) \
 			--mode $$mode --expected --work $(MEGALODON_TEST_DIR)/langdef-native-$$mode \
@@ -247,8 +279,8 @@ test-langdef-megalodon: $(BIN) $(MEGALODON_GSLT_PROGRAM) $(MG_GSLT_NATIVE)
 	done
 
 test-megalodon: test-megalodon-core test-megalodon-metta test-seal test-megalodon-source \
-	test-megalodon-elab test-megalodon-verdict test-megalodon-gslt test-megalodon-gslt-native \
-	test-langdef-megalodon test-megalodon-scaling
+	test-megalodon-elab test-megalodon-verdict test-megalodon-gslt test-megalodon-gslt-native
+test-asymptotic: test-megalodon-scaling
 
 # The kernel's work on three generated workloads at sizes 0, N and 2N:
 # doubling the size may at most double the counted work (kernel work units

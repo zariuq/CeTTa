@@ -5,18 +5,19 @@ import sys
 
 source_path, kind, output_path = sys.argv[1:]
 source = Path(source_path).read_text()
-expected_sites = 1
 if kind == "order":
-    old = "cursor->heap[right] < cursor->heap[left]"
-    new = old.replace(" <", " >")
+    edits = [("cursor->heap[right] < cursor->heap[left]",
+              "cursor->heap[right] > cursor->heap[left]")]
 elif kind == "clone":
-    old = "memcpy(dst->leaf_pos, src->leaf_pos,"
-    new = "memset(dst->leaf_pos, 0,"
+    edits = [("memcpy(dst->leaf_pos, src->leaf_pos,", "memset(dst->leaf_pos, 0,")]
 elif kind == "ceiling":
-    old = "disc_leaf_at(node, position) >= cursor->ceiling"
-    new = old.replace(" >=", " >")
-    expected_sites = 2
+    # The row at the ceiling, added after the cursor opened, is read in
+    # either direction.
+    edits = [("if (leaf >= cursor->ceiling) {", "if (leaf > cursor->ceiling) {"),
+             ("if (leaf < cursor->ceiling) {", "if (leaf <= cursor->ceiling) {")]
 else:
     raise SystemExit(f"unknown mutation: {kind}")
-assert source.count(old) == expected_sites, (kind, source.count(old))
-Path(output_path).write_text(source.replace(old, new))
+for old, new in edits:
+    assert source.count(old) == 1, (kind, old, source.count(old))
+    source = source.replace(old, new)
+Path(output_path).write_text(source)

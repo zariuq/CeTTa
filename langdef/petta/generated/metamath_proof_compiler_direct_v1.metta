@@ -960,8 +960,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=21 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-formal-member-tail target=mode relation=proof-formal-member input=111 functional=relational
 (= (gslt:mode:proof-formal-member:111 (cons proof-list-cons-v1 (cons $formal (cons $rest ()))) $name $depth)
-   (let (cons proof-formal-member (cons $rest (cons $name (cons $depth ())))) (gslt:proof-formal-member (proof-formal-member $rest $name $depth))
-   (quote gslt:result:proof-formal-member:111)))
+   (gslt:mode:proof-formal-member:111 $rest $name $depth))
 
 ; gslt-lowered-equation-v1 source-rewrite=20 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-formal-member-head target=mode relation=proof-formal-member input=101 functional=relational
 (= (gslt:mode:proof-formal-member:101 (cons proof-list-cons-v1 (cons (cons proof-formal-v1 (cons $name (cons $depth ()))) (cons $rest ()))) $depth)
@@ -969,8 +968,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=21 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-formal-member-tail target=mode relation=proof-formal-member input=101 functional=relational
 (= (gslt:mode:proof-formal-member:101 (cons proof-list-cons-v1 (cons $formal (cons $rest ()))) $depth)
-   (let (cons proof-formal-member (cons $rest (cons $name (cons $depth ())))) (gslt:proof-formal-member (proof-formal-member $rest $name $depth))
-   (quote (gslt:result:proof-formal-member:101 $name))))
+   (gslt:mode:proof-formal-member:101 $rest $depth))
 
 ; gslt-lowered-equation-v1 source-rewrite=22 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-formal-index-head target=mode relation=proof-formal-index input=0000 functional=relational
 (= (gslt:mode:proof-formal-index:0000)
@@ -3107,8 +3105,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=21 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-formal-member-tail target=mode relation=proof-formal-member input=100 functional=relational
 (= (gslt:mode:proof-formal-member:100 (cons proof-list-cons-v1 (cons $formal (cons $rest ()))))
-   (let (cons proof-formal-member (cons $rest (cons $name (cons $depth ())))) (gslt:proof-formal-member (proof-formal-member $rest $name $depth))
-   (quote (gslt:result:proof-formal-member:100 $name $depth))))
+   (gslt:mode:proof-formal-member:100 $rest))
 
 ; gslt-lowered-equation-v1 source-rewrite=33 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-data-pattern-list-nil target=mode relation=proof-data-pattern-list input=1100 functional=relational
 (= (gslt:mode:proof-data-pattern-list:1100 $owner $formals)

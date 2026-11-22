@@ -5,10 +5,13 @@ static const char *const python_object_operations[] = {
     "py:slice", "py:none", "py:is", "py:eq", "py:to-tuple", "py:close!", "py:bind!", "py:iter", "py:with"
 };
 
+uint32_t cetta_foreign_objects_any_enabled = 0u;
+
 void cetta_foreign_enable_objects(CettaForeignRuntime *rt, Registry *registry) {
     if (rt) {
         rt->objects_enabled = true;
         if (!rt->object_registry) rt->object_registry = registry;
+        __atomic_store_n(&cetta_foreign_objects_any_enabled, 1u, __ATOMIC_RELEASE);
     }
 }
 

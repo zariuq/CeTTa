@@ -15,7 +15,6 @@ typedef enum {
     CETTA_TRANSFORM_NAME_TRANSFORM = 0,
     CETTA_TRANSFORM_NAME_SPLIT,
     CETTA_TRANSFORM_NAME_PROPOSE,
-    CETTA_TRANSFORM_NAME_INST,
     CETTA_TRANSFORM_NAME_FIRE,
     CETTA_TRANSFORM_NAME_FIRE_INTO,
     CETTA_TRANSFORM_NAME_RUN,
@@ -56,6 +55,15 @@ static inline bool cetta_transform_run_call_head(SymbolId head,
         cetta_transform_run_call_head_slow(head, arity);
 }
 
+static inline bool cetta_transform_is_run_call(const Atom *call) {
+    if (!call || call->kind != ATOM_EXPR ||
+        (call->expr.len != 4u && call->expr.len != 5u))
+        return false;
+    SymbolId head = atom_head_symbol_id(call);
+    return head == cetta_transform_name_id(CETTA_TRANSFORM_NAME_TRANSFORM) ||
+        cetta_transform_run_call_head(head, call->expr.len - 1u);
+}
+
 static inline bool cetta_transform_name_head(SymbolId head) {
     return head != SYMBOL_ID_NONE && !symbol_id_is_builtin(head) &&
         !(symbol_flags(g_symbols, head) & CETTA_SYMBOL_FLAG_NOT_TRANSFORM_NAME) &&
@@ -94,16 +102,21 @@ bool cetta_transform_tcalc_receipts(void);
 bool cetta_transform_tcalc_checking(void);
 bool cetta_transform_tcalc_terms(void);
 
-/* A finite selected interface to a Space, not a materialized store. */
+/* A finite selected interface to a Space, not a materialized store.
+ * POSITION names the row among the cursor's; KEPT: that cursor lends facts a
+ * relation kept, whose positions are that cursor's own
+ * (space_occurrence_cursor_lends_kept). */
 typedef struct {
     Space *space;
     SpaceReadToken view;
     CettaIndex position;
     Atom *opened;
+    bool kept;
 } CettaTransformWitness;
 
 typedef struct {
     Space *space;
+    SpaceReadToken view;
     Atom *space_ref;
     Atom *pattern;
     Atom *receipt;
@@ -138,7 +151,6 @@ typedef struct {
     Atom *const *expected;
     size_t expected_count;
     void *context;
-    CettaTransformOutcome (*commit)(void *, Atom *const *, size_t);
     bool (*spend)(void *, uint64_t);
     /* A synchronous loan from the successful match of these exact witnessed
      * occurrences, under their captured Space versions. It establishes the
@@ -154,6 +166,13 @@ typedef struct {
     int (*open_row)(void *, Arena *, BindingsBuilder *, Atom *, Atom **);
     int (*unify)(void *, Arena *, BindingsBuilder *, Atom *, Atom *);
     Atom *(*capture)(void *, Arena *, Atom *, const Bindings *);
+    /* Borrow each stored read/take occurrence of the selected firing before
+     * its effects. SIZE_MAX denotes the common kernel, otherwise the index
+     * is that of the retained extension in the publication. */
+    bool (*selected_row)(void *, Atom *, size_t);
+    /* A pure admission check on several publications and their borrowed
+     * footprint. It discards its observations on every outcome. */
+    int (*compatible_publications)(void *, Atom *const *, size_t);
     /* Resource accounting uses live space identity and exact stored rows. */
     bool exact_occurrences;
 } CettaTransformLogic;
@@ -165,6 +184,9 @@ typedef struct {
      * still isolated by the common trail and never mutate this loan. */
     const Bindings *environment;
     const CettaTransformLogic *logic;
+    /* Optional owned image of the winning kernel of an all-firing.
+     * Its extension rows each carry their own full binding image. */
+    Atom **extension_basis_out;
     /* Pure lookup of the space named by a conjunct. It may be queried during
      * planning and again after earlier bindings/effects. False for an operand
      * that names no space; true with *space_out NULL for a location that
@@ -232,8 +254,10 @@ typedef struct {
     bool (*equation_check)(void *context, Atom *pattern, Atom *expression,
                            CettaTransformCheck *check);
     bool (*equation_value)(void *context, Atom *value, bool held);
-    /* Optional separately linked tcalc realization. DECLINED is exclusively
-     * a pre-protocol carrier refusal; every other outcome forbids fallback. */
+    /* Optional admission backend. It checks the read selection and
+     * publication under this request's configuration. FIRED certifies
+     * admission only. The host owns publication and can check it separately.
+     * DECLINED is a carrier refusal; INTERRUPTED decides no firing. */
     CettaTransformOutcome (*decide_firing)(void *context, Arena *arena,
         const CettaTransformFiring *firing, Atom **error);
 } CettaTransformHost;
@@ -245,6 +269,13 @@ typedef struct {
 CettaTransformOutcome cetta_transform_fire(
     Space *program, Arena *a, Atom *call, const CettaTransformHost *host,
     Atom **answer_out);
+
+/* The same step from normalized sources. TARGET selects counted publication
+ * into a space. Scoped hosts can receive the firing packet and publish it in
+ * their own world. */
+CettaTransformOutcome cetta_transform_step(
+    Arena *a, Atom *space, Atom *sources, Atom *template_atom, Atom *target,
+    const CettaTransformHost *host, Atom **answer_out);
 
 /* The names cands and pin correspond to proposals/guided in
  * Languages/MeTTa/PeTTa/LibTransform.lean.
@@ -276,11 +307,6 @@ CettaTransformOutcome cetta_transform_candidate_cursor_next(
 void cetta_transform_candidate_cursor_close(
     CettaTransformCandidateCursor *cursor);
 
-/* `call` is (tf:inst CONJUNCTS GUIDE): a branch's sources, each kernel read
- * or take pinned to the atom its proposal matched.  Data only: false when the
- * call is not of the library's shape. */
-bool cetta_transform_inst(Arena *a, Atom *call, Atom **answer_out);
-
 /* Prepare a public transform for the native step.  `work` owns the returned
  * conjuncts and template. PeTTa protects caller templates and syntax-only
  * let evaluators; bound code reads its variables from the firing's value
@@ -291,14 +317,24 @@ bool cetta_transform_prepare(Arena *work, Atom *sources, Atom *template_atom,
                              Atom **conjuncts_out, Atom **template_out,
                              Atom **error_out);
 
-/* Lower (tf:run SPACE SOURCES TEMPLATE DESTINATION) to ordinary let and
- * superpose forms over native proposals, guiding and firing.  The returned
- * expression is owned by `a`; malformed HE sources produce an Error value.
- * NULL means the call is not admitted. */
-Atom *cetta_transform_lower(Arena *a, Atom *call,
-                            const CettaTransformHost *host);
+/* A prepared transform continues one publication at a time. Its inputs and
+ * host outlive it. The return is borrowed until the next step or close.
+ * TARGET is non-null only for a destination in the store. */
+typedef struct CettaTransformRun CettaTransformRun;
+typedef enum {
+    CETTA_TRANSFORM_STREAM,
+    CETTA_TRANSFORM_FIRST,
+    CETTA_TRANSFORM_COLLECT,
+    /* A directly observed PeTTa take or destination gets one firing.
+     * The consumer can still ask for the first answer of that firing. */
+    CETTA_TRANSFORM_FIRST_FIRING,
+} CettaTransformDemand;
+CettaTransformRun *cetta_transform_run_open(
+    Atom *space, Atom *conjuncts, Atom *instance, Atom *target,
+    const CettaTransformHost *host, CettaTransformDemand demand);
+CettaTransformOutcome cetta_transform_run_next(CettaTransformRun *run, Atom **value);
+void cetta_transform_run_close(CettaTransformRun *run);
 
-/* (tf:split COMMA INSTANCES): the instances to superpose for routing. */
 Atom *cetta_transform_split(Arena *a, Atom *call,
                             CettaTransformDialect dialect);
 
@@ -312,7 +348,7 @@ Atom *cetta_transform_split(Arena *a, Atom *call,
  * over native candidates and firings instead of this PeTTa batch shortcut. */
 CettaTransformOutcome cetta_transform_collect(
     Space *program, Arena *a, Atom *call, const CettaTransformHost *host,
-    Atom **collection_out, uint64_t *count_out);
+    bool count_only, Atom **collection_out, uint64_t *count_out);
 
 /* How the read-only step reads. */
 typedef enum {
@@ -329,10 +365,11 @@ typedef enum {
 /* match as the step with reads only: (match SPACE PATTERN TEMPLATE)'s
  * answers, each read of PATTERN (or of each part of a conjunction) on the
  * store at the call answering TEMPLATE's instance as data.  FIRED, or
- * INTERRUPTED when its meter stops, or DECLINED before reading. */
+ * INTERRUPTED when its meter stops, or DECLINED before reading.
+ * Count-only callers receive the number without an owned result bag. */
 CettaTransformOutcome cetta_transform_reads(
     const CettaTransformHost *host, Arena *a, Atom *space, Atom *pattern,
-    Atom *template_atom, CettaStepReads mode, Atom **collection_out,
+    Atom *template_atom, CettaStepReads mode, bool count_only, Atom **collection_out,
     uint64_t *count_out);
 
 #endif /* CETTA_TRANSFORM_CORE_H */

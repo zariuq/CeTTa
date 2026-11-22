@@ -35,9 +35,10 @@ def observe(binary, route):
     declined = counters.get("transform-take-preparation-declined", 0)
     if reused <= 0:
         raise AssertionError(f"no open guided selection was reused [{route or 'default'}]")
-    if prepared < reused:
+    if prepared != reused:
         raise AssertionError(
-            f"prepared={prepared} is below reused={reused} [{route or 'default'}]")
+            f"an unchanged open take prepared {prepared} selections and used "
+            f"{reused} [{route or 'default'}]")
     if declined <= 0:
         raise AssertionError(f"ground controls did not decline reuse [{route or 'default'}]")
     if counters.get("space-store-prepared", 0) < reused:

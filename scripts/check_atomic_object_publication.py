@@ -61,9 +61,12 @@ raise SystemExit(subprocess.call(['cc', *args]))
     # takes the native compiler as a single command), so the driver is an
     # executable script.
     driver.chmod(0o755)
+    # A tag of its own: the driver is another compiler, so the configuration's
+    # compiler stamp and header must not be the default build's, which every
+    # other make in the tree reads.
     command = ["make", "-s", "--no-print-directory", "-f", "Makefile", "-f", str(fixture),
                "ATOMIC_GATE_ROOT=" + str(work), "CFLAGS=-O0 -Wall -Werror -std=c11",
-               "CC=" + str(driver)]
+               "CC=" + str(driver), "CETTA_DEV_TAG=atomic-publication-gate"]
     children: list[tuple[subprocess.Popen, object]] = []
     checks = 0
 

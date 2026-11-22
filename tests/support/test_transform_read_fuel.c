@@ -54,7 +54,7 @@ static void fresh_reads_release_temporary_terms(cetta_engine_t *engine) {
         Atom *answers = NULL;
         uint64_t count = 0u;
         assert(cetta_transform_reads(&host, &output, reference, pattern, value,
-            CETTA_STEP_READS_ORDERED, &answers, &count) == CETTA_TRANSFORM_FIRED);
+            CETTA_STEP_READS_ORDERED, false, &answers, &count) == CETTA_TRANSFORM_FIRED);
         assert(count == 1u && answers && answers->expr.len == 1u);
         assert(atom_eq(answers->expr.elems[0], value));
         arena_free(&output);
@@ -97,7 +97,7 @@ int main(void) {
                 uint64_t count = 0u;
                 CettaTransformOutcome outcome = cetta_transform_reads(&host,
                     &arena, reference, pattern, value, (CettaStepReads)mode,
-                    &answers, &count);
+                    false, &answers, &count);
                 assert(meter.spent <= budget);
                 if (mode == CETTA_STEP_READS_ENGINE) {
                     assert(outcome == CETTA_TRANSFORM_DECLINED && meter.spent == 0u);
@@ -109,6 +109,13 @@ int main(void) {
                     assert(answers && answers->expr.len == (CettaExprLen)rows);
                     assert(count == (uint64_t)rows);
                 }
+                uint64_t spent = meter.spent;
+                meter = (Meter){&engine->session.space, budget, 0u, false};
+                CettaTransformOutcome counted = cetta_transform_reads(&host,
+                    &arena, reference, pattern, value, (CettaStepReads)mode,
+                    true, &answers, &count);
+                assert(counted == outcome && meter.spent == spent && !answers);
+                assert(count == (counted == CETTA_TRANSFORM_FIRED ? (uint64_t)rows : 0u));
             }
         }
     }

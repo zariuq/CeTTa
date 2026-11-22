@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Example programs through the machine of transform rules.
 
-    check_petta_machine_corpus.py CETTA --corpus DIR... [--lane specs|native]
+    compare_corpus.py CETTA --corpus DIR... [--lane specs|native]
                                   [--timeout S] [--jobs N] [--report FILE]
 
 lib/petta/petta_machine.metta is a PeTTa evaluator whose every step is a
@@ -32,7 +32,7 @@ import os
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "tests", "support"))
 import check_petta_transform_only as whole  # noqa: E402
 
 forms, swi_lane = whole.forms, whole.swi_lane

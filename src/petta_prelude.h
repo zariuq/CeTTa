@@ -19,6 +19,7 @@
  *   (term_hash T)       SWI's term_hash/2 of T as metta.pl passes it (an
  *                       expression is a Prolog list), unbound when T is
  *                       not ground
+ *   (term_hash T D R)   SWI's term_hash/4 bounded to depth D and range R
  *
  * A Prolog error raised by one of them is (Error Formal Context).
  */
@@ -27,9 +28,8 @@
 bool petta_prelude_function(SymbolId head, uint32_t nargs);
 
 /* The input arities at which `head` is one of these, as a bit mask (bit n
- * for n arguments).  The prelude registers copy_term and term_hash at
- * further arities, SWI's copy_term/3, copy_term/4 and term_hash/4, which
- * only the embedded engine serves. */
+ * for n arguments).  The prelude registers copy_term at further arities,
+ * SWI's copy_term/3 and copy_term/4, which only the embedded engine serves. */
 uint16_t petta_prelude_native_arities(SymbolId head);
 
 /* Apply it to evaluated arguments: the value, or with *raised set the

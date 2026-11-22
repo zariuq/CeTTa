@@ -1,6 +1,7 @@
-; PeTTa's guard continues a typed call once for each type answer of the
-; argument that the parameter's type matches.  A type variable matches each
-; answer; %Undefined% asks nothing; a class matches the answer that names it.
+; PeTTa's guard admits an argument when some type answer of it meets the
+; parameter's type, and the call runs once for each tuple of argument values,
+; however many type answers admit it.  A type variable matches each answer;
+; %Undefined% asks nothing; a class matches the answer that names it.
 (: a String)
 (: a Number)
 (: f (-> $t $t))

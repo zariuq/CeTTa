@@ -108,18 +108,17 @@ def main():
          'return petta_machine_unify(machine, atom_symbol(&machine->heap, "true"), destination);',
          "allowed ? answer"),
     ]
+    # A candidate's captured plan is revalidated against the program clock
+    # when reached (P-DEF-4), so planning its body afresh is the same
+    # projection: no mutant that drops the capture can differ in answers.
     cases += [
-        ("petta-source-output-captured-plan", "src/eval_query.inc",
-         "const PettaPlanNode *plan = captured_plan ? captured_plan : owned && query->library->petta_program &&",
-         "(void)captured_plan;\n    const PettaPlanNode *plan = owned && query->library->petta_program &&",
-         "state == expected"),
         ("petta-source-output-opaque", "src/petta_search_machine.c",
          "if (!projected)\n        return true;\n    *pattern = atom_deep_copy(arena, projected);",
          "if (!projected) { *pattern = atom_unit(arena); return *pattern != NULL; }\n    *pattern = atom_deep_copy(arena, projected);",
          "state == expected"),
         ("petta-source-output-authored-builtin", "src/petta_search_machine.c",
-         "if (petta_machine_builtin_output_is_open(machine, source, plan)) {",
-         "if (false && petta_machine_builtin_output_is_open(machine, source, plan)) {",
+         "petta_machine_builtin_output_is_open(machine, source, plan)) {",
+         "(false && petta_machine_builtin_output_is_open(machine, source, plan))) {",
          "state == expected"),
     ]
     cases = [case for case in cases if case[0].startswith(args.only_prefix)]

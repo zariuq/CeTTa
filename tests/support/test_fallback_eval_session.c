@@ -2,7 +2,9 @@
 #include "eval.h"
 #include "grounded.h"
 #include "library.h"
+#include "match.h"
 #include "native_handle.h"
+#include "native_query.h"
 #include "parser.h"
 #include "session.h"
 #include "space.h"
@@ -190,6 +192,63 @@ static bool module_match_answers(Space *space, Arena *arena,
         fprintf(stderr, "match of %s: [%s], expected [%s]\n", pattern,
                 rendered, expected);
     return strcmp(rendered, expected) == 0;
+}
+
+/* PATTERN's rows as the occurrence cursor lends them, each matched: their
+ * instances, in the cursor's order. */
+static bool module_cursor_answers(Space *space, Arena *arena,
+                                  const char *pattern, const char *expected) {
+    Atom *query = module_atom(arena, pattern);
+    SpaceOccurrenceCursor cursor;
+    space_occurrence_cursor_init_empty(&cursor);
+    if (!space_occurrence_cursor_init(space, query, &cursor)) {
+        fprintf(stderr, "cursor of %s declined\n", pattern);
+        return false;
+    }
+    Atom *answers[16];
+    CettaCount count = 0u;
+    bool ended = false;
+    for (;;) {
+        Atom *row = NULL;
+        SpaceOccurrenceCursorStep step =
+            space_occurrence_cursor_next(&cursor, NULL, &row);
+        if (step != SPACE_OCCURRENCE_CURSOR_ITEM) {
+            ended = step == SPACE_OCCURRENCE_CURSOR_END;
+            break;
+        }
+        Bindings b;
+        bindings_init(&b);
+        if (row && count < 16u && match_atoms(query, row, &b, arena))
+            answers[count++] = bindings_apply(&b, arena, query);
+        bindings_free(&b);
+    }
+    space_occurrence_cursor_release(&cursor);
+    char rendered[512];
+    module_render(arena, answers, count, rendered, sizeof(rendered));
+    if (!ended || strcmp(rendered, expected) != 0)
+        fprintf(stderr, "cursor of %s: [%s]%s, expected [%s]\n", pattern,
+                rendered, ended ? "" : " (invalidated)", expected);
+    return ended && strcmp(rendered, expected) == 0;
+}
+
+/* The native query engine's status for PATTERN over SPACE, collecting a
+ * constant per answer. */
+static CettaNativeQueryStatus module_native_query(Space *space, Arena *arena,
+                                                  const char *pattern,
+                                                  uint64_t *answers) {
+    Atom *patterns[1] = {module_atom(arena, pattern)};
+    CettaNativeQuery query = {
+        .source = space,
+        .patterns = patterns,
+        .pattern_count = 1u,
+        .template_atom = module_atom(arena, "found"),
+        .consumer = CETTA_NATIVE_QUERY_COLLECT,
+    };
+    CettaNativeQueryResult result;
+    CettaNativeQueryStatus status =
+        cetta_native_query_run(&query, arena, &result);
+    *answers = result.answers;
+    return status;
 }
 
 static int module_text_compare(const void *left, const void *right) {
@@ -389,11 +448,23 @@ static bool space_module_dependency_contract(void) {
     MODULE_CHECK(!space_remove(&top, module_atom(&scratch, "(dep-fact a)")));
     MODULE_CHECK(space_length64(&a_mod) == 5u);
 
-    /* Accelerators over one space's storage decline. */
-    SpaceOccurrenceCursor occurrences;
-    MODULE_CHECK(!space_occurrence_cursor_init(
-        &top, module_atom(&scratch, "(dep-fact $x)"), &occurrences));
-    space_occurrence_cursor_release(&occurrences);
+    /* The occurrence cursor reads as match does: the space's own rows, then
+     * each dependency's own rows past its imported prefix. */
+    MODULE_CHECK(module_cursor_answers(&top, &scratch, "(dep-fact $x)",
+                                       "(dep-fact top) (dep-fact a) "
+                                       "(dep-fact d)"));
+
+    /* Accelerators over one space's storage decline.  The native query
+     * engine answers a space of its own rows, and declines one with
+     * dependencies. */
+    uint64_t native_answers = 0u;
+    MODULE_CHECK(module_native_query(&a_mod, &scratch, "(dep-fact $x)",
+                                     &native_answers) ==
+                     CETTA_NATIVE_QUERY_DONE &&
+                 native_answers == 1u);
+    MODULE_CHECK(module_native_query(&top, &scratch, "(dep-fact $x)",
+                                     &native_answers) ==
+                 CETTA_NATIVE_QUERY_DECLINED);
     MODULE_CHECK(!space_match_backend_supports_seeded_candidates(&top));
     bool applicable = true;
     (void)space_match_exists_ground_exact(

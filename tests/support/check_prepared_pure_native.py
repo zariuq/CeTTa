@@ -17,9 +17,14 @@ patterns and by let; symbols compared; literal lists as arguments; integers
 in terms near the edge of what a term word holds; in the HE lane.  Last,
 fixed programs over long lists, whose heaps are collected many times, which
 the native code must answer alone, never declining.  Each program runs twice, natively and with
-CETTA_PREPARED_PURE_NATIVE=0, and the two outputs must be equal; the run
-also counts how many programs each lane lowered, so a lowering that quietly
-refuses everything fails.
+CETTA_PREPARED_PURE_NATIVE=0, and the two outputs must be equal; the native
+run compiles at a program's first run (CETTA_PREPARED_PURE_NATIVE=eager), and
+counts how many programs each lane lowered, so a lowering that quietly
+refuses everything fails.  The fixed programs compile at their first run
+too.  By default a program is compiled once its register code has spent
+what a compile costs; last, that rule itself: a short recursion and a step
+entered many times that makes no call of its own are never compiled, a long
+recursion is, and each answers as its register code does.
 
 usage: check_prepared_pure_native.py CETTA [--programs N] [--seed S]"""
 import argparse
@@ -172,6 +177,16 @@ def term_program(rng):
 # register code anywhere: lists long enough that the heap is collected many
 # times, answers copied out whole.  A decline here is a fault of the native
 # tier (a collection that lost a value reads as a mismatch and declines).
+SUM = "(= (ordinary-sum $n) (if (<= $n 0) 0 (+ $n (ordinary-sum (- $n 1)))))\n"
+STEP = "(= (fold-step $x $acc) (+ $acc $x))\n"
+TIERED = [
+    ("short-recursion", "petta", SUM + "!(ordinary-sum 100)\n!(ordinary-sum 0)\n", False),
+    ("long-recursion", "petta", SUM + "!(ordinary-sum 20000)\n", True),
+    ("long-recursion-he", "he", SUM + "!(ordinary-sum 20000)\n", True),
+    ("step-entered-often", "petta",
+     STEP + "!(foldl fold-step (" + " ".join(str(i) for i in range(1, 3001)) + ") 0)\n", False),
+]
+
 ANSWERED = [
     """(= (app Nil $ys) $ys)
 (= (app (Cons $x $xs) $ys) (Cons $x (app $xs $ys)))
@@ -218,8 +233,7 @@ ANSWERED = [
 def run(cetta, path, lang, native):
     env = dict(os.environ)
     env["CETTA_PREPARED_PURE_DEBUG"] = "1"
-    if not native:
-        env["CETTA_PREPARED_PURE_NATIVE"] = "0"
+    env["CETTA_PREPARED_PURE_NATIVE"] = "eager" if native else "0"
     result = subprocess.run([cetta, "--lang", lang, path], env=env,
                             capture_output=True, text=True, timeout=120)
     lowered = result.stderr.count("register code lowered to native code")
@@ -255,7 +269,8 @@ def main():
             path = os.path.join(work, "answered%d.metta" % index)
             with open(path, "w") as handle:
                 handle.write(source)
-            env = dict(os.environ, CETTA_PREPARED_PURE_DEBUG="1")
+            env = dict(os.environ, CETTA_PREPARED_PURE_DEBUG="1",
+                       CETTA_PREPARED_PURE_NATIVE="eager")
             result = subprocess.run([args.cetta, "--lang", "he", path], env=env,
                                     capture_output=True, text=True, timeout=120)
             reference = run(args.cetta, path, "he", False)
@@ -272,8 +287,26 @@ def main():
         if count == 0:
             print("FAIL: no %s program was lowered to native code" % kind)
             return 1
+    with tempfile.TemporaryDirectory(prefix="cetta-native-tier-") as work:
+        for name, lang, source, compiled in TIERED:
+            path = os.path.join(work, name + ".metta")
+            with open(path, "w") as handle:
+                handle.write(source)
+            env = dict(os.environ, CETTA_PREPARED_PURE_DEBUG="1")
+            env.pop("CETTA_PREPARED_PURE_NATIVE", None)
+            result = subprocess.run([args.cetta, "--lang", lang, path],
+                                    env=env, capture_output=True, text=True, timeout=120)
+            reference = run(args.cetta, path, lang, False)
+            lowered_here = "register code lowered to native code" in result.stderr
+            if (result.returncode, result.stdout) != reference[:2] or lowered_here != compiled:
+                print("FAIL: tier %s: %s, answering %s" % (
+                    name, "compiled" if lowered_here else "not compiled",
+                    "alike" if (result.returncode, result.stdout) == reference[:2]
+                    else "otherwise than its register code"))
+                return 1
     print("PASS: %d random programs answer alike natively and on the register code "
-          "(lowered to native code: integers %d in HE, %d in PeTTa; terms %d)"
+          "(lowered to native code: integers %d in HE, %d in PeTTa; terms %d); "
+          "short runs stay on the register code and long ones are compiled"
           % (args.programs, lowered["he"], lowered["petta"], lowered["terms"]))
     return 0
 

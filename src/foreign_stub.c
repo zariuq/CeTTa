@@ -13,6 +13,8 @@ struct CettaForeignRuntime {
 };
 
 void cetta_foreign_drain_releases(void) {}
+uint32_t cetta_foreign_objects_any_enabled = 0u;
+
 void cetta_foreign_enable_objects(CettaForeignRuntime *rt, Registry *r) { (void)rt; (void)r; }
 bool cetta_foreign_object_head(CettaForeignRuntime *rt, const char *name) {
     (void)rt; (void)name; return false;

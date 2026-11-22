@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """A PeTTa evaluator whose every step is a transform rule, against the host.
 
-    check_petta_machine.py CETTA [--swi PETTA_ROOT] [--programs N] [--seed S]
+    compare_self_interpretation.py CETTA [--swi PETTA_ROOT] [--programs N] [--seed S]
 
 lib/petta/petta_machine.metta holds a small abstract machine for PeTTa as a
 table of transform rules: its state is one stored atom, and each transition
-takes the state and makes the next.  tests/petta/petta_machine.metta runs
+takes the state and makes the next.  self_interpretation_cases.metta runs
 expressions on the host and on the machine and compares the answers in order.
 This check runs that file, and seeded expressions over the same program, with
 the native firing, with transform written in PeTTa (lib_transform_specs), and
@@ -23,14 +23,14 @@ import random
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "tests", "support"))
 import check_transform_swi_differential as swi_lane  # noqa: E402
 import check_petta_by_transform as forms  # noqa: E402
 
 ROOT = swi_lane.ROOT
 MACHINE = "!(import! &self (library petta_machine))"
 MACHINE_FILE = os.path.join(ROOT, "lib", "petta", "petta_machine.metta")
-FIXED = os.path.join(ROOT, "tests", "petta", "petta_machine.metta")
+FIXED = os.path.join(ROOT, "showcase", "petta", "self_interpretation_cases.metta")
 
 
 def results(output):
@@ -57,6 +57,8 @@ def steps_fired(output):
 
 
 DIRECT = "!(pm:lane! direct)"
+# The per-run budget, in seconds, of a lane that runs the authored transform.
+AUTHORED_TIMEOUT = 300
 
 
 def machine_answers(output):
@@ -194,14 +196,16 @@ def main():
             specs_import = f"!(import! &self {derived})"
         for stem, source in programs:
             names = names_in(source)
+            # The lanes that run transform as written in PeTTa get the budget
+            # check_petta_by_transform.py gives such runs.
             lanes = [("native", lambda: swi_lane.run_cetta(binary, source, work, stem + "-native")),
                      ("specs", lambda: swi_lane.run_cetta(
                          binary, source.replace(swi_lane.LIBRARY_IMPORT, specs_import),
-                         work, stem + "-specs"))]
+                         work, stem + "-specs", timeout=AUTHORED_TIMEOUT))]
             direct_source = source.replace(MACHINE, MACHINE + "\n" + DIRECT)
             lanes.append(("direct", lambda: swi_lane.run_cetta(
                 binary, direct_source.replace(swi_lane.LIBRARY_IMPORT, specs_import),
-                work, stem + "-direct")))
+                work, stem + "-direct", timeout=AUTHORED_TIMEOUT)))
             if swi:
                 swi_source = swi_lane.for_swi(
                     source.replace(MACHINE, f"!(import! &self {MACHINE_FILE})"),

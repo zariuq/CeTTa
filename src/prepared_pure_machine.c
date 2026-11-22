@@ -332,11 +332,11 @@ typedef struct {
     uint32_t equation_count;
     uint64_t universally_constrained_arguments;
     CettaMatchDecision *selector;
-    /* A group too small for a selector whose every two equations test
-     * different keys at one of the first key_positions arguments:
+    /* A group whose every two equations test different keys at one of
+     * the first key_positions arguments:
      * argument_keys[first_key, +equation_count * key_positions), the keys
-     * of each equation in turn.  tested_positions marks the positions some
-     * equation tests.  Then selector is NULL. */
+     * of each equation in turn. Single-position groups are sorted by key.
+     * tested_positions marks the positions some equation tests. */
     bool keyed;
     uint32_t first_key;
     uint32_t key_positions;
@@ -590,15 +590,9 @@ typedef enum {
 typedef struct {
     uint8_t kind;
     uint32_t arity;
-    /* SINGLE: the equation.  KEYED on the first argument alone: its
-     * equations' keys, packed as prepared_pure_code_key packs a value's,
-     * code_keys[target, +count), and their equations,
-     * code_key_equations[target, +count).  KEYED on more positions: the
-     * decision program `decision`, whose keys prepared_pure_key_lookup
-     * reads. */
+    /* SINGLE enters the equation in target. KEYED uses the same decision
+     * table as node selection. */
     uint32_t target;
-    uint32_t count;
-    uint32_t positions;
     uint32_t decision;
 } PreparedPureCodeEntry;
 
@@ -712,6 +706,10 @@ struct CettaPreparedPureProgram {
     size_t owned_source_cap;
     Space *space;
     SpaceProgramToken source_program;
+    /* The program clock read before `source_program`, and re-armed when the
+     * token is found current after the clock moved
+     * (prepared_pure_source_current). */
+    _Atomic uint64_t source_program_epoch;
     SpaceEquationToken equation_projection;
     CettaPreparedPureBooleanValue boolean_value;
     /* Immutable Boolean leaves copied into program-owned storage at compile
@@ -884,11 +882,6 @@ struct CettaPreparedPureProgram {
     size_t code_head_cap;
     /* One per head: how its calls enter. */
     PreparedPureCodeEntry *code_entries;
-    uint64_t *code_keys;
-    uint32_t *code_key_equations;
-    size_t code_key_len;
-    size_t code_key_cap;
-    size_t code_key_equation_cap;
     PreparedPureCodeBind *code_binds;
     size_t code_bind_len;
     size_t code_bind_cap;
@@ -906,6 +899,12 @@ struct CettaPreparedPureProgram {
      * tried: NULL where it is outside the native fragment.  The heads of
      * its scalar guards, which a dialect may come to own. */
     bool native_tried;
+    /* The turns (calls and returns) its register code has made beyond each
+     * run's first poll, toward a compile (PREPARED_PURE_NATIVE_TIER_TURNS); and
+     * whether the root run under way may stop to restart natively, and has. */
+    uint64_t interpreted_turns;
+    bool native_tier_up_allowed;
+    bool native_tier_up;
     PpnImage *native;
     Atom **native_guard_heads;
     size_t native_guard_head_len;
@@ -1157,6 +1156,31 @@ static bool prepared_pure_he_value_has_type(
  * type stamp store's arena oracle. */
 static _Thread_local const CettaPreparedPureProgram *g_prepared_pure_stamp_program;
 static _Thread_local const Arena *g_prepared_pure_stamp_arena;
+
+/* The prepared program's source observations (the equations and
+ * declarations of its space, of the spaces it reads through, and that
+ * space's identity) still hold.  Every writer of those observations moves
+ * the program clock (space.h), so while the clock stands where it was read
+ * before the program's token, they hold; once it has moved, the token itself
+ * is read, and a token found current re-arms the clock check. */
+static __attribute__((cold, noinline)) bool prepared_pure_source_recheck(
+    const CettaPreparedPureProgram *program) {
+    uint64_t clock = space_global_program_epoch();
+    if (!space_program_token_is_current(program->source_program))
+        return false;
+    atomic_store_explicit(
+        &((CettaPreparedPureProgram *)program)->source_program_epoch, clock,
+        memory_order_relaxed);
+    return true;
+}
+
+static inline bool prepared_pure_source_current(
+    const CettaPreparedPureProgram *program) {
+    return space_global_program_epoch() ==
+            atomic_load_explicit(&program->source_program_epoch,
+                                 memory_order_relaxed) ||
+        prepared_pure_source_recheck(program);
+}
 
 bool cetta_prepared_pure_stamp_arena_epoch(const Atom *atom, uint32_t *arena,
                                            uint64_t *epoch) {
@@ -1694,16 +1718,14 @@ static bool prepared_pure_memo_complete_deferred(
 
 static void prepared_pure_memo_clear(
     CettaPreparedPureProgram *program) {
-    if (!program)
+    if (!program || program->memo_len == 0u)
         return;
-    if (program->memo_len > 0u) {
-        memset(program->memo_keys, 0,
-               sizeof(*program->memo_keys) * program->memo_len);
-        memset(program->memo_values, 0,
-               sizeof(*program->memo_values) * program->memo_len);
-        memset(program->memo_states, 0,
-               sizeof(*program->memo_states) * program->memo_len);
-    }
+    memset(program->memo_keys, 0,
+           sizeof(*program->memo_keys) * program->memo_len);
+    memset(program->memo_values, 0,
+           sizeof(*program->memo_values) * program->memo_len);
+    memset(program->memo_states, 0,
+           sizeof(*program->memo_states) * program->memo_len);
     program->memo_len = 0u;
     if (program->memo_buckets && program->memo_bucket_cap > 0u)
         memset(program->memo_buckets, 0,
@@ -3565,7 +3587,7 @@ static bool prepared_pure_head_index_admitted(
         !prepared_pure_head_buckets_rebuild(
             program, program->head_len + 1u))
         return false;
-    if (!space_program_token_is_current(program->source_program))
+    if (!prepared_pure_source_current(program))
         return false;
     *index_out = (uint32_t)program->head_len;
     program->heads[program->head_len++] = (PreparedPureHead){
@@ -3589,7 +3611,7 @@ static bool prepared_pure_head_index(
             program->space, head, &defined, &dynamic) !=
             CETTA_GSLT_QUERY_EFFECT_PURE ||
         !defined ||
-        !space_program_token_is_current(program->source_program)) {
+        !prepared_pure_source_current(program)) {
         return prepared_pure_reject(
             program, "user head is not revision-pinned pure", NULL);
     }
@@ -7761,7 +7783,88 @@ static bool prepared_pure_keys_apart(
     return false;
 }
 
-/* A group too small for a selector is keyed when its equations' compiled
+static inline uint64_t prepared_pure_argument_key_value(
+    const PreparedPureArgumentKey *key) {
+    return (uint64_t)key->symbol << 32 | key->length;
+}
+
+static int prepared_pure_compare_argument_keys(const void *left, const void *right) {
+    uint64_t a = prepared_pure_argument_key_value(left);
+    uint64_t b = prepared_pure_argument_key_value(right);
+    return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/* Publish a table already written after the live key array. A sorted
+ * single-column table certifies separation by adjacent keys. */
+static bool prepared_pure_publish_key_group(
+    CettaPreparedPureProgram *program, uint32_t head_index, uint32_t arity,
+    uint32_t count, uint32_t positions, uint32_t tested) {
+    uint32_t first = (uint32_t)program->argument_key_len;
+    PreparedPureArgumentKey *keys = &program->argument_keys[first];
+    if (positions == 1u) {
+        uint32_t i = 1u;
+        for (; i < count; i++) {
+            int order = prepared_pure_compare_argument_keys(&keys[i - 1u], &keys[i]);
+            if (order == 0)
+                return true;
+            if (order > 0)
+                break;
+        }
+        if (i < count) {
+            qsort(keys, count, sizeof(*keys), prepared_pure_compare_argument_keys);
+            for (i = 1u; i < count; i++)
+                if (prepared_pure_argument_key_value(&keys[i - 1u]) ==
+                    prepared_pure_argument_key_value(&keys[i]))
+                    return true;
+        }
+    }
+    if (program->decision_len >= UINT32_MAX ||
+        !prepared_pure_reserve((void **)&program->decisions,
+            sizeof(*program->decisions), &program->decision_cap,
+            program->decision_len + 1u))
+        return false;
+    program->argument_key_len += (size_t)count * positions;
+    for (uint32_t i = 0u; i < count; i++) {
+        const PreparedPureArgumentKey *key = &keys[(size_t)i * positions];
+        PreparedPureEquation *equation = &program->equations[key->equation];
+        equation->binds_after_key = prepared_pure_binds_after_key(program, equation, key);
+    }
+    uint32_t decision = (uint32_t)program->decision_len;
+    program->decisions[program->decision_len++] = (PreparedPureDecisionProgram){
+        .arity = arity, .equation_count = count, .keyed = true,
+        .first_key = first, .key_positions = positions, .tested_positions = tested,
+    };
+    PreparedPureHead *head = &program->heads[head_index];
+    if (head->decision_count == 0u)
+        head->first_decision = decision;
+    head->decision_count++;
+    return true;
+}
+
+static bool prepared_pure_compile_unary_keys(
+    CettaPreparedPureProgram *program, uint32_t head_index, uint32_t count) {
+    if (program->argument_key_len > UINT32_MAX - count ||
+        !prepared_pure_reserve((void **)&program->argument_keys,
+            sizeof(*program->argument_keys), &program->argument_key_cap,
+            program->argument_key_len + count))
+        return false;
+    const PreparedPureHead *head = &program->heads[head_index];
+    PreparedPureArgumentKey *keys = &program->argument_keys[program->argument_key_len];
+    for (uint32_t i = 0u, next = 0u; i < head->equation_count; i++) {
+        uint32_t ref = head->first_equation + i;
+        const PreparedPureEquation *equation = &program->equations[ref];
+        if (equation->arity != 1u)
+            continue;
+        PreparedPureArgumentKey key = prepared_pure_equation_position_key(program, equation, 0u);
+        if (key.symbol == SYMBOL_ID_NONE)
+            return true;
+        key.equation = ref;
+        keys[next++] = key;
+    }
+    return prepared_pure_publish_key_group(program, head_index, 1u, count, 1u, 1u);
+}
+
+/* A group is keyed when its equations' compiled
  * matches test keys at the first few arguments and every two equations
  * test different keys at one of them.  At most one equation then admits a
  * call's arguments (KeyedEquationSelection.admitted_length_le_one), every
@@ -7786,8 +7889,11 @@ static bool prepared_pure_compile_key_group(
             return true;
         count++;
     }
-    if (arity == 0u || count < 2u ||
-        count >= PREPARED_PURE_DECISION_MIN_EQUATIONS)
+    if (arity == 0u || count < 2u)
+        return true;
+    if (arity == 1u)
+        return prepared_pure_compile_unary_keys(program, head_index, count);
+    if (count >= PREPARED_PURE_DECISION_MIN_EQUATIONS)
         return true;
     uint32_t most = arity < PREPARED_PURE_KEY_MAX_POSITIONS
         ? arity : PREPARED_PURE_KEY_MAX_POSITIONS;
@@ -7825,42 +7931,18 @@ static bool prepared_pure_compile_key_group(
         !prepared_pure_reserve(
             (void **)&program->argument_keys,
             sizeof(*program->argument_keys), &program->argument_key_cap,
-            program->argument_key_len + total) ||
-        program->decision_len >= UINT32_MAX ||
-        !prepared_pure_reserve(
-            (void **)&program->decisions, sizeof(*program->decisions),
-            &program->decision_cap, program->decision_len + 1u))
+            program->argument_key_len + total))
         return false;
-    uint32_t first_key = (uint32_t)program->argument_key_len;
+    PreparedPureArgumentKey *stored = &program->argument_keys[program->argument_key_len];
     uint32_t tested = 0u;
     for (uint32_t i = 0u; i < written; i++) {
         for (uint32_t p = 0u; p < positions; p++) {
-            program->argument_keys[program->argument_key_len++] = keys[i][p];
+            *stored++ = keys[i][p];
             if (keys[i][p].symbol != SYMBOL_ID_NONE)
                 tested |= UINT32_C(1) << p;
         }
     }
-    for (uint32_t i = 0u; i < written; i++) {
-        PreparedPureEquation *equation =
-            &program->equations[keys[i][0].equation];
-        equation->binds_after_key =
-            prepared_pure_binds_after_key(program, equation, &keys[i][0]);
-    }
-    uint32_t decision_index = (uint32_t)program->decision_len;
-    program->decisions[program->decision_len++] =
-        (PreparedPureDecisionProgram){
-            .arity = arity,
-            .equation_count = written,
-            .keyed = true,
-            .first_key = first_key,
-            .key_positions = positions,
-            .tested_positions = tested,
-        };
-    PreparedPureHead *owner = &program->heads[head_index];
-    if (owner->decision_count == 0u)
-        owner->first_decision = decision_index;
-    owner->decision_count++;
-    return true;
+    return prepared_pure_publish_key_group(program, head_index, arity, written, positions, tested);
 }
 
 static bool prepared_pure_compile_decisions_for_head(
@@ -7880,6 +7962,7 @@ static bool prepared_pure_compile_decisions_for_head(
         }
         if (seen)
             continue;
+        size_t prior = program->decision_len;
         if (!prepared_pure_compile_key_group(program, head_index, arity))
             return false;
         /* Dialect-owned pattern views may reinterpret the outer pattern
@@ -7887,7 +7970,7 @@ static bool prepared_pure_compile_decisions_for_head(
          * discriminator, retain the exact generic matcher as the only
          * authority for a selector. */
         head = &program->heads[head_index];
-        if (!program->pattern_view &&
+        if (program->decision_len == prior && !program->pattern_view &&
             !prepared_pure_compile_decision_group(program, head, arity))
             return false;
         head = &program->heads[head_index];
@@ -8379,7 +8462,7 @@ static bool prepared_pure_compile_head(
     }
     head = &program->heads[head_index];
     if (head->equation_count == 0u ||
-        !space_program_token_is_current(program->source_program))
+        !prepared_pure_source_current(program))
         return prepared_pure_reject(
             program, "empty or invalidated user head", NULL);
     bool has_scalar_guard = false;
@@ -8710,7 +8793,7 @@ static bool prepared_pure_compile_pending_heads(
             !prepared_pure_compile_head(program, i))
             return false;
     }
-    return space_program_token_is_current(program->source_program) &&
+    return prepared_pure_source_current(program) &&
         prepared_pure_binds_meet_destinations(program);
 }
 
@@ -9687,11 +9770,19 @@ static inline PreparedPureKeyLookup prepared_pure_key_lookup(
         uint32_t length = 0u;
         if (!prepared_pure_value_key(arguments[0], &symbol, &length))
             return PREPARED_PURE_KEY_NOT_APPLICABLE;
-        for (uint32_t i = 0u; i < decision->equation_count; i++) {
-            if (keys[i].symbol == symbol && keys[i].length == length) {
-                *admitted_out = &keys[i];
-                return PREPARED_PURE_KEY_ADMITTED;
-            }
+        uint64_t target = (uint64_t)symbol << 32 | length;
+        uint32_t low = 0u, high = decision->equation_count;
+        while (low < high) {
+            uint32_t middle = low + (high - low) / 2u;
+            if (prepared_pure_argument_key_value(&keys[middle]) < target)
+                low = middle + 1u;
+            else
+                high = middle;
+        }
+        if (low < decision->equation_count &&
+            prepared_pure_argument_key_value(&keys[low]) == target) {
+            *admitted_out = &keys[low];
+            return PREPARED_PURE_KEY_ADMITTED;
         }
         return PREPARED_PURE_KEY_NONE;
     }
@@ -11755,6 +11846,10 @@ static CettaPreparedPureProgram *prepared_pure_program_new(
     }
     program->references = 1u;
     program->space = space;
+    /* Read before the token: a change after this read moves the clock past
+     * the stamp, and the next check reads the token again. */
+    atomic_store_explicit(&program->source_program_epoch,
+                          space_global_program_epoch(), memory_order_relaxed);
     program->source_program = space_program_token(space);
     program->equation_projection = space_equation_token(space);
     program->boolean_value = boolean_value;
@@ -14736,27 +14831,6 @@ static bool prepared_pure_code_liveness(
     return ok;
 }
 
-/* A value's key as a keyed group tests it (prepared_pure_value_key),
- * packed: its symbol above its length, 0 for a symbol.  False for a value
- * with no key. */
-static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_code_key(
-    const Atom *value, uint64_t *key_out) {
-    if (atom_petta_value_representation(value) != PETTA_VALUE_ORDINARY)
-        return false;
-    if (value->kind == ATOM_SYMBOL) {
-        *key_out = (uint64_t)value->sym_id << 32;
-        return true;
-    }
-    if (value->kind == ATOM_EXPR && value->expr.len > 0u &&
-        value->expr.len <= UINT32_MAX && value->expr.elems[0] &&
-        value->expr.elems[0]->kind == ATOM_SYMBOL) {
-        *key_out = (uint64_t)value->expr.elems[0]->sym_id << 32 |
-                   (uint32_t)value->expr.len;
-        return true;
-    }
-    return false;
-}
-
 static bool prepared_pure_code_add_bind(
     CettaPreparedPureProgram *program, uint32_t local, uint32_t source,
     uint32_t field) {
@@ -14980,7 +15054,6 @@ static bool prepared_pure_code_entry(
         (size_t)decision->equation_count * positions >
             program->argument_key_len - decision->first_key)
         return true;
-    bool first_keys = positions == 1u;
     for (uint32_t i = 0u; i < decision->equation_count; i++) {
         const PreparedPureArgumentKey *key =
             &program->argument_keys[decision->first_key + i * positions];
@@ -14993,20 +15066,7 @@ static bool prepared_pure_code_entry(
         if (equation->arity != decision->arity ||
             !prepared_pure_code_enterable(program, equation, key_ops))
             return true;
-        first_keys = first_keys && key->symbol != SYMBOL_ID_NONE;
     }
-    uint32_t first_key = (uint32_t)program->code_key_len;
-    if (first_keys &&
-        (!prepared_pure_reserve(
-             (void **)&program->code_keys, sizeof(*program->code_keys),
-             &program->code_key_cap,
-             program->code_key_len + decision->equation_count) ||
-         !prepared_pure_reserve(
-             (void **)&program->code_key_equations,
-             sizeof(*program->code_key_equations),
-             &program->code_key_equation_cap,
-             program->code_key_len + decision->equation_count)))
-        return false;
     for (uint32_t i = 0u; i < decision->equation_count; i++) {
         const PreparedPureArgumentKey *key =
             &program->argument_keys[decision->first_key + i * positions];
@@ -15014,20 +15074,10 @@ static bool prepared_pure_code_entry(
                 program, &program->equations[key->equation], key,
                 positions))
             return false;
-        if (first_keys) {
-            program->code_keys[program->code_key_len] =
-                (uint64_t)key->symbol << 32 | key->length;
-            program->code_key_equations[program->code_key_len] =
-                key->equation;
-            program->code_key_len++;
-        }
     }
     *entry_out = (PreparedPureCodeEntry){
         .kind = PREPARED_PURE_CODE_ENTRY_KEYED,
         .arity = decision->arity,
-        .target = first_key,
-        .count = decision->equation_count,
-        .positions = positions,
         .decision = head->first_decision,
     };
     return true;
@@ -15976,12 +16026,12 @@ static void prepared_pure_code_dump(const CettaPreparedPureProgram *program,
         const PreparedPureHead *head = &program->heads[h];
         const PreparedPureCodeEntry *entry = &program->code_entries[h];
         fprintf(out, "head %zu %s: equations %u+%u, entry %s (target %u, "
-                "count %u), deterministic %d, unique %d, typed %d, "
+                "arity %u, decision %u), deterministic %d, unique %d, typed %d, "
                 "checks %d/%d, fold %u\n",
                 h, symbol_bytes(g_symbols, head->head), head->first_equation,
                 head->equation_count,
                 entry->kind < 3u ? entries[entry->kind] : "?", entry->target,
-                entry->count, head->deterministic, head->unique_match,
+                entry->arity, entry->decision, head->deterministic, head->unique_match,
                 head->typed, head->checks_arguments, head->checks_return,
                 head->fold_op);
     }
@@ -16279,7 +16329,7 @@ bool cetta_prepared_pure_program_use_exportable_booleans(
 
 bool cetta_prepared_pure_program_is_current(
     const CettaPreparedPureProgram *program) {
-    if (!program || !space_program_token_is_current(program->source_program))
+    if (!program || !prepared_pure_source_current(program))
         return false;
     for (size_t i = 0u; i < program->owned_source_len; i++)
         if (!program->source_view.source_call_owned ||
@@ -18345,7 +18395,7 @@ CettaPreparedPureCursorStep cetta_prepared_pure_answer_cursor_next(
     }
     CettaPreparedPureProgram *program = cursor->program;
     if (!cursor->native_frontier_owned &&
-        (!space_program_token_is_current(program->source_program) ||
+        (!prepared_pure_source_current(program) ||
          (cursor->continuation_current &&
           !cursor->continuation_current(cursor->continuation_context)))) {
         if (!cetta_prepared_pure_answer_cursor_frontier_is_complete(cursor))
@@ -19523,6 +19573,12 @@ static PREPARED_PURE_ALWAYS_INLINE Atom *prepared_pure_code_value(
 enum {
     PREPARED_PURE_CODE_INLINE_OPERANDS = 16u,
     PREPARED_PURE_CODE_POLL_CALLS = 256u,
+    /* The register code's turns that cost what compiling a program to
+     * native code costs (measured: a compile about 260,000 instructions, a
+     * turn about 320): a program is compiled once it has spent that, the
+     * deterministic rule whose total is at most twice the better choice's
+     * known in hindsight. */
+    PREPARED_PURE_NATIVE_TIER_TURNS = 1024u,
 };
 
 /* A safe point, every PREPARED_PURE_CODE_POLL_CALLS calls and returns: the
@@ -19537,6 +19593,13 @@ static PREPARED_PURE_NOINLINE bool prepared_pure_code_safe_point(
     void *interrupt_context, const CettaPreparedPureAnswerCursor *cursor) {
     if (interrupt_poll && interrupt_poll(interrupt_context))
         return false;
+    /* A root run that has spent a compile's worth of turns stops here, to
+     * restart natively (prepared_pure_run_code). */
+    if (!cursor && program->native_tier_up_allowed &&
+        program->interpreted_turns >= PREPARED_PURE_NATIVE_TIER_TURNS) {
+        program->native_tier_up = true;
+        return false;
+    }
     /* Calls and returns can grow or shrink the root inventory between
      * collections. Refresh its constant-time charge at the safe point,
      * rather than retaining the previous continuation's deadline. */
@@ -19826,6 +19889,7 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
         program, arena, gc_anchor, nursery_budget_bytes);
     /* The first call polls. */
     uint32_t poll_countdown = 1u;
+    uint32_t polled_turns = 0u;
     program->code_resumed = false;
     PreparedPureCodeFrame *frame = &program->code_frames[0];
     Atom **registers = program->slots;
@@ -20181,6 +20245,8 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
         case PREPARED_PURE_CODE_TAIL_CALL: {
             if (--poll_countdown == 0u) {
                 poll_countdown = PREPARED_PURE_CODE_POLL_CALLS;
+                program->interpreted_turns += polled_turns;
+                polled_turns = PREPARED_PURE_CODE_POLL_CALLS;
                 if (!prepared_pure_code_safe_point(
                         program, arena, false, nursery_budget_bytes,
                         gc_anchor, &gc_trigger_bytes, interrupt_poll,
@@ -20192,7 +20258,8 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
                             CETTA_PREPARED_PURE_HANDOFF_INTERRUPT);
                         goto residual;
                     }
-                    decline = "execution interrupted";
+                    decline = program->native_tier_up
+                        ? "a compile's worth of turns spent" : "execution interrupted";
                     goto declined;
                 }
             }
@@ -20367,32 +20434,16 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
             if (code->entry == PREPARED_PURE_CODE_ENTRY_SINGLE) {
                 equation = &program->equations[entry->target];
             } else if (code->entry == PREPARED_PURE_CODE_ENTRY_KEYED) {
-                uint64_t key = 0u;
-                if (entry->positions != 1u) {
-                    const PreparedPureArgumentKey *admitted = NULL;
-                    PreparedPureKeyLookup lookup = prepared_pure_key_lookup(
-                        program, &program->decisions[entry->decision],
-                        arguments, &admitted);
-                    if (lookup == PREPARED_PURE_KEY_NONE) {
-                        decline = "user call was not uniquely matched";
-                        goto call_refused;
-                    }
-                    if (lookup == PREPARED_PURE_KEY_ADMITTED)
-                        equation = &program->equations[admitted->equation];
-                } else if (prepared_pure_code_key(arguments[0], &key)) {
-                    const uint64_t *keys = &program->code_keys[entry->target];
-                    uint32_t i = 0u;
-                    for (; i < entry->count; i++) {
-                        if (keys[i] == key)
-                            break;
-                    }
-                    if (i == entry->count) {
-                        decline = "user call was not uniquely matched";
-                        goto call_refused;
-                    }
-                    equation = &program->equations[
-                        program->code_key_equations[entry->target + i]];
+                const PreparedPureArgumentKey *admitted = NULL;
+                PreparedPureKeyLookup lookup = prepared_pure_key_lookup(
+                    program, &program->decisions[entry->decision],
+                    arguments, &admitted);
+                if (lookup == PREPARED_PURE_KEY_NONE) {
+                    decline = "user call was not uniquely matched";
+                    goto call_refused;
                 }
+                if (lookup == PREPARED_PURE_KEY_ADMITTED)
+                    equation = &program->equations[admitted->equation];
             }
             if (equation) {
                 if (!prepared_pure_reserve(
@@ -20585,6 +20636,8 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
         registers[program->code[frame->pc - 1u].destination] = returned;
         if (--poll_countdown == 0u) {
             poll_countdown = PREPARED_PURE_CODE_POLL_CALLS;
+            program->interpreted_turns += polled_turns;
+            polled_turns = PREPARED_PURE_CODE_POLL_CALLS;
             if (!prepared_pure_code_safe_point(
                     program, arena, true, nursery_budget_bytes,
                     gc_anchor, &gc_trigger_bytes, interrupt_poll,
@@ -20788,13 +20841,27 @@ static bool PREPARED_PURE_HOT PREPARED_PURE_NOINLINE prepared_pure_run_owned_cod
 
 /* CETTA_PREPARED_PURE_NATIVE=0 leaves every program to the register code:
  * the reference the native image is compared against. */
-static bool prepared_pure_native_enabled(void) {
-    static _Thread_local int enabled = -1;
-    if (enabled < 0) {
+typedef enum {
+    PREPARED_PURE_NATIVE_OFF = 0,
+    PREPARED_PURE_NATIVE_BY_WORK,
+    PREPARED_PURE_NATIVE_EAGER,
+} PreparedPureNativeTier;
+
+/* CETTA_PREPARED_PURE_NATIVE: 0 never compiles, eager compiles at a
+ * program's first run, and otherwise a program is compiled by its work. */
+static PreparedPureNativeTier prepared_pure_native_tier(void) {
+    static _Thread_local int tier = -1;
+    if (tier < 0) {
         const char *setting = getenv("CETTA_PREPARED_PURE_NATIVE");
-        enabled = !(setting && strcmp(setting, "0") == 0);
+        tier = setting && strcmp(setting, "0") == 0 ? PREPARED_PURE_NATIVE_OFF
+             : setting && strcmp(setting, "eager") == 0 ? PREPARED_PURE_NATIVE_EAGER
+             : PREPARED_PURE_NATIVE_BY_WORK;
     }
-    return enabled != 0;
+    return (PreparedPureNativeTier)tier;
+}
+
+static bool prepared_pure_native_enabled(void) {
+    return prepared_pure_native_tier() != PREPARED_PURE_NATIVE_OFF;
 }
 
 /* Whether this dialect's constructors build plain expressions, as the
@@ -21480,8 +21547,13 @@ static PreparedPureNativeOutcome prepared_pure_run_native(
     Atom **result_out) {
     if (!prepared_pure_native_enabled())
         return PREPARED_PURE_NATIVE_NOT_RUN;
-    if (!program->native_tried)
+    if (!program->native_tried) {
+        /* Compiled once its register code has spent what a compile costs. */
+        if (prepared_pure_native_tier() == PREPARED_PURE_NATIVE_BY_WORK &&
+            program->interpreted_turns < PREPARED_PURE_NATIVE_TIER_TURNS)
+            return PREPARED_PURE_NATIVE_NOT_RUN;
         prepared_pure_native_prepare(program);
+    }
     if (!program->native || program->entry_argument_count > 16u)
         return PREPARED_PURE_NATIVE_NOT_RUN;
     /* A guard's comparison stays the dialect's where one owns its head. */
@@ -21552,33 +21624,54 @@ static bool prepared_pure_run_code(
             &program->slot_cap, root_registers ? root_registers : 1u))
         return prepared_pure_runtime_decline(
             program, "cannot allocate root registers", NULL);
-    if (root_registers > 0u)
-        memset(program->slots, 0, sizeof(*program->slots) * root_registers);
-    for (size_t i = 0u; i < program->entry_argument_count; i++) {
-        if (!program->entry_arguments[i])
-            return prepared_pure_runtime_decline(
-                program, "missing invocation entry argument", NULL);
-        program->slots[program->body.local_count + i] =
-            program->entry_arguments[i];
-    }
-    switch (prepared_pure_run_native(program, arena, interrupt_poll,
-                                     interrupt_context, result_out)) {
-    case PREPARED_PURE_NATIVE_ANSWERED:
-        return true;
-    case PREPARED_PURE_NATIVE_EMPTY:
+    bool may_tier_up = !program->native_tried &&
+        prepared_pure_native_tier() == PREPARED_PURE_NATIVE_BY_WORK;
+    ArenaMark start = may_tier_up ? arena_mark(arena) : (ArenaMark){0};
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (root_registers > 0u)
+            memset(program->slots, 0, sizeof(*program->slots) * root_registers);
+        for (size_t i = 0u; i < program->entry_argument_count; i++) {
+            if (!program->entry_arguments[i])
+                return prepared_pure_runtime_decline(
+                    program, "missing invocation entry argument", NULL);
+            program->slots[program->body.local_count + i] =
+                program->entry_arguments[i];
+        }
+        switch (prepared_pure_run_native(program, arena, interrupt_poll,
+                                         interrupt_context, result_out)) {
+        case PREPARED_PURE_NATIVE_ANSWERED:
+            return true;
+        case PREPARED_PURE_NATIVE_EMPTY:
+            if (outcome)
+                *outcome = cetta_call_failure();
+            return false;
+        case PREPARED_PURE_NATIVE_INTERRUPTED:
+            if (outcome)
+                *outcome = cetta_call_interrupted();
+            return prepared_pure_runtime_decline(program, "execution interrupted", NULL);
+        case PREPARED_PURE_NATIVE_NOT_RUN:
+            break;
+        }
+        /* The first attempt may stop once it has spent a compile's worth of
+         * turns; the program has no effects, so it is run again from its
+         * entry, natively where it compiles. */
+        program->native_tier_up = false;
+        program->native_tier_up_allowed = attempt == 0 && may_tier_up;
+        bool answered = prepared_pure_run_code_from(
+            program, arena, program->body.first_code, root_registers, false,
+            nursery_budget_bytes, interrupt_poll, interrupt_context, result_out,
+            outcome);
+        program->native_tier_up_allowed = false;
+        if (answered || !program->native_tier_up)
+            return answered;
+        program->native_tier_up = false;
+        arena_reset(arena, start);
         if (outcome)
-            *outcome = cetta_call_failure();
-        return false;
-    case PREPARED_PURE_NATIVE_INTERRUPTED:
-        if (outcome)
-            *outcome = cetta_call_interrupted();
-        return prepared_pure_runtime_decline(program, "execution interrupted", NULL);
-    case PREPARED_PURE_NATIVE_NOT_RUN:
-        break;
+            *outcome = (CettaCallOutcome){0};
+        if (result_out)
+            *result_out = NULL;
     }
-    return prepared_pure_run_code_from(
-        program, arena, program->body.first_code, root_registers, false,
-        nursery_budget_bytes, interrupt_poll, interrupt_context, result_out, outcome);
+    return false;
 }
 
 /* `step_node`, when not PREPARED_PURE_RUNTIME_NODE, evaluates that node of an
@@ -21656,9 +21749,12 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal_run(
         return prepared_pure_runtime_decline(
             program, "cannot push root frame", NULL);
 
-    ArenaMark gc_anchor = arena_mark(arena);
-    size_t gc_trigger_bytes = prepared_pure_gc_trigger_bytes(
-        program, arena, gc_anchor, nursery_budget_bytes);
+    bool gc_active = closed && nursery_budget_bytes != 0u;
+    ArenaMark gc_anchor = gc_active ? arena_mark(arena) : (ArenaMark){0};
+    size_t gc_trigger_bytes = gc_active
+        ? prepared_pure_gc_trigger_bytes(
+              program, arena, gc_anchor, nursery_budget_bytes)
+        : SIZE_MAX;
     uint32_t interrupt_poll_steps = 0u;
 
     while (program->frame_len > 0u) {
@@ -21670,16 +21766,16 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal_run(
             return prepared_pure_runtime_decline(
                 program, "execution interrupted", NULL);
         }
-        size_t gc_current_bytes = prepared_pure_saturating_add(
-            arena->live_bytes, arena->external_bytes);
-        if (closed && nursery_budget_bytes != 0u)
+        if (gc_active) {
+            size_t gc_current_bytes = prepared_pure_saturating_add(
+                arena->live_bytes, arena->external_bytes);
             gc_trigger_bytes = prepared_pure_gc_trigger_bytes(
                 program, arena, gc_anchor, nursery_budget_bytes);
-        if (closed && nursery_budget_bytes != 0u &&
-            gc_current_bytes >= gc_trigger_bytes) {
-            prepared_pure_gc_collect(program, arena, gc_anchor, NULL);
-            gc_trigger_bytes = prepared_pure_gc_trigger_bytes(
-                program, arena, gc_anchor, nursery_budget_bytes);
+            if (gc_current_bytes >= gc_trigger_bytes) {
+                prepared_pure_gc_collect(program, arena, gc_anchor, NULL);
+                gc_trigger_bytes = prepared_pure_gc_trigger_bytes(
+                    program, arena, gc_anchor, nursery_budget_bytes);
+            }
         }
         PreparedPureFrame *frame =
             &program->frames[program->frame_len - 1u];
@@ -22698,8 +22794,6 @@ void cetta_prepared_pure_program_free(
     free(program->code_literals);
     free(program->code_heads);
     free(program->code_entries);
-    free(program->code_keys);
-    free(program->code_key_equations);
     free(program->code_binds);
     free(program->code_live);
     free(program->code_frames);

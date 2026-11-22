@@ -1,0 +1,4 @@
+provable sort wff;
+term implies: wff > wff > wff;
+infixr implies: $ -> $ prec 20;
+axiom schema: $ implies $;

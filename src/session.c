@@ -87,7 +87,6 @@ static const CettaBuiltinPolicy CETTA_BUILTIN_POLICIES[] = {
     {"step!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"tf:fire", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"tf:fire-into", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
-    {"tf:inst", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"tf:propose", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"tf:run", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"tf:split", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},

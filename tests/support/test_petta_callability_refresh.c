@@ -46,7 +46,7 @@ static void check(bool live) {
     PettaProgram *program = petta_program_new();
     assert(program);
     if (live)
-        assert(petta_program_enable_callability_refresh(program));
+        assert(petta_program_enable_plan_revalidation(program));
     assert(petta_program_synchronize_space(program, &space));
     add(program, &space, &arena, "(= (caller $x) (future $x))");
     add(program, &space, &arena, "(= (unrelated) (inert 1))");
@@ -109,7 +109,7 @@ static void check_mutations(void) {
     space_init(&space);
     space_init(&replacement);
     PettaProgram *program = petta_program_new();
-    assert(petta_program_enable_callability_refresh(program));
+    assert(petta_program_enable_plan_revalidation(program));
     assert(petta_program_synchronize_space(program, &space));
     Atom *prefix = parse(&arena, "(= (prefix) 0)");
     Atom *future = parse(&arena, "(= (future $x) (+ $x 1))");
@@ -119,7 +119,7 @@ static void check_mutations(void) {
     PettaCandidateSnapshotLease saved = take_lease(program, &space, &arena, "caller");
     assert(saved.items[0].rhs_plan->role == PETTA_PLAN_STATIC_CALL);
 
-    /* Removing a lower catalog position moves its neighbour's stamp too. */
+    /* Removing a lower catalog position moves its neighbour's record too. */
     assert(space_remove(&space, prefix));
     petta_program_note_remove_one(program, &space, prefix);
     assert(space_remove(&space, future));
@@ -128,7 +128,7 @@ static void check_mutations(void) {
     assert(removed.items[0].rhs_plan->role == PETTA_PLAN_DATA);
     assert(saved.items[0].rhs_plan->role == PETTA_PLAN_STATIC_CALL);
 
-    /* Compact stamped and newly appended rows together. */
+    /* Compact revalidated and newly appended rows together. */
     add_atom(program, &space, prefix);
     add_atom(program, &space, prefix);
     add_atom(program, &space, future);
@@ -137,7 +137,7 @@ static void check_mutations(void) {
     PettaCandidateSnapshotLease restored = take_lease(program, &space, &arena, "caller");
     assert(restored.items[0].rhs_plan->role == PETTA_PLAN_STATIC_CALL);
 
-    /* Replacement must not reuse the previous catalog's validation stamps. */
+    /* Replacement must not reuse the previous catalog's revalidation. */
     assert(petta_program_synchronize_space(program, &replacement));
     add(program, &replacement, &arena, "(= (caller) (second 2))");
     while (space_length64(&space))
@@ -177,6 +177,6 @@ int main(void) {
     check_mutations();
     var_intern_free(&variables);
     symbol_table_free(&symbols);
-    puts("PASS: translation refresh preserves old leases, unrelated plans, held data and frame slots");
+    puts("PASS: plan revalidation preserves old leases, unrelated plans, held data and frame slots");
     return 0;
 }

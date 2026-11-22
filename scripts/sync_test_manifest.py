@@ -206,6 +206,10 @@ PRIME_TEST_NOTES = {
     "tests/prime/relational_first_demand.metta": (
         "Prime root first-answer demand, fallback, and nested-search regression"
     ),
+    "tests/prime/typed_bound_head_application.metta": (
+        "Prime typed application equivalence across written and bound heads "
+        "with ill-typed, non-callable, and quoted negative controls"
+    ),
     "tests/prime/system_timed_force.metta": (
         "Prime explicit suspension timing and multiplicity regression"
     ),

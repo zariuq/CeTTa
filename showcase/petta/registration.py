@@ -1,4 +1,4 @@
-"""Check initial registration, incremental fallback and held call values."""
+"""Show initial registration, incremental fallback and held call values."""
 import argparse
 import json
 import os
@@ -6,7 +6,8 @@ from pathlib import Path
 import subprocess
 import sys
 
-import check_gslt_through_machine as bridge
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests/support"))
+import replay_gslt as bridge
 import native_observation as observation
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -83,20 +84,23 @@ def main():
             assert found["final"]["contract_exit"] == 0, (name, label)
             return found
 
-        native = run(inputs, "native", record=True)
-        plan = dict(queries=0, guests=[])
-        machine_paths = []
-        for index, source in enumerate((program, queries)):
-            path = case / (str(index) + ".machine.metta")
-            path.write_text(bridge.through_the_machine(source, bridge.swi_lane.base.LIBRARY_IMPORT,
-                                                     initialize=index == 0, plan=plan))
-            machine_paths.append(path)
-        machine = run(machine_paths, "machine")
-        for number in plan.get("registration_preconditions", []):
-            assert machine["queries"][number]["answers"] == [[["symbol", "true".encode().hex()]]], name
-        for span in plan["guests"]:
-            assert machine["queries"][span["status"]]["answers"] == [[["symbol", "pm:halted".encode().hex()]]], name
-        assert observation.project(native, [(i, i) for i in native["queries"]]) == observation.project(machine, plan["guests"]), name
+        written = run(inputs, "written", record=True)
+        expected = observation.project(written, [(i, i) for i in written["queries"]])
+        for lane, library in (("native", bridge.swi_lane.base.LIBRARY_IMPORT),
+                              ("specs", bridge.swi_lane.base.SPECS_IMPORT)):
+            plan = dict(queries=0, guests=[])
+            machine_paths = []
+            for index, source in enumerate((program, queries)):
+                path = case / f"{index}.{lane}.metta"
+                path.write_text(bridge.through_the_machine(source, library,
+                                                         initialize=index == 0, plan=plan))
+                machine_paths.append(path)
+            machine = run(machine_paths, lane)
+            for number in plan.get("registration_preconditions", []):
+                assert machine["queries"][number]["answers"] == [[["symbol", "true".encode().hex()]]], (name, lane)
+            for span in plan["guests"]:
+                assert machine["queries"][span["status"]]["answers"] == [[["symbol", "pm:halted".encode().hex()]]], (name, lane)
+            assert expected == observation.project(machine, plan["guests"]), (name, lane)
         results.append(name)
 
     for source, initialize in [("(= (f) 1)\n!(f)\n(= (f) 2)", True), ("(Row a)", True),
@@ -106,7 +110,8 @@ def main():
         bridge.through_the_machine(source, bridge.swi_lane.base.LIBRARY_IMPORT, initialize=initialize, plan=plan)
         assert not plan.get("registration_preconditions"), source
     (work / "qualified.json").write_text(json.dumps(dict(programs=results, incremental_fallbacks=6), indent=2) + "\n")
-    print(f"PASS: {len(results)} complete structural/effect comparisons and six incremental registration fallbacks")
+    print(f"PASS: {len(results)} programs agree as written, through native transform and through "
+          "authored transform; six incremental registration fallbacks")
 
 
 if __name__ == "__main__":

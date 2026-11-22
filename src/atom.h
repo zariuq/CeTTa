@@ -1034,7 +1034,7 @@ int   cetta_format_float(char *buf, size_t size, double value);
 
 /* ── Hash-Consing (structural sharing for immutable atoms) ─────────────── */
 
-#define HASHCONS_TABLE_SIZE 65536
+#define HASHCONS_TABLE_SIZE 1024
 
 struct HashConsTable {
     CettaFrameIdentityScope frame_identities;
@@ -1053,6 +1053,7 @@ void hashcons_init(HashConsTable *hc);
 /* A private ownership domain starts small and uses the same growing table.
  * Canonical atoms retain their addresses when its index grows. */
 void hashcons_init_compact(HashConsTable *hc);
+void hashcons_reserve(HashConsTable *hc, uint32_t min_capacity);
 void hashcons_free(HashConsTable *hc);
 /* Process-wide stamp for caches borrowing atoms from any hash-cons table.
  * Reclamation advances it before freeing atoms; UINT64_MAX permanently
@@ -1715,6 +1716,11 @@ bool atom_value_eq(Atom *a, Atom *b);
  * value, so 1 and 1.0, and 1/2 and 0.5, hash alike.  atom_hash stays the
  * hash of the representation. */
 uint32_t atom_value_hash(Atom *a);
+/* A hash constant on the classes of the current lane's atom_eq: in HE, where
+ * numbers of different kinds compare equal by value (2 and 2.0), the value
+ * hash; elsewhere the hash of the representation.  Keys of tables that
+ * compare with atom_eq use it. */
+uint32_t atom_lane_hash(Atom *a);
 
 /* A grounded leaf in caller storage, standing in for an unboxed Int, Float
  * or Bool so that it compares exactly as its atom would.  It belongs to no

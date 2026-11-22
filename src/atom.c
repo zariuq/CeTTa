@@ -1948,7 +1948,8 @@ ArenaMark arena_mark(const Arena *a) {
     mark.live_bytes = a->live_bytes;
     mark.external_bytes = a->external_bytes;
     mark.retained_resource_bytes = a->retained_resource_bytes;
-    mark.ownership_index_bytes = arena_ownership_index_bytes(a);
+    mark.ownership_index_bytes = (a->retained_owners || a->frame_identities)
+        ? arena_ownership_index_bytes(a) : 0u;
     mark.symbol_cache_bytes = a->symbol_cache_bytes;
     mark.reserved_bytes = a->reserved_bytes;
     mark.block_count = a->block_count;
@@ -1999,22 +2000,30 @@ void arena_release_spare(Arena *a, size_t keep_bytes) {
 void arena_reset(Arena *a, ArenaMark mark) {
     if (!a) return;
     arena_invalidate_allocations(a, CETTA_GSLT_LIFETIME_ARENA_RESET);
-    arena_frame_identity_set_truncate(a, mark.frame_identity_len);
-    arena_run_finalizers_until(a, mark.finalizers);
-    ArenaBlock *recycled = NULL;
-    while (a->head && a->head != mark.head) {
-        ArenaBlock *next = a->head->next;
-        a->head->used = 0;
-        a->head->next = recycled;
-        recycled = a->head;
-        a->head = next;
+    if (a->frame_identities && a->frame_identities->len > mark.frame_identity_len)
+        arena_frame_identity_set_truncate(a, mark.frame_identity_len);
+    if (a->finalizers != mark.finalizers)
+        arena_run_finalizers_until(a, mark.finalizers);
+    if (a->head != mark.head) {
+        ArenaBlock *recycled = NULL;
+        while (a->head && a->head != mark.head) {
+            ArenaBlock *next = a->head->next;
+            a->head->used = 0;
+            a->head->next = recycled;
+            recycled = a->head;
+            a->head = next;
+        }
+        if (recycled)
+            arena_push_spare_list(a, recycled);
     }
-    arena_push_spare_list(a, recycled);
     if (a->head && a->head->used > mark.used) {
         a->head->used = mark.used;
     }
     a->live_bytes = mark.live_bytes;
-    a->external_bytes = arena_mark_external_bytes(a, mark);
+    a->external_bytes = (!a->retained_owners && !a->frame_identities &&
+                         mark.ownership_index_bytes == 0u)
+        ? mark.external_bytes
+        : arena_mark_external_bytes(a, mark);
     a->retained_resource_bytes = mark.retained_resource_bytes;
     arena_runtime_note_usage(a);
 }
@@ -2311,9 +2320,11 @@ void hashcons_free(HashConsTable *hc) {
     if (!hc || !hc->table) return;
     /* Invalidate borrowed pointer keys before allocations can be reused. */
     hashcons_note_reclamation();
-    for (uint32_t i = 0; i < hc->size; i++) {
+    uint32_t remaining = hc->used;
+    for (uint32_t i = 0; remaining != 0u && i < hc->size; i++) {
         Atom *atom = hc->table[i];
         if (!atom) continue;
+        remaining--;
         if (atom->kind == ATOM_GROUNDED &&
             atom->ground.gkind == GV_STRING)
             free((void *)atom->ground.sval);
@@ -2472,7 +2483,7 @@ static inline uint64_t hashcons_index_finalize(uint64_t h) {
     return h;
 }
 
-static uint64_t hashcons_slot_hash(Atom *atom) {
+static inline uint64_t hashcons_slot_hash(Atom *atom) {
     uint64_t h = UINT64_C(0x243f6a8885a308d3);
     h = hashcons_index_mix(h, atom->kind);
     h = hashcons_index_mix(h, atom_hash(atom));
@@ -2723,13 +2734,13 @@ static bool atom_intern_identical(Atom *a, Atom *b) {
 }
 
 static uint32_t hashcons_find_slot(HashConsTable *hc, Atom *atom, bool *found) {
-    uint32_t h = (uint32_t)(hashcons_slot_hash(atom) % hc->size);
+    uint32_t mask = hc->size - 1u;
+    uint32_t idx = (uint32_t)hashcons_slot_hash(atom) & mask;
     hc->lookup_count++;
-    for (uint32_t i = 0; i < hc->size; i++) {
+    for (uint32_t i = 0; i < hc->size; i++, idx = (idx + 1u) & mask) {
         hc->lookup_probes++;
         if ((uint64_t)i + 1u > hc->maximum_lookup_probe)
             hc->maximum_lookup_probe = (uint64_t)i + 1u;
-        uint32_t idx = (h + i) % hc->size;
         if (!hc->table[idx]) {
             *found = false;
             return idx;
@@ -2808,24 +2819,43 @@ static void hashcons_leaf_cache_store(HashConsTable *hc, Atom *atom) {
     }
 }
 
-static void hashcons_grow(HashConsTable *hc) {
+static void hashcons_rehash_to(HashConsTable *hc, uint32_t new_size) {
     Atom **old_table = hc->table;
     uint32_t old_size = hc->size;
-    Atom **grown = cetta_malloc(sizeof(Atom *) * (size_t)hc->size * 2u);
+    Atom **grown = cetta_malloc(sizeof(Atom *) * (size_t)new_size);
     if (!grown) return;
-    hc->size *= 2;
-    hc->used = 0;
+    memset(grown, 0, sizeof(Atom *) * (size_t)new_size);
+    hc->size = new_size;
     hc->table = grown;
-    memset(hc->table, 0, sizeof(Atom *) * hc->size);
-    for (uint32_t i = 0; i < old_size; i++) {
-        Atom *atom = old_table[i];
-        if (!atom) continue;
-        bool found = false;
-        uint32_t slot = hashcons_find_slot(hc, atom, &found);
-        hc->table[slot] = atom;
-        hc->used++;
+    if (hc->used != 0u) {
+        hc->used = 0;
+        uint32_t mask = new_size - 1u;
+        for (uint32_t i = 0; i < old_size; i++) {
+            Atom *atom = old_table[i];
+            if (!atom) continue;
+            uint32_t slot = (uint32_t)hashcons_slot_hash(atom) & mask;
+            while (hc->table[slot])
+                slot = (slot + 1u) & mask;
+            hc->table[slot] = atom;
+            hc->used++;
+        }
     }
     free(old_table);
+}
+
+static void hashcons_grow(HashConsTable *hc) {
+    if (!hc || hc->size > UINT32_MAX / 2u) return;
+    hashcons_rehash_to(hc, hc->size * 2u);
+}
+
+void hashcons_reserve(HashConsTable *hc, uint32_t min_capacity) {
+    if (!hc || !hc->table || min_capacity <= hc->size)
+        return;
+    uint32_t target = hc->size ? hc->size : HASHCONS_TABLE_SIZE;
+    while (target < min_capacity && target <= UINT32_MAX / 2u)
+        target *= 2u;
+    if (target > hc->size)
+        hashcons_rehash_to(hc, target);
 }
 
 static Atom *hashcons_intern_admitted(HashConsTable *hc, Atom *atom);
@@ -2886,6 +2916,31 @@ static Atom *hashcons_published_symbol(HashConsTable *hc, SymbolId sym_id) {
     return published;
 }
 
+static inline Atom *hashcons_published_int(HashConsTable *hc, int64_t val) {
+    if (!hc || !hc->table || !hc->small_int_cache ||
+        val < HASHCONS_SMALL_INT_MIN || val > HASHCONS_SMALL_INT_MAX)
+        return NULL;
+    Atom *published = hc->small_int_cache[(size_t)(val - HASHCONS_SMALL_INT_MIN)];
+    if (!published)
+        return NULL;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASHCONS_ATTEMPT);
+    hc->lookup_count++;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASHCONS_HIT);
+    return published;
+}
+
+static inline Atom *hashcons_published_bool(HashConsTable *hc, bool val) {
+    if (!hc || !hc->table)
+        return NULL;
+    Atom *published = hc->bool_cache[val ? 1u : 0u];
+    if (!published)
+        return NULL;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASHCONS_ATTEMPT);
+    hc->lookup_count++;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASHCONS_HIT);
+    return published;
+}
+
 /* The table's representative of `atom`, inserting an owned copy when it has
  * none; NULL when the table cannot hold another.  The input itself is never
  * the answer: constructors pass temporary headers here, and a miss sends
@@ -2913,7 +2968,7 @@ static Atom *hashcons_intern_admitted(HashConsTable *hc, Atom *atom) {
     hc->used++;
     hashcons_leaf_cache_store(hc, owned);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASHCONS_INSERT);
-    if (hc->used * 10 > hc->size * 7)
+    if (hc->used * 2u >= hc->size)
         hashcons_grow(hc);
     return owned;
 }
@@ -4514,31 +4569,50 @@ Atom *atom_var(Arena *a, const char *name) {
     return at;
 }
 
+static __attribute__((noinline, cold)) Atom *atom_int_hashcons_slow(
+    Arena *a, int64_t val) {
+    Atom temp = {
+        .kind = ATOM_GROUNDED,
+        .flags = atom_flags_for_grounded_kind(GV_INT),
+        .var_id = VAR_ID_NONE,
+        .arena_id = a->identity,
+        .structural_facts = atom_structural_facts_for_grounded_kind(GV_INT),
+        .ground = {.gkind = GV_INT, .ival = val},
+    };
+    Atom *shared = atom_maybe_hashcons(a, &temp);
+    if (shared)
+        return shared;
+    Atom *at = arena_alloc(a, sizeof(Atom));
+    if (!at) return NULL;
+    *at = temp;
+    return at;
+}
+
 Atom *atom_int(Arena *a, int64_t val) {
+    if (!atom_grounded_default_arena_owned(GV_INT) && a && a->hashcons) {
+        Atom *published = hashcons_published_int(a->hashcons, val);
+        if (published)
+            return published;
+        return atom_int_hashcons_slow(a, val);
+    }
     bool cached = a && a->scalar_cache && !a->hashcons &&
         val >= ARENA_INT_CACHE_MIN &&
         val < ARENA_INT_CACHE_MIN + ARENA_INT_CACHE_CAPACITY;
     size_t int_slot = cached ? (size_t)(val - ARENA_INT_CACHE_MIN) : 0u;
     if (cached && a->symbol_cache && a->symbol_cache->ints[int_slot])
         return a->symbol_cache->ints[int_slot];
-    Atom temp = {0};
-    temp.kind = ATOM_GROUNDED;
-    temp.flags = atom_flags_for_grounded_kind(GV_INT);
-    temp.var_id = VAR_ID_NONE;
-    temp.arena_id = a->identity;
-    temp.hash_cache = 0;
-    temp.structural_facts =
-        atom_structural_facts_for_grounded_kind(GV_INT);
-    temp.ground.gkind = GV_INT;
-    temp.ground.ival = val;
-    Atom *shared = atom_maybe_hashcons(a, &temp);
-    if (shared) return shared;
     Arena *owner = cached ? arena_scalar_owner(a) : NULL;
     Arena *home = owner ? owner : a;
-    temp.arena_id = home->identity;
     Atom *at = arena_alloc(home, sizeof(Atom));
     if (!at) return NULL;
-    *at = temp;
+    *at = (Atom){
+        .kind = ATOM_GROUNDED,
+        .flags = atom_flags_for_grounded_kind(GV_INT),
+        .var_id = VAR_ID_NONE,
+        .arena_id = home->identity,
+        .structural_facts = atom_structural_facts_for_grounded_kind(GV_INT),
+        .ground = {.gkind = GV_INT, .ival = val},
+    };
     if (owner)
         a->symbol_cache->ints[int_slot] = at;
     return at;
@@ -5599,22 +5673,42 @@ void atom_scalar_leaf_bool(Atom *out, bool value) {
     out->ground.bval = value;
 }
 
-Atom *atom_bool(Arena *a, bool val) {
-    Atom temp = {0};
-    temp.kind = ATOM_GROUNDED;
-    temp.flags = atom_flags_for_grounded_kind(GV_BOOL);
-    temp.var_id = VAR_ID_NONE;
-    temp.arena_id = a->identity;
-    temp.hash_cache = 0;
-    temp.structural_facts =
-        atom_structural_facts_for_grounded_kind(GV_BOOL);
-    temp.ground.gkind = GV_BOOL;
-    temp.ground.bval = val;
+static __attribute__((noinline, cold)) Atom *atom_bool_hashcons_slow(
+    Arena *a, bool val) {
+    Atom temp = {
+        .kind = ATOM_GROUNDED,
+        .flags = atom_flags_for_grounded_kind(GV_BOOL),
+        .var_id = VAR_ID_NONE,
+        .arena_id = a->identity,
+        .structural_facts = atom_structural_facts_for_grounded_kind(GV_BOOL),
+        .ground = {.gkind = GV_BOOL, .bval = val},
+    };
     Atom *shared = atom_maybe_hashcons(a, &temp);
-    if (shared) return shared;
+    if (shared)
+        return shared;
     Atom *at = arena_alloc(a, sizeof(Atom));
     if (!at) return NULL;
     *at = temp;
+    return at;
+}
+
+Atom *atom_bool(Arena *a, bool val) {
+    if (!atom_grounded_default_arena_owned(GV_BOOL) && a && a->hashcons) {
+        Atom *published = hashcons_published_bool(a->hashcons, val);
+        if (published)
+            return published;
+        return atom_bool_hashcons_slow(a, val);
+    }
+    Atom *at = arena_alloc(a, sizeof(Atom));
+    if (!at) return NULL;
+    *at = (Atom){
+        .kind = ATOM_GROUNDED,
+        .flags = atom_flags_for_grounded_kind(GV_BOOL),
+        .var_id = VAR_ID_NONE,
+        .arena_id = a->identity,
+        .structural_facts = atom_structural_facts_for_grounded_kind(GV_BOOL),
+        .ground = {.gkind = GV_BOOL, .bval = val},
+    };
     return at;
 }
 
@@ -7768,6 +7862,14 @@ char *cetta_he_float_exact_key_text(double value) {
 
 uint32_t atom_value_hash(Atom *a) {
     return atom_hash_fold(a, true, false);
+}
+
+uint32_t atom_lane_hash(Atom *a) {
+    if (!a)
+        return 0u;
+    return eval_current_language_id &&
+           eval_current_language_id() == CETTA_LANGUAGE_HE
+        ? atom_value_hash(a) : atom_hash(a);
 }
 
 static __attribute__((noinline)) bool atom_value_eq_walk(

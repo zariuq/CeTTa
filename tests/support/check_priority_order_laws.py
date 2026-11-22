@@ -107,7 +107,10 @@ def main():
     rng = random.Random(20261111)
     checked = 0
     for lang in ("petta", "he"):
-        pool = GROUND + OPEN + ZEROS + SPACES + (PETTA_LISTS if lang == "petta" else [])
+        # PeTTa adds no bare variable (its add-atom raises, as assertz does);
+        # its variables are ordered inside the atoms that hold them.
+        opened = [atom for atom in OPEN if lang != "petta" or not atom.startswith("$")]
+        pool = GROUND + opened + ZEROS + SPACES + (PETTA_LISTS if lang == "petta" else [])
         for profile in ("", " full"):
             lines, groups, tag = list(BINDS), [], 0
             for _ in range(triples):

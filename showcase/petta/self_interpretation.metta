@@ -1,3 +1,5 @@
+; A PeTTa machine implemented as transform rules. Each “holds” line shows
+; agreement with direct evaluation and the number of guest machine steps.
 !(import! &self (library lib_transform))
 !(import! &self (library petta_machine))
 

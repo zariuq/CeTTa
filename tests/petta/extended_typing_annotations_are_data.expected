@@ -1,0 +1,6 @@
+(brand T 5)
+(the T 5)
+(the Number 5)
+(-[det]-> A B)
+(brand Marker 7)
+(typed 8)

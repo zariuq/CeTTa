@@ -24,11 +24,9 @@
           (system:exit 2)))
        ($boolean $boolean))))
 
-; The exact serialized fields retain upstream evidence identities. An
-; unrelated field, path, spelling or malformed digest is still authored text.
-(= (vocabulary:pinned-source "reference")
-  (str:concat "^\\s*\"examples/import_error_" (str:concat (vocabulary:needle)
-    "\\.metta\":\\s*\"[0-9a-f]{64}\",?\\s*$")))
+; The observation ledger's exact source field and the corpus manifest's entry
+; for that example retain an upstream evidence identity. An unrelated field,
+; path or spelling is still authored text.
 (= (vocabulary:pinned-source "observation")
   (str:concat "^\\s*\"source\":\\s*\"examples/import_error_" (str:concat (vocabulary:needle)
     "\\.metta\",?\\s*$")))
@@ -42,27 +40,23 @@
        ($result (vocabulary:regex-result $result))))))
 (= (vocabulary:pinned-field $relative $text)
   (case $relative
-    (("langdef/petta/reference.json" (vocabulary:pinned-match "reference" $text))
-     ("tests/petta/corrected_stable_observations.json"
+    (("tests/petta/corrected_stable_observations.json"
         (vocabulary:pinned-match "observation" $text))
      ("tests/petta/corpus/manifest.json"
         (vocabulary:pinned-match "corpus" $text))
      ($other False))))
 
 (= (vocabulary:prepare-pinned)
- (let $reference (re:compile (vocabulary:pinned-source "reference"))
  (let $observation (re:compile (vocabulary:pinned-source "observation"))
  (let $corpus (re:compile (vocabulary:pinned-source "corpus"))
- (case (VocabularyPatterns $reference $observation $corpus)
-  (((VocabularyPatterns (NativeHandle $kind1 $id1) (NativeHandle $kind2 $id2)
-                        (NativeHandle $kind3 $id3))
-    (let $saved1 (add-atom &self (vocabulary:pinned-pattern "reference" $reference))
-     (let $saved2 (add-atom &self (vocabulary:pinned-pattern "observation" $observation))
-      (let $saved3 (add-atom &self (vocabulary:pinned-pattern "corpus" $corpus))
-       (vocabulary:main)))))
+ (case (VocabularyPatterns $observation $corpus)
+  (((VocabularyPatterns (NativeHandle $kind1 $id1) (NativeHandle $kind2 $id2))
+    (let $saved1 (add-atom &self (vocabulary:pinned-pattern "observation" $observation))
+     (let $saved2 (add-atom &self (vocabulary:pinned-pattern "corpus" $corpus))
+      (vocabulary:main))))
    ($fault
     (let $shown (system:write stderr "Cannot complete vocabulary check: regex preparation failed\n")
-      (system:exit 2)))))))))
+      (system:exit 2))))))))
 ; POSIX filenames can contain non-text bytes. Keep each such byte as a
 ; barrier, as Python's surrogateescaped path spelling does, rather than
 ; deleting bytes and accidentally joining two halves of a word.

@@ -157,18 +157,23 @@
    (let $source (pt:every (pt:source $pattern))
      (transform $space $source $template)))
 
-(= (pt:get-atoms $space) (transform $space (all (read $atom)) $atom))
+(= (pt:get-atoms $space)
+   (if (is-space $space)
+       (transform $space (all (read $atom)) $atom)
+       (get-atoms $space)))
 
 ; A read that binds the pattern's variables in the caller: the firing answers
 ; the row of their values, and the row is met with the pattern's own.  PeTTa
 ; reads a conjunction at one snapshot in the CeTTa variant. In the SWI
 ; variant each leg starts as its preceding leg reaches it.
 (= (pt:read $space $pattern)
-   (if (and (== (pt:variant) swi) (pt:conjunction? $pattern))
-       (pt:read-parts $space (cdr-atom $pattern))
-       (let $row (pt:row-of $pattern)
-         (let $source (pt:every (pt:source $pattern))
-           (let $row (transform $space $source $row) True)))))
+   (if (is-space $space)
+       (if (and (== (pt:variant) swi) (pt:conjunction? $pattern))
+           (pt:read-parts $space (cdr-atom $pattern))
+           (let $row (pt:row-of $pattern)
+             (let $source (pt:every (pt:source $pattern))
+               (let $row (transform $space $source $row) True))))
+       (match $space $pattern True)))
 
 (= (pt:read-parts $space $parts)
    (if (== $parts ()) True
@@ -179,16 +184,14 @@
 
 ; The atom is made as data: bound by a let, a template headed by ',' is one
 ; instance.  add-atom answers true.
-; A space handle is the firing's destination.  Any other name is a space as
-; soon as an atom is added under it, and a transform reads a destination that
-; is no handle as a function; for such a name the firing answers the atom it
-; makes to the caller, who stores it under the name.
+; A space handle is the firing's destination. Creating a named space or
+; refusing a malformed operand belongs to the host's space admission; an
+; invalid handle is not a firing with an empty frontier.
 (: pt:add-atom (-> %Undefined% Atom %Undefined%))
 (= (pt:add-atom $space $atom)
    (if (is-space $space)
        (let $made (transform $space (let $new (quote $atom)) $new $space) True)
-       (let (pt:made $value) (transform $space (let $new (quote $atom)) (pt:made $new))
-         (add-atom $space $value))))
+       (add-atom $space $atom)))
 
 ; An unbound atom or equation head is the host's to refuse. Other pattern
 ; variables are selectors, and collecting keeps their bindings private.
@@ -213,10 +216,12 @@
 
 (: pt:remove-atom (-> %Undefined% Atom %Undefined%))
 (= (pt:remove-atom $space $atom)
-   (if (pt:removal-unbound? $atom) (remove-atom $space $atom)
-     (let $source (pt:source $atom)
-       (let $taken (transform $space (collect (take $source) $all) $all)
-         (not (== $taken ()))))))
+   (if (is-space $space)
+       (if (pt:removal-unbound? $atom) (remove-atom $space $atom)
+         (let $source (pt:source $atom)
+           (let $taken (transform $space (collect (take $source) $all) $all)
+             (not (== $taken ())))))
+       (remove-atom $space $atom)))
 
 ;; ---- choice -----------------------------------------------------------------------
 
@@ -432,12 +437,16 @@
                      (pt:fired $k))
        (pt:body-of $key $arguments $mark))))
 
-; The equation of a key: one that cuts takes the call's mark as well.
+; The key and operands are already values, possibly with live variables.
+; Dispatch the application without evaluating the operands again. A key
+; whose body cuts also receives the call's mark.
 (= (pt:body-of $key $arguments $mark)
    (let (pt:key $name $kind $index) $key
      (if (is-member $kind (static-cut dynamic-cut))
-         (pt:body-cut $key $arguments $mark)
-         (pt:body $key $arguments))))
+         (let $cut-call (pt:list4 pt:body-cut $key $arguments $mark)
+           (reduce $cut-call))
+         (let $plain-call (pt:list3 pt:body $key $arguments)
+           (reduce $plain-call)))))
 
 (= (pt:cut! $mark) (pt:add-atom &pt-work (pt:cut $mark)))
 

@@ -456,6 +456,7 @@ Atom *petta_semantics_instantiation_error(
 /* Public removal needs a bound atom and, for an equation, a bound function
  * name. Other variables in a removal pattern remain valid selectors. */
 Atom *petta_semantics_remove_pattern_error(Arena *arena, Atom *pattern);
+Atom *petta_semantics_space_operand_error(Arena *arena, Atom *location);
 /* What (Predicate V) gives for the value V of its argument, the reference's
  * 'Predicate'([F|Args], T) :- T =.. [F|Args]: a list whose first element is
  * a symbol names that compound, and a list of one element names the element.
@@ -581,6 +582,11 @@ bool petta_semantics_match_cons_constraint(
  * not acquire list-pattern meaning during matching. */
 bool petta_semantics_match_lowered_head(
     Arena *arena, Atom *head, Atom *value, BindingsBuilder *builder);
+/* Match two values with their own lexical coordinates. Neither operand's
+ * public spelling is a pattern constructor. */
+bool petta_semantics_match_list_values(
+    Arena *arena, BindingValue left, BindingValue right,
+    BindingsBuilder *builder);
 /* Same match as freshening the head with this epoch first. Observed
  * structure stays borrowed; retaining source syntax uses the eager match. */
 bool petta_semantics_match_lowered_head_epoch(
@@ -652,6 +658,8 @@ Atom *petta_semantics_msort(Arena *arena, Atom *list);
 
 /* Stable sort of structural keys made from scalar leaves, variables and
  * finite expressions. Compare node kinds before their contents. */
+bool cetta_term_compare_structural(const Atom *left, const Atom *right,
+                                   int *ordering);
 Atom *cetta_term_msort_structural(Arena *arena, Atom *keys);
 
 /*

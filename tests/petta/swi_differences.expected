@@ -12,7 +12,7 @@ Grounded
 (20)
 (installed-later 5)
 6
-((Visible visibility-a) (Visible visibility-a))
+((Visible visibility-b))
 ()
 (Raw (+ 1 2))
 ()

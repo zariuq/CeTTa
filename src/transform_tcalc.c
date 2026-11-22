@@ -1,7 +1,6 @@
 #include "transform_tcalc.h"
 #include "native/kernel/kernel.h"
 #include "../native/tcalc/tcalc_core.h"
-#include "petta_semantics.h"
 #include "stats.h"
 #include "term_canon.h"
 #include "u64_index.h"
@@ -133,10 +132,14 @@ struct TfTc {
     TcOccurrence *selected;
     size_t takes;
     bool unsupported;
+    /* A cursor lent facts a relation kept.  Rows are told apart by their
+     * positions, and a kept fact's position is its cursor's own, so the
+     * decision is declined and the direct engine decides the firing; I4
+     * gives every occurrence one name and removes this. */
+    bool kept;
     bool no_memory;
     bool protocol_started;
     Atom *error;
-    CettaTransformOutcome committed;
 };
 
 static bool tftc_grow(void **array, size_t *capacity, size_t needed, size_t width) {
@@ -508,11 +511,13 @@ static TcStoreStatus tftc_cursor(TfTc *ctx, uint32_t location, Atom *pattern, vo
         return TC_STORE_NO_MEMORY;
     *cursor = (TfTcCursor){.owner = ctx, .space = ctx->locations[location].space, .location = location};
     space_occurrence_cursor_init_empty(&cursor->rows);
-    Atom *index = petta_semantics_match_index_pattern(ctx->arena, pattern, NULL);
-    if (!index || !space_occurrence_cursor_init(cursor->space, index, &cursor->rows)) {
+    if (space_match_cursor_open(cursor->space, ctx->arena, pattern, &cursor->rows, NULL) !=
+        SPACE_MATCH_CURSOR_READY) {
         space_occurrence_cursor_release(&cursor->rows);
         return TC_STORE_NO_MEMORY;
     }
+    if (space_occurrence_cursor_lends_kept(&cursor->rows))
+        ctx->kept = true;
     ctx->cursors[ctx->cursor_length++] = cursor;
     *out = cursor;
     return TC_STORE_ROW;
@@ -521,6 +526,9 @@ static TcStoreStatus tftc_cursor(TfTc *ctx, uint32_t location, Atom *pattern, vo
 static TcStoreStatus tftc_next(void *raw, TcOccurrence *out) {
     TfTcCursor *cursor = raw;
     TfTc *ctx = cursor->owner;
+    /* No row is named once positions may confuse two of them. */
+    if (ctx->kept)
+        return TC_STORE_END;
     if (ctx->firing->spend && !ctx->firing->spend(ctx->firing->context, 1u))
         return TC_STORE_INTERRUPTED;
     CettaIndex position = 0u;
@@ -668,7 +676,9 @@ done:
     return agrees;
 }
 
-static TcCommitStatus tftc_commit(void *raw, const TcTerms *terms,
+/* The term kernel's commit callback is a validation sink for this adapter.
+ * The runtime publishes after the solver returns and releases its readers. */
+static TcCommitStatus tftc_check_publication(void *raw, const TcTerms *terms,
         const TcOccurrence *taken, size_t takes, const TcTerm *made, size_t count) {
     TfTc *ctx = raw;
     ctx->terms = (TcTerms *)terms;
@@ -680,17 +690,9 @@ static TcCommitStatus tftc_commit(void *raw, const TcTerms *terms,
         if (ctx->no_memory) return TC_COMMIT_NO_MEMORY;
         ctx->error = atom_error(ctx->arena, ctx->firing->publication,
             atom_symbol(ctx->arena, "TransformProtocolResultMismatch"));
-        ctx->committed = CETTA_TRANSFORM_ERROR;
         return TC_COMMIT_HOST_ERROR;
     }
-    /* Original publications already own their leaves. Releasing pins before
-     * the first removal avoids detaching an entire Space for this call. */
-    tftc_close_all(ctx);
-    ctx->committed = ctx->firing->commit(ctx->firing->context, ctx->firing->expected, count);
-    return ctx->committed == CETTA_TRANSFORM_FIRED ? TC_COMMIT_DONE
-        : ctx->committed == CETTA_TRANSFORM_NONE ? TC_COMMIT_REFUSED
-        : ctx->committed == CETTA_TRANSFORM_INTERRUPTED ? TC_COMMIT_INTERRUPTED
-        : ctx->committed == CETTA_TRANSFORM_DECLINED ? TC_COMMIT_NO_MEMORY : TC_COMMIT_HOST_ERROR;
+    return TC_COMMIT_DONE;
 }
 
 static bool tftc_location(TfTc *ctx, Space *space, uint32_t *out) {
@@ -743,7 +745,7 @@ static CettaTransformOutcome tftc_terms_decide(void *unused, Arena *arena,
         const CettaTransformFiring *firing, Atom **error) {
     (void)unused;
     *error = NULL;
-    TfTc ctx = {.arena = arena, .firing = firing, .committed = CETTA_TRANSFORM_NONE};
+    TfTc ctx = {.arena = arena, .firing = firing};
     ctx.cache = tftc_cache_take();
     ctx.terms = ctx.cache && ctx.cache->terms ? ctx.cache->terms : tc_terms_new();
     if (ctx.cache) ctx.cache->terms = ctx.terms;
@@ -809,7 +811,8 @@ static CettaTransformOutcome tftc_terms_decide(void *unused, Arena *arena,
     TcInterpretation how = {.step = TC_STEP_ONE,
         .ask = firing->checks_before_tells ? TC_ASK_BEFORE_TELLS : TC_ASK_AFTER_TELLS,
         .store = TC_STORE_MULTISET, .matches = TC_MATCHES_KEYS, .budget = UINT64_MAX};
-    TcStoreOps ops = {&ctx, tftc_open, tftc_next, tftc_close, tftc_import, tftc_commit, tftc_spend};
+    TcStoreOps ops = {&ctx, tftc_open, tftc_next, tftc_close, tftc_import,
+        tftc_check_publication, tftc_spend};
     const TcTerm *made = NULL;
     size_t count = 0u;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_DECISION);
@@ -835,7 +838,8 @@ static CettaTransformOutcome tftc_terms_decide(void *unused, Arena *arena,
     case TC_DECIDED_NO_MEMORY: break;
     }
 done:
-    if (ctx.unsupported && !ctx.protocol_started) result = CETTA_TRANSFORM_DECLINED;
+    if ((ctx.unsupported && !ctx.protocol_started) || ctx.kept)
+        result = CETTA_TRANSFORM_DECLINED;
     if (result == CETTA_TRANSFORM_ERROR && !*error)
         *error = ctx.error && atom_is_error(ctx.error) ? ctx.error
             : atom_error(arena, firing->publication,
@@ -1130,12 +1134,6 @@ static bool tc_fire_admit(Explorer *x) {
 
 #include "../native/tcalc/tcalc_fire.generated.h"
 
-static CettaTransformOutcome tftc_reference_commit(void *unused,
-        Atom *const *made, size_t count) {
-    (void)unused; (void)made; (void)count;
-    return CETTA_TRANSFORM_FIRED;
-}
-
 static bool tftc_witnesses_current(const CettaTransformFiring *firing) {
     for (size_t i = 0u; i < firing->port_count; i++) {
         const CettaTransformPort *port = &firing->ports[i];
@@ -1147,6 +1145,10 @@ static bool tftc_witnesses_current(const CettaTransformFiring *firing) {
 
 static bool tftc_witnesses_enabled(const CettaTransformFiring *firing) {
     if (!tftc_witnesses_current(firing)) return false;
+    /* A witness whose cursor lends kept facts names its row by that
+     * cursor's position (TfTc.kept). */
+    for (size_t i = 0u; i < firing->port_count; i++)
+        if (firing->ports[i].witness->kept) return false;
     for (size_t i = 0u; i < firing->port_count; i++) {
         const CettaTransformPort *take = &firing->ports[i];
         if (!take->take) continue;
@@ -1244,11 +1246,10 @@ protocol:
     (void)tc_fire(&x);
     result = x.outcome;
 done:
-    if (x.store.unsupported) result = CETTA_TRANSFORM_DECLINED;
+    if (x.store.unsupported || x.store.kept) result = CETTA_TRANSFORM_DECLINED;
     if (x.store.no_memory) result = CETTA_TRANSFORM_ERROR;
     if (compare_carriers && result != CETTA_TRANSFORM_ERROR && result != CETTA_TRANSFORM_INTERRUPTED) {
         CettaTransformFiring reference = *firing;
-        reference.commit = tftc_reference_commit;
         reference.spend = NULL;
         Atom *reference_error = NULL;
         CettaTransformOutcome checked = tftc_terms_decide(NULL, arena, &reference, &reference_error);
@@ -1264,8 +1265,6 @@ done:
     tftc_close_all(&x.store);
     if (firing->principal && result != CETTA_TRANSFORM_ERROR && !tftc_witnesses_current(firing))
         result = CETTA_TRANSFORM_DECLINED;
-    if (result == CETTA_TRANSFORM_FIRED)
-        result = firing->commit(firing->context, firing->expected, firing->expected_count);
     if (result == CETTA_TRANSFORM_ERROR)
         *error = x.store.error && atom_is_error(x.store.error) ? x.store.error
             : atom_error(arena, firing->publication,

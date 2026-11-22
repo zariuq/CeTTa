@@ -804,14 +804,11 @@ static bool he_head_single_answer_in(Space *space, SymbolId head,
     const Atom *body = NULL;
     bool single = true;
     for (;;) {
-        SpaceEquationOccurrenceId id;
-        SpaceEquationCursorStep step = space_equation_cursor_next(&cursor, &id);
+        SpaceEquationOccurrence occurrence;
+        SpaceEquationCursorStep step = space_rule_cursor_read(&cursor, &occurrence);
         if (step == SPACE_EQUATION_CURSOR_END)
             break;
-        SpaceEquationOccurrence occurrence;
         if (step != SPACE_EQUATION_CURSOR_ITEM || body ||
-            !space_rule_occurrence_resolve(id, eval_admitted_rule_forms(),
-                                           &occurrence) ||
             !occurrence.lhs || occurrence.lhs->kind != ATOM_EXPR) {
             single = false;
             break;

@@ -28,3 +28,11 @@
     (effects (sort-atom $answers))))
 !(println! (let $answers (collapse (match &s (p $x) $x))
     (unchanged-source (sort-atom $answers))))
+!(println! (read-count
+    (size-atom (collapse (transform &s (, (p $x) (p $y)) (pair $x $y))))))
+!(println! (match-count
+    (size-atom (collapse (match &s (, (p $x) (p $y)) (pair $x $y))))))
+!(println! (split-count
+    (size-atom (collapse (transform &s (p $x) (, (left $x) (right $x)))))))
+!(println! (missing-count
+    (size-atom (collapse (transform &s (q $x) (missing $x))))))

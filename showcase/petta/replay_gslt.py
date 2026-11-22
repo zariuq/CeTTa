@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""GSLT -> PeTTa -> transform, measured by running it.
+"""Optional GSLT -> PeTTa -> transform demonstration from recorded invocations.
 
-    check_gslt_through_machine.py CETTA --corpus DIR [--keep DIR] [--report FILE]
+    replay_gslt.py --corpus DIR --keep DIR [--report FILE]
                                   [--timeout SECONDS] [--turns STEPS COUNT]
                                   [--fire transform|direct] [--only NAME ...]
+                                  [--jobs N]
 
 DIR holds invocation manifests made by record_petta_direct_run.sh. Replays
 preserve the recorded command/profile, cwd, environment, input order and file
@@ -16,20 +17,21 @@ original queries mapped to their retained machine turns. Pending, failed,
 unobserved and stale runs never qualify by agreeing with another failure.
 """
 import argparse
+import concurrent.futures as futures
 from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
-import resource
 import signal
 import tempfile
-
-import gslt_invocation as invocation
-import native_observation
+import threading
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import check_petta_machine_corpus as corpus  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests/support"))
+import gslt_invocation as invocation
+import native_observation
+
+import compare_corpus as corpus
 
 whole, forms, swi_lane = corpus.whole, corpus.forms, corpus.swi_lane
 ROOT = forms.ROOT
@@ -144,38 +146,15 @@ def through_the_machine(source, lane_import, initialize=True, plan=None):
 
 
 def run_invocation(record, arguments, timeout, observation=None):
-    def limit():
-        resource.setrlimit(resource.RLIMIT_CPU, (timeout, timeout + 5))
     observed = (["--run-observation", str(observation),
                  "--run-report", str(observation) + ".process.json"] if observation else [])
     return swi_lane.run_group(record["command"] + observed + arguments, record["cwd"], timeout * 6,
-                              env=invocation.replay_environment(record), limit=limit, text=False)
-
-
-def process_signal(code, observation):
-    """Physical termination is independent of guest completion or failure.
-
-    A guard receipt keeps the child's signal. A raw exit with the same
-    integer status is insufficient, as is an unacknowledged guest report.
-    """
-    if code < 0:
-        return -code
-    try:
-        report = json.loads(Path(str(observation) + ".process.json").read_text())
-        physical = report["process"]
-        number = physical["signal"]
-        if (report["contract_exit"] == 1 and report["document_framing_ok"] is False
-                and physical["state"] == "signalled" and type(number) is int
-                and number > 0 and code == 128 + number):
-            return number
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
-    return None
+                              env=invocation.replay_environment(record), cpu_seconds=timeout,
+                              text=False)
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("binary")
     parser.add_argument("--corpus", required=True)
     parser.add_argument("--keep", required=True, help="where the runs' files are written")
     parser.add_argument("--report")
@@ -190,8 +169,9 @@ def main():
     parser.add_argument("--lane", choices=["native", "specs"], default="native",
                         help="production transform library or its MeTTa specification")
     parser.add_argument("--only", nargs="*")
+    parser.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2),
+                        help="programs replayed side by side")
     args = parser.parse_args()
-    binary = os.path.abspath(args.binary)
     corpus.FIRE = args.fire
     corpus.TURNS = tuple(args.turns)
     keep = os.path.abspath(args.keep)
@@ -203,11 +183,20 @@ def main():
     if not files:
         print(f"FAIL: no invocation records in {args.corpus}")
         return 1
-    rows = []
+    harness = [*Path(__file__).parent.glob("*.py"),
+               *(invocation.ROOT / "tests/support").glob("*.py")]
     implementation = invocation.digest(json.dumps([
         (path.name, invocation.digest(path.read_bytes()))
-        for path in sorted(Path(__file__).parent.glob("*.py"))]).encode())
-    for name in files:
+        for path in sorted(harness)]).encode())
+    printing = threading.Lock()
+
+    def say(text):
+        with printing:
+            print(text, flush=True)
+
+    def qualify(name, record):
+        """One program's row: its runs as written and through the machine,
+        compared.  RECORD is its restored record, or the error refusing it."""
         stem = name[:-len(".invocation.json")]
         origin = os.path.abspath(os.path.join(args.corpus, name))
         checkpoint = Path(keep) / (stem + ".qualification.json")
@@ -215,19 +204,17 @@ def main():
             invocation.digest(Path(origin).read_bytes()), implementation,
             args.fire, args.lane, args.turns, args.timeout]).encode())
         try:
-            with invocation.restored_inputs(origin) as record, ExitStack() as cleanup:
-                if record["process"].get("state") != "exited" or record["process"].get("returncode") != 0:
-                    raise ValueError("source invocation did not complete successfully")
-                if record.get("source_gate") and record.get("source_gate_status") != 0:
-                    raise ValueError("source gate did not complete successfully")
+            if isinstance(record, Exception):
+                raise record
+            with ExitStack() as cleanup:
+                invocation.require_completed(record)
                 if not record["sources"]:
                     raise ValueError("invocation has no recorded source documents")
                 if checkpoint.exists():
                     prior = json.loads(checkpoint.read_text())
                     if prior.get("fingerprint") == fingerprint and prior["row"][1] == "same-native-observation":
-                        rows.append(tuple(prior["row"]))
-                        print(f"REUSE: {stem}", flush=True)
-                        continue
+                        say(f"REUSE: {stem}")
+                        return tuple(prior["row"])
                 written_events = Path(keep) / (stem + ".written.events.jsonl")
                 machine_events = Path(keep) / (stem + ".machine.events.jsonl")
                 code, out, err = run_invocation(record, record["arguments"], args.timeout, written_events)
@@ -253,9 +240,8 @@ def main():
                     origins += ["--source-origin", str(index), record["arguments"][item["argument"]]]
                 mcode, mout, merr = run_invocation(record, origins + machine_arguments, args.timeout, machine_events)
         except (OSError, ValueError) as error:
-            rows.append((stem, "unqualified-invocation", 0, str(error)))
-            print(f"unqualified-invocation {stem}: {error}", flush=True)
-            continue
+            say(f"unqualified-invocation {stem}: {error}")
+            return (stem, "unqualified-invocation", 0, str(error))
         for suffix, text in (("written.out", out), ("written.err", err),
                              ("machine.out", mout), ("machine.err", merr)):
             with open(os.path.join(keep, f"{stem}.{suffix}"), "wb") as stream:
@@ -284,8 +270,8 @@ def main():
                     observation_error = "native query contract did not complete successfully"
             except (OSError, ValueError, KeyError) as error:
                 observation_error = str(error)
-        host_signal = process_signal(code, written_events)
-        machine_signal = process_signal(mcode, machine_events)
+        host_signal = native_observation.process_signal(code, written_events)
+        machine_signal = native_observation.process_signal(mcode, machine_events)
         if code == 124:
             verdict = "host-not-ended"
         elif host_signal is not None:
@@ -314,9 +300,23 @@ def main():
             note = (f"written exit {code}, {len(out)} display bytes {first(err)!r} | "
                     f"machine exit {mcode}, {len(mout)} display bytes {first(merr)!r}")
         count = sum(len(query["answers"]) for query in a) if a is not None else 0
-        rows.append((stem, verdict, count, note))
-        invocation.save_json(checkpoint, dict(fingerprint=fingerprint, row=rows[-1]))
-        print(f"{verdict:14s} {stem:62s} {count:4d} answers  {note}", flush=True)
+        row = (stem, verdict, count, note)
+        invocation.save_json(checkpoint, dict(fingerprint=fingerprint, row=row))
+        say(f"{verdict:14s} {stem:62s} {count:4d} answers  {note}")
+        return row
+
+    # Programs run side by side, batch by batch.  A batch restores the
+    # generated inputs its records lack under the context lock, which it holds
+    # until its runs end and those inputs are removed; its records agree on
+    # every input they declare (invocation.replay_batches).
+    rows = []
+    with futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        for batch in invocation.replay_batches(
+                [os.path.join(args.corpus, name) for name in files]):
+            names = [os.path.basename(path) for path in batch]
+            with invocation.restored_batch(batch) as records:
+                rows.extend(pool.map(qualify, names, records))
+    rows.sort(key=lambda row: row[0])
     by = {}
     for row in rows:
         by[row[1]] = by.get(row[1], 0) + 1

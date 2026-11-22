@@ -143,13 +143,20 @@ class ReadinessTests(unittest.TestCase):
                 self.assertEqual(engine.run("!(== True true)").to_python(), [Symbol("true")])
                 self.assertEqual(engine.symbol("True").to_python(), Symbol("True"))
 
-    def test_missing_host_import_is_distinct_from_empty_answers(self):
+    def test_missing_petta_import_is_distinct_from_empty_answers(self):
         with Engine() as engine:
             self.assertEqual(engine.eval("(superpose ())").to_python(), [])
             with self.assertRaises(EvaluationError) as caught:
                 engine.import_("(library missing-readiness-module)")
-            self.assertEqual(caught.exception.status, "io-error")
-            self.assertIn("missing-readiness-module", caught.exception.diagnostic["message"])
+            self.assertEqual(caught.exception.status, "language-raised")
+            errors = caught.exception.answers.to_python()
+            self.assertEqual(len(errors), 1)
+            head, formal, context = errors[0]
+            self.assertEqual(head, Symbol("Error"))
+            kind, resource, file = formal
+            self.assertEqual((kind, resource), (Symbol("existence_error"), Symbol("source_sink")))
+            self.assertIn("missing-readiness-module", file.name)
+            self.assertEqual(context, (Symbol("context"), Symbol("import!"), file))
             self.assertEqual(engine.eval("(+ 1 2)").to_python(), [3])
 
     def test_parse_diagnostic_and_file_origin(self):

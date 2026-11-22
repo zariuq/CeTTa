@@ -1964,7 +1964,7 @@ def compare_manifest(
             write_run_outputs(out_dir, name, run)
             verdict = judge(entry, run, golden, timeout)
         counts[verdict.status] += 1
-        if not verdict.matches:
+        if not verdict.matches or (require_match and verdict.status == "XFAIL"):
             failures.append(f"{name}: {verdict.detail}")
         exit_text = "-" if run is None else str(run.exit)
         seconds = "-" if run is None else f"{run.seconds:.3f}"
@@ -2436,7 +2436,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             )
         if command == "compare":
             sub.add_argument("--require-complete", action="store_true")
-            sub.add_argument("--require-match", action="store_true")
+            sub.add_argument("--require-match", action="store_true",
+                             help="require every selected example to pass")
         if command == "sync":
             sub.add_argument("--base", default=DEFAULT_BASE)
             sub.add_argument("--base-commit")

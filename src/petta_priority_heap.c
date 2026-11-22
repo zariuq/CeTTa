@@ -104,6 +104,15 @@ static Atom *petta_priority_heap_prepend_child(
         : NULL;
 }
 
+/* Priorities are ordered by the established finite term ordering, so a key
+ * must be ground and finite.  An order on unbound priorities has no MeTTa
+ * meaning: an operation that reads such a key declines to the imported
+ * predicate.  A value is payload and is never read. */
+static bool petta_priority_heap_key_admitted(Atom *key) {
+    return key && !atom_has_vars(key) &&
+        !atom_structural_has_rational(key);
+}
+
 static Atom *petta_priority_heap_meld(
         Arena *arena, Atom *left, Atom *right, bool *supported) {
     if (atom_is_symbol(left, "nil"))
@@ -112,7 +121,9 @@ static Atom *petta_priority_heap_meld(
         return left;
     PettaPairingNode lnode, rnode;
     if (!petta_priority_heap_node(left, &lnode) ||
-        !petta_priority_heap_node(right, &rnode)) {
+        !petta_priority_heap_node(right, &rnode) ||
+        !petta_priority_heap_key_admitted(lnode.key) ||
+        !petta_priority_heap_key_admitted(rnode.key)) {
         *supported = false;
         return NULL;
     }
@@ -169,11 +180,6 @@ static Atom *petta_priority_heap_pair_children(
     return result;
 }
 
-static bool petta_priority_heap_ground_finite(Atom *atom) {
-    return atom && !atom_has_vars(atom) &&
-        !atom_structural_has_rational(atom);
-}
-
 static PettaPriorityHeapStatus petta_priority_heap_empty(
         Arena *arena, PettaPriorityHeapAnswer *answer) {
     Atom *heap = atom_symbol(arena, "heap");
@@ -191,9 +197,8 @@ static PettaPriorityHeapStatus petta_priority_heap_add(
     Atom *root = NULL;
     int64_t size = 0;
     if (!petta_priority_heap_carrier(heap, &root, &size) || size < 0 ||
-        size == INT64_MAX || !petta_priority_heap_ground_finite(heap) ||
-        !petta_priority_heap_ground_finite(key) ||
-        !petta_priority_heap_ground_finite(value)) {
+        size == INT64_MAX || !value ||
+        !petta_priority_heap_key_admitted(key)) {
         return PETTA_PRIORITY_HEAP_DECLINED;
     }
     Atom *empty = atom_expr(arena, NULL, 0u);
@@ -220,15 +225,14 @@ static PettaPriorityHeapStatus petta_priority_heap_take(
         Arena *arena, Atom *heap, PettaPriorityHeapAnswer *answer) {
     Atom *root = NULL;
     int64_t size = 0;
-    if (!petta_priority_heap_carrier(heap, &root, &size) || size < 0 ||
-        !petta_priority_heap_ground_finite(heap)) {
+    if (!petta_priority_heap_carrier(heap, &root, &size) || size < 0)
         return PETTA_PRIORITY_HEAP_DECLINED;
-    }
     if (atom_is_symbol(root, "nil"))
         return size == 0
             ? PETTA_PRIORITY_HEAP_NO_ANSWER : PETTA_PRIORITY_HEAP_DECLINED;
     PettaPairingNode node;
-    if (size == 0 || !petta_priority_heap_node(root, &node))
+    if (size == 0 || !petta_priority_heap_node(root, &node) ||
+        !petta_priority_heap_key_admitted(node.key))
         return PETTA_PRIORITY_HEAP_DECLINED;
     bool supported = true;
     Atom *remaining = petta_priority_heap_pair_children(
@@ -298,8 +302,8 @@ PettaPriorityHeapStatus petta_priority_heap_validate(Atom *heap,
     *valid = false;
     Atom *root = NULL;
     int64_t size = 0;
-    if (!petta_priority_heap_carrier(heap, &root, &size) || size < 0 ||
-        !petta_priority_heap_ground_finite(heap)) return PETTA_PRIORITY_HEAP_ANSWER;
+    if (!petta_priority_heap_carrier(heap, &root, &size) || size < 0)
+        return PETTA_PRIORITY_HEAP_ANSWER;
     if (atom_is_symbol(root, "nil")) {
         *valid = size == 0;
         return PETTA_PRIORITY_HEAP_ANSWER;
@@ -315,6 +319,7 @@ PettaPriorityHeapStatus petta_priority_heap_validate(Atom *heap,
         PettaPairingNode node;
         int order = 0;
         if (++visited > (uint64_t)size || !petta_priority_heap_node(next.root, &node) ||
+            !petta_priority_heap_key_admitted(node.key) ||
             (next.parent && (!petta_semantics_term_compare(next.parent, node.key, &order) || order > 0)))
             break;
         size_t children = node.children->expr.len;

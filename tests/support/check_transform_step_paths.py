@@ -42,7 +42,7 @@ PATHS = [
      "!(bind! &s (new-space))\n"
      "!(add-atom &s (job a))\n"
      "!(transform &s (take (job $j)) (done $j))\n",
-     ["[transform] proposals made", "[transform] fired (tf:fire"], "(done a)"),
+     ["[transform] candidate cursor opened", "[transform] fired (tf:fire"], "(done a)"),
     ("collected match", "!(bind! &s (new-space))\n"
      "!(add-atom &s (p a 1))\n!(add-atom &s (p a 2))\n!(add-atom &s (p b 3))\n"
      "!(sort-atom (collapse (match &s (p a $n) (got $n))))\n",

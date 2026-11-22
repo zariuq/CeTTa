@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Corpus changes and proof failures must not silently change syntax judgments."""
+"""Manifest controls on two tiny inputs; never loads the upstream corpus."""
 import copy
 import hashlib
 import json

@@ -47,6 +47,7 @@ typedef struct {
     uint8_t *input_ground;
     uint8_t *success_ground;
     uint8_t functional;
+    uint8_t decreasing_self;
     uint8_t input_heads_disjoint;
     uint8_t selected;
     uint8_t admitted;

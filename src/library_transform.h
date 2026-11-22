@@ -10,8 +10,8 @@ bool cetta_eval_transform_module_call(
     CettaLibraryContext *ctx, Space *space, Arena *a,
     Atom *head, Atom **args, uint32_t nargs, CettaCallOutcome *out);
 
-/* The first answer of a transform, with no later branch fired. */
+/* Read one answer, optionally limiting an effectful transform to one firing. */
 bool cetta_eval_transform_first(Space *space, Arena *a, Atom *call,
-                                OutcomeSet *answers);
+                                bool first_firing, OutcomeSet *answers);
 
 #endif /* CETTA_LIBRARY_TRANSFORM_H */

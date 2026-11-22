@@ -16,10 +16,11 @@ typedef struct {
     Atom *value;
 } PettaPriorityHeapAnswer;
 
-/* Realize the ground finite fragment of SWI library(heaps)' persistent
- * pairing heaps. The exposed heap/t/list representation and equal-key LIFO
- * order are preserved. Calls outside that fragment decline to the imported
- * predicate. */
+/* Realize SWI library(heaps)' persistent pairing heaps for ground finite
+ * priorities. A value is payload: it may be any term, open or rational, and
+ * a heap may carry such values. The exposed heap/t/list representation and
+ * equal-key LIFO order are preserved. A call that would read a priority
+ * outside that fragment declines to the imported predicate. */
 PettaPriorityHeapStatus petta_priority_heap_call(
     Arena *arena, Atom *resolved_call, PettaPriorityHeapAnswer *answer);
 /* Validate untrusted finite data at an import/resumption boundary. Normal

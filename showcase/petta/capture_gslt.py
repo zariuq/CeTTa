@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture production gates and retain qualified attempts across interruptions."""
+"""Manually capture selected production gates for the GSLT replay showcase."""
 import argparse
 import fcntl
 import json
@@ -9,6 +9,7 @@ import subprocess
 import sys
 import uuid
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests/support"))
 import gslt_invocation as invocation
 
 sys.path.insert(0, str(invocation.ROOT / "tools"))
@@ -45,13 +46,16 @@ def successful_attempt(path, identity):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("binary")
     parser.add_argument("--work", required=True, type=Path)
     parser.add_argument("--make", default="make")
     parser.add_argument("--gates", nargs="+", required=True)
+    parser.add_argument("--core-gates", nargs="*", default=[],
+                        help="source gates that require BUILD=core even when the parent build differs")
     parser.add_argument("--capture-only", action="store_true")
     parser.add_argument("--lane", choices=["native", "specs"], default="native")
     args = parser.parse_args()
+    if not set(args.core_gates).issubset(args.gates):
+        parser.error("--core-gates must be included in --gates")
     root = invocation.ROOT
     work = args.work.resolve()
     work.mkdir(parents=True, exist_ok=True)
@@ -79,7 +83,9 @@ def main():
                 runner = ("sh tests/support/record_petta_direct_run.sh '" + str(attempt).replace("'", "'\\''")
                           + "' $(words env CETTA_PETTA_SEARCH_MACHINE=1 $(CETTA_BIN_INVOKE) --lang petta) "
                             "env CETTA_PETTA_SEARCH_MACHINE=1 $(CETTA_BIN_INVOKE) --lang petta")
-                command = [args.make, "--no-print-directory", gate, "CETTA_PETTA_DIRECT_RUN_V1=" + runner]
+                settings = ["BUILD=core"] if gate in args.core_gates else []
+                command = [args.make, "--no-print-directory", *settings, gate,
+                           "CETTA_PETTA_DIRECT_RUN_V1=" + runner]
                 with (attempt / "gate.log").open("w") as log:
                     run = subprocess.run(command, cwd=root, env=env, stdout=log,
                                          stderr=subprocess.STDOUT, close_fds=False)
@@ -104,8 +110,8 @@ def main():
         selection.mkdir()
         for record in selected:
             (selection / record.name).symlink_to(record)
-        result = subprocess.run([sys.executable, str(root / "tests/support/check_gslt_through_machine.py"),
-            args.binary, "--fire", "transform", "--lane", args.lane,
+        result = subprocess.run([sys.executable, str(Path(__file__).with_name("replay_gslt.py")),
+            "--fire", "transform", "--lane", args.lane,
             "--corpus", str(selection), "--keep", str(work / "runs" / args.lane),
             "--report", str(work / (args.lane + "-report.txt"))], cwd=root)
         if gate_identity(root) != identity:

@@ -640,7 +640,7 @@ bool cetta_library_context_try_init_for_language_profile(CettaLibraryContext *ct
     if (ctx->petta_program &&
         (language_id == CETTA_LANGUAGE_HE ||
          language_id == CETTA_LANGUAGE_PETTA))
-        (void)petta_program_enable_callability_refresh(ctx->petta_program);
+        (void)petta_program_enable_plan_revalidation(ctx->petta_program);
     if (ctx->petta_program && cetta_profile_uses_petta_typing(profile)) {
         (void)petta_program_enable_analysis(ctx->petta_program);
     }
@@ -895,6 +895,7 @@ static void cetta_library_petta_admission_advance(
     ctx->petta_admission_revision =
         ctx->petta_admission_revision == UINT64_MAX
             ? 1u : ctx->petta_admission_revision + 1u;
+    space_global_mutation_epoch_advance();
 }
 
 static void cetta_library_petta_translator_rule_advance(
@@ -1006,6 +1007,11 @@ static void cetta_library_petta_memo_sync(CettaLibraryContext *ctx);
 uint64_t cetta_library_petta_admission_revision(CettaLibraryContext *ctx) {
     if (!ctx)
         return 0u;
+    uint64_t instance = symbol_table_instance_id(g_symbols);
+    if (ctx->petta_translator_symbol_table_instance == instance &&
+        ctx->petta_tabled_symbol_table_instance == instance &&
+        ctx->petta_memo.symbol_table_instance == instance)
+        return ctx->petta_admission_revision;
     cetta_library_petta_translator_rule_sync(ctx);
     cetta_library_petta_tabled_relation_sync(ctx);
     cetta_library_petta_memo_sync(ctx);
@@ -10118,7 +10124,7 @@ static bool transform_native_head(SymbolId head) {
     if (!name)
         return true;
     static const char *const operations[] = {
-        "transform", "tf:run", "tf:split", "tf:propose", "tf:inst",
+        "transform", "tf:run", "tf:split", "tf:propose",
         "tf:fire", "tf:fire-into", "tf:cand", "tf:fired", "tf:cs",
     };
     for (size_t i = 0u; i < sizeof operations / sizeof operations[0]; i++)
@@ -11798,6 +11804,7 @@ static bool library_import_native(CettaLibraryContext *ctx, const char *name,
 #endif
 
     ctx->active_mask |= import_bit;
+    space_global_mutation_epoch_advance();
     memset(&parsed_spec, 0, sizeof(parsed_spec));
     parsed_spec.kind = CETTA_MODULE_SPEC_STDLIB;
     snprintf(parsed_spec.raw_spec, sizeof(parsed_spec.raw_spec), "%s", import_name);
@@ -11811,8 +11818,10 @@ static bool library_import_native(CettaLibraryContext *ctx, const char *name,
                              &plan, eval_arena, error_out) ||
         !execute_import_plan(ctx, &plan, eval_arena, persistent_arena,
                              registry, fuel, NULL, error_out)) {
-        if (!previously_active)
+        if (!previously_active) {
             ctx->active_mask &= ~import_bit;
+            space_global_mutation_epoch_advance();
+        }
         return false;
     }
     if (import_bit == CETTA_LIBRARY_IO && !ctx->io_runtime)

@@ -8,3 +8,7 @@
 (effectful ((effect c)))
 (effects (c c))
 (unchanged-source (a a b))
+(read-count 9)
+(match-count 9)
+(split-count 6)
+(missing-count 0)

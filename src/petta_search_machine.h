@@ -168,6 +168,11 @@ typedef enum {
 } PettaTableMutationPolicy;
 
 PettaMachineTable *petta_machine_table_new(void);
+/* A top-level directive's bracket for the live reading (P-DEF-4): every
+ * machine it runs decides a planned data occurrence again once the program
+ * differs from the one the directive began under. */
+void petta_machine_live_begin(void);
+void petta_machine_live_end(void);
 PettaMachineTable *petta_machine_table_new_with_mutation_policy(PettaTableMutationPolicy);
 void petta_machine_table_free(PettaMachineTable *table);
 
@@ -239,14 +244,12 @@ typedef struct {
         void *context, SymbolId head, CettaExprLen arity);
     bool (*tabled_relation_join_set)(
         void *context, SymbolId head, CettaExprLen arity, SymbolId join);
-    /* A transform as its library's chain, which the machine translates and
-     * runs as its own continuation: the proposals, then one branch per
-     * proposal, fired and routed only when it is continued, every value of
-     * the chain held by a variable.  CALL is the transform with the caller's
-     * values in place.  NULL leaves the call to the host as one
-     * application. */
-    Atom *(*transform_chain)(
-        void *context, Space *space, Arena *arena, Atom *call);
+    /* The transform owns its prepared plan and lends each publication to the
+     * machine. Opening performs no effects. A refused request remains with
+     * the host's ordinary call dispatch. */
+    bool (*transform_open)(
+        void *context, Space *space, Arena *arena, Atom *call,
+        bool first_firing, CettaOwnedExecution *execution);
     /* The error a failed native collection raised, taken from the host so
      * that the machine raises it under its own handlers, as it raises a
      * host application's error.  NULL when the host raised none. */
@@ -310,6 +313,11 @@ typedef struct {
      * A fault occurrence returns from this application, rather than becoming
      * a field in its constructed value. */
     bool eager_argument_faults;
+    /* A language whose declared-type applications follow a non-PeTTa typing
+     * protocol (such as Prime's gradual/DTT BadArgType/BadType semantics)
+     * declines declared-type applications rather than running PeTTa's
+     * silent-failure type-guard protocol or constructing them unchecked. */
+    bool decline_declared_typed_calls;
     /* PeTTa's collections are findall: an error raised while collecting
      * aborts the collection and propagates, as an exception does in
      * SWI-PeTTa.  Other dialects keep a raised error as an occurrence. */
@@ -333,6 +341,10 @@ typedef struct {
     /* A `once` whose body is one call to the open tier takes its witness
      * from a portfolio of depth-first search and iterative deepening. */
     bool first_witness_portfolio;
+    /* When a transform with takes or a destination space returns its
+     * result to a `once`, the once limits it to its first firing; when that
+     * firing answers nothing, the once goes on to its other alternatives. */
+    bool once_observes_firing;
     /* The language's answer-traversal materializer beside `collapse`:
      * `reify` where the profile offers it, and `collapse` in plain PeTTa,
      * which has no `reify`.  A zero field means `collapse`, for standalone
@@ -435,6 +447,14 @@ typedef struct {
     /* Authority for authored equations sharing an intrinsic head. APPEND
      * enumerates the intrinsic first; OWNED selects this space's equations;
      * PROTECTED retains rows as data without executing them. */
+    /* Whether running an occurrence, or the goals it runs before child
+     * BEFORE_CHILD, may change the program
+     * (petta_program_occurrence_may_change_program).  An output projection
+     * leaves open each data occurrence such goals precede.  NULL: any goal
+     * with a call may. */
+    bool (*may_change_program)(void *context, Space *space, Atom *source,
+                               const PettaPlanNode *plan,
+                               uint32_t before_child);
     PettaMachineBuiltinEquations (*builtin_equations)(
         void *context, Space *space, SymbolId head, CettaExprLen arity);
     /* Exact mutable authority for deciding whether an expression root is

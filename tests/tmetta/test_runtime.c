@@ -14,9 +14,30 @@ typedef struct { CettaRuntimeSession runtime; Arena source, output, retained; } 
 
 static bool refuse_answers, answers_refused;
 static unsigned matches_until_refusal;
+static Arena *capture_copy_arena;
+static AtomDeepCopySession *capture_copy_session;
+static unsigned capture_copies_until_refusal;
+static bool capture_copy_refused;
 
 bool __real_match_atoms(Atom *left, Atom *right, Bindings *bindings, Arena *arena);
 bool __real_match_atoms_builder(Atom *left, Atom *right, BindingsBuilder *bindings, Arena *arena);
+AtomDeepCopySession *__real_atom_deep_copy_session_new(Arena *arena);
+Atom *__real_atom_deep_copy_session_copy(AtomDeepCopySession *, Atom *);
+
+AtomDeepCopySession *__wrap_atom_deep_copy_session_new(Arena *arena) {
+    AtomDeepCopySession *session = __real_atom_deep_copy_session_new(arena);
+    if (arena == capture_copy_arena) capture_copy_session = session;
+    return session;
+}
+
+Atom *__wrap_atom_deep_copy_session_copy(AtomDeepCopySession *session, Atom *source) {
+    if (capture_copy_arena && session == capture_copy_session &&
+        capture_copies_until_refusal && !--capture_copies_until_refusal) {
+        capture_copy_refused = true;
+        return NULL;
+    }
+    return __real_atom_deep_copy_session_copy(session, source);
+}
 
 static bool refuse_match(void) {
     if (!matches_until_refusal || --matches_until_refusal) return false;
@@ -350,6 +371,50 @@ static void ordered_answers(Fixture *fixture) {
     number(ask_atom(fixture, first), 20);
 }
 
+static void canonical_residuals(Fixture *fixture) {
+    Arena *arena = &fixture->source;
+    Atom *arguments = parse(fixture, "(args $x $y)");
+    Atom *x = arguments->expr.elems[1], *y = arguments->expr.elems[2];
+    Atom *r = atom_symbol(arena, "r"), *s = atom_symbol(arena, "s");
+    Atom *r_open = atom_expr2(arena, r, x), *s_open = atom_expr2(arena, s, y);
+    Atom *r_a = parse(fixture, "(r a)"), *r_b = parse(fixture, "(r b)");
+    Atom *s_c = parse(fixture, "(s c)");
+    Atom *value = atom_symbol(arena, "answer");
+    CettaIndex reference[2];
+    for (unsigned permutation = 0; permutation < 2; ++permutation) {
+        TmAnswers answers = {0};
+        answer_bank_init(&answers.bank);
+        Bindings first, second;
+        bindings_init(&first);
+        bindings_init(&second);
+        if (permutation) {
+            assert(bindings_add_constraint(&first, s_c, s_open));
+            assert(bindings_add_constraint(&first, r_a, r_open));
+        } else {
+            assert(bindings_add_constraint(&first, r_open, r_a));
+            assert(bindings_add_constraint(&first, s_open, s_c));
+        }
+        assert(bindings_add_constraint(&second, r_open, r_b));
+        assert(bindings_add_constraint(&second, s_open, s_c));
+        assert(first.eq_len == 2 && second.eq_len == 2);
+        assert(answer_bank_add(&answers.bank, value, &first, NULL, NULL));
+        assert(answer_bank_add(&answers.bank, value, &second, NULL, NULL));
+        CettaIndex order[2];
+        assert(tm_answers_canonical_order(&fixture->runtime.libraries,
+            &fixture->retained, &answers, order) == 1);
+        if (permutation)
+            assert(order[0] == reference[0] && order[1] == reference[1]);
+        else {
+            reference[0] = order[0];
+            reference[1] = order[1];
+        }
+        assert(answer_bank_get(&answers.bank, 0)->bindings.eq_len == 2);
+        bindings_free(&first);
+        bindings_free(&second);
+        answer_bank_free(&answers.bank);
+    }
+}
+
 static void wake_inputs(Fixture *fixture) {
     CettaLibraryContext *context = &fixture->runtime.libraries;
     Space *root = &fixture->runtime.space;
@@ -433,11 +498,15 @@ static void wake_inputs(Fixture *fixture) {
     arena_reset(output, (ArenaMark){0});
 }
 
-static void publication_failure(Fixture *fixture) {
+static void publication_failure(Fixture *fixture, bool all) {
     ask(fixture, "(bind! &left (new-space))");
     ask(fixture, "(bind! &right (new-space))");
     ask(fixture, "(add-atom &left first)");
     ask(fixture, "(add-atom &right second)");
+    if (all) {
+        ask(fixture, "(add-atom &left (item 1))");
+        ask(fixture, "(add-atom &left (item 2))");
+    }
     CettaLibraryContext *context = &fixture->runtime.libraries;
     Space *root = &fixture->runtime.space;
     Registry *registry = &fixture->runtime.registry;
@@ -447,9 +516,12 @@ static void publication_failure(Fixture *fixture) {
     SpaceReadToken before_left = space_read_token(left), before_right = space_read_token(right);
     EvalOutcome result;
     eval_outcome_init(&result);
+    answers_refused = false;
     refuse_answers = true;
     cetta_tmetta_eval(context, root, registry, &fixture->output,
-        parse(fixture, "(transform &left (, (take first) (take &right second)) done)"),
+        parse(fixture, all
+            ? "(transform &left (, (take first) (take &right second) (all (item $x))) (done $x))"
+            : "(transform &left (, (take first) (take &right second)) done)"),
         -1, &result);
     refuse_answers = false;
     assert(answers_refused && result.completion == CETTA_EVAL_INCOMPLETE_CAPACITY);
@@ -462,11 +534,15 @@ static void publication_failure(Fixture *fixture) {
     cetta_tmetta_resume(context, root, registry, &fixture->output, paused, -1, &result);
     assert(result.completion == CETTA_EVAL_COMPLETE && result.results.len == 1);
     TmAnswers *output = tm_answers_get(context, result.results.items[0]);
-    assert(output && output->bank.len == 1);
-    assert(space_length64(left) == 1 && tm_named(space_get_at64(left, 0), "done"));
+    assert(output && output->bank.len == (all ? 2u : 1u));
+    assert(space_length64(left) == (all ? 4u : 1u));
+    if (all) {
+        assert(!atom_eq(answer_bank_get(&output->bank, 0)->result, answer_bank_get(&output->bank, 1)->result));
+    } else assert(tm_named(space_get_at64(left, 0), "done"));
     assert(space_length64(right) == 0);
     eval_outcome_free(&result);
     arena_reset(&fixture->output, (ArenaMark){0});
+    if (all) number(ask(fixture, "(count (reify (match &left (done $x) $x)))"), 2);
 }
 
 static void collection_publication_failure(Fixture *fixture) {
@@ -506,6 +582,117 @@ static void collection_publication_failure(Fixture *fixture) {
     }
     eval_outcome_free(&result);
     arena_reset(&fixture->output, (ArenaMark){0});
+}
+
+static void capture_publication_failure(Fixture *fixture) {
+    ask(fixture, "(bind! &capture-src (new-space))");
+    ask(fixture, "(bind! &capture-dst (new-space))");
+    ask(fixture, "(add-atom &capture-src (capture ($x $y) (claim $x $y)))");
+    CettaLibraryContext *context = &fixture->runtime.libraries;
+    Space *root = &fixture->runtime.space;
+    Registry *registry = &fixture->runtime.registry;
+    Space *source = resolve_space(registry, parse(fixture, "&capture-src"));
+    Space *destination = resolve_space(registry, parse(fixture, "&capture-dst"));
+    assert(source && destination);
+    SpaceReadToken before_source = space_read_token(source), before_destination = space_read_token(destination);
+    ArenaMark before_knowledge = arena_mark(&context->tmetta_runtime->knowledge);
+    capture_copy_arena = &context->tmetta_runtime->knowledge;
+    capture_copies_until_refusal = 2;
+    capture_copy_refused = false;
+    EvalOutcome result;
+    eval_outcome_init(&result);
+    cetta_tmetta_eval(context, root, registry, &fixture->output,
+        parse(fixture, "(transform &capture-src (take (claim a b)) accepted &capture-dst)"),
+        -1, &result);
+    capture_copy_arena = NULL;
+    capture_copy_session = NULL;
+    assert(capture_copy_refused && result.completion == CETTA_EVAL_INCOMPLETE_CAPACITY);
+    assert(!result.results.len && result.frontier);
+    assert(space_read_token_matches_live_space(before_source, source));
+    assert(space_read_token_matches_live_space(before_destination, destination));
+    assert(arena_at_mark(&context->tmetta_runtime->knowledge, before_knowledge));
+    Atom *paused = atom_deep_copy(&fixture->retained, result.frontier);
+    assert(paused);
+    eval_outcome_free(&result);
+    number(ask(fixture, "(count (reify (match &capture-src (claim c d) available)))"), 1);
+    eval_outcome_init(&result);
+    cetta_tmetta_resume(context, root, registry, &fixture->output, paused, -1, &result);
+    assert(result.completion == CETTA_EVAL_COMPLETE && result.results.len == 1);
+    assert(space_length64(source) == 0 && space_length64(destination) == 1);
+    assert(tm_named(space_get_at64(destination, 0), "accepted"));
+    eval_outcome_free(&result);
+    arena_reset(&fixture->output, (ArenaMark){0});
+}
+
+static void capture_read_revalidation(Fixture *fixture) {
+    ask(fixture, "(bind! &capture-view (new-space))");
+    ask(fixture, "(bind! &capture-tell (new-space))");
+    ask(fixture, "(bind! &capture-other (new-space))");
+    ask(fixture, "(bind! &capture-receipt (new-space))");
+    ask(fixture, "(chain (add-atom &capture-view (capture ($x) (seen $x))) $_ "
+                 "(chain (add-atom &capture-tell (capture ($x $y) (link $x $y))) "
+                 "$_ (add-atom &capture-tell (capture ($y) (tell $y)))))");
+    ask(fixture, "(add-atom &capture-other (capture ($y) (other $y)))");
+    number(ask(fixture,
+        "(count (transform &capture-tell (read (link (box $y) $y)) linked &capture-receipt))"), 1);
+    CettaLibraryContext *context = &fixture->runtime.libraries;
+    Space *root = &fixture->runtime.space;
+    Registry *registry = &fixture->runtime.registry;
+    Space *view = resolve_space(registry, parse(fixture, "&capture-view"));
+    assert(view);
+    SpaceReadToken version = space_read_token(view);
+    EvalOutcome result;
+    eval_outcome_init(&result);
+    cetta_tmetta_eval(context, root, registry, &fixture->output,
+        parse(fixture, "(reify (chain (match &capture-view (seen $v) $v) $_ "
+                       "(if $waiting yes no)))"), -1, &result);
+    assert(result.completion == CETTA_EVAL_INCOMPLETE_SUSPENDED && result.frontier);
+    Atom *paused = atom_deep_copy(&fixture->retained, result.frontier);
+    assert(paused);
+    eval_outcome_free(&result);
+    number(ask(fixture, "(count (transform &capture-other (read (other red)) learned &capture-receipt))"), 1);
+    eval_outcome_init(&result);
+    cetta_tmetta_resume(context, root, registry, &fixture->output, paused, -1, &result);
+    assert(result.completion == CETTA_EVAL_INCOMPLETE_SUSPENDED && result.frontier);
+    eval_outcome_free(&result);
+    number(ask(fixture, "(count (transform &capture-tell (read (tell blue)) learned &capture-receipt))"), 1);
+    assert(space_read_token_matches_live_space(version, view));
+    eval_outcome_init(&result);
+    cetta_tmetta_resume(context, root, registry, &fixture->output, paused, -1, &result);
+    assert(result.completion == CETTA_EVAL_INCOMPLETE_INVALIDATED && !result.results.len);
+    eval_outcome_free(&result);
+    arena_reset(&fixture->output, (ArenaMark){0});
+}
+
+static void stored_frame_words(Fixture *fixture) {
+    ask(fixture, "(bind! &slot-bank (new-space))");
+    ask(fixture, "(add-atom &slot-bank (capture ($shared) (slots $x $x $y $shared)))");
+    ask(fixture, "(let $_ (add-atom &slot-bank (slots $x $x $y ordinary)) ())");
+    CettaLibraryContext *context = &fixture->runtime.libraries;
+    TmAnswers *first = tm_answers_get(context, ask(fixture,
+        "(reify (match &slot-bank (slots $a $b $c $d) (record $a $b $c $d)))"));
+    TmAnswers *second = tm_answers_get(context, ask(fixture,
+        "(reify (match &slot-bank (slots $a $b $c $d) (record $a $b $c $d)))"));
+    assert(first && second && first->bank.len == 2 && second->bank.len == 2);
+    assert(term_universe_collect(cetta_library_context_universe(context), NULL));
+    Atom *captured[2] = {NULL, NULL};
+    TmAnswers *bags[] = {first, second};
+    for (size_t bag = 0; bag < 2; ++bag) {
+        for (CettaIndex row = 0; row < bags[bag]->bank.len; ++row) {
+            Atom *record = answer_bank_get(&bags[bag]->bank, row)->result;
+            assert(record->kind == ATOM_EXPR && record->expr.len == 5);
+            Atom **fields = record->expr.elems;
+            assert(atom_eq(fields[1], fields[2]));
+            assert(!atom_eq(fields[1], fields[3]));
+            if (fields[4]->kind == ATOM_VAR) captured[bag] = record;
+        }
+    }
+    assert(captured[0] && captured[1]);
+    Atom **left = captured[0]->expr.elems;
+    Atom **right = captured[1]->expr.elems;
+    assert(atom_eq(left[4], right[4]));
+    assert(!atom_eq(left[1], right[1]) && !atom_eq(left[3], right[3]));
+    assert(left[4]->var_id.epoch.word == context->tmetta_runtime->capture_epoch.word);
 }
 
 static void wake_guard(Fixture *fixture) {
@@ -640,6 +827,16 @@ static Atom *resume_after_match_refusal(Fixture *fixture, const char *text, unsi
 }
 
 static void match_capacity_failure(Fixture *fixture) {
+    ask(fixture, "(bind! &query-retry (new-space))");
+    ask(fixture, "(add-atom &query-retry (row 7))");
+    ask(fixture, "(add-atom &query-retry (row 8))");
+    Atom *bag = resume_after_match_refusal(fixture,
+        "(reify (match &query-retry (row $x) $x))", 2);
+    TmAnswers *saved_rows = tm_answers_get(&fixture->runtime.libraries, bag);
+    assert(saved_rows && saved_rows->bank.len == 2);
+    number(answer_bank_get(&saved_rows->bank, 0)->result, 8);
+    number(answer_bank_get(&saved_rows->bank, 1)->result, 7);
+
     define(fixture, "(= (budgeted (Tag $x)) match-available)");
     assert(tm_named(resume_after_match_refusal(fixture, "(budgeted (Tag 7))", 1),
                     "match-available"));
@@ -654,6 +851,374 @@ static void match_capacity_failure(Fixture *fixture) {
     size_t count;
     assert(bindings_current_binding_count(&row->bindings, &count) && count == 2);
     assert(atom_eq(row->result, parse(fixture, "(Pair 7 8)")));
+}
+
+static void retry_unpublished_read(Fixture *fixture) {
+    CettaRuntimeSession *session = &fixture->runtime;
+    Atom *named = parse(fixture, "&query-retry");
+    Space *rows = resolve_space(&session->registry, named);
+    assert(rows);
+    Atom *source = parse(fixture, "(reify (reify (match &query-retry (row $x) $x)))");
+    CettaNativeMemory *owner = cetta_native_memory_new(UINT64_MAX);
+    CettaNativeMemoryScope memory;
+    assert(owner);
+    cetta_native_memory_enter(&memory, owner);
+    EvalOutcome result;
+    eval_outcome_init(&result);
+    matches_until_refusal = 2;
+    cetta_tmetta_eval(&session->libraries, &session->space, &session->registry,
+        &fixture->output, source, -1, &result);
+    assert(!matches_until_refusal && result.completion == CETTA_EVAL_INCOMPLETE_CAPACITY);
+    assert(!result.results.len && result.frontier);
+    Atom *paused = result.frontier;
+    CettaTmettaFrontier info;
+    assert(cetta_tmetta_frontier_info(&session->libraries, paused, &info));
+    assert(info.collecting == 2 && info.observed_spaces == 0);
+    eval_outcome_free(&result);
+    cetta_native_memory_clear_failure(owner);
+    assert(space_admit_atom(rows, NULL, parse(fixture, "(row 9)")));
+    eval_outcome_init(&result);
+    cetta_tmetta_resume(&session->libraries, &session->space, &session->registry,
+        &fixture->output, paused, -1, &result);
+    assert(result.completion == CETTA_EVAL_COMPLETE && result.results.len == 1);
+    TmAnswers *outer = tm_answers_get(&session->libraries, result.results.items[0]);
+    assert(outer && outer->bank.len == 1);
+    TmAnswers *inner = tm_answers_get(&session->libraries,
+        answer_bank_get(&outer->bank, 0)->result);
+    assert(inner && inner->bank.len == 3);
+    for (CettaIndex i = 0; i < 3; ++i)
+        number(answer_bank_get(&inner->bank, i)->result, 9 - (int64_t)i);
+    eval_outcome_free(&result);
+    arena_reset(&fixture->output, (ArenaMark){0});
+    cetta_native_memory_leave(&memory);
+    cetta_native_memory_release(owner);
+}
+
+static void wake_mixed_equations(Fixture *fixture) {
+    CettaRuntimeSession *session = &fixture->runtime;
+    Arena *output = &fixture->output;
+    ask(fixture, "(bind! &wake-rows (new-space))");
+    ask(fixture, "(add-atom &wake-rows seed)");
+    Space *rows = resolve_space(&session->registry, parse(fixture, "&wake-rows"));
+    assert(rows);
+    Atom *source = parse(fixture, "(reify (reify (chain (match &wake-rows seed ok) $_ (amb "
+        "(chain (unify (Pair (lam (ctx $f (idx 0) (idx 0))) "
+        "                    (lam (ctx $g (Pair (idx 0)) (idx 0))) $saved) "
+        "              (Pair (lam a) (lam b) retained)) $_ $saved) sibling))))");
+    Atom *amb = source->expr.elems[1]->expr.elems[1]->expr.elems[3];
+    Atom *lhs = amb->expr.elems[1]->expr.elems[1]->expr.elems[1];
+    Atom *f = lhs->expr.elems[1]->expr.elems[1]->expr.elems[1];
+    Atom *g = lhs->expr.elems[2]->expr.elems[1]->expr.elems[1];
+    assert(f->kind == ATOM_VAR && g->kind == ATOM_VAR);
+    for (unsigned trial = 0; trial < 3; ++trial) {
+        bool compatible = trial != 0;
+        EvalOutcome result;
+        eval_outcome_init(&result);
+        cetta_tmetta_eval(&session->libraries, &session->space, &session->registry,
+            output, source, -1, &result);
+        assert(result.completion == CETTA_EVAL_INCOMPLETE_SUSPENDED &&
+            !result.results.len && result.frontier);
+        Atom *frontier = result.frontier;
+        eval_outcome_free(&result);
+
+        eval_outcome_init(&result);
+        Atom *first = parse(fixture, compatible ?
+            "(Contextual 2 (lam (lam a)))" : "(Contextual 2 (lam (lam c)))");
+        assert(cetta_tmetta_resume_with_value(&session->libraries, &session->space,
+            &session->registry, output, frontier, f, first, -1, &result) == 1);
+        if (compatible) {
+            assert(result.completion == CETTA_EVAL_INCOMPLETE_SUSPENDED &&
+                !result.results.len && result.frontier);
+            CettaTmettaFrontier saved;
+            assert(cetta_tmetta_frontier_info(&session->libraries, frontier, &saved));
+            assert(saved.suspended == 1 && saved.collecting == 2 && saved.observed_spaces == 2);
+            eval_outcome_free(&result);
+            eval_outcome_init(&result);
+            Atom *second = parse(fixture, "(Contextual 2 (lam (lam b)))");
+            bool stale = trial == 2;
+            if (stale) assert(space_admit_atom(rows, NULL, parse(fixture, "new-row")));
+            size_t advanced = cetta_tmetta_resume_with_value(&session->libraries, &session->space,
+                &session->registry, output, frontier, g, second, -1, &result);
+            if (stale) {
+                assert(!advanced && result.completion == CETTA_EVAL_INCOMPLETE_INVALIDATED);
+                assert(!result.results.len);
+                eval_outcome_free(&result);
+                arena_reset(output, (ArenaMark){0});
+                continue;
+            }
+            assert(advanced == 1);
+        }
+        assert(result.completion == CETTA_EVAL_COMPLETE && result.results.len == 1);
+        TmAnswers *outer = tm_answers_get(&session->libraries, result.results.items[0]);
+        assert(outer && outer->bank.len == 1);
+        TmAnswers *inner = tm_answers_get(&session->libraries,
+            answer_bank_get(&outer->bank, 0)->result);
+        assert(inner && inner->bank.len == (compatible ? 2 : 1));
+        assert(tm_named(answer_bank_get(&inner->bank, 0)->result, "sibling"));
+        if (compatible) assert(tm_named(answer_bank_get(&inner->bank, 1)->result, "retained"));
+        eval_outcome_free(&result);
+        arena_reset(output, (ArenaMark){0});
+    }
+}
+
+static void wake_capacity_failure(Fixture *fixture) {
+    CettaRuntimeSession *session = &fixture->runtime;
+    Arena *output = &fixture->output;
+    define(fixture, "(= (retry-head (lam $x)) (Left $x))");
+    define(fixture, "(= (retry-head (lam $y)) (Right $y))");
+    Atom *syntax = parse(fixture, "(reify (retry-head (hold (lam (ctx $f (idx 0) (idx 0))))))");
+    Atom *call = syntax->expr.elems[1];
+    Atom *lambda = call->expr.elems[1]->expr.elems[1];
+    Atom *input = lambda->expr.elems[1]->expr.elems[1];
+    Atom *value = parse(fixture, "(Contextual 2 (lam (lam a)))");
+    assert(input->kind == ATOM_VAR);
+    CettaNativeMemory *owner = cetta_native_memory_new(UINT64_MAX);
+    CettaNativeMemoryScope scope;
+    assert(owner);
+    cetta_native_memory_enter(&scope, owner);
+    EvalOutcome result;
+    eval_outcome_init(&result);
+    cetta_tmetta_eval(&session->libraries, &session->space, &session->registry,
+        output, syntax, -1, &result);
+    assert(result.completion == CETTA_EVAL_INCOMPLETE_SUSPENDED && result.frontier);
+    Atom *frontier = result.frontier;
+    eval_outcome_free(&result);
+
+    eval_outcome_init(&result);
+    matches_until_refusal = 2;
+    assert(!cetta_tmetta_resume_with_value(&session->libraries, &session->space,
+        &session->registry, output, frontier, input, value, -1, &result));
+    assert(!matches_until_refusal && result.completion == CETTA_EVAL_INCOMPLETE_CAPACITY);
+    assert(!result.results.len && result.frontier);
+    CettaTmettaFrontier info;
+    assert(cetta_tmetta_frontier_info(&session->libraries, frontier, &info));
+    assert(info.suspended == 2 && !info.runnable);
+    eval_outcome_free(&result);
+
+    cetta_native_memory_clear_failure(owner);
+    eval_outcome_init(&result);
+    assert(cetta_tmetta_resume_with_value(&session->libraries, &session->space,
+        &session->registry, output, frontier, input, value, -1, &result) == 2);
+    assert(result.completion == CETTA_EVAL_COMPLETE && result.results.len == 1);
+    TmAnswers *answers = tm_answers_get(&session->libraries, result.results.items[0]);
+    assert(answers && answers->bank.len == 2);
+    assert(atom_eq(answer_bank_get(&answers->bank, 0)->result, parse(fixture, "(Left a)")));
+    assert(atom_eq(answer_bank_get(&answers->bank, 1)->result, parse(fixture, "(Right a)")));
+    eval_outcome_free(&result);
+    arena_reset(output, (ArenaMark){0});
+    cetta_native_memory_leave(&scope);
+    cetta_native_memory_release(owner);
+}
+
+static void stale_collector_cannot_wake_writer(Fixture *fixture) {
+    ask(fixture, "(bind! &wake-effect (new-space))");
+    ask(fixture, "(add-atom &wake-effect coin)");
+    CettaRuntimeSession *session = &fixture->runtime;
+    Space *rows = resolve_space(&session->registry, parse(fixture, "&wake-rows"));
+    Space *effects = resolve_space(&session->registry, parse(fixture, "&wake-effect"));
+    assert(rows && effects);
+    Atom *source = parse(fixture,
+        "(amb (if $permit (remove-atom &wake-effect coin) held) "
+        "(reify (match &wake-rows seed seen)))");
+    Atom *permit = source->expr.elems[1]->expr.elems[1];
+    EvalOutcome result;
+    eval_outcome_init(&result);
+    answers_refused = false;
+    refuse_answers = true;
+    cetta_tmetta_eval(&session->libraries, &session->space, &session->registry,
+        &fixture->output, source, -1, &result);
+    refuse_answers = false;
+    assert(answers_refused && result.completion == CETTA_EVAL_INCOMPLETE_CAPACITY);
+    assert(!result.results.len && result.frontier);
+    Atom *frontier = result.frontier;
+    CettaTmettaFrontier info;
+    assert(cetta_tmetta_frontier_info(&session->libraries, frontier, &info));
+    assert(info.collecting == 1 && info.observed_spaces == 1 && info.suspended == 1);
+    eval_outcome_free(&result);
+
+    assert(space_admit_atom(rows, NULL, parse(fixture, "later-write")));
+    SpaceReadToken version = space_read_token(effects);
+    eval_outcome_init(&result);
+    assert(!cetta_tmetta_resume_with_value(&session->libraries, &session->space,
+        &session->registry, &fixture->output, frontier, permit,
+        atom_bool(&fixture->source, true), -1, &result));
+    assert(result.completion == CETTA_EVAL_INCOMPLETE_INVALIDATED && !result.results.len);
+    assert(space_read_token_matches_live_space(version, effects));
+    assert(space_contains_exact(effects, parse(fixture, "coin")));
+    eval_outcome_free(&result);
+    arena_reset(&fixture->output, (ArenaMark){0});
+}
+
+static void sibling_write_stales_pending_collection(Fixture *fixture) {
+    ask(fixture, "(bind! &sibling-read (new-space))");
+    ask(fixture, "(add-atom &sibling-read seed)");
+    CettaRuntimeSession *session = &fixture->runtime;
+    Space *rows = resolve_space(&session->registry, parse(fixture, "&sibling-read"));
+    assert(rows);
+    Atom *source = parse(fixture,
+        "(amb (reify (chain (match &sibling-read seed seen) $_ (if $permit yes no))) "
+        " (add-atom &sibling-read sibling))");
+    Atom *permit = source->expr.elems[1]->expr.elems[1]->expr.elems[3]->expr.elems[1];
+    EvalOutcome result;
+    eval_outcome_init(&result);
+    cetta_tmetta_eval(&session->libraries, &session->space, &session->registry,
+        &fixture->output, source, -1, &result);
+    assert(result.completion == CETTA_EVAL_INCOMPLETE_SUSPENDED && result.frontier);
+    assert(space_contains_exact(rows, parse(fixture, "sibling")));
+    CettaTmettaFrontier info;
+    assert(cetta_tmetta_frontier_info(&session->libraries, result.frontier, &info));
+    assert(info.collecting == 1 && info.observed_spaces == 1 && info.suspended == 1);
+    Atom *frontier = result.frontier;
+    eval_outcome_free(&result);
+
+    SpaceReadToken version = space_read_token(rows);
+    eval_outcome_init(&result);
+    assert(!cetta_tmetta_resume_with_value(&session->libraries, &session->space,
+        &session->registry, &fixture->output, frontier, permit,
+        atom_bool(&fixture->source, true), -1, &result));
+    assert(result.completion == CETTA_EVAL_INCOMPLETE_INVALIDATED && !result.results.len);
+    assert(space_read_token_matches_live_space(version, rows));
+    eval_outcome_free(&result);
+    arena_reset(&fixture->output, (ArenaMark){0});
+}
+
+static void sibling_collectors_resume_together(Fixture *fixture, bool contextual) {
+    CettaRuntimeSession *session = &fixture->runtime;
+    Atom *source = parse(fixture, contextual
+        ? "(reify (amb "
+          "(reify (chain (unify (lam (ctx $gate (idx 0) (idx 0))) (lam a)) $_ first)) "
+          "(reify (chain (unify (lam (ctx $gate (idx 0) (idx 0))) (lam b)) $_ second))))"
+        : "(reify (amb (reify (chain (run $gate) $_ first)) "
+          "(reify (chain (run $gate) $_ second))))");
+    Atom *producer = source->expr.elems[1]->expr.elems[1]->expr.elems[1]->expr.elems[1];
+    Atom *gate = contextual
+        ? producer->expr.elems[1]->expr.elems[1]->expr.elems[1] : producer->expr.elems[1];
+    assert(gate->kind == ATOM_VAR);
+    EvalOutcome result;
+    eval_outcome_init(&result);
+    cetta_tmetta_eval(&session->libraries, &session->space, &session->registry,
+        &fixture->output, source, -1, &result);
+    assert(result.completion == CETTA_EVAL_INCOMPLETE_SUSPENDED && result.frontier);
+    CettaTmettaFrontier info;
+    assert(cetta_tmetta_frontier_info(&session->libraries, result.frontier, &info));
+    assert(info.collecting == 3 && info.suspended == 2);
+    Atom *frontier = result.frontier;
+    eval_outcome_free(&result);
+
+    eval_outcome_init(&result);
+    Atom *input = contextual
+        ? parse(fixture, "(Contextual 2 (lam (lam a)))") : atom_bool(&fixture->source, true);
+    assert(cetta_tmetta_resume_with_value(&session->libraries, &session->space,
+        &session->registry, &fixture->output, frontier, gate, input, -1, &result) == 2);
+    assert(result.completion == CETTA_EVAL_COMPLETE && result.results.len == 1);
+    TmAnswers *outer = tm_answers_get(&session->libraries, result.results.items[0]);
+    assert(outer && outer->bank.len == 2);
+    unsigned first = 0, second = 0, empty = 0;
+    for (CettaIndex i = 0; i < outer->bank.len; ++i) {
+        Atom *handle = answer_bank_get(&outer->bank, i)->result;
+        TmAnswers *child = tm_answers_get(&session->libraries, handle);
+        assert(child && child->bank.len <= 1);
+        if (!child->bank.len) {
+            ++empty;
+            continue;
+        }
+        Atom *value = answer_bank_get(&child->bank, 0)->result;
+        first += tm_named(value, "first");
+        second += tm_named(value, "second");
+    }
+    assert(first == 1 && (contextual ? (second == 0 && empty == 1) : (second == 1 && empty == 0)));
+    eval_outcome_free(&result);
+    arena_reset(&fixture->output, (ArenaMark){0});
+}
+
+static void wake_equation_candidates(Fixture *fixture) {
+    define(fixture, "(= (delayed-head (lam a)) first)");
+    define(fixture, "(= (delayed-head (lam b)) second)");
+    Atom *source = parse(fixture, "(delayed-head (hold (lam (ctx $f (idx 0) (idx 0)))))");
+    Atom *input = source->expr.elems[1]->expr.elems[1]->expr.elems[1]->expr.elems[1];
+    assert(input->kind == ATOM_VAR);
+    CettaRuntimeSession *session = &fixture->runtime;
+    Arena *output = &fixture->output;
+    for (unsigned i = 0; i < 2; ++i) {
+        EvalOutcome result;
+        eval_outcome_init(&result);
+        cetta_tmetta_eval(&session->libraries, &session->space, &session->registry,
+            output, source, -1, &result);
+        assert(result.completion == CETTA_EVAL_INCOMPLETE_SUSPENDED &&
+            !result.results.len && result.frontier);
+        Atom *frontier = result.frontier;
+        CettaTmettaFrontier info;
+        assert(cetta_tmetta_frontier_info(&session->libraries, frontier, &info));
+        assert(info.suspended == 2 && !info.completed);
+        eval_outcome_free(&result);
+        eval_outcome_init(&result);
+        Atom *given = parse(fixture, i ? "(Contextual 2 (lam (lam b)))" : "(Contextual 2 (lam (lam c)))");
+        assert(cetta_tmetta_resume_with_value(&session->libraries, &session->space,
+            &session->registry, output, frontier, input, given, -1, &result) == 2);
+        assert(result.completion == CETTA_EVAL_COMPLETE && result.results.len == 1);
+        assert(atom_eq(result.results.items[0], parse(fixture, i ? "second" : "(delayed-head (lam c))")));
+        eval_outcome_free(&result);
+        arena_reset(output, (ArenaMark){0});
+    }
+
+    ask(fixture, "(bind! &census-effects (new-space))");
+    define(fixture, "(= (delayed-with-effect $term) (add-atom &census-effects tick))");
+    define(fixture, "(= (delayed-with-effect (lam a)) second)");
+    source = parse(fixture, "(delayed-with-effect (hold (lam (ctx $f (idx 0) (idx 0)))))");
+    input = source->expr.elems[1]->expr.elems[1]->expr.elems[1]->expr.elems[1];
+    Space *effects = resolve_space(&session->registry, parse(fixture, "&census-effects"));
+    assert(effects);
+    EvalOutcome result;
+    eval_outcome_init(&result);
+    cetta_tmetta_eval(&session->libraries, &session->space, &session->registry,
+        output, source, -1, &result);
+    assert(result.completion == CETTA_EVAL_INCOMPLETE_SUSPENDED && result.frontier);
+    assert(space_length64(effects) == 1);
+    Atom *frontier = result.frontier;
+    eval_outcome_free(&result);
+    eval_outcome_init(&result);
+    assert(cetta_tmetta_resume_with_value(&session->libraries, &session->space, &session->registry,
+        output, frontier, input, parse(fixture, "(Contextual 2 (lam (lam c)))"), -1, &result) == 1);
+    assert(result.completion == CETTA_EVAL_COMPLETE && result.results.len == 1);
+    assert(atom_eq(result.results.items[0], parse(fixture, "()")));
+    assert(space_length64(effects) == 1);
+    eval_outcome_free(&result);
+    arena_reset(output, (ArenaMark){0});
+
+    define(fixture, "(= (staged-head (lam a) $other) (add-atom &census-effects again))");
+    define(fixture, "(= (staged-head $other (lam b)) second)");
+    source = parse(fixture, "(staged-head (hold (lam (ctx $f (idx 0) (idx 0)))) "
+        "(hold (lam (ctx $g (idx 0) (idx 0)))))");
+    Atom *first_input = source->expr.elems[1]->expr.elems[1]->expr.elems[1]->expr.elems[1];
+    Atom *second_input = source->expr.elems[2]->expr.elems[1]->expr.elems[1]->expr.elems[1];
+    for (unsigned i = 0; i < 2; ++i) {
+        eval_outcome_init(&result);
+        cetta_tmetta_eval(&session->libraries, &session->space, &session->registry,
+            output, source, -1, &result);
+        assert(result.completion == CETTA_EVAL_INCOMPLETE_SUSPENDED && result.frontier);
+        frontier = result.frontier;
+        eval_outcome_free(&result);
+        eval_outcome_init(&result);
+        Atom *given = parse(fixture, i ? "(Contextual 2 (lam (lam a)))" : "(Contextual 2 (lam (lam c)))");
+        assert(cetta_tmetta_resume_with_value(&session->libraries, &session->space,
+            &session->registry, output, frontier, first_input, given, -1, &result) == 2);
+        assert(result.completion == CETTA_EVAL_INCOMPLETE_SUSPENDED && !result.results.len);
+        CettaTmettaFrontier info;
+        assert(cetta_tmetta_frontier_info(&session->libraries, frontier, &info));
+        assert(info.suspended == 1 && info.completed == i);
+        assert(space_length64(effects) == 1 + i);
+        eval_outcome_free(&result);
+        eval_outcome_init(&result);
+        assert(cetta_tmetta_resume_with_value(&session->libraries, &session->space,
+            &session->registry, output, frontier, second_input,
+            parse(fixture, "(Contextual 2 (lam (lam d)))"), -1, &result) == 1);
+        assert(result.completion == CETTA_EVAL_COMPLETE && result.results.len == 1);
+        assert(atom_eq(result.results.items[0],
+            parse(fixture, i ? "()" : "(staged-head (lam c) (lam d))")));
+        assert(space_length64(effects) == 1 + i);
+        eval_outcome_free(&result);
+        arena_reset(output, (ArenaMark){0});
+    }
 }
 
 static void fresh_runtime_inputs(Fixture *fixture) {
@@ -696,13 +1261,26 @@ int main(int argc, char **argv) {
     shared_dag(fixture);
     retained_frontiers(fixture);
     ordered_answers(fixture);
+    canonical_residuals(fixture);
     wake_inputs(fixture);
-    publication_failure(fixture);
+    publication_failure(fixture, false);
+    publication_failure(fixture, true);
+    capture_publication_failure(fixture);
+    capture_read_revalidation(fixture);
+    stored_frame_words(fixture);
     collection_publication_failure(fixture);
     wake_guard(fixture);
     observed_space_revision(fixture);
     retained_code_binder(fixture);
     match_capacity_failure(fixture);
+    retry_unpublished_read(fixture);
+    wake_mixed_equations(fixture);
+    wake_capacity_failure(fixture);
+    stale_collector_cannot_wake_writer(fixture);
+    sibling_write_stales_pending_collection(fixture);
+    sibling_collectors_resume_together(fixture, false);
+    sibling_collectors_resume_together(fixture, true);
+    wake_equation_candidates(fixture);
     fresh_runtime_inputs(fixture);
     arena_free(&fixture->output); arena_free(&fixture->retained);
     cetta_runtime_session_dispose(&fixture->runtime);

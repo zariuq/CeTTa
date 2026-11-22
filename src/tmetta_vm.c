@@ -5,16 +5,38 @@
 #include "call_outcome.h"
 #include "delay_service.h"
 #include "shared_transition.h"
+#include "term_canon.h"
 #include <stdlib.h>
 
 typedef struct TmContinuation TmContinuation;
 typedef struct TmCollector TmCollector;
 typedef struct TmBranch TmBranch;
 typedef struct TmTransaction TmTransaction;
+typedef struct TmCallInput TmCallInput;
+
+typedef struct {
+    VarId *names;
+    size_t len, capacity;
+    CettaVarIndex index;
+} TmCaptureSet;
+
+static void capture_set_free(TmCaptureSet *set) {
+    free(set->names);
+    cetta_var_index_free(&set->index);
+    *set = (TmCaptureSet){0};
+}
+
+typedef struct {
+    VarId name;
+    BindingValue value;
+} TmCaptureObservation;
 
 typedef struct TmRead {
+    TmCollector *collector;
     Atom *owner;
     SpaceReadToken version;
+    const TmCaptureObservation *captures;
+    size_t capture_count;
     struct TmRead *next;
 } TmRead;
 
@@ -38,6 +60,14 @@ struct TmContinuation {
     TmContinuation *next;
 };
 
+/* A call with only pending heads retains one caller. Its candidates hold
+ * separate solver images, while an input to the call refines all of them. */
+typedef struct TmCallCensus {
+    TmBranch *caller;
+    size_t pending;
+    TmCallInput *offered;
+} TmCallCensus;
+
 struct TmBranch {
     TmCode *code;
     Atom *value;
@@ -45,9 +75,10 @@ struct TmBranch {
     TmScope *scope;
     TmContinuation *continuation;
     TmCollector *collector;
-    bool waiting;
+    bool retry_constraints;
     Atom *residual;
     CettaDelayService *delay;
+    TmCallCensus *census;
     TmBranch *next;
     TmBranch *allocated_next;
 };
@@ -60,6 +91,7 @@ struct TmCollector {
     TmScope *scope_boundary;
     SpaceProgramToken program;
     TmRead *reads;
+    bool closing;
     TmCollector *next;
 };
 
@@ -104,6 +136,10 @@ static CettaCallOutcome evaluate(CettaLibraryContext *context, Space *space,
     AnswerBank *answers, CettaEvalEpisode *episode);
 static Space *transaction_space(TmTransaction *transaction, Space *source);
 static Atom *contextual_normalize(TmMachine *machine, Bindings *bindings, Atom *source, int *status);
+
+static struct CettaTmettaRuntime *tm_world(const TmMachine *machine) {
+    return machine->context->tmetta_runtime;
+}
 
 static void *work(TmMachine *machine, size_t bytes) {
     void *value = arena_alloc(&machine->arena, bytes);
@@ -366,6 +402,7 @@ static bool finish_branch(TmMachine *machine, TmBranch *branch, bool answer) {
     if (!collector->live && collector->caller) {
         TmBranch *caller = collector->caller;
         collector->caller = NULL;
+        collector->closing = true;
         caller->continuation = close;
         caller->value = NULL;
         caller->code = NULL;
@@ -388,7 +425,7 @@ static Atom *wait_variable(Arena *arena, Atom *variable, void *context) {
     return variable;
 }
 
-static bool suspend_read(TmMachine *machine, TmBranch *branch, Atom *term) {
+static bool prepare_delay(TmMachine *machine, Atom *term, CettaDelayService **prepared) {
     CettaVarMap support;
     cetta_var_map_init(&support);
     Atom *observed = cetta_atom_rewrite_vars(&machine->arena, term, wait_variable, &support, true);
@@ -400,15 +437,33 @@ static bool suspend_read(TmMachine *machine, TmBranch *branch, Atom *term) {
         if (delay && cetta_delay_suspend(delay, 0, CETTA_DELAY_CLIENT_TMETTA,
                 observed, variables, support.len, false)) {
             cetta_delay_commit(delay);
-            branch->delay = delay;
+            *prepared = delay;
         } else {
             cetta_delay_service_free(delay);
             ok = false;
         }
     }
     cetta_var_map_free(&support);
-    if (ok) suspend(machine, branch);
     return ok;
+}
+
+static bool suspend_read(TmMachine *machine, TmBranch *branch, Atom *term) {
+    if (!prepare_delay(machine, term, &branch->delay)) return false;
+    suspend(machine, branch);
+    return true;
+}
+
+static bool prepare_constraint_delay(TmMachine *machine, const Bindings *bindings,
+                                     CettaDelayService **prepared) {
+    Atom *snapshot = bindings_to_atom(&machine->arena, bindings);
+    return snapshot && prepare_delay(machine, snapshot->expr.elems[2], prepared);
+}
+
+static bool suspend_constraints(TmMachine *machine, TmBranch *branch) {
+    if (!prepare_constraint_delay(machine, &branch->bindings, &branch->delay)) return false;
+    branch->retry_constraints = true;
+    suspend(machine, branch);
+    return true;
 }
 
 static bool scope_local_to(const TmScope *scope, const TmCollector *collector) {
@@ -420,30 +475,66 @@ static bool scope_local_to(const TmScope *scope, const TmCollector *collector) {
 static bool collection_current(const TmMachine *machine, const TmCollector *collector) {
     if (!space_program_token_matches_live_space(collector->program, machine->space))
         return false;
-    for (const TmRead *read = collector->reads; read; read = read->next)
+    Bindings *captures = &tm_world(machine)->captures;
+    for (const TmRead *read = collector->reads; read; read = read->next) {
         if (!space_read_token_matches_live_space(read->version, read->owner->ground.ptr))
             return false;
+        for (size_t i = 0; i < read->capture_count; ++i) {
+            const TmCaptureObservation *observed = &read->captures[i];
+            BindingValue current = bindings_lookup_value_id(captures, observed->name);
+            if (current.skeleton != observed->value.skeleton || current.context != observed->value.context)
+                return false;
+        }
+    }
     return true;
 }
 
-static bool observe_space(TmMachine *machine, TmCollector *collector, Space *space) {
+static bool prepare_read(TmMachine *machine, TmCollector *collector, Space *space,
+                         SpaceReadToken version, const TmCaptureSet *captures, TmRead **prepared) {
+    Atom *owner = NULL;
+    TmCaptureObservation *observed = NULL;
+    if (collector->parent && captures->len) {
+        if (captures->len > SIZE_MAX / sizeof *observed) return false;
+        observed = work(machine, captures->len * sizeof *observed);
+        if (!observed) return false;
+        Bindings *knowledge = &tm_world(machine)->captures;
+        for (size_t i = 0; i < captures->len; ++i) {
+            VarId name = captures->names[i];
+            observed[i] = (TmCaptureObservation){name, bindings_lookup_value_id(knowledge, name)};
+        }
+    }
     for (; collector->parent; collector = collector->parent) {
         TmRead *read = collector->reads;
         while (read && read->version.space != space) read = read->next;
         if (read) {
-            if (space_read_token_matches_live_space(read->version, space)) continue;
-            machine->episode.completion = CETTA_EVAL_INCOMPLETE_INVALIDATED;
-            return false;
+            if (!space_read_token_matches_live_space(read->version, space)) {
+                machine->episode.completion = CETTA_EVAL_INCOMPLETE_INVALIDATED;
+                return false;
+            }
+            if (!observed) continue;
         }
         read = work(machine, sizeof *read);
         if (!read) return false;
-        read->owner = atom_space(&machine->arena, space);
-        if (!read->owner) return false;
-        read->version = space_read_token(space);
-        read->next = collector->reads;
-        collector->reads = read;
+        if (!owner) owner = atom_space(&machine->arena, space);
+        if (!owner) return false;
+        read->collector = collector;
+        read->owner = owner;
+        read->version = version;
+        read->captures = observed;
+        read->capture_count = captures->len;
+        read->next = *prepared;
+        *prepared = read;
     }
     return true;
+}
+
+static void publish_read(TmRead *prepared) {
+    while (prepared) {
+        TmRead *read = prepared;
+        prepared = read->next;
+        read->next = read->collector->reads;
+        read->collector->reads = read;
+    }
 }
 
 static Atom *publish_collection(TmMachine *machine, TmCollector *collector) {
@@ -463,7 +554,10 @@ static Atom *publish_collection(TmMachine *machine, TmCollector *collector) {
         if (scope_local_to(scope, collector)) locals[next++] = scope->identity;
     Atom *value = tm_answers_publish(machine->context, &machine->arena,
         &collector->answers, NULL, false, locals, count);
-    if (value) answer_bank_free(&collector->answers);
+    if (value) {
+        collector->closing = false;
+        answer_bank_free(&collector->answers);
+    }
     return value;
 }
 
@@ -523,8 +617,9 @@ static Atom *reduce_contextual(TmMachine *machine, Bindings *bindings, Atom *sou
                 }
                 body = abt_subst(&machine->program->binders, &machine->arena, 0,
                     result->expr.elems[i + 2], body->expr.elems[1]);
+                if (!body) { *status = -1; return NULL; }
             }
-            body = body ? bindings_apply_graph(bindings, &machine->arena, body) : NULL;
+            body = bindings_apply_graph(bindings, &machine->arena, body);
             if (!body) { *status = -1; return NULL; }
             result = reduce_contextual(machine, bindings, body, memo, status);
         }
@@ -624,16 +719,26 @@ static Atom *contextual_prune(TmMachine *machine, Bindings *bindings, Atom *term
     return atom_expr(&machine->arena, parts, term->expr.len);
 }
 
+/* The contextual pattern solver admits distinct, in-scope bound indices.
+ * Other spines stay residual while their head is unresolved. */
+static int contextual_spine(Atom *application, uint32_t arity, uint64_t depth,
+                            uint64_t *indices) {
+    for (uint32_t i = 0; i < arity; ++i) {
+        if (!object_index(application->expr.elems[i + 2], &indices[i])) return 2;
+        if (indices[i] >= depth) return 0;
+        for (uint32_t j = 0; j < i; ++j)
+            if (indices[i] == indices[j]) return 2;
+    }
+    return 1;
+}
+
 static int contextual_solve(TmMachine *machine, Bindings *bindings,
     Atom *application, Atom *target, uint64_t depth) {
     uint32_t arity = (uint32_t)(application->expr.len - 2);
     uint64_t *indices = work(machine, arity * sizeof *indices);
     if (arity && !indices) return -1;
-    for (uint32_t i = 0; i < arity; ++i) {
-        if (!object_index(application->expr.elems[i + 2], &indices[i])) return 2;
-        if (indices[i] >= depth) return 0;
-        for (uint32_t j = 0; j < i; ++j) if (indices[i] == indices[j]) return 2;
-    }
+    int spine = contextual_spine(application, arity, depth, indices);
+    if (spine != 1) return spine;
     Atom *identity = application->expr.elems[1];
     if (identity->kind != ATOM_VAR) return 0;
     if (contextual_application(target) && target->expr.elems[1]->kind == ATOM_VAR) {
@@ -642,11 +747,8 @@ static int contextual_solve(TmMachine *machine, Bindings *bindings,
         uint32_t *left = work(machine, arity * sizeof *left);
         uint32_t *right = work(machine, arity * sizeof *right);
         if ((other_arity && !other) || (arity && (!left || !right))) return -1;
-        for (uint32_t i = 0; i < other_arity; ++i) {
-            if (!object_index(target->expr.elems[i + 2], &other[i])) return 2;
-            if (other[i] >= depth) return 0;
-            for (uint32_t j = 0; j < i; ++j) if (other[i] == other[j]) return 2;
-        }
+        spine = contextual_spine(target, other_arity, depth, other);
+        if (spine != 1) return spine;
         bool same = var_id_eq(identity->var_id, target->expr.elems[1]->var_id);
         if (same && arity != other_arity) return 0;
         uint32_t common = 0;
@@ -867,10 +969,365 @@ typedef struct {
 struct TmTransaction {
     TmMachine *machine;
     TmBranch *branch;
+    Atom *call;
     TmTransactionSpace *spaces;
     size_t len, cap;
     bool failed, pending;
+    TmCaptureSet common;
+    TmCaptureSet *extensions;
+    size_t extension_count;
 };
+
+/* ── Stored rows ──────────────────────────────────────────────────────────
+ * A stored row's variables have one of two roles, fixed when the row is
+ * built.  A private variable belongs to the row: every read opens all of
+ * them in one fresh frame, so occurrences of one variable stay one variable
+ * within the read, and no read is coupled to another.  A capture keeps its
+ * identity: it names a cell of the runtime's capture world, and every read
+ * sees the value committed to that cell.  The role is the identity's
+ * namespace (the capture epoch), so it survives every representation of the
+ * row.  An ordinary write captures nothing; (capture (V ...) ROW) captures
+ * the unknowns of V ... . */
+
+static bool tm_captured(const struct CettaTmettaRuntime *world, VarId id) {
+    return id.epoch.word == world->capture_epoch.word;
+}
+
+static bool capture_contains(const TmCaptureSet *set, VarId name) {
+    return cetta_var_index_find_records(&set->index, set->names, sizeof *set->names,
+        set->len, name) != SIZE_MAX;
+}
+
+static bool capture_insert(TmCaptureSet *set, VarId name) {
+    if (set->len == set->capacity) {
+        if (set->capacity > SIZE_MAX / (2 * sizeof *set->names)) return false;
+        size_t capacity = set->capacity ? set->capacity * 2 : 8;
+        VarId *names = cetta_realloc(set->names, capacity * sizeof *names);
+        if (!names) return false;
+        set->names = names;
+        set->capacity = capacity;
+    }
+    set->names[set->len] = name;
+    if (!cetta_var_index_note_records(&set->index, set->names, sizeof *set->names, set->len + 1u))
+        return false;
+    ++set->len;
+    return true;
+}
+
+typedef struct {
+    struct CettaTmettaRuntime *world;
+    TmCaptureSet *names;
+} TmCaptureScan;
+
+static bool collect_capture(const Atom *node, void *context) {
+    TmCaptureScan *scan = context;
+    if (node->kind != ATOM_VAR || !tm_captured(scan->world, node->var_id) ||
+        capture_contains(scan->names, node->var_id))
+        return false;
+    return !capture_insert(scan->names, node->var_id);
+}
+
+static bool capture_dependency(TmMachine *machine, TmCaptureSet *set,
+                               const Atom *term, bool follow) {
+    if (!atom_has_vars(term)) return true;
+    TmCaptureScan scan = {tm_world(machine), set};
+    size_t first = set->len;
+    bool complete = false;
+    if (atom_graph_any_checked(term, collect_capture, NULL, &scan, SIZE_MAX, &complete) || !complete)
+        return false;
+    for (size_t i = first; follow && i < set->len; ++i) {
+        BindingValue known = bindings_lookup_value_id(&scan.world->captures, set->names[i]);
+        if (atom_has_vars(known.skeleton) &&
+            (atom_graph_any_checked(known.skeleton, collect_capture, NULL, &scan, SIZE_MAX, &complete) ||
+             !complete))
+            return false;
+    }
+    return true;
+}
+
+/* The complete schema of an opened frame of COUNT slots, shared by every
+ * opening of that size: slot i is source identity i + 1. */
+static BindingsFrameSchema *tm_slot_schema(struct CettaTmettaRuntime *world, uint32_t count) {
+    if (count >= world->slot_schema_cap) {
+        if (count == UINT32_MAX) return NULL;
+        uint32_t cap = world->slot_schema_cap ? world->slot_schema_cap : 8;
+        while (cap <= count && cap <= UINT32_MAX / 2u) cap *= 2;
+        if (cap <= count) cap = count + 1u;
+        BindingsFrameSchema **schemas = realloc(world->slot_schemas, cap * sizeof *schemas);
+        if (!schemas) return NULL;
+        memset(schemas + world->slot_schema_cap, 0, (cap - world->slot_schema_cap) * sizeof *schemas);
+        world->slot_schemas = schemas;
+        world->slot_schema_cap = cap;
+    }
+    if (!world->slot_schemas[count]) {
+        VarId *ids = malloc(count * sizeof *ids);
+        Atom **variables = malloc(count * sizeof *variables);
+        bool ok = ids && variables;
+        for (uint32_t i = 0; ok && i < count; ++i) {
+            ids[i] = var_id_from_base((uint64_t)i + 1);
+            variables[i] = atom_var_with_literal(&world->knowledge, "slot", ids[i]);
+            ok = variables[i] != NULL;
+        }
+        world->slot_schemas[count] = ok ? bindings_frame_schema_new_presented(ids, variables, count) : NULL;
+        free(ids);
+        free(variables);
+    }
+    return world->slot_schemas[count];
+}
+
+/* Captures use the committed substitution, including aliases reached
+ * through values of other captures. Private row variables have disjoint ids. */
+static Atom *tm_resolve_captures(TmMachine *machine, Atom *term) {
+    if (!term || !atom_has_vars(term)) return term;
+    Bindings *known = &tm_world(machine)->captures;
+    return bindings_has_bound_values(known)
+        ? bindings_apply_graph(known, &machine->arena, term) : term;
+}
+
+typedef struct {
+    TmMachine *machine;
+    struct CettaTmettaRuntime *world;
+    CettaFrameIdentity epoch;
+    CettaVarMap slots;
+} TmOpening;
+
+static Atom *opening_slot(Arena *arena, Atom *variable, uint32_t ordinal, void *context) {
+    TmOpening *opening = context;
+    if (!ordinal || (ordinal == 1u &&
+        !cetta_frame_identity_scope_try(&opening->machine->frames, &opening->epoch))) return NULL;
+    return atom_var_like(arena, variable, var_epoch_id(var_id_from_base(ordinal), opening->epoch));
+}
+
+static Atom *open_variable(Arena *arena, Atom *variable, void *context) {
+    TmOpening *opening = context;
+    if (tm_captured(opening->world, variable->var_id)) return variable;
+    return cetta_var_map_get_or_add(&opening->slots, arena, variable, opening_slot, opening);
+}
+
+/* One opening for read and take. The immutable syntax can be lent by a
+ * TermUniverse occurrence. Apps with locals use one complete frame. */
+static Atom *open_stored_row(TmMachine *machine, Bindings *bindings, Atom *stored, bool persistent) {
+    if (!stored) return NULL;
+    Atom *source = persistent ? stored : atom_deep_copy(&machine->arena, stored);
+    source = tm_resolve_captures(machine, source);
+    if (!source || !atom_has_vars(source)) return source;
+    struct CettaTmettaRuntime *world = tm_world(machine);
+    TmOpening opening = {.machine = machine, .world = world};
+    cetta_var_map_init(&opening.slots);
+    Atom *opened = cetta_atom_rewrite_vars(&machine->arena, source, open_variable, &opening, true);
+    uint32_t count = opening.slots.len;
+    cetta_var_map_free(&opening.slots);
+    if (!opened) return NULL;
+    if (count) {
+        BindingsFrameSchema *schema = tm_slot_schema(world, count);
+        /* Retain the frame for collection readback. This scope is outside
+         * the ordinary lexical chain and needs no syntax lookup vector. */
+        TmScope *scope = schema ? scope_view(machine, NULL, schema, NULL, NULL) : NULL;
+        if (!scope || !bindings_register_complete_frame_schema(bindings, schema, opening.epoch))
+            return NULL;
+        scope->identity = opening.epoch;
+        scope->collector = machine->active ? machine->active->collector : &machine->root;
+    }
+    return opened;
+}
+
+typedef struct {
+    const TmCaptureSet *captures;
+    CettaVarMap slots;
+    bool keeps_captures;
+} TmCanon;
+
+static Atom *private_slot(Arena *arena, Atom *variable, uint32_t ordinal, void *context) {
+    (void)context;
+    return ordinal ? atom_var_like(arena, variable, var_id_from_base(ordinal)) : NULL;
+}
+
+static Atom *canon_variable(Arena *arena, Atom *variable, void *context) {
+    TmCanon *canon = context;
+    if (capture_contains(canon->captures, variable->var_id)) {
+        canon->keeps_captures = true;
+        return variable;
+    }
+    return cetta_var_map_get_or_add(&canon->slots, arena, variable, private_slot, NULL);
+}
+
+/* (capture (V ...) ROW) names the identities that ROW keeps. */
+static bool tm_capture_form(Atom *row, Atom **names, Atom **body) {
+    if (!row || row->kind != ATOM_EXPR || row->expr.len != 3 ||
+        !tm_named(row->expr.elems[0], "capture") || row->expr.elems[1]->kind != ATOM_EXPR)
+        return false;
+    *names = row->expr.elems[1];
+    *body = row->expr.elems[2];
+    return true;
+}
+
+typedef struct {
+    TmMachine *machine;
+    Bindings *bindings;
+} TmCapturing;
+
+static Atom *capture_variable(Arena *arena, Atom *variable, void *context) {
+    TmCapturing *capturing = context;
+    struct CettaTmettaRuntime *world = tm_world(capturing->machine);
+    if (tm_captured(world, variable->var_id) ||
+        bindings_lookup_value_id(capturing->bindings, variable->var_id).skeleton)
+        return variable;
+    VarId name = var_epoch_id(fresh_var_id(), world->capture_epoch);
+    Atom *capture = atom_var_with_literal(arena, "captured", name);
+    return capture && bindings_add_var(capturing->bindings, variable, capture) ? variable : NULL;
+}
+
+/* Capturing promotes only the explicitly listed unknowns, retaining aliases
+ * in the writer. Allocating a name here installs no public knowledge. */
+static Atom *tm_capture_unknowns(TmMachine *machine, Bindings *bindings, Atom *term) {
+    Atom *resolved = bindings_apply_graph(bindings, &machine->arena, term);
+    if (!resolved || !atom_has_vars(resolved)) return resolved;
+    TmCapturing capturing = {.machine = machine, .bindings = bindings};
+    if (!cetta_atom_rewrite_vars(&machine->arena, resolved, capture_variable, &capturing, true))
+        return NULL;
+    return bindings_apply_graph(bindings, &machine->arena, resolved);
+}
+
+/* An ordinary row schematizes every unbound variable, even a variable
+ * captured by a different row. Only the explicit list chooses captures. */
+static Atom *tm_stored_form(TmMachine *machine, Bindings *bindings, Atom *row, bool adding,
+                            bool *keeps_captures) {
+    TmCaptureSet captures = {0};
+    Atom *names, *body;
+    if (tm_capture_form(row, &names, &body)) {
+        names = adding ? tm_capture_unknowns(machine, bindings, names)
+            : bindings_apply_graph(bindings, &machine->arena, names);
+        if (!names) return NULL;
+        names = tm_resolve_captures(machine, names);
+        if (!names) return NULL;
+        row = bindings_apply_graph(bindings, &machine->arena, body);
+        if (!row) return NULL;
+    } else {
+        names = NULL;
+    }
+    row = tm_resolve_captures(machine, row);
+    if (!row || !atom_has_vars(row)) { *keeps_captures = false; return row; }
+    bool ok = capture_dependency(machine, &captures, names, false);
+    TmCanon canon = {.captures = &captures};
+    cetta_var_map_init(&canon.slots);
+    Atom *stored = !ok ? NULL : captures.len
+        ? cetta_atom_rewrite_vars(&machine->arena, row, canon_variable, &canon, true)
+        : cetta_compile_frame_syntax(&machine->arena, row, &canon.slots);
+    cetta_var_map_free(&canon.slots);
+    *keeps_captures = canon.keeps_captures;
+    capture_set_free(&captures);
+    return stored;
+}
+
+static bool tm_admit_stored(Space *space, Arena *arena, Atom *row, bool keeps_captures) {
+    return (keeps_captures || (space->kind == SPACE_KIND_SET && atom_has_vars(row)))
+        ? space_admit_scoped_atom(space, arena, row)
+        : space_admit_atom_from_source_arena(space, NULL, arena, row);
+}
+
+static bool capture_node(const Atom *node, void *context) {
+    return node->kind == ATOM_VAR && tm_captured(context, node->var_id);
+}
+
+/* A selected footprint is accounted for only at commit preparation. The
+ * enumeration and guards may have opened many rejected rows. */
+static bool transaction_selected_row(void *context, Atom *row, size_t extension) {
+    if (!atom_has_vars(row)) return true;
+    TmTransaction *transaction = context;
+    TmCaptureSet *selected = &transaction->common;
+    if (extension != SIZE_MAX) {
+        if (extension >= transaction->extension_count) {
+            size_t count = extension + 1;
+            if (count > SIZE_MAX / sizeof *transaction->extensions) return false;
+            TmCaptureSet *sets = cetta_realloc(transaction->extensions, count * sizeof *sets);
+            if (!sets) return false;
+            memset(sets + transaction->extension_count, 0,
+                   (count - transaction->extension_count) * sizeof *sets);
+            transaction->extensions = sets;
+            transaction->extension_count = count;
+        }
+        selected = &transaction->extensions[extension];
+    }
+    return capture_dependency(transaction->machine, selected, row, true);
+}
+
+/* Stage a compatible extension of the committed image. The copy session
+ * keeps sharing across every told value, including values of other captures. */
+static int stage_capture_tells(TmMachine *machine, const TmCaptureSet *selected,
+    Bindings *answer, Bindings *staged, AtomDeepCopySession *copy, bool *changed) {
+    for (size_t i = 0; i < selected->len; ++i) {
+        VarId name = selected->names[i];
+        if (!bindings_lookup_value_id(answer, name).skeleton) continue;
+        Atom *variable = atom_var_with_literal(&machine->arena, "captured", name);
+        Atom *value = !variable ? NULL : copy
+            ? tm_capture_unknowns(machine, answer, variable)
+            : bindings_apply_graph(answer, &machine->arena, variable);
+        if (!value) return -1;
+        if (value->kind == ATOM_VAR && var_id_eq(value->var_id, name)) continue;
+        Atom *old = bindings_apply_graph(staged, &machine->arena, variable);
+        Atom *resolved = bindings_apply_graph(staged, &machine->arena, value);
+        if (!old || !resolved) return -1;
+        if (atom_eq(old, resolved)) continue;
+        Atom *owned = copy ? atom_deep_copy_session_copy(copy, value) : value;
+        if (!owned) return -1;
+        if (!bindings_add_var_owned(staged, variable, owned))
+            return tm_capacity_failed() ? -1 : 0;
+        *changed = true;
+    }
+    return 1;
+}
+
+static void clear_capture_footprint(TmTransaction *transaction) {
+    capture_set_free(&transaction->common);
+    for (size_t i = 0; i < transaction->extension_count; ++i)
+        capture_set_free(&transaction->extensions[i]);
+    free(transaction->extensions);
+    transaction->extensions = NULL;
+    transaction->extension_count = 0;
+}
+
+static int stage_selected_tells(TmTransaction *transaction, Bindings *known, size_t row,
+    Bindings *staged, AtomDeepCopySession *copy, bool *changed) {
+    int status = stage_capture_tells(transaction->machine, &transaction->common, known,
+        staged, copy, changed);
+    if (status == 1 && row < transaction->extension_count)
+        status = stage_capture_tells(transaction->machine, &transaction->extensions[row], known,
+            staged, copy, changed);
+    return status;
+}
+
+static int transaction_compatible_publications(void *context, Atom *const *rows, size_t count) {
+    TmTransaction *transaction = context;
+    TmMachine *machine = transaction->machine;
+    int status = capture_dependency(machine, &transaction->common, transaction->call, true) ? 1 : -1;
+    bool captures = transaction->common.len != 0u;
+    for (size_t i = 0; !captures && i < transaction->extension_count; ++i)
+        captures = transaction->extensions[i].len != 0u;
+    if (status == 1 && captures) {
+        Bindings probe;
+        bindings_init(&probe);
+        if (!bindings_clone(&probe, &tm_world(machine)->captures)) status = -1;
+        for (size_t i = 0; status == 1 && i < count; ++i) {
+            Atom *packet = rows[i];
+            Bindings known;
+            bindings_init(&known);
+            bool changed = false;
+            if (packet->kind != ATOM_EXPR || packet->expr.len != 3 ||
+                !bindings_restore_captured_value(packet->expr.elems[2], &known))
+                status = -1;
+            else
+                status = stage_selected_tells(transaction, &known, i, &probe, NULL, &changed);
+            bindings_free(&known);
+        }
+        bindings_free(&probe);
+    }
+    clear_capture_footprint(transaction);
+    if (status < 0) {
+        transaction->failed = true;
+        machine->episode.completion = CETTA_EVAL_INCOMPLETE_CAPACITY;
+    }
+    return status;
+}
 
 static int transaction_open_row(void *context, Arena *arena, BindingsBuilder *builder,
     Atom *stored, Atom **opened) {
@@ -878,12 +1335,9 @@ static int transaction_open_row(void *context, Arena *arena, BindingsBuilder *bu
     TmTransaction *transaction = context;
     Bindings next;
     bindings_init(&next);
-    BindingsFrameSchema *schema = tm_schema(stored);
-    bool ok = schema && bindings_clone(&next, bindings_builder_bindings(builder));
-    TmScope *scope = ok ? open_scope(transaction->machine, NULL, schema, &next) : NULL;
-    *opened = scope ? syntax(transaction->machine, scope, stored) : NULL;
-    ok = *opened && bindings_builder_try_merge(builder, &next);
-    bindings_frame_schema_release(schema);
+    bool copied = bindings_clone(&next, bindings_builder_bindings(builder));
+    *opened = copied ? open_stored_row(transaction->machine, &next, stored, false) : NULL;
+    bool ok = *opened && bindings_builder_try_merge(builder, &next);
     bindings_free(&next);
     if (!ok) {
         transaction->failed = true;
@@ -978,13 +1432,19 @@ static Atom *transaction_remove(void *context, Atom *ref, Atom *atom) {
     return transaction_take(context, ref, atom, 1);
 }
 
+/* ATOM is already in stored form (prepare_transform_outputs). */
 static Atom *transaction_add(void *context, Atom *ref, Atom *atom) {
     TmTransaction *transaction = context;
-    Space *space = knowledge_space(transaction->machine, ref);
-    if (!space || !space_admit_scoped_atom(space, &transaction->machine->arena, atom))
+    TmMachine *machine = transaction->machine;
+    Space *space = knowledge_space(machine, ref);
+    bool complete = true;
+    bool captures = atom_has_vars(atom) &&
+        atom_graph_any_checked(atom, capture_node, NULL, tm_world(machine), SIZE_MAX, &complete);
+    if (!complete || !space || !tm_admit_stored(space, &machine->arena, atom, captures))
         return transaction_error(transaction, atom, "TransformMakeRefused");
     for (size_t i = 0; i < transaction->len; ++i)
-        if (transaction->spaces[i].prepared == space) transaction->spaces[i].changed = true;
+        if (transaction->spaces[i].prepared == space)
+            transaction->spaces[i].changed = true;
     return NULL;
 }
 
@@ -1074,15 +1534,92 @@ static CettaTransformOutcome transaction_decide(void *context, Arena *arena,
     return cetta_transform_tcalc_decide(context, arena, &projected, error);
 }
 
+typedef struct {
+    Bindings bindings;
+    AtomDeepCopySession *copy;
+    bool changed;
+    bool refused;
+} TmCaptureCommit;
+
+static bool prepare_capture_bindings(TmTransaction *transaction, TmCaptureCommit *commit,
+                                     Bindings *known, size_t row) {
+    if (!commit->copy) return true;
+    int status = stage_selected_tells(transaction, known, row, &commit->bindings,
+        commit->copy, &commit->changed);
+    commit->refused = status == 0;
+    return status == 1;
+}
+
+/* Solving one extension can bind a variable differently from another.
+ * Its normalized makes and saved answer use that extension's image. */
+static bool prepare_transform_outputs(TmTransaction *transaction, Atom *call,
+    Atom *rows, Atom *extension_basis, Bindings *next, AnswerBank *made,
+    TmCaptureCommit *commit) {
+    TmMachine *machine = transaction->machine;
+    Atom **args = call->expr.elems;
+    Atom *destination = call->expr.len == 5 ? args[4] : args[1];
+    bool comma = args[3]->kind == ATOM_EXPR && args[3]->expr.len && tm_named(args[3]->expr.elems[0], ",");
+    if (extension_basis && (!bindings_restore_captured_value(extension_basis, next) ||
+        !prepare_capture_bindings(transaction, commit, next, SIZE_MAX))) return false;
+    for (CettaExprIndex i = 0; i < rows->expr.len; ++i) {
+        Atom *packet = rows->expr.elems[i];
+        Bindings known;
+        bindings_init(&known);
+        if (packet->kind != ATOM_EXPR || packet->expr.len != 3 ||
+            !tm_named(packet->expr.elems[0], "tmetta:publication")) {
+            raise_error(machine, call, "MalformedTransformPublication");
+            return false;
+        }
+        if (!bindings_restore_captured_value(packet->expr.elems[2], &known)) return false;
+        Atom *row = packet->expr.elems[1];
+        int matched = match_data(machine, &known, call, row->expr.elems[1]);
+        if (matched != 1) {
+            bindings_free(&known);
+            if (matched == 0) raise_error(machine, call, "TransformBindingMismatch");
+            transaction->pending = matched > 1;
+            return false;
+        }
+        Atom *makes = row->expr.elems[2];
+        CettaExprLen count = comma ? makes->expr.len - 1 : 1;
+        bool ok = prepare_capture_bindings(transaction, commit, &known, i);
+        for (CettaExprIndex j = 0; ok && j < count; ++j) {
+            Atom *item = comma ? makes->expr.elems[j + 1] : makes;
+            int normalized = 1;
+            item = contextual_normalize(machine, &known, item, &normalized);
+            if (!item || !abt_scope_check(&machine->program->binders, 0, item)) {
+                raise_error(machine, makes, "IllScopedPublication");
+                ok = false;
+                break;
+            }
+            Atom *names, *body;
+            bool captures;
+            Atom *stored = tm_stored_form(machine, &known, item, true, &captures);
+            if (stored && tm_capture_form(item, &names, &body))
+                item = bindings_apply_graph(&known, &machine->arena, body);
+            if (!stored || !item) { ok = false; break; }
+            ok = !transaction_add(transaction, destination, stored) && !transaction->failed &&
+                answer_bank_add(made, item, &known, NULL, NULL);
+        }
+        if (ok && !extension_basis) bindings_replace(next, &known);
+        bindings_free(&known);
+        if (!ok) return false;
+    }
+    return true;
+}
+
 static bool transform(TmMachine *machine, TmBranch *branch, Atom *call) {
     if (call->expr.len != 4 && call->expr.len != 5) {
         raise_error(machine, call, "TransformArity"); return true;
     }
-    TmTransaction transaction = {.machine = machine, .branch = branch};
+    TmTransaction transaction = {.machine = machine, .branch = branch, .call = call};
     const CettaTransformLogic logic = {.open_row = transaction_open_row,
-        .unify = transaction_unify, .capture = transaction_capture, .exact_occurrences = true};
+        .unify = transaction_unify, .capture = transaction_capture,
+        .selected_row = transaction_selected_row,
+        .compatible_publications = transaction_compatible_publications, .exact_occurrences = true};
+    Atom *extension_basis = NULL;
     CettaTransformHost host = {.context = &transaction, .dialect = CETTA_TRANSFORM_DIALECT_HE,
         .logic = &logic,
+        .extension_basis_out = &extension_basis,
         .environment = &branch->bindings, .resolve_space = transaction_resolve,
         .remove_atom = transaction_remove, .add_atom = transaction_add,
         .take_atom = transaction_take, .evaluate = transaction_evaluate,
@@ -1101,52 +1638,31 @@ static bool transform(TmMachine *machine, TmBranch *branch, Atom *call) {
     machine->transaction = &transaction;
     Atom *publication = atom_expr3(&machine->arena,
         atom_symbol(&machine->arena, "tmetta:firing"), call, args[3]);
-    Atom *fire = publication && conjuncts ? atom_expr(&machine->arena,
-        (Atom *[]){atom_symbol(&machine->arena, "tf:fire"), args[1], conjuncts, publication}, 4) : NULL;
+    ok = ok && publication && conjuncts;
     Atom *answer = NULL;
-    CettaTransformOutcome outcome = ok && fire ? cetta_transform_fire(machine->space,
-        &machine->arena, fire, &host, &answer) : CETTA_TRANSFORM_ERROR;
-    ok = ok && fire && !transaction.failed;
+    CettaTransformOutcome outcome = ok ? cetta_transform_step(&machine->arena,
+        args[1], conjuncts, publication, NULL, &host, &answer) : CETTA_TRANSFORM_ERROR;
+    struct CettaTmettaRuntime *world = tm_world(machine);
+    ArenaMark capture_start = arena_mark(&world->knowledge);
+    TmCaptureCommit capture_commit = {0};
+    bindings_init(&capture_commit.bindings);
+    bool installed = false;
+    ok = ok && !transaction.failed;
     if (outcome == CETTA_TRANSFORM_ERROR) {
-        if (answer) machine->error = answer;
-        else if (error) machine->error = error;
-        else if (ok) raise_error(machine, call, "MalformedTransform");
-    } else if (outcome == CETTA_TRANSFORM_FIRED && ok) {
-        ok = bindings_clone(&next, &branch->bindings);
-        Atom *rows = answer->expr.elems[1];
-        Atom *destination = call->expr.len == 5 ? args[4] : args[1];
-        bool comma = args[3]->kind == ATOM_EXPR && args[3]->expr.len && tm_named(args[3]->expr.elems[0], ",");
-        for (CettaExprIndex i = 0; ok && i < rows->expr.len; ++i) {
-            Atom *packet = rows->expr.elems[i];
-            Bindings known;
-            bindings_init(&known);
-            ok = packet->kind == ATOM_EXPR && packet->expr.len == 3 &&
-                tm_named(packet->expr.elems[0], "tmetta:publication") &&
-                bindings_restore_captured_value(packet->expr.elems[2], &known) &&
-                bindings_try_merge_live(&next, &known);
-            bindings_free(&known);
-            if (!ok) { raise_error(machine, call, "IncompatibleFiringKnowledge"); break; }
-            Atom *row = packet->expr.elems[1];
-            int matched = match_data(machine, &next, call, row->expr.elems[1]);
-            if (matched != 1) {
-                if (matched == 0) raise_error(machine, call, "TransformBindingMismatch");
-                transaction.pending = matched > 1;
-                ok = matched > 1;
-                break;
-            }
-            Atom *makes = row->expr.elems[2];
-            CettaExprLen count = comma ? makes->expr.len - 1 : 1;
-            for (CettaExprIndex j = 0; ok && j < count; ++j) {
-                Atom *item = comma ? makes->expr.elems[j + 1] : makes;
-                int normalized = 1;
-                item = contextual_normalize(machine, &next, item, &normalized);
-                if (!item || !abt_scope_check(&machine->program->binders, 0, item)) {
-                    raise_error(machine, makes, "IllScopedPublication"); ok = false; break;
-                }
-                if (transaction_add(&transaction, destination, item) || transaction.failed) { ok = false; break; }
-                ok = answer_bank_add(&made, item, &next, NULL, NULL);
-            }
+        if (machine->episode.completion == CETTA_EVAL_COMPLETE) {
+            if (answer) machine->error = answer;
+            else if (error) machine->error = error;
+            else if (ok) raise_error(machine, call, "MalformedTransform");
         }
+    } else if (outcome == CETTA_TRANSFORM_FIRED && ok) {
+        ok = capture_dependency(machine, &transaction.common, call, true);
+        if (ok && (transaction.common.len || transaction.extension_count)) {
+            ok = bindings_clone(&capture_commit.bindings, &world->captures);
+            if (ok) capture_commit.copy = atom_deep_copy_session_new(&world->knowledge);
+            ok = ok && capture_commit.copy;
+        }
+        if (ok) ok = prepare_transform_outputs(&transaction, call, answer->expr.elems[1],
+            extension_basis, &next, &made, &capture_commit);
     } else if (outcome == CETTA_TRANSFORM_DECLINED && ok && !transaction.pending) {
         raise_error(machine, call, "MalformedTransform");
     }
@@ -1173,16 +1689,29 @@ static bool transform(TmMachine *machine, TmBranch *branch, Atom *call) {
         if (ok && !space_publish_native_replacements(destinations, prepared, versions, count)) {
             raise_error(machine, call, "TransformPublicationRefused"); ok = false;
         }
-        if (ok) { bindings_free(&branch->bindings); branch->bindings = next; bindings_init(&next); }
+        if (ok) {
+            if (capture_commit.changed) {
+                bindings_replace(&world->captures, &capture_commit.bindings);
+                installed = true;
+            }
+            bindings_replace(&branch->bindings, &next);
+        }
     }
     machine->transaction = previous;
     for (size_t i = 0; i < transaction.len; ++i) {
         space_free(transaction.spaces[i].prepared); free(transaction.spaces[i].prepared);
     }
     free(transaction.spaces);
+    clear_capture_footprint(&transaction);
+    atom_deep_copy_session_free(capture_commit.copy);
+    bindings_free(&capture_commit.bindings);
+    if (!installed) arena_reset(&world->knowledge, capture_start);
     bindings_free(&next);
     answer_bank_free(&made);
     if (machine->error) return true;
+    /* A firing that would give a committed capture another value is not
+     * admitted: the branch has no answer, as for a failed match. */
+    if (capture_commit.refused) return finish_branch(machine, branch, false);
     if (transaction.pending) return suspend_read(machine, branch, call);
     if (machine->episode.completion != CETTA_EVAL_COMPLETE) return true;
     if (!ok || !result) return false;
@@ -1210,10 +1739,22 @@ static bool effect(TmMachine *machine, TmBranch *branch, Atom *call) {
     } else if ((tm_named(args[0], "add-atom") || tm_named(args[0], "remove-atom")) && n == 3) {
         Space *space = knowledge_space(machine, args[1]);
         if (!space) { raise_error(machine, call, "ExpectedKnowledgeSpace"); return true; }
-        if (tm_named(args[0], "add-atom")) {
-            if (!space_admit_scoped_atom(space, &machine->arena, args[2])) return false;
-        } else (void)space_remove(space, args[2]);
+        bool adding = tm_named(args[0], "add-atom");
         answer = atom_unit(&machine->arena);
+        if (!answer) return false;
+        bool captures;
+        Atom *stored = tm_stored_form(machine, &branch->bindings, args[2], adding, &captures);
+        if (!stored) return false;
+        if (adding) {
+            if (!tm_admit_stored(space, &machine->arena, stored, captures)) return false;
+        } else {
+            CettaCount length = space_length64(space);
+            for (CettaIndex i = 0; i < length; ++i) {
+                if (!atom_eq(space_get_at64(space, i), stored)) continue;
+                if (!space_remove_logical_positions(space, &i, 1)) return false;
+                break;
+            }
+        }
     } else if (tm_named(args[0], "import!") && n == 3) {
         Space *space = knowledge_space(machine, args[1]);
         if (!space) { raise_error(machine, call, "ExpectedKnowledgeSpace"); return true; }
@@ -1300,8 +1841,7 @@ static bool dispatch_call(TmMachine *machine, TmBranch *branch, Atom *call, Atom
         if (!matched) return finish_branch(machine, branch, false);
         branch->code = NULL;
         branch->value = atom_bool(&machine->arena, true);
-        if (matched > 1) { branch->waiting = true; suspend(machine, branch); }
-        return true;
+        return branch->value && (matched == 1 || suspend_constraints(machine, branch));
     }
     SymbolId operation = primitive(head);
     if (operation != SYMBOL_ID_NONE && atom_has_vars(call)) {
@@ -1346,7 +1886,9 @@ static bool dispatch_call(TmMachine *machine, TmBranch *branch, Atom *call, Atom
             }
         }
     }
-    bool matched = false, pending = false;
+    bool matched = false;
+    size_t pending = 0;
+    TmBranch *earlier = machine->suspended;
     const TmProgram *program = machine->program;
     SymbolId key = tm_equation_head(call);
     size_t named = 0, named_end = program->len, wildcard = 0, wildcard_end = 0;
@@ -1389,17 +1931,25 @@ static bool dispatch_call(TmMachine *machine, TmBranch *branch, Atom *call, Atom
         candidate->code = equation->body;
         candidate->value = NULL;
         if (matched_data == 2) {
-            pending = true;
-            candidate->waiting = true;
-            suspend(machine, candidate);
+            if (!suspend_constraints(machine, candidate)) return false;
+            ++pending;
         } else {
             matched = true;
             schedule(machine, candidate);
         }
     }
-    if (matched || pending) return finish_branch(machine, branch, false);
+    if (matched) return finish_branch(machine, branch, false);
     branch->code = NULL;
     branch->value = call;
+    if (pending) {
+        TmCallCensus *census = work(machine, sizeof *census);
+        if (!census) return false;
+        census->caller = branch;
+        census->pending = pending;
+        for (TmBranch *candidate = machine->suspended; candidate != earlier; candidate = candidate->next)
+            candidate->census = census;
+        machine->active = NULL;
+    }
     return true;
 }
 
@@ -1474,6 +2024,128 @@ static bool reflect(TmMachine *machine, TmBranch *branch, Atom *bag) {
     return finish_branch(machine, branch, false);
 }
 
+static bool prepare_match_row(TmMachine *machine, TmBranch *caller,
+                              TmContinuation *frame, Atom *pattern, Atom *row, bool lent) {
+    TmBranch *answer = clone_branch(machine, caller);
+    if (!answer) return false;
+    Atom *opened = open_stored_row(machine, &answer->bindings, row, lent);
+    if (!opened) return false;
+    int matched = match_data(machine, &answer->bindings, pattern, opened);
+    if (matched < 0) return false;
+    if (!matched) return finish_branch(machine, answer, false);
+    answer->code = NULL;
+    answer->value = quote_text(machine, answer, frame->code->children[2], frame->scope);
+    if (!answer->value) return false;
+    if (matched > 1) return suspend_constraints(machine, answer);
+    schedule(machine, answer);
+    return true;
+}
+
+/* A flat, rigid field can refute a candidate before opening its slots.
+ * Contextual applications and declared binders go to the scoped matcher. */
+static bool flat_read_key(const TmMachine *machine, const Atom *term) {
+    if (term->kind != ATOM_EXPR || !term->expr.len || term->expr.len - 1 > UINT32_MAX)
+        return false;
+    Atom *head = term->expr.elems[0];
+    if (head->kind != ATOM_SYMBOL || tm_named(head, "ctx") ||
+        abt_signature_lookup(&machine->program->binders, head->sym_id, (uint32_t)(term->expr.len - 1)))
+        return false;
+    for (CettaExprIndex i = 1; i < term->expr.len; ++i)
+        if (term->expr.elems[i]->kind != ATOM_VAR && !tm_scalar_leaf(term->expr.elems[i])) return false;
+    return true;
+}
+
+static bool flat_read_selective(const TmMachine *machine, const Atom *pattern) {
+    if (!flat_read_key(machine, pattern)) return false;
+    for (CettaExprIndex i = 1; i < pattern->expr.len; ++i)
+        if (pattern->expr.elems[i]->kind != ATOM_VAR) return true;
+    return false;
+}
+
+/* An already committed scalar can also rule out a row. A retained read
+ * records the actual cell it used, including when the row is skipped. */
+static int flat_read_refutes(const TmMachine *machine, const Atom *pattern, const Atom *row,
+                             TmCaptureSet *observed) {
+    if (!row || !flat_read_key(machine, row)) return 0;
+    if (pattern->expr.len != row->expr.len) return 1;
+    struct CettaTmettaRuntime *world = tm_world(machine);
+    for (CettaExprIndex i = 0; i < row->expr.len; ++i) {
+        Atom *left = pattern->expr.elems[i], *right = row->expr.elems[i];
+        if (left->kind == ATOM_VAR) continue;
+        if (right->kind != ATOM_VAR) {
+            if (!atom_eq(left, right)) return 1;
+            continue;
+        }
+        VarId name = right->var_id;
+        if (!tm_captured(world, name)) continue;
+        BindingValue value = bindings_lookup_value_id(&world->captures, name);
+        if (!value.skeleton || binding_value_is_contextual(value) ||
+            !tm_scalar_leaf(value.skeleton) || atom_eq(left, value.skeleton)) continue;
+        if (observed && !capture_contains(observed, name) && !capture_insert(observed, name)) return -1;
+        return 1;
+    }
+    return 0;
+}
+
+/* Prepare the complete read before any selected template can run. The
+ * occurrence cursor shares the transform reader on ordinary native bags.
+ * Other space kinds keep their public view and existing encounter order.
+ * An authored selector can miss a contextual row whose head changes upon
+ * opening, so lend every occurrence and use the scoped matcher on each. */
+static bool prepare_match(TmMachine *machine, TmBranch *branch,
+                          TmContinuation *frame, Space *space, Atom *pattern) {
+    SpaceOccurrenceCursor cursor;
+    space_occurrence_cursor_init_empty(&cursor);
+    TmCaptureSet captures = {0};
+    bool borrowed = false;
+    if (space->kind == SPACE_KIND_ATOM && !space_dense_facts(space) && !space->overlay_base &&
+        (space->match_backend.kind == SPACE_ENGINE_NATIVE ||
+         space->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT)) {
+        Atom *any = atom_var_with_id(&machine->arena, "row", fresh_var_id());
+        borrowed = any && space_occurrence_cursor_init(space, any, &cursor);
+    }
+    SpaceReadToken version = borrowed ? cursor.read : space_read_token(space);
+    bool ok = !tm_capacity_failed();
+    bool flat_key = flat_read_selective(machine, pattern);
+    CettaCount length = borrowed ? 0 : space_view_length64(space);
+    for (CettaIndex index = 0; ok; ++index) {
+        Atom *row = NULL;
+        if (borrowed) {
+            SpaceOccurrenceCursorStep next = space_occurrence_cursor_next(&cursor, NULL, &row);
+            if (next == SPACE_OCCURRENCE_CURSOR_INVALIDATED) {
+                machine->episode.completion = CETTA_EVAL_INCOMPLETE_INVALIDATED;
+                ok = false;
+                break;
+            }
+            if (next == SPACE_OCCURRENCE_CURSOR_END) break;
+        } else {
+            if (index == length) break;
+            row = space_view_get_at64(space, index);
+        }
+        if (flat_key) {
+            int refuted = flat_read_refutes(machine, pattern, row, branch->collector->parent ? &captures : NULL);
+            if (refuted < 0) { ok = false; break; }
+            if (refuted) continue;
+        }
+        ok = (!branch->collector->parent || capture_dependency(machine, &captures, row, true)) &&
+            prepare_match_row(machine, branch, frame, pattern, row, borrowed);
+    }
+    space_occurrence_cursor_release(&cursor);
+    if (ok && !space_read_token_matches_live_space(version, space)) {
+        machine->episode.completion = CETTA_EVAL_INCOMPLETE_INVALIDATED;
+        ok = false;
+    }
+    TmRead *reads = NULL;
+    ok = ok && prepare_read(machine, branch->collector, space, version, &captures, &reads) &&
+        finish_branch(machine, branch, false);
+    capture_set_free(&captures);
+    if (!ok) return false;
+    /* The read becomes part of the collectors' snapshots only when the
+     * complete selection and the caller transition have both succeeded. */
+    publish_read(reads);
+    return true;
+}
+
 static bool scalar_binding(const TmCode *code, const Atom *value) {
     return value && code->children[code->binding - 1]->source->kind == ATOM_VAR &&
         tm_scalar_leaf(value);
@@ -1494,8 +2166,7 @@ static bool bind_value(TmMachine *machine, TmBranch *branch, TmCode *code,
     branch->scope = scope;
     branch->code = body;
     branch->value = NULL;
-    if (matched > 1) { branch->waiting = true; suspend(machine, branch); }
-    return true;
+    return matched == 1 || suspend_constraints(machine, branch);
 }
 
 static bool enter_runtime_code(TmMachine *machine, TmBranch *branch, Atom *owned) {
@@ -1639,37 +2310,8 @@ static bool apply_continuation(TmMachine *machine, TmBranch *branch) {
             raise_error(machine, branch->value, "ExpectedKnowledgeSpace");
             return true;
         }
-        if (!observe_space(machine, branch->collector, space)) return false;
         Atom *pattern = syntax(machine, frame->scope, frame->code->children[1]->source);
-        if (!pattern) return false;
-        SpaceReadToken version = space_read_token(space);
-        CettaCount count = space_view_length64(space);
-        for (CettaIndex i = 0; i < count; ++i) {
-            Atom *row = space_view_get_at64(space, i);
-            if (!space_read_token_matches_live_space(version, space)) {
-                machine->episode.completion = CETTA_EVAL_INCOMPLETE_INVALIDATED; return true;
-            }
-            TmBranch *alternative = clone_branch(machine, branch);
-            if (!alternative) return false;
-            Atom *owned = row ? atom_deep_copy(&machine->arena, row) : NULL;
-            BindingsFrameSchema *schema = owned ? tm_schema(owned) : NULL;
-            TmScope *scope = schema ? open_scope(machine, NULL, schema, &alternative->bindings) : NULL;
-            bindings_frame_schema_release(schema);
-            Atom *opened = scope ? syntax(machine, scope, owned) : NULL;
-            if (!opened) return false;
-            int matched_data = match_data(machine, &alternative->bindings, pattern, opened);
-            if (matched_data < 0) return false;
-            if (!matched_data) {
-                if (!finish_branch(machine, alternative, false)) return false;
-                continue;
-            }
-            alternative->code = NULL;
-            alternative->value = quote_text(machine, alternative, frame->code->children[2], frame->scope);
-            if (!alternative->value) return false;
-            if (matched_data > 1) { alternative->waiting = true; suspend(machine, alternative); }
-            else schedule(machine, alternative);
-        }
-        return finish_branch(machine, branch, false);
+        return pattern && prepare_match(machine, branch, frame, space, pattern);
     }
     case K_SERIALIZE: {
         if (branch->value->kind == ATOM_VAR) {
@@ -2056,7 +2698,7 @@ static void machine_run(TmMachine *machine) {
                 branch->value = saved.value;
                 branch->scope = saved.scope;
                 branch->continuation = saved.continuation;
-                branch->waiting = saved.waiting;
+                branch->retry_constraints = saved.retry_constraints;
                 branch->residual = saved.residual;
                 schedule(machine, branch);
                 machine->active = NULL;
@@ -2211,11 +2853,108 @@ typedef struct TmWake {
     TmBranch *branch;
     Bindings bindings;
     Atom *value;
+    CettaDelayService *delay;
+    int status;
     struct TmWake *next;
 } TmWake;
 
-/* Stage every wake before changing the frontier. A failed allocation rolls
- * back the shared delay tables and leaves the original branch images intact. */
+struct TmCallInput {
+    TmCallCensus *census;
+    Bindings bindings;
+    TmCallInput *next;
+};
+
+/* Retain the solved assignments, add the new input and submit the entire
+ * residual conjunction to the contextual matcher. The original image owns
+ * the equations until the new assignment and residual are both staged. */
+static int refine_waiting_bindings(TmMachine *machine, const Bindings *before,
+                                  Bindings *after, Atom *target, Atom *input) {
+    Bindings assignments = *before;
+    assignments.constraints = NULL;
+    assignments.eq_len = assignments.eq_cap = assignments.private_constraint_count = 0;
+    bool unbound = target->kind == ATOM_VAR;
+    bool check_input = !unbound && !atom_eq(target, input);
+    if (!bindings_clone(after, &assignments) ||
+        (unbound && !bindings_add_var_acyclic(after, target, input)))
+        return -1;
+    size_t count = (size_t)before->eq_len + check_input;
+    if (!count) return 1;
+    if (count == 1) {
+        if (check_input) return match_data(machine, after, target, input);
+        Atom *left = binding_value_materialize(&machine->arena, before->constraints[0].lhs);
+        Atom *right = binding_value_materialize(&machine->arena, before->constraints[0].rhs);
+        return left && right ? match_data(machine, after, left, right) : -1;
+    }
+    if (count >= SIZE_MAX / sizeof(Atom *)) return -1;
+    Atom **left = work(machine, (count + 1) * sizeof *left);
+    Atom **right = work(machine, (count + 1) * sizeof *right);
+    Atom *head = atom_int(&machine->arena, 0);
+    if (!left || !right || !head) return -1;
+    left[0] = right[0] = head;
+    for (size_t i = 0; i < before->eq_len; ++i) {
+        left[i + 1] = binding_value_materialize(&machine->arena, before->constraints[i].lhs);
+        right[i + 1] = binding_value_materialize(&machine->arena, before->constraints[i].rhs);
+        if (!left[i + 1] || !right[i + 1]) return -1;
+    }
+    if (check_input) {
+        left[count] = target;
+        right[count] = input;
+    }
+    Atom *lhs = atom_expr(&machine->arena, left, count + 1);
+    Atom *rhs = atom_expr(&machine->arena, right, count + 1);
+    return lhs && rhs ? match_data(machine, after, lhs, rhs) : -1;
+}
+
+static bool stage_call_inputs(TmMachine *machine, Atom *input, Atom *given,
+                              Atom **owned, TmCallInput **prepared) {
+    for (TmBranch *candidate = machine->suspended; candidate; candidate = candidate->next) {
+        TmCallCensus *census = candidate->census;
+        if (!census || !census->caller || census->offered || !candidate->delay) continue;
+        Atom *target = bindings_apply_graph(&candidate->bindings, &machine->arena, input);
+        if (!target) return false;
+        if (target->kind != ATOM_VAR || !cetta_delay_watches(candidate->delay, target->var_id)) continue;
+        Atom *caller_input = bindings_apply_graph(&census->caller->bindings, &machine->arena, input);
+        if (!caller_input) return false;
+        if (caller_input->kind != ATOM_VAR) continue;
+        if (!*owned) *owned = atom_deep_copy_single(&machine->arena, given);
+        TmCallInput *offer = *owned ? calloc(1, sizeof *offer) : NULL;
+        if (!offer) return false;
+        offer->census = census;
+        offer->next = *prepared;
+        census->offered = *prepared = offer;
+        if (!bindings_clone(&offer->bindings, &census->caller->bindings) ||
+            !bindings_add_var_acyclic(&offer->bindings, caller_input, *owned)) return false;
+    }
+    return true;
+}
+
+static void finish_call_inputs(TmCallInput *prepared, bool publish) {
+    while (prepared) {
+        TmCallInput *offer = prepared;
+        prepared = offer->next;
+        if (publish)
+            bindings_replace(&offer->census->caller->bindings, &offer->bindings);
+        bindings_free(&offer->bindings);
+        offer->census->offered = NULL;
+        free(offer);
+    }
+}
+
+static void decide_call_candidate(TmMachine *machine, TmBranch *branch, bool admitted) {
+    TmCallCensus *census = branch->census;
+    branch->census = NULL;
+    if (!census || !census->caller) return;
+    --census->pending;
+    if (admitted) {
+        drop_branch(machine, census->caller);
+        census->caller = NULL;
+    } else if (!census->pending) {
+        schedule(machine, census->caller);
+        census->caller = NULL;
+    }
+}
+
+/* Stage every wake before replacing any binding image or delay service. */
 static bool wake_input(TmMachine *machine, Atom *variable, Atom *given, size_t *count) {
     if (!variable || variable->kind != ATOM_VAR || !given || atom_has_vars(given) ||
         !machine->input_scope || !abt_scope_check(&machine->program->binders, 0, given))
@@ -2227,11 +2966,18 @@ static bool wake_input(TmMachine *machine, Atom *variable, Atom *given, size_t *
     }
     TmWake *ready = NULL, **next = &ready;
     Atom *owned = NULL;
+    TmCallInput *offers = NULL;
+    if (!stage_call_inputs(machine, input, given, &owned, &offers)) goto failed;
     for (TmBranch *branch = machine->suspended; branch; branch = branch->next) {
-        if (!branch->delay || branch->bindings.eq_len) continue;
+        TmCallCensus *census = branch->census;
+        bool shared_input = census && census->offered;
+        if (!shared_input && (!branch->delay ||
+                (branch->bindings.eq_len && !branch->retry_constraints) ||
+                (census && census->caller))) continue;
         Atom *target = bindings_apply_graph(&branch->bindings, &machine->arena, input);
         if (!target) goto failed;
-        if (target->kind != ATOM_VAR || !cetta_delay_watches(branch->delay, target->var_id))
+        if (!shared_input &&
+            (target->kind != ATOM_VAR || !cetta_delay_watches(branch->delay, target->var_id)))
             continue;
         if (!owned) owned = atom_deep_copy_single(&machine->arena, given);
         if (!owned) goto failed;
@@ -2241,17 +2987,19 @@ static bool wake_input(TmMachine *machine, Atom *variable, Atom *given, size_t *
         bindings_init(&wake->bindings);
         *next = wake;
         next = &wake->next;
-        if (!bindings_clone(&wake->bindings, &branch->bindings) ||
-            !bindings_add_var_acyclic(&wake->bindings, target, owned))
+        wake->status = refine_waiting_bindings(machine, &branch->bindings, &wake->bindings, target, owned);
+        if (wake->status < 0 || tm_capacity_failed()) goto failed;
+        if (wake->status == 2 &&
+            !prepare_constraint_delay(machine, &wake->bindings, &wake->delay))
             goto failed;
-        if (branch->value) {
+        if (wake->status != 0 && branch->value) {
             wake->value = bindings_apply_graph(&wake->bindings, &machine->arena, branch->value);
             if (!wake->value) goto failed;
         }
-        if (!cetta_delay_bound(branch->delay, 1, target->var_id) ||
-            !cetta_delay_has_woken(branch->delay)) goto failed;
     }
 
+    finish_call_inputs(offers, true);
+    static TmCode rejected = {.op = TM_FAIL};
     TmBranch **link = &machine->suspended;
     while (ready) {
         TmWake *wake = ready;
@@ -2262,19 +3010,29 @@ static bool wake_input(TmMachine *machine, Atom *variable, Atom *given, size_t *
         bindings_replace(&branch->bindings, &wake->bindings);
         branch->value = wake->value;
         cetta_delay_service_free(branch->delay);
-        branch->delay = NULL;
+        branch->delay = wake->delay;
         branch->residual = NULL;
-        schedule(machine, branch);
+        branch->retry_constraints = wake->status == 2;
+        if (branch->retry_constraints) {
+            branch->next = *link;
+            *link = branch;
+            link = &branch->next;
+        } else {
+            decide_call_candidate(machine, branch, wake->status == 1);
+            if (!wake->status) branch->code = &rejected;
+            schedule(machine, branch);
+        }
         ++*count;
         free(wake);
     }
     return true;
 
 failed:
+    finish_call_inputs(offers, false);
     while (ready) {
         TmWake *wake = ready;
         ready = wake->next;
-        cetta_delay_rollback(wake->branch->delay, 1);
+        cetta_delay_service_free(wake->delay);
         bindings_free(&wake->bindings);
         free(wake);
     }
@@ -2294,7 +3052,7 @@ size_t cetta_tmetta_resume_with_value(CettaLibraryContext *context, Space *space
     if (machine && registry == machine->registry &&
         space_read_token_matches_live_space(machine->checkpoint, space)) {
         for (TmCollector *collector = machine->collectors; collector; collector = collector->next) {
-            if (collector->caller && !collection_current(machine, collector)) {
+            if ((collector->caller || collector->closing) && !collection_current(machine, collector)) {
                 pthread_mutex_unlock(&runtime->mutex);
                 return 0;
             }
@@ -2338,7 +3096,7 @@ bool cetta_tmetta_frontier_info(CettaLibraryContext *context, Atom *frontier,
         for (TmBranch *branch = machine->pending; branch; branch = branch->next) ++info->runnable;
         for (TmBranch *branch = machine->suspended; branch; branch = branch->next) ++info->suspended;
         for (TmCollector *collector = machine->collectors; collector; collector = collector->next) {
-            if (!collector->caller) continue;
+            if (!collector->caller && !collector->closing) continue;
             ++info->collecting;
             for (TmRead *read = collector->reads; read; read = read->next)
                 ++info->observed_spaces;

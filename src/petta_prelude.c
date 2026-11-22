@@ -3,6 +3,8 @@
 #include "match.h"
 #include "petta_numeric.h"
 
+#include <errno.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -42,6 +44,22 @@ static Atom *prelude_type_error(Arena *arena, const char *type, Atom *culprit,
                                 int64_t arity) {
     Atom *formal = prelude_term(arena, "type_error",
                                 atom_symbol(arena, type), culprit);
+    return prelude_error(arena, formal, system, name, arity);
+}
+
+static Atom *prelude_domain_error(Arena *arena, const char *domain,
+                                  Atom *culprit, bool system, const char *name,
+                                  int64_t arity) {
+    Atom *formal = prelude_term(arena, "domain_error",
+                                atom_symbol(arena, domain), culprit);
+    return prelude_error(arena, formal, system, name, arity);
+}
+
+static Atom *prelude_representation_error(Arena *arena, const char *limit,
+                                          bool system, const char *name,
+                                          int64_t arity) {
+    Atom *formal = prelude_term(arena, "representation_error",
+                                atom_symbol(arena, limit), NULL);
     return prelude_error(arena, formal, system, name, arity);
 }
 
@@ -442,6 +460,284 @@ static Atom *prelude_term_hash(Arena *arena, Atom *term) {
     return atom_int(arena, (int64_t)hash);
 }
 
+/* Read an integer operand of term_hash/4, preserving SWI's error taxonomy
+ * (instantiation_error, type_error(integer, _), representation_error(_)). */
+static bool prelude_hash4_read_int64(Arena *arena, Atom *atom, bool as_int32,
+                                     int64_t *value_out, Atom **error_out) {
+    if (atom->kind == ATOM_VAR) {
+        *error_out = prelude_instantiation_error(arena, "term_hash", 4);
+        return false;
+    }
+    if (atom->kind != ATOM_GROUNDED) {
+        *error_out = prelude_type_error(arena, "integer", atom, true,
+                                        "term_hash", 4);
+        return false;
+    }
+    if (atom->ground.gkind == GV_INT) {
+        int64_t v = atom->ground.ival;
+        if (as_int32 && (v < INT_MIN || v > INT_MAX)) {
+            *error_out = prelude_representation_error(arena, "int", true,
+                                                      "term_hash", 4);
+            return false;
+        }
+        *value_out = v;
+        return true;
+    }
+    if (atom->ground.gkind == GV_BIGINT) {
+#if CETTA_BUILD_WITH_GMP
+        mpz_t value;
+        mpz_init(value);
+        bool ok = atom_bigint_get_mpz(atom, value);
+        if (ok) {
+            if (as_int32) {
+                if (mpz_fits_sint_p(value)) {
+                    *value_out = (int64_t)mpz_get_si(value);
+                    mpz_clear(value);
+                    return true;
+                }
+                mpz_clear(value);
+                *error_out = prelude_representation_error(arena, "int", true,
+                                                          "term_hash", 4);
+                return false;
+            }
+            if (mpz_fits_slong_p(value)) {
+                *value_out = (int64_t)mpz_get_si(value);
+                mpz_clear(value);
+                return true;
+            }
+            mpz_clear(value);
+            *error_out = prelude_representation_error(arena, "int64_t", true,
+                                                      "term_hash", 4);
+            return false;
+        }
+        mpz_clear(value);
+#endif
+        const char *text = atom_bigint_cstr(atom);
+        if (text) {
+            errno = 0;
+            char *end = NULL;
+            long long parsed = strtoll(text, &end, 10);
+            if (errno == 0 && end && *end == '\0') {
+                if (as_int32 && (parsed < INT_MIN || parsed > INT_MAX)) {
+                    *error_out = prelude_representation_error(arena, "int", true,
+                                                              "term_hash", 4);
+                    return false;
+                }
+                *value_out = (int64_t)parsed;
+                return true;
+            }
+        }
+        *error_out = prelude_representation_error(
+            arena, as_int32 ? "int" : "int64_t", true, "term_hash", 4);
+        return false;
+    }
+    *error_out = prelude_type_error(arena, "integer", atom, true,
+                                    "term_hash", 4);
+    return false;
+}
+
+typedef struct {
+    Atom *term;
+    CettaExprIndex index;
+    int64_t depth;
+    bool list_slice;
+} PreludeHash4Frame;
+
+static bool prelude_hash4_push(PreludeHash4Frame **stack, size_t *len,
+                               size_t *cap, PreludeHash4Frame *inline_buf,
+                               PreludeHash4Frame frame) {
+    if (*len == *cap) {
+        size_t next = *cap * 2u;
+        if (next <= *cap || next > SIZE_MAX / sizeof(PreludeHash4Frame))
+            return false;
+        PreludeHash4Frame *grown = (*stack == inline_buf)
+            ? malloc(next * sizeof(*grown))
+            : realloc(*stack, next * sizeof(*grown));
+        if (!grown)
+            return false;
+        if (*stack == inline_buf)
+            memcpy(grown, inline_buf, *len * sizeof(*grown));
+        *stack = grown;
+        *cap = next;
+    }
+    (*stack)[(*len)++] = frame;
+    return true;
+}
+
+/* SWI's term_hash/4 (pl-prims.c): single MurmurHashAligned2 accumulator
+ * initialized to MURMUR_SEED.  Compounds fold (uint64_t)atom_hash + arity
+ * (8 little-endian bytes) before recursing up to `depth` levels (-1 = full).
+ * Wide UTF-8 strings hash safely as UTF-8 bytes rather than dereferencing
+ * a narrow-only buffer. */
+static Atom *prelude_term_hash_bounded(Arena *arena, Atom *term,
+                                       Atom *depth_atom, Atom *range_atom,
+                                       bool *raised) {
+    int64_t depth = 0;
+    Atom *err = NULL;
+    if (!prelude_hash4_read_int64(arena, depth_atom, false, &depth, &err)) {
+        *raised = true;
+        return err;
+    }
+    if (depth < -1) {
+        *raised = true;
+        return prelude_domain_error(arena, "not_less_than_zero", depth_atom,
+                                    true, "term_hash", 4);
+    }
+    int64_t range = 0;
+    if (!prelude_hash4_read_int64(arena, range_atom, true, &range, &err)) {
+        *raised = true;
+        return err;
+    }
+    if (range < 1) {
+        *raised = true;
+        return prelude_domain_error(arena, "not_less_than_one", range_atom,
+                                    true, "term_hash", 4);
+    }
+
+    uint32_t h = PRELUDE_MURMUR_SEED;
+    if (depth == 0)
+        return atom_int(arena, (int64_t)(h % (uint32_t)range));
+
+    uint32_t cons_atom_hash = prelude_murmur("[|]", 3u, PRELUDE_MURMUR_SEED);
+    uint64_t cons_functor_key = (uint64_t)cons_atom_hash + UINT64_C(2);
+
+    PreludeHash4Frame inline_stack[64];
+    PreludeHash4Frame *stack = inline_stack;
+    size_t stack_len = 0u;
+    size_t stack_cap = sizeof(inline_stack) / sizeof(inline_stack[0]);
+    stack[stack_len++] = (PreludeHash4Frame){
+        .term = term, .index = 0u, .depth = depth, .list_slice = false,
+    };
+
+    PreludeHashStatus status = PRELUDE_HASHED;
+    while (status == PRELUDE_HASHED && stack_len > 0u) {
+        PreludeHash4Frame cur = stack[--stack_len];
+        if (cur.list_slice) {
+            if (cur.index >= cur.term->expr.len) {
+                if (!prelude_fold_atom("[]", 2u, &h))
+                    status = PRELUDE_UNHASHABLE;
+                continue;
+            }
+            prelude_fold_word(cons_functor_key, &h);
+            int64_t next_depth = cur.depth > 0 ? cur.depth - 1 : -1;
+            if (next_depth != 0) {
+                if (!prelude_hash4_push(
+                        &stack, &stack_len, &stack_cap, inline_stack,
+                        (PreludeHash4Frame){.term = cur.term,
+                                            .index = cur.index + 1u,
+                                            .depth = next_depth,
+                                            .list_slice = true}) ||
+                    !prelude_hash4_push(
+                        &stack, &stack_len, &stack_cap, inline_stack,
+                        (PreludeHash4Frame){
+                            .term = cur.term->expr.elems[cur.index],
+                            .index = 0u,
+                            .depth = next_depth,
+                            .list_slice = false})) {
+                    status = PRELUDE_UNHASHABLE;
+                }
+            }
+            continue;
+        }
+
+        Atom *atom = cur.term;
+        if (atom->kind != ATOM_EXPR) {
+            status = prelude_fold_term(atom, &h);
+            continue;
+        }
+
+        Atom *compound_body = NULL;
+        if (atom_petta_prolog_compound_body(atom, &compound_body) &&
+            compound_body && compound_body->kind == ATOM_EXPR &&
+            compound_body->expr.len >= 2u &&
+            compound_body->expr.elems[0]->kind == ATOM_SYMBOL) {
+            SymbolId fname = compound_body->expr.elems[0]->sym_id;
+            uint32_t name_hash = 0u;
+            if (!prelude_text_hash(symbol_bytes(g_symbols, fname),
+                                   symbol_len(g_symbols, fname), false,
+                                   PRELUDE_MURMUR_SEED, &name_hash)) {
+                status = PRELUDE_UNHASHABLE;
+                continue;
+            }
+            uint64_t arity = (uint64_t)(compound_body->expr.len - 1u);
+            prelude_fold_word((uint64_t)name_hash + arity, &h);
+            int64_t next_depth = cur.depth > 0 ? cur.depth - 1 : -1;
+            if (next_depth != 0) {
+                for (CettaExprIndex k = compound_body->expr.len; k > 1u; k--) {
+                    if (!prelude_hash4_push(
+                            &stack, &stack_len, &stack_cap, inline_stack,
+                            (PreludeHash4Frame){
+                                .term = compound_body->expr.elems[k - 1u],
+                                .index = 0u,
+                                .depth = next_depth,
+                                .list_slice = false})) {
+                        status = PRELUDE_UNHASHABLE;
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+
+        if (atom->expr.len == 3u &&
+            atom_is_internal_tag(atom->expr.elems[0],
+                                 CETTA_INTERNAL_TAG_PETTA_OPEN_CONS)) {
+            prelude_fold_word(cons_functor_key, &h);
+            int64_t next_depth = cur.depth > 0 ? cur.depth - 1 : -1;
+            if (next_depth != 0) {
+                if (!prelude_hash4_push(
+                        &stack, &stack_len, &stack_cap, inline_stack,
+                        (PreludeHash4Frame){.term = atom->expr.elems[2],
+                                            .index = 0u,
+                                            .depth = next_depth,
+                                            .list_slice = false}) ||
+                    !prelude_hash4_push(
+                        &stack, &stack_len, &stack_cap, inline_stack,
+                        (PreludeHash4Frame){.term = atom->expr.elems[1],
+                                            .index = 0u,
+                                            .depth = next_depth,
+                                            .list_slice = false})) {
+                    status = PRELUDE_UNHASHABLE;
+                }
+            }
+            continue;
+        }
+
+        CettaExprIndex base = atom_is_list(atom) ? 1u : 0u;
+        if (atom->expr.len <= base) {
+            if (!prelude_fold_atom("[]", 2u, &h))
+                status = PRELUDE_UNHASHABLE;
+            continue;
+        }
+        prelude_fold_word(cons_functor_key, &h);
+        int64_t next_depth = cur.depth > 0 ? cur.depth - 1 : -1;
+        if (next_depth != 0) {
+            if (!prelude_hash4_push(
+                    &stack, &stack_len, &stack_cap, inline_stack,
+                    (PreludeHash4Frame){.term = atom,
+                                        .index = base + 1u,
+                                        .depth = next_depth,
+                                        .list_slice = true}) ||
+                !prelude_hash4_push(
+                    &stack, &stack_len, &stack_cap, inline_stack,
+                    (PreludeHash4Frame){.term = atom->expr.elems[base],
+                                        .index = 0u,
+                                        .depth = next_depth,
+                                        .list_slice = false})) {
+                status = PRELUDE_UNHASHABLE;
+            }
+        }
+    }
+
+    if (stack != inline_stack)
+        free(stack);
+    if (status == PRELUDE_NONGROUND)
+        return atom_var_with_id(arena, "_", fresh_var_id());
+    if (status != PRELUDE_HASHED)
+        return NULL;
+    return atom_int(arena, (int64_t)(h % (uint32_t)range));
+}
+
 /* ── =?/2 ───────────────────────────────────────────────────────────────
  * \+ \+ A = B: whether A and B unify, with SWI's unification, which has
  * no occurs check, so a variable may meet a term containing it (a rational
@@ -567,9 +863,10 @@ uint16_t petta_prelude_native_arities(SymbolId head) {
         head == g_builtin_syms.petta_atom_concat)
         return 1u << 2;
     if (head == g_builtin_syms.petta_atom_chars ||
-        head == g_builtin_syms.petta_copy_term ||
-        head == g_builtin_syms.petta_term_hash)
+        head == g_builtin_syms.petta_copy_term)
         return 1u << 1;
+    if (head == g_builtin_syms.petta_term_hash)
+        return (1u << 1) | (1u << 3);
     return 0u;
 }
 
@@ -600,5 +897,8 @@ Atom *petta_prelude_apply(Arena *arena, SymbolId head, Atom **args,
         Atom *none = atom_expr(arena, NULL, 0u);
         return none ? rename_vars_except(arena, args[0], none) : NULL;
     }
+    if (nargs == 3u)
+        return prelude_term_hash_bounded(arena, args[0], args[1], args[2],
+                                         raised);
     return prelude_term_hash(arena, args[0]);
 }

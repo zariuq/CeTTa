@@ -101,6 +101,8 @@ typedef struct {
 static bool direct_target_equations_define_capability_v1(
     const DirectRulesV1 *target_equations,
     const DirectOperatorV1 *capability);
+static bool direct_target_equation_wraps_capability_v1(
+    const Atom *equation, const DirectOperatorV1 *capability);
 
 static bool direct_error_v1(char *error, size_t error_size,
                             const char *format, ...) {
@@ -2721,6 +2723,95 @@ static bool direct_mode_success_has_ground_v1(
     return false;
 }
 
+/* A finite, first-order caller may be able to return its recursive
+ * callee's stream directly instead of collecting at every call. Admit
+ * only facts and one recursive premise of the same ground-input mode, with
+ * one common input coordinate descending to a proper constructor child in
+ * every recursive clause. There are no foreign calls in this component.
+ * Other components, other modes, and unproved termination stay buffered. */
+static bool direct_mode_decreases_to_self_v1(
+    const DirectRulesV1 *rules, const DirectRuleIndexV1 *index,
+    const DirectBindingModesV1 *modes, const DirectBindingModeV1 *mode) {
+    if (!mode->selected || mode->functional ||
+        !direct_mode_success_is_ground_v1(mode))
+        return false;
+    uint8_t *decreases = direct_mode_bits_v1(mode->arity);
+    uint8_t *inputs = direct_mode_bits_v1(mode->arity);
+    DirectVariablesV1 known = {0};
+    bool admitted = false;
+    bool recursive = false;
+    if (!decreases || !inputs)
+        goto done;
+    memcpy(decreases, mode->input_ground, mode->arity);
+    size_t begin, end;
+    direct_rule_index_range_v1(index, mode->relation, mode->arity, &begin, &end);
+    for (size_t offset = begin; offset < end; offset++) {
+        const DirectRuleV1 *rule = &rules->items[index->items[offset].source_index];
+        if (rule->body->expr.len == 1u)
+            continue;
+        if (rule->body->expr.len != 2u ||
+            !direct_head_v1(rule->body->expr.elems[1], mode->relation, mode->arity))
+            goto done;
+        const Atom *goal = rule->body->expr.elems[1];
+        known.len = 0u;
+        for (size_t i = 0u; i < mode->arity; i++)
+            if (mode->input_ground[i] &&
+                !direct_variables_add_term_v1(&known, rule->head->expr.elems[i + 1u],
+                                              NULL, 0u))
+                goto done;
+        for (size_t i = 0u; i < mode->arity; i++) {
+            Atom *next = goal->expr.elems[i + 1u];
+            inputs[i] = direct_term_is_ground_v1(&known, next);
+            if (!decreases[i])
+                continue;
+            decreases[i] = 0u;
+            const Atom *parent = rule->head->expr.elems[i + 1u];
+            if (parent->kind == ATOM_EXPR) {
+                /* The constructor token (field zero) is not a subterm. */
+                for (CettaExprIndex child = 1u; child < parent->expr.len; child++)
+                    if (atom_eq(parent->expr.elems[child], next)) {
+                        decreases[i] = 1u;
+                        break;
+                    }
+            }
+        }
+        if (direct_find_binding_mode_v1(modes, mode->relation, mode->arity, inputs) != mode)
+            goto done;
+        recursive = true;
+    }
+    if (recursive)
+        for (size_t i = 0u; i < mode->arity; i++)
+            admitted |= decreases[i] != 0u;
+done:
+    free(known.items);
+    free(decreases);
+    free(inputs);
+    return admitted;
+}
+
+static void direct_admit_self_streams_v1(
+    const DirectRulesV1 *rules, const DirectRuleIndexV1 *index,
+    const DirectOperatorsV1 *capabilities, const DirectRulesV1 *target_equations,
+    DirectBindingModesV1 *modes) {
+    /* A raw authored target equation can interpose on generated helpers.
+     * Only equations confined to declared foreign wrappers are known not to.
+     * Names with a colon may overlap a generated mode/entry namespace. */
+    for (size_t i = 0u; i < target_equations->len; i++) {
+        bool scoped = false;
+        for (size_t j = 0u; j < capabilities->len && !scoped; j++) {
+            const DirectOperatorV1 *capability = &capabilities->items[j];
+            scoped = !strchr(capability->name, ':') &&
+                direct_target_equation_wraps_capability_v1(
+                    target_equations->items[i].head, capability);
+        }
+        if (!scoped)
+            return;
+    }
+    for (size_t i = 0u; i < modes->len; i++)
+        modes->items[i].decreasing_self =
+            direct_mode_decreases_to_self_v1(rules, index, modes, &modes->items[i]);
+}
+
 static bool direct_rule_has_functional_body_v1(
     const DirectRuleV1 *rule, const DirectBindingModeV1 *mode,
     const DirectOperatorsV1 *relations,
@@ -3631,6 +3722,32 @@ static bool direct_render_function_value_v1(
            direct_byte_v1(program, (uint8_t)')');
 }
 
+/* The continuation of this self-call only repackages its result. Each
+ * output is the same free, distinct variable in the clause and premise;
+ * no pattern could filter the answer and no constructor needs rebuilding.
+ * Returning the callee itself makes this a real tail call, not a chain of
+ * one identity continuation per ancestor for every answer. */
+static bool direct_rule_forwards_self_v1(
+    const DirectRuleV1 *rule, const DirectBindingModeV1 *mode,
+    const DirectVariablesV1 *known) {
+    if (!mode->decreasing_self || rule->body->expr.len != 2u)
+        return false;
+    const Atom *goal = rule->body->expr.elems[1];
+    for (size_t i = 0u; i < mode->arity; i++) {
+        if (mode->input_ground[i])
+            continue;
+        const Atom *output = rule->head->expr.elems[i + 1u];
+        if (!direct_same_variable_v1(output, goal->expr.elems[i + 1u]) ||
+            direct_variables_contains_v1(known, output))
+            return false;
+        for (size_t j = 0u; j < i; j++)
+            if (!mode->input_ground[j] &&
+                direct_same_variable_v1(output, rule->head->expr.elems[j + 1u]))
+                return false;
+    }
+    return true;
+}
+
 static bool direct_render_function_rule_v1(
     DirectBufferV1 *program, const DirectRuleV1 *rule,
     const DirectBindingModesV1 *modes,
@@ -3649,6 +3766,10 @@ static bool direct_render_function_rule_v1(
                 NULL, 0u))
             goto done;
     }
+    bool forward_self = !direct_target_is_he_v1(program) &&
+        direct_rule_forwards_self_v1(rule, mode, &known);
+    if (forward_self)
+        body_count = 0u;
     if (!direct_render_rule_realization_v1(
             program, rule, "mode", mode) ||
         !direct_literal_v1(program, "(= ") ||
@@ -3712,8 +3833,10 @@ static bool direct_render_function_rule_v1(
         }
     }
     if (!direct_literal_v1(program, "   ") ||
-        !direct_render_function_value_v1(
-            program, rule->head, mode, scratch))
+        !(forward_self
+              ? direct_render_function_call_v1(program, rule->body->expr.elems[1],
+                                                mode, scratch)
+              : direct_render_function_value_v1(program, rule->head, mode, scratch)))
         goto done;
     for (size_t index = 0u; index < body_count; index++) {
         if (!direct_byte_v1(program, (uint8_t)')'))
@@ -4619,30 +4742,26 @@ static bool direct_render_capability_default_v1(
     return direct_literal_v1(program, ")) (empty))\n");
 }
 
-static bool direct_target_equations_define_capability_v1(
-    const DirectRulesV1 *target_equations,
-    const DirectOperatorV1 *capability) {
+static bool direct_target_equation_wraps_capability_v1(
+    const Atom *equation, const DirectOperatorV1 *capability) {
     char wrapper[512];
     int written = snprintf(
         wrapper, sizeof(wrapper), "gslt:%s", capability->name);
     if (written < 0 || (size_t)written >= sizeof(wrapper))
         return false;
-    for (size_t index = 0u; index < target_equations->len; index++) {
-        const Atom *equation = target_equations->items[index].head;
-        const Atom *left;
-        const Atom *relation;
-        if (!direct_head_v1(equation, "metta-equation", 2u) ||
-            !(left = equation->expr.elems[1]) ||
-            !direct_head_v1(left, wrapper, 1u) ||
-            !(relation = left->expr.elems[1]) ||
-            relation->kind != ATOM_EXPR ||
-            relation->expr.len != capability->arity + 1u ||
-            relation->expr.elems[0]->kind != ATOM_SYMBOL)
-            continue;
-        if (strcmp(atom_name_cstr(relation->expr.elems[0]),
-                   capability->name) == 0)
+    return direct_head_v1(equation, "metta-equation", 2u) &&
+        direct_head_v1(equation->expr.elems[1], wrapper, 1u) &&
+        direct_head_v1(equation->expr.elems[1]->expr.elems[1],
+                       capability->name, capability->arity);
+}
+
+static bool direct_target_equations_define_capability_v1(
+    const DirectRulesV1 *target_equations,
+    const DirectOperatorV1 *capability) {
+    for (size_t index = 0u; index < target_equations->len; index++)
+        if (direct_target_equation_wraps_capability_v1(
+                target_equations->items[index].head, capability))
             return true;
-    }
     return false;
 }
 
@@ -4824,6 +4943,8 @@ static bool direct_compile_petta_v1(
         goto done;
 
     if (target == CETTA_GSLT_DIRECT_TARGET_PETTA_V1) {
+        direct_admit_self_streams_v1(
+            &rules, &rule_index, &capabilities, &target_equations, &binding_modes);
         if (!direct_closed_horn_relations_v1(
                 &rules, &rule_index, &relations, &capabilities,
                 &target_equations, &closed_horn_relations, error, error_size))

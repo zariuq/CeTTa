@@ -1295,11 +1295,13 @@ The v2 receipt joins a complete source archive, its Git tree, the normal-build
 receipt and binary, and the exact runtime library staged beside that binary.
 These checks identify the artifact; they do not prove compiler correspondence.
 
-Exhaustive readiness also pins the corrected-stable PeTTa oracle's executable
-source membership and file digests. A checkout must name the pinned revision;
-a source snapshot is identified by its checked contents and never by an
-enclosing repository. The oracle manifest joins the tier's evidence identity
-and is revalidated at completion. The shared-prefix calibration identity stays
+Exhaustive readiness also records the PeTTa stable-fixed oracle it ran: the
+checkout as it is, its commit, the digest of its executable sources, and its
+differences from langdef/petta/reference.json's record of the last alignment
+(commit, date and SWI-Prolog), which are alignment work, never a failure. A
+source snapshot is identified by its contents and never by an enclosing
+repository. The oracle manifest joins the tier's evidence identity and is
+revalidated at completion. The shared-prefix calibration identity stays
 independent of this exhaustive-only oracle. Dry runs validate these inputs and
 print the selected commands without entering the heavy campaign.
 

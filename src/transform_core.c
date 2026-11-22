@@ -5,6 +5,7 @@
 #include "native_query.h"
 #include "parser.h"
 #include "petta_semantics.h"
+#include "shared_transition.h"
 #include "stats.h"
 #include "symbol.h"
 #include "term_universe.h"
@@ -71,7 +72,6 @@ static void transform_name_cache_reset(TransformNameCache *cache) {
     cache->ids[CETTA_TRANSFORM_NAME_TRANSFORM] = atom_symbol_literal_id("transform");
     cache->ids[CETTA_TRANSFORM_NAME_SPLIT] = atom_symbol_literal_id("tf:split");
     cache->ids[CETTA_TRANSFORM_NAME_PROPOSE] = atom_symbol_literal_id("tf:propose");
-    cache->ids[CETTA_TRANSFORM_NAME_INST] = atom_symbol_literal_id("tf:inst");
     cache->ids[CETTA_TRANSFORM_NAME_FIRE] = atom_symbol_literal_id("tf:fire");
     cache->ids[CETTA_TRANSFORM_NAME_FIRE_INTO] = atom_symbol_literal_id("tf:fire-into");
     cache->ids[CETTA_TRANSFORM_NAME_RUN] = atom_symbol_literal_id("tf:run");
@@ -111,9 +111,6 @@ static uint32_t transform_head_classify_slow(TransformNameCache *cache,
             break;
         case CETTA_TRANSFORM_NAME_PROPOSE:
             mask |= TF_HEAD_PUBLIC_3 | TF_HEAD_NATIVE_3;
-            break;
-        case CETTA_TRANSFORM_NAME_INST:
-            mask |= TF_HEAD_PUBLIC_2 | TF_HEAD_NATIVE_2;
             break;
         case CETTA_TRANSFORM_NAME_FIRE:
             mask |= TF_HEAD_PUBLIC_3 | TF_HEAD_NATIVE_3;
@@ -210,6 +207,7 @@ typedef struct {
     bool has_all;
     bool has_bound;    /* an `all` or a `once` met: propose_len is set */
     bool has_let;
+    bool held_lets;
     Atom *default_space; /* the space a conjunct that names none reads */
 } TfPlan;
 
@@ -256,6 +254,21 @@ typedef struct {
     const CettaTransformHost *host;
     Atom *default_space;
 } TfPlanner;
+
+typedef struct {
+    Arena *arena;
+    Atom *entries;
+    CettaExprLen next;
+} TfGuide;
+
+static Atom *tf_locate_in(Atom *c);
+
+static Atom *tf_guide_entry(TfGuide *guide) {
+    if (guide->next == guide->entries->expr.len)
+        return NULL;
+    Atom *entry = guide->entries->expr.elems[guide->next++];
+    return entry->kind == ATOM_EXPR && entry->expr.len == 3u ? entry : NULL;
+}
 
 static bool tf_plan_push(TfPlan *plan, TfConjunct conjunct) {
     if (plan->len == plan->cap) {
@@ -339,7 +352,8 @@ static bool tf_plan_list(const TfPlanner *planner, TfPlan *plan,
     for (size_t i = 0u; i < len; i++) {
         Atom *c = conjuncts[i];
         TfConjunct conjunct = {0};
-        switch (tf_mode(c)) {
+        TfMode mode = tf_mode(c);
+        switch (mode) {
         case TF_MODE_ONCE:
         case TF_MODE_ALL: {
             if (c->expr.len != 2u)
@@ -347,7 +361,7 @@ static bool tf_plan_list(const TfPlanner *planner, TfPlan *plan,
             /* `once` splices its inner conjuncts into the firing's own: the
              * firing commits the first candidate that validates.  `all`
              * also ends the kernel. */
-            if (tf_mode(c) == TF_MODE_ALL && !plan->has_all) {
+            if (mode == TF_MODE_ALL && !plan->has_all) {
                 plan->has_all = true;
                 plan->kernel_len = plan->len;
             }
@@ -390,7 +404,7 @@ static bool tf_plan_list(const TfPlanner *planner, TfPlan *plan,
             break;
         case TF_MODE_LET:
         case TF_MODE_LET_FIRST: {
-            bool guided = tf_mode(c) == TF_MODE_LET_FIRST;
+            bool guided = mode == TF_MODE_LET_FIRST;
             if (c->expr.len != (guided ? 4u : 3u))
                 return false;
             conjunct.kind = TF_LET;
@@ -402,7 +416,7 @@ static bool tf_plan_list(const TfPlanner *planner, TfPlan *plan,
         }
         case TF_MODE_UNIQUE:
         case TF_MODE_COLLECT: {
-            bool collect = tf_mode(c) == TF_MODE_COLLECT;
+            bool collect = mode == TF_MODE_COLLECT;
             if (c->expr.len != (collect ? 3u : 2u))
                 return false;
             Atom *inner = c->expr.elems[1];
@@ -444,6 +458,119 @@ static bool tf_plan_list(const TfPlanner *planner, TfPlan *plan,
     return true;
 }
 
+/* Source order, the kernel boundaries and the lexical code operands are
+ * compiled once. A guide supplies only the concrete selection and its
+ * binding equations. Refresh a space lookup for the current continuation. */
+static bool tf_plan_prepare(const TfPlanner *planner, TfPlan *plan, Atom *listed) {
+    plan->held_lets = planner->host->dialect == CETTA_TRANSFORM_DIALECT_HE &&
+        listed->kind == ATOM_EXPR && listed->expr.len == 2u &&
+        atom_is_symbol_id(listed->expr.elems[0], atom_symbol_literal_id("tf:cs"));
+    if (plan->held_lets)
+        listed = listed->expr.elems[1];
+    if (listed->kind != ATOM_EXPR ||
+        !tf_plan_list(planner, plan, listed->expr.elems, listed->expr.len))
+        return false;
+    if (!plan->has_bound)
+        plan->propose_len = plan->len;
+    return true;
+}
+
+static bool tf_plan_use(const TfPlanner *planner, TfPlan *plan, Atom *listed,
+                        const TfPlan *prepared) {
+    if (!prepared)
+        return tf_plan_prepare(planner, plan, listed);
+    *plan = *prepared;
+    plan->cap = plan->len;
+    plan->items = plan->len ? cetta_malloc(plan->len * sizeof(*plan->items)) : NULL;
+    if (plan->len && !plan->items) {
+        plan->len = plan->cap = 0u;
+        return false;
+    }
+    if (plan->len)
+        memcpy(plan->items, prepared->items, plan->len * sizeof(*plan->items));
+    for (size_t i = 0u; i < plan->len; i++)
+        if (plan->items[i].space_ref)
+            tf_resolve(planner, &plan->items[i]);
+    return true;
+}
+
+static Atom *tf_guide_value(TfGuide *guide, const TfConjunct *source) {
+    if (!source->joint) {
+        Atom *entry = tf_guide_entry(guide);
+        return entry ? entry->expr.elems[2] : NULL;
+    }
+    Atom *pattern = source->pattern;
+    CettaExprLen size = pattern->expr.len;
+    if (size - 1u > guide->entries->expr.len - guide->next ||
+        !cetta_expr_len_mul_fits_size(size, sizeof(Atom *)))
+        return NULL;
+    Atom *tuple = atom_expr_builder_begin(guide->arena, size);
+    if (!tuple)
+        return NULL;
+    tuple->expr.elems[0] = pattern->expr.elems[0];
+    for (CettaExprLen k = 1u; k < size; k++) {
+        Atom *entry = tf_guide_entry(guide);
+        if (!entry)
+            return NULL;
+        tuple->expr.elems[k] = entry->expr.elems[2];
+    }
+    return atom_expr_builder_finish(guide->arena, tuple);
+}
+
+static bool tf_plan_select(const TfPlanner *planner, TfPlan *plan,
+        const TfPlan *prepared, Atom *selected, Arena *arena) {
+    if (selected->kind != ATOM_EXPR)
+        return false;
+    *plan = *prepared;
+    plan->items = NULL;
+    plan->len = plan->cap = 0u;
+    TfGuide guide = {.arena = arena, .entries = selected};
+    for (size_t i = 0u; i < prepared->len; i++) {
+        if (i == prepared->propose_len)
+            plan->propose_len = plan->len;
+        if (prepared->has_all && i == prepared->kernel_len)
+            plan->kernel_len = plan->len;
+        TfConjunct c = prepared->items[i];
+        Atom *bind = NULL, *value = NULL;
+        if (i < prepared->propose_len) {
+            if (c.kind == TF_LET && !c.preferred && !prepared->held_lets) {
+                Atom *entry = tf_guide_entry(&guide);
+                if (!entry || !atom_is_symbol_id(entry->expr.elems[0], g_builtin_syms.let))
+                    return false;
+                c.preferred = entry->expr.elems[2];
+            } else if (c.kind == TF_READ || c.kind == TF_TAKE || c.kind == TF_AS) {
+                bind = c.kind == TF_AS ? c.expression : c.pattern;
+                Atom *entry = tf_guide_entry(&guide);
+                if (!entry)
+                    return false;
+                TfMode mode = tf_mode(entry);
+                if (mode != TF_MODE_READ && mode != TF_MODE_TAKE)
+                    return false;
+                c = (TfConjunct){.exact = true};
+                if (!tf_locate(planner, entry, &c.access, &c.space_ref, &c.pattern))
+                    return false;
+                c.kind = c.access;
+                value = c.pattern;
+            } else if (c.kind == TF_UNIQUE) {
+                bind = c.pattern;
+                value = tf_guide_value(&guide, &c);
+                if (!value)
+                    return false;
+            }
+        }
+        if (c.space_ref)
+            tf_resolve(planner, &c);
+        if (!tf_plan_push(plan, c) || (bind && !tf_plan_push(plan,
+                (TfConjunct){.kind = TF_AS, .pattern = bind, .expression = value})))
+            return false;
+    }
+    if (prepared->propose_len == prepared->len)
+        plan->propose_len = plan->len;
+    if (prepared->has_all && prepared->kernel_len == prepared->len)
+        plan->kernel_len = plan->len;
+    return true;
+}
+
 /* ── Proposal ──────────────────────────────────────────────────────────── */
 
 typedef struct {
@@ -468,6 +595,7 @@ typedef struct {
     TfEntries kernel;
     TfRow *rows;
     size_t row_len;
+    Atom *extension_basis;
 } TfCandidate;
 
 typedef enum {
@@ -477,6 +605,12 @@ typedef enum {
     TF_ERROR,     /* an error after something ran: answered */
     TF_INTERRUPTED, /* the host records fuel/cancellation separately */
 } TfStatus;
+
+typedef struct {
+    Atom *space_ref;
+    Atom *count;
+    bool split;
+} TfDestination;
 
 typedef struct {
     const CettaTransformHost *host;
@@ -514,12 +648,14 @@ typedef struct {
     CettaTransformWitness *witnesses;
     size_t witness_len, witness_cap;
     struct TfReadyReceipt *ready;
+    TfDestination *destination;
     struct TfAnswers *reads_answers; /* reads only: each kernel match's instance */
     bool bag;               /* the consumer takes every answer as a bag: the
                              * order of the matches is free */
     Atom **proposals;       /* (tf:cand GUIDE), in the answer arena */
     size_t proposal_len, proposal_cap;
     Atom *answer;
+    Atom *extension_basis;
     Atom *error;
 } TfFire;
 
@@ -700,17 +836,21 @@ static TfStatus tf_each_match(TfFire *f, Space *space, Atom *pattern,
     if (!space)
         return TF_CONTINUE; /* an empty location */
     Atom *resolved = atom_has_vars(pattern) ? tf_apply(f, pattern) : pattern;
-    Atom *index = f->host->logic && f->host->logic->open_row ?
-        atom_var_with_id(f->scratch, "row", fresh_var_id()) : resolved
-        ? petta_semantics_match_index_pattern(f->scratch, resolved, NULL)
-        : NULL;
-    if (!index)
-        return f->effects ? TF_ERROR : TF_FAIL;
     SpaceOccurrenceCursor cursor;
     space_occurrence_cursor_init_empty(&cursor);
-    if (!space_occurrence_cursor_init(space, index, &cursor))
+    if (f->host->logic && f->host->logic->open_row) {
+        /* A contextual row can refine its stored skeleton when opened. */
+        Atom *any = atom_var_with_id(f->scratch, "row", fresh_var_id());
+        if (!any || !space_occurrence_cursor_init(space, any, &cursor))
+            return f->effects ? TF_ERROR : TF_FAIL;
+    } else if (space_match_cursor_open(space, f->scratch, resolved, &cursor, NULL) !=
+               SPACE_MATCH_CURSOR_READY) {
         return f->effects ? TF_ERROR : TF_FAIL;
+    }
     TfStatus status = TF_CONTINUE;
+    /* Fixed when the cursor opens: whether its positions are its own. */
+    bool lends_kept = f->borrow_match &&
+        space_occurrence_cursor_lends_kept(&cursor);
     for (;;) {
         if (!tf_spend(f)) { status = TF_INTERRUPTED; break; }
         Atom *candidate = NULL;
@@ -764,7 +904,8 @@ static TfStatus tf_each_match(TfFire *f, Space *space, Atom *pattern,
         if (tf_unify(f, pattern, candidate)) {
             Atom *outer = f->stored;
             const CettaTransformWitness *outer_witness = f->current_witness;
-            CettaTransformWitness witness = {space, cursor.read, position, candidate};
+            CettaTransformWitness witness = {
+                space, cursor.read, position, candidate, lends_kept};
             f->stored = open;
             f->current_witness = f->borrow_match ? &witness : NULL;
             status = visit(f, data);
@@ -951,9 +1092,11 @@ static bool tf_native_collect(TfFire *f, Space **spaces, Atom **patterns,
                               size_t count, Atom *template_atom,
                               const CettaNativeQueryFilter *filters,
                               size_t filter_count, bool request_protocol,
-                              bool *protocol_used, Atom **collection, bool *failed) {
+                              bool *protocol_used, Atom **collection,
+                              uint64_t *count_only, bool *failed) {
     *collection = NULL;
     *failed = false;
+    if (count_only) *count_only = 0u;
     if (protocol_used) *protocol_used = false;
     if (f->host->spend || !cetta_native_query_enabled() ||
         count == 0u || !spaces[0] || !spaces[0]->native.universe)
@@ -971,6 +1114,7 @@ static bool tf_native_collect(TfFire *f, Space **spaces, Atom **patterns,
         .sources = one_space ? NULL : spaces,
         .template_atom = template_atom,
         .consumer = CETTA_NATIVE_QUERY_COLLECT,
+        .count_only = count_only != NULL,
         /* A joint match a guard refuses is no match. */
         .filters = filter_count ? filters : NULL,
         .filter_count = filter_count,
@@ -988,8 +1132,16 @@ static bool tf_native_collect(TfFire *f, Space **spaces, Atom **patterns,
         *failed = true;
         return true;
     }
-    if (status != CETTA_NATIVE_QUERY_DONE || !result.collection ||
-        result.collection->kind != ATOM_EXPR) {
+    if (status != CETTA_NATIVE_QUERY_DONE) {
+        *failed = true;
+        return true;
+    }
+    if (protocol_used) *protocol_used = result.read_protocol;
+    if (count_only) {
+        *count_only = result.answers;
+        return true;
+    }
+    if (!result.collection || result.collection->kind != ATOM_EXPR) {
         *failed = true;
         return true;
     }
@@ -997,7 +1149,6 @@ static bool tf_native_collect(TfFire *f, Space **spaces, Atom **patterns,
         if (atom_has_vars(result.collection->expr.elems[r]))
             return false;
     *collection = result.collection;
-    if (protocol_used) *protocol_used = result.read_protocol;
     return true;
 }
 
@@ -1069,7 +1220,7 @@ static TfStatus tf_native_legs(TfFire *f, size_t at, bool *handled) {
     Atom *found = NULL;
     bool failed = false;
     if (!legs || !tf_native_collect(f, spaces, patterns, k, legs, filters,
-                                    tested, false, NULL, &found, &failed))
+                                    tested, false, NULL, &found, NULL, &failed))
         return TF_CONTINUE;
     *handled = true;
     if (failed)
@@ -1154,7 +1305,7 @@ static TfStatus tf_native_condition(TfFire *f, const TfConjunct *c,
     Atom *instances = NULL;
     bool failed = false;
     if (!tf_native_collect(f, spaces, patterns, count, resolved, NULL, 0u,
-                           false, NULL, &instances, &failed))
+                           false, NULL, &instances, NULL, &failed))
         return TF_CONTINUE;
     if (failed) {
         *handled = true;
@@ -1426,15 +1577,15 @@ static void tf_cursor_release_level(TfCursorLevel *level) {
     level->entered = false;
 }
 
-bool cetta_transform_candidate_cursor_open(
+static bool tf_candidate_cursor_open(
     Space *program, Arena *a, Atom *call, const CettaTransformHost *host,
-    CettaTransformCandidateCursor **cursor_out) {
+    const TfPlan *prepared, CettaTransformCandidateCursor **cursor_out) {
     (void)program;
     if (cursor_out)
         *cursor_out = NULL;
     if (!cursor_out || !a || !call || call->kind != ATOM_EXPR ||
         call->expr.len != 4u || !host || !host->resolve_space ||
-        !host->remove_atom || !host->add_atom || !host->evaluate)
+        !host->remove_atom || !host->add_atom || !host->evaluate || host->logic || host->environment)
         return false;
     CettaTransformCandidateCursor *cursor = cetta_malloc(sizeof(*cursor));
     if (!cursor)
@@ -1452,15 +1603,7 @@ bool cetta_transform_candidate_cursor_open(
         .propose = true,
     };
     TfPlanner planner = {host, call->expr.elems[1]};
-    Atom *conjuncts = call->expr.elems[2];
-    if (host->dialect == CETTA_TRANSFORM_DIALECT_HE &&
-        conjuncts->kind == ATOM_EXPR && conjuncts->expr.len == 2u &&
-        atom_is_symbol_id(conjuncts->expr.elems[0],
-                          atom_symbol_literal_id("tf:cs")))
-        conjuncts = conjuncts->expr.elems[1];
-    bool ok = conjuncts->kind == ATOM_EXPR &&
-        tf_plan_list(&planner, &cursor->fire.plan, conjuncts->expr.elems,
-                     conjuncts->expr.len) &&
+    bool ok = tf_plan_use(&planner, &cursor->fire.plan, call->expr.elems[2], prepared) &&
         !cursor->fire.plan.has_bound && !cursor->fire.plan.has_all &&
         !cursor->fire.plan.has_let &&
         bindings_builder_init(&cursor->fire.builder, NULL);
@@ -1488,8 +1631,8 @@ bool cetta_transform_candidate_cursor_open(
         /* Capture every level's frontier before the first publication.  The
          * unstarted cursor is never advanced; each entry clones its pinned
          * rows and selection state, including after the space detaches. */
-        if (c->space && !space_occurrence_cursor_init(
-                c->space, c->pattern, &cursor->levels[i].unstarted)) {
+        if (c->space && space_match_cursor_open(c->space, &cursor->scratch,
+                c->pattern, &cursor->levels[i].unstarted, NULL) != SPACE_MATCH_CURSOR_READY) {
             ok = false;
             break;
         }
@@ -1507,6 +1650,12 @@ bool cetta_transform_candidate_cursor_open(
         fprintf(stderr, "[transform] candidate cursor opened (%zu levels)\n", count);
     tf_cursor_note_bytes(cursor);
     return true;
+}
+
+bool cetta_transform_candidate_cursor_open(
+    Space *program, Arena *a, Atom *call, const CettaTransformHost *host,
+    CettaTransformCandidateCursor **cursor_out) {
+    return tf_candidate_cursor_open(program, a, call, host, NULL, cursor_out);
 }
 
 static TfStatus tf_cursor_backtrack(CettaTransformCandidateCursor *cursor,
@@ -1699,6 +1848,8 @@ void cetta_transform_candidate_cursor_close(
 typedef struct TfAnswers {
     Atom **items;
     size_t len, cap;
+    bool count_only;
+    bool open_result;
 } TfAnswers;
 
 static TfStatus tf_finish(TfFire *f) {
@@ -1712,6 +1863,17 @@ static TfStatus tf_finish(TfFire *f) {
      * match fires, answering its instance. */
     if (f->reads_answers) {
         TfAnswers *answers = f->reads_answers;
+        if (answers->count_only) {
+            bool split = tf_is_comma(f->template_atom);
+            if (split && (instance->kind != ATOM_EXPR || instance->expr.len == 0u))
+                return TF_FAIL;
+            answers->open_result |= atom_has_vars(instance);
+            CettaExprLen made = split ? instance->expr.len - 1u : 1u;
+            if (made > SIZE_MAX - answers->len)
+                return TF_FAIL;
+            answers->len += (size_t)made;
+            return TF_CONTINUE;
+        }
         if (answers->len == answers->cap) {
             size_t cap = answers->cap ? answers->cap * 2u : 64u;
             Atom **items = cetta_realloc(answers->items, cap * sizeof(*items));
@@ -2131,6 +2293,7 @@ typedef struct {
     const TfEntries *kernel;
     const TfRow *rows;
     size_t row_len;
+    Atom *extension_basis;
 } TfFootprint;
 
 static size_t tf_footprint_len(const TfFootprint *fp) {
@@ -2138,6 +2301,21 @@ static size_t tf_footprint_len(const TfFootprint *fp) {
     for (size_t r = 0u; r < fp->row_len; r++)
         len += fp->rows[r].entries.len;
     return len;
+}
+
+static bool tf_note_selected(const TfFire *f, const TfFootprint *fp) {
+    const CettaTransformLogic *logic = f->host->logic;
+    if (!logic || !logic->selected_row) return true;
+    for (size_t part = 0; part <= fp->row_len; ++part) {
+        const TfEntries *entries = part ? &fp->rows[part - 1u].entries : fp->kernel;
+        for (size_t i = 0; i < entries->len; ++i) {
+            const TfEntry *entry = &entries->items[i];
+            if ((entry->access == TF_READ || entry->access == TF_TAKE) &&
+                !logic->selected_row(f->host->context, entry->atom, part ? part - 1u : SIZE_MAX))
+                return false;
+        }
+    }
+    return true;
 }
 
 /* A hash of an atom that alpha-equivalent atoms share: variables hash alike. */
@@ -2183,6 +2361,7 @@ typedef struct {
     size_t reads;         /* take groups: read entries of the same atom */
     size_t stored;
     void *prepared;       /* first take only: retained live selection */
+    SpaceReadToken validated; /* the read justifying this take's capacity */
 } TfGroup;
 
 typedef struct TfGroups {
@@ -2199,6 +2378,7 @@ typedef struct TfReadyReceipt {
     size_t count;
     CettaTransformOutcome decision;
     bool publications_owned;
+    bool protocol;
 } TfReadyReceipt;
 
 static uint64_t tf_entry_hash(TfKind access, const TfEntry *e, bool exact) {
@@ -2289,6 +2469,14 @@ static bool tf_ready_current(const TfReadyReceipt *ready) {
     for (size_t i = 0u; i < ready->count; i++)
         if (!space_read_token_matches_live_space(ready->witnesses[i].view,
                                                   ready->witnesses[i].space)) return false;
+    if (!ready->protocol)
+        for (size_t i = 0u; i < ready->groups.len; i++) {
+            const TfGroup *group = &ready->groups.groups[i];
+            if (group->entry->access == TF_TAKE &&
+                !space_read_token_matches_live_space(
+                    group->validated, group->entry->space))
+                return false;
+        }
     return true;
 }
 
@@ -2317,15 +2505,10 @@ static TfStatus tf_each_copy(TfFire *f, Space *space, Atom *atom,
         return TF_CONTINUE; /* an empty location */
     /* The atom as stored: its variables are its own, whatever the firing's
      * bindings made of them. */
-    Atom *resolved = atom;
-    Atom *index = resolved
-        ? petta_semantics_match_index_pattern(f->scratch, resolved, NULL)
-        : NULL;
-    if (!index)
-        return f->effects ? TF_ERROR : TF_FAIL;
     SpaceOccurrenceCursor cursor;
     space_occurrence_cursor_init_empty(&cursor);
-    if (!space_occurrence_cursor_init(space, index, &cursor))
+    if (space_match_cursor_open(space, f->scratch, atom, &cursor, NULL) !=
+        SPACE_MATCH_CURSOR_READY)
         return f->effects ? TF_ERROR : TF_FAIL;
     TfStatus status = TF_CONTINUE;
     for (;;) {
@@ -2340,7 +2523,7 @@ static TfStatus tf_each_copy(TfFire *f, Space *space, Atom *atom,
             break;
         }
         if (candidate && (tf_exact_occurrences(f) ?
-                atom_eq(candidate, resolved) : atom_alpha_eq(candidate, resolved)) &&
+                atom_eq(candidate, atom) : atom_alpha_eq(candidate, atom)) &&
             ++(*count) == limit)
             break;
     }
@@ -2365,7 +2548,7 @@ static bool tf_stored(TfFire *f, const TfEntry *entry, size_t limit,
 
 /* tf:valid: each taken atom is stored with the multiplicity the firing takes,
  * plus one more copy when the firing also reads it. */
-static TfStatus tf_valid(TfFire *f, TfGroups *g, bool *valid) {
+static TfStatus tf_valid(TfFire *f, TfGroups *g, bool retain, bool *valid) {
     *valid = true;
     bool first_take = true;
     for (size_t i = 0u; i < g->len && *valid; i++) {
@@ -2391,6 +2574,8 @@ static TfStatus tf_valid(TfFire *f, TfGroups *g, bool *valid) {
             !tf_stored(f, take->entry, needed, &take->stored))
             return f->effects ? TF_ERROR : TF_FAIL;
         *valid = take->stored >= needed;
+        if (retain && *valid)
+            take->validated = space_read_token(take->entry->space);
     }
     return TF_CONTINUE;
 }
@@ -2403,6 +2588,11 @@ static TfStatus tf_valid(TfFire *f, TfGroups *g, bool *valid) {
 static TfStatus tf_commit(TfFire *f, const TfFootprint *fp, TfGroups *g, bool publications_owned) {
     if (!tf_spend(f))
         return TF_INTERRUPTED;
+    Atom *basis = fp->extension_basis;
+    if (!basis && f->plan.has_all && f->host->extension_basis_out) {
+        basis = bindings_capture_value(f->answer_arena, bindings_builder_bindings(&f->builder));
+        if (!basis) return TF_ERROR;
+    }
     f->committing = true;
     Atom **instances = arena_alloc(f->answer_arena,
                                    sizeof(Atom *) * (fp->row_len ? fp->row_len : 1u));
@@ -2445,6 +2635,28 @@ static TfStatus tf_commit(TfFire *f, const TfFootprint *fp, TfGroups *g, bool pu
     Atom *answer = tag ? atom_expr(f->answer_arena, parts, 2u) : NULL;
     if (!answer)
         return TF_ERROR;
+    /* An into firing needs its final count even if the host stops after the
+     * very first answer. Prepare it with the other publication roots before
+     * taking or making any rows. */
+    if (f->destination) {
+        uint64_t count = fired->expr.len;
+        if (f->destination->split) {
+            count = 0u;
+            for (CettaExprLen r = 0u; r < fired->expr.len; r++) {
+                Atom *row = fired->expr.elems[r];
+                if (row->kind != ATOM_EXPR || row->expr.len == 0u ||
+                    row->expr.len - 1u > (uint64_t)INT64_MAX - count)
+                    return TF_ERROR;
+                count += row->expr.len - 1u;
+            }
+        }
+        if (count > (uint64_t)INT64_MAX)
+            return TF_ERROR;
+        f->destination->count = atom_int(f->answer_arena, (int64_t)count);
+        if (!f->destination->count)
+            return f->effects ? TF_ERROR : TF_FAIL;
+    }
+    if (!tf_note_selected(f, fp)) return TF_ERROR;
     f->effects = true;
     for (size_t i = 0u; i < g->len; i++) {
         TfGroup *take = &g->groups[i];
@@ -2477,21 +2689,13 @@ static TfStatus tf_commit(TfFire *f, const TfFootprint *fp, TfGroups *g, bool pu
         }
     }
     f->answer = answer;
+    f->extension_basis = basis;
     return TF_STOP;
 }
 
-/* Validate a candidate and, when it validates, commit it. */
-typedef struct {
-    TfFire *fire;
-    const TfFootprint *footprint;
-    TfGroups *groups;
-    bool preparing;
-    bool publish_read;
-} TfProtocolCommit;
-
+/* A decision backend can charge work but cannot publish its candidate. */
 static bool tf_protocol_spend(void *context, uint64_t units) {
-    TfProtocolCommit *commit = context;
-    TfFire *f = commit->fire;
+    TfFire *f = context;
     if (f->interrupted)
         return false;
     if (!f->committing && f->host->spend &&
@@ -2502,33 +2706,41 @@ static bool tf_protocol_spend(void *context, uint64_t units) {
     return true;
 }
 
-static CettaTransformOutcome tf_protocol_commit(void *context,
-        Atom *const *publications, size_t count) {
-    TfProtocolCommit *commit = context;
-    TfFire *f = commit->fire;
-    const TfFootprint *fp = commit->footprint;
-    (void)publications;
-    if (count != fp->row_len) {
-        f->error = atom_error(f->answer_arena, f->template_atom,
-                              atom_symbol(f->answer_arena, "TransformProtocolResultMismatch"));
-        return CETTA_TRANSFORM_ERROR;
+static bool tf_protocol_current(const CettaTransformPort *ports, size_t count) {
+    for (size_t i = 0u; i < count; i++)
+        if (!space_read_token_matches_live_space(ports[i].view, ports[i].space))
+            return false;
+    return true;
+}
+
+/* Validate and publish against one cut of precisely the spaces visited
+ * by this firing. The decision backend and checks run before this cut. */
+static bool tf_protocol_publish_cut(CettaGuardSection *cut,
+                                    const CettaTransformPort *ports, size_t count) {
+    cut->held = false;
+    if (!CETTA_COORDINATION_ACTIVE())
+        return true;
+    const Space *inline_spaces[8];
+    CettaGuardMode inline_modes[8];
+    bool allocated = count > 8u;
+    const Space **spaces = allocated ? calloc(count, sizeof(*spaces)) : inline_spaces;
+    CettaGuardMode *modes = allocated ? calloc(count, sizeof(*modes)) : inline_modes;
+    if (!spaces || !modes) {
+        free(spaces);
+        free(modes);
+        return false;
     }
-    if (commit->preparing && !commit->publish_read)
-        return CETTA_TRANSFORM_FIRED;
-    bool valid = false;
-    TfStatus status = tf_valid(f, commit->groups, &valid);
-    if (status == TF_INTERRUPTED)
-        return CETTA_TRANSFORM_INTERRUPTED;
-    if (status != TF_CONTINUE)
-        return status == TF_FAIL ? CETTA_TRANSFORM_DECLINED : CETTA_TRANSFORM_ERROR;
-    if (!valid)
-        return CETTA_TRANSFORM_NONE;
-    /* Retain complete values and their interpretation/ownership metadata;
-     * the protocol has checked their value observation, not erased it. */
-    status = tf_commit(f, fp, commit->groups, false);
-    return status == TF_STOP ? CETTA_TRANSFORM_FIRED
-        : status == TF_INTERRUPTED ? CETTA_TRANSFORM_INTERRUPTED
-        : status == TF_FAIL ? CETTA_TRANSFORM_DECLINED : CETTA_TRANSFORM_ERROR;
+    for (size_t i = 0u; i < count; i++) {
+        spaces[i] = ports[i].space;
+        modes[i] = ports[i].take ? CETTA_GUARD_WRITE
+                                : space_observation_mode(ports[i].space);
+    }
+    space_guard_section_enter_spaces(cut, spaces, modes, count);
+    if (allocated) {
+        free(spaces);
+        free(modes);
+    }
+    return true;
 }
 
 static bool tf_protocol_try(TfFire *f, const TfFootprint *fp, TfGroups *groups,
@@ -2558,7 +2770,8 @@ static bool tf_protocol_try(TfFire *f, const TfFootprint *fp, TfGroups *groups,
         if (c->kind == TF_READ || c->kind == TF_TAKE) {
             if (c->joint || used >= fp->kernel->len) { eligible = false; break; }
             const TfEntry *entry = &fp->kernel->items[used];
-            ports[used++] = (CettaTransformPort){.space = entry->space, .space_ref = entry->space_ref,
+            ports[used++] = (CettaTransformPort){.space = entry->space,
+                .view = space_read_token(entry->space), .space_ref = entry->space_ref,
                 .pattern = c->pattern, .receipt = entry->atom, .take = c->kind == TF_TAKE,
                 .exact = c->exact, .witness = preparing && entry->receipt &&
                     entry->receipt <= f->witness_len ? &f->witnesses[entry->receipt - 1u] : NULL};
@@ -2603,15 +2816,14 @@ static bool tf_protocol_try(TfFire *f, const TfFootprint *fp, TfGroups *groups,
     }
     CettaTransformOutcome outcome = CETTA_TRANSFORM_DECLINED;
     if (eligible) {
-        TfProtocolCommit commit = {f, fp, groups, preparing, publish_read};
         Atom *expected = fp->rows[0].instance;
         CettaTransformFiring firing = {.dialect = f->host->dialect,
             .checks_before_tells = checked != 0u && matching_tells,
             .ports = ports, .port_count = used,
             .equations = equations, .equation_count = told, .checks = checks,
             .check_count = checked, .publication = f->template_atom,
-            .expected = &expected, .expected_count = 1u, .context = &commit,
-            .commit = tf_protocol_commit, .spend = tf_protocol_spend};
+            .expected = &expected, .expected_count = 1u, .context = f,
+            .spend = tf_protocol_spend};
         if (preparing)
             firing.principal = bindings_builder_bindings(&f->builder);
         outcome = f->host->decide_firing(f->host->context, f->scratch, &firing, &f->error);
@@ -2619,7 +2831,7 @@ static bool tf_protocol_try(TfFire *f, const TfFootprint *fp, TfGroups *groups,
             f->used_early_checks = true;
         if (outcome == CETTA_TRANSFORM_NONE && cetta_transform_tcalc_checking()) {
             bool host_valid = false;
-            TfStatus host_status = tf_valid(f, groups, &host_valid);
+            TfStatus host_status = tf_valid(f, groups, false, &host_valid);
             if (host_status == TF_CONTINUE && host_valid) {
                 f->error = atom_error(f->answer_arena, f->template_atom,
                     atom_symbol(f->answer_arena, "TransformProtocolHostAdmissionMismatch"));
@@ -2631,20 +2843,36 @@ static bool tf_protocol_try(TfFire *f, const TfFootprint *fp, TfGroups *groups,
             }
         }
     }
+    *status = outcome == CETTA_TRANSFORM_FIRED ? TF_STOP
+        : outcome == CETTA_TRANSFORM_NONE ? TF_CONTINUE
+        : outcome == CETTA_TRANSFORM_INTERRUPTED ? TF_INTERRUPTED : TF_ERROR;
+    if (outcome == CETTA_TRANSFORM_FIRED && (!preparing || publish_read)) {
+        bool valid = false;
+        bool current = tf_protocol_current(ports, used);
+        if (current)
+            *status = tf_valid(f, groups, false, &valid);
+        CettaGuardSection publish __attribute__((cleanup(cetta_guard_section_close))) = {0};
+        if (current && !tf_protocol_publish_cut(&publish, ports, used)) {
+            *status = TF_ERROR;
+        } else if (!current || !tf_protocol_current(ports, used)) {
+            f->error = atom_error(f->answer_arena, f->template_atom,
+                atom_symbol(f->answer_arena, "TransformReadViewInvalidated"));
+            *status = TF_ERROR;
+        } else if (*status == TF_CONTINUE && valid) {
+            *status = tf_commit(f, fp, groups, false);
+        }
+        if (*status == TF_STOP)
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_FIRING);
+    }
     if (allocated) { free(ports); free(equations); free(checks); }
     if (outcome == CETTA_TRANSFORM_DECLINED)
         return false;
     f->tcalc = true;
-    *status = outcome == CETTA_TRANSFORM_FIRED ? TF_STOP
-        : outcome == CETTA_TRANSFORM_NONE ? TF_CONTINUE
-        : outcome == CETTA_TRANSFORM_INTERRUPTED ? TF_INTERRUPTED : TF_ERROR;
-    if (outcome == CETTA_TRANSFORM_FIRED && (!preparing || publish_read))
-        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_FIRING);
     return true;
 }
 
 static TfStatus tf_try_commit(TfFire *f, const TfFootprint *fp) {
-    bool groups_needed = cetta_transform_engine() != CETTA_TRANSFORM_ENGINE_TCALC || tf_footprint_takes(fp);
+    bool groups_needed = tf_footprint_takes(fp);
     /* Read groups are used only by a take's multiplicity check. A read-only
      * firing has no such obligation and publishes the same rows with none. */
     TfGroups g = {0};
@@ -2658,7 +2886,7 @@ static TfStatus tf_try_commit(TfFire *f, const TfFootprint *fp) {
         if (cetta_transform_engine() == CETTA_TRANSFORM_ENGINE_TCALC)
             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_FALLBACK);
         bool valid = false;
-        status = tf_valid(f, &g, &valid);
+        status = tf_valid(f, &g, false, &valid);
         if (status == TF_CONTINUE && valid)
             status = tf_commit(f, fp, &g, false);
         if (status == TF_STOP)
@@ -2693,6 +2921,10 @@ static TfStatus tf_keep_candidate(TfFire *f, TfEntries *kernel, TfRow *rows,
         f->candidate_cap = cap;
     }
     TfCandidate kept = {0};
+    if (f->plan.has_all && f->host->extension_basis_out) {
+        kept.extension_basis = bindings_capture_value(f->answer_arena, bindings_builder_bindings(&f->builder));
+        if (!kept.extension_basis) return TF_ERROR;
+    }
     Arena *copy_arena = f->ready && f->ready->publications_owned
         ? f->answer_arena : f->scratch;
     AtomDeepCopySession *copy = atom_deep_copy_session_new(copy_arena);
@@ -2720,9 +2952,38 @@ static TfStatus tf_keep_candidate(TfFire *f, TfEntries *kernel, TfRow *rows,
     return TF_CONTINUE;
 }
 
+/* All of these groups point into the kernel. Retain the admitted footprint
+ * and move the groups onto its owned copy before the search unwinds. */
+static TfStatus tf_hold_kernel(TfFire *f, TfEntries *kernel, TfRow *rows,
+                               TfGroups *groups, TfReadyReceipt *ready) {
+    f->ready = ready;
+    TfStatus status = tf_keep_candidate(f, kernel, rows, 1u);
+    if (status != TF_CONTINUE) {
+        f->ready = NULL;
+        return status;
+    }
+    TfEntries *kept = &f->candidates[f->candidate_len - 1u].kernel;
+    for (size_t i = 0u; i < groups->len; i++) {
+        size_t entry = (size_t)(groups->groups[i].entry - kernel->items);
+        groups->groups[i].entry = &kept->items[entry];
+    }
+    ready->groups = *groups;
+    return TF_STOP;
+}
+
 static TfStatus tf_candidate(TfFire *f, TfEntries *kernel, TfRow *rows,
                              size_t row_len) {
-    TfFootprint fp = {kernel, rows, row_len};
+    TfFootprint fp = {.kernel = kernel, .rows = rows, .row_len = row_len};
+    if (row_len > 1u && f->host->logic && f->host->logic->compatible_publications) {
+        Atom *small[8];
+        if (!tf_note_selected(f, &fp) || row_len > SIZE_MAX / sizeof(Atom *)) return TF_ERROR;
+        Atom **publications = row_len <= 8u ? small : cetta_malloc(row_len * sizeof *publications);
+        if (!publications) return TF_ERROR;
+        for (size_t i = 0; i < row_len; ++i) publications[i] = rows[i].instance;
+        int compatible = f->host->logic->compatible_publications(f->host->context, publications, row_len);
+        if (publications != small) free(publications);
+        if (compatible <= 0) return compatible < 0 ? TF_ERROR : TF_CONTINUE;
+    }
     /* Code may have run between proposals: keep the candidate and validate
      * every one after the proposal, as the library does. */
     if (f->plan.has_let)
@@ -2731,8 +2992,17 @@ static TfStatus tf_candidate(TfFire *f, TfEntries *kernel, TfRow *rows,
      * once the proposal has unwound, as the library commits after its
      * search, so no removal meets a reader the proposal still holds. */
     bool takes = tf_footprint_takes(&fp);
+    bool direct = cetta_transform_engine() == CETTA_TRANSFORM_ENGINE_DIRECT;
     TfGroups g = {0};
-    if ((!f->borrow_match || takes) && !tf_groups_build(&fp, &g, tf_exact_occurrences(f))) {
+    if (direct && !takes && !f->host->spend) {
+        /* With no takes or evaluator callbacks, owning the answer is the
+         * entire decision. Destination writes still wait for reader release. */
+        TfStatus status = tf_commit(f, &fp, &g, false);
+        if (status == TF_STOP)
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TRANSFORM_DIRECT_FIRING);
+        return status;
+    }
+    if (takes && !tf_groups_build(&fp, &g, tf_exact_occurrences(f))) {
         tf_groups_free(f, &g);
         return f->effects ? TF_ERROR : TF_FAIL;
     }
@@ -2747,7 +3017,24 @@ static TfStatus tf_candidate(TfFire *f, TfEntries *kernel, TfRow *rows,
                 host_validated = true;
                 break;
             }
-    TfStatus status = host_validated ? tf_valid(f, &g, &valid) : TF_CONTINUE;
+    bool retain = direct && !f->host->spend && !f->host->logic && takes &&
+        row_len == 1u && rows[0].entries.len == 0u &&
+        !cetta_shared_transition_scope_active();
+    TfStatus status = host_validated ? tf_valid(f, &g, retain, &valid)
+                                    : TF_CONTINUE;
+    if (retain && status == TF_CONTINUE && valid) {
+        TfReadyReceipt *ready = cetta_malloc(sizeof(*ready));
+        if (ready) {
+            *ready = (TfReadyReceipt){.decision = CETTA_TRANSFORM_FIRED,
+                .publications_owned = true};
+            status = tf_hold_kernel(f, kernel, rows, &g, ready);
+            if (status == TF_STOP)
+                return status;
+            free(ready);
+            tf_groups_free(f, &g);
+            return status;
+        }
+    }
     /* A read-only decision may form its owned publication while the matched
      * frame is still lent. No removal, destination write or template
      * evaluation happens until after the readers unwind. There is no need
@@ -2787,23 +3074,14 @@ static TfStatus tf_candidate(TfFire *f, TfEntries *kernel, TfRow *rows,
              * readers unwind, also for takes. Commit then keeps this copy
              * rather than copying the same result through two arenas. */
             *ready = (TfReadyReceipt){.witnesses = witnesses, .count = kernel->len,
-                .publications_owned = true};
+                .publications_owned = true, .protocol = true};
             TfStatus decided = TF_CONTINUE;
             if (tf_ready_current(ready) && tf_protocol_try(f, &fp, &g, &decided, true, false)) {
                 if (decided == TF_STOP || decided == TF_CONTINUE) {
                     ready->decision = decided == TF_STOP ? CETTA_TRANSFORM_FIRED : CETTA_TRANSFORM_NONE;
-                    f->ready = ready;
-                    status = tf_keep_candidate(f, kernel, rows, row_len);
-                    if (status == TF_CONTINUE) {
-                        TfEntries *kept = &f->candidates[f->candidate_len - 1u].kernel;
-                        for (size_t i = 0u; i < g.len; i++) {
-                            size_t entry = (size_t)(g.groups[i].entry - kernel->items);
-                            g.groups[i].entry = &kept->items[entry];
-                        }
-                        ready->groups = g;
+                    status = tf_hold_kernel(f, kernel, rows, &g, ready);
+                    if (status == TF_STOP)
                         return TF_STOP;
-                    }
-                    f->ready = NULL;
                 } else {
                     status = decided;
                 }
@@ -2814,7 +3092,7 @@ static TfStatus tf_candidate(TfFire *f, TfEntries *kernel, TfRow *rows,
         }
     }
     if (!host_validated)
-        status = tf_valid(f, &g, &valid);
+        status = tf_valid(f, &g, false, &valid);
     tf_groups_free(f, &g);
     if (status != TF_CONTINUE || !valid)
         return status;
@@ -2824,45 +3102,52 @@ static TfStatus tf_candidate(TfFire *f, TfEntries *kernel, TfRow *rows,
 
 /* ── The firing ────────────────────────────────────────────────────────── */
 
-CettaTransformOutcome cetta_transform_fire(
-    Space *program, Arena *a, Atom *call, const CettaTransformHost *host,
+static void tf_print_firing(Atom *space, Atom *sources, Atom *template_atom, Atom *target) {
+    fprintf(stderr, "(%s ", target ? "tf:fire-into" : "tf:fire");
+    atom_print(space, stderr);
+    fputc(' ', stderr);
+    atom_print(sources, stderr);
+    fputc(' ', stderr);
+    atom_print(template_atom, stderr);
+    if (target) {
+        fputc(' ', stderr);
+        atom_print(target, stderr);
+    }
+    fputc(')', stderr);
+}
+
+static CettaTransformOutcome tf_fire_execute(
+    Arena *a, Atom *space, Atom *sources, Atom *template_atom, Atom *target,
+    const CettaTransformHost *host, const TfPlan *prepared, Atom *selected,
     Atom **answer_out) {
-    (void)program;
     *answer_out = NULL;
-    /* (tf:fire-into SPACE CONJUNCTS TEMPLATE DESTINATION) adds the instances
-     * to DESTINATION after the commit and answers how many. */
-    bool into = call && call->kind == ATOM_EXPR && call->expr.len == 5u;
-    if (!call || call->kind != ATOM_EXPR ||
-        (call->expr.len != 4u && !into) || !host ||
-        !host->resolve_space || !host->remove_atom || !host->add_atom ||
-        !host->evaluate)
+    if (host && host->extension_basis_out) *host->extension_basis_out = NULL;
+    if (!space || !sources || !template_atom || !host || !host->resolve_space ||
+        !host->remove_atom || !host->add_atom || !host->evaluate)
         return CETTA_TRANSFORM_DECLINED;
     Arena scratch;
     arena_init_detached(&scratch);
     CETTA_FRAME_IDENTITY_SCOPE(scope);
+    TfDestination destination = {.space_ref = target,
+        .split = target && tf_is_comma(template_atom)};
     TfFire f = {
         .host = host,
         .scratch = &scratch,
         .answer_arena = a,
-        .template_atom = call->expr.elems[3],
+        .template_atom = template_atom,
         .scope = &scope,
+        .destination = target ? &destination : NULL,
     };
-    TfPlanner planner = {host, call->expr.elems[1]};
+    TfPlanner planner = {host, space};
     CettaTransformOutcome outcome = CETTA_TRANSFORM_DECLINED;
-    Atom *conjuncts = call->expr.elems[2];
-    if (host->dialect == CETTA_TRANSFORM_DIALECT_HE &&
-        conjuncts->kind == ATOM_EXPR && conjuncts->expr.len == 2u &&
-        atom_is_symbol_id(conjuncts->expr.elems[0],
-                          atom_symbol_literal_id("tf:cs")))
-        conjuncts = conjuncts->expr.elems[1];
-    if (conjuncts->kind != ATOM_EXPR ||
-        !tf_plan_list(&planner, &f.plan, conjuncts->expr.elems,
-                      conjuncts->expr.len) ||
-        !bindings_builder_init(&f.builder, host->environment)) {
+    bool planned = selected
+        ? tf_plan_select(&planner, &f.plan, prepared, selected, &scratch)
+        : tf_plan_use(&planner, &f.plan, sources, prepared);
+    if (!planned || !bindings_builder_init(&f.builder, host->environment)) {
         if (transform_trace()) {
             fprintf(stderr, "[transform] declined ");
-            atom_print(call, stderr);
-            fprintf(stderr, "\n");
+            tf_print_firing(space, sources, template_atom, target);
+            fputc('\n', stderr);
         }
         free(f.plan.items);
         arena_free(&scratch);
@@ -2876,50 +3161,49 @@ CettaTransformOutcome cetta_transform_fire(
             (f.plan.items[i].kind == TF_READ || f.plan.items[i].kind == TF_TAKE ||
              f.plan.items[i].kind == TF_AS);
     TfStatus status = tf_walk(&f, 0u);
-    /* With a let, every kept candidate in turn; without one, the candidate
-     * that stopped the proposal, which validates again over the same store. */
+    /* A let can have changed earlier matches. Check those saved candidates
+     * in order. Otherwise reuse the selected footprint at its live revision. */
     if (!f.answer && (f.plan.has_let ? status == TF_CONTINUE : status == TF_STOP)) {
         status = TF_CONTINUE;
         for (size_t i = 0u; i < f.candidate_len && status == TF_CONTINUE; i++) {
             TfFootprint fp = {&f.candidates[i].kernel, f.candidates[i].rows,
-                              f.candidates[i].row_len};
-            if (i == 0u && f.ready && tf_ready_current(f.ready)) {
-                f.tcalc = true;
-                f.used_match_receipt = true;
-                status = f.ready->decision == CETTA_TRANSFORM_FIRED
-                    ? tf_commit(&f, &fp, &f.ready->groups, f.ready->publications_owned) : TF_CONTINUE;
-                if (status == TF_STOP)
-                    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_FIRING);
-            } else {
-                tf_ready_free(&f);
-                status = tf_try_commit(&f, &fp);
+                              f.candidates[i].row_len, f.candidates[i].extension_basis};
+            if (i == 0u && f.ready) {
+                if (tf_ready_current(f.ready)) {
+                    f.tcalc = f.ready->protocol;
+                    f.used_match_receipt = f.ready->protocol;
+                    status = f.ready->decision == CETTA_TRANSFORM_FIRED
+                        ? tf_commit(&f, &fp, &f.ready->groups, f.ready->publications_owned) : TF_CONTINUE;
+                    if (status == TF_STOP)
+                        cetta_runtime_stats_inc(f.tcalc
+                            ? CETTA_RUNTIME_COUNTER_TRANSFORM_TCALC_FIRING
+                            : CETTA_RUNTIME_COUNTER_TRANSFORM_DIRECT_FIRING);
+                    continue;
+                }
             }
+            tf_ready_free(&f);
+            status = tf_try_commit(&f, &fp);
         }
     }
-    if (status == TF_STOP && into) {
+    if (status == TF_STOP && target) {
         /* tf:split, then tf:add-all: a comma template gives its parts; the
          * template's own syntax decides, never an instantiated value. */
         Atom *fired = f.answer->expr.elems[1];
-        Atom *destination = call->expr.elems[4];
-        bool comma = tf_is_comma(f.template_atom);
-        int64_t added = 0;
         for (CettaExprLen r = 0u; r < fired->expr.len && status == TF_STOP; r++) {
             Atom *instance = fired->expr.elems[r];
-            CettaExprLen first = comma ? 1u : 0u;
-            CettaExprLen last = comma ? instance->expr.len : 1u;
+            CettaExprLen first = destination.split ? 1u : 0u;
+            CettaExprLen last = destination.split ? instance->expr.len : 1u;
             for (CettaExprLen k = first; k < last && status == TF_STOP; k++) {
-                Atom *part = comma ? instance->expr.elems[k] : instance;
-                Atom *error = host->add_atom(host->context, destination, part);
+                Atom *part = destination.split ? instance->expr.elems[k] : instance;
+                Atom *error = host->add_atom(host->context, destination.space_ref, part);
                 if (error) {
                     f.error = error;
                     status = TF_ERROR;
-                } else {
-                    added++;
                 }
             }
         }
         if (status == TF_STOP)
-            f.answer = atom_int(a, added);
+            f.answer = destination.count;
     }
     if (f.interrupted)
         status = TF_INTERRUPTED;
@@ -2929,6 +3213,7 @@ CettaTransformOutcome cetta_transform_fire(
         break;
     case TF_STOP:
         *answer_out = f.answer;
+        if (host->extension_basis_out) *host->extension_basis_out = f.extension_basis;
         outcome = CETTA_TRANSFORM_FIRED;
         break;
     case TF_CONTINUE:
@@ -2963,7 +3248,7 @@ CettaTransformOutcome cetta_transform_fire(
                 outcome == CETTA_TRANSFORM_NONE ? "none" :
                 outcome == CETTA_TRANSFORM_INTERRUPTED ? "interrupted" :
                 outcome == CETTA_TRANSFORM_ERROR ? "error" : "declined");
-        atom_print(call, stderr);
+        tf_print_firing(space, sources, template_atom, target);
         fprintf(stderr, " (engine %s) (requested-engine %s) (knowledge per-firing) (fast-path %s)\n",
                 cetta_transform_engine_spellings[f.tcalc ? CETTA_TRANSFORM_ENGINE_TCALC : CETTA_TRANSFORM_ENGINE_DIRECT],
                 cetta_transform_engine_spellings[cetta_transform_engine()],
@@ -2973,19 +3258,39 @@ CettaTransformOutcome cetta_transform_fire(
     return outcome;
 }
 
+CettaTransformOutcome cetta_transform_step(
+    Arena *a, Atom *space, Atom *sources, Atom *template_atom, Atom *target,
+    const CettaTransformHost *host, Atom **answer_out) {
+    return tf_fire_execute(a, space, sources, template_atom, target, host,
+                           NULL, NULL, answer_out);
+}
+
+CettaTransformOutcome cetta_transform_fire(
+    Space *program, Arena *a, Atom *call, const CettaTransformHost *host,
+    Atom **answer_out) {
+    (void)program;
+    *answer_out = NULL;
+    if (!call || call->kind != ATOM_EXPR ||
+        (call->expr.len != 4u && call->expr.len != 5u))
+        return CETTA_TRANSFORM_DECLINED;
+    Atom **parts = call->expr.elems;
+    return cetta_transform_step(a, parts[1], parts[2], parts[3],
+        call->expr.len == 5u ? parts[4] : NULL, host, answer_out);
+}
+
 /* ── Proposals and guided sources ──────────────────────────────────────── */
 
 static CettaTransformOutcome cetta_transform_propose_cursor(
     Space *program, Arena *a, Atom *call, const CettaTransformHost *host,
     Atom **answer_out);
 
-static bool tf_public_cursor_worthwhile(const TfFire *f) {
+static bool tf_public_cursor_worthwhile(const TfPlan *plan) {
     const size_t threshold = 64u;
-    if (f->plan.has_bound || f->plan.has_all || f->plan.has_let)
+    if (plan->has_bound || plan->has_all || plan->has_let)
         return false;
     size_t product = 1u;
-    for (size_t i = 0u; i < f->plan.len; i++) {
-        const TfConjunct *c = &f->plan.items[i];
+    for (size_t i = 0u; i < plan->len; i++) {
+        const TfConjunct *c = &plan->items[i];
         if ((c->kind != TF_READ && c->kind != TF_TAKE) || c->joint ||
             atom_has_vars(c->space_ref) || !c->space)
             return false;
@@ -3004,7 +3309,8 @@ static bool tf_public_cursor_worthwhile(const TfFire *f) {
 
 static CettaTransformOutcome cetta_transform_propose_impl(
     Space *program, Arena *a, Atom *call, const CettaTransformHost *host,
-    Atom **answer_out, bool allow_cursor) {
+    Atom **answer_out, bool allow_cursor,
+    const TfPlan *prepared) {
     (void)program;
     *answer_out = NULL;
     if (!call || call->kind != ATOM_EXPR ||
@@ -3023,21 +3329,11 @@ static CettaTransformOutcome cetta_transform_propose_impl(
         .propose = true,
     };
     TfPlanner planner = {host, call->expr.elems[1]};
-    Atom *conjuncts = call->expr.elems[2];
-    if (host->dialect == CETTA_TRANSFORM_DIALECT_HE &&
-        conjuncts->kind == ATOM_EXPR && conjuncts->expr.len == 2u &&
-        atom_is_symbol_id(conjuncts->expr.elems[0],
-                          atom_symbol_literal_id("tf:cs")))
-        conjuncts = conjuncts->expr.elems[1];
     CettaTransformOutcome outcome = CETTA_TRANSFORM_DECLINED;
     bool use_cursor = false;
-    if (conjuncts->kind == ATOM_EXPR &&
-        tf_plan_list(&planner, &f.plan, conjuncts->expr.elems,
-                     conjuncts->expr.len) &&
+    if (tf_plan_use(&planner, &f.plan, call->expr.elems[2], prepared) &&
         bindings_builder_init(&f.builder, host->environment)) {
-        if (!f.plan.has_bound)
-            f.plan.propose_len = f.plan.len;
-        use_cursor = allow_cursor && tf_public_cursor_worthwhile(&f);
+        use_cursor = allow_cursor && tf_public_cursor_worthwhile(&f.plan);
         if (!use_cursor) {
             TfStatus status = tf_walk(&f, 0u);
             if (f.interrupted) {
@@ -3076,7 +3372,7 @@ static CettaTransformOutcome cetta_transform_propose_impl(
 CettaTransformOutcome cetta_transform_propose_eager(
     Space *program, Arena *a, Atom *call, const CettaTransformHost *host,
     Atom **answer_out) {
-    return cetta_transform_propose_impl(program, a, call, host, answer_out, false);
+    return cetta_transform_propose_impl(program, a, call, host, answer_out, false, NULL);
 }
 
 /* Public proposals are still a materialized bag.  Large eligible frontiers
@@ -3142,7 +3438,7 @@ CettaTransformOutcome cetta_transform_propose(
     Space *program, Arena *a, Atom *call, const CettaTransformHost *host,
     Atom **answer_out) {
     return cetta_transform_propose_impl(
-        program, a, call, host, answer_out, !transform_cursor_reference());
+        program, a, call, host, answer_out, !transform_cursor_reference(), NULL);
 }
 
 /* tf:locate-in: the pattern of a read, take or unique conjunct. */
@@ -3155,112 +3451,6 @@ static Atom *tf_locate_in(Atom *c) {
     if (c->expr.len == 3u)
         return c->expr.elems[2];
     return c->expr.len >= 2u ? c->expr.elems[1] : NULL;
-}
-
-bool cetta_transform_inst(Arena *a, Atom *call, Atom **answer_out) {
-    *answer_out = NULL;
-    if (!call || call->kind != ATOM_EXPR ||
-        call->expr.len != 3u)
-        return false;
-    Atom *cs = call->expr.elems[1];
-    Atom *guide = call->expr.elems[2];
-    bool wrapped = cs && cs->kind == ATOM_EXPR && cs->expr.len == 2u &&
-        atom_is_symbol_id(cs->expr.elems[0], atom_symbol_literal_id("tf:cs"));
-    if (wrapped)
-        cs = cs->expr.elems[1];
-    if (cs->kind != ATOM_EXPR || guide->kind != ATOM_EXPR)
-        return false;
-    size_t cap = 2u * (size_t)cs->expr.len + 1u;
-    Atom **out = cetta_malloc(cap * sizeof(*out));
-    if (!out)
-        return false;
-    Atom *as = atom_symbol(a, "tf:as");
-    size_t n = 0u, g = 0u;
-    bool ok = true;
-    for (CettaExprLen i = 0u; ok && i < cs->expr.len; i++) {
-        Atom *c = cs->expr.elems[i];
-        TfMode mode = tf_mode(c);
-        if (mode == TF_MODE_ALL || mode == TF_MODE_ONCE) {
-            for (CettaExprLen k = i; k < cs->expr.len; k++)
-                out[n++] = cs->expr.elems[k];
-            break;
-        }
-        if (mode == TF_MODE_LET && !wrapped) {
-            if (c->expr.len != 3u || g >= guide->expr.len) {
-                ok = false;
-                break;
-            }
-            Atom *entry = guide->expr.elems[g++];
-            if (entry->kind != ATOM_EXPR || entry->expr.len != 3u ||
-                !atom_is_symbol_id(entry->expr.elems[0], g_builtin_syms.let)) {
-                ok = false;
-                break;
-            }
-            Atom *parts[4] = {atom_symbol(a, "tf:let-first"),
-                             entry->expr.elems[2], c->expr.elems[1], c->expr.elems[2]};
-            out[n++] = atom_expr(a, parts, 4u);
-            ok = out[n - 1u] != NULL;
-            continue;
-        }
-        if (mode == TF_MODE_ABSENT || mode == TF_MODE_COLLECT ||
-            mode == TF_MODE_LET || mode == TF_MODE_LET_FIRST) {
-            out[n++] = c;
-            continue;
-        }
-        Atom *p = tf_locate_in(c);
-        if (!p) {
-            ok = false;
-            break;
-        }
-        if (mode == TF_MODE_UNIQUE && tf_is_comma(p)) {
-            /* a unique joint match: one guide entry per part, bound as the
-             * tuple */
-            size_t parts = (size_t)p->expr.len - 1u;
-            Atom **atoms = arena_alloc(a, sizeof(Atom *) * (parts + 1u));
-            if (!atoms || g + parts > guide->expr.len) {
-                ok = false;
-                break;
-            }
-            atoms[0] = p->expr.elems[0];
-            for (size_t k = 0u; ok && k < parts; k++) {
-                Atom *e = guide->expr.elems[g + k];
-                ok = e->kind == ATOM_EXPR && e->expr.len == 3u;
-                if (ok)
-                    atoms[k + 1u] = e->expr.elems[2];
-            }
-            g += parts;
-            Atom *tuple = ok ? atom_expr(a, atoms, (CettaExprLen)(parts + 1u)) : NULL;
-            Atom *pinned[3] = {as, p, tuple};
-            out[n++] = c;
-            out[n++] = tuple ? atom_expr(a, pinned, 3u) : NULL;
-            ok = ok && out[n - 1u];
-            continue;
-        }
-        if (g >= guide->expr.len) {
-            ok = false;
-            break;
-        }
-        Atom *e = guide->expr.elems[g++];
-        if (e->kind != ATOM_EXPR || e->expr.len != 3u) {
-            ok = false;
-            break;
-        }
-        Atom *pinned[3] = {as, p, e->expr.elems[2]};
-        /* a read or take of the atom itself, then its pattern bound to it; a
-         * unique keeps its count, then binds */
-        out[n++] = mode == TF_MODE_UNIQUE ? c : e;
-        out[n++] = atom_expr(a, pinned, 3u);
-        ok = out[n - 1u] != NULL;
-    }
-    if (ok) {
-        *answer_out = atom_expr(a, out, (CettaExprLen)n);
-        if (wrapped && *answer_out) {
-            Atom *parts[2] = {atom_symbol(a, "tf:cs"), *answer_out};
-            *answer_out = atom_expr(a, parts, 2u);
-        }
-    }
-    free(out);
-    return *answer_out != NULL;
 }
 
 /* ── A whole transform, collected ──────────────────────────────────────── */
@@ -3507,24 +3697,6 @@ static bool tf_protect_lets(Arena *a, const TfAtoms *vars, Atom **cs, size_t len
     return true;
 }
 
-/* tf:has-let */
-static bool tf_has_let(Atom *cs) {
-    for (CettaExprLen i = 0u; cs->kind == ATOM_EXPR && i < cs->expr.len; i++) {
-        Atom *c = cs->expr.elems[i];
-        TfMode mode = tf_mode(c);
-        if (mode == TF_MODE_LET || mode == TF_MODE_LET_FIRST)
-            return true;
-        if ((mode == TF_MODE_ALL || mode == TF_MODE_ONCE) && c->expr.len >= 2u) {
-            Atom *inner = c->expr.elems[1];
-            if (tf_is_comma(inner) ? tf_has_let(inner)
-                                   : (tf_mode(inner) == TF_MODE_LET ||
-                                      tf_mode(inner) == TF_MODE_LET_FIRST))
-                return true;
-        }
-    }
-    return false;
-}
-
 static Atom *tf_call3(Arena *a, const char *head, Atom *x, Atom *y, Atom *z) {
     Atom *parts[4] = {atom_symbol(a, head), x, y, z};
     return atom_expr(a, parts, 4u);
@@ -3536,16 +3708,37 @@ static Atom *tf_call3(Arena *a, const char *head, Atom *x, Atom *y, Atom *z) {
  * and no code runs, so every kernel match the tests pass fires on the store
  * at the call and answers its instance, which is match's bag of answers.
  * DECLINED, having read nothing, otherwise. */
+/* In an ordinary match every leg is a data pattern, including patterns
+ * headed by the name of a transform operation. Build the same read plan
+ * directly without writing and decoding intermediate (read P) syntax. */
+static bool tf_plan_match(const TfPlanner *planner, TfPlan *plan, Atom *pattern) {
+    bool joint = tf_is_comma(pattern);
+    size_t count = joint ? (size_t)pattern->expr.len - 1u : 1u;
+    if (count == 0u || count > TF_NATIVE_LEGS)
+        return false;
+    plan->default_space = planner->default_space;
+    TfConjunct leg = {.kind = TF_READ, .access = TF_READ,
+                      .space_ref = planner->default_space};
+    tf_resolve(planner, &leg);
+    for (size_t i = 0u; i < count; i++) {
+        leg.pattern = joint ? pattern->expr.elems[i + 1u] : pattern;
+        if (tf_is_comma(leg.pattern) || !tf_plan_push(plan, leg))
+            return false;
+    }
+    return true;
+}
+
 static CettaTransformOutcome tf_reads_only_collect(
     const CettaTransformHost *host, Arena *a, Atom *space, Atom *conjuncts,
-    Atom *template_atom, CettaStepReads mode, bool request_protocol,
+    Atom *pattern, Atom *template_atom, CettaStepReads mode, bool count_only,
+    bool request_protocol,
     bool *protocol_used, Atom **collection_out, uint64_t *count_out) {
     if (protocol_used) *protocol_used = false;
     bool bag = mode != CETTA_STEP_READS_ORDERED;
     Arena scratch;
     arena_init_detached(&scratch);
     CETTA_FRAME_IDENTITY_SCOPE(scope);
-    TfAnswers answers = {0};
+    TfAnswers answers = {.count_only = count_only};
     TfFire f = {
         .host = host,
         .scratch = &scratch,
@@ -3557,8 +3750,9 @@ static CettaTransformOutcome tf_reads_only_collect(
     };
     TfPlanner planner = {host, space};
     CettaTransformOutcome outcome = CETTA_TRANSFORM_DECLINED;
-    bool planned = tf_plan_list(&planner, &f.plan, conjuncts->expr.elems,
-                                conjuncts->expr.len);
+    bool planned = pattern ? tf_plan_match(&planner, &f.plan, pattern)
+        : tf_plan_list(&planner, &f.plan, conjuncts->expr.elems,
+                       conjuncts->expr.len);
     bool reads = planned && !f.plan.has_bound;
     for (size_t i = 0u; reads && i < f.plan.len; i++)
         reads = f.plan.items[i].access != TF_TAKE &&
@@ -3608,7 +3802,8 @@ static CettaTransformOutcome tf_reads_only_collect(
         bool collected = tf_native_collect(&f, spaces, patterns, read_len,
                                            template_atom, filters, tested,
                                            request_protocol, protocol_used,
-                                           &found, &failed);
+                                           &found, count_only ? count_out : NULL,
+                                           &failed);
         f.scratch = &scratch;
         if (collected && failed && f.error) {
             *collection_out = f.error;
@@ -3618,12 +3813,11 @@ static CettaTransformOutcome tf_reads_only_collect(
         }
         if (collected && !failed) {
             *collection_out = found;
-            *count_out = found->expr.len;
-            outcome = *collection_out ? CETTA_TRANSFORM_FIRED
-                                      : CETTA_TRANSFORM_DECLINED;
+            if (!count_only)
+                *count_out = found->expr.len;
             free(f.plan.items);
             arena_free(&scratch);
-            return outcome;
+            return CETTA_TRANSFORM_FIRED;
         }
     }
     /* Tests the join declined (a value that is no integer, say) are code
@@ -3633,15 +3827,18 @@ static CettaTransformOutcome tf_reads_only_collect(
         TfStatus status = tf_walk(&f, 0u);
         /* A row holding variables is renamed in this step's frame: an answer
          * holding one would outlive its names, so the caller reads it. */
-        for (size_t i = 0u; status == TF_CONTINUE && i < answers.len; i++)
+        if (answers.open_result && status == TF_CONTINUE)
+            status = TF_FAIL;
+        for (size_t i = 0u; !count_only && status == TF_CONTINUE && i < answers.len; i++)
             if (atom_has_vars(answers.items[i]))
                 status = TF_FAIL;
         if (f.interrupted) {
             outcome = CETTA_TRANSFORM_INTERRUPTED;
         } else if (status == TF_CONTINUE) {
-            *collection_out = atom_expr(a, answers.items, (CettaExprLen)answers.len);
+            if (!count_only)
+                *collection_out = atom_expr(a, answers.items, (CettaExprLen)answers.len);
             *count_out = answers.len;
-            outcome = *collection_out ? CETTA_TRANSFORM_FIRED
+            outcome = count_only || *collection_out ? CETTA_TRANSFORM_FIRED
                                       : CETTA_TRANSFORM_DECLINED;
         }
         bindings_builder_free(&f.builder);
@@ -3655,34 +3852,15 @@ static CettaTransformOutcome tf_reads_only_collect(
 
 CettaTransformOutcome cetta_transform_reads(
     const CettaTransformHost *host, Arena *a, Atom *space, Atom *pattern,
-    Atom *template_atom, CettaStepReads mode, Atom **collection_out,
+    Atom *template_atom, CettaStepReads mode, bool count_only, Atom **collection_out,
     uint64_t *count_out) {
     *collection_out = NULL;
     *count_out = 0u;
     if (!host || !space || !pattern ||
         !template_atom)
         return CETTA_TRANSFORM_DECLINED;
-    /* match reads its pattern, or each part of a conjunction, as data: a
-     * read conjunct each, whatever heads it. */
-    bool joint = tf_is_comma(pattern);
-    size_t parts = joint ? (size_t)pattern->expr.len - 1u : 1u;
-    if (parts == 0u || parts > TF_NATIVE_LEGS)
-        return CETTA_TRANSFORM_DECLINED;
-    Atom *reads[TF_NATIVE_LEGS];
-    Atom *read = atom_symbol(a, "read");
-    for (size_t i = 0u; i < parts; i++) {
-        Atom *part = joint ? pattern->expr.elems[i + 1u] : pattern;
-        if (tf_is_comma(part))
-            return CETTA_TRANSFORM_DECLINED;
-        reads[i] = atom_expr2(a, read, part);
-        if (!reads[i])
-            return CETTA_TRANSFORM_DECLINED;
-    }
-    Atom *conjuncts = atom_expr(a, reads, (CettaExprLen)parts);
-    CettaTransformOutcome outcome = conjuncts
-        ? tf_reads_only_collect(host, a, space, conjuncts, template_atom, mode,
-                                false, NULL, collection_out, count_out)
-        : CETTA_TRANSFORM_DECLINED;
+    CettaTransformOutcome outcome = tf_reads_only_collect(host, a, space, NULL,
+        pattern, template_atom, mode, count_only, false, NULL, collection_out, count_out);
     if (transform_trace() && outcome == CETTA_TRANSFORM_FIRED)
         fprintf(stderr, "[step] match reads: %llu answers\n",
                 (unsigned long long)*count_out);
@@ -3737,109 +3915,197 @@ bool cetta_transform_prepare(Arena *work, Atom *sources, Atom *template_atom,
     return true;
 }
 
-static Atom *tf_lower_let(Arena *a, Atom *pattern, Atom *value, Atom *body) {
-    Atom *parts[4] = {atom_symbol(a, "let"), pattern, value, body};
-    return atom_expr(a, parts, 4u);
-}
+struct CettaTransformRun {
+    const CettaTransformHost *host;
+    Atom *propose;
+    Atom *target;
+    Arena proposals;
+    Arena attempt;
+    ArenaMark empty_attempt;
+    TfPlan plan;
+    Atom *matches;
+    CettaTransformCandidateCursor *cursor;
+    Atom *rows;
+    CettaExprIndex proposal_position, row, part;
+    CettaTransformDemand demand;
+    bool split, initialized, streaming, release_before_fire;
+    bool skip_proposal_errors, finished, published, first_firing;
+};
 
-static Atom *tf_lower_call2(Arena *a, const char *head, Atom *x, Atom *y) {
-    Atom *parts[3] = {atom_symbol(a, head), x, y};
-    return atom_expr(a, parts, 3u);
-}
-
-Atom *cetta_transform_lower(Arena *a, Atom *call,
-                            const CettaTransformHost *host) {
-    if (!a || !call || !host || call->kind != ATOM_EXPR ||
-        call->expr.len != 5u ||
-        !atom_is_symbol_id(call->expr.elems[0],
-                           atom_symbol_literal_id("tf:run")))
+CettaTransformRun *cetta_transform_run_open(
+    Atom *space, Atom *conjuncts, Atom *instance, Atom *target,
+    const CettaTransformHost *host, CettaTransformDemand demand) {
+    CettaTransformRun *run = calloc(1u, sizeof(*run));
+    if (!run)
         return NULL;
-    Arena work;
-    arena_init_detached(&work);
-    Atom *space = call->expr.elems[1];
-    Atom *sources = call->expr.elems[2];
-    Atom *template_atom = call->expr.elems[3];
-    Atom *destination = call->expr.elems[4];
-    bool he = host->dialect == CETTA_TRANSFORM_DIALECT_HE;
-    bool caller = atom_is_symbol_id(destination,
-                                    atom_symbol_literal_id("tf:caller"));
-    bool into = !caller &&
-        (he ? destination->kind == ATOM_GROUNDED
-            : (destination->kind == ATOM_GROUNDED &&
-               destination->ground.gkind == GV_SPACE) ||
-              (destination->kind == ATOM_SYMBOL &&
-               atom_name_cstr(destination)[0] == '&'));
-    Atom *listed = NULL, *instance = NULL;
-    Atom *lowered = NULL, *error = NULL;
-    if (!cetta_transform_prepare(&work, sources, template_atom, host->dialect,
-                                 caller && !into, host->evaluate_bound != NULL,
-                                 &listed, &instance, &error)) {
-        lowered = error;
-        goto done;
+    arena_init_detached(&run->proposals);
+    arena_init_detached(&run->attempt);
+    run->empty_attempt = arena_mark(&run->attempt);
+    run->host = host;
+    run->first_firing = demand == CETTA_TRANSFORM_FIRST_FIRING;
+    run->demand = run->first_firing ? CETTA_TRANSFORM_FIRST : demand;
+    run->split = tf_is_comma(instance);
+    run->target = target;
+    run->propose = tf_call3(&run->proposals, "tf:propose", space, conjuncts, instance);
+    if (!run->propose) {
+        cetta_transform_run_close(run);
+        return NULL;
     }
-    Atom *matches = atom_var_with_id(&work, "tf-matches", fresh_var_id());
-    Atom *guide = atom_var_with_id(&work, "tf-guide", fresh_var_id());
-    Atom *guided = atom_var_with_id(&work, "tf-guided", fresh_var_id());
-    Atom *instances = atom_var_with_id(&work, "tf-instances", fresh_var_id());
-    Atom *all = atom_var_with_id(&work, "tf-all", fresh_var_id());
-    Atom *item = atom_var_with_id(&work, "tf-instance", fresh_var_id());
-    if (!matches || !guide || !guided || !instances || !all || !item)
-        goto done;
-    Atom *proposal = tf_call3(&work, "tf:propose", space, listed, instance);
-    Atom *guided_call = tf_lower_call2(&work, "tf:inst", listed, guide);
-    Atom *fire = NULL;
-    if (into) {
-        Atom *parts[5] = {atom_symbol(&work, "tf:fire-into"), space, guided,
-                          instance, destination};
-        fire = atom_expr(&work, parts, 5u);
-    } else {
-        fire = tf_call3(&work, "tf:fire", space, guided, instance);
-    }
-    if (!proposal || !guided_call || !fire)
-        goto done;
+    return run;
+}
 
-    Atom *body = NULL;
-    if (into) {
-        body = fire;
-    } else {
-        Atom *boolean = atom_symbol(&work, tf_is_comma(instance)
-            ? (he ? "True" : "true") : (he ? "False" : "false"));
-        Atom *split = tf_lower_call2(&work, "tf:split", boolean, instances);
-        Atom *alternatives = atom_expr2(&work, atom_symbol(&work, "superpose"), all);
-        Atom *route = NULL;
-        if (caller) {
-            route = item;
-            if (!he) {
-                Atom *parts[2] = {atom_symbol(&work, "eval"), item};
-                route = atom_expr(&work, parts, 2u);
+void cetta_transform_run_close(CettaTransformRun *run) {
+    if (!run)
+        return;
+    cetta_transform_candidate_cursor_close(run->cursor);
+    free(run->plan.items);
+    arena_free(&run->attempt);
+    arena_free(&run->proposals);
+    free(run);
+}
+
+static CettaTransformOutcome tf_run_stop(CettaTransformRun *run,
+                                         CettaTransformOutcome outcome) {
+    run->finished = true;
+    cetta_transform_candidate_cursor_close(run->cursor);
+    run->cursor = NULL;
+    return outcome;
+}
+
+static CettaTransformOutcome tf_run_start(CettaTransformRun *run, Atom **error) {
+    run->initialized = true;
+    TfPlanner planner = {run->host, run->propose->expr.elems[1]};
+    if (!tf_plan_prepare(&planner, &run->plan, run->propose->expr.elems[2]))
+        return tf_run_stop(run, CETTA_TRANSFORM_DECLINED);
+    if (run->first_firing && !run->target) {
+        run->first_firing = false;
+        for (size_t i = 0; i < run->plan.len; i++) {
+            if (run->plan.items[i].access == TF_TAKE) {
+                run->first_firing = true;
+                break;
             }
-        } else {
-            Atom *parts[3] = {destination, item};
-            Atom *application = atom_expr(&work, parts, 2u);
-            if (!he) {
-                Atom *reduce_parts[2] = {atom_symbol(&work, "reduce"), application};
-                application = atom_expr(&work, reduce_parts, 2u);
-            }
-            route = application;
         }
-        Atom *fired_pattern[2] = {atom_symbol(&work, "tf:fired"), instances};
-        body = tf_lower_let(&work, atom_expr(&work, fired_pattern, 2u), fire,
-            tf_lower_let(&work, all, split,
-                tf_lower_let(&work, item, alternatives, route)));
     }
-    Atom *guide_pattern[2] = {atom_symbol(&work, "tf:cand"), guide};
-    body = tf_lower_let(&work, guided, guided_call, body);
-    body = tf_lower_let(&work, atom_expr(&work, guide_pattern, 2u),
-                        atom_expr2(&work, atom_symbol(&work, "superpose"), matches),
-                        body);
-    lowered = tf_lower_let(&work, matches, proposal, body);
-done:
-    /* Both lowered programs and preparation errors belong to work. Retain
-     * the complete result in its caller's owner before releasing that arena. */
-    if (lowered)
-        lowered = atom_deep_copy(a, lowered);
-    arena_free(&work);
-    return lowered;
+    run->streaming = !transform_cursor_reference() &&
+        (run->demand != CETTA_TRANSFORM_COLLECT || tf_public_cursor_worthwhile(&run->plan)) &&
+        tf_candidate_cursor_open(NULL, &run->attempt, run->propose,
+                                 run->host, &run->plan, &run->cursor);
+    if (run->streaming) {
+        /* This observer stops at the first successful destination count. A
+         * declined firing has made no write, so a reopened read can skip it. */
+        run->release_before_fire = run->demand == CETTA_TRANSFORM_FIRST &&
+            run->target && !run->host->spend && !cetta_shared_transition_scope_active();
+        return CETTA_TRANSFORM_FIRED;
+    }
+    CettaTransformOutcome outcome = cetta_transform_propose_impl(
+        NULL, &run->proposals, run->propose, run->host, &run->matches, false, &run->plan);
+    if (outcome != CETTA_TRANSFORM_FIRED) {
+        *error = run->matches;
+        return tf_run_stop(run, outcome);
+    }
+    if (run->demand == CETTA_TRANSFORM_FIRST &&
+        run->host->dialect == CETTA_TRANSFORM_DIALECT_HE)
+        for (CettaExprIndex i = 0u; !run->skip_proposal_errors &&
+                                   i < run->matches->expr.len; i++)
+            run->skip_proposal_errors = !atom_is_error(run->matches->expr.elems[i]);
+    return outcome;
+}
+
+static CettaTransformOutcome tf_run_candidate(CettaTransformRun *run, Atom **out) {
+    if (!run->streaming) {
+        if (run->proposal_position >= run->matches->expr.len)
+            return CETTA_TRANSFORM_NONE;
+        *out = run->matches->expr.elems[run->proposal_position++];
+        return CETTA_TRANSFORM_FIRED;
+    }
+    CettaExprIndex skip = 0u;
+    if (!run->cursor) {
+        if (!tf_candidate_cursor_open(NULL, &run->attempt, run->propose,
+                run->host, &run->plan, &run->cursor))
+            return CETTA_TRANSFORM_DECLINED;
+        skip = run->proposal_position;
+    }
+    CettaTransformOutcome outcome;
+    do {
+        outcome = cetta_transform_candidate_cursor_next(run->cursor, out);
+    } while (outcome == CETTA_TRANSFORM_FIRED && skip && skip--);
+    if (outcome == CETTA_TRANSFORM_FIRED && run->release_before_fire) {
+        run->proposal_position++;
+        cetta_transform_candidate_cursor_close(run->cursor);
+        run->cursor = NULL;
+    }
+    return outcome;
+}
+
+CettaTransformOutcome cetta_transform_run_next(CettaTransformRun *run, Atom **value) {
+    *value = NULL;
+    if (run->finished)
+        return CETTA_TRANSFORM_NONE;
+    if (!run->initialized) {
+        CettaTransformOutcome started = tf_run_start(run, value);
+        if (started != CETTA_TRANSFORM_FIRED)
+            return started;
+    }
+    for (;;) {
+        while (run->rows && run->row < run->rows->expr.len) {
+            Atom *row = run->rows->expr.elems[run->row];
+            if (!run->split) {
+                run->row++;
+                *value = row;
+                return CETTA_TRANSFORM_FIRED;
+            }
+            if (run->part < row->expr.len) {
+                *value = row->expr.elems[run->part++];
+                return CETTA_TRANSFORM_FIRED;
+            }
+            run->row++;
+            run->part = 1u;
+        }
+        run->rows = NULL;
+        /* The selected firing can have no instances, or every instance
+         * can fail in the caller. Its commit still closes this search. */
+        if (run->first_firing && run->published)
+            return tf_run_stop(run, CETTA_TRANSFORM_NONE);
+        arena_reset(&run->attempt, run->empty_attempt);
+        Atom *candidate = NULL;
+        CettaTransformOutcome outcome = tf_run_candidate(run, &candidate);
+        if (outcome != CETTA_TRANSFORM_FIRED) {
+            *value = candidate;
+            return tf_run_stop(run, outcome);
+        }
+        if (atom_is_error(candidate)) {
+            if (run->skip_proposal_errors)
+                continue;
+            *value = candidate;
+            if (run->demand == CETTA_TRANSFORM_FIRST)
+                return tf_run_stop(run, CETTA_TRANSFORM_ERROR);
+            return CETTA_TRANSFORM_ERROR;
+        }
+        if (candidate->kind != ATOM_EXPR || candidate->expr.len != 2u)
+            return tf_run_stop(run, CETTA_TRANSFORM_DECLINED);
+        Atom **args = run->propose->expr.elems;
+        Atom *fired = NULL;
+        outcome = tf_fire_execute(&run->attempt, args[1], args[2], args[3],
+            run->target, run->host, &run->plan, candidate->expr.elems[1], &fired);
+        if (outcome == CETTA_TRANSFORM_NONE)
+            continue;
+        if (outcome != CETTA_TRANSFORM_FIRED) {
+            *value = fired;
+            if (outcome == CETTA_TRANSFORM_ERROR &&
+                run->host->dialect == CETTA_TRANSFORM_DIALECT_HE &&
+                run->demand != CETTA_TRANSFORM_FIRST)
+                return outcome;
+            return tf_run_stop(run, outcome);
+        }
+        run->published = true;
+        if (run->target) {
+            *value = fired;
+            return outcome;
+        }
+        run->rows = fired->expr.elems[1];
+        run->row = 0u;
+        run->part = 1u;
+    }
 }
 
 Atom *cetta_transform_split(Arena *a, Atom *call,
@@ -3873,7 +4139,8 @@ fail:
 
 CettaTransformOutcome cetta_transform_collect(
     Space *program, Arena *a, Atom *call, const CettaTransformHost *host,
-    Atom **collection_out, uint64_t *count_out) {
+    bool count_only, Atom **collection_out, uint64_t *count_out) {
+    (void)program;
     *collection_out = NULL;
     *count_out = 0u;
     bool into = call && call->kind == ATOM_EXPR && call->expr.len == 5u;
@@ -3895,9 +4162,9 @@ CettaTransformOutcome cetta_transform_collect(
     Arena work;
     arena_init_detached(&work);
     TfAtoms answers = {0};
+    uint64_t count = 0u;
     CettaTransformOutcome outcome = CETTA_TRANSFORM_DECLINED;
     Atom *answer = NULL;
-    bool fired_any = false;
     Atom *listed = NULL, *prepared_template = NULL;
     if (!cetta_transform_prepare(&work, sources, template_atom, host->dialect,
                                  false, host->evaluate_bound != NULL,
@@ -3909,8 +4176,8 @@ CettaTransformOutcome cetta_transform_collect(
     if (!into) {
         bool protocol_used = false;
         CettaTransformOutcome reads =
-            tf_reads_only_collect(host, a, space, listed, template_atom,
-                                  CETTA_STEP_READS_BAG,
+            tf_reads_only_collect(host, a, space, listed, NULL, template_atom,
+                                  CETTA_STEP_READS_BAG, count_only,
                                   cetta_transform_engine() == CETTA_TRANSFORM_ENGINE_TCALC &&
                                       host->decide_firing != NULL,
                                   &protocol_used, collection_out, count_out);
@@ -3937,80 +4204,46 @@ CettaTransformOutcome cetta_transform_collect(
             return outcome;
         }
     }
-    Atom *propose = tf_call3(&work, "tf:propose", space, listed,
-                             template_atom);
-    Atom *matches = NULL;
-    if (!propose)
+    CettaTransformRun *run = cetta_transform_run_open(
+        space, listed, template_atom, destination, host, CETTA_TRANSFORM_COLLECT);
+    if (!run)
         goto done;
-    outcome = cetta_transform_propose(program, &work, propose, host, &matches);
-    if (outcome != CETTA_TRANSFORM_FIRED) {
-        answer = matches;
-        goto done;
+    for (;;) {
+        Atom *value = NULL;
+        CettaTransformOutcome step = cetta_transform_run_next(run, &value);
+        if (step == CETTA_TRANSFORM_NONE) {
+            outcome = CETTA_TRANSFORM_FIRED;
+            break;
+        }
+        if (step == CETTA_TRANSFORM_INTERRUPTED) {
+            outcome = step;
+            break;
+        }
+        if (step == CETTA_TRANSFORM_ERROR) {
+            outcome = step;
+            answer = value ? atom_deep_copy(&work, value) : NULL;
+            break;
+        }
+        if (step != CETTA_TRANSFORM_FIRED || count == UINT64_MAX) {
+            outcome = run->published || run->plan.has_let
+                ? CETTA_TRANSFORM_ERROR : CETTA_TRANSFORM_DECLINED;
+            break;
+        }
+        if (!count_only && !tf_atoms_push(&answers, atom_deep_copy(a, value))) {
+            outcome = CETTA_TRANSFORM_ERROR;
+            break;
+        }
+        count++;
     }
-    bool comma = tf_is_comma(template_atom);
-    for (CettaExprLen m = 0u; m < matches->expr.len; m++) {
-        Atom *candidate = matches->expr.elems[m];
-        Atom *guided_call = atom_expr2(&work, atom_symbol(&work, "tf:inst"), listed);
-        Atom *kc = NULL;
-        if (candidate->kind != ATOM_EXPR || candidate->expr.len != 2u || !guided_call)
-            goto failed;
-        Atom *gparts[3] = {guided_call->expr.elems[0], listed, candidate->expr.elems[1]};
-        if (!cetta_transform_inst(&work, atom_expr(&work, gparts, 3u), &kc))
-            goto failed;
-        Atom *fire;
-        if (into) {
-            Atom *parts[5] = {atom_symbol(&work, "tf:fire-into"), space, kc,
-                              template_atom, destination};
-            fire = atom_expr(&work, parts, 5u);
-        } else {
-            fire = tf_call3(&work, "tf:fire", space, kc, template_atom);
-        }
-        Atom *fired = NULL;
-        CettaTransformOutcome branch =
-            fire ? cetta_transform_fire(program, &work, fire, host, &fired)
-                 : CETTA_TRANSFORM_DECLINED;
-        if (branch == CETTA_TRANSFORM_NONE)
-            continue;
-        if (branch == CETTA_TRANSFORM_ERROR || branch == CETTA_TRANSFORM_INTERRUPTED) {
-            outcome = branch;
-            answer = fired;
-            goto done;
-        }
-        if (branch != CETTA_TRANSFORM_FIRED || !fired)
-            goto failed;
-        fired_any = true;
-        if (into) {
-            if (!tf_atoms_push(&answers, fired))
-                goto failed;
-            continue;
-        }
-        /* tf:split: a comma template gives its parts */
-        Atom *instances = fired->expr.elems[1];
-        for (CettaExprLen r = 0u; r < instances->expr.len; r++) {
-            Atom *instance = instances->expr.elems[r];
-            CettaExprLen first = comma ? 1u : 0u;
-            CettaExprLen last = comma ? instance->expr.len : 1u;
-            for (CettaExprLen k = first; k < last; k++)
-                if (!tf_atoms_push(&answers, comma ? instance->expr.elems[k]
-                                                   : instance))
-                    goto failed;
-        }
-    }
-    outcome = CETTA_TRANSFORM_FIRED;
-    goto done;
-failed:
-    /* Nothing is undone: a failure after a branch fired, or after the
-     * proposals ran code, is an error. */
-    outcome = fired_any || tf_has_let(listed) ? CETTA_TRANSFORM_ERROR
-                                              : CETTA_TRANSFORM_DECLINED;
-    answer = NULL;
+    cetta_transform_run_close(run);
 done:
     if (outcome == CETTA_TRANSFORM_FIRED) {
-        *count_out = answers.len;
-        *collection_out = atom_deep_copy(
-            a, atom_expr(&work, answers.items, (CettaExprLen)answers.len));
-        if (!*collection_out)
-            outcome = CETTA_TRANSFORM_ERROR;
+        *count_out = count;
+        if (!count_only) {
+            *collection_out = atom_expr(a, answers.items, (CettaExprLen)answers.len);
+            if (!*collection_out)
+                outcome = CETTA_TRANSFORM_ERROR;
+        }
     }
     if (outcome == CETTA_TRANSFORM_ERROR)
         *collection_out = answer ? atom_deep_copy(a, answer)

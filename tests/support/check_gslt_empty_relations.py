@@ -9,8 +9,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 from gslt_relation_executor_v1 import completed
-from check_gslt_through_machine import through_the_machine
-from native_observation import read_observation
+from native_observation import check_petta_fuel_exhaustion
 
 
 def compile_program(args, sources, target, output, closed=False, epilogue=None):
@@ -87,33 +86,12 @@ def main():
     completed([str(args.compiler), "petta-direct", "--source",
                str(ROOT / "tests/petta/gslt_empty_prefix_v1.metta"),
                "--entry-mode", "UsesLoopV1:10", "--out", str(prefix)], 30)
-    machine = work / "prefix-machine.metta"
-    plan = dict(queries=0, guests=[])
-    source = through_the_machine(prefix.read_text(), "!(import! &self (library lib_transform))", plan=plan)
-    selected = []
-    next_query = plan["queries"]
-    for query in ("(gslt:UsesLoopV1 (UsesLoopV1 anchor $answer))",
-                  "(gslt:entry:UsesLoopV1:10 anchor)"):
-        source += (f'!(pm:begin-quietly "{query}")\n'
-                   '!(PrefixProgressV1 (pm:advance 100))\n'
-                   '!(PrefixResumeV1 (pm:advance 100))\n'
-                   '!(PrefixEndingV1 (pm:end))\n')
-        selected.extend(range(next_query + 2, next_query + 5))
-        next_query += 4
-    machine.write_text(source)
-    receipt = work / "prefix.events.jsonl"
-    completed([str(args.runtime), "--lang", "petta", "--run-observation", str(receipt), str(machine)], 30)
-    observed = read_observation(receipt)
-    assert observed["final"]["contract_exit"] == 0
-    symbol = lambda name: ["symbol", name.encode().hex()]
-    progress = [["expression", 2], symbol("PrefixProgressV1"), symbol("pm:turn-over")]
-    resumed = [["expression", 2], symbol("PrefixResumeV1"), symbol("pm:turn-over")]
-    ending = [["expression", 2], symbol("PrefixEndingV1"), ["expression", 2],
-              symbol("pm:no-end"), symbol("pm:turn-over")]
-    assert [observed["queries"][number]["answers"] for number in selected] == [[value] for value in (progress, resumed, ending) * 2]
-    assert not observed["outside_effects"] and all(not query["effects"] for query in observed["queries"].values())
-    for number in plan.get("registration_preconditions", []):
-        assert observed["queries"][number]["answers"] == [[symbol("true")]]
+    for entry, query in enumerate(("(gslt:UsesLoopV1 (UsesLoopV1 anchor $answer))",
+                                   "(gslt:entry:UsesLoopV1:10 anchor)")):
+        document = work / f"prefix-{entry}.metta"
+        document.write_text(f"!{query}\n")
+        check_petta_fuel_exhaustion(args.runtime, [prefix, document],
+                                    work / f"prefix-{entry}.events.jsonl")
     print("PASS: clause-free relations, supplied duplicate occurrences and closed entries agree on PeTTa and HE")
     print("PASS: the C target's empty entry builds with strict warnings and returns an empty bag")
     print("PASS: an earlier unfinished interpretation is not erased by a later empty relation")

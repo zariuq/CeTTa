@@ -238,6 +238,12 @@ void tm_program_release(TmProgram *program) {
 void cetta_tmetta_runtime_free(struct CettaTmettaRuntime *runtime) {
     if (!runtime) return;
     tm_program_release(runtime->cached_program);
+    bindings_free(&runtime->captures);
+    for (uint32_t k = 0; k < runtime->slot_schema_cap; ++k)
+        bindings_frame_schema_release(runtime->slot_schemas[k]);
+    free(runtime->slot_schemas);
+    arena_free(&runtime->knowledge);
+    cetta_frame_identity_scope_clear(&runtime->capture_scope);
     pthread_mutex_destroy(&runtime->mutex);
     free(runtime);
 }
@@ -254,6 +260,13 @@ struct CettaTmettaRuntime *tm_runtime(CettaLibraryContext *context) {
             pthread_mutexattr_destroy(&attributes);
         }
         if (!ready) { free(runtime); pthread_mutex_unlock(&context->nik_runtime_mutex); return NULL; }
+        bindings_init(&runtime->captures);
+        if (!arena_try_init_detached(&runtime->knowledge) ||
+            !cetta_frame_identity_scope_try(&runtime->capture_scope, &runtime->capture_epoch)) {
+            cetta_tmetta_runtime_free(runtime);
+            pthread_mutex_unlock(&context->nik_runtime_mutex);
+            return NULL;
+        }
         context->tmetta_runtime = runtime;
     }
     struct CettaTmettaRuntime *runtime = context->tmetta_runtime;
