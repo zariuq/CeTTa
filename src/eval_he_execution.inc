@@ -562,9 +562,7 @@ static bool he_execution_condition_head(SymbolId head) {
 static bool he_execution_effect_atom_plain(Atom *atom) {
     SymbolId head = atom_head_symbol_id(atom);
     return atom && atom->kind == ATOM_EXPR && head != SYMBOL_ID_NONE &&
-        head != g_builtin_syms.equals && head != g_builtin_syms.equals_percent &&
-        !space_theory_is_alias_head(head) &&
-        head != g_builtin_syms.colon;
+        !space_theory_is_theory_head(head);
 }
 
 static bool he_execution_push(HeExecutionAdmission *admission, Atom *term) {
@@ -1105,9 +1103,10 @@ static _Thread_local HeDispatchMemo g_he_dispatch_memo[8];
  * other head. */
 static Atom *he_dispatch_signature(Space *space, SymbolId head,
                                    CettaExprLen arity) {
+    SpaceTheoryView view = space_theory_view_borrow(space);
     if (!space || head == SYMBOL_ID_NONE || is_grounded_op(head) ||
         symbol_id_is_builtin(head) || arity == 0u ||
-        !space_head_declares_type(space, head) ||
+        !space_theory_view_head_declares_type(&view, head) ||
         !eval_space_has_equations(space, head))
         return NULL;
     size_t slot = ((size_t)head * 31u + arity) & 7u;
@@ -1398,9 +1397,10 @@ static bool he_dispatch_arguments_fit(Space *space, Atom *term) {
 static inline __attribute__((always_inline)) bool
 he_execution_head_requires_canonical(Space *space, SymbolId head,
     CettaExprLen arity, bool intrinsic, bool collection, bool library_stream) {
+    SpaceTheoryView view = space_theory_view_borrow(space);
     return !intrinsic && head != SYMBOL_ID_NONE && !collection &&
         !library_stream && (is_grounded_op(head) || symbol_id_is_builtin(head) ||
-                           (space_head_declares_type(space, head) &&
+                           (space_theory_view_head_declares_type(&view, head) &&
                             !he_dispatch_signature(space, head, arity)));
 }
 
@@ -1867,11 +1867,12 @@ static bool he_return_bind_row(HeReturnEnvironment *env, const Atom *pattern) {
  * PeTTa, which keep it data, as prepared calls and grounded dispatch do)
  * and no equation of the program redefines it: its value is a truth value. */
 static bool he_return_numeric_test(Space *space, SymbolId head) {
+    SpaceTheoryView view = space_theory_view_borrow(space);
     return head == g_builtin_syms.numeric_eq &&
         eval_current_language_id() == CETTA_LANGUAGE_HE &&
         !active_profile_uses_rust_he_compat_semantics() &&
         !eval_space_has_equations(space, head) &&
-        !space_head_declares_type(space, head);
+        !space_theory_view_head_declares_type(&view, head);
 }
 
 static HeReturnProvenance he_return_body(HeReturnAnalysis *, const Atom *,
@@ -1933,7 +1934,8 @@ static HeReturnProvenance he_return_call(HeReturnAnalysis *analysis, SymbolId he
      * a head's answers are scalars where its bodies' are. */
     bool checks_range = false;
     bool structural_range = false;
-    if (space_head_declares_type(analysis->space, head) &&
+    SpaceTheoryView view = space_theory_view_borrow(analysis->space);
+    if (space_theory_view_head_declares_type(&view, head) &&
         !cetta_prepared_pure_value_signature(analysis->space, head, arity,
                                              &checks_range,
                                              &structural_range)) {
@@ -2227,7 +2229,8 @@ static HeReturnProvenance he_return_body(HeReturnAnalysis *analysis,
     else if (he_return_native_answers_as_is(analysis, body, arguments, arity))
         result = (HeReturnProvenance)(HE_RETURN_RAW | HE_RETURN_SCALAR);
     else if ((head != SYMBOL_ID_NONE && !symbol_id_is_builtin(head) && !is_grounded_op(head) &&
-               (!space_head_declares_type(analysis->space, head) ||
+               (!space_theory_view_head_declares_type(
+                    &(SpaceTheoryView){.space = analysis->space}, head) ||
                 cetta_prepared_pure_he_checked_constructor(analysis->space,
                                                            head, arity)) &&
                !space_equations_may_match_unnamed_head(analysis->space)) ||

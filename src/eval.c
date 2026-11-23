@@ -6455,26 +6455,12 @@ static unsigned eval_admitted_rule_forms(void) {
         eval_named_head_rule_form();
 }
 
-static __attribute__((noinline, cold)) bool eval_space_has_alias_equations_slow(
-    Space *space, SymbolId head, unsigned forms) {
-    return (forms & CETTA_RULE_SYNTAX_EQUATIONAL_ALIAS) &&
-        space_alias_head_in_carrier_slow(space, head) &&
-        space_alias_head_has_rules(space, head, forms);
-}
-
 static bool eval_space_has_equations(Space *space, SymbolId head) {
-    if (space_equations_may_match_known_head(space, head))
+    SpaceTheoryView view = space_theory_view_borrow(space);
+    if (space_theory_view_head_has_ordinary_rules(&view, head))
         return true;
-    unsigned forms = eval_admitted_rule_forms();
-    if ((forms & CETTA_RULE_SYNTAX_DIRECTIONAL) &&
-        space_directional_rules_may_match_known_head(space, head))
-        return true;
-    return __builtin_expect(
-               atomic_load_explicit(&cetta_space_global_equational_epoch,
-                                    memory_order_relaxed) != 0u,
-               0) &&
-        space_may_have_equational_aliases(space) &&
-        eval_space_has_alias_equations_slow(space, head, forms);
+    return space_theory_view_head_has_extended_rules(
+        &view, head, eval_admitted_rule_forms());
 }
 
 static bool eval_rule_head_arity_bounds(Space *space, SymbolId head,
@@ -12915,7 +12901,9 @@ static __attribute__((noinline, cold)) CettaCount eval_alias_equations_visit(
     Atom **equations = NULL;
     size_t count = 0u;
     SymbolId head = atom_head_symbol_id(query);
-    if (!space_alias_collect_head_rules(space, head, forms, &equations, &count))
+    SpaceTheoryView view = space_theory_view_open(space);
+    if (!space_theory_view_collect_head_rules(&view, head, forms, &equations,
+                                              &count, NULL))
         return 0u;
     CettaCount emitted = 0u;
     RuleResultForward forward = {visitor, context, false};
@@ -18559,11 +18547,12 @@ static bool eval_prepared_pure_head_admitted(void *context, Space *space, Symbol
 
 static bool eval_prepared_pure_source_call_owned(
         Space *space, SymbolId head, CettaExprLen arity) {
+    SpaceTheoryView view = space_theory_view_borrow(space);
     return eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
         !eval_current_petta_typed_line() &&
         !eval_petta_classifier_extended(space, g_builtin_syms.get_type) &&
         !eval_petta_classifier_extended(space, g_builtin_syms.get_metatype) &&
-        space_type_annotations_have_only_symbol_subjects(space) &&
+        space_theory_view_type_annotations_symbol_only(&view) &&
         active_search_table_mode() == CETTA_TABLE_MODE_NONE &&
         eval_prepared_pure_head_admitted(NULL, space, head) &&
         !petta_eval_extension_named_arity(head, arity).exact &&
@@ -24460,9 +24449,10 @@ uint32_t eval_get_atom_types_profiled_transient(
 }
 
 bool eval_symbol_type_undefined(Space *s, Atom *atom) {
+    SpaceTheoryView view = space_theory_view_borrow(s);
     if (!s || !atom || atom->kind != ATOM_SYMBOL ||
         atom_is_registry_token(atom) ||
-        space_head_declares_type(s, atom->sym_id))
+        space_theory_view_head_declares_type(&view, atom->sym_id))
         return false;
     Arena scratch;
     arena_init(&scratch);
@@ -35869,6 +35859,108 @@ static bool count_generic_direct_match_row(const Bindings *bindings, void *ctx) 
     return true;
 }
 
+enum { COUNT_REGION_CACHE_SLOTS = 32u, COUNT_REGION_MAX_ARITY = 8u };
+
+typedef struct {
+    SymbolId head;
+    uint8_t arity;
+    uint8_t arg_kind[COUNT_REGION_MAX_ARITY - 1u];
+    uint64_t arg_val[COUNT_REGION_MAX_ARITY - 1u];
+} CountRegionPatternKey;
+
+typedef struct {
+    bool occupied;
+    const Space *space;
+    const Space *theory_space;
+    CountRegionPatternKey key;
+    uint64_t count;
+    SpaceRegionGuard guard;
+} CountRegionCacheSlot;
+
+static _Thread_local CountRegionCacheSlot
+    g_count_region_cache[COUNT_REGION_CACHE_SLOTS];
+static _Thread_local uint64_t g_count_region_cache_hits = 0u;
+
+uint64_t eval_count_region_cache_hits(void) {
+    return g_count_region_cache_hits;
+}
+
+void eval_count_region_cache_reset(void) {
+    memset(g_count_region_cache, 0, sizeof(g_count_region_cache));
+    g_count_region_cache_hits = 0u;
+}
+
+static bool count_region_extract_key(const Atom *pattern,
+                                     CountRegionPatternKey *out) {
+    if (!pattern || !out || pattern->kind != ATOM_EXPR ||
+        pattern->expr.len < 1u || pattern->expr.len > COUNT_REGION_MAX_ARITY)
+        return false;
+    const Atom *head_atom = pattern->expr.elems[0];
+    if (!head_atom || head_atom->kind != ATOM_SYMBOL)
+        return false;
+    SymbolId head = head_atom->sym_id;
+    if (head == SYMBOL_ID_NONE || head == g_builtin_syms.comma ||
+        space_theory_is_theory_head(head))
+        return false;
+    memset(out, 0, sizeof(*out));
+    out->head = head;
+    out->arity = (uint8_t)pattern->expr.len;
+    VarId seen_vars[COUNT_REGION_MAX_ARITY - 1u];
+    uint8_t seen_var_count = 0u;
+    for (CettaExprLen i = 1u; i < pattern->expr.len; i++) {
+        const Atom *arg = pattern->expr.elems[i];
+        if (!arg)
+            return false;
+        uint8_t slot = (uint8_t)(i - 1u);
+        if (arg->kind == ATOM_VAR) {
+            if (var_id_is_none(arg->var_id))
+                return false;
+            for (uint8_t v = 0u; v < seen_var_count; v++) {
+                if (var_id_eq(seen_vars[v], arg->var_id))
+                    return false;
+            }
+            seen_vars[seen_var_count++] = arg->var_id;
+            out->arg_kind[slot] = 0u;
+            out->arg_val[slot] = 0u;
+        } else if (arg->kind == ATOM_SYMBOL) {
+            out->arg_kind[slot] = 1u;
+            out->arg_val[slot] = (uint64_t)arg->sym_id;
+        } else if (arg->kind == ATOM_GROUNDED && arg->ground.gkind == GV_INT) {
+            out->arg_kind[slot] = 2u;
+            out->arg_val[slot] = (uint64_t)arg->ground.ival;
+        } else if (arg->kind == ATOM_GROUNDED && arg->ground.gkind == GV_BOOL) {
+            out->arg_kind[slot] = 3u;
+            out->arg_val[slot] = arg->ground.bval ? 1u : 0u;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+static uint32_t count_region_key_slot(const Space *ms,
+                                      const CountRegionPatternKey *k) {
+    uint64_t h = ((uint64_t)(uintptr_t)ms) ^ ((uint64_t)k->head * UINT64_C(0x9e3779b97f4a7c15)) ^
+                 ((uint64_t)k->arity << 32);
+    for (uint8_t i = 0u; i + 1u < k->arity; i++) {
+        h ^= ((uint64_t)k->arg_kind[i] << 56) ^ k->arg_val[i];
+        h *= UINT64_C(0xbf58476d1ce4e5b9);
+        h ^= h >> 31;
+    }
+    return (uint32_t)(h & (COUNT_REGION_CACHE_SLOTS - 1u));
+}
+
+static bool count_region_key_eq(const CountRegionPatternKey *a,
+                                const CountRegionPatternKey *b) {
+    if (a->head != b->head || a->arity != b->arity)
+        return false;
+    for (uint8_t i = 0u; i + 1u < a->arity; i++) {
+        if (a->arg_kind[i] != b->arg_kind[i] || a->arg_val[i] != b->arg_val[i])
+            return false;
+    }
+    return true;
+}
+
 static bool try_count_generic_match_collapse(Space *s, Arena *a, Atom *match_atom,
                                              int fuel, uint64_t *out_count) {
     Bindings empty;
@@ -35897,9 +35989,9 @@ static bool try_count_generic_match_collapse(Space *s, Arena *a, Atom *match_ato
         return false;
     SpaceObserverKind requested =
         space_observer_from_fuel(SPACE_OBSERVER_COUNT, fuel);
-    SpaceRegionAdmission admission =
-        space_region_admission_for_data(SPACE_OBSERVER_COUNT, s, ms, false);
-    if (!space_region_admission_valid(&admission, requested, s, ms, NULL))
+    SpaceRegionGuard guard =
+        space_region_guard_for_data(SPACE_OBSERVER_COUNT, s, ms, false);
+    if (!space_region_guard_valid(&guard, requested, s, ms, NULL))
         return false;
     /* No engine-specific bail on variable templates: count_template_units is
      * conservative (it counts a row only when the projected template is
@@ -35936,8 +36028,40 @@ static bool try_count_generic_match_collapse(Space *s, Arena *a, Atom *match_ato
     } else {
         SubstMatchSet matches;
         CettaIndex examined = 0u;
-        if (count_template_is_one_without_bindings(
-                s, a, templ, &visible, fuel)) {
+        bool unit_template = count_template_is_one_without_bindings(
+            s, a, templ, &visible, fuel);
+        CountRegionPatternKey region_key;
+        CountRegionCacheSlot *cache_slot = NULL;
+        SpaceRegionGuard cache_guard = guard;
+        bool cache_eligible = unit_template &&
+            ms->overlay_base == NULL &&
+            count_region_extract_key(pattern, &region_key);
+        if (cache_eligible) {
+            cache_slot = &g_count_region_cache[count_region_key_slot(
+                ms, &region_key)];
+            bool same_slot = cache_slot->occupied &&
+                cache_slot->space == ms &&
+                cache_slot->theory_space == s &&
+                count_region_key_eq(&cache_slot->key, &region_key);
+            if (same_slot &&
+                space_region_guard_valid(&cache_slot->guard, requested,
+                                         s, ms, NULL)) {
+                g_count_region_cache_hits++;
+                match_visible_var_set_free(&visible);
+                *out_count = cache_slot->count;
+                return true;
+            }
+            if (same_slot || ms->head_clocks != NULL) {
+                /* 2nd touch (or space already tracking per-head counters):
+                 * promote to a per-head validity guard so future counts survive
+                 * writes on other head symbols in O(1) while leaving one-shot
+                 * spaces untouched. */
+                cache_guard = space_region_guard_for_head(
+                    SPACE_OBSERVER_COUNT, s, 0u, ms, SPACE_THEORY_ROLE_DATA,
+                    region_key.head, false);
+            }
+        }
+        if (unit_template) {
             CettaGsltTermViewV1 view =
                 bindings_term_view_v1(pattern, &empty);
             bool counted = space_match_count_flat_linear_view64(
@@ -35949,6 +36073,18 @@ static bool try_count_generic_match_collapse(Space *s, Arena *a, Atom *match_ato
                     ms, a, pattern, &count, &examined);
             }
             if (counted) {
+                if (cache_slot &&
+                    space_region_guard_valid(&cache_guard, requested,
+                                             s, ms, NULL)) {
+                    *cache_slot = (CountRegionCacheSlot){
+                        .occupied = true,
+                        .space = ms,
+                        .theory_space = s,
+                        .key = region_key,
+                        .count = count,
+                        .guard = cache_guard,
+                    };
+                }
                 match_visible_var_set_free(&visible);
                 *out_count = count;
                 return true;
@@ -35968,6 +36104,18 @@ static bool try_count_generic_match_collapse(Space *s, Arena *a, Atom *match_ato
             match_visible_var_set_free(&visible);
             if (direct_ctx.unsupported)
                 return false;
+            if (cache_slot &&
+                space_region_guard_valid(&cache_guard, requested,
+                                         s, ms, NULL)) {
+                *cache_slot = (CountRegionCacheSlot){
+                    .occupied = true,
+                    .space = ms,
+                    .theory_space = s,
+                    .key = region_key,
+                    .count = direct_ctx.count,
+                    .guard = cache_guard,
+                };
+            }
             *out_count = direct_ctx.count;
             return true;
         }
@@ -35983,10 +36131,22 @@ static bool try_count_generic_match_collapse(Space *s, Arena *a, Atom *match_ato
             }
         }
         smset_free(&matches);
+        if (ok && cache_slot &&
+            space_region_guard_valid(&cache_guard, requested,
+                                     s, ms, NULL)) {
+            *cache_slot = (CountRegionCacheSlot){
+                .occupied = true,
+                .space = ms,
+                .theory_space = s,
+                .key = region_key,
+                .count = count,
+                .guard = cache_guard,
+            };
+        }
     }
     match_visible_var_set_free(&visible);
     if (!ok ||
-        !space_region_admission_valid(&admission, requested, s, ms, NULL))
+        !space_region_guard_valid(&guard, requested, s, ms, NULL))
         return false;
     *out_count = count;
     return true;
@@ -48132,10 +48292,12 @@ static const HeGroundedSignature *he_grounded_signature(Space *space, Arena *are
 }
 
 static bool he_undeclared_expression(Space *space, const Atom *atom) {
+    SpaceTheoryView view = space_theory_view_borrow(space);
     return atom && atom->kind == ATOM_EXPR &&
         (atom->expr.len == 0u ||
          (atom->expr.elems[0]->kind == ATOM_SYMBOL &&
-          !space_head_declares_type(space, atom->expr.elems[0]->sym_id)));
+          !space_theory_view_head_declares_type(
+              &view, atom->expr.elems[0]->sym_id)));
 }
 
 static bool he_machine_grounded_values(void *context, Space *space, Arena *arena,
@@ -49393,7 +49555,8 @@ static bool petta_native_query_empty(Space *root, Atom *atom);
 static bool petta_native_query_types_transparent(Space *root, Arena *arena,
                                                  Atom *call, bool test) {
     SymbolId head = call->expr.elems[0]->sym_id;
-    if (!space_head_declares_type(root, head))
+    SpaceTheoryView view = space_theory_view_borrow(root);
+    if (!space_theory_view_head_declares_type(&view, head))
         return true;
     CettaExprLen arity = call->expr.len - 1u;
     if (arity > 64u ||
@@ -49555,9 +49718,10 @@ static bool petta_native_region_answers_itself(Space *root, Atom *atom,
         space_has_dependencies(root))
         return false;
     SymbolId head = atom->expr.elems[0]->sym_id;
+    SpaceTheoryView view = space_theory_view_borrow(root);
     if (petta_program_head_is_intrinsic(head) ||
         petta_native_query_defined(root, head) ||
-        space_head_declares_type(root, head) ||
+        space_theory_view_head_declares_type(&view, head) ||
         ((eval_admitted_rule_forms() & CETTA_RULE_SYNTAX_DIRECTIONAL) &&
          space_directional_rules_may_match_known_head(root, head)) ||
         (__builtin_expect(space_may_have_equational_aliases(root), 0) &&
@@ -49606,11 +49770,12 @@ static bool petta_native_query_head_inert(void *context,
     if (hdr->tag != ATOM_SYMBOL)
         return false;
     SymbolId head = hdr->sym_or_head;
+    SpaceTheoryView view = space_theory_view_borrow(root);
     return !petta_program_head_is_intrinsic(head) &&
         petta_semantics_form(head) == PETTA_FORM_NONE &&
         !is_grounded_op(head) &&
         !petta_native_query_defined(root, head) &&
-        !space_head_declares_type(root, head) &&
+        !space_theory_view_head_declares_type(&view, head) &&
         !((eval_admitted_rule_forms() & CETTA_RULE_SYNTAX_DIRECTIONAL) &&
           space_directional_rules_may_match_known_head(root, head)) &&
         !(__builtin_expect(space_may_have_equational_aliases(root), 0) &&
@@ -50199,7 +50364,7 @@ static bool petta_native_region_never(const Atom *atom) {
 /* `(add-atom S $v)` with $v a variable the legs bind: as
  * petta_native_query_effect admits an addition, its instances checked one
  * by one while the run defers every change
- * (CettaNativeQueryEffect.refused_heads). */
+ * (CettaNativeQueryEffect.refuse_theory_heads). */
 static bool petta_native_query_effect_checked(void *context, Space *root,
                                               Arena *arena, Atom *call,
                                               CettaNativeQueryEffect *effect,
@@ -50225,15 +50390,14 @@ static bool petta_native_query_effect_checked(void *context, Space *root,
     *answer = petta_semantics_success_value(arena);
     if (!*answer)
         return false;
-    /* A row PeTTa reads as a rule or a declaration is refused. */
+    /* Any theory-projection row (`=`, `=%`, `:`, `:<`, `=e`, `=e>`, `=e<`)
+     * is refused via the single canonical classifier. */
     *effect = (CettaNativeQueryEffect){
         .removal = false,
         .target = target,
         .data = call->expr.elems[2],
         .call = call,
-        .refused_heads = {g_builtin_syms.equals, g_builtin_syms.equals_percent,
-                          g_builtin_syms.colon},
-        .refused_head_count = 3u,
+        .refuse_theory_heads = true,
     };
     return true;
 }
@@ -53965,7 +54129,8 @@ static PettaMachineFoldResult petta_eval_scalar_fold(
         !symbol_id_is_builtin(step->expr.elems[0]->sym_id)) {
         /* A call of a function the program defines. */
         SymbolId head = step->expr.elems[0]->sym_id;
-        if (space_head_declares_type(space, head))
+        SpaceTheoryView view = space_theory_view_borrow(space);
+        if (space_theory_view_head_declares_type(&view, head))
             return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
         Atom *lhs[2];
         Atom *rhs[2];
@@ -54758,10 +54923,11 @@ static bool petta_eval_machine_admits_root(
             petta_eval_machine_relational_subject(expression);
         SymbolId relation_head =
             atom_head_symbol_id(relational_subject);
+        SpaceTheoryView view = space_theory_view_borrow(space);
         if (fuel >= 0 ||
             prime_need_receipt_observer_requested() ||
             relation_head == SYMBOL_ID_NONE ||
-            space_head_declares_type(space, relation_head) ||
+            space_theory_view_head_declares_type(&view, relation_head) ||
             !eval_space_has_equations(
                 space, relation_head)) {
             return false;

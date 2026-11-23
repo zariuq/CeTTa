@@ -204,6 +204,8 @@ typedef struct {
     SpaceTheoryToken program_token;
     SpaceReadToken rows;
     CettaCount row_count;
+    SpaceHeadSetStamp head_stamp;
+    uint8_t disjoint_refreshes;
 } CettaOpenEquationRead;
 CettaOpenEquationRead cetta_open_equation_program_read(
     const CettaOpenEquationProgram *program);

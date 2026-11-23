@@ -90,18 +90,8 @@ typedef struct SpaceAliasTable {
     AtomId *class_members;
     uint32_t class_members_len;
 
-    /* Suffix-tracked native `=e`/`=e>`/`=e<` rows in `s`'s own storage so
-     * append-only alias edits scan only newly appended rows instead of
-     * rebuilding a full-space index over N data rows. */
-    AtomId *own_alias_ids;
-    size_t own_alias_len;
-    size_t own_alias_cap;
-    CettaCount own_alias_synced_len;
-    uint64_t own_alias_prefix_epoch;
-    CettaIndex own_alias_marked;
-    uint64_t own_alias_universe_instance;
-    uint64_t own_alias_universe_epoch;
-    bool own_alias_valid;
+    /* Suffix-tracked equation collection cache owned by SpaceTheoryView. */
+    SpaceTheoryEquationCache equation_cache;
 } SpaceAliasTable;
 
 static inline uint32_t alias_mix_u32(uint32_t x) {
@@ -179,7 +169,7 @@ void space_alias_table_free(SpaceAliasTable *table) {
     if (!table)
         return;
     space_alias_clear_maps(table);
-    free(table->own_alias_ids);
+    space_theory_equation_cache_free(&table->equation_cache);
     free(table);
 }
 
@@ -622,71 +612,23 @@ static void alias_preference_sinks(uint32_t n, const uint32_t *from,
     free(start);
 }
 
-static bool space_alias_supports_native_id_scan(const Space *s) {
-    if (!s || s->overlay_base || s->native.start != 0u || !s->native.universe ||
-        (s->kind != SPACE_KIND_ATOM && s->kind != SPACE_KIND_SET) ||
-        (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
-         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
-        return false;
-    if (s->native.len == 0u)
-        return true;
-    return s->native.atom_ids != NULL &&
-           cetta_atom_id_storage_width_bytes_from_bits(
-               s->native.atom_id_width_bits) != 0u;
-}
-
-static void space_alias_scan_native_range(const Space *s, CettaIndex from,
-                                          CettaIndex to, AtomId **ids,
-                                          size_t *len, size_t *cap) {
-    if (from >= to)
+static void space_alias_append_equation_edges(Atom *atom, AliasEdgePair **edges,
+                                              size_t *edge_len, size_t *edge_cap) {
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len < 3u ||
+        !atom->expr.elems[0] || atom->expr.elems[0]->kind != ATOM_SYMBOL ||
+        space_theory_classify_head_arity(atom->expr.elems[0]->sym_id,
+                                         atom->expr.len) !=
+            SPACE_THEORY_ATOM_EQUATION)
         return;
-    const TermUniverse *u = s->native.universe;
-    size_t width =
-        cetta_atom_id_storage_width_bytes_from_bits(s->native.atom_id_width_bits);
-    const uint64_t *marks = s->native.marked ? s->native.marks : NULL;
-    for (CettaIndex row = from; row < to; row++) {
-        if (marks && row < s->native.mark_rows &&
-            ((marks[row >> 6] >> (row & 63u)) & 1u) != 0u)
-            continue;
-        AtomId id = cetta_atom_id_storage_load_bits(
-            s->native.atom_ids + (size_t)row * width,
-            s->native.atom_id_width_bits);
-        const CettaTermHdr *hdr = tu_hdr(u, id);
-        SymbolId head;
-        if (hdr) {
-            if (hdr->tag != ATOM_EXPR ||
-                (hdr->aux32 & CETTA_TERM_HDR_DATA_MASK) < 3u)
-                continue;
-            head = hdr->sym_or_head;
-        } else {
-            head = term_universe_head_sym_unrecorded(u, id);
-        }
-        if (!space_theory_is_alias_head(head))
-            continue;
-        if (*len == *cap) {
-            size_t next = *cap ? *cap * 2u : 8u;
-            *ids = cetta_realloc(*ids, sizeof(**ids) * next);
-            *cap = next;
-        }
-        (*ids)[(*len)++] = id;
-    }
-}
-
-static void space_alias_append_row_edges(Atom *row, AliasEdgePair **edges,
-                                         size_t *edge_len, size_t *edge_cap) {
-    if (!row || row->kind != ATOM_EXPR || row->expr.len < 3u ||
-        !row->expr.elems[0] || row->expr.elems[0]->kind != ATOM_SYMBOL ||
-        !space_theory_is_alias_head(row->expr.elems[0]->sym_id))
-        return;
-    SymbolId form = row->expr.elems[0]->sym_id;
+    SymbolId form = atom->expr.elems[0]->sym_id;
     AliasPrefer prefer = form == g_builtin_syms.equals_e_right
         ? ALIAS_PREFER_RIGHT
         : form == g_builtin_syms.equals_e_left ? ALIAS_PREFER_LEFT
                                                : ALIAS_PREFER_NONE;
     /* (=e a1 ... an) equates each member with its right neighbour. */
-    for (CettaExprIndex k = 1u; k + 1u < row->expr.len; k++) {
-        Atom *lhs = row->expr.elems[k];
-        Atom *rhs = row->expr.elems[k + 1u];
+    for (CettaExprIndex k = 1u; k + 1u < atom->expr.len; k++) {
+        Atom *lhs = atom->expr.elems[k];
+        Atom *rhs = atom->expr.elems[k + 1u];
         if (!lhs || !rhs || atom_has_vars(lhs) || atom_has_vars(rhs) ||
             atom_eq(lhs, rhs))
             continue;
@@ -719,87 +661,23 @@ static void space_alias_rebuild_locked(Space *s, SpaceAliasTable *t,
     AliasEdgePair *edges = NULL;
     size_t edge_len = 0u, edge_cap = 0u;
 
-    /* Collect alias rows without rebuilding a full-space head index over N
-     * data rows: on plain native spaces, track `s`'s own alias AtomIds by
-     * append-only suffix catch-up (O(delta) per edit), then read only
-     * dependencies whose equational revision is non-zero.  Overlays and
-     * ordered/external spaces fall back to the composed view. */
-    if (space_alias_supports_native_id_scan(s)) {
-        uint64_t prefix = space_prefix_epoch(s);
-        CettaIndex marked = s->native.marked;
-        CettaCount cur_len = s->native.len;
-        if (t->own_alias_valid &&
-            t->own_alias_prefix_epoch == prefix &&
-            t->own_alias_marked == marked &&
-            t->own_alias_universe_instance == u_inst &&
-            t->own_alias_universe_epoch == u_epoch &&
-            t->own_alias_synced_len <= cur_len) {
-            space_alias_scan_native_range(
-                s, t->own_alias_synced_len, cur_len,
-                &t->own_alias_ids, &t->own_alias_len, &t->own_alias_cap);
-        } else {
-            t->own_alias_len = 0u;
-            space_alias_scan_native_range(
-                s, 0u, cur_len,
-                &t->own_alias_ids, &t->own_alias_len, &t->own_alias_cap);
+    /* Collect active equation atoms through SpaceTheoryView (preserving
+     * O(delta) suffix catch-up on plain native spaces). */
+    SpaceTheoryView view = space_theory_view_open(s);
+    Atom **equation_atoms = NULL;
+    size_t equation_count = 0u;
+    if (space_theory_view_collect_equations(&view, &t->equation_cache,
+                                            &equation_atoms, &equation_count)) {
+        for (size_t i = 0u; i < equation_count; i++) {
+            space_alias_append_equation_edges(equation_atoms[i], &edges,
+                                              &edge_len, &edge_cap);
         }
-        t->own_alias_synced_len = cur_len;
-        t->own_alias_prefix_epoch = prefix;
-        t->own_alias_marked = marked;
-        t->own_alias_universe_instance = u_inst;
-        t->own_alias_universe_epoch = u_epoch;
-        t->own_alias_valid = true;
-
-        for (size_t i = 0u; i < t->own_alias_len; i++) {
-            Atom *row = term_universe_get_atom(s->native.universe,
-                                               t->own_alias_ids[i]);
-            space_alias_append_row_edges(row, &edges, &edge_len, &edge_cap);
-        }
-
-        uint32_t dep_count = space_dependency_count(s);
-        for (uint32_t d = 0u; d < dep_count; d++) {
-            const Space *dep = space_dependency_at(s, d);
-            if (!dep)
-                continue;
-            if (space_equational_revision(dep) == 0u &&
-                !dep->overlay_base && dep->dep_count == 0u)
-                continue;
-            if (space_alias_supports_native_id_scan(dep) &&
-                dep->native.marked == 0u &&
-                dep->imported_len <= dep->native.len) {
-                AtomId *dep_ids = NULL;
-                size_t dep_len = 0u, dep_cap = 0u;
-                space_alias_scan_native_range(
-                    dep, dep->imported_len, dep->native.len,
-                    &dep_ids, &dep_len, &dep_cap);
-                for (size_t i = 0u; i < dep_len; i++) {
-                    Atom *row =
-                        term_universe_get_atom(dep->native.universe, dep_ids[i]);
-                    space_alias_append_row_edges(row, &edges, &edge_len,
-                                                 &edge_cap);
-                }
-                free(dep_ids);
-            } else {
-                CettaIndex begin = space_imported_length(dep);
-                CettaCount dep_total = space_length64(dep);
-                for (CettaIndex i = begin; i < dep_total; i++) {
-                    space_alias_append_row_edges(
-                        space_get_at64(dep, i), &edges, &edge_len, &edge_cap);
-                }
-            }
-        }
-    } else {
-        t->own_alias_valid = false;
-        CettaCount total = space_view_length64(s);
-        for (CettaIndex i = 0u; i < total; i++) {
-            space_alias_append_row_edges(
-                space_view_get_at64(s, i), &edges, &edge_len, &edge_cap);
-        }
+        free(equation_atoms);
     }
 
     if (edge_len == 0u) {
-        /* LiveTheoryProjections.empty_after_edit: empty active equations ->
-         * Plan.literal even when equational_revision > 0. */
+        /* When no active equations remain, the table stays inactive even when
+         * equational_revision > 0. */
         free(edges);
         return;
     }

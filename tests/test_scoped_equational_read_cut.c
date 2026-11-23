@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "eval.h"
+#include "parser.h"
 #include "runtime_names.h"
 #include "shared_transition.h"
 #include "space.h"
@@ -141,6 +143,100 @@ static void run_cut(int imported) {
     arena_free(&persistent);
 }
 
+static Atom *parse_one_atom(Arena *arena, const char *src) {
+    Atom **atoms = NULL;
+    int n = parse_metta_text(src, arena, &atoms);
+    assert(n == 1 && atoms && atoms[0]);
+    Atom *res = atoms[0];
+    free(atoms);
+    return res;
+}
+
+static int64_t eval_int_once(Space *s, Arena *arena, const char *src, int fuel) {
+    Atom *expr = parse_one_atom(arena, src);
+    int prev_fuel = eval_get_default_fuel();
+    eval_set_default_fuel(fuel);
+    ResultSet rs;
+    result_set_init(&rs);
+    eval_top(s, arena, expr, &rs);
+    eval_set_default_fuel(prev_fuel);
+    assert(rs.len == 1u && rs.items[0] &&
+           rs.items[0]->kind == ATOM_GROUNDED &&
+           rs.items[0]->ground.gkind == GV_INT);
+    int64_t val = rs.items[0]->ground.ival;
+    result_set_free(&rs);
+    return val;
+}
+
+static void verify_head_scoped_count_region_cache(void) {
+    Arena persistent, scratch;
+    TermUniverse universe;
+    Space s;
+    arena_init(&persistent);
+    arena_set_runtime_kind(&persistent, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    space_init_with_universe(&s, &universe);
+
+    eval_count_region_cache_reset();
+    const char *seed[] = {
+        "(rel 77 1 2)", "(rel 77 3 4)", "(rel 77 5 6)", "(rel 99 1 2)"
+    };
+    for (size_t i = 0u; i < 4u; i++)
+        space_add(&s, parse_one_atom(&scratch, seed[i]));
+
+    const char *q = "(let $xs (collapse (match &self (rel 77 $b $c) 1)) (size-atom $xs))";
+    /* 1st touch: computes 3, leaves head_clocks NULL (zero overhead for one-shot). */
+    assert(eval_int_once(&s, &scratch, q, -1) == 3);
+    assert(eval_count_region_cache_hits() == 0u);
+    assert(s.head_clocks == NULL);
+
+    /* Unrelated write + 2nd touch: promotes to SPACE_FOOTPRINT_HEAD_SCOPED. */
+    Atom *noise1 = parse_one_atom(&scratch, "(noise 1)");
+    space_add(&s, noise1);
+    assert(eval_int_once(&s, &scratch, q, -1) == 3);
+    assert(eval_count_region_cache_hits() == 0u);
+    assert(s.head_clocks != NULL);
+
+    /* Subsequent unrelated writes and removals hit the head-scoped cache in O(1)! */
+    for (int i = 2; i <= 10; i++) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "(noise %d)", i);
+        space_add(&s, parse_one_atom(&scratch, buf));
+    }
+    assert(space_remove(&s, noise1));
+    assert(eval_int_once(&s, &scratch, q, -1) == 3);
+    assert(eval_count_region_cache_hits() == 1u);
+    space_add(&s, parse_one_atom(&scratch, "(other-head 1 2)"));
+    assert(eval_int_once(&s, &scratch, q, -1) == 3);
+    assert(eval_count_region_cache_hits() == 2u);
+
+    /* Same-head add invalidates cache (no spurious hit), next unrelated write hits again. */
+    space_add(&s, parse_one_atom(&scratch, "(rel 77 9 10)"));
+    assert(eval_int_once(&s, &scratch, q, -1) == 4);
+    assert(eval_count_region_cache_hits() == 2u);
+    space_add(&s, parse_one_atom(&scratch, "(noise 99)"));
+    assert(eval_int_once(&s, &scratch, q, -1) == 4);
+    assert(eval_count_region_cache_hits() == 3u);
+
+    /* Open atom invalidates watched head symbol count. */
+    space_add(&s, parse_one_atom(&scratch, "($open-h 77 1 2)"));
+    assert(eval_int_once(&s, &scratch, q, -1) == 5);
+    assert(eval_count_region_cache_hits() == 3u);
+
+    /* Bounded fuel (`SPACE_OBSERVER_TIMED`) declines cached count validity guard. */
+    assert(eval_int_once(&s, &scratch, q, 1000) == 5);
+    assert(eval_count_region_cache_hits() == 3u);
+
+    eval_count_region_cache_reset();
+    space_free(&s);
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+    puts("PASS: head-scoped counted-match region cache hits under unrelated writes and invalidates cleanly");
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -150,6 +246,7 @@ int main(void) {
     g_var_intern = NULL;
     run_cut(0);
     run_cut(1);
+    verify_head_scoped_count_region_cache();
     bindings_thread_cache_free();
     symbol_table_free(&symbols);
     puts("PASS: 4800 guarded reads cannot invent a match across an equation edit");

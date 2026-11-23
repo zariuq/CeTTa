@@ -780,6 +780,8 @@ bool cetta_open_equation_program_refresh(
     SpaceTheoryToken now = space_theory_token(space);
     SpaceReadToken rows = space_read_token(space);
     CettaCount count = space_rule_rows64(space);
+    SpaceHeadSetStamp next_stamp = read->head_stamp;
+    uint8_t next_refreshes = read->disjoint_refreshes;
     if (!space_theory_token_eq(read->program_token, now)) {
         if (!program->read_heads_complete || space->overlay_base ||
             space_has_dependencies(space) ||
@@ -787,45 +789,72 @@ bool cetta_open_equation_program_refresh(
             !space_read_token_prefix_intact(read->rows) ||
             read->row_count > count)
             return false;
-        for (CettaIndex index = read->row_count; index < count; index++) {
-            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_APPEND_ROW);
-            Atom *row = space_get_at64(space, index);
-            if (!row)
-                return false;
-            SymbolId head = SYMBOL_ID_NONE;
-            bool compound_subject = false;
-            SpaceTheoryRowKind kind = space_theory_classify_row(
-                row, &head, &compound_subject);
-            switch (kind) {
-            case SPACE_THEORY_ROW_DATA:
-                continue;
-            case SPACE_THEORY_ROW_SUBTYPE_DECLARATION:
-            case SPACE_THEORY_ROW_EQUATIONAL_ALIAS:
-                return false;
-            case SPACE_THEORY_ROW_EQUATION:
-            case SPACE_THEORY_ROW_DIRECTIONAL_RULE:
-                if (head == SYMBOL_ID_NONE || program->assumes_unchanged_callees)
+        bool head_clock_eligible =
+            program->read_head_len > 0u && program->read_heads != NULL &&
+            !program->assumes_unchanged_callees &&
+            !program->assumes_value_callees;
+        bool head_clock_hit =
+            head_clock_eligible && read->head_stamp.active &&
+            space_theory_head_set_clock_current(
+                space, program->read_heads, program->read_head_len,
+                &read->head_stamp);
+        if (!head_clock_hit) {
+            for (CettaIndex index = read->row_count; index < count; index++) {
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_APPEND_ROW);
+                Atom *row = space_get_at64(space, index);
+                if (!row)
                     return false;
-                break;
-            case SPACE_THEORY_ROW_TYPE_DECLARATION:
-                if (compound_subject) {
-                    /* Compilation asks for types of named heads. A compound
-                     * subject cannot unify with a symbol, even with open fields. */
+                SymbolId head = SYMBOL_ID_NONE;
+                bool compound_subject = false;
+                SpaceTheoryAtomKind kind = space_theory_classify_atom(
+                    row, &head, &compound_subject);
+                switch (kind) {
+                case SPACE_THEORY_ATOM_DATA:
                     continue;
-                }
-                if (program->assumes_value_callees || head == SYMBOL_ID_NONE)
+                case SPACE_THEORY_ATOM_SUBTYPE_ASSIGNMENT:
+                case SPACE_THEORY_ATOM_EQUATION:
                     return false;
-                break;
+                case SPACE_THEORY_ATOM_DEFINITION:
+                case SPACE_THEORY_ATOM_DIRECTIONAL_DEFINITION:
+                    if (head == SYMBOL_ID_NONE || program->assumes_unchanged_callees)
+                        return false;
+                    break;
+                case SPACE_THEORY_ATOM_TYPE_ASSIGNMENT:
+                    if (compound_subject) {
+                        /* Compilation asks for types of named heads. A compound
+                         * subject cannot unify with a symbol, even with open fields. */
+                        continue;
+                    }
+                    if (program->assumes_value_callees || head == SYMBOL_ID_NONE)
+                        return false;
+                    break;
+                }
+                if (oem_reads_head(program, head))
+                    return false;
             }
-            if (oem_reads_head(program, head))
-                return false;
+            if (head_clock_eligible) {
+                if (next_refreshes < 2u)
+                    next_refreshes++;
+                if (next_refreshes >= 2u) {
+                    (void)space_theory_head_set_clock_capture(
+                        space, program->read_heads, program->read_head_len,
+                        SPACE_THEORY_ROLE_RULES | SPACE_THEORY_ROLE_DECLS |
+                            SPACE_THEORY_ROLE_ALIAS,
+                        &next_stamp);
+                }
+            }
         }
     }
     if (!space_read_token_matches_live_space(rows, space) ||
         !space_theory_token_matches_live_space(now, space))
         return false;
     *read = (CettaOpenEquationRead){
-        .program = program, .program_token = now, .rows = rows, .row_count = count,
+        .program = program,
+        .program_token = now,
+        .rows = rows,
+        .row_count = count,
+        .head_stamp = next_stamp,
+        .disjoint_refreshes = next_refreshes,
     };
     return true;
 }
@@ -3410,7 +3439,8 @@ static bool oem_literal_types_intrinsic(const OemCompile *compile) {
                                          &maximum, &exact, 1u, forms))
             return false;
     }
-    return space_type_annotations_have_only_symbol_subjects(space);
+    SpaceTheoryView view = space_theory_view_borrow(space);
+    return space_theory_view_type_annotations_symbol_only(&view);
 }
 
 enum { OEM_CLASS_NONE = 0u, OEM_CLASS_NUMBER = 1u, OEM_CLASS_STRING = 2u };
@@ -3610,14 +3640,15 @@ static bool oem_host_takes_data_values(const OemCompile *compile,
 static bool oem_build_builtin_entry(OemCompile *compile, Atom *expr,
                                     const PettaPlanNode *plan, uint32_t depth,
                                     bool tail, uint32_t *out) {
+    SpaceTheoryView view = space_theory_view_borrow(compile->program->space);
     if (compile->host && compile->host->declared_builtin_protocol &&
         expr && expr->kind == ATOM_EXPR && expr->expr.len > 0u &&
         expr->expr.elems[0]->kind == ATOM_SYMBOL && plan &&
         plan->role != PETTA_PLAN_VALUE && plan->role != PETTA_PLAN_DATA &&
         is_grounded_op(expr->expr.elems[0]->sym_id) &&
         petta_semantics_form(expr->expr.elems[0]->sym_id) == PETTA_FORM_NONE &&
-        space_head_declares_type(
-            compile->program->space, expr->expr.elems[0]->sym_id)) {
+        space_theory_view_head_declares_type(
+            &view, expr->expr.elems[0]->sym_id)) {
         /* The native protocol keeps the program it was compiled under: the
          * entry sends a changed program's occurrence to the host. */
         bool built = false;
@@ -4006,10 +4037,11 @@ static bool oem_build_value_native(OemCompile *compile, Atom *expr,
         while (innermost->kind == ATOM_EXPR && innermost->expr.len > 0u &&
                innermost->expr.elems[0]->kind == ATOM_EXPR)
             innermost = innermost->expr.elems[0];
+        SpaceTheoryView view = space_theory_view_borrow(compile->program->space);
         if (innermost->kind == ATOM_EXPR && innermost->expr.len > 0u &&
             innermost->expr.elems[0]->kind == ATOM_SYMBOL &&
-            space_head_declares_type(compile->program->space,
-                                     innermost->expr.elems[0]->sym_id))
+            space_theory_view_head_declares_type(
+                &view, innermost->expr.elems[0]->sym_id))
             return oem_build_host(compile, expr, plan, depth,
                                   "written head of a declared function", out);
     }

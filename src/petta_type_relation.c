@@ -159,11 +159,12 @@ static bool petta_type_fact_key(Space *space, Arena *arena, Atom *subject,
         petta_type_facts.enabled = !reference || strcmp(reference, "1") != 0;
         petta_type_facts.configured = true;
     }
+    SpaceTheoryView theory_view = space_theory_view_borrow(space);
     if (!petta_type_facts.enabled ||
         !petta_type_fact_operand(arena, subject) ||
         (target && target->kind != ATOM_VAR &&
          !petta_type_fact_operand(arena, target)) ||
-        !space_type_annotations_have_only_symbol_subjects(space))
+        !space_theory_view_type_annotations_symbol_only(&theory_view))
         return false;
     uint64_t hashcons_epoch = hashcons_reclamation_epoch();
     if (hashcons_epoch == UINT64_MAX) {
@@ -1010,9 +1011,10 @@ static Atom *petta_type_walk_declaration(Space *space, Arena *arena,
  * which decides every other case, failures included. */
 static bool petta_type_walk_once(Space *space, Arena *arena, Atom *subject,
                                  Atom *target) {
+    SpaceTheoryView theory_view = space_theory_view_borrow(space);
     if (!subject || subject->kind != ATOM_EXPR || atom_has_vars(subject) ||
         !target || atom_has_vars(target) || target->kind == ATOM_VAR ||
-        !space_type_annotations_have_only_symbol_subjects(space))
+        !space_theory_view_type_annotations_symbol_only(&theory_view))
         return false;
     PettaTypeWalkHead heads[PETTA_TYPE_WALK_HEADS];
     uint32_t head_count = 0u;

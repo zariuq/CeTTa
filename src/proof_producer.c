@@ -175,7 +175,7 @@ CettaProofProducerStatus cetta_proof_producer_prepare(
     if (!native_space(program) || !native_space(q->source) || !native_space(source) ||
         !native_space(effect->target) || effect->target != source ||
         !space_is_set(source) || effect->removal || effect->insert ||
-        effect->refused_head_count ||
+        effect->refuse_theory_heads ||
         program->native.universe != source->native.universe ||
         q->source->native.universe != source->native.universe)
         return declined(why, CETTA_PROOF_REASON_SPACE);

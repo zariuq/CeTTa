@@ -1915,7 +1915,8 @@ static bool petta_machine_declared_grounded(PettaMachineImpl *machine, SymbolId 
         return false;
     /* One read of the head's declarations. */
     CETTA_SCOPED_SPACE_OBSERVE(declaration_read, machine->space);
-    return space_head_declares_type(machine->space, head);
+    SpaceTheoryView view = space_theory_view_borrow(machine->space);
+    return space_theory_view_head_declares_type(&view, head);
 }
 
 /* Whether HEAD names the plain operation at this arity, with no declaration
@@ -2382,7 +2383,8 @@ static bool petta_machine_has_equations(const PettaMachineImpl *machine, SymbolI
 static bool petta_machine_head_declares_type(const PettaMachineImpl *machine,
                                              SymbolId head) {
     CETTA_SCOPED_SPACE_OBSERVE(declaration_read, machine->space);
-    return space_head_declares_type(machine->space, head);
+    SpaceTheoryView view = space_theory_view_borrow(machine->space);
+    return space_theory_view_head_declares_type(&view, head);
 }
 
 /* The live reading (P-DEF-4).  A plan decides each occurrence under the
@@ -12599,14 +12601,15 @@ static bool petta_machine_closed_relation_call_ready(
     /* The head's declarations and the callability of its arguments are one
      * observation of the shared space. */
     CETTA_SCOPED_SPACE_OBSERVE(ready_call_observation, machine->space);
+    SpaceTheoryView view = space_theory_view_borrow(machine->space);
     if (!plan || !plan->contains_call || !plan->relation_head_admitted ||
         plan->execution != PETTA_PLAN_EXEC_RELATION_SLOTS ||
         !result || result->kind != ATOM_EXPR || result->expr.len == 0u ||
         !result->expr.elems[0] ||
         result->expr.elems[0]->kind != ATOM_SYMBOL ||
         (!petta_equation_result_is_explicit_function(result) &&
-         space_head_declares_type(
-             machine->space, result->expr.elems[0]->sym_id)) ||
+         space_theory_view_head_declares_type(
+             &view, result->expr.elems[0]->sym_id)) ||
         plan->child_count != result->expr.len || atom_has_vars(result) ||
         machine->host.source_output_constraints ||
         machine->host.externalize_equation_choices ||
@@ -17113,8 +17116,9 @@ static PettaJointGuardVerdict petta_machine_joint_guard_intrinsic(
         if (closed)
             subject = closed;
     }
+    SpaceTheoryView view = space_theory_view_borrow(machine->space);
     if (subject->kind != ATOM_VAR && atom_has_vars(subject) &&
-        !space_type_annotations_have_only_symbol_subjects(machine->space))
+        !space_theory_view_type_annotations_symbol_only(&view))
         return PETTA_JOINT_GUARD_DEFER;
     Atom **types = NULL;
     uint32_t type_count = 0u;
@@ -17946,7 +17950,8 @@ static PettaRhsExtension petta_machine_equation_extension_seen(
     {
         /* The head's declarations, read in one observation. */
         CETTA_SCOPED_SPACE_OBSERVE(declaration_read, machine->space);
-        if (space_head_declares_type(machine->space, head)) {
+        SpaceTheoryView view = space_theory_view_borrow(machine->space);
+        if (space_theory_view_head_declares_type(&view, head)) {
             Atom **types = NULL;
             uint32_t count = space_get_declared_types(
                 machine->space, &machine->heap, query->expr.elems[0], &types);
@@ -24081,9 +24086,10 @@ static bool petta_machine_start_intrinsic_get_type(
         /* The annotations' subjects and get-type's equations are one
          * observation of the shared space. */
         CETTA_SCOPED_SPACE_OBSERVE(type_query_observation, machine->space);
+        SpaceTheoryView view = space_theory_view_borrow(machine->space);
         relational =
             (atom_has_vars(value) &&
-             !space_type_annotations_have_only_symbol_subjects(machine->space)) ||
+             !space_theory_view_type_annotations_symbol_only(&view)) ||
             (sequence && petta_machine_get_type_has_exact_extension(machine));
     }
     if (relational) {
@@ -25357,10 +25363,11 @@ static Atom *petta_machine_native_query_unfold(
      * the head. */
     PeTTaNamedArity extension = petta_machine_head_extension_arity(machine, call);
     CETTA_SCOPED_SPACE_OBSERVE(unfold_observation, machine->space);
+    SpaceTheoryView view = space_theory_view_borrow(machine->space);
     if (petta_program_head_is_intrinsic(head) ||
         petta_machine_builtin_equations_mode(machine, head, arity) !=
             PETTA_MACHINE_BUILTIN_EQUATIONS_NONE ||
-        (space_head_declares_type(machine->space, head) &&
+        (space_theory_view_head_declares_type(&view, head) &&
          !(unobserved && petta_machine_types_unobserved(machine, call))) ||
         ((machine->host.admitted_rule_forms &
           CETTA_RULE_SYNTAX_DIRECTIONAL) &&
@@ -27033,11 +27040,12 @@ static bool petta_machine_intrinsic_guard_program(PettaMachineImpl *machine,
              &machine->intrinsic_guard.guard, space, clock))) {
         return machine->intrinsic_guard.ready;
     }
+    SpaceTheoryView view = space_theory_view_open(space);
     space_theory_clock_guard_capture(&machine->intrinsic_guard.guard, space);
     bool ready = machine->host.get_type && machine->host.get_metatype &&
         !petta_machine_get_type_has_exact_extension(machine) &&
         !petta_machine_has_unary_extension(machine, g_builtin_syms.get_metatype) &&
-        space_type_annotations_have_only_symbol_subjects(space);
+        space_theory_view_type_annotations_symbol_only(&view);
     machine->intrinsic_guard.valid = true;
     machine->intrinsic_guard.ready = ready;
     return ready;
@@ -27207,8 +27215,9 @@ static bool petta_machine_commit_contract_type(
         if (closed)
             subject = closed;
     }
+    SpaceTheoryView view = space_theory_view_borrow(machine->space);
     if (atom_has_vars(subject) &&
-        !space_type_annotations_have_only_symbol_subjects(machine->space)) {
+        !space_theory_view_type_annotations_symbol_only(&view)) {
         *failure = PETTA_MACHINE_STEP_EXHAUSTED;
         return false;
     }
@@ -27266,6 +27275,7 @@ static bool petta_machine_contract_check(
          * whether the annotations' subjects are symbols, are one
          * observation of the shared space. */
         CETTA_SCOPED_SPACE_OBSERVE(contract_guard_observation, machine->space);
+        SpaceTheoryView view = space_theory_view_borrow(machine->space);
         exact_extension = petta_machine_get_type_has_exact_extension(machine);
         intrinsic_guard =
             machine->host.get_type && machine->host.get_metatype && failure &&
@@ -27273,7 +27283,7 @@ static bool petta_machine_contract_check(
             !petta_machine_has_unary_extension(
                 machine, g_builtin_syms.get_metatype) &&
             (value->kind == ATOM_VAR || !atom_has_vars(value) ||
-             space_type_annotations_have_only_symbol_subjects(machine->space));
+             space_theory_view_type_annotations_symbol_only(&view));
     }
     if (petta_type_literal_proves(value, formal) && !exact_extension)
         return true;
@@ -27312,6 +27322,7 @@ static bool petta_machine_type_accept(
     bool symbol_subjects;
     {
         CETTA_SCOPED_SPACE_OBSERVE(type_guard_observation, machine->space);
+        SpaceTheoryView view = space_theory_view_borrow(machine->space);
         exact_extension =
             petta_machine_get_type_has_exact_extension(machine);
         exact_metatype_extension = ground_pair &&
@@ -27319,7 +27330,7 @@ static bool petta_machine_type_accept(
                                               g_builtin_syms.get_metatype);
         symbol_subjects = value->kind == ATOM_VAR ||
             !atom_has_vars(value) ||
-            space_type_annotations_have_only_symbol_subjects(machine->space);
+            space_theory_view_type_annotations_symbol_only(&view);
     }
     if (petta_type_literal_proves(value, formal) &&
         (ground_pair || !exact_extension))
@@ -28726,9 +28737,10 @@ static bool petta_machine_dispatch_counted_collection(
             !extension.exact &&
             petta_machine_has_equations(machine, head);
         if (ordinary_equation_call) {
+            SpaceTheoryView view = space_theory_view_borrow(machine->space);
             partial = petta_machine_partial_decision_given(
                 machine, expression, extension);
-            head_declared = space_head_declares_type(machine->space, head);
+            head_declared = space_theory_view_head_declares_type(&view, head);
         }
         if (ordinary_equation_call && partial == PETTA_PARTIAL_NO) {
             Atom **types = NULL;
@@ -36252,7 +36264,8 @@ static bool petta_machine_head_declines_declared_type(
         petta_semantics_form(head_id) != PETTA_FORM_NONE)
         return false;
     CETTA_SCOPED_SPACE_OBSERVE(declared_type_decline_observation, machine->space);
-    if (!space_head_declares_type(machine->space, head_id))
+    SpaceTheoryView view = space_theory_view_borrow(machine->space);
+    if (!space_theory_view_head_declares_type(&view, head_id))
         return false;
     if (petta_machine_has_equations(machine, head_id))
         return true;
@@ -36287,7 +36300,8 @@ static bool petta_machine_call_equations(
     PettaTypeCall *calls = NULL;
     uint32_t count = 0u;
     bool hold_body = false;
-    bool declared = space_head_declares_type(machine->space, head_id);
+    SpaceTheoryView view = space_theory_view_borrow(machine->space);
+    bool declared = space_theory_view_head_declares_type(&view, head_id);
     if (declared && machine->host.decline_declared_typed_calls) {
         *failure = PETTA_MACHINE_STEP_DECLINED;
         return false;
@@ -36619,9 +36633,10 @@ static bool petta_machine_callee_demands_source(
         return false;
     /* The callee's equations and declarations are one observation. */
     CETTA_SCOPED_SPACE_OBSERVE(callee_observation, machine->space);
+    SpaceTheoryView view = space_theory_view_borrow(machine->space);
     return (petta_machine_has_equations(machine, (*base)->sym_id) ||
             petta_machine_declared_grounded(machine, (*base)->sym_id)) &&
-        space_head_declares_type(machine->space, (*base)->sym_id);
+        space_theory_view_head_declares_type(&view, (*base)->sym_id);
 }
 
 /* The plan of a callee's call made from `held` partial values followed by
@@ -36761,12 +36776,13 @@ static bool petta_machine_try_staged_typed_call(
     /* The function is the program's, or an intrinsic operation that obeys
      * its declarations (petta_machine_declared_grounded); a name the
      * language dispatches otherwise keeps that dispatch. */
+    SpaceTheoryView view = space_theory_view_borrow(machine->space);
     if (level->kind != ATOM_EXPR || level->expr.len < 2u ||
         level->expr.elems[0]->kind != ATOM_SYMBOL ||
         petta_semantics_form(level->expr.elems[0]->sym_id) !=
             PETTA_FORM_NONE ||
-        !space_head_declares_type(machine->space,
-                                  level->expr.elems[0]->sym_id) ||
+        !space_theory_view_head_declares_type(
+            &view, level->expr.elems[0]->sym_id) ||
         !(petta_machine_has_equations(machine, level->expr.elems[0]->sym_id) ||
           petta_machine_declared_grounded(machine,
                                           level->expr.elems[0]->sym_id)))
@@ -39665,6 +39681,7 @@ static bool petta_machine_dispatch_solve(
         PeTTaNamedArity extension = petta_machine_step_boundary(
             machine, expression, &boundary_for, &boundary);
         CETTA_SCOPED_SPACE_OBSERVE(partial_dispatch_observation, machine->space);
+        SpaceTheoryView view = space_theory_view_borrow(machine->space);
         PettaPartialDecision partial =
             petta_machine_partial_decision_given(machine, expression, extension);
         if (partial == PETTA_PARTIAL_INVALIDATED) {
@@ -39673,14 +39690,14 @@ static bool petta_machine_dispatch_solve(
         }
         if ((partial == PETTA_PARTIAL_OVERAPPLIED || partial == PETTA_PARTIAL_YES) &&
             machine->host.decline_declared_typed_calls &&
-            space_head_declares_type(machine->space, head_id)) {
+            space_theory_view_head_declares_type(&view, head_id)) {
             *failure = PETTA_MACHINE_STEP_DECLINED;
             return false;
         }
         if (partial == PETTA_PARTIAL_OVERAPPLIED) {
             /* A declared call selects its interface before any argument effect.
              * Preserve the existing untyped dispatch boundary separately. */
-            if (space_head_declares_type(machine->space, head_id)) {
+            if (space_theory_view_head_declares_type(&view, head_id)) {
                 return petta_goal_push(machine, &(PettaGoal){
                     .kind = PETTA_GOAL_OVERAPPLICATION_READY,
                     .barrier = goal->barrier,
@@ -39703,7 +39720,7 @@ static bool petta_machine_dispatch_solve(
             /* Check supplied arguments through the same typed-call path. The
              * closure itself is not checked against the completed codomain. */
             if (petta_machine_has_equations(machine, head_id) &&
-                space_head_declares_type(machine->space, head_id)) {
+                space_theory_view_head_declares_type(&view, head_id)) {
                 PettaTypeCall *calls = NULL;
                 uint32_t count = 0u;
                 bool hold_body = false;

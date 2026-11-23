@@ -217,7 +217,7 @@ CettaNativeQueryStatus cetta_native_open_query_run(
     /* Additions into sets, which hold an instance as its alpha key. */
     for (size_t e = 0u; e < effect_count; e++) {
         const CettaNativeQueryEffect *made = &query->effects[e];
-        if (made->removal || made->refused_head_count != 0u ||
+        if (made->removal || made->refuse_theory_heads ||
             !made->target || !made->data ||
             made->target->native.universe != universe ||
             !space_is_set(made->target))

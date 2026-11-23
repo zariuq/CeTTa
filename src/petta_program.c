@@ -1381,13 +1381,12 @@ static bool petta_program_type_declaration_view(
 
 bool petta_program_form_id_may_affect_metadata(const TermUniverse *universe,
                                                AtomId id) {
-    if (!universe || tu_kind(universe, id) != ATOM_EXPR ||
-        tu_arity(universe, id) != 3u)
+    if (!universe || tu_kind(universe, id) != ATOM_EXPR)
         return false;
-    SymbolId head = tu_head_sym(universe, id);
-    return head == g_builtin_syms.equals ||
-        head == g_builtin_syms.equals_percent ||
-        head == g_builtin_syms.colon;
+    SpaceTheoryAtomKind kind = space_theory_classify_head_arity(
+        tu_head_sym(universe, id), tu_arity(universe, id));
+    return space_theory_atom_kind_is_definition(kind) ||
+           kind == SPACE_THEORY_ATOM_TYPE_ASSIGNMENT;
 }
 
 bool petta_program_atom_affects_metadata(Atom *atom) {
@@ -3408,9 +3407,10 @@ static bool petta_program_scan_callability_rows(
     const PettaProgram *program, const Space *space,
     CettaCount from, CettaCount to,
     PettaCallabilityDomain *callability) {
+    SpaceTheoryView view = space_theory_view_open((Space *)space);
     for (CettaIndex atom_index = from; atom_index < to; atom_index++) {
-        /* Only a row shaped as a rule names a head; a fact is not read. */
-        if (!space_row_may_be_rule(space, atom_index))
+        /* Only an atom shaped as a function definition names a head; data is skipped. */
+        if (!space_theory_view_atom_may_be_definition(&view, atom_index, true))
             continue;
         Atom *lhs = NULL;
         SymbolId head = SYMBOL_ID_NONE;
@@ -5387,7 +5387,8 @@ bool petta_program_synchronize_space(
     }
 
     SpaceReadToken read = space_read_token(space);
-    SpaceTheoryToken program_token = space_theory_token(space);
+    SpaceTheoryView view = space_theory_view_open(space);
+    SpaceTheoryToken program_token = view.token;
     CettaCount atom_count = space_length64(space);
     CettaCount rule_rows = space_rule_rows64(space);
     CettaCount view_count = space_view_length64(space);
@@ -5400,7 +5401,7 @@ bool petta_program_synchronize_space(
     /* Imported heads are callable in this view, while each equation remains
      * owned by its defining space's occurrence catalog below. */
     for (CettaIndex index = 0u; ok && index < view_count; index++) {
-        if (!space_view_row_may_be_rule(space, index))
+        if (!space_theory_view_atom_may_be_definition(&view, index, false))
             continue;
         Atom *atom = space_view_get_at64(space, index);
         Atom *lhs = NULL;
@@ -5970,12 +5971,14 @@ static bool petta_program_candidate_snapshot_lease_from_entry(
     size_t actual_len = 0u;
     size_t actual_cap = 0u;
     PettaLiveEquation *actual = NULL;
+    SpaceTheoryView theory_view = space_theory_view_open(space);
     if ((admitted_forms & CETTA_RULE_SYNTAX_EQUATIONAL_ALIAS) &&
         space_alias_head_in_carrier(space, head)) {
         Atom **alias_eqs = NULL;
         size_t alias_len = 0u;
-        if (!space_alias_collect_head_rules(
-                space, head, admitted_forms, &alias_eqs, &alias_len))
+        if (!space_theory_view_collect_head_rules(
+                &theory_view, head, admitted_forms, &alias_eqs, &alias_len,
+                NULL))
             return false;
         SpaceReadToken live_read = space_read_token(space);
         for (size_t i = 0u; i < alias_len; i++) {
@@ -6001,7 +6004,8 @@ static bool petta_program_candidate_snapshot_lease_from_entry(
         free(alias_eqs);
     } else {
         SpaceEquationCursor cursor;
-        if (!space_rule_cursor_init(space, head, admitted_forms, &cursor))
+        if (!space_theory_view_open_rule_cursor(
+                &theory_view, head, admitted_forms, &cursor))
             return false;
         for (;;) {
             SpaceEquationOccurrence occurrence;
@@ -6769,21 +6773,8 @@ static bool petta_table_safety_trace_enabled(void) {
 /* A row whatever values its variables take: no equation or declaration
  * (the forms Space reads as program rows), and no variable where one could
  * stand for such a form. */
-static bool petta_table_safety_row_is_data(const Atom *row) {
-    if (!row || row->kind == ATOM_VAR)
-        return false;
-    if (row->kind != ATOM_EXPR || row->expr.len == 0u)
-        return true;
-    const Atom *head = row->expr.elems[0];
-    if (!head || head->kind != ATOM_SYMBOL)
-        return false;
-    if (row->expr.len >= 3u && space_theory_is_alias_head(head->sym_id))
-        return false;
-    return row->expr.len != 3u ||
-        (head->sym_id != g_builtin_syms.equals &&
-         head->sym_id != g_builtin_syms.equals_percent &&
-         head->sym_id != g_builtin_syms.colon &&
-         head->sym_id != g_builtin_syms.subtype);
+static bool petta_table_safety_row_is_data(const Atom *atom) {
+    return space_theory_atom_is_guaranteed_data(atom);
 }
 
 /* An addition or a removal of a data row: it changes data, never the
