@@ -4596,7 +4596,20 @@ static int petta_compare_float_values(double left, double right) {
     if (left_nan || right_nan) {
         if (left_nan != right_nan)
             return left_nan ? -1 : 1;
-        return 0;
+        /* SWI orders two NaNs by their payloads: the value the bits have
+         * with the exponent replaced by the bias (NaN_value in pl-write.c),
+         * so only a NaN of the same bits is equal. */
+        uint64_t a = 0u, b = 0u;
+        memcpy(&a, &left, sizeof a);
+        memcpy(&b, &right, sizeof b);
+        if (a == b)
+            return 0;
+        a = (a & UINT64_C(0x800fffffffffffff)) | (UINT64_C(0x3ff) << 52);
+        b = (b & UINT64_C(0x800fffffffffffff)) | (UINT64_C(0x3ff) << 52);
+        double x = 0.0, y = 0.0;
+        memcpy(&x, &a, sizeof x);
+        memcpy(&y, &b, sizeof y);
+        return x < y ? -1 : x > y ? 1 : 0;
     }
     if (left < right)
         return -1;
@@ -4750,14 +4763,26 @@ static int petta_compare_grounded_atoms(
         return left->ground.gkind < right->ground.gkind ? -1 : 1;
     }
     switch (left->ground.gkind) {
-    case GV_SPACE:
-        /* A space's serial is given when it is made: the same from run to
-         * run, where its address is not. */
+    case GV_SPACE: {
+        /* A space new-space made orders by its generated name, which reads
+         * the program's structure and the seed (name_supply.h); every other
+         * space comes first, by the serial it is given when made.  Neither
+         * reads an address or the order threads ran in. */
+        CettaGeneratedName left_name = {0}, right_name = {0};
+        bool left_named = left->ground.ptr && space_generated_name &&
+            space_generated_name(left->ground.ptr, &left_name);
+        bool right_named = right->ground.ptr && space_generated_name &&
+            space_generated_name(right->ground.ptr, &right_name);
+        if (left_named != right_named)
+            return left_named ? 1 : -1;
+        if (left_named)
+            return cetta_generated_name_compare(left_name, right_name);
         return petta_compare_u64(
             left->ground.ptr
                 ? space_instance_id((const Space *)left->ground.ptr) : 0u,
             right->ground.ptr
                 ? space_instance_id((const Space *)right->ground.ptr) : 0u);
+    }
     case GV_STATE:
     case GV_CAPTURE:
     case GV_BINDINGS:
@@ -5404,34 +5429,29 @@ Atom *petta_semantics_apply(
     return atom_expr2(arena, callable, argument);
 }
 
-/* Fresh names may be translated by different workers, then copied between
- * them. Like variable identities, their allocation cannot be thread-local. */
-static _Atomic uint64_t g_petta_callable_identity;
-
-Atom *petta_semantics_new_callable_identity(Arena *arena) {
+Atom *petta_semantics_callable_identity(
+    Arena *arena, CettaGeneratedName name, bool *taken) {
+    if (taken)
+        *taken = false;
     if (!arena || !petta_symbol_ids()->table)
         return NULL;
-    for (;;) {
-        uint64_t previous = atomic_load_explicit(
-            &g_petta_callable_identity, memory_order_relaxed);
-        do {
-            if (previous == (uint64_t)INT64_MAX)
-                return NULL;
-        } while (!atomic_compare_exchange_weak_explicit(
-            &g_petta_callable_identity, &previous, previous + 1u,
-            memory_order_relaxed, memory_order_relaxed));
-        uint64_t identity = previous + 1u;
-        char spelling[64];
-        int length = snprintf(spelling, sizeof(spelling), "lambda_%llu",
-                              (unsigned long long)identity);
-        if (length <= 0 || (size_t)length >= sizeof(spelling))
-            return NULL;
-        /* Avoid taking an authored name when the callable later crosses
-         * the foreign atom boundary. Do not intern unused labels: repeated
-         * translation must not retain one symbol per transient callable. */
-        if (symbol_lookup_cstr(g_symbols, spelling) == SYMBOL_ID_NONE)
-            return atom_int(arena, (int64_t)identity);
+    char spelling[CETTA_GENERATED_NAME_SPELLING_MAX];
+    size_t length = cetta_generated_name_spell(
+        CETTA_NAME_KIND_CALLABLE, name, spelling, sizeof(spelling));
+    if (length == 0u)
+        return NULL;
+    /* Avoid taking an authored name when the callable later crosses
+     * the foreign atom boundary. Do not intern unused labels: repeated
+     * translation must not retain one symbol per transient callable. */
+    if (symbol_lookup_cstr(g_symbols, spelling) != SYMBOL_ID_NONE) {
+        if (taken)
+            *taken = true;
+        return NULL;
     }
+    int64_t number = 0;
+    if (cetta_generated_name_small(name, &number))
+        return atom_int(arena, number);
+    return atom_string_n(arena, spelling + 7u, length - 7u);
 }
 
 Atom *petta_semantics_lambda_value(
@@ -5470,16 +5490,16 @@ bool petta_semantics_lambda_arity(
         const Atom *atom, CettaExprLen *arity) {
     if (arity)
         *arity = 0u;
-    int64_t identity = 0;
+    PettaCallableIdentity identity;
     if (!atom_petta_callable_identity(atom, &identity))
         return false;
     CettaExprLen count = 0u;
     const Atom *body = atom;
     for (;;) {
-        int64_t nested_identity = 0;
+        PettaCallableIdentity nested_identity;
         Atom *next = NULL;
         if (!atom_petta_callable_identity(body, &nested_identity) ||
-            nested_identity != identity ||
+            !petta_callable_identity_eq(nested_identity, identity) ||
             !petta_semantics_lambda_body(body, &next))
             break;
         if (count == UINT64_MAX)

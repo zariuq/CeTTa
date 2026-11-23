@@ -10550,6 +10550,22 @@ Atom *cetta_petta_open_callable_parameters(
  */
 #define PETTA_LAMBDA_ELABORATION_MAX_DEPTH 2048u
 
+/* A fresh identity for a lambda: a name from the calling thread's name
+ * supply (name_supply.h) whose spelling lambda_N no symbol has.  A parallel
+ * worker draws from its task's split supply, so lambdas translated by
+ * different workers and then copied between them never share an identity.
+ * The identity holds the name's text, so it keeps nothing of the supply. */
+static Atom *petta_new_callable_identity(Arena *arena) {
+    for (;;) {
+        CettaGeneratedName name = cetta_name_fresh(CETTA_NAME_KIND_CALLABLE);
+        bool taken = false;
+        Atom *identity =
+            petta_semantics_callable_identity(arena, name, &taken);
+        if (identity || !taken)
+            return identity;
+    }
+}
+
 /* A lambda with a pattern among its parameters, as one with variable
  * parameters: the reference compiles a lambda to a clause whose head is its
  * parameters, so each is matched as an equation's head pattern is, and every
@@ -10626,7 +10642,7 @@ static Atom *petta_elaborate_lambda_tree(
             signature, arena, source->expr.elems[2], depth + 1u);
         if (!body)
             return NULL;
-        Atom *identity = petta_semantics_new_callable_identity(arena);
+        Atom *identity = petta_new_callable_identity(arena);
         if (!identity)
             return NULL;
         if (parameters->expr.len == 0u)
@@ -16489,6 +16505,11 @@ static Space *hyperpose_transfer_space(HyperposeResourceTransfer *transfer,
     space_init_with_universe(target, transfer->parent_universe);
     target->kind = source->kind;
     space_set_strict(target, source->strict);
+    /* The parent receives the space the branch made, so it keeps that
+       space's generated name; it holds the name's block itself, since the
+       branch's copy gives its own back when the branch retires. */
+    target->generated_name =
+        cetta_generated_name_retain(source->generated_name);
     if (!hyperpose_transferred_space_insert(transfer, source, target)) {
         space_free(target);
         return NULL;
@@ -22439,25 +22460,35 @@ static void space_algebra_add_meet(Space *ns, Space *sa, Space *sb) {
  * location, including a removal from the initially empty space. Later reads
  * and writes use the selected space backend.
  */
-/* The number of the name a PeTTa new-space gives, &space(N).  The name is
- * the space's identity: the text &space(N), built or read, is an ordinary
- * symbol, which names a space of its own once written to.  A number whose
- * text already names a space is skipped, as the reference skips names in
- * use, so two spaces never print alike.  The counter is never reset or
- * rewound, so no collection changes the names a program sees later. */
-static uint64_t petta_generated_space_serial(void) {
+/* NAME, or the first name drawn after it whose text, &space(N), names no
+ * space: read only while some registry binding is spelled so. */
+static __attribute__((cold, noinline)) CettaGeneratedName
+petta_generated_space_name_not_in_use(CettaGeneratedName name) {
     for (;;) {
-        uint64_t serial = space_next_display_serial();
-        if (!g_registry || g_registry->space_spelled_len == 0u)
-            return serial;
-        char text[48];
-        snprintf(text, sizeof(text), "&space(%" PRIu64 ")", serial);
+        char text[CETTA_GENERATED_NAME_SPELLING_MAX];
+        if (!cetta_generated_name_spell(CETTA_NAME_KIND_SPACE, name, text,
+                                        sizeof(text)))
+            return name;
         SymbolId named = g_symbols ? symbol_lookup_cstr(g_symbols, text)
                                    : SYMBOL_ID_NONE;
-        if (named == SYMBOL_ID_NONE || !g_registry ||
-            !registry_lookup_id(g_registry, named))
-            return serial;
+        if (named == SYMBOL_ID_NONE || !registry_lookup_id(g_registry, named))
+            return name;
+        name = cetta_name_fresh(CETTA_NAME_KIND_SPACE);
     }
+}
+
+/* The name a PeTTa new-space gives, &space(N), drawn from the calling
+ * thread's name supply (name_supply.h).  The name is the space's identity:
+ * the text &space(N), built or read, is an ordinary symbol, which names a
+ * space of its own once written to.  A name whose text already names a
+ * space is skipped, as the reference skips names in use, so two spaces
+ * never print alike.  A supply never gives a name twice, so no collection
+ * changes the names a program sees later. */
+static inline CettaGeneratedName petta_generated_space_name(void) {
+    CettaGeneratedName name = cetta_name_fresh(CETTA_NAME_KIND_SPACE);
+    if (__builtin_expect(g_registry && g_registry->space_spelled_len != 0u, 0))
+        return petta_generated_space_name_not_in_use(name);
+    return name;
 }
 
 static Space *petta_ensure_named_space(
@@ -58703,20 +58734,22 @@ static bool petta_open_lexical_source(
     if (!owner || !callable || !source || !parameter_name ||
         arity == 0u || arity > 64u)
         return false;
-    int64_t identity = 0;
+    PettaCallableIdentity identity;
     if (!atom_petta_callable_identity(callable, &identity))
         return false;
     /* Decide this exact-arity inquiry within its bounded prefix, before
      * allocating parameters. A longer or cyclic nominal chain refuses. */
     Atom *body = callable;
     for (uint32_t index = 0u; index < arity; index++) {
-        int64_t nested = 0;
-        if (!atom_petta_callable_identity(body, &nested) || nested != identity ||
+        PettaCallableIdentity nested;
+        if (!atom_petta_callable_identity(body, &nested) ||
+            !petta_callable_identity_eq(nested, identity) ||
             !petta_semantics_lambda_body(body, &body))
             return false;
     }
-    int64_t remaining = 0;
-    if (atom_petta_callable_identity(body, &remaining) && remaining == identity &&
+    PettaCallableIdentity remaining;
+    if (atom_petta_callable_identity(body, &remaining) &&
+        petta_callable_identity_eq(remaining, identity) &&
         petta_semantics_lambda_body(body, NULL))
         return false;
     for (uint32_t index = 0u; body && index < arity; index++) {
@@ -58745,7 +58778,7 @@ static bool prepared_pure_open_lexical_source(
         atom_has_registry_refs(callable) ||
         hyperpose_atom_has_thread_local_resource(callable))
         return false;
-    int64_t identity = 0;
+    PettaCallableIdentity identity;
     if (!atom_petta_callable_identity(callable, &identity))
         return false;
     Atom *owned = atom_deep_copy(owner, callable);
@@ -65844,8 +65877,11 @@ petta_lowered_to_shared_form:
         space_init_with_universe(ns, eval_current_term_universe());
         ns->kind = kind;
         space_set_strict(ns, strict);
+        /* The space keeps its name, and the name's block, until it is
+           freed. */
         if (language_id == CETTA_LANGUAGE_PETTA)
-            ns->display_serial = petta_generated_space_serial();
+            ns->generated_name =
+                cetta_generated_name_retain(petta_generated_space_name());
         if (!space_match_backend_try_set(ns, backend_kind)) {
             space_free(ns);
             free(ns);

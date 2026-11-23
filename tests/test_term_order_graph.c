@@ -7,6 +7,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 /* An independently recursive tree walk for small generated cases. Leaf
  * order is exercised separately below; this reference has no pair memo. */
@@ -115,6 +116,20 @@ static void finite_cases(Arena *arena) {
     expect(floating, integer, -1);
     expect(atom_float(arena, -0.0), atom_float(arena, 0.0), -1);
     expect(atom_float(arena, NAN), atom_float(arena, NAN), 0);
+    {
+        /* Two NaNs of different payloads are two terms, ordered as SWI
+         * orders them: by the payload's value, its sign included. */
+        uint64_t quiet = UINT64_C(0x7ff8000000000000);
+        uint64_t negative = UINT64_C(0xfff8000000000000);
+        uint64_t larger = UINT64_C(0x7ff8000000000001);
+        double q, n, l;
+        memcpy(&q, &quiet, sizeof q);
+        memcpy(&n, &negative, sizeof n);
+        memcpy(&l, &larger, sizeof l);
+        expect(atom_float(arena, n), atom_float(arena, q), -1);
+        expect(atom_float(arena, q), atom_float(arena, l), -1);
+        expect(atom_float(arena, l), atom_float(arena, -1.0e308), -1);
+    }
     expect(atom_float(arena, -INFINITY), integer, -1);
     expect(atom_float(arena, INFINITY), integer, 1);
     expect(atom_int(arena, INT64_C(9007199254740993)),

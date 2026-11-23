@@ -6685,8 +6685,8 @@ Atom *atom_list_type(Arena *a)      { return atom_symbol_id(a, g_builtin_syms.li
 
 bool atom_is_generated_space_name(const Atom *atom) {
     return atom && atom->kind == ATOM_GROUNDED &&
-           atom->ground.gkind == GV_SPACE && space_generated_name_serial &&
-           space_generated_name_serial(atom->ground.ptr) != 0u;
+           atom->ground.gkind == GV_SPACE && space_generated_name &&
+           space_generated_name(atom->ground.ptr, NULL);
 }
 
 SymbolId atom_meta_type_id(const Atom *atom) {
@@ -9383,12 +9383,17 @@ static void atom_print_mode(
              * a space new-space made in PeTTa by its generated name. */
             const char *module_name = space_module_display_name
                 ? space_module_display_name(a->ground.ptr) : NULL;
-            uint64_t serial = space_generated_name_serial
-                ? space_generated_name_serial(a->ground.ptr) : 0u;
+            CettaGeneratedName name = {0};
+            char spelling[CETTA_GENERATED_NAME_SPELLING_MAX];
+            size_t spelled = !module_name && space_generated_name &&
+                    space_generated_name(a->ground.ptr, &name)
+                ? cetta_generated_name_spell(CETTA_NAME_KIND_SPACE, name,
+                                             spelling, sizeof(spelling))
+                : 0u;
             if (module_name)
                 fprintf(out, "ModuleSpace(GroundingSpace-%s)", module_name);
-            else if (serial)
-                fprintf(out, "&space(%" PRIu64 ")", serial);
+            else if (spelled)
+                fwrite(spelling, 1u, spelled, out);
             else
                 fprintf(out, "<space %p>", a->ground.ptr);
             break;
@@ -9479,9 +9484,14 @@ static void atom_print_mode(
         break;
     case ATOM_EXPR:
         if (petta) {
-            int64_t identity = 0;
-            if (atom_petta_callable_identity(a, &identity)) {
-                fprintf(out, "lambda_%llu", (unsigned long long)identity);
+            PettaCallableIdentity identity;
+            char spelling[CETTA_GENERATED_NAME_SPELLING_MAX];
+            size_t spelled = atom_petta_callable_identity(a, &identity)
+                ? petta_callable_identity_spell(identity, spelling,
+                                                sizeof(spelling))
+                : 0u;
+            if (spelled) {
+                fwrite(spelling, 1u, spelled, out);
                 break;
             }
         }

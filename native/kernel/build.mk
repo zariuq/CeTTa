@@ -19,13 +19,30 @@ native/kernel/pair.%.o native/kernel/observe.%.o native/kernel/constructor.%.o n
 ifeq ($(ENABLE_SANITIZERS),1)
 KERNEL_CFLAGS = -O1 -g -std=c11 -Wall -Wextra -Werror -fsanitize=$(SANITIZERS) -fno-omit-frame-pointer
 endif
+# A configuration whose objects are linked into shared libraries compiles the
+# components as it compiles its own objects, so their thread-local storage
+# takes a model valid in a shared object.  The executable's configuration
+# keeps its own model.
+ifeq ($(ENABLE_PIC),1)
+KERNEL_CFLAGS += -fPIC
+endif
 SRC += native/kernel/kernel.c native/kernel/batch.c native/kernel/constructor.c native/kernel/pair.c native/kernel/observe.c native/kernel/reference.c native/kernel/tcalc_native.c
 OBJ += $(KERNEL_COMPONENT_OBJ) $(KERNEL_TCALC_IMAGES) $(KERNEL_PAIR_IMAGE) $(KERNEL_WORD_IMAGE) $(KERNEL_OBSERVE_IMAGE) $(KERNEL_CONSTRUCTOR_IMAGE)
 OBJ += $(KERNEL_BATCH_IMAGE)
 
-$(KERNEL_LIBRARY): $(KERNEL_INPUTS)
+# The package's own makefile rebuilds an object when its sources change, not
+# when its flags do, so the flags are recorded beside the objects and a change
+# of either rebuilds the library from scratch.
+KERNEL_FLAGS_RECORD = $(KERNEL_BUILD)/flags
+$(KERNEL_FLAGS_RECORD): FORCE | $(KERNEL_BUILD)
+	@set -eu; tmp_flags=$$(mktemp "$(KERNEL_BUILD)/.flags.XXXXXX"); \
+	trap 'rm -f "$$tmp_flags"' EXIT INT TERM; \
+	printf '%s\n' '$(CESTA_NATIVE_CC)' '$(KERNEL_CFLAGS)' > "$$tmp_flags"; \
+	if ! cmp -s "$$tmp_flags" "$@"; then mv "$$tmp_flags" "$@"; fi
+
+$(KERNEL_LIBRARY): $(KERNEL_INPUTS) $(KERNEL_FLAGS_RECORD)
 	@python3 tools/check_native_kernel_package.py $(KERNEL_VENDOR) --components native/kernel/IMAGES.json
-	@$(MAKE) -s -C $(KERNEL_VENDOR)/native/matching CC="$(CESTA_NATIVE_CC)" \
+	@$(MAKE) -B -s -C $(KERNEL_VENDOR)/native/matching CC="$(CESTA_NATIVE_CC)" \
 		CFLAGS="$(KERNEL_CFLAGS)" DEVELOPMENT_REFERENCE=0 BUILD="$(abspath $(KERNEL_BUILD))" "$(abspath $@)"
 
 $(KERNEL_COMPONENT_OBJ): $(KERNEL_LIBRARY)

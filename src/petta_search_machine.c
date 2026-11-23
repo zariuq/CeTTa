@@ -4490,8 +4490,8 @@ static PettaTableRoundSlot *petta_table_round_slot(
 /* A lattice table keeps, for each instance of its call, the join of the
  * values derived for it (SWI's mode-directed tabling): a value that changes
  * the join is a new answer, one that does not is not.  The join is min or
- * max in the standard order of terms, or a function of two arguments, its
- * values joined before the merge (petta_table_lattice_join_round).  Superseded answers stay until the
+ * max, or a function of two arguments, its values joined before the merge
+ * (petta_table_lattice_join_round).  Superseded answers stay until the
  * table completes (consumers inside the fixpoint may read them, as in SWI);
  * completion keeps each instance's last, which is its join. */
 static bool petta_table_lattice_native(SymbolId join) {
@@ -4499,14 +4499,28 @@ static bool petta_table_lattice_native(SymbolId join) {
 }
 
 /* Whether VALUE, joined with BEST already (a user join's round answers are
- * joined before the merge), changes the instance's join. */
+ * joined before the merge), changes the instance's join.  min and max join
+ * as the functions do, the join so far first: (min BEST VALUE) selects an
+ * operand by the value it stands for, a constant included, and a tie keeps
+ * BEST for min and takes VALUE for max (petta_numeric_min_max); the join
+ * changes when the selection is not BEST.  Values that are no numbers join
+ * by the standard order of terms, a tie keeping BEST. */
 static bool petta_table_lattice_improves(SymbolId join, Atom *value, Atom *best) {
     if (!petta_table_lattice_native(join))
         return !atom_eq(value, best);
+    bool minimum = symbol_eq_cstr(g_symbols, join, "min");
+    Arena scratch;
+    arena_init_detached(&scratch);
+    Atom *joined = NULL;
+    bool selected = petta_numeric_min_max(&scratch, minimum, best, value,
+                                          &joined);
+    arena_free(&scratch);
+    if (selected)
+        return !atom_eq(joined, best);
     int ordering = 0;
     if (!petta_semantics_term_compare(value, best, &ordering))
         return false;
-    return symbol_eq_cstr(g_symbols, join, "max") ? ordering > 0 : ordering < 0;
+    return minimum ? ordering < 0 : ordering > 0;
 }
 
 static bool petta_table_merge_lattice(

@@ -1,0 +1,7 @@
+(Root "&space(1)")
+((Named b0 "&space(2)") (Named b1 "&space(3)") (Named b2 "&space(4)"))
+((Named c0 "&space(5)") (Named c3 "&space(6)") (Pair (Named c1 "&space(7)") (Named c2 "&space(8)")))
+(Root "&space(9)")
+(Fresh 6 6)
+(Forged (7) () false)
+((Joined g0 &space(10) true Symbol) (Joined g1 &space(11) true Symbol))

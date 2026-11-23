@@ -19,9 +19,12 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'tests' / 'support'))
+from generated_space_names import rename_generated_space_names  # noqa: E402
 COMMIT = re.compile(r'[0-9a-f]{40}')
 DATE = re.compile(r'\d{4}-\d{2}-\d{2}')
 SOURCE_DIRECTORIES = ('src', 'lib', 'examples', 'tests')
@@ -182,7 +185,8 @@ def check_default(binary):
     for language in ('petta', 'petta@stable-fixed'):
         run = subprocess.run([str(binary), '--lang', language, str(source)],
                              capture_output=True, text=True, timeout=30)
-        if (run.returncode, run.stdout, run.stderr) != (0, expected, ''):
+        if (run.returncode, rename_generated_space_names(run.stdout), run.stderr) != (
+                0, rename_generated_space_names(expected), ''):
             raise ValueError(('default contract changed', language,
                               run.returncode, run.stdout, run.stderr))
     # The reference's two-argument lambda map is adapted to the native binder map.
@@ -192,7 +196,8 @@ def check_default(binary):
     for language in ('petta', 'petta@stable-fixed'):
         run = subprocess.run([str(binary), '--lang', language, str(source)],
                              capture_output=True, text=True, timeout=30)
-        if (run.returncode, run.stdout, run.stderr) != (0, expected, ''):
+        if (run.returncode, rename_generated_space_names(run.stdout), run.stderr) != (
+                0, rename_generated_space_names(expected), ''):
             raise ValueError(('combinatorics adaptation changed', language,
                               run.returncode, run.stdout, run.stderr))
 

@@ -10,6 +10,11 @@
 typedef struct CettaParallelTaskNode CettaParallelTaskNode;
 struct CettaParallelTaskNode {
     void *task;
+    /* The task's name supply, split off the pusher's when it was pushed, so
+       its names depend on which task pushed it and when, never on which
+       worker runs it (name_supply.h).  The node holds its block until a
+       worker takes it. */
+    CettaNameSupplyChild names;
     CettaParallelTaskNode *next;
 };
 
@@ -18,6 +23,11 @@ typedef struct {
     pthread_cond_t cond;
     CettaParallelTaskNode *head;
     CettaParallelTaskNode *tail;
+    /* Nodes taken off the queue, kept for the next pushes under the queue's
+       lock and freed with the queue, so a task costs no allocation once
+       the queue has been as long, and every node is freed by the thread
+       that frees the queue. */
+    CettaParallelTaskNode *spare;
     uint32_t queued;
     uint32_t active;
     bool closed;
@@ -74,6 +84,8 @@ struct CettaParallelExecutor {
 bool cetta_parallel_executor_init(CettaParallelExecutor *executor,
                                   const CettaParallelExecutorConfig *config);
 void cetta_parallel_executor_free(CettaParallelExecutor *executor);
+/* Queue TASK, giving it the next child of the calling thread's name supply;
+   its names are drawn from that child while it runs. */
 bool cetta_parallel_executor_push(CettaParallelExecutor *executor, void *task);
 bool cetta_parallel_executor_run(CettaParallelExecutor *executor);
 void cetta_parallel_executor_cancel(CettaParallelExecutor *executor);

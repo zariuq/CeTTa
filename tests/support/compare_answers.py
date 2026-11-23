@@ -28,6 +28,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from generated_space_names import rename_generated_space_names  # noqa: E402
+
 MARKER = '(__cetta_answers_frame__)'
 FRAMED_TIMEOUT = 120
 
@@ -338,7 +341,7 @@ def observe_framed(stdout, kinds, marker=MARKER):
     Both runners buffer query answers until after effects. An absent final
     marker or trailing text is unfinished/ambiguous execution, not agreement.
     """
-    lines = stdout.splitlines()
+    lines = rename_generated_space_names(stdout).splitlines()
     marks = [i for i, line in enumerate(lines) if line.strip() == marker]
     if len(marks) != len(kinds) + 1 or marks[-1] != len(lines) - 1:
         raise ValueError(f'incomplete framing: {len(marks)} markers for {len(kinds)} queries')
@@ -364,7 +367,8 @@ def compare_completed_runs(kinds, expected, actual, representations=None):
     for record in (expected, actual):
         if record['returncode'] != 0 or record.get('timed_out') or 'observations' not in record:
             return False, 'execution incomplete or raised; inspect each outcome'
-    if expected.get('stderr', '') != actual.get('stderr', ''):
+    if (rename_generated_space_names(expected.get('stderr', '')) !=
+            rename_generated_space_names(actual.get('stderr', ''))):
         return False, 'stderr observations differ'
     return compare_framed(kinds, expected['observations'], actual['observations'], representations)
 
@@ -447,8 +451,8 @@ def main():
     ap.add_argument('--actual', required=True)
     ap.add_argument('--cetta', nargs=argparse.REMAINDER)
     a = ap.parse_args()
-    expected = Path(a.expected).read_text()
-    actual = Path(a.actual).read_text()
+    expected = rename_generated_space_names(Path(a.expected).read_text())
+    actual = rename_generated_space_names(Path(a.actual).read_text())
     if expected.rstrip('\n') == actual.rstrip('\n'):
         return 0
     if a.lang == 'petta':

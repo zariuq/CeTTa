@@ -2598,13 +2598,13 @@ static Atom *petta_libpl_callable_find(CettaLibPrologRuntime *runtime, SymbolId 
 }
 
 static SymbolId petta_libpl_callable_name(CettaLibPrologRuntime *runtime, Atom *code) {
-    int64_t identity = 0;
+    PettaCallableIdentity identity;
     if (!runtime || !atom_petta_callable_identity(code, &identity))
         return SYMBOL_ID_NONE;
-    char spelling[64];
-    int length = snprintf(spelling, sizeof(spelling), "lambda_%llu",
-                          (unsigned long long)identity);
-    if (length <= 0 || (size_t)length >= sizeof(spelling))
+    char spelling[CETTA_GENERATED_NAME_SPELLING_MAX];
+    size_t length = petta_callable_identity_spell(
+        identity, spelling, sizeof(spelling));
+    if (length == 0u)
         return SYMBOL_ID_NONE;
     SymbolId name = symbol_intern_bytes(g_symbols, (const uint8_t *)spelling, (uint32_t)length);
     if (name == SYMBOL_ID_NONE)
@@ -3036,15 +3036,15 @@ static bool petta_libpl_to_term(
         /* A space new-space made crosses as the text of its name, as the
          * reference's names are atoms; text that comes back is a symbol,
          * never the space. */
-        uint64_t serial = space_generated_name_serial
-            ? space_generated_name_serial(atom->ground.ptr) : 0u;
-        if (!serial)
+        CettaGeneratedName name = {0};
+        if (!space_generated_name ||
+            !space_generated_name(atom->ground.ptr, &name))
             return false;
-        char text[48];
-        int length = snprintf(text, sizeof(text), "&space(%" PRIu64 ")",
-                              serial);
-        return length > 0 &&
-               petta_libpl_put_utf8(output, PL_ATOM, text, (size_t)length);
+        char text[CETTA_GENERATED_NAME_SPELLING_MAX];
+        size_t length = cetta_generated_name_spell(
+            CETTA_NAME_KIND_SPACE, name, text, sizeof(text));
+        return length > 0u &&
+               petta_libpl_put_utf8(output, PL_ATOM, text, length);
     }
     case GV_STATE:
     case GV_CAPTURE:

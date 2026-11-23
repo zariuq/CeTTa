@@ -42,12 +42,12 @@
   (@return "Larger of the two numbers"))
 
 (@doc math:clamp
-  (@desc "Currying-friendly clamp helper with the bounds first and the input value last.")
+  (@desc "Currying-friendly clamp helper with the bounds first and the input value last. (math:clamp lo hi x) is (math:max lo (math:min x hi)): the input whenever lo <= x <= hi by value, a tie with either bound included, otherwise the bound the input crosses. A NaN operand propagates; when lo exceeds hi the answer is lo.")
   (@params (
     (@param "Lower bound")
     (@param "Upper bound")
     (@param "Input value")))
-  (@return "Input clamped into the inclusive [min, max] interval"))
+  (@return "The input when it lies within the inclusive [lo, hi] interval by value, else the bound it crosses"))
 
 (@doc math:quot
   (@desc "Truncating quotient in the math: namespace. Rounds toward zero and pairs with math:rem so that a = b * q + r.")

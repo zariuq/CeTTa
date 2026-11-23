@@ -39,7 +39,8 @@ static Atom *call(Arena *arena, unsigned variant) {
     unsigned arity = variant == 2u ? 66u : 2u;
     Atom *body = variant == 2u ? parse(arena, "(idx 0)")
         : parse(arena, "(Bundle (idx 1) (idx 0))");
-    Atom *identity = petta_semantics_new_callable_identity(arena);
+    Atom *identity = petta_semantics_callable_identity(
+        arena, cetta_name_fresh(CETTA_NAME_KIND_CALLABLE), NULL);
     assert(identity);
     for (unsigned parameter = 0u; parameter < arity; parameter++)
         body = petta_semantics_lambda_value(arena, identity, body);

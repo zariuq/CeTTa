@@ -401,16 +401,16 @@ static bool petta_repra_render(
             }
             break;
         case ATOM_EXPR: {
-            int64_t identity = 0;
+            PettaCallableIdentity identity;
             if (atom_petta_callable_identity(atom, &identity)) {
-                char spelling[64];
-                int length = snprintf(spelling, sizeof(spelling), "lambda_%llu",
-                                      (unsigned long long)identity);
-                if (length <= 0 || (size_t)length >= sizeof(spelling)) {
+                char spelling[CETTA_GENERATED_NAME_SPELLING_MAX];
+                size_t length = petta_callable_identity_spell(
+                    identity, spelling, sizeof(spelling));
+                if (length == 0u) {
                     ok = false;
                     break;
                 }
-                sb_append_n(output, spelling, (size_t)length);
+                sb_append_n(output, spelling, length);
                 break;
             }
             if (atom_is_petta_partial(atom)) {
@@ -1610,7 +1610,7 @@ bool petta_numeric_min_max(Arena *a, bool minimum, Atom *x, Atom *y,
     if (!a || !x || !y || !out || !get_numeric_arg(x, &nx) ||
         !get_numeric_arg(y, &ny))
         return false;
-    /* A NaN operand propagates (IEEE 754-2019 minimum and maximum). */
+    /* A NaN operand propagates. */
     if (nx.is_float && isnan(nx.val)) {
         *out = x;
         return true;
@@ -1644,15 +1644,10 @@ bool petta_numeric_min_max(Arena *a, bool minimum, Atom *x, Atom *y,
         return false;
 #endif
     }
-    if (cmp == 0) {
-        /* -0.0 below 0 and 0.0 (IEEE 754-2019). */
-        bool x_negative_zero = nx.is_float && nx.val == 0.0 && signbit(nx.val);
-        bool y_negative_zero = ny.is_float && ny.val == 0.0 && signbit(ny.val);
-        if (x_negative_zero != y_negative_zero)
-            cmp = x_negative_zero ? -1 : 1;
-    }
-    /* A tie: min answers its first operand, max its second, so that
-     * (min a b) and (max a b) are a stable sort of a and b. */
+    /* A tie, -0.0 against 0 or 0.0 among them: min answers its first
+     * operand, max its second, so that (min a b) and (max a b) are a
+     * stable sort of a and b by value (not by the standard order of terms,
+     * which separates 1.0 from 1 and -0.0 from 0.0). */
     if (cmp == 0)
         *out = minimum ? x : y;
     else
@@ -3323,16 +3318,15 @@ static inline Atom *grounded_float_min_max_pair(bool want_min,
         return want_min ? ax : ay;
     if (x > y)
         return want_min ? ay : ax;
-    bool xn = x == 0.0 && signbit(x);
-    bool yn = y == 0.0 && signbit(y);
-    if (xn != yn)
-        return (want_min ? xn : yn) ? ax : ay;
+    /* A tie, -0.0 and 0.0 included: min's first operand, max's second. */
     return want_min ? ax : ay;
 }
 
 /* Direct C implementations for the remaining math: library functions:
  *   exp, ln          true libm exp/log (with PeTTa float flags & HE domain checks)
- *   min, max, clamp  exact ordering, IEEE 754-2019 NaN propagation and -0.0 < 0.0 */
+ *   min, max         an operand by exact value, a NaN operand propagating; on
+ *                    a tie min's first operand and max's second
+ *   clamp            (clamp lo hi x) is (max lo (min x hi)) */
 static Atom *grounded_math_extras(Arena *a, Atom *head, SymbolId head_id,
                                   Atom **args, uint32_t nargs) {
     if (head_id == g_builtin_syms.lib_math_exp) {
@@ -3430,27 +3424,30 @@ static Atom *grounded_math_extras(Arena *a, Atom *head, SymbolId head_id,
         if (args[0]->kind == ATOM_GROUNDED &&
             args[1]->kind == ATOM_GROUNDED &&
             args[2]->kind == ATOM_GROUNDED) {
+            /* (clamp lo hi x) is (max lo (min x hi)): x whenever lo <= x
+             * <= hi by value, a tie with either bound included, else the
+             * bound x crosses; lo where lo > hi. */
             if (args[0]->ground.gkind == GV_INT &&
                 args[1]->ground.gkind == GV_INT &&
                 args[2]->ground.gkind == GV_INT) {
                 int64_t lo = args[0]->ground.ival;
                 int64_t hi = args[1]->ground.ival;
                 int64_t v = args[2]->ground.ival;
-                Atom *raised = v > lo ? args[2] : args[0];
-                int64_t rv = v > lo ? v : lo;
-                return hi <= rv ? args[1] : raised;
+                Atom *lowered = v <= hi ? args[2] : args[1];
+                int64_t lv = v <= hi ? v : hi;
+                return lo > lv ? args[0] : lowered;
             }
             if (args[0]->ground.gkind == GV_FLOAT &&
                 args[1]->ground.gkind == GV_FLOAT &&
                 args[2]->ground.gkind == GV_FLOAT) {
-                Atom *raised = grounded_float_min_max_pair(false, args[2], args[0]);
-                return grounded_float_min_max_pair(true, args[1], raised);
+                Atom *lowered = grounded_float_min_max_pair(true, args[2], args[1]);
+                return grounded_float_min_max_pair(false, args[0], lowered);
             }
         }
-        Atom *raised = NULL;
+        Atom *lowered = NULL;
         Atom *clamped = NULL;
-        if (petta_numeric_min_max(a, false, args[2], args[0], &raised) &&
-            petta_numeric_min_max(a, true, args[1], raised, &clamped))
+        if (petta_numeric_min_max(a, true, args[2], args[1], &lowered) &&
+            petta_numeric_min_max(a, false, args[0], lowered, &clamped))
             return clamped;
         for (uint32_t i = 0u; i < 3u; i++) {
             NumArg check = {0};

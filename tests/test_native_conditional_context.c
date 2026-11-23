@@ -10,15 +10,17 @@
 #endif
 #include <assert.h>
 
-static int64_t observed_callable_identity = INT64_MIN;
+static PettaCallableIdentityKey observed_callable_identity;
+static bool observing_callable_identity;
 static unsigned observed_callable_arity_reads;
 static bool observe_he_division_entries;
 static unsigned he_division_entries;
 bool __real_petta_semantics_lambda_arity(const Atom *, CettaExprLen *);
 bool __wrap_petta_semantics_lambda_arity(const Atom *callable, CettaExprLen *arity) {
-    int64_t identity = 0;
-    if (observed_callable_identity != INT64_MIN &&
-        atom_petta_callable_identity(callable, &identity) && identity == observed_callable_identity)
+    PettaCallableIdentity identity;
+    if (observing_callable_identity &&
+        atom_petta_callable_identity(callable, &identity) &&
+        petta_callable_identity_key_eq(&observed_callable_identity, identity))
         observed_callable_arity_reads++;
     return __real_petta_semantics_lambda_arity(callable, arity);
 }
@@ -1279,7 +1281,7 @@ static unsigned prepared_machine_consumers(CettaLibraryContext *library,
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = space}};
         PettaMachineHost host = petta_eval_machine_host(&context, -1,
-            false, false, false, false, false,
+            false, false, false, false,
             petta_eval_machine_match_semantics(library, false));
         host.next_answer_cursor = counted_prepared_machine_return;
         if (ordinary) {
@@ -1387,7 +1389,7 @@ static unsigned prepared_machine_consumers(CettaLibraryContext *library,
     PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
         .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = space}};
     PettaMachineHost host = petta_eval_machine_host(&context, -1,
-        false, false, false, false, false,
+        false, false, false, false,
         petta_eval_machine_match_semantics(library, false));
     host.next_answer_cursor = counted_prepared_machine_return;
     host.open_answer_cursor = prepared_machine_observe_heap;
@@ -2517,7 +2519,7 @@ static unsigned lexical_source_controls(void) {
     assert(!prepared_pure_open_lexical_source(&owner, not_callable, 1u, &source));
     assert(arena_accounted_live_bytes(&owner) == before);
     Atom *cyclic = petta_semantics_lambda_value(&input,
-        petta_semantics_new_callable_identity(&input), atom_int(&input, 0));
+        petta_new_callable_identity(&input), atom_int(&input, 0));
     assert(cyclic && cyclic->kind == ATOM_EXPR && cyclic->expr.len == 3u);
     cyclic->expr.elems[2] = cyclic;
     assert(!petta_open_lexical_source(&owner, cyclic, 1u, "__lexical_arg", &source));
@@ -2707,7 +2709,7 @@ static unsigned caller_result_controls(void) {
     PettaEvalMachineContext context = {.library_context = library, .fuel = -1,
         .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
     PettaMachineHost host = petta_eval_machine_host(&context, -1,
-        false, false, false, false, false, petta_eval_machine_match_semantics(library, false));
+        false, false, false, false, petta_eval_machine_match_semantics(library, false));
     host.prepare_call = NULL;
     host.open_answer_cursor = NULL;
     host.open_relation_cursor = NULL;
@@ -4266,7 +4268,7 @@ static unsigned source_invocation_plans(void) {
     PettaEvalMachineContext dispatch_context = {.library_context = dispatch_library, .fuel = -1,
         .prepared_pure_cache = {.root_space = &space}};
     PettaMachineHost dispatch_host = petta_eval_machine_host(&dispatch_context, -1,
-        false, false, false, false, false, petta_eval_machine_match_semantics(dispatch_library, false));
+        false, false, false, false, petta_eval_machine_match_semantics(dispatch_library, false));
     dispatch_host.execute_prepared_pure_call = NULL;
     dispatch_host.open_answer_cursor = NULL;
     dispatch_host.open_relation_cursor = NULL;
@@ -4768,7 +4770,7 @@ static unsigned source_first_success_plans(void) {
     PettaEvalMachineContext context = {.library_context = library, .fuel = -1,
         .prepared_pure_cache = {.root_space = &space}};
     PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
-        false, false, false, petta_eval_machine_match_semantics(library, false));
+        false, false, petta_eval_machine_match_semantics(library, false));
     unsigned checks = 0u;
     for (unsigned wrapper = 0u; wrapper < 3u; wrapper++)
     for (unsigned first = 0u; first < 2u; first++) {
@@ -5406,7 +5408,7 @@ static unsigned prepared_worker_availability(void) {
     PettaEvalMachineContext context = {.fuel = -1};
     for (int fuel = -1; fuel <= 1; fuel++) {
         PettaMachineHost host = petta_eval_machine_host(&context, fuel,
-            false, false, false, false, false,
+            false, false, false, false,
             petta_eval_machine_match_semantics(NULL, false));
         bool available = fuel < 0 && !prepared_pure_reference_enabled();
         assert(!!host.execute_prepared_pure_call == available);
@@ -5416,7 +5418,7 @@ static unsigned prepared_worker_availability(void) {
     CettaEvalEpisode tracker = {.budget_limited = true};
     g_eval_completion_tracker = &tracker;
     PettaMachineHost inherited = petta_eval_machine_host(&context, -1,
-        false, false, false, false, false,
+        false, false, false, false,
         petta_eval_machine_match_semantics(NULL, false));
     assert(!inherited.execute_prepared_pure_call && !inherited.open_answer_cursor);
     g_eval_completion_tracker = NULL;
@@ -5640,7 +5642,7 @@ static unsigned episode_accounting(void) {
         PettaEvalMachineContext context = {.diagnostic_transition_limit = diagnostic};
         g_eval_completion_tracker = &parent;
         PettaMachineHost host = petta_eval_machine_host(&context, request,
-            false, false, false, true, false, (CettaMatchDecisionSemanticIdentity){0});
+            false, false, false, true, (CettaMatchDecisionSemanticIdentity){0});
         assert(cetta_eval_episode_allows_unmetered(&parent, request) ==
             (!inherited && request < 0));
         assert(host.unlimited_transition_budget ==
@@ -7204,7 +7206,10 @@ static unsigned callable_signature_reuse_controls(void) {
         arena_init(&answers);
         Atom *callable = petta_capture_lambda(&source,
             fixture_atom(&source, "(|-> ($x) ignored)"), NULL);
-        assert(atom_petta_callable_identity(callable, &observed_callable_identity));
+        PettaCallableIdentity callable_identity;
+        assert(atom_petta_callable_identity(callable, &callable_identity));
+        observed_callable_identity = petta_callable_identity_key(callable_identity);
+        observing_callable_identity = true;
         observed_callable_arity_reads = 0u;
         ProgramOperandProbe probe = {.arity = 1u, .first = atom_int(&source, 7)};
         CettaOpenEquationRuntime runtime = {.context = &probe,
@@ -7224,7 +7229,7 @@ static unsigned callable_signature_reuse_controls(void) {
             probe.availability_reads == 1u && observed_callable_arity_reads == 2u);
         cetta_open_equation_cursor_close(cursor);
         assert(probe.releases == 1u);
-        observed_callable_identity = INT64_MIN;
+        observing_callable_identity = false;
         arena_free(&answers);
     }
     cetta_open_equation_program_release(program);
@@ -7357,7 +7362,7 @@ static unsigned lexical_native_tail_controls(void) {
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
         PettaMachineHost host = petta_eval_machine_host(&context, -1,
-            false, false, false, false, false,
+            false, false, false, false,
             petta_eval_machine_match_semantics(library, false));
         Atom *call = fixture_atom(&execution, body_route ? "(lexical-native-body)" : "(lexical-native-driver)");
         PettaMachine machine;
@@ -7440,7 +7445,7 @@ static unsigned lexical_native_tail_controls(void) {
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
         PettaMachineHost host = petta_eval_machine_host(&context, -1,
-            false, false, false, false, false,
+            false, false, false, false,
             petta_eval_machine_match_semantics(library, false));
         PettaMachine machine;
         assert(petta_machine_init(&machine, &space, &execution,
@@ -8307,8 +8312,7 @@ static unsigned contextual_resumption_controls(void) {
         arena_init_detached(&execution);
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
-        PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false, false, false,
-            false, petta_eval_machine_match_semantics(library, false));
+        PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false, false, false, petta_eval_machine_match_semantics(library, false));
         host.execute_prepared_pure_call = NULL;
         host.open_relation_cursor = NULL;
         host.open_answer_cursor = resumption_open_cursor;
@@ -8356,8 +8360,7 @@ static unsigned contextual_resumption_controls(void) {
         arena_init_detached(&execution);
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
-        PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false, false, false,
-            false, petta_eval_machine_match_semantics(library, false));
+        PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false, false, false, petta_eval_machine_match_semantics(library, false));
         host.execute_prepared_pure_call = NULL;
         host.open_relation_cursor = NULL;
         host.open_answer_cursor = resumption_open_cursor;
@@ -8416,8 +8419,7 @@ static unsigned contextual_resumption_controls(void) {
         arena_init_detached(&execution);
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
-        PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false, false, false,
-            false, petta_eval_machine_match_semantics(library, false));
+        PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false, false, false, petta_eval_machine_match_semantics(library, false));
         host.execute_prepared_pure_call = NULL;
         host.open_relation_cursor = NULL;
         host.open_answer_cursor = resumption_open_cursor;
@@ -8479,8 +8481,7 @@ static unsigned contextual_resumption_controls(void) {
         arena_init_detached(&execution);
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
-        PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false, false, false,
-            false, petta_eval_machine_match_semantics(library, false));
+        PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false, false, false, petta_eval_machine_match_semantics(library, false));
         host.execute_prepared_pure_call = NULL;
         host.open_relation_cursor = NULL;
         host.open_answer_cursor = resumption_open_cursor;
@@ -8529,8 +8530,7 @@ static unsigned contextual_resumption_controls(void) {
         arena_init_detached(&execution);
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
-        PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false, false, false,
-            false, petta_eval_machine_match_semantics(library, false));
+        PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false, false, false, petta_eval_machine_match_semantics(library, false));
         host.execute_prepared_pure_call = NULL;
         host.open_relation_cursor = NULL;
         host.open_answer_cursor = resumption_open_cursor;
@@ -9205,7 +9205,7 @@ static unsigned caller_graph_entry_controls(void) {
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
         PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
-            false, true, false, petta_eval_machine_match_semantics(library, false));
+            false, true, petta_eval_machine_match_semantics(library, false));
         CettaPreparedPureCaller nodes[2] = {0};
         const Arena *owners[] = {&output};
         Atom *captured = fixture_atom(&output, "(function (return (readln!)))");
@@ -9310,7 +9310,7 @@ static unsigned tagged_raise_route_controls(void) {
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
         PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
-            false, true, false, petta_eval_machine_match_semantics(library, false));
+            false, true, petta_eval_machine_match_semantics(library, false));
         if (route != 1u) {
             host.execute_prepared_pure_call = NULL;
             host.open_answer_cursor = NULL;
@@ -9568,7 +9568,7 @@ static unsigned conditional_native_continuation_controls(void) {
             PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
                 .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
             PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
-                false, true, false, petta_eval_machine_match_semantics(library, false));
+                false, true, petta_eval_machine_match_semantics(library, false));
             host.execute_prepared_pure_call = NULL;
             host.open_relation_cursor = NULL;
             host.open_answer_cursor = resumption_open_cursor;
@@ -9764,7 +9764,7 @@ static unsigned conditional_native_continuation_controls(void) {
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
         PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
-            false, true, false, petta_eval_machine_match_semantics(library, false));
+            false, true, petta_eval_machine_match_semantics(library, false));
         const Arena *owners[] = {&execution};
         const PettaPlanNode fields[] = {{.role = PETTA_PLAN_VALUE},
                                         {.role = PETTA_PLAN_VALUE}};
@@ -9842,7 +9842,7 @@ static unsigned conditional_native_continuation_controls(void) {
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
         PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
-            false, true, false, petta_eval_machine_match_semantics(library, false));
+            false, true, petta_eval_machine_match_semantics(library, false));
         host.execute_prepared_pure_call = NULL;
         host.open_relation_cursor = NULL;
         host.open_answer_cursor = resumption_open_cursor;
@@ -9995,7 +9995,7 @@ static unsigned native_frontier_rejoin_controls(void) {
             PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
                 .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
             PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
-                false, true, false, petta_eval_machine_match_semantics(library, false));
+                false, true, petta_eval_machine_match_semantics(library, false));
             host.execute_prepared_pure_call = NULL;
             host.open_relation_cursor = NULL;
             host.open_answer_cursor = ordinary ? NULL : resumption_open_cursor;
@@ -10064,7 +10064,7 @@ static unsigned native_frontier_rejoin_controls(void) {
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
         PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
-            false, true, false, petta_eval_machine_match_semantics(library, false));
+            false, true, petta_eval_machine_match_semantics(library, false));
         host.execute_prepared_pure_call = NULL; host.open_relation_cursor = NULL;
         host.open_answer_cursor = ordinary ? NULL : resumption_open_cursor;
         host.next_answer_cursor = resumption_next_cursor;
@@ -10245,7 +10245,7 @@ static unsigned native_frontier_rejoin_controls(void) {
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
         PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
-            false, true, false, petta_eval_machine_match_semantics(library, false));
+            false, true, petta_eval_machine_match_semantics(library, false));
         host.execute_prepared_pure_call = NULL; host.open_relation_cursor = NULL;
         host.open_answer_cursor = resumption_open_cursor; host.next_answer_cursor = resumption_next_cursor;
         host.permit_transition = resumption_parent_permit;
@@ -10303,7 +10303,7 @@ static unsigned native_frontier_rejoin_controls(void) {
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
         PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
-            false, true, false, petta_eval_machine_match_semantics(library, false));
+            false, true, petta_eval_machine_match_semantics(library, false));
         host.execute_prepared_pure_call = NULL; host.open_relation_cursor = NULL;
         host.open_answer_cursor = resumption_open_cursor; host.next_answer_cursor = resumption_next_cursor;
         resumption_root = symbol_intern_cstr(g_symbols, entry_name);
@@ -10341,7 +10341,7 @@ static unsigned native_frontier_rejoin_controls(void) {
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
         PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
-            false, true, false, petta_eval_machine_match_semantics(library, false));
+            false, true, petta_eval_machine_match_semantics(library, false));
         host.execute_prepared_pure_call = NULL; host.open_relation_cursor = NULL;
         host.open_answer_cursor = compiled ? resumption_open_cursor : NULL;
         host.next_answer_cursor = resumption_next_cursor;
@@ -10490,7 +10490,7 @@ static unsigned live_source_caller_controls(void) {
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
         PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
-            false, true, false, petta_eval_machine_match_semantics(library, false));
+            false, true, petta_eval_machine_match_semantics(library, false));
         host.execute_prepared_pure_call = NULL;
         host.open_relation_cursor = NULL;
         host.open_answer_cursor = ordinary ? NULL : resumption_open_cursor;
@@ -10711,7 +10711,7 @@ static unsigned branching_native_frontier_controls(void) {
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
         PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
-            false, true, false, petta_eval_machine_match_semantics(library, false));
+            false, true, petta_eval_machine_match_semantics(library, false));
         host.execute_prepared_pure_call = NULL;
         host.open_relation_cursor = NULL;
         host.open_answer_cursor = ordinary ? NULL : resumption_open_cursor;
@@ -10860,7 +10860,7 @@ static unsigned branching_native_frontier_controls(void) {
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
         PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
-            false, true, false, petta_eval_machine_match_semantics(library, false));
+            false, true, petta_eval_machine_match_semantics(library, false));
         host.execute_prepared_pure_call = NULL;
         host.open_relation_cursor = NULL;
         host.open_answer_cursor = ordinary ? NULL : resumption_open_cursor;
@@ -11019,7 +11019,7 @@ static unsigned caller_dag_scaling_controls(void) {
             PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
                 .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
             PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
-                false, true, false, petta_eval_machine_match_semantics(library, false));
+                false, true, petta_eval_machine_match_semantics(library, false));
             host.execute_prepared_pure_call = NULL;
             host.open_relation_cursor = NULL;
             host.open_answer_cursor = ordinary ? NULL : resumption_open_cursor;
@@ -11112,7 +11112,7 @@ static unsigned stale_native_tail_controls(void) {
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
         PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
-            false, false, false, petta_eval_machine_match_semantics(library, false));
+            false, false, petta_eval_machine_match_semantics(library, false));
         host.execute_prepared_pure_call = NULL;
         host.open_relation_cursor = NULL;
         host.open_answer_cursor = compiled ? resumption_open_cursor : NULL;
@@ -11167,7 +11167,7 @@ static unsigned stale_native_tail_controls(void) {
         PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
             .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = &space}};
         PettaMachineHost host = petta_eval_machine_host(&context, -1, false, false,
-            false, false, false, petta_eval_machine_match_semantics(library, false));
+            false, false, petta_eval_machine_match_semantics(library, false));
         host.execute_prepared_pure_call = NULL;
         host.open_relation_cursor = NULL;
         host.open_answer_cursor = compiled ? resumption_open_cursor : NULL;
@@ -11871,7 +11871,7 @@ static unsigned metered_activation_controls(void) {
                 .prepared_pure_cache = {.root_space = &space}},
                 .budget = {.remaining = credit, .quantum = quantums[physical]}};
             PettaMachineHost host = petta_eval_machine_host(&probe.eval, -1, false,
-                false, false, true, false, (CettaMatchDecisionSemanticIdentity){0});
+                false, false, true, (CettaMatchDecisionSemanticIdentity){0});
             host.permit_transition = source_activation_permit;
             host.unlimited_transition_budget = false;
             host.equation_activation_relation_admissible = source_activation_admit;
@@ -11941,7 +11941,7 @@ static unsigned metered_activation_controls(void) {
             .prepared_pure_cache = {.root_space = &space}},
             .budget = {.remaining = UINT64_MAX, .quantum = UINT64_MAX}};
         PettaMachineHost host = petta_eval_machine_host(&probe.eval, -1, false,
-            false, false, true, false, (CettaMatchDecisionSemanticIdentity){0});
+            false, false, true, (CettaMatchDecisionSemanticIdentity){0});
         host.permit_transition = callback ? source_activation_permit : NULL;
         host.unlimited_transition_budget = callback != 0u;
         host.equation_activation_relation_admissible = source_activation_admit;

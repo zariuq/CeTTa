@@ -23,7 +23,7 @@ static void *checked_calloc(size_t n, size_t size) {
 #undef malloc
 #undef calloc
 
-static bool lookup(SpaceTheoryToken program, SymbolId source,
+static bool lookup(PettaRelevanceProgram program, SymbolId source,
                    PettaRelationRelevance expected) {
     PettaRelationRelevance got = PETTA_RELATION_RELEVANCE_CERTAIN;
     bool found = petta_relation_relevance_cache_lookup(program, source, &got);
@@ -31,7 +31,7 @@ static bool lookup(SpaceTheoryToken program, SymbolId source,
     return found;
 }
 
-static void collide(SpaceTheoryToken program, SymbolId found[9]) {
+static void collide(PettaRelevanceProgram program, SymbolId found[9]) {
     SymbolId candidates[PETTA_RELATION_RELEVANCE_CACHE_BANKS][9] = {{0}};
     unsigned counts[PETTA_RELATION_RELEVANCE_CACHE_BANKS] = {0};
     /* Pigeonhole: eight per bank plus one guarantees nine colliders. */
@@ -85,7 +85,7 @@ static void reference_put(Reference *ref, SymbolId source,
     ref->oldest[ref->count++] = (ReferenceEntry){source, value};
 }
 
-static void collision_and_lru(SpaceTheoryToken program, SymbolId sources[9]) {
+static void collision_and_lru(PettaRelevanceProgram program, SymbolId sources[9]) {
     petta_relation_relevance_cache_clear();
     for (unsigned i = 0u; i < 4u; i++)
         petta_relation_relevance_cache_store(program, sources[i],
@@ -128,7 +128,7 @@ static void collision_and_lru(SpaceTheoryToken program, SymbolId sources[9]) {
     puts("PASS: four colliding keys coexist; actual LRU agrees with 20000 independent operations, including transient results under allocation refusal");
 }
 
-static void complete_key_guards(SpaceTheoryToken program, Space *other,
+static void complete_key_guards(PettaRelevanceProgram program, Space *other,
                                 SymbolId source, SymbolTable *other_symbols) {
     petta_relation_relevance_cache_clear();
     petta_relation_relevance_cache_store(program, source,
@@ -138,17 +138,15 @@ static void complete_key_guards(SpaceTheoryToken program, Space *other,
     PettaRelationRelevanceCacheSlot saved =
         g_petta_relation_relevance_cache[bank * PETTA_RELATION_RELEVANCE_CACHE_WAYS];
     assert(saved.source == source);
-    for (unsigned changed = 0u; changed < 7u; changed++) {
-        SpaceTheoryToken query = program;
+    for (unsigned changed = 0u; changed < 5u; changed++) {
+        PettaRelevanceProgram query = program;
         SymbolId query_source = source;
         SymbolTable *symbols = g_symbols;
         if (changed == 0u) query.space = other;
-        if (changed == 1u) query.instance_id++;
-        if (changed == 2u) query.equation_revision++;
-        if (changed == 3u) query.declaration_revision++;
-        if (changed == 4u) query.base_dependency_epoch++;
-        if (changed == 5u) g_symbols = other_symbols;
-        if (changed == 6u) query_source++;
+        if (changed == 1u) query.space_instance++;
+        if (changed == 2u) query.program_epoch++;
+        if (changed == 3u) g_symbols = other_symbols;
+        if (changed == 4u) query_source++;
         /* Place a real old fact in the prospective bank: complete-key
          * rejection must hold independently of hash placement. */
         memset(g_petta_relation_relevance_cache, 0,
@@ -171,7 +169,7 @@ static void complete_key_guards(SpaceTheoryToken program, Space *other,
     petta_relation_relevance_cache_clear();
     assert(g_petta_admission_cache_generation == 1u &&
            !lookup(program, source, PETTA_RELATION_RELEVANCE_UNKNOWN));
-    puts("PASS: every program-token field, source, symbol-table instance, generation change and generation wrap rejects stale facts");
+    puts("PASS: every program-key field (the space, its instance and the program clock), source, symbol-table instance, generation change and generation wrap rejects stale facts");
 }
 
 int main(void) {
@@ -180,9 +178,8 @@ int main(void) {
     symbol_table_init(&second);
     g_symbols = &first;
     Space space = {0}, other = {0};
-    SpaceTheoryToken program = {.space = &space, .instance_id = 17u,
-        .equation_revision = 5u, .declaration_revision = 3u,
-        .base_dependency_epoch = 9u};
+    PettaRelevanceProgram program = {.space = &space, .space_instance = 17u,
+        .program_epoch = 5u};
     SymbolId colliders[9];
     collide(program, colliders);
     assert(sizeof(g_petta_relation_relevance_cache) ==

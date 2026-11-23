@@ -800,6 +800,7 @@ SRC += src/tmetta_compile.c src/tmetta_vm.c src/tmetta_answers.c
 SRC += src/petta_priority_heap.c
 SRC += src/prepared_pure_native.c
 SRC += src/library_provenance.c native/provenance/prov_kernel_v1.c
+SRC += src/name_supply.c
 SRC += src/native_memory.c src/host_services.c src/library_postings.c src/library_asp.c native/asp/asp_cdnl_v1.c native/asp/asp_hall_v1.c native/support/support_v1.c native/smt/euf_cc_v1.c native/smt/lra_simplex_v1.c native/asp/asp_clingo_v1.c native/asp/sat_ipasir_v1.c src/tensor.c src/tensor_bounds.c src/tensor_screening.c src/library_tensor.c src/library_group.c
 SRC += src/binary_codec.c src/library_binary.c
 SRC += src/library_heap.c
@@ -1077,6 +1078,10 @@ PARALLEL_EXECUTOR_LIFECYCLE_TEST_SRC = tests/test_parallel_executor_lifecycle.c
 PARALLEL_EXECUTOR_LIFECYCLE_TEST_OBJ = runtime/bootstrap/test_parallel_executor_lifecycle.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 PARALLEL_EXECUTOR_LIFECYCLE_TEST_BIN = runtime/test_parallel_executor_lifecycle-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 PARALLEL_EXECUTOR_LIFECYCLE_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+NAME_SUPPLY_PARALLEL_TEST_SRC = tests/test_name_supply_parallel.c
+NAME_SUPPLY_PARALLEL_TEST_OBJ = runtime/bootstrap/test_name_supply_parallel.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+NAME_SUPPLY_PARALLEL_TEST_BIN = runtime/test_name_supply_parallel-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+NAME_SUPPLY_PARALLEL_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 HE_COMPILED_READER_TEST_SRC = tests/support/test_he_compiled_reader_v1.c
 HE_COMPILED_READER_TEST_OBJ = runtime/bootstrap/test_he_compiled_reader_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 HE_COMPILED_READER_TEST_BIN = runtime/test_he_compiled_reader_v1-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -2016,7 +2021,9 @@ SHARED_TRANSITION_STANDALONE_SRC = src/shared_transition.c
 # What space.c calls beyond the space: its proof batch store, the indexes
 # that store reads and the fallible allocator.
 SPACE_PROOF_STANDALONE_SRC = src/proof_language_region.c src/proof_producer.c src/proof_row.c src/proof_batches.c src/u64_index.c src/gslt_u32_index_v1.c src/fallible_alloc.c
-SPACE_STANDALONE_SRC = src/space.c src/space_dense.c src/space_theory.c src/space_alias.c src/space_tuples.c src/space_skeleton.c src/space_path_index.c src/binding/rule.c src/fixpoint.c $(SPACE_PROOF_STANDALONE_SRC)
+# A space gives back its generated name's block when it is freed, so the
+# name supply comes with it.
+SPACE_STANDALONE_SRC = src/space.c src/space_dense.c src/space_theory.c src/space_alias.c src/space_tuples.c src/space_skeleton.c src/space_path_index.c src/binding/rule.c src/fixpoint.c src/name_supply.c $(SPACE_PROOF_STANDALONE_SRC)
 SPACE_STANDALONE_DEPS = $(SPACE_STANDALONE_SRC) $(wildcard src/*.h src/binding/*.h) Makefile
 # Standalone native queries share transform's option reader, not the evaluator.
 RELATIONAL_STANDALONE_SRC = src/relational_plan.c src/relational_cursor.c src/native_query.c src/transform_options.c src/dense_relation.c src/native_open_query.c src/term_molecule.c
@@ -6063,6 +6070,43 @@ $(PARALLEL_EXECUTOR_LIFECYCLE_TEST_BIN): $(PARALLEL_EXECUTOR_LIFECYCLE_TEST_OBJ)
 .PHONY: test-parallel-executor-lifecycle
 test-parallel-executor-lifecycle: $(PARALLEL_EXECUTOR_LIFECYCLE_TEST_BIN)
 	@$(call cetta_exec,./$(PARALLEL_EXECUTOR_LIFECYCLE_TEST_BIN))
+
+$(NAME_SUPPLY_PARALLEL_TEST_OBJ): $(NAME_SUPPLY_PARALLEL_TEST_SRC) src/parallel_executor.h src/name_supply.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(NAME_SUPPLY_PARALLEL_TEST_BIN): $(NAME_SUPPLY_PARALLEL_TEST_OBJ) $(NAME_SUPPLY_PARALLEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -o $@ $(NAME_SUPPLY_PARALLEL_TEST_OBJ) $(NAME_SUPPLY_PARALLEL_TEST_LINK_OBJ) $(LDFLAGS)
+
+# Generated names through the parallel executor, in both modes: a chain of a
+# million tasks and many pushes give the same names on 1, 2 and 4 workers,
+# no two alike, with every block given back and the heap flat.
+.PHONY: test-name-supply-parallel
+test-petta-semantics: test-name-supply-parallel
+test-name-supply-parallel: $(NAME_SUPPLY_PARALLEL_TEST_BIN)
+	@set -eu; \
+	for supply in counter unforgeable; do \
+		CETTA_NAME_SUPPLY=$$supply CETTA_NAME_SEED=$(NAME_SUPPLY_TEST_SEED) \
+			$(call cetta_exec,./$(NAME_SUPPLY_PARALLEL_TEST_BIN)); \
+	done
+
+# A space keeps its generated name, and the name's block, through new
+# contents and a removal that empties it, and gives the block back when it
+# is freed; a space without a name gains none.  In both modes.
+SPACE_GENERATED_NAME_TEST_BIN = runtime/test_space_generated_name-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(SPACE_GENERATED_NAME_TEST_BIN): tests/test_space_generated_name.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_generated_name.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+
+.PHONY: test-space-generated-name
+test-petta-semantics: test-space-generated-name
+test-space-generated-name: $(SPACE_GENERATED_NAME_TEST_BIN)
+	@set -eu; \
+	for supply in counter unforgeable; do \
+		CETTA_NAME_SUPPLY=$$supply CETTA_NAME_SEED=$(NAME_SUPPLY_TEST_SEED) \
+			$(call cetta_exec,./$(SPACE_GENERATED_NAME_TEST_BIN)); \
+	done
 
 .PHONY: test-stable-occurrence-realization-tournament
 test-stable-occurrence-realization-tournament:
@@ -26948,7 +26992,8 @@ test-petta-tabled-shared-and-runtime: $(BIN)
 
 # tabled-lattice: the results for each instance of a tabled call joined (min
 # or max) inside the fixpoint, against SWI's mode-directed tabling through the
-# embedded Prolog on 40 seeded graphs.
+# embedded Prolog on 40 seeded graphs, and min and max against the functions'
+# own selection over the same answers.
 .PHONY: test-petta-tabled-lattice
 test-petta-tabled-lattice: $(BIN)
 	@actual=runtime/test-petta-tabled-lattice.out; \
@@ -26958,7 +27003,13 @@ test-petta-tabled-lattice: $(BIN)
 	if ./$(BIN) --lang petta tests/petta/tabled_lattice_join_error.metta >"$$actual" 2>&1; then \
 		echo "FAIL: a join giving two values was not reported"; exit 1; fi; \
 	diff -u tests/petta/tabled_lattice_join_error.expected "$$actual"
-	@echo "PASS: tabled-lattice joins each call instance's results by min, max or a function of two arguments inside the fixpoint: shortest paths and reachable sets on cyclic graphs terminate, and on 40 seeded graphs every pair's shortest and longest path and every node's reachable set equal SWI's mode-directed tabling (min, max, lattice(J/3)); a plain table keeps every cost; a join giving two values is reported"
+	@set -eu; actual=runtime/test-petta-tabled-lattice-selection.out; \
+	for route in 0 1; do \
+		CETTA_OPEN_EQUATIONS_REFERENCE=$$route ./$(BIN) --lang petta \
+			tests/petta/tabled_lattice_selection.metta >"$$actual" 2>&1; \
+		diff -u tests/petta/tabled_lattice_selection.expected "$$actual"; \
+	done
+	@echo "PASS: tabled-lattice joins each call instance's results by min, max or a function of two arguments inside the fixpoint: shortest paths and reachable sets on cyclic graphs terminate, and on 40 seeded graphs every pair's shortest and longest path and every node's reachable set equal SWI's mode-directed tabling (min, max, lattice(J/3)); min and max join as the functions select, constants and ties included; a plain table keeps every cost; a join giving two values is reported"
 
 # A let pattern headed by a variable: PeTTa dispatches it at run time.  A
 # head first bound by the pattern keeps it data, so the compiled tier and the
@@ -29320,17 +29371,99 @@ test-petta-generated-space-names: $(BIN) tests/petta/generated_space_names.metta
 		tests/petta/generated_space_names.expected \
 		tests/petta/fixtures/generated_space_module.metta
 	@set -eu; \
+	for supply in counter unforgeable; do \
 	for machine in 0 1; do for reference in "" 1; do for budget in "" 1; do \
-		actual=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=$$budget CETTA_PETTA_SEARCH_MACHINE=$$machine \
+		actual=$$(CETTA_NAME_SUPPLY=$$supply CETTA_NAME_SEED=$(NAME_SUPPLY_TEST_SEED) \
+			CETTA_GC=1 CETTA_GC_BUDGET_MB=$$budget CETTA_PETTA_SEARCH_MACHINE=$$machine \
 			CETTA_OPEN_EQUATIONS_REFERENCE=$$reference timeout 120 ./$(BIN) --lang petta \
 			tests/petta/generated_space_names.metta 2>&1); \
 		if [ "$$actual" != "$$(cat tests/petta/generated_space_names.expected)" ]; then \
-			echo "FAIL: generated space names (machine $$machine, reference '$$reference', budget '$$budget')"; \
+			echo "FAIL: generated space names ($$supply names, machine $$machine, reference '$$reference', budget '$$budget')"; \
 			diff <(cat tests/petta/generated_space_names.expected) <(printf '%s\n' "$$actual") | head -20; \
 			exit 1; \
 		fi; \
-	done; done; done; \
-	echo "PASS: a generated space name is the space's identity, not its text, on every route and collection budget"
+	done; done; done; done; \
+	echo "PASS: a generated space name is the space's identity, not its text, in both name supplies, on every route and collection budget"
+
+# The name supply (src/name_supply.h): SipHash-2-4 with 128-bit output
+# against the specification's vectors and OpenSSL, the numeral, its spelling
+# and the order, split paths, and that no depth, width or count fails: a
+# chain of a million levels, a million siblings, a counter past its end, and
+# millions of names from a random tree, distinct and the same on every run,
+# with every block given back, in both modes.
+NAME_SUPPLY_TEST_BIN = runtime/test_name_supply-$(BUILD_OBJ_TAG)
+NAME_SUPPLY_TEST_SEED = 000102030405060708090a0b0c0d0e0f
+$(NAME_SUPPLY_TEST_BIN): tests/test_name_supply.c src/name_supply.c src/name_supply.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_name_supply.c src/name_supply.c $(LDFLAGS)
+
+.PHONY: test-name-supply test-petta-generated-names-parallel
+test-petta-semantics: test-name-supply test-petta-generated-names-parallel
+test-name-supply: $(NAME_SUPPLY_TEST_BIN)
+	@set -eu; \
+	for supply in counter unforgeable; do \
+		CETTA_NAME_SUPPLY=$$supply CETTA_NAME_SEED=$(NAME_SUPPLY_TEST_SEED) \
+			$(call cetta_exec,./$(NAME_SUPPLY_TEST_BIN)); \
+	done
+
+# Each parallel task draws from the supply split off when it was queued: the
+# names are the same on every run and on any number of workers, distinct
+# from the root's and each other's, equal modulo renaming in both modes and
+# on the cooperative route; a fixed seed replays unforgeable names, another
+# seed changes them, and a run without a seed reports one that replays it.
+test-petta-generated-names-parallel: $(BIN) tests/petta/generated_names_parallel.metta \
+		tests/petta/generated_names_parallel.expected tests/support/generated_space_names.py
+	@set -eu; \
+	run() { $(CETTA_BIN_INVOKE) --lang petta "$$@" tests/petta/generated_names_parallel.metta; }; \
+	renamed() { PYTHONDONTWRITEBYTECODE=1 python3 -c 'import sys; sys.path.insert(0, "tests/support"); from generated_space_names import rename_generated_space_names; sys.stdout.write(rename_generated_space_names(sys.stdin.read()))'; }; \
+	expected=$$(cat tests/petta/generated_names_parallel.expected); \
+	for supply in counter unforgeable; do for threads in 0 1 2 4; do \
+		actual=$$(CETTA_NAME_SUPPLY=$$supply CETTA_NAME_SEED=$(NAME_SUPPLY_TEST_SEED) run --num-threads $$threads 2>&1 | renamed); \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: parallel generated names ($$supply names, $$threads threads)"; \
+			diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual") | head -20; exit 1; \
+		fi; \
+	done; done; \
+	for supply in counter unforgeable; do \
+		first=$$(CETTA_NAME_SUPPLY=$$supply CETTA_NAME_SEED=$(NAME_SUPPLY_TEST_SEED) run --num-threads 4 2>&1); \
+		if [ $$supply = counter ] && ! printf '%s\n' "$$first" | grep -Eq '&space\([0-9]+(\.[0-9]+)+\)'; then \
+			echo "FAIL: no branch drew from a split supply"; exit 1; \
+		fi; \
+		for threads in 2 4 4 4; do \
+			again=$$(CETTA_NAME_SUPPLY=$$supply CETTA_NAME_SEED=$(NAME_SUPPLY_TEST_SEED) run --num-threads $$threads 2>&1); \
+			if [ "$$again" != "$$first" ]; then \
+				echo "FAIL: parallel names changed between runs ($$supply names, $$threads threads)"; \
+				diff <(printf '%s\n' "$$first") <(printf '%s\n' "$$again") | head -20; exit 1; \
+			fi; \
+		done; \
+	done; \
+	seeded=$$(run --name-supply=unforgeable --name-seed=$(NAME_SUPPLY_TEST_SEED) --num-threads 4 2>&1); \
+	other=$$(run --name-supply=unforgeable --name-seed=5eed --num-threads 4 2>&1); \
+	if [ "$$other" = "$$seeded" ] || [ "$$(printf '%s\n' "$$other" | renamed)" != "$$expected" ]; then \
+		echo "FAIL: another seed must change the names and nothing else"; exit 1; \
+	fi; \
+	report=runtime/generated-names-seed.$(BUILD_OBJ_TAG).err; \
+	unseeded=$$(run --name-supply=unforgeable --num-threads 4 2>"$$report"); \
+	seed=$$(sed -n 's/^cetta: name seed \([0-9a-f]\{32\}\) (replay with --name-seed=\1)$$/\1/p' "$$report"); \
+	if [ -z "$$seed" ] || [ "$$(wc -l < "$$report")" -ne 1 ]; then \
+		echo "FAIL: a run without a seed must report its seed, once"; cat "$$report"; exit 1; \
+	fi; \
+	rm -f "$$report"; \
+	replayed=$$(run --name-supply=unforgeable --name-seed=$$seed --num-threads 4 2>&1); \
+	from_environment=$$(CETTA_NAME_SUPPLY=unforgeable CETTA_NAME_SEED=$$seed run --num-threads 4 2>&1); \
+	if [ "$$replayed" != "$$unseeded" ] || [ "$$from_environment" != "$$unseeded" ]; then \
+		echo "FAIL: the reported seed must replay the run"; exit 1; \
+	fi; \
+	echo "PASS: parallel names depend on the program and the seed, never on the workers; both supplies agree modulo renaming"
+
+# The renaming that compares outputs up to generated names: callables and
+# spaces, each kind apart, in both supplies; it merges no names and leaves a
+# symbol that only resembles a generated name alone.
+.PHONY: test-generated-name-renaming
+test-petta-semantics: test-generated-name-renaming
+test-generated-name-renaming: $(BIN) tests/support/generated_space_names.py \
+		tests/support/check_generated_name_renaming.py
+	@PYTHONDONTWRITEBYTECODE=1 $(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_generated_name_renaming.py ./$(BIN)
 
 .PHONY: test-petta-profile-boundary test-petta-semantics \
 	test-petta-semantics-differential
@@ -30680,12 +30813,13 @@ test-admission-fixture-law: $(BIN) \
 		tests/petta/builtin_owned_by_space.metta \
 		tests/petta/builtin_owned_by_space.expected \
 		tests/petta/minmax_selection.metta \
-		tests/petta/minmax_selection.expected
+		tests/petta/minmax_selection.expected \
+		tests/petta/math_clamp.metta tests/petta/math_clamp.expected
 	@set -eu -o pipefail; \
 	diff -u tests/petta/admission_normal_forms.expected \
 		<($(CETTA_BIN_INVOKE) --lang petta tests/petta/admission_normal_forms.metta); \
 	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" "CETTA_ADMISSION_NORMALIZE=0"; do \
-		for test in minmax_intrinsic minmax_selection let_rebinding \
+		for test in minmax_intrinsic minmax_selection math_clamp let_rebinding \
 				builtin_owned_by_space \
 				$(notdir $(basename $(wildcard tests/petta/normal_form_guard_*.metta))); do \
 			env $$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/$$test.metta | \
@@ -50240,6 +50374,7 @@ $(EMBED_SHARED_TEST): tests/test_embedding.c $(EMBED_LIB)
 	$(CC) $(CFLAGS) -Iinclude -o "$$tmp_out" $< -Lruntime -l:$(notdir $(EMBED_LIB)) -Wl,-rpath,'$$ORIGIN'; \
 	mv "$$tmp_out" "$@"
 .PHONY: test-embedding-shared-api test-embedding-rust-api
+ifeq ($(ENABLE_PIC),1)
 test-embedding-shared-api: embedding-native $(EMBED_SHARED_TEST)
 	./$(EMBED_SHARED_TEST)
 test-embedding-rust-api: embedding-native $(EMBED_LIB)
@@ -50250,6 +50385,13 @@ test-embedding-rust-api: embedding-native $(EMBED_LIB)
 		-L native=runtime -l dylib:+verbatim=$(notdir $(EMBED_LIB)) -C link-arg=-Wl,-rpath,'$$ORIGIN'; \
 	mv "$$tmp_out" runtime/test_embedding_rust-$(EMBED_TAG)
 	$(GSLT2PARSE_SHARED_ASAN_ENV) ./runtime/test_embedding_rust-$(EMBED_TAG)
+else
+# A shared library is linked from objects compiled for one, never from the
+# executable's, whose thread-local storage has the executable's model.  The
+# consumers run against the library `make embedding` builds.
+test-embedding-shared-api test-embedding-rust-api:
+	+$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_PIC=1 $@
+endif
 
 PYTHON_EXECUTABLE ?= python3
 PYTHON_EXTENSION_SUFFIX = $(shell $(PYTHON_EXECUTABLE) -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')

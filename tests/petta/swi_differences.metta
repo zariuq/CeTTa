@@ -168,15 +168,18 @@
 !(min -inf 1)
 !(max -inf 1)
 !(< -inf 1)
-; 17. min and max select one of their operands by the numeric order of what
-;     they stand for: a constant stays itself, integers and floats compare
-;     exactly, -0.0 is below 0 and 0.0, a NaN operand propagates, and on a tie
-;     min answers its first operand and max its second, so (min a b) and
-;     (max a b) are a stable sort of a and b.  SWI-PeTTa computes them as
-;     arithmetic (R is min(A,B)): a constant becomes its float, and a tie of
-;     an integer and a float is the float for both.
+; 17. min and max select one of their operands by the numeric value it
+;     stands for: a constant stays itself, integers and floats compare
+;     exactly, a NaN operand propagates, and on a tie min answers its first
+;     operand and max its second, so (min a b) and (max a b) are a stable
+;     sort of a and b by value: by what the operands stand for, not by the
+;     standard order of terms, which orders terms without evaluating them (a
+;     constant is a symbol there, and 1.0 stands before 1).  SWI-PeTTa
+;     computes them as arithmetic (R is min(A,B)): a constant becomes its
+;     float, and a tie of an integer and a float is the float for both.
 ;     Decided: Zar, 2026-11-06 ("(== pi (min pi 4)) --> false ... We must
-;     dynamically maintain our living petta specs and divergence graph").
+;     dynamically maintain our living petta specs and divergence graph"),
+;     and 2026-11-22 ("committed is best").
 ; SWI-PeTTa: 3.141592653589793, false, 2.0, 2.0
 !(min pi 4)
 !(== pi (min pi 4))
@@ -260,3 +263,18 @@
 !(pow-math 1 2.5)
 !(pow-math 0 0.5)
 !(pow-math 2 0)
+; 22. -0.0 has the value of 0 and 0.0, so in min and max it ties them and
+;     the tie decides as in entry 17: min answers its first operand, max its
+;     second.  SWI-PeTTa's arithmetic puts -0.0 below 0 and 0.0 (min answers
+;     -0.0, max the other); SWI-PeTTa's answers are SWI-Prolog's own min and
+;     max, which it calls (checked 2026-11-22).  This is a rule of the
+;     numeric selections alone: the standard order of terms (msort, sort,
+;     @< and the rest) is SWI's, a float before an integer of equal value
+;     and -0.0 before 0.0, as a total order on terms must tell apart terms
+;     that are not identical.
+;     Decided: Zar, 2026-11-22 ("committed is best").
+; SWI-PeTTa: -0.0, 0.0, -0.0, 0
+!(min 0.0 -0.0)
+!(max 0.0 -0.0)
+!(min 0 -0.0)
+!(max 0 -0.0)

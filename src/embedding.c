@@ -54,6 +54,10 @@ struct cetta_engine {
     pthread_mutex_t mutex;
     unsigned active_entries;
     CettaNameDomain names;
+    /* The root of the engine's generated names (name_supply.h): an engine
+       draws only from its own, so engines on different threads never share
+       a supply. */
+    CettaNameSupply name_supply;
     CettaRuntimeSession session;
     Arena persistent;
     CettaLanguageId language;
@@ -113,6 +117,7 @@ struct cetta_space {
 typedef struct {
     cetta_engine_t *engine;
     CettaNameContext names;
+    CettaNameSupply *name_supply;
     HashConsTable *hashcons;
     CettaLibraryContext *libraries;
     CettaHeTypeTables *he_types;
@@ -313,6 +318,7 @@ static void scope_enter(cetta_engine_t *engine, EmbeddingScope *scope) {
     scope->hashcons = g_hashcons;
     CettaNameContext names = cetta_name_domain_context(&engine->names);
     cetta_name_context_install(&names);
+    scope->name_supply = cetta_name_supply_install(&engine->name_supply);
     g_hashcons = NULL;
     scope->stats = cetta_runtime_stats_owner_exchange(engine->stats);
     scope->allocation_role = cetta_survivor_allocation_scope_enter(CETTA_SURVIVOR_ALLOC_ROLE_OTHER);
@@ -355,6 +361,7 @@ static void scope_leave(EmbeddingScope *scope) {
     eval_collector_exchange(scope->collector);
     he_type_tables_exchange(scope->he_types);
     g_hashcons = scope->hashcons;
+    cetta_name_supply_install(scope->name_supply);
     cetta_name_context_install(&scope->names);
     cetta_survivor_allocation_scope_leave(scope->allocation_role);
     cetta_runtime_stats_owner_exchange(scope->stats);
@@ -449,6 +456,7 @@ static bool installed_resource_root(char *root, size_t capacity) {
 
 static void engine_free_allocation(cetta_engine_t *engine) {
     CettaNativeMemory *memory = engine->memory;
+    cetta_name_supply_dispose(&engine->name_supply);
     free(engine);
     cetta_native_memory_release(memory);
 }
@@ -468,8 +476,13 @@ static cetta_status_t engine_new_native(const cetta_engine_config_t *config, cet
     if (config && config->profile && !profile) return CETTA_INVALID_ARGUMENT;
     if (config && config->resource_root && strlen(config->resource_root) >= 4096)
         return CETTA_INVALID_ARGUMENT;
+    /* Names are given under the mode and seed the environment sets: one
+       that cannot be read refuses the engine, before any name is drawn. */
+    if (!cetta_name_supply_configure(NULL, NULL, NULL, 0u))
+        return CETTA_INVALID_ARGUMENT;
     cetta_engine_t *engine = calloc(1, sizeof(*engine));
     if (!engine) return CETTA_OUT_OF_MEMORY;
+    cetta_name_supply_init_root(&engine->name_supply);
     engine->memory = cetta_native_memory_current();
     cetta_native_memory_retain(engine->memory);
     pthread_mutexattr_t attr;
@@ -516,6 +529,8 @@ static cetta_status_t engine_new_native(const cetta_engine_config_t *config, cet
     g_hashcons = NULL;
     CettaNameContext names = cetta_name_domain_context(&engine->names);
     cetta_name_context_install(&names);
+    CettaNameSupply *previous_supply =
+        cetta_name_supply_install(&engine->name_supply);
     bool started = cetta_runtime_session_init(&engine->session, &engine->persistent, language->id, profile);
     /* Resource-path discovery may change errno after a refused constructor. */
     int startup_error = started ? 0 : errno;
@@ -539,6 +554,7 @@ static cetta_status_t engine_new_native(const cetta_engine_config_t *config, cet
         && cetta_runtime_load_prelude(&engine->session.space, &engine->persistent, language->id, profile);
     if (rooted && !loaded) startup_error = errno;
     scope_leave(&scope);
+    cetta_name_supply_install(previous_supply);
     cetta_name_context_install(&previous);
     g_hashcons = previous_hashcons;
     cetta_runtime_stats_owner_exchange(previous_stats);
