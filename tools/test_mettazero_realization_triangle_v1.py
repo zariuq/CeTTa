@@ -157,7 +157,7 @@ def require_cli_pair(
     cetta: Path, program: str, expected: str,
     profile: str | None = None,
 ) -> None:
-    horn = cli(cetta, "horn-reference", program, profile)
+    horn = cli(cetta, "horn-oracle", program, profile)
     compiled = cli(cetta, "compiled-worklist", program, profile)
     if horn != expected or compiled != horn:
         raise GateFailure(
@@ -564,7 +564,7 @@ def main() -> int:
     realization = "generated-petta" if isinstance(chart, executor.PeTTaExecutor) else "native-chart"
     print(
         "(MettaZeroRealizationTriangleV1Summary "
-        f"{realization}=1 horn-reference=1 compiled-worklist=1 "
+        f"{realization}=1 horn-oracle=1 compiled-worklist=1 "
         "classification=4 query-multiplicity=2 reflection=3 "
         "query-derived-evaluation=1 inert-completion=1 empty-query=1 "
         "reify=4 collapse-not-zero=1 ground-capability=1 "

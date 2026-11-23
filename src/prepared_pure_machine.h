@@ -35,7 +35,7 @@ enum {
  * a later uncertified scalar failure. Unclassified failures remain retryable.
  * The source is borrowed for the duration of its owner's preparation scope. */
 typedef struct {
-    SpaceProgramToken source;
+    SpaceTheoryToken source;
     CettaPreparedPureCompileStatus status;
     uint8_t refusals;
 } CettaPreparedPureCompileReport;
@@ -45,7 +45,7 @@ static inline bool cetta_prepared_pure_compile_refused(
     return report &&
         (report->refusals & (answers ? CETTA_PREPARED_PURE_REFUSE_ANSWERS
                                    : CETTA_PREPARED_PURE_REFUSE_SCALAR)) != 0u &&
-        space_program_token_matches_live_space(report->source, space);
+        space_theory_token_matches_live_space(report->source, space);
 }
 /* Whether the prepared machine can call `head` with `arity` arguments: the
  * dialect leaves the head untyped, or it is an HE head whose one signature
@@ -355,7 +355,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_answers(
     CettaPreparedPureCompileReport *report);
 
 bool cetta_prepared_pure_program_is_current(
-    const CettaPreparedPureProgram *program);
+    CettaPreparedPureProgram *program);
 
 /* The compiled node graph only selects, constructs, or observes values.
  * It neither interprets argument syntax nor matches/binds caller variables.
@@ -728,7 +728,7 @@ bool cetta_prepared_pure_answer_cursor_resume_transitions(
     CettaOwnedExecution *execution, uint64_t allowance);
 
 /* The Space program the producer reads. */
-SpaceProgramToken cetta_prepared_pure_answer_cursor_program_token(
+SpaceTheoryToken cetta_prepared_pure_answer_cursor_program_token(
     const CettaPreparedPureAnswerCursor *cursor);
 
 /* Calls entered so far, by head, in first-entry order. */

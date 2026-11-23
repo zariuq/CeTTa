@@ -4,3 +4,4 @@
 (Root "&space(9)")
 (Fresh 6 6)
 (Forged (7) () false)
+((Joined g0 &space(10) true Symbol) (Joined g1 &space(11) true Symbol))

@@ -89,7 +89,7 @@ struct TmCollector {
     TmBranch *caller;
     TmCollector *parent;
     TmScope *scope_boundary;
-    SpaceProgramToken program;
+    SpaceTheoryToken program;
     TmRead *reads;
     bool closing;
     TmCollector *next;
@@ -148,8 +148,8 @@ static void *work(TmMachine *machine, size_t bytes) {
 }
 
 static bool refresh_program(TmMachine *machine) {
-    SpaceProgramToken token = space_program_token(machine->space);
-    if (machine->program && space_program_token_eq(machine->program->token, token)) return true;
+    SpaceTheoryToken token = space_theory_token(machine->space);
+    if (machine->program && space_theory_token_eq(machine->program->token, token)) return true;
     TmProgram *program = tm_program(machine->context, machine->space);
     if (!program) return false;
     for (TmProgramPin *pin = machine->program_pins; pin; pin = pin->next) {
@@ -473,7 +473,7 @@ static bool scope_local_to(const TmScope *scope, const TmCollector *collector) {
 }
 
 static bool collection_current(const TmMachine *machine, const TmCollector *collector) {
-    if (!space_program_token_matches_live_space(collector->program, machine->space))
+    if (!space_theory_token_matches_live_space(collector->program, machine->space))
         return false;
     Bindings *captures = &tm_world(machine)->captures;
     for (const TmRead *read = collector->reads; read; read = read->next) {
@@ -2536,7 +2536,7 @@ static bool execute(TmMachine *machine, TmBranch *branch) {
         answer_bank_init(&collector->answers);
         collector->parent = branch->collector;
         collector->scope_boundary = machine->scopes;
-        collector->program = space_program_token(machine->space);
+        collector->program = space_theory_token(machine->space);
         collector->next = machine->collectors;
         machine->collectors = collector;
         TmBranch *child = clone_branch(machine, branch);

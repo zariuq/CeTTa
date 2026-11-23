@@ -135,7 +135,7 @@ typedef struct {
     /* A typed call in the closure runs at the dispatch boundary. */
     bool typed_dispatch;
     HeRawFlowFlags raw_flow;
-    SpaceProgramToken token;
+    SpaceTheoryToken token;
     uint64_t authority;
 } HeClosureDecision;
 
@@ -157,7 +157,7 @@ static const HeClosureDecision *he_closure_decision_find(Space *space,
     HeClosureDecision *slot = he_closure_decision_slot(head, open_root, stream);
     return authority && slot->authority == authority && slot->head == head &&
         slot->open_root == open_root && slot->stream == stream &&
-        slot->token.space == space && space_program_token_is_current(slot->token)
+        slot->token.space == space && space_theory_token_is_current(slot->token)
         ? slot : NULL;
 }
 
@@ -179,7 +179,7 @@ static void he_closure_decision_record(Space *space, SymbolId head,
         .raise_unshaped = admitted && admission->raise_unshaped,
         .typed_dispatch = admitted && admission->typed_dispatch,
         .raw_flow = admitted ? admission->raw_flow : (HeRawFlowFlags){0},
-        .token = space_program_token(space), .authority = authority};
+        .token = space_theory_token(space), .authority = authority};
 }
 
 static bool he_stream_head_total(Space *space, SymbolId head,
@@ -204,7 +204,7 @@ static bool he_execution_type_name(Atom *type, const char *name) {
  * an effect even when its result is discarded; the shared machine must call
  * the ordinary constructor exactly once and may never retry a pure run. */
 typedef struct {
-    SpaceProgramToken token;
+    SpaceTheoryToken token;
     const CettaLibraryContext *library;
     const CettaProfile *profile;
     uint64_t symbols;
@@ -229,7 +229,7 @@ static bool he_native_new_space_contract_current(Space *space) {
         contract->features == g_library_context->active_mask &&
         contract->symbols == symbol_table_instance_id(g_symbols) &&
         contract->kinds == active_builtin_allowed("new-space-kind") &&
-        space_program_token_eq(contract->token, space_program_token(space));
+        space_theory_token_matches_live_space(contract->token, space);
 }
 
 static bool he_shared_native_new_space_ready(Space *space,
@@ -247,7 +247,7 @@ static bool he_native_new_space_admitted(Space *space, Arena *arena,
     if (he_native_new_space_contract_current(space))
         return g_he_new_space_contract.admitted;
     HeNewSpaceContract contract = {
-        .token = space_program_token(space), .library = g_library_context,
+        .token = space_theory_token(space), .library = g_library_context,
         .profile = g_library_context->session.profile,
         .symbols = symbol_table_instance_id(g_symbols),
         .features = g_library_context->active_mask,
@@ -285,7 +285,7 @@ static bool he_native_new_space_admitted(Space *space, Arena *arena,
  * type observation. It must supersede PeTTa's data-wrapper form without
  * evaluating the operand on the machine or making allocation retryable. */
 typedef struct {
-    SpaceProgramToken token;
+    SpaceTheoryToken token;
     const CettaLibraryContext *library;
     const CettaProfile *profile;
     uint64_t symbols;
@@ -308,7 +308,7 @@ static bool he_native_new_state_contract_current(Space *space) {
         contract->profile == g_library_context->session.profile &&
         contract->features == g_library_context->active_mask &&
         contract->symbols == symbol_table_instance_id(g_symbols) &&
-        space_program_token_eq(contract->token, space_program_token(space));
+        space_theory_token_matches_live_space(contract->token, space);
 }
 
 static bool he_shared_native_new_state_ready(Space *space,
@@ -326,7 +326,7 @@ static bool he_native_new_state_admitted(Space *space, Arena *arena,
     if (he_native_new_state_contract_current(space))
         return g_he_new_state_contract.admitted;
     HeNewStateContract contract = {
-        .token = space_program_token(space), .library = g_library_context,
+        .token = space_theory_token(space), .library = g_library_context,
         .profile = g_library_context->session.profile,
         .symbols = symbol_table_instance_id(g_symbols),
         .features = g_library_context->active_mask, .valid = true,
@@ -372,7 +372,7 @@ static bool he_native_state_write_contract_current(Space *space) {
         contract->profile == g_library_context->session.profile &&
         contract->features == g_library_context->active_mask &&
         contract->symbols == symbol_table_instance_id(g_symbols) &&
-        space_program_token_eq(contract->token, space_program_token(space));
+        space_theory_token_matches_live_space(contract->token, space);
 }
 
 static bool he_shared_native_state_write_ready(Space *space,
@@ -404,7 +404,7 @@ static bool he_native_state_write_admitted(Space *space, Arena *arena,
     if (he_native_state_write_contract_current(space))
         return g_he_state_write_contract.admitted;
     HeNewStateContract contract = {
-        .token = space_program_token(space), .library = g_library_context,
+        .token = space_theory_token(space), .library = g_library_context,
         .profile = g_library_context->session.profile,
         .symbols = symbol_table_instance_id(g_symbols),
         .features = g_library_context->active_mask, .valid = true,
@@ -562,8 +562,7 @@ static bool he_execution_condition_head(SymbolId head) {
 static bool he_execution_effect_atom_plain(Atom *atom) {
     SymbolId head = atom_head_symbol_id(atom);
     return atom && atom->kind == ATOM_EXPR && head != SYMBOL_ID_NONE &&
-        head != g_builtin_syms.equals && head != g_builtin_syms.equals_percent &&
-        head != g_builtin_syms.colon;
+        !space_theory_is_theory_head(head);
 }
 
 static bool he_execution_push(HeExecutionAdmission *admission, Atom *term) {
@@ -619,6 +618,9 @@ static bool he_execution_primitive_signature(HeExecutionAdmission *admission,
 static bool he_execution_intrinsic_equations(Space *space, SymbolId head) {
     if ((eval_admitted_rule_forms() & CETTA_RULE_SYNTAX_DIRECTIONAL) &&
         space_directional_rules_may_match_known_head(space, head)) return false;
+    if (__builtin_expect(space_may_have_equational_aliases(space), 0) &&
+        (eval_admitted_rule_forms() & CETTA_RULE_SYNTAX_EQUATIONAL_ALIAS) &&
+        space_alias_head_affected_slow(space, head)) return false;
     SpaceEquationCursor cursor;
     if (!space_equation_cursor_init(space, head, &cursor))
         return false;
@@ -774,7 +776,7 @@ static bool he_term_single_answer_in(Space *space, const Atom *term,
 typedef struct {
     SymbolId head;
     bool single;
-    SpaceProgramToken token;
+    SpaceTheoryToken token;
     uint64_t authority;
 } HeSingleAnswerDecision;
 
@@ -790,7 +792,7 @@ static bool he_head_single_answer_in(Space *space, SymbolId head,
     HeSingleAnswerDecision *slot = &decisions[
         (uint32_t)((uint64_t)head * 2654435761u) % HE_SINGLE_ANSWER_DECISIONS];
     if (authority && slot->authority == authority && slot->head == head &&
-        slot->token.space == space && space_program_token_is_current(slot->token))
+        slot->token.space == space && space_theory_token_is_current(slot->token))
         return slot->single;
     for (size_t index = 0u; index < scope->len; index++)
         if (scope->heads[index] == head)
@@ -838,7 +840,7 @@ static bool he_head_single_answer_in(Space *space, SymbolId head,
     }
     if (scope->len == 0u)
         *slot = (HeSingleAnswerDecision){.head = head, .single = single,
-            .token = space_program_token(space), .authority = authority};
+            .token = space_theory_token(space), .authority = authority};
     return single;
 }
 
@@ -1083,7 +1085,7 @@ static SymbolId he_library_stream_aggregate(Space *space, const Atom *term) {
 
 typedef struct {
     const Space *space;
-    SpaceProgramToken program;
+    SpaceTheoryToken program;
     SymbolId head;
     CettaExprLen arity;
     Atom *signature;
@@ -1101,15 +1103,16 @@ static _Thread_local HeDispatchMemo g_he_dispatch_memo[8];
  * other head. */
 static Atom *he_dispatch_signature(Space *space, SymbolId head,
                                    CettaExprLen arity) {
+    SpaceTheoryView view = space_theory_view_borrow(space);
     if (!space || head == SYMBOL_ID_NONE || is_grounded_op(head) ||
         symbol_id_is_builtin(head) || arity == 0u ||
-        !space_head_declares_type(space, head) ||
+        !space_theory_view_head_declares_type(&view, head) ||
         !eval_space_has_equations(space, head))
         return NULL;
     size_t slot = ((size_t)head * 31u + arity) & 7u;
     HeDispatchMemo *memo = &g_he_dispatch_memo[slot];
     if (memo->ready && memo->space == space && memo->head == head &&
-        memo->arity == arity && space_program_token_is_current(memo->program))
+        memo->arity == arity && space_theory_token_is_current(memo->program))
         return memo->signature;
     /* The head's types are read here and only the closed signature is kept:
      * the fresh variables a polymorphic type is read with stay in this
@@ -1137,7 +1140,7 @@ static Atom *he_dispatch_signature(Space *space, SymbolId head,
     free(types);
     arena_free(&scratch);
     memo->space = space;
-    memo->program = space_program_token(space);
+    memo->program = space_theory_token(space);
     memo->head = head;
     memo->arity = arity;
     memo->ready = true;
@@ -1284,7 +1287,7 @@ static bool he_typed_reach_head(HeTypedReach *reach, SymbolId head,
 
 typedef struct {
     const Space *space;
-    SpaceProgramToken program;
+    SpaceTheoryToken program;
     SymbolId head;
     CettaExprLen arity;
     bool ready;
@@ -1305,13 +1308,13 @@ static bool he_head_reaches_typed_dispatch(Space *space, SymbolId head,
     HeTypedReachMemo *memo =
         &g_he_typed_reach_memo[((size_t)head * 31u + arity) & 63u];
     if (memo->ready && memo->space == space && memo->head == head &&
-        memo->arity == arity && space_program_token_is_current(memo->program))
+        memo->arity == arity && space_theory_token_is_current(memo->program))
         return memo->reaches;
     SymbolId heads[HE_TYPED_REACH_HEADS];
     HeTypedReach reach = {.space = space, .heads = heads};
     bool reaches = he_typed_reach_head(&reach, head, arity, 0u);
     *memo = (HeTypedReachMemo){.space = space,
-        .program = space_program_token(space), .head = head, .arity = arity,
+        .program = space_theory_token(space), .head = head, .arity = arity,
         .ready = true, .reaches = reaches};
     return reaches;
 }
@@ -1394,9 +1397,10 @@ static bool he_dispatch_arguments_fit(Space *space, Atom *term) {
 static inline __attribute__((always_inline)) bool
 he_execution_head_requires_canonical(Space *space, SymbolId head,
     CettaExprLen arity, bool intrinsic, bool collection, bool library_stream) {
+    SpaceTheoryView view = space_theory_view_borrow(space);
     return !intrinsic && head != SYMBOL_ID_NONE && !collection &&
         !library_stream && (is_grounded_op(head) || symbol_id_is_builtin(head) ||
-                           (space_head_declares_type(space, head) &&
+                           (space_theory_view_head_declares_type(&view, head) &&
                             !he_dispatch_signature(space, head, arity)));
 }
 
@@ -1417,6 +1421,11 @@ static bool he_execution_push_pattern(HeExecutionAdmission *admission,
 
 static bool he_execution_source_admitted(HeExecutionAdmission *admission,
                                          Atom *source) {
+    if (__builtin_expect(
+            space_may_have_equational_aliases(admission->space), 0) &&
+        (eval_admitted_rule_forms() & CETTA_RULE_SYNTAX_EQUATIONAL_ALIAS) &&
+        space_has_active_equations_slow(admission->space))
+        return false;
     if (!he_execution_push(admission, source))
         return false;
     while (admission->length) {
@@ -1858,11 +1867,12 @@ static bool he_return_bind_row(HeReturnEnvironment *env, const Atom *pattern) {
  * PeTTa, which keep it data, as prepared calls and grounded dispatch do)
  * and no equation of the program redefines it: its value is a truth value. */
 static bool he_return_numeric_test(Space *space, SymbolId head) {
+    SpaceTheoryView view = space_theory_view_borrow(space);
     return head == g_builtin_syms.numeric_eq &&
         eval_current_language_id() == CETTA_LANGUAGE_HE &&
         !active_profile_uses_rust_he_compat_semantics() &&
         !eval_space_has_equations(space, head) &&
-        !space_head_declares_type(space, head);
+        !space_theory_view_head_declares_type(&view, head);
 }
 
 static HeReturnProvenance he_return_body(HeReturnAnalysis *, const Atom *,
@@ -1924,7 +1934,8 @@ static HeReturnProvenance he_return_call(HeReturnAnalysis *analysis, SymbolId he
      * a head's answers are scalars where its bodies' are. */
     bool checks_range = false;
     bool structural_range = false;
-    if (space_head_declares_type(analysis->space, head) &&
+    SpaceTheoryView view = space_theory_view_borrow(analysis->space);
+    if (space_theory_view_head_declares_type(&view, head) &&
         !cetta_prepared_pure_value_signature(analysis->space, head, arity,
                                              &checks_range,
                                              &structural_range)) {
@@ -2218,7 +2229,8 @@ static HeReturnProvenance he_return_body(HeReturnAnalysis *analysis,
     else if (he_return_native_answers_as_is(analysis, body, arguments, arity))
         result = (HeReturnProvenance)(HE_RETURN_RAW | HE_RETURN_SCALAR);
     else if ((head != SYMBOL_ID_NONE && !symbol_id_is_builtin(head) && !is_grounded_op(head) &&
-               (!space_head_declares_type(analysis->space, head) ||
+               (!space_theory_view_head_declares_type(
+                    &(SpaceTheoryView){.space = analysis->space}, head) ||
                 cetta_prepared_pure_he_checked_constructor(analysis->space,
                                                            head, arity)) &&
                !space_equations_may_match_unnamed_head(analysis->space)) ||
@@ -2436,7 +2448,7 @@ static HeExpectedCast he_cast_head(HeCastAnalysis *analysis, SymbolId head,
 
 typedef struct {
     const Space *space;
-    SpaceProgramToken program;
+    SpaceTheoryToken program;
     SymbolId head;
     CettaExprLen arity;
     Atom *expected;
@@ -2464,7 +2476,7 @@ static HeExpectedCast he_expected_cast(Space *space, Atom *call,
     HeCastMemo *memo = &g_he_cast_memo[slot];
     if (memo->ready && memo->space == space && memo->head == head &&
         memo->arity == arity && atom_eq(memo->expected, expected) &&
-        space_program_token_is_current(memo->program))
+        space_theory_token_is_current(memo->program))
         return memo->mode;
     Arena scratch;
     arena_init(&scratch);
@@ -2479,7 +2491,7 @@ static HeExpectedCast he_expected_cast(Space *space, Atom *call,
     memo->arena_ready = true;
     memo->expected = atom_deep_copy(&memo->expected_arena, expected);
     memo->space = space;
-    memo->program = space_program_token(space);
+    memo->program = space_theory_token(space);
     memo->head = head;
     memo->arity = arity;
     memo->mode = mode;
@@ -2584,7 +2596,7 @@ static bool he_stream_head_total(Space *space, SymbolId head,
 typedef struct {
     SymbolId symbol;
     bool callable;
-    SpaceProgramToken token;
+    SpaceTheoryToken token;
     uint64_t authority;
 } HeSymbolCallability;
 
@@ -2599,12 +2611,12 @@ static bool he_symbol_callable(Space *space, SymbolId symbol) {
         (uint32_t)((uint64_t)symbol * 2654435761u) % HE_SYMBOL_CALLABILITIES];
     if (authority && slot->authority == authority &&
         slot->symbol == symbol && slot->token.space == space &&
-        space_program_token_is_current(slot->token))
+        space_theory_token_is_current(slot->token))
         return slot->callable;
     bool callable = eval_space_has_equations(space, symbol) ||
         is_grounded_op(symbol) || symbol_id_is_builtin(symbol);
     *slot = (HeSymbolCallability){.symbol = symbol, .callable = callable,
-        .token = space_program_token(space), .authority = authority};
+        .token = space_theory_token(space), .authority = authority};
     return callable;
 }
 
@@ -2651,7 +2663,7 @@ typedef struct {
     SymbolId head;
     CettaExprLen arity;
     bool admitted;
-    SpaceProgramToken token;
+    SpaceTheoryToken token;
     uint64_t authority;
 } HeStreamHeadDecision;
 
@@ -2670,13 +2682,13 @@ static bool he_stream_head_admitted(Space *space, Arena *arena,
         HE_STREAM_HEAD_DECISIONS];
     if (authority && slot->authority == authority &&
         slot->head == head && slot->arity == arity &&
-        slot->token.space == space && space_program_token_is_current(slot->token))
+        slot->token.space == space && space_theory_token_is_current(slot->token))
         return slot->admitted;
     bool admitted = eval_space_has_equations(space, head) &&
         he_stream_head_total(space, head, arity) &&
         he_stream_admitted(space, arena, head);
     *slot = (HeStreamHeadDecision){.head = head, .arity = arity,
-        .admitted = admitted, .token = space_program_token(space),
+        .admitted = admitted, .token = space_theory_token(space),
         .authority = authority};
     return admitted;
 }

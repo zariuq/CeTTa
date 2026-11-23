@@ -42,7 +42,7 @@ static bool support_trace(void) {
 }
 
 static _Thread_local struct {
-    SpaceProgramToken program;
+    SpaceTheoryToken program;
     char path[4096];
     bool admitted;
 } g_support_presentation;
@@ -51,8 +51,8 @@ bool cetta_support_presentation_admitted(Space *program,
                                          const char *library_path) {
     if (!program || !library_path || !*library_path || support_reference())
         return false;
-    SpaceProgramToken token = space_program_token(program);
-    if (space_program_token_eq(g_support_presentation.program, token) &&
+    SpaceTheoryToken token = space_theory_token(program);
+    if (space_theory_token_eq(g_support_presentation.program, token) &&
         strcmp(g_support_presentation.path, library_path) == 0)
         return g_support_presentation.admitted;
     bool admitted =

@@ -539,6 +539,9 @@ their ownership and fallback rules.
 ./cetta --quiet <file>               hide [()] success results
 ./cetta --fuel <-1|n> <file>         evaluation budget, positive n or -1 unlimited
 ./cetta --num-threads <n> <file>     OS threads for parallel-capable execution
+./cetta --name-supply=<counter|unforgeable> <file>
+                                     numbered (default) or hashed generated names
+./cetta --name-seed=<hex> <file>     the seed of hashed names
 ./cetta --space-engine <name> <file> select the space engine
 ./cetta --compile <file.metta>       emit LLVM IR
 ./cetta --run-report <path> <file>   query report as JSON
@@ -548,3 +551,27 @@ Without `--lang`, `cetta` runs `petta`. `--lang petta` reads consecutive
 `.metta` files in order; the other languages run one file and pass the
 remaining arguments to the program (`system:args`). `./cetta --help` lists
 every option.
+
+A space `new-space` makes in PeTTa prints as `&space(N)`, and a lambda as
+`lambda_N`. Such a generated name is nominal: a program can observe only
+that it equals itself and no other name, and its text, built again or read
+back, is an ordinary symbol that never reaches the space. Names come from a
+splittable supply that never runs out: no depth or width of parallel tasks
+and no number of names is refused. Each parallel task draws from a child
+supply split off when the task is queued, so the names depend on the
+program and the seed, never on thread scheduling or the number of workers.
+With `--name-supply=counter` (the default) a name spells its place: the main
+thread gives 1, 2, ..., its first task 0.1, 0.2, ..., that task's first task
+0.0.1, and a task nested deeper than one machine word can number spells the
+32 hexadecimal digits of its block's key in front, as in
+`529d30b948a8330fdb6a1996a5480869.0.1`. With `--name-supply=unforgeable` a
+name is 32 hexadecimal digits of SipHash-2-4 (128-bit output) keyed by the
+seed, for names that leave the process. In counter mode two names are
+equal only when they are the same name: a deep name's block is compared as
+an object, so its key affects only how the name prints and sorts. An
+unforgeable name is compared by its 128 bits, so among n of them a
+collision has probability at most about n²/2¹²⁹ and becomes likely only
+near 2⁶⁴ names; the same bound covers two deep blocks printing alike. `--name-seed=<hex>` sets
+the seed, 1 to 32 hexadecimal digits; without one, a random seed is
+reported on stderr so that the run can be replayed. The environment
+variables `CETTA_NAME_SUPPLY` and `CETTA_NAME_SEED` set the same options.

@@ -405,9 +405,8 @@ static void exercise_backend(SpaceEngine engine) {
 
     run_raw_candidate_frontier(provider, engine_name);
 
-    size_t worlds_after_reference = 0u;
-    for (uint32_t raw = CETTA_GSLT_REALIZATION_HORN_REFERENCE;
-         raw <= CETTA_GSLT_REALIZATION_COMPILED_WORKLIST; raw++) {
+    size_t worlds_after_first = 0u;
+    for (uint32_t raw = 0u; raw < CETTA_GSLT_REALIZATION_COUNT; raw++) {
         CettaGsltRealization realization = (CettaGsltRealization)raw;
         CettaGsltLanguage *language = NULL;
         memset(error, 0, sizeof(error));
@@ -432,8 +431,8 @@ static void exercise_backend(SpaceEngine engine) {
                 &physical.registry, engine_name);
         }
         cetta_gslt_language_free(language);
-        if (realization == CETTA_GSLT_REALIZATION_HORN_REFERENCE)
-            worlds_after_reference =
+        if (raw == 0u)
+            worlds_after_first =
                 cetta_gslt_revisioned_space_provider_world_count_v1(provider);
     }
 
@@ -443,8 +442,8 @@ static void exercise_backend(SpaceEngine engine) {
         label, sizeof(label),
         "%s content-addresses identical worlds across realizations",
         engine_name);
-    CHECK(worlds_after_reference > 0u &&
-              worlds_after_both == worlds_after_reference,
+    CHECK(worlds_after_first > 0u &&
+              worlds_after_both == worlds_after_first,
           label);
     (void)snprintf(
         label, sizeof(label), "%s keeps its selected physical backend active",

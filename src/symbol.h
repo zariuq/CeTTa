@@ -745,7 +745,14 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_ipasir_solve, "__cetta_lib_ipasir_solve") \
     X(lib_ipasir_models, "__cetta_lib_ipasir_models") \
     X(lib_provenance_supports, "__cetta_lib_provenance_supports") \
-    X(lib_provenance_supports_each, "__cetta_lib_provenance_supports_each")
+    X(lib_provenance_supports_each, "__cetta_lib_provenance_supports_each") \
+    X(equals_e, "=e") \
+    X(equals_e_right, "=e>") \
+    X(equals_e_left, "=e<") \
+    X(eq_norm, "eq:norm") \
+    X(eq_same, "eq:same") \
+    X(eq_class, "eq:class") \
+    X(eq_match, "eq:match")
 
 /* Libraries may publish native primitives under their public names. The
  * shared registry supplies dispatch and operand-observation capability;
@@ -989,11 +996,13 @@ extern _Thread_local BuiltinSyms g_builtin_syms;
  * This distinguishes evaluator syntax from later interned constructor/data
  * heads without spelling the builtin set again in each consumer. */
 static inline bool symbol_id_is_builtin(SymbolId id) {
-    return id != SYMBOL_ID_NONE &&
-           (id <= g_builtin_syms.native_handle ||
-            id == g_builtin_syms.empty_form ||
-            (id >= g_builtin_syms.work_new &&
-             id <= g_builtin_syms.work_exists));
+    if (id == SYMBOL_ID_NONE || id > g_builtin_syms.eq_match)
+        return false;
+    return id <= g_builtin_syms.native_handle ||
+           id == g_builtin_syms.empty_form ||
+           (id >= g_builtin_syms.work_new &&
+            id <= g_builtin_syms.work_exists) ||
+           id >= g_builtin_syms.eq_norm;
 }
 
 /* The next key of the sequence every table that places untrusted content

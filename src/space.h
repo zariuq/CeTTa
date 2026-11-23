@@ -329,17 +329,17 @@ typedef struct Space {
     /* Process-local lifetime identity.  A revision identifies a state only
        within one Space lifetime; instance_id prevents pointer reuse from
        reviving cached state from a freed Space at the same address. */
-    uint64_t instance_id;
-    uint64_t revision;
+    _Atomic uint64_t instance_id;
+    _Atomic uint64_t revision;
     /* Revision of the ordered equation-occurrence projection only.  Data-only
        mutations leave this coordinate unchanged; mutations whose projection
        effect is opaque advance it conservatively. */
-    uint64_t equation_revision;
+    _Atomic uint64_t equation_revision;
     /* Revision of the declaration projection: `(: subject type)` occurrences
        only.  Callability, named arity, and effect classification read the
        equation and declaration projections together and nothing else, so
        caches of those facts key on this pair rather than on `revision`. */
-    uint64_t declaration_revision;
+    _Atomic uint64_t declaration_revision;
     /* A `(:< sub super)` row, or a mutation that could not be classified, has
        been published here. Never cleared: a read that finds it false knows
        the space has no subtype rows. */
@@ -351,7 +351,7 @@ typedef struct Space {
        rows, move as rows are appended (space_rule_rows64).  An overlay
        folds the stamps of its actual base chain into projection currency,
        so unrelated Spaces cannot invalidate its equation view. */
-    uint64_t prefix_epoch;
+    _Atomic uint64_t prefix_epoch;
     /* Space engine state is explicit so native, PathMap, and MORK lanes can
        share one runtime seam without confusing storage with execution. */
     SpaceMatchBackend match_backend;
@@ -381,7 +381,7 @@ typedef struct Space {
     uint32_t importer_count, importer_cap;
     /* Unique stamp of changes read through the live module handles.
        Dependency appends change this, but preserve the storage prefix. */
-    uint64_t module_dependency_epoch;
+    _Atomic uint64_t module_dependency_epoch;
     /* Charged to the resource ledger's space gauges at initialization. */
     bool ledger_counted;
     /* Set when the space lives only while an arena holds an atom of it: the
@@ -399,6 +399,17 @@ typedef struct Space {
        text spelled the same is another symbol.  Given once; no collection
        changes it.  The space holds the name's block until space_free. */
     CettaGeneratedName generated_name;
+    /* Strictly monotone revision of the ground equational-alias projection
+       (`(=e lhs rhs)` occurrences).  Always advances on add/remove so caches
+       invalidate; active-equation emptiness is read from `alias_table`, never
+       from `equational_revision == 0` (LiveTheoryProjections.empty_after_edit). */
+    _Atomic uint64_t equational_revision;
+    /* Lazily constructed ground alias table (`src/space_alias.c`); NULL until
+       an `=e` row is observed so spaces without `=e` pay zero heap memory. */
+    struct SpaceAliasTable *alias_table;
+    /* Lazily constructed per-head clocks & seals (`src/space_theory.c`); NULL
+       until a head is watched or sealed so ordinary spaces pay zero overhead. */
+    struct SpaceHeadClocks *head_clocks;
 } Space;
 
 /* ── Space sections ─────────────────────────────────────────────────────
@@ -916,16 +927,34 @@ bool space_truncate64(Space *s, CettaCount new_len);
 bool space_truncate(Space *s, uint32_t new_len);
 bool space_length_u32_checked(const Space *s, uint32_t *out_len);
 static inline uint64_t space_revision(const Space *s) {
-    return s ? s->revision : 0;
+    return s ? atomic_load_explicit(&s->revision, memory_order_relaxed) : 0u;
+}
+static inline uint64_t space_prefix_epoch(const Space *s) {
+    return s ? atomic_load_explicit(&s->prefix_epoch, memory_order_relaxed)
+             : 0u;
+}
+static inline uint64_t space_module_dependency_epoch(const Space *s) {
+    return s ? atomic_load_explicit(&s->module_dependency_epoch,
+                                    memory_order_relaxed)
+             : 0u;
 }
 static inline uint64_t space_equation_revision(const Space *s) {
-    return s ? s->equation_revision : 0;
+    return s ? atomic_load_explicit(&s->equation_revision,
+                                    memory_order_relaxed)
+             : 0u;
 }
 static inline uint64_t space_declaration_revision(const Space *s) {
-    return s ? s->declaration_revision : 0;
+    return s ? atomic_load_explicit(&s->declaration_revision,
+                                    memory_order_relaxed)
+             : 0u;
+}
+static inline uint64_t space_equational_revision(const Space *s) {
+    return s ? atomic_load_explicit(&s->equational_revision,
+                                    memory_order_relaxed)
+             : 0u;
 }
 static inline uint64_t space_instance_id(const Space *s) {
-    return s ? s->instance_id : 0;
+    return s ? atomic_load_explicit(&s->instance_id, memory_order_relaxed) : 0u;
 }
 
 /* A process-global monotonic counter bumped on every space revision bump.
@@ -939,7 +968,7 @@ static inline uint64_t space_instance_id(const Space *s) {
 extern _Atomic uint64_t cetta_space_global_mutation_epoch;
 static inline uint64_t space_global_mutation_epoch(void) {
     return atomic_load_explicit(&cetta_space_global_mutation_epoch,
-                                memory_order_relaxed);
+                                memory_order_acquire);
 }
 /* A change of meaning outside every Space (a module imported, an engine name
  * registered) advances the clock as a mutation does, and the program clock
@@ -954,7 +983,7 @@ void space_global_mutation_epoch_advance(void);
 extern _Atomic uint64_t cetta_space_global_program_epoch;
 static inline uint64_t space_global_program_epoch(void) {
     return atomic_load_explicit(&cetta_space_global_program_epoch,
-                                memory_order_relaxed);
+                                memory_order_acquire);
 }
 
 /* An in-process read token for one live Space revision.  The token carries a
@@ -989,19 +1018,20 @@ typedef struct {
     uint64_t projection_dependency_epoch;
 } SpaceEquationToken;
 
-/* Lifetime-qualified identity of the program projection a Space presents to
-   callability, named-arity, and effect classification: its equation and
-   declaration occurrences.  Data-only mutations leave it unchanged.  An
-   overlay freezes a base storage prefix but reads its modules live. Its
-   token includes the newest base-prefix or module-view stamp, so module
-   appends invalidate it without unrelated spaces doing so. */
-typedef struct {
-    const Space *space;
-    uint64_t instance_id;
-    uint64_t equation_revision;
-    uint64_t declaration_revision;
-    uint64_t base_dependency_epoch;
-} SpaceProgramToken;
+/* The dependency epoch of an overlay's base chain. */
+uint64_t space_overlay_dependency_epoch(const Space *s);
+SpaceReadToken space_read_token(const Space *s);
+bool space_read_token_is_current(SpaceReadToken token);
+/* Instance live and prefix not rewritten.  Data-only appends that bump
+ * `revision` remain intact. */
+bool space_read_token_prefix_intact(SpaceReadToken token);
+/* Validate a token against a Space whose lifetime is independently known to
+ * be active.  Unlike the one-argument form, this never dereferences the raw
+ * pointer retained by a stale token. */
+bool space_read_token_matches_live_space(SpaceReadToken token,
+                                         const Space *live_space);
+
+#include "space_theory.h"
 
 typedef struct {
     SpaceReadToken read;
@@ -1017,16 +1047,6 @@ typedef struct {
     Atom *rhs;
 } SpaceEquationOccurrence;
 
-SpaceReadToken space_read_token(const Space *s);
-bool space_read_token_is_current(SpaceReadToken token);
-/* Instance live and prefix not rewritten.  Data-only appends that bump
- * `revision` remain intact. */
-bool space_read_token_prefix_intact(SpaceReadToken token);
-/* Validate a token against a Space whose lifetime is independently known to
- * be active.  Unlike the one-argument form, this never dereferences the raw
- * pointer retained by a stale token. */
-bool space_read_token_matches_live_space(SpaceReadToken token,
-                                         const Space *live_space);
 /* Publish privately prepared native bag/set replacements as one serialized
  * host transaction. Every token and storage precondition is checked before
  * any transfer. The transfer allocates nothing; each private Space receives
@@ -1035,33 +1055,6 @@ bool space_read_token_matches_live_space(SpaceReadToken token,
 bool space_publish_native_replacements(Space *const *destinations,
     Space *const *prepared, const SpaceReadToken *versions, size_t count);
 SpaceEquationToken space_equation_token(const Space *s);
-SpaceProgramToken space_program_token(const Space *s);
-static inline bool space_program_token_eq(SpaceProgramToken left,
-                                          SpaceProgramToken right) {
-    return left.space == right.space &&
-           left.instance_id == right.instance_id &&
-           left.equation_revision == right.equation_revision &&
-           left.declaration_revision == right.declaration_revision &&
-           left.base_dependency_epoch == right.base_dependency_epoch;
-}
-/* The dependency epoch of an overlay's base chain. */
-uint64_t space_overlay_dependency_epoch(const Space *s);
-/* space_program_token_eq(token, space_program_token(token.space)), field by
- * field: a space without an overlay base has dependency epoch zero, so only
- * an overlay walks its base chain.  Inline, since every call a compiled
- * relation makes checks it. */
-static inline bool space_program_token_is_current(SpaceProgramToken token) {
-    const Space *s = token.space;
-    return s && token.instance_id != 0u &&
-           token.base_dependency_epoch != UINT64_MAX &&
-           token.instance_id == s->instance_id &&
-           token.equation_revision == s->equation_revision &&
-           token.declaration_revision == s->declaration_revision &&
-           token.base_dependency_epoch ==
-               (s->overlay_base ? space_overlay_dependency_epoch(s) : 0u);
-}
-bool space_program_token_matches_live_space(
-    SpaceProgramToken token, const Space *live_space);
 bool space_equation_token_is_current(SpaceEquationToken token);
 bool space_equation_token_matches_live_space(
     SpaceEquationToken token, const Space *live_space);
@@ -1077,7 +1070,7 @@ bool space_rule_occurrence_resolve(SpaceEquationOccurrenceId id,
  * equations and source order without scanning unrelated heads.  Overlay spaces
  * use the complete logical view as the correctness fallback.
  */
-typedef struct {
+typedef struct SpaceEquationCursor {
     SpaceReadToken read;
     SymbolId head;
     /* The member being read: the space itself, then each dependency's own
@@ -1584,6 +1577,8 @@ static inline bool space_directional_rules_may_match_known_head(Space *s, Symbol
     return !space_directional_index_proves_absent(s) &&
         space_directional_rules_may_match_general(s, head);
 }
+
+#include "space_alias.h"
 /* Whether a rule of the admitted syntax (rule_binding.h) may answer a call
  * of `head`, in `s` or a module it imports.  Without the named-head
  * qualifier this is the two predicates above for the admitted forms; with
@@ -2165,5 +2160,69 @@ uint32_t get_atom_types_structural(Space *s, Arena *a, Atom *atom,
 uint32_t get_atom_types_structural_budgeted(
     Space *s, Arena *a, Atom *atom, Atom ***out_types,
     CettaTypeInferenceBudget *budget);
+
+/* ── Live SpaceTheoryView Readers ───────────────────────────────────────── */
+
+/* Unified rule-existence check over a live SpaceTheoryView across ordinary
+ * `=`, directional `=%`, and scoped `=e` alias rules. */
+static inline bool space_theory_view_head_has_ordinary_rules(
+        const SpaceTheoryView *view, SymbolId head) {
+    return view && view->space &&
+           space_equations_may_match_known_head(view->space, head);
+}
+
+static inline bool space_theory_view_head_has_extended_rules(
+        const SpaceTheoryView *view, SymbolId head, unsigned admitted_forms) {
+    if (!view || !view->space)
+        return false;
+    Space *s = view->space;
+    if ((admitted_forms & 2u /* CETTA_RULE_SYNTAX_DIRECTIONAL */) &&
+        space_directional_rules_may_match_known_head(s, head))
+        return true;
+    return __builtin_expect(
+               atomic_load_explicit(&cetta_space_global_equational_epoch,
+                                    memory_order_relaxed) != 0u,
+               0) &&
+           space_may_have_equational_aliases(s) &&
+           space_theory_view_head_has_alias_rules_slow(
+               view, head, admitted_forms);
+}
+
+static inline bool space_theory_view_head_has_rules(
+        const SpaceTheoryView *view, SymbolId head, unsigned admitted_forms) {
+    return space_theory_view_head_has_ordinary_rules(view, head) ||
+           space_theory_view_head_has_extended_rules(view, head, admitted_forms);
+}
+
+static inline bool space_theory_view_open_rule_cursor(
+        const SpaceTheoryView *view, SymbolId head, unsigned admitted_forms,
+        SpaceEquationCursor *cursor) {
+    return view && view->space &&
+           space_rule_cursor_init(view->space, head, admitted_forms, cursor);
+}
+
+static inline bool space_theory_view_atom_may_be_definition(
+        const SpaceTheoryView *view, CettaIndex index, bool own_only) {
+    if (!view || !view->space)
+        return false;
+    return own_only ? space_row_may_be_rule(view->space, index)
+                    : space_view_row_may_be_rule(view->space, index);
+}
+
+static inline bool space_theory_view_head_declares_type(
+        const SpaceTheoryView *view, SymbolId head) {
+    return view && view->space && space_head_declares_type(view->space, head);
+}
+
+static inline bool space_theory_view_type_annotations_symbol_only(
+        const SpaceTheoryView *view) {
+    return view && view->space &&
+           space_type_annotations_have_only_symbol_subjects(view->space);
+}
+
+static inline bool space_theory_view_declares_subtypes(
+        const SpaceTheoryView *view) {
+    return view && view->space && view->space->declares_subtypes;
+}
 
 #endif /* CETTA_SPACE_H */

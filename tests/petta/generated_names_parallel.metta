@@ -9,6 +9,8 @@
 (= (holding $label $n) (let* (($s (new-space)) ($_ (add-atom $s (held $n)))) (Held $label $s (repr $s))))
 (= (root-name) (let $s (new-space) (repr $s)))
 (= (text-of $pair) (let (Named $label $t) $pair $t))
+(= (made $label) (let $s (new-space) (Made $label $s (repr $s))))
+(= (joined (Made $label $s $t)) (Joined $label $s (== (repr $s) $t) (get-metatype $s)))
 
 !(Root (root-name))
 !(sort-atom (collapse (hyperpose ((named b0) (named b1) (named b2)))))
@@ -26,3 +28,7 @@
 ; A space a branch made keeps its rows at the root, and its name's text,
 ; built again, is a symbol of its own.
 !(let (Held $label $s $t) (hyperpose ((holding f0 7))) (Forged (collapse (match $s (held $x) $x)) (collapse (match (atom_concat $t "") (held $x) $x)) (== (atom_concat $t "") $s)))
+
+; The space a branch made is that space at the root: it prints as its name,
+; the name the branch read, and its metatype is Symbol.
+!(sort-atom (collapse (joined (hyperpose ((made g0) (made g1))))))

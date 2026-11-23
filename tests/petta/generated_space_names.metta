@@ -16,6 +16,8 @@
 (= (as-symbol $x) True)
 (: as-grounded (-> Grounded Bool))
 (= (as-grounded $x) True)
+(= (metatype-in-body $x) (get-metatype $x))
+(= (fresh-metatype) (let $s (new-space) (get-metatype $s)))
 (= (burn $n $acc) (if (== $n -1) (println! unreachable) (if (== $n 0) $acc (burn (- $n 1) (payload $n r0 r1 r2 r3 r4 r5 r6 r7 r8 r9 r10 r11 r12 r13 r14 r15)))))
 (= (kept-space $n) (let $s (new-space) (let $_ (add-atom $s (kept $n)) $s)))
 ; Whether text spells &space( around a numeral and ): character codes that
@@ -41,6 +43,9 @@
 
 ; The presentation, and identity.
 !(let $s (new-space) (Shown (get-metatype $s) (as-symbol $s) (collapse (as-grounded $s)) (is-space $s)))
+; Inside an equation's body, a call the open-equation machine may run
+; itself, the metatype is Symbol too; a number and a string stay Grounded.
+!(let $s (new-space) (InBody (metatype-in-body $s) (fresh-metatype) (metatype-in-body 3) (metatype-in-body "text")))
 !(let $s (new-space) (Spelled (spelled-name? (repr $s)) (spelled-name? "&space(x)") (spelled-name? "&spaces(3)") (spelled-name? "&space()")))
 ; The law's controls: a root's, a child's and a keyed block's numerals; an
 ; empty part at either end or between dots, a letter past f, a blank.

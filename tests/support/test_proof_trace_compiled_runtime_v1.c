@@ -235,7 +235,7 @@ static void check_query(const CettaGsltLanguage *source,
     bool compiled_ok = false;
     if (query && admitted_entry) {
         source_ok = cetta_gslt_language_query_with_providers_v1(
-            source, CETTA_GSLT_REALIZATION_HORN_REFERENCE,
+            source, CETTA_GSLT_REALIZATION_HORN_ORACLE,
             &cetta_metamath_proof_trace_provider_catalog_v1, providers,
             &source_output, query, limits, &source_result,
             source_error, sizeof(source_error));
@@ -404,7 +404,7 @@ int main(int argc, char **argv) {
     }
     memset(error, 0, sizeof(error));
     CHECK(cetta_gslt_language_load_embedded_for_realization(
-              descriptor, CETTA_GSLT_REALIZATION_HORN_REFERENCE,
+              descriptor, CETTA_GSLT_REALIZATION_HORN_ORACLE,
               &source_language, error, sizeof(error)),
           "proof-trace service loads in the source realization");
     memset(error, 0, sizeof(error));

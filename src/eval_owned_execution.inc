@@ -101,7 +101,8 @@ static bool eval_owned_shape(EvalOwnedAdmission *admission, Atom *term,
                 return false;
         return true;
     }
-    if (arity > 64u || space_head_declares_type(admission->space, head))
+    SpaceTheoryView theory_view = space_theory_view_borrow(admission->space);
+    if (arity > 64u || space_theory_view_head_declares_type(&theory_view, head))
         return false;
     for (CettaExprIndex i = 1u; i < term->expr.len; i++)
         if (!eval_owned_shape(admission, term->expr.elems[i], variables,

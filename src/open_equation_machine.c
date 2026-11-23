@@ -525,7 +525,7 @@ struct CettaOpenEquationProgram {
     bool admitted;
     CettaOpenEquationEntryKind entry_kind;
     Space *space;
-    SpaceProgramToken token;
+    SpaceTheoryToken token;
     SpaceReadToken source_rows;
     CettaCount source_row_count;
     /* All named syntax/contract leaves consulted by this compilation,
@@ -733,7 +733,7 @@ void cetta_open_equation_program_release(
 
 bool cetta_open_equation_program_is_current(
     const CettaOpenEquationProgram *program) {
-    return program && space_program_token_is_current(program->token);
+    return program && space_theory_token_is_current(program->token);
 }
 
 CettaOpenEquationRead cetta_open_equation_program_read(
@@ -777,54 +777,84 @@ bool cetta_open_equation_program_refresh(
         program->space != space || read->program_token.space != space ||
         read->program_token.instance_id != space_instance_id(space))
         return false;
-    SpaceProgramToken now = space_program_token(space);
+    SpaceTheoryToken now = space_theory_token(space);
     SpaceReadToken rows = space_read_token(space);
     CettaCount count = space_rule_rows64(space);
-    if (!space_program_token_eq(read->program_token, now)) {
+    SpaceHeadSetStamp next_stamp = read->head_stamp;
+    uint8_t next_refreshes = read->disjoint_refreshes;
+    if (!space_theory_token_eq(read->program_token, now)) {
         if (!program->read_heads_complete || space->overlay_base ||
             space_has_dependencies(space) ||
             space->match_backend.kind != SPACE_ENGINE_NATIVE ||
             !space_read_token_prefix_intact(read->rows) ||
             read->row_count > count)
             return false;
-        for (CettaIndex index = read->row_count; index < count; index++) {
-            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_APPEND_ROW);
-            Atom *row = space_get_at64(space, index);
-            if (!row)
-                return false;
-            if (row->kind != ATOM_EXPR || row->expr.len != 3u ||
-                row->expr.elems[0]->kind != ATOM_SYMBOL)
-                continue;
-            SymbolId form = row->expr.elems[0]->sym_id;
-            Atom *subject = row->expr.elems[1];
-            if (form == g_builtin_syms.subtype)
-                return false;
-            if (form == g_builtin_syms.equals ||
-                form == g_builtin_syms.equals_percent) {
-                if (subject->kind != ATOM_EXPR || subject->expr.len == 0u ||
-                    program->assumes_unchanged_callees)
+        bool head_clock_eligible =
+            program->read_head_len > 0u && program->read_heads != NULL &&
+            !program->assumes_unchanged_callees &&
+            !program->assumes_value_callees;
+        bool head_clock_hit =
+            head_clock_eligible && read->head_stamp.active &&
+            space_theory_head_set_clock_current(
+                space, program->read_heads, program->read_head_len,
+                &read->head_stamp);
+        if (!head_clock_hit) {
+            for (CettaIndex index = read->row_count; index < count; index++) {
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_APPEND_ROW);
+                Atom *row = space_get_at64(space, index);
+                if (!row)
                     return false;
-                subject = subject->expr.elems[0];
-            } else if (form != g_builtin_syms.colon) {
-                continue;
-            } else if (subject->kind == ATOM_EXPR) {
-                /* Compilation asks for types of named heads. A compound
-                 * subject cannot unify with a symbol, even with open fields. */
-                continue;
-            } else if (program->assumes_value_callees) {
-                /* Any callee may be this name, now declared. */
-                return false;
+                SymbolId head = SYMBOL_ID_NONE;
+                bool compound_subject = false;
+                SpaceTheoryAtomKind kind = space_theory_classify_atom(
+                    row, &head, &compound_subject);
+                switch (kind) {
+                case SPACE_THEORY_ATOM_DATA:
+                    continue;
+                case SPACE_THEORY_ATOM_SUBTYPE_ASSIGNMENT:
+                case SPACE_THEORY_ATOM_EQUATION:
+                    return false;
+                case SPACE_THEORY_ATOM_DEFINITION:
+                case SPACE_THEORY_ATOM_DIRECTIONAL_DEFINITION:
+                    if (head == SYMBOL_ID_NONE || program->assumes_unchanged_callees)
+                        return false;
+                    break;
+                case SPACE_THEORY_ATOM_TYPE_ASSIGNMENT:
+                    if (compound_subject) {
+                        /* Compilation asks for types of named heads. A compound
+                         * subject cannot unify with a symbol, even with open fields. */
+                        continue;
+                    }
+                    if (program->assumes_value_callees || head == SYMBOL_ID_NONE)
+                        return false;
+                    break;
+                }
+                if (oem_reads_head(program, head))
+                    return false;
             }
-            if (subject->kind != ATOM_SYMBOL ||
-                oem_reads_head(program, subject->sym_id))
-                return false;
+            if (head_clock_eligible) {
+                if (next_refreshes < 2u)
+                    next_refreshes++;
+                if (next_refreshes >= 2u) {
+                    (void)space_theory_head_set_clock_capture(
+                        space, program->read_heads, program->read_head_len,
+                        SPACE_THEORY_ROLE_RULES | SPACE_THEORY_ROLE_DECLS |
+                            SPACE_THEORY_ROLE_ALIAS,
+                        &next_stamp);
+                }
+            }
         }
     }
     if (!space_read_token_matches_live_space(rows, space) ||
-        !space_program_token_matches_live_space(now, space))
+        !space_theory_token_matches_live_space(now, space))
         return false;
     *read = (CettaOpenEquationRead){
-        .program = program, .program_token = now, .rows = rows, .row_count = count,
+        .program = program,
+        .program_token = now,
+        .rows = rows,
+        .row_count = count,
+        .head_stamp = next_stamp,
+        .disjoint_refreshes = next_refreshes,
     };
     return true;
 }
@@ -3409,7 +3439,8 @@ static bool oem_literal_types_intrinsic(const OemCompile *compile) {
                                          &maximum, &exact, 1u, forms))
             return false;
     }
-    return space_type_annotations_have_only_symbol_subjects(space);
+    SpaceTheoryView view = space_theory_view_borrow(space);
+    return space_theory_view_type_annotations_symbol_only(&view);
 }
 
 enum { OEM_CLASS_NONE = 0u, OEM_CLASS_NUMBER = 1u, OEM_CLASS_STRING = 2u };
@@ -3609,14 +3640,15 @@ static bool oem_host_takes_data_values(const OemCompile *compile,
 static bool oem_build_builtin_entry(OemCompile *compile, Atom *expr,
                                     const PettaPlanNode *plan, uint32_t depth,
                                     bool tail, uint32_t *out) {
+    SpaceTheoryView view = space_theory_view_borrow(compile->program->space);
     if (compile->host && compile->host->declared_builtin_protocol &&
         expr && expr->kind == ATOM_EXPR && expr->expr.len > 0u &&
         expr->expr.elems[0]->kind == ATOM_SYMBOL && plan &&
         plan->role != PETTA_PLAN_VALUE && plan->role != PETTA_PLAN_DATA &&
         is_grounded_op(expr->expr.elems[0]->sym_id) &&
         petta_semantics_form(expr->expr.elems[0]->sym_id) == PETTA_FORM_NONE &&
-        space_head_declares_type(
-            compile->program->space, expr->expr.elems[0]->sym_id)) {
+        space_theory_view_head_declares_type(
+            &view, expr->expr.elems[0]->sym_id)) {
         /* The native protocol keeps the program it was compiled under: the
          * entry sends a changed program's occurrence to the host. */
         bool built = false;
@@ -4005,10 +4037,11 @@ static bool oem_build_value_native(OemCompile *compile, Atom *expr,
         while (innermost->kind == ATOM_EXPR && innermost->expr.len > 0u &&
                innermost->expr.elems[0]->kind == ATOM_EXPR)
             innermost = innermost->expr.elems[0];
+        SpaceTheoryView view = space_theory_view_borrow(compile->program->space);
         if (innermost->kind == ATOM_EXPR && innermost->expr.len > 0u &&
             innermost->expr.elems[0]->kind == ATOM_SYMBOL &&
-            space_head_declares_type(compile->program->space,
-                                     innermost->expr.elems[0]->sym_id))
+            space_theory_view_head_declares_type(
+                &view, innermost->expr.elems[0]->sym_id))
             return oem_build_host(compile, expr, plan, depth,
                                   "written head of a declared function", out);
     }
@@ -7794,7 +7827,7 @@ static CettaOpenEquationProgram *oem_compile_certificate(
     program->entry_kind = host && host->entry_ready_call ? CETTA_OPEN_ENTRY_READY_CALL
         : host && host->entry_body_is_data ? CETTA_OPEN_ENTRY_BODY_DATA : CETTA_OPEN_ENTRY_BODY_VALUE;
     program->compilation_program_epoch = space_global_program_epoch();
-    program->token = space_program_token(space);
+    program->token = space_theory_token(space);
     program->source_rows = space_read_token(space);
     program->source_row_count = space_rule_rows64(space);
     program->read_heads_complete = host && host->capture_reads;
@@ -7843,7 +7876,7 @@ static CettaOpenEquationProgram *oem_compile_certificate(
          * snapshot. Semantic refusals are stable under the recorded reads. */
         if (strcmp(rejection, "out of memory") == 0 ||
             strcmp(rejection, "compile") == 0 ||
-            !space_program_token_is_current(program->token)) {
+            !space_theory_token_is_current(program->token)) {
             cetta_open_equation_program_release(program);
             return NULL;
         }
@@ -7905,7 +7938,7 @@ static CettaOpenEquationProgram *oem_compile_certificate(
         default: break;
         }
     }
-    if (!space_program_token_is_current(program->token)) {
+    if (!space_theory_token_is_current(program->token)) {
         if (reason_out)
             *reason_out = "program changed during compilation";
         cetta_open_equation_program_release(program);
@@ -8231,7 +8264,7 @@ typedef struct {
 typedef struct {
     PettaCallableIdentityKey identity;
     uint32_t arity;
-    SpaceProgramToken source;
+    SpaceTheoryToken source;
     uint64_t authority_epoch;
     CettaOpenEquationProgram *program;
     void *lifetime_hold;
@@ -10222,7 +10255,7 @@ static bool oem_program_current(CettaOpenEquationCursor *cursor,
                                  const CettaOpenEquationProgram *program) {
     /* One read of the program's token, or the host's revalidation of it. */
     CETTA_SCOPED_SPACE_OBSERVE(program_authority, program ? (Space *)program->space : NULL);
-    return space_program_token_is_current(program->token) ||
+    return space_theory_token_is_current(program->token) ||
         (cursor->runtime.program_current &&
          cursor->runtime.program_current(cursor->runtime.context,
                                           program->space, program));
@@ -13488,13 +13521,13 @@ static const CettaOpenEquationProgram *oem_callable_program(
     /* The token an entry is kept under, the compilation and its
      * confirmation are one observation of the shared space. */
     CETTA_SCOPED_SPACE_OBSERVE(callable_program_observation, space);
-    SpaceProgramToken now = space_program_token(space);
+    SpaceTheoryToken now = space_theory_token(space);
     for (uint32_t index = 0u; index < cursor->callable_len; index++) {
         OemCallable *entry = &cursor->callables[index];
         if (petta_callable_identity_key_eq(&entry->identity, identity) &&
             entry->arity == arity &&
             entry->authority_epoch == cursor->authority_epoch &&
-            space_program_token_eq(entry->source, now))
+            space_theory_token_eq(entry->source, now))
             return entry->program;
     }
     if (!oem_reserve((void **)&cursor->callables, &cursor->callable_cap,
@@ -13506,7 +13539,7 @@ static const CettaOpenEquationProgram *oem_callable_program(
      * program can populate the revision-qualified worker cache. */
     if (!prepared)
         return NULL;
-    if (!space_program_token_is_current(now)) {
+    if (!space_theory_token_is_current(now)) {
         cetta_open_equation_program_release(prepared);
         return NULL;
     }
@@ -14243,7 +14276,10 @@ static __attribute__((noinline)) OemRun oem_metatype_step(
         type = atom_expression_type(&cursor->region);
     else if (value->kind == ATOM_GROUNDED &&
              value->ground.gkind != GV_INTERNAL_TAG)
-        type = atom_grounded_type(&cursor->region);
+        /* A space's generated name is a Symbol, as atom_meta_type_id says. */
+        type = atom_is_generated_space_name(value)
+            ? atom_symbol_type(&cursor->region)
+            : atom_grounded_type(&cursor->region);
     else if (value->kind == ATOM_SYMBOL && cursor->runtime.function_registered)
         type = petta_semantics_symbol_metatype(
             &cursor->region, value->sym_id,
@@ -14638,7 +14674,7 @@ typedef struct OemAbsentHead {
     SymbolId head;
     uint32_t arity;
     uint64_t epoch;
-    SpaceProgramToken token;
+    SpaceTheoryToken token;
 } OemAbsentHead;
 
 /* The program an evaluated call enters for `head` at `arity`, or NULL,
@@ -14661,7 +14697,7 @@ static const CettaOpenEquationProgram *oem_enter_evaluated(
         if (absent->head == head && absent->arity == arity &&
             absent->token.space == space &&
             absent->epoch == cursor->authority_epoch &&
-            space_program_token_is_current(absent->token))
+            space_theory_token_is_current(absent->token))
             return NULL;
     }
     const CettaOpenEquationProgram *program =
@@ -14674,7 +14710,7 @@ static const CettaOpenEquationProgram *oem_enter_evaluated(
      * change. */
     OemAbsentHead verdict = {
         .head = head, .arity = arity, .epoch = cursor->authority_epoch,
-        .token = space_program_token(space),
+        .token = space_theory_token(space),
     };
     for (uint32_t index = 0u; index < cursor->absent_len; index++) {
         OemAbsentHead *absent = &cursor->absent[index];

@@ -128,7 +128,7 @@ CettaPreparedPureProgram *__wrap_cetta_prepared_pure_program_compile_closed(
                 refusal_program_allocation_fail = true;
             else {
                 refusal_last_report = (CettaPreparedPureCompileReport){
-                    .source = space_program_token(space),
+                    .source = space_theory_token(space),
                     .status = refusal_compile_status,
                 };
                 if (report)

@@ -29,10 +29,9 @@ typedef struct {
     Atom *data;
     Atom *call;
     /* An addition whose data is a variable: each instance is checked
-     * before any change is made, and one headed by a symbol the dialect
-     * refuses here (its rules and declarations) declines the run. */
-    SymbolId refused_heads[4];
-    uint8_t refused_head_count;
+     * before any change is made, and one headed by a theory form
+     * (`space_theory_is_theory_head`) declines the run. */
+    bool refuse_theory_heads;
     /* An addition made once for each distinct instance its target does
      * not hold: the effect of adding a row only where it is absent. */
     bool insert;

@@ -1,9 +1,13 @@
+#define _POSIX_C_SOURCE 200809L
 #include <assert.h>
+#include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "parser.h"
+#include "shared_transition.h"
 #include "space.h"
 #include "stats.h"
 #include "symbol.h"
@@ -578,27 +582,27 @@ static void test_space_program_projection_tokens(void) {
 
     /* Data-only mutation: read token moves, program token does not. */
     SpaceReadToken read0 = space_read_token(&ordered);
-    SpaceProgramToken program0 = space_program_token(&ordered);
+    SpaceTheoryToken program0 = space_theory_token(&ordered);
     reset_test_counters();
     space_add(&ordered, data);
     assert(!space_read_token_matches_live_space(read0, &ordered));
-    assert(space_program_token_eq(program0, space_program_token(&ordered)));
-    assert(space_program_token_is_current(program0));
-    assert(space_program_token_matches_live_space(program0, &ordered));
+    assert(space_theory_token_eq(program0, space_theory_token(&ordered)));
+    assert(space_theory_token_is_current(program0));
+    assert(space_theory_token_matches_live_space(program0, &ordered));
     assert(test_counter(
                CETTA_RUNTIME_COUNTER_SPACE_DECLARATION_REVISION_BUMP) == 0u);
     assert(test_counter(
                CETTA_RUNTIME_COUNTER_SPACE_EQUATION_REVISION_BUMP) == 0u);
 
     /* Equation: program token moves through the equation clock only. */
-    SpaceProgramToken program1 = space_program_token(&ordered);
+    SpaceTheoryToken program1 = space_theory_token(&ordered);
     reset_test_counters();
     space_add(&ordered, equation);
-    SpaceProgramToken program2 = space_program_token(&ordered);
-    assert(!space_program_token_eq(program1, program2));
-    assert(!space_program_token_is_current(program1));
-    assert(!space_program_token_matches_live_space(program1, &ordered));
-    assert(space_program_token_is_current(program2));
+    SpaceTheoryToken program2 = space_theory_token(&ordered);
+    assert(!space_theory_token_eq(program1, program2));
+    assert(!space_theory_token_is_current(program1));
+    assert(!space_theory_token_matches_live_space(program1, &ordered));
+    assert(space_theory_token_is_current(program2));
     assert(program2.equation_revision == program1.equation_revision + 1u);
     assert(program2.declaration_revision == program1.declaration_revision);
     assert(test_counter(
@@ -610,11 +614,11 @@ static void test_space_program_projection_tokens(void) {
        and the equation-occurrence token stays current. */
     SpaceEquationToken equations_before_declaration =
         space_equation_token(&ordered);
-    SpaceProgramToken program3 = space_program_token(&ordered);
+    SpaceTheoryToken program3 = space_theory_token(&ordered);
     reset_test_counters();
     space_add(&ordered, declaration);
-    SpaceProgramToken program4 = space_program_token(&ordered);
-    assert(!space_program_token_eq(program3, program4));
+    SpaceTheoryToken program4 = space_theory_token(&ordered);
+    assert(!space_theory_token_eq(program3, program4));
     assert(program4.equation_revision == program3.equation_revision);
     assert(program4.declaration_revision ==
            program3.declaration_revision + 1u);
@@ -628,18 +632,18 @@ static void test_space_program_projection_tokens(void) {
                CETTA_RUNTIME_COUNTER_SPACE_MUTATION_PUBLISH_DATA_ONLY) == 1u);
 
     /* Negative canary: a two-element `:` form is ordinary data. */
-    SpaceProgramToken program5 = space_program_token(&ordered);
+    SpaceTheoryToken program5 = space_theory_token(&ordered);
     space_add(&ordered, colon_data);
-    assert(space_program_token_eq(program5, space_program_token(&ordered)));
+    assert(space_theory_token_eq(program5, space_theory_token(&ordered)));
 
     /* Removals follow the same partition. */
-    SpaceProgramToken program6 = space_program_token(&ordered);
+    SpaceTheoryToken program6 = space_theory_token(&ordered);
     assert(space_remove(&ordered, data));
-    assert(space_program_token_eq(program6, space_program_token(&ordered)));
-    SpaceProgramToken program7 = space_program_token(&ordered);
+    assert(space_theory_token_eq(program6, space_theory_token(&ordered)));
+    SpaceTheoryToken program7 = space_theory_token(&ordered);
     assert(space_remove(&ordered, declaration));
-    SpaceProgramToken program8 = space_program_token(&ordered);
-    assert(!space_program_token_eq(program7, program8));
+    SpaceTheoryToken program8 = space_theory_token(&ordered);
+    assert(!space_theory_token_eq(program7, program8));
     assert(program8.declaration_revision ==
            program7.declaration_revision + 1u);
     assert(program8.equation_revision == program7.equation_revision);
@@ -648,6 +652,1073 @@ static void test_space_program_projection_tokens(void) {
     term_universe_free(&universe);
     arena_free(&scratch);
     arena_free(&persistent);
+}
+
+typedef struct {
+    Space *theory;
+    Space *data;
+    const SpaceRegionGuard *cached_count;
+    const SpaceRegionGuard *cached_presence;
+    _Atomic bool stop;
+    _Atomic uint64_t invalidations_seen;
+    _Atomic uint64_t checks_run;
+} ConcurrentGuardCheckCtx;
+
+static void *concurrent_guard_check_thread(void *arg) {
+    ConcurrentGuardCheckCtx *ctx = (ConcurrentGuardCheckCtx *)arg;
+    while (!atomic_load_explicit(&ctx->stop, memory_order_acquire)) {
+        (void)space_global_mutation_epoch();
+        bool count_ok = space_region_guard_valid(
+            ctx->cached_count, SPACE_OBSERVER_COUNT,
+            ctx->theory, ctx->data, NULL);
+        if (!count_ok) {
+            atomic_fetch_add_explicit(&ctx->invalidations_seen, 1u,
+                                      memory_order_relaxed);
+        }
+        bool presence_ok = space_region_guard_valid(
+            ctx->cached_presence, SPACE_OBSERVER_PRESENCE,
+            ctx->theory, ctx->data, NULL);
+        /* Append-only data writes must never invalidate positive PRESENCE. */
+        assert(presence_ok);
+        atomic_fetch_add_explicit(&ctx->checks_run, 1u, memory_order_relaxed);
+    }
+    return NULL;
+}
+
+static void test_space_theory_view_and_observers(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+    Space primary;
+    Space unrelated;
+
+    arena_init(&persistent);
+    arena_set_runtime_kind(
+        &persistent, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    space_init_with_universe(&primary, &universe);
+    space_init_with_universe(&unrelated, &universe);
+
+    SymbolId f_sym = symbol_intern_cstr(g_symbols, "theory-view-f");
+    SymbolId g_sym = symbol_intern_cstr(g_symbols, "theory-view-g");
+    Atom *f_call = atom_expr2(&scratch, atom_symbol_id(&scratch, f_sym),
+                              atom_int(&scratch, 1));
+    Atom *eq_row = atom_expr3(&scratch,
+                              atom_symbol_id(&scratch, g_builtin_syms.equals),
+                              f_call, atom_int(&scratch, 2));
+    Atom *dir_row = atom_expr3(&scratch,
+                               atom_symbol_id(&scratch, g_builtin_syms.equals_percent),
+                               f_call, atom_int(&scratch, 3));
+    Atom *decl_sym_row = atom_expr3(&scratch,
+                                    atom_symbol_id(&scratch, g_builtin_syms.colon),
+                                    atom_symbol_id(&scratch, f_sym),
+                                    atom_symbol(&scratch, "Number"));
+    Atom *decl_compound_row = atom_expr3(&scratch,
+                                         atom_symbol_id(&scratch, g_builtin_syms.colon),
+                                         f_call,
+                                         atom_symbol(&scratch, "Number"));
+    Atom *sub_row = atom_expr3(&scratch,
+                               atom_symbol_id(&scratch, g_builtin_syms.subtype),
+                               atom_symbol_id(&scratch, f_sym),
+                               atom_symbol_id(&scratch, g_sym));
+    Atom *data_row = atom_symbol(&scratch, "theory-view-plain-data");
+
+    /* Atom classifier checks across all 5 non-equation roles. */
+    SymbolId head = SYMBOL_ID_NONE;
+    bool compound = true;
+    assert(space_theory_classify_atom(data_row, &head, &compound) ==
+           SPACE_THEORY_ATOM_DATA);
+    assert(head == SYMBOL_ID_NONE && !compound);
+    assert(space_theory_classify_atom(eq_row, &head, &compound) ==
+           SPACE_THEORY_ATOM_DEFINITION);
+    assert(head == f_sym && !compound);
+    assert(space_theory_classify_atom(dir_row, &head, &compound) ==
+           SPACE_THEORY_ATOM_DIRECTIONAL_DEFINITION);
+    assert(head == f_sym && !compound);
+    assert(space_theory_classify_atom(decl_sym_row, &head, &compound) ==
+           SPACE_THEORY_ATOM_TYPE_ASSIGNMENT);
+    assert(head == f_sym && !compound);
+    assert(space_theory_classify_atom(decl_compound_row, &head, &compound) ==
+           SPACE_THEORY_ATOM_TYPE_ASSIGNMENT);
+    assert(head == f_sym && compound);
+    assert(space_theory_classify_atom(sub_row, &head, &compound) ==
+           SPACE_THEORY_ATOM_SUBTYPE_ASSIGNMENT);
+
+    /* SpaceTheoryView + clock guards: data mutation keeps them current;
+     * unrelated-space equation moves the global clock and re-arms cleanly;
+     * watched-space equation invalidates them. */
+    SpaceTheoryView view = space_theory_view_open(&primary);
+    assert(space_theory_token_cacheable(view.token));
+    assert(space_theory_view_is_current(&view));
+
+    SpaceTheoryClockGuard guard = {0};
+    space_theory_clock_guard_capture(&guard, &primary);
+    SpaceTheoryAtomicClockGuard atomic_guard = {0};
+    space_theory_atomic_clock_guard_capture(&atomic_guard, &primary);
+
+    uint64_t c0 = space_global_program_epoch();
+    assert(space_theory_clock_guard_fast_current(&guard, &primary, c0));
+    assert(space_theory_atomic_clock_guard_is_current(&atomic_guard));
+
+    /* Pure data write leaves program clock and theory token intact. */
+    space_add(&primary, data_row);
+    assert(space_theory_view_is_current(&view));
+    assert(space_theory_clock_guard_fast_current(
+        &guard, &primary, space_global_program_epoch()));
+    assert(space_theory_atomic_clock_guard_is_current(&atomic_guard));
+
+    /* Unrelated-space equation bumps global clock; guards re-arm cleanly. */
+    space_add(&unrelated, eq_row);
+    uint64_t c1 = space_global_program_epoch();
+    assert(c1 != c0);
+    assert(!space_theory_clock_guard_fast_current(&guard, &primary, c1));
+    assert(space_theory_clock_guard_rearm(&guard, &primary, c1));
+    assert(space_theory_clock_guard_fast_current(&guard, &primary, c1));
+    assert(space_theory_atomic_clock_guard_is_current(&atomic_guard));
+    assert(space_theory_view_is_current(&view));
+
+    /* Watched-space equation invalidates guards and view, while declaration
+     * currency remains valid until a declaration changes. */
+    SpaceTheoryToken before_eq = space_theory_token(&primary);
+    space_add(&primary, eq_row);
+    uint64_t c2 = space_global_program_epoch();
+    assert(!space_theory_clock_guard_rearm(&guard, &primary, c2));
+    assert(!space_theory_atomic_clock_guard_is_current(&atomic_guard));
+    assert(!space_theory_view_is_current(&view));
+    assert(space_theory_token_declarations_current(before_eq, &primary));
+    space_add(&primary, decl_sym_row);
+    assert(!space_theory_token_declarations_current(before_eq, &primary));
+
+    /* Complete 49-pair observation coarsening check across all 7 demands. */
+    static const bool k_expected_49[7][7] = {
+        /* timed    */ {true,  true,  true,  true,  true,  true,  true},
+        /* ordered  */ {false, true,  true,  true,  true,  true,  true},
+        /* bag      */ {false, false, true,  true,  false, true,  true},
+        /* count    */ {false, false, false, true,  false, true,  true},
+        /* first    */ {false, false, false, false, true,  true,  true},
+        /* presence */ {false, false, false, false, false, true,  true},
+        /* absence  */ {false, false, false, false, false, true,  true},
+    };
+    for (unsigned p = 0u; p < SPACE_OBSERVER_COUNT_KINDS; p++) {
+        for (unsigned r = 0u; r < SPACE_OBSERVER_COUNT_KINDS; r++) {
+            assert(space_observer_licenses((SpaceObserverKind)p,
+                                           (SpaceObserverKind)r) ==
+                   k_expected_49[p][r]);
+        }
+    }
+
+    /* Fuel budget promotes observer demand to TIMED (declining macro-step
+     * COUNT shortcuts). */
+    assert(space_observer_from_fuel(SPACE_OBSERVER_COUNT, -1) ==
+           SPACE_OBSERVER_COUNT);
+    assert(space_observer_from_fuel(SPACE_OBSERVER_COUNT, 0) ==
+           SPACE_OBSERVER_TIMED);
+    assert(space_observer_from_fuel(SPACE_OBSERVER_COUNT, 100) ==
+           SPACE_OBSERVER_TIMED);
+    assert(!space_observer_licenses(
+        SPACE_OBSERVER_COUNT,
+        space_observer_from_fuel(SPACE_OBSERVER_COUNT, 10)));
+
+    /* Two-axis SpaceRegionGuard checks across snapshots:
+     * (1) THEORY_ONLY survives data writes, invalidates on definition/type edits. */
+    SpaceRegionGuard theory_guard = space_region_guard_for_theory(
+        SPACE_OBSERVER_ORDERED, &primary);
+    assert(space_region_guard_valid(
+        &theory_guard, SPACE_OBSERVER_COUNT, &primary, NULL, NULL));
+    assert(!space_region_guard_valid(
+        &theory_guard, SPACE_OBSERVER_TIMED, &primary, NULL, NULL));
+    space_add(&primary, data_row);
+    assert(space_region_guard_valid(
+        &theory_guard, SPACE_OBSERVER_ORDERED, &primary, NULL, NULL));
+    space_add(&primary, eq_row);
+    assert(!space_region_guard_valid(
+        &theory_guard, SPACE_OBSERVER_ORDERED, &primary, NULL, NULL));
+
+    /* (2) THEORY_AND_DATA over distinct spaces (theory=&primary, data=&unrelated):
+     * survives unrelated data write to &primary, invalidates immediately on
+     * data write to &unrelated for COUNT/ABSENCE/BAG/FIRST, while positive
+     * PRESENCE survives append-only growth on &unrelated and invalidates on
+     * removal. */
+    Space discovery;
+    space_init_with_universe(&discovery, &universe);
+    SpaceRegionGuard count_guard = space_region_guard_with_discovery(
+        space_region_guard_for_data(
+            SPACE_OBSERVER_COUNT, &primary, &unrelated, true),
+        &discovery);
+    SpaceRegionGuard empty_count_guard = space_region_guard_for_data(
+        SPACE_OBSERVER_COUNT, &primary, &unrelated, false);
+
+    assert(space_region_guard_valid(
+        &count_guard, SPACE_OBSERVER_COUNT, &primary, &unrelated, &discovery));
+    assert(space_region_guard_valid(
+        &count_guard, SPACE_OBSERVER_PRESENCE, &primary, &unrelated, &discovery));
+    assert(space_region_guard_valid(
+        &count_guard, SPACE_OBSERVER_ABSENCE, &primary, &unrelated, &discovery));
+    assert(!space_region_guard_valid(
+        &count_guard, SPACE_OBSERVER_BAG, &primary, &unrelated, &discovery));
+    assert(!space_region_guard_valid(
+        &count_guard, SPACE_OBSERVER_FIRST, &primary, &unrelated, &discovery));
+
+    /* Pure data write to theory space (&primary) leaves count over &unrelated valid. */
+    space_add(&primary, data_row);
+    assert(space_region_guard_valid(
+        &count_guard, SPACE_OBSERVER_COUNT, &primary, &unrelated, &discovery));
+
+    /* Append-only data write to &unrelated invalidates COUNT and negative/absence
+     * checks, while preserving positive PRESENCE. */
+    Atom *item_atom = atom_symbol(&scratch, "theory-view-item");
+    space_add(&unrelated, item_atom);
+    assert(!space_region_guard_valid(
+        &count_guard, SPACE_OBSERVER_COUNT, &primary, &unrelated, &discovery));
+    assert(!space_region_guard_valid(
+        &count_guard, SPACE_OBSERVER_ABSENCE, &primary, &unrelated, &discovery));
+    assert(space_region_guard_valid(
+        &count_guard, SPACE_OBSERVER_PRESENCE, &primary, &unrelated, &discovery));
+    assert(!space_region_guard_valid(
+        &empty_count_guard, SPACE_OBSERVER_PRESENCE, &primary, &unrelated, NULL));
+
+    /* Removing an atom from &unrelated invalidates even positive PRESENCE. */
+    assert(space_remove(&unrelated, item_atom));
+    assert(!space_region_guard_valid(
+        &count_guard, SPACE_OBSERVER_PRESENCE, &primary, &unrelated, &discovery));
+
+    /* Discovery-space edit invalidates any guard that discovered its data
+     * space through &discovery. */
+    SpaceRegionGuard disc_guard = space_region_guard_with_discovery(
+        space_region_guard_for_data(
+            SPACE_OBSERVER_COUNT, &primary, &unrelated, true),
+        &discovery);
+    assert(space_region_guard_valid(
+        &disc_guard, SPACE_OBSERVER_COUNT, &primary, &unrelated, &discovery));
+    space_add(&discovery, item_atom);
+    assert(!space_region_guard_valid(
+        &disc_guard, SPACE_OBSERVER_COUNT, &primary, &unrelated, &discovery));
+
+    /* Concurrent TSan verification: validate a cached THEORY_AND_DATA
+     * SpaceRegionGuard on a checking thread while a writer runs space_add. */
+    {
+        SpaceRegionGuard cached_count = space_region_guard_for_data(
+            SPACE_OBSERVER_COUNT, &primary, &unrelated, true);
+        SpaceRegionGuard cached_presence = space_region_guard_for_data(
+            SPACE_OBSERVER_PRESENCE, &primary, &unrelated, true);
+        ConcurrentGuardCheckCtx ctx = {
+            .theory = &primary,
+            .data = &unrelated,
+            .cached_count = &cached_count,
+            .cached_presence = &cached_presence,
+        };
+        atomic_init(&ctx.stop, false);
+        atomic_init(&ctx.invalidations_seen, 0u);
+        atomic_init(&ctx.checks_run, 0u);
+        pthread_t checker;
+        assert(pthread_create(&checker, NULL, concurrent_guard_check_thread,
+                              &ctx) == 0);
+        for (int i = 0; i < 1000; i++) {
+            Atom *atom = atom_int(&scratch, 90000 + i);
+            space_add(&unrelated, atom);
+        }
+        while (atomic_load_explicit(&ctx.checks_run, memory_order_relaxed) < 64u) {
+            /* Let checker execute at least a handful of post-write validations. */
+        }
+        atomic_store_explicit(&ctx.stop, true, memory_order_release);
+        assert(pthread_join(checker, NULL) == 0);
+        assert(!space_region_guard_valid(
+            &cached_count, SPACE_OBSERVER_COUNT, &primary, &unrelated, NULL));
+        assert(space_region_guard_valid(
+            &cached_presence, SPACE_OBSERVER_PRESENCE, &primary, &unrelated,
+            NULL));
+    }
+
+    space_free(&discovery);
+
+    space_free(&unrelated);
+    space_free(&primary);
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+}
+
+typedef struct {
+    Atom *items[16];
+    size_t len;
+} AliasTestCollect;
+
+static bool alias_test_collect_visitor(Atom *result, const Bindings *bindings,
+                                       void *ctx) {
+    (void)bindings;
+    AliasTestCollect *c = (AliasTestCollect *)ctx;
+    if (c->len < 16u)
+        c->items[c->len++] = result;
+    return true;
+}
+
+static void test_space_alias_scoped_equations(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+    Space s;
+
+    arena_init(&persistent);
+    arena_set_runtime_kind(&persistent, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    space_init_with_universe(&s, &universe);
+
+    /* Fresh space has equational_revision == 0 and no active equations. */
+    assert(space_equational_revision(&s) == 0u);
+    assert(!space_has_active_equations(&s));
+
+    SymbolId probe_sym = symbol_intern_cstr(g_symbols, "alias-probe");
+    SymbolId other_sym = symbol_intern_cstr(g_symbols, "alias-other");
+    SymbolId id_sym = symbol_intern_cstr(g_symbols, "alias-id");
+    SymbolId pet_sym = symbol_intern_cstr(g_symbols, "alias-Pet");
+    SymbolId comp_sym = symbol_intern_cstr(g_symbols, "alias-Companion");
+    Atom *cold = atom_symbol(&scratch, "alias-Cold");
+    Atom *warm = atom_symbol(&scratch, "alias-Warm");
+    Atom *p1 = atom_symbol(&scratch, "alias-p1");
+    Atom *p2 = atom_symbol(&scratch, "alias-p2");
+    Atom *p3 = atom_symbol(&scratch, "alias-p3");
+    Atom *fido = atom_symbol(&scratch, "alias-Fido");
+    Atom *fido_lo = atom_symbol(&scratch, "alias-fido");
+
+    Atom *eq_e_cw = atom_expr3(&scratch,
+        atom_symbol_id(&scratch, g_builtin_syms.equals_e), cold, warm);
+    assert(space_theory_classify_atom(eq_e_cw, NULL, NULL) ==
+           SPACE_THEORY_ATOM_EQUATION);
+
+    /* Rules for probe: Cold:p1, Warm:p2, Cold:p3 (preserving order & duplicates). */
+    Atom *r1 = atom_expr3(&scratch, atom_symbol_id(&scratch, g_builtin_syms.equals),
+        atom_expr2(&scratch, atom_symbol_id(&scratch, probe_sym), cold), p1);
+    Atom *r2 = atom_expr3(&scratch, atom_symbol_id(&scratch, g_builtin_syms.equals),
+        atom_expr2(&scratch, atom_symbol_id(&scratch, probe_sym), warm), p2);
+    Atom *r3 = atom_expr3(&scratch, atom_symbol_id(&scratch, g_builtin_syms.equals),
+        atom_expr2(&scratch, atom_symbol_id(&scratch, probe_sym), cold), p3);
+    Atom *r_other = atom_expr3(&scratch, atom_symbol_id(&scratch, g_builtin_syms.equals),
+        atom_expr2(&scratch, atom_symbol_id(&scratch, other_sym), atom_int(&scratch, 7)),
+        atom_int(&scratch, 8));
+    Atom *x_var = atom_var(&scratch, "x");
+    Atom *r_id = atom_expr3(&scratch, atom_symbol_id(&scratch, g_builtin_syms.equals),
+        atom_expr2(&scratch, atom_symbol_id(&scratch, id_sym), x_var), x_var);
+
+    space_add(&s, r1);
+    space_add(&s, r2);
+    space_add(&s, r3);
+    space_add(&s, r_other);
+    space_add(&s, r_id);
+
+    SpaceTheoryToken before_eq_e = space_theory_token(&s);
+    SpaceEquationToken eq_before_eq_e = space_equation_token(&s);
+    assert(space_equational_revision(&s) == 0u);
+
+    /* Install (=e Cold Warm): bumps equational_revision to 1, invalidates
+     * prior SpaceTheoryToken and SpaceEquationToken, while leaving
+     * declaration-only currency intact. */
+    space_add(&s, eq_e_cw);
+    assert(space_equational_revision(&s) == 1u);
+    assert(!space_theory_token_is_current(before_eq_e));
+    assert(!space_equation_token_is_current(eq_before_eq_e));
+    assert(space_theory_token_declarations_current(before_eq_e, &s));
+    assert(space_has_active_equations(&s));
+
+    /* Unaffected head & unrelated terms bypass normalization with zero
+     * allocations (exact pointer identity). */
+    assert(space_alias_head_affected(&s, probe_sym));
+    assert(!space_alias_head_affected(&s, other_sym));
+    Atom *unrelated_call = atom_expr2(&scratch,
+        atom_symbol_id(&scratch, other_sym), atom_int(&scratch, 7));
+    assert(!space_alias_term_touches_carrier(&s, unrelated_call));
+    assert(space_alias_normalize_atom(&s, &scratch, unrelated_call) ==
+           unrelated_call);
+
+    /* Querying (probe Warm) under (=e Cold Warm) must return p1, p2, p3 in
+     * exact source order, matching definitions written with either spelling. */
+    unsigned ext_forms = CETTA_RULE_SYNTAX_ORDINARY |
+        CETTA_RULE_SYNTAX_DIRECTIONAL | CETTA_RULE_SYNTAX_EQUATIONAL_ALIAS;
+    Atom *query_warm = atom_expr2(&scratch,
+        atom_symbol_id(&scratch, probe_sym), warm);
+    Atom **rules = NULL;
+    size_t rule_count = 0u;
+    assert(space_alias_collect_head_rules(&s, probe_sym, ext_forms,
+                                          &rules, &rule_count));
+    assert(rule_count == 3u);
+    AliasTestCollect collected = {0};
+    for (size_t i = 0u; i < rule_count; i++) {
+        (void)space_alias_query_equation_visit(
+            &s, rules[i], query_warm, ext_forms, &scratch,
+            alias_test_collect_visitor, &collected);
+    }
+    free(rules);
+    assert(collected.len == 3u);
+    assert(atom_eq(collected.items[0], p1));
+    assert(atom_eq(collected.items[1], p2));
+    assert(atom_eq(collected.items[2], p3));
+
+    /* Pattern variable binds raw caller syntax (`Warm`), not rewritten rep. */
+    AliasTestCollect id_collected = {0};
+    Atom *id_warm = atom_expr2(&scratch,
+        atom_symbol_id(&scratch, id_sym), warm);
+    assert(space_alias_query_equation_visit(
+               &s, r_id, id_warm, ext_forms, &scratch,
+               alias_test_collect_visitor, &id_collected) == 1u);
+    assert(id_collected.len == 1u && atom_eq(id_collected.items[0], warm));
+
+    /* Removing (=e Cold Warm) advances equational_revision to 2 and returns
+     * the equation table to inactive. */
+    assert(space_remove(&s, eq_e_cw));
+    assert(space_equational_revision(&s) == 2u);
+    assert(!space_has_active_equations(&s));
+    assert(!space_alias_head_affected(&s, probe_sym));
+
+    /* Compound ground alias: (=e AI:UnitRange (Range Float 0 1)) normalizes
+     * strictly to smaller AI:UnitRange and preserves congruence inside exprs. */
+    Atom *unit_range = atom_symbol(&scratch, "AI:UnitRange");
+    Atom *range_expr = atom_expr(&scratch, (Atom *[]){
+        atom_symbol(&scratch, "Range"),
+        atom_symbol(&scratch, "Float"),
+        atom_int(&scratch, 0),
+        atom_int(&scratch, 1),
+    }, 4u);
+    space_add(&s, atom_expr3(&scratch,
+        atom_symbol_id(&scratch, g_builtin_syms.equals_e),
+        unit_range, range_expr));
+    assert(space_has_active_equations(&s));
+    assert(atom_eq(space_alias_normalize_atom(&s, &scratch, range_expr),
+                   unit_range));
+    assert(atom_eq(space_alias_normalize_atom(&s, &scratch, unit_range),
+                   unit_range));
+    Atom *schema_a = atom_expr2(&scratch, atom_symbol(&scratch, "Schema"), unit_range);
+    Atom *schema_b = atom_expr2(&scratch, atom_symbol(&scratch, "Schema"), range_expr);
+    assert(space_alias_same(&s, &scratch, schema_a, schema_b));
+
+    /* Head alias + indexed eq:match with duplicates. */
+    space_add(&s, atom_expr3(&scratch,
+        atom_symbol_id(&scratch, g_builtin_syms.equals_e),
+        atom_symbol_id(&scratch, pet_sym), atom_symbol_id(&scratch, comp_sym)));
+    space_add(&s, atom_expr3(&scratch,
+        atom_symbol_id(&scratch, g_builtin_syms.equals_e), fido, fido_lo));
+    space_add(&s, atom_expr3(&scratch,
+        atom_symbol_id(&scratch, g_builtin_syms.equals),
+        atom_expr2(&scratch, atom_symbol_id(&scratch, pet_sym), fido),
+        atom_symbol(&scratch, "good-dog")));
+    assert(space_alias_head_has_rules(&s, comp_sym, ext_forms));
+    Atom **comp_rules = NULL;
+    size_t comp_count = 0u;
+    assert(space_alias_collect_head_rules(&s, comp_sym, ext_forms,
+                                          &comp_rules, &comp_count));
+    assert(comp_count == 1u);
+    AliasTestCollect comp_res = {0};
+    Atom *comp_call = atom_expr2(&scratch,
+        atom_symbol_id(&scratch, comp_sym), fido_lo);
+    assert(space_alias_query_equation_visit(
+               &s, comp_rules[0], comp_call, ext_forms, &scratch,
+               alias_test_collect_visitor, &comp_res) == 1u);
+    assert(comp_res.len == 1u &&
+           atom_eq(comp_res.items[0], atom_symbol(&scratch, "good-dog")));
+    free(comp_rules);
+
+    /* A ground row equal modulo the aliases.  eq:match's candidate rows come
+     * from the space's own cursor, which this standalone fixture does not
+     * run; their order, duplicates and raw syntax are checked end to end by
+     * test-scoped-equational-alias-differential and -v1. */
+    Atom *dog_fido = atom_expr2(&scratch, atom_symbol(&scratch, "Dog"), fido);
+    Atom *dog_fido_lo = atom_expr2(&scratch, atom_symbol(&scratch, "Dog"), fido_lo);
+    assert(space_alias_same(&s, &scratch, dog_fido, dog_fido_lo));
+    Bindings dog_env;
+    bindings_init(&dog_env);
+    assert(space_alias_match_pattern(&s, &scratch, dog_fido_lo, dog_fido, &dog_env));
+    bindings_free(&dog_env);
+
+    space_free(&s);
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+}
+
+typedef struct {
+    Space *space;
+    Space *importer;
+    Space *module;
+    SymbolId watched_head;
+    SymbolId other_head;
+    SymbolId mod_head;
+    AtomId noise_id;
+    AtomId watched_id;
+    AtomId alias_id;
+    pthread_barrier_t start;
+    _Atomic bool writer_done;
+    _Atomic uint64_t reader_checks;
+} HeadClocksTsanCtx;
+
+static void *head_clocks_tsan_reader(void *opaque) {
+    HeadClocksTsanCtx *ctx = (HeadClocksTsanCtx *)opaque;
+    cetta_shared_transition_scope_enter();
+    int st = pthread_barrier_wait(&ctx->start);
+    assert(st == 0 || st == PTHREAD_BARRIER_SERIAL_THREAD);
+    uint64_t checks = 0u;
+    while (!atomic_load_explicit(&ctx->writer_done, memory_order_acquire) ||
+           checks < 256u) {
+        assert(space_theory_watch_head(ctx->space, ctx->watched_head));
+        assert(space_theory_watch_head(ctx->space, ctx->other_head));
+        SpaceRegionGuard guard = space_region_guard_for_head(
+            SPACE_OBSERVER_COUNT, ctx->space, SPACE_THEORY_ROLE_RULES,
+            ctx->space, SPACE_THEORY_ROLE_DATA, ctx->watched_head, false);
+        (void)space_region_guard_valid(
+            &guard, SPACE_OBSERVER_COUNT, ctx->space, ctx->space, NULL);
+        SymbolId set_heads[2] = {ctx->watched_head, ctx->other_head};
+        SpaceHeadSetStamp set_stamp = {0};
+        if (space_theory_head_set_clock_capture(
+                ctx->space, set_heads, 2u,
+                SPACE_THEORY_ROLE_RULES | SPACE_THEORY_ROLE_DECLS |
+                    SPACE_THEORY_ROLE_ALIAS,
+                &set_stamp)) {
+            (void)space_theory_head_set_clock_current(
+                ctx->space, set_heads, 2u, &set_stamp);
+        }
+        (void)space_theory_head_sealed_mask(ctx->space, ctx->watched_head);
+        (void)space_theory_import_protects_head(
+            ctx->importer, ctx->module, ctx->mod_head,
+            SPACE_THEORY_ROLE_RULES | SPACE_THEORY_ROLE_ALIAS);
+        checks++;
+    }
+    atomic_fetch_add_explicit(&ctx->reader_checks, checks, memory_order_relaxed);
+    cetta_shared_transition_scope_leave();
+    return NULL;
+}
+
+static void *head_clocks_tsan_writer(void *opaque) {
+    HeadClocksTsanCtx *ctx = (HeadClocksTsanCtx *)opaque;
+    cetta_shared_transition_scope_enter();
+    int st = pthread_barrier_wait(&ctx->start);
+    assert(st == 0 || st == PTHREAD_BARRIER_SERIAL_THREAD);
+    for (unsigned i = 0u; i < 400u; i++) {
+        {
+            CETTA_SCOPED_SPACE_WRITE(w, ctx->space);
+            space_add_atom_id(ctx->space, ctx->noise_id);
+        }
+        {
+            CETTA_SCOPED_SPACE_WRITE(w, ctx->space);
+            space_add_atom_id(ctx->space, ctx->watched_id);
+        }
+        {
+            CETTA_SCOPED_SPACE_WRITE(w, ctx->space);
+            (void)space_remove_atom_id(ctx->space, ctx->watched_id);
+        }
+        if ((i & 15u) == 0u) {
+            {
+                CETTA_SCOPED_SPACE_WRITE(w, ctx->space);
+                space_add_atom_id(ctx->space, ctx->alias_id);
+            }
+            {
+                CETTA_SCOPED_SPACE_WRITE(w, ctx->space);
+                (void)space_remove_atom_id(ctx->space, ctx->alias_id);
+            }
+        }
+        {
+            CETTA_SCOPED_SPACE_WRITE(w, ctx->space);
+            (void)space_remove_atom_id(ctx->space, ctx->noise_id);
+        }
+    }
+    atomic_store_explicit(&ctx->writer_done, true, memory_order_release);
+    cetta_shared_transition_scope_leave();
+    return NULL;
+}
+
+static void test_space_theory_head_clocks_and_sealing(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+    Space s;
+
+    arena_init(&persistent);
+    arena_set_runtime_kind(&persistent, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    space_init_with_universe(&s, &universe);
+
+    SymbolId rel_sym = symbol_intern_cstr(g_symbols, "hc-rel");
+    SymbolId noise_sym = symbol_intern_cstr(g_symbols, "hc-noise");
+    SymbolId other_sym = symbol_intern_cstr(g_symbols, "hc-other");
+    SymbolId foreign_d = symbol_intern_cstr(g_symbols, "hc-foreign-D");
+    SymbolId foreign_e = symbol_intern_cstr(g_symbols, "hc-foreign-E");
+    SymbolId target_x = symbol_intern_cstr(g_symbols, "hc-target-X");
+    SymbolId inspect_sym = symbol_intern_cstr(g_symbols, "hc-Inspect");
+    SymbolId next_sym = symbol_intern_cstr(g_symbols, "hc-Next");
+    SymbolId a_sym = symbol_intern_cstr(g_symbols, "hc-A");
+    SymbolId alias_sym = symbol_intern_cstr(g_symbols, "hc-alias");
+    SymbolId mod_f = symbol_intern_cstr(g_symbols, "hc-mod-f");
+    SymbolId mod_g = symbol_intern_cstr(g_symbols, "hc-mod-g");
+
+    Atom *rel_1 = atom_expr2(&scratch, atom_symbol_id(&scratch, rel_sym),
+                             atom_int(&scratch, 1));
+    Atom *rel_2 = atom_expr2(&scratch, atom_symbol_id(&scratch, rel_sym),
+                             atom_int(&scratch, 2));
+    Atom *noise_1 = atom_expr2(&scratch, atom_symbol_id(&scratch, noise_sym),
+                               atom_int(&scratch, 1));
+    Atom *noise_2 = atom_expr2(&scratch, atom_symbol_id(&scratch, noise_sym),
+                               atom_int(&scratch, 2));
+    Atom *x_var = atom_var_with_id(&scratch, "hc-x", var_id_from_base(7701u));
+    Atom *open_expr = atom_expr2(&scratch, x_var, atom_int(&scratch, 1));
+    Atom *eq_rel = atom_expr3(&scratch,
+        atom_symbol_id(&scratch, g_builtin_syms.equals),
+        atom_expr2(&scratch, atom_symbol_id(&scratch, rel_sym), x_var), x_var);
+    Atom *dir_other = atom_expr3(&scratch,
+        atom_symbol_id(&scratch, g_builtin_syms.equals_percent),
+        atom_expr2(&scratch, atom_symbol_id(&scratch, other_sym), x_var), x_var);
+    Atom *decl_rel = atom_expr3(&scratch,
+        atom_symbol_id(&scratch, g_builtin_syms.colon),
+        atom_symbol_id(&scratch, rel_sym), atom_symbol(&scratch, "Number"));
+    Atom *decl_other = atom_expr3(&scratch,
+        atom_symbol_id(&scratch, g_builtin_syms.colon),
+        atom_symbol_id(&scratch, other_sym), atom_symbol(&scratch, "Number"));
+    Atom *sub_row = atom_expr3(&scratch,
+        atom_symbol_id(&scratch, g_builtin_syms.subtype),
+        atom_symbol_id(&scratch, rel_sym), atom_symbol_id(&scratch, other_sym));
+    Atom *alias_row = atom_expr3(&scratch,
+        atom_symbol_id(&scratch, g_builtin_syms.equals_e),
+        atom_symbol_id(&scratch, rel_sym), atom_symbol_id(&scratch, alias_sym));
+    Atom *alias_right = atom_expr3(&scratch,
+        atom_symbol_id(&scratch, g_builtin_syms.equals_e_right),
+        atom_symbol_id(&scratch, rel_sym), atom_symbol_id(&scratch, alias_sym));
+    Atom *alias_left = atom_expr3(&scratch,
+        atom_symbol_id(&scratch, g_builtin_syms.equals_e_left),
+        atom_symbol_id(&scratch, rel_sym), atom_symbol_id(&scratch, alias_sym));
+
+    /* A. Single atom classifier equivalence across all 6 atom kinds + open atoms. */
+    assert(space_theory_is_theory_head(g_builtin_syms.equals));
+    assert(space_theory_is_theory_head(g_builtin_syms.equals_percent));
+    assert(space_theory_is_theory_head(g_builtin_syms.colon));
+    assert(space_theory_is_theory_head(g_builtin_syms.subtype));
+    assert(space_theory_is_theory_head(g_builtin_syms.equals_e));
+    assert(space_theory_is_theory_head(g_builtin_syms.equals_e_right));
+    assert(space_theory_is_theory_head(g_builtin_syms.equals_e_left));
+    assert(!space_theory_is_theory_head(rel_sym));
+    assert(space_theory_atom_is_guaranteed_data(rel_1));
+    assert(!space_theory_atom_is_guaranteed_data(x_var));
+    assert(!space_theory_atom_is_guaranteed_data(open_expr));
+    assert(!space_theory_atom_is_guaranteed_data(eq_rel));
+    assert(!space_theory_atom_is_guaranteed_data(dir_other));
+    assert(!space_theory_atom_is_guaranteed_data(decl_rel));
+    assert(!space_theory_atom_is_guaranteed_data(sub_row));
+    assert(!space_theory_atom_is_guaranteed_data(alias_row));
+    assert(!space_theory_atom_is_guaranteed_data(alias_right));
+    assert(!space_theory_atom_is_guaranteed_data(alias_left));
+
+    const struct {
+        Atom *atom;
+        SpaceTheoryAtomKind kind;
+        SymbolId expected_head;
+        bool expected_open;
+    } hdr_cases[] = {
+        {rel_1, SPACE_THEORY_ATOM_DATA, rel_sym, false},
+        {x_var, SPACE_THEORY_ATOM_DATA, SYMBOL_ID_NONE, true},
+        {open_expr, SPACE_THEORY_ATOM_DATA, SYMBOL_ID_NONE, true},
+        {eq_rel, SPACE_THEORY_ATOM_DEFINITION, rel_sym, false},
+        {dir_other, SPACE_THEORY_ATOM_DIRECTIONAL_DEFINITION, other_sym, false},
+        {decl_rel, SPACE_THEORY_ATOM_TYPE_ASSIGNMENT, rel_sym, false},
+        {sub_row, SPACE_THEORY_ATOM_SUBTYPE_ASSIGNMENT, SYMBOL_ID_NONE, true},
+        {alias_row, SPACE_THEORY_ATOM_EQUATION, SYMBOL_ID_NONE, false},
+        {alias_right, SPACE_THEORY_ATOM_EQUATION, SYMBOL_ID_NONE, false},
+        {alias_left, SPACE_THEORY_ATOM_EQUATION, SYMBOL_ID_NONE, false},
+    };
+    for (size_t i = 0u; i < sizeof(hdr_cases) / sizeof(hdr_cases[0]); i++) {
+        AtomId id = term_universe_store_atom_id(&universe, NULL, hdr_cases[i].atom);
+        assert(id != CETTA_ATOM_ID_NONE);
+        const CettaTermHdr *hdr = tu_hdr(&universe, id);
+        assert(hdr != NULL);
+        SymbolId got_head = SYMBOL_ID_NONE;
+        bool got_open = false;
+        assert(space_theory_classify_header(&universe, id, hdr, &got_head,
+                                            &got_open) == hdr_cases[i].kind);
+        assert(got_head == hdr_cases[i].expected_head);
+        assert(got_open == hdr_cases[i].expected_open);
+        assert(space_theory_classify_atom(hdr_cases[i].atom, NULL, NULL) ==
+               hdr_cases[i].kind);
+    }
+
+    /* B. Lazy SpaceHeadClocks: NULL until first watch or seal. */
+    space_add(&s, rel_1);
+    space_add(&s, noise_1);
+    assert(s.head_clocks == NULL);
+
+    /* C. Per-head version-counter isolation across data, definitions, types,
+     * open atoms, and =e equations. */
+    SpaceRegionGuard rel_data_guard = space_region_guard_for_head(
+        SPACE_OBSERVER_COUNT, &s, SPACE_THEORY_ROLE_RULES,
+        &s, SPACE_THEORY_ROLE_DATA, rel_sym, true);
+    assert(s.head_clocks != NULL);
+    assert(space_region_guard_valid(&rel_data_guard, SPACE_OBSERVER_COUNT,
+                                    &s, &s, NULL));
+    /* Finite fuel -> TIMED must be refused even when counters are current. */
+    assert(!space_region_guard_valid(&rel_data_guard, SPACE_OBSERVER_TIMED,
+                                     &s, &s, NULL));
+
+    /* Unrelated data, definition, and type assignment leave rel valid. */
+    space_add(&s, noise_2);
+    space_add(&s, dir_other);
+    space_add(&s, decl_other);
+    assert(space_region_guard_valid(&rel_data_guard, SPACE_OBSERVER_COUNT,
+                                    &s, &s, NULL));
+
+    /* Same-head add invalidates COUNT/ABSENCE while keeping positive PRESENCE
+     * on append-only growth; removal invalidates PRESENCE too. */
+    space_add(&s, rel_2);
+    assert(!space_region_guard_valid(&rel_data_guard, SPACE_OBSERVER_COUNT,
+                                     &s, &s, NULL));
+    assert(!space_region_guard_valid(&rel_data_guard, SPACE_OBSERVER_ABSENCE,
+                                     &s, &s, NULL));
+    assert(space_region_guard_valid(&rel_data_guard, SPACE_OBSERVER_PRESENCE,
+                                    &s, &s, NULL));
+    assert(space_remove(&s, rel_2));
+    assert(!space_region_guard_valid(&rel_data_guard, SPACE_OBSERVER_PRESENCE,
+                                     &s, &s, NULL));
+
+    /* Role separation: definition edit on rel invalidates RULES but not DATA-only stamp. */
+    SpaceHeadClockStamp rel_data_only = {0};
+    SpaceHeadClockStamp rel_rules_only = {0};
+    SpaceHeadClockStamp rel_decls_only = {0};
+    assert(space_theory_head_clock_capture(&s, rel_sym, SPACE_THEORY_ROLE_DATA,
+                                           &rel_data_only));
+    assert(space_theory_head_clock_capture(&s, rel_sym, SPACE_THEORY_ROLE_RULES,
+                                           &rel_rules_only));
+    assert(space_theory_head_clock_capture(&s, rel_sym, SPACE_THEORY_ROLE_DECLS,
+                                           &rel_decls_only));
+    space_add(&s, eq_rel);
+    assert(space_theory_head_clock_current(&s, &rel_data_only));
+    assert(!space_theory_head_clock_current(&s, &rel_rules_only));
+    assert(space_theory_head_clock_current(&s, &rel_decls_only));
+
+    space_add(&s, decl_rel);
+    assert(space_theory_head_clock_current(&s, &rel_data_only));
+    assert(!space_theory_head_clock_current(&s, &rel_decls_only));
+
+    /* Open atom invalidates ALL roles (DATA, RULES, DECLS) and latches
+     * conservative declares_subtypes on the space. */
+    SpaceTheoryView view_before_open = space_theory_view_open(&s);
+    assert(!space_theory_view_declares_subtypes(&view_before_open));
+    assert(space_theory_head_clock_capture(&s, rel_sym, SPACE_THEORY_ROLE_DATA,
+                                           &rel_data_only));
+    assert(space_theory_head_clock_capture(&s, rel_sym, SPACE_THEORY_ROLE_RULES,
+                                           &rel_rules_only));
+    space_add(&s, open_expr);
+    assert(!space_theory_head_clock_current(&s, &rel_data_only));
+    assert(!space_theory_head_clock_current(&s, &rel_rules_only));
+    assert(space_remove(&s, open_expr));
+
+    /* D. Live SpaceTheoryView lookups (definitions, type assignments, equations). */
+    {
+        unsigned ext_forms = CETTA_RULE_SYNTAX_ORDINARY |
+            CETTA_RULE_SYNTAX_DIRECTIONAL | CETTA_RULE_SYNTAX_EQUATIONAL_ALIAS;
+        SpaceTheoryView view = space_theory_view_open(&s);
+        assert(space_theory_view_head_has_rules(&view, rel_sym, ext_forms));
+        assert(space_theory_view_head_has_rules(&view, other_sym, ext_forms));
+        assert(!space_theory_view_head_has_rules(&view, noise_sym, ext_forms));
+        assert(space_theory_view_head_declares_type(&view, rel_sym));
+        assert(!space_theory_view_head_declares_type(&view, noise_sym));
+        assert(space_theory_view_type_annotations_symbol_only(&view));
+        assert(space_theory_view_declares_subtypes(&view));
+
+        Atom **collected_rules = NULL;
+        size_t collected_count = 0u;
+        bool via_alias = true;
+        assert(space_theory_view_collect_head_rules(
+            &view, rel_sym, ext_forms, &collected_rules, &collected_count,
+            &via_alias));
+        assert(collected_count == 1u && !via_alias);
+        free(collected_rules);
+
+        space_add(&s, alias_row);
+        SpaceTheoryView view_alias = space_theory_view_open(&s);
+        SpaceTheoryEquationCache eq_cache = {0};
+        Atom **eq_atoms = NULL;
+        size_t eq_count = 0u;
+        assert(space_theory_view_collect_equations(
+            &view_alias, &eq_cache, &eq_atoms, &eq_count));
+        assert(eq_count == 1u);
+        free(eq_atoms);
+        assert(space_theory_view_head_has_rules(&view_alias, alias_sym, ext_forms));
+        assert(space_theory_view_collect_head_rules(
+            &view_alias, alias_sym, ext_forms, &collected_rules,
+            &collected_count, &via_alias));
+        assert(collected_count == 1u && via_alias);
+        free(collected_rules);
+        space_theory_equation_cache_free(&eq_cache);
+        assert(space_remove(&s, alias_row));
+    }
+
+    /* E. Unordered removal with a wildcard atom:
+     * In a space holding (hc-foreign-D 1), (hc-target-X 1), and ($hc-x 1),
+     * removing (hc-foreign-D 1) can reorder ($hc-x 1) ahead of (hc-target-X 1),
+     * changing the first match for (hc-target-X $v); the FIRST validity guard
+     * for hc-target-X must invalidate.  When the third atom is concrete on an
+     * unrelated head (hc-foreign-E 2), the guard for hc-target-X stays valid. */
+    {
+        Space swap_wild, swap_safe;
+        space_init_with_universe(&swap_wild, &universe);
+        space_init_with_universe(&swap_safe, &universe);
+        Atom *atom_d = atom_expr2(&scratch, atom_symbol_id(&scratch, foreign_d),
+                                  atom_int(&scratch, 1));
+        Atom *atom_x = atom_expr2(&scratch, atom_symbol_id(&scratch, target_x),
+                                  atom_int(&scratch, 1));
+        Atom *atom_e = atom_expr2(&scratch, atom_symbol_id(&scratch, foreign_e),
+                                  atom_int(&scratch, 2));
+
+        space_add(&swap_wild, atom_d);
+        space_add(&swap_wild, atom_x);
+        space_add(&swap_wild, open_expr);
+        SpaceRegionGuard first_wild = space_region_guard_for_head(
+            SPACE_OBSERVER_FIRST, &swap_wild, SPACE_THEORY_ROLE_RULES,
+            &swap_wild, SPACE_THEORY_ROLE_DATA, target_x, true);
+        assert(space_region_guard_valid(
+            &first_wild, SPACE_OBSERVER_FIRST, &swap_wild, &swap_wild, NULL));
+        assert(space_remove(&swap_wild, atom_d));
+        assert(!space_region_guard_valid(
+            &first_wild, SPACE_OBSERVER_FIRST, &swap_wild, &swap_wild, NULL));
+
+        space_add(&swap_safe, atom_d);
+        space_add(&swap_safe, atom_x);
+        space_add(&swap_safe, atom_e);
+        SpaceRegionGuard first_safe = space_region_guard_for_head(
+            SPACE_OBSERVER_FIRST, &swap_safe, SPACE_THEORY_ROLE_RULES,
+            &swap_safe, SPACE_THEORY_ROLE_DATA, target_x, true);
+        assert(space_region_guard_valid(
+            &first_safe, SPACE_OBSERVER_FIRST, &swap_safe, &swap_safe, NULL));
+        assert(space_remove(&swap_safe, atom_d));
+        assert(space_region_guard_valid(
+            &first_safe, SPACE_OBSERVER_FIRST, &swap_safe, &swap_safe, NULL));
+
+        space_free(&swap_safe);
+        space_free(&swap_wild);
+    }
+
+    /* F. Cyclic equation invalidating a negative match:
+     * With (= (hc-Inspect (hc-Next hc-A)) OK) in the space, (hc-Inspect hc-A)
+     * has no match until (=e hc-A (hc-Next hc-A)) is added.  Adding that
+     * equation makes (hc-Inspect hc-A) match OK with no edit to hc-Inspect's
+     * own definition, so the ABSENCE guard for hc-Inspect must invalidate and
+     * its equation seal must clear. */
+    {
+        Space neg_s;
+        space_init_with_universe(&neg_s, &universe);
+        Atom *a_atom = atom_symbol_id(&scratch, a_sym);
+        Atom *next_a = atom_expr2(&scratch, atom_symbol_id(&scratch, next_sym),
+                                  a_atom);
+        Atom *inspect_rule = atom_expr3(&scratch,
+            atom_symbol_id(&scratch, g_builtin_syms.equals),
+            atom_expr2(&scratch, atom_symbol_id(&scratch, inspect_sym), next_a),
+            atom_symbol(&scratch, "OK"));
+        Atom *cyclic_alias = atom_expr3(&scratch,
+            atom_symbol_id(&scratch, g_builtin_syms.equals_e), a_atom, next_a);
+        space_add(&neg_s, inspect_rule);
+        assert(space_theory_seal_head(
+            &neg_s, inspect_sym,
+            SPACE_THEORY_ROLE_RULES | SPACE_THEORY_ROLE_ALIAS));
+        SpaceRegionGuard miss_guard = space_region_guard_for_head(
+            SPACE_OBSERVER_ABSENCE, &neg_s, SPACE_THEORY_ROLE_RULES,
+            NULL, 0u, inspect_sym, false);
+        assert(space_region_guard_valid(
+            &miss_guard, SPACE_OBSERVER_ABSENCE, &neg_s, NULL, NULL));
+
+        space_add(&neg_s, cyclic_alias);
+        assert(!space_region_guard_valid(
+            &miss_guard, SPACE_OBSERVER_ABSENCE, &neg_s, NULL, NULL));
+        assert((space_theory_head_sealed_mask(&neg_s, inspect_sym) &
+                SPACE_THEORY_ROLE_ALIAS) == 0u);
+        assert((space_theory_head_sealed_mask(&neg_s, inspect_sym) &
+                SPACE_THEORY_ROLE_RULES) != 0u);
+        space_free(&neg_s);
+    }
+
+    /* G. Compact multi-head SpaceHeadSetStamp: survives disjoint rules/decls/data
+     * and invalidates on any member head edit, subtype, alias, or space reuse. */
+    {
+        Space set_s;
+        space_init_with_universe(&set_s, &universe);
+        SymbolId watched[2] = {rel_sym, other_sym};
+        SpaceHeadSetStamp set_stamp = {0};
+        assert(space_theory_head_set_clock_capture(
+            &set_s, watched, 2u,
+            SPACE_THEORY_ROLE_RULES | SPACE_THEORY_ROLE_DECLS |
+                SPACE_THEORY_ROLE_ALIAS,
+            &set_stamp));
+        assert(set_stamp.active && set_stamp.head_count == 2u);
+        assert(space_theory_head_set_clock_current(&set_s, watched, 2u, &set_stamp));
+
+        /* Unrelated data + unrelated rule + unrelated decl preserve stamp. */
+        space_add(&set_s, noise_1);
+        space_add(&set_s, atom_expr3(&scratch,
+            atom_symbol_id(&scratch, g_builtin_syms.equals),
+            atom_expr2(&scratch, atom_symbol_id(&scratch, noise_sym), atom_int(&scratch, 1)),
+            atom_int(&scratch, 2)));
+        space_add(&set_s, atom_expr3(&scratch,
+            atom_symbol_id(&scratch, g_builtin_syms.colon),
+            atom_symbol_id(&scratch, noise_sym), atom_symbol(&scratch, "Number")));
+        assert(space_theory_head_set_clock_current(&set_s, watched, 2u, &set_stamp));
+
+        /* Rule on 2nd watched head invalidates stamp. */
+        space_add(&set_s, dir_other);
+        assert(!space_theory_head_set_clock_current(&set_s, watched, 2u, &set_stamp));
+
+        /* Re-capture; decl on 1st watched head invalidates stamp. */
+        assert(space_theory_head_set_clock_capture(
+            &set_s, watched, 2u,
+            SPACE_THEORY_ROLE_RULES | SPACE_THEORY_ROLE_DECLS |
+                SPACE_THEORY_ROLE_ALIAS,
+            &set_stamp));
+        space_add(&set_s, decl_rel);
+        assert(!space_theory_head_set_clock_current(&set_s, watched, 2u, &set_stamp));
+
+        /* Re-capture; alias invalidates stamp. */
+        assert(space_theory_head_set_clock_capture(
+            &set_s, watched, 2u,
+            SPACE_THEORY_ROLE_RULES | SPACE_THEORY_ROLE_DECLS |
+                SPACE_THEORY_ROLE_ALIAS,
+            &set_stamp));
+        space_add(&set_s, alias_row);
+        assert(!space_theory_head_set_clock_current(&set_s, watched, 2u, &set_stamp));
+
+        /* Address reuse invalidates via fresh table_id. */
+        assert(space_theory_head_set_clock_capture(
+            &set_s, watched, 2u,
+            SPACE_THEORY_ROLE_RULES | SPACE_THEORY_ROLE_DECLS |
+                SPACE_THEORY_ROLE_ALIAS,
+            &set_stamp));
+        space_free(&set_s);
+        space_init_with_universe(&set_s, &universe);
+        assert(space_theory_watch_head(&set_s, rel_sym));
+        assert(space_theory_watch_head(&set_s, other_sym));
+        assert(!space_theory_head_set_clock_current(&set_s, watched, 2u, &set_stamp));
+        space_free(&set_s);
+    }
+
+    /* G. Sealing, protecting imports, and cross-importer head-clock propagation. */
+    {
+        Space mod_a, mod_b, imp;
+        space_init_with_universe(&mod_a, &universe);
+        space_init_with_universe(&mod_b, &universe);
+        space_init_with_universe(&imp, &universe);
+
+        Atom *rule_f = atom_expr3(&scratch,
+            atom_symbol_id(&scratch, g_builtin_syms.equals),
+            atom_expr2(&scratch, atom_symbol_id(&scratch, mod_f), x_var),
+            atom_int(&scratch, 10));
+        Atom *rule_f_override = atom_expr3(&scratch,
+            atom_symbol_id(&scratch, g_builtin_syms.equals),
+            atom_expr2(&scratch, atom_symbol_id(&scratch, mod_f),
+                       atom_int(&scratch, 0)),
+            atom_int(&scratch, 99));
+        Atom *rule_g = atom_expr3(&scratch,
+            atom_symbol_id(&scratch, g_builtin_syms.equals),
+            atom_expr2(&scratch, atom_symbol_id(&scratch, mod_g), x_var),
+            atom_int(&scratch, 20));
+        Atom *alias_f = atom_expr3(&scratch,
+            atom_symbol_id(&scratch, g_builtin_syms.equals_e),
+            atom_symbol_id(&scratch, mod_f), atom_symbol_id(&scratch, alias_sym));
+
+        space_add(&mod_a, rule_f);
+        assert(space_theory_seal_head(
+            &mod_a, mod_f, SPACE_THEORY_ROLE_RULES | SPACE_THEORY_ROLE_ALIAS));
+        assert(space_add_dependency(&imp, &mod_a));
+
+        /* Unrelated rule/data in importer preserves protecting import. */
+        space_add(&imp, noise_1);
+        space_add(&imp, rule_g);
+        assert(space_theory_import_protects_head(
+            &imp, &mod_a, mod_f,
+            SPACE_THEORY_ROLE_RULES | SPACE_THEORY_ROLE_ALIAS));
+
+        /* Adding =e in importer breaks ALIAS-sensitive protecting import! */
+        space_add(&imp, alias_f);
+        assert(!space_theory_import_protects_head(
+            &imp, &mod_a, mod_f,
+            SPACE_THEORY_ROLE_RULES | SPACE_THEORY_ROLE_ALIAS));
+        assert(space_remove(&imp, alias_f));
+        assert(space_theory_import_protects_head(
+            &imp, &mod_a, mod_f,
+            SPACE_THEORY_ROLE_RULES | SPACE_THEORY_ROLE_ALIAS));
+
+        /* Adding a local rule for mod_f breaks protecting import. */
+        space_add(&imp, rule_f_override);
+        assert(!space_theory_import_protects_head(
+            &imp, &mod_a, mod_f, SPACE_THEORY_ROLE_RULES));
+        assert(space_remove(&imp, rule_f_override));
+        assert(space_theory_import_protects_head(
+            &imp, &mod_a, mod_f, SPACE_THEORY_ROLE_RULES));
+
+        /* Per-head version-counter propagation through module imports: unrelated
+         * write to mod_a keeps imp's rel validity guard valid; rel write to
+         * mod_a invalidates imp's rel validity guard. */
+        SpaceRegionGuard imp_rel = space_region_guard_for_head(
+            SPACE_OBSERVER_COUNT, &imp, SPACE_THEORY_ROLE_RULES,
+            &imp, SPACE_THEORY_ROLE_DATA, rel_sym, false);
+        space_add(&mod_a, noise_2);
+        assert(space_region_guard_valid(
+            &imp_rel, SPACE_OBSERVER_COUNT, &imp, &imp, NULL));
+        space_add(&mod_a, rel_1);
+        assert(!space_region_guard_valid(
+            &imp_rel, SPACE_OBSERVER_COUNT, &imp, &imp, NULL));
+
+        /* Sibling dependency defining mod_f breaks protecting import. */
+        space_add(&mod_b, rule_f_override);
+        assert(space_add_dependency(&imp, &mod_b));
+        assert(!space_theory_import_protects_head(
+            &imp, &mod_a, mod_f, SPACE_THEORY_ROLE_RULES));
+
+        /* Mutating mod_a on sealed mod_f clears mod_a's seal. */
+        space_add(&mod_a, rule_f_override);
+        assert((space_theory_head_sealed_mask(&mod_a, mod_f) &
+                SPACE_THEORY_ROLE_RULES) == 0u);
+
+        /* H. Concurrent TSan stress over SpaceHeadClocks & protecting imports. */
+        Space tsan_s, tsan_mod, tsan_imp;
+        space_init_with_universe(&tsan_s, &universe);
+        space_init_with_universe(&tsan_mod, &universe);
+        space_init_with_universe(&tsan_imp, &universe);
+        space_add(&tsan_mod, rule_f);
+        assert(space_theory_seal_head(
+            &tsan_mod, mod_f, SPACE_THEORY_ROLE_RULES | SPACE_THEORY_ROLE_ALIAS));
+        assert(space_add_dependency(&tsan_imp, &tsan_mod));
+        HeadClocksTsanCtx tctx = {
+            .space = &tsan_s,
+            .importer = &tsan_imp,
+            .module = &tsan_mod,
+            .watched_head = rel_sym,
+            .other_head = other_sym,
+            .mod_head = mod_f,
+            .noise_id = term_universe_store_atom_id(&universe, NULL, noise_1),
+            .watched_id = term_universe_store_atom_id(&universe, NULL, rel_1),
+            .alias_id = term_universe_store_atom_id(&universe, NULL, alias_row),
+        };
+        atomic_init(&tctx.writer_done, false);
+        atomic_init(&tctx.reader_checks, 0u);
+        assert(pthread_barrier_init(&tctx.start, NULL, 3) == 0);
+        pthread_t r1, r2, w;
+        assert(pthread_create(&r1, NULL, head_clocks_tsan_reader, &tctx) == 0);
+        assert(pthread_create(&r2, NULL, head_clocks_tsan_reader, &tctx) == 0);
+        assert(pthread_create(&w, NULL, head_clocks_tsan_writer, &tctx) == 0);
+        assert(pthread_join(r1, NULL) == 0);
+        assert(pthread_join(r2, NULL) == 0);
+        assert(pthread_join(w, NULL) == 0);
+        assert(pthread_barrier_destroy(&tctx.start) == 0);
+        assert(atomic_load_explicit(&tctx.reader_checks, memory_order_relaxed) >=
+               512u);
+
+        space_free(&tsan_imp);
+        space_free(&tsan_mod);
+        space_free(&tsan_s);
+        space_free(&imp);
+        space_free(&mod_b);
+        space_free(&mod_a);
+    }
+
+    space_free(&s);
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+    puts("PASS: atom classifier, SpaceTheoryView, per-head version counters, sealing & TSan");
 }
 
 static void test_space_equation_projection_tokens(void) {
@@ -806,9 +1877,9 @@ static void test_space_equation_projection_tokens(void) {
     SpaceEquationToken overlay_equations = space_equation_token(&overlay);
     SpaceEquationToken nested_equations =
         space_equation_token(&nested_overlay);
-    SpaceProgramToken overlay_program = space_program_token(&overlay);
-    SpaceProgramToken nested_program =
-        space_program_token(&nested_overlay);
+    SpaceTheoryToken overlay_program = space_theory_token(&overlay);
+    SpaceTheoryToken nested_program =
+        space_theory_token(&nested_overlay);
     space_add(&overlay, atom_symbol(&scratch, "overlay-local-data"));
     space_add(&overlay_base, atom_symbol(&scratch, "overlay-base-data"));
     space_add(&unrelated, wildcard_equation);
@@ -817,9 +1888,9 @@ static void test_space_equation_projection_tokens(void) {
         overlay_equations, &overlay));
     assert(space_equation_token_matches_live_space(
         nested_equations, &nested_overlay));
-    assert(space_program_token_matches_live_space(
+    assert(space_theory_token_matches_live_space(
         overlay_program, &overlay));
-    assert(space_program_token_matches_live_space(
+    assert(space_theory_token_matches_live_space(
         nested_program, &nested_overlay));
     uint64_t overlay_revision = space_revision(&overlay);
     uint64_t nested_revision = space_revision(&nested_overlay);
@@ -830,9 +1901,9 @@ static void test_space_equation_projection_tokens(void) {
         overlay_equations, &overlay));
     assert(!space_equation_token_matches_live_space(
         nested_equations, &nested_overlay));
-    assert(!space_program_token_matches_live_space(
+    assert(!space_theory_token_matches_live_space(
         overlay_program, &overlay));
-    assert(!space_program_token_matches_live_space(
+    assert(!space_theory_token_matches_live_space(
         nested_program, &nested_overlay));
     space_free(&unrelated);
     space_free(&nested_overlay);
@@ -1047,6 +2118,9 @@ int main(void) {
     test_space_imported_prefix();
     test_space_equation_projection_tokens();
     test_space_program_projection_tokens();
+    test_space_theory_view_and_observers();
+    test_space_alias_scoped_equations();
+    test_space_theory_head_clocks_and_sealing();
 
     {
         Arena equation_persistent;
@@ -2429,7 +3503,7 @@ int main(void) {
         assert(atom_eq(space_get_at64(&own, 1u), first));
         assert(!space_add_dependency(&own, &dependency));
         SpaceReadToken read = space_read_token(&own);
-        SpaceProgramToken program = space_program_token(&own);
+        SpaceTheoryToken program = space_theory_token(&own);
         space_add(&owner, added);
         assert(space_length64(&own) == 4u);
         assert(!space_read_token_is_current(read));
@@ -2438,7 +3512,7 @@ int main(void) {
             atom_symbol_id(&scratch_d, g_builtin_syms.colon),
             atom_symbol(&scratch_d, "own-view-subject"),
             atom_symbol(&scratch_d, "OwnViewType")));
-        assert(!space_program_token_is_current(program));
+        assert(!space_theory_token_is_current(program));
         assert(space_length64(&owner) == 6u);
         Space *outer_work = space_heap_clone_shallow(&owner);
         assert(outer_work);

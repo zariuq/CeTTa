@@ -215,12 +215,12 @@ static void append_views(TermUniverse *u, Arena *a, CettaProofImage *im, CettaPr
     CettaProofBudget budget = {100u, 0u}; CettaProofWord pending;
     assert(cetta_proof_cursor_peek(proof, &budget, &pending) == CETTA_PROOF_ROW);
     uint64_t pending_token = pending.token;
-    SpaceReadToken before = space_read_token(&s); SpaceProgramToken program = space_program_token(&s);
+    SpaceReadToken before = space_read_token(&s); SpaceTheoryToken program = space_theory_token(&s);
     AtomId first[] = {key(u,a,"(final 1)"),key(u,a,"(final 2)"),key(u,a,"(final 1)")};
     refuse_materialization = true; materializations = 0u;
     assert(space_add_alpha_keys_batch(&s, first, 3u));
     assert(materializations == 0u && s.native.len == 3u);
-    assert(!space_read_token_prefix_intact(before) && space_program_token_matches_live_space(program, &s));
+    assert(!space_read_token_prefix_intact(before) && space_theory_token_matches_live_space(program, &s));
     proof_count(&s, a, l, 8u);
     assert(term_universe_collect(u, NULL));
     const char *old_rows[] = {"(unrelated 9)"}; cursor_values(&old, a, old_rows, 1u);

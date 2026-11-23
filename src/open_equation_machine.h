@@ -201,9 +201,11 @@ bool cetta_open_equation_program_is_current(
  * Initialize from the program, then update only through refresh. */
 typedef struct {
     const CettaOpenEquationProgram *program;
-    SpaceProgramToken program_token;
+    SpaceTheoryToken program_token;
     SpaceReadToken rows;
     CettaCount row_count;
+    SpaceHeadSetStamp head_stamp;
+    uint8_t disjoint_refreshes;
 } CettaOpenEquationRead;
 CettaOpenEquationRead cetta_open_equation_program_read(
     const CettaOpenEquationProgram *program);

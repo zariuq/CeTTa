@@ -2173,17 +2173,13 @@ static bool native_query_visit(void *context, const AtomId *values,
                                              run->universe, values);
         if (id == CETTA_ATOM_ID_NONE)
             return false;
-        if (made->refused_head_count) {
+        if (made->refuse_theory_heads) {
             /* Every change waits for the end, so declining here makes
              * none. */
             const CettaTermHdr *hdr = tu_hdr(run->universe, id);
-            if (!hdr)
+            if (!hdr || (hdr->tag == ATOM_EXPR &&
+                         space_theory_is_theory_head(hdr->sym_or_head)))
                 return false;
-            for (uint8_t refused = 0u; hdr->tag == ATOM_EXPR &&
-                 refused < made->refused_head_count; refused++) {
-                if (hdr->sym_or_head == made->refused_heads[refused])
-                    return false;
-            }
         }
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_NATIVE_QUERY_EFFECT_INSTANCE);
         /* Set insertion is idempotent. Bag additions and one-occurrence
@@ -2594,7 +2590,7 @@ static bool native_query_stream_exact(const CettaNativeQuery *query,
                                       NativeQueryLoops *loops) {
     if (!query->count_only || query->effect_count != 1u ||
         !space_is_set(query->effects[0].target) ||
-        query->effects[0].removal || query->effects[0].refused_head_count ||
+        query->effects[0].removal || query->effects[0].refuse_theory_heads ||
         query->snapshot || query->filter_count || query->guard_space ||
         query->inert_head_count || query->afresh || query->rows)
         return false;
@@ -2782,7 +2778,7 @@ CettaNativeQueryStatus cetta_native_query_run(
         if (!made->target || !made->data ||
             made->target->native.universe != universe)
             return CETTA_NATIVE_QUERY_DECLINED;
-        deferred |= made->removal || made->refused_head_count != 0u;
+        deferred |= made->removal || made->refuse_theory_heads;
     }
     deferred |= query->snapshot;
     /* A filter declines a run whose values its ids cannot tell apart, which

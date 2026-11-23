@@ -1944,7 +1944,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --space-engine <name> <file.metta>\n", out);
     fputs("       cetta --kernel <c|x86|hybrid> [--kernel-stats] <file>\n", out);
     fputs("       cetta --space-match-backend <name> <file.metta>   # alias for --space-engine\n", out);
-    fputs("       cetta --lang <zero|subzero|gslt-il|zerouv|metta-interact> --gslt-realization <horn-reference|compiled-worklist> <file.metta>\n", out);
+    fputs("       cetta --lang <zero|subzero|gslt-il|zerouv|metta-interact> --gslt-realization <compiled-worklist|horn-oracle> <file.metta>\n", out);
     fputs("       cetta --lang zero <file.metta> # direct (eval subject) and (zero-query pattern template) requests; ! is not Zero syntax\n", out);
     fputs("       cetta --lang zero --profile emit <file.metta> # revision-threaded match/let/eval/emit; add-atom aliases persistent emit\n", out);
     fputs("       cetta --lang zero --profile interact [--space-engine <native|pathmap>] <file.metta> # authenticated immutable revisions; native C or Rust/PathMap via C ABI\n", out);
@@ -2918,7 +2918,7 @@ static int cetta_main(int argc, char **argv) {
     SpaceEngine space_engine = SPACE_ENGINE_NATIVE;
     bool space_engine_requested = false;
     CettaGsltRealization gslt_realization =
-        CETTA_GSLT_REALIZATION_HORN_REFERENCE;
+        CETTA_GSLT_REALIZATION_COMPILED_WORKLIST;
     bool gslt_realization_requested = false;
     const char *name_supply_mode = NULL;
     const char *name_supply_seed = NULL;

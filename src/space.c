@@ -81,10 +81,16 @@ static _Atomic uint64_t g_space_next_prefix_epoch = 1u;
 _Atomic uint64_t cetta_space_global_mutation_epoch = 0u;
 /* Starts at one: a decision stamped zero was made under no program. */
 _Atomic uint64_t cetta_space_global_program_epoch = 1u;
+/* Starts at zero: bumped only when an `=e` alias (or opaque external write) is
+ * published, so spaces without `=e` collapse every alias check to one branch. */
+_Atomic uint64_t cetta_space_global_equational_epoch = 0u;
 
 static void space_advance_global_program_epoch(void) {
+    /* Release pairs with acquire in space_global_program_epoch(), ordering
+     * published revision updates ahead of the clock bump
+     * (Mettapedia/Machines/VersionedValidation/Clock.lean). */
     uint64_t prior = atomic_fetch_add_explicit(
-        &cetta_space_global_program_epoch, 1u, memory_order_relaxed);
+        &cetta_space_global_program_epoch, 1u, memory_order_release);
     if (prior == UINT64_MAX) {
         fputs("CeTTa: exhausted global program epoch\n", stderr);
         abort();
@@ -94,7 +100,9 @@ static void space_advance_global_program_epoch(void) {
 /* Whether a space's identity is part of some program's observations: it has
  * held equations or declarations, or reads another space's. */
 static bool space_identity_observed_by_programs(const Space *s) {
-    return s->equation_revision != 0u || s->declaration_revision != 0u ||
+    return space_equation_revision(s) != 0u ||
+        space_declaration_revision(s) != 0u ||
+        space_equational_revision(s) != 0u ||
         s->overlay_base != NULL || s->dep_count != 0u;
 }
 
@@ -170,7 +178,7 @@ void space_global_mutation_epoch_advance(void) {
 
 static void space_advance_global_mutation_epoch(void) {
     uint64_t prior = atomic_fetch_add_explicit(
-        &cetta_space_global_mutation_epoch, 1u, memory_order_relaxed);
+        &cetta_space_global_mutation_epoch, 1u, memory_order_release);
     if (prior == UINT64_MAX) {
         fputs("CeTTa: exhausted global Space mutation epoch\n", stderr);
         abort();
@@ -3068,9 +3076,9 @@ static inline void space_journal_note(Space *s, AtomId id, int64_t delta) {
 /* The stamp of what a space reads beyond its own rows: the modules it
  * imports, and an overlay's base. */
 static uint64_t space_entry_dependency_stamp(const Space *s) {
-    uint64_t stamp = s->module_dependency_epoch;
+    uint64_t stamp = space_module_dependency_epoch(s);
     if (s->overlay_base && !s->module_own_view)
-        stamp += s->overlay_base->revision;
+        stamp += space_revision(s->overlay_base);
     return stamp;
 }
 
@@ -3732,7 +3740,7 @@ static bool space_occurrence_cursor_frontier_is_full(
 static bool space_occurrence_cursor_capture(
         Space *space, SpaceOccurrenceCursor *cursor) {
     cursor->read = space_read_token(space);
-    cursor->prefix_epoch = space->prefix_epoch;
+    cursor->prefix_epoch = space_prefix_epoch(space);
     cursor->ceiling = space->native.len;
     cursor->occurrences = space_pinned_occurrences_acquire(space);
     if (!cursor->occurrences) return false;
@@ -4386,7 +4394,7 @@ static bool space_occurrence_cursor_copy_own(
     /* A frozen view outlives the removals that moved the prefix on. */
     if ((live &&
          (src->read.instance_id != space_instance_id(live) ||
-          (!frozen && src->prefix_epoch != live->prefix_epoch))) ||
+          (!frozen && src->prefix_epoch != space_prefix_epoch(live)))) ||
         (rewind && (!live || frozen || src->ceiling != live->native.len ||
                     (src->flat_mode && src->order_walked != 0u))) ||
         src->ceiling > space_pinned_occurrences_len(src->occurrences) ||
@@ -4564,7 +4572,7 @@ space_occurrence_cursor_next_row(
     if (occurrences->space &&
         (cursor->read.instance_id != space_instance_id(occurrences->space) ||
          (!occurrences->frozen &&
-          cursor->prefix_epoch != occurrences->space->prefix_epoch)))
+          cursor->prefix_epoch != space_prefix_epoch(occurrences->space))))
         return SPACE_OCCURRENCE_CURSOR_INVALIDATED;
     CettaCount len = space_pinned_occurrences_len(occurrences);
     SpaceViewMarks marks = space_view_marks(occurrences);
@@ -5922,16 +5930,9 @@ static SymbolId eq_head_symbol_id(const Space *s, AtomId lhs_id) {
     return tu_head_sym(s->native.universe, lhs_id);
 }
 
-/* Exact-head maps place a symbol by its id: a probe compares heads, so the
- * work does not depend on which other symbols collide. */
-static uint32_t symbol_id_mix(SymbolId head) {
-    uint32_t mixed = (uint32_t)head;
-    mixed ^= mixed >> 16;
-    mixed *= 0x7feb352du;
-    mixed ^= mixed >> 15;
-    mixed *= 0x846ca68bu;
-    mixed ^= mixed >> 16;
-    return mixed;
+/* Exact-head maps delegate to space_theory_symbol_id_mix (space_theory.h). */
+static inline uint32_t symbol_id_mix(SymbolId head) {
+    return space_theory_symbol_id_mix(head);
 }
 
 static void eq_head_set_init(EqHeadSet *set) {
@@ -6025,21 +6026,9 @@ static void space_head_chains_free(SpaceHeadChains *rows) {
     space_head_chains_init(rows);
 }
 
-static const SpaceHeadChain *space_head_chains_find(const SpaceHeadChains *rows,
-                                                    SymbolId head) {
-    if (head == SYMBOL_ID_NONE)
-        return &rows->headless;
-    if (rows->chain_cap == 0u)
-        return NULL;
-    uint32_t mask = rows->chain_cap - 1u;
-    for (uint32_t slot = symbol_id_mix(head) & mask;;
-         slot = (slot + 1u) & mask) {
-        const SpaceHeadChain *chain = &rows->chains[slot];
-        if (chain->head == head)
-            return chain;
-        if (chain->head == SYMBOL_ID_NONE)
-            return NULL;
-    }
+static inline const SpaceHeadChain *space_head_chains_find(
+        const SpaceHeadChains *rows, SymbolId head) {
+    return space_theory_head_chain_find(rows, head);
 }
 
 static SpaceHeadChain *space_head_chain_slot(SpaceHeadChain *chains,
@@ -7441,6 +7430,8 @@ typedef enum {
     SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION = 1u << 2,
     /* With DECLARATION: the declaration is a `(:< sub super)` row. */
     SPACE_MUTATION_EQUATION_PROJECTION_SUBTYPE = 1u << 3,
+    /* An `(=e lhs rhs)` ground alias row, advancing `equational_revision`. */
+    SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL = 1u << 4,
 } SpaceMutationEquationProjection;
 
 typedef enum {
@@ -7455,6 +7446,16 @@ static void space_release_rows(Space *s, CettaIndex from, CettaIndex to);
 static void space_publish_mutation(
     Space *s, SpaceMutationEquationProjection equation_projection,
     SpaceMutationPrefixEffect prefix_effect);
+static void space_publish_mutation_noted(
+    Space *s, SpaceMutationEquationProjection equation_projection,
+    SpaceMutationPrefixEffect prefix_effect, bool head_clocks_noted);
+static __attribute__((noinline, cold)) void
+space_head_clocks_note_atom_and_importers_slow(
+    Space *s, const Space *source, AtomId primary, const Atom *atom,
+    AtomId secondary, SpaceMutationEquationProjection equation_projection);
+static __attribute__((noinline, cold)) void
+space_head_clocks_note_head_and_importers_slow(
+    Space *s, SymbolId head, uint8_t roles);
 static void space_replace_contents_classified(
     Space *dst, Space *src,
     SpaceMutationEquationProjection equation_projection);
@@ -7640,6 +7641,9 @@ static bool space_overlay_remove_local_raw_index(Space *s, CettaIndex raw_idx) {
     AtomId removed_id = space_atom_id_storage_load_at(
         s->native.atom_ids, s->native.atom_id_width_bits, raw_idx);
     if (space_rows_in_kind_order(s)) {
+        if (space_theory_any_head_clocks_active())
+            space_head_clocks_note_atom_and_importers_slow(
+                s, s, removed_id, NULL, CETTA_ATOM_ID_NONE, equation_projection);
         size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
         memmove(s->native.atom_ids + ((size_t)raw_idx * width),
                 s->native.atom_ids + ((size_t)(raw_idx + 1u) * width),
@@ -7648,6 +7652,9 @@ static bool space_overlay_remove_local_raw_index(Space *s, CettaIndex raw_idx) {
     } else {
         AtomId tail_id = space_atom_id_storage_load_at(
             s->native.atom_ids, s->native.atom_id_width_bits, s->native.len - 1u);
+        if (space_theory_any_head_clocks_active())
+            space_head_clocks_note_atom_and_importers_slow(
+                s, s, removed_id, NULL, tail_id, equation_projection);
         s->native.len--;
         (void)space_atom_id_storage_store_at(
             s->native.atom_ids, s->native.atom_id_width_bits, raw_idx, tail_id);
@@ -7655,8 +7662,8 @@ static bool space_overlay_remove_local_raw_index(Space *s, CettaIndex raw_idx) {
     space_release_row(s, removed_id);
     space_mark_indexes_dirty(s);
     space_match_backend_note_remove(s);
-    space_publish_mutation(
-        s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
+    space_publish_mutation_noted(
+        s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN, true);
     return true;
 }
 
@@ -7971,9 +7978,9 @@ static inline bool space_dense_fact_len(uint32_t len) {
 }
 
 /* Whether the row ID is a fact a relation could hold: a ground
- * (h c1 ... ck) of a head other than the program's (=, =%, :, <:), each
- * column one a relation holds.  Its columns go to COLUMNS and their number
- * to *ARITY. */
+ * (h c1 ... ck) of a head other than the theory projection forms
+ * (`space_theory_is_theory_head`), each column one a relation holds.  Its
+ * columns go to COLUMNS and their number to *ARITY. */
 static bool space_dense_fact(const Space *s, AtomId id, SymbolId *head,
                              AtomId *head_id, AtomId *columns,
                              uint32_t *arity) {
@@ -7984,8 +7991,7 @@ static bool space_dense_fact(const Space *s, AtomId id, SymbolId *head,
         hdr->sym_or_head == SYMBOL_ID_NONE)
         return false;
     SymbolId h = hdr->sym_or_head;
-    if (h == g_builtin_syms.equals || h == g_builtin_syms.equals_percent ||
-        h == g_builtin_syms.colon || h == g_builtin_syms.subtype)
+    if (space_theory_is_theory_head(h))
         return false;
     uint32_t k = (hdr->aux32 & CETTA_TERM_HDR_DATA_MASK) - 1u;
     for (uint32_t c = 0u; c < k; c++) {
@@ -8250,8 +8256,7 @@ SpaceProofImageStatus space_attach_proof_image(Space *s, SymbolId symbol,
     if (!s || !layout || !image || !space_is_set(s) || !space_dense_admits(s) ||
         s->native.marked || !layout->proof.length || layout->proof.length > CETTA_PROOF_PATH_MAX ||
         symbol == SYMBOL_ID_NONE || symbol != layout->head[0] ||
-        symbol == g_builtin_syms.equals || symbol == g_builtin_syms.equals_percent ||
-        symbol == g_builtin_syms.colon || symbol == g_builtin_syms.subtype ||
+        space_theory_is_theory_head(symbol) ||
         layout->universe_instance != s->native.universe->instance_id ||
         layout->storage_epoch != s->native.universe->storage_epoch ||
         !cetta_proof_image_matches_universe(image, s->native.universe))
@@ -8326,7 +8331,11 @@ SpaceProofImageStatus space_attach_proof_image(Space *s, SymbolId symbol,
     s->native.has_non_exact_atoms |= non_exact;
     s->native.has_non_exact_atoms_dirty = true;
     space_dense_touch(s);
-    space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY, SPACE_MUTATION_PREFIX_APPEND_ONLY);
+    if (space_theory_any_head_clocks_active())
+        space_head_clocks_note_head_and_importers_slow(
+            s, symbol, SPACE_THEORY_ROLE_DATA);
+    space_publish_mutation_noted(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
+                                 SPACE_MUTATION_PREFIX_APPEND_ONLY, true);
     return SPACE_PROOF_IMAGE_READY;
 }
 
@@ -8364,9 +8373,8 @@ SpaceProofImageStatus space_promote_proof_seed(Space *s,
         layout->storage_epoch != s->native.universe->storage_epoch)
         return SPACE_PROOF_IMAGE_DECLINED;
     SymbolId symbol = layout->head[0];
-    if (symbol == SYMBOL_ID_NONE || symbol == g_builtin_syms.equals ||
-        symbol == g_builtin_syms.equals_percent || symbol == g_builtin_syms.colon ||
-        symbol == g_builtin_syms.subtype) return SPACE_PROOF_IMAGE_DECLINED;
+    if (symbol == SYMBOL_ID_NONE || space_theory_is_theory_head(symbol))
+        return SPACE_PROOF_IMAGE_DECLINED;
     Space native; space_match_backend_init(&native);
     if (s->match_backend.ops != native.match_backend.ops) return SPACE_PROOF_IMAGE_DECLINED;
     const SpaceDenseHead *previous = space_dense_find(s->native.dense, symbol);
@@ -8494,8 +8502,11 @@ CettaProofBatchStatus space_publish_proof_batch(Space *s, SymbolId symbol,
         s->native.has_non_exact_atoms = true; s->native.has_non_exact_atoms_dirty = true;
         s->native.dense->open_rows = true;
         space_dense_touch(s); space_mark_indexes_dirty(s);
-        space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
-            SPACE_MUTATION_PREFIX_APPEND_ONLY);
+        if (space_theory_any_head_clocks_active())
+            space_head_clocks_note_head_and_importers_slow(
+                s, head->head, SPACE_THEORY_ROLE_DATA);
+        space_publish_mutation_noted(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
+            SPACE_MUTATION_PREFIX_APPEND_ONLY, true);
     }
     if (out) *out = result;
     return CETTA_PROOF_BATCH_OK;
@@ -9392,9 +9403,13 @@ static bool space_dense_take_publishing(Space *s, SpaceDenseHead *head,
     s->native.dense_facts++;
     if (__builtin_expect(s->journal != NULL, 0) && !space_journal_quiet(s))
         space_journal_note(s, space_dense_fact_id(s, head, columns), 1);
-    if (publish)
-        space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
-                               SPACE_MUTATION_PREFIX_APPEND_ONLY);
+    if (publish) {
+        if (space_theory_any_head_clocks_active())
+            space_head_clocks_note_head_and_importers_slow(
+                s, head->head, SPACE_THEORY_ROLE_DATA);
+        space_publish_mutation_noted(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
+                                     SPACE_MUTATION_PREFIX_APPEND_ONLY, true);
+    }
     /* A relation whose columns outgrow its facts is worth more as rows. */
     if (space_dense_kept_numbered(head) != numbered && !space_dense_worth(head))
         space_dense_settle_head(s, head);
@@ -9498,8 +9513,7 @@ static bool space_dense_route_add(Space *s, AtomId atom_id,
         return false;
     SymbolId h = hdr->sym_or_head;
     if (h == SYMBOL_ID_NONE || h == s->native.dense_rows_head ||
-        h == g_builtin_syms.equals || h == g_builtin_syms.equals_percent ||
-        h == g_builtin_syms.colon || h == g_builtin_syms.subtype ||
+        space_theory_is_theory_head(h) ||
         !space_dense_admits(s))
         return false;
     SymbolId head_sym;
@@ -9675,8 +9689,7 @@ bool space_add_deep_holes(Space *s, SymbolId head_sym,
 
 bool space_dense_may_hold(const Space *s, SymbolId head) {
     if (!space_dense_admits(s) || head == SYMBOL_ID_NONE ||
-        head == g_builtin_syms.equals || head == g_builtin_syms.equals_percent ||
-        head == g_builtin_syms.colon || head == g_builtin_syms.subtype)
+        space_theory_is_theory_head(head))
         return false;
     const SpaceDenseHead *entry = space_dense_find(s->native.dense, head);
     return !entry || entry->state != SPACE_DENSE_ROWS;
@@ -9738,10 +9751,14 @@ bool space_add_dense_tuples(Space *s, SymbolId head, AtomId head_id,
             ? space_dense_find(target->native.dense, head) : NULL;
     }
     /* Nothing reads the space between two facts of one batch. */
-    if (taken)
-        space_publish_mutation(target,
-                               SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
-                               SPACE_MUTATION_PREFIX_APPEND_ONLY);
+    if (taken) {
+        if (space_theory_any_head_clocks_active())
+            space_head_clocks_note_head_and_importers_slow(
+                target, head, SPACE_THEORY_ROLE_DATA);
+        space_publish_mutation_noted(target,
+                                     SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
+                                     SPACE_MUTATION_PREFIX_APPEND_ONLY, true);
+    }
     return true;
 }
 
@@ -9936,11 +9953,14 @@ static bool space_dense_holds_atom(const Space *s, Atom *atom) {
  * a row's removal is, which pinned readers do not see: they keep the rows
  * they began with.  The rows do not move, so the path indexes keep their
  * epoch, as a removal by marks keeps it. */
-static void space_dense_publish_removal(Space *s) {
+static void space_dense_publish_removal(Space *s, SymbolId head) {
     uint64_t followed_prefix = s->prefix_epoch;
     space_pinned_occurrences_detach(s);
-    space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
-                           SPACE_MUTATION_PREFIX_REWRITTEN);
+    if (space_theory_any_head_clocks_active())
+        space_head_clocks_note_head_and_importers_slow(
+            s, head, SPACE_THEORY_ROLE_DATA);
+    space_publish_mutation_noted(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
+                                 SPACE_MUTATION_PREFIX_REWRITTEN, true);
     space_path_indexes_adopt_prefix_epoch(s, followed_prefix);
 }
 
@@ -9959,7 +9979,7 @@ CettaCount space_dense_remove_ground(Space *s, Atom *atom) {
         return 0u;
     s->native.dense_facts--;
     space_note_released(s, 1u);
-    space_dense_publish_removal(s);
+    space_dense_publish_removal(s, head->head);
     return 1u;
 }
 
@@ -9995,7 +10015,7 @@ static bool space_dense_route_remove(Space *s, AtomId atom_id) {
         return false;
     s->native.dense_facts--;
     space_note_released(s, 1u);
-    space_dense_publish_removal(s);
+    space_dense_publish_removal(s, head->head);
     return true;
 }
 
@@ -10294,6 +10314,7 @@ static void space_logical_positions_publish(
     }
     SpaceMatchNativeState *native_state = &s->match_backend.native;
     bool order_follows = space_order_forget_rows(s, rows, count);
+    bool track_heads = space_theory_any_head_clocks_active();
     for (CettaCount i = 0u; i < count; i++) {
         space_marks_mark(s, rows[i]);
         /* The row leaves the match trie and the exact index now, so lookups
@@ -10301,6 +10322,10 @@ static void space_logical_positions_publish(
          * settle, and their reader drops marked rows. */
         AtomId atom_id = space_atom_id_storage_load_at(
             s->native.atom_ids, s->native.atom_id_width_bits, rows[i]);
+        if (track_heads)
+            space_head_clocks_note_atom_and_importers_slow(
+                s, s, atom_id, NULL, CETTA_ATOM_ID_NONE,
+                SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY);
         space_journal_note(s, atom_id, -1);
         term_universe_release(s->native.universe, atom_id);
         if (native_state->match_trie && !native_state->match_trie_dirty)
@@ -10319,9 +10344,9 @@ static void space_logical_positions_publish(
     } else {
         s->native.id_present_dirty = true;
     }
-    uint64_t followed_prefix = s->prefix_epoch;
-    space_publish_mutation(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
-                           SPACE_MUTATION_PREFIX_REWRITTEN);
+    uint64_t followed_prefix = space_prefix_epoch(s);
+    space_publish_mutation_noted(s, SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY,
+                                 SPACE_MUTATION_PREFIX_REWRITTEN, true);
     space_path_indexes_adopt_prefix_epoch(s, followed_prefix);
     space_order_adopt(s, order_follows);
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_SPACE_MARKED_ROW, count);
@@ -10440,8 +10465,8 @@ static int space_order_leaf_tie(const TermUniverse *universe, AtomId a,
         const Atom *y = term_universe_get_atom(universe, b);
         const Space *p = x ? (const Space *)x->ground.ptr : NULL;
         const Space *q = y ? (const Space *)y->ground.ptr : NULL;
-        uint64_t left = p ? p->instance_id : 0u;
-        uint64_t right = q ? q->instance_id : 0u;
+        uint64_t left = space_instance_id(p);
+        uint64_t right = space_instance_id(q);
         return left < right ? -1 : left > right ? 1 : 0;
     }
     default:
@@ -10880,7 +10905,7 @@ static bool space_order_rebuild(Space *s, struct SpaceOrder *order) {
         return false;
     }
     order->synced = n->len;
-    order->prefix_epoch = s->prefix_epoch;
+    order->prefix_epoch = space_prefix_epoch(s);
     order->valid = true;
     return true;
 }
@@ -10905,7 +10930,7 @@ static struct SpaceOrder *space_order_ensure(Space *s) {
         s->order = order;
     }
     const SpaceNativeStorage *n = &s->native;
-    if (order->valid && order->prefix_epoch == s->prefix_epoch &&
+    if (order->valid && order->prefix_epoch == space_prefix_epoch(s) &&
         order->synced <= n->len && n->len < CETTA_ORDER_NONE) {
         if (order->synced < n->len) {
             SpaceOrderRows rows;
@@ -10934,7 +10959,7 @@ static bool space_order_forget_rows(Space *s, const CettaIndex *rows,
     struct SpaceOrder *order = s->order;
     if (!order)
         return false;
-    if (!order->valid || order->prefix_epoch != s->prefix_epoch) {
+    if (!order->valid || order->prefix_epoch != space_prefix_epoch(s)) {
         order->valid = false;
         return false;
     }
@@ -10948,14 +10973,14 @@ static bool space_order_forget_rows(Space *s, const CettaIndex *rows,
 
 static void space_order_adopt(Space *s, bool follows) {
     if (follows && s->order && s->order->valid)
-        s->order->prefix_epoch = s->prefix_epoch;
+        s->order->prefix_epoch = space_prefix_epoch(s);
 }
 
 /* Whether the order reflects the rows now, so a contraction may renumber it
  * with them. */
 static bool space_order_current(const Space *s) {
     return s->order && s->order->valid &&
-           s->order->prefix_epoch == s->prefix_epoch;
+           s->order->prefix_epoch == space_prefix_epoch(s);
 }
 
 /* A contraction renumbered the rows: source row R is row TARGET[R] now, or
@@ -10978,7 +11003,7 @@ static void space_order_transport(Space *s, const CettaIndex *target,
         &order->tree, target, reach, SPACE_OCCURRENCE_COORDINATE_REMOVED,
         kept);
     order->synced = synced;
-    order->prefix_epoch = s->prefix_epoch;
+    order->prefix_epoch = space_prefix_epoch(s);
 }
 
 /* A contraction is about to remove the rows MASK marks, which no mark had
@@ -12498,26 +12523,23 @@ void space_discard_native_logical_view_preserving_dispatch(Space *s) {
     s->native.id_present_dirty = true;
 }
 
-static bool space_atom_form_is(Atom *atom, SymbolId head,
-                               CettaExprLen arity) {
-    return atom && atom->kind == ATOM_EXPR && atom->expr.len == arity &&
-           atom_is_symbol_id(atom->expr.elems[0], head);
-}
-
-static bool space_atom_id_form_is(const Space *s, AtomId atom_id,
-                                  Atom *atom, SymbolId head,
-                                  CettaExprLen arity) {
-    if (s && s->native.universe && atom_id != CETTA_ATOM_ID_NONE) {
-        const CettaTermHdr *hdr = tu_hdr(s->native.universe, atom_id);
-        if (hdr) {
-            return tu_kind(s->native.universe, atom_id) == ATOM_EXPR &&
-                   tu_arity(s->native.universe, atom_id) == arity &&
-                   tu_head_sym(s->native.universe, atom_id) == head;
-        }
-        if (!atom)
-            atom = term_universe_peek_atom(s->native.universe, atom_id);
+static inline SpaceMutationEquationProjection
+space_theory_atom_kind_to_mutation_projection(SpaceTheoryAtomKind kind) {
+    switch (kind) {
+    case SPACE_THEORY_ATOM_DEFINITION:
+    case SPACE_THEORY_ATOM_DIRECTIONAL_DEFINITION:
+        return SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT;
+    case SPACE_THEORY_ATOM_TYPE_ASSIGNMENT:
+        return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION;
+    case SPACE_THEORY_ATOM_SUBTYPE_ASSIGNMENT:
+        return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
+               SPACE_MUTATION_EQUATION_PROJECTION_SUBTYPE;
+    case SPACE_THEORY_ATOM_EQUATION:
+        return SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL;
+    case SPACE_THEORY_ATOM_DATA:
+    default:
+        return SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
     }
-    return space_atom_form_is(atom, head, arity);
 }
 
 static SpaceMutationEquationProjection
@@ -12525,18 +12547,15 @@ space_atom_equation_projection(const Space *s, AtomId atom_id, Atom *atom) {
     if (s && s->native.universe && atom_id != CETTA_ATOM_ID_NONE) {
         const CettaTermHdr *header = tu_hdr(s->native.universe, atom_id);
         if (header) {
-            if (tu_kind(s->native.universe, atom_id) == ATOM_EXPR &&
-                tu_arity(s->native.universe, atom_id) == 3u) {
-                SymbolId head = tu_head_sym(s->native.universe, atom_id);
-                if (head == g_builtin_syms.equals || head == g_builtin_syms.equals_percent)
-                    return SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT;
-                if (head == g_builtin_syms.colon)
-                    return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION;
-                if (head == g_builtin_syms.subtype)
-                    return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
-                        SPACE_MUTATION_EQUATION_PROJECTION_SUBTYPE;
+            if (header->tag == ATOM_EXPR) {
+                CettaExprLen arity = header->aux32 & CETTA_TERM_HDR_DATA_MASK;
+                SymbolId head = header->sym_or_head;
+                SpaceTheoryAtomKind kind =
+                    space_theory_classify_head_arity(head, arity);
+                if (kind != SPACE_THEORY_ATOM_DATA)
+                    return space_theory_atom_kind_to_mutation_projection(kind);
             }
-            /* An open row can match a declaration, a subtype or an equation
+            /* An open atom can match a type assignment, a subtype or a definition
              * query: it changes them all. */
             return space_row_outer_open(s->native.universe, atom_id)
                 ? SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE
@@ -12546,14 +12565,13 @@ space_atom_equation_projection(const Space *s, AtomId atom_id, Atom *atom) {
             atom = term_universe_peek_atom(s->native.universe, atom_id);
     }
     if (atom) {
-        if (space_atom_form_is(atom, g_builtin_syms.equals, 3u) ||
-            space_atom_form_is(atom, g_builtin_syms.equals_percent, 3u))
-            return SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT;
-        if (space_atom_form_is(atom, g_builtin_syms.colon, 3u))
-            return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION;
-        if (space_atom_form_is(atom, g_builtin_syms.subtype, 3u))
-            return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
-                SPACE_MUTATION_EQUATION_PROJECTION_SUBTYPE;
+        if (atom->kind == ATOM_EXPR && atom->expr.len >= 3u &&
+            atom->expr.elems[0] && atom->expr.elems[0]->kind == ATOM_SYMBOL) {
+            SpaceTheoryAtomKind kind = space_theory_classify_head_arity(
+                atom->expr.elems[0]->sym_id, atom->expr.len);
+            if (kind != SPACE_THEORY_ATOM_DATA)
+                return space_theory_atom_kind_to_mutation_projection(kind);
+        }
         return space_atom_outer_open(atom)
             ? SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE
             : SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
@@ -12681,7 +12699,8 @@ space_logical_removed_range_equation_projection(
                 space_get_at64(s, index)));
         if ((result & SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE) ||
             ((result & SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT) &&
-             (result & SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION)))
+             (result & SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION) &&
+             (result & SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL)))
             break;
     }
     return result;
@@ -12690,12 +12709,8 @@ space_logical_removed_range_equation_projection(
 bool space_atom_id_requires_authored_order(const Space *s,
                                            AtomId atom_id,
                                            Atom *atom) {
-    return space_atom_id_form_is(
-               s, atom_id, atom, g_builtin_syms.equals, 3u) ||
-           space_atom_id_form_is(
-               s, atom_id, atom, g_builtin_syms.equals_percent, 3u) ||
-           space_atom_id_form_is(
-               s, atom_id, atom, g_builtin_syms.colon, 3u);
+    return space_atom_equation_projection(s, atom_id, atom) !=
+           SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
 }
 
 /* The counted PathMap remains the occurrence authority. Its full tuple view
@@ -12705,10 +12720,15 @@ static void space_mark_backend_primary_atom_mutation(
     Space *s, AtomId atom_id, Atom *atom) {
     if (!s)
         return;
-    if (space_atom_id_form_is(s, atom_id, atom, g_builtin_syms.equals, 3u) ||
-        space_atom_id_form_is(s, atom_id, atom, g_builtin_syms.equals_percent, 3u))
+    SpaceMutationEquationProjection proj =
+        space_atom_equation_projection(s, atom_id, atom);
+    if (proj & (SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
+                SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL |
+                SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE))
         s->native.eq_idx_dirty = true;
-    if (space_atom_id_form_is(s, atom_id, atom, g_builtin_syms.colon, 3u))
+    if (proj & (SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
+                SPACE_MUTATION_EQUATION_PROJECTION_SUBTYPE |
+                SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE))
         s->native.ty_idx_dirty = true;
     s->native.exact_idx_dirty = true;
     s->native.has_non_exact_atoms_dirty = true;
@@ -12780,9 +12800,13 @@ static inline __attribute__((always_inline)) bool space_store_via_backend_primar
             had_non_exact_atom || !atom_exact_indexable;
         s->native.has_non_exact_atoms_dirty = false;
     }
-    space_publish_mutation(
-        s, space_atom_equation_projection(s, atom_id, atom),
-        SPACE_MUTATION_PREFIX_REWRITTEN);
+    SpaceMutationEquationProjection equation_projection =
+        space_atom_equation_projection(s, atom_id, atom);
+    if (space_theory_any_head_clocks_active())
+        space_head_clocks_note_atom_and_importers_slow(
+            s, s, atom_id, atom, CETTA_ATOM_ID_NONE, equation_projection);
+    space_publish_mutation_noted(
+        s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN, true);
     return true;
 }
 
@@ -12805,8 +12829,7 @@ static inline __attribute__((always_inline)) bool space_store_atom_via_backend_p
         s->match_backend.pathmap.bridge.native_shadow_synced)
         return false;
     if (s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
-        (space_atom_form_is(atom, g_builtin_syms.equals, 3u) ||
-         space_atom_form_is(atom, g_builtin_syms.colon, 3u))) {
+        space_atom_id_requires_authored_order(s, CETTA_ATOM_ID_NONE, atom)) {
         if (!space_match_backend_require_logical_order(s, NULL) &&
             out_transition_failed)
             *out_transition_failed = true;
@@ -12832,10 +12855,14 @@ static inline __attribute__((always_inline)) bool space_store_atom_via_backend_p
             had_non_exact_atom || !atom_exact_indexable;
         s->native.has_non_exact_atoms_dirty = false;
     }
-    space_publish_mutation(
-        s, space_atom_equation_projection(
-               s, CETTA_ATOM_ID_NONE, atom),
-        SPACE_MUTATION_PREFIX_REWRITTEN);
+    SpaceMutationEquationProjection equation_projection =
+        space_atom_equation_projection(s, CETTA_ATOM_ID_NONE, atom);
+    if (space_theory_any_head_clocks_active())
+        space_head_clocks_note_atom_and_importers_slow(
+            s, s, CETTA_ATOM_ID_NONE, atom, CETTA_ATOM_ID_NONE,
+            equation_projection);
+    space_publish_mutation_noted(
+        s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN, true);
     return true;
 }
 
@@ -12867,9 +12894,13 @@ static bool space_remove_via_backend_primary(Space *s, AtomId atom_id) {
         s->native.has_non_exact_atoms_dirty =
             had_non_exact_atom && !atom_exact_indexable;
     }
-    space_publish_mutation(
-        s, space_atom_equation_projection(s, atom_id, NULL),
-        SPACE_MUTATION_PREFIX_REWRITTEN);
+    SpaceMutationEquationProjection equation_projection =
+        space_atom_equation_projection(s, atom_id, NULL);
+    if (space_theory_any_head_clocks_active())
+        space_head_clocks_note_atom_and_importers_slow(
+            s, s, atom_id, NULL, CETTA_ATOM_ID_NONE, equation_projection);
+    space_publish_mutation_noted(
+        s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN, true);
     return true;
 }
 
@@ -12895,10 +12926,14 @@ static bool space_remove_atom_via_backend_primary(Space *s, Atom *atom) {
         s->native.has_non_exact_atoms_dirty =
             had_non_exact_atom && !atom_exact_indexable;
     }
-    space_publish_mutation(
-        s, space_atom_equation_projection(
-               s, CETTA_ATOM_ID_NONE, atom),
-        SPACE_MUTATION_PREFIX_REWRITTEN);
+    SpaceMutationEquationProjection equation_projection =
+        space_atom_equation_projection(s, CETTA_ATOM_ID_NONE, atom);
+    if (space_theory_any_head_clocks_active())
+        space_head_clocks_note_atom_and_importers_slow(
+            s, s, CETTA_ATOM_ID_NONE, atom, CETTA_ATOM_ID_NONE,
+            equation_projection);
+    space_publish_mutation_noted(
+        s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN, true);
     return true;
 }
 
@@ -13108,34 +13143,47 @@ static void space_move_storage_and_backend(Space *dst, Space *src) {
     dst->overlay_removed_base_cap = src->overlay_removed_base_cap;
     dst->payload_owner_epoch = src->payload_owner_epoch;
     dst->payload_export_owner_epoch = src->payload_export_owner_epoch;
+    dst->alias_table = NULL;
+    dst->head_clocks = NULL;
 }
 
 static void space_reset_moved_from(Space *s) {
     if (!s)
         return;
-    /* A program read through the old identity ends with it. */
-    if (space_identity_observed_by_programs(s))
-        space_advance_global_program_epoch();
+    /* A program read through the old identity ends with it; publish the new
+     * identity and revisions BEFORE bumping the global program clock
+     * (Mettapedia/Machines/VersionedValidation/Clock.lean). */
+    bool observed = space_identity_observed_by_programs(s);
+    space_alias_table_free(s->alias_table);
+    s->alias_table = NULL;
+    space_head_clocks_free(s->head_clocks);
+    s->head_clocks = NULL;
     s->kind = SPACE_KIND_ATOM;
     s->strict = false;
     /* Moving the payload ends the old source lifetime.  Re-establish every
        invariant of an empty live Space so callers may safely reuse or free it:
        a fresh identity prevents stale read tokens from reviving, and the
        universe observer keeps AtomId storage width synchronized. */
-    s->instance_id = space_fresh_instance_id();
-    s->revision = 0;
-    s->equation_revision = 0;
-    s->declaration_revision = 0;
+    atomic_store_explicit(&s->instance_id, space_fresh_instance_id(),
+                          memory_order_relaxed);
+    atomic_store_explicit(&s->revision, 0u, memory_order_relaxed);
+    atomic_store_explicit(&s->equation_revision, 0u, memory_order_relaxed);
+    atomic_store_explicit(&s->declaration_revision, 0u, memory_order_relaxed);
+    atomic_store_explicit(&s->equational_revision, 0u, memory_order_relaxed);
     s->declares_subtypes = false;
-    s->prefix_epoch = space_fresh_prefix_epoch();
+    atomic_store_explicit(&s->prefix_epoch, space_fresh_prefix_epoch(),
+                          memory_order_relaxed);
+    atomic_store_explicit(&s->module_dependency_epoch, 0u,
+                          memory_order_relaxed);
     space_set_overlay_base(s, NULL);
     space_native_storage_init_empty(s, space_default_universe());
     space_match_backend_init(s);
+    if (observed)
+        space_advance_global_program_epoch();
     space_attach_to_universe(s, s->native.universe);
     s->payload_owner_epoch = 0;
     s->payload_export_owner_epoch = 0;
     s->imported_len = 0;
-    s->module_dependency_epoch = 0u;
 }
 
 /* ── Space ──────────────────────────────────────────────────────────────── */
@@ -13167,12 +13215,15 @@ bool space_try_init_with_universe(Space *s, TermUniverse *universe) {
      * its maintenance lock start free here, never from what was there. */
     cetta_guard_init(&s->guard);
     atomic_init(&s->maintenance.word, 0u);
-    s->instance_id = space_fresh_instance_id();
-    s->revision = 0;
-    s->equation_revision = 0;
-    s->declaration_revision = 0;
+    atomic_init(&s->instance_id, space_fresh_instance_id());
+    atomic_init(&s->revision, 0u);
+    atomic_init(&s->equation_revision, 0u);
+    atomic_init(&s->declaration_revision, 0u);
+    atomic_init(&s->equational_revision, 0u);
+    s->alias_table = NULL;
+    s->head_clocks = NULL;
     s->declares_subtypes = false;
-    s->prefix_epoch = space_fresh_prefix_epoch();
+    atomic_init(&s->prefix_epoch, space_fresh_prefix_epoch());
     space_match_backend_init(s);
     s->payload_owner_epoch = 0;
     s->payload_export_owner_epoch = 0;
@@ -13183,7 +13234,7 @@ bool space_try_init_with_universe(Space *s, TermUniverse *universe) {
     s->importers = NULL;
     s->importer_count = 0u;
     s->importer_cap = 0u;
-    s->module_dependency_epoch = 0u;
+    atomic_init(&s->module_dependency_epoch, 0u);
     if (!space_attach_to_universe_try(s, s->native.universe, true)) return false;
     s->ledger_counted = ledger_counted;
     s->arena_hold = NULL;
@@ -13240,41 +13291,71 @@ static void space_handle_list_remove(Space **items, uint32_t *count,
  * and so ends the importer's prefix epoch as well. */
 static void space_note_dependency_mutation(
         Space *importer, SpaceMutationEquationProjection equation_projection,
-        bool view_rewritten) {
+        bool view_rewritten, bool head_clocks_noted) {
     if (!importer)
         return;
-    if (importer->revision == UINT64_MAX ||
+    if (!head_clocks_noted && space_theory_any_head_clocks_active() &&
+        importer->head_clocks != NULL)
+        space_theory_note_mutation_slow(
+            importer, NULL, SPACE_THEORY_ROLE_OPAQUE);
+    uint64_t importer_rev = space_revision(importer);
+    if (importer_rev == UINT64_MAX ||
         ((equation_projection &
             (SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
              SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)) &&
-         importer->declaration_revision == UINT64_MAX) ||
+         space_declaration_revision(importer) == UINT64_MAX) ||
         ((equation_projection &
             (SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
+             SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL |
              SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)) &&
-         importer->equation_revision == UINT64_MAX)) {
+         space_equation_revision(importer) == UINT64_MAX) ||
+        ((equation_projection &
+            (SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL |
+             SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)) &&
+         space_equational_revision(importer) == UINT64_MAX)) {
         fputs("CeTTa: exhausted imported Space revision counter\n", stderr);
         abort();
     }
-    importer->revision++;
-    importer->module_dependency_epoch = space_fresh_prefix_epoch();
+    atomic_store_explicit(&importer->revision, importer_rev + 1u,
+                          memory_order_relaxed);
+    atomic_store_explicit(&importer->module_dependency_epoch,
+                          space_fresh_prefix_epoch(), memory_order_relaxed);
     if (view_rewritten)
-        importer->prefix_epoch = space_fresh_prefix_epoch();
+        atomic_store_explicit(&importer->prefix_epoch,
+                              space_fresh_prefix_epoch(),
+                              memory_order_relaxed);
     if (equation_projection &
             (SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
              SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE |
-             SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION))
+             SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
+             SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL))
         space_execution_analysis_note_mutation(importer);
     if ((equation_projection &
             (SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
-             SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)))
-        importer->declaration_revision++;
+             SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE))) {
+        uint64_t cur = space_declaration_revision(importer);
+        atomic_store_explicit(&importer->declaration_revision, cur + 1u,
+                              memory_order_relaxed);
+    }
     if ((equation_projection &
             (SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
-             SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)))
-        importer->equation_revision++;
+             SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL |
+             SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE))) {
+        uint64_t cur = space_equation_revision(importer);
+        atomic_store_explicit(&importer->equation_revision, cur + 1u,
+                              memory_order_relaxed);
+    }
+    if ((equation_projection &
+            (SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL |
+             SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE))) {
+        uint64_t cur = space_equational_revision(importer);
+        atomic_store_explicit(&importer->equational_revision, cur + 1u,
+                              memory_order_relaxed);
+    }
     if (equation_projection &
             (SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
              SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
+             SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL |
              SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE))
         space_advance_global_program_epoch();
 }
@@ -13299,7 +13380,7 @@ static bool space_add_dependency_link(Space *importer, Space *dependency) {
         return false;
     }
     space_note_dependency_mutation(
-        importer, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true);
+        importer, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true, false);
     space_advance_global_mutation_epoch();
     return true;
 }
@@ -13366,12 +13447,12 @@ bool space_row_may_be_rule(const Space *s, CettaIndex idx) {
         tu_hdr(s->native.universe, space_get_atom_id_at64(s, idx));
     if (!header)
         return true;
-    if (header->tag != ATOM_EXPR ||
-        (header->aux32 & CETTA_TERM_HDR_DATA_MASK) != 3u)
+    CettaExprLen arity = header->aux32 & CETTA_TERM_HDR_DATA_MASK;
+    if (header->tag != ATOM_EXPR || arity != 3u)
         return false;
     return header->sym_or_head == SYMBOL_ID_NONE ||
-        header->sym_or_head == g_builtin_syms.equals ||
-        header->sym_or_head == g_builtin_syms.equals_percent;
+           space_theory_atom_kind_is_definition(
+               space_theory_classify_head_arity(header->sym_or_head, arity));
 }
 
 bool space_view_row_may_be_rule(const Space *s, CettaIndex index) {
@@ -13472,7 +13553,7 @@ static void space_dependencies_unlink(Space *s) {
             space_set_overlay_base(importer, importer->dep_count
                 ? importer->deps[importer->dep_count - 1u] : NULL);
         space_note_dependency_mutation(
-            importer, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true);
+            importer, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true, false);
     }
     free(s->deps);
     free(s->importers);
@@ -13805,7 +13886,7 @@ bool space_module_own_view_select(Space *view, Space *storage) {
     if (view->overlay_base != storage) {
         space_set_overlay_base(view, storage);
         space_note_dependency_mutation(
-            view, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true);
+            view, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true, false);
         space_advance_global_mutation_epoch();
     }
     return true;
@@ -13821,7 +13902,7 @@ void space_module_own_view_release(Space *view, Space *storage) {
         space_set_overlay_base(view, view->dep_count
             ? view->deps[view->dep_count - 1u] : NULL);
     space_note_dependency_mutation(
-        view, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true);
+        view, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE, true, false);
     space_advance_global_mutation_epoch();
 }
 
@@ -13858,6 +13939,10 @@ void space_free(Space *s) {
     s->native.resource_owner = NULL;
     space_marks_free(s);
     space_order_free(s);
+    space_alias_table_free(s->alias_table);
+    s->alias_table = NULL;
+    space_head_clocks_free(s->head_clocks);
+    s->head_clocks = NULL;
     free(s->native.atom_ids);
     s->native.atom_ids = NULL;
     s->native.atom_id_width_bits = 0;
@@ -13865,13 +13950,18 @@ void space_free(Space *s) {
     s->native.len = 0;
     s->native.cap = 0;
     s->native.universe = space_default_universe();
+    /* Publish cleared identity and revisions BEFORE bumping the program clock
+     * (Mettapedia/Machines/VersionedValidation/Clock.lean). */
+    atomic_store_explicit(&s->instance_id, 0u, memory_order_relaxed);
+    atomic_store_explicit(&s->revision, 0u, memory_order_relaxed);
+    atomic_store_explicit(&s->equation_revision, 0u, memory_order_relaxed);
+    atomic_store_explicit(&s->declaration_revision, 0u, memory_order_relaxed);
+    atomic_store_explicit(&s->equational_revision, 0u, memory_order_relaxed);
+    atomic_store_explicit(&s->prefix_epoch, 0u, memory_order_relaxed);
+    atomic_store_explicit(&s->module_dependency_epoch, 0u,
+                          memory_order_relaxed);
     if (observed_by_programs)
         space_advance_global_program_epoch();
-    s->instance_id = 0;
-    s->revision = 0;
-    s->equation_revision = 0;
-    s->declaration_revision = 0;
-    s->prefix_epoch = 0;
     eq_index_free(&s->native.eq_idx);
     ty_ann_index_free(&s->native.ty_idx);
     exact_index_free(&s->native.exact_idx);
@@ -13927,43 +14017,67 @@ static uint64_t space_projection_dependency_epoch(const Space *s,
                                                  bool include_modules);
 
 SpaceReadToken space_read_token(const Space *s) {
+    if (!s)
+        return (SpaceReadToken){0};
+    bool has_base = s->overlay_base != NULL;
     return (SpaceReadToken){
         .space = s,
-        .instance_id = space_instance_id(s),
-        .revision = space_revision(s),
-        .prefix_epoch = s ? s->prefix_epoch : 0u,
-        .base_prefix_epoch = space_projection_dependency_epoch(s, false),
-        .base_dependency_epoch = space_projection_dependency_epoch(s, true),
+        .instance_id =
+            atomic_load_explicit(&s->instance_id, memory_order_relaxed),
+        .revision =
+            atomic_load_explicit(&s->revision, memory_order_relaxed),
+        .prefix_epoch =
+            atomic_load_explicit(&s->prefix_epoch, memory_order_relaxed),
+        .base_prefix_epoch =
+            has_base ? space_projection_dependency_epoch(s, false) : 0u,
+        .base_dependency_epoch =
+            has_base ? space_projection_dependency_epoch(s, true) : 0u,
     };
 }
 
 bool space_read_token_is_current(SpaceReadToken token) {
-    return token.space && token.instance_id != 0u &&
-           token.instance_id == space_instance_id(token.space) &&
-           token.revision == space_revision(token.space) &&
+    const Space *s = token.space;
+    return s && token.instance_id != 0u &&
+           token.instance_id ==
+               atomic_load_explicit(&s->instance_id, memory_order_relaxed) &&
+           token.revision ==
+               atomic_load_explicit(&s->revision, memory_order_relaxed) &&
            token.base_dependency_epoch != UINT64_MAX &&
            token.base_dependency_epoch ==
-               space_projection_dependency_epoch(token.space, true);
+               (s->overlay_base
+                    ? space_projection_dependency_epoch(s, true)
+                    : 0u);
 }
 
 bool space_read_token_prefix_intact(SpaceReadToken token) {
-    return token.space && token.instance_id != 0u &&
-           token.instance_id == space_instance_id(token.space) &&
-           token.prefix_epoch == token.space->prefix_epoch &&
+    const Space *s = token.space;
+    return s && token.instance_id != 0u &&
+           token.instance_id ==
+               atomic_load_explicit(&s->instance_id, memory_order_relaxed) &&
+           token.prefix_epoch ==
+               atomic_load_explicit(&s->prefix_epoch, memory_order_relaxed) &&
            token.base_prefix_epoch != UINT64_MAX &&
            token.base_prefix_epoch ==
-               space_projection_dependency_epoch(token.space, false);
+               (s->overlay_base
+                    ? space_projection_dependency_epoch(s, false)
+                    : 0u);
 }
 
 bool space_read_token_matches_live_space(SpaceReadToken token,
                                          const Space *live_space) {
     return live_space && token.space == live_space &&
            token.instance_id != 0u &&
-           token.instance_id == space_instance_id(live_space) &&
-           token.revision == space_revision(live_space) &&
+           token.instance_id ==
+               atomic_load_explicit(&live_space->instance_id,
+                                    memory_order_relaxed) &&
+           token.revision ==
+               atomic_load_explicit(&live_space->revision,
+                                    memory_order_relaxed) &&
            token.base_dependency_epoch != UINT64_MAX &&
            token.base_dependency_epoch ==
-               space_projection_dependency_epoch(live_space, true);
+               (live_space->overlay_base
+                    ? space_projection_dependency_epoch(live_space, true)
+                    : 0u);
 }
 
 static uint64_t space_projection_dependency_epoch(const Space *s,
@@ -13980,23 +14094,16 @@ static uint64_t space_projection_dependency_epoch(const Space *s,
     uint64_t latest = 0u;
     for (const Space *dependency = s ? s->overlay_base : NULL;
          dependency; dependency = dependency->overlay_base) {
-        if (dependency->prefix_epoch > latest)
-            latest = dependency->prefix_epoch;
-        if (include_modules && dependency->module_dependency_epoch > latest)
-            latest = dependency->module_dependency_epoch;
+        uint64_t dep_prefix = space_prefix_epoch(dependency);
+        if (dep_prefix > latest)
+            latest = dep_prefix;
+        if (include_modules) {
+            uint64_t dep_mod = space_module_dependency_epoch(dependency);
+            if (dep_mod > latest)
+                latest = dep_mod;
+        }
     }
     return latest;
-}
-
-SpaceProgramToken space_program_token(const Space *s) {
-    return (SpaceProgramToken){
-        .space = s,
-        .instance_id = space_instance_id(s),
-        .equation_revision = space_equation_revision(s),
-        .declaration_revision = space_declaration_revision(s),
-        .base_dependency_epoch =
-            space_projection_dependency_epoch(s, true),
-    };
 }
 
 SpaceEquationToken space_equation_token(const Space *s) {
@@ -14006,21 +14113,16 @@ SpaceEquationToken space_equation_token(const Space *s) {
         .equation_revision = space_equation_revision(s),
         .projection_dependency = s ? s->overlay_base : NULL,
         .projection_dependency_epoch =
-            space_projection_dependency_epoch(s, true),
+            (s && s->overlay_base)
+                ? space_projection_dependency_epoch(s, true)
+                : 0u,
     };
 }
 
 uint64_t space_overlay_dependency_epoch(const Space *s) {
-    return space_projection_dependency_epoch(s, true);
-}
-
-bool space_program_token_matches_live_space(
-        SpaceProgramToken token, const Space *live_space) {
-    return live_space && token.space == live_space &&
-           token.instance_id != 0u &&
-           token.base_dependency_epoch != UINT64_MAX &&
-           space_program_token_eq(
-               token, space_program_token(live_space));
+    return (s && s->overlay_base)
+        ? space_projection_dependency_epoch(s, true)
+        : 0u;
 }
 
 bool space_equation_token_is_current(SpaceEquationToken token) {
@@ -14031,7 +14133,9 @@ bool space_equation_token_is_current(SpaceEquationToken token) {
            token.projection_dependency == token.space->overlay_base &&
            token.projection_dependency_epoch != UINT64_MAX &&
            token.projection_dependency_epoch ==
-               space_projection_dependency_epoch(token.space, true);
+               (token.space->overlay_base
+                    ? space_projection_dependency_epoch(token.space, true)
+                    : 0u);
 }
 
 bool space_equation_token_matches_live_space(
@@ -14044,7 +14148,9 @@ bool space_equation_token_matches_live_space(
            token.projection_dependency == live_space->overlay_base &&
            token.projection_dependency_epoch != UINT64_MAX &&
            token.projection_dependency_epoch ==
-               space_projection_dependency_epoch(live_space, true);
+               (live_space->overlay_base
+                    ? space_projection_dependency_epoch(live_space, true)
+                    : 0u);
 }
 
 /* An index entry without its atom id: read its row.  While rows are
@@ -14397,7 +14503,7 @@ typedef struct {
 } SpaceEffectCacheEntry;
 
 typedef struct {
-    SpaceProgramToken program;
+    SpaceTheoryToken program;
     /* The language the analysis read the program in: HE reads its macro
      * calls as their expansions. */
     CettaLanguageId language;
@@ -14472,7 +14578,7 @@ typedef struct {
 
 typedef struct {
     Space *space;
-    SpaceProgramToken program;
+    SpaceTheoryToken program;
     SpaceEffectNode *nodes;
     size_t len;
     size_t cap;
@@ -14581,7 +14687,7 @@ static CettaLanguageId space_effect_language(void) {
 
 static SpaceEffectCacheShard *space_effect_cache_shard(
     Space *space, bool create) {
-    SpaceProgramToken program = space_program_token(space);
+    SpaceTheoryToken program = space_theory_token(space);
     CettaLanguageId language = space_effect_language();
     SpaceEffectCacheShard *reusable = NULL;
     for (size_t index = 0u;
@@ -14589,9 +14695,9 @@ static SpaceEffectCacheShard *space_effect_cache_shard(
         SpaceEffectCacheShard *shard =
             &g_space_effect_cache.shards[index];
         if (shard->occupied &&
-            space_program_token_eq(shard->program, program) &&
+            space_theory_token_eq(shard->program, program) &&
             shard->language == language &&
-            space_program_token_matches_live_space(
+            space_theory_token_matches_live_space(
                 shard->program, space)) {
             return shard;
         }
@@ -15059,7 +15165,7 @@ static bool space_effect_scan_node(
         }
     }
     graph->nodes[node_index].scanned = true;
-    return space_program_token_is_current(graph->program);
+    return space_theory_token_is_current(graph->program);
 }
 
 static void space_effect_graph_free(SpaceEffectGraph *graph) {
@@ -15118,7 +15224,7 @@ static bool space_effect_graph_solve(SpaceEffectGraph *graph) {
     free(first);
     free(targets);
     free(in);
-    return ok && space_program_token_is_current(graph->program);
+    return ok && space_theory_token_is_current(graph->program);
 }
 
 static CettaGsltQueryEffect space_query_effect_for_head_analyzed(
@@ -15153,7 +15259,7 @@ static CettaGsltQueryEffect space_query_effect_for_head_analyzed(
 
     SpaceEffectGraph graph = {
         .space = space,
-        .program = space_program_token(space),
+        .program = space_theory_token(space),
     };
     size_t root_index = 0u;
     if (!space_effect_graph_find_or_add(&graph, head, &root_index) ||
@@ -15431,31 +15537,97 @@ static void recompute_has_non_exact_atoms(Space *s) {
     s->native.has_non_exact_atoms_dirty = false;
 }
 
+static inline uint8_t space_mutation_projection_to_theory_roles(
+        SpaceMutationEquationProjection equation_projection) {
+    uint8_t roles = 0u;
+    if (equation_projection & SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)
+        roles |= SPACE_THEORY_ROLE_OPAQUE;
+    if (equation_projection & SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT)
+        roles |= SPACE_THEORY_ROLE_RULES;
+    if (equation_projection & (SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
+                               SPACE_MUTATION_EQUATION_PROJECTION_SUBTYPE))
+        roles |= SPACE_THEORY_ROLE_DECLS;
+    if (equation_projection & SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL)
+        roles |= SPACE_THEORY_ROLE_ALIAS;
+    if (roles == 0u)
+        roles = SPACE_THEORY_ROLE_DATA;
+    return roles;
+}
+
+static __attribute__((noinline, cold)) void
+space_head_clocks_note_atom_and_importers_slow(
+        Space *s, const Space *source, AtomId primary, const Atom *atom,
+        AtomId secondary, SpaceMutationEquationProjection equation_projection) {
+    if (!s || (s->head_clocks == NULL && s->importer_count == 0u))
+        return;
+    SpaceHeadMutationNote note = {
+        .source_space = source ? source : s,
+        .atom_id = primary,
+        .atom = atom,
+        .secondary_atom_id = secondary,
+        .has_atom = true,
+    };
+    uint8_t roles = space_mutation_projection_to_theory_roles(equation_projection);
+    if (s->head_clocks)
+        space_theory_note_mutation_slow(s, &note, roles);
+    for (uint32_t i = 0u; i < s->importer_count; i++) {
+        Space *importer = s->importers[i];
+        if (importer && importer->head_clocks)
+            space_theory_note_mutation_slow(importer, &note, roles);
+    }
+}
+
+static __attribute__((noinline, cold)) void
+space_head_clocks_note_head_and_importers_slow(
+        Space *s, SymbolId head, uint8_t roles) {
+    if (!s || (s->head_clocks == NULL && s->importer_count == 0u))
+        return;
+    SpaceHeadMutationNote note = {
+        .source_space = s,
+        .head = head,
+        .roles = roles,
+        .has_head = true,
+    };
+    if (s->head_clocks)
+        space_theory_note_mutation_slow(s, &note, roles);
+    for (uint32_t i = 0u; i < s->importer_count; i++) {
+        Space *importer = s->importers[i];
+        if (importer && importer->head_clocks)
+            space_theory_note_mutation_slow(importer, &note, roles);
+    }
+}
+
 /* A module changed: every space importing it reads the change. */
 static __attribute__((noinline, cold)) void space_notify_importers(
         Space *s, SpaceMutationEquationProjection equation_projection,
-        SpaceMutationPrefixEffect prefix_effect) {
+        SpaceMutationPrefixEffect prefix_effect, bool head_clocks_noted) {
     for (uint32_t i = 0u; i < s->importer_count; i++)
         space_note_dependency_mutation(
             s->importers[i], equation_projection,
-            prefix_effect == SPACE_MUTATION_PREFIX_REWRITTEN);
+            prefix_effect == SPACE_MUTATION_PREFIX_REWRITTEN,
+            head_clocks_noted);
 }
 
-static void space_publish_mutation(
+static void space_publish_mutation_noted(
         Space *s, SpaceMutationEquationProjection equation_projection,
-        SpaceMutationPrefixEffect prefix_effect) {
+        SpaceMutationPrefixEffect prefix_effect, bool head_clocks_noted) {
     if (!s)
         return;
     if (__builtin_expect(s->native.dense != NULL, 0) &&
         s->native.dense->settling)
         return;
-    if (s->revision == UINT64_MAX) {
+    if (!head_clocks_noted && space_theory_any_head_clocks_active() &&
+        s->head_clocks != NULL)
+        space_theory_note_mutation_slow(s, NULL, SPACE_THEORY_ROLE_OPAQUE);
+    uint64_t cur_rev = space_revision(s);
+    if (cur_rev == UINT64_MAX) {
         fputs("CeTTa: exhausted Space revision counter\n", stderr);
         abort();
     }
-    s->revision++;
+    atomic_store_explicit(&s->revision, cur_rev + 1u, memory_order_relaxed);
     if (prefix_effect == SPACE_MUTATION_PREFIX_REWRITTEN) {
-        s->prefix_epoch = space_fresh_prefix_epoch();
+        atomic_store_explicit(&s->prefix_epoch, space_fresh_prefix_epoch(),
+                              memory_order_relaxed);
     } else if (prefix_effect != SPACE_MUTATION_PREFIX_APPEND_ONLY) {
         abort();
     }
@@ -15463,7 +15635,8 @@ static void space_publish_mutation(
             ~(SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
               SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE |
               SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
-              SPACE_MUTATION_EQUATION_PROJECTION_SUBTYPE)) {
+              SPACE_MUTATION_EQUATION_PROJECTION_SUBTYPE |
+              SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL)) {
         abort();
     }
     if (equation_projection &
@@ -15473,7 +15646,8 @@ static void space_publish_mutation(
     if (equation_projection &
             (SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
              SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE |
-             SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION)) {
+             SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
+             SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL)) {
         space_execution_analysis_note_mutation(s);
     }
     /* The publication counters describe the equation-occurrence projection:
@@ -15489,35 +15663,69 @@ static void space_publish_mutation(
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_SPACE_MUTATION_PUBLISH_DATA_ONLY);
     }
+    bool program_changed = false;
     if (equation_projection &
             (SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
              SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)) {
-        space_advance_global_program_epoch();
-        if (s->declaration_revision == UINT64_MAX) {
+        uint64_t cur = space_declaration_revision(s);
+        if (cur == UINT64_MAX) {
             fputs("CeTTa: exhausted Space declaration revision counter\n",
                   stderr);
             abort();
         }
-        s->declaration_revision++;
+        atomic_store_explicit(&s->declaration_revision, cur + 1u,
+                              memory_order_relaxed);
+        program_changed = true;
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_SPACE_DECLARATION_REVISION_BUMP);
     }
     if (equation_projection &
             (SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
+             SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL |
              SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)) {
-        space_advance_global_program_epoch();
-        if (s->equation_revision == UINT64_MAX) {
+        uint64_t cur = space_equation_revision(s);
+        if (cur == UINT64_MAX) {
             fputs("CeTTa: exhausted Space equation revision counter\n", stderr);
             abort();
         }
-        s->equation_revision++;
+        atomic_store_explicit(&s->equation_revision, cur + 1u,
+                              memory_order_relaxed);
+        program_changed = true;
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_SPACE_EQUATION_REVISION_BUMP);
     }
+    if (equation_projection &
+            (SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL |
+             SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)) {
+        uint64_t cur = space_equational_revision(s);
+        if (cur == UINT64_MAX) {
+            fputs("CeTTa: exhausted Space equational revision counter\n", stderr);
+            abort();
+        }
+        atomic_store_explicit(&s->equational_revision, cur + 1u,
+                              memory_order_relaxed);
+        if (equation_projection & SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL) {
+            atomic_fetch_add_explicit(&cetta_space_global_equational_epoch, 1u,
+                                      memory_order_release);
+        }
+        program_changed = true;
+    }
     if (__builtin_expect(s->importer_count != 0u, 0))
-        space_notify_importers(s, equation_projection, prefix_effect);
+        space_notify_importers(s, equation_projection, prefix_effect,
+                               head_clocks_noted);
+    /* Publish-before-bump law (Mettapedia/Machines/VersionedValidation/Clock.lean):
+     * revisions and importer notifications are published before advancing the
+     * global program clock with release semantics. */
+    if (program_changed)
+        space_advance_global_program_epoch();
     space_advance_global_mutation_epoch();
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_REVISION_BUMP);
+}
+
+static void space_publish_mutation(
+        Space *s, SpaceMutationEquationProjection equation_projection,
+        SpaceMutationPrefixEffect prefix_effect) {
+    space_publish_mutation_noted(s, equation_projection, prefix_effect, false);
 }
 
 void space_note_external_backend_mutation(Space *s) {
@@ -15525,6 +15733,8 @@ void space_note_external_backend_mutation(Space *s) {
         return;
     space_journal_lose(s);
     space_mark_derived_state_dirty(s);
+    atomic_fetch_add_explicit(&cetta_space_global_equational_epoch, 1u,
+                              memory_order_release);
     space_publish_mutation(
         s, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE,
         SPACE_MUTATION_PREFIX_REWRITTEN);
@@ -15653,9 +15863,13 @@ static bool space_add_stored_id_as(Space *s, AtomId atom_id,
         id_present_set(&s->native, atom_id))
         s->native.id_present_synced_len = s->native.len;
     space_note_atom_id_storage_peak(s);
-    space_publish_mutation(
-        s, space_atom_equation_projection(s, atom_id, backend_atom),
-        SPACE_MUTATION_PREFIX_APPEND_ONLY);
+    SpaceMutationEquationProjection add_projection =
+        space_atom_equation_projection(s, atom_id, backend_atom);
+    if (space_theory_any_head_clocks_active())
+        space_head_clocks_note_atom_and_importers_slow(
+            s, s, atom_id, backend_atom, CETTA_ATOM_ID_NONE, add_projection);
+    space_publish_mutation_noted(
+        s, add_projection, SPACE_MUTATION_PREFIX_APPEND_ONLY, true);
     if (queue_gap) {
         space_mark_indexes_dirty(s);
         space_match_backend_note_remove(s);
@@ -16131,7 +16345,14 @@ static bool space_add_atom_ids_batch_rows(Space *s, const AtomId *atom_ids,
                 space_match_backend_note_add(s, atom_ids[i], NULL, start + i);
         }
         space_note_atom_id_storage_peak(s);
-        space_publish_mutation(s, equation_projection, SPACE_MUTATION_PREFIX_APPEND_ONLY);
+    if (space_theory_any_head_clocks_active()) {
+        for (CettaCount i = 0u; i < atom_count; i++)
+            space_head_clocks_note_atom_and_importers_slow(
+                s, s, atom_ids[i], NULL, CETTA_ATOM_ID_NONE,
+                equation_projection);
+    }
+        space_publish_mutation_noted(
+            s, equation_projection, SPACE_MUTATION_PREFIX_APPEND_ONLY, true);
         return true;
     }
 
@@ -16190,8 +16411,14 @@ static bool space_add_atom_ids_batch_rows(Space *s, const AtomId *atom_ids,
                 had_non_exact_atom || batch_has_non_exact_atom;
             s->native.has_non_exact_atoms_dirty = false;
         }
-        space_publish_mutation(
-            s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
+    if (space_theory_any_head_clocks_active()) {
+        for (CettaCount i = 0u; i < atom_count; i++)
+            space_head_clocks_note_atom_and_importers_slow(
+                s, s, atom_ids[i], NULL, CETTA_ATOM_ID_NONE,
+                equation_projection);
+    }
+        space_publish_mutation_noted(
+            s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN, true);
         return true;
     }
 
@@ -16522,7 +16749,7 @@ typedef struct {
 
 static SpaceAdditiveCopySource space_additive_copy_source(const Space *s) {
     return (SpaceAdditiveCopySource){
-        .revision = s->revision, .prefix_epoch = s->prefix_epoch,
+        .revision = space_revision(s), .prefix_epoch = space_prefix_epoch(s),
         .dense_epoch = s->native.dense_epoch, .len = s->native.len,
         .start = s->native.start, .marked = s->native.marked,
         .dense_facts = s->native.dense_facts, .dense = s->native.dense,
@@ -16646,13 +16873,15 @@ static void space_replace_contents_classified(
     space_settle_marks(src);
     if (!dst || !src || dst == src)
         return;
-    uint64_t dst_instance_id = dst->instance_id;
-    uint64_t old_revision = dst->revision;
-    uint64_t src_revision = src->revision;
-    uint64_t old_equation_revision = dst->equation_revision;
-    uint64_t src_equation_revision = src->equation_revision;
-    uint64_t old_declaration_revision = dst->declaration_revision;
-    uint64_t src_declaration_revision = src->declaration_revision;
+    uint64_t dst_instance_id = space_instance_id(dst);
+    uint64_t old_revision = space_revision(dst);
+    uint64_t src_revision = space_revision(src);
+    uint64_t old_equation_revision = space_equation_revision(dst);
+    uint64_t src_equation_revision = space_equation_revision(src);
+    uint64_t old_declaration_revision = space_declaration_revision(dst);
+    uint64_t src_declaration_revision = space_declaration_revision(src);
+    uint64_t old_equational_revision = space_equational_revision(dst);
+    uint64_t src_equational_revision = space_equational_revision(src);
     /* Imported atoms travel with the contents: a source that has them passes
        them on, and a rebuild that starts with the destination's imported
        atoms, as a rebuild in logical order does, keeps them. */
@@ -16689,8 +16918,13 @@ static void space_replace_contents_classified(
             space_journal_note(dst, space_get_atom_id_at64(dst, i), -1);
         dst->journal = NULL;
     }
+    /* The generated name is dst's identity, which new contents keep: it
+       stays, with the name's block, which space_free would give back. */
+    CettaGeneratedName generated_name = dst->generated_name;
+    dst->generated_name = (CettaGeneratedName){0};
     space_free(dst);
     space_move_storage_and_backend(dst, src);
+    dst->generated_name = generated_name;
     if (journal) {
         dst->journal = journal;
         CettaCount new_len = space_length64(dst);
@@ -16709,22 +16943,40 @@ static void space_replace_contents_classified(
     space_dependencies_unlink(src);
     space_detach_from_universe(src);
     space_attach_to_universe(dst, dst->native.universe);
-    dst->instance_id = dst_instance_id;
-    dst->revision = old_revision > src_revision ? old_revision : src_revision;
-    dst->equation_revision =
+    atomic_store_explicit(&dst->instance_id, dst_instance_id,
+                          memory_order_relaxed);
+    atomic_store_explicit(
+        &dst->revision,
+        old_revision > src_revision ? old_revision : src_revision,
+        memory_order_relaxed);
+    atomic_store_explicit(
+        &dst->equation_revision,
         (equation_projection &
          (SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
+          SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL |
           SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)) == 0
             ? old_equation_revision
             : old_equation_revision > src_equation_revision
-                ? old_equation_revision : src_equation_revision;
-    dst->declaration_revision =
+                ? old_equation_revision : src_equation_revision,
+        memory_order_relaxed);
+    atomic_store_explicit(
+        &dst->declaration_revision,
         (equation_projection &
          (SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
           SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)) == 0
             ? old_declaration_revision
             : old_declaration_revision > src_declaration_revision
-                ? old_declaration_revision : src_declaration_revision;
+                ? old_declaration_revision : src_declaration_revision,
+        memory_order_relaxed);
+    atomic_store_explicit(
+        &dst->equational_revision,
+        (equation_projection &
+         (SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL |
+          SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)) == 0
+            ? old_equational_revision
+            : old_equational_revision > src_equational_revision
+                ? old_equational_revision : src_equational_revision,
+        memory_order_relaxed);
     space_publish_mutation(
         dst, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
     space_reset_moved_from(src);
@@ -16752,8 +17004,10 @@ bool space_publish_native_replacements(Space *const *destinations,
             dst->dep_count != src->dep_count || dst->imported_len != src->imported_len ||
             atomic_load_explicit(&dst->native.has_proof_image, memory_order_acquire) ||
             atomic_load_explicit(&src->native.has_proof_image, memory_order_acquire) ||
-            dst->revision == UINT64_MAX || dst->equation_revision == UINT64_MAX ||
-            dst->declaration_revision == UINT64_MAX)
+            space_revision(dst) == UINT64_MAX ||
+            space_equation_revision(dst) == UINT64_MAX ||
+            space_declaration_revision(dst) == UINT64_MAX ||
+            space_equational_revision(dst) == UINT64_MAX)
             return false;
         for (uint32_t dependency = 0; dependency < dst->dep_count; ++dependency)
             if (dst->deps[dependency] != src->deps[dependency]) return false;
@@ -16779,6 +17033,14 @@ bool space_publish_native_replacements(Space *const *destinations,
         dst->match_backend = src->match_backend;
         src->match_backend = backend;
         dst->declares_subtypes |= src->declares_subtypes;
+        space_alias_table_free(dst->alias_table);
+        dst->alias_table = NULL;
+        space_alias_table_free(src->alias_table);
+        src->alias_table = NULL;
+        space_head_clocks_free(dst->head_clocks);
+        dst->head_clocks = NULL;
+        space_head_clocks_free(src->head_clocks);
+        src->head_clocks = NULL;
     }
     for (size_t i = 0; i < count; ++i)
         space_publish_mutation(destinations[i], SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE,
@@ -17676,15 +17938,20 @@ bool space_remove(Space *s, Atom *atom) {
                 continue;
             candidate = space_get_at64(s->overlay_base, raw);
             if (candidate && atom_eq(candidate, atom)) {
+                AtomId removed_base_id =
+                    space_get_atom_id_at64(s->overlay_base, raw);
                 SpaceMutationEquationProjection equation_projection =
                     space_atom_equation_projection(
-                        s->overlay_base,
-                        space_get_atom_id_at64(s->overlay_base, raw),
-                        candidate);
+                        s->overlay_base, removed_base_id, candidate);
                 if (!space_overlay_mark_base_removed(s, raw))
                     return false;
-                space_publish_mutation(
-                    s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
+                if (space_theory_any_head_clocks_active())
+                    space_head_clocks_note_atom_and_importers_slow(
+                        s, s->overlay_base, removed_base_id, candidate,
+                        CETTA_ATOM_ID_NONE, equation_projection);
+                space_publish_mutation_noted(
+                    s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN,
+                    true);
                 return true;
             }
         }
@@ -17732,8 +17999,12 @@ bool space_remove(Space *s, Atom *atom) {
                     s->overlay_base, removed_id, removed_atom);
             if (!space_overlay_mark_base_removed(s, alpha_index))
                 return false;
-            space_publish_mutation(
-                s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
+            if (space_theory_any_head_clocks_active())
+                space_head_clocks_note_atom_and_importers_slow(
+                    s, s->overlay_base, removed_id, removed_atom,
+                    CETTA_ATOM_ID_NONE, equation_projection);
+            space_publish_mutation_noted(
+                s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN, true);
             return true;
         }
         return space_overlay_remove_local_raw_index(s, alpha_index);
@@ -17812,6 +18083,9 @@ bool space_remove(Space *s, Atom *atom) {
         size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
         AtomId removed_id = space_atom_id_storage_load_at(
             s->native.atom_ids, s->native.atom_id_width_bits, remove_idx);
+        if (space_theory_any_head_clocks_active())
+            space_head_clocks_note_atom_and_importers_slow(
+                s, s, removed_id, NULL, CETTA_ATOM_ID_NONE, equation_projection);
         memmove(s->native.atom_ids + ((size_t)remove_idx * width),
                 s->native.atom_ids + ((size_t)(remove_idx + 1u) * width),
                 (size_t)(s->native.len - remove_idx - 1u) * width);
@@ -17823,6 +18097,11 @@ bool space_remove(Space *s, Atom *atom) {
         CettaIndex moved_from = s->native.len - 1u;
         AtomId tail_id = space_atom_id_storage_load_at(
             s->native.atom_ids, s->native.atom_id_width_bits, moved_from);
+        if (space_theory_any_head_clocks_active())
+            space_head_clocks_note_atom_and_importers_slow(
+                s, s, removed_id, NULL,
+                moved_from != remove_idx ? tail_id : CETTA_ATOM_ID_NONE,
+                equation_projection);
         s->native.len--;
         space_release_row(s, removed_id);
         (void)space_atom_id_storage_store_at(
@@ -17841,8 +18120,8 @@ bool space_remove(Space *s, Atom *atom) {
                                              swap_moved_from, swap_moved_id);
     else
         space_match_backend_note_remove(s);
-    space_publish_mutation(
-        s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
+    space_publish_mutation_noted(
+        s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN, true);
     if (swap_removed_id != CETTA_ATOM_ID_NONE)
         space_path_indexes_adopt_prefix_epoch(s, followed_prefix);
     return true;
@@ -17932,8 +18211,12 @@ static bool space_remove_atom_id_rows(Space *s, AtomId atom_id) {
                     space_get_at64(s->overlay_base, raw));
             if (!space_overlay_mark_base_removed(s, raw))
                 return false;
-            space_publish_mutation(
-                s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
+            if (space_theory_any_head_clocks_active())
+                space_head_clocks_note_atom_and_importers_slow(
+                    s, s->overlay_base, atom_id, NULL, CETTA_ATOM_ID_NONE,
+                    equation_projection);
+            space_publish_mutation_noted(
+                s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN, true);
             return true;
         }
         for (CettaIndex i = 0; i < space_local_length64(s); i++) {
@@ -17973,6 +18256,10 @@ static bool space_remove_atom_id_rows(Space *s, AtomId atom_id) {
             s, equation_projection, NULL, i);
         space_pinned_occurrences_detach(s);
         if (space_rows_in_kind_order(s)) {
+            if (space_theory_any_head_clocks_active())
+                space_head_clocks_note_atom_and_importers_slow(
+                    s, s, atom_id, NULL, CETTA_ATOM_ID_NONE,
+                    equation_projection);
             size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
             memmove(s->native.atom_ids + ((size_t)i * width),
                     s->native.atom_ids + ((size_t)(i + 1u) * width),
@@ -17987,6 +18274,11 @@ static bool space_remove_atom_id_rows(Space *s, AtomId atom_id) {
             CettaIndex moved_from = s->native.len - 1u;
             AtomId tail_id = space_atom_id_storage_load_at(
                 s->native.atom_ids, s->native.atom_id_width_bits, moved_from);
+            if (space_theory_any_head_clocks_active())
+                space_head_clocks_note_atom_and_importers_slow(
+                    s, s, atom_id, NULL,
+                    moved_from != i ? tail_id : CETTA_ATOM_ID_NONE,
+                    equation_projection);
             s->native.len--;
             space_release_row(s, atom_id);
             (void)space_atom_id_storage_store_at(
@@ -18002,13 +18294,13 @@ static bool space_remove_atom_id_rows(Space *s, AtomId atom_id) {
             uint64_t followed_prefix = s->prefix_epoch;
             space_match_backend_note_swap_remove(s, i, atom_id, moved_from,
                                                  tail_id);
-            space_publish_mutation(
-                s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
+            space_publish_mutation_noted(
+                s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN, true);
             space_path_indexes_adopt_prefix_epoch(s, followed_prefix);
             return true;
         }
-        space_publish_mutation(
-            s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
+        space_publish_mutation_noted(
+            s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN, true);
         return true;
     }
     return false;
@@ -19015,11 +19307,17 @@ bool space_pop(Space *s, Atom **out) {
                 !space_overlay_mark_base_removed(s, raw)) {
                 return false;
             }
-            space_publish_mutation(
-                s, space_atom_equation_projection(
-                       s->overlay_base,
-                       space_get_atom_id_at64(s->overlay_base, raw), top),
-                SPACE_MUTATION_PREFIX_REWRITTEN);
+            AtomId popped_base_id =
+                space_get_atom_id_at64(s->overlay_base, raw);
+            SpaceMutationEquationProjection pop_proj =
+                space_atom_equation_projection(s->overlay_base, popped_base_id,
+                                               top);
+            if (space_theory_any_head_clocks_active())
+                space_head_clocks_note_atom_and_importers_slow(
+                    s, s->overlay_base, popped_base_id, top, CETTA_ATOM_ID_NONE,
+                    pop_proj);
+            space_publish_mutation_noted(
+                s, pop_proj, SPACE_MUTATION_PREFIX_REWRITTEN, true);
             return true;
         }
         return false;
@@ -19032,14 +19330,17 @@ bool space_pop(Space *s, Atom **out) {
         return false;
     if (out)
         *out = top;
+    AtomId popped_id = space_get_atom_id_at64(
+        s, space_is_queue(s) ? 0u : logical_len - 1u);
     SpaceMutationEquationProjection equation_projection =
-        space_atom_equation_projection(
-            s, space_get_atom_id_at64(
-                   s, space_is_queue(s) ? 0u : logical_len - 1u), top);
+        space_atom_equation_projection(s, popped_id, top);
     if (space_truncate_via_backend_primary64(s, logical_len - 1))
         return true;
     if (!space_match_backend_materialize_native_storage(s, NULL))
         return false;
+    if (space_theory_any_head_clocks_active())
+        space_head_clocks_note_atom_and_importers_slow(
+            s, s, popped_id, top, CETTA_ATOM_ID_NONE, equation_projection);
     if (space_is_queue(s)) {
         space_remove_rows(s, 0u, 1u);
         s->native.start++;
@@ -19052,8 +19353,8 @@ bool space_pop(Space *s, Atom **out) {
     }
     space_mark_indexes_dirty(s);
     space_match_backend_note_remove(s);
-    space_publish_mutation(
-        s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
+    space_publish_mutation_noted(
+        s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN, true);
     return true;
 }
 
@@ -21273,8 +21574,8 @@ static bool type_stamps_bind_scope(Space *s) {
     TypeStampStore *store = &g_type_stamps;
     if (s && g_type_stamps_run_space == s && g_type_stamps_run_bound &&
         store->space == s && !s->overlay_base &&
-        store->instance_id == s->instance_id &&
-        store->declaration_revision == s->declaration_revision &&
+        store->instance_id == space_instance_id(s) &&
+        store->declaration_revision == space_declaration_revision(s) &&
         store->base_dependency_epoch == 0u)
         return true;
     uint64_t scope = 0u;
@@ -21282,10 +21583,10 @@ static bool type_stamps_bind_scope(Space *s) {
         !type_stamps_enabled())
         return false;
     /* The bound scope, read from the space's live fields: a space without
-     * an overlay base has dependency epoch zero (space_program_token). */
+     * an overlay base has dependency epoch zero (space_theory_token). */
     if (store->space == s && store->scope == scope && !s->overlay_base &&
-        store->instance_id == s->instance_id &&
-        store->declaration_revision == s->declaration_revision &&
+        store->instance_id == space_instance_id(s) &&
+        store->declaration_revision == space_declaration_revision(s) &&
         store->base_dependency_epoch == 0u)
         return true;
     /* A declaration holding a state cell is observed afresh by every
@@ -21296,7 +21597,7 @@ static bool type_stamps_bind_scope(Space *s) {
         store->space = NULL;
         return false;
     }
-    SpaceProgramToken token = space_program_token(s);
+    SpaceTheoryToken token = space_theory_token(s);
     if (store->space != s || store->instance_id != token.instance_id ||
         store->declaration_revision != token.declaration_revision ||
         store->base_dependency_epoch != token.base_dependency_epoch ||
@@ -24047,41 +24348,38 @@ bool space_head_has_arrow_signature(Space *s, SymbolId head,
     }
     /* The consult runs on hot accelerator admissions (eager closed-call
      * compiles ask once per call), so the indexed annotation consult is memoized
-     * per (space instance, revision, head, arity).  Any space mutation
-     * advances the revision and naturally invalidates the entry. */
+     * per (theory declarations, head, arity).  Data-only and equation-only
+     * mutations leave declaration_revision intact, while overlay/dependency
+     * changes advance base_dependency_epoch. */
     typedef struct {
-        const Space *space;
-        uint64_t instance_id;
-        uint64_t revision;
+        SpaceTheoryToken theory;
         SymbolId head;
         CettaExprLen arity;
         bool shadowed;
         bool valid;
     } ArrowSignatureMemo;
     static _Thread_local ArrowSignatureMemo memo[64];
-    SpaceReadToken read = space_read_token(s);
     size_t slot = ((size_t)head * 31u + (size_t)arity +
-                   (size_t)read.revision) & 63u;
+                   (size_t)space_declaration_revision(s)) & 63u;
     ArrowSignatureMemo *entry = &memo[slot];
-    if (entry->valid && entry->space == (const Space *)s &&
-        entry->instance_id == read.instance_id &&
-        entry->revision == read.revision &&
-        entry->head == head && entry->arity == arity) {
+    if (entry->valid && entry->head == head && entry->arity == arity &&
+        space_theory_token_declarations_current(entry->theory, s)) {
         return entry->shadowed;
     }
+    SpaceTheoryToken theory = space_theory_token(s);
     bool shadowed = space_member_has_arrow_signature(s, head, arity, false);
     for (uint32_t d = 0u; !shadowed && d < space_dependency_count(s); d++)
         shadowed = space_member_has_arrow_signature(
             space_dependency_at(s, d), head, arity, true);
-    *entry = (ArrowSignatureMemo){
-        .space = (const Space *)s,
-        .instance_id = read.instance_id,
-        .revision = read.revision,
-        .head = head,
-        .arity = arity,
-        .shadowed = shadowed,
-        .valid = true,
-    };
+    if (space_theory_token_cacheable(theory)) {
+        *entry = (ArrowSignatureMemo){
+            .theory = theory,
+            .head = head,
+            .arity = arity,
+            .shadowed = shadowed,
+            .valid = true,
+        };
+    }
     return shadowed;
 }
 
@@ -25531,17 +25829,29 @@ bool space_rules_may_match_known_head(Space *s, SymbolId head,
                                       unsigned admitted_forms) {
     if (!s || head == SYMBOL_ID_NONE)
         return true;
-    if (!(admitted_forms & CETTA_RULE_SYNTAX_NAMED_HEAD))
-        return ((admitted_forms & CETTA_RULE_SYNTAX_ORDINARY) &&
-                space_equations_may_match_known_head(s, head)) ||
-               ((admitted_forms & CETTA_RULE_SYNTAX_DIRECTIONAL) &&
-                space_directional_rules_may_match_known_head(s, head));
-    if (space_member_named_rules_may_match(s, head, admitted_forms))
+    bool direct = false;
+    if (!(admitted_forms & CETTA_RULE_SYNTAX_NAMED_HEAD)) {
+        direct = ((admitted_forms & CETTA_RULE_SYNTAX_ORDINARY) &&
+                  space_equations_may_match_known_head(s, head)) ||
+                 ((admitted_forms & CETTA_RULE_SYNTAX_DIRECTIONAL) &&
+                  space_directional_rules_may_match_known_head(s, head));
+    } else if (space_member_named_rules_may_match(s, head, admitted_forms)) {
+        direct = true;
+    } else {
+        for (uint32_t d = 0u; d < space_dependency_count(s); d++) {
+            if (space_member_named_rules_may_match(
+                    space_dependency_at(s, d), head, admitted_forms)) {
+                direct = true;
+                break;
+            }
+        }
+    }
+    if (direct)
         return true;
-    for (uint32_t d = 0u; d < space_dependency_count(s); d++)
-        if (space_member_named_rules_may_match(
-                space_dependency_at(s, d), head, admitted_forms))
-            return true;
+    if ((admitted_forms & CETTA_RULE_SYNTAX_EQUATIONAL_ALIAS) &&
+        space_alias_head_in_carrier(s, head)) {
+        return space_alias_head_has_rules(s, head, admitted_forms);
+    }
     return false;
 }
 

@@ -96,7 +96,7 @@ typedef struct {
 static _Thread_local struct {
     PeTTaTypeFact *entries;
     Arena payloads;
-    SpaceProgramToken program;
+    SpaceTheoryToken program;
     uint32_t arena_identity;
     uint64_t arena_epoch;
     uint64_t hashcons_epoch;
@@ -159,18 +159,19 @@ static bool petta_type_fact_key(Space *space, Arena *arena, Atom *subject,
         petta_type_facts.enabled = !reference || strcmp(reference, "1") != 0;
         petta_type_facts.configured = true;
     }
+    SpaceTheoryView theory_view = space_theory_view_borrow(space);
     if (!petta_type_facts.enabled ||
         !petta_type_fact_operand(arena, subject) ||
         (target && target->kind != ATOM_VAR &&
          !petta_type_fact_operand(arena, target)) ||
-        !space_type_annotations_have_only_symbol_subjects(space))
+        !space_theory_view_type_annotations_symbol_only(&theory_view))
         return false;
     uint64_t hashcons_epoch = hashcons_reclamation_epoch();
     if (hashcons_epoch == UINT64_MAX) {
         petta_type_facts_free_for_current_thread();
         return false;
     }
-    SpaceProgramToken program = space_program_token(space);
+    SpaceTheoryToken program = space_theory_token(space);
     if (!petta_type_facts.entries) {
         petta_type_facts.entries = calloc(
             PETTA_TYPE_FACT_ENTRIES, sizeof(*petta_type_facts.entries));
@@ -179,7 +180,7 @@ static bool petta_type_fact_key(Space *space, Arena *arena, Atom *subject,
     }
     bool sealed = petta_type_sealed();
     if (!petta_type_facts.ready ||
-        !space_program_token_eq(petta_type_facts.program, program) ||
+        !space_theory_token_eq(petta_type_facts.program, program) ||
         petta_type_facts.arena_identity != arena->identity ||
         petta_type_facts.arena_epoch != arena->reset_epoch ||
         petta_type_facts.hashcons_epoch != hashcons_epoch ||
@@ -1010,9 +1011,10 @@ static Atom *petta_type_walk_declaration(Space *space, Arena *arena,
  * which decides every other case, failures included. */
 static bool petta_type_walk_once(Space *space, Arena *arena, Atom *subject,
                                  Atom *target) {
+    SpaceTheoryView theory_view = space_theory_view_borrow(space);
     if (!subject || subject->kind != ATOM_EXPR || atom_has_vars(subject) ||
         !target || atom_has_vars(target) || target->kind == ATOM_VAR ||
-        !space_type_annotations_have_only_symbol_subjects(space))
+        !space_theory_view_type_annotations_symbol_only(&theory_view))
         return false;
     PettaTypeWalkHead heads[PETTA_TYPE_WALK_HEADS];
     uint32_t head_count = 0u;

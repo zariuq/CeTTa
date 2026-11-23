@@ -3,7 +3,7 @@
 #include <stdio.h>
 
 #define LANGUAGES(X) \
-    X(petta_typecheck_v3_core_v1) X(gslt_il_language_v1) X(metta_interact_language_v1) \
+    X(gslt_il_language_v1) X(metta_interact_language_v1) \
     X(subzero_language_v1) X(zero_language_v1) X(zero_exp_language_v1) \
     X(zero_emit_language_v1) X(zero_interact_language_v1) X(zerouv_language_v1)
 #define DECLARE(name) extern const CettaGsltEmbeddedLanguageV1 cetta_##name;
