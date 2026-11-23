@@ -940,13 +940,23 @@ MgStatus mg_thm_publish(MgTheory *theory, MgThm *thm, uint32_t name,
             *reason = "claim does not normalize to the theorem";
         return MG_REFUSED;
     }
-    /* The declaration keeps the theorem's evidence (a tree proof is
-     * store-interned; other derivations are copied as rows). */
+    /* The declaration keeps the theorem's evidence: a tree proof is
+     * store-interned; a published known taken up under another name is
+     * proved by citing that known; other derivations are copied as rows. */
     MgEvidence *evidence = NULL;
     MgPf *proof = NULL;
     if (thm->origin == MG_THM_TREE && thm->judgment.ctx == theory->store.ctx_empty) {
         proof = thm->proof;
-    } else if (thm->origin != MG_THM_DECLARATION) {
+    } else if (thm->origin == MG_THM_DECLARATION) {
+        if (!thm->decl) {
+            if (reason)
+                *reason = "a known without its declaration";
+            return MG_MALFORMED;
+        }
+        proof = mg_pf_known(&theory->store, thm->decl->name);
+        if (!proof)
+            return MG_NOMEM;
+    } else {
         MgEvidence ev;
         MgStatus est = mg_evidence_of(thm, &ev);
         if (est != MG_OK) {

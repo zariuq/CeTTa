@@ -9,6 +9,7 @@
  * (failed commits leave the live theory unchanged).
  */
 #include "mg_core.h"
+#include "mg_library.h"
 #include "mg_session.h"
 #include "mg_sexpr.h"
 
@@ -891,6 +892,148 @@ static void test_publication(void) {
     store_free(&st);
 }
 
+/* ── a known taken up under another name ──────────────────────────────── */
+
+/* imp_refl : q -> q, made from rows and published. */
+static MgThm *derived_known(void) {
+    implication_theory();
+    TestStore st;
+    store_init(&st);
+    put_implication(&st);
+    MgSession *s = begin(&st);
+    const uint64_t sched[] = {10, 11};
+    MgSessionReport r = run(s, sched, 2, 0, 0);
+    const char *why = NULL;
+    MgThm *t = NULL;
+    const MgDecl *d = NULL;
+    bool ok = r.status == MG_SESSION_FINISHED &&
+              mg_session_finish(s, 11, TM(IMPQ), NULL, &why, &t) == MG_OK &&
+              mg_thm_publish(T, t, NM("imp_refl"), NULL, NULL, &why, &d) == MG_OK;
+    EXPECT(ok, "publish a derived known");
+    mg_session_release(s);
+    store_free(&st);
+    return t;
+}
+
+static char *saved_library(MgTheory *t, size_t *len, const char **why) {
+    char *text = NULL;
+    FILE *f = open_memstream(&text, len);
+    if (!f)
+        return NULL;
+    MgStatus st = mg_library_save(t, f, why);
+    fclose(f);
+    if (st != MG_OK) {
+        free(text);
+        return NULL;
+    }
+    return text;
+}
+
+/* The text with one occurrence of `from` replaced by `to`. */
+static char *edited(const char *text, const char *from, const char *to) {
+    const char *at = strstr(text, from);
+    if (!at || strstr(at + 1, from))
+        return NULL;
+    size_t head = (size_t)(at - text), n = strlen(text) - strlen(from) + strlen(to);
+    char *out = malloc(n + 1u);
+    if (!out)
+        return NULL;
+    memcpy(out, text, head);
+    strcpy(out + head, to);
+    strcat(out, at + strlen(from));
+    return out;
+}
+
+static MgStatus load_into_fresh(const char *text, MgImportReport *rep, MgTheory **out) {
+    MgTheory *u = new_theory();
+    MgImportPolicy all = {.all_axioms = true};
+    MgBudget b;
+    mg_budget_init(&b, 0);
+    MgStatus st = mg_library_load(u, text, strlen(text), "saved", &all, &b, rep);
+    *out = u;
+    return st;
+}
+
+/* Its proof is the citation of the known, so the theory still saves; the
+ * saved library reloads it, rechecked, and a citation of a known with
+ * another statement, or of no known, is refused at that row. */
+static void test_republished_known(void) {
+    MgThm *t = derived_known();
+    const char *why = NULL;
+    MgThm *k = NULL, *a = NULL;
+    const MgDecl *d = NULL;
+    EXPECT(mg_thm_from_known(T, NM("imp_refl"), &why, &k) == MG_OK &&
+           mg_thm_publish(T, k, NM("imp_refl_again"), NULL, NULL, &why, &d) == MG_OK && d &&
+           d->proof && d->proof->tag == MG_PF_KNOWN && d->proof->n == NM("imp_refl"),
+           "a derived known taken up under another name is proved by citing it");
+    EXPECT(mg_thm_from_known(T, NM("ax"), &why, &a) == MG_OK &&
+           mg_thm_publish(T, a, NM("ax_again"), NULL, NULL, &why, &d) == MG_OK && d &&
+           d->proof && d->proof->tag == MG_PF_KNOWN && d->proof->n == NM("ax"),
+           "so is an axiom taken up under another name");
+    size_t len = 0;
+    char *text = saved_library(T, &len, &why);
+    EXPECT(text != NULL, "the theory saves");
+    if (text) {
+        EXPECT(strstr(text, "(tree (Pf.known \"imp_refl\"))") != NULL &&
+               strstr(text, "(tree (Pf.known \"ax\"))") != NULL,
+               "the saved proofs are the citations");
+        MgImportReport rep;
+        MgTheory *u = NULL;
+        EXPECT(load_into_fresh(text, &rep, &u) == MG_OK && rep.theorems == 3u,
+               "the library reloads, every theorem rechecked");
+        MgThm *x = NULL, *y = NULL;
+        EXPECT(mg_thm_from_known(u, mg_name_intern(&u->store, "imp_refl_again", 14), &why, &x) == MG_OK &&
+               mg_thm_from_known(u, mg_name_intern(&u->store, "imp_refl", 8), &why, &y) == MG_OK &&
+               x->judgment.prop == y->judgment.prop,
+               "the reloaded name states what the known states");
+        mg_thm_release(x);
+        mg_thm_release(y);
+        mg_theory_release(u);
+        char *other = edited(text, "(tree (Pf.known \"imp_refl\"))", "(tree (Pf.known \"ax\"))");
+        EXPECT(other && load_into_fresh(other, &rep, &u) != MG_OK && rep.stopped &&
+               strstr(rep.message, "imp_refl_again") != NULL,
+               "a citation of a known with another statement is refused at its row");
+        mg_theory_release(u);
+        free(other);
+        char *none = edited(text, "(tree (Pf.known \"imp_refl\"))", "(tree (Pf.known \"nowhere\"))");
+        EXPECT(none && load_into_fresh(none, &rep, &u) != MG_OK && rep.stopped &&
+               strstr(rep.message, "imp_refl_again") != NULL,
+               "a citation of no known is refused at its row");
+        mg_theory_release(u);
+        free(none);
+        free(text);
+    }
+    mg_thm_release(a);
+    mg_thm_release(k);
+    mg_thm_release(t);
+#ifdef MG_TEST_HOOKS
+    bool unchanged = true, undecided_only = true, finished = false;
+    uint64_t attempts = 0;
+    for (uint64_t n = 0; !finished && n < 100000u; ++n, ++attempts) {
+        MgThm *base = derived_known();
+        uint64_t rev = T->rev, decls = T->decl_len;
+        MgThm *known = NULL;
+        mg_test_fail_allocation_after(n);
+        MgStatus outcome = mg_thm_from_known(T, NM("imp_refl"), &why, &known);
+        if (outcome == MG_OK)
+            outcome = mg_thm_publish(T, known, NM("imp_refl_again"), NULL, NULL, &why, &d);
+        mg_test_fail_allocation_after(UINT64_MAX);
+        if (outcome == MG_OK) {
+            finished = T->rev == rev + 1u && T->decl_len == decls + 1u;
+        } else {
+            undecided_only = undecided_only && outcome == MG_NOMEM;
+            unchanged = unchanged && T->rev == rev && T->decl_len == decls;
+        }
+        mg_thm_release(known);
+        mg_thm_release(base);
+    }
+    EXPECT(finished, "allocation injection reaches the republication");
+    EXPECT(undecided_only, "an allocation failure in republication is never a refusal");
+    EXPECT(unchanged, "every failed republication leaves the theory unchanged");
+    printf("(republication allocation points exercised: %llu)\n", (unsigned long long)attempts);
+#endif
+}
+
 /* ── allocation failure through check / finish / publish ──────────────── */
 
 static void test_allocation_failure(void) {
@@ -1023,6 +1166,7 @@ int main(void) {
     test_theory_change();
     test_lcf();
     test_publication();
+    test_republished_known();
     test_allocation_failure();
     test_context_footprint();
     if (T)

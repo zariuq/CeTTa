@@ -31,6 +31,8 @@
 ; An LCF theorem published as a known keeps its derivation as rows: lazy
 ; evidence, which the library stores marked (conversion lazy).
 !(mg:publish (T) (mg:term-app (mg:term-app (mg:known (T) "and_left") (truth)) (truth)) "and_left_truth")
+; A known taken up under another name keeps its proof, the citation of that known.
+!(mg:publish (T) (mg:known (T) "and_left") "and_left_again")
 
 ; Save, then reload into a fresh HF theory: everything is rechecked.
 !(mg:save-library (T) "runtime/megalodon-test/pfghf_logic.mglib")
@@ -38,6 +40,7 @@
 !(mg:load-library (mg:authority (get-state &again)) "runtime/megalodon-test/pfghf_logic.mglib" (axioms all))
 !(mg:statement (mg:known (mg:use (get-state &again)) "and_left"))
 !(mg:statement (mg:known (mg:use (get-state &again)) "and_left_truth"))
+!(mg:statement (mg:known (mg:use (get-state &again)) "and_left_again"))
 ; The reloaded library is used by a later proof: and A B -> A at A := B := True.
 !(mg:statement
    (mg:term-app (mg:term-app (mg:known (mg:use (get-state &again)) "and_left") (truth)) (truth)))
