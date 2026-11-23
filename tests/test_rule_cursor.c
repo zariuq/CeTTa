@@ -72,13 +72,13 @@ int main(void) {
     assert(space_length64(&space) == 1u);
     assert(!space_directional_rules_may_match_known_head(&space, head));
     assert(space_directional_index_proves_absent(&space));
-    SpaceProgramToken before = space_program_token(&space);
+    SpaceTheoryToken before = space_theory_token(&space);
     space_begin_secondary_index_deferral(&space);
     space_add(&space, directional);
     assert(!space_directional_index_proves_absent(&space));
     assert(space_directional_rules_may_match_known_head(&space, head));
     space_end_secondary_index_deferral(&space);
-    assert(!space_program_token_is_current(before));
+    assert(!space_theory_token_is_current(before));
     space_add(&space, directional); /* Separate, equal rule occurrences. */
     space_add(&space, equation(&arena, "=%", x, 3));
     space_add(&space, equation(&arena, "=", a, 4));
@@ -106,9 +106,9 @@ int main(void) {
     while (space_equation_cursor_next(&cursor, &id) == SPACE_EQUATION_CURSOR_ITEM) ++remaining;
     assert(remaining == 5u); /* Append does not enter this captured prefix. */
     assert(space_rule_cursor_init(&space, head, both, &cursor));
-    before = space_program_token(&space);
+    before = space_theory_token(&space);
     assert(space_remove(&space, directional));
-    assert(!space_program_token_is_current(before));
+    assert(!space_theory_token_is_current(before));
     assert(space_equation_cursor_next(&cursor, &id) == SPACE_EQUATION_CURSOR_INVALIDATED);
 
     Space overlay;

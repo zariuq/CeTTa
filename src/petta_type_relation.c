@@ -96,7 +96,7 @@ typedef struct {
 static _Thread_local struct {
     PeTTaTypeFact *entries;
     Arena payloads;
-    SpaceProgramToken program;
+    SpaceTheoryToken program;
     uint32_t arena_identity;
     uint64_t arena_epoch;
     uint64_t hashcons_epoch;
@@ -170,7 +170,7 @@ static bool petta_type_fact_key(Space *space, Arena *arena, Atom *subject,
         petta_type_facts_free_for_current_thread();
         return false;
     }
-    SpaceProgramToken program = space_program_token(space);
+    SpaceTheoryToken program = space_theory_token(space);
     if (!petta_type_facts.entries) {
         petta_type_facts.entries = calloc(
             PETTA_TYPE_FACT_ENTRIES, sizeof(*petta_type_facts.entries));
@@ -179,7 +179,7 @@ static bool petta_type_fact_key(Space *space, Arena *arena, Atom *subject,
     }
     bool sealed = petta_type_sealed();
     if (!petta_type_facts.ready ||
-        !space_program_token_eq(petta_type_facts.program, program) ||
+        !space_theory_token_eq(petta_type_facts.program, program) ||
         petta_type_facts.arena_identity != arena->identity ||
         petta_type_facts.arena_epoch != arena->reset_epoch ||
         petta_type_facts.hashcons_epoch != hashcons_epoch ||

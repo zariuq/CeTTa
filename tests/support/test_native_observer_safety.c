@@ -56,7 +56,7 @@ int main(void) {
     SymbolId unsigned_head = atom_symbol(&arena, "observer-unsigned")->sym_id;
     SymbolId kind_head = atom_symbol(&arena, "observer-kind")->sym_id;
     SymbolId portable_head = atom_symbol(&arena, "observer-portable-kind")->sym_id;
-    SpaceProgramToken unchanged = space_program_token(&space);
+    SpaceTheoryToken unchanged = space_theory_token(&space);
 
     /* Availability changes without editing the program. Both stale unsafe
      * and stale safe cache answers must be rejected under the new basis. */
@@ -72,7 +72,7 @@ int main(void) {
     library.active_mask = 0u;
     assert(petta_program_relation_safety(program, &space, unsigned_head, 1u) == PETTA_RELATION_SAFETY_UNSAFE);
     assert(petta_program_relation_safety(program, &space, kind_head, 1u) == PETTA_RELATION_SAFETY_UNSAFE);
-    assert(space_program_token_eq(unchanged, space_program_token(&space)));
+    assert(space_theory_token_eq(unchanged, space_theory_token(&space)));
     CettaLoadedModule module = {0};
     snprintf(module.display_name, sizeof(module.display_name), "binary");
     CettaLoadedModule *loaded[] = {&module};

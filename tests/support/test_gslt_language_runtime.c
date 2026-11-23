@@ -581,7 +581,7 @@ static void check_compiled_optimizations_cross_guest(
     char compiled_error[ERROR_CAP] = {0};
     bool reference_ok = form_count >= 0 &&
         cetta_gslt_language_execute_atoms_with_realization(
-            language, CETTA_GSLT_REALIZATION_HORN_REFERENCE,
+            language, CETTA_GSLT_REALIZATION_HORN_ORACLE,
             forms, (size_t)form_count, answers, limits(),
             &reference, reference_error, sizeof(reference_error));
     bool compiled_ok = form_count >= 0 &&
@@ -771,7 +771,7 @@ static void run_document(const CettaGsltLanguage *language,
                          const char *text, const char *expected_text,
                          size_t expected_count, const char *label) {
     run_document_realization(
-        language, CETTA_GSLT_REALIZATION_HORN_REFERENCE,
+        language, CETTA_GSLT_REALIZATION_HORN_ORACLE,
         source, answers, text, expected_text, expected_count, label);
 }
 
@@ -1117,14 +1117,14 @@ int main(int argc, char **argv) {
           "incomplete request-pipeline ABI fails at admission");
 
     memset(error, 0, sizeof(error));
-    CHECK(cetta_gslt_language_load_embedded(
-              &cetta_subzero_language_v1, &language, error, sizeof(error)),
+    CHECK(cetta_gslt_language_load_embedded_for_realization(
+              &cetta_subzero_language_v1, CETTA_GSLT_REALIZATION_HORN_ORACLE,
+              &language, error, sizeof(error)),
           "digest-checked embedded GSLT language loads");
     if (!language) {
         fprintf(stderr, "embedded descriptor diagnostic: %s\n", error);
     } else {
-        for (uint32_t raw = CETTA_GSLT_REALIZATION_HORN_REFERENCE;
-             raw <= CETTA_GSLT_REALIZATION_COMPILED_WORKLIST; raw++) {
+        for (uint32_t raw = 0u; raw < CETTA_GSLT_REALIZATION_COUNT; raw++) {
             CettaGsltRealization realization = (CettaGsltRealization)raw;
             CHECK(cetta_gslt_realization_name(realization) != NULL,
                   "generated realization has a stable public name");
@@ -1195,8 +1195,9 @@ int main(int argc, char **argv) {
         false, true, true,
         "Subzero exercises nested rigid incompatibility after dispatch");
     memset(error, 0, sizeof(error));
-    CHECK(cetta_gslt_language_load_embedded(
-              &cetta_zero_language_v1, &language, error, sizeof(error)),
+    CHECK(cetta_gslt_language_load_embedded_for_realization(
+              &cetta_zero_language_v1, CETTA_GSLT_REALIZATION_HORN_ORACLE,
+              &language, error, sizeof(error)),
           "query-first generated MeTTa Zero language loads");
     if (!language) {
         fprintf(stderr, "MeTTa Zero descriptor diagnostic: %s\n", error);
@@ -1205,8 +1206,7 @@ int main(int argc, char **argv) {
               "request pipeline language identity comes from its descriptor");
         CHECK(cetta_gslt_language_semantic_rule_count(language) == 51u,
               "request pipeline composes matching, query, and observation");
-        for (uint32_t raw = CETTA_GSLT_REALIZATION_HORN_REFERENCE;
-             raw <= CETTA_GSLT_REALIZATION_COMPILED_WORKLIST; raw++) {
+        for (uint32_t raw = 0u; raw < CETTA_GSLT_REALIZATION_COUNT; raw++) {
             CettaGsltRealization realization = (CettaGsltRealization)raw;
             run_document_realization(
                 language, realization, &source, &answers,
@@ -1265,9 +1265,9 @@ int main(int argc, char **argv) {
     cetta_gslt_language_free(language);
     language = NULL;
     memset(error, 0, sizeof(error));
-    CHECK(cetta_gslt_language_load_embedded(
-              &cetta_gslt_il_language_v1, &language,
-              error, sizeof(error)),
+    CHECK(cetta_gslt_language_load_embedded_for_realization(
+              &cetta_gslt_il_language_v1, CETTA_GSLT_REALIZATION_HORN_ORACLE,
+              &language, error, sizeof(error)),
           "generated GSLT-IL language loads for optimization checking");
     if (!language) {
         fprintf(stderr, "GSLT-IL descriptor diagnostic: %s\n", error);
@@ -1294,17 +1294,16 @@ int main(int argc, char **argv) {
         true, false, false,
         "GSLT-IL exercises generic ground dense matching");
     memset(error, 0, sizeof(error));
-    CHECK(cetta_gslt_language_load_embedded(
-              &cetta_zero_exp_language_v1, &language,
-              error, sizeof(error)),
+    CHECK(cetta_gslt_language_load_embedded_for_realization(
+              &cetta_zero_exp_language_v1, CETTA_GSLT_REALIZATION_HORN_ORACLE,
+              &language, error, sizeof(error)),
           "authored experimental Zero runner profile loads");
     if (!language) {
         fprintf(stderr, "MeTTa Zero exp descriptor diagnostic: %s\n", error);
     } else {
         CHECK(cetta_gslt_language_semantic_rule_count(language) == 57u,
               "experimental profile adds exactly its authored runner rules");
-        for (uint32_t raw = CETTA_GSLT_REALIZATION_HORN_REFERENCE;
-             raw <= CETTA_GSLT_REALIZATION_COMPILED_WORKLIST; raw++) {
+        for (uint32_t raw = 0u; raw < CETTA_GSLT_REALIZATION_COUNT; raw++) {
             CettaGsltRealization realization = (CettaGsltRealization)raw;
             run_document_realization(
                 language, realization, &source, &answers,
@@ -1326,8 +1325,7 @@ int main(int argc, char **argv) {
     }
     cetta_gslt_language_free(language);
     language = NULL;
-    for (uint32_t raw = CETTA_GSLT_REALIZATION_HORN_REFERENCE;
-         raw <= CETTA_GSLT_REALIZATION_COMPILED_WORKLIST; raw++) {
+    for (uint32_t raw = 0u; raw < CETTA_GSLT_REALIZATION_COUNT; raw++) {
         CettaGsltRealization realization = (CettaGsltRealization)raw;
         memset(error, 0, sizeof(error));
         CHECK(cetta_gslt_language_load_embedded_for_realization(
@@ -1351,11 +1349,10 @@ int main(int argc, char **argv) {
         language = NULL;
     }
     memset(error, 0, sizeof(error));
-    CHECK(cetta_gslt_language_load_embedded_for_realization(
+    CHECK(cetta_gslt_language_load_embedded(
               &cetta_gslt_compiled_canary_v1,
-              CETTA_GSLT_REALIZATION_COMPILED_WORKLIST,
               &language, error, sizeof(error)),
-          "renamed non-Zero compiled canary loads generically");
+          "default embedded load selects compiled-worklist generically");
     if (language) {
         run_document_realization(
             language, CETTA_GSLT_REALIZATION_COMPILED_WORKLIST,
@@ -1365,16 +1362,15 @@ int main(int argc, char **argv) {
         CettaGsltLanguageResult unavailable;
         memset(error, 0, sizeof(error));
         CHECK(!cetta_gslt_language_execute_atoms_with_realization(
-              language, CETTA_GSLT_REALIZATION_HORN_REFERENCE,
+                  language, CETTA_GSLT_REALIZATION_HORN_ORACLE,
                   no_forms, 0u, &answers, limits(), &unavailable,
                   error, sizeof(error)) &&
                   strstr(error, "not loaded") != NULL,
-              "compiled-only load does not retain the reference program");
+              "default embedded load does not retain the horn-oracle program");
     }
     cetta_gslt_language_free(language);
     language = NULL;
-    for (uint32_t raw = CETTA_GSLT_REALIZATION_HORN_REFERENCE;
-         raw <= CETTA_GSLT_REALIZATION_COMPILED_WORKLIST; raw++) {
+    for (uint32_t raw = 0u; raw < CETTA_GSLT_REALIZATION_COUNT; raw++) {
         CettaGsltRealization realization = (CettaGsltRealization)raw;
         memset(error, 0, sizeof(error));
         CHECK(cetta_gslt_language_load_embedded_for_realization(

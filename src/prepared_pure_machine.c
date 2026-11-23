@@ -705,11 +705,9 @@ struct CettaPreparedPureProgram {
     size_t owned_source_len;
     size_t owned_source_cap;
     Space *space;
-    SpaceProgramToken source_program;
-    /* The program clock read before `source_program`, and re-armed when the
-     * token is found current after the clock moved
-     * (prepared_pure_source_current). */
-    _Atomic uint64_t source_program_epoch;
+    /* Unified theory-token + atomic program-clock guard
+     * (space_theory_atomic_clock_guard_is_current). */
+    SpaceTheoryAtomicClockGuard source_theory;
     SpaceEquationToken equation_projection;
     CettaPreparedPureBooleanValue boolean_value;
     /* Immutable Boolean leaves copied into program-owned storage at compile
@@ -1157,29 +1155,12 @@ static bool prepared_pure_he_value_has_type(
 static _Thread_local const CettaPreparedPureProgram *g_prepared_pure_stamp_program;
 static _Thread_local const Arena *g_prepared_pure_stamp_arena;
 
-/* The prepared program's source observations (the equations and
+/* The prepared program's source theory observations (the equations and
  * declarations of its space, of the spaces it reads through, and that
- * space's identity) still hold.  Every writer of those observations moves
- * the program clock (space.h), so while the clock stands where it was read
- * before the program's token, they hold; once it has moved, the token itself
- * is read, and a token found current re-arms the clock check. */
-static __attribute__((cold, noinline)) bool prepared_pure_source_recheck(
-    const CettaPreparedPureProgram *program) {
-    uint64_t clock = space_global_program_epoch();
-    if (!space_program_token_is_current(program->source_program))
-        return false;
-    atomic_store_explicit(
-        &((CettaPreparedPureProgram *)program)->source_program_epoch, clock,
-        memory_order_relaxed);
-    return true;
-}
-
+ * space's identity) still hold via SpaceTheoryAtomicClockGuard. */
 static inline bool prepared_pure_source_current(
-    const CettaPreparedPureProgram *program) {
-    return space_global_program_epoch() ==
-            atomic_load_explicit(&program->source_program_epoch,
-                                 memory_order_relaxed) ||
-        prepared_pure_source_recheck(program);
+    CettaPreparedPureProgram *program) {
+    return space_theory_atomic_clock_guard_is_current(&program->source_theory);
 }
 
 bool cetta_prepared_pure_stamp_arena_epoch(const Atom *atom, uint32_t *arena,
@@ -1213,6 +1194,8 @@ static bool prepared_pure_debug_enabled(void) {
 
 /* CETTA_PREPARED_PURE_DEBUG=code also prints each program's register code. */
 static bool prepared_pure_code_dump_enabled(void) {
+    if (!prepared_pure_debug_enabled())
+        return false;
     const char *debug = getenv("CETTA_PREPARED_PURE_DEBUG");
     return debug && strcmp(debug, "code") == 0;
 }
@@ -11846,11 +11829,8 @@ static CettaPreparedPureProgram *prepared_pure_program_new(
     }
     program->references = 1u;
     program->space = space;
-    /* Read before the token: a change after this read moves the clock past
-     * the stamp, and the next check reads the token again. */
-    atomic_store_explicit(&program->source_program_epoch,
-                          space_global_program_epoch(), memory_order_relaxed);
-    program->source_program = space_program_token(space);
+    /* Read clock before token via SpaceTheoryAtomicClockGuard. */
+    space_theory_atomic_clock_guard_capture(&program->source_theory, space);
     program->equation_projection = space_equation_token(space);
     program->boolean_value = boolean_value;
     if (!prepared_pure_cache_boolean_atoms(program)) {
@@ -15976,7 +15956,7 @@ static void prepared_pure_compile_failure_report(
     if (!report)
         return;
     report->refusals = 0u;
-    if (!space_program_token_matches_live_space(report->source, space)) {
+    if (!space_theory_token_matches_live_space(report->source, space)) {
         report->status = CETTA_PREPARED_PURE_COMPILE_INVALIDATED;
         return;
     }
@@ -16090,7 +16070,7 @@ prepared_pure_program_compile_closed_mode(
          (call_mode != CETTA_GSLT_PURE_CALL_EAGER ||
           !entry_arguments_are_values)))
         return NULL;
-    SpaceProgramToken observed = space_program_token(space);
+    SpaceTheoryToken observed = space_theory_token(space);
     if (report)
         *report = (CettaPreparedPureCompileReport){
             .source = observed, .status = CETTA_PREPARED_PURE_COMPILE_UNCERTIFIED,
@@ -16175,7 +16155,7 @@ prepared_pure_program_compile_closed_mode(
         cetta_prepared_pure_program_free(program);
         return NULL;
     }
-    if (!space_program_token_matches_live_space(observed, space)) {
+    if (!space_theory_token_matches_live_space(observed, space)) {
         prepared_pure_compile_failure_report(report, space, NULL, false,
             entry_arguments_are_values, call_mode, answer_producer);
         cetta_prepared_pure_program_free(program);
@@ -16328,7 +16308,7 @@ bool cetta_prepared_pure_program_use_exportable_booleans(
 }
 
 bool cetta_prepared_pure_program_is_current(
-    const CettaPreparedPureProgram *program) {
+    CettaPreparedPureProgram *program) {
     if (!program || !prepared_pure_source_current(program))
         return false;
     for (size_t i = 0u; i < program->owned_source_len; i++)
@@ -16345,7 +16325,7 @@ bool cetta_prepared_pure_program_is_current(
  * overlay chain change only under the space's write guard, so the read
  * takes its guard; outside a concurrent scope the guard is inert. */
 static bool prepared_pure_program_current_observed(
-    const CettaPreparedPureProgram *program) {
+    CettaPreparedPureProgram *program) {
     CETTA_SCOPED_SPACE_OBSERVE(authority, program ? program->space : NULL);
     return cetta_prepared_pure_program_is_current(program);
 }
@@ -19037,10 +19017,10 @@ CettaPreparedPureHandoffReason cetta_prepared_pure_answer_cursor_handoff_reason(
     return cursor ? cursor->handoff : CETTA_PREPARED_PURE_HANDOFF_NONE;
 }
 
-SpaceProgramToken cetta_prepared_pure_answer_cursor_program_token(
+SpaceTheoryToken cetta_prepared_pure_answer_cursor_program_token(
     const CettaPreparedPureAnswerCursor *cursor) {
-    return cursor ? cursor->program->source_program
-                  : (SpaceProgramToken){0};
+    return cursor ? cursor->program->source_theory.token
+                  : (SpaceTheoryToken){0};
 }
 
 size_t cetta_prepared_pure_answer_cursor_head_count(

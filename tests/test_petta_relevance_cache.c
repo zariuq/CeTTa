@@ -23,7 +23,7 @@ static void *checked_calloc(size_t n, size_t size) {
 #undef malloc
 #undef calloc
 
-static bool lookup(SpaceProgramToken program, SymbolId source,
+static bool lookup(SpaceTheoryToken program, SymbolId source,
                    PettaRelationRelevance expected) {
     PettaRelationRelevance got = PETTA_RELATION_RELEVANCE_CERTAIN;
     bool found = petta_relation_relevance_cache_lookup(program, source, &got);
@@ -31,7 +31,7 @@ static bool lookup(SpaceProgramToken program, SymbolId source,
     return found;
 }
 
-static void collide(SpaceProgramToken program, SymbolId found[9]) {
+static void collide(SpaceTheoryToken program, SymbolId found[9]) {
     SymbolId candidates[PETTA_RELATION_RELEVANCE_CACHE_BANKS][9] = {{0}};
     unsigned counts[PETTA_RELATION_RELEVANCE_CACHE_BANKS] = {0};
     /* Pigeonhole: eight per bank plus one guarantees nine colliders. */
@@ -85,7 +85,7 @@ static void reference_put(Reference *ref, SymbolId source,
     ref->oldest[ref->count++] = (ReferenceEntry){source, value};
 }
 
-static void collision_and_lru(SpaceProgramToken program, SymbolId sources[9]) {
+static void collision_and_lru(SpaceTheoryToken program, SymbolId sources[9]) {
     petta_relation_relevance_cache_clear();
     for (unsigned i = 0u; i < 4u; i++)
         petta_relation_relevance_cache_store(program, sources[i],
@@ -128,7 +128,7 @@ static void collision_and_lru(SpaceProgramToken program, SymbolId sources[9]) {
     puts("PASS: four colliding keys coexist; actual LRU agrees with 20000 independent operations, including transient results under allocation refusal");
 }
 
-static void complete_key_guards(SpaceProgramToken program, Space *other,
+static void complete_key_guards(SpaceTheoryToken program, Space *other,
                                 SymbolId source, SymbolTable *other_symbols) {
     petta_relation_relevance_cache_clear();
     petta_relation_relevance_cache_store(program, source,
@@ -139,7 +139,7 @@ static void complete_key_guards(SpaceProgramToken program, Space *other,
         g_petta_relation_relevance_cache[bank * PETTA_RELATION_RELEVANCE_CACHE_WAYS];
     assert(saved.source == source);
     for (unsigned changed = 0u; changed < 7u; changed++) {
-        SpaceProgramToken query = program;
+        SpaceTheoryToken query = program;
         SymbolId query_source = source;
         SymbolTable *symbols = g_symbols;
         if (changed == 0u) query.space = other;
@@ -180,7 +180,7 @@ int main(void) {
     symbol_table_init(&second);
     g_symbols = &first;
     Space space = {0}, other = {0};
-    SpaceProgramToken program = {.space = &space, .instance_id = 17u,
+    SpaceTheoryToken program = {.space = &space, .instance_id = 17u,
         .equation_revision = 5u, .declaration_revision = 3u,
         .base_dependency_epoch = 9u};
     SymbolId colliders[9];

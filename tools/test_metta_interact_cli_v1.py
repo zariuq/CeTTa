@@ -91,7 +91,7 @@ def main() -> int:
         if not expected_path.is_file():
             raise GateFailure(f"missing expected bag for {source.name}")
         expected = answer_bag(expected_path.read_text(encoding="utf-8"))
-        for realization in ("horn-reference", "compiled-worklist", None):
+        for realization in ("horn-oracle", "compiled-worklist", None):
             rendered = run(cetta, source, realization)
             actual = answer_bag(rendered)
             if actual != expected:

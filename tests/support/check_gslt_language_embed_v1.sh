@@ -10,10 +10,10 @@ mkdir -p "$2"
 evidence=$(realpath "$2")
 test ! -e "$evidence/inputs.sha256"
 cd "$repo"
-manifests=(petta/typecheck_v3_core_runtime_v1 gslt-il/langdef metta-interact/langdef
+manifests=(gslt-il/langdef metta-interact/langdef
            subzero/langdef zero/langdef zero/langdef zero/langdef zero/langdef zerouv/langdef)
-profiles=('' '' '' '' '' exp emit interact '')
-stems=(petta_typecheck_v3_core_v1 gslt_il_language_v1 metta_interact_language_v1
+profiles=('' '' '' '' exp emit interact '')
+stems=(gslt_il_language_v1 metta_interact_language_v1
        subzero_language_v1 zero_language_v1 zero_exp_language_v1 zero_emit_language_v1
        zero_interact_language_v1 zerouv_language_v1)
 sha256sum "$tool" "$0" tools/gslt_language_embed_v1.c \
@@ -48,4 +48,4 @@ for i in "${!stems[@]}"; do
     "$dir/compare" "$tool_sha"
 done
 sha256sum -c "$evidence/inputs.sha256" > "$evidence/inputs-after.txt"
-echo 'GsltLanguageNativeEmbedV1: 9 exact descriptors; 9 deterministic regenerations'
+echo 'GsltLanguageNativeEmbedV1: 8 exact descriptors; 8 deterministic regenerations'

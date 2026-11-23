@@ -535,12 +535,12 @@ static void test_saved_environment_and_consumers(void) {
 typedef struct {
     CettaOwnedReturnImagePolicy policy;
     Space *space;
-    SpaceProgramToken token;
+    SpaceTheoryToken token;
 } ProgramContext;
 
 static bool program_compatible(void *context) {
     ProgramContext *program = context;
-    return space_program_token_matches_live_space(program->token, program->space);
+    return space_theory_token_matches_live_space(program->token, program->space);
 }
 
 typedef struct {

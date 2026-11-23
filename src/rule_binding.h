@@ -17,6 +17,10 @@ enum {
      * `(= (F args...) body)` with F a symbol; any other such row is a fact
      * of its space, read by match and never called. */
     CETTA_RULE_SYNTAX_NAMED_HEAD = 4u,
+    /* A qualifier of the forms above: ground `(=e lhs rhs)` aliases in the
+     * active space normalize ground keys on both sides of rule dispatch
+     * while preserving raw occurrences, source order, and duplicates. */
+    CETTA_RULE_SYNTAX_EQUATIONAL_ALIAS = 8u,
 };
 
 #define CETTA_RULE_SYNTAX_FORMS \
@@ -26,7 +30,8 @@ enum {
 static inline bool cetta_rule_syntax_valid(unsigned admitted_forms) {
     return (admitted_forms & CETTA_RULE_SYNTAX_FORMS) &&
         !(admitted_forms &
-          ~(CETTA_RULE_SYNTAX_FORMS | CETTA_RULE_SYNTAX_NAMED_HEAD));
+          ~(CETTA_RULE_SYNTAX_FORMS | CETTA_RULE_SYNTAX_NAMED_HEAD |
+            CETTA_RULE_SYNTAX_EQUATIONAL_ALIAS));
 }
 
 /* Borrowed source view. Admission chooses the permitted declaration forms;

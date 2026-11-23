@@ -245,7 +245,7 @@ CettaProofProducerStatus cetta_proof_producer_prepare(
         CETTA_PROOF_NEEDS_LABEL_DATA_AUTHORITY | CETTA_PROOF_NEEDS_PUBLICATION_PREFLIGHT |
         CETTA_PROOF_NEEDS_WORK_ADMISSION | CETTA_PROOF_NEEDS_OWNER_ADMISSION |
         (literal ? 0u : CETTA_PROOF_NEEDS_GROUND_LABEL_BINDING);
-    d->program = space_program_token(program);
+    d->program = space_theory_token(program);
     plan->program_hold = space_lifetime_pin ? space_lifetime_pin(program) : NULL;
     d->program_has_lifetime_hold = plan->program_hold != NULL;
     for (size_t i = 0u; i < q->pattern_count; i++)
@@ -308,7 +308,7 @@ bool cetta_proof_producer_is_current(const CettaProofProducerPlan *plan,
     __attribute__((cleanup(cetta_guard_section_close))) CettaGuardSection guard;
     proof_spaces_open(&guard, program, sources, count, NULL, target);
     if (!plan || !program || !sources || count != plan->description.source_count ||
-        !space_program_token_matches_live_space(plan->description.program, program) ||
+        !space_theory_token_matches_live_space(plan->description.program, program) ||
         !current_binding(&plan->description.target, target)) return false;
     for (size_t i = 0u; i < count; i++)
         if (!current_binding(&plan->description.sources[i], sources[i])) return false;

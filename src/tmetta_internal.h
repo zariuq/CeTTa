@@ -73,7 +73,7 @@ typedef struct {
 } TmEquationKey;
 
 typedef struct TmProgram {
-    SpaceProgramToken token;
+    SpaceTheoryToken token;
     Arena arena;
     TmCode *allocated;
     AbtSignature binders;

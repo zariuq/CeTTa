@@ -174,8 +174,8 @@ typedef struct CettaLibraryContext {
     /* The session's imports: libraries in the lower half, native modules in
      * the upper half (native/native_modules.h). */
     uint64_t active_mask;
-    SpaceProgramToken transform_program;
-    SpaceProgramToken *transform_views;
+    SpaceTheoryToken transform_program;
+    SpaceTheoryToken *transform_views;
     size_t transform_view_count;
     Arena transform_definitions;
     Atom *transform_definition_rows;

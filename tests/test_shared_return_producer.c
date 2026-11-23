@@ -138,7 +138,7 @@ typedef struct {
     unsigned next_calls, emitted, effects, captures, freed, released;
     bool compatible, refuse_capture, fail_log_reserve, change_during_capture;
     Space *space;
-    SpaceProgramToken token;
+    SpaceTheoryToken token;
 } Account;
 
 typedef struct {
@@ -224,7 +224,7 @@ static bool capture(void *context, const CettaOwnedReturn *borrowed,
 static bool compatible(void *context) {
     Account *account = context;
     return account->compatible && (!account->space ||
-        space_program_token_matches_live_space(account->token, account->space));
+        space_theory_token_matches_live_space(account->token, account->space));
 }
 
 typedef struct {

@@ -625,7 +625,8 @@ bool cetta_library_context_try_init_for_language_profile(CettaLibraryContext *ct
         ? petta_program_new_with_rules(CETTA_RULE_SYNTAX_ORDINARY |
             ((profile && (profile->id == CETTA_PROFILE_PETTA_EXTENDED ||
                           profile->id == CETTA_PROFILE_HE_EXTENDED))
-                ? CETTA_RULE_SYNTAX_DIRECTIONAL : 0u) |
+                ? (CETTA_RULE_SYNTAX_DIRECTIONAL |
+                   CETTA_RULE_SYNTAX_EQUATIONAL_ALIAS) : 0u) |
             (cetta_language_rules_need_named_head(language_id)
                 ? CETTA_RULE_SYNTAX_NAMED_HEAD : 0u)) : NULL;
     if (needs_occurrence_program && !ctx->petta_program) return false;
@@ -10037,35 +10038,23 @@ static bool transform_native_row(Atom *atom) {
  * Store those semantic coordinates, without retaining facts or comparing
  * library source text. Dependency imports publish to these revisions too. */
 static bool transform_views_current(const CettaLibraryContext *ctx, const Space *space) {
-    if (!ctx->transform_view_count)
-        return false;
-    for (size_t i = 0u; i < ctx->transform_view_count; i++) {
-        if (!space)
-            return false;
-        SpaceProgramToken old = ctx->transform_views[i];
-        if (old.space != space || old.instance_id != space_instance_id(space) ||
-            old.equation_revision != space_equation_revision(space) ||
-            old.declaration_revision != space_declaration_revision(space)) {
-            return false;
-        }
-        space = space->overlay_base;
-    }
-    return !space;
+    return space_theory_overlay_chain_tokens_current(
+        space, ctx->transform_views, ctx->transform_view_count);
 }
 
 static bool transform_record_views(CettaLibraryContext *ctx, const Space *space) {
-    if (space_program_token(space).base_dependency_epoch == UINT64_MAX)
+    if (space_theory_token(space).base_dependency_epoch == UINT64_MAX)
         return false;
     size_t count = 0u;
     for (const Space *view = space; view; view = view->overlay_base)
         count++;
-    SpaceProgramToken *views = cetta_realloc(ctx->transform_views, count * sizeof(*views));
+    SpaceTheoryToken *views = cetta_realloc(ctx->transform_views, count * sizeof(*views));
     if (!views)
         return false;
     ctx->transform_views = views;
     ctx->transform_view_count = count;
     for (size_t i = 0u; space; i++, space = space->overlay_base)
-        views[i] = space_program_token(space);
+        views[i] = space_theory_token(space);
     return true;
 }
 
@@ -10114,8 +10103,8 @@ static bool transform_record_definitions(CettaLibraryContext *ctx, Space *space)
 bool cetta_library_transform_program_current(CettaLibraryContext *ctx, Space *space) {
     if (!ctx || !ctx->transform_program_valid || !space)
         return false;
-    SpaceProgramToken now = space_program_token(space);
-    if (space_program_token_eq(ctx->transform_program, now))
+    SpaceTheoryToken now = space_theory_token(space);
+    if (space_theory_token_eq(ctx->transform_program, now))
         return true;
     CettaCount rows = space_length64(space);
     if (transform_views_current(ctx, space)) {
@@ -10155,13 +10144,13 @@ static bool record_transform_import(CettaLibraryContext *ctx,
         strcmp(plan->canonical_path + path_len -
                (sizeof("/lib_transform.metta") - 1u), "/lib_transform.metta") == 0) {
         Space *space = plan->execution_target_space;
-        ctx->transform_program = space_program_token(space);
+        ctx->transform_program = space_theory_token(space);
         ctx->transform_read = space_read_token(space);
         ctx->transform_scanned_rows = space_length64(space);
         ctx->transform_program_valid = true;
         if (!transform_record_views(ctx, space) ||
             !transform_record_definitions(ctx, space)) {
-            ctx->transform_program = (SpaceProgramToken){0};
+            ctx->transform_program = (SpaceTheoryToken){0};
             ctx->transform_read = (SpaceReadToken){0};
             ctx->transform_view_count = 0u;
             return false;

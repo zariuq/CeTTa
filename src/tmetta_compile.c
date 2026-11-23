@@ -322,8 +322,8 @@ static bool scalar_pattern(Atom *left) {
 TmProgram *tm_program(CettaLibraryContext *context, Space *space) {
     struct CettaTmettaRuntime *runtime = context->tmetta_runtime;
     TmProgram *cached = runtime->cached_program;
-    SpaceProgramToken token = space_program_token(space);
-    if (cached && space_program_token_eq(cached->token, token)) return cached;
+    SpaceTheoryToken token = space_theory_token(space);
+    if (cached && space_theory_token_eq(cached->token, token)) return cached;
     TmProgram *program = calloc(1, sizeof *program);
     if (!program) return NULL;
     atomic_init(&program->refs, 1);

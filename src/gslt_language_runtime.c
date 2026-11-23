@@ -323,7 +323,7 @@ bool cetta_gslt_language_load_embedded(
     const CettaGsltEmbeddedLanguageV1 *descriptor,
     CettaGsltLanguage **out, char *error, size_t error_size) {
     return cetta_gslt_language_load_embedded_for_realization(
-        descriptor, CETTA_GSLT_REALIZATION_HORN_REFERENCE,
+        descriptor, CETTA_GSLT_REALIZATION_COMPILED_WORKLIST,
         out, error, error_size);
 }
 
@@ -342,8 +342,8 @@ bool cetta_gslt_language_load_embedded_for_realization(
         descriptor->request_pipeline->produced_nil &&
         descriptor->request_pipeline->produced_cons;
     if (!descriptor || !out ||
-        (realization != CETTA_GSLT_REALIZATION_HORN_REFERENCE &&
-         realization != CETTA_GSLT_REALIZATION_COMPILED_WORKLIST) ||
+        (realization != CETTA_GSLT_REALIZATION_COMPILED_WORKLIST &&
+         realization != CETTA_GSLT_REALIZATION_HORN_ORACLE) ||
         !descriptor->name ||
         !descriptor->syntax_backend || !descriptor->term_abi ||
         !descriptor->manifest.input.bytes ||
@@ -444,7 +444,7 @@ bool cetta_gslt_language_load_embedded_for_realization(
         cetta_gslt_language_free(language);
         return false;
     }
-    if (realization == CETTA_GSLT_REALIZATION_HORN_REFERENCE)
+    if (realization == CETTA_GSLT_REALIZATION_HORN_ORACLE)
         language->semantics = admitted_source;
     else
         cetta_gslt_horn_program_free(admitted_source);
@@ -540,14 +540,14 @@ static bool language_run_query(
     Arena *output_arena, Atom *query,
     CettaGsltHornLimits limits, CettaGsltHornResult *result,
     char *error, size_t error_size) {
-    if (realization == CETTA_GSLT_REALIZATION_HORN_REFERENCE)
+    if (realization == CETTA_GSLT_REALIZATION_HORN_ORACLE)
         return language->semantics
             ? cetta_gslt_horn_query_with_providers_v1(
                 language->semantics, providers,
                 output_arena, query, limits,
                 result, error, error_size)
             : language_error(error, error_size,
-                             "reference realization was not loaded");
+                             "horn-oracle realization was not loaded");
     if (realization == CETTA_GSLT_REALIZATION_COMPILED_WORKLIST)
         return language->compiled_semantics
             ? cetta_gslt_compiled_query_with_providers_v1(
@@ -996,17 +996,17 @@ bool cetta_gslt_language_execute_atoms(
     CettaGsltLanguageResult *result,
     char *error, size_t error_size) {
     return cetta_gslt_language_execute_atoms_with_realization(
-        language, CETTA_GSLT_REALIZATION_HORN_REFERENCE,
+        language, CETTA_GSLT_REALIZATION_COMPILED_WORKLIST,
         forms, form_count, output_arena, limits,
         result, error, error_size);
 }
 
 const char *cetta_gslt_realization_name(CettaGsltRealization realization) {
     switch (realization) {
-    case CETTA_GSLT_REALIZATION_HORN_REFERENCE:
-        return "horn-reference";
     case CETTA_GSLT_REALIZATION_COMPILED_WORKLIST:
         return "compiled-worklist";
+    case CETTA_GSLT_REALIZATION_HORN_ORACLE:
+        return "horn-oracle";
     }
     return NULL;
 }
@@ -1015,8 +1015,7 @@ bool cetta_gslt_realization_parse(
     const char *name, CettaGsltRealization *realization) {
     if (!name || !realization)
         return false;
-    for (uint32_t value = CETTA_GSLT_REALIZATION_HORN_REFERENCE;
-         value <= CETTA_GSLT_REALIZATION_COMPILED_WORKLIST; value++) {
+    for (uint32_t value = 0u; value < CETTA_GSLT_REALIZATION_COUNT; value++) {
         const char *candidate = cetta_gslt_realization_name(
             (CettaGsltRealization)value);
         if (candidate && strcmp(name, candidate) == 0) {

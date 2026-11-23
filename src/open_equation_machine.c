@@ -525,7 +525,7 @@ struct CettaOpenEquationProgram {
     bool admitted;
     CettaOpenEquationEntryKind entry_kind;
     Space *space;
-    SpaceProgramToken token;
+    SpaceTheoryToken token;
     SpaceReadToken source_rows;
     CettaCount source_row_count;
     /* All named syntax/contract leaves consulted by this compilation,
@@ -733,7 +733,7 @@ void cetta_open_equation_program_release(
 
 bool cetta_open_equation_program_is_current(
     const CettaOpenEquationProgram *program) {
-    return program && space_program_token_is_current(program->token);
+    return program && space_theory_token_is_current(program->token);
 }
 
 CettaOpenEquationRead cetta_open_equation_program_read(
@@ -777,10 +777,10 @@ bool cetta_open_equation_program_refresh(
         program->space != space || read->program_token.space != space ||
         read->program_token.instance_id != space_instance_id(space))
         return false;
-    SpaceProgramToken now = space_program_token(space);
+    SpaceTheoryToken now = space_theory_token(space);
     SpaceReadToken rows = space_read_token(space);
     CettaCount count = space_rule_rows64(space);
-    if (!space_program_token_eq(read->program_token, now)) {
+    if (!space_theory_token_eq(read->program_token, now)) {
         if (!program->read_heads_complete || space->overlay_base ||
             space_has_dependencies(space) ||
             space->match_backend.kind != SPACE_ENGINE_NATIVE ||
@@ -792,36 +792,37 @@ bool cetta_open_equation_program_refresh(
             Atom *row = space_get_at64(space, index);
             if (!row)
                 return false;
-            if (row->kind != ATOM_EXPR || row->expr.len != 3u ||
-                row->expr.elems[0]->kind != ATOM_SYMBOL)
+            SymbolId head = SYMBOL_ID_NONE;
+            bool compound_subject = false;
+            SpaceTheoryRowKind kind = space_theory_classify_row(
+                row, &head, &compound_subject);
+            switch (kind) {
+            case SPACE_THEORY_ROW_DATA:
                 continue;
-            SymbolId form = row->expr.elems[0]->sym_id;
-            Atom *subject = row->expr.elems[1];
-            if (form == g_builtin_syms.subtype)
+            case SPACE_THEORY_ROW_SUBTYPE_DECLARATION:
+            case SPACE_THEORY_ROW_EQUATIONAL_ALIAS:
                 return false;
-            if (form == g_builtin_syms.equals ||
-                form == g_builtin_syms.equals_percent) {
-                if (subject->kind != ATOM_EXPR || subject->expr.len == 0u ||
-                    program->assumes_unchanged_callees)
+            case SPACE_THEORY_ROW_EQUATION:
+            case SPACE_THEORY_ROW_DIRECTIONAL_RULE:
+                if (head == SYMBOL_ID_NONE || program->assumes_unchanged_callees)
                     return false;
-                subject = subject->expr.elems[0];
-            } else if (form != g_builtin_syms.colon) {
-                continue;
-            } else if (subject->kind == ATOM_EXPR) {
-                /* Compilation asks for types of named heads. A compound
-                 * subject cannot unify with a symbol, even with open fields. */
-                continue;
-            } else if (program->assumes_value_callees) {
-                /* Any callee may be this name, now declared. */
-                return false;
+                break;
+            case SPACE_THEORY_ROW_TYPE_DECLARATION:
+                if (compound_subject) {
+                    /* Compilation asks for types of named heads. A compound
+                     * subject cannot unify with a symbol, even with open fields. */
+                    continue;
+                }
+                if (program->assumes_value_callees || head == SYMBOL_ID_NONE)
+                    return false;
+                break;
             }
-            if (subject->kind != ATOM_SYMBOL ||
-                oem_reads_head(program, subject->sym_id))
+            if (oem_reads_head(program, head))
                 return false;
         }
     }
     if (!space_read_token_matches_live_space(rows, space) ||
-        !space_program_token_matches_live_space(now, space))
+        !space_theory_token_matches_live_space(now, space))
         return false;
     *read = (CettaOpenEquationRead){
         .program = program, .program_token = now, .rows = rows, .row_count = count,
@@ -7794,7 +7795,7 @@ static CettaOpenEquationProgram *oem_compile_certificate(
     program->entry_kind = host && host->entry_ready_call ? CETTA_OPEN_ENTRY_READY_CALL
         : host && host->entry_body_is_data ? CETTA_OPEN_ENTRY_BODY_DATA : CETTA_OPEN_ENTRY_BODY_VALUE;
     program->compilation_program_epoch = space_global_program_epoch();
-    program->token = space_program_token(space);
+    program->token = space_theory_token(space);
     program->source_rows = space_read_token(space);
     program->source_row_count = space_rule_rows64(space);
     program->read_heads_complete = host && host->capture_reads;
@@ -7843,7 +7844,7 @@ static CettaOpenEquationProgram *oem_compile_certificate(
          * snapshot. Semantic refusals are stable under the recorded reads. */
         if (strcmp(rejection, "out of memory") == 0 ||
             strcmp(rejection, "compile") == 0 ||
-            !space_program_token_is_current(program->token)) {
+            !space_theory_token_is_current(program->token)) {
             cetta_open_equation_program_release(program);
             return NULL;
         }
@@ -7905,7 +7906,7 @@ static CettaOpenEquationProgram *oem_compile_certificate(
         default: break;
         }
     }
-    if (!space_program_token_is_current(program->token)) {
+    if (!space_theory_token_is_current(program->token)) {
         if (reason_out)
             *reason_out = "program changed during compilation";
         cetta_open_equation_program_release(program);
@@ -8231,7 +8232,7 @@ typedef struct {
 typedef struct {
     int64_t identity;
     uint32_t arity;
-    SpaceProgramToken source;
+    SpaceTheoryToken source;
     uint64_t authority_epoch;
     CettaOpenEquationProgram *program;
     void *lifetime_hold;
@@ -10222,7 +10223,7 @@ static bool oem_program_current(CettaOpenEquationCursor *cursor,
                                  const CettaOpenEquationProgram *program) {
     /* One read of the program's token, or the host's revalidation of it. */
     CETTA_SCOPED_SPACE_OBSERVE(program_authority, program ? (Space *)program->space : NULL);
-    return space_program_token_is_current(program->token) ||
+    return space_theory_token_is_current(program->token) ||
         (cursor->runtime.program_current &&
          cursor->runtime.program_current(cursor->runtime.context,
                                           program->space, program));
@@ -13487,12 +13488,12 @@ static const CettaOpenEquationProgram *oem_callable_program(
     /* The token an entry is kept under, the compilation and its
      * confirmation are one observation of the shared space. */
     CETTA_SCOPED_SPACE_OBSERVE(callable_program_observation, space);
-    SpaceProgramToken now = space_program_token(space);
+    SpaceTheoryToken now = space_theory_token(space);
     for (uint32_t index = 0u; index < cursor->callable_len; index++) {
         OemCallable *entry = &cursor->callables[index];
         if (entry->identity == identity && entry->arity == arity &&
             entry->authority_epoch == cursor->authority_epoch &&
-            space_program_token_eq(entry->source, now))
+            space_theory_token_eq(entry->source, now))
             return entry->program;
     }
     if (!oem_reserve((void **)&cursor->callables, &cursor->callable_cap,
@@ -13504,7 +13505,7 @@ static const CettaOpenEquationProgram *oem_callable_program(
      * program can populate the revision-qualified worker cache. */
     if (!prepared)
         return NULL;
-    if (!space_program_token_is_current(now)) {
+    if (!space_theory_token_is_current(now)) {
         cetta_open_equation_program_release(prepared);
         return NULL;
     }
@@ -14635,7 +14636,7 @@ typedef struct OemAbsentHead {
     SymbolId head;
     uint32_t arity;
     uint64_t epoch;
-    SpaceProgramToken token;
+    SpaceTheoryToken token;
 } OemAbsentHead;
 
 /* The program an evaluated call enters for `head` at `arity`, or NULL,
@@ -14658,7 +14659,7 @@ static const CettaOpenEquationProgram *oem_enter_evaluated(
         if (absent->head == head && absent->arity == arity &&
             absent->token.space == space &&
             absent->epoch == cursor->authority_epoch &&
-            space_program_token_is_current(absent->token))
+            space_theory_token_is_current(absent->token))
             return NULL;
     }
     const CettaOpenEquationProgram *program =
@@ -14671,7 +14672,7 @@ static const CettaOpenEquationProgram *oem_enter_evaluated(
      * change. */
     OemAbsentHead verdict = {
         .head = head, .arity = arity, .epoch = cursor->authority_epoch,
-        .token = space_program_token(space),
+        .token = space_theory_token(space),
     };
     for (uint32_t index = 0u; index < cursor->absent_len; index++) {
         OemAbsentHead *absent = &cursor->absent[index];
