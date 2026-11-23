@@ -1,7 +1,10 @@
 (Shown Symbol true () true)
-(Distinct false true)
+(Spelled true false false false)
+(Law true true true false false false false false)
+(Distinct false true false)
 (Forged Symbol false ())
 (Planted () (2))
+(Read Symbol false ())
 true
 burned
 true
@@ -16,7 +19,9 @@ burned
 (Composed ((8)))
 (Bag (9))
 (Pending (10 11))
+(Stable true false (12))
 (Imported (1 2))
-true
-&space(17)
-&space(18)
+done
+(Fresh 0 true ())
+(Fresh 0 true ())
+(Fresh false 0 0)

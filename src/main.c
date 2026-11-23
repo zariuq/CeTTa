@@ -1935,6 +1935,8 @@ static void print_usage(FILE *out) {
     fputs("       cetta --prefer-rationals <file.metta>  # exact rational division for exact numbers\n", out);
     fputs("       cetta --fuel <-1|n> <file.metta>       # -1 unlimited, n positive\n", out);
     fputs("       cetta --num-threads <n> <file>             # set OS-thread budget for parallel-capable execution\n", out);
+    fputs("       cetta --name-supply=<counter|unforgeable> <file> # generated names (&space(N), lambda_N): numbered (default) or hashed; env CETTA_NAME_SUPPLY\n", out);
+    fputs("       cetta --name-seed=<hex> <file>                   # seed of unforgeable names, 1 to 32 hex digits; without one a random seed is reported on stderr; env CETTA_NAME_SEED\n", out);
     fputs("       cetta --rho-reduction-limit <n> <file>            # run at most n strict-core rho COMM reductions (default 100000)\n", out);
     fputs("       cetta --rho-scheduler <canonical|rotating> <file> # select strict-core rho reduction policy\n", out);
     fputs("       cetta --lang mm2 [--steps <n>] <file.mm2> # upstream MORK ABI\n", out);
@@ -2918,6 +2920,8 @@ static int cetta_main(int argc, char **argv) {
     CettaGsltRealization gslt_realization =
         CETTA_GSLT_REALIZATION_HORN_REFERENCE;
     bool gslt_realization_requested = false;
+    const char *name_supply_mode = NULL;
+    const char *name_supply_seed = NULL;
 
     /* PeTTa is the most widely used dialect: a program names another. */
     endpoint_init(&source_endpoint, "petta");
@@ -2977,6 +2981,33 @@ static int cetta_main(int argc, char **argv) {
             }
             kernel_selected = true;
             explicit_kernel = mode;
+            continue;
+        }
+        if (strncmp(argv[i], "--name-s", 8u) == 0 &&
+            (strcmp(argv[i], "--name-supply") == 0 ||
+             strncmp(argv[i], "--name-supply=", 14u) == 0 ||
+             strcmp(argv[i], "--name-seed") == 0 ||
+             strncmp(argv[i], "--name-seed=", 12u) == 0)) {
+            bool supply = strncmp(argv[i], "--name-supply", 13u) == 0;
+            size_t option_length = supply ? 13u : 11u;
+            const char *value = argv[i] + option_length;
+            if (*value == '=') {
+                value++;
+            } else {
+                if (++i >= argc) {
+                    fputs(supply
+                              ? "error: --name-supply needs counter or unforgeable\n"
+                              : "error: --name-seed needs 1 to 32 hexadecimal digits\n",
+                          stderr);
+                    free(inline_buf);
+                    return 2;
+                }
+                value = argv[i];
+            }
+            if (supply)
+                name_supply_mode = value;
+            else
+                name_supply_seed = value;
             continue;
         }
         if (strcmp(argv[i], "--kernel-stats") == 0) {
@@ -3384,6 +3415,22 @@ static int cetta_main(int argc, char **argv) {
 
     if (inline_buf)
         inline_text = inline_buf;
+
+    /* Name options, and the variable that selects the mode, take effect
+       before any name is drawn, and a bad value stops the run here, so no
+       draw can meet one.  Without them names are counted, which the first
+       draw sets up: a run that draws none pays one look at the
+       environment. */
+    if (name_supply_mode || name_supply_seed || getenv("CETTA_NAME_SUPPLY")) {
+        char name_supply_error[256];
+        if (!cetta_name_supply_configure(name_supply_mode, name_supply_seed,
+                                         name_supply_error,
+                                         sizeof(name_supply_error))) {
+            fprintf(stderr, "error: %s\n", name_supply_error);
+            free(inline_buf);
+            return 2;
+        }
+    }
 
     if (repl_mode) {
         if (filename || inline_text || translate_mode || compile_mode || compile_stdlib_mode) {

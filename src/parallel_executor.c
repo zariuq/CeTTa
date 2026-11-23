@@ -73,6 +73,7 @@ static void parallel_ready_queue_init(CettaParallelReadyQueue *queue) {
     pthread_cond_init(&queue->cond, NULL);
     queue->head = NULL;
     queue->tail = NULL;
+    queue->spare = NULL;
     queue->queued = 0;
     queue->active = 0;
     queue->closed = false;
@@ -84,6 +85,13 @@ static void parallel_ready_queue_free(CettaParallelReadyQueue *queue) {
     CettaParallelTaskNode *node = queue->head;
     while (node) {
         CettaParallelTaskNode *next = node->next;
+        /* A task that never ran gives back its supply's block. */
+        cetta_name_supply_child_release(node->names);
+        free(node);
+        node = next;
+    }
+    for (node = queue->spare; node;) {
+        CettaParallelTaskNode *next = node->next;
         free(node);
         node = next;
     }
@@ -91,21 +99,29 @@ static void parallel_ready_queue_free(CettaParallelReadyQueue *queue) {
     pthread_mutex_destroy(&queue->mutex);
     queue->head = NULL;
     queue->tail = NULL;
+    queue->spare = NULL;
 }
 
 static bool parallel_ready_queue_push(CettaParallelReadyQueue *queue,
-                                      void *task) {
-    CettaParallelTaskNode *node = cetta_malloc(sizeof(CettaParallelTaskNode));
-    if (!node) return false;
-    node->task = task;
-    node->next = NULL;
-
+                                      void *task, CettaNameSupplyChild names) {
     pthread_mutex_lock(&queue->mutex);
     if (queue->closed || queue->cancelled || queue->failed) {
         pthread_mutex_unlock(&queue->mutex);
-        free(node);
         return false;
     }
+    CettaParallelTaskNode *node = queue->spare;
+    if (node) {
+        queue->spare = node->next;
+    } else {
+        node = cetta_malloc(sizeof(CettaParallelTaskNode));
+        if (!node) {
+            pthread_mutex_unlock(&queue->mutex);
+            return false;
+        }
+    }
+    node->task = task;
+    node->names = names;
+    node->next = NULL;
     if (queue->tail) {
         queue->tail->next = node;
     } else {
@@ -121,7 +137,8 @@ static bool parallel_ready_queue_push(CettaParallelReadyQueue *queue,
     return true;
 }
 
-static void *parallel_ready_queue_pop(CettaParallelReadyQueue *queue) {
+static void *parallel_ready_queue_pop(CettaParallelReadyQueue *queue,
+                                      CettaNameSupplyChild *names) {
     CettaParallelTaskNode *node;
     void *task;
 
@@ -143,10 +160,11 @@ static void *parallel_ready_queue_pop(CettaParallelReadyQueue *queue) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PARALLEL_QUEUE_POP);
     cetta_runtime_stats_update_max(
         CETTA_RUNTIME_COUNTER_PARALLEL_QUEUE_ACTIVE_PEAK, queue->active);
-    pthread_mutex_unlock(&queue->mutex);
-
     task = node->task;
-    free(node);
+    *names = node->names;
+    node->next = queue->spare;
+    queue->spare = node;
+    pthread_mutex_unlock(&queue->mutex);
     return task;
 }
 
@@ -247,7 +265,13 @@ void cetta_parallel_executor_free(CettaParallelExecutor *executor) {
 
 bool cetta_parallel_executor_push(CettaParallelExecutor *executor, void *task) {
     if (!executor || !task) return false;
-    return parallel_ready_queue_push(&executor->queue, task);
+    /* The pusher owns its supply, so splitting needs no lock. */
+    CettaNameSupplyChild names =
+        cetta_name_supply_split(cetta_name_supply_current());
+    if (parallel_ready_queue_push(&executor->queue, task, names))
+        return true;
+    cetta_name_supply_child_release(names);
+    return false;
 }
 
 void cetta_parallel_executor_cancel(CettaParallelExecutor *executor) {
@@ -288,15 +312,28 @@ static void parallel_worker_run_episode(CettaParallelWorker *worker) {
     CettaRuntimeStatsOwner *previous_stats = cetta_runtime_stats_owner_exchange(executor->stats);
 
     g_parallel_worker_depth++;
+    /* Each name a task draws comes from the supply of the task.  Between
+       tasks the worker has a supply of its own, outside the split tree, in
+       which nothing is drawn. */
+    CettaNameSupply between_tasks;
+    cetta_name_supply_init_unplaced(&between_tasks);
+    CettaNameSupply *previous_supply =
+        cetta_name_supply_install(&between_tasks);
     if (executor->config.worker_enter) {
         executor->config.worker_enter(worker, executor->config.user);
     }
     for (;;) {
-        void *task = parallel_ready_queue_pop(&executor->queue);
+        CettaNameSupplyChild names = {0};
+        void *task = parallel_ready_queue_pop(&executor->queue, &names);
         bool ok;
         if (!task) break;
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PARALLEL_WORKER_TASK);
+        CettaNameSupply task_names;
+        cetta_name_supply_init_child(&task_names, names);
+        cetta_name_supply_install(&task_names);
         ok = executor->config.task_fn(worker, task, executor->config.user);
+        cetta_name_supply_install(&between_tasks);
+        cetta_name_supply_dispose(&task_names);
         if (!ok) {
             const char *message = executor->config.worker_failure_message
                 ? executor->config.worker_failure_message
@@ -308,6 +345,8 @@ static void parallel_worker_run_episode(CettaParallelWorker *worker) {
     if (executor->config.worker_leave) {
         executor->config.worker_leave(worker, executor->config.user);
     }
+    cetta_name_supply_install(previous_supply);
+    cetta_name_supply_dispose(&between_tasks);
     g_parallel_worker_depth--;
     cetta_runtime_stats_owner_exchange(previous_stats);
     cetta_name_context_install(&previous_names);

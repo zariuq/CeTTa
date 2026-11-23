@@ -30,10 +30,13 @@ typedef struct {
    An escaping result must own any vector storage it needs. */
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs);
 /* PeTTa's min (`minimum`) or max of two numbers or arithmetic constants:
- * the operand that is least (greatest) by the numeric order of what they
- * stand for, -0.0 below 0 and 0.0, a NaN operand propagating; on a tie the
- * first for min and the second for max.  False where an operand is not a
- * number or constant (the caller's comparison then answers or raises). */
+ * the operand that is least (greatest) by the numeric value it stands for,
+ * a NaN operand propagating; on a tie (-0.0 ties 0 and 0.0, having their
+ * value) the first for min and the second for max, so the two are a stable
+ * sort of the operands by value; the standard order of terms is another
+ * relation, which reads a constant as a symbol and puts 1.0 before 1.  False
+ * where an operand is not a number or constant (the caller's comparison then
+ * answers or raises). */
 bool petta_numeric_min_max(Arena *a, bool minimum, Atom *x, Atom *y,
                            Atom **out);
 

@@ -8222,14 +8222,14 @@ typedef struct {
  * the cursor's nonmoving names arena, so collection and backtracking cannot
  * invalidate literal pointers retained by the opaque plan. */
 typedef struct {
-    int64_t identity;
+    PettaCallableIdentityKey identity;
     uint32_t arity;
     bool answers_only;
     void *prepared;
 } OemPureCallable;
 
 typedef struct {
-    int64_t identity;
+    PettaCallableIdentityKey identity;
     uint32_t arity;
     SpaceProgramToken source;
     uint64_t authority_epoch;
@@ -12240,12 +12240,12 @@ static bool oem_debug_first_callable(const Atom *goal) {
         candidate = base;
     while (petta_semantics_partial_view(candidate, &base, NULL))
         candidate = base;
-    int64_t identity = 0;
+    PettaCallableIdentity identity;
     if (!atom_petta_callable_identity(candidate, &identity) ||
-        identity < 0 || identity >= 4096)
+        identity.number <= 0 || identity.number >= 4096)
         return false;
-    uint64_t mask = UINT64_C(1) << ((uint64_t)identity & 63u);
-    uint64_t *word = &seen[(uint64_t)identity >> 6u];
+    uint64_t mask = UINT64_C(1) << ((uint64_t)identity.number & 63u);
+    uint64_t *word = &seen[(uint64_t)identity.number >> 6u];
     if (*word & mask)
         return false;
     *word |= mask;
@@ -13357,7 +13357,7 @@ static OemRun oem_lexical_callable_step(
     if (!operands ||
         arity == 0u || arity > OEM_LEXICAL_INLINE_ARGS)
         return OEM_RUN_DECLINED;
-    int64_t identity = 0;
+    PettaCallableIdentity identity;
     CettaExprLen callable_arity = 0u;
     if (!atom_petta_callable_identity(head, &identity))
         return OEM_RUN_DECLINED;
@@ -13370,7 +13370,8 @@ static OemRun oem_lexical_callable_step(
     if (pure_available) {
         for (uint32_t index = 0u; index < cursor->pure_callable_len; index++) {
             OemPureCallable *candidate = &cursor->pure_callables[index];
-            if (candidate->identity == identity && candidate->arity == arity) {
+            if (petta_callable_identity_key_eq(&candidate->identity, identity) &&
+                candidate->arity == arity) {
                 entry = candidate;
                 break;
             }
@@ -13395,7 +13396,7 @@ static OemRun oem_lexical_callable_step(
                 return OEM_RUN_HANDOFF;
             entry = &cursor->pure_callables[cursor->pure_callable_len++];
             *entry = (OemPureCallable){
-                .identity = identity,
+                .identity = petta_callable_identity_key(identity),
                 .arity = arity,
             };
         }
@@ -13477,7 +13478,7 @@ static OemRun oem_lexical_callable_step(
  * can still run; the host leases them when a continuation leaves the cursor. */
 static const CettaOpenEquationProgram *oem_callable_program(
     CettaOpenEquationCursor *cursor, Space *space, Atom *head, uint32_t arity) {
-    int64_t identity = 0;
+    PettaCallableIdentity identity;
     CettaExprLen full_arity = 0u;
     if (!cursor->runtime.compile_callable || cursor->runtime.activation_budget ||
         cursor->runtime.depth_bound ||
@@ -13490,7 +13491,8 @@ static const CettaOpenEquationProgram *oem_callable_program(
     SpaceProgramToken now = space_program_token(space);
     for (uint32_t index = 0u; index < cursor->callable_len; index++) {
         OemCallable *entry = &cursor->callables[index];
-        if (entry->identity == identity && entry->arity == arity &&
+        if (petta_callable_identity_key_eq(&entry->identity, identity) &&
+            entry->arity == arity &&
             entry->authority_epoch == cursor->authority_epoch &&
             space_program_token_eq(entry->source, now))
             return entry->program;
@@ -13509,7 +13511,8 @@ static const CettaOpenEquationProgram *oem_callable_program(
         return NULL;
     }
     cursor->callables[cursor->callable_len++] = (OemCallable){
-        .identity = identity, .arity = arity, .source = now,
+        .identity = petta_callable_identity_key(identity),
+        .arity = arity, .source = now,
         .authority_epoch = cursor->authority_epoch, .program = prepared,
         .lifetime_hold = space_lifetime_pin
             ? space_lifetime_pin(prepared->space) : NULL,
@@ -13544,7 +13547,7 @@ static OemRun oem_apply_step(CettaOpenEquationCursor *cursor,
     if (petta_semantics_partial_view(
             head, &partial_base, &partial_bound)) {
         partial_base = oem_deref(cursor, partial_base);
-        int64_t identity = 0;
+        PettaCallableIdentity identity;
         if (partial_base->kind != ATOM_SYMBOL &&
             !atom_petta_callable_identity(partial_base, &identity))
             return OEM_RUN_DECLINED;

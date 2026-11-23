@@ -55,6 +55,8 @@ from typing import Any, Iterator, NamedTuple
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "tests" / "support"))
+from generated_space_names import rename_generated_space_names  # noqa: E402
 SCHEMA = "cetta-petta-corpus-v3"
 DEFAULT_MANIFEST = REPO_ROOT / "tests" / "petta" / "corpus" / "manifest.json"
 DEFAULT_OVERLAY_DIR = REPO_ROOT / "tests" / "petta" / "overlay"
@@ -349,15 +351,15 @@ def normalize_oracle_stdout(
     normalized = normalize_stream(text, petta_dir, extra_roots)
     if normalized.startswith(MORK_READY_BANNER):
         normalized = normalized[len(MORK_READY_BANNER):]
-    return alpha_canonicalize_output(normalized)
+    return rename_generated_space_names(alpha_canonicalize_output(normalized))
 
 
 def normalize_cetta_stdout(
     text: str, petta_dir: Path, extra_roots: tuple[Path, ...] = ()
 ) -> str:
-    return alpha_canonicalize_output(
+    return rename_generated_space_names(alpha_canonicalize_output(
         normalize_stream(text, petta_dir, extra_roots)
-    )
+    ))
 
 
 def semantic_stdout(text: str) -> str:
@@ -379,8 +381,9 @@ def semantic_stdout(text: str) -> str:
 def stdout_observation(
     text: str, contract: str
 ) -> str | Counter[str]:
-    """Observe output under an explicitly selected answer algebra."""
-    semantic = semantic_stdout(text)
+    """Observe output under an explicitly selected answer algebra, up to a
+    consistent renaming of generated space names."""
+    semantic = rename_generated_space_names(semantic_stdout(text))
     if contract == STDOUT_EXACT_STREAM:
         return semantic
     if contract == STDOUT_OCCURRENCE_BAG:
@@ -410,7 +413,7 @@ def normalize_oracle_stderr(
         normalized = OPTIONAL_JANUS_INIT_FAILURE_RE.sub("", normalized, count=1)
         if normalized == previous:
             break
-    return normalized
+    return rename_generated_space_names(normalized)
 
 
 def split_lines(text: str) -> list[str]:

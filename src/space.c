@@ -68,15 +68,14 @@ static _Thread_local uint64_t
     g_space_match_backend_contextual_query_slot_limit_override = 0;
 static _Thread_local CettaCount g_query_results_capacity_limit_override = 0;
 static _Atomic uint64_t g_space_next_instance_id = 1u;
-static _Atomic uint64_t g_space_next_display_serial = 1u;
 
-uint64_t space_next_display_serial(void) {
-    return atomic_fetch_add_explicit(&g_space_next_display_serial, 1u,
-                                     memory_order_relaxed);
-}
-
-uint64_t space_generated_name_serial(const void *space) {
-    return space ? ((const Space *)space)->display_serial : 0u;
+bool space_generated_name(const void *space, CettaGeneratedName *name) {
+    if (!space ||
+        !cetta_generated_name_is_name(((const Space *)space)->generated_name))
+        return false;
+    if (name)
+        *name = ((const Space *)space)->generated_name;
+    return true;
 }
 static _Atomic uint64_t g_space_next_prefix_epoch = 1u;
 _Atomic uint64_t cetta_space_global_mutation_epoch = 0u;
@@ -13162,7 +13161,7 @@ bool space_try_init_with_universe(Space *s, TermUniverse *universe) {
     s->dense_from_first = false;
     s->order = NULL;
     s->journal = NULL;
-    s->display_serial = 0u;
+    s->generated_name = (CettaGeneratedName){0};
     space_native_storage_init_empty(s, universe);
     /* A space's storage may come from an arena or the stack: its guard and
      * its maintenance lock start free here, never from what was there. */
@@ -13889,6 +13888,13 @@ void space_free(Space *s) {
     s->overlay_removed_base_cap = 0;
     s->payload_owner_epoch = 0;
     s->payload_export_owner_epoch = 0;
+    /* The name ends with the space, and gives back its block. */
+    CettaNameBlock *name_block =
+        (CettaNameBlock *)cetta_generated_name_block(s->generated_name);
+    if (name_block) {
+        s->generated_name = (CettaGeneratedName){0};
+        cetta_name_block_release(name_block);
+    }
 }
 
 /* A space stores syntax: copies made to store an atom drop HE's evaluated
