@@ -2513,7 +2513,7 @@ static bool he_prepared_completion_admit(Space *space, Arena *arena,
     bool *completed) {
     *completed = false;
     if (eval_current_language_id() != CETTA_LANGUAGE_HE) return true;
-    if (!space || space->overlay_base || space_has_dependencies(space))
+    if (!space || space->overlay_base)
         return false;
     if ((!call || arguments_are_values) && invocation)
         call = cetta_invocation_materialize(arena, invocation);

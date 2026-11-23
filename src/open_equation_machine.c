@@ -546,6 +546,10 @@ struct CettaOpenEquationProgram {
      * The proof reads equations beyond `read_heads`, so any added equation
      * ends this program's currency. */
     bool assumes_unchanged_callees;
+    /* A generic host goal's cached PettaPlanNode observed one or more already-
+     * callable heads inside its arguments; append-only growth preserves their
+     * callability, while a removal (`prefix_epoch` change) invalidates it. */
+    bool has_host_positive_heads;
     OemHostRead *host_reads;
     uint32_t host_read_len, host_read_cap;
     uint32_t host_read_mask;
@@ -784,10 +788,10 @@ bool cetta_open_equation_program_refresh(
     uint8_t next_refreshes = read->disjoint_refreshes;
     if (!space_theory_token_eq(read->program_token, now)) {
         if (!program->read_heads_complete || space->overlay_base ||
-            space_has_dependencies(space) ||
-            space->match_backend.kind != SPACE_ENGINE_NATIVE ||
-            !space_read_token_prefix_intact(read->rows) ||
-            read->row_count > count)
+            space->match_backend.kind != SPACE_ENGINE_NATIVE)
+            return false;
+        if (program->has_host_positive_heads &&
+            !space_read_token_prefix_intact(read->rows))
             return false;
         bool head_clock_eligible =
             program->read_head_len > 0u && program->read_heads != NULL &&
@@ -799,6 +803,11 @@ bool cetta_open_equation_program_refresh(
                 space, program->read_heads, program->read_head_len,
                 &read->head_stamp);
         if (!head_clock_hit) {
+            if ((space_has_dependencies(space) &&
+                 read->rows.base_dependency_epoch != rows.base_dependency_epoch) ||
+                !space_read_token_prefix_intact(read->rows) ||
+                read->row_count > count)
+                return false;
             for (CettaIndex index = read->row_count; index < count; index++) {
                 cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_APPEND_ROW);
                 Atom *row = space_get_at64(space, index);
@@ -1264,6 +1273,9 @@ typedef struct {
     Atom *const *let_before;
     uint32_t let_before_len;
     const OemInactiveBranch *inactive;
+    Atom *generic_host_inline[4];
+    Atom **generic_host_exprs;
+    uint32_t generic_host_len, generic_host_cap;
     const char *reason;
 } OemCompile;
 
@@ -2582,6 +2594,28 @@ static bool oem_build_host_goal(OemCompile *compile, Atom *expr,
             (existence.once ? OEM_EXISTS_ONCE : 0u) |
             (existence.negated ? OEM_EXISTS_NEGATED : 0u));
     program->host_plans[program->host_plan_len++] = plan;
+    if (program->read_heads_complete &&
+        (node.host_fast == OEM_HOST_PLAIN || node.host_fast == OEM_HOST_ADMIT)) {
+        if (compile->generic_host_len < 4u && !compile->generic_host_exprs) {
+            compile->generic_host_inline[compile->generic_host_len++] = expr;
+        } else {
+            if (!compile->generic_host_exprs) {
+                if (!oem_reserve((void **)&compile->generic_host_exprs,
+                                 &compile->generic_host_cap, 8u,
+                                 sizeof(*compile->generic_host_exprs)))
+                    return oem_reject(compile, "out of memory");
+                memcpy(compile->generic_host_exprs, compile->generic_host_inline,
+                       (size_t)compile->generic_host_len *
+                           sizeof(*compile->generic_host_exprs));
+            } else if (!oem_reserve((void **)&compile->generic_host_exprs,
+                                    &compile->generic_host_cap,
+                                    compile->generic_host_len + 1u,
+                                    sizeof(*compile->generic_host_exprs))) {
+                return oem_reject(compile, "out of memory");
+            }
+            compile->generic_host_exprs[compile->generic_host_len++] = expr;
+        }
+    }
     return oem_lower_pattern(compile, expr, NULL, depth + 1u, false,
                              &node.value) &&
         oem_hole(compile, &node.exposed) &&
@@ -3730,7 +3764,7 @@ static bool oem_build_tail(OemCompile *compile, Atom *expr,
 static bool oem_known_output(OemCompile *compile, Atom *expr,
                              const PettaPlanNode *plan, uint32_t depth,
                              bool root, bool preceded, uint8_t *kind_out,
-                             uint32_t *template_out);
+                             uint32_t *template_out, bool *relied_unchanged);
 
 /* Only the caller's already-value native comparison grants exclusivity.
  * Keep the fence on this compilation stack, never in deferred equations. */
@@ -3751,12 +3785,15 @@ static bool oem_build_selected_branch(OemCompile *compile, Atom *expr,
         return true;
     uint8_t kind = OEM_OUTPUT_OPEN;
     uint32_t projection = 0u;
+    bool relied_unchanged = false;
     if (!oem_known_output(compile, expr, plan, depth, true, false,
-                          &kind, &projection))
+                          &kind, &projection, &relied_unchanged))
         return false;
     if (kind != OEM_OUTPUT_TEMPLATE ||
         compile->program->templates[projection].kind == OEM_T_SLOT)
         return true;
+    if (relied_unchanged)
+        compile->program->assumes_unchanged_callees = true;
     /* The enclosing if or case has selected this branch. Its own result
      * shape can constrain the caller before the branch's goals, just as
      * in the source machine. A version change or a retained continuation
@@ -5342,7 +5379,8 @@ static bool oem_compile_relational_occurrences(OemCompile *compile) {
  * (cetta_open_equation_program_refresh). */
 static bool oem_may_change_program(OemCompile *compile, Atom *expr,
                                    const PettaPlanNode *plan,
-                                   CettaExprIndex before_child) {
+                                   CettaExprIndex before_child,
+                                   bool *relied_unchanged) {
     if (!expr || !plan)
         return true;
     if (!plan->contains_call)
@@ -5350,8 +5388,8 @@ static bool oem_may_change_program(OemCompile *compile, Atom *expr,
     bool may = !compile->host || !compile->host->may_change_program ||
         compile->host->may_change_program(compile->host->context,
             compile->program->space, expr, plan, before_child);
-    if (!may)
-        compile->program->assumes_unchanged_callees = true;
+    if (!may && relied_unchanged)
+        *relied_unchanged = true;
     return may;
 }
 
@@ -5366,7 +5404,7 @@ static bool oem_may_change_program(OemCompile *compile, Atom *expr,
 static bool oem_known_output(OemCompile *compile, Atom *expr,
                              const PettaPlanNode *plan, uint32_t depth,
                              bool root, bool preceded, uint8_t *kind_out,
-                             uint32_t *template_out) {
+                             uint32_t *template_out, bool *relied_unchanged) {
     if (depth > OEM_MAX_DEPTH)
         return oem_reject(compile, "expression too deep");
     while (plan && plan->output == PETTA_PLAN_OUTPUT_CHILD) {
@@ -5380,7 +5418,8 @@ static bool oem_known_output(OemCompile *compile, Atom *expr,
             return oem_reject(compile, "output child");
         CettaExprIndex child = plan->output_child;
         if (!preceded && child > 1u)
-            preceded = oem_may_change_program(compile, expr, plan, child);
+            preceded = oem_may_change_program(compile, expr, plan, child,
+                                              relied_unchanged);
         expr = expr->expr.elems[child];
         plan = petta_plan_child(plan, child);
     }
@@ -5428,10 +5467,11 @@ static bool oem_known_output(OemCompile *compile, Atom *expr,
         if (!preceded && index > 1u)
             preceded = oem_may_change_program(compile,
                 expr->expr.elems[index - 1u], petta_plan_child(plan, index - 1u),
-                0u);
+                0u, relied_unchanged);
         ok = oem_known_output(compile, expr->expr.elems[index],
                               petta_plan_child(plan, index), depth + 1u,
-                              false, preceded, &kind, &children[index]);
+                              false, preceded, &kind, &children[index],
+                              relied_unchanged);
     }
     ok = ok && oem_template_build(compile, children,
                                   (uint32_t)expr->expr.len, template_out);
@@ -5984,6 +6024,11 @@ static bool oem_steps_call_relation(const CettaOpenEquationProgram *program,
     return false;
 }
 
+static __attribute__((cold, noinline)) bool oem_record_rhs_read_names(
+        CettaOpenEquationProgram *program, Atom *rhs,
+        const PettaPlanNode *rhs_plan,
+        Atom *const *generic_host_exprs, uint32_t generic_host_len);
+
 static bool oem_compile_equation(CettaOpenEquationProgram *program,
                                  PettaProgram *petta,
                                  const CettaOpenEquationHost *host,
@@ -5993,7 +6038,6 @@ static bool oem_compile_equation(CettaOpenEquationProgram *program,
                                  const char **reason) {
     if (program->read_heads_complete &&
         (!oem_record_read_names(program, lhs) ||
-         !oem_record_read_names(program, rhs) ||
          (typed && !oem_record_read_names(program, typed->contract.signature))))
         program->read_heads_complete = false;
     OemCompile compile = {.program = program, .host = host, .petta = petta,
@@ -6049,9 +6093,15 @@ static bool oem_compile_equation(CettaOpenEquationProgram *program,
         if (body_is_data) {
             equation.output_kind = OEM_OUTPUT_TEMPLATE;
             equation.output = node->exposed;
-        } else if (equation.dest_kind == OEM_DEST_SLOT)
+        } else if (equation.dest_kind == OEM_DEST_SLOT) {
+            bool relied_unchanged = false;
             ok = oem_known_output(&compile, rhs, rhs_plan, 0u, true, false,
-                                  &equation.output_kind, &equation.output);
+                                  &equation.output_kind, &equation.output,
+                                  &relied_unchanged);
+            if (ok && relied_unchanged &&
+                equation.output_kind != OEM_OUTPUT_OPEN)
+                program->assumes_unchanged_callees = true;
+        }
         /* An output the plan fixes before the body would meet the
          * destination before a late output's pattern is read. */
         if (ok && compile.late_outputs &&
@@ -6102,6 +6152,19 @@ static bool oem_compile_equation(CettaOpenEquationProgram *program,
                 oem_reject(&compile, "out of memory"));
     if (!ok && reason && !*reason)
         *reason = compile.reason ? compile.reason : "equation compile";
+    if (program->read_heads_complete) {
+        Atom *const *host_exprs = compile.generic_host_exprs
+            ? compile.generic_host_exprs : compile.generic_host_inline;
+        bool rhs_ok = ok && !typed && !body_is_data && rhs_plan &&
+            compile.generic_host_len > 0u
+            ? oem_record_rhs_read_names(program, rhs, rhs_plan,
+                                        host_exprs,
+                                        compile.generic_host_len)
+            : oem_record_read_names(program, rhs);
+        if (!rhs_ok)
+            program->read_heads_complete = false;
+    }
+    free(compile.generic_host_exprs);
     free(compile.vars);
     free(compile.bound);
     free(compile.pending);
@@ -15501,6 +15564,193 @@ static bool oem_record_read_names(CettaOpenEquationProgram *program, Atom *root)
     if (stack != inline_stack)
         free(stack);
     oem_atom_map_free(&visited);
+    return ok;
+}
+
+static bool oem_record_read_symbol(CettaOpenEquationProgram *program,
+                                   SymbolId sym) {
+    if (sym == SYMBOL_ID_NONE)
+        return true;
+    if (!oem_reserve((void **)&program->read_heads,
+                     &program->read_head_cap, program->read_head_len + 1u,
+                     sizeof(*program->read_heads)))
+        return false;
+    program->read_heads[program->read_head_len++] = sym;
+    return true;
+}
+
+static bool oem_atom_in_list(const Atom *atom, Atom *const *list,
+                             uint32_t len) {
+    for (uint32_t i = 0u; i < len; i++)
+        if (list[i] == atom)
+            return true;
+    return false;
+}
+
+/* Record every head symbol read by RHS.  Outside a generic host goal, every
+ * symbol in the syntax is watched; inside a generic host goal (whose cached
+ * PettaPlanNode is the only compiled dependence on its arguments), its outer
+ * head and every non-value sub-expression whose head had no equations are
+ * watched, while already-callable sub-expression heads mark
+ * `has_host_positive_heads` (valid under append-only growth). */
+static bool oem_record_rhs_read_names(
+        CettaOpenEquationProgram *program, Atom *rhs,
+        const PettaPlanNode *rhs_plan,
+        Atom *const *generic_host_exprs, uint32_t generic_host_len) {
+    typedef struct {
+        Atom *atom;
+        const PettaPlanNode *plan;
+        bool in_host;
+    } Item;
+    if (!rhs || !rhs_plan)
+        return oem_record_read_names(program, rhs);
+    Item inline_stack[32];
+    Item *stack = inline_stack;
+    size_t len = 0u, cap = 32u;
+    bool ok = true;
+    stack[len++] = (Item){rhs, rhs_plan, false};
+    while (len && ok) {
+        Item cur = stack[--len];
+        Atom *atom = cur.atom;
+        const PettaPlanNode *plan = cur.plan;
+        if (!atom) {
+            ok = false;
+            break;
+        }
+        if (cur.in_host) {
+            if (!plan || plan->role == PETTA_PLAN_VALUE ||
+                atom->kind != ATOM_EXPR)
+                continue;
+            if (atom->expr.len != plan->child_count) {
+                ok = oem_record_read_names(program, atom);
+                continue;
+            }
+            if (atom->expr.len > 0u &&
+                atom->expr.elems[0]->kind == ATOM_SYMBOL) {
+                if (!plan->relation_head_admitted)
+                    ok = oem_record_read_symbol(program,
+                                                atom->expr.elems[0]->sym_id);
+                else
+                    program->has_host_positive_heads = true;
+            }
+            if (!ok)
+                break;
+            size_t need = len + (size_t)atom->expr.len;
+            if (need > cap) {
+                size_t next = cap;
+                while (next < need && next <= SIZE_MAX / 2u)
+                    next *= 2u;
+                if (next < need || next > SIZE_MAX / sizeof(*stack)) {
+                    ok = false;
+                    break;
+                }
+                Item *grown = malloc(next * sizeof(*grown));
+                if (!grown) {
+                    ok = false;
+                    break;
+                }
+                memcpy(grown, stack, len * sizeof(*grown));
+                if (stack != inline_stack)
+                    free(stack);
+                stack = grown;
+                cap = next;
+            }
+            for (CettaExprIndex i = atom->expr.len; i-- > 1u;)
+                stack[len++] = (Item){atom->expr.elems[i],
+                                      petta_plan_child(plan, i), true};
+            continue;
+        }
+        if (atom->kind == ATOM_SYMBOL) {
+            ok = oem_record_read_symbol(program, atom->sym_id);
+            continue;
+        }
+        if (atom->kind != ATOM_EXPR)
+            continue;
+        if (plan && atom->expr.len == plan->child_count &&
+            oem_atom_in_list(atom, generic_host_exprs, generic_host_len)) {
+            if (atom->expr.len > 0u &&
+                atom->expr.elems[0]->kind == ATOM_SYMBOL)
+                ok = oem_record_read_symbol(program,
+                                            atom->expr.elems[0]->sym_id);
+            if (!ok)
+                break;
+            /* `add-atom`'s second argument is passed untranslated as data
+             * regardless of its plan; only the operator and space operand are
+             * read by this compiled program. */
+            if (atom->expr.len == 3u &&
+                atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.add_atom)) {
+                if (len + 1u > cap) {
+                    size_t next = cap * 2u;
+                    Item *grown = malloc(next * sizeof(*grown));
+                    if (!grown) {
+                        ok = false;
+                        break;
+                    }
+                    memcpy(grown, stack, len * sizeof(*grown));
+                    if (stack != inline_stack)
+                        free(stack);
+                    stack = grown;
+                    cap = next;
+                }
+                stack[len++] = (Item){atom->expr.elems[1],
+                                      petta_plan_child(plan, 1u), false};
+                continue;
+            }
+            size_t need = len + (size_t)atom->expr.len;
+            if (need > cap) {
+                size_t next = cap;
+                while (next < need && next <= SIZE_MAX / 2u)
+                    next *= 2u;
+                if (next < need || next > SIZE_MAX / sizeof(*stack)) {
+                    ok = false;
+                    break;
+                }
+                Item *grown = malloc(next * sizeof(*grown));
+                if (!grown) {
+                    ok = false;
+                    break;
+                }
+                memcpy(grown, stack, len * sizeof(*grown));
+                if (stack != inline_stack)
+                    free(stack);
+                stack = grown;
+                cap = next;
+            }
+            for (CettaExprIndex i = atom->expr.len; i-- > 1u;)
+                stack[len++] = (Item){atom->expr.elems[i],
+                                      petta_plan_child(plan, i), true};
+            continue;
+        }
+        if (!plan || atom->expr.len != plan->child_count) {
+            ok = oem_record_read_names(program, atom);
+            continue;
+        }
+        size_t need = len + (size_t)atom->expr.len;
+        if (need > cap) {
+            size_t next = cap;
+            while (next < need && next <= SIZE_MAX / 2u)
+                next *= 2u;
+            if (next < need || next > SIZE_MAX / sizeof(*stack)) {
+                ok = false;
+                break;
+            }
+            Item *grown = malloc(next * sizeof(*grown));
+            if (!grown) {
+                ok = false;
+                break;
+            }
+            memcpy(grown, stack, len * sizeof(*grown));
+            if (stack != inline_stack)
+                free(stack);
+            stack = grown;
+            cap = next;
+        }
+        for (CettaExprIndex i = atom->expr.len; i-- > 0u;)
+            stack[len++] = (Item){atom->expr.elems[i],
+                                  petta_plan_child(plan, i), false};
+    }
+    if (stack != inline_stack)
+        free(stack);
     return ok;
 }
 

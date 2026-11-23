@@ -15548,6 +15548,23 @@ static inline uint8_t space_mutation_projection_to_theory_roles(
     return roles;
 }
 
+static void space_head_clocks_notify_importers_rec(
+        Space *s, const SpaceHeadMutationNote *note, uint8_t roles,
+        uint32_t depth) {
+    if (!s || depth >= 16u)
+        return;
+    for (uint32_t i = 0u; i < s->importer_count; i++) {
+        Space *importer = s->importers[i];
+        if (!importer)
+            continue;
+        if (importer->head_clocks)
+            space_theory_note_mutation_slow(importer, note, roles);
+        if (importer->importer_count != 0u)
+            space_head_clocks_notify_importers_rec(
+                importer, note, roles, depth + 1u);
+    }
+}
+
 static __attribute__((noinline, cold)) void
 space_head_clocks_note_atom_and_importers_slow(
         Space *s, const Space *source, AtomId primary, const Atom *atom,
@@ -15564,11 +15581,8 @@ space_head_clocks_note_atom_and_importers_slow(
     uint8_t roles = space_mutation_projection_to_theory_roles(equation_projection);
     if (s->head_clocks)
         space_theory_note_mutation_slow(s, &note, roles);
-    for (uint32_t i = 0u; i < s->importer_count; i++) {
-        Space *importer = s->importers[i];
-        if (importer && importer->head_clocks)
-            space_theory_note_mutation_slow(importer, &note, roles);
-    }
+    if (s->importer_count != 0u)
+        space_head_clocks_notify_importers_rec(s, &note, roles, 0u);
 }
 
 static __attribute__((noinline, cold)) void
@@ -15584,11 +15598,8 @@ space_head_clocks_note_head_and_importers_slow(
     };
     if (s->head_clocks)
         space_theory_note_mutation_slow(s, &note, roles);
-    for (uint32_t i = 0u; i < s->importer_count; i++) {
-        Space *importer = s->importers[i];
-        if (importer && importer->head_clocks)
-            space_theory_note_mutation_slow(importer, &note, roles);
-    }
+    if (s->importer_count != 0u)
+        space_head_clocks_notify_importers_rec(s, &note, roles, 0u);
 }
 
 /* A module changed: every space importing it reads the change. */
@@ -21818,7 +21829,7 @@ static TypeStampSymbol *type_stamps_symbol(SymbolId symbol) {
  * `head` itself: no expression subject headed by it, no open row, no
  * headless row in the space. */
 bool space_type_rows_only_declare(Space *s, SymbolId head) {
-    if (!s || head == SYMBOL_ID_NONE)
+    if (!s || head == SYMBOL_ID_NONE || space_has_dependencies(s))
         return false;
     ensure_ty_ann_index(s);
     bool ok = !s->native.ty_idx_dirty && !s->native.ty_idx.has_open_rows &&
@@ -21832,7 +21843,7 @@ bool space_type_rows_only_declare(Space *s, SymbolId head) {
 }
 
 bool space_type_rows_type_no_expression_of(Space *s, SymbolId head) {
-    if (!s || head == SYMBOL_ID_NONE)
+    if (!s || head == SYMBOL_ID_NONE || space_has_dependencies(s))
         return false;
     ensure_ty_ann_index(s);
     if (s->native.ty_idx_dirty || s->native.ty_idx.has_open_rows ||

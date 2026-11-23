@@ -25028,6 +25028,9 @@ typedef struct PreparedPureCacheEntry {
     bool entry_arguments_are_values;
     bool total_structural_equality;
     bool admission_refused;
+    bool monotonic_effect_refusal;
+    uint64_t prefix_epoch;
+    uint64_t base_dependency_epoch;
     CettaPreparedPureProgram *program;
 } PreparedPureCacheEntry;
 
@@ -25267,6 +25270,34 @@ static void prepared_pure_backoff_refused(PreparedPureBackoffSlot *slot) {
 }
 
 
+static __attribute__((cold, noinline)) void prepared_pure_program_cache_clear_declines(
+    PreparedPureProgramCache *cache, const Space *space) {
+    if (!cache)
+        return;
+    SpaceReadToken live_read = space ? space_read_token(space) : (SpaceReadToken){0};
+    PreparedPureCacheEntry **link = &cache->entries;
+    while (*link) {
+        PreparedPureCacheEntry *entry = *link;
+        if (!entry->program &&
+            !(entry->monotonic_effect_refusal && space &&
+              entry->space == space &&
+              entry->prefix_epoch == live_read.prefix_epoch &&
+              entry->base_dependency_epoch == live_read.base_dependency_epoch)) {
+            *link = entry->next;
+            free(entry);
+        } else {
+            link = &entry->next;
+        }
+    }
+    cache->entry_generation++;
+    cache->backoff_epoch++;
+    cache->replay_len = 0u;
+    if (cache->replay_storage_ready) {
+        arena_free(&cache->replay_storage);
+        cache->replay_storage_ready = false;
+    }
+}
+
 static void prepared_pure_program_cache_clear_entries(
     PreparedPureProgramCache *cache) {
     if (!cache)
@@ -25381,11 +25412,18 @@ prepared_pure_program_cache_check_revision(
     uint64_t clock = space_global_program_epoch();
     if (cache->capability_revision == capability_revision &&
         cache->library_mask == library_mask && cache->profile == profile &&
-        cache->language == language &&
-        (space_theory_clock_guard_fast_current(
-             &cache->theory_guard, space, clock) ||
-         space_theory_clock_guard_rearm(&cache->theory_guard, space, clock))) {
-        return true;
+        cache->language == language) {
+        if (space_theory_clock_guard_fast_current(
+                &cache->theory_guard, space, clock) ||
+            space_theory_clock_guard_rearm(&cache->theory_guard, space, clock))
+            return true;
+        if (cache->theory_guard.token.space == space &&
+            cache->theory_guard.token.instance_id != 0u &&
+            cache->theory_guard.token.instance_id == space_instance_id(space)) {
+            prepared_pure_program_cache_clear_declines(cache, space);
+            space_theory_clock_guard_capture(&cache->theory_guard, space);
+            return cache->theory_guard.token.instance_id != 0u;
+        }
     }
     prepared_pure_program_cache_clear_entries(cache);
     space_theory_clock_guard_capture(&cache->theory_guard, space);
@@ -57708,7 +57746,8 @@ static CettaPreparedPureProgram *prepared_pure_program_cache_peek_current(
                 CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_NEGATIVE_CACHE_HIT);
             return NULL;
         }
-        if (cetta_prepared_pure_program_is_current(entry->program))
+        if (cetta_prepared_pure_program_is_current(entry->program) ||
+            cetta_prepared_pure_program_refresh(entry->program, space))
             return entry->program;
         *link = entry->next;
         cetta_prepared_pure_program_free(entry->program);
@@ -57763,7 +57802,8 @@ static CettaPreparedPureProgram *prepared_pure_program_cache_lookup(
                 CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_NEGATIVE_CACHE_HIT);
             return NULL;
         }
-        if (cetta_prepared_pure_program_is_current(entry->program) &&
+        if ((cetta_prepared_pure_program_is_current(entry->program) ||
+             cetta_prepared_pure_program_refresh(entry->program, space)) &&
             cetta_prepared_pure_program_rebind_closed_invocation(
                 entry->program, invocation)) {
             cetta_runtime_stats_inc(
@@ -57865,17 +57905,24 @@ static bool prepared_pure_program_cache_store_entry(
     const void *source_identity, CettaLanguageId language_id,
     CettaGsltPureCallMode call_mode, bool answer_producer,
     bool entry_arguments_are_values, bool total_structural_equality,
-    CettaPreparedPureProgram *program, bool admission_refused) {
+    CettaPreparedPureProgram *program, bool admission_refused,
+    bool monotonic_effect_refusal) {
     PreparedPureCacheEntry *entry = malloc(sizeof(*entry));
     if (!entry)
         return false;
+    SpaceReadToken read = monotonic_effect_refusal && space
+        ? space_read_token(space) : (SpaceReadToken){0};
     *entry = (PreparedPureCacheEntry){
         .next = cache->entries, .space = space, .head = head, .arity = arity,
         .source_identity = source_identity, .language_id = language_id,
         .call_mode = call_mode, .answer_producer = answer_producer,
         .entry_arguments_are_values = entry_arguments_are_values,
         .total_structural_equality = total_structural_equality,
-        .admission_refused = admission_refused, .program = program,
+        .admission_refused = admission_refused,
+        .monotonic_effect_refusal = monotonic_effect_refusal,
+        .prefix_epoch = read.prefix_epoch,
+        .base_dependency_epoch = read.base_dependency_epoch,
+        .program = program,
     };
     cache->entries = entry;
     cache->entry_generation++;
@@ -57911,7 +57958,7 @@ static bool prepared_pure_program_cache_insert(
     return prepared_pure_program_cache_store_entry(cache, space,
         call->expr.elems[0]->sym_id, call->expr.len - 1u, source_identity,
         language_id, call_mode, answer_producer, entry_arguments_are_values,
-        total_structural_equality, program, false);
+        total_structural_equality, program, false, false);
 }
 
 /* A source-qualified refusal has no operand payload to retain. */
@@ -57920,7 +57967,7 @@ static bool prepared_pure_program_cache_insert_decline_head(
     const void *source_identity, CettaLanguageId language_id,
     CettaGsltPureCallMode call_mode, bool answer_producer,
     bool entry_arguments_are_values, bool total_structural_equality,
-    bool admission_refused) {
+    bool admission_refused, bool monotonic_effect_refusal) {
     uint64_t capability_revision =
         language_id == CETTA_LANGUAGE_PETTA && g_library_context
             ? petta_libpl_capability_revision(g_library_context->lib_prolog) : 0u;
@@ -57928,7 +57975,8 @@ static bool prepared_pure_program_cache_insert_decline_head(
         prepared_pure_program_cache_prepare_revision(cache, space, capability_revision) &&
         prepared_pure_program_cache_store_entry(cache, space, head, arity,
             source_identity, language_id, call_mode, answer_producer,
-            entry_arguments_are_values, total_structural_equality, NULL, admission_refused);
+            entry_arguments_are_values, total_structural_equality, NULL,
+            admission_refused, monotonic_effect_refusal);
 }
 
 static bool prepared_pure_program_cache_insert_decline(
@@ -57941,7 +57989,7 @@ static bool prepared_pure_program_cache_insert_decline(
         prepared_pure_program_cache_insert_decline_head(cache, space,
             call->expr.elems[0]->sym_id, call->expr.len - 1u, source_identity,
             language_id, call_mode, answer_producer, entry_arguments_are_values,
-            total_structural_equality, false);
+            total_structural_equality, false, false);
 }
 
 /* Publish only the demands the compiler actually certified. A failed
@@ -58512,11 +58560,21 @@ static bool prepared_pure_closed_invocation_plan_checked(
             if (defined && program_cache &&
                 space_theory_token_matches_live_space(effect_source, space)) {
                 CettaLanguageId language = eval_current_language_id();
+                /* Effects outside PURE and RELATIONAL_QUERY (such as
+                 * WORLD_WRITE) are monotone under append-only growth: adding
+                 * definitions cannot remove an existing effect while the
+                 * space prefix and imported modules remain intact. */
+                bool monotonic_effect =
+                    !space->overlay_base &&
+                    ((unsigned)effect &
+                     ~(unsigned)(CETTA_GSLT_QUERY_EFFECT_PURE |
+                                 CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY)) != 0u;
                 (void)prepared_pure_program_cache_insert_decline_head(program_cache,
                     space, head->sym_id, arity, NULL, language,
                     language == CETTA_LANGUAGE_PRIME ? CETTA_GSLT_PURE_CALL_CALL_BY_NEED
                         : CETTA_GSLT_PURE_CALL_EAGER,
-                    false, true, active_composition_uses_total_structural_eq(), true);
+                    false, true, active_composition_uses_total_structural_eq(),
+                    true, monotonic_effect);
             }
             char reason[96] = "effect";
             if (prepared_pure_precheck_debug_enabled())
@@ -58789,6 +58847,254 @@ static bool he_prepared_completion_admit(Space *, Arena *,
     const CettaInvocation *, Atom *, bool, bool *);
 static void he_prepared_completion_finish(Arena *, OutcomeSet *, CettaCount, bool);
 
+#define MODULE_PURE_IMPORTER_SLOTS 8u
+#define MODULE_PURE_PROGRAM_CACHE_BOUND 128u
+
+typedef struct {
+    const Space *importer;
+    uint64_t importer_instance_id;
+    SpaceHeadSetStamp stamp;
+} ModulePureImporterStamp;
+
+typedef struct {
+    Space *module;
+    uint64_t module_instance_id;
+    SymbolId head;
+    CettaExprLen arity;
+    CettaLanguageId language_id;
+    CettaGsltPureCallMode call_mode;
+    bool total_structural_equality;
+    uint64_t library_mask;
+    const CettaProfile *profile;
+    uint64_t capability_revision;
+    CettaPreparedPureProgram *program;
+    ModulePureImporterStamp importers[MODULE_PURE_IMPORTER_SLOTS];
+    uint8_t next_importer_slot;
+    bool in_use;
+} ModulePureProgramEntry;
+
+typedef struct {
+    ModulePureProgramEntry *entries;
+    size_t len;
+    size_t cap;
+} ModulePureProgramCache;
+
+static void module_pure_program_cache_free(void *raw) {
+    ModulePureProgramCache *cache = raw;
+    if (!cache)
+        return;
+    for (size_t i = 0u; i < cache->len; i++)
+        cetta_prepared_pure_program_free(cache->entries[i].program);
+    free(cache->entries);
+    free(cache);
+}
+
+static __attribute__((cold, noinline)) bool module_pure_importer_protected(
+        ModulePureProgramEntry *entry, Space *importer,
+        const SymbolId *read_heads, uint32_t read_head_len) {
+    uint64_t imp_id = space_instance_id(importer);
+    if (imp_id == 0u)
+        return false;
+    for (uint32_t i = 0u; i < MODULE_PURE_IMPORTER_SLOTS; i++) {
+        ModulePureImporterStamp *slot = &entry->importers[i];
+        if (slot->importer == importer &&
+            slot->importer_instance_id == imp_id &&
+            slot->stamp.active &&
+            space_theory_head_set_clock_current(
+                importer, read_heads, read_head_len, &slot->stamp)) {
+            return true;
+        }
+    }
+    uint8_t roles = SPACE_THEORY_ROLE_RULES | SPACE_THEORY_ROLE_DECLS |
+                    SPACE_THEORY_ROLE_ALIAS;
+    if (!space_theory_import_protects_head_set(
+            importer, entry->module, read_heads, read_head_len, roles))
+        return false;
+    ModulePureImporterStamp *slot = NULL;
+    for (uint32_t i = 0u; i < MODULE_PURE_IMPORTER_SLOTS; i++) {
+        if (entry->importers[i].importer == importer) {
+            slot = &entry->importers[i];
+            break;
+        }
+    }
+    if (!slot) {
+        slot = &entry->importers[
+            entry->next_importer_slot++ % MODULE_PURE_IMPORTER_SLOTS];
+    }
+    *slot = (ModulePureImporterStamp){
+        .importer = importer,
+        .importer_instance_id = imp_id,
+    };
+    (void)space_theory_head_set_clock_capture(
+        importer, read_heads, read_head_len, roles, &slot->stamp);
+    return true;
+}
+
+static __attribute__((cold, noinline)) CettaPreparedPureProgram *module_pure_program_acquire(
+        CettaLibraryContext *ctx, Space *importer,
+        const PreparedPureClosedCallPlan *plan, Atom *call,
+        ModulePureProgramEntry **entry_out) {
+    if (entry_out)
+        *entry_out = NULL;
+    if (!ctx || !importer || !plan || !space_has_dependencies(importer) ||
+        importer->overlay_base || !plan->cacheable_program ||
+        !plan->cache_entry_arguments_are_values || plan->source_view.root ||
+        cetta_parallel_worker_active() ||
+        binding_value_is_contextual(plan->invocation.head) ||
+        !plan->invocation.head.skeleton ||
+        plan->invocation.head.skeleton->kind != ATOM_SYMBOL)
+        return NULL;
+    CettaExprLen arity = 0u;
+    if (!cetta_invocation_arity(&plan->invocation, &arity))
+        return NULL;
+    SymbolId head = plan->invocation.head.skeleton->sym_id;
+    Space *module = NULL;
+    uint32_t dep_count = space_dependency_count(importer);
+    for (uint32_t d = 0u; d < dep_count; d++) {
+        Space *dep = space_dependency_at(importer, d);
+        if (dep && !dep->overlay_base && !space_has_dependencies(dep) &&
+            space_equations_may_match_known_head(dep, head)) {
+            module = dep;
+            break;
+        }
+    }
+    if (!module)
+        return NULL;
+    uint64_t mod_id = space_instance_id(module);
+    if (mod_id == 0u)
+        return NULL;
+    uint64_t library_mask = ctx->active_mask;
+    const CettaProfile *profile = active_profile();
+    uint64_t capability_revision =
+        plan->language_id == CETTA_LANGUAGE_PETTA
+            ? petta_libpl_capability_revision(ctx->lib_prolog)
+            : 0u;
+
+    ModulePureProgramCache *cache = ctx->module_pure_programs;
+    if (cache) {
+        for (size_t i = 0u; i < cache->len; i++) {
+            ModulePureProgramEntry *entry = &cache->entries[i];
+            if (entry->module != module ||
+                entry->module_instance_id != mod_id ||
+                entry->head != head || entry->arity != arity ||
+                entry->language_id != plan->language_id ||
+                entry->call_mode != plan->call_mode ||
+                entry->total_structural_equality !=
+                    plan->total_structural_equality ||
+                entry->library_mask != library_mask ||
+                entry->profile != profile ||
+                entry->capability_revision != capability_revision)
+                continue;
+            if (entry->in_use)
+                return NULL;
+            if (!cetta_prepared_pure_program_refresh(entry->program, module) ||
+                !cetta_prepared_pure_program_module_shareable(entry->program)) {
+                cetta_prepared_pure_program_free(entry->program);
+                cache->entries[i] = cache->entries[--cache->len];
+                break;
+            }
+            uint32_t read_head_len = 0u;
+            const SymbolId *read_heads =
+                cetta_prepared_pure_program_read_heads(
+                    entry->program, &read_head_len);
+            if (!read_heads || read_head_len == 0u ||
+                !module_pure_importer_protected(
+                    entry, importer, read_heads, read_head_len))
+                return NULL;
+            if (!cetta_prepared_pure_program_rebind_closed_invocation(
+                    entry->program, &plan->invocation))
+                return NULL;
+            entry->in_use = true;
+            if (entry_out)
+                *entry_out = entry;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_PROGRAM_CACHE_HIT);
+            return entry->program;
+        }
+    }
+
+    uint8_t roles = SPACE_THEORY_ROLE_RULES | SPACE_THEORY_ROLE_DECLS |
+                    SPACE_THEORY_ROLE_ALIAS;
+    if (!call ||
+        !space_theory_import_protects_head_set(
+            importer, module, &head, 1u, roles))
+        return NULL;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_COMPILE_ATTEMPT);
+    CettaPreparedPureProgram *compiled =
+        cetta_prepared_pure_program_compile_closed(
+            module, call, plan->call_mode, plan->boolean_value,
+            plan->construct_value, plan->constructs_expression,
+            plan->opaque_value, plan->register_view,
+            plan->expression_view, plan->pattern_view,
+            &plan->source_view, true, plan->total_structural_equality,
+            prepared_pure_match_decision_semantics(plan->call_mode), NULL);
+    if (!compiled)
+        return NULL;
+    uint32_t read_head_len = 0u;
+    const SymbolId *read_heads =
+        cetta_prepared_pure_program_read_heads(compiled, &read_head_len);
+    if (!cetta_prepared_pure_program_module_shareable(compiled) ||
+        !read_heads || read_head_len == 0u ||
+        !space_theory_import_protects_head_set(
+            importer, module, read_heads, read_head_len, roles)) {
+        cetta_prepared_pure_program_free(compiled);
+        return NULL;
+    }
+    if (!cache) {
+        cache = calloc(1u, sizeof(*cache));
+        if (!cache) {
+            cetta_prepared_pure_program_free(compiled);
+            return NULL;
+        }
+        ctx->module_pure_programs = cache;
+        ctx->module_pure_programs_free = module_pure_program_cache_free;
+    }
+    if (cache->len >= MODULE_PURE_PROGRAM_CACHE_BOUND) {
+        bool any_in_use = false;
+        for (size_t i = 0u; i < cache->len; i++)
+            any_in_use |= cache->entries[i].in_use;
+        if (!any_in_use) {
+            for (size_t i = 0u; i < cache->len; i++)
+                cetta_prepared_pure_program_free(cache->entries[i].program);
+            cache->len = 0u;
+        } else {
+            cetta_prepared_pure_program_free(compiled);
+            return NULL;
+        }
+    }
+    if (cache->len == cache->cap) {
+        size_t next_cap = cache->cap ? cache->cap * 2u : 8u;
+        ModulePureProgramEntry *grown = realloc(
+            cache->entries, next_cap * sizeof(*grown));
+        if (!grown) {
+            cetta_prepared_pure_program_free(compiled);
+            return NULL;
+        }
+        cache->entries = grown;
+        cache->cap = next_cap;
+    }
+    ModulePureProgramEntry *entry = &cache->entries[cache->len++];
+    *entry = (ModulePureProgramEntry){
+        .module = module,
+        .module_instance_id = mod_id,
+        .head = head,
+        .arity = arity,
+        .language_id = plan->language_id,
+        .call_mode = plan->call_mode,
+        .total_structural_equality = plan->total_structural_equality,
+        .library_mask = library_mask,
+        .profile = profile,
+        .capability_revision = capability_revision,
+        .program = compiled,
+        .in_use = true,
+    };
+    (void)module_pure_importer_protected(entry, importer, read_heads, read_head_len);
+    if (entry_out)
+        *entry_out = entry;
+    return compiled;
+}
+
 static bool prepared_pure_closed_invocation_try(
     Space *space, Arena *destination, const CettaInvocation *invocation,
     Atom *call, int fuel,
@@ -58949,8 +59255,15 @@ static bool prepared_pure_closed_invocation_try(
         return false;
     }
     if (language_id == CETTA_LANGUAGE_HE &&
-        (!space || space->overlay_base || space_has_dependencies(space))) {
+        (!space || space->overlay_base)) {
         return false;
+    }
+    ModulePureProgramEntry *module_shared_entry = NULL;
+    if (!program && space_has_dependencies(space) && g_library_context) {
+        program = module_pure_program_acquire(
+            g_library_context, space, &plan, call, &module_shared_entry);
+        if (program)
+            program_is_cached = true;
     }
     CettaPreparedPureCompileReport compilation = {0};
     uint64_t generation = program_cache ? program_cache->entry_generation : 0u;
@@ -58994,7 +59307,9 @@ static bool prepared_pure_closed_invocation_try(
             prepared_pure_program_cache_refusal_current(
                 program_cache, space, language_id, generation);
         cetta_prepared_pure_program_clear_closed_entry_call(program);
-        if (program_is_cached)
+        if (module_shared_entry)
+            module_shared_entry->in_use = false;
+        else if (program_is_cached)
             prepared_pure_program_cache_remove(program_cache, program);
         else
             cetta_prepared_pure_program_free(program);
@@ -59016,7 +59331,9 @@ static bool prepared_pure_closed_invocation_try(
         !he_prepared_completion_admit(space, destination, &plan.invocation,
             call, cache_entry_arguments_are_values, &he_completed_result)) {
         cetta_prepared_pure_program_clear_closed_entry_call(program);
-        if (!program_is_cached)
+        if (module_shared_entry)
+            module_shared_entry->in_use = false;
+        else if (!program_is_cached)
             cetta_prepared_pure_program_free(program);
         return false;
     }
@@ -59082,6 +59399,8 @@ static bool prepared_pure_closed_invocation_try(
     }
     cetta_prepared_pure_program_release_closed_execution(program);
     cetta_prepared_pure_program_clear_closed_entry_call(program);
+    if (module_shared_entry)
+        module_shared_entry->in_use = false;
     if (machine_arena_is_local)
         arena_free(machine_arena);
     else

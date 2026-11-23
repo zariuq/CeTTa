@@ -985,6 +985,19 @@ struct CettaPreparedPureProgram {
     /* A failed structural inspection supplies no stable compiler refusal. */
     bool compile_inspection_incomplete;
 
+    /* Cold per-head refresh metadata: kept at the end so execution-hot
+     * frames, values, slots, and memo state preserve their cache layout. */
+    SpaceReadToken source_atoms;
+    CettaCount source_atom_count;
+    uint64_t source_module_dep_epoch;
+    SymbolId read_heads_inline[16];
+    SymbolId *read_heads;
+    uint32_t read_head_len;
+    uint32_t read_head_cap;
+    bool read_heads_complete;
+    bool read_depends_on_all_decls;
+    SpaceHeadSetStamp head_stamp;
+
 };
 
 enum {
@@ -1161,6 +1174,108 @@ static _Thread_local const Arena *g_prepared_pure_stamp_arena;
 static inline bool prepared_pure_source_current(
     CettaPreparedPureProgram *program) {
     return space_theory_atomic_clock_guard_is_current(&program->source_theory);
+}
+
+static void prepared_pure_note_read_head(CettaPreparedPureProgram *program,
+                                         SymbolId head) {
+    if (!program || !program->read_heads_complete || head == SYMBOL_ID_NONE)
+        return;
+    if (program->read_head_len <= 16u) {
+        for (uint32_t i = 0u; i < program->read_head_len; i++) {
+            if (program->read_heads[i] == head)
+                return;
+        }
+    }
+    if (program->read_head_len >= program->read_head_cap) {
+        uint32_t next_cap = program->read_head_cap
+            ? (program->read_head_cap * 2u) : 16u;
+        if (next_cap < program->read_head_len + 1u ||
+            next_cap > (uint32_t)(SIZE_MAX / sizeof(*program->read_heads))) {
+            program->read_heads_complete = false;
+            return;
+        }
+        SymbolId *grown = NULL;
+        if (program->read_heads == program->read_heads_inline) {
+            grown = malloc((size_t)next_cap * sizeof(*grown));
+            if (grown)
+                memcpy(grown, program->read_heads_inline,
+                       (size_t)program->read_head_len * sizeof(*grown));
+        } else {
+            grown = realloc(program->read_heads,
+                            (size_t)next_cap * sizeof(*grown));
+        }
+        if (!grown) {
+            program->read_heads_complete = false;
+            return;
+        }
+        program->read_heads = grown;
+        program->read_head_cap = next_cap;
+    }
+    program->read_heads[program->read_head_len++] = head;
+}
+
+static int prepared_pure_read_head_compare(const void *left,
+                                           const void *right) {
+    SymbolId a = *(const SymbolId *)left;
+    SymbolId b = *(const SymbolId *)right;
+    return (a > b) - (a < b);
+}
+
+static bool prepared_pure_reads_head(const CettaPreparedPureProgram *program,
+                                     SymbolId head) {
+    if (!program || !program->read_heads || program->read_head_len == 0u ||
+        head == SYMBOL_ID_NONE)
+        return false;
+    uint32_t lo = 0u, hi = program->read_head_len;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2u;
+        if (program->read_heads[mid] < head)
+            lo = mid + 1u;
+        else
+            hi = mid;
+    }
+    return lo < program->read_head_len && program->read_heads[lo] == head;
+}
+
+static __attribute__((cold, noinline)) void prepared_pure_read_heads_finish(CettaPreparedPureProgram *program) {
+    if (!program || !program->read_heads_complete)
+        return;
+    for (size_t i = 0u; i < program->head_len; i++)
+        prepared_pure_note_read_head(program, program->heads[i].head);
+    for (size_t i = 0u; i < program->owned_source_len; i++)
+        prepared_pure_note_read_head(program, program->owned_sources[i].head);
+    if (!program->read_heads_complete || program->read_head_len == 0u)
+        return;
+    if (program->read_head_len <= 32u) {
+        for (uint32_t i = 1u; i < program->read_head_len; i++) {
+            SymbolId key = program->read_heads[i];
+            uint32_t j = i;
+            while (j > 0u && program->read_heads[j - 1u] > key) {
+                program->read_heads[j] = program->read_heads[j - 1u];
+                j--;
+            }
+            program->read_heads[j] = key;
+        }
+    } else {
+        qsort(program->read_heads, program->read_head_len,
+              sizeof(*program->read_heads), prepared_pure_read_head_compare);
+    }
+    uint32_t unique = 1u;
+    for (uint32_t i = 1u; i < program->read_head_len; i++) {
+        if (program->read_heads[i] != program->read_heads[unique - 1u])
+            program->read_heads[unique++] = program->read_heads[i];
+    }
+    program->read_head_len = unique;
+    /* Only arm per-head version counters eagerly when this space already has
+     * head clocks active; 1-shot programs keep `head_clocks == NULL`. */
+    if (program->space && !program->space->overlay_base &&
+        program->space->head_clocks != NULL) {
+        (void)space_theory_head_set_clock_capture(
+            program->space, program->read_heads, program->read_head_len,
+            SPACE_THEORY_ROLE_RULES | SPACE_THEORY_ROLE_DECLS |
+                SPACE_THEORY_ROLE_ALIAS,
+            &program->head_stamp);
+    }
 }
 
 bool cetta_prepared_pure_stamp_arena_epoch(const Atom *atom, uint32_t *arena,
@@ -4083,6 +4198,7 @@ static PreparedPureHeadRole prepared_pure_head_role(
         return PREPARED_PURE_HEAD_CALLABLE;
     }
     bool defined = false;
+    prepared_pure_note_read_head(program, head->sym_id);
     (void)space_query_effect_for_head(
         program->space, head->sym_id, &defined);
     return defined || space_equations_may_match_known_head(
@@ -5451,6 +5567,7 @@ static bool prepared_pure_try_inline_syntax_consumer(
         syntax_index = i;
     }
     SymbolId head = call->expr.elems[0]->sym_id;
+    prepared_pure_note_read_head(program, head);
     if (syntax_index == arity ||
         !prepared_pure_head_takes_values(program->space, head, arity))
         return true;
@@ -5609,6 +5726,8 @@ static bool prepared_pure_ground_data(CettaPreparedPureProgram *program,
             continue;
         Atom *head = node->expr.elems[0];
         SpaceTheoryView view = space_theory_view_borrow(program->space);
+        if (head && head->kind == ATOM_SYMBOL)
+            prepared_pure_note_read_head(program, head->sym_id);
         if (!head || head->kind != ATOM_SYMBOL ||
             prepared_pure_head_role(program, node) != PREPARED_PURE_HEAD_INERT ||
             space_theory_view_head_declares_type(&view, head->sym_id) ||
@@ -5845,6 +5964,7 @@ static bool prepared_pure_owned_source(
 }
 static bool prepared_pure_owned_builtin(
     CettaPreparedPureProgram *program, SymbolId head, CettaExprLen arity) {
+    prepared_pure_note_read_head(program, head);
     SpaceTheoryView view = space_theory_view_borrow(program->space);
     return prepared_pure_owned_source(program, head, arity) &&
         !space_theory_view_head_declares_type(&view, head) &&
@@ -7101,6 +7221,7 @@ static bool prepared_pure_compile_eval_with_role_in_source(
     CettaGsltRegisterResultKind result_kind;
     CettaGsltRegisterInstruction instruction;
     CettaGsltPreparedPureIntrinsicInstruction intrinsic_instruction;
+    prepared_pure_note_read_head(program, head);
     /* A PeTTa space's own equations for a builtin head are how that space
      * evaluates it (in &self the builtin is protected): the canonical
      * evaluator applies that policy. */
@@ -7269,6 +7390,7 @@ static bool prepared_pure_compile_eval_with_role_in_source(
             return prepared_pure_reject(
                 program, "declared constructor signature decides argument demand",
                 source);
+        program->read_depends_on_all_decls = true;
         uint32_t *children = NULL;
         if (!prepared_pure_compile_children(
                 program, context, source->expr.elems, source->expr.len,
@@ -8289,6 +8411,8 @@ static bool prepared_pure_compile_head(
     SpaceTheoryView view = space_theory_view_borrow(program->space);
     head->declares_type =
         space_theory_view_head_declares_type(&view, head->head);
+    if (head->declares_type || head->typed)
+        program->read_depends_on_all_decls = true;
     SpaceEquationCursor cursor;
     if (!space_equation_cursor_init(program->space, head->head, &cursor))
         return false;
@@ -11836,6 +11960,13 @@ static CettaPreparedPureProgram *prepared_pure_program_new(
     /* Read clock before token via SpaceTheoryAtomicClockGuard. */
     space_theory_atomic_clock_guard_capture(&program->source_theory, space);
     program->equation_projection = space_equation_token(space);
+    program->source_atoms = space_read_token(space);
+    program->source_atom_count = space_rule_rows64(space);
+    program->source_module_dep_epoch =
+        atomic_load_explicit(&space->module_dependency_epoch, memory_order_relaxed);
+    program->read_heads = program->read_heads_inline;
+    program->read_head_cap = 16u;
+    program->read_heads_complete = true;
     program->boolean_value = boolean_value;
     if (!prepared_pure_cache_boolean_atoms(program)) {
         cetta_prepared_pure_program_free(program);
@@ -11901,6 +12032,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
         return NULL;
     }
     program->accepts_open_values = prepared_pure_open_value_program(program);
+    prepared_pure_read_heads_finish(program);
     return program;
 }
 
@@ -16165,6 +16297,7 @@ prepared_pure_program_compile_closed_mode(
         cetta_prepared_pure_program_free(program);
         return NULL;
     }
+    prepared_pure_read_heads_finish(program);
     if (report)
         report->status = CETTA_PREPARED_PURE_COMPILE_READY;
     return program;
@@ -16272,6 +16405,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_body_answers(
         cetta_prepared_pure_program_free(program);
         return NULL;
     }
+    prepared_pure_read_heads_finish(program);
     return program;
 }
 
@@ -16321,6 +16455,123 @@ bool cetta_prepared_pure_program_is_current(
                 program->space, program->owned_sources[i].head,
                 program->owned_sources[i].arity))
             return false;
+    return true;
+}
+
+const SymbolId *cetta_prepared_pure_program_read_heads(
+        const CettaPreparedPureProgram *program, uint32_t *count_out) {
+    if (count_out)
+        *count_out = 0u;
+    if (!program || !program->read_heads_complete ||
+        !program->read_heads || program->read_head_len == 0u)
+        return NULL;
+    if (count_out)
+        *count_out = program->read_head_len;
+    return program->read_heads;
+}
+
+bool cetta_prepared_pure_program_module_shareable(
+        const CettaPreparedPureProgram *program) {
+    return program && program->closed_program && !program->answer_producer &&
+           program->entry_head != SYMBOL_ID_NONE &&
+           program->read_heads_complete && program->read_heads != NULL &&
+           program->read_head_len > 0u &&
+           !program->read_depends_on_all_decls &&
+           !program->return_checks && !program->structural_checks &&
+           !program->has_native_calls &&
+           program->owned_source_len == 0u;
+}
+
+bool cetta_prepared_pure_program_refresh(
+        CettaPreparedPureProgram *program, Space *space) {
+    if (!program || !space || program->space != space)
+        return false;
+    if (cetta_prepared_pure_program_is_current(program))
+        return true;
+    for (size_t i = 0u; i < program->owned_source_len; i++) {
+        if (!program->source_view.source_call_owned ||
+            !program->source_view.source_call_owned(
+                space, program->owned_sources[i].head,
+                program->owned_sources[i].arity))
+            return false;
+    }
+    if (!program->read_heads_complete || !program->read_heads ||
+        program->read_head_len == 0u || space->overlay_base ||
+        space->match_backend.kind != SPACE_ENGINE_NATIVE ||
+        program->source_theory.token.instance_id == 0u ||
+        program->source_theory.token.instance_id != space_instance_id(space))
+        return false;
+    if (program->read_depends_on_all_decls &&
+        space_declaration_revision(space) !=
+            program->source_theory.token.declaration_revision)
+        return false;
+
+    uint64_t clock = space_global_program_epoch();
+    SpaceTheoryToken now_theory = space_theory_token(space);
+    SpaceReadToken now_atoms = space_read_token(space);
+    CettaCount count = space_rule_rows64(space);
+    uint64_t dep_epoch = atomic_load_explicit(
+        &space->module_dependency_epoch, memory_order_relaxed);
+    SpaceHeadSetStamp next_stamp = program->head_stamp;
+
+    bool head_clock_hit =
+        program->head_stamp.active &&
+        space_theory_head_set_clock_current(
+            space, program->read_heads, program->read_head_len,
+            &program->head_stamp);
+    if (!head_clock_hit) {
+        if (!space_read_token_prefix_intact(program->source_atoms) ||
+            program->source_atom_count > count ||
+            dep_epoch != program->source_module_dep_epoch)
+            return false;
+        for (CettaIndex idx = program->source_atom_count; idx < count; idx++) {
+            Atom *atom = space_get_at64(space, idx);
+            if (!atom)
+                return false;
+            SymbolId head = SYMBOL_ID_NONE;
+            bool compound_subject = false;
+            SpaceTheoryAtomKind kind = space_theory_classify_atom(
+                atom, &head, &compound_subject);
+            switch (kind) {
+            case SPACE_THEORY_ATOM_DATA:
+                continue;
+            case SPACE_THEORY_ATOM_SUBTYPE_ASSIGNMENT:
+            case SPACE_THEORY_ATOM_EQUATION:
+                return false;
+            case SPACE_THEORY_ATOM_DEFINITION:
+            case SPACE_THEORY_ATOM_DIRECTIONAL_DEFINITION:
+                if (head == SYMBOL_ID_NONE ||
+                    prepared_pure_reads_head(program, head))
+                    return false;
+                break;
+            case SPACE_THEORY_ATOM_TYPE_ASSIGNMENT:
+                if (compound_subject)
+                    continue;
+                if (head == SYMBOL_ID_NONE ||
+                    prepared_pure_reads_head(program, head))
+                    return false;
+                break;
+            }
+        }
+        (void)space_theory_head_set_clock_capture(
+            space, program->read_heads, program->read_head_len,
+            SPACE_THEORY_ROLE_RULES | SPACE_THEORY_ROLE_DECLS |
+                SPACE_THEORY_ROLE_ALIAS,
+            &next_stamp);
+    }
+    if (!space_read_token_matches_live_space(now_atoms, space) ||
+        !space_theory_token_matches_live_space(now_theory, space))
+        return false;
+    program->source_theory.token = now_theory;
+    atomic_store_explicit(
+        &program->source_theory.program_clock,
+        space_theory_token_cacheable(now_theory) ? clock : UINT64_MAX,
+        memory_order_relaxed);
+    program->equation_projection = space_equation_token(space);
+    program->source_atoms = now_atoms;
+    program->source_atom_count = count;
+    program->source_module_dep_epoch = dep_epoch;
+    program->head_stamp = next_stamp;
     return true;
 }
 
@@ -22730,6 +22981,8 @@ void cetta_prepared_pure_program_free(
     ppn_free(program->native);
     free(program->native_guard_heads);
     free(program->owned_sources);
+    if (program->read_heads != program->read_heads_inline)
+        free(program->read_heads);
     free(program->answer_shapes);
     free(program->nodes);
     free(program->node_sources);

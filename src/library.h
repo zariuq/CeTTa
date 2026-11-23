@@ -273,6 +273,15 @@ typedef struct CettaLibraryContext {
      * through `petta_open_programs_free`. */
     void *petta_open_programs;
     void (*petta_open_programs_free)(void *programs);
+    /* Module-compiled prepared-pure programs shared across importers that add
+     * nothing on their dependency heads.  Owned by the evaluator, freed
+     * through `module_pure_programs_free`. */
+    void *module_pure_programs;
+    void (*module_pure_programs_free)(void *programs);
+    /* Space-compiled tcalc programs guarded by per-head version counters.
+     * Owned by the tcalc module, freed through `tcalc_space_cache_free`. */
+    void *tcalc_space_cache;
+    void (*tcalc_space_cache_free)(void *cache);
     /* The search machine's compiled match decisions, kept for the session
      * per space; owned by the evaluator, which frees them through
      * `petta_match_decisions_free`. */

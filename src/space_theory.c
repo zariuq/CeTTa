@@ -1095,6 +1095,109 @@ bool space_theory_import_protects_head(
     return true;
 }
 
+static bool space_head_set_contains(const SymbolId *heads, uint32_t head_count,
+                                    SymbolId target) {
+    if (!heads || head_count == 0u || target == SYMBOL_ID_NONE)
+        return false;
+    uint32_t lo = 0u, hi = head_count;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2u;
+        if (heads[mid] < target)
+            lo = mid + 1u;
+        else
+            hi = mid;
+    }
+    return lo < head_count && heads[lo] == target;
+}
+
+static bool space_own_atoms_touch_head_set(const Space *s,
+                                           const SymbolId *sorted_heads,
+                                           uint32_t head_count,
+                                           uint8_t roles) {
+    if (!s || !sorted_heads || head_count == 0u || roles == 0u)
+        return false;
+    CettaIndex begin = space_imported_length(s);
+    CettaCount len = space_length64(s);
+    for (CettaIndex i = begin; i < len; i++) {
+        Atom *atom = space_get_at64(s, i);
+        if (!atom)
+            return true;
+        if (atom_is_outer_open(atom)) {
+            if ((roles & (SPACE_THEORY_ROLE_RULES | SPACE_THEORY_ROLE_DECLS |
+                          SPACE_THEORY_ROLE_DATA)) != 0u)
+                return true;
+            continue;
+        }
+        SymbolId atom_head = SYMBOL_ID_NONE;
+        SpaceTheoryAtomKind kind =
+            space_theory_classify_atom(atom, &atom_head, NULL);
+        switch (kind) {
+        case SPACE_THEORY_ATOM_DATA:
+            if ((roles & SPACE_THEORY_ROLE_DATA) != 0u &&
+                space_head_set_contains(sorted_heads, head_count,
+                                        space_theory_data_atom_head(atom)))
+                return true;
+            break;
+        case SPACE_THEORY_ATOM_DEFINITION:
+        case SPACE_THEORY_ATOM_DIRECTIONAL_DEFINITION:
+            if ((roles & SPACE_THEORY_ROLE_RULES) != 0u &&
+                (atom_head == SYMBOL_ID_NONE ||
+                 space_head_set_contains(sorted_heads, head_count, atom_head)))
+                return true;
+            break;
+        case SPACE_THEORY_ATOM_TYPE_ASSIGNMENT:
+            if ((roles & SPACE_THEORY_ROLE_DECLS) != 0u &&
+                (atom_head == SYMBOL_ID_NONE ||
+                 space_head_set_contains(sorted_heads, head_count, atom_head)))
+                return true;
+            break;
+        case SPACE_THEORY_ATOM_SUBTYPE_ASSIGNMENT:
+            if ((roles & SPACE_THEORY_ROLE_DECLS) != 0u)
+                return true;
+            break;
+        case SPACE_THEORY_ATOM_EQUATION:
+            if ((roles & SPACE_THEORY_ROLE_ALIAS) != 0u)
+                return true;
+            break;
+        }
+    }
+    return false;
+}
+
+bool space_theory_import_protects_head_set(
+        const Space *importer, const Space *module,
+        const SymbolId *heads, uint32_t head_count, uint8_t roles) {
+    roles &= SPACE_THEORY_ROLE_ALL;
+    if (!importer || !module || !heads || head_count == 0u || roles == 0u)
+        return false;
+    if (importer == module)
+        return true;
+    CETTA_SCOPED_SPACES2(protect_guard,
+                         importer, space_observation_mode(importer),
+                         module, space_observation_mode(module));
+    if (importer->overlay_base != NULL)
+        return false;
+    bool imports_module = false;
+    uint32_t dep_count = space_dependency_count(importer);
+    for (uint32_t d = 0u; d < dep_count; d++) {
+        if (space_dependency_at(importer, d) == module) {
+            imports_module = true;
+            break;
+        }
+    }
+    if (!imports_module)
+        return false;
+    if (space_own_atoms_touch_head_set(importer, heads, head_count, roles))
+        return false;
+    for (uint32_t d = 0u; d < dep_count; d++) {
+        const Space *dep = space_dependency_at(importer, d);
+        if (dep && dep != module &&
+            space_own_atoms_touch_head_set(dep, heads, head_count, roles))
+            return false;
+    }
+    return true;
+}
+
 /* ── Per-Head Validity Guard Constructor ────────────────────────────────── */
 
 SpaceRegionGuard space_region_guard_for_head(

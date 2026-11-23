@@ -34,3 +34,25 @@
 (: __cetta_lib_tcalc_query (-> Atom Atom Atom Atom))
 (= (tcalc:query $program $profile $pattern)
    (function (chain (eval (__cetta_lib_tcalc_query $program $profile $pattern)) $result (return $result))))
+
+; Compile a space's reachable first-order function definitions to demand-driven
+; tcalc rules guarded by per-head version counters, run the call under
+; (store set) (step every), and return the expression of derived values.
+(: tcalc:space-eval (-> %Undefined% Atom Atom))
+(: __cetta_lib_tcalc_space_eval (-> Atom Atom Atom))
+(= (tcalc:space-eval $space $call)
+   (function (chain (eval (__cetta_lib_tcalc_space_eval $space $call)) $result (return $result))))
+
+; Return the compiled canonical tcalc program for a space's definitions rooted
+; at the given head symbol (reusing the per-head version-guarded cache).
+(: tcalc:space-program (-> %Undefined% Atom Atom))
+(: __cetta_lib_tcalc_space_program (-> Atom Atom Atom))
+(= (tcalc:space-program $space $head)
+   (function (chain (eval (__cetta_lib_tcalc_space_program $space $head)) $result (return $result))))
+
+; Inspect the per-head version-guarded cache for a space and head symbol:
+; returns (tcalc-cache-stats (compiles N) (hits M) (deps (h1 h2 ...))).
+(: tcalc:space-cache-stats (-> %Undefined% Atom Atom))
+(: __cetta_lib_tcalc_space_cache_stats (-> Atom Atom Atom))
+(= (tcalc:space-cache-stats $space $head)
+   (function (chain (eval (__cetta_lib_tcalc_space_cache_stats $space $head)) $result (return $result))))

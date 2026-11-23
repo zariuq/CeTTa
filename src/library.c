@@ -691,6 +691,14 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
         ctx->petta_open_programs_free(ctx->petta_open_programs);
     ctx->petta_open_programs = NULL;
     ctx->petta_open_programs_free = NULL;
+    if (ctx->module_pure_programs_free)
+        ctx->module_pure_programs_free(ctx->module_pure_programs);
+    ctx->module_pure_programs = NULL;
+    ctx->module_pure_programs_free = NULL;
+    if (ctx->tcalc_space_cache_free)
+        ctx->tcalc_space_cache_free(ctx->tcalc_space_cache);
+    ctx->tcalc_space_cache = NULL;
+    ctx->tcalc_space_cache_free = NULL;
     if (ctx->petta_match_decisions_free)
         ctx->petta_match_decisions_free(ctx->petta_match_decisions);
     ctx->petta_match_decisions = NULL;
@@ -9530,11 +9538,12 @@ static bool load_module_mm2_file_into_mork_bridge(CettaLibraryContext *ctx,
 /* A syntax failure does not suppress effects of the complete prefix.
  * Parsing and statement execution retain their established implementations. */
 /* import-as!: a module's own definitions are read under the importer's
- * prefix.  The module defines the heads of its equations; their type
- * declarations and every other occurrence in the document follow them.
- * When all the qualified names it defines share one namespace, the prefix
- * replaces that namespace (mg:new-theory read as m:new-theory); otherwise
- * the prefix is put before each name. */
+ * prefix.  The module introduces the heads of its function definitions (`=`
+ * and `=%`), type assignments (`:`), subtype assignments (`:<`), and
+ * equation members (`=e`, `=e>`, `=e<`); every occurrence in the document
+ * follows them.  When all the qualified names it introduces share one
+ * namespace, the prefix replaces that namespace (mg:new-theory read as
+ * m:new-theory); otherwise the prefix is put before each name. */
 typedef struct {
     SymbolId from;
     SymbolId to;
@@ -9558,22 +9567,93 @@ static int import_as_rename_order(const void *left, const void *right) {
     return a < b ? -1 : a > b;
 }
 
-static SymbolId import_as_defined_head(TermUniverse *universe, AtomId id) {
-    if (tu_kind(universe, id) != ATOM_EXPR || tu_arity(universe, id) != 3u)
-        return SYMBOL_ID_NONE;
-    AtomId equals = tu_child(universe, id, 0u);
-    if (tu_kind(universe, equals) != ATOM_SYMBOL ||
-        tu_sym(universe, equals) != g_builtin_syms.equals)
-        return SYMBOL_ID_NONE;
-    AtomId lhs = tu_child(universe, id, 1u);
-    if (tu_kind(universe, lhs) == ATOM_SYMBOL)
-        return tu_sym(universe, lhs);
-    if (tu_kind(universe, lhs) == ATOM_EXPR && tu_arity(universe, lhs) > 0u) {
-        AtomId head = tu_child(universe, lhs, 0u);
-        if (tu_kind(universe, head) == ATOM_SYMBOL)
-            return tu_sym(universe, head);
+static bool import_as_symbol_renameable(SymbolId sym) {
+    if (sym == SYMBOL_ID_NONE || sym == g_builtin_syms.self ||
+        symbol_id_is_builtin(sym) || space_theory_is_theory_head(sym))
+        return false;
+    const char *name = g_symbols ? symbol_bytes(g_symbols, sym) : NULL;
+    if (!name || !name[0])
+        return false;
+    if (strncmp(name, "__cetta_", 8u) == 0)
+        return false;
+    if (strcmp(name, "->") == 0 || strcmp(name, "Atom") == 0 ||
+        strcmp(name, "Symbol") == 0 || strcmp(name, "Variable") == 0 ||
+        strcmp(name, "Expression") == 0 || strcmp(name, "Grounded") == 0 ||
+        strcmp(name, "Type") == 0 || strcmp(name, "Number") == 0 ||
+        strcmp(name, "String") == 0 || strcmp(name, "Bool") == 0 ||
+        strcmp(name, "SpaceType") == 0 || strcmp(name, "%Undefined%") == 0 ||
+        strcmp(name, "True") == 0 || strcmp(name, "False") == 0 ||
+        strcmp(name, "true") == 0 || strcmp(name, "false") == 0 ||
+        strcmp(name, "Empty") == 0 || strcmp(name, "Error") == 0)
+        return false;
+    return true;
+}
+
+static bool import_as_push_symbol(ImportAsRename **pairs, uint32_t *len,
+                                  uint32_t *cap, SymbolId sym) {
+    if (!import_as_symbol_renameable(sym))
+        return true;
+    if (*len >= *cap) {
+        uint32_t next_cap = *cap ? (*cap * 2u) : 16u;
+        ImportAsRename *next = realloc(*pairs, sizeof(*next) * next_cap);
+        if (!next)
+            return false;
+        *pairs = next;
+        *cap = next_cap;
     }
-    return SYMBOL_ID_NONE;
+    (*pairs)[(*len)++] = (ImportAsRename){.from = sym};
+    return true;
+}
+
+static bool import_as_collect_defined_symbols(TermUniverse *universe, AtomId id,
+                                              ImportAsRename **pairs,
+                                              uint32_t *len, uint32_t *cap) {
+    if (tu_kind(universe, id) != ATOM_EXPR)
+        return true;
+    CettaExprLen arity = tu_arity(universe, id);
+    if (arity < 3u)
+        return true;
+    AtomId form = tu_child(universe, id, 0u);
+    if (tu_kind(universe, form) != ATOM_SYMBOL)
+        return true;
+    SpaceTheoryAtomKind kind =
+        space_theory_classify_head_arity(tu_sym(universe, form), arity);
+    if (kind == SPACE_THEORY_ATOM_DATA)
+        return true;
+    if (kind == SPACE_THEORY_ATOM_DEFINITION ||
+        kind == SPACE_THEORY_ATOM_DIRECTIONAL_DEFINITION ||
+        kind == SPACE_THEORY_ATOM_TYPE_ASSIGNMENT) {
+        AtomId subject = tu_child(universe, id, 1u);
+        if (tu_kind(universe, subject) == ATOM_SYMBOL)
+            return import_as_push_symbol(pairs, len, cap,
+                                         tu_sym(universe, subject));
+        if (tu_kind(universe, subject) == ATOM_EXPR &&
+            tu_arity(universe, subject) > 0u) {
+            AtomId head = tu_child(universe, subject, 0u);
+            if (tu_kind(universe, head) == ATOM_SYMBOL)
+                return import_as_push_symbol(pairs, len, cap,
+                                             tu_sym(universe, head));
+        }
+        return true;
+    }
+    if (kind == SPACE_THEORY_ATOM_SUBTYPE_ASSIGNMENT) {
+        AtomId sub = tu_child(universe, id, 1u);
+        if (tu_kind(universe, sub) == ATOM_SYMBOL)
+            return import_as_push_symbol(pairs, len, cap,
+                                         tu_sym(universe, sub));
+        return true;
+    }
+    if (kind == SPACE_THEORY_ATOM_EQUATION) {
+        for (CettaExprLen k = 1u; k < arity; k++) {
+            AtomId member = tu_child(universe, id, k);
+            if (tu_kind(universe, member) == ATOM_SYMBOL &&
+                !import_as_push_symbol(pairs, len, cap,
+                                       tu_sym(universe, member)))
+                return false;
+        }
+        return true;
+    }
+    return true;
 }
 
 static bool import_as_renames_build(TermUniverse *universe,
@@ -9581,14 +9661,17 @@ static bool import_as_renames_build(TermUniverse *universe,
                                     const char *prefix,
                                     ImportAsRenames *out) {
     memset(out, 0, sizeof(*out));
-    ImportAsRename *pairs = malloc(sizeof(*pairs) * (count > 0 ? (size_t)count : 1u));
+    uint32_t cap = count > 0 ? (uint32_t)count : 1u;
+    ImportAsRename *pairs = malloc(sizeof(*pairs) * cap);
     if (!pairs)
         return false;
     uint32_t len = 0u;
     for (int i = 0; i < count; i++) {
-        SymbolId head = import_as_defined_head(universe, ids[i]);
-        if (head != SYMBOL_ID_NONE)
-            pairs[len++] = (ImportAsRename){.from = head};
+        if (!import_as_collect_defined_symbols(universe, ids[i], &pairs,
+                                               &len, &cap)) {
+            free(pairs);
+            return false;
+        }
     }
     qsort(pairs, len, sizeof(*pairs), import_as_rename_order);
     uint32_t unique = 0u;
