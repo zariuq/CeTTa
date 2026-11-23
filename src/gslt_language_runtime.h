@@ -56,10 +56,16 @@ typedef struct {
     const char *manifest_sha256;
 } CettaGsltEmbeddedLanguageV1;
 
+/* Realizations for embedded finite-Horn language descriptors.
+ * Compiled worklist is the default execution path; the backtracking Horn
+ * solver is strictly an opt-in differential test oracle and never a canonical
+ * general GSLT interpreter. */
 typedef enum {
-    CETTA_GSLT_REALIZATION_HORN_REFERENCE = 0,
-    CETTA_GSLT_REALIZATION_COMPILED_WORKLIST = 1,
+    CETTA_GSLT_REALIZATION_COMPILED_WORKLIST = 0,
+    CETTA_GSLT_REALIZATION_HORN_ORACLE = 1,
 } CettaGsltRealization;
+
+#define CETTA_GSLT_REALIZATION_COUNT 2u
 
 typedef struct {
     CettaGsltHornOutcome outcome;

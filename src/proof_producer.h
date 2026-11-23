@@ -58,7 +58,7 @@ typedef struct {
     /* These full original arities accompany structural field omission.
      * Erased Atom keys from different layouts must never be interchanged. */
     CettaExprLen proof_ancestor_arity[CETTA_PROOF_PATH_MAX];
-    SpaceProgramToken program;
+    SpaceTheoryToken program;
     CettaProofSourceBinding sources[CETTA_PROOF_SOURCE_MAX], target;
     size_t source_count;
     VarId proof_variable;

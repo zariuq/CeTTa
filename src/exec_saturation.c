@@ -64,7 +64,7 @@ static const ExecSaturationPresentation EXEC_SATURATION_PRESENTATION[] = {
 
 /* Equations, declarations and imported boundaries of the presentation. */
 static _Thread_local struct {
-    SpaceProgramToken program;
+    SpaceTheoryToken program;
     bool admitted;
 } g_exec_saturation_presentation;
 
@@ -82,8 +82,8 @@ static bool exec_saturation_reference(void) {
 bool cetta_exec_saturation_presentation_admitted(Space *program) {
     if (!program || exec_saturation_reference())
         return false;
-    SpaceProgramToken token = space_program_token(program);
-    if (space_program_token_eq(g_exec_saturation_presentation.program, token))
+    SpaceTheoryToken token = space_theory_token(program);
+    if (space_theory_token_eq(g_exec_saturation_presentation.program, token))
         return g_exec_saturation_presentation.admitted;
     Arena scratch;
     arena_init(&scratch);

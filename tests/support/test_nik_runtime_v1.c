@@ -415,9 +415,9 @@ int main(int argc, char **argv) {
 
     CettaGsltLanguage *query_service = NULL;
     char service_error[512] = {0};
-    CHECK(cetta_gslt_language_load_embedded(
-              &cetta_prime_nik_runtime_v1, &query_service,
-              service_error, sizeof(service_error)),
+    CHECK(cetta_gslt_language_load_embedded_for_realization(
+              &cetta_prime_nik_runtime_v1, CETTA_GSLT_REALIZATION_HORN_ORACLE,
+              &query_service, service_error, sizeof(service_error)),
           "generated NIK query service loads");
     CettaGsltHornLimits service_limits = {
         .max_rule_attempts = 64u,
@@ -427,7 +427,7 @@ int main(int argc, char **argv) {
     CettaGsltHornResult query_result = {0};
     Atom *wrong_relation = parse_one(&arena, "(not-nik-check a b c)");
     CHECK(!cetta_gslt_language_query_v1(
-              query_service, CETTA_GSLT_REALIZATION_HORN_REFERENCE,
+              query_service, CETTA_GSLT_REALIZATION_HORN_ORACLE,
               &arena, wrong_relation, service_limits, &query_result,
               service_error, sizeof(service_error)),
           "query service rejects a relation outside its admitted entry");

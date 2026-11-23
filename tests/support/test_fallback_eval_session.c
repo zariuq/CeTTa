@@ -548,7 +548,7 @@ static bool space_module_dependency_contract(void) {
         &nested_overlay, &scratch, "(dep-fact $x)",
         "(dep-fact top) (dep-fact a) (dep-fact d)"));
     space_add(&d_mod, module_atom(&scratch, "(= (dep-effect) 42)"));
-    SpaceProgramToken overlay_program = space_program_token(&nested_overlay);
+    SpaceTheoryToken overlay_program = space_theory_token(&nested_overlay);
     SpaceEquationToken overlay_equations = space_equation_token(&nested_overlay);
     SpaceReadToken overlay_read = space_read_token(&nested_overlay);
     SymbolId effect_head = symbol_intern_cstr(g_symbols, "dep-effect");
@@ -556,7 +556,7 @@ static bool space_module_dependency_contract(void) {
                  CETTA_GSLT_QUERY_EFFECT_PURE);
     space_add(&d_mod, module_atom(&scratch,
                        "(= (dep-effect) (match &self (dep-fact $x) $x))"));
-    MODULE_CHECK(!space_program_token_is_current(overlay_program));
+    MODULE_CHECK(!space_theory_token_is_current(overlay_program));
     MODULE_CHECK(!space_equation_token_is_current(overlay_equations));
     MODULE_CHECK(!space_read_token_is_current(overlay_read));
     MODULE_CHECK(!space_read_token_matches_live_space(overlay_read,

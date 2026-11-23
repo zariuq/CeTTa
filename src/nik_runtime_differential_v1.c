@@ -167,9 +167,9 @@ static CettaNikOutcome nik_check_differential_v1(
             receipt, CETTA_NIK_INCOMPLETE, error_buf, error_buf_size,
             "aggregate NIK work limit exhausted after native replay");
 
-    if (!cetta_gslt_language_load_embedded(
-            &cetta_prime_nik_runtime_v1, &language,
-            error_buf, error_buf_size))
+    if (!cetta_gslt_language_load_embedded_for_realization(
+            &cetta_prime_nik_runtime_v1, CETTA_GSLT_REALIZATION_HORN_ORACLE,
+            &language, error_buf, error_buf_size))
         goto done;
     query = nik_query_atom(arena, receipt, claim, proof);
     base_gslt_limits = nik_gslt_limits(limits.gslt);
@@ -177,7 +177,7 @@ static CettaNikOutcome nik_check_differential_v1(
     if (total_limited)
         nik_cap_rule_attempts(&reference_limits, remaining);
     if (!query_realization(
-        language, CETTA_GSLT_REALIZATION_HORN_REFERENCE,
+        language, CETTA_GSLT_REALIZATION_HORN_ORACLE,
         arena, query, reference_limits, &reference,
         error_buf, error_buf_size))
         goto done;

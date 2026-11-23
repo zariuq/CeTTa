@@ -495,8 +495,8 @@ static void exercise_space_provider_backend(SpaceEngine engine) {
         .max_depth = 100u,
     };
     const CettaGsltRealization realizations[] = {
-        CETTA_GSLT_REALIZATION_HORN_REFERENCE,
         CETTA_GSLT_REALIZATION_COMPILED_WORKLIST,
+        CETTA_GSLT_REALIZATION_HORN_ORACLE,
     };
     for (size_t realization_index = 0u;
          realization_index < sizeof(realizations) / sizeof(realizations[0]);
@@ -866,11 +866,11 @@ int main(void) {
         exercise_engine("Horn reference", query_horn, horn);
         exercise_engine("compiled worklist", query_compiled, compiled);
     }
-    exercise_language(CETTA_GSLT_REALIZATION_HORN_REFERENCE);
     exercise_language(CETTA_GSLT_REALIZATION_COMPILED_WORKLIST);
+    exercise_language(CETTA_GSLT_REALIZATION_HORN_ORACLE);
     exercise_space_provider_backend(SPACE_ENGINE_NATIVE);
-    exercise_finite_fact_provider(CETTA_GSLT_REALIZATION_HORN_REFERENCE);
     exercise_finite_fact_provider(CETTA_GSLT_REALIZATION_COMPILED_WORKLIST);
+    exercise_finite_fact_provider(CETTA_GSLT_REALIZATION_HORN_ORACLE);
     exercise_finite_fact_rigid_index();
 #if CETTA_BUILD_WITH_PATHMAP_SPACE
     exercise_space_provider_backend(SPACE_ENGINE_PATHMAP);

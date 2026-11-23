@@ -8,6 +8,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Finite-Horn source admission and differential test oracle.
+ *
+ * This module is NOT a canonical or general-purpose GSLT interpreter: CeTTa
+ * executes languages and GSLTs through fiber-appropriate compiled/admitted
+ * realizations (SpaceTheoryView machines, rule_machine, tcalc, compiled
+ * worklists, and direct native checkers).  The backtracking solver here exists
+ * only as an opt-in differential oracle for finite-Horn fiber fixtures. */
+
 typedef struct CettaGsltHornProgram CettaGsltHornProgram;
 
 /* Read-only normalized view of one admitted source-rule occurrence.  Rule

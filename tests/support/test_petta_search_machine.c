@@ -4467,7 +4467,7 @@ static void test_compiled_dependency_appends(TermUniverse *universe, Arena *aren
         }
         assert(!cetta_open_equation_program_refresh(compiled, &space, &reads));
         assert(reads.row_count == before.row_count);
-        assert(space_program_token_eq(reads.program_token, before.program_token));
+        assert(space_theory_token_eq(reads.program_token, before.program_token));
         cetta_open_equation_program_release(compiled);
         petta_program_free(program);
         space_free(&space);
@@ -4791,9 +4791,9 @@ static void test_program_safety_cache_scope(
         "(= (cache-changing $x) (id $x))");
     assert(petta_program_relation_safety(program, space, changing, 1u) ==
            PETTA_RELATION_SAFETY_STATIC);
-    SpaceProgramToken before = space_program_token(space);
+    SpaceTheoryToken before = space_theory_token(space);
     space_add(space, parse_one(arena, "(cache-unrelated-data 17)"));
-    assert(space_program_token_eq(before, space_program_token(space)));
+    assert(space_theory_token_eq(before, space_theory_token(space)));
     assert(petta_program_relation_safety(program, space, changing, 1u) ==
            PETTA_RELATION_SAFETY_STATIC);
     assert(space_remove(space, equation));
@@ -4818,12 +4818,12 @@ static void test_program_safety_cache_scope(
     space_add(space, late);
     late = space_get_at64(space, index);
     SymbolId late_head = symbol_intern_cstr(g_symbols, "cache-late-plan");
-    before = space_program_token(space);
+    before = space_theory_token(space);
     assert(petta_program_relation_safety(program, space, late_head, 1u) ==
            PETTA_RELATION_SAFETY_UNSAFE);
     const PettaPlanNode *plan = petta_program_plan_dynamic_add(program, late);
     assert(plan && petta_program_note_add(program, space, late, plan));
-    assert(space_program_token_eq(before, space_program_token(space)));
+    assert(space_theory_token_eq(before, space_theory_token(space)));
     assert(petta_program_relation_safety(program, space, late_head, 1u) ==
            PETTA_RELATION_SAFETY_STATIC);
 

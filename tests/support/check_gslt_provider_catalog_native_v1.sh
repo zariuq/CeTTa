@@ -2,15 +2,14 @@
 set -euo pipefail
 
 if (( $# < 2 || $# > 4 )); then
-    echo 'usage: check_gslt_provider_catalog_native_v1.sh TOOL EVIDENCE_DIRECTORY [REFERENCE_DIRECTORY [all|petta|nik|zero]]' >&2
+    echo 'usage: check_gslt_provider_catalog_native_v1.sh TOOL EVIDENCE_DIRECTORY [REFERENCE_DIRECTORY [all|nik|zero]]' >&2
     exit 2
 fi
 
 case "${4:-all}" in
-    all) catalog_indices=(0 1 2) ;;
-    petta) catalog_indices=(0) ;;
-    nik) catalog_indices=(1) ;;
-    zero) catalog_indices=(2) ;;
+    all) catalog_indices=(0 1) ;;
+    nik) catalog_indices=(0) ;;
+    zero) catalog_indices=(1) ;;
     *) echo 'unknown provider-catalog client' >&2; exit 2 ;;
 esac
 
@@ -25,18 +24,14 @@ cd "$catalog_repo"
 catalog_reference=$(realpath "${3:-src/generated}")
 
 catalog_sources=(
-    langdef/petta/typecheck_v3_core_provider_catalog_v1.metta
     langdef/prime/nik_side_condition_provider_catalog_v1.metta
     langdef/zero/interact_provider_catalog_v1.metta)
 catalog_manifests=(
-    langdef/petta/typecheck_v3_core_runtime_v1.metta
     langdef/prime/nik_runtime_v1.metta
     langdef/zero/langdef.metta)
-catalog_stems=(petta_typecheck_v3_core_provider_catalog_v1
-               prime_nik_side_condition_provider_catalog_v1
+catalog_stems=(prime_nik_side_condition_provider_catalog_v1
                zero_interact_provider_catalog_v1)
 catalog_semantics=(
-    langdef/petta/typecheck_v3_core_v1.metta
     langdef/prime/nik_authority_runtime_v1.metta
     langdef/shared/finite_horn_quote_match_v1.metta
     langdef/zero/semantics/query_kernel_v1.metta
@@ -52,8 +47,8 @@ for catalog_index in "${catalog_indices[@]}"; do
                     "$catalog_reference/$catalog_stem.generated.c"
                     "$catalog_reference/$catalog_stem.generated.h")
     case "$catalog_index" in
-        0|1) catalog_pinned+=("${catalog_semantics[$catalog_index]}") ;;
-        2) catalog_pinned+=("${catalog_semantics[@]:2}") ;;
+        0) catalog_pinned+=("${catalog_semantics[0]}") ;;
+        1) catalog_pinned+=("${catalog_semantics[@]:1}") ;;
     esac
 done
 catalog_native_sources=(src/gslt_provider_runtime.c src/parser.c src/atom.c src/binding/frame_identity.c

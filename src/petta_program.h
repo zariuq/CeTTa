@@ -428,7 +428,7 @@ bool petta_program_lifetime_retain(PettaProgram *program);
 void petta_program_lifetime_release(PettaProgram *program);
 void petta_program_free(PettaProgram *program);
 /* Signature facts are owned by the existing program and keyed by the live
- * SpaceProgramToken. Data-only changes preserve them; equation, declaration,
+ * SpaceTheoryToken. Data-only changes preserve them; equation, declaration,
  * overlay and lifetime changes invalidate them. This caches declarations,
  * never answers to a type query. The returned array is caller-owned; its
  * fresh signatures and literal modes belong to arena. Full source predicate

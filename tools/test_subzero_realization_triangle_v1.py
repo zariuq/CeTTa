@@ -155,7 +155,7 @@ def main() -> int:
     if chart_duplicate != [qsym("b"), qsym("b")]:
         raise GateFailure(f"chart changed duplicate occurrences: {chart_duplicate}")
     syntax_duplicate = "(= a b) (= a b) (! a)"
-    horn = cli_results(cetta, "horn-reference", syntax_duplicate)
+    horn = cli_results(cetta, "horn-oracle", syntax_duplicate)
     compiled = cli_results(
         cetta, "compiled-worklist", syntax_duplicate
     )
@@ -180,7 +180,7 @@ def main() -> int:
             f"chart changed contextual rewriting: {chart_contextual}"
         )
     syntax_contextual = "(= a b) (! (wrap a))"
-    horn = cli_results(cetta, "horn-reference", syntax_contextual)
+    horn = cli_results(cetta, "horn-oracle", syntax_contextual)
     compiled = cli_results(
         cetta, "compiled-worklist", syntax_contextual
     )
@@ -202,7 +202,7 @@ def main() -> int:
     ):
         raise GateFailure("chart accepted an inconsistent repeated variable")
     syntax_repeated = "(= ($x $x) same) (! (a b))"
-    horn = cli_results(cetta, "horn-reference", syntax_repeated)
+    horn = cli_results(cetta, "horn-oracle", syntax_repeated)
     compiled = cli_results(
         cetta, "compiled-worklist", syntax_repeated
     )
@@ -214,7 +214,7 @@ def main() -> int:
 
     print(
         "(SubzeroRealizationTriangleV1Summary "
-        "native-chart=1 horn-reference=1 compiled-worklist=1 "
+        "native-chart=1 horn-oracle=1 compiled-worklist=1 "
         "duplicate-bag=2 contextual=1 repeated-negative=1)"
     )
     return 0

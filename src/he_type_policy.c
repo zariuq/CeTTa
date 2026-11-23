@@ -291,11 +291,15 @@ CettaHeTypeTables *he_type_tables_exchange(CettaHeTypeTables *tables) {
 #define g_he_library_declarations (he_type_tables_current()->declarations)
 #define g_he_library_undeclared (he_type_tables_current()->undeclared)
 
+_Static_assert(HE_GROUNDED_TYPE_SLOTS == 256u,
+               "he_grounded_slot shift assumes 256 slots");
+
 static HeGroundedTypeSlot *he_grounded_slot(SymbolId symbol, bool insert) {
-    uint32_t start = ((uint32_t)symbol * 2654435761u) % HE_GROUNDED_TYPE_SLOTS;
+    HeGroundedTypeSlot *slots = g_he_grounded_slots;
+    uint32_t start = ((uint32_t)symbol * 2654435761u) >> 24;
     for (uint32_t probe = 0u; probe < HE_GROUNDED_TYPE_SLOTS; probe++) {
         HeGroundedTypeSlot *slot =
-            &g_he_grounded_slots[(start + probe) % HE_GROUNDED_TYPE_SLOTS];
+            &slots[(start + probe) & (HE_GROUNDED_TYPE_SLOTS - 1u)];
         if (slot->symbol == symbol)
             return slot;
         if (slot->symbol == SYMBOL_ID_NONE)

@@ -63,7 +63,7 @@ typedef struct {
     Arena types;
     bool types_ready;
     const Space *space;
-    SpaceProgramToken program;
+    SpaceTheoryToken program;
     const Arena *arena;
     bool open;
 } HeValueIndex;
@@ -128,10 +128,10 @@ static bool he_value_index_usable(Space *s, int fuel) {
         if (index->len || index->head_len)
             return false;
         index->space = s;
-        index->program = space_program_token(s);
-    } else if (!space_program_token_is_current(index->program)) {
+        index->program = space_theory_token(s);
+    } else if (!space_theory_token_is_current(index->program)) {
         he_value_index_forget();
-        index->program = space_program_token(s);
+        index->program = space_theory_token(s);
     }
     return true;
 }

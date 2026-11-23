@@ -180,7 +180,7 @@ typedef struct {
 } ContractSpaceVerdict;
 
 struct PettaContractMemo {
-    SpaceProgramToken token;
+    SpaceTheoryToken token;
     bool token_valid;
     Arena scratch;
     ContractSymbolMemo symbols;
@@ -205,8 +205,8 @@ void petta_contract_memo_free(PettaContractMemo *memo) {
 
 /* Verdicts belong to the program projection they were judged under. */
 static void contract_memo_refresh(PettaContractMemo *memo, Space *space) {
-    SpaceProgramToken token = space_program_token(space);
-    if (memo->token_valid && space_program_token_eq(memo->token, token))
+    SpaceTheoryToken token = space_theory_token(space);
+    if (memo->token_valid && space_theory_token_eq(memo->token, token))
         return;
     contract_memo_free(&memo->symbols);
     memo->space_count = 0u;
