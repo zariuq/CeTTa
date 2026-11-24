@@ -16303,6 +16303,23 @@ prepared_pure_program_compile_closed_mode(
     return program;
 }
 
+bool cetta_prepared_pure_program_has_multiple_calls(
+        const CettaPreparedPureProgram *program) {
+    if (!program)
+        return false;
+    /* One PREPARED_PURE_CALL is the closed root invocation itself, and a
+     * linear-recursive function adds only one body call (total <= 2).
+     * True branching recursion requires at least two body calls (total >= 3). */
+    uint32_t calls = 0u;
+    for (size_t i = 0u; i < program->node_len; i++) {
+        if (program->nodes[i].kind == PREPARED_PURE_CALL) {
+            if (++calls >= 3u)
+                return true;
+        }
+    }
+    return false;
+}
+
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     Space *space, Atom *expression,
     CettaGsltPureCallMode call_mode,

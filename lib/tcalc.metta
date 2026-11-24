@@ -35,16 +35,17 @@
 (= (tcalc:query $program $profile $pattern)
    (function (chain (eval (__cetta_lib_tcalc_query $program $profile $pattern)) $result (return $result))))
 
-; Compile a space's reachable first-order function definitions to demand-driven
-; tcalc rules guarded by per-head version counters, run the call under
-; (store set) (step every), and return the expression of derived values.
+; Evaluate CALL in SPACE through demand-driven tcalc rules guarded by per-head
+; version counters, preserving exact MeTTa answer multiplicities and returning
+; each answer directly. Undefined heads stay data and definitions outside the
+; compiled fragment run on the interpreter.
 (: tcalc:space-eval (-> %Undefined% Atom Atom))
 (: __cetta_lib_tcalc_space_eval (-> Atom Atom Atom))
 (= (tcalc:space-eval $space $call)
    (function (chain (eval (__cetta_lib_tcalc_space_eval $space $call)) $result (return $result))))
 
-; Return the compiled canonical tcalc program for a space's definitions rooted
-; at the given head symbol (reusing the per-head version-guarded cache).
+; Return the compiled tcalc program for a space's definitions rooted at HEAD,
+; or (tcalc-not-compiled HEAD REASON) when HEAD is outside the compiled fragment.
 (: tcalc:space-program (-> %Undefined% Atom Atom))
 (: __cetta_lib_tcalc_space_program (-> Atom Atom Atom))
 (= (tcalc:space-program $space $head)

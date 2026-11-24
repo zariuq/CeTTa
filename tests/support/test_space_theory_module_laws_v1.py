@@ -466,6 +466,179 @@ def test_equations_across_modules(cetta: Path, work: Path):
     )
 
 
+def test_import_vs_include_and_linked_petta(cetta: Path, work: Path):
+    """Law 8: `import!` (linked space) vs `include` (atoms into current space)
+    across HE, PeTTa default, and PeTTa `--petta-linked-import`."""
+    # `include` puts atoms directly into the current space in both plain HE
+    # and plain PeTTa (so remove-atom on &self removes them directly).
+    inc_files = {
+        "inc_mod.metta": (
+            "(inc-fact 10)\n"
+            "(= (inc-fn $x) (+ $x 100))\n"
+        ),
+        "main.metta": (
+            "!(include inc_mod)\n"
+            "!(inc-fn 7)\n"
+            "!(collapse (match &self (inc-fact $x) $x))\n"
+            "!(let $_ (remove-atom &self (inc-fact 10))\n"
+            "   (collapse (match &self (inc-fact $x) $x)))\n"
+        ),
+    }
+    rc, lines, err = run_metta(cetta, work, inc_files, ["--lang", "he"])
+    check_eq("include HE rc", (rc, err), (0, ""))
+    check_eq("include HE results", lines[-3:], ["[107]", "[(10)]", "[()]"])
+
+    rc, lines, err = run_metta(cetta, work, inc_files, ["--lang", "petta"])
+    check_eq("include PeTTa rc", (rc, err), (0, ""))
+    check_eq("include PeTTa results", lines[-3:], ["107", "(10)", "()"])
+
+    rc, lines, err = run_metta(
+        cetta, work, inc_files, ["--lang", "petta", "--petta-linked-import"]
+    )
+    check_eq("include PeTTa-linked rc", (rc, err), (0, ""))
+    check_eq("include PeTTa-linked results", lines[-3:], ["107", "(10)", "()"])
+
+    # Under `--petta-linked-import`, `import!` links the module in its own
+    # space (live writes on &m visible in &self; remove-atom on &self cannot
+    # delete module's own atoms), matching HE's linked-module semantics.
+    linked_files = {
+        "m.metta": "(orig 1)\n(= (f 1) one)\n",
+        "main.metta": (
+            "!(import! &self m)\n"
+            "!(import! &m m)\n"
+            "!(add-atom &m (added-live 2))\n"
+            "!(add-atom &m (= (f 2) two))\n"
+            "!(let $_ (remove-atom &self (orig 1))\n"
+            "   (collapse (match &self (orig $x) $x)))\n"
+            "!(collapse (match &self (added-live $x) $x))\n"
+            "!(collapse (f 2))\n"
+        ),
+    }
+    rc, lines, err = run_metta(cetta, work, linked_files, ["--lang", "he"])
+    check_eq("linked-import HE rc", (rc, err), (0, ""))
+    check_eq("linked-import HE results", lines[-3:], ["[(1)]", "[(2)]", "[(two)]"])
+
+    rc, lines, err = run_metta(
+        cetta, work, linked_files, ["--lang", "petta", "--petta-linked-import"]
+    )
+    check_eq("linked-import PeTTa-linked rc", (rc, err), (0, ""))
+    check_eq("linked-import PeTTa-linked results", lines[-3:], ["(1)", "(2)", "(two)"])
+
+
+def test_import_as_shared_state_and_fresh_constructor(cetta: Path, work: Path):
+    """Law 9: `import-as!` renames and shares one module instance under several
+    prefixes (setup runs once; state is shared across prefixes) in both HE and
+    PeTTa, while fresh independent instances come from a constructor around
+    `new-space`."""
+    # Stateful counter stored in a module-private space bound once at load time.
+    stateful_files = {
+        "counter.metta": (
+            "!(bind! &cnt (new-space))\n"
+            "!(add-atom &cnt (val 0))\n"
+            "!(add-atom &self (init-ran tick))\n"
+            "(= (cur) (match &cnt (val $n) $n))\n"
+            "(= (bump)\n"
+            "   (let $n (match &cnt (val $x) $x)\n"
+            "     (let $_ (remove-atom &cnt (val $n))\n"
+            "       (let $next (+ $n 1)\n"
+            "         (let $_ (add-atom &cnt (val $next))\n"
+            "           $next)))))\n"
+        ),
+        "main.metta": (
+            "!(import-as! &self counter a)\n"
+            "!(import-as! &self counter b)\n"
+            "!(import-as! &self counter a)\n"
+            "!(a:cur)\n"
+            "!(a:bump)\n"
+            "!(b:cur)\n"
+            "!(b:bump)\n"
+            "!(a:cur)\n"
+            "!(collapse (match &self (init-ran $t) $t))\n"
+        ),
+    }
+    rc, lines, err = run_metta(
+        cetta, work, stateful_files, ["--lang", "he", "--profile", "extended"]
+    )
+    check_eq("import-as shared-state HE rc", (rc, err), (0, ""))
+    check_eq(
+        "import-as shared-state HE results",
+        lines[-6:],
+        ["[0]", "[1]", "[1]", "[2]", "[2]", "[(tick)]"],
+    )
+
+    rc, lines, err = run_metta(
+        cetta, work, stateful_files, ["--lang", "petta"]
+    )
+    check_eq("import-as shared-state PeTTa rc", (rc, err), (0, ""))
+    check_eq(
+        "import-as shared-state PeTTa results",
+        lines[-6:],
+        ["0", "1", "1", "2", "2", "(tick)"],
+    )
+
+    # Also test a second stateful import-as! in HE using `new-state` / `change-state!`,
+    # directly covering HE's historical failure on repeated stateful import-as!.
+    he_state_cell_files = {
+        "state_mod.metta": (
+            "!(bind! &cell (new-state 0))\n"
+            "(= (read-cell) (get-state &cell))\n"
+            "(= (bump-cell)\n"
+            "   (let $n (get-state &cell)\n"
+            "     (let $_ (change-state! &cell (+ $n 1))\n"
+            "       (get-state &cell))))\n"
+        ),
+        "main.metta": (
+            "!(import-as! &self state_mod p)\n"
+            "!(import-as! &self state_mod q)\n"
+            "!(p:read-cell)\n"
+            "!(p:bump-cell)\n"
+            "!(q:read-cell)\n"
+            "!(q:bump-cell)\n"
+            "!(p:read-cell)\n"
+        ),
+    }
+    rc, lines, err = run_metta(
+        cetta, work, he_state_cell_files, ["--lang", "he", "--profile", "extended"]
+    )
+    check_eq("import-as new-state HE rc", (rc, err), (0, ""))
+    check_eq(
+        "import-as new-state HE results",
+        lines[-5:],
+        ["[0]", "[1]", "[1]", "[2]", "[2]"],
+    )
+
+    # Fresh independent instances via an exported constructor around `new-space`.
+    factory_files = {
+        "counter_factory.metta": (
+            "(= (make-counter)\n"
+            "   (let $s (new-space)\n"
+            "     (let $_ (add-atom $s (val 0)) $s)))\n"
+            "(= (counter-cur $s) (match $s (val $n) $n))\n"
+            "(= (counter-bump $s)\n"
+            "   (let $n (match $s (val $x) $x)\n"
+            "     (let $_ (remove-atom $s (val $n))\n"
+            "       (let $next (+ $n 1)\n"
+            "         (let $_ (add-atom $s (val $next))\n"
+            "           $next)))))\n"
+        ),
+        "main.metta": (
+            "!(import! &self counter_factory)\n"
+            "!(let $c1 (make-counter)\n"
+            "   (let $c2 (make-counter)\n"
+            "     (let $_1 (counter-bump $c1)\n"
+            "       (let $_2 (counter-bump $c1)\n"
+            "         ((counter-cur $c1) (counter-cur $c2))))))\n"
+        ),
+    }
+    rc, lines, err = run_metta(cetta, work, factory_files, ["--lang", "he"])
+    check_eq("fresh-constructor HE rc", (rc, err), (0, ""))
+    check_eq("fresh-constructor HE results", lines[-1:], ["[(2 0)]"])
+
+    rc, lines, err = run_metta(cetta, work, factory_files, ["--lang", "petta"])
+    check_eq("fresh-constructor PeTTa rc", (rc, err), (0, ""))
+    check_eq("fresh-constructor PeTTa results", lines[-1:], ["(2 0)"])
+
+
 def main():
     if len(sys.argv) < 2:
         sys.exit("usage: test_space_theory_module_laws_v1.py <path-to-cetta>")
@@ -482,9 +655,11 @@ def main():
         test_commuting(cetta, work)
         test_removal_and_cycles(cetta, work)
         test_equations_across_modules(cetta, work)
+        test_import_vs_include_and_linked_petta(cetta, work)
+        test_import_as_shared_state_and_fresh_constructor(cetta, work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
-    print("PASS: test_space_theory_module_laws_v1 (all 7 module laws across HE and PeTTa)")
+    print("PASS: test_space_theory_module_laws_v1 (all 9 module laws across HE and PeTTa)")
 
 
 if __name__ == "__main__":

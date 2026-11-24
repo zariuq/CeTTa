@@ -375,6 +375,11 @@ const SymbolId *cetta_prepared_pure_program_read_heads(
 bool cetta_prepared_pure_program_module_shareable(
     const CettaPreparedPureProgram *program);
 
+/* True when the compiled node graph contains at least two user-defined call
+ * sites (a cheap O(nodes) pre-filter for branching recursion). */
+bool cetta_prepared_pure_program_has_multiple_calls(
+    const CettaPreparedPureProgram *program);
+
 /* The compiled node graph only selects, constructs, or observes values.
  * It neither interprets argument syntax nor matches/binds caller variables.
  * A live unresolved branch condition can still decline at execution. */

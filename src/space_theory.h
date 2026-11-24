@@ -516,6 +516,38 @@ void space_theory_note_mutation_slow(
     Space *s, const SpaceHeadMutationNote *note, uint8_t fallback_roles)
     __attribute__((cold, noinline));
 
+/* ── Capability-Based Head Write Sealing (`lib/seal`) ───────────────────── */
+
+struct CettaSealObject;
+struct SpaceHeadAuthoritySeals;
+
+extern _Atomic uint64_t cetta_space_global_head_authority_seals_active;
+
+static inline bool space_theory_any_head_authority_seals_active(void) {
+    return __builtin_expect(
+        atomic_load_explicit(&cetta_space_global_head_authority_seals_active,
+                             memory_order_relaxed) != 0u,
+        0);
+}
+
+void space_head_authority_seals_free(struct SpaceHeadAuthoritySeals *seals);
+struct SpaceHeadAuthoritySeals *space_head_authority_seals_clone_space(
+    const Space *src);
+struct SpaceHeadAuthoritySeals *space_head_authority_seals_take(Space *s);
+bool space_head_authority_seals_merge(
+    Space *dst, const struct SpaceHeadAuthoritySeals *src);
+
+bool space_theory_head_attach_write_seal(
+    Space *s, SymbolId head, struct CettaSealObject *brand_anchor,
+    const char **reason_out);
+
+bool space_theory_head_is_authority_sealed(const Space *s, SymbolId head);
+
+bool space_theory_atom_check_head_seal(
+    const Space *target, const Atom *atom,
+    const struct CettaSealObject *offered_facet,
+    const char **reason_out);
+
 /* ── Observation Coarsening Lattice ─────────────────────────────────────── */
 
 /* Exact 7-demand observation lattice on completed runs:

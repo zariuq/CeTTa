@@ -34,6 +34,8 @@ bool cetta_runtime_session_open_root(CettaRuntimeSession *runtime, Arena *persis
     if (runtime->libraries.session.language_id == CETTA_LANGUAGE_HE) {
         cetta_library_set_top_module_space(&runtime->libraries, &runtime->space);
         cetta_library_set_top_module_registry(&runtime->libraries, &runtime->registry);
+    } else if (runtime->libraries.session.language_id == CETTA_LANGUAGE_PETTA) {
+        cetta_library_set_top_module_registry(&runtime->libraries, &runtime->registry);
     }
     return true;
 }

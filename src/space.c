@@ -10315,6 +10315,7 @@ static void space_logical_positions_publish(
     SpaceMatchNativeState *native_state = &s->match_backend.native;
     bool order_follows = space_order_forget_rows(s, rows, count);
     bool track_heads = space_theory_any_head_clocks_active();
+    bool removed_non_exact = false;
     for (CettaCount i = 0u; i < count; i++) {
         space_marks_mark(s, rows[i]);
         /* The row leaves the match trie and the exact index now, so lookups
@@ -10322,6 +10323,8 @@ static void space_logical_positions_publish(
          * settle, and their reader drops marked rows. */
         AtomId atom_id = space_atom_id_storage_load_at(
             s->native.atom_ids, s->native.atom_id_width_bits, rows[i]);
+        if (!atom_id_is_exact_indexable(s, atom_id))
+            removed_non_exact = true;
         if (track_heads)
             space_head_clocks_note_atom_and_importers_slow(
                 s, s, atom_id, NULL, CETTA_ATOM_ID_NONE,
@@ -10336,7 +10339,8 @@ static void space_logical_positions_publish(
             s->native.exact_idx_dirty = true;
         space_path_indexes_note_mark(s, rows[i], atom_id);
     }
-    s->native.has_non_exact_atoms_dirty = true;
+    if (removed_non_exact)
+        s->native.has_non_exact_atoms_dirty = true;
     if (presence_follows) {
         s->native.id_present_synced_len -= presence_removed;
         id_present_keys_compact(&s->native,
@@ -13115,6 +13119,8 @@ static void space_set_overlay_base(Space *space, const Space *base) {
     if (space_lifetime_rebase)
         space_lifetime_rebase(space, base);
     space->overlay_base = base;
+    if (base)
+        atomic_store_explicit(&space->has_user_theory, 1u, memory_order_relaxed);
 }
 
 static void space_move_storage_and_backend(Space *dst, Space *src) {
@@ -13145,6 +13151,18 @@ static void space_move_storage_and_backend(Space *dst, Space *src) {
     dst->payload_export_owner_epoch = src->payload_export_owner_epoch;
     dst->alias_table = NULL;
     dst->head_clocks = NULL;
+    dst->imported_equation_revision = src->imported_equation_revision;
+    atomic_store_explicit(
+        &dst->has_user_theory,
+        atomic_load_explicit(&src->has_user_theory, memory_order_relaxed),
+        memory_order_relaxed);
+    if (space_theory_any_head_authority_seals_active()) {
+        struct SpaceHeadAuthoritySeals *taken = space_head_authority_seals_take(src);
+        if (taken) {
+            (void)space_head_authority_seals_merge(dst, taken);
+            space_head_authority_seals_free(taken);
+        }
+    }
 }
 
 static void space_reset_moved_from(Space *s) {
@@ -13156,8 +13174,12 @@ static void space_reset_moved_from(Space *s) {
     bool observed = space_identity_observed_by_programs(s);
     space_alias_table_free(s->alias_table);
     s->alias_table = NULL;
-    space_head_clocks_free(s->head_clocks);
-    s->head_clocks = NULL;
+    if (__builtin_expect(s->head_clocks != NULL, 0)) {
+        space_head_clocks_free(s->head_clocks);
+        s->head_clocks = NULL;
+    }
+    s->imported_equation_revision = 0u;
+    atomic_store_explicit(&s->has_user_theory, 0u, memory_order_relaxed);
     s->kind = SPACE_KIND_ATOM;
     s->strict = false;
     /* Moving the payload ends the old source lifetime.  Re-establish every
@@ -13222,6 +13244,8 @@ bool space_try_init_with_universe(Space *s, TermUniverse *universe) {
     atomic_init(&s->equational_revision, 0u);
     s->alias_table = NULL;
     s->head_clocks = NULL;
+    atomic_init(&s->has_user_theory, 0u);
+    s->imported_equation_revision = 0u;
     s->declares_subtypes = false;
     atomic_init(&s->prefix_epoch, space_fresh_prefix_epoch());
     space_match_backend_init(s);
@@ -13344,6 +13368,8 @@ static void space_note_dependency_mutation(
         uint64_t cur = space_equation_revision(importer);
         atomic_store_explicit(&importer->equation_revision, cur + 1u,
                               memory_order_relaxed);
+        atomic_store_explicit(&importer->has_user_theory, 1u,
+                              memory_order_relaxed);
     }
     if ((equation_projection &
             (SPACE_MUTATION_EQUATION_PROJECTION_EQUATIONAL |
@@ -13389,8 +13415,12 @@ bool space_add_dependency(Space *importer, Space *dependency) {
     if (!space_proof_prepare_mutation(importer)) return false;
     /* A space that composes others keeps no relations. */
     space_dense_settle(importer, SYMBOL_ID_NONE);
-    return importer && !importer->module_own_view &&
-           space_add_dependency_link(importer, dependency);
+    bool linked = importer && !importer->module_own_view &&
+                  space_add_dependency_link(importer, dependency);
+    if (linked)
+        atomic_store_explicit(&importer->has_user_theory, 1u,
+                              memory_order_relaxed);
+    return linked;
 }
 
 /* A dependency contributes its own atoms: those after its imported prefix. */
@@ -13569,6 +13599,13 @@ bool space_mark_imported_prefix(Space *s) {
         return false;
     space_dense_settle(s, SYMBOL_ID_NONE);
     s->imported_len = space_length64(s);
+    uint64_t eq_rev = space_equation_revision(s);
+    s->imported_equation_revision =
+        eq_rev <= UINT32_MAX ? (uint32_t)eq_rev : UINT32_MAX;
+    atomic_store_explicit(
+        &s->has_user_theory,
+        (s->dep_count != 0u || s->overlay_base != NULL) ? 1u : 0u,
+        memory_order_relaxed);
     return true;
 }
 
@@ -13941,8 +13978,12 @@ void space_free(Space *s) {
     space_order_free(s);
     space_alias_table_free(s->alias_table);
     s->alias_table = NULL;
-    space_head_clocks_free(s->head_clocks);
-    s->head_clocks = NULL;
+    if (__builtin_expect(s->head_clocks != NULL, 0)) {
+        space_head_clocks_free(s->head_clocks);
+        s->head_clocks = NULL;
+    }
+    s->imported_equation_revision = 0u;
+    atomic_store_explicit(&s->has_user_theory, 0u, memory_order_relaxed);
     free(s->native.atom_ids);
     s->native.atom_ids = NULL;
     s->native.atom_id_width_bits = 0;
@@ -15701,6 +15742,7 @@ static void space_publish_mutation_noted(
         }
         atomic_store_explicit(&s->equation_revision, cur + 1u,
                               memory_order_relaxed);
+        atomic_store_explicit(&s->has_user_theory, 1u, memory_order_relaxed);
         program_changed = true;
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_SPACE_EQUATION_REVISION_BUMP);
@@ -16871,6 +16913,24 @@ Space *space_heap_clone_shallow(Space *src) {
         free(clone);
         return NULL;
     }
+    if (space_theory_any_head_authority_seals_active()) {
+        struct SpaceHeadAuthoritySeals *cloned =
+            space_head_authority_seals_clone_space(src);
+        if (cloned) {
+            bool merged = space_head_authority_seals_merge(clone, cloned);
+            space_head_authority_seals_free(cloned);
+            if (!merged) {
+                space_free(clone);
+                free(clone);
+                return NULL;
+            }
+        }
+    }
+    clone->imported_equation_revision = src->imported_equation_revision;
+    atomic_store_explicit(
+        &clone->has_user_theory,
+        atomic_load_explicit(&src->has_user_theory, memory_order_relaxed),
+        memory_order_relaxed);
     return clone;
 }
 
@@ -16933,9 +16993,22 @@ static void space_replace_contents_classified(
        stays, with the name's block, which space_free would give back. */
     CettaGeneratedName generated_name = dst->generated_name;
     dst->generated_name = (CettaGeneratedName){0};
+    struct SpaceHeadAuthoritySeals *dst_seals =
+        space_theory_any_head_authority_seals_active()
+            ? space_head_authority_seals_take(dst) : NULL;
+    uint32_t dst_imp_eq_rev = dst->imported_equation_revision;
     space_free(dst);
     space_move_storage_and_backend(dst, src);
     dst->generated_name = generated_name;
+    if (dst_seals) {
+        (void)space_head_authority_seals_merge(dst, dst_seals);
+        space_head_authority_seals_free(dst_seals);
+    }
+    if (dst->imported_equation_revision == 0u)
+        dst->imported_equation_revision = dst_imp_eq_rev;
+    if (space_equation_revision(dst) != (uint64_t)dst->imported_equation_revision ||
+        dst->dep_count != 0u || dst->overlay_base != NULL)
+        atomic_store_explicit(&dst->has_user_theory, 1u, memory_order_relaxed);
     if (journal) {
         dst->journal = journal;
         CettaCount new_len = space_length64(dst);
@@ -19907,7 +19980,7 @@ static bool exact_index_current(Space *s) {
     if (s->native.exact_idx_dirty) {
         if (!space_keeps_exact_index(s) ||
             s->native.secondary_index_deferral_depth > 0u ||
-            s->native.marked != 0u)
+            (s->native.marked != 0u && s->match_backend.native.frozen))
             return false;
         SPACE_MAINTAIN(maintenance, s);
         if (s->native.exact_idx_dirty)

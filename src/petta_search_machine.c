@@ -40,6 +40,10 @@
 #include "state_cell.h"
 #include "u64_index.h"
 #include "space_type_evidence.h"
+#include "native/tcalc/tcalc_cetta_module.h"
+
+extern struct CettaLibraryContext *eval_current_library_context(void) __attribute__((weak));
+extern int eval_current_effective_fuel_limit(void) __attribute__((weak));
 
 #pragma weak state_cell_pressure_observer_new
 #pragma weak state_cell_pressure_observer_free
@@ -37083,6 +37087,29 @@ static Atom *petta_machine_values_as_variables(
 }
 
 
+static __attribute__((noinline, cold)) bool petta_machine_try_tcalc_unique(
+        PettaMachineImpl *machine, Atom *expression, Atom *expected,
+        uint32_t barrier, CettaLanguageId language_id, bool *handled,
+        PettaMachineStep *failure) {
+    *handled = false;
+    if (machine->host.call_contracts || !cetta_tcalc_space_try_eval ||
+        !eval_current_library_context ||
+        (eval_current_effective_fuel_limit &&
+         eval_current_effective_fuel_limit() >= 0))
+        return true;
+    struct CettaLibraryContext *lctx = eval_current_library_context();
+    Atom *inner = petta_machine_materialize_answer(
+        machine, expression->expr.elems[1]);
+    CettaCallOutcome tcalc_out;
+    if (!lctx || !inner || !cetta_tcalc_space_try_eval(
+            lctx, machine->space, &machine->heap, inner,
+            language_id, CETTA_TCALC_OBSERVE_PRESENCE, &tcalc_out))
+        return true;
+    *handled = true;
+    return petta_machine_deliver_native_return(
+        machine, tcalc_out, expected, barrier, false, false, failure);
+}
+
 static bool petta_machine_dispatch_solve(
     PettaMachineImpl *machine, const PettaGoal *goal,
     PettaMachineStep *failure) {
@@ -38182,6 +38209,16 @@ static bool petta_machine_dispatch_solve(
         SymbolId aggregate = machine->host.he_library_stream(
             machine->host.context, machine->space, expression);
         if (aggregate != SYMBOL_ID_NONE) {
+            if (__builtin_expect(
+                    form == PETTA_FORM_STREAM_UNIQUE &&
+                    aggregate == g_builtin_syms.unique_atom && nargs == 1u, 0)) {
+                bool tcalc_handled = false;
+                bool tcalc_ok = petta_machine_try_tcalc_unique(
+                    machine, expression, expected, goal->barrier,
+                    CETTA_LANGUAGE_HE, &tcalc_handled, failure);
+                if (tcalc_handled)
+                    return tcalc_ok;
+            }
             Atom *lowered = petta_machine_he_library_stream_lower(
                 machine, expression, aggregate);
             if (!lowered || !petta_push_solve_planned(
@@ -38234,6 +38271,15 @@ static bool petta_machine_dispatch_solve(
          form == PETTA_FORM_STREAM_INTERSECTION ||
          form == PETTA_FORM_STREAM_SUBTRACTION) &&
         petta_machine_builtin_allowed(machine, head)) {
+        if (__builtin_expect(
+                form == PETTA_FORM_STREAM_UNIQUE && nargs == 1u, 0)) {
+            bool tcalc_handled = false;
+            bool tcalc_ok = petta_machine_try_tcalc_unique(
+                machine, expression, expected, goal->barrier,
+                CETTA_LANGUAGE_PETTA, &tcalc_handled, failure);
+            if (tcalc_handled)
+                return tcalc_ok;
+        }
         Atom *written = petta_machine_values_as_variables(
             machine, expression, plan, NULL);
         if (!written) {

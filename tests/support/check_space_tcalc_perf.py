@@ -108,7 +108,7 @@ def main() -> int:
 
             tcalc_lines = [norm(l) for l in out_tcalc.splitlines() if l.strip()]
             interp_lines = [norm(l) for l in out_interp.splitlines() if l.strip()]
-            agree = tcalc_lines[-1] == f"({interp_lines[-1]})"
+            agree = tcalc_lines[-1] == interp_lines[-1]
             warm_lines = [norm(l) for l in out_warm.splitlines() if l.strip()]
             stats_line = warm_lines[-1]
             if not agree:
@@ -123,6 +123,36 @@ def main() -> int:
             print(
                 f"{lang:<8} {n:>3} {t_interp:>10.2f} {t_tcalc:>10.2f} {speedup:>8.1f}x {t_warm:>12.2f} {'OK':>6}"
             )
+
+    # Measure presence-only set store under `(unique ...)` on a diamond DAG with
+    # 2^14 = 16,384 duplicate paths versus explicit multiset collapse + unique-atom.
+    print("\nPresence-only set store under `(unique ...)` (14-layer diamond DAG, 2^14 paths):")
+    print(f"{'dialect':<8} {'interp_ms':>10} {'unique_ms':>10} {'speedup':>9} {'agree':>6}")
+    print("-" * 47)
+    dag_defs = """
+(= (dag-dup Z) Leaf)
+(= (dag-dup (S $n)) (dag-dup $n))
+(= (dag-dup (S $n)) (dag-dup $n))
+"""
+    d_arg = peano(14)
+    for lang in ("he", "petta"):
+        interp_dag = dag_defs + f"\n!(let $c (collapse (dag-dup {d_arg})) (unique-atom $c))\n"
+        unique_dag = dag_defs + f"\n!(collapse (unique (dag-dup {d_arg})))\n"
+        t_interp, out_i = measure(cetta, lang, interp_dag, trials=3)
+        t_uniq, out_u = measure(cetta, lang, unique_dag, trials=5)
+
+        def norm_u(s: str) -> str:
+            s = s.strip()
+            if lang == "he" and s.startswith("[") and s.endswith("]"):
+                s = s[1:-1].strip()
+            return s
+
+        oi = [norm_u(l) for l in out_i.splitlines() if l.strip()][-1]
+        ou = [norm_u(l) for l in out_u.splitlines() if l.strip()][-1]
+        if oi != "(Leaf)" or ou != "(Leaf)":
+            raise AssertionError(f"unique DAG mismatch ({lang}): interp={oi!r} unique={ou!r}")
+        speedup = t_interp / t_uniq if t_uniq > 0 else 0.0
+        print(f"{lang:<8} {t_interp:>10.2f} {t_uniq:>10.2f} {speedup:>8.1f}x {'OK':>6}")
     print("PASS: check_space_tcalc_perf")
     return 0
 

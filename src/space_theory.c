@@ -500,6 +500,7 @@ struct SpaceHeadClocks {
     SpaceHeadClockEntry *slots;
     uint32_t cap;
     uint32_t count;
+    struct SpaceHeadAuthoritySeals *authority_seals;
 };
 
 static _Atomic uint64_t g_space_head_clocks_next_id = 1u;
@@ -508,6 +509,8 @@ _Atomic uint64_t cetta_space_global_head_clocks_active = 0u;
 void space_head_clocks_free(struct SpaceHeadClocks *clocks) {
     if (!clocks)
         return;
+    if (clocks->authority_seals)
+        space_head_authority_seals_free(clocks->authority_seals);
     free(clocks->slots);
     free(clocks);
 }
@@ -1241,4 +1244,335 @@ SpaceRegionGuard space_region_guard_for_head(
         }
     }
     return guard;
+}
+
+/* ── Capability-Based Head Write Sealing (`lib/seal`) ───────────────────── */
+
+extern void cetta_seal_retain(struct CettaSealObject *object) __attribute__((weak));
+extern void cetta_seal_release(struct CettaSealObject *object) __attribute__((weak));
+extern bool cetta_seal_same_brand(const struct CettaSealObject *left,
+                                  const struct CettaSealObject *right) __attribute__((weak));
+extern uint32_t cetta_seal_facet_rights(const struct CettaSealObject *facet) __attribute__((weak));
+
+#ifndef CETTA_SEAL_RIGHT_SEAL_BIT
+#define CETTA_SEAL_RIGHT_SEAL_BIT 1u
+#endif
+
+typedef struct SpaceHeadAuthoritySealEntry {
+    SymbolId head;
+    struct CettaSealObject *brand_anchor;
+} SpaceHeadAuthoritySealEntry;
+
+struct SpaceHeadAuthoritySeals {
+    SpaceHeadAuthoritySealEntry *items;
+    uint32_t len;
+    uint32_t cap;
+};
+
+_Atomic uint64_t cetta_space_global_head_authority_seals_active = 0u;
+
+void space_head_authority_seals_free(struct SpaceHeadAuthoritySeals *seals) {
+    if (!seals)
+        return;
+    for (uint32_t i = 0u; i < seals->len; i++) {
+        if (seals->items[i].brand_anchor && cetta_seal_release)
+            cetta_seal_release(seals->items[i].brand_anchor);
+    }
+    free(seals->items);
+    free(seals);
+}
+
+struct SpaceHeadAuthoritySeals *space_head_authority_seals_clone_space(
+        const Space *src) {
+    const struct SpaceHeadAuthoritySeals *seals =
+        (src && src->head_clocks) ? src->head_clocks->authority_seals : NULL;
+    if (!seals || seals->len == 0u)
+        return NULL;
+    struct SpaceHeadAuthoritySeals *copy = calloc(1u, sizeof(*copy));
+    if (!copy)
+        return NULL;
+    copy->items = malloc(sizeof(*copy->items) * seals->len);
+    if (!copy->items) {
+        free(copy);
+        return NULL;
+    }
+    copy->cap = seals->len;
+    copy->len = seals->len;
+    for (uint32_t i = 0u; i < seals->len; i++) {
+        copy->items[i] = seals->items[i];
+        if (copy->items[i].brand_anchor && cetta_seal_retain)
+            cetta_seal_retain(copy->items[i].brand_anchor);
+    }
+    return copy;
+}
+
+struct SpaceHeadAuthoritySeals *space_head_authority_seals_take(Space *s) {
+    if (!s || !s->head_clocks || !s->head_clocks->authority_seals)
+        return NULL;
+    struct SpaceHeadAuthoritySeals *taken = s->head_clocks->authority_seals;
+    s->head_clocks->authority_seals = NULL;
+    return taken;
+}
+
+static struct CettaSealObject *head_authority_find_local(
+        const struct SpaceHeadAuthoritySeals *seals, SymbolId head) {
+    if (!seals || head == SYMBOL_ID_NONE)
+        return NULL;
+    for (uint32_t i = 0u; i < seals->len; i++) {
+        if (seals->items[i].head == head)
+            return seals->items[i].brand_anchor;
+    }
+    return NULL;
+}
+
+static struct CettaSealObject *head_authority_find_recursive(
+        const Space *s, SymbolId head, uint32_t depth) {
+    if (!s || head == SYMBOL_ID_NONE || depth > 16u)
+        return NULL;
+    struct CettaSealObject *local = head_authority_find_local(
+        s->head_clocks ? s->head_clocks->authority_seals : NULL, head);
+    if (local)
+        return local;
+    if (s->overlay_base) {
+        struct CettaSealObject *base_found =
+            head_authority_find_recursive(s->overlay_base, head, depth + 1u);
+        if (base_found)
+            return base_found;
+    }
+    uint32_t dep_count = space_dependency_count(s);
+    for (uint32_t d = 0u; d < dep_count; d++) {
+        const Space *dep = space_dependency_at(s, d);
+        struct CettaSealObject *found =
+            head_authority_find_recursive(dep, head, depth + 1u);
+        if (found)
+            return found;
+    }
+    return NULL;
+}
+
+static bool head_authority_add_local(Space *s, SymbolId head,
+                                     struct CettaSealObject *brand_anchor,
+                                     const char **reason_out) {
+    if (!s || head == SYMBOL_ID_NONE || !brand_anchor) {
+        if (reason_out) *reason_out = "invalid";
+        return false;
+    }
+    struct SpaceHeadClocks *clocks = head_clocks_ensure_locked(s);
+    if (!clocks) {
+        if (reason_out) *reason_out = "no-memory";
+        return false;
+    }
+    if (!clocks->authority_seals) {
+        clocks->authority_seals = calloc(1u, sizeof(*clocks->authority_seals));
+        if (!clocks->authority_seals) {
+            if (reason_out) *reason_out = "no-memory";
+            return false;
+        }
+    }
+    struct SpaceHeadAuthoritySeals *seals = clocks->authority_seals;
+    struct CettaSealObject *existing = head_authority_find_local(seals, head);
+    if (existing) {
+        if (cetta_seal_same_brand && cetta_seal_same_brand(existing, brand_anchor))
+            return true;
+        if (reason_out) *reason_out = "already-sealed";
+        return false;
+    }
+    if (seals->len >= seals->cap) {
+        uint32_t next_cap = seals->cap ? seals->cap * 2u : 4u;
+        SpaceHeadAuthoritySealEntry *grown =
+            realloc(seals->items, sizeof(*grown) * next_cap);
+        if (!grown) {
+            if (reason_out) *reason_out = "no-memory";
+            return false;
+        }
+        seals->items = grown;
+        seals->cap = next_cap;
+    }
+    if (cetta_seal_retain)
+        cetta_seal_retain(brand_anchor);
+    seals->items[seals->len++] = (SpaceHeadAuthoritySealEntry){
+        .head = head,
+        .brand_anchor = brand_anchor,
+    };
+    atomic_store_explicit(&cetta_space_global_head_authority_seals_active, 1u,
+                          memory_order_release);
+    return true;
+}
+
+bool space_head_authority_seals_merge(
+        Space *dst, const struct SpaceHeadAuthoritySeals *src) {
+    if (!dst || !src || src->len == 0u)
+        return true;
+    for (uint32_t i = 0u; i < src->len; i++) {
+        const char *ignored = NULL;
+        (void)head_authority_add_local(
+            dst, src->items[i].head, src->items[i].brand_anchor, &ignored);
+    }
+    return true;
+}
+
+bool space_theory_head_attach_write_seal(
+        Space *s, SymbolId head, struct CettaSealObject *brand_anchor,
+        const char **reason_out) {
+    if (reason_out)
+        *reason_out = NULL;
+    if (!s || head == SYMBOL_ID_NONE || !brand_anchor) {
+        if (reason_out) *reason_out = "invalid";
+        return false;
+    }
+    s = space_mutation_target(s);
+    if (!s) {
+        if (reason_out) *reason_out = "invalid";
+        return false;
+    }
+    struct CettaSealObject *inherited =
+        head_authority_find_recursive(s, head, 0u);
+    if (inherited &&
+        (!cetta_seal_same_brand || !cetta_seal_same_brand(inherited, brand_anchor))) {
+        if (reason_out) *reason_out = "already-sealed";
+        return false;
+    }
+    return head_authority_add_local(s, head, brand_anchor, reason_out);
+}
+
+bool space_theory_head_is_authority_sealed(const Space *s, SymbolId head) {
+    if (!s || head == SYMBOL_ID_NONE ||
+        !space_theory_any_head_authority_seals_active())
+        return false;
+    atomic_thread_fence(memory_order_acquire);
+    return head_authority_find_recursive(s, head, 0u) != NULL;
+}
+
+static bool head_authority_check_anchor(
+        const struct CettaSealObject *brand_anchor,
+        const struct CettaSealObject *offered_facet,
+        const char **reason_out) {
+    if (!brand_anchor)
+        return true;
+    if (!offered_facet) {
+        if (reason_out) *reason_out = "head-sealed";
+        return false;
+    }
+    if (!cetta_seal_same_brand || !cetta_seal_facet_rights) {
+        if (reason_out) *reason_out = "wrong-facet";
+        return false;
+    }
+    if (!cetta_seal_same_brand(brand_anchor, offered_facet)) {
+        if (reason_out) *reason_out = "wrong-facet";
+        return false;
+    }
+    if ((cetta_seal_facet_rights(offered_facet) & CETTA_SEAL_RIGHT_SEAL_BIT) == 0u) {
+        if (reason_out) *reason_out = "missing-right";
+        return false;
+    }
+    return true;
+}
+
+static bool head_authority_check_all_in_space(
+        const Space *s, const struct CettaSealObject *offered_facet,
+        const char **reason_out, uint32_t depth) {
+    if (!s || depth > 16u)
+        return true;
+    const struct SpaceHeadAuthoritySeals *seals =
+        s->head_clocks ? s->head_clocks->authority_seals : NULL;
+    if (seals) {
+        for (uint32_t i = 0u; i < seals->len; i++) {
+            if (!head_authority_check_anchor(
+                    seals->items[i].brand_anchor,
+                    offered_facet, reason_out))
+                return false;
+        }
+    }
+    if (s->overlay_base &&
+        !head_authority_check_all_in_space(
+            s->overlay_base, offered_facet, reason_out, depth + 1u))
+        return false;
+    uint32_t dep_count = space_dependency_count(s);
+    for (uint32_t d = 0u; d < dep_count; d++) {
+        if (!head_authority_check_all_in_space(
+                space_dependency_at(s, d), offered_facet, reason_out, depth + 1u))
+            return false;
+    }
+    return true;
+}
+
+static bool head_authority_check_symbols_in_atom(
+        const Space *target, const Atom *atom,
+        const struct CettaSealObject *offered_facet,
+        const char **reason_out, uint32_t depth) {
+    if (!atom || depth > 256u)
+        return true;
+    if (atom->kind == ATOM_SYMBOL) {
+        struct CettaSealObject *anchor =
+            head_authority_find_recursive(target, atom->sym_id, 0u);
+        return head_authority_check_anchor(anchor, offered_facet, reason_out);
+    }
+    if (atom->kind == ATOM_EXPR) {
+        for (CettaExprLen i = 0u; i < atom->expr.len; i++) {
+            if (!head_authority_check_symbols_in_atom(
+                    target, atom->expr.elems[i], offered_facet,
+                    reason_out, depth + 1u))
+                return false;
+        }
+    }
+    return true;
+}
+
+bool space_theory_atom_check_head_seal(
+        const Space *target, const Atom *atom,
+        const struct CettaSealObject *offered_facet,
+        const char **reason_out) {
+    if (reason_out)
+        *reason_out = NULL;
+    if (!target || !atom || !space_theory_any_head_authority_seals_active())
+        return true;
+    atomic_thread_fence(memory_order_acquire);
+    SymbolId atom_head = SYMBOL_ID_NONE;
+    SpaceTheoryAtomKind kind =
+        space_theory_classify_atom(atom, &atom_head, NULL);
+    switch (kind) {
+    case SPACE_THEORY_ATOM_DEFINITION:
+    case SPACE_THEORY_ATOM_DIRECTIONAL_DEFINITION:
+    case SPACE_THEORY_ATOM_TYPE_ASSIGNMENT:
+        if (atom_head != SYMBOL_ID_NONE) {
+            struct CettaSealObject *anchor =
+                head_authority_find_recursive(target, atom_head, 0u);
+            return head_authority_check_anchor(anchor, offered_facet, reason_out);
+        }
+        return head_authority_check_all_in_space(
+            target, offered_facet, reason_out, 0u);
+    case SPACE_THEORY_ATOM_SUBTYPE_ASSIGNMENT:
+        if (atom->kind == ATOM_EXPR && atom->expr.len == 3u) {
+            for (CettaExprLen i = 1u; i < 3u; i++) {
+                if (!head_authority_check_symbols_in_atom(
+                        target, atom->expr.elems[i], offered_facet,
+                        reason_out, 0u))
+                    return false;
+            }
+        }
+        return true;
+    case SPACE_THEORY_ATOM_EQUATION:
+        if (atom->kind == ATOM_EXPR && atom->expr.len >= 3u) {
+            for (CettaExprLen i = 1u; i < atom->expr.len; i++) {
+                if (!head_authority_check_symbols_in_atom(
+                        target, atom->expr.elems[i], offered_facet,
+                        reason_out, 0u))
+                    return false;
+            }
+        }
+        return true;
+    case SPACE_THEORY_ATOM_DATA:
+        if (atom_is_outer_open(atom)) {
+            return head_authority_check_all_in_space(
+                target, offered_facet, reason_out, 0u);
+        }
+        atom_head = space_theory_data_atom_head(atom);
+        if (atom_head != SYMBOL_ID_NONE) {
+            struct CettaSealObject *anchor =
+                head_authority_find_recursive(target, atom_head, 0u);
+            return head_authority_check_anchor(anchor, offered_facet, reason_out);
+        }
+        return true;
+    }
+    return true;
 }

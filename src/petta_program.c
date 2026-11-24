@@ -1531,11 +1531,17 @@ bool petta_program_function_registered(
         petta_program_space_rebuild_head_index(entry)) {
         const PettaProgramHeadBucket *bucket =
             petta_program_space_find_head_bucket(entry, head);
-        return bucket && bucket->len > 0u;
-    }
-    for (size_t index = 0u; index < entry->equation_len; index++) {
-        if (entry->equations[index].head == head)
+        if (bucket && bucket->len > 0u)
             return true;
+    } else {
+        for (size_t index = 0u; index < entry->equation_len; index++) {
+            if (entry->equations[index].head == head)
+                return true;
+        }
+    }
+    if (space_has_dependencies(space)) {
+        return space_rules_may_match_known_head(
+            space, head, petta_program_rule_forms(program));
     }
     return false;
 }
@@ -3461,7 +3467,8 @@ static bool petta_program_callability_cache_current(
                 return false;
             continue;
         }
-        if (!space_equation_token_matches_live_space(
+        if (space_has_dependencies(space->space) ||
+            !space_equation_token_matches_live_space(
                 scan->equations, space->space) ||
             scan->equational_revision !=
                 space_equational_revision(space->space)) {
@@ -3615,6 +3622,8 @@ static bool petta_program_extend_callability(PettaProgram *program) {
                 return false;
             continue;
         }
+        if (space_has_dependencies(space->space))
+            return false;
         bool alias_changed =
             scan->equational_revision !=
             space_equational_revision(space->space);
@@ -3687,6 +3696,14 @@ static bool petta_program_scan_callability(
                 space_rule_rows64(space->space), callability)) {
             return false;
         }
+        uint32_t dep_count = space_dependency_count(space->space);
+        for (uint32_t d = 0u; d < dep_count; d++) {
+            const Space *dep = space_dependency_at(space->space, d);
+            if (dep && !petta_program_scan_callability_rows(
+                    program, dep, 0u, space_rule_rows64(dep), callability)) {
+                return false;
+            }
+        }
     }
     for (size_t space_index = 0u;
          space_index < program->space_len; space_index++) {
@@ -3697,6 +3714,14 @@ static bool petta_program_scan_callability(
         if (!petta_callability_close_space_aliases(
                 program, space->space, callability)) {
             return false;
+        }
+        uint32_t dep_count = space_dependency_count(space->space);
+        for (uint32_t d = 0u; d < dep_count; d++) {
+            const Space *dep = space_dependency_at(space->space, d);
+            if (dep && !petta_callability_close_space_aliases(
+                    program, dep, callability)) {
+                return false;
+            }
         }
     }
     return true;
@@ -6230,6 +6255,7 @@ bool petta_program_candidate_snapshot_lease_clone(
 }
 
 static bool petta_program_candidate_snapshot_lease_from_entry(
+    PettaProgram *program,
     const PettaProgramSpace *entry,
     PettaProgramSpace *publication_authority,
     bool admit_local_execution_payload, unsigned admitted_forms,
@@ -6253,10 +6279,11 @@ static bool petta_program_candidate_snapshot_lease_from_entry(
         !petta_program_candidate_snapshot_key_matches_live_space(key, space)) {
         return false;
     }
-    const PettaProgramCandidateSnapshot *cached = publication_authority
-        ? petta_program_space_find_candidate_snapshot(
-              publication_authority, head, space)
-        : NULL;
+    const PettaProgramCandidateSnapshot *cached =
+        publication_authority && !space_has_dependencies(space)
+            ? petta_program_space_find_candidate_snapshot(
+                  publication_authority, head, space)
+            : NULL;
     if (cached) {
         /* The snapshot key is the equation projection and prefix epoch.
          * Data-only appends bump `revision` but leave that key intact, so
@@ -6579,6 +6606,42 @@ static bool petta_program_candidate_snapshot_lease_from_entry(
             free(items);
             return false;
         }
+        const PettaProgramEquation *dep_record = NULL;
+        if (program && admit_local_execution_payload &&
+            actual[index].occurrence.read.space &&
+            actual[index].occurrence.read.space != space) {
+            PettaProgramSpace *dep_entry = petta_program_find_space(
+                program, actual[index].occurrence.read.space);
+            if (dep_entry) {
+                for (size_t di = 0u; di < dep_entry->equation_len; di++) {
+                    if (dep_entry->equations[di].equation ==
+                            actual[index].equation ||
+                        atom_eq(dep_entry->equations[di].equation,
+                                actual[index].equation)) {
+                        dep_record = &dep_entry->equations[di];
+                        break;
+                    }
+                }
+            }
+        }
+        if (dep_record) {
+            items[length++] = (PettaEquationCandidate){
+                .equation = actual[index].equation,
+                .source_root = dep_record->source_root,
+                .rhs_plan = petta_plan_child(dep_record->plan, 2u),
+                .equation_template_c0 = dep_record->equation_template_c0,
+                .equation_template = dep_record->equation_template,
+                .activation_layout =
+                    petta_equation_activation_layout(
+                        dep_record->equation_template
+                            ? dep_record->equation_template->equation
+                            : actual[index].equation,
+                        dep_record->static_variable_count),
+                .occurrence = actual[index].occurrence,
+                .rhs_binds_variables = dep_record->rhs_binds_variables,
+            };
+            continue;
+        }
         uint64_t source_root = cetta_source_root_new();
         if (!source_root) {
             free(used);
@@ -6603,7 +6666,7 @@ static bool petta_program_candidate_snapshot_lease_from_entry(
     free(pointer_next);
     if (stats)
         stats->candidates_emitted = length;
-    if (publication_authority &&
+    if (publication_authority && !space_has_dependencies(space) &&
         space_read_token_matches_live_space(source, space) &&
         petta_program_candidate_snapshot_key_matches_live_space(key, space) &&
         petta_program_space_store_candidate_snapshot_take(
@@ -6642,12 +6705,12 @@ bool petta_program_candidate_snapshot_lease_profiled(
     if (!petta_program_revalidate_plans(program, entry, head))
         return false;
     return petta_program_candidate_snapshot_lease_from_entry(
-        entry, entry, true, petta_program_rule_forms(program), space, head, lease, stats);
+        program, entry, entry, true, petta_program_rule_forms(program), space, head, lease, stats);
 }
 
 bool petta_rule_snapshot_lease(Space *space, SymbolId head, unsigned admitted_forms,
     PettaCandidateSnapshotLease *lease) {
-    return petta_program_candidate_snapshot_lease_from_entry(NULL, NULL, false,
+    return petta_program_candidate_snapshot_lease_from_entry(NULL, NULL, NULL, false,
         admitted_forms, space, head, lease, NULL);
 }
 
@@ -6661,13 +6724,13 @@ bool petta_program_revision_view_equation_lease(
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PETTA_PROGRAM_REVISION_VIEW_QUERY_COMMIT);
         return petta_program_candidate_snapshot_lease_from_entry(
-            &projection->view->catalog, NULL, false, projection->view->admitted_rule_forms,
+            NULL, &projection->view->catalog, NULL, false, projection->view->admitted_rule_forms,
             space, head, lease, stats);
     }
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PETTA_PROGRAM_REVISION_VIEW_QUERY_STALE_FALLBACK);
     return petta_program_candidate_snapshot_lease_from_entry(
-        NULL, NULL, false, projection && projection->view
+        NULL, NULL, NULL, false, projection && projection->view
             ? projection->view->admitted_rule_forms : CETTA_RULE_SYNTAX_ORDINARY,
         space, head, lease, stats);
 }
@@ -6692,7 +6755,7 @@ bool petta_program_revision_view_source_candidate_lease(
         return false;
     }
     return petta_program_candidate_snapshot_lease_from_entry(
-        &projection->view->catalog, NULL, true, projection->view->admitted_rule_forms,
+        NULL, &projection->view->catalog, NULL, true, projection->view->admitted_rule_forms,
         space, head, lease, stats);
 }
 
