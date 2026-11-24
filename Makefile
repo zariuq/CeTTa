@@ -1082,6 +1082,10 @@ NAME_SUPPLY_PARALLEL_TEST_SRC = tests/test_name_supply_parallel.c
 NAME_SUPPLY_PARALLEL_TEST_OBJ = runtime/bootstrap/test_name_supply_parallel.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 NAME_SUPPLY_PARALLEL_TEST_BIN = runtime/test_name_supply_parallel-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 NAME_SUPPLY_PARALLEL_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+RHOCALC_THREADED_REGIONS_TEST_SRC = tests/test_rhocalc_threaded_regions.c
+RHOCALC_THREADED_REGIONS_TEST_OBJ = runtime/bootstrap/test_rhocalc_threaded_regions.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+RHOCALC_THREADED_REGIONS_TEST_BIN = runtime/test_rhocalc_threaded_regions-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+RHOCALC_THREADED_REGIONS_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 HE_COMPILED_READER_TEST_SRC = tests/support/test_he_compiled_reader_v1.c
 HE_COMPILED_READER_TEST_OBJ = runtime/bootstrap/test_he_compiled_reader_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 HE_COMPILED_READER_TEST_BIN = runtime/test_he_compiled_reader_v1-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -6079,9 +6083,38 @@ $(NAME_SUPPLY_PARALLEL_TEST_BIN): $(NAME_SUPPLY_PARALLEL_TEST_OBJ) $(NAME_SUPPLY
 	@mkdir -p runtime
 	$(CC) $(CFLAGS) -o $@ $(NAME_SUPPLY_PARALLEL_TEST_OBJ) $(NAME_SUPPLY_PARALLEL_TEST_LINK_OBJ) $(LDFLAGS)
 
+$(RHOCALC_THREADED_REGIONS_TEST_OBJ): $(RHOCALC_THREADED_REGIONS_TEST_SRC) src/rhocalc_core.h src/rhocalc_syntax.h src/name_supply.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(RHOCALC_THREADED_REGIONS_TEST_BIN): $(RHOCALC_THREADED_REGIONS_TEST_OBJ) $(RHOCALC_THREADED_REGIONS_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -o $@ $(RHOCALC_THREADED_REGIONS_TEST_OBJ) $(RHOCALC_THREADED_REGIONS_TEST_LINK_OBJ) $(LDFLAGS)
+
+# Threaded rho runs, in both name modes: the duplicator loop for up to a
+# million COMMs on 1, 2 and 4 workers holds only what its two live tasks need;
+# spawns and COMMs place their tasks by their parties' supplies, so positions
+# and names are the same on every run and any number of workers, and placing
+# by the finder (a test hook) changes them; a spawn of 640 takes balanced
+# pieces in the root block, whose COMMs join in the word; the loop's names
+# stay in the root block, none twice.  Through the command line, the
+# duplicator loop and the persistent-receive loop keep a flat peak RSS from
+# 10^4 to 10^6 COMMs.
+.PHONY: test-rhocalc-threaded-regions
+test-rhocalc: test-rhocalc-threaded-regions
+test-rhocalc-threaded-regions: $(RHOCALC_THREADED_REGIONS_TEST_BIN) $(BIN) tests/support/check_rho_threaded_memory.py
+	@set -eu; \
+	for supply in counter unforgeable; do \
+		CETTA_NAME_SUPPLY=$$supply CETTA_NAME_SEED=$(NAME_SUPPLY_TEST_SEED) \
+			$(call cetta_exec,./$(RHOCALC_THREADED_REGIONS_TEST_BIN)); \
+	done; \
+	$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_rho_threaded_memory.py "$(CETTA_SCRIPT_BIN)"
+
 # Generated names through the parallel executor, in both modes: a chain of a
-# million tasks and many pushes give the same names on 1, 2 and 4 workers,
-# no two alike, with every block given back and the heap flat.
+# million tasks and a million pushes from one supply give the same names on
+# 1, 2 and 4 workers, no two alike, the pushes all in the root block, with
+# every block given back and the heap flat; the supply that pushed them gets
+# its place back at the latest clock its tasks reached.
 .PHONY: test-name-supply-parallel
 test-petta-semantics: test-name-supply-parallel
 test-name-supply-parallel: $(NAME_SUPPLY_PARALLEL_TEST_BIN)
@@ -29378,10 +29411,15 @@ test-petta-generated-space-names: $(BIN) tests/petta/generated_space_names.metta
 
 # The name supply (src/name_supply.h): SipHash-2-4 with 128-bit output
 # against the specification's vectors and OpenSSL, the numeral, its spelling
-# and the order, split paths, and that no depth, width or count fails: a
-# chain of a million levels, a million siblings, a counter past its end, and
-# millions of names from a random tree, distinct and the same on every run,
-# with every block given back, in both modes.
+# and the order, the share algebra against a separate implementation of
+# Mettapedia's Shares, BalancedPieces and SiblingPushes (spawns of up to 4097
+# that are disjoint, cover their share and lie within ceil(log2 k) halvings;
+# a million pushes in the root block within 40), and that no depth, width or
+# count fails: chains of a million levels, a spent pool, a million balanced
+# forks and joins in the root block, a clock past its end, and millions of
+# names from a random tree that pushes, forks, spawns, joins and ends,
+# distinct and the same on every run, with every block given back, in both
+# modes.
 NAME_SUPPLY_TEST_BIN = runtime/test_name_supply-$(BUILD_OBJ_TAG)
 NAME_SUPPLY_TEST_SEED = 000102030405060708090a0b0c0d0e0f
 $(NAME_SUPPLY_TEST_BIN): tests/test_name_supply.c src/name_supply.c src/name_supply.h $(BUILD_CONFIG_HEADER)
@@ -29397,11 +29435,12 @@ test-name-supply: $(NAME_SUPPLY_TEST_BIN)
 			$(call cetta_exec,./$(NAME_SUPPLY_TEST_BIN)); \
 	done
 
-# Each parallel task draws from the supply split off when it was queued: the
-# names are the same on every run and on any number of workers, distinct
-# from the root's and each other's, equal modulo renaming in both modes and
-# on the cooperative route; a fixed seed replays unforgeable names, another
-# seed changes them, and a run without a seed reports one that replays it.
+# Each parallel task draws from its pusher's next push, a part of the
+# pusher's pool its push count gives: the names are the same on every run
+# and on any number of workers, distinct from the root's and each other's,
+# equal modulo renaming in both modes and on the cooperative route; a fixed
+# seed replays unforgeable names, another seed changes them, and a run
+# without a seed reports one that replays it.
 test-petta-generated-names-parallel: $(BIN) tests/petta/generated_names_parallel.metta \
 		tests/petta/generated_names_parallel.expected tests/support/generated_space_names.py
 	@set -eu; \

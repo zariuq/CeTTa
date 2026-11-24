@@ -2,10 +2,11 @@
 
 CeTTa generates two kinds of nominal name: a space new-space makes prints as
 &space(N), and a callable a PeTTa lambda makes prints as lambda_N.  Which
-numeral a name is given is not specified (under the counter name supply,
-dot-separated decimal ranks and counter, behind a block's 32 hexadecimal
-digits beyond the root block; under the unforgeable one, 32 hexadecimal
-digits): two outputs that differ only in the names they were given agree.
+numeral a name is given is not specified (under the counter name supply, a
+clock, or a share's prefix code and a clock, dot-separated, behind a block's
+32 hexadecimal digits beyond the root block; under the unforgeable one, 32
+hexadecimal digits): two outputs that differ only in the names they were
+given agree.
 Each side is renamed on its own, and each kind apart, every distinct name in
 the order it first appears, so a name keeps one spelling throughout an
 output, two names never merge, and a space is never confused with a

@@ -1,12 +1,16 @@
 /*
  * Generated names through the parallel executor (parallel_executor.h,
- * name_supply.h).  A task draws from the supply split off when it was
- * pushed, so its names depend on the tasks and the seed, never on the
+ * name_supply.h).  A pushed task draws from its pusher's next push, a part
+ * of the pusher's pool its push count gives, or from the supply its pusher
+ * placed it at, so its names depend on the tasks and the seed, never on the
  * workers.  A chain of a million tasks, each pushing the next from its own
  * supply, gives the same names on 1, 2 and 4 workers, keeps at most a few
  * blocks alive at once and gives every block back, with a flat heap; a
- * coordinator's many pushes give the same names on any number of workers;
- * no two names are alike.  Run once per mode, as test_name_supply is.
+ * coordinator's million pushes, one at a time, give the same names on any
+ * number of workers, all in the root block; no two names are alike.  When
+ * the executor ends, the coordinator's supply has its place back, at the
+ * latest clocks its tasks reached, so that its next names are fresh.  Run
+ * once per mode, as test_name_supply is.
  */
 #define _POSIX_C_SOURCE 200809L
 
@@ -112,6 +116,35 @@ static size_t chain_slots(unsigned levels) {
     return levels / CHAIN_STRIDE + 4u;
 }
 
+/* The clocks the chain's bottom task reaches: each task's draws, on top of
+   those of the tasks above it. */
+static void chain_clocks(unsigned levels, uint64_t *clocks) {
+    clocks[CETTA_NAME_KIND_SPACE] = clocks[CETTA_NAME_KIND_CALLABLE] = 0u;
+    for (unsigned level = 0u; level <= levels; level++)
+        if (level % CHAIN_STRIDE == 0u)
+            clocks[(level / CHAIN_STRIDE) % 2u ? CETTA_NAME_KIND_CALLABLE
+                                               : CETTA_NAME_KIND_SPACE]++;
+    clocks[CETTA_NAME_KIND_SPACE] += 2u;
+    clocks[CETTA_NAME_KIND_CALLABLE] += 1u;
+}
+
+/* The coordinator ROOT after its executor ended: its whole share in the
+   root block with nothing pushed, at the clocks EXPECTED, and its next name
+   a root's. */
+static bool coordinator_back(CettaNameSupply *root, const uint64_t *expected) {
+    bool placed = root->share == CETTA_NAME_SHARE_WHOLE && root->block == NULL &&
+                  root->pushes == 0u && root->pushed == 0u &&
+                  root->drawn[CETTA_NAME_KIND_SPACE] == expected[CETTA_NAME_KIND_SPACE] &&
+                  root->drawn[CETTA_NAME_KIND_CALLABLE] == expected[CETTA_NAME_KIND_CALLABLE];
+    CettaGeneratedName next = cetta_name_supply_fresh(root, CETTA_NAME_KIND_SPACE);
+    bool root_name = cetta_generated_name_form(next) == CETTA_NAME_FORM_HASHED ||
+                     (next.hi == CETTA_NAME_SHARE_WHOLE && next.tag == CETTA_NAME_FORM_COUNTED &&
+                      next.lo == expected[CETTA_NAME_KIND_SPACE] + 1u);
+    return placed && root_name;
+}
+
+static bool g_coordinator_back = true;
+
 /* Each run starts from a root of its own, as a run of the program does. */
 static bool run_chain(unsigned levels, uint32_t workers, Fingerprint *prints,
                       uint64_t *peak) {
@@ -135,6 +168,9 @@ static bool run_chain(unsigned levels, uint32_t workers, Fingerprint *prints,
               cetta_parallel_executor_run(&executor);
     cetta_parallel_executor_free(&executor);
     *peak = atomic_load_explicit(&chain.peak_blocks, memory_order_relaxed);
+    uint64_t expected[CETTA_NAME_KIND_COUNT];
+    chain_clocks(levels, expected);
+    g_coordinator_back = g_coordinator_back && coordinator_back(&root, expected);
     cetta_name_supply_install(previous);
     cetta_name_supply_dispose(&root);
     return ok;
@@ -144,22 +180,29 @@ static bool run_chain(unsigned levels, uint32_t workers, Fingerprint *prints,
 
 typedef struct {
     Fingerprint *prints;
+    /* Siblings that drew beyond the root block. */
+    _Atomic uint64_t blocked;
 } Siblings;
 
 static bool sibling_task(CettaParallelWorker *worker, void *task, void *user) {
     (void)worker;
     Siblings *siblings = user;
     size_t index = (size_t)((uintptr_t)task - 1u);
-    siblings->prints[index] = spelling_fingerprint(
-        CETTA_NAME_KIND_SPACE, cetta_name_fresh(CETTA_NAME_KIND_SPACE));
+    CettaGeneratedName name = cetta_name_fresh(CETTA_NAME_KIND_SPACE);
+    if (cetta_name_supply_current()->block)
+        atomic_fetch_add_explicit(&siblings->blocked, 1u, memory_order_relaxed);
+    siblings->prints[index] = spelling_fingerprint(CETTA_NAME_KIND_SPACE, name);
     return true;
 }
+
+static uint64_t g_siblings_blocked;
 
 static bool run_siblings(size_t count, uint32_t workers, Fingerprint *prints) {
     CettaNameSupply root;
     cetta_name_supply_init_root(&root);
     CettaNameSupply *previous = cetta_name_supply_install(&root);
     Siblings siblings = {.prints = prints};
+    atomic_init(&siblings.blocked, 0u);
     CettaParallelExecutor executor;
     CettaParallelExecutorConfig config = {
         .thread_count = workers,
@@ -175,6 +218,11 @@ static bool run_siblings(size_t count, uint32_t workers, Fingerprint *prints) {
         ok = cetta_parallel_executor_push(&executor, (void *)(uintptr_t)(i + 1u));
     ok = ok && cetta_parallel_executor_run(&executor);
     cetta_parallel_executor_free(&executor);
+    g_siblings_blocked += atomic_load_explicit(&siblings.blocked,
+                                               memory_order_relaxed);
+    /* Every sibling drew one space name from the root's clocks. */
+    static const uint64_t expected[CETTA_NAME_KIND_COUNT] = {1u, 0u};
+    g_coordinator_back = g_coordinator_back && coordinator_back(&root, expected);
     cetta_name_supply_install(previous);
     cetta_name_supply_dispose(&root);
     return ok;
@@ -202,7 +250,7 @@ int main(void) {
     bool unforgeable = cetta_name_supply_unforgeable();
 
     /* A short chain warms the workers and the allocator. */
-    enum { SHORT = 100000u, LONG = 1000000u, SIBLINGS = 200000u };
+    enum { SHORT = 100000u, LONG = 1000000u, SIBLINGS = 1000000u };
     Fingerprint *warm = malloc(chain_slots(SHORT) * sizeof(*warm));
     uint64_t peak = 0u;
     CHECK(run_chain(SHORT, 4u, warm, &peak), "a short chain runs");
@@ -250,6 +298,10 @@ int main(void) {
         CHECK(memcmp(sibling_prints[0], sibling_prints[i],
                      SIBLINGS * sizeof(Fingerprint)) == 0,
               "siblings' names on %u workers are those on one", workers[i]);
+    /* Counted pushes keep a million siblings in the root block. */
+    CHECK(g_siblings_blocked == 0u && cetta_name_supply_live_blocks() == 0u,
+          "a million siblings pushed one at a time draw in the root block "
+          "(%llu beyond it)", (unsigned long long)g_siblings_blocked);
 
     /* Within a run no two names are alike: a chain's, and the siblings'. */
     size_t repeats = 0u, total = slots + SIBLINGS;
@@ -263,12 +315,17 @@ int main(void) {
     for (size_t i = 1u; i < SIBLINGS; i++)
         repeats += compare_fingerprints(&all[i - 1u], &all[i]) == 0;
     CHECK(repeats == 0u, "%zu of %zu names repeat", repeats, total);
+    CHECK(g_coordinator_back,
+          "every executor gives its coordinator's supply its place back, at "
+          "the latest clocks its tasks reached");
 
     printf("PASS: names through the parallel executor (%s mode): a chain of "
            "%u tasks gives the same names on 1, 2 and 4 workers with at most "
            "%llu blocks alive at once, all given back (heap %zu -> %zu bytes, "
-           "peak RSS %ld -> %ld KiB from a chain of %u); %u pushes give the "
-           "same names on 1, 2 and 4 workers; %zu names distinct\n",
+           "peak RSS %ld -> %ld KiB from a chain of %u); %u pushes, one at a "
+           "time, give the same names on 1, 2 and 4 workers, all in the root "
+           "block; %zu names distinct; the coordinator's supply comes back "
+           "whole at its tasks' latest clocks\n",
            unforgeable ? "unforgeable" : "counter", (unsigned)LONG,
            (unsigned long long)(peaks[0] > peaks[2] ? peaks[0] : peaks[2]),
            heap_before, heap_after, rss_short, rss_long, (unsigned)SHORT,
