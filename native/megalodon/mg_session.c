@@ -942,7 +942,10 @@ MgStatus mg_thm_publish(MgTheory *theory, MgThm *thm, uint32_t name,
     }
     /* The declaration keeps the theorem's evidence: a tree proof is
      * store-interned; a published known taken up under another name is
-     * proved by citing that known; other derivations are copied as rows. */
+     * proved by citing that known; a derivation by the rules is kept as the
+     * proof tree it is (mg_thm_tree), so a library holds it as a tree; a
+     * derivation with a finished session's root inside, which exists as rows
+     * only, is copied as rows. */
     MgEvidence *evidence = NULL;
     MgPf *proof = NULL;
     if (thm->origin == MG_THM_TREE && thm->judgment.ctx == theory->store.ctx_empty) {
@@ -957,17 +960,24 @@ MgStatus mg_thm_publish(MgTheory *theory, MgThm *thm, uint32_t name,
         if (!proof)
             return MG_NOMEM;
     } else {
-        MgEvidence ev;
-        MgStatus est = mg_evidence_of(thm, &ev);
-        if (est != MG_OK) {
-            if (reason)
-                *reason = "evidence";
-            return est;
-        }
-        evidence = mg_evidence_clone(&ev);
-        mg_evidence_free(&ev);
-        if (!evidence)
+        MgStatus tst = thm->origin == MG_THM_STEP ? mg_thm_tree(&theory->store, thm, &proof)
+                                                  : MG_REFUSED;
+        if (tst == MG_NOMEM)
             return MG_NOMEM;
+        if (tst != MG_OK) {
+            proof = NULL;
+            MgEvidence ev;
+            MgStatus est = mg_evidence_of(thm, &ev);
+            if (est != MG_OK) {
+                if (reason)
+                    *reason = "evidence";
+                return est;
+            }
+            evidence = mg_evidence_clone(&ev);
+            mg_evidence_free(&ev);
+            if (!evidence)
+                return MG_NOMEM;
+        }
     }
     const MgDecl *made = NULL;
     MgStatus st = mg_theory_publish_known(theory, env.rev, name, claim,

@@ -347,6 +347,144 @@ MgStatus mg_evidence_of(const MgThm *root, MgEvidence *out) {
     return st;
 }
 
+/* One rule step as its rule's proof constructor over the premises' trees.
+ * MALFORMED when the step does not have its rule's premises. */
+static MgStatus step_tree(MgStore *s, const MgThm *t, MgPf *const ps[2], MgPf **out) {
+    const MgWitness *w = &t->witness;
+    uint32_t n = t->premise_count;
+    MgPf *pf = NULL;
+    switch (w->rule) {
+    case MG_RULE_HYP:
+        if (n != 0u)
+            return MG_MALFORMED;
+        pf = mg_pf_hyp(s, w->index);
+        break;
+    case MG_RULE_KNOWN:
+        if (n != 0u || !w->name)
+            return MG_MALFORMED;
+        pf = mg_pf_known(s, w->name);
+        break;
+    case MG_RULE_TERM_APP:
+        if (n != 1u || !w->arg)
+            return MG_MALFORMED;
+        pf = mg_pf_tmap(s, ps[0], w->arg);
+        break;
+    case MG_RULE_PROOF_APP:
+        if (n != 2u)
+            return MG_MALFORMED;
+        pf = mg_pf_pfap(s, ps[0], ps[1]);
+        break;
+    case MG_RULE_TERM_LAM: {
+        /* the binder's type: the innermost term variable of the premise's context */
+        const MgCtx *inner = n == 1u ? t->premises[0]->judgment.ctx : NULL;
+        if (!inner || !inner->terms)
+            return MG_MALFORMED;
+        pf = mg_pf_tlam(s, inner->terms->head, ps[0]);
+        break;
+    }
+    case MG_RULE_PROOF_LAM:
+        if (n != 1u || !w->source)
+            return MG_MALFORMED;
+        pf = mg_pf_plam(s, w->source, ps[0]);
+        break;
+    case MG_RULE_TYPE_APP:
+        if (n != 1u || !w->type)
+            return MG_MALFORMED;
+        pf = mg_pf_tpap(s, ps[0], w->type);
+        break;
+    case MG_RULE_TYPE_LAM:
+        if (n != 1u)
+            return MG_MALFORMED;
+        pf = mg_pf_tplam(s, ps[0]);
+        break;
+    default:
+        return MG_MALFORMED;
+    }
+    if (!pf)
+        return MG_NOMEM;
+    *out = pf;
+    return MG_OK;
+}
+
+MgStatus mg_thm_tree(MgStore *store, const MgThm *root, MgPf **out) {
+    ThmMemo memo = {0};
+    typedef struct {
+        const MgThm *thm;
+        bool expanded;
+    } Frame;
+    Frame *stack = NULL;
+    size_t len = 0, cap = 0;
+    MgStatus st = MG_OK;
+    MgPf *root_tree = NULL;
+    *out = NULL;
+#define PUSH_FRAME(t) do { \
+        if (len == cap) { \
+            size_t nc = cap ? cap * 2u : 64u; \
+            Frame *grown = mg_sys_realloc(stack, sizeof(Frame) * nc); \
+            if (!grown) { st = MG_NOMEM; break; } \
+            stack = grown; cap = nc; \
+        } \
+        stack[len++] = (Frame){(t), false}; \
+    } while (0)
+    PUSH_FRAME(root);
+    while (st == MG_OK && len) {
+        Frame *f = &stack[len - 1u];
+        uint64_t known;
+        if (thm_memo_get(&memo, f->thm, &known)) {
+            --len;
+            continue;
+        }
+        const MgThm *t = f->thm;
+        if (t->origin == MG_THM_STEP && !f->expanded) {
+            f->expanded = true;
+            for (uint32_t i = t->premise_count; i > 0u && st == MG_OK; --i)
+                PUSH_FRAME(t->premises[i - 1u]);
+            continue;
+        }
+        MgPf *tree = NULL;
+        switch (t->origin) {
+        case MG_THM_STEP: {
+            MgPf *ps[2] = {NULL, NULL};
+            for (uint32_t i = 0; i < t->premise_count && i < 2u; ++i) {
+                uint64_t a = 0;
+                thm_memo_get(&memo, t->premises[i], &a);
+                ps[i] = (MgPf *)(uintptr_t)a;
+            }
+            st = step_tree(store, t, ps, &tree);
+            break;
+        }
+        case MG_THM_TREE:
+            tree = t->proof;
+            if (!tree)
+                st = MG_MALFORMED;
+            break;
+        case MG_THM_DECLARATION:
+            if (!t->decl) {
+                st = MG_MALFORMED;
+                break;
+            }
+            tree = mg_pf_known(store, t->decl->name);
+            if (!tree)
+                st = MG_NOMEM;
+            break;
+        case MG_THM_SESSION:
+            st = MG_REFUSED;
+            break;
+        }
+        if (st == MG_OK && !thm_memo_put(&memo, t, (uint64_t)(uintptr_t)tree))
+            st = MG_NOMEM;
+        if (t == root)
+            root_tree = tree;
+        --len;
+    }
+#undef PUSH_FRAME
+    mg_sys_free(stack);
+    mg_sys_free(memo.slots);
+    if (st == MG_OK)
+        *out = root_tree;
+    return st;
+}
+
 /* A row source over evidence rows (address = index). */
 static uint64_t ev_source_revision(void *context) {
     (void)context;

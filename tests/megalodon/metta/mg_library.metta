@@ -28,8 +28,8 @@
          (Pf.proofLam (Tm.db 1) (Pf.proofLam (Tm.db 0) (Pf.hyp 1))))))))
 !(mg:statement (mg:prove (T) "and_left" (and-left) (and-left-proof)))
 !(mg:dependencies (T) "and_left")
-; An LCF theorem published as a known keeps its derivation as rows: lazy
-; evidence, which the library stores marked (conversion lazy).
+; An LCF theorem published as a known keeps its derivation as the proof tree
+; it is, which the library stores and the reload rechecks.
 !(mg:publish (T) (mg:term-app (mg:term-app (mg:known (T) "and_left") (truth)) (truth)) "and_left_truth")
 ; A known taken up under another name keeps its proof, the citation of that known.
 !(mg:publish (T) (mg:known (T) "and_left") "and_left_again")

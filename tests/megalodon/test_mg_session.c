@@ -957,6 +957,130 @@ static MgStatus load_into_fresh(const char *text, MgImportReport *rep, MgTheory 
 /* Its proof is the citation of the known, so the theory still saves; the
  * saved library reloads it, rechecked, and a citation of a known with
  * another statement, or of no known, is refused at that row. */
+/* Two terms of two stores, the same when printed. */
+static bool printed_same(const MgStore *a, const MgTm *x, const MgStore *b, const MgTm *y) {
+    char *ta = NULL, *tb = NULL;
+    size_t la = 0, lb = 0;
+    FILE *fa = open_memstream(&ta, &la), *fb = open_memstream(&tb, &lb);
+    bool ok = fa && fb && mg_print_tm(fa, a, x) && mg_print_tm(fb, b, y);
+    if (fa) fclose(fa);
+    if (fb) fclose(fb);
+    ok = ok && la == lb && memcmp(ta, tb, la) == 0;
+    free(ta);
+    free(tb);
+    return ok;
+}
+
+/* A theorem the LCF rules derive is published as the proof tree it is: the
+ * declaration holds the tree, the library saves it as one and reloads it
+ * rechecked; a tree with a hypothesis renumbered is refused at its row; a
+ * value with a finished session's root inside keeps its rows. */
+static void test_rule_theorem_tree(void) {
+    /* the implication theory, with a finished session's root published (imp_refl) */
+    MgThm *s = derived_known();
+    const char *why = NULL;
+    MgThm *h = NULL, *k = NULL, *h1 = NULL, *m = NULL, *n = NULL;
+    MgThm *dom_h = NULL, *inst = NULL, *gen = NULL, *forall_id = NULL;
+    MgThm *ph = NULL, *pl = NULL, *gl = NULL, *pg = NULL, *pa = NULL;
+    MgWitness hyp = {.rule = MG_RULE_HYP, .index = 0};
+    MgWitness plam = {.rule = MG_RULE_PROOF_LAM};
+    MgWitness papp = {.rule = MG_RULE_PROOF_APP};
+    MgWitness tapp = {.rule = MG_RULE_TERM_APP, .arg = TM("(Tm.db 0)")};
+    MgWitness tlam = {.rule = MG_RULE_TERM_LAM, .type = TP("(Tp.base 0)")};
+    MgWitness tl1 = {.rule = MG_RULE_TERM_LAM, .type = TP("(Tp.var 0)")};
+    MgWitness tylam = {.rule = MG_RULE_TYPE_LAM};
+    MgWitness tyapp = {.rule = MG_RULE_TYPE_APP, .type = TP("(Tp.prop)")};
+    bool built =
+        mg_thm_step(T, &hyp, ctx_of("(Megalodon.context 0 (types) (hypotheses " QP "))"),
+                    NULL, 0, NULL, &why, &h) == MG_OK &&
+        mg_thm_step(T, &plam, NULL, &h, 1, NULL, &why, &k) == MG_OK &&
+        mg_thm_step(T, &hyp, ctx_of("(Megalodon.context 0 (types) (hypotheses " IMPQ "))"),
+                    NULL, 0, NULL, &why, &h1) == MG_OK &&
+        mg_thm_step(T, &plam, NULL, &h1, 1, NULL, &why, &m) == MG_OK;
+    MgThm *pair[2] = {m, k};
+    built = built &&
+        mg_thm_step(T, &papp, NULL, pair, 2, NULL, &why, &n) == MG_OK &&
+        mg_thm_step(T, &hyp, ctx_of("(Megalodon.context 0 (types (Tp.base 0)) (hypotheses " DOM "))"),
+                    NULL, 0, NULL, &why, &dom_h) == MG_OK &&
+        mg_thm_step(T, &tapp, NULL, &dom_h, 1, NULL, &why, &inst) == MG_OK &&
+        mg_thm_step(T, &tlam, NULL, &inst, 1, NULL, &why, &gen) == MG_OK &&
+        mg_thm_step(T, &plam, NULL, &gen, 1, NULL, &why, &forall_id) == MG_OK &&
+        mg_thm_step(T, &hyp, ctx_of("(Megalodon.context 1 (types (Tp.var 0)) (hypotheses "
+                                    "(Tm.all (Tp.var 0) (Tm.imp (Tm.named \"q\") (Tm.named \"q\")))))"),
+                    NULL, 0, NULL, &why, &ph) == MG_OK &&
+        mg_thm_step(T, &plam, NULL, &ph, 1, NULL, &why, &pl) == MG_OK &&
+        mg_thm_step(T, &tl1, NULL, &pl, 1, NULL, &why, &gl) == MG_OK &&
+        mg_thm_step(T, &tylam, NULL, &gl, 1, NULL, &why, &pg) == MG_OK &&
+        mg_thm_step(T, &tyapp, NULL, &pg, 1, NULL, &why, &pa) == MG_OK;
+    EXPECT(built, "closed theorems derived by every rule");
+    const MgDecl *dk = NULL, *dn = NULL, *df = NULL, *dp = NULL;
+    EXPECT(built &&
+           mg_thm_publish(T, k, NM("imp_by_rules"), NULL, NULL, &why, &dk) == MG_OK &&
+           mg_thm_publish(T, n, NM("imp_by_app"), NULL, NULL, &why, &dn) == MG_OK &&
+           mg_thm_publish(T, forall_id, NM("forall_by_rules"), NULL, NULL, &why, &df) == MG_OK &&
+           mg_thm_publish(T, pa, NM("poly_by_rules"), NULL, NULL, &why, &dp) == MG_OK,
+           "the derived theorems publish");
+    EXPECT(dk && dk->proof && !dk->evidence && dk->proof->tag == MG_PF_PLAM &&
+           dn && dn->proof && !dn->evidence && dn->proof->tag == MG_PF_PFAP &&
+           df && df->proof && !df->evidence && df->proof->tag == MG_PF_PLAM &&
+           dp && dp->proof && !dp->evidence && dp->proof->tag == MG_PF_TPAP,
+           "each declaration holds the proof tree its derivation is");
+    EXPECT(dn && dk && dn->proof->q == dk->proof,
+           "a premise derived once is one node of the tree");
+    const MgDecl *ds = mg_env_lookup_quiet(mg_theory_snapshot(T), NM("imp_refl"), MG_NS_KNOWN);
+    EXPECT(ds && !ds->proof && ds->evidence, "a finished session's root keeps its rows");
+    size_t len = 0;
+    char *text = saved_library(T, &len, &why);
+    EXPECT(text != NULL, "the theory saves");
+    if (text) {
+        EXPECT(strstr(text, "(Megalodon.theorem \"imp_by_rules\"") != NULL &&
+               strstr(text, "(tree (Pf.proofLam") != NULL &&
+               strstr(text, "(tree (Pf.typeApp") != NULL,
+               "the library holds the derivations as trees");
+        MgImportReport rep;
+        MgTheory *u = NULL;
+        EXPECT(load_into_fresh(text, &rep, &u) == MG_OK && rep.theorems == 5u,
+               "the library reloads, every tree rechecked");
+        const char *names[] = {"imp_by_rules", "imp_by_app", "forall_by_rules", "poly_by_rules"};
+        MgThm *const here[] = {k, n, forall_id, pa};
+        bool same = u != NULL;
+        for (int i = 0; same && i < 4; ++i) {
+            MgThm *x = NULL;
+            same = mg_thm_from_known(u, mg_name_intern(&u->store, names[i], strlen(names[i])), &why, &x) == MG_OK &&
+                   printed_same(&u->store, x->judgment.prop, &T->store, here[i]->judgment.prop);
+            mg_thm_release(x);
+        }
+        EXPECT(same, "each reloaded theorem states what was derived");
+        mg_theory_release(u);
+        char *line = strstr(text, "(Megalodon.theorem \"imp_by_rules\"");
+        char *end = line ? strchr(line, '\n') : NULL;
+        char *bad = NULL;
+        if (line && end) {
+            size_t at = (size_t)(line - text), n_line = (size_t)(end - line);
+            char *row = strndup(line, n_line);
+            char *hyp0 = row ? strstr(row, "(Pf.hyp 0)") : NULL;
+            if (hyp0) {
+                hyp0[8] = '1';
+                bad = malloc(len + 1u);
+                if (bad) {
+                    memcpy(bad, text, len + 1u);
+                    memcpy(bad + at, row, n_line);
+                }
+            }
+            free(row);
+        }
+        EXPECT(bad && load_into_fresh(bad, &rep, &u) != MG_OK && rep.stopped &&
+               strstr(rep.message, "imp_by_rules") != NULL,
+               "a tree with a hypothesis renumbered is refused at its row");
+        mg_theory_release(u);
+        free(bad);
+        free(text);
+    }
+    MgThm *all[] = {h, k, h1, m, n, dom_h, inst, gen, forall_id, ph, pl, gl, pg, pa, s};
+    for (size_t i = 0; i < sizeof all / sizeof all[0]; ++i)
+        mg_thm_release(all[i]);
+}
+
 static void test_republished_known(void) {
     MgThm *t = derived_known();
     const char *why = NULL;
@@ -1167,6 +1291,7 @@ int main(void) {
     test_lcf();
     test_publication();
     test_republished_known();
+    test_rule_theorem_tree();
     test_allocation_failure();
     test_context_footprint();
     if (T)

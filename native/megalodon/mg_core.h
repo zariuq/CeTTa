@@ -369,8 +369,9 @@ struct MgDecl {
     /* Names this declaration's admission consulted directly; withdrawal
      * of any of them withdraws this declaration too. */
     MgFootprint deps;
-    /* Theorem evidence: the checked proof tree (store-interned), or rows
-     * owned by the declaration (published from an LCF or session value). */
+    /* Theorem evidence: the proof tree (store-interned: checked, or the
+     * tree an LCF derivation is), or rows owned by the declaration
+     * (published from a value with a finished session's root inside). */
     MgPf *proof;
     MgEvidence *evidence;
     /* Provenance (display/source metadata, no authority). */

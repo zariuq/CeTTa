@@ -44,6 +44,13 @@ struct MgEvidence {
 
 /* The derivation of a theorem (caller holds its theory's lock). */
 MgStatus mg_evidence_of(const MgThm *thm, MgEvidence *out);
+/* The same derivation as the proof tree it is, interned in STORE (the
+ * theorem's theory's store; caller holds its lock): a rule step is its
+ * rule's proof constructor over its premises' trees, a checked tree is
+ * itself, a known is cited by name.  What the derivation shares, the store
+ * shares.  REFUSED when the derivation holds a finished session's root,
+ * whose derivation exists as rows only. */
+MgStatus mg_thm_tree(MgStore *store, const MgThm *thm, MgPf **out);
 void mg_evidence_free(MgEvidence *ev);
 /* Owned copy (NULL on allocation failure). */
 MgEvidence *mg_evidence_clone(const MgEvidence *ev);
