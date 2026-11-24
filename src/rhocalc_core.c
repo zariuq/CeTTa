@@ -278,30 +278,57 @@ typedef enum {
     RHO_ASYNC_ENDPOINT_RECV = 1
 } RhoAsyncEndpointKind;
 
-typedef struct RhoAsyncEndpoint RhoAsyncEndpoint;
-struct RhoAsyncEndpoint {
-    RhoAsyncEndpointKind kind;
-    Atom *atom;
+/* A task's region: the arena that holds the task's term and record and
+ * nothing else.  It is released when the task ends -- at a COMM, a spawn or
+ * a 0 -- and kept while the task waits on a channel or is stuck.  Released
+ * regions are kept for the next tasks, emptied to at most
+ * RHO_TASK_REGION_KEEP_BYTES of spare blocks: RHO_TASK_REGION_STOCK_MAX by
+ * each worker, and RHO_TASK_REGION_POOL_MAX more by the run, for the workers
+ * whose tasks make more regions than they release. */
+typedef struct RhoTaskRegion RhoTaskRegion;
+struct RhoTaskRegion {
+    Arena arena;
+    ArenaMark empty;
+    RhoTaskRegion *next;  /* in a worker's stock */
+};
+
+/* A live task of a threaded run: its process in normal form, which its
+ * region holds with this record, and, while it waits or is stuck, the name
+ * supply it ran with.  While it is queued, its supply is the queue's. */
+typedef struct RhoTask RhoTask;
+struct RhoTask {
+    RhoTaskRegion *region;
+    Atom *proc;
     RhoView view;
-    RhoAsyncEndpoint *next;
+    RhoAsyncEndpointKind kind;
+    RhoTask *next;            /* in a bucket's queue, or among the stuck */
+    CettaNameSupply supply;
+    bool holds_supply;
 };
 
 typedef struct RhoChannelBucket RhoChannelBucket;
 struct RhoChannelBucket {
-    Atom *channel;        /* the channel of the endpoint that opened it */
+    Atom *channel;        /* the channel, copied into the table's arena */
     uint64_t hash;
     pthread_mutex_t mutex;
-    RhoAsyncEndpoint *send_head;
-    RhoAsyncEndpoint *send_tail;
-    RhoAsyncEndpoint *recv_head;
-    RhoAsyncEndpoint *recv_tail;
+    RhoTask *send_head;
+    RhoTask *send_tail;
+    RhoTask *recv_head;
+    RhoTask *recv_tail;
     RhoChannelBucket *next;
 };
 
 typedef struct {
     pthread_mutex_t mutex;
     RhoChannelBucket *head;
+    Arena arena;          /* the buckets' channels */
 } RhoChannelTable;
+
+/* What one worker of a threaded run keeps across its tasks. */
+typedef struct {
+    RhoTaskRegion *stock;
+    uint32_t stock_len;
+} RhoAsyncWorkerState;
 
 typedef struct RhoAsyncExecutor RhoAsyncExecutor;
 
@@ -311,8 +338,14 @@ struct RhoAsyncExecutor {
     const RhocalcEvalContext *eval_context;
     CettaParallelExecutor parallel;
     RhoChannelTable channels;
-    RhoAtomVec residuals;
-    pthread_mutex_t residual_mutex;
+    RhoTask *stuck;                 /* the tasks that can never run again */
+    pthread_mutex_t stuck_mutex;
+    RhoAsyncWorkerState *workers;
+    pthread_mutex_t region_mutex;
+    RhoTaskRegion *region_pool;     /* released regions beyond the stocks */
+    uint32_t region_pool_len;
+    RhocalcThreadedTestHooks hooks;
+    _Atomic uint64_t regions_made;
     _Atomic uint32_t budget;
     _Atomic uint32_t reductions_taken;
     _Atomic uint32_t branch_turn;
@@ -4603,11 +4636,56 @@ static bool rho_machine_select_canonical_successor(RhoMachine *machine,
 
 /* ── Threaded strict-core executor ──────────────────────────────────────────
  *
- * Worker threads decompose tasks into components and publish send/receive
- * endpoints into per-channel buckets.  A bucket-locked rendezvous pairs one
- * send with one receive, spends one unit of the shared reduction budget,
- * and enqueues one continuation; see the run invariant at RhoAsyncExecutor
- * above.  The final state is unmatched endpoints plus stuck residuals. */
+ * Worker threads run tasks: a process in normal form, held in a region of
+ * its own with the name supply it draws from.  A task of a parallel
+ * composition spawns its components; a send or a receive is published into
+ * its channel's bucket, where a bucket-locked rendezvous pairs one send with
+ * one receive, spends one unit of the shared reduction budget, and enqueues
+ * one continuation; see the run invariant at RhoAsyncExecutor above.  The
+ * final state is the waiting endpoints plus the stuck tasks.
+ *
+ * Memory is held by tasks (Mettapedia: RhoCalculus/ParallelExecution/
+ * MemoryDisciplines, the task regions): a created task receives a copy of
+ * exactly its own term in a region of its own, a task's region is released
+ * when the task ends, and a waiting endpoint keeps its region while it
+ * waits.  What a task computes while it runs -- a COMM's substitution and
+ * payload, the scratch of matching -- is in its worker's scratch arena,
+ * reset when the task ends.  So what a run holds is what its live tasks
+ * need, however many COMMs it runs.
+ *
+ * Placement is by the parties (ContinuationPlacement, Naming.Canonical): a
+ * spawned component draws from its balanced piece of the spawner's supply
+ * (BalancedPieces.balancedPiece: the first ceil(k/2) of its k components
+ * share the left half and the others the right half, each parted again in
+ * the same way, so every piece lies within ceil(log2 k) halvings of the
+ * spawner's share), and a COMM's continuation from the join of the
+ * sender's and the receiver's supplies as each ran with it, so the run's
+ * positions and names depend on its reduction history, never on which
+ * party found the match or which worker ran it.  A persistent receive is
+ * not consumed: it keeps its supply, and its continuation takes the
+ * sender's. */
+
+/* A released region keeps this much of spare blocks, and a worker this many
+ * released regions; the first block of a region is this small. */
+#define RHO_TASK_REGION_KEEP_BYTES 4096u
+#define RHO_TASK_REGION_STOCK_MAX 16u
+#define RHO_TASK_REGION_POOL_MAX 256u
+#define RHO_TASK_REGION_FIRST_BLOCK 512u
+
+/* A test's hooks and the census of the last run, for the runs of the
+   thread that set them. */
+static _Thread_local RhocalcThreadedTestHooks g_rho_threaded_test_hooks;
+static _Thread_local RhocalcThreadedCensus g_rho_threaded_census;
+
+void rhocalc_threaded_test_hooks_set(const RhocalcThreadedTestHooks *hooks) {
+    g_rho_threaded_test_hooks =
+        hooks ? *hooks : (RhocalcThreadedTestHooks){0};
+}
+
+void rhocalc_threaded_last_census(RhocalcThreadedCensus *out) {
+    if (out)
+        *out = g_rho_threaded_census;
+}
 
 static void rho_async_fail(RhoAsyncExecutor *executor, const char *fmt, ...) {
     va_list ap;
@@ -4620,40 +4698,191 @@ static void rho_async_fail(RhoAsyncExecutor *executor, const char *fmt, ...) {
     cetta_parallel_executor_fail(&executor->parallel, "%s", message);
 }
 
+/* ── Copying a term into its region ── */
+
+/* ATOM, a process in normal form or a part of one, copied into REGION as a
+ * tree: every expression of it is allocated there and a symbol is the
+ * symbol table's own atom, while the payload of a value or of a deferred
+ * payload, and any other leaf, is copied whole (atom_deep_copy, which keeps
+ * a payload's sharing and the resources it holds), so the copy refers to
+ * nothing another region holds.  Normalizing a term rebuilds it as a tree
+ * in the same way. */
+static Atom *rho_region_copy(Arena *region, Atom *atom) {
+    switch (atom->kind) {
+    case ATOM_SYMBOL: {
+        Atom *canonical = atom_symbol_canonical(atom->sym_id);
+        return canonical ? canonical : atom_symbol_id(region, atom->sym_id);
+    }
+    case ATOM_VAR:
+        return atom_var_like(region, atom, atom->var_id);
+    case ATOM_EXPR: {
+        CettaExprLen len = atom->expr.len;
+        if (len == 0u)
+            break;
+        Atom *head = atom->expr.elems[0];
+        bool payload = len == 2u && head->kind == ATOM_SYMBOL &&
+                       (head->sym_id == g_rho_syms.val ||
+                        head->sym_id == g_rho_syms.eval_payload);
+        Atom *inline_elems[8];
+        Atom **elems = len <= 8u ? inline_elems
+                                 : cetta_malloc(sizeof(Atom *) * (size_t)len);
+        if (!elems)
+            return NULL;
+        bool ok = true;
+        for (CettaExprLen i = 0; ok && i < len; i++) {
+            Atom *part = atom->expr.elems[i];
+            elems[i] = payload && i == 1u ? atom_deep_copy(region, part)
+                                          : rho_region_copy(region, part);
+            ok = elems[i] != NULL;
+        }
+        Atom *out = ok ? atom_expr(region, elems, len) : NULL;
+        if (elems != inline_elems)
+            free(elems);
+        return out;
+    }
+    default:
+        break;
+    }
+    return atom_deep_copy(region, atom);
+}
+
+/* ── Task regions ── */
+
+static RhoTaskRegion *rho_task_region_take(RhoAsyncExecutor *executor,
+                                           RhoAsyncWorkerState *state) {
+    RhoTaskRegion *region = state ? state->stock : NULL;
+    if (region) {
+        state->stock = region->next;
+        state->stock_len--;
+        region->next = NULL;
+        return region;
+    }
+    pthread_mutex_lock(&executor->region_mutex);
+    region = executor->region_pool;
+    if (region) {
+        executor->region_pool = region->next;
+        executor->region_pool_len--;
+    }
+    pthread_mutex_unlock(&executor->region_mutex);
+    if (region) {
+        region->next = NULL;
+        return region;
+    }
+    region = cetta_malloc(sizeof(*region));
+    if (!region)
+        return NULL;
+    arena_init_detached(&region->arena);
+    arena_set_block_growth(&region->arena, RHO_TASK_REGION_FIRST_BLOCK);
+    region->empty = arena_mark(&region->arena);
+    region->next = NULL;
+    atomic_fetch_add_explicit(&executor->regions_made, 1u,
+                              memory_order_relaxed);
+    return region;
+}
+
+/* Release REGION: emptied into STATE's stock, or the run's pool, or freed
+   when both are full and on the thread that ends the run (no STATE). */
+static void rho_task_region_release(RhoAsyncExecutor *executor,
+                                    RhoAsyncWorkerState *state,
+                                    RhoTaskRegion *region) {
+    if (!region)
+        return;
+    if (state) {
+        arena_reset(&region->arena, region->empty);
+        arena_release_spare(&region->arena, RHO_TASK_REGION_KEEP_BYTES);
+        if (state->stock_len < RHO_TASK_REGION_STOCK_MAX) {
+            region->next = state->stock;
+            state->stock = region;
+            state->stock_len++;
+            return;
+        }
+        pthread_mutex_lock(&executor->region_mutex);
+        bool pooled = executor->region_pool_len < RHO_TASK_REGION_POOL_MAX;
+        if (pooled) {
+            region->next = executor->region_pool;
+            executor->region_pool = region;
+            executor->region_pool_len++;
+        }
+        pthread_mutex_unlock(&executor->region_mutex);
+        if (pooled)
+            return;
+    }
+    arena_free(&region->arena);
+    free(region);
+}
+
+static void rho_task_region_list_free(RhoTaskRegion *region) {
+    while (region) {
+        RhoTaskRegion *next = region->next;
+        arena_free(&region->arena);
+        free(region);
+        region = next;
+    }
+}
+
+/* A task of PROC, a process in normal form: a copy of PROC in a region of
+ * its own, which holds its record too. */
+static RhoTask *rho_task_make(RhoAsyncExecutor *executor,
+                              RhoAsyncWorkerState *state, Atom *proc) {
+    RhoTaskRegion *region = rho_task_region_take(executor, state);
+    if (!region)
+        return NULL;
+    RhoTask *task = arena_alloc(&region->arena, sizeof(*task));
+    Atom *copy = task ? rho_region_copy(&region->arena, proc) : NULL;
+    if (!copy) {
+        rho_task_region_release(executor, state, region);
+        return NULL;
+    }
+    *task = (RhoTask){.region = region, .proc = copy, .view = rho_view(copy)};
+    return task;
+}
+
+/* TASK ends: its supply ends, handing on its clocks, and its region is
+   released. */
+static void rho_task_end(RhoAsyncExecutor *executor, RhoAsyncWorkerState *state,
+                         RhoTask *task) {
+    if (task->holds_supply) {
+        cetta_name_supply_dispose(&task->supply);
+        task->holds_supply = false;
+    }
+    rho_task_region_release(executor, state, task->region);
+}
+
+/* TASK, which was never run, ends with the run: its supply is the queue's. */
+static void rho_async_discard_task(void *task, void *user) {
+    rho_task_end(user, NULL, task);
+}
+
+/* TASK keeps the supply it runs with, for when it waits or is stuck. */
+static void rho_task_keep_supply(RhoTask *task) {
+    task->supply = cetta_name_supply_copy(cetta_name_supply_current());
+    task->holds_supply = true;
+}
+
+/* ── Channels ── */
+
 static void rho_channel_table_init(RhoChannelTable *table) {
     pthread_mutex_init(&table->mutex, NULL);
     table->head = NULL;
-}
-
-static void rho_async_endpoint_free(RhoAsyncEndpoint *endpoint) {
-    free(endpoint);
-}
-
-static void rho_async_endpoint_list_free(RhoAsyncEndpoint *endpoint) {
-    while (endpoint) {
-        RhoAsyncEndpoint *next = endpoint->next;
-        rho_async_endpoint_free(endpoint);
-        endpoint = next;
-    }
+    arena_init_detached(&table->arena);
 }
 
 static void rho_channel_table_free(RhoChannelTable *table) {
     RhoChannelBucket *bucket = table->head;
     while (bucket) {
         RhoChannelBucket *next = bucket->next;
-        rho_async_endpoint_list_free(bucket->send_head);
-        rho_async_endpoint_list_free(bucket->recv_head);
         pthread_mutex_destroy(&bucket->mutex);
         free(bucket);
         bucket = next;
     }
+    arena_free(&table->arena);
     pthread_mutex_destroy(&table->mutex);
     table->head = NULL;
 }
 
-/* The bucket of a channel, by the structural order's equality.  The
- * channel atom lives as long as the endpoint that holds it, which is as
- * long as the run. */
+/* The bucket of a channel, by the structural order's equality.  The bucket
+ * keeps a copy of the channel in the table's arena, since the endpoint
+ * that opened it ends. */
 static RhoChannelBucket *rho_channel_table_get_or_create(RhoChannelTable *table,
                                                          Atom *channel) {
     RhoChannelBucket *bucket;
@@ -4667,8 +4896,13 @@ static RhoChannelBucket *rho_channel_table_get_or_create(RhoChannelTable *table,
         }
     }
 
-    bucket = cetta_malloc(sizeof(RhoChannelBucket));
-    bucket->channel = channel;
+    Atom *copy = rho_region_copy(&table->arena, channel);
+    bucket = copy ? cetta_malloc(sizeof(RhoChannelBucket)) : NULL;
+    if (!bucket) {
+        pthread_mutex_unlock(&table->mutex);
+        return NULL;
+    }
+    bucket->channel = copy;
     bucket->hash = hash;
     pthread_mutex_init(&bucket->mutex, NULL);
     bucket->send_head = NULL;
@@ -4681,26 +4915,24 @@ static RhoChannelBucket *rho_channel_table_get_or_create(RhoChannelTable *table,
     return bucket;
 }
 
-static void rho_async_endpoint_append(RhoAsyncEndpoint **head,
-                                      RhoAsyncEndpoint **tail,
-                                      RhoAsyncEndpoint *endpoint) {
-    endpoint->next = NULL;
+static void rho_async_endpoint_append(RhoTask **head, RhoTask **tail,
+                                      RhoTask *task) {
+    task->next = NULL;
     if (*tail) {
-        (*tail)->next = endpoint;
+        (*tail)->next = task;
     } else {
-        *head = endpoint;
+        *head = task;
     }
-    *tail = endpoint;
+    *tail = task;
 }
 
-static RhoAsyncEndpoint *rho_async_endpoint_pop(RhoAsyncEndpoint **head,
-                                                RhoAsyncEndpoint **tail) {
-    RhoAsyncEndpoint *endpoint = *head;
-    if (!endpoint) return NULL;
-    *head = endpoint->next;
+static RhoTask *rho_async_endpoint_pop(RhoTask **head, RhoTask **tail) {
+    RhoTask *task = *head;
+    if (!task) return NULL;
+    *head = task->next;
     if (!*head) *tail = NULL;
-    endpoint->next = NULL;
-    return endpoint;
+    task->next = NULL;
+    return task;
 }
 
 static bool rho_async_try_spend_budget(RhoAsyncExecutor *executor) {
@@ -4727,180 +4959,256 @@ static void rho_async_refund_budget(RhoAsyncExecutor *executor) {
                               memory_order_relaxed);
 }
 
-static bool rho_async_enqueue_proc(RhoAsyncExecutor *executor, Atom *proc) {
-    if (!executor || !proc) return false;
-    return cetta_parallel_executor_push(&executor->parallel, proc);
+/* Queue TASK to run with *NAMES, which the queue takes over; a task the
+ * queue refuses ends at once. */
+static bool rho_async_push(RhoAsyncExecutor *executor,
+                           RhoAsyncWorkerState *state, RhoTask *task,
+                           CettaNameSupply *names) {
+    if (cetta_parallel_executor_push_supply(&executor->parallel, task, names))
+        return true;
+    rho_task_end(executor, state, task);
+    return false;
 }
 
-static bool rho_async_add_residual(RhoAsyncExecutor *executor, Atom *proc) {
-    bool ok;
-    pthread_mutex_lock(&executor->residual_mutex);
-    ok = rho_vec_push(&executor->residuals, proc);
-    pthread_mutex_unlock(&executor->residual_mutex);
-    if (!ok) rho_async_fail(executor, "could not record rho residual");
-    return ok;
+/* TASK can never run again: it stays, with its region and supply, until the
+ * run ends. */
+static void rho_async_add_stuck(RhoAsyncExecutor *executor, RhoTask *task) {
+    pthread_mutex_lock(&executor->stuck_mutex);
+    task->next = executor->stuck;
+    executor->stuck = task;
+    pthread_mutex_unlock(&executor->stuck_mutex);
 }
 
-static bool rho_async_publish_endpoint(RhoAsyncExecutor *executor,
-                                       Arena *worker_arena,
-                                       RhoAsyncEndpointKind kind,
-                                       Atom *proc,
-                                       RhoView view) {
+/* A task of the parallel composition VIEW, running with SUPPLY, spawns its
+ * components, in the normal form's order, each from its balanced piece of
+ * SUPPLY (BalancedPieces.balancedPiece). */
+static bool rho_async_spawn(RhoAsyncExecutor *executor,
+                            RhoAsyncWorkerState *state, const RhoView *view,
+                            const CettaNameSupply *supply) {
+    CettaNameSupplyPieces pieces;
+    cetta_name_supply_pieces_begin(&pieces, supply, view->nargs);
+    for (uint32_t i = 0; i < view->nargs; i++) {
+        CettaNameSupply piece = cetta_name_supply_pieces_next(&pieces);
+        RhoTask *component = rho_task_make(executor, state, view->args[i]);
+        if (!component) {
+            cetta_name_supply_dispose(&piece);
+            cetta_name_supply_pieces_end(&pieces);
+            rho_async_fail(executor, "could not allocate a rho parallel component");
+            return false;
+        }
+        if (!rho_async_push(executor, state, component, &piece)) {
+            cetta_name_supply_pieces_end(&pieces);
+            rho_async_fail(executor, "could not enqueue rho parallel component");
+            return false;
+        }
+    }
+    return true;
+}
+
+/* The COMM of FINDER, the running task, with WAITING, the endpoint it met.
+ * FINDER_KIND is the finder's side.  *KEPT says whether FINDER lives on.
+ * Inlined into its one caller, the publish of an endpoint. */
+static inline __attribute__((always_inline)) bool rho_async_comm(
+    RhoAsyncExecutor *executor, RhoAsyncWorkerState *state, Arena *scratch,
+    RhoTask *finder, RhoTask *waiting, RhoAsyncEndpointKind finder_kind,
+    bool *kept) {
+    RhoTask *sender = finder_kind == RHO_ASYNC_ENDPOINT_SEND ? finder : waiting;
+    RhoTask *receiver = finder_kind == RHO_ASYNC_ENDPOINT_SEND ? waiting : finder;
+    CettaNameSupply *running = cetta_name_supply_current();
+    const CettaNameSupply *sender_supply =
+        sender == finder ? running : &waiting->supply;
+    const CettaNameSupply *receiver_supply =
+        receiver == finder ? running : &waiting->supply;
+    bool persistent = receiver->view.kind == RHO_RECV_PERSISTENT;
+
+    /* The continuation's supply: the join of the two parties' supplies as
+     * each ran with it, or the sender's alone when the receive persists. */
+    CettaNameSupply placed;
+    if (executor->hooks.finder_placement)
+        placed = cetta_name_supply_fork(running);
+    else if (persistent)
+        placed = cetta_name_supply_copy(sender_supply);
+    else
+        placed = cetta_name_supply_join(sender_supply, receiver_supply);
+
+    RhoEndpoint send_endpoint = {0, sender->view};
+    RhoEndpoint recv_endpoint = {0, receiver->view};
+    RhoAtomVec bodies;
+    rho_vec_init(&bodies);
+    /* A payload evaluated at the COMM draws from the continuation's supply,
+     * as the continuation's first draws. */
+    CettaNameSupply *previous = cetta_name_supply_install(&placed);
+    bool ok = rho_compute_comm_continuations(scratch, &send_endpoint,
+                                             &recv_endpoint,
+                                             executor->eval_context, &bodies);
+    cetta_name_supply_install(previous);
+    if (!ok) {
+        rho_vec_free(&bodies);
+        cetta_name_supply_dispose(&placed);
+        rho_task_end(executor, state, waiting);
+        rho_async_fail(executor, "could not compute rho COMM continuation");
+        return false;
+    }
+    if (bodies.len == 0) {
+        /* No continuation: both parties are stuck. */
+        rho_vec_free(&bodies);
+        cetta_name_supply_dispose(&placed);
+        rho_async_refund_budget(executor);
+        rho_task_keep_supply(finder);
+        rho_async_add_stuck(executor, finder);
+        rho_async_add_stuck(executor, waiting);
+        *kept = true;
+        return true;
+    }
+    uint32_t chosen = 0u;
+    if (executor->profile.scheduler_policy == RUN_SCHEDULE_ROTATING &&
+        bodies.len > 1u) {
+        chosen = atomic_fetch_add_explicit(&executor->branch_turn, 1u,
+                                           memory_order_relaxed) % bodies.len;
+    }
+    RhoTask *continuation = rho_task_make(executor, state, bodies.items[chosen]);
+    rho_vec_free(&bodies);
+    if (!continuation) {
+        cetta_name_supply_dispose(&placed);
+        rho_task_end(executor, state, waiting);
+        rho_async_fail(executor, "could not allocate rho COMM continuation");
+        return false;
+    }
+    if (persistent) {
+        /* The receive is armed again, with its region and its supply. */
+        bool rearmed;
+        if (receiver == finder) {
+            CettaNameSupply names = cetta_name_supply_copy(running);
+            rearmed = rho_async_push(executor, state, finder, &names);
+            *kept = true;
+        } else {
+            CettaNameSupply names = waiting->supply;
+            waiting->holds_supply = false;
+            rearmed = rho_async_push(executor, state, waiting, &names);
+        }
+        if (!rearmed) {
+            /* The receive that could not be armed again has ended; the
+               send it consumed ends too (the finder's ends with its task). */
+            if (receiver == finder)
+                rho_task_end(executor, state, waiting);
+            cetta_name_supply_dispose(&placed);
+            rho_task_end(executor, state, continuation);
+            rho_async_fail(executor, "could not re-arm persistent rho receive");
+            return false;
+        }
+    }
+    if (!rho_async_push(executor, state, continuation, &placed)) {
+        if (!(persistent && receiver == waiting))
+            rho_task_end(executor, state, waiting);
+        rho_async_fail(executor, "could not enqueue rho COMM continuation");
+        return false;
+    }
+    if (!(persistent && receiver == waiting))
+        rho_task_end(executor, state, waiting);
+    return true;
+}
+
+/* TASK publishes its endpoint on its channel: it meets a waiting endpoint
+ * of the other side, or waits itself, keeping its region and supply. */
+static bool rho_async_publish(RhoAsyncExecutor *executor,
+                              RhoAsyncWorkerState *state, Arena *scratch,
+                              RhoTask *task, RhoAsyncEndpointKind kind,
+                              bool *kept) {
     RhoChannelBucket *bucket =
-        rho_channel_table_get_or_create(&executor->channels, view.args[0]);
-    RhoAsyncEndpoint *current = cetta_malloc(sizeof(RhoAsyncEndpoint));
-    RhoAsyncEndpoint *opposite = NULL;
-    bool fire = false;
+        rho_channel_table_get_or_create(&executor->channels,
+                                        task->view.args[0]);
+    RhoTask *opposite = NULL;
 
-    current->kind = kind;
-    current->atom = proc;
-    current->view = view;
-    current->next = NULL;
+    if (!bucket) {
+        rho_async_fail(executor, "could not open a rho channel");
+        return false;
+    }
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_RHO_ASYNC_ENDPOINT_PUBLISH);
-
     pthread_mutex_lock(&bucket->mutex);
     if (kind == RHO_ASYNC_ENDPOINT_SEND) {
         if (bucket->recv_head && rho_async_try_spend_budget(executor)) {
             opposite = rho_async_endpoint_pop(&bucket->recv_head,
                                               &bucket->recv_tail);
-            fire = true;
         } else {
+            task->kind = kind;
+            rho_task_keep_supply(task);
             rho_async_endpoint_append(&bucket->send_head, &bucket->send_tail,
-                                      current);
+                                      task);
+            *kept = true;
             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_RHO_ASYNC_ENDPOINT_QUEUED);
         }
     } else {
         if (bucket->send_head && rho_async_try_spend_budget(executor)) {
             opposite = rho_async_endpoint_pop(&bucket->send_head,
                                               &bucket->send_tail);
-            fire = true;
         } else {
+            task->kind = kind;
+            rho_task_keep_supply(task);
             rho_async_endpoint_append(&bucket->recv_head, &bucket->recv_tail,
-                                      current);
+                                      task);
+            *kept = true;
             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_RHO_ASYNC_ENDPOINT_QUEUED);
         }
     }
     pthread_mutex_unlock(&bucket->mutex);
 
-    if (!fire) return true;
+    if (!opposite) return true;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_RHO_ASYNC_ENDPOINT_MATCH);
-
-    {
-        RhoEndpoint send_endpoint;
-        RhoEndpoint recv_endpoint;
-        RhoAtomVec bodies;
-        bool ok;
-        uint32_t chosen_body = 0u;
-        RhoAsyncEndpoint *send_async;
-        RhoAsyncEndpoint *recv_async;
-        Atom *persistent_recv = NULL;
-
-        if (kind == RHO_ASYNC_ENDPOINT_SEND) {
-            send_endpoint = (RhoEndpoint){0, current->view};
-            recv_endpoint = (RhoEndpoint){0, opposite->view};
-            send_async = current;
-            recv_async = opposite;
-        } else {
-            send_endpoint = (RhoEndpoint){0, opposite->view};
-            recv_endpoint = (RhoEndpoint){0, current->view};
-            send_async = opposite;
-            recv_async = current;
-        }
-        if (recv_async->view.kind == RHO_RECV_PERSISTENT) {
-            persistent_recv = recv_async->atom;
-        }
-
-        rho_vec_init(&bodies);
-        ok = rho_compute_comm_continuations(worker_arena,
-                                            &send_endpoint,
-                                            &recv_endpoint,
-                                            executor->eval_context,
-                                            &bodies);
-        if (!ok) {
-            rho_vec_free(&bodies);
-            rho_async_endpoint_free(opposite);
-            rho_async_endpoint_free(current);
-            rho_async_fail(executor, "could not compute rho COMM continuation");
-            return false;
-        }
-        if (bodies.len == 0) {
-            rho_async_refund_budget(executor);
-            if (!rho_async_add_residual(executor, send_async->atom) ||
-                !rho_async_add_residual(executor, recv_async->atom)) {
-                rho_vec_free(&bodies);
-                rho_async_endpoint_free(opposite);
-                rho_async_endpoint_free(current);
-                return false;
-            }
-            rho_async_endpoint_free(opposite);
-            rho_async_endpoint_free(current);
-            rho_vec_free(&bodies);
-            return true;
-        }
-        rho_async_endpoint_free(opposite);
-        rho_async_endpoint_free(current);
-        if (persistent_recv &&
-            !rho_async_enqueue_proc(executor, persistent_recv)) {
-            rho_vec_free(&bodies);
-            rho_async_fail(executor,
-                           "could not re-arm persistent rho receive");
-            return false;
-        }
-        if (executor->profile.scheduler_policy == RUN_SCHEDULE_ROTATING &&
-            bodies.len > 1u) {
-            chosen_body =
-                atomic_fetch_add_explicit(&executor->branch_turn, 1u,
-                                          memory_order_relaxed) % bodies.len;
-        }
-        if (!rho_async_enqueue_proc(executor, bodies.items[chosen_body])) {
-            rho_vec_free(&bodies);
-            rho_async_fail(executor, "could not enqueue rho COMM continuation");
-            return false;
-        }
-        rho_vec_free(&bodies);
-    }
-
-    return true;
+    return rho_async_comm(executor, state, scratch, task, opposite, kind, kept);
 }
 
-static bool rho_async_process_task(CettaParallelWorker *worker, void *task,
+static bool rho_async_process_task(CettaParallelWorker *worker, void *raw_task,
                                    void *user) {
     RhoAsyncExecutor *executor = user;
-    Arena *worker_arena = cetta_parallel_worker_arena(worker);
-    Atom *proc = task;
-    Atom *norm = rho_normalize_proc(worker_arena, proc);
-    RhoView view = rho_view(norm);
+    RhoTask *task = raw_task;
+    RhoAsyncWorkerState *state =
+        &executor->workers[cetta_parallel_worker_index(worker)];
+    Arena *scratch = cetta_parallel_worker_arena(worker);
+    ArenaMark mark = arena_mark(scratch);
+    bool kept = false;
+    bool ok = true;
 
-    switch (view.kind) {
+    if (executor->hooks.draw_each_task) {
+        CettaGeneratedName name = cetta_name_fresh(CETTA_NAME_KIND_SPACE);
+        if (executor->hooks.drawn)
+            executor->hooks.drawn(executor->hooks.context, name);
+    }
+    switch (task->view.kind) {
     case RHO_NIL:
-        return true;
+        break;
     case RHO_PAR:
-        for (uint32_t i = 0; i < view.nargs; i++) {
-            if (!rho_async_enqueue_proc(executor, view.args[i])) {
-                rho_async_fail(executor, "could not enqueue rho parallel component");
-                return false;
-            }
-        }
-        return true;
+        ok = rho_async_spawn(executor, state, &task->view,
+                             cetta_name_supply_current());
+        break;
     case RHO_SEND:
-        return rho_async_publish_endpoint(executor, worker_arena,
-                                          RHO_ASYNC_ENDPOINT_SEND,
-                                          norm, view);
+        ok = rho_async_publish(executor, state, scratch, task,
+                               RHO_ASYNC_ENDPOINT_SEND, &kept);
+        break;
     case RHO_RECV:
     case RHO_RECV_PERSISTENT:
-        return rho_async_publish_endpoint(executor, worker_arena,
-                                          RHO_ASYNC_ENDPOINT_RECV,
-                                          norm, view);
+        ok = rho_async_publish(executor, state, scratch, task,
+                               RHO_ASYNC_ENDPOINT_RECV, &kept);
+        break;
     case RHO_DROP:
     case RHO_VAL:
     case RHO_EVAL_PAYLOAD:
-        return rho_async_add_residual(executor, norm);
+        rho_task_keep_supply(task);
+        rho_async_add_stuck(executor, task);
+        kept = true;
+        break;
     case RHO_QUOTE:
     case RHO_BAD:
+        rho_async_fail(executor, "unsupported rho task during threaded reduction");
+        ok = false;
         break;
     }
-    rho_async_fail(executor, "unsupported rho task during threaded reduction");
-    return false;
+    /* A task that waits, is stuck or is armed again may already be in
+     * another worker's hands: it is not touched again here. */
+    if (!kept)
+        rho_task_end(executor, state, task);
+    if (!arena_at_mark(scratch, mark))
+        arena_reset(scratch, mark);
+    return ok;
 }
 
 static void rho_async_worker_enter(CettaParallelWorker *worker, void *user) {
@@ -4930,44 +5238,92 @@ static bool rho_channel_table_has_enabled_pair(RhoChannelTable *table) {
     return found;
 }
 
+/* Visit every live task at the end of a run: the stuck ones, then the
+ * waiting sends and receives of each channel. */
+typedef void (*RhoAsyncLiveVisit)(RhoAsyncExecutor *executor, RhoTask *task,
+                                  void *context);
+
+static void rho_async_visit_live(RhoAsyncExecutor *executor,
+                                 RhoAsyncLiveVisit visit, void *context) {
+    for (RhoTask *task = executor->stuck; task;) {
+        RhoTask *next = task->next;
+        visit(executor, task, context);
+        task = next;
+    }
+    for (RhoChannelBucket *bucket = executor->channels.head; bucket;
+         bucket = bucket->next) {
+        for (RhoTask *task = bucket->send_head; task;) {
+            RhoTask *next = task->next;
+            visit(executor, task, context);
+            task = next;
+        }
+        for (RhoTask *task = bucket->recv_head; task;) {
+            RhoTask *next = task->next;
+            visit(executor, task, context);
+            task = next;
+        }
+    }
+}
+
+typedef struct {
+    RhoAtomVec items;
+    bool ok;
+} RhoAsyncResidual;
+
+static void rho_async_residual_visit(RhoAsyncExecutor *executor, RhoTask *task,
+                                     void *context) {
+    RhoAsyncResidual *residual = context;
+    if (residual->ok)
+        residual->ok = rho_vec_push(
+            &residual->items, atom_deep_copy(executor->global_arena, task->proc));
+}
+
 static bool rho_async_materialize_residual(RhoAsyncExecutor *executor,
                                            Atom **out) {
-    RhoAtomVec items;
-    bool ok = true;
-
-    rho_vec_init(&items);
-    for (uint32_t i = 0; i < executor->residuals.len; i++) {
-        if (!rho_vec_push(&items,
-                          atom_deep_copy(executor->global_arena,
-                                         executor->residuals.items[i]))) {
-            ok = false;
-            break;
-        }
+    RhoAsyncResidual residual = {.ok = true};
+    rho_vec_init(&residual.items);
+    rho_async_visit_live(executor, rho_async_residual_visit, &residual);
+    if (residual.ok) {
+        *out = rho_par_from_vec(executor->global_arena, &residual.items);
+        residual.ok = *out != NULL;
     }
+    rho_vec_free(&residual.items);
+    return residual.ok;
+}
 
-    pthread_mutex_lock(&executor->channels.mutex);
-    for (RhoChannelBucket *bucket = executor->channels.head;
-         ok && bucket;
-         bucket = bucket->next) {
-        pthread_mutex_lock(&bucket->mutex);
-        for (RhoAsyncEndpoint *ep = bucket->send_head; ok && ep; ep = ep->next) {
-            ok = rho_vec_push(&items,
-                              atom_deep_copy(executor->global_arena, ep->atom));
-        }
-        for (RhoAsyncEndpoint *ep = bucket->recv_head; ok && ep; ep = ep->next) {
-            ok = rho_vec_push(&items,
-                              atom_deep_copy(executor->global_arena, ep->atom));
-        }
-        pthread_mutex_unlock(&bucket->mutex);
-    }
-    pthread_mutex_unlock(&executor->channels.mutex);
+static void rho_async_census_visit(RhoAsyncExecutor *executor, RhoTask *task,
+                                   void *context) {
+    RhocalcThreadedCensus *census = context;
+    census->live_tasks++;
+    census->live_task_bytes += arena_accounted_live_bytes(&task->region->arena);
+    census->live_task_reserved += task->region->arena.reserved_bytes;
+    if (executor->hooks.live)
+        executor->hooks.live(executor->hooks.context, &task->supply, task->proc);
+}
 
-    if (ok) {
-        *out = rho_par_from_vec(executor->global_arena, &items);
-        ok = *out != NULL;
+/* The memory a run holds at its end, for tests. */
+static void rho_async_take_census(RhoAsyncExecutor *executor) {
+    RhocalcThreadedCensus census = {0};
+    rho_async_visit_live(executor, rho_async_census_visit, &census);
+    census.regions_made = atomic_load_explicit(&executor->regions_made,
+                                               memory_order_relaxed);
+    census.regions_stocked = executor->region_pool_len;
+    for (uint32_t i = 0; i < executor->profile.thread_count; i++) {
+        census.regions_stocked += executor->workers ? executor->workers[i].stock_len : 0u;
+        if (executor->parallel.workers)
+            census.scratch_reserved +=
+                executor->parallel.workers[i].arena.reserved_bytes;
     }
-    rho_vec_free(&items);
-    return ok;
+    for (RhoChannelBucket *bucket = executor->channels.head; bucket;
+         bucket = bucket->next)
+        census.channels++;
+    g_rho_threaded_census = census;
+}
+
+static void rho_async_end_visit(RhoAsyncExecutor *executor, RhoTask *task,
+                                void *context) {
+    (void)context;
+    rho_task_end(executor, NULL, task);
 }
 
 static void rho_async_executor_init(RhoAsyncExecutor *executor,
@@ -4979,9 +5335,16 @@ static void rho_async_executor_init(RhoAsyncExecutor *executor,
     executor->global_arena = global_arena;
     executor->profile = *profile;
     executor->eval_context = eval_context;
+    executor->hooks = g_rho_threaded_test_hooks;
     rho_channel_table_init(&executor->channels);
-    rho_vec_init(&executor->residuals);
-    pthread_mutex_init(&executor->residual_mutex, NULL);
+    executor->stuck = NULL;
+    pthread_mutex_init(&executor->stuck_mutex, NULL);
+    executor->workers = calloc(profile->thread_count,
+                               sizeof(*executor->workers));
+    pthread_mutex_init(&executor->region_mutex, NULL);
+    executor->region_pool = NULL;
+    executor->region_pool_len = 0u;
+    atomic_init(&executor->regions_made, 0u);
     atomic_init(&executor->budget, profile->reduction_limit);
     atomic_init(&executor->reductions_taken, 0u);
     atomic_init(&executor->branch_turn, 0u);
@@ -4993,16 +5356,35 @@ static void rho_async_executor_init(RhoAsyncExecutor *executor,
         .task_fn = rho_async_process_task,
         .worker_enter = rho_async_worker_enter,
         .worker_leave = rho_async_worker_leave,
+        .task_discard = rho_async_discard_task,
         .worker_failure_message = "rho threaded worker failed",
     };
     cetta_parallel_executor_init(&executor->parallel, &parallel_config);
 }
 
+/* The run's end, on the thread that ran it: every live task ends, handing
+ * its supply's clocks to the executor, and then the executor gives the
+ * coordinator's supply its place back at the latest clocks. */
 static void rho_async_executor_free(RhoAsyncExecutor *executor) {
+    rho_async_visit_live(executor, rho_async_end_visit, NULL);
+    executor->stuck = NULL;
+    for (RhoChannelBucket *bucket = executor->channels.head; bucket;
+         bucket = bucket->next) {
+        bucket->send_head = bucket->send_tail = NULL;
+        bucket->recv_head = bucket->recv_tail = NULL;
+    }
     cetta_parallel_executor_free(&executor->parallel);
-    rho_vec_free(&executor->residuals);
+    if (executor->workers) {
+        for (uint32_t i = 0; i < executor->profile.thread_count; i++)
+            rho_task_region_list_free(executor->workers[i].stock);
+        free(executor->workers);
+        executor->workers = NULL;
+    }
+    rho_task_region_list_free(executor->region_pool);
+    executor->region_pool = NULL;
+    pthread_mutex_destroy(&executor->region_mutex);
     rho_channel_table_free(&executor->channels);
-    pthread_mutex_destroy(&executor->residual_mutex);
+    pthread_mutex_destroy(&executor->stuck_mutex);
 }
 
 static bool rhocalc_reduce_to_quiescence_threaded(
@@ -5027,10 +5409,46 @@ static bool rhocalc_reduce_to_quiescence_threaded(
     }
 
     rho_async_executor_init(&executor, arena, profile, eval_context);
+    if (!executor.workers) {
+        rho_validation_set("could not allocate threaded rho workers");
+        rho_async_executor_free(&executor);
+        return false;
+    }
 
-    if (!rho_async_enqueue_proc(&executor, proc)) {
-        rho_async_fail(&executor, "could not enqueue initial rho task");
-        ok = false;
+    /* The program is the first task, drawing from the right half of the
+     * caller's supply, which keeps the left half until the run gives it its
+     * place back.  When it is a parallel composition, its first event is its
+     * spawn, which runs here, as the task would run it: each component gets
+     * a region of its own with its piece of the first task's supply, and the
+     * program needs no region of its own. */
+    {
+        Arena normal;
+        arena_init_detached(&normal);
+        Atom *norm = rho_normalize_proc(&normal, proc);
+        RhoView view = norm ? rho_view(norm) : (RhoView){RHO_BAD, NULL, 0};
+        CettaNameSupply first_supply = cetta_name_supply_fork(cetta_name_supply_current());
+        if (view.kind == RHO_PAR) {
+            CettaNameSupply *previous = cetta_name_supply_install(&first_supply);
+            if (executor.hooks.draw_each_task) {
+                CettaGeneratedName name = cetta_name_fresh(CETTA_NAME_KIND_SPACE);
+                if (executor.hooks.drawn)
+                    executor.hooks.drawn(executor.hooks.context, name);
+            }
+            ok = rho_async_spawn(&executor, NULL, &view, &first_supply);
+            cetta_name_supply_install(previous);
+            cetta_name_supply_dispose(&first_supply);
+        } else {
+            RhoTask *first = norm ? rho_task_make(&executor, NULL, norm) : NULL;
+            if (!first) {
+                cetta_name_supply_dispose(&first_supply);
+                rho_async_fail(&executor, "could not enqueue initial rho task");
+                ok = false;
+            } else if (!rho_async_push(&executor, NULL, first, &first_supply)) {
+                rho_async_fail(&executor, "could not enqueue initial rho task");
+                ok = false;
+            }
+        }
+        arena_free(&normal);
     }
 
     if (ok && !cetta_parallel_executor_run(&executor.parallel)) {
@@ -5056,6 +5474,7 @@ static bool rhocalc_reduce_to_quiescence_threaded(
             ? RHOCALC_REDUCTION_LIMIT_EXHAUSTED
             : RHOCALC_REDUCTION_QUIESCENT;
     }
+    rho_async_take_census(&executor);
 
     rho_async_executor_free(&executor);
     return ok;

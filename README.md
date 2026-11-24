@@ -555,23 +555,45 @@ every option.
 A space `new-space` makes in PeTTa prints as `&space(N)`, and a lambda as
 `lambda_N`. Such a generated name is nominal: a program can observe only
 that it equals itself and no other name, and its text, built again or read
-back, is an ordinary symbol that never reaches the space. Names come from a
-splittable supply that never runs out: no depth or width of parallel tasks
-and no number of names is refused. Each parallel task draws from a child
-supply split off when the task is queued, so the names depend on the
-program and the seed, never on thread scheduling or the number of workers.
+back, is an ordinary symbol that never reaches the space. Names come from
+supplies in the style of interval tree clocks, which never run out: no depth
+or width of parallel tasks and no number of names is refused. A supply holds
+a share of the unit interval and a clock; its next name is its share with
+its clock, and drawing advances the clock. A task or thread that queues
+parallel tasks counts them: at the first it keeps the left half of its
+share to draw from, and the task it queues n-th, counting from 0, draws
+from the part of the right half reached by j = floor(log2(n+1)) right
+halvings, a left halving, and the j halvings that spell n+1-2^j in binary,
+so the tasks one supply queues never overlap and a million of them lie
+within 40 halvings. In a threaded rho run, a component of a parallel
+composition of k draws from its balanced piece of the share of the process
+it came from (the first ceil(k/2) components share the left half and the
+others the right half, each parted again in the same way), at most
+ceil(log2 k) halvings below it, and a COMM's continuation from the union of
+the shares of the send and the receive, at the later clock (a persistent
+receive keeps its share, and the continuation takes the send's); when a
+parallel run ends, the supply that started it has its whole share back and
+goes on past the latest clock any of its tasks reached. So the names depend
+on the program, the seed and, in rho, on which send met which receive,
+never on the timing of threads, the number of workers, or which party of a
+COMM found the other.
 With `--name-supply=counter` (the default) a name spells its place: the main
-thread gives 1, 2, ..., its first task 0.1, 0.2, ..., that task's first task
-0.0.1, and a task nested deeper than one machine word can number spells the
-32 hexadecimal digits of its block's key in front, as in
-`529d30b948a8330fdb6a1996a5480869.0.1`. With `--name-supply=unforgeable` a
-name is 32 hexadecimal digits of SipHash-2-4 (128-bit output) keyed by the
-seed, for names that leave the process. In counter mode two names are
-equal only when they are the same name: a deep name's block is compared as
-an object, so its key affects only how the name prints and sorts. An
+thread gives 1, 2, ..., and any other name spells its share's prefix code
+(0 an empty half, 1 a full one, 2 a node followed by its two halves), a dot
+and its clock: `201.2` is the right half's name at clock 2, `22010.3` the
+second quarter's at clock 3, and `20210.2` a name at clock 2 of the first
+task the main thread queues. A share that no longer fits one machine word
+moves on to a block of its own, keyed by a 128-bit hash of the share it
+stands for and its clocks, and its names spell the 32 hexadecimal digits of
+that key in front, as in `7031db4c9febedb92ab6bf3cd288ae56.201.2`. With
+`--name-supply=unforgeable` a name is 32 hexadecimal digits of SipHash-2-4
+(128-bit output) keyed by the seed, for names that leave the process. In
+counter mode two names are equal only when they are the same name: the
+names of one block are distinct by construction, and a block is compared as
+an object, so its key affects only how its names print and sort. An
 unforgeable name is compared by its 128 bits, so among n of them a
 collision has probability at most about n²/2¹²⁹ and becomes likely only
-near 2⁶⁴ names; the same bound covers two deep blocks printing alike. `--name-seed=<hex>` sets
+near 2⁶⁴ names; the same bound covers two blocks printing alike. `--name-seed=<hex>` sets
 the seed, 1 to 32 hexadecimal digits; without one, a random seed is
 reported on stderr so that the run can be replayed. The environment
 variables `CETTA_NAME_SUPPLY` and `CETTA_NAME_SEED` set the same options.

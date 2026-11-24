@@ -233,17 +233,23 @@ Phase 1: safe threaded strict-core executor (implemented)
 - Claiming a redex must remove exactly the consumed endpoints, unless a
   future profile explicitly adds persistence.
 
-The implemented Phase 1 uses per-worker arenas plus a single-threaded
+The implemented Phase 1 used per-worker arenas plus a single-threaded
 materialization step, so Atom/Arena mutation remains owner-threaded while
 COMM claims and endpoint ownership are synchronized at rho channel buckets.
+Per-worker arenas keep every COMM's working memory for the whole run, so a
+loop with two live processes grows without bound (Mettapedia
+RhoCalculus/ParallelExecution/MemoryDisciplines, arena_loop_unbounded).  The
+run now holds task regions instead: each task's term in a region of its own,
+handed over through the queue and the channel buckets, released when the
+task ends, and a worker's scratch reset after each task (region_run).
 
 Phase 2: narrow locks and improve scaling (future)
 
 - Keep the channel-bucket lock discipline and profile before replacing any
   remaining shared queue or table bottleneck.
 - Keep sorted lock acquisition for any operation touching multiple names.
-- Preserve per-worker arenas plus final materialization/merge unless a later
-  memory model audit justifies a different ownership boundary.
+- Keep task regions plus final materialization/merge: the memory model
+  audit (MemoryDisciplines) fixed that ownership boundary.
 - Study libdill/libmill channel rendezvous for the COMM handshake shape.
 - Study C-Thread-Pool for bounded pthread worker loops.
 - Study ck only after the mutex version is correct; lock-free structures are
