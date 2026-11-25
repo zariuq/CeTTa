@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
-"""Differential test comparing exact compiled tcalc evaluation against CeTTa's
-interpreter in both HE and PeTTa across generated programs, compared as exact
-multisets.
+"""Differential test of the compiled route against CeTTa's interpreter.
 
-Covers:
-- duplicate function definitions and nested choice products;
-- partial functions (unmatched calls at root and inside nested calls);
-- undefined head symbols (stay data);
-- builtin operations (+, *, -, if) falling back seamlessly;
-- recursion (Peano arithmetic, lists, binary trees, diamond DAGs);
-- data reads (`match &self ...`) with duplicate data atoms and multi-joins;
-- `let` destructuring and unused bindings;
-- grounded integers, strings, and dialect Booleans;
-- presence-only `(unique ...)` over duplicating DAGs.
+Each program runs twice, in separate processes: once with the compiled route
+off (the reference) and once with it forced on wherever it applies.  HE results
+must agree in order; PeTTa results must agree as multisets (answer order is not
+PeTTa semantics).
+
+Covers duplicate definitions, choice, partial and undefined calls, builtins,
+recursion, data reads and joins, let, unique, reducible arguments to the
+structural list builtins, effects inside recursion, definitions added and
+removed while running, and once / existence / count wrappers.
 """
 
 import collections
@@ -22,25 +19,27 @@ import subprocess
 import sys
 import tempfile
 
+REFERENCE_ENV = {"CETTA_TCALC_EVAL": "0"}
+CANDIDATE_ENV = {"CETTA_TCALC_EVAL": "always"}
 
-def run_cetta(cetta: str, lang: str, code: str) -> list[str]:
-    with tempfile.NamedTemporaryFile(
-        "w", suffix=".metta", delete=False, encoding="utf-8"
-    ) as tf:
+
+def run_cetta(cetta, lang, code, env_extra, profile=None):
+    with tempfile.NamedTemporaryFile("w", suffix=".metta", delete=False,
+                                     encoding="utf-8") as tf:
         tf.write(code)
         path = tf.name
+    env = dict(os.environ)
+    env.update(env_extra)
+    argv = [cetta, "--lang", lang, "--quiet"]
+    if profile:
+        argv += ["--profile", profile]
     try:
-        proc = subprocess.run(
-            [cetta, "--lang", lang, "--quiet", path],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+        proc = subprocess.run(argv + [path], capture_output=True, text=True,
+                              timeout=60, env=env)
         if proc.returncode != 0:
             raise AssertionError(
-                f"cetta --lang {lang} failed (rc={proc.returncode}):\n"
-                f"CODE:\n{code}\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
-            )
+                f"cetta --lang {lang} failed (rc={proc.returncode}, env={env_extra}):\n"
+                f"CODE:\n{code}\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
         lines = []
         for raw in proc.stdout.splitlines():
             s = raw.strip()
@@ -57,17 +56,14 @@ def run_cetta(cetta: str, lang: str, code: str) -> list[str]:
             pass
 
 
-def parse_sexp_items(text: str) -> list[str]:
+def parse_sexp_items(text):
     s = text.strip()
-    assert s.startswith("(") and s.endswith(")"), f"expected expression, got {s!r}"
+    if not (s.startswith("(") and s.endswith(")")):
+        return [s]
     inner = s[1:-1].strip()
     if not inner:
         return []
-    items = []
-    depth = 0
-    in_str = False
-    esc = False
-    start = None
+    items, depth, in_str, esc, start = [], 0, False, False, None
     for i, ch in enumerate(inner):
         if in_str:
             if esc:
@@ -88,56 +84,46 @@ def parse_sexp_items(text: str) -> list[str]:
         elif ch == ")":
             depth -= 1
             if depth == 0 and start is not None:
-                items.append(inner[start : i + 1])
+                items.append(inner[start:i + 1])
                 start = None
         elif ch.isspace():
             if depth == 0 and start is not None:
                 items.append(inner[start:i])
                 start = None
-        else:
-            if start is None:
-                start = i
+        elif start is None:
+            start = i
     if start is not None:
         items.append(inner[start:])
     return items
 
 
-def check_batch(
-    cetta: str, lang: str, label: str, defs: str, queries: list[tuple[str, bool]]
-) -> None:
-    """Run every query in QUERIES via both direct interpreter and compiled route.
-    Each item is (expr, is_unique_query).
-    """
-    lines = ["!(import! &self tcalc)", defs]
+def compare_lines(lang, label, ref, got, code):
+    if len(ref) != len(got):
+        raise AssertionError(f"{lang} {label}: {len(ref)} reference lines, {len(got)} compiled lines\n"
+                             f"reference: {ref}\ncompiled:  {got}\nCODE:\n{code}")
+    for i, (r, g) in enumerate(zip(ref, got)):
+        if lang == "he":
+            same = r == g
+        else:
+            same = collections.Counter(parse_sexp_items(r)) == collections.Counter(parse_sexp_items(g))
+        if not same:
+            raise AssertionError(f"{lang} {label} line {i}:\n  reference: {r}\n  compiled:  {g}\nCODE:\n{code}")
+
+
+def check_program(cetta, lang, label, code, profile=None):
+    ref = run_cetta(cetta, lang, code, REFERENCE_ENV, profile)
+    got = run_cetta(cetta, lang, code, CANDIDATE_ENV, profile)
+    compare_lines(lang, label, ref, got, code)
+
+
+def check_batch(cetta, lang, label, defs, queries):
+    lines = [defs]
     for expr, is_unique in queries:
         if is_unique:
-            # Direct `(unique EXPR)` routes through the presence-only set store;
-            # compare against explicit `(let $c (collapse EXPR) (unique-atom $c))`.
             lines.append(f"!(Ans (collapse (unique {expr})))")
-            lines.append(f"!(Ans (let $c (collapse {expr}) (unique-atom $c)))")
         else:
-            lines.append(f"!(Ans (collapse (tcalc:space-eval &self (quote {expr}))))")
             lines.append(f"!(Ans (collapse {expr}))")
-    out = run_cetta(cetta, lang, "\n".join(lines) + "\n")
-    if lang == "petta" and out and out[0] == "true":
-        out = out[1:]
-    assert len(out) == 2 * len(queries), (
-        f"{lang} {label}: expected {2 * len(queries)} lines, got {len(out)}:\n{out}"
-    )
-    for idx, (expr, is_unique) in enumerate(queries):
-        got_wrap = parse_sexp_items(out[2 * idx])
-        want_wrap = parse_sexp_items(out[2 * idx + 1])
-        assert len(got_wrap) == 2 and got_wrap[0] == "Ans", f"unexpected wrap: {out[2*idx]}"
-        assert len(want_wrap) == 2 and want_wrap[0] == "Ans", f"unexpected wrap: {out[2*idx+1]}"
-        got = collections.Counter(parse_sexp_items(got_wrap[1]))
-        want = collections.Counter(parse_sexp_items(want_wrap[1]))
-        if got != want:
-            raise AssertionError(
-                f"{lang} {label} query {expr!r} (unique={is_unique}) mismatch:\n"
-                f"  compiled: {out[2*idx]}\n"
-                f"  interp:   {out[2*idx+1]}\n"
-                f"  defs:\n{defs}"
-            )
+    check_program(cetta, lang, label, "\n".join(lines) + "\n")
 
 
 def generate_program(rng: random.Random, seed_id: int) -> tuple[str, list[tuple[str, bool]]]:
@@ -346,95 +332,73 @@ def test_focused_edge_cases(cetta: str, lang: str) -> None:
     check_batch(cetta, lang, "edge-cases", defs, queries)
 
 
-def test_interleaved_data_writes(cetta: str, lang: str) -> None:
-    """Verify exact multiset agreement AND zero rule recompilation when data
-    reads are interleaved with add-atom / remove-atom on both queried and
-    unrelated data heads."""
-    script = """
-!(import! &self tcalc)
-(edge a b)
-(edge b c)
-(edge b d)
-(edge a c)
-(tag b ok)
-(tag c ok)
-(other z 1)
 
-(= (reach2 $u)
-   (match &self (, (edge $u $mid) (edge $mid $v) (tag $mid ok)) ($u $v)))
-(= (out-of $u)
-   (match &self (edge $u $v) $v))
 
-; Step 1: initial reads
-!(Ans (collapse (tcalc:space-eval &self (quote (reach2 a)))))
-!(Ans (collapse (reach2 a)))
-!(Ans (collapse (tcalc:space-eval &self (quote (out-of a)))))
-!(Ans (collapse (out-of a)))
-
-; Step 2: write to unrelated head `other` -> zero recompile, answers unchanged
-!(let $_ (add-atom &self (other z 2))
-   (Ans (collapse (tcalc:space-eval &self (quote (reach2 a))))))
-!(Ans (collapse (reach2 a)))
-
-; Step 3: add duplicate edge + new edge -> data index refreshes without recompiling rules
-!(let $_ (add-atom &self (edge b d))
-   (let $_2 (add-atom &self (edge c e))
-     (Ans (collapse (tcalc:space-eval &self (quote (reach2 a)))))))
-!(Ans (collapse (reach2 a)))
-
-; Step 4: remove an edge and a tag -> index reflects removal immediately
-!(let $_ (remove-atom &self (edge b c))
-   (let $_2 (remove-atom &self (tag c ok))
-     (Ans (collapse (tcalc:space-eval &self (quote (reach2 a)))))))
-!(Ans (collapse (reach2 a)))
-
-; Step 5: add back tag + new branch -> verify exact multiplicity again
-!(let $_ (add-atom &self (tag c ok))
-   (let $_2 (add-atom &self (edge c f))
-     (Ans (collapse (tcalc:space-eval &self (quote (reach2 a)))))))
-!(Ans (collapse (reach2 a)))
-
-; Verify rules were compiled ONCE (data writes refreshed indexes without recompiling rules)
-!(tcalc:space-cache-stats &self reach2)
+STRUCTURAL_BUILTINS = """
+(= (choose) 1)
+(= (choose) 2)
+(= (pairs $n) (if (> $n 0) (cons-atom (choose) (pairs (- $n 1))) ()))
+(= (cr $n) (if (> $n 0) (cr (- $n 1)) (cons-atom (choose) ())))
+(= (car-r $n) (if (> $n 0) (car-r (- $n 1)) (car-atom ((choose) b))))
+(= (cdr-r $n) (if (> $n 0) (cdr-r (- $n 1)) (cdr-atom (a (choose)))))
+(= (dec-r $n) (if (> $n 0) (dec-r (- $n 1)) (decons-atom ((choose) b))))
+(= (size-r $n) (if (> $n 0) (size-r (- $n 1)) (size-atom ((choose) (choose)))))
+(= (idx-r $n) (if (> $n 0) (idx-r (- $n 1)) (index-atom ((choose) b) 0)))
+!(Ans (collapse (pairs 2)))
+!(Ans (collapse (cr 2)))
+!(Ans (collapse (car-r 2)))
+!(Ans (collapse (cdr-r 2)))
+!(Ans (collapse (dec-r 2)))
+!(Ans (collapse (size-r 2)))
+!(Ans (collapse (idx-r 2)))
 """
-    out = run_cetta(cetta, lang, script)
-    if lang == "petta" and out and out[0] == "true":
-        out = out[1:]
-    # 6 pairs of (compiled, interp) + 1 cache stats line = 13 lines
-    assert len(out) == 13, f"{lang} interleaved-writes expected 13 lines, got {len(out)}: {out}"
-    for idx in range(6):
-        got_wrap = parse_sexp_items(out[2 * idx])
-        want_wrap = parse_sexp_items(out[2 * idx + 1])
-        assert len(got_wrap) == 2 and got_wrap[0] == "Ans", f"unexpected wrap: {out[2*idx]}"
-        assert len(want_wrap) == 2 and want_wrap[0] == "Ans", f"unexpected wrap: {out[2*idx+1]}"
-        got = collections.Counter(parse_sexp_items(got_wrap[1]))
-        want = collections.Counter(parse_sexp_items(want_wrap[1]))
-        if got != want:
-            raise AssertionError(
-                f"{lang} interleaved-writes step {idx} mismatch:\n"
-                f"  compiled: {out[2*idx]}\n"
-                f"  interp:   {out[2*idx+1]}"
-            )
-    stats = out[-1]
-    assert "(compiles 1)" in stats, (
-        f"{lang} interleaved data writes triggered rule recompilation: {stats}"
-    )
+
+EFFECTS_AND_LIVE_EDITS = """
+(= (tick $n) (if (== $n 0) 0 (let $u (add-atom &self (t $n)) (+ 1 (tick (- $n 1))))))
+!(Ans (collapse (tick 3)))
+!(Ans (collapse (tick 3)))
+!(Ans (collapse (match &self (t $x) $x)))
+(= (rh 0) a)
+(= (rh $n) (if (> $n 0) (rh (- $n 1)) none))
+!(Ans (collapse (rh 3)))
+!(Ans (collapse (let $u (add-atom &self (= (rh 0) b)) (rh 3))))
+!(Ans (collapse (let $u (remove-atom &self (= (rh 0) a)) (rh 3))))
+(= (d 0) x)
+(= (d 0) x)
+(= (d $n) (if (> $n 0) (d (- $n 1)) none))
+!(Ans (collapse (d 2)))
+"""
+
+WRAPPERS = """
+(rel n0 n1)
+(rel n1 n2)
+(rel n0 n2)
+(rel n2 n3)
+(= (dpath $x) $x)
+(= (dpath $x) (match &self (rel $x $y) (dpath $y)))
+!(Ans (collapse (once (dpath n0))))
+!(Ans (== (collapse (dpath n0)) ()))
+!(Ans (== (collapse (dpath n9)) ()))
+!(Ans (size-atom (collapse (dpath n0))))
+!(Ans (let $c (collapse (dpath n0)) (size-atom $c)))
+"""
 
 
-def main() -> int:
+def main():
     cetta = sys.argv[1] if len(sys.argv) > 1 else "./cetta"
     n_programs = 24
     for lang in ("he", "petta"):
         test_focused_edge_cases(cetta, lang)
-        test_interleaved_data_writes(cetta, lang)
+        for profile in (None, "extended"):
+            check_program(cetta, lang, f"structural-builtins/{profile}", STRUCTURAL_BUILTINS, profile)
+            check_program(cetta, lang, f"effects-live-edits/{profile}", EFFECTS_AND_LIVE_EDITS, profile)
+        check_program(cetta, lang, "wrappers/extended", WRAPPERS, "extended")
         rng = random.Random(20261124)
         for i in range(n_programs):
             defs, queries = generate_program(rng, i)
             check_batch(cetta, lang, f"gen-{i}", defs, queries)
-    print(
-        f"PASS: test_space_tcalc_differential_v1 (HE + PeTTa, edge cases + "
-        f"interleaved data writes + {n_programs} generated programs x 15 queries each, exact multiset match)"
-    )
+    print(f"PASS: compiled route agrees with the interpreter (HE in order, PeTTa as multisets): "
+          f"edge cases, structural builtins, effects and live edits, wrappers, {n_programs} generated programs, both dialects")
     return 0
 
 

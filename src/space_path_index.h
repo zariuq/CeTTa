@@ -10,7 +10,9 @@ typedef struct CettaSpacePathIndex CettaSpacePathIndex;
 
 typedef enum {
     CETTA_SPACE_PATH_SYMBOL_KEY = 0,
-    CETTA_SPACE_PATH_INTEGER_KEY,
+    /* A number: an integer's value, which a float exactly equal to an
+     * int64 shares (HE matches the two); any other float's bits. */
+    CETTA_SPACE_PATH_NUMBER_KEY,
     /* An ordinary ground term keyed by its structural hash. */
     CETTA_SPACE_PATH_TERM_KEY,
     /* The bound prefix after the head: a mix of the ids of the first
@@ -55,6 +57,15 @@ static inline bool space_path_index_leads(const Atom *pattern) {
  * cutting a deep constant to the trie's wildcard. */
 bool space_path_index_term_key_admits(const Atom *element);
 
+/* Whether a pattern element is a value a position index keys by itself:
+ * a symbol, a string, an integer or a float. */
+static inline bool space_path_index_scalar_key_admits(const Atom *element) {
+    return element && (element->kind == ATOM_SYMBOL ||
+        (element->kind == ATOM_GROUNDED &&
+         (element->ground.gkind == GV_INT || element->ground.gkind == GV_FLOAT ||
+          element->ground.gkind == GV_STRING)));
+}
+
 /* A scalar prefix needs no second access path. Keep this admission test a
  * leaf; only nested patterns enter the explicit coordinate walker. */
 static inline bool space_path_index_may_select(const Atom *pattern) {
@@ -65,8 +76,7 @@ static inline bool space_path_index_may_select(const Atom *pattern) {
     for (CettaExprIndex position = CETTA_INDEX_CHILD_TOKEN_LIMIT;
          position < pattern->expr.len; position++) {
         const Atom *child = pattern->expr.elems[position];
-        if (child && (child->kind == ATOM_SYMBOL ||
-            (child->kind == ATOM_GROUNDED && child->ground.gkind == GV_INT)))
+        if (space_path_index_scalar_key_admits(child))
             return true;
     }
     for (CettaExprIndex position = 1u; position < pattern->expr.len; position++) {
@@ -76,15 +86,13 @@ static inline bool space_path_index_may_select(const Atom *pattern) {
             return true;
     }
     /* A two-coordinate bound prefix followed by one free scalar: the bound
-     * field's position index answers it when that field is a symbol or an
-     * integer; a ground nested prefix stays with the trie. */
+     * field's position index answers it when that field is a scalar it
+     * keys; a ground nested prefix stays with the trie. */
     if (pattern->expr.len == 3u && pattern->expr.elems[2] &&
         pattern->expr.elems[2]->kind == ATOM_VAR &&
         !atom_has_vars(pattern->expr.elems[0]) &&
         !atom_has_vars(pattern->expr.elems[1]))
-        return pattern->expr.elems[1]->kind == ATOM_SYMBOL ||
-            (pattern->expr.elems[1]->kind == ATOM_GROUNDED &&
-             pattern->expr.elems[1]->ground.gkind == GV_INT);
+        return space_path_index_scalar_key_admits(pattern->expr.elems[1]);
     for (CettaExprIndex position = 0u; position < pattern->expr.len; position++) {
         const Atom *child = pattern->expr.elems[position];
         if (!atom_has_vars(child))
@@ -99,8 +107,8 @@ static inline bool space_path_index_may_select(const Atom *pattern) {
         for (CettaExprIndex suffix = position + 1u;
              suffix < pattern->expr.len; suffix++) {
             child = pattern->expr.elems[suffix];
-            if (child && (child->kind == ATOM_EXPR || child->kind == ATOM_SYMBOL ||
-                    (child->kind == ATOM_GROUNDED && child->ground.gkind == GV_INT)))
+            if (child && (child->kind == ATOM_EXPR ||
+                          space_path_index_scalar_key_admits(child)))
                 return true;
         }
         return false;

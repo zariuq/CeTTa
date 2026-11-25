@@ -20,10 +20,6 @@ typedef enum {
     CETTA_TCALC_OBSERVE_MULTISET_AUTO = 3,       /* Evaluator route after prepared_pure */
 } CettaTcalcObservation;
 
-/* Pre-initialize the evaluator-route mode from a startup environment scan so
- * evaluation never rescans the process environment on the first user call. */
-void cetta_tcalc_set_eval_mode_from_startup(int mode) __attribute__((weak));
-
 /* True only when CETTA_TCALC_EVAL=always (2) was requested. */
 bool cetta_tcalc_eval_mode_is_always(void) __attribute__((weak));
 

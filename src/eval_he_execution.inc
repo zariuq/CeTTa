@@ -2873,8 +2873,10 @@ static bool he_walk_memo_find(const HeWalkMemo *memo, const Atom *term,
 static bool he_walk_memo_store(HeWalkMemo *memo, const Atom *term,
                                uint32_t position, uint64_t first,
                                uint64_t second, uintptr_t value) {
+    /* A walk remembers a few positions: the first table is small, and
+     * doubling keeps a long walk's stores amortized constant. */
     if ((memo->len + 1u) * 2u > memo->cap) {
-        size_t cap = memo->cap ? memo->cap * 2u : 64u;
+        size_t cap = memo->cap ? memo->cap * 2u : 16u;
         HeWalkMemoSlot *slots = calloc(cap, sizeof(*slots));
         if (!slots)
             return false;

@@ -25,6 +25,8 @@ import tempfile
 
 def run_cetta(cetta: str, lang: str, code: str, extra_env=None) -> list[str]:
     env = os.environ.copy()
+    # The route is opt-in: this test exercises it explicitly.
+    env.setdefault("CETTA_TCALC_EVAL", "auto")
     if extra_env:
         env.update(extra_env)
     with tempfile.NamedTemporaryFile(

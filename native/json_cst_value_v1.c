@@ -279,7 +279,7 @@ static const char *json_target_name(
 
 static bool json_whitespace(JsonElabV1 *ctx, Atom *term, uint32_t depth) {
     Atom **children = NULL;
-    uint32_t scalar;
+    uint32_t scalar = 0u;
     if (depth > ctx->depth_limit) {
         return json_elab_error(
             ctx, CETTA_JSON_CST_VALUE_V1_RESOURCE_LIMIT,
@@ -338,7 +338,7 @@ static bool json_string_char(JsonElabV1 *ctx, Atom *term,
                              uint32_t *pending_high,
                              uint32_t depth) {
     Atom **children = NULL;
-    uint32_t scalar;
+    uint32_t scalar = 0u;
     if (depth > ctx->depth_limit) {
         return json_elab_error(
             ctx, CETTA_JSON_CST_VALUE_V1_RESOURCE_LIMIT,
@@ -500,7 +500,7 @@ done:
 static bool json_number_digits(JsonElabV1 *ctx, Atom *term,
                                JsonByteVecV1 *bytes, uint32_t depth) {
     Atom **children = NULL;
-    uint32_t scalar;
+    uint32_t scalar = 0u;
     if (depth > ctx->depth_limit) {
         return json_elab_error(
             ctx, CETTA_JSON_CST_VALUE_V1_RESOURCE_LIMIT,
@@ -529,7 +529,7 @@ static bool json_number_digits(JsonElabV1 *ctx, Atom *term,
 static bool json_number_integer(JsonElabV1 *ctx, Atom *term,
                                 JsonByteVecV1 *bytes, uint32_t depth) {
     Atom **children = NULL;
-    uint32_t scalar;
+    uint32_t scalar = 0u;
     if (json_cst_is(ctx, term, CETTA_JSON_ELAB_INT_ZERO_V1, NULL))
         return json_byte_vec_push(ctx, bytes, '0');
     if (!json_cst_is(ctx, term, CETTA_JSON_ELAB_INT_NONZERO_V1,
@@ -549,7 +549,7 @@ static bool json_number_integer(JsonElabV1 *ctx, Atom *term,
 static bool json_number_fraction(JsonElabV1 *ctx, Atom *term,
                                  JsonByteVecV1 *bytes, uint32_t depth) {
     Atom **children = NULL;
-    uint32_t scalar;
+    uint32_t scalar = 0u;
     if (json_cst_is(ctx, term, CETTA_JSON_ELAB_FRAC_NONE_V1, NULL))
         return true;
     if (!json_cst_is(ctx, term, CETTA_JSON_ELAB_FRAC_SOME_V1, &children) ||

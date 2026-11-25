@@ -208,6 +208,9 @@ static const unsigned char *native_storage_value(const TensorStorage *storage,
         CettaTensorScalar *scratch) {
     if (!raw || !storage->swapped) return raw;
     size_t width = cetta_tensor_itemsize(dtype);
+    /* Every element type fits a scalar; the bound makes that visible to
+     * the compiler as well. */
+    if (width > sizeof *scratch) abort();
     unsigned char *bytes = (unsigned char *)scratch;
     for (size_t i = 0u; i < width; ++i) bytes[i] = raw[width - i - 1u];
     return bytes;

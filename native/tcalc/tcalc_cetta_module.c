@@ -34,6 +34,7 @@
 #include "petta_semantics.h"
 #include "relational_plan.h"
 #include "space_theory.h"
+#include "he_type_policy.h"
 
 #include <ctype.h>
 #include <inttypes.h>
@@ -1201,6 +1202,93 @@ static bool tcalc_space_symbol_has_bare_rule(Space *space, SymbolId sym) {
 static bool tcalc_lower_rhs(TcalcEqLower *L, const Atom *atom,
                             uint32_t depth, TcTerm *out);
 
+/* HE does not evaluate an argument whose declared parameter type is Atom or a
+ * metatype (Expression, Symbol, Variable, Grounded): minimal-MeTTa
+ * instructions such as cons-atom and decons-atom are structural.  True when
+ * SIG, an arrow of ARITY parameters, declares POSITION (1-based) so. */
+static bool tcalc_he_signature_position_structural(Atom *sig, uint32_t position,
+                                                   uint32_t arity) {
+    if (!sig || sig->kind != ATOM_EXPR || sig->expr.len != arity + 2u ||
+        !atom_is_symbol_id(sig->expr.elems[0], g_builtin_syms.arrow))
+        return false;
+    Atom *type = sig->expr.elems[position];
+    return atom_is_symbol_id(type, g_builtin_syms.atom) || atom_is_meta_type(type);
+}
+
+/* Whether some HE signature of SYM with ARITY parameters leaves POSITION
+ * unevaluated: the standard library's declarations and the grounded
+ * operations' own types, at the widest profile tier. */
+static bool tcalc_he_position_structural(SymbolId sym, uint32_t position,
+                                         uint32_t arity) {
+    size_t n = he_library_declaration_count();
+    for (size_t i = 0u; i < n; i++) {
+        Atom *decl = he_library_declaration_at(i);
+        if (!decl || decl->kind != ATOM_EXPR || decl->expr.len != 3u ||
+            !atom_is_symbol_id(decl->expr.elems[1], sym))
+            continue;
+        if (tcalc_he_signature_position_structural(decl->expr.elems[2],
+                                                   position, arity))
+            return true;
+    }
+    Atom *const *types = NULL;
+    uint32_t nt = he_grounded_symbol_types(sym, HE_GROUNDED_TIER_EXTENDED_PROFILE,
+                                           &types);
+    for (uint32_t i = 0u; i < nt; i++) {
+        if (tcalc_he_signature_position_structural(types[i], position, arity))
+            return true;
+    }
+    return false;
+}
+
+/* Whether ATOM contains a call that evaluation would run: an expression headed
+ * by a variable, a defined function, or a builtin or grounded operation.
+ * Variables themselves hold values already computed and are not calls. */
+static bool tcalc_atom_contains_call(TcalcEqLower *L, const Atom *atom,
+                                     uint32_t depth) {
+    if (!atom || depth > TCALC_SPACE_MAX_DEPTH)
+        return true;
+    if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
+        return false;
+    const Atom *head = atom->expr.elems[0];
+    if (!head || head->kind == ATOM_VAR)
+        return true;
+    if (head->kind == ATOM_SYMBOL) {
+        SymbolId s = head->sym_id;
+        Atom *const *types = NULL;
+        if (tcalc_sym_set_contains(L->defined_heads, L->defined_len, s) ||
+            space_equations_may_match_known_head(L->space, s) ||
+            symbol_id_is_builtin(s) ||
+            he_grounded_symbol_types(s, HE_GROUNDED_TIER_EXTENDED_PROFILE, &types) > 0u ||
+            he_library_names_subject(head))
+            return true;
+    }
+    for (CettaExprLen i = 0u; i < atom->expr.len; i++) {
+        if (tcalc_atom_contains_call(L, atom->expr.elems[i], depth + 1u))
+            return true;
+    }
+    return false;
+}
+
+/* In HE, a call to builtin SYM whose argument sits in a position HE leaves
+ * unevaluated, and contains a call, is refused: compiled code evaluates
+ * arguments first, so the interpreter answers instead. */
+static bool tcalc_he_structural_arguments_ok(TcalcEqLower *L, SymbolId sym,
+                                             const Atom *atom, uint32_t depth) {
+    if (L->language_id != CETTA_LANGUAGE_HE || atom->expr.len < 2u)
+        return true;
+    uint32_t arity = (uint32_t)atom->expr.len - 1u;
+    for (uint32_t i = 1u; i <= arity; i++) {
+        if (tcalc_he_position_structural(sym, i, arity) &&
+            tcalc_atom_contains_call(L, atom->expr.elems[i], depth + 1u)) {
+            snprintf(L->err, L->err_cap,
+                     "argument %u of '%s' is not evaluated in HE",
+                     i, symbol_bytes(g_symbols, sym));
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool tcalc_lower_let_binding(TcalcEqLower *L, const Atom *pat,
                                     const Atom *expr, uint32_t depth) {
     if (expr && expr->kind == ATOM_EXPR && expr->expr.len > 0u &&
@@ -1932,6 +2020,8 @@ static bool tcalc_lower_rhs(TcalcEqLower *L, const Atom *atom,
                 snprintf(L->err, L->err_cap, "too many dependency head symbols");
                 return false;
             }
+            if (!tcalc_he_structural_arguments_ok(L, sym, atom, depth))
+                return false;
             L->has_prims = true;
             TcTerm a0 = 0u, a1 = 0u;
             if (!tcalc_lower_rhs(L, atom->expr.elems[1], depth + 1u, &a0))
@@ -1965,6 +2055,8 @@ static bool tcalc_lower_rhs(TcalcEqLower *L, const Atom *atom,
             snprintf(L->err, L->err_cap, "too many dependency head symbols");
             return false;
         }
+        if (!is_defined && !tcalc_he_structural_arguments_ok(L, sym, atom, depth))
+            return false;
         uint32_t n = (uint32_t)atom->expr.len;
         TcTerm stack_items[16] = {0};
         TcTerm *items = n <= 16u ? stack_items : malloc((size_t)n * sizeof(*items));
@@ -3435,13 +3527,10 @@ static bool tcalc_atom_is_inert_value(Space *space, const Atom *atom,
 
 static pthread_once_t g_tcalc_eval_mode_once = PTHREAD_ONCE_INIT;
 static _Atomic int g_tcalc_eval_mode_ready = 0;
-static int g_tcalc_eval_mode = 1; /* 0 = off, 1 = auto (default), 2 = always */
+/* 0 = off (default), 1 = auto, 2 = always.  The tabled route runs only when
+ * CETTA_TCALC_EVAL asks for it. */
+static int g_tcalc_eval_mode = 0;
 static void tcalc_eval_mode_init(void);
-
-void cetta_tcalc_set_eval_mode_from_startup(int mode) {
-    g_tcalc_eval_mode = mode;
-    atomic_store_explicit(&g_tcalc_eval_mode_ready, 1, memory_order_release);
-}
 
 static inline int tcalc_get_eval_mode(void) {
     if (__builtin_expect(
@@ -3461,41 +3550,22 @@ extern char **environ;
 
 static void tcalc_eval_mode_init(void) {
     const char *env = NULL;
-    bool disable_auto = false;
     if (environ) {
         for (char **ep = environ; *ep; ep++) {
-            const char *e = *ep;
-            if (e[0] != 'C' || strncmp(e, "CETTA_", 6u) != 0)
-                continue;
-            const char *rest = e + 6u;
-            if (strncmp(rest, "TCALC_EVAL=", 11u) == 0) {
-                env = rest + 11u;
-            } else if ((strncmp(rest, "PREPARED_PURE_DEBUG=", 20u) == 0 &&
-                        rest[20] && strcmp(rest + 20u, "0") != 0) ||
-                       (strncmp(rest, "PREPARED_PURE_CODE_REFERENCE=", 29u) == 0 &&
-                        rest[29] && strcmp(rest + 29u, "0") != 0) ||
-                       (strncmp(rest, "SEARCH_CONTROLLER=", 18u) == 0 &&
-                        rest[18]) ||
-                       (strncmp(rest, "SEARCH_CONTROLLER_TRACE=", 24u) == 0 &&
-                        rest[24] && strcmp(rest + 24u, "0") != 0) ||
-                       (strncmp(rest, "PETTA_MACHINE_STATS=", 20u) == 0 &&
-                        rest[20] && strcmp(rest + 20u, "0") != 0) ||
-                       (strncmp(rest, "PETTA_MACHINE_TRANSITION_LIMIT=", 31u) == 0 &&
-                        rest[31] && strcmp(rest + 31u, "0") != 0)) {
-                disable_auto = true;
+            if (strncmp(*ep, "CETTA_TCALC_EVAL=", 17u) == 0) {
+                env = *ep + 17u;
+                break;
             }
         }
     }
-    if (!env || !env[0]) {
-        g_tcalc_eval_mode = disable_auto ? 0 : 1;
-    } else if (strcmp(env, "0") == 0 || strcmp(env, "off") == 0 ||
-               strcmp(env, "false") == 0) {
+    if (!env)
         g_tcalc_eval_mode = 0;
-    } else if (strcmp(env, "always") == 0 || strcmp(env, "2") == 0) {
+    else if (strcmp(env, "always") == 0 || strcmp(env, "2") == 0)
         g_tcalc_eval_mode = 2;
-    } else {
+    else if (strcmp(env, "auto") == 0 || strcmp(env, "1") == 0)
         g_tcalc_eval_mode = 1;
-    }
+    else
+        g_tcalc_eval_mode = 0;
 }
 
 static _Thread_local uint32_t g_tcalc_space_eval_depth = 0u;

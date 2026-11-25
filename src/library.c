@@ -543,57 +543,13 @@ bool cetta_library_context_try_init_for_language_profile(CettaLibraryContext *ct
     ctx->he_module_alias_len = ctx->he_module_alias_cap = 0u;
     ctx->include_fault_keeps_prefix = false;
     {
-        extern char **environ;
-        extern void cetta_tcalc_set_eval_mode_from_startup(int) __attribute__((weak));
-        const char *linked_env = NULL;
-        const char *tcalc_env = NULL;
-        bool tcalc_disable_auto = false;
-        if (environ) {
-            for (char **ep = environ; *ep; ep++) {
-                const char *e = *ep;
-                if (e[0] != 'C' || strncmp(e, "CETTA_", 6u) != 0)
-                    continue;
-                const char *rest = e + 6u;
-                if (strncmp(rest, "PETTA_LINKED_IMPORT=", 20u) == 0) {
-                    linked_env = rest + 20u;
-                } else if (strncmp(rest, "TCALC_EVAL=", 11u) == 0) {
-                    tcalc_env = rest + 11u;
-                } else if ((strncmp(rest, "PREPARED_PURE_DEBUG=", 20u) == 0 &&
-                            rest[20] && strcmp(rest + 20u, "0") != 0) ||
-                           (strncmp(rest, "PREPARED_PURE_CODE_REFERENCE=", 29u) == 0 &&
-                            rest[29] && strcmp(rest + 29u, "0") != 0) ||
-                           (strncmp(rest, "SEARCH_CONTROLLER=", 18u) == 0 &&
-                            rest[18]) ||
-                           (strncmp(rest, "SEARCH_CONTROLLER_TRACE=", 24u) == 0 &&
-                            rest[24] && strcmp(rest + 24u, "0") != 0) ||
-                           (strncmp(rest, "PETTA_MACHINE_STATS=", 20u) == 0 &&
-                            rest[20] && strcmp(rest + 20u, "0") != 0) ||
-                           (strncmp(rest, "PETTA_MACHINE_TRANSITION_LIMIT=", 31u) == 0 &&
-                            rest[31] && strcmp(rest + 31u, "0") != 0)) {
-                    tcalc_disable_auto = true;
-                }
-            }
-        }
+        const char *linked_env = getenv("CETTA_PETTA_LINKED_IMPORT");
         ctx->petta_linked_import =
             language_id == CETTA_LANGUAGE_PETTA &&
             linked_env != NULL && linked_env[0] != '\0' &&
             strcmp(linked_env, "0") != 0 &&
             strcmp(linked_env, "false") != 0 &&
             strcmp(linked_env, "off") != 0;
-        if (cetta_tcalc_set_eval_mode_from_startup) {
-            int tcalc_mode = 1;
-            if (!tcalc_env || !tcalc_env[0]) {
-                tcalc_mode = tcalc_disable_auto ? 0 : 1;
-            } else if (strcmp(tcalc_env, "0") == 0 ||
-                       strcmp(tcalc_env, "off") == 0 ||
-                       strcmp(tcalc_env, "false") == 0) {
-                tcalc_mode = 0;
-            } else if (strcmp(tcalc_env, "always") == 0 ||
-                       strcmp(tcalc_env, "2") == 0) {
-                tcalc_mode = 2;
-            }
-            cetta_tcalc_set_eval_mode_from_startup(tcalc_mode);
-        }
     }
     ctx->cmdline_arg_len = 0;
     ctx->loaded_modules = NULL;

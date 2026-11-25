@@ -2,6 +2,7 @@
 
 #include "space.h"
 #include "stats.h"
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -670,6 +671,23 @@ static inline uint64_t path_term_key(uint32_t hash) {
 #endif
 }
 
+/* A float's number key.  A float exactly equal to an int64 has that
+ * integer's key: HE matches the two (cetta_he_promoted_kind_equal), and in
+ * PeTTa, where they differ, sharing a key only offers a candidate.  Any
+ * other float is keyed by its bits, with one key for every NaN, which
+ * matches nothing.  Numbers that can match always share a key. */
+static inline uint64_t path_float_key(double value) {
+    if (value >= -0x1p63 && value < 0x1p63) {
+        int64_t integer = (int64_t)value;
+        if ((double)integer == value)
+            return (uint64_t)integer;
+    }
+    if (isnan(value))
+        return UINT64_C(0x7ff8000000000000);
+    union { double value; uint64_t bits; } conversion = {.value = value};
+    return conversion.bits;
+}
+
 /* An ordinary finite ground tree with exact leaves. Other representations
  * stay in the uncertain posting, including numbers that may meet these
  * integers by promotion. Equal admitted trees have equal structural hashes;
@@ -723,6 +741,10 @@ static PathProjection path_project_atom(const CettaSpacePathIndex *index,
     }
     if (atom->kind != ATOM_GROUNDED)
         return PATH_MISS;
+    if (atom->ground.gkind == GV_FLOAT) {
+        *key = path_float_key(atom->ground.fval);
+        return PATH_KEY;
+    }
     if (atom->ground.gkind != GV_INT)
         return PATH_UNCERTAIN;
     *key = (uint64_t)atom->ground.ival;
@@ -874,6 +896,10 @@ static PathProjection path_project(const CettaSpacePathIndex *index,
     }
     if (header->tag != ATOM_GROUNDED)
         return PATH_MISS;
+    if (tu_ground_kind(universe, id) == GV_FLOAT) {
+        *key = path_float_key(tu_float(universe, id));
+        return PATH_KEY;
+    }
     if (tu_ground_kind(universe, id) != GV_INT)
         return PATH_UNCERTAIN;
     *key = (uint64_t)tu_int(universe, id);
@@ -1021,8 +1047,20 @@ static bool path_query_key(const Atom *atom, CettaSpacePathKeyKind *kind,
         return true;
     }
     if (atom && atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_INT) {
-        *kind = CETTA_SPACE_PATH_INTEGER_KEY;
+        *kind = CETTA_SPACE_PATH_NUMBER_KEY;
         *key = (uint64_t)atom->ground.ival;
+        return true;
+    }
+    if (atom && atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_FLOAT) {
+        *kind = CETTA_SPACE_PATH_NUMBER_KEY;
+        *key = path_float_key(atom->ground.fval);
+        return true;
+    }
+    /* A string equals only itself: its structural hash, as for a ground
+     * term holding it. */
+    if (atom && atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING) {
+        *kind = CETTA_SPACE_PATH_TERM_KEY;
+        *key = path_term_key(atom_hash((Atom *)atom));
         return true;
     }
     return false;
@@ -1054,7 +1092,7 @@ static bool path_term_holds_term(const Atom *term) {
 }
 
 /* The shape of a flat pattern: its length, then two bits per element
- * (variable, symbol, integer, other leaf). Coordinate selection reads only
+ * (variable; symbol or string; integer or float; other leaf). Coordinate selection reads only
  * this shape. 0 for a nested or long pattern. */
 static uint64_t path_flat_shape(const Atom *pattern) {
     if (!pattern || pattern->kind != ATOM_EXPR || pattern->expr.len == 0u ||
@@ -1068,9 +1106,11 @@ static uint64_t path_flat_shape(const Atom *pattern) {
             return 0u;
         if (element->kind == ATOM_VAR)
             code = 1u;
-        else if (element->kind == ATOM_SYMBOL)
+        else if (element->kind == ATOM_SYMBOL ||
+                 (element->kind == ATOM_GROUNDED && element->ground.gkind == GV_STRING))
             code = 2u;
-        else if (element->kind == ATOM_GROUNDED && element->ground.gkind == GV_INT)
+        else if (element->kind == ATOM_GROUNDED &&
+                 (element->ground.gkind == GV_INT || element->ground.gkind == GV_FLOAT))
             code = 3u;
         else
             code = 0u;
@@ -1439,6 +1479,15 @@ static CettaSpacePathIndex *path_demand(Space *space, Atom *pattern,
             }
         }
     }
+    /* With nothing else bound, a bound number head is the coordinate: the
+     * head trie selects by symbol heads only. */
+    if (!found && !head_path &&
+        path_query_key(pattern->expr.elems[0], &kind, key) &&
+        kind == CETTA_SPACE_PATH_NUMBER_KEY) {
+        frames[0] = (PathQueryFrame){.term = pattern, .child = 0u};
+        depth = 1u;
+        found = true;
+    }
     SymbolId index_head = SYMBOL_ID_NONE;
     bool selected_head = !found && head_path;
     if (selected_head) {
@@ -1626,12 +1675,17 @@ static void path_shapes_clear(Space *space) {
 }
 
 
-/* A flat shape's columns after its first variable: bit p for a symbol or an
- * integer at position p. */
+/* A flat shape's columns after its first variable: bit p for a value keyed
+ * by itself at position p.  A bound number head is a column too: a symbol
+ * head already restricts every offer to its rows, but nothing selects by a
+ * number head unless its own position is keyed, and it can be the most
+ * selective value of the pattern. */
 static uint32_t path_shape_columns(uint64_t shape) {
     size_t len = (size_t)(shape & 0xffu);
     uint32_t columns = 0u;
     bool unbound = false;
+    if (len > 0u && ((shape >> 8u) & 3u) == 3u)
+        columns |= UINT32_C(1);
     for (size_t position = 0u; position < len; position++) {
         uint64_t code = (shape >> (8u + 2u * position)) & 3u;
         if (code == 1u)
@@ -1643,7 +1697,7 @@ static uint32_t path_shape_columns(uint64_t shape) {
 }
 
 /* A flat shape's keyed columns after its head, bound before or after its
- * variables: bit p for a symbol or an integer at position p. */
+ * variables: bit p for a value keyed by itself at position p. */
 static uint32_t path_shape_keyed_columns(uint64_t shape) {
     size_t len = (size_t)(shape & 0xffu);
     uint32_t columns = 0u;
