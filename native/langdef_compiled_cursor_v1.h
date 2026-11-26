@@ -14,6 +14,12 @@
 #define CETTA_LANGDEF_COMPILED_CURSOR_V1_ABI UINT32_C(7)
 #define CETTA_LANGDEF_COMPILED_CURSOR_V1_SYMBOL \
     "cetta_langdef_compiled_cursor_v1"
+/* A compiled cursor carries the SHA-256 of the generated C it was compiled
+   from (CETTA_LANGDEF_COMPILED_SOURCE_SHA256, 64 hexadecimal digits) after
+   this marker: a lock seals the cursor by it, the same whatever compiler
+   built the cursor, and a tool reads it from the file without loading it. */
+#define CETTA_LANGDEF_COMPILED_SOURCE_MARKER_V1 \
+    "cetta-langdef-compiled-source-sha256-v1:"
 
 typedef bool (*CettaLangDefCompiledProgramInitV1)(
     PPGuardedLexCursorV1Program *out,

@@ -44,9 +44,9 @@
 #include "parser_pack_gll_v1.h"
 #include "parser_pack_glr_v1.h"
 #endif
+#include "native/langdef_compiled_cursor_v1.h"
 #if !defined(CETTA_LANGDEF_ARTIFACT_ONLY) && !defined(CETTA_NO_STDLIB)
 #define CETTA_LANGDEF_COMPILED_CURSOR_RUNTIME 1
-#include "native/langdef_compiled_cursor_v1.h"
 #include "finite_horn_answer_stream_v1.h"
 #include "parser_pack_guard_evidence_stream_v1.h"
 #include "parser_pack_guarded_lexical_exec_v1.h"
@@ -1610,6 +1610,42 @@ bool cetta_langdef_sha256_file(const char *path, char digest[65],
     return ok;
 }
 
+bool cetta_langdef_compiled_cursor_source_sha256(const char *path,
+                                                 char digest[65],
+                                                 char *error,
+                                                 size_t error_size) {
+    uint8_t *bytes = NULL;
+    size_t len = 0u;
+    if (!cetta_langdef_slurp(path, &bytes, &len, error, error_size))
+        return false;
+    const size_t marker_len = sizeof(CETTA_LANGDEF_COMPILED_SOURCE_MARKER_V1) - 1u;
+    bool found = false, ok = true;
+    for (size_t at = 0u; ok && at + marker_len + 64u <= len; at++) {
+        if (bytes[at] != (uint8_t)'c' ||
+            memcmp(bytes + at, CETTA_LANGDEF_COMPILED_SOURCE_MARKER_V1,
+                   marker_len) != 0)
+            continue;
+        const uint8_t *hex = bytes + at + marker_len;
+        for (size_t index = 0u; ok && index < 64u; index++)
+            ok = (hex[index] >= '0' && hex[index] <= '9') ||
+                 (hex[index] >= 'a' && hex[index] <= 'f');
+        /* Every copy of the marker gives one digest. */
+        if (ok && found)
+            ok = memcmp(digest, hex, 64u) == 0;
+        if (ok && !found) {
+            memcpy(digest, hex, 64u);
+            digest[64] = '\0';
+            found = true;
+        }
+    }
+    free(bytes);
+    if (!found || !ok)
+        return langdef_set_error(
+            error, error_size,
+            "compiled cursor does not give the digest of its source");
+    return true;
+}
+
 static bool langdef_digest_text(Atom *atom, const char **out) {
     const char *text;
     size_t index;
@@ -1908,8 +1944,8 @@ bool cetta_langdef_lock_parse(Atom *root, CettaLangDefLockV1 *out,
         else if (cetta_langdef_expr_head(field, "program-sha256", 1u))
             slot = &out->program_sha256;
         else if (cetta_langdef_expr_head(field,
-                                         "compiled-cursor-sha256", 1u))
-            slot = &out->compiled_cursor_sha256;
+                                         "compiled-cursor-source-sha256", 1u))
+            slot = &out->compiled_cursor_source_sha256;
         else if (cetta_langdef_expr_head(field, "program-source-sha256", 2u)) {
             if (out->program_source_path || out->program_source_sha256 ||
                 !cetta_langdef_text_arg(field->expr.elems[1],
@@ -3008,7 +3044,7 @@ static CettaLangDefV1 *langdef_load_resource(const char *manifest_argument,
     char source_sha256[65];
     char program_source_sha256[65];
     char program_sha256[65];
-    char compiled_cursor_sha256[65];
+    char compiled_cursor_source_sha256[65];
     char extension_artifact_sha256[65];
     uint32_t source_index;
     bool manifest_arena_ready = false;
@@ -3072,7 +3108,7 @@ static CettaLangDefV1 *langdef_load_resource(const char *manifest_argument,
         goto fail;
     }
     if ((manifest.compiled_cursor_relative == NULL) !=
-        (lock.compiled_cursor_sha256 == NULL)) {
+        (lock.compiled_cursor_source_sha256 == NULL)) {
         langdef_set_error(
             error, error_size,
             "langdef compiled cursor disagrees with its lock");
@@ -3162,20 +3198,23 @@ static CettaLangDefV1 *langdef_load_resource(const char *manifest_argument,
                 "langdef program hash does not match its lock");
         goto fail;
     }
+    /* The compiled cursor is sealed by the digest of the generated C it
+     * was compiled from, which it carries: its own bytes depend on the
+     * compiler that built it. */
     if (manifest.compiled_cursor_relative != NULL &&
         (!cetta_langdef_path_join(
              manifest_path, manifest.compiled_cursor_relative,
              compiled_cursor_path, sizeof(compiled_cursor_path),
              error, error_size) ||
-         !cetta_langdef_sha256_file(
-             compiled_cursor_path, compiled_cursor_sha256,
+         !cetta_langdef_compiled_cursor_source_sha256(
+             compiled_cursor_path, compiled_cursor_source_sha256,
              error, error_size) ||
-         strcmp(compiled_cursor_sha256,
-                lock.compiled_cursor_sha256) != 0)) {
+         strcmp(compiled_cursor_source_sha256,
+                lock.compiled_cursor_source_sha256) != 0)) {
         if (!error[0])
             langdef_set_error(
                 error, error_size,
-                "compiled cursor hash does not match its lock");
+                "compiled cursor source does not match its lock");
         goto fail;
     }
 

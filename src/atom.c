@@ -632,7 +632,16 @@ static ArenaBlock *arena_claim_block(Arena *a, size_t min_capacity, bool fallibl
 
     size_t capacity = a->block_capacity ? a->block_capacity
                                         : ARENA_BLOCK_SIZE;
-    if (a->block_growth && a->reserved_bytes > capacity)
+    if (a->block_growth == ARENA_GROWTH_POW2) {
+        /* The least power of two at or above what the arena holds and the
+         * least block: the block is that less what it holds. */
+        size_t total = a->reserved_bytes + capacity;
+        size_t power = total <= 1u ? 1u
+            : (size_t)1 << (64 - __builtin_clzll((unsigned long long)total - 1u));
+        capacity = power - a->reserved_bytes;
+        if (capacity > ARENA_BLOCK_SIZE)
+            capacity = ARENA_BLOCK_SIZE;
+    } else if (a->block_growth && a->reserved_bytes > capacity)
         capacity = a->reserved_bytes < ARENA_BLOCK_SIZE
             ? a->reserved_bytes : ARENA_BLOCK_SIZE;
     if (min_capacity > capacity)
@@ -1209,6 +1218,14 @@ void arena_set_block_growth(Arena *a, size_t first) {
     arena_set_block_capacity(a, first);
     a->block_growth = a->block_capacity != 0u &&
         a->block_capacity < ARENA_BLOCK_SIZE;
+}
+
+void arena_set_block_growth_pow2(Arena *a, size_t least) {
+    arena_set_block_capacity(a, least);
+    a->block_growth = a->block_capacity != 0u &&
+                              a->block_capacity < ARENA_BLOCK_SIZE
+                          ? ARENA_GROWTH_POW2
+                          : ARENA_GROWTH_NONE;
 }
 
 static void arena_run_finalizers_until(Arena *a, ArenaFinalizer *stop) {
@@ -1995,6 +2012,43 @@ void arena_release_spare(Arena *a, size_t keep_bytes) {
     }
     arena_runtime_note_usage(a);
     arena_runtime_note_spare(a);
+}
+
+void arena_lend_block(Arena *a, void *storage, size_t bytes) {
+    size_t header = offsetof(ArenaBlock, data);
+    if (!a || !storage || bytes <= header ||
+        ((uintptr_t)storage & (_Alignof(ArenaBlock) - 1u)) != 0u) {
+        fputs("fatal: arena_lend_block needs an aligned block\n", stderr);
+        abort();
+    }
+    ArenaBlock *block = storage;
+    block->capacity = bytes - header;
+    block->used = 0;
+    block->next = a->head;
+    a->head = block;
+    a->reserved_bytes += block->capacity;
+    a->block_count++;
+    arena_ledger_charge((CettaArenaLedgerTag)a->ledger_tag, 0,
+                        (int64_t)block->capacity);
+    arena_runtime_note_usage(a);
+}
+
+ArenaMark arena_lent_mark(void *storage) {
+    return (ArenaMark){.head = storage};
+}
+
+void arena_free_lent(Arena *a, void *storage) {
+    if (!a)
+        return;
+    /* Kept below every mark the owner resets to, the lent block is in the
+     * chain of blocks in use. */
+    for (ArenaBlock **link = &a->head; *link; link = &(*link)->next) {
+        if (*link == storage) {
+            *link = (*link)->next;
+            break;
+        }
+    }
+    arena_free(a);
 }
 
 void arena_reset(Arena *a, ArenaMark mark) {
@@ -6084,10 +6138,10 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
             .len = len,
         },
     };
-    /* The suffix's summary is the list's, bit by bit
-     * (SuffixSummary.lean): a bit the departed elements did not hold, or
-     * held with every other element, is the list's; a bit a departed element
-     * held is the suffix's when a remaining element holds it, and a bit that
+    /* The suffix's summary is the list's, bit by bit: a bit the departed
+     * elements did not hold, or held with every other element, is the
+     * list's; a bit a departed element held is the suffix's when a
+     * remaining element holds it, and a bit that
      * every element must hold, which a departed element lacked, is the
      * suffix's when no remaining element lacks it.  A scan of the suffix
      * settles only those bits and stops at the first element that settles
@@ -6685,8 +6739,8 @@ Atom *atom_list_type(Arena *a)      { return atom_symbol_id(a, g_builtin_syms.li
 
 bool atom_is_generated_space_name(const Atom *atom) {
     return atom && atom->kind == ATOM_GROUNDED &&
-           atom->ground.gkind == GV_SPACE && space_generated_name_serial &&
-           space_generated_name_serial(atom->ground.ptr) != 0u;
+           atom->ground.gkind == GV_SPACE && space_generated_name &&
+           space_generated_name(atom->ground.ptr, NULL);
 }
 
 SymbolId atom_meta_type_id(const Atom *atom) {
@@ -9383,12 +9437,17 @@ static void atom_print_mode(
              * a space new-space made in PeTTa by its generated name. */
             const char *module_name = space_module_display_name
                 ? space_module_display_name(a->ground.ptr) : NULL;
-            uint64_t serial = space_generated_name_serial
-                ? space_generated_name_serial(a->ground.ptr) : 0u;
+            CettaGeneratedName name = {0};
+            char spelling[CETTA_GENERATED_NAME_SPELLING_MAX];
+            size_t spelled = !module_name && space_generated_name &&
+                    space_generated_name(a->ground.ptr, &name)
+                ? cetta_generated_name_spell(CETTA_NAME_KIND_SPACE, name,
+                                             spelling, sizeof(spelling))
+                : 0u;
             if (module_name)
                 fprintf(out, "ModuleSpace(GroundingSpace-%s)", module_name);
-            else if (serial)
-                fprintf(out, "&space(%" PRIu64 ")", serial);
+            else if (spelled)
+                fwrite(spelling, 1u, spelled, out);
             else
                 fprintf(out, "<space %p>", a->ground.ptr);
             break;
@@ -9479,9 +9538,14 @@ static void atom_print_mode(
         break;
     case ATOM_EXPR:
         if (petta) {
-            int64_t identity = 0;
-            if (atom_petta_callable_identity(a, &identity)) {
-                fprintf(out, "lambda_%llu", (unsigned long long)identity);
+            PettaCallableIdentity identity;
+            char spelling[CETTA_GENERATED_NAME_SPELLING_MAX];
+            size_t spelled = atom_petta_callable_identity(a, &identity)
+                ? petta_callable_identity_spell(identity, spelling,
+                                                sizeof(spelling))
+                : 0u;
+            if (spelled) {
+                fwrite(spelling, 1u, spelled, out);
                 break;
             }
         }

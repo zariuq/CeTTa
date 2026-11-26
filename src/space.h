@@ -393,11 +393,12 @@ typedef struct Space {
     /* The atoms added and removed while a reader reads the space as it
        stood when it began (space.c, "Entry reads"); NULL while none does. */
     struct SpaceJournal *journal;
-    /* The number N of the name &space(N) a PeTTa program sees for a space
-       new-space made, or 0 for a space with no generated name.  The name is
-       the space's identity, not its text: text spelled the same is another
-       symbol.  Given once, from a counter no collection resets. */
-    uint64_t display_serial;
+    /* The generated name &space(N) a PeTTa program sees for a space
+       new-space made, drawn from the name supply (name_supply.h); no name
+       for any other space.  The name is the space's identity, not its text:
+       text spelled the same is another symbol.  Given once; no collection
+       changes it.  The space holds the name's block until space_free. */
+    CettaGeneratedName generated_name;
     /* Strictly monotone revision of the ground equational-alias projection
        (`(=e lhs rhs)` occurrences).  Always advances on add/remove so caches
        invalidate; active-equation emptiness is read from `alias_table`, never
@@ -406,6 +407,9 @@ typedef struct Space {
     /* Lazily constructed ground alias table (`src/space_alias.c`); NULL until
        an `=e` row is observed so spaces without `=e` pay zero heap memory. */
     struct SpaceAliasTable *alias_table;
+    /* Lazily constructed per-head clocks & seals (`src/space_theory.c`); NULL
+       until a head is watched or sealed so ordinary spaces pay zero overhead. */
+    struct SpaceHeadClocks *head_clocks;
 } Space;
 
 /* ── Space sections ─────────────────────────────────────────────────────
@@ -531,9 +535,6 @@ static inline Space *space_mutation_target(Space *s) {
     return s && s->module_own_view ? (Space *)s->overlay_base : s;
 }
 void space_init(Space *s);
-/* The next number for a generated space name, &space(N): numbers are never
-   reused, and no collection changes which one comes next. */
-uint64_t space_next_display_serial(void);
 /* Mark the current contents as imported-module atoms.  False, leaving the
    space unchanged, for an overlay or a stack, queue or hash space. */
 bool space_mark_imported_prefix(Space *s);
@@ -596,6 +597,19 @@ bool space_copy_module_view(Space *dst, const Space *src);
    space; an accelerator that reads one space's storage or indices declines. */
 static inline bool space_has_dependencies(const Space *s) {
     return space_dependency_count(s) != 0u;
+}
+/* Whether EXPRESSION is a space expression of the read algebra:
+   (, A B ...), the meet of its spaces, or (| A B ...), their additive
+   union.  It is a read-only view, which a read of it builds and no write
+   reaches: a write's operand that is one names no writable space. */
+static inline bool petta_space_expression_is_algebra(const Atom *expression) {
+    if (!expression || expression->kind != ATOM_EXPR ||
+        expression->expr.len < 2u)
+        return false;
+    const Atom *head = expression->expr.elems[0];
+    return head && head->kind == ATOM_SYMBOL &&
+           (head->sym_id == g_builtin_syms.comma ||
+            head->sym_id == g_builtin_syms.pipe);
 }
 /* The active session's grounded operation types: in a language whose
    grounded operations type themselves (HE's Grounded::type_), type lookup
@@ -1069,7 +1083,7 @@ bool space_rule_occurrence_resolve(SpaceEquationOccurrenceId id,
  * equations and source order without scanning unrelated heads.  Overlay spaces
  * use the complete logical view as the correctness fallback.
  */
-typedef struct {
+typedef struct SpaceEquationCursor {
     SpaceReadToken read;
     SymbolId head;
     /* The member being read: the space itself, then each dependency's own
@@ -2030,7 +2044,7 @@ bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *
 void space_query_conjunction(Space *s, Arena *a, Atom **patterns, CettaExprLen npatterns,
                              const Bindings *seed, BindingSet *out);
 
-/* ── Type Lookup (from HE spec Space.lean) ─────────────────────────────── */
+/* ── Type Lookup ───────────────────────────────────────────────────────── */
 
 /* Get intrinsic type for grounded atom: int/float→Number, bool→Bool, string→String */
 Atom *get_grounded_type(Arena *a, Atom *atom);
@@ -2159,5 +2173,69 @@ uint32_t get_atom_types_structural(Space *s, Arena *a, Atom *atom,
 uint32_t get_atom_types_structural_budgeted(
     Space *s, Arena *a, Atom *atom, Atom ***out_types,
     CettaTypeInferenceBudget *budget);
+
+/* ── Live SpaceTheoryView Readers ───────────────────────────────────────── */
+
+/* Unified rule-existence check over a live SpaceTheoryView across ordinary
+ * `=`, directional `=%`, and scoped `=e` alias rules. */
+static inline bool space_theory_view_head_has_ordinary_rules(
+        const SpaceTheoryView *view, SymbolId head) {
+    return view && view->space &&
+           space_equations_may_match_known_head(view->space, head);
+}
+
+static inline bool space_theory_view_head_has_extended_rules(
+        const SpaceTheoryView *view, SymbolId head, unsigned admitted_forms) {
+    if (!view || !view->space)
+        return false;
+    Space *s = view->space;
+    if ((admitted_forms & 2u /* CETTA_RULE_SYNTAX_DIRECTIONAL */) &&
+        space_directional_rules_may_match_known_head(s, head))
+        return true;
+    return __builtin_expect(
+               atomic_load_explicit(&cetta_space_global_equational_epoch,
+                                    memory_order_relaxed) != 0u,
+               0) &&
+           space_may_have_equational_aliases(s) &&
+           space_theory_view_head_has_alias_rules_slow(
+               view, head, admitted_forms);
+}
+
+static inline bool space_theory_view_head_has_rules(
+        const SpaceTheoryView *view, SymbolId head, unsigned admitted_forms) {
+    return space_theory_view_head_has_ordinary_rules(view, head) ||
+           space_theory_view_head_has_extended_rules(view, head, admitted_forms);
+}
+
+static inline bool space_theory_view_open_rule_cursor(
+        const SpaceTheoryView *view, SymbolId head, unsigned admitted_forms,
+        SpaceEquationCursor *cursor) {
+    return view && view->space &&
+           space_rule_cursor_init(view->space, head, admitted_forms, cursor);
+}
+
+static inline bool space_theory_view_atom_may_be_definition(
+        const SpaceTheoryView *view, CettaIndex index, bool own_only) {
+    if (!view || !view->space)
+        return false;
+    return own_only ? space_row_may_be_rule(view->space, index)
+                    : space_view_row_may_be_rule(view->space, index);
+}
+
+static inline bool space_theory_view_head_declares_type(
+        const SpaceTheoryView *view, SymbolId head) {
+    return view && view->space && space_head_declares_type(view->space, head);
+}
+
+static inline bool space_theory_view_type_annotations_symbol_only(
+        const SpaceTheoryView *view) {
+    return view && view->space &&
+           space_type_annotations_have_only_symbol_subjects(view->space);
+}
+
+static inline bool space_theory_view_declares_subtypes(
+        const SpaceTheoryView *view) {
+    return view && view->space && view->space->declares_subtypes;
+}
 
 #endif /* CETTA_SPACE_H */

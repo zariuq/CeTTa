@@ -595,9 +595,11 @@ static bool write_lock(const char *path,
              fputs(")\n", stream) != EOF &&
              write_digest_field(stream, "program-sha256", program_digest);
     }
+    /* The compiled cursor by the digest of the generated C it was compiled
+       from, which it carries: its own bytes depend on the compiler. */
     if (ok && manifest->compiled_cursor_relative != NULL)
         ok = write_digest_field(
-            stream, "compiled-cursor-sha256",
+            stream, "compiled-cursor-source-sha256",
             compiled_cursor_digest);
     ok = ok && fputs(")\n", stream) != EOF && fclose(stream) == 0;
     stream = NULL;
@@ -757,7 +759,7 @@ static bool compile_parser_pack(const char *manifest_argument,
              manifest_path, manifest.compiled_cursor_relative,
              compiled_cursor_path, sizeof(compiled_cursor_path),
              error, error_size) ||
-         !cetta_langdef_sha256_file(
+         !cetta_langdef_compiled_cursor_source_sha256(
              compiled_cursor_path, compiled_cursor_digest,
              error, error_size)))
         goto done;
@@ -900,7 +902,7 @@ static bool seal_langdef(const char *manifest_argument,
              manifest_path, manifest.compiled_cursor_relative,
              compiled_cursor_override, compiled_cursor_path,
              error, error_size) ||
-         !cetta_langdef_sha256_file(
+         !cetta_langdef_compiled_cursor_source_sha256(
              compiled_cursor_path, compiled_cursor_digest,
              error, error_size)))
         goto done;

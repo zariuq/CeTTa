@@ -2886,10 +2886,11 @@ static PREPARED_PURE_ALWAYS_INLINE uint8_t prepared_pure_value_class(
  * for the guard only where neither can, as for the canonical machine's
  * intrinsic guard. */
 static bool prepared_pure_petta_intrinsic_type_guard(Space *space) {
+    SpaceTheoryView view = space_theory_view_borrow(space);
     return eval_petta_classifier_extended &&
         !eval_petta_classifier_extended(space, g_builtin_syms.get_type) &&
         !eval_petta_classifier_extended(space, g_builtin_syms.get_metatype) &&
-        space_type_annotations_have_only_symbol_subjects(space);
+        space_theory_view_type_annotations_symbol_only(&view);
 }
 
 static bool prepared_pure_type_mentions_var(
@@ -5607,9 +5608,10 @@ static bool prepared_pure_ground_data(CettaPreparedPureProgram *program,
             !atom_visit_set_add(&seen, node, &fault) && !fault)
             continue;
         Atom *head = node->expr.elems[0];
+        SpaceTheoryView view = space_theory_view_borrow(program->space);
         if (!head || head->kind != ATOM_SYMBOL ||
             prepared_pure_head_role(program, node) != PREPARED_PURE_HEAD_INERT ||
-            space_head_declares_type(program->space, head->sym_id) ||
+            space_theory_view_head_declares_type(&view, head->sym_id) ||
             !prepared_pure_reserve((void **)&stack, sizeof(*stack), &cap,
                                    len + node->expr.len)) {
             data = false;
@@ -5843,8 +5845,9 @@ static bool prepared_pure_owned_source(
 }
 static bool prepared_pure_owned_builtin(
     CettaPreparedPureProgram *program, SymbolId head, CettaExprLen arity) {
+    SpaceTheoryView view = space_theory_view_borrow(program->space);
     return prepared_pure_owned_source(program, head, arity) &&
-        !space_head_declares_type(program->space, head) &&
+        !space_theory_view_head_declares_type(&view, head) &&
         !space_equations_may_match_known_head(program->space, head);
 }
 
@@ -8283,8 +8286,9 @@ static bool prepared_pure_compile_head(
     PreparedPureHead *head = &program->heads[head_index];
     if (head->compiled)
         return true;
+    SpaceTheoryView view = space_theory_view_borrow(program->space);
     head->declares_type =
-        space_head_declares_type(program->space, head->head);
+        space_theory_view_head_declares_type(&view, head->head);
     SpaceEquationCursor cursor;
     if (!space_equation_cursor_init(program->space, head->head, &cursor))
         return false;

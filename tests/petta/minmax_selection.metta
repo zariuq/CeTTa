@@ -1,9 +1,12 @@
-; PeTTa min and max select one of their operands by the numeric order of what
-; they stand for: a constant stays itself ((min pi 4) is pi), integers and
-; floats compare exactly, -0.0 is below 0 and 0.0, a NaN operand propagates,
-; and on a tie min answers its first operand and max its second, so
-; (min a b) and (max a b) are a stable sort of a and b.  SWI-PeTTa computes
-; them as arithmetic instead (swi_differences entry 17).
+; PeTTa min and max select one of their operands by the numeric value it
+; stands for: a constant stays itself ((min pi 4) is pi), integers and floats
+; compare exactly, a NaN operand propagates, and on a tie min answers its
+; first operand and max its second, so (min a b) and (max a b) are a stable
+; sort of a and b by value (not by the standard order of terms, which orders
+; terms unevaluated and puts 1.0 before 1).  -0.0 has the value of 0 and 0.0,
+; so it ties them and the tie decides; a value below or above zero still wins
+; against it.  SWI-PeTTa computes them as arithmetic instead (swi_differences
+; entry 17).
 !(min 2 2.0)
 !(min 2.0 2)
 !(max 2 2.0)
@@ -18,6 +21,11 @@
 !(max -0.0 0)
 !(min 0.0 0)
 !(max 0 0.0)
+!(min -1.0e-300 -0.0)
+!(max 1.0e-300 -0.0)
+!(max -0.0 -1.0e-300)
+!(min nan -0.0)
+!(max -0.0 nan)
 !(min 1 2.5)
 !(min 3 2.5)
 !(min 9223372036854775807 9223372036854775808)

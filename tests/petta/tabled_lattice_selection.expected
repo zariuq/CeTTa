@@ -1,0 +1,15 @@
+true
+true
+true
+(pi-4 pi pi 4 4)
+(4-pi pi pi 4 4)
+(int-float 2 2 2.0 2.0)
+(float-int 2.0 2.0 2 2)
+(zeros 0.0 0.0 -0.0 -0.0)
+(zeros- -0.0 -0.0 0.0 0.0)
+(three 1.0 1.0 3 3)
+true
+true
+((a 2) (b 1))
+true
+((t 1.0) (u 2.0))

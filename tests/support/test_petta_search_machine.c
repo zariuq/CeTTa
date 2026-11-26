@@ -4432,20 +4432,69 @@ static void test_compiled_dependency_appends(TermUniverse *universe, Arena *aren
             1u, &host, NULL);
         assert(compiled);
         CettaOpenEquationRead reads = cetta_open_equation_program_read(compiled);
+        assert(space.head_clocks == NULL);
         assert(cetta_open_equation_program_refresh(compiled, &space, &reads));
+        assert(space.head_clocks == NULL);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+        bool stats_enabled = cetta_runtime_stats_is_enabled();
+        cetta_runtime_stats_enable();
+        CettaRuntimeStats after_arm = {0}, after_disjoint = {0};
+#endif
         for (unsigned i = 0; i < 32; i++) {
             char declaration[128];
             snprintf(declaration, sizeof(declaration), "(: independent-%u (-> Number Number))", i);
             space_add(&space, parse_one(arena, declaration));
             assert(cetta_open_equation_program_refresh(compiled, &space, &reads));
             assert(reads.row_count == space_length64(&space));
+            if (i == 0u) {
+                /* 1st disjoint refresh scans without allocating head_clocks. */
+                assert(space.head_clocks == NULL);
+                assert(!reads.head_stamp.active);
+            }
             snprintf(declaration, sizeof(declaration), "(: (seen %u) Evidence)", i);
             space_add(&space, parse_one(arena, declaration));
             assert(cetta_open_equation_program_refresh(compiled, &space, &reads));
+            if (i == 0u) {
+                /* 2nd disjoint refresh promotes to O(k) head-set clocks. */
+                assert(space.head_clocks != NULL);
+                assert(reads.head_stamp.active);
+                assert(reads.head_stamp.head_count == 3u);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+                cetta_runtime_stats_snapshot(&after_arm);
+#endif
+            }
         }
         add_compiled_program_equation(program, &space, arena,
             "(= (different-head $x) (foot-root $x))");
         assert(cetta_open_equation_program_refresh(compiled, &space, &reads));
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+        cetta_runtime_stats_snapshot(&after_disjoint);
+        assert(after_disjoint.counters[CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_APPEND_ROW] ==
+               after_arm.counters[CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_APPEND_ROW]);
+#endif
+        /* Compound-subject type assignment on a watched head falls back to exact
+         * atom scan, refreshes to true, and re-arms per-head version counters
+         * for subsequent O(k) disjoint batch appends. */
+        space_add(&space, parse_one(arena, "(: (foot-callee 1) Evidence)"));
+        assert(cetta_open_equation_program_refresh(compiled, &space, &reads));
+        assert(reads.head_stamp.active);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+        cetta_runtime_stats_snapshot(&after_arm);
+#endif
+        for (unsigned j = 0u; j < 16u; j++) {
+            char extra[128];
+            snprintf(extra, sizeof(extra), "(: batch-indep-%u (-> Number Number))", j);
+            space_add(&space, parse_one(arena, extra));
+        }
+        assert(cetta_open_equation_program_refresh(compiled, &space, &reads));
+        assert(reads.row_count == space_length64(&space));
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+        cetta_runtime_stats_snapshot(&after_disjoint);
+        assert(after_disjoint.counters[CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_APPEND_ROW] ==
+               after_arm.counters[CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PROGRAM_APPEND_ROW]);
+        if (!stats_enabled)
+            cetta_runtime_stats_disable();
+#endif
         CettaOpenEquationRead before = reads;
         if (trial < sizeof(mutations)/sizeof(*mutations)) {
             space_add(&space, parse_one(arena, mutations[trial]));

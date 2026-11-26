@@ -196,7 +196,7 @@ static bool native_fold_step_declarations_numeric(Space *space, Arena *arena,
  * and the accumulator; a lambda capturing variables declines. */
 static Atom *native_fold_open_lambda(Arena *arena, Atom *function,
                                      VarId *item, VarId *accumulator) {
-    int64_t identity = 0;
+    PettaCallableIdentity identity;
     if (!arena || !atom_petta_callable_identity(function, &identity) ||
         atom_has_vars(function))
         return NULL;
@@ -206,10 +206,11 @@ static Atom *native_fold_open_lambda(Arena *arena, Atom *function,
     };
     Atom *body = function;
     for (size_t place = 0u; place < 2u; place++) {
-        int64_t layer = 0;
+        PettaCallableIdentity layer;
         if (!places[place] || !body ||
             !atom_petta_callable_identity(body, &layer) ||
-            layer != identity || !petta_semantics_lambda_body(body, NULL))
+            !petta_callable_identity_eq(layer, identity) ||
+            !petta_semantics_lambda_body(body, NULL))
             return NULL;
         body = cetta_petta_open_callable(arena, body, places[place]);
     }

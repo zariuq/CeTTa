@@ -101,19 +101,20 @@ static const char *prelude_atomic_text(Arena *arena, Atom *atom,
         return text;
     }
     case GV_SPACE: {
-        uint64_t serial = space_generated_name_serial
-            ? space_generated_name_serial(atom->ground.ptr) : 0u;
-        if (!serial)
+        CettaGeneratedName name = {0};
+        if (!space_generated_name ||
+            !space_generated_name(atom->ground.ptr, &name))
             return NULL;
-        char buf[48];
-        int written = snprintf(buf, sizeof(buf), "&space(%" PRIu64 ")", serial);
-        if (written <= 0 || (size_t)written >= sizeof(buf))
+        char buf[CETTA_GENERATED_NAME_SPELLING_MAX];
+        size_t written = cetta_generated_name_spell(
+            CETTA_NAME_KIND_SPACE, name, buf, sizeof(buf));
+        if (written == 0u)
             return NULL;
-        char *text = arena_alloc(arena, (size_t)written + 1u);
+        char *text = arena_alloc(arena, written + 1u);
         if (!text)
             return NULL;
-        memcpy(text, buf, (size_t)written + 1u);
-        *length = (size_t)written;
+        memcpy(text, buf, written + 1u);
+        *length = written;
         return text;
     }
     default:
@@ -419,16 +420,16 @@ static PreludeHashStatus prelude_fold_term(Atom *atom, uint32_t *h) {
             return PRELUDE_HASHED;
         }
         case GV_SPACE: {
-            uint64_t serial = space_generated_name_serial
-                ? space_generated_name_serial(atom->ground.ptr) : 0u;
-            if (!serial)
+            CettaGeneratedName name = {0};
+            if (!space_generated_name ||
+                !space_generated_name(atom->ground.ptr, &name))
                 return PRELUDE_UNHASHABLE;
-            char buf[48];
-            int written = snprintf(buf, sizeof(buf), "&space(%" PRIu64 ")",
-                                   serial);
-            if (written <= 0 || (size_t)written >= sizeof(buf))
+            char buf[CETTA_GENERATED_NAME_SPELLING_MAX];
+            size_t written = cetta_generated_name_spell(
+                CETTA_NAME_KIND_SPACE, name, buf, sizeof(buf));
+            if (written == 0u)
                 return PRELUDE_UNHASHABLE;
-            return prelude_fold_atom(buf, (size_t)written, h)
+            return prelude_fold_atom(buf, written, h)
                 ? PRELUDE_HASHED : PRELUDE_UNHASHABLE;
         }
 #if CETTA_BUILD_WITH_GMP

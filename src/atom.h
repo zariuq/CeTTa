@@ -10,6 +10,7 @@
 #include "session.h"
 #include "symbol.h"
 #include "binding/frame_identity.h"
+#include "name_supply.h"
 
 #ifndef CETTA_PROVENANCE_ASSERT
 #define CETTA_PROVENANCE_ASSERT 0
@@ -517,21 +518,98 @@ static inline PeTTaValueRepresentation atom_petta_value_representation(
         domain_pair ? 2u : 0u, domain_pair ? domain->expr.elems[0] : NULL);
 }
 
+/* A registered callable's identity: the generated name its lambda drew
+ * (name_supply.h).  Like every generated name, all that can be observed of
+ * it is equality and freshness, and its spelling lambda_N.  Its token is a
+ * positive Number when the name is one the counter mode's root gives and
+ * fits int64, else a String holding the numeral (at most
+ * CETTA_GENERATED_NAME_NUMERAL_MAX - 1 bytes), so a callable is a value
+ * that holds nothing of the supply. */
+typedef struct {
+    int64_t number;     /* the identity when positive; 0 for a numeral */
+    const char *text;   /* the numeral, held by the token */
+    uint32_t length;
+} PettaCallableIdentity;
+
 /* Only privately constructed callable values carry an identity. Authored
  * Lam/partial expressions do not acquire one from their public spelling. */
 static inline bool atom_petta_callable_identity(
-        const Atom *atom, int64_t *identity) {
+        const Atom *atom, PettaCallableIdentity *identity) {
     if (!identity || atom_petta_value_representation(atom) !=
                          PETTA_VALUE_REGISTERED_CALLABLE)
         return false;
     const Atom *token = atom_is_internal_tag(atom->expr.elems[0],
         CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE)
         ? atom->expr.elems[1] : atom->expr.elems[1]->expr.elems[1];
-    if (!token || token->kind != ATOM_GROUNDED ||
-        token->ground.gkind != GV_INT || token->ground.ival <= 0)
+    if (!token || token->kind != ATOM_GROUNDED)
         return false;
-    *identity = token->ground.ival;
-    return true;
+    if (token->ground.gkind == GV_INT && token->ground.ival > 0) {
+        *identity = (PettaCallableIdentity){token->ground.ival, NULL, 0u};
+        return true;
+    }
+    if (token->ground.gkind == GV_STRING && token->ground.slen > 0u &&
+        token->ground.slen < CETTA_GENERATED_NAME_NUMERAL_MAX) {
+        *identity = (PettaCallableIdentity){
+            0, token->ground.sval, token->ground.slen};
+        return true;
+    }
+    return false;
+}
+
+static inline bool petta_callable_identity_eq(PettaCallableIdentity left,
+                                              PettaCallableIdentity right) {
+    if (left.number != 0 || right.number != 0)
+        return left.number == right.number;
+    return left.length == right.length &&
+           memcmp(left.text, right.text, left.length) == 0;
+}
+
+/* The one spelling of a callable's identity, lambda_N, as it prints and
+ * crosses to Prolog, into OUT (at least CETTA_GENERATED_NAME_SPELLING_MAX
+ * bytes), NUL-terminated; its length, or 0. */
+static inline size_t petta_callable_identity_spell(
+        PettaCallableIdentity identity, char *out, size_t capacity) {
+    if (!out || capacity < CETTA_GENERATED_NAME_SPELLING_MAX)
+        return 0u;
+    if (identity.number > 0)
+        return cetta_generated_name_spell(
+            CETTA_NAME_KIND_CALLABLE,
+            (CettaGeneratedName){1u, (uint64_t)identity.number,
+                                 (uintptr_t)CETTA_NAME_FORM_COUNTED},
+            out, capacity);
+    if (identity.length == 0u ||
+        identity.length >= CETTA_GENERATED_NAME_NUMERAL_MAX)
+        return 0u;
+    memcpy(out, "lambda_", 7u);
+    memcpy(out + 7u, identity.text, identity.length);
+    out[7u + identity.length] = '\0';
+    return 7u + identity.length;
+}
+
+/* A callable's identity copied out of its token, for a cache that outlives
+ * the atom it was read from. */
+typedef struct {
+    int64_t number;
+    uint32_t length;
+    char text[CETTA_GENERATED_NAME_NUMERAL_MAX];
+} PettaCallableIdentityKey;
+
+static inline PettaCallableIdentityKey petta_callable_identity_key(
+        PettaCallableIdentity identity) {
+    PettaCallableIdentityKey key = {identity.number, 0u, {0}};
+    if (identity.number == 0 &&
+        identity.length < CETTA_GENERATED_NAME_NUMERAL_MAX) {
+        key.length = identity.length;
+        memcpy(key.text, identity.text, identity.length);
+    }
+    return key;
+}
+
+static inline bool petta_callable_identity_key_eq(
+        const PettaCallableIdentityKey *key, PettaCallableIdentity identity) {
+    return key && petta_callable_identity_eq(
+        (PettaCallableIdentity){key->number, key->text, key->length},
+        identity);
 }
 
 /* Call after dereferencing variables. A variable may bind a whole value;
@@ -669,6 +747,13 @@ static inline bool atom_variable_bloom_may_contain(
 
 #define ARENA_BLOCK_SIZE (64 * 1024)
 
+/* How an arena's later blocks grow (Arena.block_growth). */
+typedef enum {
+    ARENA_GROWTH_NONE = 0,
+    ARENA_GROWTH_DOUBLING = 1,
+    ARENA_GROWTH_POW2 = 2,
+} ArenaBlockGrowth;
+
 typedef enum {
     CETTA_ARENA_RUNTIME_KIND_OTHER = 0,
     CETTA_ARENA_RUNTIME_KIND_PERSISTENT = 1,
@@ -769,9 +854,10 @@ typedef struct {
      * recycling arena instead of back to the allocator.  Opt-in, for owners
      * that create and retire many short-lived arenas. */
     bool recycle_blocks;
-    /* block_capacity is the first block's size; a later block matches what
-     * the arena already holds (arena_set_block_growth). */
-    bool block_growth;
+    /* How later blocks grow (ArenaBlockGrowth): not at all, to match what
+     * the arena already holds (arena_set_block_growth), or to bring it to
+     * a power of two (arena_set_block_growth_pow2). */
+    uint8_t block_growth;
     /* CettaArenaLedgerTag charged for this arena's blocks, and whether an
      * owner named it (otherwise it follows the runtime kind). */
     uint8_t ledger_tag;
@@ -844,6 +930,13 @@ void  arena_set_block_capacity(Arena *a, size_t capacity);
  * allocates, and an arena that gives back every block starts small again.
  * An allocation larger than that still gets a block of its own size. */
 void  arena_set_block_growth(Arena *a, size_t first);
+/* Each block claimed from the allocator brings all the blocks the arena
+ * holds to the least power of two that leaves the block at least `least`
+ * bytes, up to ARENA_BLOCK_SIZE: whatever the arena holds first, a lent block
+ * of any size among it, what it holds for n bytes is what blocks of powers
+ * of two would hold, less than 2n once it outgrows its first block.  An
+ * allocation larger than that still gets a block of its own size. */
+void  arena_set_block_growth_pow2(Arena *a, size_t least);
 void  arena_free(Arena *a);
 void  arena_reserve(Arena *a, size_t size);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);
@@ -989,6 +1082,20 @@ void  arena_reset(Arena *a, ArenaMark mark);
 /* Free the arena's unused blocks beyond the first `keep_bytes` of spare
  * capacity; the blocks in use are untouched. */
 void  arena_release_spare(Arena *a, size_t keep_bytes);
+/* Lend `a` the `bytes` of `storage`, aligned for a pointer, as its next
+ * block, which `a` allocates from like a block of its own: an owner keeps an
+ * arena and its first block in one allocation.  The owner resets `a` only to
+ * marks taken after lending, so the lent block stays in use and is never
+ * spare, and ends `a` with arena_free_lent, which leaves the block to it.
+ * Arenas that borrow nothing pay nothing for this. */
+void  arena_lend_block(Arena *a, void *storage, size_t bytes);
+/* arena_free of an arena lent `storage` (arena_lend_block): the lent block
+ * goes back to its owner, every other block to the allocator. */
+void  arena_free_lent(Arena *a, void *storage);
+/* The mark of a fresh arena lent `storage` as its first block, as
+ * arena_mark taken right after lending gives it: resetting to it empties
+ * that block and gives every later block to the arena's spare. */
+ArenaMark arena_lent_mark(void *storage);
 /* Whether `a` is exactly at `mark`: nothing allocated, finalized or acquired
  * since, so a reset to it would release nothing and every atom stays
  * valid. */
@@ -1619,7 +1726,7 @@ Atom *atom_false(Arena *a);     /* Symbol "False" */
 /* Error: (Error source message) */
 Atom *atom_error(Arena *a, Atom *source, Atom *message);
 
-/* ── Type system atoms (from HE spec Types.lean / Space.lean) ──────────── */
+/* ── Type system atoms ─────────────────────────────────────────────────── */
 
 Atom *atom_undefined_type(Arena *a);   /* Symbol "%Undefined%" */
 Atom *atom_atom_type(Arena *a);        /* Symbol "Atom" */
@@ -1776,10 +1883,10 @@ char *atom_to_string(Arena *a, Atom *atom);
    without one prints every space by address. */
 const char *space_module_display_name(const void *space)
     __attribute__((weak));
-/* The number N of a space's generated name &space(N), or 0 when it has none
+/* A space's generated name, &space(N), into NAME; false when it has none
    (space.c).  A space with a generated name is presented as a name: it
    prints as &space(N), and its metatype is Symbol. */
-uint64_t space_generated_name_serial(const void *space)
+bool space_generated_name(const void *space, CettaGeneratedName *name)
     __attribute__((weak));
 /* Whether ATOM is a space presented by its generated name. */
 bool atom_is_generated_space_name(const Atom *atom);

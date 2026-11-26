@@ -21,7 +21,8 @@ bool he_macro_signature(Space *space, Atom *call, HeMacroArgument *arguments,
     CettaExprLen arity = call->expr.len - 1u;
     SymbolId head = call->expr.elems[0]->sym_id;
     /* The index answers first whether the head declares any type. */
-    if (!space_head_declares_type(space, head))
+    SpaceTheoryView theory_view = space_theory_view_borrow(space);
+    if (!space_theory_view_head_declares_type(&theory_view, head))
         return false;
     Atom *head_atom = atom_symbol_canonical(head);
     if (!head_atom)

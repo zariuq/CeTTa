@@ -539,6 +539,9 @@ their ownership and fallback rules.
 ./cetta --quiet <file>               hide [()] success results
 ./cetta --fuel <-1|n> <file>         evaluation budget, positive n or -1 unlimited
 ./cetta --num-threads <n> <file>     OS threads for parallel-capable execution
+./cetta --name-supply=<counter|unforgeable> <file>
+                                     numbered (default) or hashed generated names
+./cetta --name-seed=<hex> <file>     the seed of hashed names
 ./cetta --space-engine <name> <file> select the space engine
 ./cetta --compile <file.metta>       emit LLVM IR
 ./cetta --run-report <path> <file>   query report as JSON
@@ -548,3 +551,51 @@ Without `--lang`, `cetta` runs `petta`. `--lang petta` reads consecutive
 `.metta` files in order; the other languages run one file and pass the
 remaining arguments to the program (`system:args`). `./cetta --help` lists
 every option.
+
+A space `new-space` makes in PeTTa prints as `&space(N)`, and a lambda as
+`lambda_N`. Such a generated name is nominal: a program can observe only
+that it equals itself and no other name, and its text, built again or read
+back, is an ordinary symbol that never reaches the space. Names come from
+supplies in the style of interval tree clocks, which never run out: no depth
+or width of parallel tasks and no number of names is refused. A supply holds
+a share of the unit interval and a clock; its next name is its share with
+its clock, and drawing advances the clock. The k branches of a threaded
+`hyperpose`, and the k components of a parallel composition in a threaded
+rho run, draw from balanced pieces of the share of the supply they come
+from (the first ceil(k/2) share the left half and the others the right
+half, each parted again in the same way), at most ceil(log2 k) halvings
+below it. A task or thread that queues tasks one at a time, not knowing how
+many, counts them: at the first it keeps the left half of its share to draw
+from, and the task it queues n-th, counting from 0, draws from the part of
+the right half reached by j = floor(log2(n+1)) right halvings, a left
+halving, and the j halvings that spell n+1-2^j in binary, so the tasks one
+supply queues never overlap and a million of them lie within 40 halvings.
+A rho COMM's continuation draws from the union of the shares of the send
+and the receive, at the later clock (a persistent receive keeps its share,
+and the continuation takes the send's); when a parallel run ends, the
+supply that started it has its whole share back and goes on past the
+latest clock any of its tasks reached. So the names depend
+on the program, the seed and, in rho, on which send met which receive,
+never on the timing of threads, the number of workers, or which party of a
+COMM found the other.
+With `--name-supply=counter` (the default) a name spells its place: the main
+thread gives 1, 2, ..., and any other name spells its share's prefix code
+(0 an empty half, 1 a full one, 2 a node followed by its two halves), a dot
+and its clock: `201.2` is the right half's name at clock 2, `22010.3` the
+second quarter's at clock 3, and `22100.2` a name at clock 2 of the first
+of the three branches of a `hyperpose` the main thread runs. A share that
+no longer fits one machine word
+moves on to a block of its own, keyed by a 128-bit hash of the share it
+stands for and its clocks, and its names spell the 32 hexadecimal digits of
+that key in front, as in `7031db4c9febedb92ab6bf3cd288ae56.201.2`. With
+`--name-supply=unforgeable` a name is 32 hexadecimal digits of SipHash-2-4
+(128-bit output) keyed by the seed, for names that leave the process. In
+counter mode two names are equal only when they are the same name: the
+names of one block are distinct by construction, and a block is compared as
+an object, so its key affects only how its names print and sort. An
+unforgeable name is compared by its 128 bits, so among n of them a
+collision has probability at most about n²/2¹²⁹ and becomes likely only
+near 2⁶⁴ names; the same bound covers two blocks printing alike. `--name-seed=<hex>` sets
+the seed, 1 to 32 hexadecimal digits; without one, a random seed is
+reported on stderr so that the run can be replayed. The environment
+variables `CETTA_NAME_SUPPLY` and `CETTA_NAME_SEED` set the same options.

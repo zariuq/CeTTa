@@ -29,6 +29,10 @@ void eval_cancellation_enter_query(CettaEvalCancellationScope *, _Atomic bool *)
 void eval_cancellation_leave(CettaEvalCancellationScope *);
 /* Opaque revision of a live owned retained computation; NULL if not owned. */
 Atom *eval_current_work_epoch(Arena *arena, Atom *handle);
+/* Diagnostic hit counter / reset for the thread-local head-scoped counted-match
+ * region cache (`try_count_generic_match_collapse`). */
+uint64_t eval_count_region_cache_hits(void);
+void eval_count_region_cache_reset(void);
 struct CettaPettaTokenSpaceClauseRegistry;
 
 /*

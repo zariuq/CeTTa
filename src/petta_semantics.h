@@ -684,8 +684,14 @@ Atom *petta_semantics_apply(Arena *arena, Atom *callable, Atom *argument);
  * is minted at translation, preserved by copying/capture/substitution, and
  * does not change the neutral constructor's binding structure. The body is
  * canonical locally-nameless syntax.
+ *
+ * The identity of a lambda that drew NAME from the name supply: a positive
+ * Number when the name's numeral fits int64, else a String holding it.
+ * NULL, with *TAKEN set, when its spelling lambda_N is already a symbol, so
+ * the caller draws again; a callable never takes an authored name.
  */
-Atom *petta_semantics_new_callable_identity(Arena *arena);
+Atom *petta_semantics_callable_identity(
+    Arena *arena, CettaGeneratedName name, bool *taken);
 Atom *petta_semantics_lambda_value(
     Arena *arena, Atom *identity, Atom *canonical_body);
 bool petta_semantics_lambda_body(const Atom *atom, Atom **canonical_body);

@@ -800,6 +800,7 @@ SRC += src/tmetta_compile.c src/tmetta_vm.c src/tmetta_answers.c
 SRC += src/petta_priority_heap.c
 SRC += src/prepared_pure_native.c
 SRC += src/library_provenance.c native/provenance/prov_kernel_v1.c
+SRC += src/name_supply.c
 SRC += src/native_memory.c src/host_services.c src/library_postings.c src/library_asp.c native/asp/asp_cdnl_v1.c native/asp/asp_hall_v1.c native/support/support_v1.c native/smt/euf_cc_v1.c native/smt/lra_simplex_v1.c native/asp/asp_clingo_v1.c native/asp/sat_ipasir_v1.c src/tensor.c src/tensor_bounds.c src/tensor_screening.c src/library_tensor.c src/library_group.c
 SRC += src/binary_codec.c src/library_binary.c
 SRC += src/library_heap.c
@@ -1077,6 +1078,14 @@ PARALLEL_EXECUTOR_LIFECYCLE_TEST_SRC = tests/test_parallel_executor_lifecycle.c
 PARALLEL_EXECUTOR_LIFECYCLE_TEST_OBJ = runtime/bootstrap/test_parallel_executor_lifecycle.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 PARALLEL_EXECUTOR_LIFECYCLE_TEST_BIN = runtime/test_parallel_executor_lifecycle-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 PARALLEL_EXECUTOR_LIFECYCLE_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+NAME_SUPPLY_PARALLEL_TEST_SRC = tests/test_name_supply_parallel.c
+NAME_SUPPLY_PARALLEL_TEST_OBJ = runtime/bootstrap/test_name_supply_parallel.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+NAME_SUPPLY_PARALLEL_TEST_BIN = runtime/test_name_supply_parallel-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+NAME_SUPPLY_PARALLEL_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+RHOCALC_THREADED_REGIONS_TEST_SRC = tests/test_rhocalc_threaded_regions.c
+RHOCALC_THREADED_REGIONS_TEST_OBJ = runtime/bootstrap/test_rhocalc_threaded_regions.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+RHOCALC_THREADED_REGIONS_TEST_BIN = runtime/test_rhocalc_threaded_regions-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+RHOCALC_THREADED_REGIONS_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 HE_COMPILED_READER_TEST_SRC = tests/support/test_he_compiled_reader_v1.c
 HE_COMPILED_READER_TEST_OBJ = runtime/bootstrap/test_he_compiled_reader_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 HE_COMPILED_READER_TEST_BIN = runtime/test_he_compiled_reader_v1-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -2016,7 +2025,9 @@ SHARED_TRANSITION_STANDALONE_SRC = src/shared_transition.c
 # What space.c calls beyond the space: its proof batch store, the indexes
 # that store reads and the fallible allocator.
 SPACE_PROOF_STANDALONE_SRC = src/proof_language_region.c src/proof_producer.c src/proof_row.c src/proof_batches.c src/u64_index.c src/gslt_u32_index_v1.c src/fallible_alloc.c
-SPACE_STANDALONE_SRC = src/space.c src/space_dense.c src/space_theory.c src/space_alias.c src/space_tuples.c src/space_skeleton.c src/space_path_index.c src/binding/rule.c src/fixpoint.c $(SPACE_PROOF_STANDALONE_SRC)
+# A space gives back its generated name's block when it is freed, so the
+# name supply comes with it.
+SPACE_STANDALONE_SRC = src/space.c src/space_dense.c src/space_theory.c src/space_alias.c src/space_tuples.c src/space_skeleton.c src/space_path_index.c src/binding/rule.c src/fixpoint.c src/name_supply.c $(SPACE_PROOF_STANDALONE_SRC)
 SPACE_STANDALONE_DEPS = $(SPACE_STANDALONE_SRC) $(wildcard src/*.h src/binding/*.h) Makefile
 # Standalone native queries share transform's option reader, not the evaluator.
 RELATIONAL_STANDALONE_SRC = src/relational_plan.c src/relational_cursor.c src/native_query.c src/transform_options.c src/dense_relation.c src/native_open_query.c src/term_molecule.c
@@ -2892,6 +2903,10 @@ METAMATH_PROOF_STORAGE_DENOTED_V1 = $(METAMATH_PROOF_STORAGE_STAGE_DIR_V1)/denot
 METAMATH_PROOF_STORAGE_REQUIRED_KEYS_V1 = $(METAMATH_PROOF_STORAGE_STAGE_DIR_V1)/required-keys.answers
 METAMATH_PROOF_STORAGE_DENOTED_KEYS_V1 = $(METAMATH_PROOF_STORAGE_STAGE_DIR_V1)/denoted-keys.answers
 LANGDEF_COMPILED_CURSOR_EXPORT_V1 = native/langdef_compiled_cursor_export_v1.c
+# A compiled cursor carries the SHA-256 of the generated C it is compiled
+# from, which a lock seals it by: its own bytes depend on the compiler that
+# built it.  $(1) is the generated C, in a recipe.
+LANGDEF_COMPILED_CURSOR_SOURCE_V1 = -DCETTA_LANGDEF_COMPILED_SOURCE_SHA256=\"$$(sha256sum $(1) | cut -c1-64)\"
 LANGDEF_COMPILED_CURSOR_HEADER_V1 = native/langdef_compiled_cursor_v1.h
 METAMATH_CURSOR_FOLD_TEST_BIN_V1 = runtime/test_metamath_syntax_cursor_fold_v1-$(BUILD_OBJ_TAG)
 METAMATH_FOLD_PART_DIR_V1 = runtime/bootstrap/metamath-occurrence-fold-v1.$(BUILD_OBJ_TAG)
@@ -6064,6 +6079,74 @@ $(PARALLEL_EXECUTOR_LIFECYCLE_TEST_BIN): $(PARALLEL_EXECUTOR_LIFECYCLE_TEST_OBJ)
 test-parallel-executor-lifecycle: $(PARALLEL_EXECUTOR_LIFECYCLE_TEST_BIN)
 	@$(call cetta_exec,./$(PARALLEL_EXECUTOR_LIFECYCLE_TEST_BIN))
 
+$(NAME_SUPPLY_PARALLEL_TEST_OBJ): $(NAME_SUPPLY_PARALLEL_TEST_SRC) src/parallel_executor.h src/name_supply.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(NAME_SUPPLY_PARALLEL_TEST_BIN): $(NAME_SUPPLY_PARALLEL_TEST_OBJ) $(NAME_SUPPLY_PARALLEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -o $@ $(NAME_SUPPLY_PARALLEL_TEST_OBJ) $(NAME_SUPPLY_PARALLEL_TEST_LINK_OBJ) $(LDFLAGS)
+
+$(RHOCALC_THREADED_REGIONS_TEST_OBJ): $(RHOCALC_THREADED_REGIONS_TEST_SRC) src/rhocalc_core.h src/rhocalc_syntax.h src/name_supply.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime/bootstrap
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(RHOCALC_THREADED_REGIONS_TEST_BIN): $(RHOCALC_THREADED_REGIONS_TEST_OBJ) $(RHOCALC_THREADED_REGIONS_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -o $@ $(RHOCALC_THREADED_REGIONS_TEST_OBJ) $(RHOCALC_THREADED_REGIONS_TEST_LINK_OBJ) $(LDFLAGS)
+
+# Threaded rho runs, in both name modes: the duplicator loop for up to a
+# million COMMs on 1, 2 and 4 workers holds only what its two live tasks need,
+# and a burst of 4000 live tasks before it has its regions given back once the
+# live tasks fall; spawns and COMMs place their tasks by their parties'
+# supplies, so positions
+# and names are the same on every run and any number of workers, and placing
+# by the finder (a test hook) changes them; a spawn of 640 takes balanced
+# pieces in the root block, whose COMMs join in the word; the loop's names
+# stay in the root block, none twice.  Through the command line, the
+# duplicator loop and the persistent-receive loop keep a flat peak RSS from
+# 10^4 to 10^6 COMMs.
+.PHONY: test-rhocalc-threaded-regions
+test-rhocalc: test-rhocalc-threaded-regions
+test-rhocalc-threaded-regions: $(RHOCALC_THREADED_REGIONS_TEST_BIN) $(BIN) tests/support/check_rho_threaded_memory.py
+	@set -eu; \
+	for supply in counter unforgeable; do \
+		CETTA_NAME_SUPPLY=$$supply CETTA_NAME_SEED=$(NAME_SUPPLY_TEST_SEED) \
+			$(call cetta_exec,./$(RHOCALC_THREADED_REGIONS_TEST_BIN)); \
+	done; \
+	$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_rho_threaded_memory.py "$(CETTA_SCRIPT_BIN)"
+
+# Generated names through the parallel executor, in both modes: a chain of a
+# million tasks and a million pushes from one supply give the same names on
+# 1, 2 and 4 workers, no two alike, the pushes all in the root block, with
+# every block given back and the heap flat; the supply that pushed them gets
+# its place back at the latest clock its tasks reached.
+.PHONY: test-name-supply-parallel
+test-petta-semantics: test-name-supply-parallel
+test-name-supply-parallel: $(NAME_SUPPLY_PARALLEL_TEST_BIN)
+	@set -eu; \
+	for supply in counter unforgeable; do \
+		CETTA_NAME_SUPPLY=$$supply CETTA_NAME_SEED=$(NAME_SUPPLY_TEST_SEED) \
+			$(call cetta_exec,./$(NAME_SUPPLY_PARALLEL_TEST_BIN)); \
+	done
+
+# A space keeps its generated name, and the name's block, through new
+# contents and a removal that empties it, and gives the block back when it
+# is freed; a space without a name gains none.  In both modes.
+SPACE_GENERATED_NAME_TEST_BIN = runtime/test_space_generated_name-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+$(SPACE_GENERATED_NAME_TEST_BIN): tests/test_space_generated_name.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_generated_name.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+
+.PHONY: test-space-generated-name
+test-petta-semantics: test-space-generated-name
+test-space-generated-name: $(SPACE_GENERATED_NAME_TEST_BIN)
+	@set -eu; \
+	for supply in counter unforgeable; do \
+		CETTA_NAME_SUPPLY=$$supply CETTA_NAME_SEED=$(NAME_SUPPLY_TEST_SEED) \
+			$(call cetta_exec,./$(SPACE_GENERATED_NAME_TEST_BIN)); \
+	done
+
 .PHONY: test-stable-occurrence-realization-tournament
 test-stable-occurrence-realization-tournament:
 	@benchmarks/stable_occurrence_index/run.sh 1 >/dev/null
@@ -6604,6 +6687,9 @@ test-space-term-universe-membership: $(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN)
 test-scoped-equational-alias-v1: $(BIN) tests/support/test_scoped_equational_alias_v1.py
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/test_scoped_equational_alias_v1.py ./$(BIN)
 
+test-space-theory-head-region-v1: $(BIN) tests/support/test_space_theory_head_region_v1.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/test_space_theory_head_region_v1.py ./$(BIN)
+
 SCOPED_EQUATIONAL_READ_CUT_TEST_OBJ = runtime/bootstrap/test_scoped_equational_read_cut.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 SCOPED_EQUATIONAL_READ_CUT_TEST_BIN = runtime/test_scoped_equational_read_cut-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 
@@ -7074,15 +7160,22 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(GSLT2PARSE_AUX_OBJ:.o=.d)
 
 # Standalone compiler and qualification objects live under runtime/bootstrap
-# but are not all members of one link-object family.  Their generated
-# dependency files are nevertheless authoritative: omitting them can retain
-# an ABI-stale object after a shared header changes.  Restrict the wildcard to
-# the active configuration tag so unrelated build variants remain isolated.
-# The tag's own variants (runtime stats) are included:
-# their objects link into the same tool paths, so a variant object left stale
-# by a header change would be relinked into those tools.
+# and its subdirectories, and the parser foundation's under
+# experiments/gslt2parse_foundation/native, but are not all members of one
+# link-object family.  Their generated dependency files are nevertheless
+# authoritative: omitting them can retain an ABI-stale object after a shared
+# header changes (a layout change of src/atom.h left such objects compiled
+# against the old layout, linked into tests that then crashed).  Restrict the
+# wildcard to the active configuration tag so unrelated build variants remain
+# isolated.  The tag's own variants (runtime stats) are included: their
+# objects link into the same tool paths, so a variant object left stale by a
+# header change would be relinked into those tools.
 AUXILIARY_DEPS = $(wildcard runtime/bootstrap/*.$(BUILD_OBJ_TAG).d \
-	runtime/bootstrap/*.$(BUILD_OBJ_TAG).*.d)
+	runtime/bootstrap/*.$(BUILD_OBJ_TAG).*.d \
+	runtime/bootstrap/*/*.$(BUILD_OBJ_TAG).d \
+	runtime/bootstrap/*/*.$(BUILD_OBJ_TAG).*.d \
+	experiments/gslt2parse_foundation/native/*.$(BUILD_OBJ_TAG).d \
+	experiments/gslt2parse_foundation/native/*.$(BUILD_OBJ_TAG).*.d)
 
 # Remake configuration stamps before evaluating object dependencies.  The
 # stamp recipes update their generated headers as a side effect; treating the
@@ -9796,6 +9889,7 @@ $(METAMATH_COMPILED_CURSOR_V1): \
 	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/langdef-compiled-cursor.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -shared -Wl,--build-id=none \
+		$(call LANGDEF_COMPILED_CURSOR_SOURCE_V1,$(METAMATH_CURSOR_FOLD_GENERATED_C_V1)) \
 		-DCETTA_LANGDEF_COMPILED_PREFIX=$(METAMATH_CURSOR_FOLD_PREFIX_V1) \
 		-DCETTA_LANGDEF_COMPILED_HAS_OCCURRENCE_SPAN_MASK=1 \
 		-DCETTA_LANGDEF_COMPILED_HAS_STATE_PROGRAM=1 \
@@ -9842,6 +9936,7 @@ $(METAMATH_DIRECT_COMPILED_CURSOR_V1): \
 	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/langdef-direct-compiled-cursor.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -shared -Wl,--build-id=none \
+		$(call LANGDEF_COMPILED_CURSOR_SOURCE_V1,$(METAMATH_DIRECT_CURSOR_FOLD_GENERATED_C_V1)) \
 		-DCETTA_LANGDEF_COMPILED_PREFIX=$(METAMATH_DIRECT_CURSOR_FOLD_PREFIX_V1) \
 		-DCETTA_LANGDEF_COMPILED_HAS_OCCURRENCE_SPAN_MASK=1 \
 		-DCETTA_LANGDEF_COMPILED_HAS_STATE_PROGRAM=1 \
@@ -9875,6 +9970,7 @@ build-langdef-compiled-cursor-generated-v1: \
 		-n "$(GENERATED_LANGDEF_CURSOR_PREFIX)"
 	@mkdir -p "$(dir $(GENERATED_LANGDEF_CURSOR_SO))"
 	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -shared -Wl,--build-id=none \
+		$(call LANGDEF_COMPILED_CURSOR_SOURCE_V1,"$(GENERATED_LANGDEF_CURSOR_C)") \
 		-DCETTA_LANGDEF_COMPILED_PREFIX=$(GENERATED_LANGDEF_CURSOR_PREFIX) \
 		-DCETTA_LANGDEF_COMPILED_HAS_OCCURRENCE_SPAN_MASK=1 \
 		-DCETTA_LANGDEF_COMPILED_HAS_STATE_PROGRAM=1 \
@@ -16180,11 +16276,14 @@ test-metamath-cogslt-langdef-v1: $(BIN) \
 		native/langdef_module.c native/langdef_module.h \
 		native/langdef_compiled_cursor_v1.h \
 		native/langdef_compiled_cursor_export_v1.c; then exit 1; fi
-	@lock_dir=$$(mktemp -d langdef/metamath-compiled-lock.XXXXXX); \
+	@set -eu; lock_dir=$$(mktemp -d langdef/metamath-compiled-lock.XXXXXX); \
 	trap 'rm -rf "$$lock_dir"' EXIT INT TERM; \
 	cp -R $(METAMATH_LANGDEF_DIR_V1)/. "$$lock_dir/"; \
-	printf '\001' >> \
-		"$$lock_dir/generated/syntax_cursor_fold_v1.generated.so"; \
+	cursor="$$lock_dir/generated/syntax_cursor_fold_v1.generated.so"; \
+	printf '\001' >> "$$cursor"; \
+	$(LANGDEF_COMPILER_V1_BIN) validate \
+		--manifest "$$lock_dir/langdef.metta" >/dev/null; \
+	python3 -c 'import sys; path = sys.argv[1]; data = open(path, "rb").read(); marker = b"cetta-langdef-compiled-source-sha256-v1:"; at = data.index(marker) + len(marker); open(path, "wb").write(data[:at] + b"0" * 64 + data[at + 64:])' "$$cursor"; \
 	if $(LANGDEF_COMPILER_V1_BIN) validate \
 		--manifest "$$lock_dir/langdef.metta" >/dev/null 2>&1; \
 		then exit 1; fi
@@ -16914,6 +17013,7 @@ test-metamath-cogslt-lowered-artifact-mutations-core-v1: $(BIN) \
 		timeout 180 $(CC) $(CPPFLAGS) \
 			-Iexperiments/gslt2parse_foundation/native $(CFLAGS) \
 			-fPIC -shared -Wl,--build-id=none \
+			$(call LANGDEF_COMPILED_CURSOR_SOURCE_V1,"$$mutated_c") \
 			-DCETTA_LANGDEF_COMPILED_PREFIX=$(METAMATH_CURSOR_FOLD_PREFIX_V1) \
 			-DCETTA_LANGDEF_COMPILED_HAS_OCCURRENCE_SPAN_MASK=1 \
 			-DCETTA_LANGDEF_COMPILED_HAS_STATE_PROGRAM=1 \
@@ -17276,6 +17376,7 @@ test-metamath-cogslt-generated-form-mutations-core-v1: $(BIN) \
 		timeout 180 $(CC) $(CPPFLAGS) \
 			-Iexperiments/gslt2parse_foundation/native $(CFLAGS) \
 			-fPIC -shared -Wl,--build-id=none \
+			$(call LANGDEF_COMPILED_CURSOR_SOURCE_V1,"$$mutated_c") \
 			-DCETTA_LANGDEF_COMPILED_PREFIX=$(METAMATH_CURSOR_FOLD_PREFIX_V1) \
 			-DCETTA_LANGDEF_COMPILED_HAS_OCCURRENCE_SPAN_MASK=1 \
 			-DCETTA_LANGDEF_COMPILED_HAS_STATE_PROGRAM=1 \
@@ -18872,7 +18973,7 @@ test-lean: test-plain-bnf-semantic-generated-artifact-current-v1
 test-all: test-plain-bnf-reader-v1
 test-all: test-plain-bnf-denotation-v1
 
-test-all: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-language-def-ground-term-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-arena-frame-identity-ownership test-name-space test-arena-identity-names test-arena-block-growth test-delay-service test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-scoped-equational-alias-v1 test-scoped-equational-alias-differential test-term-universe-collection test-space-dense test-petta-slices test-count-footprint test-compare-answers test-stable-occurrence-transport test-shared-space-concurrent-index test-parallel-executor-lifecycle test-stable-occurrence-realization-tournament test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1 test-decl-langdef-v1
+test-all: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-language-def-ground-term-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-arena-frame-identity-ownership test-name-space test-arena-identity-names test-arena-block-growth test-delay-service test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-space-theory-head-region-v1 test-scoped-equational-alias-v1 test-scoped-equational-alias-differential test-term-universe-collection test-space-dense test-petta-slices test-count-footprint test-compare-answers test-stable-occurrence-transport test-shared-space-concurrent-index test-parallel-executor-lifecycle test-stable-occurrence-realization-tournament test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1 test-decl-langdef-v1
 test-asymptotic: test-term-universe-plateau
 test-asymptotic: test-space-dense-scaling
 test-asymptotic: test-stdlib-growth-memory-regression
@@ -26936,7 +27037,8 @@ test-petta-tabled-shared-and-runtime: $(BIN)
 
 # tabled-lattice: the results for each instance of a tabled call joined (min
 # or max) inside the fixpoint, against SWI's mode-directed tabling through the
-# embedded Prolog on 40 seeded graphs.
+# embedded Prolog on 40 seeded graphs, and min and max against the functions'
+# own selection over the same answers.
 .PHONY: test-petta-tabled-lattice
 test-petta-tabled-lattice: $(BIN)
 	@actual=runtime/test-petta-tabled-lattice.out; \
@@ -26946,7 +27048,13 @@ test-petta-tabled-lattice: $(BIN)
 	if ./$(BIN) --lang petta tests/petta/tabled_lattice_join_error.metta >"$$actual" 2>&1; then \
 		echo "FAIL: a join giving two values was not reported"; exit 1; fi; \
 	diff -u tests/petta/tabled_lattice_join_error.expected "$$actual"
-	@echo "PASS: tabled-lattice joins each call instance's results by min, max or a function of two arguments inside the fixpoint: shortest paths and reachable sets on cyclic graphs terminate, and on 40 seeded graphs every pair's shortest and longest path and every node's reachable set equal SWI's mode-directed tabling (min, max, lattice(J/3)); a plain table keeps every cost; a join giving two values is reported"
+	@set -eu; actual=runtime/test-petta-tabled-lattice-selection.out; \
+	for route in 0 1; do \
+		CETTA_OPEN_EQUATIONS_REFERENCE=$$route ./$(BIN) --lang petta \
+			tests/petta/tabled_lattice_selection.metta >"$$actual" 2>&1; \
+		diff -u tests/petta/tabled_lattice_selection.expected "$$actual"; \
+	done
+	@echo "PASS: tabled-lattice joins each call instance's results by min, max or a function of two arguments inside the fixpoint: shortest paths and reachable sets on cyclic graphs terminate, and on 40 seeded graphs every pair's shortest and longest path and every node's reachable set equal SWI's mode-directed tabling (min, max, lattice(J/3)); min and max join as the functions select, constants and ties included; a plain table keeps every cost; a join giving two values is reported"
 
 # A let pattern headed by a variable: PeTTa dispatches it at run time.  A
 # head first bound by the pattern keeps it data, so the compiled tier and the
@@ -29308,17 +29416,105 @@ test-petta-generated-space-names: $(BIN) tests/petta/generated_space_names.metta
 		tests/petta/generated_space_names.expected \
 		tests/petta/fixtures/generated_space_module.metta
 	@set -eu; \
+	for supply in counter unforgeable; do \
 	for machine in 0 1; do for reference in "" 1; do for budget in "" 1; do \
-		actual=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=$$budget CETTA_PETTA_SEARCH_MACHINE=$$machine \
+		actual=$$(CETTA_NAME_SUPPLY=$$supply CETTA_NAME_SEED=$(NAME_SUPPLY_TEST_SEED) \
+			CETTA_GC=1 CETTA_GC_BUDGET_MB=$$budget CETTA_PETTA_SEARCH_MACHINE=$$machine \
 			CETTA_OPEN_EQUATIONS_REFERENCE=$$reference timeout 120 ./$(BIN) --lang petta \
 			tests/petta/generated_space_names.metta 2>&1); \
 		if [ "$$actual" != "$$(cat tests/petta/generated_space_names.expected)" ]; then \
-			echo "FAIL: generated space names (machine $$machine, reference '$$reference', budget '$$budget')"; \
+			echo "FAIL: generated space names ($$supply names, machine $$machine, reference '$$reference', budget '$$budget')"; \
 			diff <(cat tests/petta/generated_space_names.expected) <(printf '%s\n' "$$actual") | head -20; \
 			exit 1; \
 		fi; \
-	done; done; done; \
-	echo "PASS: a generated space name is the space's identity, not its text, on every route and collection budget"
+	done; done; done; done; \
+	echo "PASS: a generated space name is the space's identity, not its text, in both name supplies, on every route and collection budget"
+
+# The name supply (src/name_supply.h): SipHash-2-4 with 128-bit output
+# against the specification's vectors and OpenSSL, the numeral, its spelling
+# and the order, the share algebra of interval tree clocks against a
+# separate implementation as trees, balanced spawns and counted pushes among
+# it (spawns of up to 4097 that are disjoint, cover their share and lie
+# within ceil(log2 k) halvings; a million pushes in the root block within
+# 40), and that no depth, width or count fails: chains of a million levels, a spent pool, a million balanced
+# forks and joins in the root block, a clock past its end, and millions of
+# names from a random tree that pushes, forks, spawns, joins and ends,
+# distinct and the same on every run, with every block given back, in both
+# modes.
+NAME_SUPPLY_TEST_BIN = runtime/test_name_supply-$(BUILD_OBJ_TAG)
+NAME_SUPPLY_TEST_SEED = 000102030405060708090a0b0c0d0e0f
+$(NAME_SUPPLY_TEST_BIN): tests/test_name_supply.c src/name_supply.c src/name_supply.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_name_supply.c src/name_supply.c $(LDFLAGS)
+
+.PHONY: test-name-supply test-petta-generated-names-parallel
+test-petta-semantics: test-name-supply test-petta-generated-names-parallel
+test-name-supply: $(NAME_SUPPLY_TEST_BIN)
+	@set -eu; \
+	for supply in counter unforgeable; do \
+		CETTA_NAME_SUPPLY=$$supply CETTA_NAME_SEED=$(NAME_SUPPLY_TEST_SEED) \
+			$(call cetta_exec,./$(NAME_SUPPLY_TEST_BIN)); \
+	done
+
+# Each parallel task draws from its pusher's next push, a part of the
+# pusher's pool its push count gives: the names are the same on every run
+# and on any number of workers, distinct from the root's and each other's,
+# equal modulo renaming in both modes and on the cooperative route; a fixed
+# seed replays unforgeable names, another seed changes them, and a run
+# without a seed reports one that replays it.
+test-petta-generated-names-parallel: $(BIN) tests/petta/generated_names_parallel.metta \
+		tests/petta/generated_names_parallel.expected tests/support/generated_space_names.py
+	@set -eu; \
+	run() { $(CETTA_BIN_INVOKE) --lang petta "$$@" tests/petta/generated_names_parallel.metta; }; \
+	renamed() { PYTHONDONTWRITEBYTECODE=1 python3 -c 'import sys; sys.path.insert(0, "tests/support"); from generated_space_names import rename_generated_space_names; sys.stdout.write(rename_generated_space_names(sys.stdin.read()))'; }; \
+	expected=$$(cat tests/petta/generated_names_parallel.expected); \
+	for supply in counter unforgeable; do for threads in 0 1 2 4; do \
+		actual=$$(CETTA_NAME_SUPPLY=$$supply CETTA_NAME_SEED=$(NAME_SUPPLY_TEST_SEED) run --num-threads $$threads 2>&1 | renamed); \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: parallel generated names ($$supply names, $$threads threads)"; \
+			diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual") | head -20; exit 1; \
+		fi; \
+	done; done; \
+	for supply in counter unforgeable; do \
+		first=$$(CETTA_NAME_SUPPLY=$$supply CETTA_NAME_SEED=$(NAME_SUPPLY_TEST_SEED) run --num-threads 4 2>&1); \
+		if [ $$supply = counter ] && ! printf '%s\n' "$$first" | grep -Eq '&space\([0-9]+(\.[0-9]+)+\)'; then \
+			echo "FAIL: no branch drew from a split supply"; exit 1; \
+		fi; \
+		for threads in 2 4 4 4; do \
+			again=$$(CETTA_NAME_SUPPLY=$$supply CETTA_NAME_SEED=$(NAME_SUPPLY_TEST_SEED) run --num-threads $$threads 2>&1); \
+			if [ "$$again" != "$$first" ]; then \
+				echo "FAIL: parallel names changed between runs ($$supply names, $$threads threads)"; \
+				diff <(printf '%s\n' "$$first") <(printf '%s\n' "$$again") | head -20; exit 1; \
+			fi; \
+		done; \
+	done; \
+	seeded=$$(run --name-supply=unforgeable --name-seed=$(NAME_SUPPLY_TEST_SEED) --num-threads 4 2>&1); \
+	other=$$(run --name-supply=unforgeable --name-seed=5eed --num-threads 4 2>&1); \
+	if [ "$$other" = "$$seeded" ] || [ "$$(printf '%s\n' "$$other" | renamed)" != "$$expected" ]; then \
+		echo "FAIL: another seed must change the names and nothing else"; exit 1; \
+	fi; \
+	report=runtime/generated-names-seed.$(BUILD_OBJ_TAG).err; \
+	unseeded=$$(run --name-supply=unforgeable --num-threads 4 2>"$$report"); \
+	seed=$$(sed -n 's/^cetta: name seed \([0-9a-f]\{32\}\) (replay with --name-seed=\1)$$/\1/p' "$$report"); \
+	if [ -z "$$seed" ] || [ "$$(wc -l < "$$report")" -ne 1 ]; then \
+		echo "FAIL: a run without a seed must report its seed, once"; cat "$$report"; exit 1; \
+	fi; \
+	rm -f "$$report"; \
+	replayed=$$(run --name-supply=unforgeable --name-seed=$$seed --num-threads 4 2>&1); \
+	from_environment=$$(CETTA_NAME_SUPPLY=unforgeable CETTA_NAME_SEED=$$seed run --num-threads 4 2>&1); \
+	if [ "$$replayed" != "$$unseeded" ] || [ "$$from_environment" != "$$unseeded" ]; then \
+		echo "FAIL: the reported seed must replay the run"; exit 1; \
+	fi; \
+	echo "PASS: parallel names depend on the program and the seed, never on the workers; both supplies agree modulo renaming"
+
+# The renaming that compares outputs up to generated names: callables and
+# spaces, each kind apart, in both supplies; it merges no names and leaves a
+# symbol that only resembles a generated name alone.
+.PHONY: test-generated-name-renaming
+test-petta-semantics: test-generated-name-renaming
+test-generated-name-renaming: $(BIN) tests/support/generated_space_names.py \
+		tests/support/check_generated_name_renaming.py
+	@PYTHONDONTWRITEBYTECODE=1 $(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_generated_name_renaming.py ./$(BIN)
 
 .PHONY: test-petta-profile-boundary test-petta-semantics \
 	test-petta-semantics-differential
@@ -30231,6 +30427,30 @@ test-priority-space: $(BIN) tests/petta/priority_space.metta tests/petta/priorit
 
 test-all: test-priority-space
 
+.PHONY: test-space-view-writes
+# A space expression of the read algebra, (, A B) or (| A B), is a read-only
+# view: a write to it -- add-atom, remove-atom or add-atoms, flat, nested, a
+# singleton fold, bound by let or passed through a function -- is refused as
+# a write to any operand that is no space is, in the dialect's own form
+# (PeTTa raises (type_error atom X), HE answers its Error), and the spaces
+# stay as they were, while writes to the spaces themselves land; both
+# profiles.
+test-space-view-writes: $(BIN) tests/petta/space_view_writes.metta \
+		tests/petta/space_view_writes.expected \
+		tests/test_space_view_writes.metta tests/test_space_view_writes.expected
+	@set -eu; mkdir -p runtime; for profile in "" "--profile extended"; do \
+		$(CETTA_BIN_INVOKE) --lang petta $$profile tests/petta/space_view_writes.metta \
+			> runtime/space-view-writes-petta.out 2>&1; \
+		diff -u tests/petta/space_view_writes.expected runtime/space-view-writes-petta.out; \
+		$(CETTA_BIN_INVOKE) --lang he $$profile tests/test_space_view_writes.metta \
+			> runtime/space-view-writes-he.out 2>&1; \
+		diff -u tests/test_space_view_writes.expected runtime/space-view-writes-he.out; \
+	done
+	@echo "PASS: writes to views of the read algebra are refused in PeTTa and HE, each in its own form, under both profiles, and the spaces stay as they were"
+
+test-petta-semantics: test-space-view-writes
+test-all: test-space-view-writes
+
 .PHONY: test-space-order
 # The order index a priority space keeps over its rows, against a sorted
 # array: random and adversarial adds and removals, rank, select, search,
@@ -30668,12 +30888,13 @@ test-admission-fixture-law: $(BIN) \
 		tests/petta/builtin_owned_by_space.metta \
 		tests/petta/builtin_owned_by_space.expected \
 		tests/petta/minmax_selection.metta \
-		tests/petta/minmax_selection.expected
+		tests/petta/minmax_selection.expected \
+		tests/petta/math_clamp.metta tests/petta/math_clamp.expected
 	@set -eu -o pipefail; \
 	diff -u tests/petta/admission_normal_forms.expected \
 		<($(CETTA_BIN_INVOKE) --lang petta tests/petta/admission_normal_forms.metta); \
 	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" "CETTA_ADMISSION_NORMALIZE=0"; do \
-		for test in minmax_intrinsic minmax_selection let_rebinding \
+		for test in minmax_intrinsic minmax_selection math_clamp let_rebinding \
 				builtin_owned_by_space \
 				$(notdir $(basename $(wildcard tests/petta/normal_form_guard_*.metta))); do \
 			env $$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/$$test.metta | \
@@ -41270,9 +41491,11 @@ $(GSLT_PROVIDER_CANARY_CATALOG_GENERATED_H) $(GSLT_PROVIDER_CANARY_CATALOG_GENER
 
 # The tracked outputs of the GSLT language, provider-catalog and
 # support-profile generators, their compilation certificates, and the
-# metamath direct-runtime lock.  Each is a function of its sources alone: no
-# generator writes its own build (binary, flags or paths) into what it
-# generates, so every build configuration regenerates the same bytes.
+# metamath langdef and direct-runtime locks.  Each is a function of its
+# sources alone: no generator writes its own build (binary, flags or paths)
+# into what it generates, so every build configuration regenerates the same
+# bytes.  A lock seals a compiled cursor by the digest of the generated C it
+# was compiled from, never by the cursor's bytes, which the compiler decides.
 TRACKED_GENERATED_V1 = \
 	$(GSLT_IL_GENERATED_LANGUAGE_V1_C) \
 	$(METTA_INTERACT_GENERATED_LANGUAGE_V1_C) \
@@ -41294,6 +41517,7 @@ TRACKED_GENERATED_V1 = \
 	$(METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1_GENERATED_C) \
 	$(METAMATH_PROOF_MACHINE_LANGUAGE_V1_GENERATED_C) \
 	$(METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_GENERATED_C) \
+	$(METAMATH_LANGDEF_LOCK_V1) \
 	$(METAMATH_DIRECT_RUNTIME_LOCK_V1) \
 	$(GSLT_COMPILED_CANARY_V1_GENERATED_C) \
 	$(GSLT_PIPELINE_CANARY_V1_GENERATED_C) \
@@ -41301,14 +41525,6 @@ TRACKED_GENERATED_V1 = \
 	$(GSLT_PROVIDER_CANARY_CATALOG_GENERATED_C) \
 	$(METTAZERO_GROUND_LIBRARY_CANARY_V1_GENERATED_C) \
 	$(PROOF_TRACE_COMPILED_CANARY_V1_GENERATED_C)
-
-# A lock that seals a compiled native artifact holds that artifact's digest
-# in the ordinary build, which the default compiler makes; a sanitized build or
-# another compiler compiles it differently, so their checks leave those locks
-# to the ordinary one.
-TRACKED_GENERATED_FLAVOR_SEALED_V1 = $(METAMATH_DIRECT_RUNTIME_LOCK_V1)
-TRACKED_GENERATED_ORDINARY_FLAVOR_V1 = $(and $(filter-out 1,$(ENABLE_SANITIZERS)),$(filter gcc,$(CC)))
-TRACKED_GENERATED_CHECKED_V1 = $(if $(TRACKED_GENERATED_ORDINARY_FLAVOR_V1),$(TRACKED_GENERATED_V1),$(filter-out $(TRACKED_GENERATED_FLAVOR_SEALED_V1),$(TRACKED_GENERATED_V1)))
 
 # Regenerate every tracked output from its sources and require the bytes git
 # holds for it in the index, so what is committed or about to be, headers
@@ -41321,7 +41537,7 @@ check-generated:
 	@set -eu; \
 	work=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/check-generated.XXXXXX"); \
 	trap 'rm -rf "$${work:?}"' EXIT INT TERM; \
-	outputs="$(TRACKED_GENERATED_CHECKED_V1)"; \
+	outputs="$(TRACKED_GENERATED_V1)"; \
 	compared=""; \
 	for output in $$outputs; do \
 		compared="$$compared $$output"; \
@@ -41361,7 +41577,7 @@ check-generated:
 		for file in $$stale; do echo "  $$file"; done; \
 		exit 1; \
 	fi; \
-	echo "PASS: $(words $(TRACKED_GENERATED_CHECKED_V1)) tracked generated outputs are what their sources generate$(if $(TRACKED_GENERATED_ORDINARY_FLAVOR_V1),, ($(words $(TRACKED_GENERATED_FLAVOR_SEALED_V1)) sealed by the ordinary build left to it))"
+	echo "PASS: $(words $(TRACKED_GENERATED_V1)) tracked generated outputs are what their sources generate"
 
 test-all: check-generated
 
@@ -48743,9 +48959,9 @@ ifeq ($(ENABLE_PYTHON),1)
 endif
 
 .PHONY: test-gslt2parse-schema-v1 test-gslt2parse-schema-v1-native test-gslt2parse-c-horn-v1-native test-gslt2parse-c-horn-v1-differential test-gslt2parse-parser-action-bytecode-v1 test-gslt2parse-lookahead-semantics-v1 test-gslt2parse-parser-pack-guard-compiler-v1 test-gslt2parse-parser-pack-guard-regular-v1 test-gslt2parse-parser-pack-lr1-v1 test-gslt2parse-parser-pack-guard-plan-he-v1 test-gslt2parse-parser-pack-guard-plan-prime-v1 test-gslt2parse-parser-pack-abi-v1-native test-gslt2parse-parser-pack-abi-v1-matrix test-gslt2parse-parser-term-projection-v1-native test-gslt2parse-parser-atom-projection-v1-native test-gslt2parse-parser-atom-projection-closure-v1 test-gslt2parse-semantic-mask-span-compiler-v1 test-gslt2parse-parser-pack-gll-v1-native test-gslt2parse-parser-pack-gll-v1-matrix test-gslt2parse-regular-span-dfa-v1-native test-gslt2parse-regular-span-dfa-v1-matrix test-term-universe-backend-add-abi bench-space-scale-ladder
-.PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-slr-prepared test-lib-parse-gll-utf8-forest test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-scoped-equational-alias-v1 test-scoped-equational-alias-differential test-scoped-equational-alias-churn test-term-universe-store-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-slr-prepared test-lib-parse-gll-utf8-forest test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-space-theory-head-region-v1 test-scoped-equational-alias-v1 test-scoped-equational-alias-differential test-scoped-equational-alias-churn test-term-universe-store-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
 .PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-canonical-binder-mutation test-prime-abt-chain-mutation test-prime-abt-let-mutation test-prime-abt-sealed-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
-.PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-scoped-equational-alias-v1 test-scoped-equational-alias-differential test-scoped-equational-alias-churn test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-space-theory-head-region-v1 test-scoped-equational-alias-v1 test-scoped-equational-alias-differential test-scoped-equational-alias-churn test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
 .PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime test-prime-all test-prime-coverage test-prime-crossdialect test-prime-internal-graduality test-prime-practical test-runtime-named-var test-prime-bare-dollar-parser test-prime-bare-dollar-gslt test-prime-bare-dollar-reference test-prime-bare-dollar-evaluator test-prime-bare-dollar-mutations test-prime-bare-dollar-tournament test-prime-need-algebra test-prime-need-he-noninterference test-prime-need-correspondence probe-prime-need-observation-boundary probe-prime-equation-call-sharing-tournament test-prime-equation-call-sharing-tournament test-prime-equation-call-constitution test-prime-need-gc-lifetime test-prime-need-boundaries test-prime-need-match-pattern test-prime-suspension-rights test-prime-contexts test-prime-context-tutorial test-prime-rewrite-frontier-tutorial test-prime-need-effect-isolation test-prime-need-equation-choice-sharing test-prime-need-equation-choice-sharing-body test-prime-need-equation-choice-sharing-mutation test-prime-need-equation-choice-sharing-mutation-body test-prime-evaluation-strategy-contrast test-prime-need-mutations test-prime-universal-name-compile test-prime-universal-name-syntax test-prime-universal-name-mutation test-prime-syntax-mutation test-prime-universal-name-metadata test-prime-universal-name-metadata-mutation test-prime-universal-name-syntax-gslt test-registry-resolver test-prime-universal-name-resolver bench-prime-universal-name-resolver test-prime-occurs-check-mutation test-prime-completion-mutation test-prime-delayed-ambiguity-mutation test-prime-variable-mutation test-prime-canonical-binder-mutation test-prime-abt-chain-mutation test-prime-abt-let-mutation test-prime-abt-sealed-mutation test-prime-applicability-capacity-mutation test-prime-type-capacity-mutation test-prime-budget-monotonicity test-prime-package-validation
 .PHONY: test-rhocalc-cost-differential
 .PHONY: test-atom-deep-copy-iterative test-name-key test-abt test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-abt-differential test-abt-integration-ledger test-abt-scope-construction-candidates bench-abt bench-lib-parse-inference-native
@@ -48755,7 +48971,7 @@ endif
 .PHONY: test-lib-parse-glr-utf8-forest
 .PHONY: test-gslt2parse-parser-pack-glr-v1-native test-gslt2parse-parser-pack-glr-v1-matrix test-gslt2parse-parser-pack-wide-scale-v1 test-gslt2parse-parser-pack-lexical-v1-native test-gslt2parse-parser-pack-lexical-v1-matrix test-gslt2parse-generic-engine-purity-v1 test-gslt2parse-c-production-v1 test-gslt2parse-c-production-v1-body
 .PHONY: test-gslt2parse-parser-pack-native-api-v1-matrix test-gslt2parse-parser-pack-native-petta-v1 test-gslt2parse-parser-pack-native-petta-v1-body test-gslt2parse-he-parser-authority-v1 test-gslt2parse-he-unicode-residual-dfa-v1 test-gslt2parse-he-string-slr-specialization-v1 test-gslt2parse-he-reader-escape-differential-v1 test-gslt2parse-he-reader-source-faithfulness-v1 test-gslt2parse-he-reader-source-correspondence-v1 test-gslt2parse-rho-abstract-syntax-v1 test-gslt2parse-rhocalc-reader-authority-v1 test-gslt2parse-rhocalc-parser-pack-v1 test-gslt2parse-he-reader-guard-exec-v1 test-gslt2parse-he-reader-guarded-lexical-v1 test-gslt2parse-he-document-pipeline-v1 test-gslt2parse-he-gslt-parse-only-v1 bench-gslt2parse-he-gslt-parse-only-v1 test-gslt2parse-petta-form-guard-exec-v1 test-gslt2parse-petta-document-splitter-v1 test-gslt2parse-petta-document-pipeline-v1 test-gslt2parse-petta-document-pipeline-v1-body test-gslt2parse-petta-ffi-v1 test-gslt2parse-petta-ffi-v1-body test-gslt2parse-petta-parser-authority-v1 test-gslt2parse-stable-parser-parse-only-v1 bench-gslt2parse-stable-parser-parse-only-v1 bench-gslt2parse-prepared-final-forest-v1
-.PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-var-scope-across-exprs test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-rhocalc-cost-differential test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-scoped-equational-alias-v1 test-scoped-equational-alias-differential test-scoped-equational-alias-churn test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
+.PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-var-scope-across-exprs test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-rhocalc-cost-differential test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-space-theory-head-region-v1 test-scoped-equational-alias-v1 test-scoped-equational-alias-differential test-scoped-equational-alias-churn test-term-universe-store-abi test-term-universe-backend-add-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-space-scale-ladder bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness
 .PHONY: refresh-he-native-contracts test-he-compat-catalog-guards test-step-rules
 .PHONY: test-rhocalc-cost-parallel-stress test-rhocalc-canonical-selector-differential
 .PHONY: test-atom-deep-copy-iterative bench-lib-parse-inference-native
@@ -50228,6 +50444,7 @@ $(EMBED_SHARED_TEST): tests/test_embedding.c $(EMBED_LIB)
 	$(CC) $(CFLAGS) -Iinclude -o "$$tmp_out" $< -Lruntime -l:$(notdir $(EMBED_LIB)) -Wl,-rpath,'$$ORIGIN'; \
 	mv "$$tmp_out" "$@"
 .PHONY: test-embedding-shared-api test-embedding-rust-api
+ifeq ($(ENABLE_PIC),1)
 test-embedding-shared-api: embedding-native $(EMBED_SHARED_TEST)
 	./$(EMBED_SHARED_TEST)
 test-embedding-rust-api: embedding-native $(EMBED_LIB)
@@ -50238,6 +50455,13 @@ test-embedding-rust-api: embedding-native $(EMBED_LIB)
 		-L native=runtime -l dylib:+verbatim=$(notdir $(EMBED_LIB)) -C link-arg=-Wl,-rpath,'$$ORIGIN'; \
 	mv "$$tmp_out" runtime/test_embedding_rust-$(EMBED_TAG)
 	$(GSLT2PARSE_SHARED_ASAN_ENV) ./runtime/test_embedding_rust-$(EMBED_TAG)
+else
+# A shared library is linked from objects compiled for one, never from the
+# executable's, whose thread-local storage has the executable's model.  The
+# consumers run against the library `make embedding` builds.
+test-embedding-shared-api test-embedding-rust-api:
+	+$(MAKE) --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 ENABLE_PIC=1 $@
+endif
 
 PYTHON_EXECUTABLE ?= python3
 PYTHON_EXTENSION_SUFFIX = $(shell $(PYTHON_EXECUTABLE) -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')

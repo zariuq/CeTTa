@@ -172,9 +172,11 @@ def generate_case(root: Path, spec: GeneratedBenchmarkSpec, size: int,
 
 
 def run_metta_build(bin_path: str, fixture: Path) -> BuildResult:
+    # The fixtures are HE MeTTa programs: they run in that dialect, as the M3
+    # gates run them (rhocalc_m3_may_must.py), whatever cetta's default.
     start = time.perf_counter()
     proc = subprocess.run(
-        [bin_path, str(fixture)],
+        [bin_path, "--lang", "he", str(fixture)],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

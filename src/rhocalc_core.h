@@ -89,7 +89,40 @@ bool rhocalc_reduce_to_quiescence(
  * The returned expression preserves their occurrence order. */
 Atom *rhocalc_observe_top_level_values(Arena *arena, Atom *residual);
 
+/* What a test may watch in a threaded strict-core or rhometta run. */
+typedef struct {
+    /* Place each COMM's continuation at the right half of the supply of
+     * the party that found the match instead of by the two parties'
+     * supplies: the placement whose outcome depends on scheduling.  A
+     * negative control only. */
+    bool finder_placement;
+    /* Each task draws a space name when it runs, which DRAWN sees, on the
+     * worker that runs it. */
+    bool draw_each_task;
+    void (*drawn)(void *context, CettaGeneratedName name);
+    /* At the end of a run, each live task (waiting on a channel or stuck),
+     * with its supply and process, on the thread that ran the reduction. */
+    void (*live)(void *context, const CettaNameSupply *supply, Atom *proc);
+    void *context;
+} RhocalcThreadedTestHooks;
+
+/* The memory of the end of the last threaded run. */
+typedef struct {
+    uint64_t live_tasks;          /* waiting on a channel or stuck */
+    uint64_t live_task_bytes;     /* what their regions hold */
+    uint64_t live_task_reserved;  /* the blocks of their regions */
+    uint64_t regions_made;        /* regions allocated during the run */
+    uint64_t regions_given_back;  /* of those, freed during the run */
+    uint64_t regions_stocked;     /* released regions kept for reuse */
+    uint64_t scratch_reserved;    /* the blocks of the workers' scratch */
+    uint64_t channels;
+} RhocalcThreadedCensus;
+
 #ifdef CETTA_TEST_HOOKS
+/* HOOKS for the threaded runs the calling thread runs next, NULL for none,
+   and the census of the last one it ran. */
+void rhocalc_threaded_test_hooks_set(const RhocalcThreadedTestHooks *hooks);
+void rhocalc_threaded_last_census(RhocalcThreadedCensus *out);
 bool rhocalc_payload_map_capacity_selftest(void);
 bool rhocalc_abt_substitution_correspondence_selftest(Arena *arena);
 bool rhocalc_structural_order_selftest(Arena *arena);
