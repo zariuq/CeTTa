@@ -1,0 +1,5 @@
+done
+((payload 1 (part a 1) (part b 1)) (payload 2 (part a 2) (part b 2)) (payload 2 (part a 2) (part b 2)) (payload 3 (part a 3) (part b 3)))
+((R 1 a (payload 2 (part a 2) (part b 2))) (R 1 b (payload 2 (part a 2) (part b 2))) (R 1 c (payload 2 (part a 2) (part b 2))))
+(payload 2 (part a 2) (part b 2))
+((payload 2 (part a 2) (part b 2)) (payload 4 (part a 4) (part b 4)) (payload 5 (part a 5) (part b 5)))

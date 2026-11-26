@@ -5185,6 +5185,14 @@ bool petta_program_note_add(
     PETTA_PROGRAM_SECTION(program);
     if (!program || !space || !atom)
         return false;
+    /* The program keeps its definitions for its life: a definition read as
+     * one of the universe's decoded copies, which an epoch's release frees,
+     * is kept as the space's stored atom, a persistent copy. */
+    if (term_universe_identity_is_decoded(atom->arena_id)) {
+        atom = space_store_atom(space, &program->plans, atom);
+        if (!atom)
+            return false;
+    }
     if (petta_program_type_declaration_view(atom, NULL, NULL))
         return petta_program_ensure_space(program, space) != NULL;
     Atom *lhs = NULL;

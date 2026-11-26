@@ -21,12 +21,16 @@ typedef enum {
 } CettaSpacePathKeyKind;
 
 /* A path is a vector of expression-child positions. Each index belongs to
- * one Space and one universe generation. It refutes candidates only; matching
- * still determines bindings, promotion, correlation and opaque equality.
- * Posting lists contain source occurrence positions, never representatives
- * of equal payloads. Queries merge a key's postings and uncertain rows in
- * ascending position order. Appends extend the index; prefix rewrites retire
- * it. Cursors own their selected positions independently of that retirement. */
+ * one Space and one universe generation and holds every row. It refutes
+ * candidates only; matching still determines bindings, promotion,
+ * correlation and opaque equality. An index at a path serves either the
+ * queries a symbol heads, keying a row by its head symbol, its length and
+ * its value at the path together, or every other query, keying a row by
+ * that value alone. Posting lists contain source occurrence positions, never
+ * representatives of equal payloads. Queries merge a key's postings and
+ * uncertain rows in ascending position order. Appends extend the index;
+ * prefix rewrites retire it. Cursors own their selected positions
+ * independently of that retirement. */
 typedef struct {
     size_t index_count;
     size_t retained_bytes;
@@ -118,11 +122,6 @@ static inline bool space_path_index_may_select(const Atom *pattern) {
 
 bool space_path_index_candidates(
     Space *space, Atom *pattern, CettaIndex **out, CettaIndex *count);
-/* The rows of a pattern's head that its first bound column after the head
- * keys (a symbol, an integer or a ground symbolic term) admits, from that
- * column's index: an exact count's candidates, however broad, with no trie.
- * The index is built when `build` asks; false when no column is keyed or
- * the Space keeps no such index. */
 /* The index serving a read of PATTERN, as the read's demand of it (the
  * caller's to free()), with *PRICE the rows it would hand over, counted
  * without reading them: the shortest offer among those kept for a flat
@@ -144,6 +143,11 @@ CettaSpacePathDemand *space_path_index_demand_copy(
     const CettaSpacePathDemand *demand);
 /* ROWS read by a walk for want of an index (space_path_index_offer). */
 void space_path_index_rent(Space *space, CettaCount rows);
+/* The rows of a pattern's head that its first bound column after the head
+ * keys (a symbol, an integer or a ground symbolic term) admits, from that
+ * column's index: an exact count's candidates, however broad, with no trie.
+ * The index is built when `build` asks; false when no column is keyed or
+ * the Space keeps no such index. */
 bool space_path_index_lead_candidates(Space *space, Atom *pattern, bool build,
                                       CettaIndex **out, CettaIndex *count);
 /* The rows of a pattern's head whose first columns hold the pattern's bound
@@ -151,7 +155,9 @@ bool space_path_index_lead_candidates(Space *space, Atom *pattern, bool build,
  * symbols), with the rows open there: a hash probe of the index kept for
  * that prefix's length, built when `build` asks, where the trie would
  * descend the prefix holding every row of the space.  False when the
- * pattern binds no prefix or the Space keeps no such index. */
+ * pattern binds no prefix, the Space keeps no such index, or the probe
+ * would read more rows open in the prefix than rows its key holds, beyond
+ * a few: those the trie descends by their shape. */
 bool space_path_index_prefix_candidates(Space *space, Atom *pattern, bool build,
                                         CettaIndex **out, CettaIndex *count);
 /* space_path_index_prefix_candidates, building the index, for a flat

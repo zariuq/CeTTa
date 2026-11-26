@@ -6869,6 +6869,43 @@ test-space-dense: $(SPACE_DENSE_TEST_BIN) $(SPACE_DENSE_LEAVES_TEST_BIN) \
 	done; \
 	echo "PASS: relations kept as bits or tables answer as rows do ($(SPACE_DENSE_PROGRAMS))"
 
+# A loop that rewrites stored state reads each state as a decoded copy of its
+# row.  Decoded copies live in epochs that are freed once no reader keeps
+# them, so from one number of rewrites to four times it the loop's peak memory
+# grows by at most an eighth of what it grows with epochs off, also while
+# older copies stay live through the loop (a row read before it, a suspended
+# generator).
+DECODED_COPY_FLAT_REWRITES ?= 100000
+DECODED_COPY_FLAT_PROGRAMS = tests/petta/decoded_copy_rewrite_loop.metta \
+	tests/petta/decoded_copy_rewrite_held.metta
+.PHONY: test-decoded-copy-flat
+test-decoded-copy-flat: $(BIN) $(DECODED_COPY_FLAT_PROGRAMS) \
+		tests/support/check_decoded_copy_flat.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_decoded_copy_flat.py \
+		$(DECODED_COPY_FLAT_REWRITES) $(DECODED_COPY_FLAT_PROGRAMS) \
+		$(if $(filter 1,$(ENABLE_SANITIZERS)),--answers-only)
+ifeq ($(ENABLE_SANITIZERS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=0 test-decoded-copy-flat
+endif
+
+# Decoded-copy epochs free memory and change nothing a program does: every
+# test program (PeTTa, HE and top-level), under AddressSanitizer, prints the
+# same and exits alike with epochs off as with 16 KB epochs, and again with
+# 16 KB epochs poisoned when freed.  Qualification, not in test-all.
+DECODE_EPOCH_DIFFERENTIAL_ARGS ?=
+.PHONY: test-decode-epoch-differential
+ifeq ($(ENABLE_SANITIZERS)$(filter address,$(SANITIZER_WORDS)),1address)
+test-decode-epoch-differential: $(BIN) tests/support/check_decode_epoch_differential.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_decode_epoch_differential.py \
+		$(DECODE_EPOCH_DIFFERENTIAL_ARGS)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_decode_epoch_differential.py \
+		--poison $(DECODE_EPOCH_DIFFERENTIAL_ARGS)
+else
+test-decode-epoch-differential:
+	@$(MAKE) --no-print-directory BUILD=$(BUILD_CANON) ENABLE_SANITIZERS=1 \
+		SANITIZERS=address,undefined test-decode-epoch-differential
+endif
+
 # A dense relation kept as bits grows by its bits: from one size to twice it,
 # its peak memory grows by at most a third of what it grows as rows.
 SPACE_DENSE_SCALING_NODES ?= 2000
@@ -18882,6 +18919,7 @@ NORMAL_TEST_TARGETS := \
 	test-embedding-query \
 	test-prepared-pure-answer-producer \
 	test-petta-native-value-boundaries \
+	test-decoded-copy-flat \
 	test-petta-oem-single-sequence \
 	test-petta-oem-collection-after-restore \
 	test-prune-build-products \
@@ -33744,6 +33782,35 @@ test-petta-rational-terms: $(BIN)
 
 .PHONY: test-petta-hyperpose-answers
 test-petta-semantics: test-petta-hyperpose-answers test-petta-hyperpose-named-state test-petta-identity-forwarding
+
+# Hyperpose branches answer with decoded copies of a space's rows.  A branch's
+# answers are copied out as it publishes them, so the epochs the workers read
+# are freed once they leave while the answers stay: with epochs of every size
+# (small poisoned ones too), on one thread and on several.
+HYPERPOSE_DECODED_COPIES_TIMEOUT ?= 300
+.PHONY: test-petta-hyperpose-decoded-copies
+test-petta-semantics: test-petta-hyperpose-decoded-copies
+test-petta-hyperpose-decoded-copies: $(BIN) tests/petta/hyperpose_decoded_copies.metta \
+		tests/petta/hyperpose_decoded_copies.expected
+	@set -eu; \
+	for threads in 1 4; do \
+		for epochs in default small; do \
+			if [ $$epochs = small ]; then \
+				small='CETTA_DECODE_EPOCH_KB=16 CETTA_DECODE_EPOCH_POISON=1'; \
+			else small=; fi; \
+			actual=$$(env $$small timeout $(HYPERPOSE_DECODED_COPIES_TIMEOUT) \
+				$(CETTA_BIN_INVOKE) --num-threads $$threads --lang petta \
+				tests/petta/hyperpose_decoded_copies.metta 2>&1) || { \
+				echo "FAIL: hyperpose decoded copies ($$threads threads, $$epochs epochs) did not finish"; \
+				exit 1; }; \
+			if [ "$$actual" != "$$(cat tests/petta/hyperpose_decoded_copies.expected)" ]; then \
+				echo "FAIL: hyperpose decoded copies ($$threads threads, $$epochs epochs)"; \
+				diff -u tests/petta/hyperpose_decoded_copies.expected <(printf '%s\n' "$$actual"); \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: hyperpose answers made of decoded copies outlive the epochs their workers read"
 .PHONY: test-petta-identity-forwarding
 test-petta-identity-forwarding: $(BIN)
 	@set -eu; \

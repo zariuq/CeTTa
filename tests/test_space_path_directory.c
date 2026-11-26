@@ -62,6 +62,30 @@ static void query(Space *space, Arena *scratch, unsigned h, SymbolId head,
     arena_reset(scratch, mark);
 }
 
+/* A lookup no symbol heads reads the index of every row by the value alone:
+ * every head's rows holding 1 there, and EXTRA rows more. */
+static void query_any_head(Space *space, Arena *scratch, unsigned extra) {
+    ArenaMark mark = arena_mark(scratch);
+    Atom *pattern = read_atom(scratch, "($directory-any 1 $value $tail)");
+    CettaIndex *positions = NULL;
+    CettaIndex count = 0u;
+    assert(space_path_index_candidates(space, pattern, &positions, &count));
+    assert(count == HEADS * 11u + extra);
+    unsigned keyed = 0u;
+    for (CettaIndex i = 0u; i < count; i++) {
+        Atom *row = space_get_at64(space, positions[i]);
+        assert(row);
+        if (i)
+            assert(positions[i - 1u] < positions[i]);
+        keyed += row->kind == ATOM_EXPR && row->expr.len == 4u &&
+            row->expr.elems[1]->kind == ATOM_GROUNDED &&
+            row->expr.elems[1]->ground.ival == 1;
+    }
+    assert(keyed == HEADS * 11u);
+    free(positions);
+    arena_reset(scratch, mark);
+}
+
 static void exercise_mutations(Space *space, Arena *scratch,
                                  const SymbolId *heads, const SymbolId *values,
                                  bool prefixes) {
@@ -234,19 +258,26 @@ int main(void) {
             arena_reset(&scratch, mark);
         }
     }
-    /* Equal head/length/path descriptions with distinct index kinds coexist.
-     * Their construction order differs from their canonical key order. */
+    /* One index of each kind at a path serves every head: the first lead
+     * lookup and the first prefix lookup build theirs, and every head after
+     * reads them, in whatever order the heads come.  Equal paths with
+     * distinct index kinds coexist. */
     for (unsigned i = 0u; i < HEADS; i++) {
         unsigned h = (i * 37u) % HEADS;
         query(&space, &scratch, h, heads[h], values, false, true, true, false);
         query(&space, &scratch, h, heads[h], values, true, true, true, false);
     }
     CettaSpacePathIndexInfo info;
-    assert(space_path_indexes_info(&space, &info) && info.index_count == 2u * HEADS);
+    assert(space_path_indexes_info(&space, &info) && info.index_count == 2u);
+    /* A lookup no symbol heads keeps an index of its own at the same path
+     * and kind, beside the headed one. */
+    query_any_head(&space, &scratch, 0u);
+    assert(space_path_indexes_info(&space, &info) && info.index_count == 3u);
     exercise_mutations(&space, &scratch, heads, values, true);
     exercise_unknown_heads(&space, &scratch, heads, values);
+    query_any_head(&space, &scratch, 0u);
     space_path_indexes_retire_prefixes(&space);
-    assert(space_path_indexes_info(&space, &info) && info.index_count == HEADS);
+    assert(space_path_indexes_info(&space, &info) && info.index_count == 2u);
     for (unsigned h = 0u; h < HEADS; h++) {
         query(&space, &scratch, h, heads[h], values, false, false, true, false);
         query(&space, &scratch, h, heads[h], values, true, false, false, false);
@@ -256,7 +287,7 @@ int main(void) {
         unsigned h = (i * 37u) % HEADS;
         query(&space, &scratch, h, heads[h], values, true, true, true, false);
     }
-    assert(space_path_indexes_info(&space, &info) && info.index_count == 2u * HEADS);
+    assert(space_path_indexes_info(&space, &info) && info.index_count == 3u);
     space_path_indexes_retire(&space);
     assert(!space_path_indexes_info(&space, &info));
     query(&space, &scratch, 0u, heads[0], values, false, false, false, false);
@@ -267,6 +298,6 @@ int main(void) {
     arena_free(&persistent);
     var_intern_free(&variables);
     symbol_table_free(&symbols);
-    puts("PASS: complete index keys survive mixed insertion, mutation, prefix retirement and rebuilding");
+    puts("PASS: one index of each kind serves every head; headed and unheaded indexes at one path survive mixed insertion, mutation, prefix retirement and rebuilding");
     return 0;
 }

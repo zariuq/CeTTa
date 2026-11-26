@@ -23,7 +23,8 @@
  *     reuse: each certificate records its arena's identity and reset epoch
  *     (the hash-cons reclamation epoch for atoms no arena owns), and only
  *     arenas whose epochs this index can read are certified: the run's, the
- *     collector's survivors, and the term universe of the run's space;
+ *     collector's survivors, and the term universe of the run's space with
+ *     its decoded-copy epochs, whose storage is never reset;
  *   - how evaluation runs: the index is off under fuel, step budgets,
  *     dependent telescopes, the bare-minimal interpreter and languages other
  *     than HE.  A foreign callable is a grounded atom, never a symbol, so a
@@ -162,7 +163,8 @@ static bool he_value_arena_epoch(const Atom *atom, uint32_t *arena,
         *epoch = stored->reset_epoch;
         return true;
     }
-    return false;
+    /* Or in one of the universe's decoded-copy epochs. */
+    return term_universe_decode_arena_epoch(atom->arena_id, epoch);
 }
 
 /* The type stamp store's scope: HE's typing outside bare-minimal profiles
@@ -206,6 +208,8 @@ bool eval_type_stamp_atom_epoch(const Space *space, const Atom *atom,
         *epoch = stored->reset_epoch;
         return true;
     }
+    if (term_universe_decode_arena_epoch(atom->arena_id, epoch))
+        return true;
     /* The prepared machine's own arenas, while it runs. */
     return cetta_prepared_pure_stamp_arena_epoch(atom, arena, epoch);
 }

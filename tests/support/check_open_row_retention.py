@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BINARY = str(Path(sys.argv[1]).resolve())
 
 
-def run(depth, reference=False):
+def run(depth, reference=False, epochs=True):
     program = f"""
 (= (mk $n $last) (if (== $n 0) $last (f $v (mk (- $n 1) $last))))
 !(bind! &s (new-space))
@@ -28,8 +28,11 @@ def run(depth, reference=False):
 """
     env = dict(os.environ)
     env.pop("CETTA_OEM_STORED_REFERENCE", None)
+    env.pop("CETTA_DECODE_EPOCHS", None)
     if reference:
         env["CETTA_OEM_STORED_REFERENCE"] = "1"
+    if not epochs:
+        env["CETTA_DECODE_EPOCHS"] = "0"
     # Exercise collection during each run, rather than measuring process RSS.
     env.update(CETTA_TERM_UNIVERSE_COLLECTION_TRACE="1",
                CETTA_TERM_UNIVERSE_COLLECTION_FLOOR="1024",
@@ -56,6 +59,12 @@ def qualified(growth):
 
 normal = [run(depth) for depth in (24, 96)]
 assert qualified(normal), f"retired row payloads retained: {normal}"
-reference = [run(depth, True) for depth in (24, 96)]
+# Decoded snapshots hold their rows' decoded copies, which live in epochs
+# freed once no reader keeps them: they retain no retired payload either.
+decoded = [run(depth, True) for depth in (24, 96)]
+assert qualified(decoded), f"decoded snapshots retained retired payloads: {decoded}"
+# The control keeps decoded copies in the persistent arena (epochs off),
+# where the snapshots' retention is what the measure must see.
+reference = [run(depth, True, False) for depth in (24, 96)]
 assert not qualified(reference), f"decoded-snapshot control did not detect retention: {reference}"
-print(f"PASS: scoped rows preserve answers without retaining retired payloads; growth {normal}; decoded-snapshot control {reference}")
+print(f"PASS: scoped rows and decoded snapshots preserve answers without retaining retired payloads; growth {normal} and {decoded}; decoded-snapshot control with copies kept for good {reference}")

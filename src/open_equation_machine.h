@@ -768,6 +768,13 @@ CettaOpenEquationStep cetta_open_equation_cursor_continue(
  * of those it borrows from it.  False only when out of memory. */
 bool cetta_open_equation_cursor_detach(CettaOpenEquationCursor *cursor,
                                        const Arena *arena);
+/* The host hands the cursor values that may share the universe's decoded
+ * copies (its answer to a host goal): the cursor keeps their epochs too.
+ * RECLAIMED: the host has released what it made after MARK, its mark at the
+ * storage mark it returned to (term_universe_decode_holder_receive). */
+void cetta_open_equation_cursor_decode_receive(CettaOpenEquationCursor *cursor,
+                                               bool reclaimed,
+                                               TermUniverseDecodeMark mark);
 
 CettaOpenEquationHandoff cetta_open_equation_cursor_handoff(
     const CettaOpenEquationCursor *cursor);

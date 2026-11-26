@@ -1839,6 +1839,20 @@ void arena_free(Arena *a) {
     a->finalizers = NULL;
 }
 
+/* The steps of arena_free up to its finalizers, then every block's bytes
+ * overwritten (the finalizers may read the atoms they finalize), then the
+ * rest of arena_free, whose repeated steps find nothing left to do. */
+void arena_free_poisoned(Arena *a, uint8_t byte) {
+    if (!a)
+        return;
+    arena_invalidate_allocations(a, CETTA_GSLT_LIFETIME_ARENA_FREE);
+    provenance_unregister_arena(a);
+    arena_run_finalizers_until(a, NULL);
+    for (ArenaBlock *block = a->head; block; block = block->next)
+        memset(block->data, byte, block->used);
+    arena_free(a);
+}
+
 void arena_reserve(Arena *a, size_t size) {
     if (!a || size == 0)
         return;
@@ -7304,6 +7318,16 @@ static __attribute__((noinline)) bool atom_eq_walk(Atom *a, Atom *b) {
          ATOM_STRUCTURAL_SYMBOLIC) != 0u) {
         uint32_t left_hash = atom_hash_cache_load(a);
         uint32_t right_hash = atom_hash_cache_load(b);
+        /* One side's hash is known (a decoded copy starts with its record's):
+         * the other's, computed once and kept, decides most unequal pairs
+         * without a walk, as interned terms' hashes did. */
+        if ((left_hash == 0u) != (right_hash == 0u) && atom_is_hash_stable(a) &&
+            atom_is_hash_stable(b)) {
+            if (left_hash == 0u)
+                left_hash = atom_hash(a);
+            else
+                right_hash = atom_hash(b);
+        }
         if (left_hash != 0u && right_hash != 0u && left_hash != right_hash)
             return false;
     }

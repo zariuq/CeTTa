@@ -14229,6 +14229,35 @@ static Atom *space_indexed_occurrence_atom(
         : NULL;
 }
 
+/* A rule is read by every call of its head, and callers keep what they read
+ * of it (a program's candidate snapshots live across top-level forms): its
+ * atom is the term universe's persistent copy, kept for the entry's life, as
+ * every decoded atom was before decoded copies went into epochs. */
+static Atom *space_rule_atom_kept(const Space *s, AtomId id, Atom *atom) {
+    if (!atom || !s || !s->native.universe || id == CETTA_ATOM_ID_NONE ||
+        !term_universe_identity_is_decoded(atom->arena_id))
+        return atom;
+    Atom *kept = term_universe_get_pinned_atom(s->native.universe, id);
+    return kept ? kept : atom;
+}
+
+/* The rule at logical index IDX, from the space that holds its row. */
+static Atom *space_rule_atom_at64(const Space *s, CettaIndex idx) {
+    if (!s)
+        return NULL;
+    if (space_has_overlay_base(s)) {
+        CettaCount base_visible = space_overlay_visible_base_count(s);
+        if (idx < base_visible) {
+            CettaIndex raw = 0;
+            return space_overlay_visible_base_raw_index(s, idx, &raw)
+                ? space_rule_atom_at64(s->overlay_base, raw) : NULL;
+        }
+        return space_get_at64(s, idx);
+    }
+    return space_rule_atom_kept(s, space_get_atom_id_at64(s, idx),
+                                space_get_at64(s, idx));
+}
+
 bool space_rule_occurrence_resolve(SpaceEquationOccurrenceId id,
     unsigned admitted_forms, SpaceEquationOccurrence *out) {
     if (out)
@@ -14237,10 +14266,11 @@ bool space_rule_occurrence_resolve(SpaceEquationOccurrenceId id,
         return false;
     }
     Atom *equation = id.has_equation_id
-        ? term_universe_get_atom(
-              id.read.space->native.universe, id.equation_id)
+        ? space_rule_atom_kept(id.read.space, id.equation_id,
+              term_universe_get_atom(id.read.space->native.universe,
+                                     id.equation_id))
         : (id.logical_index < space_length64(id.read.space)
-               ? space_get_at64(id.read.space, id.logical_index)
+               ? space_rule_atom_at64(id.read.space, id.logical_index)
                : NULL);
     CettaRuleDescriptor rule;
     if (!cetta_rule_view(equation, admitted_forms, &rule) ||

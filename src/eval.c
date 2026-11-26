@@ -16981,6 +16981,10 @@ static void hyperpose_worker_leave(CettaParallelWorker *worker, void *user) {
     if (run && run->worker_states)
         petta_worker_state_scope_leave(
             &run->worker_states[cetta_parallel_worker_index(worker)]);
+    /* Each task published its results as copies in its branch's storage
+     * (eval_execution_publish_results), so nothing this worker read of the
+     * universe's decoded copies outlives it: its thread keeps no epoch. */
+    term_universe_decode_worker_leave();
     cetta_shared_transition_scope_leave();
     g_eval_parallel_resource_share_count = 1u;
 }
@@ -56247,6 +56251,10 @@ static __attribute__((noinline)) bool petta_eval_machine_run(
     PettaRelationSafety prime_safety,
     CettaSearchControllerPolicy requested_controller,
     bool controller_requested, bool pattern_query_ready) {
+    /* A run holds what it reads of the universe's decoded copies until it
+     * ends, and then its results may carry them: the holder below keeps
+     * their epochs (term_universe_decode_holder_pop). */
+    TERM_UNIVERSE_DECODE_RUN_SCOPE(decode_run);
     CettaObservationContract observation_contract = {
         .demand = petta_eval_machine_root_observation(expression),
         .algebra =
