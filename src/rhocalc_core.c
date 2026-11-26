@@ -280,17 +280,23 @@ typedef enum {
 
 /* A task's region: the arena that holds the task's term and record and
  * nothing else.  It is released when the task ends -- at a COMM, a spawn or
- * a 0 -- and kept while the task waits on a channel or is stuck.  Released
- * regions are kept for the next tasks, emptied to at most
- * RHO_TASK_REGION_KEEP_BYTES of spare blocks: RHO_TASK_REGION_STOCK_MAX by
- * each worker, and RHO_TASK_REGION_POOL_MAX more by the run, for the workers
- * whose tasks make more regions than they release. */
+ * a 0 -- and kept while the task waits on a channel or is stuck.  A region
+ * is one allocation: the record below, followed by the arena's first block,
+ * which the region lends it.  Released regions are kept for the next tasks
+ * as long as the run's live tasks have recently needed them (the region
+ * reuse below). */
 typedef struct RhoTaskRegion RhoTaskRegion;
 struct RhoTaskRegion {
     Arena arena;
-    ArenaMark empty;
-    RhoTaskRegion *next;  /* in a worker's stock */
+    RhoTaskRegion *next;  /* in a worker's stock or the run's pool */
 };
+
+/* The symbol table's own atoms for the rho symbols, looked up once per
+ * threaded run, for the heads of the terms copied into regions. */
+typedef struct {
+    Atom *nil, *par, *send, *recv, *recv_persistent, *quote, *drop, *val,
+        *eval_payload;
+} RhoHeadAtoms;
 
 /* A live task of a threaded run: its process in normal form, which its
  * region holds with this record, and, while it waits or is stuck, the name
@@ -324,10 +330,12 @@ typedef struct {
     Arena arena;          /* the buckets' channels */
 } RhoChannelTable;
 
-/* What one worker of a threaded run keeps across its tasks. */
+/* What one worker of a threaded run keeps across its tasks: released
+ * regions at hand, and the task ends it has not yet counted in the run's. */
 typedef struct {
     RhoTaskRegion *stock;
     uint32_t stock_len;
+    uint32_t ends;
 } RhoAsyncWorkerState;
 
 typedef struct RhoAsyncExecutor RhoAsyncExecutor;
@@ -340,12 +348,22 @@ struct RhoAsyncExecutor {
     RhoChannelTable channels;
     RhoTask *stuck;                 /* the tasks that can never run again */
     pthread_mutex_t stuck_mutex;
+    RhoHeadAtoms heads;
     RhoAsyncWorkerState *workers;
     pthread_mutex_t region_mutex;
     RhoTaskRegion *region_pool;     /* released regions beyond the stocks */
-    uint32_t region_pool_len;
+    _Atomic uint64_t region_pool_len;
+    /* Under region_mutex: the fewest regions the pool held in the current
+     * window, and in it and the one before: those no task needed while
+     * the two lasted. */
+    uint64_t region_pool_low;
+    uint64_t region_pool_low_both;
+    /* Task ends counted so far, and the count that closes the window. */
+    _Atomic uint64_t region_ends;
+    _Atomic uint64_t region_window_end;
     RhocalcThreadedTestHooks hooks;
     _Atomic uint64_t regions_made;
+    _Atomic uint64_t regions_freed;
     _Atomic uint32_t budget;
     _Atomic uint32_t reductions_taken;
     _Atomic uint32_t branch_turn;
@@ -4644,18 +4662,17 @@ static bool rho_machine_select_canonical_successor(RhoMachine *machine,
  * one continuation; see the run invariant at RhoAsyncExecutor above.  The
  * final state is the waiting endpoints plus the stuck tasks.
  *
- * Memory is held by tasks (Mettapedia: RhoCalculus/ParallelExecution/
- * MemoryDisciplines, the task regions): a created task receives a copy of
- * exactly its own term in a region of its own, a task's region is released
- * when the task ends, and a waiting endpoint keeps its region while it
+ * Memory is held by tasks, each in a region of its own, as in region-based
+ * memory management (Tofte and Talpin 1997): a created task receives a copy
+ * of exactly its own term in its region, the region is released whole when
+ * the task ends, and a waiting endpoint keeps its region while it
  * waits.  What a task computes while it runs -- a COMM's substitution and
  * payload, the scratch of matching -- is in its worker's scratch arena,
  * reset when the task ends.  So what a run holds is what its live tasks
  * need, however many COMMs it runs.
  *
- * Placement is by the parties (ContinuationPlacement, Naming.Canonical): a
- * spawned component draws from its balanced piece of the spawner's supply
- * (BalancedPieces.balancedPiece: the first ceil(k/2) of its k components
+ * Placement is by the parties: a spawned component draws from its balanced
+ * piece of the spawner's supply (the first ceil(k/2) of its k components
  * share the left half and the others the right half, each parted again in
  * the same way, so every piece lies within ceil(log2 k) halvings of the
  * spawner's share), and a COMM's continuation from the join of the
@@ -4665,12 +4682,25 @@ static bool rho_machine_select_canonical_successor(RhoMachine *machine,
  * not consumed: it keeps its supply, and its continuation takes the
  * sender's. */
 
-/* A released region keeps this much of spare blocks, and a worker this many
- * released regions; the first block of a region is this small. */
-#define RHO_TASK_REGION_KEEP_BYTES 4096u
+/* A region is one allocation of this many bytes, its record and its first
+ * block: enough for a task's record and a small term (a receive whose
+ * continuation is a send needs 632 bytes, a send of a send 416).  A larger
+ * term takes blocks that bring the region to powers of two, at least this
+ * many bytes each, so it holds what blocks of powers of two would, whatever
+ * the first block.  A released region keeps its spare blocks, in order,
+ * while they hold less than this many bytes, so less than this and one
+ * block more: after a term that grew it by powers of two, 320, 1024 and
+ * 2048 bytes, 4096 in all with its first block's 704; a worker
+ * keeps this many released regions at hand; a window of the region reuse
+ * lasts at least this many task ends, which a worker counts in the run's
+ * this many at a time. */
+#define RHO_TASK_REGION_BYTES 896u
+#define RHO_TASK_REGION_FIRST_BLOCK (RHO_TASK_REGION_BYTES - sizeof(RhoTaskRegion))
+#define RHO_TASK_REGION_LEAST_BLOCK 256u
+#define RHO_TASK_REGION_KEEP_BYTES 2048u
 #define RHO_TASK_REGION_STOCK_MAX 16u
-#define RHO_TASK_REGION_POOL_MAX 256u
-#define RHO_TASK_REGION_FIRST_BLOCK 512u
+#define RHO_TASK_REGION_WINDOW_MIN 1024u
+#define RHO_TASK_REGION_COUNT_EVERY 64u
 
 /* A test's hooks and the census of the last run, for the runs of the
    thread that set them. */
@@ -4700,17 +4730,34 @@ static void rho_async_fail(RhoAsyncExecutor *executor, const char *fmt, ...) {
 
 /* ── Copying a term into its region ── */
 
+/* The run's atom for the rho symbol ID, NULL for any other symbol. */
+static Atom *rho_head_atom(const RhoHeadAtoms *heads, SymbolId id) {
+    if (id == g_rho_syms.send) return heads->send;
+    if (id == g_rho_syms.recv) return heads->recv;
+    if (id == g_rho_syms.nil) return heads->nil;
+    if (id == g_rho_syms.drop) return heads->drop;
+    if (id == g_rho_syms.quote) return heads->quote;
+    if (id == g_rho_syms.par) return heads->par;
+    if (id == g_rho_syms.recv_persistent) return heads->recv_persistent;
+    if (id == g_rho_syms.val) return heads->val;
+    if (id == g_rho_syms.eval_payload) return heads->eval_payload;
+    return NULL;
+}
+
 /* ATOM, a process in normal form or a part of one, copied into REGION as a
  * tree: every expression of it is allocated there and a symbol is the
- * symbol table's own atom, while the payload of a value or of a deferred
- * payload, and any other leaf, is copied whole (atom_deep_copy, which keeps
- * a payload's sharing and the resources it holds), so the copy refers to
- * nothing another region holds.  Normalizing a term rebuilds it as a tree
- * in the same way. */
-static Atom *rho_region_copy(Arena *region, Atom *atom) {
+ * symbol table's own atom (a rho symbol's from HEADS, the run's), while the
+ * payload of a value or of a deferred payload, and any other leaf, is copied
+ * whole (atom_deep_copy, which keeps a payload's sharing and the resources
+ * it holds), so the copy refers to nothing another region holds.
+ * Normalizing a term rebuilds it as a tree in the same way. */
+static Atom *rho_region_copy(const RhoHeadAtoms *heads, Arena *region,
+                             Atom *atom) {
     switch (atom->kind) {
     case ATOM_SYMBOL: {
-        Atom *canonical = atom_symbol_canonical(atom->sym_id);
+        Atom *canonical = rho_head_atom(heads, atom->sym_id);
+        if (!canonical)
+            canonical = atom_symbol_canonical(atom->sym_id);
         return canonical ? canonical : atom_symbol_id(region, atom->sym_id);
     }
     case ATOM_VAR:
@@ -4731,8 +4778,9 @@ static Atom *rho_region_copy(Arena *region, Atom *atom) {
         bool ok = true;
         for (CettaExprLen i = 0; ok && i < len; i++) {
             Atom *part = atom->expr.elems[i];
-            elems[i] = payload && i == 1u ? atom_deep_copy(region, part)
-                                          : rho_region_copy(region, part);
+            elems[i] = payload && i == 1u
+                           ? atom_deep_copy(region, part)
+                           : rho_region_copy(heads, region, part);
             ok = elems[i] != NULL;
         }
         Atom *out = ok ? atom_expr(region, elems, len) : NULL;
@@ -4748,6 +4796,86 @@ static Atom *rho_region_copy(Arena *region, Atom *atom) {
 
 /* ── Task regions ── */
 
+/* Region reuse.  A released region keeps its first block, and spare blocks
+ * while they hold less than RHO_TASK_REGION_KEEP_BYTES, and is kept: up to
+ * RHO_TASK_REGION_STOCK_MAX at hand by the worker that released it, and the
+ * rest in the run's pool, from which a worker whose stock is empty takes,
+ * so a region is made only when no released one is left.  The pool is
+ * counted out in windows of task ends, as many as the regions the run holds
+ * (at least RHO_TASK_REGION_WINDOW_MIN).  The regions it held all through a
+ * window and the one before -- the lower of the two windows' low-water
+ * marks -- were not needed by the tasks live at their peak in either, and
+ * are given back when the window closes, beyond enough to refill every
+ * worker's stock.  A worker takes from the pool only with its stock empty
+ * and gives to it only with its stock full, so while as many tasks are live
+ * the pool falls by at most what the stocks can hold: keeping that much, a
+ * run whose live tasks hold steady never makes a region again.  So a run
+ * keeps regions for the recent peak of its live tasks and holds less again
+ * once that peak falls, however long it runs. */
+
+static void rho_task_region_free(RhoAsyncExecutor *executor,
+                                 RhoTaskRegion *region) {
+    arena_free_lent(&region->arena, region + 1);
+    free(region);
+    atomic_fetch_add_explicit(&executor->regions_freed, 1u,
+                              memory_order_relaxed);
+}
+
+/* N more task ends: when they close the window, the pool gives back the
+ * regions it held all through this window and the one before. */
+static void rho_task_regions_count_ends(RhoAsyncExecutor *executor,
+                                        uint64_t n) {
+    uint64_t ends = atomic_fetch_add_explicit(&executor->region_ends, n,
+                                              memory_order_relaxed) + n;
+    uint64_t window_end = atomic_load_explicit(&executor->region_window_end,
+                                               memory_order_relaxed);
+    if (ends < window_end)
+        return;
+    uint64_t freed = atomic_load_explicit(&executor->regions_freed,
+                                          memory_order_relaxed);
+    uint64_t made = atomic_load_explicit(&executor->regions_made,
+                                         memory_order_relaxed);
+    uint64_t held = made > freed ? made - freed : 0u;
+    uint64_t length = held > RHO_TASK_REGION_WINDOW_MIN
+                          ? held : RHO_TASK_REGION_WINDOW_MIN;
+    if (!atomic_compare_exchange_strong_explicit(
+            &executor->region_window_end, &window_end, ends + length,
+            memory_order_relaxed, memory_order_relaxed))
+        return;   /* another worker closed it */
+    RhoTaskRegion *given = NULL;
+    pthread_mutex_lock(&executor->region_mutex);
+    uint64_t len = atomic_load_explicit(&executor->region_pool_len,
+                                        memory_order_relaxed);
+    uint64_t idle = executor->region_pool_low_both;
+    uint64_t keep = (uint64_t)RHO_TASK_REGION_STOCK_MAX *
+                    executor->profile.thread_count;
+    uint64_t give_back = idle > keep ? idle - keep : 0u;
+    for (uint64_t i = 0; i < give_back; i++) {
+        RhoTaskRegion *region = executor->region_pool;
+        executor->region_pool = region->next;
+        region->next = given;
+        given = region;
+    }
+    len -= give_back;
+    atomic_store_explicit(&executor->region_pool_len, len,
+                          memory_order_relaxed);
+    /* The window that closes is the one before the next: its low-water
+     * mark, less what was given back, which it held all through. */
+    executor->region_pool_low_both = executor->region_pool_low - give_back;
+    executor->region_pool_low = len;
+    pthread_mutex_unlock(&executor->region_mutex);
+    while (given) {
+        RhoTaskRegion *next = given->next;
+        rho_task_region_free(executor, given);
+        given = next;
+    }
+}
+
+/* A region for a task: one at hand in STATE's stock, else one from the
+ * run's pool, else a new one, whose first block it lends its arena; a
+ * release resets the arena to the mark of that block (arena_lent_mark), so
+ * the block stays in use.  STATE is NULL on the thread that starts and ends
+ * the run. */
 static RhoTaskRegion *rho_task_region_take(RhoAsyncExecutor *executor,
                                            RhoAsyncWorkerState *state) {
     RhoTaskRegion *region = state ? state->stock : NULL;
@@ -4757,67 +4885,105 @@ static RhoTaskRegion *rho_task_region_take(RhoAsyncExecutor *executor,
         region->next = NULL;
         return region;
     }
-    pthread_mutex_lock(&executor->region_mutex);
-    region = executor->region_pool;
-    if (region) {
-        executor->region_pool = region->next;
-        executor->region_pool_len--;
+    if (atomic_load_explicit(&executor->region_pool_len,
+                             memory_order_relaxed) != 0u) {
+        pthread_mutex_lock(&executor->region_mutex);
+        region = executor->region_pool;
+        if (region) {
+            executor->region_pool = region->next;
+            uint64_t len = atomic_load_explicit(&executor->region_pool_len,
+                                                memory_order_relaxed) - 1u;
+            atomic_store_explicit(&executor->region_pool_len, len,
+                                  memory_order_relaxed);
+            if (len < executor->region_pool_low)
+                executor->region_pool_low = len;
+            if (len < executor->region_pool_low_both)
+                executor->region_pool_low_both = len;
+        }
+        pthread_mutex_unlock(&executor->region_mutex);
+        if (region) {
+            region->next = NULL;
+            return region;
+        }
     }
-    pthread_mutex_unlock(&executor->region_mutex);
-    if (region) {
-        region->next = NULL;
-        return region;
-    }
-    region = cetta_malloc(sizeof(*region));
+    region = cetta_malloc(RHO_TASK_REGION_BYTES);
     if (!region)
         return NULL;
     arena_init_detached(&region->arena);
-    arena_set_block_growth(&region->arena, RHO_TASK_REGION_FIRST_BLOCK);
-    region->empty = arena_mark(&region->arena);
+    arena_set_block_growth_pow2(&region->arena, RHO_TASK_REGION_LEAST_BLOCK);
+    arena_lend_block(&region->arena, region + 1, RHO_TASK_REGION_FIRST_BLOCK);
     region->next = NULL;
     atomic_fetch_add_explicit(&executor->regions_made, 1u,
                               memory_order_relaxed);
     return region;
 }
 
-/* Release REGION: emptied into STATE's stock, or the run's pool, or freed
-   when both are full and on the thread that ends the run (no STATE). */
+/* Release REGION: emptied into STATE's stock or the run's pool, or freed on
+   the thread that starts and ends the run (no STATE). */
 static void rho_task_region_release(RhoAsyncExecutor *executor,
                                     RhoAsyncWorkerState *state,
                                     RhoTaskRegion *region) {
     if (!region)
         return;
-    if (state) {
-        arena_reset(&region->arena, region->empty);
-        arena_release_spare(&region->arena, RHO_TASK_REGION_KEEP_BYTES);
-        if (state->stock_len < RHO_TASK_REGION_STOCK_MAX) {
-            region->next = state->stock;
-            state->stock = region;
-            state->stock_len++;
-            return;
-        }
-        pthread_mutex_lock(&executor->region_mutex);
-        bool pooled = executor->region_pool_len < RHO_TASK_REGION_POOL_MAX;
-        if (pooled) {
-            region->next = executor->region_pool;
-            executor->region_pool = region;
-            executor->region_pool_len++;
-        }
-        pthread_mutex_unlock(&executor->region_mutex);
-        if (pooled)
-            return;
+    if (!state) {
+        rho_task_region_free(executor, region);
+        return;
     }
-    arena_free(&region->arena);
-    free(region);
+    if (++state->ends == RHO_TASK_REGION_COUNT_EVERY) {
+        state->ends = 0u;
+        rho_task_regions_count_ends(executor, RHO_TASK_REGION_COUNT_EVERY);
+    }
+    arena_reset(&region->arena, arena_lent_mark(region + 1));
+    arena_release_spare(&region->arena, RHO_TASK_REGION_KEEP_BYTES);
+    if (state->stock_len < RHO_TASK_REGION_STOCK_MAX) {
+        region->next = state->stock;
+        state->stock = region;
+        state->stock_len++;
+        return;
+    }
+    pthread_mutex_lock(&executor->region_mutex);
+    region->next = executor->region_pool;
+    executor->region_pool = region;
+    atomic_store_explicit(
+        &executor->region_pool_len,
+        atomic_load_explicit(&executor->region_pool_len, memory_order_relaxed) + 1u,
+        memory_order_relaxed);
+    pthread_mutex_unlock(&executor->region_mutex);
 }
 
-static void rho_task_region_list_free(RhoTaskRegion *region) {
+static void rho_task_region_list_free(RhoAsyncExecutor *executor,
+                                      RhoTaskRegion *region) {
     while (region) {
         RhoTaskRegion *next = region->next;
-        arena_free(&region->arena);
-        free(region);
+        rho_task_region_free(executor, region);
         region = next;
     }
+}
+
+/* The view of a task's term, rho_view's, read from its head's identity:
+ * the run interned the rho symbols when it began. */
+static RhoView rho_task_view(Atom *proc) {
+    RhoView view = {RHO_BAD, NULL, 0};
+    if (proc->kind == ATOM_SYMBOL) {
+        if (proc->sym_id == g_rho_syms.nil)
+            view.kind = RHO_NIL;
+        return view;
+    }
+    if (proc->kind != ATOM_EXPR || proc->expr.len == 0 ||
+        proc->expr.elems[0]->kind != ATOM_SYMBOL)
+        return view;
+    SymbolId head = proc->expr.elems[0]->sym_id;
+    view.args = proc->expr.elems + 1;
+    view.nargs = proc->expr.len - 1;
+    if (head == g_rho_syms.send) view.kind = RHO_SEND;
+    else if (head == g_rho_syms.recv) view.kind = RHO_RECV;
+    else if (head == g_rho_syms.par) view.kind = RHO_PAR;
+    else if (head == g_rho_syms.drop) view.kind = RHO_DROP;
+    else if (head == g_rho_syms.recv_persistent) view.kind = RHO_RECV_PERSISTENT;
+    else if (head == g_rho_syms.quote) view.kind = RHO_QUOTE;
+    else if (head == g_rho_syms.val) view.kind = RHO_VAL;
+    else if (head == g_rho_syms.eval_payload) view.kind = RHO_EVAL_PAYLOAD;
+    return view;
 }
 
 /* A task of PROC, a process in normal form: a copy of PROC in a region of
@@ -4828,12 +4994,13 @@ static RhoTask *rho_task_make(RhoAsyncExecutor *executor,
     if (!region)
         return NULL;
     RhoTask *task = arena_alloc(&region->arena, sizeof(*task));
-    Atom *copy = task ? rho_region_copy(&region->arena, proc) : NULL;
+    Atom *copy = task ? rho_region_copy(&executor->heads, &region->arena, proc)
+                      : NULL;
     if (!copy) {
         rho_task_region_release(executor, state, region);
         return NULL;
     }
-    *task = (RhoTask){.region = region, .proc = copy, .view = rho_view(copy)};
+    *task = (RhoTask){.region = region, .proc = copy, .view = rho_task_view(copy)};
     return task;
 }
 
@@ -4884,6 +5051,7 @@ static void rho_channel_table_free(RhoChannelTable *table) {
  * keeps a copy of the channel in the table's arena, since the endpoint
  * that opened it ends. */
 static RhoChannelBucket *rho_channel_table_get_or_create(RhoChannelTable *table,
+                                                         const RhoHeadAtoms *heads,
                                                          Atom *channel) {
     RhoChannelBucket *bucket;
     uint64_t hash = rho_name_hash(channel);
@@ -4896,7 +5064,7 @@ static RhoChannelBucket *rho_channel_table_get_or_create(RhoChannelTable *table,
         }
     }
 
-    Atom *copy = rho_region_copy(&table->arena, channel);
+    Atom *copy = rho_region_copy(heads, &table->arena, channel);
     bucket = copy ? cetta_malloc(sizeof(RhoChannelBucket)) : NULL;
     if (!bucket) {
         pthread_mutex_unlock(&table->mutex);
@@ -4981,7 +5149,7 @@ static void rho_async_add_stuck(RhoAsyncExecutor *executor, RhoTask *task) {
 
 /* A task of the parallel composition VIEW, running with SUPPLY, spawns its
  * components, in the normal form's order, each from its balanced piece of
- * SUPPLY (BalancedPieces.balancedPiece). */
+ * SUPPLY. */
 static bool rho_async_spawn(RhoAsyncExecutor *executor,
                             RhoAsyncWorkerState *state, const RhoView *view,
                             const CettaNameSupply *supply) {
@@ -5115,7 +5283,7 @@ static bool rho_async_publish(RhoAsyncExecutor *executor,
                               RhoTask *task, RhoAsyncEndpointKind kind,
                               bool *kept) {
     RhoChannelBucket *bucket =
-        rho_channel_table_get_or_create(&executor->channels,
+        rho_channel_table_get_or_create(&executor->channels, &executor->heads,
                                         task->view.args[0]);
     RhoTask *opposite = NULL;
 
@@ -5307,7 +5475,10 @@ static void rho_async_take_census(RhoAsyncExecutor *executor) {
     rho_async_visit_live(executor, rho_async_census_visit, &census);
     census.regions_made = atomic_load_explicit(&executor->regions_made,
                                                memory_order_relaxed);
-    census.regions_stocked = executor->region_pool_len;
+    census.regions_stocked = atomic_load_explicit(&executor->region_pool_len,
+                                                  memory_order_relaxed);
+    census.regions_given_back = atomic_load_explicit(&executor->regions_freed,
+                                                     memory_order_relaxed);
     for (uint32_t i = 0; i < executor->profile.thread_count; i++) {
         census.regions_stocked += executor->workers ? executor->workers[i].stock_len : 0u;
         if (executor->parallel.workers)
@@ -5336,6 +5507,18 @@ static void rho_async_executor_init(RhoAsyncExecutor *executor,
     executor->profile = *profile;
     executor->eval_context = eval_context;
     executor->hooks = g_rho_threaded_test_hooks;
+    rho_symbols_ensure();
+    executor->heads = (RhoHeadAtoms){
+        .nil = atom_symbol_canonical(g_rho_syms.nil),
+        .par = atom_symbol_canonical(g_rho_syms.par),
+        .send = atom_symbol_canonical(g_rho_syms.send),
+        .recv = atom_symbol_canonical(g_rho_syms.recv),
+        .recv_persistent = atom_symbol_canonical(g_rho_syms.recv_persistent),
+        .quote = atom_symbol_canonical(g_rho_syms.quote),
+        .drop = atom_symbol_canonical(g_rho_syms.drop),
+        .val = atom_symbol_canonical(g_rho_syms.val),
+        .eval_payload = atom_symbol_canonical(g_rho_syms.eval_payload),
+    };
     rho_channel_table_init(&executor->channels);
     executor->stuck = NULL;
     pthread_mutex_init(&executor->stuck_mutex, NULL);
@@ -5343,8 +5526,13 @@ static void rho_async_executor_init(RhoAsyncExecutor *executor,
                                sizeof(*executor->workers));
     pthread_mutex_init(&executor->region_mutex, NULL);
     executor->region_pool = NULL;
-    executor->region_pool_len = 0u;
+    atomic_init(&executor->region_pool_len, 0u);
+    executor->region_pool_low = 0u;
+    executor->region_pool_low_both = 0u;
+    atomic_init(&executor->region_ends, 0u);
+    atomic_init(&executor->region_window_end, RHO_TASK_REGION_WINDOW_MIN);
     atomic_init(&executor->regions_made, 0u);
+    atomic_init(&executor->regions_freed, 0u);
     atomic_init(&executor->budget, profile->reduction_limit);
     atomic_init(&executor->reductions_taken, 0u);
     atomic_init(&executor->branch_turn, 0u);
@@ -5376,11 +5564,11 @@ static void rho_async_executor_free(RhoAsyncExecutor *executor) {
     cetta_parallel_executor_free(&executor->parallel);
     if (executor->workers) {
         for (uint32_t i = 0; i < executor->profile.thread_count; i++)
-            rho_task_region_list_free(executor->workers[i].stock);
+            rho_task_region_list_free(executor, executor->workers[i].stock);
         free(executor->workers);
         executor->workers = NULL;
     }
-    rho_task_region_list_free(executor->region_pool);
+    rho_task_region_list_free(executor, executor->region_pool);
     executor->region_pool = NULL;
     pthread_mutex_destroy(&executor->region_mutex);
     rho_channel_table_free(&executor->channels);
@@ -5546,8 +5734,8 @@ static bool rhocalc_collect_successor_set(Arena *arena, Atom *proc,
  * NB: C2's quietness here is via rho_proc_is_quiet, which is STRONGER than
  * "could enable a rendezvous": it rejects send/recv/drop even under an inert
  * rho:val/rho:quote wrapper (conservative).  And free rho:drop(quote P) is
- * inert in this strict core (it only unquotes under matched-COMM substitution,
- * see semanticCommSubst), so excluding drop in continuations is sufficient. */
+ * inert in this strict core (it unquotes only under the substitution of a
+ * matched COMM), so excluding drop in continuations is sufficient. */
 static bool rho_atom_is_active_process(const Atom *atom, void *context) {
     RhoView view;
     (void)context;

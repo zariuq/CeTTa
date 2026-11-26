@@ -17163,7 +17163,8 @@ static bool hyperpose_threaded_execute(
     }
 
     CettaCount branch_count = branches_expr->expr.len;
-    if (branch_count == 0)
+    /* The branches are pieces of one spawn, at most UINT32_MAX. */
+    if (branch_count == 0 || branch_count > UINT32_MAX)
         return false;
     bool eligible = petta_execution && captured_env
         ? hyperpose_all_branches_thread_eligible(s, branches_expr)
@@ -17287,13 +17288,22 @@ static bool hyperpose_threaded_execute(
         return false;
     }
 
+    /* The branches are a spawn of the supply that runs the hyperpose: branch
+     * i draws from its balanced piece of that supply's share, a function of
+     * the share, the branch count and i, and the supply goes on from their
+     * join once they are all done. */
     bool pushed = true;
+    CettaParallelSpawn spawn;
+    cetta_parallel_executor_spawn_begin(&run.parallel, &spawn,
+                                        (uint32_t)branch_count);
     for (CettaCount i = 0; i < branch_count; i++) {
-        if (!cetta_parallel_executor_push(&run.parallel, &branches[i])) {
+        if (!cetta_parallel_executor_spawn_push(&run.parallel, &spawn,
+                                                &branches[i])) {
             pushed = false;
             break;
         }
     }
+    cetta_parallel_executor_spawn_end(&spawn);
 
     if (!pushed) {
         cetta_parallel_executor_free(&run.parallel);
@@ -22281,15 +22291,6 @@ static Space *space_algebra_fresh_result(Arena *a);
 static Space *space_algebra_union_result(Arena *a, Space *sa, Space *sb);
 static void space_algebra_add_meet(Space *ns, Space *sa, Space *sb);
 
-static bool petta_space_expression_is_algebra(const Atom *expression) {
-    return expression && expression->kind == ATOM_EXPR &&
-           expression->expr.len >= 2u &&
-           (atom_is_symbol_id(
-                expression->expr.elems[0], g_builtin_syms.comma) ||
-            atom_is_symbol_id(
-                expression->expr.elems[0], g_builtin_syms.pipe));
-}
-
 static Space *resolve_single_space_arg(Space *s, Arena *a, Atom *space_expr, int fuel) {
     if (!g_registry) return NULL;
 
@@ -22330,8 +22331,16 @@ static Space *resolve_single_space_arg(Space *s, Arena *a, Atom *space_expr, int
     return sp;
 }
 
+/* The space a write goes to.  A read-algebra term, (, A B ...) or
+ * (| A B ...), denotes a read-only view of its spaces -- their meet or their
+ * additive union, built for the read -- and no write reaches its spaces
+ * through it, so it names no writable space: the caller answers as for any
+ * operand that is no space, in its dialect's form (PeTTa's type_error,
+ * HE's Error). */
 static Space *resolve_single_space_arg_write(Space *s, Arena *a, Atom *space_expr,
                                              int fuel) {
+    if (petta_space_expression_is_algebra(space_expr))
+        return NULL;
     return payload_resolve_space_write(
         resolve_single_space_arg(s, a, space_expr, fuel));
 }
@@ -23299,7 +23308,7 @@ static Atom *runtime_stats_inventory_atom(Arena *a) {
     return atom_space(a, inventory);
 }
 
-/* ── Function type utilities (Types.lean:260-281) ──────────────────────── */
+/* ── Function type utilities ───────────────────────────────────────────── */
 
 static bool is_function_type(Atom *a) {
     /* HE uses (-> (->)) for zero-argument functions, so a valid function type
@@ -24539,7 +24548,7 @@ uint32_t eval_get_atom_types_structural_profiled_budgeted(
     return count;
 }
 
-/* ── Type cast (TypeCheck.lean:126-148) ────────────────────────────────── */
+/* ── Type cast ─────────────────────────────────────────────────────────── */
 
 static void type_cast_outcomes(Space *s, Arena *a, Atom *atom,
                                Atom *expectedType, const Bindings *prefix,
@@ -24821,7 +24830,7 @@ static __attribute__((noinline)) bool dispatch_native_value_call(
     return admitted;
 }
 
-/* ── Check if function type is applicable (TypeCheck.lean:55-116) ──────── */
+/* ── Check if function type is applicable ──────────────────────────────── */
 
 typedef HeTypeErrors ApplicabilityErrors;
 typedef HeTypeContracts ApplicabilityTypes;

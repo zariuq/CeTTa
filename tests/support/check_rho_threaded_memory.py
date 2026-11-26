@@ -30,15 +30,23 @@ SLACK_KIB = 8 * 1024
 # GNU time when it is there, which forks it from a small process.
 GNU_TIME = "/usr/bin/time" if os.access("/usr/bin/time", os.X_OK) else None
 
+# A binary built with AddressSanitizer keeps what it frees in a quarantine
+# that grows to hundreds of megabytes, which the peak RSS would measure in
+# place of the run; the runs are measured with it off.  A binary built
+# without it ignores the setting.
+RUN_ENV = dict(os.environ)
+RUN_ENV["ASAN_OPTIONS"] = ":".join(
+    part for part in (RUN_ENV.get("ASAN_OPTIONS", ""), "quarantine_size_mb=0") if part)
+
 
 def peak_rss_kib(binary: str, workers: int, comms: int, args: list[str], program: str) -> tuple[int, int]:
     command = [binary, "--num-threads", str(workers), "--rho-reduction-limit", str(comms), *args, "-e", program]
     if GNU_TIME:
         report = subprocess.run([GNU_TIME, "-f", "%x %M", *command], stdout=subprocess.DEVNULL,
-                                stderr=subprocess.PIPE, text=True)
+                                stderr=subprocess.PIPE, text=True, env=RUN_ENV)
         status, rss = report.stderr.strip().splitlines()[-1].split()
         return int(status), int(rss)
-    process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=RUN_ENV)
     _, status, usage = os.wait4(process.pid, 0)
     return os.waitstatus_to_exitcode(status), usage.ru_maxrss
 

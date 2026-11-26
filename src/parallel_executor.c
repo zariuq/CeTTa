@@ -248,6 +248,11 @@ static void parallel_executor_coordinator_give_back(
         coordinator->share = place->share;
         coordinator->pushed = place->pushed;
         coordinator->pushes = place->pushes;
+        /* A coordinator that spawned drew nothing from its share since,
+           and goes on from the clocks it spawned at. */
+        if (executor->coordinator_spawned)
+            for (unsigned kind = 0u; kind < CETTA_NAME_KIND_COUNT; kind++)
+                coordinator->drawn[kind] = executor->spawned_clocks[kind];
         for (unsigned kind = 0u; kind < CETTA_NAME_KIND_COUNT; kind++)
             if (executor->ending_clocks[kind] > coordinator->drawn[kind])
                 coordinator->drawn[kind] = executor->ending_clocks[kind];
@@ -335,6 +340,39 @@ bool cetta_parallel_executor_push_supply(CettaParallelExecutor *executor,
         return true;
     cetta_name_supply_dispose(names);
     return false;
+}
+
+void cetta_parallel_executor_spawn_begin(CettaParallelExecutor *executor,
+                                         CettaParallelSpawn *spawn,
+                                         uint32_t count) {
+    CettaNameSupply *coordinator = executor->coordinator;
+    cetta_name_supply_pieces_begin(&spawn->pieces, coordinator, count);
+    spawn->left = count;
+    /* The share is the pieces' now: the coordinator holds none until the
+       executor gives its place back. */
+    if (!executor->coordinator_spawned) {
+        for (unsigned kind = 0u; kind < CETTA_NAME_KIND_COUNT; kind++)
+            executor->spawned_clocks[kind] = coordinator->drawn[kind];
+        executor->coordinator_spawned = true;
+    }
+    CettaNameBlock *block = coordinator->block;
+    cetta_name_supply_init_unplaced(coordinator);
+    if (block)
+        cetta_name_block_release(block);
+}
+
+bool cetta_parallel_executor_spawn_push(CettaParallelExecutor *executor,
+                                        CettaParallelSpawn *spawn, void *task) {
+    if (spawn->left == 0u)
+        return false;
+    spawn->left--;
+    CettaNameSupply piece = cetta_name_supply_pieces_next(&spawn->pieces);
+    return cetta_parallel_executor_push_supply(executor, task, &piece);
+}
+
+void cetta_parallel_executor_spawn_end(CettaParallelSpawn *spawn) {
+    cetta_name_supply_pieces_end(&spawn->pieces);
+    spawn->left = 0u;
 }
 
 void cetta_parallel_executor_cancel(CettaParallelExecutor *executor) {

@@ -747,6 +747,13 @@ static inline bool atom_variable_bloom_may_contain(
 
 #define ARENA_BLOCK_SIZE (64 * 1024)
 
+/* How an arena's later blocks grow (Arena.block_growth). */
+typedef enum {
+    ARENA_GROWTH_NONE = 0,
+    ARENA_GROWTH_DOUBLING = 1,
+    ARENA_GROWTH_POW2 = 2,
+} ArenaBlockGrowth;
+
 typedef enum {
     CETTA_ARENA_RUNTIME_KIND_OTHER = 0,
     CETTA_ARENA_RUNTIME_KIND_PERSISTENT = 1,
@@ -847,9 +854,10 @@ typedef struct {
      * recycling arena instead of back to the allocator.  Opt-in, for owners
      * that create and retire many short-lived arenas. */
     bool recycle_blocks;
-    /* block_capacity is the first block's size; a later block matches what
-     * the arena already holds (arena_set_block_growth). */
-    bool block_growth;
+    /* How later blocks grow (ArenaBlockGrowth): not at all, to match what
+     * the arena already holds (arena_set_block_growth), or to bring it to
+     * a power of two (arena_set_block_growth_pow2). */
+    uint8_t block_growth;
     /* CettaArenaLedgerTag charged for this arena's blocks, and whether an
      * owner named it (otherwise it follows the runtime kind). */
     uint8_t ledger_tag;
@@ -922,6 +930,13 @@ void  arena_set_block_capacity(Arena *a, size_t capacity);
  * allocates, and an arena that gives back every block starts small again.
  * An allocation larger than that still gets a block of its own size. */
 void  arena_set_block_growth(Arena *a, size_t first);
+/* Each block claimed from the allocator brings all the blocks the arena
+ * holds to the least power of two that leaves the block at least `least`
+ * bytes, up to ARENA_BLOCK_SIZE: whatever the arena holds first, a lent block
+ * of any size among it, what it holds for n bytes is what blocks of powers
+ * of two would hold, less than 2n once it outgrows its first block.  An
+ * allocation larger than that still gets a block of its own size. */
+void  arena_set_block_growth_pow2(Arena *a, size_t least);
 void  arena_free(Arena *a);
 void  arena_reserve(Arena *a, size_t size);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);
@@ -1067,6 +1082,20 @@ void  arena_reset(Arena *a, ArenaMark mark);
 /* Free the arena's unused blocks beyond the first `keep_bytes` of spare
  * capacity; the blocks in use are untouched. */
 void  arena_release_spare(Arena *a, size_t keep_bytes);
+/* Lend `a` the `bytes` of `storage`, aligned for a pointer, as its next
+ * block, which `a` allocates from like a block of its own: an owner keeps an
+ * arena and its first block in one allocation.  The owner resets `a` only to
+ * marks taken after lending, so the lent block stays in use and is never
+ * spare, and ends `a` with arena_free_lent, which leaves the block to it.
+ * Arenas that borrow nothing pay nothing for this. */
+void  arena_lend_block(Arena *a, void *storage, size_t bytes);
+/* arena_free of an arena lent `storage` (arena_lend_block): the lent block
+ * goes back to its owner, every other block to the allocator. */
+void  arena_free_lent(Arena *a, void *storage);
+/* The mark of a fresh arena lent `storage` as its first block, as
+ * arena_mark taken right after lending gives it: resetting to it empties
+ * that block and gives every later block to the arena's spare. */
+ArenaMark arena_lent_mark(void *storage);
 /* Whether `a` is exactly at `mark`: nothing allocated, finalized or acquired
  * since, so a reset to it would release nothing and every atom stays
  * valid. */
@@ -1697,7 +1726,7 @@ Atom *atom_false(Arena *a);     /* Symbol "False" */
 /* Error: (Error source message) */
 Atom *atom_error(Arena *a, Atom *source, Atom *message);
 
-/* ── Type system atoms (from HE spec Types.lean / Space.lean) ──────────── */
+/* ── Type system atoms ─────────────────────────────────────────────────── */
 
 Atom *atom_undefined_type(Arena *a);   /* Symbol "%Undefined%" */
 Atom *atom_atom_type(Arena *a);        /* Symbol "Atom" */

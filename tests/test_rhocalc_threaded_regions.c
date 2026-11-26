@@ -1,19 +1,24 @@
 /*
- * Threaded rho runs (src/rhocalc_core.c), against Mettapedia's
- * RhoCalculus/ParallelExecution: memory held by task regions
- * (MemoryDisciplines), continuations placed by their parties
- * (ContinuationPlacement) and names drawn from shares (SharedPositions).
+ * Threaded rho runs (src/rhocalc_core.c): memory held by task regions, in
+ * the manner of region-based memory management (Tofte and Talpin), so a
+ * run holds what its live tasks need; continuations placed by their
+ * parties, so positions and names do not depend on scheduling; and names
+ * drawn from shares in the style of interval tree clocks (Almeida, Baquero
+ * and Fonte 2008), so no name is drawn twice.
  *
  *   Memory.  The duplicator loop x!(D(x)) | D(x) run for 10^3 to 10^6 COMMs
  *   on 1, 2 and 4 workers ends with its two processes and what their
  *   regions hold, the same bytes whatever the number of COMMs, with no more
- *   regions made, no more scratch, a flat heap and a flat peak RSS.
+ *   regions made, no more scratch, and a heap and a peak RSS that a run of
+ *   10^6 COMMs leaves where one of 10^5 left them.  A
+ *   burst of 4000 live tasks before the loop makes a region for each, and
+ *   once the live tasks fall the run gives them back.
  *   Placement.  A spawn's components draw from the balanced pieces of the
- *   spawner's supply (BalancedPieces) and a COMM's continuation from the
- *   join of its parties'; on two loops side by side, on one channel and on
- *   two, and on two relays whose every task draws a name, the sorted
- *   positions and names are the same on every run and any number of
- *   workers.  Placing continuations by the party that found the match
+ *   spawner's supply and a COMM's continuation from the join of its
+ *   parties'; on two loops side by side, on one channel and on two, and on
+ *   two relays whose every task draws a name, the sorted positions and
+ *   names are the same on every run and any number of workers.  Placing
+ *   continuations by the party that found the match
  *   instead (a test hook) changes them.  A spawn of 640 components lies
  *   within 11 halvings, and 320 COMMs among them on one channel join their
  *   parties' pieces in the word: no block is made.
@@ -38,6 +43,22 @@
 #include "rhocalc_core.h"
 #include "rhocalc_syntax.h"
 #include "symbol.h"
+
+/* A sanitizer keeps memory of its own: AddressSanitizer quarantines what is
+   freed, and ThreadSanitizer shadows what is touched and keeps state for
+   each thread.  Under one the peak RSS measures the sanitizer, not the run,
+   so it is checked in builds without one; the census checks hold in every
+   build. */
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define RSS_MEASURES_THE_RUN 0
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define RSS_MEASURES_THE_RUN 0
+#endif
+#endif
+#ifndef RSS_MEASURES_THE_RUN
+#define RSS_MEASURES_THE_RUN 1
+#endif
 
 static int g_failures;
 
@@ -255,7 +276,12 @@ static void test_memory(Atom *loop) {
     size_t heap_small = 0u, heap_large = 0u;
     for (unsigned w = 0u; w < 3u; w++) {
         for (unsigned l = 0u; l < 4u; l++) {
-            if (l == 3u && w == 0u) {
+            /* The heap and the peak RSS before and after the last run, 10^5
+               and then 10^6 COMMs on 4 workers: the same threads, their
+               allocator caches warm, so the difference is what the COMMs
+               add.  (A persistent worker's cache keeps some chunks it
+               freed, which the heap counts as in use.) */
+            if (l == 3u && w == 2u) {
                 rss_small = peak_rss_kib();
                 heap_small = heap_in_use();
             }
@@ -276,38 +302,95 @@ static void test_memory(Atom *loop) {
             live_ok = live_ok && c->live_tasks == 2u;
             bytes_ok = bytes_ok && c->live_task_bytes == census[0][0].live_task_bytes;
             /* Regions are made for the tasks live at once (three, between
-               a COMM and its spawn) and the regions kept for reuse (16 by
-               each worker and 256 by the run), never per COMM. */
+               a COMM and its spawn) and the regions kept at hand (16 by
+               each worker, and a stock's worth in the run's pool), never
+               per COMM. */
+            uint64_t need = 3u + 16u * (workers[w] + 1u);
             regions_ok = regions_ok &&
-                         c->regions_made <= 3u + 16u * workers[w] + 256u;
+                         c->regions_made - c->regions_given_back <= need &&
+                         c->regions_made <= 2u * need;
             scratch_ok = scratch_ok && c->scratch_reserved == census[w][0].scratch_reserved;
         }
     CHECK(live_ok, "every run ends with the loop's two processes");
     CHECK(bytes_ok, "their regions hold %llu bytes after every run, whatever "
                     "the COMMs and workers", (unsigned long long)census[0][0].live_task_bytes);
-    CHECK(regions_ok, "no run makes more regions than its live tasks and "
-                      "stocks hold (%llu at 10^3, %llu at 10^6 on 4 workers)",
+    CHECK(regions_ok, "no run makes or holds more regions than its live "
+                      "tasks and stocks need (%llu at 10^3, %llu at 10^6 on "
+                      "4 workers)",
           (unsigned long long)census[2][0].regions_made,
           (unsigned long long)census[2][3].regions_made);
     CHECK(scratch_ok, "the workers' scratch does not grow with the COMMs");
     CHECK(heap_large <= heap_small + 64u * 1024u,
-          "runs of 10^6 COMMs leave the heap flat (%zu -> %zu bytes)",
-          heap_small, heap_large);
-    CHECK(rss_large <= rss_small + 4096,
-          "runs of 10^6 COMMs leave the peak RSS flat (%ld -> %ld KiB)",
-          rss_small, rss_large);
+          "a run of 10^6 COMMs leaves the heap where 10^5 left it (%zu -> "
+          "%zu bytes)", heap_small, heap_large);
+    CHECK(!RSS_MEASURES_THE_RUN || rss_large <= rss_small + 4096,
+          "a run of 10^6 COMMs leaves the peak RSS where 10^5 left it "
+          "(%ld -> %ld KiB)", rss_small, rss_large);
     CHECK(cetta_name_supply_live_blocks() == 0u,
           "the loop's supplies never leave the root block");
     printf("PASS: the duplicator loop on 1, 2 and 4 workers, 10^3 to 10^6 "
            "COMMs: it ends with 2 tasks holding %llu bytes in their regions "
            "(%llu reserved), %llu-%llu regions made, %llu scratch bytes on 4 "
-           "workers; heap %zu -> %zu bytes, peak RSS %ld -> %ld KiB\n",
+           "workers; from 10^5 to 10^6 COMMs on 4 workers heap %zu -> %zu "
+           "bytes, peak RSS %ld -> %ld KiB\n",
            (unsigned long long)census[0][0].live_task_bytes,
            (unsigned long long)census[0][0].live_task_reserved,
            (unsigned long long)census[0][0].regions_made,
            (unsigned long long)census[2][3].regions_made,
            (unsigned long long)census[2][3].scratch_reserved,
            heap_small, heap_large, rss_small, rss_large);
+}
+
+/* A burst of 2000 sends and 2000 receives on one channel beside the loop:
+   4000 tasks live at once, each in a region of its own, then two.  The run
+   ends holding only what the loop's live tasks, the workers' stocks and a
+   pool that can refill them need: the burst's regions were given back once
+   no task needed them. */
+static void test_memory_peak_falls(void) {
+    static const uint32_t workers[3] = {1u, 2u, 4u};
+    enum { BURST = 2000 };
+    const char *dup =
+        "(rho:recv (rho:quote rho:nil) $y (rho:par (rho:drop $y) "
+        "(rho:send (rho:quote rho:nil) (rho:drop $y))))";
+    size_t cap = 64u + BURST * 48u + 3u * strlen(dup);
+    char *text = malloc(cap);
+    size_t len = (size_t)snprintf(text, cap, "(rho:par");
+    for (unsigned i = 0u; i < BURST; i++)
+        len += (size_t)snprintf(text + len, cap - len,
+                                " (rho:send $b rho:nil) (rho:recv $b $x rho:nil)");
+    snprintf(text + len, cap - len, " %s (rho:send (rho:quote rho:nil) %s))",
+             dup, dup);
+    Atom *proc = parse(text);
+    free(text);
+    if (!proc)
+        return;
+    bool ok = true, made_ok = true, held_ok = true;
+    RhocalcThreadedCensus census[3];
+    for (unsigned w = 0u; w < 3u; w++) {
+        RhoReductionResult result;
+        ok = ok && run(proc, workers[w], 100000u, &result) &&
+             result.reductions_taken == 100000u;
+        rhocalc_threaded_last_census(&census[w]);
+        const RhocalcThreadedCensus *c = &census[w];
+        made_ok = made_ok && c->regions_made >= 2u * BURST && c->live_tasks == 2u;
+        held_ok = held_ok && c->regions_made - c->regions_given_back <=
+                                 3u + 16u * (2u * workers[w] + 1u);
+    }
+    CHECK(ok, "the burst and the loop run 10^5 COMMs on 1, 2 and 4 workers");
+    CHECK(made_ok, "the burst's 4000 tasks, live at once, each get a region "
+                   "(%llu made on 4 workers)",
+          (unsigned long long)census[2].regions_made);
+    CHECK(held_ok, "the run ends holding what the loop's live tasks and the "
+                   "stocks need, the burst's regions given back (%llu of %llu "
+                   "on 4 workers)",
+          (unsigned long long)census[2].regions_given_back,
+          (unsigned long long)census[2].regions_made);
+    printf("PASS: a burst of %u live tasks before the loop: %llu-%llu regions "
+           "made, all but %llu-%llu given back once the live tasks fell\n",
+           2u * BURST, (unsigned long long)census[0].regions_made,
+           (unsigned long long)census[2].regions_made,
+           (unsigned long long)(census[0].regions_made - census[0].regions_given_back),
+           (unsigned long long)(census[2].regions_made - census[2].regions_given_back));
 }
 
 /* ── Placement ───────────────────────────────────────────────────────── */
@@ -317,8 +400,8 @@ static void test_memory(Atom *loop) {
 static void test_placement_by_hand(Observed *o) {
     Atom *three = parse("(rho:par (rho:drop $u) (rho:drop $v) (rho:drop $w))");
     char *outcome = three ? watched_run(three, 2u, 1000u, false, false, o) : NULL;
-    /* balancedPath 3: the first two share the left half, the third takes
-       the right half. */
+    /* The balanced pieces of 3: the first two share the left half, the
+       third takes the right half. */
     CHECK(outcome && strstr(outcome, "live 2022100 ") &&
               strstr(outcome, "live 2022010 ") &&
               strstr(outcome, "live 20201 "),
@@ -413,8 +496,8 @@ static char *two_relays(unsigned length) {
 }
 
 /* A spawn as wide as hot_channel's, of stuck processes: every piece within
-   the first task's half and 10 halvings, in the root block
-   (wide_fork_word); and 320 sends meeting 320 receives on one channel
+   the first task's half and 10 halvings, in the root block; and 320
+   sends meeting 320 receives on one channel
    among 640 components: every continuation draws from the union of two
    pieces, which fits the word, so no block is made. */
 static void test_wide_spawn(Observed *o) {
@@ -474,7 +557,7 @@ static void test_placement(Observed *o) {
     snprintf(apart, 2600, "(rho:par %s %s)", a, b);
     char *relays = two_relays(40u);
     PlacementCase cases[] = {
-        {"two loops on one channel (twoLoops)", parse(both), 2000u, false},
+        {"two loops on one channel", parse(both), 2000u, false},
         {"two loops on two channels", parse(apart), 2000u, false},
         {"two relays of 40 COMMs, every task drawing a name", parse(relays),
          1000000u, true},
@@ -561,6 +644,7 @@ int main(void) {
     Atom *loop = parse(loop_text);
     if (loop) {
         test_memory(loop);
+        test_memory_peak_falls();
         test_placement(&observed);
         test_names(loop, &observed);
     }

@@ -13978,8 +13978,11 @@ static bool petta_machine_try_admit_atom(
         return true;
     Atom *head = call->expr.elems[0];
     Atom *payload = call->expr.elems[2];
+    /* A view of the read algebra is no space a write reaches: the general
+       add-atom refuses it. */
     if (!head || head->kind != ATOM_SYMBOL ||
-        head->sym_id != g_builtin_syms.add_atom || !payload)
+        head->sym_id != g_builtin_syms.add_atom || !payload ||
+        petta_space_expression_is_algebra(call->expr.elems[1]))
         return true;
     Space *target = petta_machine_resolve_space_ref(
         machine, call->expr.elems[1]);

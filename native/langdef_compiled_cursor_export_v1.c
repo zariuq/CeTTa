@@ -3,6 +3,14 @@
 #ifndef CETTA_LANGDEF_COMPILED_PREFIX
 #error "CETTA_LANGDEF_COMPILED_PREFIX must name a generated cursor"
 #endif
+#ifndef CETTA_LANGDEF_COMPILED_SOURCE_SHA256
+#error "CETTA_LANGDEF_COMPILED_SOURCE_SHA256 must give the SHA-256 of the generated cursor's C"
+#endif
+
+/* The digest a lock seals this cursor by (CETTA_LANGDEF_COMPILED_SOURCE_
+   MARKER_V1). */
+__attribute__((used)) static const char cetta_langdef_compiled_source_v1[] =
+    CETTA_LANGDEF_COMPILED_SOURCE_MARKER_V1 CETTA_LANGDEF_COMPILED_SOURCE_SHA256;
 
 #define CETTA_LANGDEF_JOIN_RAW(left, right) left##right
 #define CETTA_LANGDEF_JOIN(left, right) CETTA_LANGDEF_JOIN_RAW(left, right)

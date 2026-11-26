@@ -10,7 +10,14 @@
  *     size;
  *   - an arena that gives back every block starts small again;
  *   - without growth an arena keeps its fixed block size: full-size blocks
- *     by default, or the capacity it was given.
+ *     by default, or the capacity it was given;
+ *   - growth to powers of two: each later block brings what the arena
+ *     holds to the least power of two that leaves the block at least the
+ *     least size, up to ARENA_BLOCK_SIZE, whatever the arena held first --
+ *     a lent block of any size among it -- while growth by doubling after
+ *     the same lent block holds amounts that are no powers of two; an
+ *     allocation larger than that still gets a block of its own size, and
+ *     the block after it brings the arena back to a power of two.
  */
 #include "atom.h"
 #include "symbol.h"
@@ -142,6 +149,114 @@ static void test_without_growth(void) {
     arena_free(&off);
 }
 
+/* Whether X is a power of two. */
+static bool is_pow2(size_t x) {
+    return x != 0u && (x & (x - 1u)) == 0u;
+}
+
+/* Allocate 64 bytes at a time until A holds at least LIMIT, and whether
+   every block claimed after the first BLOCKS brought A to a power of two,
+   no block below LEAST nor above full size. */
+static bool grows_to_powers(Arena *a, size_t blocks, size_t least,
+                            size_t limit) {
+    bool powers = true;
+    size_t seen = a->block_count;
+    while (a->reserved_bytes < limit) {
+        (void)arena_alloc(a, 64u);
+        if (a->block_count != seen) {
+            seen = a->block_count;
+            if (seen > blocks)
+                powers = powers && is_pow2(a->reserved_bytes) &&
+                         a->head->capacity >= least &&
+                         a->head->capacity <= ARENA_BLOCK_SIZE;
+        }
+    }
+    return powers;
+}
+
+static void test_pow2_blocks(void) {
+    Arena a;
+    arena_init(&a);
+    arena_set_block_growth_pow2(&a, 256u);
+    (void)arena_alloc(&a, 16u);
+    check(a.reserved_bytes == 256u && a.block_growth == ARENA_GROWTH_POW2,
+          "growth to powers of two takes a first block of the least size");
+    check(grows_to_powers(&a, 1u, 256u, ARENA_BLOCK_SIZE),
+          "each later block brings the arena to a power of two");
+    arena_free(&a);
+
+    /* After a lent block of 704 bytes the blocks are 320, 1024, 2048, ...:
+       the arena holds 1024, 2048, 4096, ... as blocks of powers of two
+       would. */
+    void *lent = malloc(728u);
+    Arena b;
+    arena_init(&b);
+    arena_set_block_growth_pow2(&b, 256u);
+    arena_lend_block(&b, lent, 728u);
+    check(b.reserved_bytes == 704u, "the lent block holds 704 bytes");
+    size_t caps[64];
+    bool powers = grows_to_powers(&b, 1u, 256u, 8192u);
+    size_t len = block_capacities(&b, caps, 64u);
+    check(powers && len == 5u && caps[1] == 320u && caps[2] == 1024u &&
+              caps[3] == 2048u && caps[4] == 4096u &&
+              b.reserved_bytes == 8192u,
+          "after a lent block the blocks bring the arena to powers of two");
+    arena_free_lent(&b, lent);
+
+    /* Doubling after the same lent block holds 1432, 2864, ...: no power
+       of two. */
+    Arena c;
+    arena_init(&c);
+    arena_set_block_growth(&c, 728u);
+    arena_lend_block(&c, lent, 728u);
+    bool any_power = false;
+    size_t seen = c.block_count;
+    while (c.reserved_bytes < 8192u) {
+        (void)arena_alloc(&c, 64u);
+        if (c.block_count != seen) {
+            seen = c.block_count;
+            any_power = any_power || is_pow2(c.reserved_bytes);
+        }
+    }
+    check(!any_power,
+          "doubling after a lent block of 704 bytes holds no power of two");
+    arena_free_lent(&c, lent);
+    free(lent);
+}
+
+static void test_pow2_least_and_large(void) {
+    /* Just below a power of two, the next block still has the least
+       size: 1000 bytes lent, then a block of 1048 to 2048, not of 24. */
+    void *lent = malloc(1024u);
+    Arena a;
+    arena_init(&a);
+    arena_set_block_growth_pow2(&a, 256u);
+    arena_lend_block(&a, lent, 1024u);
+    check(a.reserved_bytes == 1000u, "the lent block holds 1000 bytes");
+    while (a.block_count == 1u)
+        (void)arena_alloc(&a, 64u);
+    check(a.head->capacity == 1048u && a.reserved_bytes == 2048u,
+          "a block below the least size goes on to the next power of two");
+    arena_free_lent(&a, lent);
+    free(lent);
+
+    Arena b;
+    arena_init(&b);
+    arena_set_block_growth_pow2(&b, 256u);
+    (void)arena_alloc(&b, 10000u);
+    check(b.reserved_bytes == 10000u,
+          "an allocation larger than the next block gets a block of its size");
+    (void)arena_alloc(&b, 8u);
+    check(b.reserved_bytes == 16384u && b.head->capacity == 6384u,
+          "the block after it brings the arena back to a power of two");
+    while (b.reserved_bytes < 4u * ARENA_BLOCK_SIZE)
+        (void)arena_alloc(&b, 64u);
+    check(b.head->capacity == ARENA_BLOCK_SIZE &&
+              b.reserved_bytes == 4u * ARENA_BLOCK_SIZE,
+          "blocks stop at full size");
+    arena_free(&b);
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -151,6 +266,8 @@ int main(void) {
     test_large_allocation();
     test_starts_small_again();
     test_without_growth();
+    test_pow2_blocks();
+    test_pow2_least_and_large();
     if (g_failures) {
         fprintf(stderr, "%d of %d checks failed\n", g_failures, g_checks);
         return 1;

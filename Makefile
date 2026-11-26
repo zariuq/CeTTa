@@ -2903,6 +2903,10 @@ METAMATH_PROOF_STORAGE_DENOTED_V1 = $(METAMATH_PROOF_STORAGE_STAGE_DIR_V1)/denot
 METAMATH_PROOF_STORAGE_REQUIRED_KEYS_V1 = $(METAMATH_PROOF_STORAGE_STAGE_DIR_V1)/required-keys.answers
 METAMATH_PROOF_STORAGE_DENOTED_KEYS_V1 = $(METAMATH_PROOF_STORAGE_STAGE_DIR_V1)/denoted-keys.answers
 LANGDEF_COMPILED_CURSOR_EXPORT_V1 = native/langdef_compiled_cursor_export_v1.c
+# A compiled cursor carries the SHA-256 of the generated C it is compiled
+# from, which a lock seals it by: its own bytes depend on the compiler that
+# built it.  $(1) is the generated C, in a recipe.
+LANGDEF_COMPILED_CURSOR_SOURCE_V1 = -DCETTA_LANGDEF_COMPILED_SOURCE_SHA256=\"$$(sha256sum $(1) | cut -c1-64)\"
 LANGDEF_COMPILED_CURSOR_HEADER_V1 = native/langdef_compiled_cursor_v1.h
 METAMATH_CURSOR_FOLD_TEST_BIN_V1 = runtime/test_metamath_syntax_cursor_fold_v1-$(BUILD_OBJ_TAG)
 METAMATH_FOLD_PART_DIR_V1 = runtime/bootstrap/metamath-occurrence-fold-v1.$(BUILD_OBJ_TAG)
@@ -6092,8 +6096,10 @@ $(RHOCALC_THREADED_REGIONS_TEST_BIN): $(RHOCALC_THREADED_REGIONS_TEST_OBJ) $(RHO
 	$(CC) $(CFLAGS) -o $@ $(RHOCALC_THREADED_REGIONS_TEST_OBJ) $(RHOCALC_THREADED_REGIONS_TEST_LINK_OBJ) $(LDFLAGS)
 
 # Threaded rho runs, in both name modes: the duplicator loop for up to a
-# million COMMs on 1, 2 and 4 workers holds only what its two live tasks need;
-# spawns and COMMs place their tasks by their parties' supplies, so positions
+# million COMMs on 1, 2 and 4 workers holds only what its two live tasks need,
+# and a burst of 4000 live tasks before it has its regions given back once the
+# live tasks fall; spawns and COMMs place their tasks by their parties'
+# supplies, so positions
 # and names are the same on every run and any number of workers, and placing
 # by the finder (a test hook) changes them; a spawn of 640 takes balanced
 # pieces in the root block, whose COMMs join in the word; the loop's names
@@ -7154,15 +7160,22 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(GSLT2PARSE_AUX_OBJ:.o=.d)
 
 # Standalone compiler and qualification objects live under runtime/bootstrap
-# but are not all members of one link-object family.  Their generated
-# dependency files are nevertheless authoritative: omitting them can retain
-# an ABI-stale object after a shared header changes.  Restrict the wildcard to
-# the active configuration tag so unrelated build variants remain isolated.
-# The tag's own variants (runtime stats) are included:
-# their objects link into the same tool paths, so a variant object left stale
-# by a header change would be relinked into those tools.
+# and its subdirectories, and the parser foundation's under
+# experiments/gslt2parse_foundation/native, but are not all members of one
+# link-object family.  Their generated dependency files are nevertheless
+# authoritative: omitting them can retain an ABI-stale object after a shared
+# header changes (a layout change of src/atom.h left such objects compiled
+# against the old layout, linked into tests that then crashed).  Restrict the
+# wildcard to the active configuration tag so unrelated build variants remain
+# isolated.  The tag's own variants (runtime stats) are included: their
+# objects link into the same tool paths, so a variant object left stale by a
+# header change would be relinked into those tools.
 AUXILIARY_DEPS = $(wildcard runtime/bootstrap/*.$(BUILD_OBJ_TAG).d \
-	runtime/bootstrap/*.$(BUILD_OBJ_TAG).*.d)
+	runtime/bootstrap/*.$(BUILD_OBJ_TAG).*.d \
+	runtime/bootstrap/*/*.$(BUILD_OBJ_TAG).d \
+	runtime/bootstrap/*/*.$(BUILD_OBJ_TAG).*.d \
+	experiments/gslt2parse_foundation/native/*.$(BUILD_OBJ_TAG).d \
+	experiments/gslt2parse_foundation/native/*.$(BUILD_OBJ_TAG).*.d)
 
 # Remake configuration stamps before evaluating object dependencies.  The
 # stamp recipes update their generated headers as a side effect; treating the
@@ -9876,6 +9889,7 @@ $(METAMATH_COMPILED_CURSOR_V1): \
 	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/langdef-compiled-cursor.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -shared -Wl,--build-id=none \
+		$(call LANGDEF_COMPILED_CURSOR_SOURCE_V1,$(METAMATH_CURSOR_FOLD_GENERATED_C_V1)) \
 		-DCETTA_LANGDEF_COMPILED_PREFIX=$(METAMATH_CURSOR_FOLD_PREFIX_V1) \
 		-DCETTA_LANGDEF_COMPILED_HAS_OCCURRENCE_SPAN_MASK=1 \
 		-DCETTA_LANGDEF_COMPILED_HAS_STATE_PROGRAM=1 \
@@ -9922,6 +9936,7 @@ $(METAMATH_DIRECT_COMPILED_CURSOR_V1): \
 	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/langdef-direct-compiled-cursor.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -shared -Wl,--build-id=none \
+		$(call LANGDEF_COMPILED_CURSOR_SOURCE_V1,$(METAMATH_DIRECT_CURSOR_FOLD_GENERATED_C_V1)) \
 		-DCETTA_LANGDEF_COMPILED_PREFIX=$(METAMATH_DIRECT_CURSOR_FOLD_PREFIX_V1) \
 		-DCETTA_LANGDEF_COMPILED_HAS_OCCURRENCE_SPAN_MASK=1 \
 		-DCETTA_LANGDEF_COMPILED_HAS_STATE_PROGRAM=1 \
@@ -9955,6 +9970,7 @@ build-langdef-compiled-cursor-generated-v1: \
 		-n "$(GENERATED_LANGDEF_CURSOR_PREFIX)"
 	@mkdir -p "$(dir $(GENERATED_LANGDEF_CURSOR_SO))"
 	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -shared -Wl,--build-id=none \
+		$(call LANGDEF_COMPILED_CURSOR_SOURCE_V1,"$(GENERATED_LANGDEF_CURSOR_C)") \
 		-DCETTA_LANGDEF_COMPILED_PREFIX=$(GENERATED_LANGDEF_CURSOR_PREFIX) \
 		-DCETTA_LANGDEF_COMPILED_HAS_OCCURRENCE_SPAN_MASK=1 \
 		-DCETTA_LANGDEF_COMPILED_HAS_STATE_PROGRAM=1 \
@@ -16260,11 +16276,14 @@ test-metamath-cogslt-langdef-v1: $(BIN) \
 		native/langdef_module.c native/langdef_module.h \
 		native/langdef_compiled_cursor_v1.h \
 		native/langdef_compiled_cursor_export_v1.c; then exit 1; fi
-	@lock_dir=$$(mktemp -d langdef/metamath-compiled-lock.XXXXXX); \
+	@set -eu; lock_dir=$$(mktemp -d langdef/metamath-compiled-lock.XXXXXX); \
 	trap 'rm -rf "$$lock_dir"' EXIT INT TERM; \
 	cp -R $(METAMATH_LANGDEF_DIR_V1)/. "$$lock_dir/"; \
-	printf '\001' >> \
-		"$$lock_dir/generated/syntax_cursor_fold_v1.generated.so"; \
+	cursor="$$lock_dir/generated/syntax_cursor_fold_v1.generated.so"; \
+	printf '\001' >> "$$cursor"; \
+	$(LANGDEF_COMPILER_V1_BIN) validate \
+		--manifest "$$lock_dir/langdef.metta" >/dev/null; \
+	python3 -c 'import sys; path = sys.argv[1]; data = open(path, "rb").read(); marker = b"cetta-langdef-compiled-source-sha256-v1:"; at = data.index(marker) + len(marker); open(path, "wb").write(data[:at] + b"0" * 64 + data[at + 64:])' "$$cursor"; \
 	if $(LANGDEF_COMPILER_V1_BIN) validate \
 		--manifest "$$lock_dir/langdef.metta" >/dev/null 2>&1; \
 		then exit 1; fi
@@ -16994,6 +17013,7 @@ test-metamath-cogslt-lowered-artifact-mutations-core-v1: $(BIN) \
 		timeout 180 $(CC) $(CPPFLAGS) \
 			-Iexperiments/gslt2parse_foundation/native $(CFLAGS) \
 			-fPIC -shared -Wl,--build-id=none \
+			$(call LANGDEF_COMPILED_CURSOR_SOURCE_V1,"$$mutated_c") \
 			-DCETTA_LANGDEF_COMPILED_PREFIX=$(METAMATH_CURSOR_FOLD_PREFIX_V1) \
 			-DCETTA_LANGDEF_COMPILED_HAS_OCCURRENCE_SPAN_MASK=1 \
 			-DCETTA_LANGDEF_COMPILED_HAS_STATE_PROGRAM=1 \
@@ -17356,6 +17376,7 @@ test-metamath-cogslt-generated-form-mutations-core-v1: $(BIN) \
 		timeout 180 $(CC) $(CPPFLAGS) \
 			-Iexperiments/gslt2parse_foundation/native $(CFLAGS) \
 			-fPIC -shared -Wl,--build-id=none \
+			$(call LANGDEF_COMPILED_CURSOR_SOURCE_V1,"$$mutated_c") \
 			-DCETTA_LANGDEF_COMPILED_PREFIX=$(METAMATH_CURSOR_FOLD_PREFIX_V1) \
 			-DCETTA_LANGDEF_COMPILED_HAS_OCCURRENCE_SPAN_MASK=1 \
 			-DCETTA_LANGDEF_COMPILED_HAS_STATE_PROGRAM=1 \
@@ -29411,11 +29432,11 @@ test-petta-generated-space-names: $(BIN) tests/petta/generated_space_names.metta
 
 # The name supply (src/name_supply.h): SipHash-2-4 with 128-bit output
 # against the specification's vectors and OpenSSL, the numeral, its spelling
-# and the order, the share algebra against a separate implementation of
-# Mettapedia's Shares, BalancedPieces and SiblingPushes (spawns of up to 4097
-# that are disjoint, cover their share and lie within ceil(log2 k) halvings;
-# a million pushes in the root block within 40), and that no depth, width or
-# count fails: chains of a million levels, a spent pool, a million balanced
+# and the order, the share algebra of interval tree clocks against a
+# separate implementation as trees, balanced spawns and counted pushes among
+# it (spawns of up to 4097 that are disjoint, cover their share and lie
+# within ceil(log2 k) halvings; a million pushes in the root block within
+# 40), and that no depth, width or count fails: chains of a million levels, a spent pool, a million balanced
 # forks and joins in the root block, a clock past its end, and millions of
 # names from a random tree that pushes, forks, spawns, joins and ends,
 # distinct and the same on every run, with every block given back, in both
@@ -30405,6 +30426,30 @@ test-priority-space: $(BIN) tests/petta/priority_space.metta tests/petta/priorit
 	@echo "PASS: a priority space peeks, pops, gets and truncates in the standard order of terms whatever its history, and reads its bag, in PeTTa and HE; the two-lane given-clause example saturates, runs out of budget and proves as written"
 
 test-all: test-priority-space
+
+.PHONY: test-space-view-writes
+# A space expression of the read algebra, (, A B) or (| A B), is a read-only
+# view: a write to it -- add-atom, remove-atom or add-atoms, flat, nested, a
+# singleton fold, bound by let or passed through a function -- is refused as
+# a write to any operand that is no space is, in the dialect's own form
+# (PeTTa raises (type_error atom X), HE answers its Error), and the spaces
+# stay as they were, while writes to the spaces themselves land; both
+# profiles.
+test-space-view-writes: $(BIN) tests/petta/space_view_writes.metta \
+		tests/petta/space_view_writes.expected \
+		tests/test_space_view_writes.metta tests/test_space_view_writes.expected
+	@set -eu; mkdir -p runtime; for profile in "" "--profile extended"; do \
+		$(CETTA_BIN_INVOKE) --lang petta $$profile tests/petta/space_view_writes.metta \
+			> runtime/space-view-writes-petta.out 2>&1; \
+		diff -u tests/petta/space_view_writes.expected runtime/space-view-writes-petta.out; \
+		$(CETTA_BIN_INVOKE) --lang he $$profile tests/test_space_view_writes.metta \
+			> runtime/space-view-writes-he.out 2>&1; \
+		diff -u tests/test_space_view_writes.expected runtime/space-view-writes-he.out; \
+	done
+	@echo "PASS: writes to views of the read algebra are refused in PeTTa and HE, each in its own form, under both profiles, and the spaces stay as they were"
+
+test-petta-semantics: test-space-view-writes
+test-all: test-space-view-writes
 
 .PHONY: test-space-order
 # The order index a priority space keeps over its rows, against a sorted
@@ -41446,9 +41491,11 @@ $(GSLT_PROVIDER_CANARY_CATALOG_GENERATED_H) $(GSLT_PROVIDER_CANARY_CATALOG_GENER
 
 # The tracked outputs of the GSLT language, provider-catalog and
 # support-profile generators, their compilation certificates, and the
-# metamath direct-runtime lock.  Each is a function of its sources alone: no
-# generator writes its own build (binary, flags or paths) into what it
-# generates, so every build configuration regenerates the same bytes.
+# metamath langdef and direct-runtime locks.  Each is a function of its
+# sources alone: no generator writes its own build (binary, flags or paths)
+# into what it generates, so every build configuration regenerates the same
+# bytes.  A lock seals a compiled cursor by the digest of the generated C it
+# was compiled from, never by the cursor's bytes, which the compiler decides.
 TRACKED_GENERATED_V1 = \
 	$(GSLT_IL_GENERATED_LANGUAGE_V1_C) \
 	$(METTA_INTERACT_GENERATED_LANGUAGE_V1_C) \
@@ -41470,6 +41517,7 @@ TRACKED_GENERATED_V1 = \
 	$(METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1_GENERATED_C) \
 	$(METAMATH_PROOF_MACHINE_LANGUAGE_V1_GENERATED_C) \
 	$(METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_GENERATED_C) \
+	$(METAMATH_LANGDEF_LOCK_V1) \
 	$(METAMATH_DIRECT_RUNTIME_LOCK_V1) \
 	$(GSLT_COMPILED_CANARY_V1_GENERATED_C) \
 	$(GSLT_PIPELINE_CANARY_V1_GENERATED_C) \
@@ -41477,14 +41525,6 @@ TRACKED_GENERATED_V1 = \
 	$(GSLT_PROVIDER_CANARY_CATALOG_GENERATED_C) \
 	$(METTAZERO_GROUND_LIBRARY_CANARY_V1_GENERATED_C) \
 	$(PROOF_TRACE_COMPILED_CANARY_V1_GENERATED_C)
-
-# A lock that seals a compiled native artifact holds that artifact's digest
-# in the ordinary build, which the default compiler makes; a sanitized build or
-# another compiler compiles it differently, so their checks leave those locks
-# to the ordinary one.
-TRACKED_GENERATED_FLAVOR_SEALED_V1 = $(METAMATH_DIRECT_RUNTIME_LOCK_V1)
-TRACKED_GENERATED_ORDINARY_FLAVOR_V1 = $(and $(filter-out 1,$(ENABLE_SANITIZERS)),$(filter gcc,$(CC)))
-TRACKED_GENERATED_CHECKED_V1 = $(if $(TRACKED_GENERATED_ORDINARY_FLAVOR_V1),$(TRACKED_GENERATED_V1),$(filter-out $(TRACKED_GENERATED_FLAVOR_SEALED_V1),$(TRACKED_GENERATED_V1)))
 
 # Regenerate every tracked output from its sources and require the bytes git
 # holds for it in the index, so what is committed or about to be, headers
@@ -41497,7 +41537,7 @@ check-generated:
 	@set -eu; \
 	work=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/check-generated.XXXXXX"); \
 	trap 'rm -rf "$${work:?}"' EXIT INT TERM; \
-	outputs="$(TRACKED_GENERATED_CHECKED_V1)"; \
+	outputs="$(TRACKED_GENERATED_V1)"; \
 	compared=""; \
 	for output in $$outputs; do \
 		compared="$$compared $$output"; \
@@ -41537,7 +41577,7 @@ check-generated:
 		for file in $$stale; do echo "  $$file"; done; \
 		exit 1; \
 	fi; \
-	echo "PASS: $(words $(TRACKED_GENERATED_CHECKED_V1)) tracked generated outputs are what their sources generate$(if $(TRACKED_GENERATED_ORDINARY_FLAVOR_V1),, ($(words $(TRACKED_GENERATED_FLAVOR_SEALED_V1)) sealed by the ordinary build left to it))"
+	echo "PASS: $(words $(TRACKED_GENERATED_V1)) tracked generated outputs are what their sources generate"
 
 test-all: check-generated
 

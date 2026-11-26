@@ -237,19 +237,22 @@ The implemented Phase 1 used per-worker arenas plus a single-threaded
 materialization step, so Atom/Arena mutation remains owner-threaded while
 COMM claims and endpoint ownership are synchronized at rho channel buckets.
 Per-worker arenas keep every COMM's working memory for the whole run, so a
-loop with two live processes grows without bound (Mettapedia
-RhoCalculus/ParallelExecution/MemoryDisciplines, arena_loop_unbounded).  The
-run now holds task regions instead: each task's term in a region of its own,
-handed over through the queue and the channel buckets, released when the
-task ends, and a worker's scratch reset after each task (region_run).
+loop with two live processes grows without bound.  The run now holds task
+regions instead, as in region-based memory management (Tofte and Talpin
+1997): each task's term in a region of its own, handed over through the
+queue and the channel buckets, released whole when the task ends, and a
+worker's scratch reset after each task.  Released regions are kept for the
+recent peak of live tasks and given back once it falls, so a long run holds
+what its live tasks recently needed.
 
 Phase 2: narrow locks and improve scaling (future)
 
 - Keep the channel-bucket lock discipline and profile before replacing any
   remaining shared queue or table bottleneck.
 - Keep sorted lock acquisition for any operation touching multiple names.
-- Keep task regions plus final materialization/merge: the memory model
-  audit (MemoryDisciplines) fixed that ownership boundary.
+- Keep task regions plus final materialization/merge: each task owns its
+  region, and only the final materialization reads across tasks, which is
+  what keeps a long run's memory bounded by its live tasks.
 - Study libdill/libmill channel rendezvous for the COMM handshake shape.
 - Study C-Thread-Pool for bounded pthread worker loops.
 - Study ck only after the mutex version is correct; lock-free structures are

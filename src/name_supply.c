@@ -9,11 +9,12 @@
  * a supply of its own between tasks.  Drawing touches only the drawing
  * thread's supply: no shared counter and no atomic operation on the share.
  *
- * The share algebra here follows Mettapedia's Machines/NameSupplies/Shares
- * exactly: a share is none, all, or a node of two halves, kept normal (no
- * node with two empty or two full halves); split and join are its split and
- * join, the pieces of a spawn BalancedPieces' balancedPiece and a push
- * SiblingPushes' countedChild, both along split.  The word holds a share as
+ * The shares are those of interval tree clocks (Almeida, Baquero and Fonte
+ * 2008): a share is none, all, or a node of two halves, kept normal (no
+ * node with two empty or two full halves).  Split hands each half on; join
+ * is the union, normalized; the pieces of a spawn and the shares of pushed
+ * tasks are reached by splits alone, along a balanced or a counted path
+ * (name_supply.h).  The word holds a share as
  * a path when it is one dyadic interval and as its prefix code otherwise;
  * the general operations read a share out of its word into its prefix code,
  * a token per node or leaf, operate on that, and write the result back into
@@ -290,8 +291,8 @@ bool cetta_name_supply_unforgeable(void) {
 /* ── Shares ──────────────────────────────────────────────────────────────
  *
  * A share read out of its word is its prefix code: a token per node or
- * leaf, in preorder, 0 none, 1 all, 2 a node followed by its two halves (the
- * serialization of PortableNames.writeShare).  A word's share has at most
+ * leaf, in preorder, 0 none, 1 all, 2 a node followed by its two halves (as
+ * a name of counter mode spells it).  A word's share has at most
  * 125 tokens (an interval 62 halvings deep); the union of two has at most
  * 249, and its halves a few more. */
 
@@ -417,7 +418,7 @@ static bool name_share_write(const NameShareCode *share, uint64_t *word) {
     return true;
 }
 
-/* The split of SHARE (Shares.split): down the nodes with an empty half to
+/* The split of SHARE: down the nodes with an empty half to
    the whole interval, which halves, or to a node with two nonempty halves,
    which parts into them; the path down is kept around both. */
 static void name_share_split(const NameShareCode *share, NameShareCode *left,
@@ -493,8 +494,8 @@ static void name_share_copy_subtree(const NameShareCode *from, uint32_t *at,
     *at = end;
 }
 
-/* The join of the subtrees at *A and *B (Shares.join), onto OUT, with a node
-   of two empty or two full halves made a leaf (Shares.node'). */
+/* The join of the subtrees at *A and *B, their union, onto OUT, with a node
+   of two empty or two full halves made a leaf. */
 static void name_share_join_at(const NameShareCode *a, uint32_t *at_a,
                                const NameShareCode *b, uint32_t *at_b,
                                NameShareCode *out) {
@@ -581,7 +582,7 @@ static inline uint64_t name_code_interval(uint64_t code, uint64_t path,
     return ((code << 2) | 1u) << (2u * left_turns);
 }
 
-/* The union of the intervals A and B (Shares.join) as a word, without
+/* The union of the intervals A and B, their join, as a word, without
    reading them into tokens: the larger when one lies in the other, and
    otherwise the prefix code of the path they share, the node where they
    part, and each one's path below it, 3 (depth A + depth B - shared) - 1
@@ -660,7 +661,7 @@ static unsigned name_code_read_empty(uint64_t code, unsigned *at) {
 
 /* Whether the coded share CODED is the union of two intervals, as a join of
    two pieces makes (name_share_join_intervals), and which: its halves
-   (Shares.split parts it at the node where the intervals part).  The code
+   (a split parts it at the node where the intervals part).  The code
    goes down the shared path, the node and the left path to the left full
    half, up the left path's left turns, down and up the right path, and up
    the shared path's left turns; the node is the shared path's next left
@@ -707,7 +708,7 @@ static bool name_share_two_intervals(uint64_t coded, uint64_t *left,
     return true;
 }
 
-/* The halves of the share in WORD, as words (Shares.split): false when
+/* The halves of the share in WORD, its split, as words: false when
    WORD is no share or a half would not fit. */
 static bool name_share_halves(uint64_t word, uint64_t *left, uint64_t *right) {
     if (cetta_name_share_halves_in_word(word)) {
@@ -984,7 +985,7 @@ void cetta_name_supply_fork_beyond(CettaNameSupply *parent,
 
 /* PUSHER's first push, its share's halves being OWN, which it keeps to
    draw from, and POOL, an interval at most 61 halvings deep: POOL's left
-   half (countedPath 0). */
+   half (the counted path of 0). */
 static void name_supply_push_first(CettaNameSupply *pusher,
                                    CettaNameSupply *child, uint64_t own,
                                    uint64_t pool) {

@@ -112,6 +112,7 @@ typedef struct {
     uint64_t live_task_bytes;     /* what their regions hold */
     uint64_t live_task_reserved;  /* the blocks of their regions */
     uint64_t regions_made;        /* regions allocated during the run */
+    uint64_t regions_given_back;  /* of those, freed during the run */
     uint64_t regions_stocked;     /* released regions kept for reuse */
     uint64_t scratch_reserved;    /* the blocks of the workers' scratch */
     uint64_t channels;

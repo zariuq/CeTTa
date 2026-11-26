@@ -477,6 +477,10 @@ BROAD_EXTENDED_PROFILE_NOTES: dict[str, dict[str, Any]] = {
             "space join/meet algebra",
             ["profile.syntax-policy", "syntax.native-space", "minimal.match", "nondet.visible-bag"],
         ),
+        "tests/test_space_view_writes.metta": (
+            "read-only space views (meet, additive union), which refuse writes",
+            ["profile.syntax-policy", "syntax.native-space", "minimal.match", "result.error-shape"],
+        ),
     }.items()
 }
 

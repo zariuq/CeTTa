@@ -48,7 +48,7 @@ typedef struct {
     const char *program_source_path;
     const char *program_source_sha256;
     const char *program_sha256;
-    const char *compiled_cursor_sha256;
+    const char *compiled_cursor_source_sha256;
     const char *source_paths[CETTA_LANGDEF_MAX_SOURCES];
     const char *source_sha256s[CETTA_LANGDEF_MAX_SOURCES];
     uint32_t source_len;
@@ -111,6 +111,15 @@ cetta_langdef_deterministic_equations_load_manifest_v1(
     const char *manifest_path, char *reason, size_t reason_size);
 bool cetta_langdef_sha256_file(const char *path, char digest[65],
                                char *error, size_t error_size);
+/* The SHA-256 of the generated C the compiled cursor at PATH was compiled
+ * from, which the cursor carries behind its marker
+ * (CETTA_LANGDEF_COMPILED_SOURCE_MARKER_V1): what a lock seals the cursor by,
+ * the same whatever compiler built it.  Read from the file; the cursor is not
+ * loaded. */
+bool cetta_langdef_compiled_cursor_source_sha256(const char *path,
+                                                 char digest[65],
+                                                 char *error,
+                                                 size_t error_size);
 bool cetta_langdef_path_join(const char *base_file, const char *relative,
                              char output[], size_t output_size,
                              char *error, size_t error_size);

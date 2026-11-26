@@ -13772,8 +13772,9 @@ static OemRun oem_sealed_step(CettaOpenEquationCursor *cursor,
  * does, and its result meets the step's destination; an error it returns
  * is raised, as the machine raises it.  The host admits a payload with an
  * unbound cell where the set keeps the row as its alpha key, which no
- * naming of the cells changes.  A space the reference does not name, or a
- * call the host declines, is the host's ordinary path.  The call is built in the scratch arena, since the space
+ * naming of the cells changes.  A space the reference does not name, a
+ * view of the read algebra (which no write reaches), or a call the host
+ * declines, is the host's ordinary path.  The call is built in the scratch arena, since the space
  * keeps its own copy; the region, which its region parts come from, is
  * the source the host may memoize them by. */
 static OemRun oem_admit_step(CettaOpenEquationCursor *cursor,
@@ -13792,7 +13793,8 @@ static OemRun oem_admit_step(CettaOpenEquationCursor *cursor,
     Atom *result = NULL;
     if (!call) {
         run = OEM_RUN_HANDOFF;
-    } else if (call->kind == ATOM_EXPR && call->expr.len == 3u) {
+    } else if (call->kind == ATOM_EXPR && call->expr.len == 3u &&
+               !petta_space_expression_is_algebra(call->expr.elems[1])) {
         Atom *reference = call->expr.elems[1];
         Space *target = cursor->runtime.resolve_space
             ? cursor->runtime.resolve_space(cursor->runtime.context,

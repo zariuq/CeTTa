@@ -1,7 +1,7 @@
 ; Names a parallel branch draws come from that branch's own supply, its
-; pusher's next push when the branch is queued (a part of the pusher's pool
-; that the push's count gives), so they depend on which branch drew them and
-; in what order, never on which worker ran it or when.  The names are
+; balanced piece of the share of the supply that runs the hyperpose (branch
+; i of k, within ceil(log2 k) halvings), so they depend on which branch drew
+; them and in what order, never on which worker ran it or when.  The names are
 ; printed: a program gives the same names on every run and on any number
 ; of workers.  The root's names, a branch's and its siblings' are all
 ; distinct, and the text of a name a branch made reaches nothing at the

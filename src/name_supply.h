@@ -19,30 +19,30 @@
  * unit interval and, for each kind of name, a clock: the number of names of
  * that kind it has given.  Its next name is its share with its clock, and
  * drawing advances the clock.  A fork in two hands each half of the share
- * (Shares.split) on at the same clocks.  A spawn of k components hands
- * component i its balanced piece (Mettapedia: Machines/NameSupplies/
- * BalancedPieces, balancedPiece): the first ceil(k/2) components share the
- * left half and the others the right half, each half parted again in the
- * same way, so every piece lies at most ceil(log2 k) halvings below the
- * share (balancedPiece_depth_le).  A supply that queues tasks one at a time,
- * not knowing how many, counts them (SiblingPushes, countedChild): at its
- * first push it keeps the left half of its share, which it draws from and
- * never pushes from, and the right half becomes its pool; push n hands the
- * task the part of the pool at countedPath n: floor(log2(n+1)) = j right
+ * on at the same clocks.  A spawn of k components hands component i its
+ * balanced piece: the first ceil(k/2) components share the left half and
+ * the others the right half, each half parted again in the same way, so
+ * every piece lies at most ceil(log2 k) halvings below the share.  A supply
+ * that queues tasks one at a time, not knowing how many, counts them: at
+ * its first push it keeps the left half of its share, which it draws from
+ * and never pushes from, and the right half becomes its pool; push n hands
+ * the task the part of the pool reached by j = floor(log2(n+1)) right
  * halvings, a left halving into the block of the 2^j pushes n = 2^j - 1 ..
- * 2^(j+1) - 2, and the balanced path of n + 1 - 2^j among them, so the
- * pushed tasks' shares are disjoint and push n lies 2j + 2 halvings below
- * the share (countedChild_depth_le): a million pushes from the whole
- * interval lie within 40.  No count-oblivious way of pushing keeps push n
- * within ceil(log2(n+1)) + c halvings for any c (no_balanced_pushes).  A
- * join -- the continuation of a rho COMM, or a parallel episode handing its
- * supplies back to the supply that started it -- takes the union of the
- * shares at the later clocks.  The shares of live supplies are disjoint, so
- * their names are distinct and never repeat (SharedSupplies, shares_exact,
- * and balanced_exact and counted_exact for the pieces and the pushes); a
- * supply forked in two and joined again is the supply it was (join_pieces),
- * so balanced fork and join keep shares bounded.  The process starts with
- * the whole interval.
+ * 2^(j+1) - 2, and the balanced path of n + 1 - 2^j among them, which is
+ * the j bits of n + 1 below its leading one: the path has the shape of the
+ * Elias gamma code of n + 1 (Elias 1975).  So the pushed tasks' shares are
+ * disjoint and push n lies 2j + 2 halvings below the share: a million
+ * pushes from the whole interval lie within 40.  No way of pushing that
+ * does not know the count keeps every push n within ceil(log2(n+1)) + c
+ * halvings, whatever the constant c: disjoint pieces at depths d_n have
+ * sum 2^-d_n <= 1 (Kraft's inequality), while the sum of 1/(n+1)
+ * diverges.  A join -- the continuation of a rho COMM, or a parallel
+ * episode handing its supplies back to the supply that started it -- takes
+ * the union of the shares at the later clocks.  The shares of live
+ * supplies are disjoint, balanced pieces and counted pushes among them, so
+ * their names are distinct and never repeat; a supply forked in two and
+ * joined again is the supply it was, so balanced fork and join keep shares
+ * bounded.  The process starts with the whole interval.
  *
  * A share is kept in one word.  A single dyadic interval (the whole
  * interval among them) is its start bit followed by its path, a bit per
@@ -236,8 +236,8 @@ static inline void cetta_generated_name_put_hex64(char *out, uint64_t value) {
 
 /* The prefix code of SHARE into OUT (at least CETTA_NAME_SHARE_SPELLING_MAX
    bytes), as digits: 0 an empty half, 1 a full one, 2 a node followed by
-   its halves.  Its length, or 0 when SHARE is no share word.  This is the
-   share's serialization in Mettapedia's PortableNames. */
+   its halves.  Its length, or 0 when SHARE is no share word.  A name of
+   counter mode spells its share this way. */
 static inline size_t cetta_name_share_spell(uint64_t share, char *out) {
     if (share == 0u)
         return 0u;
@@ -543,7 +543,7 @@ static inline bool cetta_name_share_halves_in_word(uint64_t share) {
     return share - 1u < (UINT64_C(1) << 62) - 1u;
 }
 
-/* Fork PARENT in two (Shares.split): PARENT keeps the left half of its
+/* Fork PARENT in two: PARENT keeps the left half of its
    share, and its pool, and *CHILD gets the right half, at PARENT's clocks,
    holding its own reference to the block, with nothing pushed. */
 static inline void cetta_name_supply_fork_into(CettaNameSupply *parent,
@@ -572,8 +572,10 @@ static inline CettaNameSupply cetta_name_supply_fork(CettaNameSupply *parent) {
 }
 
 /* Push a task from PUSHER, PUSHER's push n: *CHILD gets the part of
-   PUSHER's pool at countedPath n (SiblingPushes.countedChild), at PUSHER's
-   clocks, holding its own reference to the block, with nothing pushed.  At
+   PUSHER's pool along the counted path of n (j = floor(log2(n+1)) right
+   halvings, a left one, then the j bits of n + 1 below its leading one),
+   at PUSHER's clocks, holding its own reference to the block, with
+   nothing pushed.  At
    its first push PUSHER keeps the left half of its share to draw from and
    pools the right half, whose left half is push 0.  The pushes of one
    block are consecutive words, so push n is the word after push n - 1,
@@ -616,7 +618,7 @@ static inline void cetta_name_supply_push_into(CettaNameSupply *pusher,
         cetta_name_block_retain(block);
 }
 
-/* Split SUPPLY into its halves LEFT and RIGHT (Shares.split), each holding
+/* Split SUPPLY into its halves LEFT and RIGHT, each holding
    its block, neither with anything pushed; SUPPLY's reference goes with
    them, and what is left of its pool is given up. */
 static inline void cetta_name_supply_split(CettaNameSupply *supply,
@@ -665,9 +667,10 @@ static inline void cetta_name_supply_dispose(CettaNameSupply *supply) {
 }
 
 /* The pieces of a spawn of parts components, taken in order: component i
-   draws from the part of the spawner's share along balancedPath parts i
-   (BalancedPieces.balancedPiece), at the spawner's clocks, with nothing
-   pushed.  Taking them forks each share on the way down once, in the
+   draws from the part of the spawner's share along the balanced path of i
+   among parts (the first ceil(parts/2) go left, the rest right, and so on
+   down), at the spawner's clocks, with nothing pushed.  Taking them forks
+   each share on the way down once, in the
    word or through cetta_name_supply_fork_beyond; the right halves met on
    the way wait for the components after, at most ceil(log2 parts) at a
    time, each with its block (every piece has the spawner's clocks). */

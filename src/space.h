@@ -598,6 +598,19 @@ bool space_copy_module_view(Space *dst, const Space *src);
 static inline bool space_has_dependencies(const Space *s) {
     return space_dependency_count(s) != 0u;
 }
+/* Whether EXPRESSION is a space expression of the read algebra:
+   (, A B ...), the meet of its spaces, or (| A B ...), their additive
+   union.  It is a read-only view, which a read of it builds and no write
+   reaches: a write's operand that is one names no writable space. */
+static inline bool petta_space_expression_is_algebra(const Atom *expression) {
+    if (!expression || expression->kind != ATOM_EXPR ||
+        expression->expr.len < 2u)
+        return false;
+    const Atom *head = expression->expr.elems[0];
+    return head && head->kind == ATOM_SYMBOL &&
+           (head->sym_id == g_builtin_syms.comma ||
+            head->sym_id == g_builtin_syms.pipe);
+}
 /* The active session's grounded operation types: in a language whose
    grounded operations type themselves (HE's Grounded::type_), type lookup
    for such a symbol answers these alone, and declarations written for the
@@ -2031,7 +2044,7 @@ bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *
 void space_query_conjunction(Space *s, Arena *a, Atom **patterns, CettaExprLen npatterns,
                              const Bindings *seed, BindingSet *out);
 
-/* ── Type Lookup (from HE spec Space.lean) ─────────────────────────────── */
+/* ── Type Lookup ───────────────────────────────────────────────────────── */
 
 /* Get intrinsic type for grounded atom: int/float→Number, bool→Bool, string→String */
 Atom *get_grounded_type(Arena *a, Atom *atom);

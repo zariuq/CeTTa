@@ -75,16 +75,20 @@ struct CettaParallelExecutor {
     CettaNameContext names;
     /* The name supply of the thread that made the executor, its place then
        (its block, held, its share and its pushes), and the latest clocks of
-       the supplies that ended on that thread since.  Its pushes hand on
-       parts of it; when the executor is freed every task's supply has
-       ended, so the place comes back whole and the clocks go on from the
-       latest any task reached: a fork and join in balance
-       (SharedSupplies.join_pieces). */
+       the supplies that ended on that thread since.  Its pushes, or its
+       spawn, hand on parts of it; when the executor is freed every task's
+       supply has ended, so the place comes back whole and the clocks go on
+       from the latest any task reached: the pieces of a share joined again
+       are that share. */
     CettaNameSupply *coordinator;
     CettaNameSupply coordinator_place;
     uint64_t ending_clocks[CETTA_NAME_KIND_COUNT];
     uint64_t *coordinator_ending_clocks;
     bool coordinator_held;
+    /* Whether the coordinator spawned its tasks (cetta_parallel_executor_
+       spawn_begin), handing its share over to them, and its clocks then. */
+    bool coordinator_spawned;
+    uint64_t spawned_clocks[CETTA_NAME_KIND_COUNT];
     CettaRuntimeStatsOwner *stats;
     CettaParallelExecutorConfig config;
     CettaParallelReadyQueue queue;
@@ -119,6 +123,27 @@ bool cetta_parallel_executor_push(CettaParallelExecutor *executor, void *task);
    supplies of the tasks they come from). */
 bool cetta_parallel_executor_push_supply(CettaParallelExecutor *executor,
                                          void *task, CettaNameSupply *names);
+/* A spawn of a known number of tasks from the coordinator's supply. */
+typedef struct {
+    CettaNameSupplyPieces pieces;
+    uint32_t left;   /* the pieces not yet taken */
+} CettaParallelSpawn;
+/* Begin a spawn of COUNT tasks from the coordinator's supply, on the thread
+   that made the executor: task i draws from its balanced piece of the
+   coordinator's share (name_supply.h) at its clocks, within
+   ceil(log2 COUNT) halvings of it.  The coordinator hands its share over
+   to the pieces and draws nothing from it until the executor is freed (a
+   name drawn meanwhile is one of a fresh block), when the pieces join back
+   into the whole share at the latest clocks its tasks reached. */
+void cetta_parallel_executor_spawn_begin(CettaParallelExecutor *executor,
+                                         CettaParallelSpawn *spawn,
+                                         uint32_t count);
+/* Queue TASK to draw from SPAWN's next piece; false, ending the piece,
+   when the queue refuses it. */
+bool cetta_parallel_executor_spawn_push(CettaParallelExecutor *executor,
+                                        CettaParallelSpawn *spawn, void *task);
+/* End the pieces of SPAWN that no task took. */
+void cetta_parallel_executor_spawn_end(CettaParallelSpawn *spawn);
 bool cetta_parallel_executor_run(CettaParallelExecutor *executor);
 void cetta_parallel_executor_cancel(CettaParallelExecutor *executor);
 void cetta_parallel_executor_fail(CettaParallelExecutor *executor,

@@ -1,11 +1,11 @@
 /*
  * The supply of generated names (src/name_supply.h): SipHash-2-4 with
  * 128-bit output against the reference vectors and OpenSSL, the numeral and
- * its spelling, the order of names, the share algebra against a separate
- * implementation of Mettapedia's Machines/NameSupplies (Shares: split,
- * join, normal forms; BalancedPieces: the balanced pieces of a spawn;
- * SiblingPushes: counted pushes) over both forms of the word, and that no
- * depth, width or count fails: spawns of up to 4097 components that are
+ * its spelling, the order of names, the share algebra of interval tree
+ * clocks (Almeida, Baquero and Fonte 2008) against a separate
+ * implementation as trees (split, join and normal forms, the balanced
+ * pieces of a spawn, counted pushes) over both forms of the word, and that
+ * no depth, width or count fails: spawns of up to 4097 components that are
  * disjoint, cover their share and lie within ceil(log2 k) halvings of it, a
  * million pushes from one supply that stay in the root block within 40
  * halvings, a spent pool, chains of a million levels, a counter past its
@@ -130,7 +130,7 @@ static void test_siphash_vectors(void) {
     }
 }
 
-/* ── Shares, separately: Mettapedia's Shares, as trees ───────────────── */
+/* ── Shares, separately: interval-tree-clock shares, as trees ────────── */
 
 typedef struct Share Share;
 struct Share {
@@ -155,7 +155,7 @@ static const Share *share_node(const Share *left, const Share *right) {
     return node;
 }
 
-/* Shares.node': two empty halves are none, two full halves all. */
+/* A normal node: two empty halves are none, two full halves all. */
 static const Share *share_node_normal(const Share *left, const Share *right) {
     if (left->kind == SHARE_NONE && right->kind == SHARE_NONE) return &k_none;
     if (left->kind == SHARE_ALL && right->kind == SHARE_ALL) return &k_all;
@@ -199,7 +199,7 @@ static void share_split(const Share *s, const Share **first,
     }
 }
 
-/* PositionBounds.shareAt: down a path of halvings, true the right half. */
+/* The share down a path of halvings from S, true the right half. */
 static const Share *share_at(const Share *s, const bool *path, unsigned length) {
     for (unsigned i = 0u; i < length; i++) {
         const Share *first, *second;
@@ -209,7 +209,8 @@ static const Share *share_at(const Share *s, const bool *path, unsigned length) 
     return s;
 }
 
-/* BalancedPieces.balancedPath K I into PATH; its length. */
+/* The balanced path of I among K into PATH: the first ceil(K/2) go left,
+   the rest right, and so on down; its length. */
 static unsigned balanced_path(uint64_t k, uint64_t i, bool *path) {
     unsigned length = 0u;
     while (k > 1u) {
@@ -226,9 +227,9 @@ static unsigned balanced_path(uint64_t k, uint64_t i, bool *path) {
     return length;
 }
 
-/* SiblingPushes.countedPath N into PATH: pushBlock N = floor(log2(N+1))
-   right halvings, a left halving, and the balanced path of N + 1 - 2^j
-   among 2^j; its length. */
+/* The counted path of N into PATH: j = floor(log2(N+1)) right halvings, a
+   left halving, and the balanced path of N + 1 - 2^j among 2^j (the j bits
+   of N + 1 below its leading one); its length. */
 static unsigned counted_path(uint64_t n, bool *path) {
     unsigned j = 0u;
     while ((n + 1u) >> (j + 1u))
@@ -263,7 +264,7 @@ static unsigned share_depth(const Share *s) {
     return 1u + (left > right ? left : right);
 }
 
-/* Shares.Overlap, for normal shares: some point is in both. */
+/* Whether two normal shares overlap: some point is in both. */
 static bool share_overlap(const Share *a, const Share *b) {
     if (a->kind == SHARE_NONE || b->kind == SHARE_NONE) return false;
     if (a->kind == SHARE_ALL || b->kind == SHARE_ALL) return true;
@@ -276,7 +277,8 @@ static bool share_eq(const Share *a, const Share *b) {
     return share_eq(a->left, b->left) && share_eq(a->right, b->right);
 }
 
-/* PortableNames.writeShare: 0 none, 1 all, 2 a node and its halves. */
+/* A share's prefix code, as a name of counter mode spells it: 0 none,
+   1 all, 2 a node and its halves. */
 static size_t share_write(const Share *s, char *out) {
     if (s->kind == SHARE_NONE) { out[0] = '0'; return 1u; }
     if (s->kind == SHARE_ALL) { out[0] = '1'; return 1u; }
@@ -528,7 +530,7 @@ typedef struct {
 } TreeSupply;
 
 /* Whether SUPPLY's pushes are the trees': its count, and the word of its
-   last push, the pool along countedPath of the count before. */
+   last push, the pool along the counted path of the count before. */
 static bool pushes_are(const CettaNameSupply *supply, const TreeSupply *tree) {
     if (supply->pushes != tree->pushes)
         return false;
@@ -539,13 +541,12 @@ static bool pushes_are(const CettaNameSupply *supply, const TreeSupply *tree) {
     return word_of_share(share_at(tree->pool, path, length)) == supply->pushed;
 }
 
-/* Every share word of a supply that has not moved on is Shares' share:
+/* Every share word of a supply that has not moved on is the trees' share:
    forks, counted pushes, the balanced pieces of a spawn and joins, at
-   random, compared after each step with the same operation on the trees
-   (SiblingPushes.countedChild, BalancedPieces.balancedPiece), which hold
-   the same shares, pools and counts; the live shares are pairwise
-   disjoint.  A supply moves on to a block exactly when a share it needs
-   would not fit the word. */
+   random, compared after each step with the same operation on the trees,
+   which hold the same shares, pools and counts; the live shares are
+   pairwise disjoint.  A supply moves on to a block exactly when a share it
+   needs would not fit the word. */
 static void test_share_algebra(void) {
     enum { LIVE = 16u, STEPS = 200000u, ROUND = 40u };
     CettaNameSupply supply[LIVE];
@@ -606,8 +607,9 @@ static void test_share_algebra(void) {
             }
             supply[live++] = child;
         } else if (action < 5u && live < LIVE) {
-            /* A push: push n is the pool along countedPath n; at the first
-               the pusher keeps the left half and pools the right. */
+            /* A push: push n is the pool along the counted path of n; at
+               the first the pusher keeps the left half and pools the
+               right. */
             CettaNameBlock *block = supply[i].block;
             CettaNameSupply child;
             cetta_name_supply_push_into(&supply[i], &child);
@@ -736,14 +738,14 @@ static void test_share_algebra(void) {
             agree = supply[i].block != supply[j].block ||
                     !share_overlap(tree[i].share, tree[j].share);
     }
-    CHECK(agree, "the words' shares are Shares' shares after %zu steps "
+    CHECK(agree, "the words' shares are the trees' shares after %zu steps "
                  "(%zu forks, %zu pushes, %zu spawns, %zu joins, %zu moves on)",
           agreed, forks, pushes, spawns, joins, moved);
     for (size_t i = 0u; i < live; i++)
         cetta_name_supply_dispose(&supply[i]);
     CHECK(cetta_name_supply_live_blocks() == 0u,
           "the algebra's blocks are all given back");
-    printf("PASS: the words' shares are Shares' shares over %zu random "
+    printf("PASS: the words' shares are the trees' shares over %zu random "
            "steps: %zu forks, %zu counted pushes, %zu balanced spawns, %zu "
            "joins (%zu in the word, %zu of them coded), %zu moves on\n",
            agreed, forks, pushes, spawns, joins, kept, coded, moved);
@@ -756,7 +758,7 @@ static void test_share_algebra(void) {
     CettaNameSupply whole = cetta_name_supply_join(&left, &right);
     CHECK(left.share == 2u && right.share == 3u &&
               whole.share == CETTA_NAME_SHARE_WHOLE && whole.block == NULL,
-          "the halves of the whole join to the whole (join_pieces)");
+          "the halves of the whole join to the whole");
     CettaNameSupply ll, lr, rl, rr;
     cetta_name_supply_split(&left, &ll, &lr);
     cetta_name_supply_split(&right, &rl, &rr);
@@ -810,7 +812,7 @@ static void test_share_algebra(void) {
                     unions = unions && joined.block == NULL &&
                              supply_is_share(&joined, both);
                     kept_pairs++;
-                    /* And its halves are Shares.split's: for two intervals
+                    /* And its halves are the trees' split: for two intervals
                        that part, the two intervals. */
                     const Share *first, *second;
                     share_split(both, &first, &second);
@@ -832,12 +834,12 @@ static void test_share_algebra(void) {
             }
     }
     CHECK(unions && cetta_name_supply_live_blocks() == 0u,
-          "the join of two intervals is Shares.join in the word, or moves on "
+          "the join of two intervals is the trees' join in the word, or moves on "
           "exactly when that would not fit (%zu pairs: %zu in the word, %zu "
           "moved)", pairs, kept_pairs, moved_pairs);
-    printf("PASS: the joins of %zu pairs of intervals are Shares.join, and "
-           "their halves Shares.split: %zu in the word, %zu too wide for it in "
-           "blocks of their own\n",
+    printf("PASS: the joins of %zu pairs of intervals are the trees' "
+           "joins, and their halves the trees' splits: %zu in the word, %zu "
+           "too wide for it in blocks of their own\n",
            pairs, kept_pairs, moved_pairs);
 }
 
@@ -1088,25 +1090,23 @@ static bool key_is(const CettaNameBlock *block, const uint8_t *message,
 
 /* ── Balanced pieces ─────────────────────────────────────────────────── */
 
-/* The measure of a share as a multiple of 2^-62 (SiblingPushes.measure);
-   the share lies at most 62 halvings below DEPTH. */
+/* The measure of a share, the total length of its intervals, as a
+   multiple of 2^-62; the share lies at most 62 halvings below DEPTH. */
 static uint64_t share_measure(const Share *s, unsigned depth) {
     if (s->kind == SHARE_NONE) return 0u;
     if (s->kind == SHARE_ALL) return UINT64_C(1) << (62u - depth);
     return share_measure(s->left, depth + 1u) + share_measure(s->right, depth + 1u);
 }
 
-/* The pieces of spawns against BalancedPieces on the trees.  From the
-   whole interval, a half, a quarter, an interval 40 halvings deep and two
-   coded shares, spawns of 1 to 4097 components: every piece is the share
-   along balancedPath k i (balancedPiece), at the spawner's clocks with
-   nothing pushed, and within ceil(log2 k) halvings of it
-   (balancedPiece_depth_le); together they cover the share
-   (balancedPieces_cover) and their measures add up to its own, so no two
-   overlap (balancedPieces_disjoint), which the trees check pair by pair
-   up to 129 pieces; a second spawn gives the same pieces.  The 640 pieces
-   of the whole interval are intervals at most 10 halvings deep
-   (wide_fork_word). */
+/* The pieces of spawns against the balanced pieces on the trees.  From
+   the whole interval, a half, a quarter, an interval 40 halvings deep and
+   two coded shares, spawns of 1 to 4097 components: every piece is the
+   share along the balanced path of i among k, at the spawner's clocks with
+   nothing pushed, and within ceil(log2 k) halvings of it; together they
+   cover the share and their measures add up to its own, so no two
+   overlap, which the trees check pair by pair up to 129 pieces; a second
+   spawn gives the same pieces.  The 640 pieces of the whole interval are
+   intervals at most 10 halvings deep. */
 static void test_balanced_pieces(void) {
     static const uint32_t counts[] = {
         1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 15u, 16u, 17u, 31u, 32u,
@@ -1154,7 +1154,7 @@ static void test_balanced_pieces(void) {
             uint64_t measures = 0u;
             for (uint32_t i = 0u; i < k; i++) {
                 /* The share along the path; of an interval, the interval
-                   one path further (balancedPiece_interval). */
+                   one path further. */
                 bool path[64];
                 unsigned length = balanced_path(k, i, path);
                 expected[i] = interval
@@ -1183,17 +1183,16 @@ static void test_balanced_pieces(void) {
             pieces_taken += k;
         }
     }
-    CHECK(exact, "every piece is the share along balancedPath, at the "
-                 "spawner's clocks, with nothing pushed (balancedPiece)");
-    CHECK(bounded, "every piece lies within ceil(log2 k) halvings of the share "
-                   "(balancedPiece_depth_le)");
-    CHECK(covered, "the pieces cover the share (balancedPieces_cover)");
+    CHECK(exact, "every piece is the share along its balanced path, at the "
+                 "spawner's clocks, with nothing pushed");
+    CHECK(bounded, "every piece lies within ceil(log2 k) halvings of the share");
+    CHECK(covered, "the pieces cover the share");
     CHECK(apart, "no two pieces overlap: pair by pair, and their measures add "
-                 "up to the share's (balancedPieces_disjoint)");
+                 "up to the share's");
     CHECK(same, "a second spawn gives the same pieces");
     CHECK(clean, "a spawn takes all its pieces and leaves the spawner as it was");
     CHECK(wide, "640 pieces of the whole interval are intervals at most 10 "
-                "halvings deep (wide_fork_word)");
+                "halvings deep");
     CHECK(cetta_name_supply_live_blocks() == 0u, "pieces that fit make no block");
 
     /* Below an interval 58 halvings deep, 64 pieces would lie 64 deep: each
@@ -1252,7 +1251,7 @@ static void test_balanced_pieces(void) {
           "not take");
     cetta_name_supply_dispose(&deep);
     printf("PASS: %zu spawns of 1 to 4097 components from seven shares take "
-           "%zu balanced pieces: each the share along balancedPath, within "
+           "%zu balanced pieces: each the share along its balanced path, within "
            "ceil(log2 k) halvings, covering it, pairwise apart, the same "
            "again; 640 pieces of the whole lie within 10 halvings; below 58 "
            "halvings, pieces move on in blocks keyed by their places\n",
@@ -1285,10 +1284,10 @@ static size_t word_set_at(const WordSet *set, uint64_t word) {
 
 /* PUSHES pushes from a root, one at a time, each pushed task drawing a
    name, and the pusher drawing every thousand: push n must be the right
-   half along countedPath n in the root block, within 2 floor(log2(n+1)) + 2
-   halvings.  The words into WORDS, the names' fingerprints into PRINTS
-   (their number returned), and whether every push and name was as it
-   should be into *OK. */
+   half along the counted path of n in the root block, within
+   2 floor(log2(n+1)) + 2 halvings.  The words into WORDS, the names'
+   fingerprints into PRINTS (their number returned), and whether every
+   push and name was as it should be into *OK. */
 static size_t push_names(unsigned pushes, uint64_t *words, Fingerprint *prints,
                          bool *ok) {
     CettaNameSupply pusher;
@@ -1340,10 +1339,10 @@ static void test_counted_pushes(void) {
     bool ok = false, ok_again = false, ok_short = false;
     size_t count = push_names(PUSHES, words, first, &ok);
     size_t count_again = push_names(PUSHES, words, again, &ok_again);
-    CHECK(ok && ok_again, "push n is the pool, the right half, along countedPath "
-                          "n, in the root block, within 2 floor(log2(n+1)) + 2 "
-                          "halvings, and the pusher keeps the left half "
-                          "(countedChild, countedChild_depth_le, million_pushes_word)");
+    CHECK(ok && ok_again, "push n is the pool, the right half, along the "
+                          "counted path of n, in the root block, within "
+                          "2 floor(log2(n+1)) + 2 halvings, and the pusher "
+                          "keeps the left half");
     CHECK(count == count_again && memcmp(first, again, count * sizeof(*first)) == 0,
           "a million pushes give the same names on a second run");
     Fingerprint short_prints[SHORT + SHORT / 1000u + 8u];
@@ -1351,7 +1350,7 @@ static void test_counted_pushes(void) {
     CHECK(ok_short && memcmp(short_words, words, SHORT * sizeof(*words)) == 0,
           "the first pushes do not depend on how many follow (count-oblivious)");
     /* No push's interval lies inside another's: none of a push's prefixes
-       down to the pool is a push (countedChildren_disjoint). */
+       down to the pool is a push. */
     WordSet set;
     word_set_init(&set, PUSHES);
     for (unsigned n = 0u; n < PUSHES; n++)
@@ -1368,9 +1367,10 @@ static void test_counted_pushes(void) {
     size_t repeats = fingerprint_repeats(first, count);
     CHECK(repeats == 0u, "%zu of %zu names of the pushes repeat", repeats, count);
     printf("PASS: a million pushes from the root, one at a time: push n is the "
-           "pool along countedPath n, the deepest %zu halvings down, none "
-           "inside another, all %zu names distinct and in the root block, the "
-           "same on a second run, the first ones whatever follows\n",
+           "pool along the counted path of n, the deepest %zu halvings "
+           "down, none inside another, all %zu names distinct and in the "
+           "root block, the same on a second run, the first ones whatever "
+           "follows\n",
            deepest, count);
     free(set.slot);
     free(words);
