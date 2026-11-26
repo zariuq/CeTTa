@@ -3262,10 +3262,10 @@ int main(void) {
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
     query_results_free(&eq_results);
 
+    /* Membership of a ground atom is answered by the exact index. */
     bool coordinate_existence_applicable = false;
-    assert(space_match_exists_ground_exact_expression_coordinates(
-        &hash_space, seen_atom->expr.elems, seen_atom->expr.len,
-        &coordinate_existence_applicable));
+    assert(space_match_exists_ground_exact(
+        &hash_space, seen_atom, &coordinate_existence_applicable));
     assert(coordinate_existence_applicable);
     Atom *seen_arguments[1] = {seen_alpha};
     assert(term_universe_lookup_symbol_application(
@@ -3286,19 +3286,20 @@ int main(void) {
         &hash_space, seen_head->sym_id, open_seen_arguments, 1u,
         &coordinate_existence_applicable));
     assert(!coordinate_existence_applicable);
-    assert(!space_match_exists_ground_exact_expression_coordinates(
-        &hash_space, missing_seen_coordinates, 2u,
+    assert(!space_match_exists_ground_exact(
+        &hash_space, atom_expr(&scratch, missing_seen_coordinates, 2u),
         &coordinate_existence_applicable));
     assert(coordinate_existence_applicable);
+    /* A present atom matches its own occurrence, whatever rows with
+     * variables the space also holds. */
     Atom *open_seen_items[2] = {
         seen_head,
         atom_var(&scratch, "$stored-seen-value"),
     };
     space_add(&hash_space, atom_expr(&scratch, open_seen_items, 2u));
-    assert(!space_match_exists_ground_exact_expression_coordinates(
-        &hash_space, seen_atom->expr.elems, seen_atom->expr.len,
-        &coordinate_existence_applicable));
-    assert(!coordinate_existence_applicable);
+    assert(space_match_exists_ground_exact(
+        &hash_space, seen_atom, &coordinate_existence_applicable));
+    assert(coordinate_existence_applicable);
 
     /* A term the universe keeps without a record is decoded and filed: the
      * trie offers it to a query of its own shape. */

@@ -31,13 +31,13 @@ static bool support_setting(const char *name, int *cached) {
 /* CETTA_SUPPORT_REFERENCE=1 runs the library's definitions, so the two can be
  * compared. */
 static bool support_reference(void) {
-    static int reference = -1;
+    static _Thread_local int reference = -1;
     return support_setting("CETTA_SUPPORT_REFERENCE", &reference);
 }
 
 /* CETTA_SUPPORT_TRACE=1 reports admissions, declines and cache reads. */
 static bool support_trace(void) {
-    static int trace = -1;
+    static _Thread_local int trace = -1;
     return support_setting("CETTA_SUPPORT_TRACE", &trace);
 }
 

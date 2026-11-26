@@ -11346,8 +11346,8 @@ static OemRun oem_joint_next_leg(OemJointRows *join, uint32_t leg) {
         : oem_resolve_mode(cursor, pattern, true);
     bool exact_query = false;
     if (query)
-        query = petta_semantics_match_index_pattern(&cursor->region, query,
-                                                    &exact_query);
+        query = match_index_selector(&cursor->region, query,
+                                     &exact_query);
     if (!query)
         return OEM_RUN_HANDOFF;
     CettaIndex *indices = NULL;
@@ -11776,8 +11776,7 @@ static __attribute__((noinline)) bool oem_leg_point_rows(
     OemRows **rows_out, uint32_t *len_out, bool *capacity) {
     Atom *query = oem_pattern_resolved(pattern)
         ? pattern : oem_resolve_mode(cursor, pattern, true);
-    query = query ? petta_semantics_match_index_pattern(&cursor->region,
-                                                        query, NULL)
+    query = query ? match_index_selector(&cursor->region, query, NULL)
                   : NULL;
     Atom **atoms = NULL;
     CettaCount count = 0u;
@@ -11974,7 +11973,7 @@ static inline __attribute__((always_inline)) OemRun oem_match_step_mode(
             if (!query)
                 return OEM_RUN_HANDOFF;
             bool exact_query = false;
-            query = petta_semantics_match_index_pattern(
+            query = match_index_selector(
                 &cursor->region, query, &exact_query);
             if (!query)
                 return OEM_RUN_HANDOFF;
@@ -12319,7 +12318,7 @@ static inline OemRun oem_raised(CettaOpenEquationCursor *cursor,
  * host by head and arity; host-terms prints its PeTTa presentation and
  * host-raw prints the internal atom representation. */
 static int oem_debug_host_goals(void) {
-    static int mode = -1;
+    static _Thread_local int mode = -1;
     if (mode < 0) {
         const char *setting = getenv("CETTA_OPEN_EQUATIONS_DEBUG");
         mode = setting && strcmp(setting, "host-raw") == 0
@@ -20948,7 +20947,7 @@ static __attribute__((noinline)) OemRun oem_try_stored_in_place(
  * rows are decoded, as the machine read them before it read a large
  * space's rows by their ids: the stored-row law compares the two. */
 static __attribute__((noinline)) bool oem_stored_reference(void) {
-    static int enabled = -1;
+    static _Thread_local int enabled = -1;
     if (enabled < 0) {
         const char *setting = getenv("CETTA_OEM_STORED_REFERENCE");
         enabled = setting && strcmp(setting, "1") == 0;

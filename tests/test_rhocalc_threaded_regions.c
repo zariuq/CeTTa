@@ -290,12 +290,22 @@ static void test_memory(Atom *loop) {
           (unsigned long long)census[2][0].regions_made,
           (unsigned long long)census[2][3].regions_made);
     CHECK(scratch_ok, "the workers' scratch does not grow with the COMMs");
+    /* Under a sanitizer the allocator is the sanitizer's and its shadow
+     * memory grows with the threads' accesses: the heap and the peak RSS then
+     * measure the tool, not the loop.  The census checks above measure the
+     * loop itself in every build. */
+#if defined(__SANITIZE_THREAD__) || defined(__SANITIZE_ADDRESS__)
+    printf("NOTE: heap and peak RSS are not the loop's own under a sanitizer "
+           "(%zu -> %zu bytes, %ld -> %ld KiB)\n",
+           heap_small, heap_large, rss_small, rss_large);
+#else
     CHECK(heap_large <= heap_small + 64u * 1024u,
           "runs of 10^6 COMMs leave the heap flat (%zu -> %zu bytes)",
           heap_small, heap_large);
     CHECK(rss_large <= rss_small + 4096,
           "runs of 10^6 COMMs leave the peak RSS flat (%ld -> %ld KiB)",
           rss_small, rss_large);
+#endif
     CHECK(cetta_name_supply_live_blocks() == 0u,
           "the loop's supplies never leave the root block");
     printf("PASS: the duplicator loop on 1, 2 and 4 workers, 10^3 to 10^6 "

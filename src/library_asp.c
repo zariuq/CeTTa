@@ -727,7 +727,7 @@ static bool asp_defs_on_cycles(const AspProgram *p, const uint32_t *def_stmt,
 /* CETTA_ASP_WEIGHTS_NORMALIZED=1 normalizes every weight statement, so the
  * solver's own propagation can be compared with the verified counter. */
 static bool asp_weights_normalized(void) {
-    static int normalized = -1;
+    static _Thread_local int normalized = -1;
     if (normalized < 0) {
         const char *setting = getenv("CETTA_ASP_WEIGHTS_NORMALIZED");
         normalized = setting && strcmp(setting, "1") == 0;

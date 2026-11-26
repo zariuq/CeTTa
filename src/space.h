@@ -1254,6 +1254,17 @@ typedef enum {
 void space_occurrence_cursor_init_empty(SpaceOccurrenceCursor *cursor);
 bool space_occurrence_cursor_init(Space *s, Atom *pattern,
                                   SpaceOccurrenceCursor *cursor);
+/* As space_occurrence_cursor_init, but the rows of the space and of each
+ * dependency are read in row order (an ordered kind's in its kind's order),
+ * whatever index selects them, and every occurrence lent is a row: the
+ * relation the pattern names gives its facts back to the rows first. */
+bool space_occurrence_cursor_init_in_row_order(Space *s, Atom *pattern,
+                                               SpaceOccurrenceCursor *cursor);
+/* The index the cursor gives the first own row of the space's first
+ * dependency: every index below it names a row or a kept fact of the space
+ * itself.  UINT64_MAX for a space without dependencies. */
+CettaIndex space_occurrence_cursor_dependency_base(
+    const SpaceOccurrenceCursor *cursor);
 typedef enum {
     SPACE_MATCH_CURSOR_READY,
     SPACE_MATCH_CURSOR_DECLINED,
@@ -1434,12 +1445,6 @@ bool space_contains_exact_symbol_application(
    declines instead of materializing a native shadow. */
 bool space_match_exists_ground_exact(Space *s, Atom *pattern,
                                      bool *out_applicable);
-/* Exact match existence for an expression presented as borrowed top-level
- * coordinates.  Native storage answers from its canonical AtomId presence
- * projection only when every stored row is structurally exact. */
-bool space_match_exists_ground_exact_expression_coordinates(
-    Space *s, Atom *const *coordinates, CettaExprLen coordinate_count,
-    bool *out_applicable);
 /* O(1)-amortized alpha-aware membership over native spaces, including native
    overlays; *out_applicable is false for non-native backends. */
 bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable);
@@ -2017,14 +2022,6 @@ bool space_match_count_flat_linear_view64(
     Space *s, Arena *scratch, const CettaGsltTermViewV1 *view,
     CettaGsltTermViewOpenBindingObservationV1 open_bindings,
     uint64_t *count,
-    CettaIndex *examined);
-/* Boolean image of the same flat match producer.  This interface keeps the
- * observer independent of evaluator syntax; the current native realization
- * reuses exact occurrence aggregation and otherwise the exact count fold. */
-bool space_match_exists_flat_linear_view64(
-    Space *s, Arena *scratch, const CettaGsltTermViewV1 *view,
-    CettaGsltTermViewOpenBindingObservationV1 open_bindings,
-    bool *exists,
     CettaIndex *examined);
 bool space_match_count_conjunction64(Space *s, Arena *scratch,
                                      Atom **patterns,

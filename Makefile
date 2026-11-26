@@ -825,6 +825,7 @@ SRC += src/space_tuples.c
 SRC += src/space_skeleton.c
 SRC += src/term_molecule.c src/native_open_query.c
 SRC += src/space_path_index.c
+SRC += src/space_match_scan.c
 SRC += src/producer_reads.c
 SRC += src/producer_dependencies.c src/producer_schedule.c
 SRC += src/fallible_alloc.c
@@ -31498,6 +31499,25 @@ test-he-exact-index-frontier: $(BIN) tests/he/exact_index_frontier.metta tests/h
 		exit 1; \
 	fi; \
 	echo "PASS: HE ground matches keep promoted numbers, NaN, rows with variables and a row with no head"
+
+.PHONY: test-he-match-observations
+# Observations of a match read through the shared scan: a first answer in
+# the order of the space's rows; presence and absence, which stop at the
+# first answer only where every skipped template evaluation is data; and a
+# count.  A template with a nested call, and a row whose value is a call
+# with an effect, are still evaluated, and a row's value counts its own
+# answers.
+test-he-contract-suite: test-he-match-observations
+test-he-match-observations: $(BIN) tests/he/match_observations.metta tests/he/match_observations.expected
+	@set -eu; \
+	actual=$$($(CETTA_BIN_INVOKE) --lang he --profile extended tests/he/match_observations.metta 2>&1); \
+	if [ "$$actual" != "$$(cat tests/he/match_observations.expected)" ]; then \
+		echo "FAIL: HE match observations"; \
+		diff <(cat tests/he/match_observations.expected) \
+			<(printf '%s\n' "$$actual") | head -20; \
+		exit 1; \
+	fi; \
+	echo "PASS: HE match observations: first answer, presence, absence and count, effects of evaluated rows kept"
 
 .PHONY: test-he-stored-row-used-twice
 # A stored row read twice in one derivation, by two conjuncts or by a read

@@ -1770,7 +1770,7 @@ Atom *petta_semantics_materialize_closed_logical_list(
 enum { PETTA_MATCH_INDEX_DEPTH = 256u };
 
 /* The index's reading of PART, a part of a match pattern at DEPTH
- * (petta_semantics_match_index_pattern).  A part that holds no cell is
+ * (match_index_selector).  A part that holds no cell is
  * itself.  A closed chain of cells is the flat list it spells, read in turn,
  * since its elements may be chains too.  A chain whose tail is not a complete
  * list may spell lists of any length, so it is read as a fresh wildcard of
@@ -1817,7 +1817,7 @@ wildcard:
     return atom_var_with_literal(arena, "__match_index", fresh_var_id());
 }
 
-Atom *petta_semantics_match_index_pattern(
+Atom *match_index_selector(
     Arena *arena, Atom *pattern, bool *exact) {
     if (exact)
         *exact = false;

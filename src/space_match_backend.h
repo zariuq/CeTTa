@@ -583,12 +583,4 @@ bool space_match_backend_count_conjunction_semi_naive(
     uint64_t *out_count);
 void space_match_backend_print_inventory(FILE *out);
 
-/* Seeded single-atom matching for streamed conjunctive match (native
-   engines): one unification of pattern against the indexed atom under (and
-   extending) env. Pair with space_match_backend_candidates64. */
-bool space_match_backend_supports_seeded_candidates(Space *s);
-bool space_match_backend_match_atom_seeded(Space *s, CettaIndex atom_idx,
-                                           Atom *pattern, Bindings *env,
-                                           Arena *a);
-
 #endif /* CETTA_SPACE_MATCH_BACKEND_H */

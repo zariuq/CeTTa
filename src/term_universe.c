@@ -10412,7 +10412,7 @@ bool term_universe_collect(TermUniverse *universe,
     if (!collected)
         return false;
 
-    static int trace = -1;
+    static _Thread_local int trace = -1;
     if (trace < 0) {
         const char *flag = getenv("CETTA_TERM_UNIVERSE_COLLECTION_TRACE");
         trace = flag && *flag && strcmp(flag, "0") != 0;

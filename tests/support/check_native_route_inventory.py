@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inventory every route in the observer and coordinate-existence gates.
+"""Inventory every route in the observer gates.
 
 The executable hash selects a reviewed probe profile. Source anchors describe
 the working-source obligation map and are not asserted to be the binary's
@@ -15,17 +15,6 @@ import subprocess
 from check_native_observers import ROOT, save_json, sha256
 from native_observer_cases import FAMILIES, SOURCE_ANCHORS
 from native_observer_probes import CHECKPOINTS, COLLECT, FUNCTIONS, REVIEWED_SHA256S
-
-EXTERNAL = {
-    "match-existence-partition": {
-        "source": "src/space_match_backend.c",
-        "anchor": "space_match_exists_flat_linear_view64",
-        "language": "he",
-        "driver": "check_existence_domains.py",
-        "symbols": ["space_match_exists_flat_linear_view64",
-                    "space_match_exists_ground_exact_expression_coordinates"],
-    },
-}
 
 
 def route_table():
@@ -43,10 +32,6 @@ def route_table():
             raise AssertionError("route lacks an evidence contract: " + family)
         routes[family] = {"source": source, "anchor": anchor, "language": "petta",
                           "driver": "check_native_observers.py", "evidence": evidence}
-    for name, item in EXTERNAL.items():
-        routes[name] = {"source": item["source"], "anchor": item["anchor"],
-                        "language": item["language"], "driver": item["driver"],
-                        "evidence": {"kind": "partitioned-caller-chain", "symbols": item["symbols"]}}
     return routes
 
 

@@ -2335,7 +2335,7 @@ static void space_pinned_occurrences_roots(const TermUniverse *universe,
 /* CETTA_SPACE_READERS_REFERENCE: every removal copies its readers' view, as
  * before frozen views; the differential tests compare the two. */
 static bool space_readers_reference(void) {
-    static int reference = -1;
+    static _Thread_local int reference = -1;
     if (reference < 0)
         reference = getenv("CETTA_SPACE_READERS_REFERENCE") != NULL;
     return reference != 0;
@@ -3966,7 +3966,8 @@ static AtomId space_kept_occurrences_id(SpaceKeptOccurrences *kept, size_t i) {
 }
 
 static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
-                                              SpaceOccurrenceCursor *cursor);
+                                              SpaceOccurrenceCursor *cursor,
+                                              bool in_row_order);
 
 /* The reading of a space's dependencies after its own rows: a member cursor
  * for each dependency over its own rows, each opened, and so pinned, with
@@ -4036,9 +4037,11 @@ static bool space_occurrence_composition_readable(const Space *s) {
  * relations hold.  Each dependency's rows come after both, then after the
  * rows and relation facts of the dependencies before.  The pattern decides
  * none of these bounds, and giving a relation's facts back to rows leaves
- * each sum of rows and facts the same. */
+ * each sum of rows and facts the same.  IN_ROW_ORDER: each dependency's rows
+ * are read in row order, as the space's own are. */
 static bool space_occurrence_composition_open(Space *s, Atom *pattern,
-                                              SpaceOccurrenceCursor *cursor) {
+                                              SpaceOccurrenceCursor *cursor,
+                                              bool in_row_order) {
     if (!space_occurrence_composition_readable(s))
         return false;
     uint32_t dependencies = space_dependency_count(s);
@@ -4055,7 +4058,8 @@ static bool space_occurrence_composition_open(Space *s, Atom *pattern,
         space_occurrence_cursor_init_empty(&m->rows);
         c->len = d + 1u;
         if (!space_prepare_proof_read(dependency, pattern) ||
-            !space_occurrence_cursor_init_rows(dependency, pattern, &m->rows))
+            !space_occurrence_cursor_init_rows(dependency, pattern, &m->rows,
+                                               in_row_order))
             return false;
         m->begin = space_imported_length(dependency);
         m->base = base;
@@ -4067,20 +4071,27 @@ static bool space_occurrence_composition_open(Space *s, Atom *pattern,
 
 /* The rows the pattern may match, then the facts the space's relation for
  * it kept: the relation stays, and only the facts lent get records.  A space
- * with dependencies then lends each dependency's own rows. */
-bool space_occurrence_cursor_init(Space *s, Atom *pattern,
-                                  SpaceOccurrenceCursor *cursor) {
+ * with dependencies then lends each dependency's own rows.  IN_ROW_ORDER:
+ * the rows of the space and of each dependency are read in row order (an
+ * ordered kind's in its kind's order), whatever index selects them, and the
+ * relation the pattern names gives its facts back to the rows first, so
+ * every occurrence the cursor lends is a row. */
+static bool space_occurrence_cursor_open(Space *s, Atom *pattern,
+                                         SpaceOccurrenceCursor *cursor,
+                                         bool in_row_order) {
     if (!space_prepare_proof_read(s, pattern)) return false;
     /* Open the owner and all imported row views at one cut, before any
      * maintenance lock is taken. */
     CETTA_SCOPED_SPACE_OBSERVE(cursor_view, s);
-    SpaceKeptOccurrences *kept = space_dense_occurrences(s, pattern);
+    SpaceKeptOccurrences *kept =
+        in_row_order ? NULL : space_dense_occurrences(s, pattern);
     bool ok;
     if (!kept) {
-        ok = space_occurrence_cursor_init_rows(s, pattern, cursor);
+        ok = space_occurrence_cursor_init_rows(s, pattern, cursor,
+                                               in_row_order);
     } else {
         space_dense_reading_begin();
-        ok = space_occurrence_cursor_init_rows(s, pattern, cursor);
+        ok = space_occurrence_cursor_init_rows(s, pattern, cursor, false);
         space_dense_reading_end();
         if (!ok)
             space_kept_occurrences_release(kept);
@@ -4088,7 +4099,8 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
             cursor->kept = kept;
     }
     if (ok && space_has_dependencies(s) &&
-        !space_occurrence_composition_open(s, pattern, cursor)) {
+        !space_occurrence_composition_open(s, pattern, cursor,
+                                           in_row_order)) {
         space_occurrence_cursor_release(cursor);
         return false;
     }
@@ -4097,10 +4109,26 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
     return ok;
 }
 
+bool space_occurrence_cursor_init(Space *s, Atom *pattern,
+                                  SpaceOccurrenceCursor *cursor) {
+    return space_occurrence_cursor_open(s, pattern, cursor, false);
+}
+
+bool space_occurrence_cursor_init_in_row_order(Space *s, Atom *pattern,
+                                               SpaceOccurrenceCursor *cursor) {
+    return space_occurrence_cursor_open(s, pattern, cursor, true);
+}
+
+CettaIndex space_occurrence_cursor_dependency_base(
+    const SpaceOccurrenceCursor *cursor) {
+    return cursor && cursor->composition
+        ? cursor->composition->first_base : UINT64_MAX;
+}
+
 SpaceMatchCursorStatus space_match_cursor_open(
     Space *s, Arena *arena, Atom *pattern, SpaceOccurrenceCursor *cursor,
     Atom **selector_out) {
-    Atom *selector = petta_semantics_match_index_pattern(arena, pattern, NULL);
+    Atom *selector = match_index_selector(arena, pattern, NULL);
     if (selector_out)
         *selector_out = selector;
     if (!selector)
@@ -4184,12 +4212,14 @@ static bool space_occurrence_cursor_init_ordered(Space *s, Atom *pattern,
 
 static int exact_index_row_compare(const void *left, const void *right);
 
-/* A flat read of a space whose kind orders its rows (a stack, a queue) takes
- * its candidates in that order, whatever index supplied them: the oldest
- * first, or the newest first for a stack. */
-static void space_occurrence_cursor_flat_in_kind_order(
+/* A flat read in row order (row_order), and a flat read of a space whose
+ * kind orders its rows (a stack, a queue), takes its candidates in that
+ * order, whatever index supplied them: the oldest first, or the newest first
+ * for a stack. */
+static void space_occurrence_cursor_flat_in_row_order(
         const Space *s, SpaceOccurrenceCursor *cursor) {
-    if (!space_rows_in_kind_order(s) || cursor->flat_len < 2u)
+    if ((!cursor->row_order && !space_rows_in_kind_order(s)) ||
+        cursor->flat_len < 2u)
         return;
     CettaIndex *rows = cursor->flat;
     CettaIndex n = cursor->flat_len;
@@ -4240,12 +4270,13 @@ static bool space_occurrence_cursor_copy_small_frontier(
     cursor->flat = rows;
     cursor->flat_len = count;
     cursor->flat_mode = true;
-    space_occurrence_cursor_flat_in_kind_order(space, cursor);
+    space_occurrence_cursor_flat_in_row_order(space, cursor);
     return true;
 }
 
 static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
-                                              SpaceOccurrenceCursor *cursor) {
+                                              SpaceOccurrenceCursor *cursor,
+                                              bool in_row_order) {
     space_dense_settle_for_pattern(s, pattern);
     CETTA_SCOPED_SPACE_OBSERVE(transition, s);
     /* Registrations of readers are the space's derived state. */
@@ -4258,6 +4289,7 @@ static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
     space_linearize(s);
     cursor->space = s;
     cursor->descending = space_reads_newest_first(s);
+    cursor->row_order = in_row_order;
     if (s->kind == SPACE_KIND_PRIORITY)
         return space_occurrence_cursor_init_ordered(s, pattern, cursor);
     if (pattern->kind == ATOM_VAR ||
@@ -4268,7 +4300,7 @@ static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
     if (space_match_native_exact_occurrences(
             s, pattern, &cursor->flat, &cursor->flat_len)) {
         cursor->flat_mode = true;
-        space_occurrence_cursor_flat_in_kind_order(s, cursor);
+        space_occurrence_cursor_flat_in_row_order(s, cursor);
         return space_occurrence_cursor_capture(s, cursor);
     }
     if (cetta_native_memory_failed && cetta_native_memory_failed()) return false;
@@ -4299,14 +4331,14 @@ static bool space_occurrence_cursor_init_rows(Space *s, Atom *pattern,
          space_path_index_prefix_candidates(s, pattern, true, &cursor->flat,
                                             &cursor->flat_len))) {
         cursor->flat_mode = true;
-        space_occurrence_cursor_flat_in_kind_order(s, cursor);
+        space_occurrence_cursor_flat_in_row_order(s, cursor);
         return space_occurrence_cursor_capture(s, cursor);
     }
     space_match_native_ensure_trie(s);
     DiscNode *root = s->match_backend.native.match_trie;
     if (!root)
         return false;
-    cursor->row_order = space_rows_in_kind_order(s);
+    cursor->row_order = in_row_order || space_rows_in_kind_order(s);
     DiscNodeSet final;
     dns_init(&final);
     disc_step(root, pattern, &final);
@@ -19845,35 +19877,6 @@ bool space_match_exists_ground_exact(Space *s, Atom *pattern,
     if (out_applicable)
         *out_applicable = true;
     return found;
-}
-
-bool space_match_exists_ground_exact_expression_coordinates(
-        Space *s, Atom *const *coordinates,
-        CettaExprLen coordinate_count, bool *out_applicable) {
-    if (out_applicable)
-        *out_applicable = false;
-    if (!s || coordinate_count == 0u || !coordinates ||
-        match_head_is_connective(coordinates[0]) ||
-        space_has_overlay_base(s) || space_has_dependencies(s) ||
-        space_engine_uses_pathmap(s->match_backend.kind) ||
-        !s->native.universe || !space_contains_only_exact_atoms(s)) {
-        return false;
-    }
-    for (CettaExprIndex index = 0u;
-         index < coordinate_count; index++) {
-        if (!atom_is_exact_indexable(coordinates[index]) ||
-            !space_match_ground_pattern_matches_by_identity(
-                coordinates[index]))
-            return false;
-    }
-    if (!id_present_sync(s))
-        return false;
-    AtomId query_id = term_universe_lookup_expression_coordinates(
-        s->native.universe, coordinates, coordinate_count);
-    if (out_applicable)
-        *out_applicable = true;
-    return query_id != CETTA_ATOM_ID_NONE &&
-        id_present_contains(&s->native, query_id);
 }
 
 bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable) {

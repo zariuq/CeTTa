@@ -17,7 +17,7 @@
 
 /* CETTA_TRANSFORM_TRACE=1 reports each native step on stderr. */
 static bool transform_trace(void) {
-    static int trace = -1;
+    static _Thread_local int trace = -1;
     if (trace < 0) {
         const char *setting = getenv("CETTA_TRANSFORM_TRACE");
         trace = setting && strcmp(setting, "1") == 0;

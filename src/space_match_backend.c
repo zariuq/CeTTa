@@ -2461,6 +2461,9 @@ static void native_query_rows(Space *s, Arena *a, Atom *query,
         CettaIndex *positions = NULL;
         CettaIndex count = 0u;
         if (space_path_index_candidates(s, query, &positions, &count)) {
+            /* A match reads its rows in row order, whichever index found
+             * them (space_match_scan's module order). */
+            count = sort_unique_cetta_index(positions, count);
             for (CettaIndex next = 0u; next < count; next++)
                 subst_matchset_push_row(out, positions[next]);
             free(positions);
@@ -2482,6 +2485,9 @@ static void native_query_rows(Space *s, Arena *a, Atom *query,
         CettaIndex count = native_candidates(s, query, &positions);
         if (st->match_trie)
             st->stree_rent += count + 1u;
+        /* The trie lends its nodes' rows one node after another: a match
+         * reads them in row order, as the tree that follows answers them. */
+        count = sort_unique_cetta_index(positions, count);
         for (CettaIndex next = 0u; next < count; next++)
             subst_matchset_push_row(out, positions[next]);
         free(positions);
@@ -10351,6 +10357,10 @@ static void native_candidate_exact_query(Space *s, Arena *a, Atom *query,
         native_index_authoritative
             ? native_candidates(s, query, &candidates)
             : all_linear_candidates(s, &candidates);
+    /* A match reads a space's rows in row order, whichever index found
+     * them; a space of an ordered kind keeps its own order. */
+    if (native_index_authoritative && !space_is_ordered(s))
+        ncand = sort_unique_cetta_index(candidates, ncand);
     for (CettaIndex ci = 0; ci < ncand; ci++)
         if (candidates[ci] < s->native.len)
             native_push_matched_row(s, a, query, candidates[ci], out);
@@ -12089,85 +12099,6 @@ static bool space_match_count_flat_linear_view_rows64(
     return admitted;
 }
 
-static bool space_match_exists_flat_linear_view_rows64(
-    Space *s, Arena *scratch, const CettaGsltTermViewV1 *view,
-    CettaGsltTermViewOpenBindingObservationV1 open_bindings,
-    bool *exists, CettaIndex *examined);
-
-bool space_match_exists_flat_linear_view64(
-    Space *s, Arena *scratch, const CettaGsltTermViewV1 *view,
-    CettaGsltTermViewOpenBindingObservationV1 open_bindings,
-    bool *exists,
-    CettaIndex *examined) {
-    CettaCount bits = 0u;
-    if (space_match_dense_view_count(s, view, open_bindings, &bits)) {
-        if (bits != 0u) {
-            if (exists)
-                *exists = true;
-            if (examined)
-                *examined = 0u;
-            return exists && examined;
-        }
-        space_dense_reading_begin();
-        bool admitted = space_match_exists_flat_linear_view_rows64(
-            s, scratch, view, open_bindings, exists, examined);
-        space_dense_reading_end();
-        return admitted;
-    }
-    if (!space_prepare_proof_read(s, view ? view->source : NULL)) return false;
-    space_dense_settle_for_pattern(s, view ? view->source : NULL);
-    return space_match_exists_flat_linear_view_rows64(
-        s, scratch, view, open_bindings, exists, examined);
-}
-
-static bool space_match_exists_flat_linear_view_rows64(
-    Space *s, Arena *scratch, const CettaGsltTermViewV1 *view,
-    CettaGsltTermViewOpenBindingObservationV1 open_bindings,
-    bool *exists, CettaIndex *examined) {
-    enum { MATCH_EXISTENCE_INLINE_COORDINATES = 16u };
-    uint64_t count = 0u;
-    if (exists)
-        *exists = false;
-    if (examined)
-        *examined = 0u;
-    if (!s || !scratch || !view || !view->source || !exists || !examined ||
-        space_has_dependencies(s) || match_pattern_is_connective(view->source) ||
-        view->source->kind != ATOM_EXPR || view->source->expr.len == 0u ||
-        !cetta_gslt_term_view_open_binding_observation_valid_v1(
-            open_bindings)) {
-        return false;
-    }
-
-    CettaExprLen coordinate_count = view->source->expr.len;
-    if ((size_t)coordinate_count > SIZE_MAX / sizeof(Atom *))
-        return false;
-    Atom *inline_coordinates[MATCH_EXISTENCE_INLINE_COORDINATES];
-    Atom **coordinates = coordinate_count <= MATCH_EXISTENCE_INLINE_COORDINATES
-        ? inline_coordinates
-        : malloc((size_t)coordinate_count * sizeof(*coordinates));
-    if (!coordinates)
-        return false;
-    bool projected =
-        cetta_gslt_term_view_project_expression_coordinates_v1(
-            view, open_bindings, coordinates, coordinate_count);
-    bool applicable = false;
-    bool found = projected &&
-        space_match_exists_ground_exact_expression_coordinates(
-            s, coordinates, coordinate_count, &applicable);
-    if (coordinates != inline_coordinates)
-        free(coordinates);
-    if (applicable) {
-        *exists = found;
-        return true;
-    }
-
-    if (!space_match_count_flat_linear_view_rows64(
-            s, scratch, view, open_bindings, &count, examined)) {
-        return false;
-    }
-    *exists = count != 0u;
-    return true;
-}
 
 bool space_match_count_conjunction64(
     Space *s, Arena *scratch, Atom **patterns,
@@ -12528,31 +12459,6 @@ bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *
     }
     bindings_free(&merged);
     return false;
-}
-
-bool space_match_backend_supports_seeded_candidates(Space *s) {
-    /* Candidate coordinates are a private deferred representation.  A
-       concurrent caller may use them only while it already owns the physical
-       transition bracket; otherwise choose the exact binding snapshot path.
-       They address one space's storage, so a composed space declines. */
-    return s && !space_has_dependencies(s) &&
-           (!cetta_shared_transition_scope_active() || space_guard_held(s)) &&
-           !s->overlay_base &&
-           (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
-            s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) &&
-           !space_match_backend_is_attached_compiled(s);
-}
-
-bool space_match_backend_match_atom_seeded(Space *s, CettaIndex atom_idx,
-                                           Atom *pattern, Bindings *env,
-                                           Arena *a) {
-    space_dense_settle_for_pattern(s, pattern);
-                                               CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
-    CETTA_SCOPED_SPACE_OBSERVE(shared_read, s);
-    if (!s || atom_idx >= s->native.len)
-        return false;
-    CettaFrameIdentity suffix = cetta_frame_identity_scope_fresh(&frame_identity_scope);
-    return match_space_atom_epoch(s, atom_idx, pattern, env, a, suffix);
 }
 
 void space_query_conjunction(Space *s, Arena *a, Atom **patterns, CettaExprLen npatterns,
