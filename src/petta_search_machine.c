@@ -32858,7 +32858,14 @@ static bool petta_open_answer_bindings(
     for (uint32_t index = 0u; index < open->var_count; index++) {
         if (values[index] == open->vars[index])
             continue;
-        left[next] = values[index];
+        /* A closed open-cons chain is machine-internal representation of the
+         * flat list it denotes (as at petta_eval_machine_run's answer
+         * boundary): an answer of the open tier enters the machine flat, so
+         * no value it binds holds a carrier that would make every later call
+         * containing it opaque to structural candidate selection. */
+        left[next] = petta_semantics_open_cons_built()
+            ? petta_semantics_flatten_closed_open_cons(&machine->heap, values[index])
+            : values[index];
         right[next++] = open->vars[index];
     }
     *values_out = atom_expr(&machine->heap, left, count);

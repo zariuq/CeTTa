@@ -407,10 +407,9 @@
    (quote (gslt:result:proof-semantic-nat-v1:10 q-zero)))
 
 ; gslt-lowered-equation-v1 source-rewrite=59 source-presentation=CertificateGSLTFirstOrderDenotationV1 source-rule=proof-semantic-nat-succ-v1 target=mode relation=proof-semantic-nat-v1 input=10 functional=semidet
-(= (gslt:fn:proof-semantic-nat-v1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom proof-succ-v1 (cons-atom $value ())) $__gslt_input_v1_0_0
+(= (gslt:fn:proof-semantic-nat-v1:10 (proof-succ-v1 $value))
    (let (gslt:result:proof-semantic-nat-v1:10 $quoted) (gslt:fn:proof-semantic-nat-v1:10 $value)
-   (quote (gslt:result:proof-semantic-nat-v1:10 (q-succ $quoted))))))
+   (quote (gslt:result:proof-semantic-nat-v1:10 (q-succ $quoted)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=60 source-presentation=CertificateGSLTFirstOrderDenotationV1 source-rule=proof-semantic-formal-index-head-v1 target=mode relation=proof-semantic-formal-index-v1 input=0000 functional=relational
 (= (gslt:mode:proof-semantic-formal-index-v1:0000)
@@ -422,38 +421,33 @@
    (quote (gslt:result:proof-semantic-formal-index-v1:0000 (proof-list-cons-v1 $formal $rest) $name $depth (q-succ $index)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=60 source-presentation=CertificateGSLTFirstOrderDenotationV1 source-rule=proof-semantic-formal-index-head-v1 target=mode relation=proof-semantic-formal-index-v1 input=1110 functional=relational
-(= (gslt:mode:proof-semantic-formal-index-v1:1110 $__gslt_input_v1_0_0 $name $depth)
-   (let (cons-atom proof-list-cons-v1 (cons-atom (cons-atom proof-formal-v1 (cons-atom $name (cons-atom $depth ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:proof-semantic-formal-index-v1:1110 q-zero))))
+(= (gslt:mode:proof-semantic-formal-index-v1:1110 (proof-list-cons-v1 (proof-formal-v1 $name $depth) $rest) $name $depth)
+   (quote (gslt:result:proof-semantic-formal-index-v1:1110 q-zero)))
 
 ; gslt-lowered-equation-v1 source-rewrite=61 source-presentation=CertificateGSLTFirstOrderDenotationV1 source-rule=proof-semantic-formal-index-tail-v1 target=mode relation=proof-semantic-formal-index-v1 input=1110 functional=relational
-(= (gslt:mode:proof-semantic-formal-index-v1:1110 $__gslt_input_v1_0_0 $name $depth)
-   (let (cons-atom proof-list-cons-v1 (cons-atom $formal (cons-atom $rest ()))) $__gslt_input_v1_0_0
+(= (gslt:mode:proof-semantic-formal-index-v1:1110 (proof-list-cons-v1 $formal $rest) $name $depth)
    (let (gslt:result:proof-semantic-formal-index-v1:1110 $index) (superpose (collapse (gslt:mode:proof-semantic-formal-index-v1:1110 $rest $name $depth)))
-   (quote (gslt:result:proof-semantic-formal-index-v1:1110 (q-succ $index))))))
+   (quote (gslt:result:proof-semantic-formal-index-v1:1110 (q-succ $index)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=62 source-presentation=CertificateGSLTFirstOrderDenotationV1 source-rule=proof-semantic-pattern-fvar-v1 target=mode relation=proof-semantic-pattern-v1 input=1110 functional=relational
-(= (gslt:mode:proof-semantic-pattern-v1:1110 $formals $depth $__gslt_input_v1_0_2)
-   (let (cons-atom proof-fvar-v1 (cons-atom $name ())) $__gslt_input_v1_0_2
+(= (gslt:mode:proof-semantic-pattern-v1:1110 $formals $depth (proof-fvar-v1 $name))
    (let (gslt:result:proof-semantic-formal-index-v1:1110 $index) (superpose (collapse (gslt:mode:proof-semantic-formal-index-v1:1110 $formals $name $depth)))
-   (quote (gslt:result:proof-semantic-pattern-v1:1110 (q-var $index))))))
+   (quote (gslt:result:proof-semantic-pattern-v1:1110 (q-var $index)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=63 source-presentation=CertificateGSLTFirstOrderDenotationV1 source-rule=proof-semantic-pattern-apply-v1 target=mode relation=proof-semantic-pattern-v1 input=1110 functional=relational
-(= (gslt:mode:proof-semantic-pattern-v1:1110 $formals $depth $__gslt_input_v1_0_2)
-   (let (cons-atom proof-apply-v1 (cons-atom $name (cons-atom $arguments ()))) $__gslt_input_v1_0_2
+(= (gslt:mode:proof-semantic-pattern-v1:1110 $formals $depth (proof-apply-v1 $name $arguments))
    (let (gslt:result:proof-semantic-pattern-list-v1:1110 $quoted-arguments) (superpose (collapse (gslt:mode:proof-semantic-pattern-list-v1:1110 $formals $depth $arguments)))
-   (quote (gslt:result:proof-semantic-pattern-v1:1110 (q-app (q-sym $name) $quoted-arguments))))))
+   (quote (gslt:result:proof-semantic-pattern-v1:1110 (q-app (q-sym $name) $quoted-arguments)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=64 source-presentation=CertificateGSLTFirstOrderDenotationV1 source-rule=proof-semantic-pattern-list-nil-v1 target=mode relation=proof-semantic-pattern-list-v1 input=1110 functional=relational
 (= (gslt:mode:proof-semantic-pattern-list-v1:1110 $formals $depth proof-list-nil-v1)
    (quote (gslt:result:proof-semantic-pattern-list-v1:1110 q-nil)))
 
 ; gslt-lowered-equation-v1 source-rewrite=65 source-presentation=CertificateGSLTFirstOrderDenotationV1 source-rule=proof-semantic-pattern-list-cons-v1 target=mode relation=proof-semantic-pattern-list-v1 input=1110 functional=relational
-(= (gslt:mode:proof-semantic-pattern-list-v1:1110 $formals $depth $__gslt_input_v1_0_2)
-   (let (cons-atom proof-list-cons-v1 (cons-atom $pattern (cons-atom $rest ()))) $__gslt_input_v1_0_2
+(= (gslt:mode:proof-semantic-pattern-list-v1:1110 $formals $depth (proof-list-cons-v1 $pattern $rest))
    (let (gslt:result:proof-semantic-pattern-v1:1110 $quoted-pattern) (superpose (collapse (gslt:mode:proof-semantic-pattern-v1:1110 $formals $depth $pattern)))
    (let (gslt:result:proof-semantic-pattern-list-v1:1110 $quoted-rest) (superpose (collapse (gslt:mode:proof-semantic-pattern-list-v1:1110 $formals $depth $rest)))
-   (quote (gslt:result:proof-semantic-pattern-list-v1:1110 (q-cons $quoted-pattern $quoted-rest)))))))
+   (quote (gslt:result:proof-semantic-pattern-list-v1:1110 (q-cons $quoted-pattern $quoted-rest))))))
 
 
 ; gslt-lowered-equation-v1 source-rewrite=0 source-presentation=GeneratedAnswerFactsV1_35cb7181d70b75fc43e565d1c13a578f98aec3b42d591fd45df680d83dc4f534 source-rule=answer-fact-88b3905a507e8457d3d52d5cfb2e52a6870537c43ff741039bd77f742d53fbf6 target=relation

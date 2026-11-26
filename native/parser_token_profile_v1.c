@@ -232,6 +232,26 @@ bool cetta_parser_token_profile_v1_decode(
             }
             continue;
         }
+        /* the offside rule: three token names; a bracket pair; a line
+           continuation */
+        bool indent = token_form(row, "ParserLayoutIndentV1", 4u);
+        bool bracket = token_form(row, "ParserLayoutBracketV1", 3u);
+        bool joins = token_form(row, "ParserLayoutContinueV1", 2u);
+        /* an interpolated string: three token names and three texts; an
+           option and its value */
+        bool interpolation = token_form(row, "ParserInterpolationV1", 7u);
+        bool option = token_form(row, "ParserInterpolationOptionV1", 3u);
+        bool soft = token_form(row, "ParserSoftKeywordV1", 4u);
+        if (indent || bracket || joins || interpolation || option || soft) {
+            size_t texts = interpolation ? 6u : indent || soft ? 3u : bracket || option ? 2u : 1u;
+            bool well = token_origin(row->expr.elems[texts + 1u]);
+            for (size_t k = 1u; k <= texts && well; ++k) well = token_string(row->expr.elems[k]);
+            if (!well) {
+                token_error(error, error_size, "malformed origin-bearing layout declaration");
+                goto done;
+            }
+            continue;
+        }
         bool line = token_form(row, "ParserLineCommentV1", 2u);
         bool block = token_form(row, "ParserBlockCommentV1", 3u);
         if ((!line && !block) || !token_nonempty_text(row->expr.elems[1]) ||

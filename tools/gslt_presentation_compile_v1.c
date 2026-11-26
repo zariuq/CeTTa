@@ -58,6 +58,18 @@ static char *xstrdup(const char *s) {
     return d;
 }
 
+/* Room for one more entry in a growable table ARR of N entries and CAP
+   allocated: the table doubles when it is full.  Every table the compiler
+   fills from its inputs grows this way, so no input size overruns a fixed
+   array; the limits that remain are those of the generated tables' types,
+   and each is a refusal with a message. */
+#define GROW(arr, n, cap) do { \
+        if ((n) >= (cap)) { \
+            (cap) = (cap) ? (cap) * 2 : 16; \
+            (arr) = xrealloc((arr), (size_t)(cap) * sizeof *(arr)); \
+        } \
+    } while (0)
+
 /* ------------------------------------------------------------ data reader */
 
 typedef struct Node {
@@ -293,7 +305,7 @@ static int term_find(const char *text, uint8_t kind) {
 static int term_add(const char *text, uint8_t kind, int decl) {
     int found = term_find(text, kind);
     if (found >= 0) return found;
-    if (n_terms >= MAXT) die("too many terminals");
+    if (n_terms >= MAXT) die("more than %d terminals; the lookahead sets hold %d", MAXT - 1, MAXT);
     terms[n_terms].text = xstrdup(text);
     terms[n_terms].kind = kind;
     terms[n_terms].token_decl = decl;
@@ -336,15 +348,31 @@ typedef struct {
     int terminal;
 } TokenDecl;
 
-static TokenDecl decls[64];
-static int n_decls;
-static char *line_comments[8];
-static int n_line_comments;
-static char *layout_words[32], *layout_stops[32];
-static int n_layout_words, n_layout_stops;
+static TokenDecl *decls;
+static int n_decls, cap_decls;
+static char **line_comments;
+static int n_line_comments, cap_line_comments;
+static char **layout_words, **layout_stops;
+static int n_layout_words, cap_layout_words, n_layout_stops, cap_layout_stops;
 static bool layout_toplevel, has_layout;
-static char *block_open[8], *block_close[8];
-static int n_block_comments;
+static struct { char *open, *close; } *block_comments;
+static int n_block_comments, cap_block_comments;
+/* the offside rule: layout indent NEWLINE INDENT DEDENT, its bracket pairs
+   and its line continuation */
+static bool offside;
+static char *offside_names[3];
+static int offside_terms[3] = {-1, -1, -1};
+static struct { char *open, *close; } *brackets;
+static int n_brackets, cap_brackets;
+static char *offside_continuation;
+/* interpolated strings: the opener's token, the text and closer tokens, the
+   field brackets and the format-spec introducer; raw and named options */
+static bool interp;
+static char *interp_names[3], *interp_texts[3], *interp_raw, *interp_named;
+static int interp_terms[3] = {-1, -1, -1};
+/* soft keywords: the word, "ends" or "before", and the condition's terminal */
+static struct { char *word, *mode, *arg; } *softs;
+static int n_softs, cap_softs;
 
 /* ------------------------------------------------------------ forms */
 
@@ -353,33 +381,49 @@ typedef struct {
     const Node *tpl;
 } Form;
 
-static Form forms[512];
-static int n_forms;
-static struct { char *label; int kind; } token_forms[64];
-static int n_token_forms;
-static struct { char *label; int guard; } guards[64];
-static int n_guards;
+static Form *forms;
+static int n_forms, cap_forms;
+static struct { char *label; int kind; } *token_forms;
+static int n_token_forms, cap_token_forms;
+static struct { char *label; int guard; } *guards;
+static int n_guards, cap_guards;
 static char *statement_cat, *statement_end, *leaf_cat;
+/* how a token child with no token form is read (pres:token-default), or 0 */
+static int token_default;
+/* (pres:positions NAME): every production's atom ends with its span */
+static bool positions;
+/* (pres:lists NAME cons): lists read as (LCons item rest) ... (LNil) */
+static bool lists_cons;
+/* (pres:full-text NAME LABEL): LABEL's atom also holds its source text with
+   the trivia around it, and that text's span, before its own span */
+static char **full_text_labels;
+static int n_full_text, cap_full_text;
+
+static bool full_text_of(const char *label) {
+    for (int i = 0; i < n_full_text; i++)
+        if (strcmp(full_text_labels[i], label) == 0) return true;
+    return false;
+}
 static char *channel_cats[GSLT_PRES_MAX_CHANNELS];
 static int n_channel_cats;
-static char *scope_openers[16];
-static int n_scope_openers;
-static struct { char *text; int kind; } spacings[64];
-static int n_spacings;
-static char *breaks[32];
-static int n_breaks;
+static char **scope_openers;
+static int n_scope_openers, cap_scope_openers;
+static struct { char *text; int kind; } *spacings;
+static int n_spacings, cap_spacings;
+static char **breaks;
+static int n_breaks, cap_breaks;
 static char *version;
 /* roles of a production's children, and the roles it prints in */
-static struct { char *label; const Node *roles; } role_decls[128];
-static int n_role_decls;
-static struct { char *label; unsigned look; } look_decls[64];
-static int n_look_decls;
+static struct { char *label; const Node *roles; } *role_decls;
+static int n_role_decls, cap_role_decls;
+static struct { char *label; unsigned look; } *look_decls;
+static int n_look_decls, cap_look_decls;
 /* builtin positions, derived from the builtins' declared types
    (: HEAD (-> T1 ... Tn R)): the role of argument i is Ti's */
-static struct { char *head; int n; uint8_t roles[32]; } sig_decls[256];
-static int n_sig_decls;
-static uint8_t role_code[4096];
-static int n_role_code;
+static struct { char *head; int n; uint8_t *roles; } *sig_decls;
+static int n_sig_decls, cap_sig_decls;
+static uint8_t *role_code;
+static int n_role_code, cap_role_code;
 
 static int role_of(const char *s) {
     static const char *names[] = {"run", "data", "list", "head", "inherit", "args", "source", "pattern"};
@@ -397,7 +441,7 @@ static int roles_emit(const Node *list, int want, const char *what) {
     int off = n_role_code;
     for (int i = 0; i < list->n; i++) {
         if (list->kids[i]->kind != 's') die("%s: a role is a word", what);
-        if (n_role_code == (int)sizeof role_code) die("too many roles");
+        GROW(role_code, n_role_code, cap_role_code);
         role_code[n_role_code++] = (uint8_t)role_of(list->kids[i]->text);
     }
     return off;
@@ -416,11 +460,12 @@ static void load_declarations(const char *path) {
         Node *node = read_node(&in);
         if (!node) break;
         if (is_head(node, "pres:special-form")) {
-            if (node->n != 3 || node->kids[1]->kind != 's' || node->kids[2]->kind != 'l' || node->kids[2]->n > 32)
+            if (node->n != 3 || node->kids[1]->kind != 's' || node->kids[2]->kind != 'l')
                 die("%s: a malformed pres:special-form", path);
-            if (n_sig_decls == 256) die("too many builtin declarations");
+            GROW(sig_decls, n_sig_decls, cap_sig_decls);
             sig_decls[n_sig_decls].head = node->kids[1]->text;
             sig_decls[n_sig_decls].n = node->kids[2]->n;
+            sig_decls[n_sig_decls].roles = xcalloc((size_t)node->kids[2]->n, 1u);
             for (int i = 0; i < node->kids[2]->n; i++) {
                 if (node->kids[2]->kids[i]->kind != 's') die("%s: a role is a word", path);
                 sig_decls[n_sig_decls].roles[i] = (uint8_t)role_of(node->kids[2]->kids[i]->text);
@@ -434,10 +479,10 @@ static void load_declarations(const char *path) {
         if (node->kids[1]->kind != 's' || !ty || !is_head(ty, "->") || ty->n < 2)
             die("%s: a malformed declaration", path);
         int n = ty->n - 2;
-        if (n > 32) die("%s: %s declares more than 32 arguments", path, node->kids[1]->text);
-        if (n_sig_decls == 256) die("too many builtin declarations");
+        GROW(sig_decls, n_sig_decls, cap_sig_decls);
         sig_decls[n_sig_decls].head = node->kids[1]->text;
         sig_decls[n_sig_decls].n = n;
+        sig_decls[n_sig_decls].roles = xcalloc((size_t)n, 1u);
         for (int i = 0; i < n; i++) {
             const Node *t = ty->kids[1 + i];
             const char *h = t->kind == 'l' ? (t->n > 0 && t->kids[0]->kind == 's' ? t->kids[0]->text : NULL) : t->text;
@@ -550,6 +595,10 @@ static bool template_uses_channel(int *pc) {
         (*pc)++;
         uses = true;
         break;
+    case GSLT_PRES_T_SPAN:
+    case GSLT_PRES_T_FULL_TEXT:
+    case GSLT_PRES_T_FULL_SPAN:
+        break;
     case GSLT_PRES_T_RUN:
         uses = template_uses_channel(pc);
         break;
@@ -573,8 +622,9 @@ static bool template_uses_channel(int *pc) {
 }
 
 static int leaf_kind_of(const char *s) {
-    static const char *names[] = {"", "var", "name", "quoted", "number", "negative", "string", "raw", "word"};
-    for (int i = 1; i < 9; i++)
+    static const char *names[] = {"", "var", "name", "quoted", "number", "negative", "string", "raw", "word",
+                                  "text"};
+    for (int i = 1; i < 10; i++)
         if (strcmp(s, names[i]) == 0) return i;
     die("unknown token form %s", s);
     return 0;
@@ -584,6 +634,9 @@ static void load_forms(const char *path, const char *name) {
     size_t len;
     char *text = read_file(path, &len);
     Src in = {text, 0, len};
+    /* A presentation may declare no templates: every production then
+       denotes (Label child ...), as a language other than MeTTa wants. */
+    bool forms_declared = false;
     for (;;) {
         Node *node = read_node(&in);
         if (!node) break;
@@ -591,10 +644,13 @@ static void load_forms(const char *path, const char *name) {
             strcmp(node->kids[1]->text, name) != 0)
             continue;
         if (is_head(node, "pres:forms") && node->n == 3) {
+            forms_declared = true;
             const Node *list = node->kids[2];
+            if (list->kind != 'l') die("pres:forms: the forms are a list");
             for (int i = 0; i < list->n; i++) {
                 const Node *f = list->kids[i];
                 if (f->kind != 'l' || f->n != 2 || f->kids[0]->kind != 's') die("malformed form entry");
+                GROW(forms, n_forms, cap_forms);
                 forms[n_forms].label = f->kids[0]->text;
                 forms[n_forms].tpl = f->kids[1];
                 n_forms++;
@@ -603,10 +659,23 @@ static void load_forms(const char *path, const char *name) {
             const Node *list = node->kids[2];
             for (int i = 0; i < list->n; i++) {
                 const Node *f = list->kids[i];
+                if (f->kind != 'l' || f->n != 2 || f->kids[0]->kind != 's' || f->kids[1]->kind != 's')
+                    die("malformed token form entry");
+                GROW(token_forms, n_token_forms, cap_token_forms);
                 token_forms[n_token_forms].label = f->kids[0]->text;
                 token_forms[n_token_forms].kind = leaf_kind_of(f->kids[1]->text);
                 n_token_forms++;
             }
+        } else if (is_head(node, "pres:positions") && node->n == 2) {
+            positions = true;
+        } else if (is_head(node, "pres:full-text") && node->n == 3 && node->kids[2]->kind == 's') {
+            GROW(full_text_labels, n_full_text, cap_full_text);
+            full_text_labels[n_full_text++] = node->kids[2]->text;
+        } else if (is_head(node, "pres:lists") && node->n == 3 && node->kids[2]->kind == 's') {
+            if (strcmp(node->kids[2]->text, "cons") != 0) die("pres:lists: the encodings are cons");
+            lists_cons = true;
+        } else if (is_head(node, "pres:token-default") && node->n == 3 && node->kids[2]->kind == 's') {
+            token_default = leaf_kind_of(node->kids[2]->text);
         } else if (is_head(node, "pres:statement") && node->n == 4) {
             statement_cat = node->kids[2]->text;
             statement_end = node->kids[3]->text;
@@ -616,10 +685,10 @@ static void load_forms(const char *path, const char *name) {
             if (n_channel_cats == GSLT_PRES_MAX_CHANNELS) die("too many channel categories");
             channel_cats[n_channel_cats++] = node->kids[2]->text;
         } else if (is_head(node, "pres:break-after") && node->n == 3) {
-            if (n_breaks == 32) die("too many break declarations");
+            GROW(breaks, n_breaks, cap_breaks);
             breaks[n_breaks++] = node->kids[2]->text;
         } else if (is_head(node, "pres:spacing") && node->n == 4) {
-            if (n_spacings == 64) die("too many spacing declarations");
+            GROW(spacings, n_spacings, cap_spacings);
             spacings[n_spacings].text = node->kids[2]->text;
             if (strcmp(node->kids[3]->text, "tight") == 0) spacings[n_spacings].kind = GSLT_PRES_SPACING_TIGHT;
             else if (strcmp(node->kids[3]->text, "spaced") == 0) spacings[n_spacings].kind = GSLT_PRES_SPACING_SPACED;
@@ -627,9 +696,10 @@ static void load_forms(const char *path, const char *name) {
             else die("unknown spacing %s", node->kids[3]->text);
             n_spacings++;
         } else if (is_head(node, "pres:scope-open") && node->n == 3) {
-            if (n_scope_openers == 16) die("too many scope openers");
+            GROW(scope_openers, n_scope_openers, cap_scope_openers);
             scope_openers[n_scope_openers++] = node->kids[2]->text;
         } else if (is_head(node, "pres:view-guard") && node->n == 4) {
+            GROW(guards, n_guards, cap_guards);
             guards[n_guards].label = node->kids[2]->text;
             if (strcmp(node->kids[3]->text, "callable-head") == 0)
                 guards[n_guards].guard = GSLT_PRES_GUARD_CALLABLE_HEAD;
@@ -641,12 +711,12 @@ static void load_forms(const char *path, const char *name) {
         } else if (is_head(node, "pres:version") && node->n == 3) {
             version = (char *)str_of(node->kids[2], "version");
         } else if (is_head(node, "pres:roles") && node->n == 4) {
-            if (n_role_decls == 128) die("too many role declarations");
+            GROW(role_decls, n_role_decls, cap_role_decls);
             role_decls[n_role_decls].label = node->kids[2]->text;
             role_decls[n_role_decls].roles = node->kids[3];
             n_role_decls++;
         } else if (is_head(node, "pres:look") && node->n >= 4) {
-            if (n_look_decls == 64) die("too many look declarations");
+            GROW(look_decls, n_look_decls, cap_look_decls);
             look_decls[n_look_decls].label = node->kids[2]->text;
             look_decls[n_look_decls].look = 0;
             for (int i = 3; i < node->n; i++)
@@ -654,7 +724,7 @@ static void load_forms(const char *path, const char *name) {
             n_look_decls++;
         }
     }
-    if (!n_forms) die("no (pres:forms %s ...) in %s", name, path);
+    if (!forms_declared) die("no (pres:forms %s ...) in %s", name, path);
     if (!statement_cat || !leaf_cat) die("forms need pres:statement and pres:leaf-category");
     if (!version) die("forms need (pres:version %s \"MAJOR.MINOR\")", name);
 }
@@ -686,12 +756,13 @@ static void split_cat(const char *cat, char *family, int *level) {
     *level = k == n ? 0 : atoi(cat + k);
 }
 
-static char *families[128];
-static int n_families;
+static char **families;
+static int n_families, cap_families;
 
 static int family_id(const char *f) {
     for (int i = 0; i < n_families; i++)
         if (strcmp(families[i], f) == 0) return i;
+    GROW(families, n_families, cap_families);
     families[n_families] = xstrdup(f);
     return n_families++;
 }
@@ -710,12 +781,14 @@ static void load_inspection(const char *path, const char *entry) {
     /* token categories */
     const Node **types;
     int n_types = lcons_items(wire->kids[2], &types);
-    char *token_cats[64];
-    int n_token_cats = 0;
+    char **token_cats = NULL;
+    int n_token_cats = 0, cap_token_cats = 0;
     for (int i = 0; i < n_types; i++) {
         if (!is_head(types[i], "TypeDecl")) continue;
-        if (strcmp(types[i]->kids[2]->text, "CarrierTokenRaw") == 0)
+        if (strcmp(types[i]->kids[2]->text, "CarrierTokenRaw") == 0) {
+            GROW(token_cats, n_token_cats, cap_token_cats);
             token_cats[n_token_cats++] = types[i]->kids[1]->text;
+        }
     }
 
     /* terminal 0: end of input */
@@ -727,6 +800,7 @@ static void load_inspection(const char *path, const char *entry) {
     tok = NULL;
     find_all(layer, "RegularTokenDeclV1", &tok, &nt, &ct);
     for (int i = 0; i < nt; i++) {
+        GROW(decls, n_decls, cap_decls);
         decls[n_decls].name = xstrdup(str_of(tok[i]->kids[1], "token name"));
         decls[n_decls].regex = tok[i]->kids[3];
         decls[n_decls].kind = GSLT_PRES_RULE_TOKEN;
@@ -737,6 +811,7 @@ static void load_inspection(const char *path, const char *entry) {
     int ntv = 0, ctv = 0;
     find_all(layer, "RegularTriviaDeclV1", &triv, &ntv, &ctv);
     for (int i = 0; i < ntv; i++) {
+        GROW(decls, n_decls, cap_decls);
         decls[n_decls].name = xstrdup("trivia");
         decls[n_decls].regex = triv[i]->kids[2];
         decls[n_decls].kind = GSLT_PRES_RULE_TRIVIA;
@@ -747,7 +822,10 @@ static void load_inspection(const char *path, const char *entry) {
     int nl = 0, cl = 0, nb = 0, cb = 0;
     find_all(layer, "ParserLineCommentV1", &lc, &nl, &cl);
     find_all(layer, "ParserBlockCommentV1", &bc, &nb, &cb);
-    for (int i = 0; i < nl; i++) line_comments[n_line_comments++] = text_of(lc[i]->kids[1]);
+    for (int i = 0; i < nl; i++) {
+        GROW(line_comments, n_line_comments, cap_line_comments);
+        line_comments[n_line_comments++] = text_of(lc[i]->kids[1]);
+    }
     /* BNFC layout declarations, lowered by CeTTa's LBNF machinery */
     const Node **lw = NULL, **ls = NULL, **lt = NULL;
     int nlw = 0, clw = 0, nls = 0, cls = 0, nlt = 0, clt = 0;
@@ -757,19 +835,86 @@ static void load_inspection(const char *path, const char *entry) {
     for (int i = 0; i < nlw; i++) {
         const Node **words;
         int nw = lcons_items(lw[i]->kids[1], &words);
-        for (int k = 0; k < nw && n_layout_words < 32; k++) layout_words[n_layout_words++] = xstrdup(str_of(words[k], "layout word"));
+        for (int k = 0; k < nw; k++) {
+            GROW(layout_words, n_layout_words, cap_layout_words);
+            layout_words[n_layout_words++] = xstrdup(str_of(words[k], "layout word"));
+        }
         has_layout = true;
     }
     for (int i = 0; i < nls; i++) {
         const Node **words;
         int nw = lcons_items(ls[i]->kids[1], &words);
-        for (int k = 0; k < nw && n_layout_stops < 32; k++) layout_stops[n_layout_stops++] = xstrdup(str_of(words[k], "layout stop word"));
+        for (int k = 0; k < nw; k++) {
+            GROW(layout_stops, n_layout_stops, cap_layout_stops);
+            layout_stops[n_layout_stops++] = xstrdup(str_of(words[k], "layout stop word"));
+        }
         has_layout = true;
     }
     if (nlt) { layout_toplevel = true; has_layout = true; }
+    /* the offside rule, lowered from layout indent, layout bracket and
+       layout continue; its three tokens are terminals no text spells */
+    const Node **oi = NULL, **ob = NULL, **oc = NULL;
+    int noi = 0, coi = 0, nob = 0, cob = 0, noc = 0, coc = 0;
+    find_all(layer, "ParserLayoutIndentV1", &oi, &noi, &coi);
+    find_all(layer, "ParserLayoutBracketV1", &ob, &nob, &cob);
+    find_all(layer, "ParserLayoutContinueV1", &oc, &noc, &coc);
+    if (noi > 1) die("more than one layout indent declaration");
+    if (noc > 1) die("more than one layout continue declaration");
+    if ((nob || noc) && !noi) die("layout bracket and layout continue belong to a layout indent declaration");
+    if (noi && has_layout) die("layout indent and BNFC's layout words cannot be combined");
+    if (noi) {
+        offside = true;
+        for (int k = 0; k < 3; k++) {
+            offside_names[k] = xstrdup(str_of(oi[0]->kids[1 + k], "layout indent token"));
+            offside_terms[k] = term_add(offside_names[k], GSLT_PRES_TERM_LAYOUT, -1);
+        }
+    }
+    for (int i = 0; i < nob; i++) {
+        GROW(brackets, n_brackets, cap_brackets);
+        brackets[n_brackets].open = xstrdup(str_of(ob[i]->kids[1], "bracket"));
+        brackets[n_brackets].close = xstrdup(str_of(ob[i]->kids[2], "bracket"));
+        n_brackets++;
+    }
+    if (noc) offside_continuation = xstrdup(str_of(oc[0]->kids[1], "line continuation"));
+    /* interpolated strings: the opener is a declared token; the text and
+       closer tokens are terminals the reader emits */
+    const Node **ip = NULL, **io = NULL;
+    int nip = 0, cip = 0, nio = 0, cio = 0;
+    find_all(layer, "ParserInterpolationV1", &ip, &nip, &cip);
+    find_all(layer, "ParserInterpolationOptionV1", &io, &nio, &cio);
+    if (nip > 1) die("more than one interpolation declaration");
+    if (nio && !nip) die("an interpolation option belongs to an interpolation declaration");
+    if (nip) {
+        interp = true;
+        for (int k = 0; k < 3; k++) {
+            interp_names[k] = xstrdup(str_of(ip[0]->kids[1 + k], "interpolation token"));
+            interp_texts[k] = xstrdup(str_of(ip[0]->kids[4 + k], "interpolation terminal"));
+        }
+        interp_terms[0] = term_find(interp_names[0], GSLT_PRES_TERM_TOKEN);
+        if (interp_terms[0] < 0) die("interpolation opener %s is no declared token", interp_names[0]);
+        for (int k = 1; k < 3; k++) interp_terms[k] = term_add(interp_names[k], GSLT_PRES_TERM_TOKEN, -1);
+    }
+    const Node **sk = NULL;
+    int nsk = 0, csk = 0;
+    find_all(layer, "ParserSoftKeywordV1", &sk, &nsk, &csk);
+    for (int i = 0; i < nsk; i++) {
+        GROW(softs, n_softs, cap_softs);
+        softs[n_softs].word = xstrdup(str_of(sk[i]->kids[1], "soft keyword"));
+        softs[n_softs].mode = xstrdup(str_of(sk[i]->kids[2], "soft keyword condition"));
+        softs[n_softs].arg = xstrdup(str_of(sk[i]->kids[3], "soft keyword condition"));
+        n_softs++;
+    }
+    for (int i = 0; i < nio; i++) {
+        const char *option = str_of(io[i]->kids[1], "interpolation option");
+        char *value = xstrdup(str_of(io[i]->kids[2], "interpolation option value"));
+        if (strcmp(option, "raw") == 0) interp_raw = value;
+        else if (strcmp(option, "named") == 0) interp_named = value;
+        else die("unknown interpolation option %s", option);
+    }
     for (int i = 0; i < nb; i++) {
-        block_open[n_block_comments] = text_of(bc[i]->kids[1]);
-        block_close[n_block_comments] = text_of(bc[i]->kids[2]);
+        GROW(block_comments, n_block_comments, cap_block_comments);
+        block_comments[n_block_comments].open = text_of(bc[i]->kids[1]);
+        block_comments[n_block_comments].close = text_of(bc[i]->kids[2]);
         n_block_comments++;
     }
 
@@ -791,8 +936,9 @@ static void load_inspection(const char *path, const char *entry) {
         const Node **params, **items;
         int np = lcons_items(g->kids[3], &params);
         int ni = lcons_items(g->kids[4], &items);
-        int rhs[64];
-        if (ni > 64) die("rule %s too long", label);
+        /* the generated tables store a production's length in a byte */
+        if (ni > UINT8_MAX) die("rule %s has %d items; the tables hold at most %d", label, ni, UINT8_MAX);
+        int *rhs = xcalloc((size_t)(ni ? ni : 1), sizeof(int));
         for (int k = 0; k < ni; k++) {
             if (is_head(items[k], "SyntaxTerminal")) {
                 const char *lit = str_of(items[k]->kids[1], "terminal");
@@ -810,6 +956,7 @@ static void load_inspection(const char *path, const char *entry) {
                     if (strcmp(token_cats[q], cat) == 0) is_token = true;
                 if (is_token) {
                     int t = term_find(cat, GSLT_PRES_TERM_TOKEN);
+                    if (t < 0) t = term_find(cat, GSLT_PRES_TERM_LAYOUT);
                     if (t < 0) die("rule %s uses token %s with no declaration", label, cat);
                     rhs[k] = t;
                 } else {
@@ -822,6 +969,7 @@ static void load_inspection(const char *path, const char *entry) {
             }
         }
         prod_add(lhs, ni, rhs, label);
+        free(rhs);
     }
     int start_rhs[1] = {-(1 + 1)};
     int start = prod_add(0, 1, start_rhs, "%start");
@@ -873,13 +1021,25 @@ static void classify_productions(void) {
                its label: (Label child ...). */
             if (!isupper((unsigned char)pr->label[0]))
                 die("production %s has no form and a lowercase label", pr->label);
+            bool full = full_text_of(pr->label);
             pr->template_off = n_tcode;
             emit_t(GSLT_PRES_T_EXPR);
-            emit_t(nargs + 1);
+            emit_t(nargs + 1 + (full ? 2 : 0) + (positions ? 1 : 0));
             emit_t(GSLT_PRES_T_WORD);
             emit_t(const_add(pr->label, false));
             for (int i = 0; i < nargs; i++) { emit_t(GSLT_PRES_T_ARG); emit_t(i); }
+            if (full) { emit_t(GSLT_PRES_T_FULL_TEXT); emit_t(GSLT_PRES_T_FULL_SPAN); }
+            if (positions) emit_t(GSLT_PRES_T_SPAN);
         }
+    }
+    for (int i = 0; i < n_full_text; i++) {
+        bool found = false;
+        for (int p = 0; p < n_prods; p++)
+            if (strcmp(prods[p].label, full_text_labels[i]) == 0) found = true;
+        if (!found) die("pres:full-text %s names no production", full_text_labels[i]);
+        for (int f = 0; f < n_forms; f++)
+            if (strcmp(forms[f].label, full_text_labels[i]) == 0)
+                die("pres:full-text %s: a production with a form states its atom itself", full_text_labels[i]);
     }
     for (int i = 0; i < n_forms; i++) {
         bool found = false;
@@ -895,13 +1055,14 @@ static void classify_productions(void) {
         if (!found) die("roles or look for %s, which is no production with a form", label);
     }
     for (int n = 0; n < n_nts; n++) {
-        char fam[256];
         int lvl;
         nts[n].is_list = nts[n].name[0] == '[';
         if (nts[n].is_list || n == 0) { nts[n].family = -1; nts[n].level = 0; continue; }
+        char *fam = xcalloc(strlen(nts[n].name) + 1u, 1u);
         split_cat(nts[n].name, fam, &lvl);
         nts[n].family = family_id(fam);
         nts[n].level = lvl;
+        free(fam);
     }
 }
 
@@ -1129,7 +1290,9 @@ static void conflict(int s, int t, const char *what, int a, int b) {
 static void build_tables(void) {
     action_table = xcalloc((size_t)n_states * (size_t)n_terms, sizeof(int16_t));
     goto_table = xcalloc((size_t)n_states * (size_t)n_nts, sizeof(int16_t));
-    if (n_states >= INT16_MAX - 1 || n_prods >= INT16_MAX - 1) die("table too large");
+    if (n_states >= INT16_MAX - 1 || n_prods >= INT16_MAX - 1)
+        die("%d states and %d productions; the tables hold fewer than %d of each", n_states, n_prods, INT16_MAX - 1);
+    if (n_nts > UINT16_MAX) die("%d categories; the tables hold at most %d", n_nts, UINT16_MAX);
     for (int s = 0; s < n_states; s++) {
         int16_t *row = &action_table[(size_t)s * (size_t)n_terms];
         for (int n = 0; n < n_nts; n++) goto_table[(size_t)s * (size_t)n_nts + (size_t)n] = (int16_t)states[s].go[n_terms + n];
@@ -1401,7 +1564,7 @@ static Frag nfa_literal(const char *s) {
 
 /* rules: symbols first (BNFC lists reserved symbols before tokens), then the
    token declarations in order, then trivia */
-static int rule_kind[MAXT + 64], rule_terminal[MAXT + 64], n_rule;
+static int *rule_kind, *rule_terminal, n_rule;
 
 typedef struct { uint64_t *w; } NSet;
 static int nsw; /* words per NFA set */
@@ -1453,7 +1616,33 @@ static void build_lexer(void) {
             add_bound(cp + 1u);
         }
     }
+    /* a line continuation followed by a line end is trivia; the layout
+       resolver joins the two lines */
+    char *joins[2] = {NULL, NULL};
+    if (offside_continuation) {
+        size_t cl = strlen(offside_continuation);
+        joins[0] = xcalloc(cl + 2u, 1u);
+        joins[1] = xcalloc(cl + 3u, 1u);
+        sprintf(joins[0], "%s\n", offside_continuation);
+        sprintf(joins[1], "%s\r\n", offside_continuation);
+        for (int j = 0; j < 2; j++) {
+            const unsigned char *p = (const unsigned char *)joins[j];
+            while (*p) {
+                uint32_t cp;
+                if (*p < 0x80) cp = *p++;
+                else if ((*p & 0xE0) == 0xC0) { cp = (uint32_t)(*p & 0x1F) << 6 | (p[1] & 0x3F); p += 2; }
+                else if ((*p & 0xF0) == 0xE0) { cp = (uint32_t)(*p & 0x0F) << 12 | (uint32_t)(p[1] & 0x3F) << 6 | (p[2] & 0x3F); p += 3; }
+                else { cp = (uint32_t)(*p & 0x07) << 18 | (uint32_t)(p[1] & 0x3F) << 12 | (uint32_t)(p[2] & 0x3F) << 6 | (p[3] & 0x3F); p += 4; }
+                add_bound(cp);
+                add_bound(cp + 1u);
+            }
+        }
+    }
     finish_bounds();
+    /* one rule per symbol terminal, per token or trivia declaration, and per
+       line join */
+    rule_kind = xcalloc((size_t)(n_terms + n_decls + 2), sizeof *rule_kind);
+    rule_terminal = xcalloc((size_t)(n_terms + n_decls + 2), sizeof *rule_terminal);
     int start = nfa_new();
     for (int t = 0; t < n_terms; t++) {
         if (terms[t].kind != GSLT_PRES_TERM_SYMBOL) continue;
@@ -1468,6 +1657,13 @@ static void build_lexer(void) {
         nfa_eps(start, f.in);
         rule_kind[n_rule] = decls[i].kind;
         rule_terminal[n_rule] = decls[i].terminal;
+        ns[f.out].accept = n_rule++;
+    }
+    for (int j = 0; j < 2 && joins[j]; j++) {
+        Frag f = nfa_literal(joins[j]);
+        nfa_eps(start, f.in);
+        rule_kind[n_rule] = GSLT_PRES_RULE_TRIVIA;
+        rule_terminal[n_rule] = -1;
         ns[f.out].accept = n_rule++;
     }
     nsw = (n_ns + 63) / 64;
@@ -1567,12 +1763,13 @@ int main(int argc, char **argv) {
         digest = fnv1a(digest, rtext, rlen);
     }
     /* builtin positions, after the productions' roles in role_code */
-    int sig_off[256], sig_len[256];
+    int *sig_off = xcalloc((size_t)n_sig_decls, sizeof *sig_off);
+    int *sig_len = xcalloc((size_t)n_sig_decls, sizeof *sig_len);
     for (int k = 0; k < n_sig_decls; k++) {
         sig_off[k] = n_role_code;
         sig_len[k] = sig_decls[k].n;
         for (int i = 0; i < sig_decls[k].n; i++) {
-            if (n_role_code == (int)sizeof role_code) die("too many roles");
+            GROW(role_code, n_role_code, cap_role_code);
             role_code[n_role_code++] = sig_decls[k].roles[i];
         }
     }
@@ -1590,8 +1787,8 @@ int main(int argc, char **argv) {
     }
     for (char *p = prefix; *p; p++) if (!isalnum((unsigned char)*p) && *p != '_') *p = '_';
 
-    char tmp[4096];
-    snprintf(tmp, sizeof tmp, "%s.tmp", argv[5]);
+    char *tmp = xcalloc(strlen(argv[5]) + sizeof ".tmp", 1u);
+    sprintf(tmp, "%s.tmp", argv[5]);
     FILE *out = fopen(tmp, "w");
     if (!out) die("cannot write %s", tmp);
     fprintf(out, "/* Generated by tools/gslt_presentation_compile_v1.c from the %s presentation\n"
@@ -1763,6 +1960,47 @@ int main(int argc, char **argv) {
         if (layout_toplevel && lay_sep < 0) die("layout toplevel needs the terminal \";\"");
     }
     ARR("uint8_t", "terminal_layout", n_terms, terminal_layout[i_]);
+    /* the offside rule's brackets: 1 opens a pair, 2 closes one */
+    if (offside) {
+        int *terminal_bracket = xcalloc((size_t)n_terms, sizeof(int));
+        for (int i = 0; i < n_brackets; i++) {
+            const char *pair[2] = {brackets[i].open, brackets[i].close};
+            for (int k = 0; k < 2; k++) {
+                int t = term_find(pair[k], identifier_like(pair[k]) ? GSLT_PRES_TERM_KEYWORD : GSLT_PRES_TERM_SYMBOL);
+                if (t < 0) die("layout bracket \"%s\" is no terminal of the grammar", pair[k]);
+                if (terminal_bracket[t] && terminal_bracket[t] != k + 1)
+                    die("layout bracket \"%s\" both opens and closes a pair", pair[k]);
+                terminal_bracket[t] = k + 1;
+            }
+        }
+        ARR("uint8_t", "terminal_bracket", n_terms, terminal_bracket[i_]);
+    }
+    /* soft keywords: their condition per terminal */
+    if (n_softs) {
+        int *soft = xcalloc((size_t)n_terms, sizeof(int)), *soft_arg = xcalloc((size_t)n_terms, sizeof(int));
+        for (int t = 0; t < n_terms; t++) soft_arg[t] = -1;
+        for (int i = 0; i < n_softs; i++) {
+            int t = term_find(softs[i].word, GSLT_PRES_TERM_KEYWORD);
+            if (t < 0) die("soft keyword \"%s\" is no keyword of the grammar", softs[i].word);
+            if (soft[t]) die("soft keyword \"%s\" has two conditions", softs[i].word);
+            int a;
+            if (strcmp(softs[i].mode, "ends") == 0) {
+                soft[t] = 1;
+                a = term_find(softs[i].arg, identifier_like(softs[i].arg) ? GSLT_PRES_TERM_KEYWORD : GSLT_PRES_TERM_SYMBOL);
+                if (a < 0) die("soft keyword \"%s\": \"%s\" is no terminal of the grammar", softs[i].word, softs[i].arg);
+            } else if (strcmp(softs[i].mode, "parser") == 0) {
+                soft[t] = 3;
+                a = -1;
+            } else {
+                soft[t] = 2;
+                a = term_find(softs[i].arg, GSLT_PRES_TERM_TOKEN);
+                if (a < 0) die("soft keyword \"%s\": %s is no token of the grammar", softs[i].word, softs[i].arg);
+            }
+            soft_arg[t] = a;
+        }
+        ARR("uint8_t", "terminal_soft", n_terms, soft[i_]);
+        ARR("int16_t", "terminal_soft_arg", n_terms, soft_arg[i_]);
+    }
     ARR("int8_t", "nt_channel", n_nts, nt_channel[i_]);
     ARR("uint8_t", "terminal_scope", n_terms, terminal_scope[i_]);
     ARR("uint8_t", "prod_scope", n_prods, prod_scope[i_]);
@@ -1770,7 +2008,8 @@ int main(int argc, char **argv) {
     int leaf_prod[9];
     for (int k = 0; k < 9; k++) leaf_prod[k] = -1;
     for (int p = 0; p < n_prods; p++)
-        if (prods[p].kind == GSLT_PRES_PROD_TOKEN && leaf_prod[prods[p].leaf] < 0) leaf_prod[prods[p].leaf] = p;
+        if (prods[p].kind == GSLT_PRES_PROD_TOKEN && prods[p].leaf < 9 && leaf_prod[prods[p].leaf] < 0)
+            leaf_prod[prods[p].leaf] = p;
 
     /* lexer */
     {
@@ -1801,10 +2040,10 @@ int main(int argc, char **argv) {
         for (int i = 0; i < n_line_comments; i++) { put_cstr(out, line_comments[i]); fputc(',', out); }
         fputs("0};\n", out);
         fprintf(out, "static const char *const %s_block_open[] = {", prefix);
-        for (int i = 0; i < n_block_comments; i++) { put_cstr(out, block_open[i]); fputc(',', out); }
+        for (int i = 0; i < n_block_comments; i++) { put_cstr(out, block_comments[i].open); fputc(',', out); }
         fputs("0};\n", out);
         fprintf(out, "static const char *const %s_block_close[] = {", prefix);
-        for (int i = 0; i < n_block_comments; i++) { put_cstr(out, block_close[i]); fputc(',', out); }
+        for (int i = 0; i < n_block_comments; i++) { put_cstr(out, block_comments[i].close); fputc(',', out); }
         fputs("0};\n", out);
 
         fprintf(out, "\nstatic const GSLTPresentationTablesV1 %s = {\n", prefix);
@@ -1830,6 +2069,9 @@ int main(int argc, char **argv) {
         fputs("  .leaf_prod = {", out);
         for (int k = 0; k < 9; k++) fprintf(out, "%d,", leaf_prod[k]);
         fputs("},\n", out);
+        if (token_default) fprintf(out, "  .token_default = %d,\n", token_default);
+        if (positions) fputs("  .positions = true,\n", out);
+        if (lists_cons) fputs("  .lists_cons = true,\n", out);
         fprintf(out, "  .n_channels = %d, .nt_channel = %s_nt_channel, .terminal_scope = %s_terminal_scope, .prod_scope = %s_prod_scope,\n",
                 n_channel_cats, prefix, prefix, prefix);
         fprintf(out, "  .terminal_spacing = %s_terminal_spacing,\n", prefix);
@@ -1837,6 +2079,32 @@ int main(int argc, char **argv) {
         fprintf(out, "  .has_layout = %s, .layout_toplevel = %s, .terminal_layout = %s_terminal_layout,\n",
                 has_layout ? "true" : "false", layout_toplevel ? "true" : "false", prefix);
         fprintf(out, "  .layout_open = %d, .layout_sep = %d, .layout_close = %d,\n", lay_open, lay_sep, lay_close);
+        if (offside) {
+            fprintf(out, "  .offside = true, .offside_newline = %d, .offside_indent = %d, .offside_dedent = %d,\n",
+                    offside_terms[0], offside_terms[1], offside_terms[2]);
+            fprintf(out, "  .terminal_bracket = %s_terminal_bracket, .offside_continuation = ", prefix);
+            if (offside_continuation) put_cstr(out, offside_continuation); else fputs("0", out);
+            fputs(",\n", out);
+        }
+        if (n_softs)
+            fprintf(out, "  .has_soft = true, .terminal_soft = %s_terminal_soft, .terminal_soft_arg = %s_terminal_soft_arg,\n",
+                    prefix, prefix);
+        if (interp) {
+            int field[3];
+            for (int k = 0; k < 3; k++) {
+                const char *t = interp_texts[k];
+                field[k] = term_find(t, identifier_like(t) ? GSLT_PRES_TERM_KEYWORD : GSLT_PRES_TERM_SYMBOL);
+                if (field[k] < 0) die("interpolation terminal \"%s\" is no terminal of the grammar", t);
+            }
+            fprintf(out, "  .interp = true, .interp_open = %d, .interp_text = %d, .interp_close = %d,\n",
+                    interp_terms[0], interp_terms[1], interp_terms[2]);
+            fprintf(out, "  .interp_field_open = %d, .interp_field_close = %d, .interp_spec = %d, .interp_raw = ",
+                    field[0], field[1], field[2]);
+            if (interp_raw) put_cstr(out, interp_raw); else fputs("0", out);
+            fputs(", .interp_named = ", out);
+            if (interp_named) put_cstr(out, interp_named); else fputs("0", out);
+            fputs(",\n", out);
+        }
         fprintf(out, "  .n_classes = %d, .class_of_low = %s_class_of_low, .n_high = %d, .high_lo = %s_high_lo, .high_hi = %s_high_hi, .high_class = %s_high_class,\n",
                 n_classes, prefix, n_high, prefix, prefix, prefix);
         fprintf(out, "  .n_dfa = %d, .dfa_next = %s_dfa_next, .dfa_accept = %s_dfa_accept,\n", n_dfa, prefix, prefix);

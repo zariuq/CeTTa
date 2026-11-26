@@ -32,6 +32,8 @@
 #include "library_re.h"
 #include "library_json.h"
 #include "str_natives.h"
+#include "float_natives.h"
+#include "integer_natives.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -46,6 +48,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
+#include <sys/utsname.h>
 #include <unistd.h>
 #include <stdatomic.h>
 #include <assert.h>
@@ -178,6 +181,8 @@ enum {
     CETTA_LIBRARY_SAT = 1u << 23,
     CETTA_LIBRARY_IPASIR = 1u << 24,
     CETTA_LIBRARY_SMT = 1u << 25,
+    CETTA_LIBRARY_FLOAT = 1u << 26,
+    CETTA_LIBRARY_INTEGER = 1u << 27,
 #if CETTA_BUILD_WITH_JSON_GSLT
     CETTA_LIBRARY_JSON = 1u << 12
 #endif
@@ -194,6 +199,8 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"proc", CETTA_LIBRARY_PROC, NULL},
     {"fs", CETTA_LIBRARY_FS, NULL},
     {"str", CETTA_LIBRARY_STR, NULL},
+    {"float", CETTA_LIBRARY_FLOAT, NULL},
+    {"integer", CETTA_LIBRARY_INTEGER, NULL},
     {"re", CETTA_LIBRARY_RE, NULL},
     {"postings", CETTA_LIBRARY_POSTINGS, NULL},
     {"tensor", CETTA_LIBRARY_TENSOR, NULL},
@@ -4703,6 +4710,17 @@ static Atom *system_write(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     return atom_unit(a);
 }
 
+/* (system:read-line): the next line of the standard input with its end of
+ * line, as getline reads it; "" at the end of the input. */
+static Atom *system_read_line(Arena *a) {
+    char *line = NULL;
+    size_t capacity = 0u;
+    ssize_t length = getline(&line, &capacity, stdin);
+    Atom *text = atom_string_n(a, length > 0 ? line : "", length > 0 ? (size_t)length : 0u);
+    free(line);
+    return text;
+}
+
 static Atom *system_cwd(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     char path[PATH_MAX];
     if (!system_zero_arg_ok(args, nargs)) {
@@ -4713,6 +4731,41 @@ static Atom *system_cwd(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
                                        "cannot determine current directory");
     }
     return atom_string(a, path);
+}
+
+extern char **environ;
+
+/* (system:environ): the process environment's (NAME VALUE) pairs in the
+   order the process holds them; an entry without '=' names no pair */
+static Atom *system_environ(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    if (!system_zero_arg_ok(args, nargs))
+        return library_signature_error(a, head, args, nargs, "expected: (system:environ)");
+    uint32_t n = 0;
+    for (char **e = environ; e && *e; e++)
+        if (strchr(*e, '=')) n++;
+    Atom **items = arena_alloc(a, sizeof(Atom *) * (n ? n : 1));
+    uint32_t i = 0;
+    for (char **e = environ; e && *e && i < n; e++) {
+        const char *eq = strchr(*e, '=');
+        if (!eq) continue;
+        size_t len = (size_t)(eq - *e);
+        char *name = arena_alloc(a, len + 1u);
+        memcpy(name, *e, len);
+        name[len] = '\0';
+        items[i++] = atom_expr2(a, atom_string(a, name), atom_string(a, eq + 1));
+    }
+    return atom_expr(a, items, i);
+}
+
+/* (system:uname): (SYSNAME NODENAME RELEASE VERSION MACHINE) */
+static Atom *system_uname(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    struct utsname u;
+    if (!system_zero_arg_ok(args, nargs))
+        return library_signature_error(a, head, args, nargs, "expected: (system:uname)");
+    if (uname(&u) < 0)
+        return library_signature_error(a, head, args, nargs, "uname failed");
+    return atom_expr(a, (Atom *[]){atom_string(a, u.sysname), atom_string(a, u.nodename),
+        atom_string(a, u.release), atom_string(a, u.version), atom_string(a, u.machine)}, 5u);
 }
 
 static Atom *system_monotonic_ns(Arena *a, Atom *head, Atom **args,
@@ -4771,6 +4824,11 @@ static Atom *cetta_library_dispatch_system(CettaLibraryContext *ctx,
         return library_entry_directory(ctx)[0] ? atom_string(a, library_entry_directory(ctx))
             : library_signature_error(a, head, args, nargs, "entry directory is not established");
     }
+    if (atom_is_symbol(head, "__cetta_lib_system_read_line")) {
+        if (!system_zero_arg_ok(args, nargs))
+            return library_signature_error(a, head, args, nargs, "expected: (system:read-line)");
+        return system_read_line(a);
+    }
     if (atom_is_symbol(head, "__cetta_lib_system_runtime_root")) {
         if (!system_zero_arg_ok(args, nargs))
             return library_signature_error(a, head, args, nargs, "expected: (system:runtime-root)");
@@ -4779,6 +4837,22 @@ static Atom *cetta_library_dispatch_system(CettaLibraryContext *ctx,
     }
     if (head_id == g_builtin_syms.lib_system_monotonic_ns) {
         return system_monotonic_ns(a, head, args, nargs);
+    }
+    if (atom_is_symbol(head, "__cetta_lib_system_environ"))
+        return system_environ(a, head, args, nargs);
+    if (atom_is_symbol(head, "__cetta_lib_system_uname"))
+        return system_uname(a, head, args, nargs);
+    if (atom_is_symbol(head, "__cetta_lib_system_getpid")) {
+        if (!system_zero_arg_ok(args, nargs))
+            return library_signature_error(a, head, args, nargs, "expected: (system:getpid)");
+        return atom_int(a, (int64_t)getpid());
+    }
+    if (atom_is_symbol(head, "__cetta_lib_system_cpu_count")) {
+        /* the processors online; unknown as the empty expression */
+        if (!system_zero_arg_ok(args, nargs))
+            return library_signature_error(a, head, args, nargs, "expected: (system:cpu-count)");
+        long count = sysconf(_SC_NPROCESSORS_ONLN);
+        return count > 0 ? atom_int(a, (int64_t)count) : atom_unit(a);
     }
     return NULL;
 }
@@ -5622,6 +5696,70 @@ static Atom *cetta_library_dispatch_str(Arena *a, Atom *head,
                           atom_expr2(a, atom_symbol(a, refusal.reason),
                                      atom_int(a, (int64_t)refusal.offset)), values);
     return str_operation_refusal(a, call, atom_symbol(a, refusal.expected), values);
+}
+
+/* ── lib/float: IEEE 754 binary64 as C computes it ────────────────────────
+ * (__cetta_lib_float name args...) is the float: operation `name` of the
+ * native table; a call outside an operation's signature is
+ * (Error (float:name args...) expectation). */
+
+static Atom *cetta_library_dispatch_float(Arena *a, Atom *head,
+                                          Atom **args, uint32_t nargs,
+                                          CettaCallResultForm *result_form) {
+    if (head->kind != ATOM_SYMBOL || head->sym_id != g_builtin_syms.lib_float)
+        return NULL;
+    const char *name = nargs > 0u && args[0] && args[0]->kind == ATOM_SYMBOL
+        ? atom_name_cstr(args[0]) : NULL;
+    const CettaFloatNative *native = cetta_float_native(name);
+    if (!native)
+        return atom_error(a, library_call_expr(a, head, args, nargs),
+                          atom_string(a, "unknown float operation"));
+    Atom **operands = args + 1u;
+    uint32_t count = nargs - 1u;
+    CettaFloatRefusal refusal = {0};
+    Atom *result = count == native->arity ? native->fn(a, operands, &refusal) : NULL;
+    if (result) {
+        *result_form = CETTA_CALL_RESULT_COMPLETED_VALUE;
+        return result;
+    }
+    size_t public_len = strlen(name) + 7u;
+    char *public_name = arena_alloc(a, public_len);
+    snprintf(public_name, public_len, "float:%s", name);
+    Atom *call = library_call_expr(a, atom_symbol(a, public_name), operands, count);
+    return atom_error(a, call, atom_string(a, count != native->arity
+        ? "wrong number of arguments" : refusal.expected));
+}
+
+/* ── lib/integer: integers of any size as two's complement bit strings ────
+ * (__cetta_lib_integer name args...) is the integer: operation `name` of the
+ * native table; a call outside an operation's signature is
+ * (Error (integer:name args...) expectation). */
+
+static Atom *cetta_library_dispatch_integer(Arena *a, Atom *head,
+                                            Atom **args, uint32_t nargs,
+                                            CettaCallResultForm *result_form) {
+    if (head->kind != ATOM_SYMBOL || head->sym_id != g_builtin_syms.lib_integer)
+        return NULL;
+    const char *name = nargs > 0u && args[0] && args[0]->kind == ATOM_SYMBOL
+        ? atom_name_cstr(args[0]) : NULL;
+    const CettaIntegerNative *native = cetta_integer_native(name);
+    if (!native)
+        return atom_error(a, library_call_expr(a, head, args, nargs),
+                          atom_string(a, "unknown integer operation"));
+    Atom **operands = args + 1u;
+    uint32_t count = nargs - 1u;
+    CettaIntegerRefusal refusal = {0};
+    Atom *result = count == native->arity ? native->fn(a, operands, &refusal) : NULL;
+    if (result) {
+        *result_form = CETTA_CALL_RESULT_COMPLETED_VALUE;
+        return result;
+    }
+    size_t public_len = strlen(name) + 9u;
+    char *public_name = arena_alloc(a, public_len);
+    snprintf(public_name, public_len, "integer:%s", name);
+    Atom *call = library_call_expr(a, atom_symbol(a, public_name), operands, count);
+    return atom_error(a, call, atom_string(a, count != native->arity
+        ? "wrong number of arguments" : refusal.expected));
 }
 
 static CettaMorkSpaceResource *library_mork_space_resource(CettaLibraryContext *ctx,
@@ -11743,7 +11881,7 @@ static bool library_import_native(CettaLibraryContext *ctx, const char *name,
     const CettaNativeBuiltinModule *native_spec = spec ? NULL : cetta_native_module_lookup(name);
     CettaModuleSpec parsed_spec;
     CettaImportPlan plan;
-    uint32_t import_bit;
+    CettaImportMask import_bit;
     const char *import_name;
 
     if (!spec && !native_spec) {
@@ -12678,6 +12816,14 @@ static Atom *cetta_library_dispatch_native_value(
 #endif
     if (ctx->active_mask & CETTA_LIBRARY_STR) {
         Atom *result = cetta_library_dispatch_str(a, head, args, nargs, result_form);
+        if (result) return result;
+    }
+    if (ctx->active_mask & CETTA_LIBRARY_FLOAT) {
+        Atom *result = cetta_library_dispatch_float(a, head, args, nargs, result_form);
+        if (result) return result;
+    }
+    if (ctx->active_mask & CETTA_LIBRARY_INTEGER) {
+        Atom *result = cetta_library_dispatch_integer(a, head, args, nargs, result_form);
         if (result) return result;
     }
     if (ctx->active_mask & CETTA_LIBRARY_RHOMETTA) {

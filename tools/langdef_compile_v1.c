@@ -2911,6 +2911,8 @@ static bool compile_petta_direct_command_v1(
     char source_digest[65], char artifact_digest[65],
     char *error, size_t error_size) {
     const char *sources[CETTA_LANGDEF_MAX_SOURCES];
+    bool external[CETTA_LANGDEF_MAX_SOURCES] = {false};
+    bool any_external = false;
     size_t source_count = 0u;
     const char *composition = NULL;
     const char *epilogue = NULL;
@@ -2949,12 +2951,16 @@ static bool compile_petta_direct_command_v1(
             goto done;
         }
         value = argv[++index];
-        if (strcmp(option, "--source") == 0) {
+        if (strcmp(option, "--source") == 0 ||
+            strcmp(option, "--extern") == 0) {
             if (source_count >= CETTA_LANGDEF_MAX_SOURCES) {
                 set_error(error, error_size,
                           "petta-direct has too many sources");
                 goto done;
             }
+            /* an extern source is rendered by the program that owns it */
+            external[source_count] = strcmp(option, "--extern") == 0;
+            any_external = any_external || external[source_count];
             sources[source_count++] = value;
         } else if (strcmp(option, "--composition") == 0 &&
                    composition == NULL) {
@@ -3029,6 +3035,11 @@ static bool compile_petta_direct_command_v1(
                   "native-type specialization requires the fixed source composition, without an unchecked epilogue");
         goto done;
     }
+    if (any_external && (native_types_path != NULL || admission_language_path != NULL)) {
+        set_error(error, error_size,
+                  "native-type and admitted specializations compile a fixed whole composition: they take no extern source");
+        goto done;
+    }
     if ((admission_language_path == NULL) != (admission_entry == NULL)) {
         set_error(error, error_size,
                   "petta-direct requires --admission-language and --admission-entry together");
@@ -3076,6 +3087,12 @@ static bool compile_petta_direct_command_v1(
               : native_type_packet != NULL
               ? cetta_gslt_petta_direct_native_types_v1(
                     presentations, source_count, target, native_type_packet,
+                    entry_modes, entry_mode_count, closed_entry_residual,
+                    &program, &program_len, rule_count, source_digest,
+                    error, error_size)
+              : any_external
+              ? cetta_gslt_petta_direct_linked_v1(
+                    presentations, external, source_count, target,
                     entry_modes, entry_mode_count, closed_entry_residual,
                     &program, &program_len, rule_count, source_digest,
                     error, error_size)
@@ -6719,6 +6736,7 @@ static void usage(const char *program) {
             "  %s equations (--source FILE... | --composition FILE) "
             "--out FILE\n"
             "  %s petta-direct (--source FILE... | --composition FILE) "
+            "[--extern FILE...] "
             "[--target petta|he|c [--c-prefix NAME]] "
             "[--entry-mode RELATION:BITS... | "
             "--closed-entry-mode RELATION:BITS...] "

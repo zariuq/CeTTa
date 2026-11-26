@@ -1,5 +1,6 @@
 #include "library_syntax.h"
 #include "eval.h"
+#include "gslt_presentation_v1.h"
 #include "library.h"
 #include "name_key.h"
 #include "parser.h"
@@ -508,12 +509,72 @@ static Atom *write_document(CettaLibraryContext *context, Arena *arena, Atom *do
     return error ? fault(arena, error) : output;
 }
 
+/* (syntax:read-in NAME TEXT): the atoms the presentation NAME, compiled into
+ * this executable, builds from TEXT, unevaluated, as one expression; a reading
+ * that fails is (Syntax:Fault ReadFailed "where and why"). */
+/* The compiled presentations link with the dialect readers, which the tools
+ * built from the library alone leave out (as the host services are): there
+ * the references are null and a read refuses. */
+#pragma weak gslt_presentation_v1_find
+#pragma weak gslt_presentation_v1_read_ids
+
+static Atom *read_presented(Arena *arena, Atom *name, Atom *input) {
+    if (!gslt_presentation_v1_find || !gslt_presentation_v1_read_ids)
+        return fault(arena, "NoPresentations");
+    const GSLTPresentationTablesV1 *tables = gslt_presentation_v1_find(name->ground.sval);
+    if (!tables) return fault(arena, "UnknownPresentation");
+    Arena source;
+    arena_init_detached(&source);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &source);
+    AtomId *ids = NULL;
+    char err[512] = "";
+    GSLTPresentationGroundingKindV1 grounding = eval_current_language_id() == CETTA_LANGUAGE_PETTA
+        ? GSLT_PRES_GROUNDING_PETTA : GSLT_PRES_GROUNDING_HOST;
+    int count = gslt_presentation_v1_read_ids(tables, grounding, input->ground.sval, atom_string_len(input),
+                                              &universe, &ids, err, sizeof err);
+    Atom *value;
+    if (count < 0) {
+        value = atom_expr3(arena, atom_symbol(arena, "Syntax:Fault"), atom_symbol(arena, "ReadFailed"),
+                           atom_string(arena, err[0] ? err : "the presentation does not read the text"));
+    } else {
+        Atom **forms = count > 0 ? arena_alloc(arena, (size_t)count * sizeof(*forms)) : NULL;
+        bool ok = true;
+        for (int i = 0; ok && i < count; i++) {
+            Atom *atom = term_universe_get_atom(&universe, ids[i]);
+            forms[i] = atom ? atom_deep_copy(arena, atom) : NULL;
+            ok = forms[i] != NULL;
+        }
+        if (ok && tables->lists_cons) {
+            /* the statements as the presentation's lists read: (LCons s rest) ... (LNil) */
+            Atom *nil = atom_symbol(arena, "LNil");
+            value = atom_expr(arena, &nil, 1);
+            for (int i = count; i-- > 0;)
+                value = atom_expr3(arena, atom_symbol(arena, "LCons"), forms[i], value);
+        } else {
+            value = ok ? atom_expr(arena, forms, (CettaExprLen)count) : fault(arena, "InvalidSource");
+        }
+    }
+    free(ids);
+    term_universe_free(&universe);
+    arena_free(&source);
+    return value;
+}
+
 bool cetta_syntax_module_call(CettaLibraryContext *context, struct Space *space,
         Arena *arena, Atom *head, Atom **arguments, uint32_t count, CettaCallOutcome *out) {
     (void)space;
-    if (!context || !head || head->kind != ATOM_SYMBOL || count != 1) return false;
+    if (!context || !head || head->kind != ATOM_SYMBOL) return false;
     const char *name = atom_name_cstr(head);
     Atom *value;
+    if (!strcmp(name, "syntax:read-in")) {
+        if (count != 2 || !text(arguments[0]) || !text(arguments[1])) return false;
+        value = read_presented(arena, arguments[0], arguments[1]);
+        *out = eval_native_interrupted() ? cetta_call_interrupted() : cetta_call_completed_value(value);
+        return true;
+    }
+    if (count != 1) return false;
     if (!strcmp(name, "syntax:read")) { if (!text(arguments[0])) return false; value = read_document(context, arena, arguments[0]); }
     else if (!strcmp(name, "syntax:restore")) value = restore_document(arena, arguments[0]);
     else if (!strcmp(name, "syntax:freeze")) {

@@ -1,0 +1,502 @@
+{- Python 3.15, syntax (the Python Language Reference, chapters 6 to 9, and
+   CPython's grammar), as an LR grammar over the tokens of Lexical.module.
+
+   Where CPython's grammar decides by trying alternatives in order, this
+   grammar reads one cover form and leaves the decision to Ast.module, as
+   CPython itself did until 3.8 for assignment targets:
+     - an assignment, augmented assignment, annotation, for-target, with-
+       target, del-target and keyword argument reads its target as an
+       expression; Ast.module checks it and gives it the Store or Del context;
+     - comparisons, boolean chains and strings read as a first item and a
+       list; Ast.module builds CPython's Compare, BoolOp and JoinedStr;
+     - an item of a parenthesized group may carry "as" a target: Ast.module
+       reads `with (a as b, c):` as two items, as CPython does, and refuses
+       "as" anywhere else.
+   Each production's label names what it denotes; Ast.module maps each to
+   CPython's ast node. -}
+import "Lexical.module" as lexical
+Module PythonSyntax {
+  Theory Statements(lex: lexical.Lexical) {
+    lex Terms {
+      -- soft keywords (2.3.2): match begins a match statement only on a line
+      -- that ends with ":" (its block is never on the same line); type
+      -- begins a type alias only before a name; case, inside a match
+      -- statement, is a keyword wherever the grammar takes it; lazy, where
+      -- an import may follow it (PEP 810).  Every other keyword is hard.
+      soft "match" ends ":" ;
+      soft "type" before Ident ;
+      soft "case" ;
+      soft "lazy" ;
+
+      -- the file: statements, then the end of the input (8.1)
+      File . FileInput ::= [Stmt] ;
+      separator Stmt "" ;
+
+      -- the input of eval() (8.3), its own entry: an expression list without
+      -- starred items on one logical line (CPython's eval_input)
+      Eval . EvalInput ::= EvalList NEWLINE ;
+      EvalListOne . EvalList ::= Exp ;
+      EvalListTuple . EvalList ::= EvalTuple ;
+      EvalTwo . EvalTuple ::= Exp "," Exp ;
+      EvalOne . EvalTuple ::= Exp "," ;
+      EvalMore . EvalTuple ::= EvalTuple "," Exp ;
+      EvalTrail . EvalTuple ::= EvalTuple "," ;
+
+      -- a statement: a line of simple statements, or a compound statement (7, 8)
+      SimpleLine . Stmt ::= SmallStmts NEWLINE ;
+      CompoundLine . Stmt ::= CompoundStmt ;
+
+      SmallOne . SmallStmts ::= SmallStmt ;
+      SmallTrail . SmallStmts ::= SmallStmt ";" ;
+      SmallMore . SmallStmts ::= SmallStmt ";" SmallStmts ;
+
+      -- simple statements (7)
+      ExprStmt . SmallStmt ::= TestListStar ;
+      AnnAssign . SmallStmt ::= TestListStar ":" Exp ;
+      AnnAssignValue . SmallStmt ::= TestListStar ":" Exp "=" AssignValue ;
+      AugAssign . SmallStmt ::= TestListStar AugOp AssignValue ;
+      Assign . SmallStmt ::= TestListStar "=" AssignChain ;
+      AssignLast . AssignChain ::= AssignValue ;
+      AssignNext . AssignChain ::= AssignValue "=" AssignChain ;
+      ValueYield . AssignValue ::= YieldExpr ;
+      ValueExprs . AssignValue ::= TestListStar ;
+      YieldStmt . SmallStmt ::= YieldExpr ;
+      Pass . SmallStmt ::= "pass" ;
+      Break . SmallStmt ::= "break" ;
+      Continue . SmallStmt ::= "continue" ;
+      Return . SmallStmt ::= "return" ;
+      ReturnValue . SmallStmt ::= "return" TestListStar ;
+      Raise . SmallStmt ::= "raise" ;
+      RaiseExc . SmallStmt ::= "raise" Exp ;
+      RaiseFrom . SmallStmt ::= "raise" Exp "from" Exp ;
+      Del . SmallStmt ::= "del" ExprList ;
+      Global . SmallStmt ::= "global" NameList ;
+      Nonlocal . SmallStmt ::= "nonlocal" NameList ;
+      Assert . SmallStmt ::= "assert" Exp ;
+      AssertMsg . SmallStmt ::= "assert" Exp "," Exp ;
+      Import . SmallStmt ::= "import" DottedAsNames ;
+      LazyImport . SmallStmt ::= "lazy" "import" DottedAsNames ;
+      ImportFrom . SmallStmt ::= "from" ImportSource "import" ImportTargets ;
+      LazyImportFrom . SmallStmt ::= "lazy" "from" ImportSource "import" ImportTargets ;
+      TypeAlias . SmallStmt ::= "type" TypeName TypeParamsOpt "=" Exp ;
+      TypeName . TypeName ::= Ident ;
+
+      NameOne . NameList ::= Ident ;
+      NameMore . NameList ::= NameList "," Ident ;
+
+      AddAssign . AugOp ::= "+=" ;
+      SubAssign . AugOp ::= "-=" ;
+      MultAssign . AugOp ::= "*=" ;
+      MatMultAssign . AugOp ::= "@=" ;
+      DivAssign . AugOp ::= "/=" ;
+      ModAssign . AugOp ::= "%=" ;
+      BitAndAssign . AugOp ::= "&=" ;
+      BitOrAssign . AugOp ::= "|=" ;
+      BitXorAssign . AugOp ::= "^=" ;
+      LShiftAssign . AugOp ::= "<<=" ;
+      RShiftAssign . AugOp ::= ">>=" ;
+      PowAssign . AugOp ::= "**=" ;
+      FloorDivAssign . AugOp ::= "//=" ;
+
+      -- import (7.11)
+      DottedOne . DottedName ::= Ident ;
+      DottedMore . DottedName ::= DottedName "." Ident ;
+      AliasModule . DottedAsName ::= DottedName ;
+      AliasModuleAs . DottedAsName ::= DottedName "as" Ident ;
+      DottedAsOne . DottedAsNames ::= DottedAsName ;
+      DottedAsMore . DottedAsNames ::= DottedAsNames "," DottedAsName ;
+      SourceModule . ImportSource ::= DottedName ;
+      SourceRelative . ImportSource ::= Dots DottedName ;
+      SourceDots . ImportSource ::= Dots ;
+      DotOne . Dots ::= "." ;
+      DotThree . Dots ::= "..." ;
+      DotsOne . Dots ::= Dots "." ;
+      DotsThree . Dots ::= Dots "..." ;
+      ImportAll . ImportTargets ::= "*" ;
+      ImportNames . ImportTargets ::= ImportAsNames ;
+      ImportParens . ImportTargets ::= "(" ImportAsNames ")" ;
+      ImportParensComma . ImportTargets ::= "(" ImportAsNames "," ")" ;
+      AliasName . ImportAsName ::= Ident ;
+      AliasNameAs . ImportAsName ::= Ident "as" Ident ;
+      ImportAsOne . ImportAsNames ::= ImportAsName ;
+      ImportAsMore . ImportAsNames ::= ImportAsNames "," ImportAsName ;
+
+      -- compound statements (8)
+      If . CompoundStmt ::= "if" NamedTest ":" Block ElseIf ;
+      ElseIfNone . ElseIf ::= ;
+      ElseIfMore . ElseIf ::= "elif" NamedTest ":" Block ElseIf ;
+      ElseIfElse . ElseIf ::= "else" ":" Block ;
+      While . CompoundStmt ::= "while" NamedTest ":" Block OrElse ;
+      For . CompoundStmt ::= "for" ExprList "in" TestListStar ":" Block OrElse ;
+      AsyncFor . CompoundStmt ::= "async" "for" ExprList "in" TestListStar ":" Block OrElse ;
+      OrElseNone . OrElse ::= ;
+      OrElseBlock . OrElse ::= "else" ":" Block ;
+      Try . CompoundStmt ::= "try" ":" Block [Handler] OrElse Finally ;
+      TryFinally . CompoundStmt ::= "try" ":" Block "finally" ":" Block ;
+      separator nonempty Handler "" ;
+      FinallyNone . Finally ::= ;
+      FinallyBlock . Finally ::= "finally" ":" Block ;
+      HandlerAll . Handler ::= "except" ":" Block ;
+      HandlerType . Handler ::= "except" Exp ":" Block ;
+      HandlerTypes . Handler ::= "except" ExceptTypes ":" Block ;
+      HandlerTypeAs . Handler ::= "except" Exp "as" Ident ":" Block ;
+      HandlerStar . Handler ::= "except" "*" Exp ":" Block ;
+      HandlerStarTypes . Handler ::= "except" "*" ExceptTypes ":" Block ;
+      -- except A, B: several types without parentheses (PEP 758), a tuple
+      -- as eval's input writes one; never with "as"
+      ExceptTuple . ExceptTypes ::= EvalTuple ;
+      HandlerStarAs . Handler ::= "except" "*" Exp "as" Ident ":" Block ;
+      With . CompoundStmt ::= "with" WithItems ":" Block ;
+      AsyncWith . CompoundStmt ::= "async" "with" WithItems ":" Block ;
+      WithItemsPlain . WithItems ::= WithItemList ;
+      WithItemOne . WithItemList ::= WithItem ;
+      WithItemMore . WithItemList ::= WithItemList "," WithItem ;
+      WithPlain . WithItem ::= Exp ;
+      WithAs . WithItem ::= Exp "as" Exp5 ;
+      Match . CompoundStmt ::= "match" MatchSubject ":" NEWLINE INDENT [CaseBlock] DEDENT ;
+      separator nonempty CaseBlock "" ;
+      SubjectOne . MatchSubject ::= NamedOrStar ;
+      SubjectTuple . MatchSubject ::= TupleItems ;
+      Case . CaseBlock ::= "case" Patterns GuardOpt ":" Block ;
+      GuardNone . GuardOpt ::= ;
+      Guard . GuardOpt ::= "if" NamedTest ;
+      FunctionDef . CompoundStmt ::= FuncDef ;
+      AsyncFunctionDef . CompoundStmt ::= "async" FuncDef ;
+      ClassDef . CompoundStmt ::= ClassDefn ;
+      Decorated . CompoundStmt ::= [Decorator] Decoratable ;
+      separator nonempty Decorator "" ;
+      Decorator . Decorator ::= "@" NamedTest NEWLINE ;
+      DecoratedFunction . Decoratable ::= FuncDef ;
+      DecoratedAsync . Decoratable ::= "async" FuncDef ;
+      DecoratedClass . Decoratable ::= ClassDefn ;
+
+      Def . FuncDef ::= "def" Ident TypeParamsOpt "(" Parameters ")" ReturnsOpt ":" Block ;
+      ReturnsNone . ReturnsOpt ::= ;
+      Returns . ReturnsOpt ::= "->" Exp ;
+      Class . ClassDefn ::= "class" Ident TypeParamsOpt ClassArgs ":" Block ;
+      ClassArgsNone . ClassArgs ::= ;
+      ClassArgsEmpty . ClassArgs ::= "(" ")" ;
+      ClassArgsSome . ClassArgs ::= "(" ArgList ")" ;
+
+      Indented . Block ::= NEWLINE INDENT [Stmt] DEDENT ;
+      Inline . Block ::= SmallStmts NEWLINE ;
+
+      -- type parameters (PEP 695, PEP 696)
+      TypeParamsNone . TypeParamsOpt ::= ;
+      TypeParams . TypeParamsOpt ::= "[" TypeParamList "]" ;
+      TypeParamsComma . TypeParamsOpt ::= "[" TypeParamList "," "]" ;
+      TypeParamOne . TypeParamList ::= TypeParam ;
+      TypeParamMore . TypeParamList ::= TypeParamList "," TypeParam ;
+      TypeVar . TypeParam ::= Ident TypeBoundOpt TypeDefaultOpt ;
+      TypeVarTuple . TypeParam ::= "*" Ident TypeDefaultStarOpt ;
+      ParamSpec . TypeParam ::= "**" Ident TypeDefaultOpt ;
+      TypeBoundNone . TypeBoundOpt ::= ;
+      TypeBound . TypeBoundOpt ::= ":" Exp ;
+      TypeDefaultNone . TypeDefaultOpt ::= ;
+      TypeDefault . TypeDefaultOpt ::= "=" Exp ;
+      TypeDefaultStarNone . TypeDefaultStarOpt ::= ;
+      TypeDefaultStar . TypeDefaultStarOpt ::= "=" StarredDefault ;
+      StarredDefaultExpr . StarredDefault ::= Exp ;
+      StarredDefaultStar . StarredDefault ::= "*" Exp5 ;
+
+      -- patterns (8.6.4); Ast.module checks what CPython checks after its
+      -- grammar (a capture name used twice, a wildcard or star in place)
+      PatternsOne . Patterns ::= Pattern ;
+      PatternsOpen . Patterns ::= OpenSequence ;
+      AsPattern . Pattern ::= OrPattern "as" Ident ;
+      PatternOr . Pattern ::= OrPattern ;
+      OrOne . OrPattern ::= ClosedPattern ;
+      OrMore . OrPattern ::= OrPattern "|" ClosedPattern ;
+      LiteralNumber . ClosedPattern ::= SignedNumber ;
+      LiteralComplexAdd . ClosedPattern ::= SignedNumber "+" PatternNumber ;
+      LiteralComplexSub . ClosedPattern ::= SignedNumber "-" PatternNumber ;
+      LiteralStrings . ClosedPattern ::= [StringPart] ;
+      LiteralNone . ClosedPattern ::= "None" ;
+      LiteralTrue . ClosedPattern ::= "True" ;
+      LiteralFalse . ClosedPattern ::= "False" ;
+      Capture . ClosedPattern ::= Ident ;
+      ValuePattern . ClosedPattern ::= PatternAttr ;
+      GroupPattern . ClosedPattern ::= "(" Pattern ")" ;
+      SequenceParenEmpty . ClosedPattern ::= "(" ")" ;
+      SequenceParen . ClosedPattern ::= "(" OpenSequence ")" ;
+      SequenceBracketEmpty . ClosedPattern ::= "[" "]" ;
+      SequenceBracket . ClosedPattern ::= "[" MaybeSequence "]" ;
+      MappingEmpty . ClosedPattern ::= "{" "}" ;
+      Mapping . ClosedPattern ::= "{" MappingItems "}" ;
+      ClassPatternEmpty . ClosedPattern ::= NameOrAttr "(" ")" ;
+      ClassPattern . ClosedPattern ::= NameOrAttr "(" ClassPatternArgs ")" ;
+      SignedPositive . SignedNumber ::= PatternNumber ;
+      SignedNegative . SignedNumber ::= "-" PatternNumber ;
+      SignedPlus . SignedNumber ::= "+" PatternNumber ;
+      PatternNumber . PatternNumber ::= NUMBER ;
+      PatternAttr . PatternAttr ::= NameOrAttr "." Ident ;
+      NameOrAttrName . NameOrAttr ::= Ident ;
+      NameOrAttrAttr . NameOrAttr ::= PatternAttr ;
+      OpenSeqOne . OpenSequence ::= MaybeStar "," ;
+      OpenSeqMore . OpenSequence ::= MaybeStar "," MaybeSequence ;
+      MaybeSeqOne . MaybeSequence ::= MaybeStar ;
+      MaybeSeqMore . MaybeSequence ::= MaybeStar "," MaybeSequence ;
+      MaybeSeqTrail . MaybeSequence ::= MaybeStar "," ;
+      StarPattern . MaybeStar ::= "*" Ident ;
+      MaybeStarPattern . MaybeStar ::= Pattern ;
+      MappingOne . MappingItems ::= MappingItem ;
+      MappingMore . MappingItems ::= MappingItems "," MappingItem ;
+      MappingTrail . MappingItems ::= MappingItems "," ;
+      MappingPair . MappingItem ::= MappingKey ":" Pattern ;
+      MappingRest . MappingItem ::= "**" Ident ;
+      KeyNumber . MappingKey ::= SignedNumber ;
+      KeyComplexAdd . MappingKey ::= SignedNumber "+" PatternNumber ;
+      KeyComplexSub . MappingKey ::= SignedNumber "-" PatternNumber ;
+      KeyStrings . MappingKey ::= [StringPart] ;
+      KeyNone . MappingKey ::= "None" ;
+      KeyTrue . MappingKey ::= "True" ;
+      KeyFalse . MappingKey ::= "False" ;
+      KeyAttr . MappingKey ::= PatternAttr ;
+      ClassArgOne . ClassPatternArgs ::= ClassPatternArg ;
+      ClassArgMore . ClassPatternArgs ::= ClassPatternArgs "," ClassPatternArg ;
+      ClassArgTrail . ClassPatternArgs ::= ClassPatternArgs "," ;
+      ClassPositional . ClassPatternArg ::= Pattern ;
+      ClassKeyword . ClassPatternArg ::= Ident "=" Pattern ;
+
+      -- parameters (8.7): the list as written; Ast.module checks the order
+      -- of positional-only, default and keyword-only parameters.  A
+      -- parameter's name and annotation are one node (ast.arg), without its
+      -- default or its stars
+      ParamsNone . Parameters ::= ;
+      ParamsSome . Parameters ::= ParamList ;
+      ParamsComma . Parameters ::= ParamList "," ;
+      ParamOne . ParamList ::= Param ;
+      ParamMore . ParamList ::= ParamList "," Param ;
+      ParamPlain . Param ::= ArgDef ;
+      ParamDefault . Param ::= ArgDef "=" Exp ;
+      ParamSlash . Param ::= "/" ;
+      ParamStar . Param ::= "*" ;
+      ParamVarArgs . Param ::= "*" ArgDefStar ;
+      ParamKwArgs . Param ::= "**" ArgDef ;
+      ArgDef . ArgDef ::= Ident AnnotationOpt ;
+      ArgDefStar . ArgDefStar ::= Ident StarAnnotationOpt ;
+      AnnotationNone . AnnotationOpt ::= ;
+      Annotation . AnnotationOpt ::= ":" Exp ;
+      StarAnnotationNone . StarAnnotationOpt ::= ;
+      StarAnnotation . StarAnnotationOpt ::= ":" StarredDefault ;
+
+      -- expressions (6), from the lowest precedence to the highest: one
+      -- family, Exp at the lowest level and Exp15 (atoms) at the highest; a
+      -- level reads every higher one (the coercions "_")
+      NamedPlain . NamedTest ::= Exp ;
+      NamedExpr . NamedTest ::= Exp ":=" Exp ;
+
+      IfExp . Exp ::= Exp1 "if" Exp1 "else" Exp ;
+      Lambda . Exp ::= "lambda" LambdaParams ":" Exp ;
+      _ . Exp ::= Exp1 ;
+      LambdaParamsNone . LambdaParams ::= ;
+      LambdaParamsSome . LambdaParams ::= LambdaParamList ;
+      LambdaParamsComma . LambdaParams ::= LambdaParamList "," ;
+      LambdaParamOne . LambdaParamList ::= LambdaParam ;
+      LambdaParamMore . LambdaParamList ::= LambdaParamList "," LambdaParam ;
+      LambdaPlain . LambdaParam ::= LambdaArg ;
+      LambdaDefault . LambdaParam ::= LambdaArg "=" Exp ;
+      LambdaSlash . LambdaParam ::= "/" ;
+      LambdaStar . LambdaParam ::= "*" ;
+      LambdaVarArgs . LambdaParam ::= "*" LambdaArg ;
+      LambdaKwArgs . LambdaParam ::= "**" LambdaArg ;
+      LambdaArg . LambdaArg ::= Ident ;
+
+      -- a chain of or, of and, of comparisons: its first operand and the
+      -- list of the rest, as ast keeps them (BoolOp values, Compare ops)
+      Or . Exp1 ::= Exp2 [OrPart] ;
+      _ . Exp1 ::= Exp2 ;
+      OrPart . OrPart ::= "or" Exp2 ;
+      separator nonempty OrPart "" ;
+      And . Exp2 ::= Exp3 [AndPart] ;
+      _ . Exp2 ::= Exp3 ;
+      AndPart . AndPart ::= "and" Exp3 ;
+      separator nonempty AndPart "" ;
+      Not . Exp3 ::= "not" Exp3 ;
+      _ . Exp3 ::= Exp4 ;
+      Compare . Exp4 ::= Exp5 [CompPart] ;
+      _ . Exp4 ::= Exp5 ;
+      CompPart . CompPart ::= CompOp Exp5 ;
+      separator nonempty CompPart "" ;
+      Lt . CompOp ::= "<" ;
+      Gt . CompOp ::= ">" ;
+      Eq . CompOp ::= "==" ;
+      GtE . CompOp ::= ">=" ;
+      LtE . CompOp ::= "<=" ;
+      NotEq . CompOp ::= "!=" ;
+      In . CompOp ::= "in" ;
+      NotIn . CompOp ::= "not" "in" ;
+      Is . CompOp ::= "is" ;
+      IsNot . CompOp ::= "is" "not" ;
+
+      StarExpr . StarExpr ::= "*" Exp5 ;
+      -- a generator expression's unpacked item (PEP 798): * and an expression
+      StarArg . StarArg ::= "*" Exp ;
+
+      BitOr . Exp5 ::= Exp5 "|" Exp6 ;
+      _ . Exp5 ::= Exp6 ;
+      BitXor . Exp6 ::= Exp6 "^" Exp7 ;
+      _ . Exp6 ::= Exp7 ;
+      BitAnd . Exp7 ::= Exp7 "&" Exp8 ;
+      _ . Exp7 ::= Exp8 ;
+      LShift . Exp8 ::= Exp8 "<<" Exp9 ;
+      RShift . Exp8 ::= Exp8 ">>" Exp9 ;
+      _ . Exp8 ::= Exp9 ;
+      Add . Exp9 ::= Exp9 "+" Exp10 ;
+      Sub . Exp9 ::= Exp9 "-" Exp10 ;
+      _ . Exp9 ::= Exp10 ;
+      Mult . Exp10 ::= Exp10 "*" Exp11 ;
+      MatMult . Exp10 ::= Exp10 "@" Exp11 ;
+      Div . Exp10 ::= Exp10 "/" Exp11 ;
+      Mod . Exp10 ::= Exp10 "%" Exp11 ;
+      FloorDiv . Exp10 ::= Exp10 "//" Exp11 ;
+      _ . Exp10 ::= Exp11 ;
+      UAdd . Exp11 ::= "+" Exp11 ;
+      USub . Exp11 ::= "-" Exp11 ;
+      Invert . Exp11 ::= "~" Exp11 ;
+      _ . Exp11 ::= Exp12 ;
+      Pow . Exp12 ::= Exp13 "**" Exp11 ;
+      _ . Exp12 ::= Exp13 ;
+      Await . Exp13 ::= "await" Exp14 ;
+      _ . Exp13 ::= Exp14 ;
+
+      Call . Exp14 ::= Exp14 "(" ")" ;
+      CallArgs . Exp14 ::= Exp14 "(" ArgList ")" ;
+      -- a generator expression as the only argument: its parentheses are the
+      -- call's (6.2.8); anywhere else in an argument list it needs its own
+      CallGenerator . Exp14 ::= Exp14 GenParens ;
+      GenParens . GenParens ::= "(" NamedTest CompFor ")" ;
+      GenParensStar . GenParens ::= "(" StarArg CompFor ")" ;
+      Subscript . Exp14 ::= Exp14 "[" SubscriptList "]" ;
+      Attribute . Exp14 ::= Exp14 "." Ident ;
+      _ . Exp14 ::= Exp15 ;
+
+      -- atoms (6.2)
+      Name . Exp15 ::= Ident ;
+      Number . Exp15 ::= NUMBER ;
+      Strings . Exp15 ::= [StringPart] ;
+      separator nonempty StringPart "" ;
+      StringPlain . StringPart ::= STRING ;
+      StringFormatted . StringPart ::= FSTRING_START [FStringPiece] FSTRING_END ;
+      separator FStringPiece "" ;
+      FStringText . FStringPiece ::= FSTRING_MIDDLE ;
+      FStringField . FStringPiece ::= "{" FStringFieldBody "}" ;
+      -- a field's expression, followed by "=" when the field also shows its
+      -- source text (the form declares that text)
+      FieldPlain . FStringFieldBody ::= FieldHead FieldConversion FieldSpec ;
+      FieldHeadPlain . FieldHead ::= FieldExpr ;
+      FieldHeadDebug . FieldHead ::= FieldExpr "=" ;
+      FieldExprs . FieldExpr ::= TestListStar ;
+      FieldYield . FieldExpr ::= YieldExpr ;
+      FieldConversionNone . FieldConversion ::= ;
+      FieldConversion . FieldConversion ::= "!" Ident ;
+      FieldSpecNone . FieldSpec ::= ;
+      FieldSpec . FieldSpec ::= ":" [FStringPiece] ;
+      Ellipsis . Exp15 ::= "..." ;
+      ConstNone . Exp15 ::= "None" ;
+      ConstTrue . Exp15 ::= "True" ;
+      ConstFalse . Exp15 ::= "False" ;
+      TupleEmpty . Exp15 ::= "(" ")" ;
+      Paren . Exp15 ::= "(" ParenBody ")" ;
+      ParenYield . ParenBody ::= YieldExpr ;
+      ParenNamed . ParenBody ::= NamedTest ;
+      ParenNamedAs . ParenBody ::= NamedTest "as" Exp5 ;
+      ParenStar . ParenBody ::= StarExpr ;
+      ParenTuple . ParenBody ::= TupleItems ;
+      ParenGenerator . ParenBody ::= NamedTest CompFor ;
+      ParenStarGenerator . ParenBody ::= StarArg CompFor ;
+      ListEmpty . Exp15 ::= "[" "]" ;
+      List . Exp15 ::= "[" ListItems "]" ;
+      ListComp . Exp15 ::= "[" NamedOrStar CompFor "]" ;
+      DictEmpty . Exp15 ::= "{" "}" ;
+      Dict . Exp15 ::= "{" DictItems "}" ;
+      DictComp . Exp15 ::= "{" Exp ":" Exp CompFor "}" ;
+      DictCompUnpack . Exp15 ::= "{" "**" Exp CompFor "}" ;
+      Set . Exp15 ::= "{" SetItems "}" ;
+      SetComp . Exp15 ::= "{" NamedOrStar CompFor "}" ;
+
+      -- comma lists: a trailing comma is kept, so that (a,) is a tuple
+      NamedOrStarNamed . NamedOrStar ::= NamedTest ;
+      NamedOrStarStar . NamedOrStar ::= StarExpr ;
+      TupleTwo . TupleItems ::= ParenItem "," ParenItem ;
+      TupleOne . TupleItems ::= ParenItem "," ;
+      TupleMore . TupleItems ::= TupleItems "," ParenItem ;
+      TupleTrail . TupleItems ::= TupleItems "," ;
+      ParenItemPlain . ParenItem ::= NamedOrStar ;
+      ParenItemAs . ParenItem ::= NamedTest "as" Exp5 ;
+      ListOne . ListItems ::= NamedOrStar ;
+      ListMore . ListItems ::= ListItems "," NamedOrStar ;
+      ListTrail . ListItems ::= ListItems "," ;
+      SetOne . SetItems ::= NamedOrStar ;
+      SetMore . SetItems ::= SetItems "," NamedOrStar ;
+      SetTrail . SetItems ::= SetItems "," ;
+      DictOne . DictItems ::= DictItem ;
+      DictMore . DictItems ::= DictItems "," DictItem ;
+      DictTrail . DictItems ::= DictItems "," ;
+      DictPair . DictItem ::= Exp ":" Exp ;
+      DictUnpack . DictItem ::= "**" Exp5 ;
+
+      -- a statement's expression list, unparenthesized: one item, or a tuple
+      ListStarOne . TestListStar ::= TestOrStar ;
+      ListStarTuple . TestListStar ::= TestOrStarTuple ;
+      TestOrStarTest . TestOrStar ::= Exp ;
+      TestOrStarStar . TestOrStar ::= StarExpr ;
+      TupleStarTwo . TestOrStarTuple ::= TestOrStar "," TestOrStar ;
+      TupleStarOne . TestOrStarTuple ::= TestOrStar "," ;
+      TupleStarMore . TestOrStarTuple ::= TestOrStarTuple "," TestOrStar ;
+      TupleStarTrail . TestOrStarTuple ::= TestOrStarTuple "," ;
+
+      -- targets of for and del: expressions without comparisons, so that
+      -- the "in" of a for is not read as an operator
+      ExprListOne . ExprList ::= ExprOrStar ;
+      ExprListTuple . ExprList ::= ExprOrStarTuple ;
+      ExprOrStarExpr . ExprOrStar ::= Exp5 ;
+      ExprOrStarStar . ExprOrStar ::= StarExpr ;
+      ExprTupleTwo . ExprOrStarTuple ::= ExprOrStar "," ExprOrStar ;
+      ExprTupleOne . ExprOrStarTuple ::= ExprOrStar "," ;
+      ExprTupleMore . ExprOrStarTuple ::= ExprOrStarTuple "," ExprOrStar ;
+      ExprTupleTrail . ExprOrStarTuple ::= ExprOrStarTuple "," ;
+
+      -- yield (6.2.9)
+      Yield . YieldExpr ::= "yield" ;
+      YieldValue . YieldExpr ::= "yield" TestListStar ;
+      YieldFrom . YieldExpr ::= "yield" "from" Exp ;
+
+      -- comprehensions (6.2.4)
+      CompFor . CompFor ::= "for" ExprList "in" Exp1 CompIter ;
+      CompAsyncFor . CompFor ::= "async" "for" ExprList "in" Exp1 CompIter ;
+      CompIterNone . CompIter ::= ;
+      CompIterFor . CompIter ::= CompFor ;
+      CompIterIf . CompIter ::= "if" Exp1 CompIter ;
+
+      -- call arguments (6.3.4)
+      ArgOne . ArgList ::= Argument ;
+      ArgMore . ArgList ::= ArgList "," Argument ;
+      ArgTrail . ArgList ::= ArgList "," ;
+      ArgPositional . Argument ::= NamedTest ;
+      ArgKeyword . Argument ::= Exp "=" Exp ;
+      ArgStar . Argument ::= "*" Exp ;
+      ArgDoubleStar . Argument ::= "**" Exp ;
+
+      -- subscriptions and slicings (6.3.2, 6.3.3)
+      SubscriptOne . SubscriptList ::= SubscriptItem ;
+      SubscriptTuple . SubscriptList ::= SubscriptTupleItems ;
+      SubscriptTupleTwo . SubscriptTupleItems ::= SubscriptItem "," SubscriptItem ;
+      SubscriptTupleOne . SubscriptTupleItems ::= SubscriptItem "," ;
+      SubscriptTupleMore . SubscriptTupleItems ::= SubscriptTupleItems "," SubscriptItem ;
+      SubscriptTupleTrail . SubscriptTupleItems ::= SubscriptTupleItems "," ;
+      SubscriptIndex . SubscriptItem ::= NamedTest ;
+      SubscriptStar . SubscriptItem ::= StarExpr ;
+      SubscriptSlice . SubscriptItem ::= SliceLower ":" SliceUpper SliceStep ;
+      SliceLowerNone . SliceLower ::= ;
+      SliceLower . SliceLower ::= Exp ;
+      SliceUpperNone . SliceUpper ::= ;
+      SliceUpper . SliceUpper ::= Exp ;
+      SliceStepNone . SliceStep ::= ;
+      SliceStepEmpty . SliceStep ::= ":" ;
+      SliceStep . SliceStep ::= ":" Exp ;
+    }
+  }
+  Theory Python() { Statements(lexical.Lexical()) }
+  theory Python()
+}

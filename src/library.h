@@ -2,6 +2,7 @@
 #define CETTA_LIBRARY_H
 
 #include "atom.h"
+#include "import_mask.h"
 #include "call_outcome.h"
 #include "eval_completion.h"
 #include "foreign.h"
@@ -171,7 +172,7 @@ typedef struct CettaLibraryContext {
     bool parser_cache_mutex_ready;
     struct CettaAuthoredParserV1 *parser_cache;
     TermUniverse term_universe;
-    uint32_t active_mask;
+    CettaImportMask active_mask;
     SpaceProgramToken transform_program;
     SpaceProgramToken *transform_views;
     size_t transform_view_count;

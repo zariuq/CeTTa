@@ -24,10 +24,11 @@
 #include "native/seal_module.h"
 #include "native/megalodon/mg_cetta_module.h"
 
-#define CETTA_NATIVE_IMPORT_GPARSE (1u << 24)
-#define CETTA_NATIVE_IMPORT_LANGDEF (1u << 25)
-#define CETTA_NATIVE_IMPORT_HOL (1u << 28)
-#define CETTA_NATIVE_IMPORT_MM0 (1u << 29)
+#define CETTA_NATIVE_IMPORT_GPARSE CETTA_NATIVE_IMPORT_BIT(5)
+#define CETTA_NATIVE_IMPORT_LANGDEF CETTA_NATIVE_IMPORT_BIT(6)
+#define CETTA_NATIVE_IMPORT_HOL CETTA_NATIVE_IMPORT_BIT(9)
+#define CETTA_NATIVE_IMPORT_MM0 CETTA_NATIVE_IMPORT_BIT(10)
+#define CETTA_NATIVE_IMPORT_SUPERVISE CETTA_NATIVE_IMPORT_BIT(13)
 
 static Atom *native_module_error(Arena *a, Atom *source, const char *message) {
     return atom_error(a, source, atom_string(a, message));
@@ -1235,6 +1236,18 @@ static bool mm0_module_call(CettaLibraryContext *ctx, Space *space,
     return true;
 }
 
+/* Each native module has its own bit, above the libraries' (import_mask.h). */
+#define CETTA_NATIVE_IMPORT_ALL \
+    (CETTA_NATIVE_IMPORT_BINARY | CETTA_NATIVE_IMPORT_WORK | CETTA_NATIVE_IMPORT_HEAP | \
+     CETTA_NATIVE_IMPORT_DAG | CETTA_NATIVE_IMPORT_SYNTAX | CETTA_NATIVE_IMPORT_GPARSE | \
+     CETTA_NATIVE_IMPORT_LANGDEF | CETTA_NATIVE_IMPORT_PAT | CETTA_NATIVE_IMPORT_TRANSFORM | \
+     CETTA_NATIVE_IMPORT_HOL | CETTA_NATIVE_IMPORT_MM0 | CETTA_NATIVE_IMPORT_SEAL | \
+     CETTA_NATIVE_IMPORT_MEGALODON | CETTA_NATIVE_IMPORT_SUPERVISE)
+_Static_assert((CETTA_NATIVE_IMPORT_ALL & UINT64_C(0xFFFFFFFF)) == 0u,
+               "native module bits lie above the libraries' bits");
+_Static_assert(__builtin_popcountll(CETTA_NATIVE_IMPORT_ALL) == 14,
+               "each native module has a bit of its own");
+
 static const CettaNativeBuiltinModule g_native_modules[] = {
     {"binary", CETTA_NATIVE_IMPORT_BINARY, NULL, "binary:", cetta_binary_module_call, NULL},
     {"heap", CETTA_NATIVE_IMPORT_HEAP, NULL, "heap:", cetta_heap_module_call, NULL},
@@ -1254,14 +1267,14 @@ static const CettaNativeBuiltinModule g_native_modules[] = {
     {"megalodon", CETTA_NATIVE_IMPORT_MEGALODON, NULL, "__cetta_lib_megalodon_",
      cetta_megalodon_module_call, NULL},
 #if CETTA_BUILD_WITH_DURABLE
-    {"supervise", 1u << 26, cetta_supervise_dispatch, "__cetta_lib_supervise_", NULL, NULL},
+    {"supervise", CETTA_NATIVE_IMPORT_SUPERVISE, cetta_supervise_dispatch, "__cetta_lib_supervise_", NULL, NULL},
 #endif
 };
 
-uint32_t cetta_native_module_available_mask(const CettaLibraryContext *ctx,
-    uint32_t active_mask, uint32_t requested_mask) {
+CettaImportMask cetta_native_module_available_mask(const CettaLibraryContext *ctx,
+    CettaImportMask active_mask, CettaImportMask requested_mask) {
     if (!ctx) return 0u;
-    uint32_t available = 0u;
+    CettaImportMask available = 0u;
     for (size_t i = 0; i < sizeof(g_native_modules) / sizeof(*g_native_modules); i++) {
         const CettaNativeBuiltinModule *module = &g_native_modules[i];
         if ((requested_mask & module->import_bit) &&
@@ -1272,7 +1285,7 @@ uint32_t cetta_native_module_available_mask(const CettaLibraryContext *ctx,
 }
 
 bool cetta_native_module_builtin_enabled(CettaLibraryContext *ctx,
-    uint32_t active_mask, const char *name) {
+    CettaImportMask active_mask, const char *name) {
     if (!ctx || !name) return false;
     size_t length = strlen(name);
     for (size_t i = 0; i < sizeof(g_native_modules) / sizeof(g_native_modules[0]); i++) {
@@ -1369,7 +1382,7 @@ static void native_module_petta_outcome(Arena *a, CettaCallOutcome *out) {
 bool cetta_native_module_call_active(struct CettaLibraryContext *ctx,
                                           Space *space, Arena *a,
                                           Atom *head, Atom **args, uint32_t nargs,
-                                     uint32_t active_mask, CettaCallOutcome *out) {
+                                     CettaImportMask active_mask, CettaCallOutcome *out) {
     uint32_t i;
 
     for (i = 0; i < sizeof(g_native_modules) / sizeof(g_native_modules[0]); i++) {

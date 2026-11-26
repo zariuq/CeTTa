@@ -18,6 +18,11 @@
 !(assertEqual (str:codepoints éa) ["é" "a"])
 !(assertEqual (str:from-codepoints ["a" 233 "€"]) "aé€")
 !(assertEqual (str:from-codepoints []) "")
+; The same text as integers: its scalar values, and its bytes.
+!(assertEqual (str:codepoint-values "aé€") [97 233 8364])
+!(assertEqual (str:codepoint-values "") [])
+!(assertEqual (str:byte-values "aé") [97 195 169])
+!(assertEqual (str:byte-values "") [])
 
 ; ----------------------------------------------------- a string with NUL ----
 !(assertEqual (str:byte-length "a\x00b") 3)
@@ -43,6 +48,9 @@
 !(assertEqual (str:byte-length "ok\xc3") 3)
 !(assertEqual (case (str:codepoint-count "ok\xc3") (((Error $call $detail) $detail))) (StrMalformedUtf8V1 2))
 !(assertEqual (case (str:codepoints "\xff") (((Error $call $detail) $detail))) (StrMalformedUtf8V1 0))
+!(assertEqual (case (str:codepoint-values "\xff") (((Error $call $detail) $detail))) (StrMalformedUtf8V1 0))
+; A byte operation takes the same bytes.
+!(assertEqual (str:byte-values "ok\xc3") [111 107 195])
 !(assertEqual (case (str:is-all-in alpha "ab\xe9") (((Error $call $detail) $detail))) (StrMalformedUtf8V1 2))
 !(assertEqual (case (str:string->symbol "x\xc3") (((Error $call $detail) $detail))) (StrMalformedUtf8V1 1))
 !(assertEqual (case (str:string->symbol "a\x00b") (((Error $call $detail) $detail))) (StrNulInSymbolV1 1))
@@ -89,4 +97,9 @@
 !(assertEqual (case (str:string->number "1e999") (((Error $call $detail) $detail))) (StrNumberOutOfRangeV1 0))
 !(assertEqual (str:number->string 42) "42")
 
-!(println! (StringLayerV1Summary 62 62 0))
+!(assertEqual (str:siphash13 0 0 "a") 4644417185603328019)
+!(assertEqual (str:siphash13 0 0 "é") 6047309291227476195)
+!(assertEqual (str:siphash13 0 0 "€x") 17963348449857282963)
+!(assertEqual (str:siphash13 0 0 "") 0)
+!(assertEqual (case (str:siphash13 -1 0 "a") (((Error $call $why) refused))) refused)
+!(println! (StringLayerV1Summary 73 73 0))

@@ -1,0 +1,740 @@
+{- Python 3.15: from the parse tree Syntax.module reads to the abstract syntax
+   of CPython's ast module.
+
+   The parse tree's nodes are the grammar's labels, each ending with its span
+   (Span line col end_line end_col; columns in bytes, as ast counts them).
+   The abstract syntax's nodes are ast's own, named py:NAME, with ast's fields
+   in ast's order and, for a node ast locates, its four positions after them.
+   A list is (LCons item rest) ... (LNil); an absent field is (py:None).
+
+   The fold is one relation, rewrite: a term built from a fold function
+   (FMod, FStmts, FExpr, ...) applied to parse-tree nodes rewrites to their
+   abstract syntax.  An expression is folded as ast marks its context: FExpr
+   reads it (Load); FTarget stores into it or deletes it, and only what can be
+   a target has a FTarget rule, so a program assigning to anything else has
+   no abstract syntax (CPython's SyntaxError).  A list the grammar builds
+   from the left (a tuple's items, a call's arguments, ...) is folded from
+   its last item with an accumulator, in one pass.
+
+   What a literal denotes, and the constants the abstract syntax states, are
+   asked of the host relations of AstHost.metta (the rule language writes no
+   literals); a cover form decided by a node's head asks head-apart
+   (lib/host_terms.metta). -}
+Module PythonAst {
+  Theory Fold() {
+    Empty
+    Types {
+      T;
+    }
+    Rewrites {
+      -- ================================================================ module
+
+      -- ast.Module: the statements, a simple line giving one statement for
+      -- each of its small statements
+      "MODULE". s:T, b:T | "FStmts"(s) ~> b |- "FMod"(s) ~> "py:Module"(b, "LNil"());
+
+      -- ast.Expression: eval()'s input (EvalInput), one expression or a tuple
+      -- of them, as a statement's tuple is built
+      "EVAL-ONE". e:T, sp:T, v:T | "FExpr"(e) ~> v |- "FEval"("EvalListOne"(e, sp)) ~> "py:Expression"(v);
+      "EVAL-TUPLE". t:T, l:T, c:T, el:T, ec:T, vs:T | "FEvalAcc"(t, "LNil"()) ~> vs |- "FEval"("EvalListTuple"(t, "Span"(l, c, el, ec))) ~> "py:Expression"("py:Tuple"(vs, "py:Load"(), l, c, el, ec));
+      "EVAL-TWO". a:T, b:T, sp:T, acc:T, u:T, v:T | "FExpr"(a) ~> u, "FExpr"(b) ~> v |- "FEvalAcc"("EvalTwo"(a, b, sp), acc) ~> "LCons"(u, "LCons"(v, acc));
+      "EVAL-ONE-COMMA". a:T, sp:T, acc:T, u:T | "FExpr"(a) ~> u |- "FEvalAcc"("EvalOne"(a, sp), acc) ~> "LCons"(u, acc);
+      "EVAL-MORE". t:T, a:T, sp:T, acc:T, u:T, r:T | "FExpr"(a) ~> u, "FEvalAcc"(t, "LCons"(u, acc)) ~> r |- "FEvalAcc"("EvalMore"(t, a, sp), acc) ~> r;
+      "EVAL-TRAIL". t:T, sp:T, acc:T, r:T | "FEvalAcc"(t, acc) ~> r |- "FEvalAcc"("EvalTrail"(t, sp), acc) ~> r;
+      "STMTS-NIL". |- "FStmts"("LNil"()) ~> "LNil"();
+      "STMTS-SIMPLE". ss:T, sp:T, rest:T, a:T, b:T, c:T | "FSmalls"(ss) ~> a, "FStmts"(rest) ~> b, "FAppend"(a, b) ~> c |- "FStmts"("LCons"("SimpleLine"(ss, sp), rest)) ~> c;
+      "STMTS-COMPOUND". s:T, sp:T, rest:T, a:T, b:T | "FCompound"(s) ~> a, "FStmts"(rest) ~> b |- "FStmts"("LCons"("CompoundLine"(s, sp), rest)) ~> "LCons"(a, b);
+      "APPEND-NIL". ys:T |- "FAppend"("LNil"(), ys) ~> ys;
+      "APPEND-CONS". x:T, xs:T, ys:T, r:T | "FAppend"(xs, ys) ~> r |- "FAppend"("LCons"(x, xs), ys) ~> "LCons"(x, r);
+      "SMALLS-ONE". s:T, sp:T, a:T | "FSmall"(s) ~> a |- "FSmalls"("SmallOne"(s, sp)) ~> "LCons"(a, "LNil"());
+      "SMALLS-TRAIL". s:T, sp:T, a:T | "FSmall"(s) ~> a |- "FSmalls"("SmallTrail"(s, sp)) ~> "LCons"(a, "LNil"());
+      "SMALLS-MORE". s:T, rest:T, sp:T, a:T, b:T | "FSmall"(s) ~> a, "FSmalls"(rest) ~> b |- "FSmalls"("SmallMore"(s, rest, sp)) ~> "LCons"(a, b);
+
+      -- a block: indented statements, or simple statements on its header's line
+      "BLOCK-INDENTED". s:T, sp:T, b:T | "FStmts"(s) ~> b |- "FBlock"("Indented"(s, sp)) ~> b;
+      "BLOCK-INLINE". ss:T, sp:T, b:T | "FSmalls"(ss) ~> b |- "FBlock"("Inline"(ss, sp)) ~> b;
+
+      -- ================================================================ simple statements
+
+      -- ast.Expr, Assign, AugAssign, AnnAssign
+      "EXPR-STMT". e:T, l:T, c:T, el:T, ec:T, v:T | "FExprs"(e) ~> v |- "FSmall"("ExprStmt"(e, "Span"(l, c, el, ec))) ~> "py:Expr"(v, l, c, el, ec);
+      "YIELD-STMT". y:T, l:T, c:T, el:T, ec:T, v:T | "FYield"(y) ~> v |- "FSmall"("YieldStmt"(y, "Span"(l, c, el, ec))) ~> "py:Expr"(v, l, c, el, ec);
+      "ASSIGN". t:T, ch:T, l:T, c:T, el:T, ec:T, t1:T, ts:T, v:T | "FExprsTarget"(t, "py:Store"()) ~> t1, "FTargets"(ch) ~> ts, "FAssignValue"(ch) ~> v |- "FSmall"("Assign"(t, ch, "Span"(l, c, el, ec))) ~> "py:Assign"("LCons"(t1, ts), v, "py:None"(), l, c, el, ec);
+      "TARGETS-LAST". v:T, sp:T |- "FTargets"("AssignLast"(v, sp)) ~> "LNil"();
+      "TARGETS-NEXT". v:T, ch:T, sp:T, t:T, ts:T | "FValueTarget"(v) ~> t, "FTargets"(ch) ~> ts |- "FTargets"("AssignNext"(v, ch, sp)) ~> "LCons"(t, ts);
+      "VALUE-LAST". v:T, sp:T, x:T | "FValue"(v) ~> x |- "FAssignValue"("AssignLast"(v, sp)) ~> x;
+      "VALUE-NEXT". v:T, ch:T, sp:T, x:T | "FAssignValue"(ch) ~> x |- "FAssignValue"("AssignNext"(v, ch, sp)) ~> x;
+      "VALUE-EXPRS". e:T, sp:T, x:T | "FExprs"(e) ~> x |- "FValue"("ValueExprs"(e, sp)) ~> x;
+      "VALUE-YIELD". y:T, sp:T, x:T | "FYield"(y) ~> x |- "FValue"("ValueYield"(y, sp)) ~> x;
+      "VALUE-TARGET". e:T, sp:T, x:T | "FExprsTarget"(e, "py:Store"()) ~> x |- "FValueTarget"("ValueExprs"(e, sp)) ~> x;
+      "AUG-ASSIGN". t:T, op:T, v:T, l:T, c:T, el:T, ec:T, x:T, o:T, y:T | "FSingleTarget"(t) ~> x, "FAugOp"(op) ~> o, "FValue"(v) ~> y |- "FSmall"("AugAssign"(t, op, v, "Span"(l, c, el, ec))) ~> "py:AugAssign"(x, o, y, l, c, el, ec);
+      "ANN-ASSIGN". t:T, a:T, l:T, c:T, el:T, ec:T, x:T, y:T, s:T | "FSingleTarget"(t) ~> x, "FExpr"(a) ~> y, "FSimple"(t) ~> s |- "FSmall"("AnnAssign"(t, a, "Span"(l, c, el, ec))) ~> "py:AnnAssign"(x, y, "py:None"(), s, l, c, el, ec);
+      "ANN-ASSIGN-VALUE". t:T, a:T, v:T, l:T, c:T, el:T, ec:T, x:T, y:T, z:T, s:T | "FSingleTarget"(t) ~> x, "FExpr"(a) ~> y, "FValue"(v) ~> z, "FSimple"(t) ~> s |- "FSmall"("AnnAssignValue"(t, a, v, "Span"(l, c, el, ec))) ~> "py:AnnAssign"(x, y, z, s, l, c, el, ec);
+
+      -- a single target: a name, an attribute or a subscription, perhaps in
+      -- parentheses; an annotated name without parentheses is simple (1)
+      "SINGLE-TARGET". e:T, sp:T, sp2:T, x:T | "FSingle"(e) ~> x |- "FSingleTarget"("ListStarOne"("TestOrStarTest"(e, sp), sp2)) ~> x;
+      "SINGLE-NAME". n:T, l:T, c:T, el:T, ec:T |- "FSingle"("Name"(n, "Span"(l, c, el, ec))) ~> "py:Name"(n, "py:Store"(), l, c, el, ec);
+      "SINGLE-ATTRIBUTE". e:T, a:T, l:T, c:T, el:T, ec:T, v:T | "FExpr"(e) ~> v |- "FSingle"("Attribute"(e, a, "Span"(l, c, el, ec))) ~> "py:Attribute"(v, a, "py:Store"(), l, c, el, ec);
+      "SINGLE-SUBSCRIPT". e:T, s:T, l:T, c:T, el:T, ec:T, v:T, w:T | "FExpr"(e) ~> v, "FSlices"(s) ~> w |- "FSingle"("Subscript"(e, s, "Span"(l, c, el, ec))) ~> "py:Subscript"(v, w, "py:Store"(), l, c, el, ec);
+      "SINGLE-PAREN". e:T, sp:T, sp2:T, sp3:T, x:T | "FSingle"(e) ~> x |- "FSingle"("Paren"("ParenNamed"("NamedPlain"(e, sp), sp2), sp3)) ~> x;
+      "SIMPLE". e:T, sp:T, sp2:T, s:T | "FSimpleOf"(e) ~> s |- "FSimple"("ListStarOne"("TestOrStarTest"(e, sp), sp2)) ~> s;
+      "SIMPLE-NAME". n:T, sp:T, s:T | "py-const"("py:one"(), s) |- "FSimpleOf"("Name"(n, sp)) ~> s;
+      "SIMPLE-ATTRIBUTE". e:T, a:T, sp:T, s:T | "py-const"("py:zero"(), s) |- "FSimpleOf"("Attribute"(e, a, sp)) ~> s;
+      "SIMPLE-SUBSCRIPT". e:T, x:T, sp:T, s:T | "py-const"("py:zero"(), s) |- "FSimpleOf"("Subscript"(e, x, sp)) ~> s;
+      "SIMPLE-PAREN". b:T, sp:T, s:T | "py-const"("py:zero"(), s) |- "FSimpleOf"("Paren"(b, sp)) ~> s;
+
+      "AUG-ADD". sp:T |- "FAugOp"("AddAssign"(sp)) ~> "py:Add"();
+      "AUG-SUB". sp:T |- "FAugOp"("SubAssign"(sp)) ~> "py:Sub"();
+      "AUG-MULT". sp:T |- "FAugOp"("MultAssign"(sp)) ~> "py:Mult"();
+      "AUG-MATMULT". sp:T |- "FAugOp"("MatMultAssign"(sp)) ~> "py:MatMult"();
+      "AUG-DIV". sp:T |- "FAugOp"("DivAssign"(sp)) ~> "py:Div"();
+      "AUG-MOD". sp:T |- "FAugOp"("ModAssign"(sp)) ~> "py:Mod"();
+      "AUG-BITAND". sp:T |- "FAugOp"("BitAndAssign"(sp)) ~> "py:BitAnd"();
+      "AUG-BITOR". sp:T |- "FAugOp"("BitOrAssign"(sp)) ~> "py:BitOr"();
+      "AUG-BITXOR". sp:T |- "FAugOp"("BitXorAssign"(sp)) ~> "py:BitXor"();
+      "AUG-LSHIFT". sp:T |- "FAugOp"("LShiftAssign"(sp)) ~> "py:LShift"();
+      "AUG-RSHIFT". sp:T |- "FAugOp"("RShiftAssign"(sp)) ~> "py:RShift"();
+      "AUG-POW". sp:T |- "FAugOp"("PowAssign"(sp)) ~> "py:Pow"();
+      "AUG-FLOORDIV". sp:T |- "FAugOp"("FloorDivAssign"(sp)) ~> "py:FloorDiv"();
+
+      -- ast.Pass, Break, Continue, Return, Raise, Delete, Global, Nonlocal, Assert
+      "PASS". l:T, c:T, el:T, ec:T |- "FSmall"("Pass"("Span"(l, c, el, ec))) ~> "py:Pass"(l, c, el, ec);
+      "BREAK". l:T, c:T, el:T, ec:T |- "FSmall"("Break"("Span"(l, c, el, ec))) ~> "py:Break"(l, c, el, ec);
+      "CONTINUE". l:T, c:T, el:T, ec:T |- "FSmall"("Continue"("Span"(l, c, el, ec))) ~> "py:Continue"(l, c, el, ec);
+      "RETURN". l:T, c:T, el:T, ec:T |- "FSmall"("Return"("Span"(l, c, el, ec))) ~> "py:Return"("py:None"(), l, c, el, ec);
+      "RETURN-VALUE". e:T, l:T, c:T, el:T, ec:T, v:T | "FExprs"(e) ~> v |- "FSmall"("ReturnValue"(e, "Span"(l, c, el, ec))) ~> "py:Return"(v, l, c, el, ec);
+      "RAISE". l:T, c:T, el:T, ec:T |- "FSmall"("Raise"("Span"(l, c, el, ec))) ~> "py:Raise"("py:None"(), "py:None"(), l, c, el, ec);
+      "RAISE-EXC". e:T, l:T, c:T, el:T, ec:T, v:T | "FExpr"(e) ~> v |- "FSmall"("RaiseExc"(e, "Span"(l, c, el, ec))) ~> "py:Raise"(v, "py:None"(), l, c, el, ec);
+      "RAISE-FROM". e:T, f:T, l:T, c:T, el:T, ec:T, v:T, w:T | "FExpr"(e) ~> v, "FExpr"(f) ~> w |- "FSmall"("RaiseFrom"(e, f, "Span"(l, c, el, ec))) ~> "py:Raise"(v, w, l, c, el, ec);
+      -- del a, b deletes two targets; del (a, b) deletes one tuple
+      "DEL". t:T, l:T, c:T, el:T, ec:T, v:T | "FDelTargets"(t) ~> v |- "FSmall"("Del"(t, "Span"(l, c, el, ec))) ~> "py:Delete"(v, l, c, el, ec);
+      "DEL-ONE". e:T, sp:T, sp2:T, v:T | "FTarget"(e, "py:Del"()) ~> v |- "FDelTargets"("ExprListOne"("ExprOrStarExpr"(e, sp), sp2)) ~> "LCons"(v, "LNil"());
+      "DEL-TUPLE". t:T, sp:T, v:T | "FExprTupleAcc"(t, "py:Del"(), "LNil"()) ~> v |- "FDelTargets"("ExprListTuple"(t, sp)) ~> v;
+      "GLOBAL". ns:T, l:T, c:T, el:T, ec:T, v:T | "FNamesAcc"(ns, "LNil"()) ~> v |- "FSmall"("Global"(ns, "Span"(l, c, el, ec))) ~> "py:Global"(v, l, c, el, ec);
+      "NONLOCAL". ns:T, l:T, c:T, el:T, ec:T, v:T | "FNamesAcc"(ns, "LNil"()) ~> v |- "FSmall"("Nonlocal"(ns, "Span"(l, c, el, ec))) ~> "py:Nonlocal"(v, l, c, el, ec);
+      "NAMES-ONE". n:T, sp:T, acc:T |- "FNamesAcc"("NameOne"(n, sp), acc) ~> "LCons"(n, acc);
+      "NAMES-MORE". ns:T, n:T, sp:T, acc:T, r:T | "FNamesAcc"(ns, "LCons"(n, acc)) ~> r |- "FNamesAcc"("NameMore"(ns, n, sp), acc) ~> r;
+      "ASSERT". e:T, l:T, c:T, el:T, ec:T, v:T | "FExpr"(e) ~> v |- "FSmall"("Assert"(e, "Span"(l, c, el, ec))) ~> "py:Assert"(v, "py:None"(), l, c, el, ec);
+      "ASSERT-MSG". e:T, m:T, l:T, c:T, el:T, ec:T, v:T, w:T | "FExpr"(e) ~> v, "FExpr"(m) ~> w |- "FSmall"("AssertMsg"(e, m, "Span"(l, c, el, ec))) ~> "py:Assert"(v, w, l, c, el, ec);
+
+      -- ast.Import, ImportFrom, alias
+      "IMPORT". ds:T, l:T, c:T, el:T, ec:T, v:T, z:T | "FDottedAsAcc"(ds, "LNil"()) ~> v, "py-const"("py:zero"(), z) |- "FSmall"("Import"(ds, "Span"(l, c, el, ec))) ~> "py:Import"(v, z, l, c, el, ec);
+      -- lazy import (PEP 810): is_lazy 1
+      "LAZY-IMPORT". ds:T, l:T, c:T, el:T, ec:T, v:T, o:T | "FDottedAsAcc"(ds, "LNil"()) ~> v, "py-const"("py:one"(), o) |- "FSmall"("LazyImport"(ds, "Span"(l, c, el, ec))) ~> "py:Import"(v, o, l, c, el, ec);
+      "DOTTED-AS-ONE". d:T, sp:T, acc:T, v:T | "FAlias"(d) ~> v |- "FDottedAsAcc"("DottedAsOne"(d, sp), acc) ~> "LCons"(v, acc);
+      "DOTTED-AS-MORE". ds:T, d:T, sp:T, acc:T, v:T, r:T | "FAlias"(d) ~> v, "FDottedAsAcc"(ds, "LCons"(v, acc)) ~> r |- "FDottedAsAcc"("DottedAsMore"(ds, d, sp), acc) ~> r;
+      "ALIAS-MODULE". d:T, l:T, c:T, el:T, ec:T, n:T | "FDotted"(d) ~> n |- "FAlias"("AliasModule"(d, "Span"(l, c, el, ec))) ~> "py:alias"(n, "py:None"(), l, c, el, ec);
+      "ALIAS-MODULE-AS". d:T, a:T, l:T, c:T, el:T, ec:T, n:T | "FDotted"(d) ~> n |- "FAlias"("AliasModuleAs"(d, a, "Span"(l, c, el, ec))) ~> "py:alias"(n, a, l, c, el, ec);
+      "DOTTED-ONE". n:T, sp:T |- "FDotted"("DottedOne"(n, sp)) ~> n;
+      "DOTTED-MORE". d:T, n:T, sp:T, a:T, r:T | "FDotted"(d) ~> a, "py-dotted"(a, n, r) |- "FDotted"("DottedMore"(d, n, sp)) ~> r;
+      "IMPORT-FROM". s:T, t:T, l:T, c:T, el:T, ec:T, m:T, v:T, n:T, z:T | "FImportModule"(s) ~> m, "FImportTargets"(t) ~> v, "FImportLevel"(s) ~> n, "py-const"("py:zero"(), z) |- "FSmall"("ImportFrom"(s, t, "Span"(l, c, el, ec))) ~> "py:ImportFrom"(m, v, n, z, l, c, el, ec);
+      -- lazy from ... import (PEP 810): is_lazy 1, but never from __future__
+      -- (the parser's own refusal: no abstract syntax)
+      "LAZY-IMPORT-FROM". s:T, t:T, l:T, c:T, el:T, ec:T, m:T, v:T, n:T, o:T | "FImportModule"(s) ~> m, "FImportTargets"(t) ~> v, "FImportLevel"(s) ~> n, "FLazySource"(s) ~> o |- "FSmall"("LazyImportFrom"(s, t, "Span"(l, c, el, ec))) ~> "py:ImportFrom"(m, v, n, o, l, c, el, ec);
+      "LAZY-SOURCE-MODULE". d:T, sp:T, m:T, f:T, o:T | "FDotted"(d) ~> m, "py-is-future"(m, f), "FLazyAllowed"(f) ~> o |- "FLazySource"("SourceModule"(d, sp)) ~> o;
+      "LAZY-SOURCE-RELATIVE". ds:T, d:T, sp:T, o:T | "py-const"("py:one"(), o) |- "FLazySource"("SourceRelative"(ds, d, sp)) ~> o;
+      "LAZY-SOURCE-DOTS". ds:T, sp:T, o:T | "py-const"("py:one"(), o) |- "FLazySource"("SourceDots"(ds, sp)) ~> o;
+      "LAZY-ALLOWED". o:T | "py-const"("py:one"(), o) |- "FLazyAllowed"("py:False"()) ~> o;
+      "SOURCE-MODULE". d:T, sp:T, m:T | "FDotted"(d) ~> m |- "FImportModule"("SourceModule"(d, sp)) ~> m;
+      "SOURCE-RELATIVE". ds:T, d:T, sp:T, m:T | "FDotted"(d) ~> m |- "FImportModule"("SourceRelative"(ds, d, sp)) ~> m;
+      "SOURCE-DOTS". ds:T, sp:T |- "FImportModule"("SourceDots"(ds, sp)) ~> "py:None"();
+      "LEVEL-MODULE". d:T, sp:T, n:T | "py-const"("py:zero"(), n) |- "FImportLevel"("SourceModule"(d, sp)) ~> n;
+      "LEVEL-RELATIVE". ds:T, d:T, sp:T, n:T | "FDots"(ds) ~> n |- "FImportLevel"("SourceRelative"(ds, d, sp)) ~> n;
+      "LEVEL-DOTS". ds:T, sp:T, n:T | "FDots"(ds) ~> n |- "FImportLevel"("SourceDots"(ds, sp)) ~> n;
+      "DOT-ONE". sp:T, n:T | "py-const"("py:one"(), n) |- "FDots"("DotOne"(sp)) ~> n;
+      "DOT-THREE". sp:T, n:T | "py-const"("py:three"(), n) |- "FDots"("DotThree"(sp)) ~> n;
+      "DOTS-ONE". ds:T, sp:T, a:T, b:T, n:T | "FDots"(ds) ~> a, "py-const"("py:one"(), b), "py-add"(a, b, n) |- "FDots"("DotsOne"(ds, sp)) ~> n;
+      "DOTS-THREE". ds:T, sp:T, a:T, b:T, n:T | "FDots"(ds) ~> a, "py-const"("py:three"(), b), "py-add"(a, b, n) |- "FDots"("DotsThree"(ds, sp)) ~> n;
+      "IMPORT-ALL". l:T, c:T, el:T, ec:T, s:T | "py-const"("py:star"(), s) |- "FImportTargets"("ImportAll"("Span"(l, c, el, ec))) ~> "LCons"("py:alias"(s, "py:None"(), l, c, el, ec), "LNil"());
+      "IMPORT-NAMES". ns:T, sp:T, v:T | "FImportAsAcc"(ns, "LNil"()) ~> v |- "FImportTargets"("ImportNames"(ns, sp)) ~> v;
+      "IMPORT-PARENS". ns:T, sp:T, v:T | "FImportAsAcc"(ns, "LNil"()) ~> v |- "FImportTargets"("ImportParens"(ns, sp)) ~> v;
+      "IMPORT-PARENS-COMMA". ns:T, sp:T, v:T | "FImportAsAcc"(ns, "LNil"()) ~> v |- "FImportTargets"("ImportParensComma"(ns, sp)) ~> v;
+      "IMPORT-AS-ONE". a:T, sp:T, acc:T, v:T | "FImportAlias"(a) ~> v |- "FImportAsAcc"("ImportAsOne"(a, sp), acc) ~> "LCons"(v, acc);
+      "IMPORT-AS-MORE". ns:T, a:T, sp:T, acc:T, v:T, r:T | "FImportAlias"(a) ~> v, "FImportAsAcc"(ns, "LCons"(v, acc)) ~> r |- "FImportAsAcc"("ImportAsMore"(ns, a, sp), acc) ~> r;
+      "ALIAS-NAME". n:T, l:T, c:T, el:T, ec:T |- "FImportAlias"("AliasName"(n, "Span"(l, c, el, ec))) ~> "py:alias"(n, "py:None"(), l, c, el, ec);
+      "ALIAS-NAME-AS". n:T, a:T, l:T, c:T, el:T, ec:T |- "FImportAlias"("AliasNameAs"(n, a, "Span"(l, c, el, ec))) ~> "py:alias"(n, a, l, c, el, ec);
+
+      -- ast.TypeAlias and type parameters (ast.TypeVar, TypeVarTuple, ParamSpec)
+      "TYPE-ALIAS". n:T, nl:T, nc:T, nel:T, nec:T, tp:T, e:T, l:T, c:T, el:T, ec:T, ps:T, v:T | "FTypeParams"(tp) ~> ps, "FExpr"(e) ~> v |- "FSmall"("TypeAlias"("TypeName"(n, "Span"(nl, nc, nel, nec)), tp, e, "Span"(l, c, el, ec))) ~> "py:TypeAlias"("py:Name"(n, "py:Store"(), nl, nc, nel, nec), ps, v, l, c, el, ec);
+      "TYPE-PARAMS-NONE". sp:T |- "FTypeParams"("TypeParamsNone"(sp)) ~> "LNil"();
+      "TYPE-PARAMS". ts:T, sp:T, v:T | "FTypeParamAcc"(ts, "LNil"()) ~> v |- "FTypeParams"("TypeParams"(ts, sp)) ~> v;
+      "TYPE-PARAMS-COMMA". ts:T, sp:T, v:T | "FTypeParamAcc"(ts, "LNil"()) ~> v |- "FTypeParams"("TypeParamsComma"(ts, sp)) ~> v;
+      "TYPE-PARAM-ONE". t:T, sp:T, acc:T, v:T | "FTypeParam"(t) ~> v |- "FTypeParamAcc"("TypeParamOne"(t, sp), acc) ~> "LCons"(v, acc);
+      "TYPE-PARAM-MORE". ts:T, t:T, sp:T, acc:T, v:T, r:T | "FTypeParam"(t) ~> v, "FTypeParamAcc"(ts, "LCons"(v, acc)) ~> r |- "FTypeParamAcc"("TypeParamMore"(ts, t, sp), acc) ~> r;
+      "TYPE-VAR". n:T, b:T, d:T, l:T, c:T, el:T, ec:T, x:T, y:T | "FBound"(b) ~> x, "FDefault"(d) ~> y |- "FTypeParam"("TypeVar"(n, b, d, "Span"(l, c, el, ec))) ~> "py:TypeVar"(n, x, y, l, c, el, ec);
+      "TYPE-VAR-TUPLE". n:T, d:T, l:T, c:T, el:T, ec:T, y:T | "FDefaultStar"(d) ~> y |- "FTypeParam"("TypeVarTuple"(n, d, "Span"(l, c, el, ec))) ~> "py:TypeVarTuple"(n, y, l, c, el, ec);
+      "PARAM-SPEC". n:T, d:T, l:T, c:T, el:T, ec:T, y:T | "FDefault"(d) ~> y |- "FTypeParam"("ParamSpec"(n, d, "Span"(l, c, el, ec))) ~> "py:ParamSpec"(n, y, l, c, el, ec);
+      "BOUND-NONE". sp:T |- "FBound"("TypeBoundNone"(sp)) ~> "py:None"();
+      "BOUND". e:T, sp:T, v:T | "FExpr"(e) ~> v |- "FBound"("TypeBound"(e, sp)) ~> v;
+      "DEFAULT-NONE". sp:T |- "FDefault"("TypeDefaultNone"(sp)) ~> "py:None"();
+      "DEFAULT". e:T, sp:T, v:T | "FExpr"(e) ~> v |- "FDefault"("TypeDefault"(e, sp)) ~> v;
+      "DEFAULT-STAR-NONE". sp:T |- "FDefaultStar"("TypeDefaultStarNone"(sp)) ~> "py:None"();
+      "DEFAULT-STAR". s:T, sp:T, v:T | "FStarredDefault"(s) ~> v |- "FDefaultStar"("TypeDefaultStar"(s, sp)) ~> v;
+      "STARRED-DEFAULT-EXPR". e:T, sp:T, v:T | "FExpr"(e) ~> v |- "FStarredDefault"("StarredDefaultExpr"(e, sp)) ~> v;
+      "STARRED-DEFAULT-STAR". e:T, l:T, c:T, el:T, ec:T, v:T | "FExpr"(e) ~> v |- "FStarredDefault"("StarredDefaultStar"(e, "Span"(l, c, el, ec))) ~> "py:Starred"(v, "py:Load"(), l, c, el, ec);
+
+      -- ================================================================ compound statements
+
+      -- ast.If, While, For, AsyncFor
+      "IF". t:T, b:T, e:T, l:T, c:T, el:T, ec:T, x:T, y:T, z:T | "FNamed"(t) ~> x, "FBlock"(b) ~> y, "FElse"(e) ~> z |- "FCompound"("If"(t, b, e, "Span"(l, c, el, ec))) ~> "py:If"(x, y, z, l, c, el, ec);
+      "ELSE-NONE". sp:T |- "FElse"("ElseIfNone"(sp)) ~> "LNil"();
+      "ELSE-BLOCK". b:T, sp:T, y:T | "FBlock"(b) ~> y |- "FElse"("ElseIfElse"(b, sp)) ~> y;
+      "ELSE-ELIF". t:T, b:T, e:T, l:T, c:T, el:T, ec:T, x:T, y:T, z:T | "FNamed"(t) ~> x, "FBlock"(b) ~> y, "FElse"(e) ~> z |- "FElse"("ElseIfMore"(t, b, e, "Span"(l, c, el, ec))) ~> "LCons"("py:If"(x, y, z, l, c, el, ec), "LNil"());
+      "WHILE". t:T, b:T, e:T, l:T, c:T, el:T, ec:T, x:T, y:T, z:T | "FNamed"(t) ~> x, "FBlock"(b) ~> y, "FOrElse"(e) ~> z |- "FCompound"("While"(t, b, e, "Span"(l, c, el, ec))) ~> "py:While"(x, y, z, l, c, el, ec);
+      "FOR". t:T, i:T, b:T, e:T, l:T, c:T, el:T, ec:T, x:T, w:T, y:T, z:T | "FExprListTarget"(t, "py:Store"()) ~> x, "FExprs"(i) ~> w, "FBlock"(b) ~> y, "FOrElse"(e) ~> z |- "FCompound"("For"(t, i, b, e, "Span"(l, c, el, ec))) ~> "py:For"(x, w, y, z, "py:None"(), l, c, el, ec);
+      "ASYNC-FOR". t:T, i:T, b:T, e:T, l:T, c:T, el:T, ec:T, x:T, w:T, y:T, z:T | "FExprListTarget"(t, "py:Store"()) ~> x, "FExprs"(i) ~> w, "FBlock"(b) ~> y, "FOrElse"(e) ~> z |- "FCompound"("AsyncFor"(t, i, b, e, "Span"(l, c, el, ec))) ~> "py:AsyncFor"(x, w, y, z, "py:None"(), l, c, el, ec);
+      "OR-ELSE-NONE". sp:T |- "FOrElse"("OrElseNone"(sp)) ~> "LNil"();
+      "OR-ELSE-BLOCK". b:T, sp:T, y:T | "FBlock"(b) ~> y |- "FOrElse"("OrElseBlock"(b, sp)) ~> y;
+
+      -- ast.Try, TryStar, ExceptHandler: the first handler decides which; the
+      -- rest must be of its kind
+      "TRY". b:T, h:T, hs:T, e:T, f:T, l:T, c:T, el:T, ec:T, k:T, x:T, y:T, z:T, w:T, r:T | "FHandlerKind"(h) ~> k, "FBlock"(b) ~> x, "FHandlers"("LCons"(h, hs), k) ~> y, "FOrElse"(e) ~> z, "FFinally"(f) ~> w, "FTryNode"(k, x, y, z, w, l, c, el, ec) ~> r |- "FCompound"("Try"(b, "LCons"(h, hs), e, f, "Span"(l, c, el, ec))) ~> r;
+      "TRY-NODE". x:T, y:T, z:T, w:T, l:T, c:T, el:T, ec:T |- "FTryNode"("py:plain"(), x, y, z, w, l, c, el, ec) ~> "py:Try"(x, y, z, w, l, c, el, ec);
+      "TRY-STAR-NODE". x:T, y:T, z:T, w:T, l:T, c:T, el:T, ec:T |- "FTryNode"("py:star"(), x, y, z, w, l, c, el, ec) ~> "py:TryStar"(x, y, z, w, l, c, el, ec);
+      "TRY-FINALLY". b:T, f:T, l:T, c:T, el:T, ec:T, x:T, w:T | "FBlock"(b) ~> x, "FBlock"(f) ~> w |- "FCompound"("TryFinally"(b, f, "Span"(l, c, el, ec))) ~> "py:Try"(x, "LNil"(), "LNil"(), w, l, c, el, ec);
+      "FINALLY-NONE". sp:T |- "FFinally"("FinallyNone"(sp)) ~> "LNil"();
+      "FINALLY-BLOCK". b:T, sp:T, x:T | "FBlock"(b) ~> x |- "FFinally"("FinallyBlock"(b, sp)) ~> x;
+      "KIND-ALL". b:T, sp:T |- "FHandlerKind"("HandlerAll"(b, sp)) ~> "py:plain"();
+      "KIND-TYPE". e:T, b:T, sp:T |- "FHandlerKind"("HandlerType"(e, b, sp)) ~> "py:plain"();
+      "KIND-TYPE-AS". e:T, n:T, b:T, sp:T |- "FHandlerKind"("HandlerTypeAs"(e, n, b, sp)) ~> "py:plain"();
+      "KIND-STAR". e:T, b:T, sp:T |- "FHandlerKind"("HandlerStar"(e, b, sp)) ~> "py:star"();
+      "KIND-STAR-AS". e:T, n:T, b:T, sp:T |- "FHandlerKind"("HandlerStarAs"(e, n, b, sp)) ~> "py:star"();
+      "KIND-TYPES". t:T, b:T, sp:T |- "FHandlerKind"("HandlerTypes"(t, b, sp)) ~> "py:plain"();
+      "KIND-STAR-TYPES". t:T, b:T, sp:T |- "FHandlerKind"("HandlerStarTypes"(t, b, sp)) ~> "py:star"();
+      "HANDLERS-NIL". k:T |- "FHandlers"("LNil"(), k) ~> "LNil"();
+      "HANDLERS-CONS". h:T, hs:T, k:T, x:T, xs:T | "FHandler"(h, k) ~> x, "FHandlers"(hs, k) ~> xs |- "FHandlers"("LCons"(h, hs), k) ~> "LCons"(x, xs);
+      "HANDLER-ALL". b:T, l:T, c:T, el:T, ec:T, y:T | "FBlock"(b) ~> y |- "FHandler"("HandlerAll"(b, "Span"(l, c, el, ec)), "py:plain"()) ~> "py:ExceptHandler"("py:None"(), "py:None"(), y, l, c, el, ec);
+      "HANDLER-TYPE". e:T, b:T, l:T, c:T, el:T, ec:T, x:T, y:T | "FExpr"(e) ~> x, "FBlock"(b) ~> y |- "FHandler"("HandlerType"(e, b, "Span"(l, c, el, ec)), "py:plain"()) ~> "py:ExceptHandler"(x, "py:None"(), y, l, c, el, ec);
+      "HANDLER-TYPE-AS". e:T, n:T, b:T, l:T, c:T, el:T, ec:T, x:T, y:T | "FExpr"(e) ~> x, "FBlock"(b) ~> y |- "FHandler"("HandlerTypeAs"(e, n, b, "Span"(l, c, el, ec)), "py:plain"()) ~> "py:ExceptHandler"(x, n, y, l, c, el, ec);
+      "HANDLER-STAR". e:T, b:T, l:T, c:T, el:T, ec:T, x:T, y:T | "FExpr"(e) ~> x, "FBlock"(b) ~> y |- "FHandler"("HandlerStar"(e, b, "Span"(l, c, el, ec)), "py:star"()) ~> "py:ExceptHandler"(x, "py:None"(), y, l, c, el, ec);
+      -- except A, B: and except* A, B: (PEP 758) the types' tuple
+      "HANDLER-TYPES". t:T, b:T, l:T, c:T, el:T, ec:T, x:T, y:T | "FExceptTuple"(t) ~> x, "FBlock"(b) ~> y |- "FHandler"("HandlerTypes"(t, b, "Span"(l, c, el, ec)), "py:plain"()) ~> "py:ExceptHandler"(x, "py:None"(), y, l, c, el, ec);
+      "HANDLER-STAR-TYPES". t:T, b:T, l:T, c:T, el:T, ec:T, x:T, y:T | "FExceptTuple"(t) ~> x, "FBlock"(b) ~> y |- "FHandler"("HandlerStarTypes"(t, b, "Span"(l, c, el, ec)), "py:star"()) ~> "py:ExceptHandler"(x, "py:None"(), y, l, c, el, ec);
+      "EXCEPT-TUPLE". t:T, l:T, c:T, el:T, ec:T, vs:T | "FEvalAcc"(t, "LNil"()) ~> vs |- "FExceptTuple"("ExceptTuple"(t, "Span"(l, c, el, ec))) ~> "py:Tuple"(vs, "py:Load"(), l, c, el, ec);
+      "HANDLER-STAR-AS". e:T, n:T, b:T, l:T, c:T, el:T, ec:T, x:T, y:T | "FExpr"(e) ~> x, "FBlock"(b) ~> y |- "FHandler"("HandlerStarAs"(e, n, b, "Span"(l, c, el, ec)), "py:star"()) ~> "py:ExceptHandler"(x, n, y, l, c, el, ec);
+
+      -- ast.With, AsyncWith, withitem.  A parenthesized group that is the
+      -- whole item list, `with (a, b as c):`, is its items when each is an
+      -- expression perhaps with "as" a target; a group holding a star or a
+      -- named expression is one tuple item (CPython tries the items first)
+      "WITH". w:T, b:T, l:T, c:T, el:T, ec:T, x:T, y:T | "FWithItems"(w) ~> x, "FBlock"(b) ~> y |- "FCompound"("With"(w, b, "Span"(l, c, el, ec))) ~> "py:With"(x, y, "py:None"(), l, c, el, ec);
+      "ASYNC-WITH". w:T, b:T, l:T, c:T, el:T, ec:T, x:T, y:T | "FWithItems"(w) ~> x, "FBlock"(b) ~> y |- "FCompound"("AsyncWith"(w, b, "Span"(l, c, el, ec))) ~> "py:AsyncWith"(x, y, "py:None"(), l, c, el, ec);
+      "WITH-ITEMS-ONE". i:T, sp:T, sp2:T, x:T | "FWithOne"(i) ~> x |- "FWithItems"("WithItemsPlain"("WithItemOne"(i, sp), sp2)) ~> x;
+      "WITH-ITEMS-MORE". il:T, i:T, sp:T, sp2:T, x:T | "FWithAcc"("WithItemMore"(il, i, sp), "LNil"()) ~> x |- "FWithItems"("WithItemsPlain"("WithItemMore"(il, i, sp), sp2)) ~> x;
+      "WITH-ACC-ONE". i:T, sp:T, acc:T, x:T | "FWithItem"(i) ~> x |- "FWithAcc"("WithItemOne"(i, sp), acc) ~> "LCons"(x, acc);
+      "WITH-ACC-MORE". il:T, i:T, sp:T, acc:T, x:T, r:T | "FWithItem"(i) ~> x, "FWithAcc"(il, "LCons"(x, acc)) ~> r |- "FWithAcc"("WithItemMore"(il, i, sp), acc) ~> r;
+      "WITH-ITEM-PLAIN". e:T, sp:T, v:T | "FExpr"(e) ~> v |- "FWithItem"("WithPlain"(e, sp)) ~> "py:withitem"(v, "py:None"());
+      "WITH-ITEM-AS". e:T, t:T, sp:T, v:T, w:T | "FExpr"(e) ~> v, "FTarget"(t, "py:Store"()) ~> w |- "FWithItem"("WithAs"(e, t, sp)) ~> "py:withitem"(v, w);
+      "WITH-ONE-AS". e:T, t:T, sp:T, x:T | "FWithItem"("WithAs"(e, t, sp)) ~> x |- "FWithOne"("WithAs"(e, t, sp)) ~> "LCons"(x, "LNil"());
+      "WITH-ONE-PLAIN". e:T, sp:T, x:T | "FWithSole"(e) ~> x |- "FWithOne"("WithPlain"(e, sp)) ~> x;
+      "WITH-SOLE-PAREN". b:T, l:T, c:T, el:T, ec:T, x:T | "FWithParen"(b, l, c, el, ec) ~> x |- "FWithSole"("Paren"(b, "Span"(l, c, el, ec))) ~> x;
+      "WITH-SOLE-OTHER". e:T, v:T | "head-apart"(e, "Paren"()), "FExpr"(e) ~> v |- "FWithSole"(e) ~> "LCons"("py:withitem"(v, "py:None"()), "LNil"());
+      "WITH-PAREN-NAMED". n:T, sp:T, l:T, c:T, el:T, ec:T, v:T | "FNamed"(n) ~> v |- "FWithParen"("ParenNamed"(n, sp), l, c, el, ec) ~> "LCons"("py:withitem"(v, "py:None"()), "LNil"());
+      "WITH-PAREN-AS". e:T, sp:T, t:T, sp2:T, l:T, c:T, el:T, ec:T, v:T, w:T | "FExpr"(e) ~> v, "FTarget"(t, "py:Store"()) ~> w |- "FWithParen"("ParenNamedAs"("NamedPlain"(e, sp), t, sp2), l, c, el, ec) ~> "LCons"("py:withitem"(v, w), "LNil"());
+      "WITH-PAREN-YIELD". y:T, sp:T, l:T, c:T, el:T, ec:T, v:T | "FYield"(y) ~> v |- "FWithParen"("ParenYield"(y, sp), l, c, el, ec) ~> "LCons"("py:withitem"(v, "py:None"()), "LNil"());
+      "WITH-PAREN-GENERATOR". n:T, cf:T, sp:T, l:T, c:T, el:T, ec:T, v:T, g:T | "FNamed"(n) ~> v, "FComp"(cf) ~> g |- "FWithParen"("ParenGenerator"(n, cf, sp), l, c, el, ec) ~> "LCons"("py:withitem"("py:GeneratorExp"(v, g, l, c, el, ec), "py:None"()), "LNil"());
+      "WITH-PAREN-STAR-GENERATOR". s:T, cf:T, sp:T, l:T, c:T, el:T, ec:T, v:T, g:T | "FStarArg"(s) ~> v, "FComp"(cf) ~> g |- "FWithParen"("ParenStarGenerator"(s, cf, sp), l, c, el, ec) ~> "LCons"("py:withitem"("py:GeneratorExp"(v, g, l, c, el, ec), "py:None"()), "LNil"());
+      "WITH-PAREN-TUPLE". ts:T, sp:T, l:T, c:T, el:T, ec:T, k:T, x:T | "FItemsKind"(ts) ~> k, "FWithTuple"(k, ts, l, c, el, ec) ~> x |- "FWithParen"("ParenTuple"(ts, sp), l, c, el, ec) ~> x;
+      "WITH-TUPLE-PLAIN". ts:T, l:T, c:T, el:T, ec:T, x:T | "FWithGroupAcc"(ts, "LNil"()) ~> x |- "FWithTuple"("py:plain"(), ts, l, c, el, ec) ~> x;
+      "WITH-TUPLE-AS". ts:T, l:T, c:T, el:T, ec:T, x:T | "FWithGroupAcc"(ts, "LNil"()) ~> x |- "FWithTuple"("py:as"(), ts, l, c, el, ec) ~> x;
+      "WITH-TUPLE-SPECIAL". ts:T, l:T, c:T, el:T, ec:T, x:T | "FTupleItemsAcc"(ts, "LNil"()) ~> x |- "FWithTuple"("py:special"(), ts, l, c, el, ec) ~> "LCons"("py:withitem"("py:Tuple"(x, "py:Load"(), l, c, el, ec), "py:None"()), "LNil"());
+      "ITEMS-KIND-TWO". a:T, b:T, sp:T, x:T, y:T, k:T | "FItemKind"(a) ~> x, "FItemKind"(b) ~> y, "FKindJoin"(x, y) ~> k |- "FItemsKind"("TupleTwo"(a, b, sp)) ~> k;
+      "ITEMS-KIND-ONE". a:T, sp:T, x:T | "FItemKind"(a) ~> x |- "FItemsKind"("TupleOne"(a, sp)) ~> x;
+      "ITEMS-KIND-MORE". ts:T, a:T, sp:T, x:T, y:T, k:T | "FItemsKind"(ts) ~> x, "FItemKind"(a) ~> y, "FKindJoin"(x, y) ~> k |- "FItemsKind"("TupleMore"(ts, a, sp)) ~> k;
+      "ITEMS-KIND-TRAIL". ts:T, sp:T, x:T | "FItemsKind"(ts) ~> x |- "FItemsKind"("TupleTrail"(ts, sp)) ~> x;
+      "ITEM-KIND-PLAIN". e:T, sp:T, sp2:T, sp3:T |- "FItemKind"("ParenItemPlain"("NamedOrStarNamed"("NamedPlain"(e, sp), sp2), sp3)) ~> "py:plain"();
+      "ITEM-KIND-NAMED". t:T, v:T, sp:T, sp2:T, sp3:T |- "FItemKind"("ParenItemPlain"("NamedOrStarNamed"("NamedExpr"(t, v, sp), sp2), sp3)) ~> "py:special"();
+      "ITEM-KIND-STAR". s:T, sp:T, sp2:T |- "FItemKind"("ParenItemPlain"("NamedOrStarStar"(s, sp), sp2)) ~> "py:special"();
+      "ITEM-KIND-AS". e:T, sp:T, t:T, sp2:T |- "FItemKind"("ParenItemAs"("NamedPlain"(e, sp), t, sp2)) ~> "py:as"();
+      "KIND-PLAIN-PLAIN". |- "FKindJoin"("py:plain"(), "py:plain"()) ~> "py:plain"();
+      "KIND-PLAIN-AS". |- "FKindJoin"("py:plain"(), "py:as"()) ~> "py:as"();
+      "KIND-AS-PLAIN". |- "FKindJoin"("py:as"(), "py:plain"()) ~> "py:as"();
+      "KIND-AS-AS". |- "FKindJoin"("py:as"(), "py:as"()) ~> "py:as"();
+      "KIND-PLAIN-SPECIAL". |- "FKindJoin"("py:plain"(), "py:special"()) ~> "py:special"();
+      "KIND-SPECIAL-PLAIN". |- "FKindJoin"("py:special"(), "py:plain"()) ~> "py:special"();
+      "KIND-SPECIAL-SPECIAL". |- "FKindJoin"("py:special"(), "py:special"()) ~> "py:special"();
+      "WITH-GROUP-TWO". a:T, b:T, sp:T, acc:T, x:T, y:T | "FWithGroupItem"(a) ~> x, "FWithGroupItem"(b) ~> y |- "FWithGroupAcc"("TupleTwo"(a, b, sp), acc) ~> "LCons"(x, "LCons"(y, acc));
+      "WITH-GROUP-ONE". a:T, sp:T, acc:T, x:T | "FWithGroupItem"(a) ~> x |- "FWithGroupAcc"("TupleOne"(a, sp), acc) ~> "LCons"(x, acc);
+      "WITH-GROUP-MORE". ts:T, a:T, sp:T, acc:T, x:T, r:T | "FWithGroupItem"(a) ~> x, "FWithGroupAcc"(ts, "LCons"(x, acc)) ~> r |- "FWithGroupAcc"("TupleMore"(ts, a, sp), acc) ~> r;
+      "WITH-GROUP-TRAIL". ts:T, sp:T, acc:T, r:T | "FWithGroupAcc"(ts, acc) ~> r |- "FWithGroupAcc"("TupleTrail"(ts, sp), acc) ~> r;
+      "WITH-GROUP-ITEM-PLAIN". e:T, sp:T, sp2:T, sp3:T, v:T | "FExpr"(e) ~> v |- "FWithGroupItem"("ParenItemPlain"("NamedOrStarNamed"("NamedPlain"(e, sp), sp2), sp3)) ~> "py:withitem"(v, "py:None"());
+      "WITH-GROUP-ITEM-AS". e:T, sp:T, t:T, sp2:T, v:T, w:T | "FExpr"(e) ~> v, "FTarget"(t, "py:Store"()) ~> w |- "FWithGroupItem"("ParenItemAs"("NamedPlain"(e, sp), t, sp2)) ~> "py:withitem"(v, w);
+
+      -- ast.Match, match_case
+      "MATCH". s:T, cs:T, l:T, c:T, el:T, ec:T, x:T, y:T | "FSubject"(s) ~> x, "FCases"(cs) ~> y |- "FCompound"("Match"(s, cs, "Span"(l, c, el, ec))) ~> "py:Match"(x, y, l, c, el, ec);
+      "SUBJECT-ONE". n:T, sp:T, sp2:T, v:T | "FNamed"(n) ~> v |- "FSubject"("SubjectOne"("NamedOrStarNamed"(n, sp), sp2)) ~> v;
+      "SUBJECT-TUPLE". ts:T, l:T, c:T, el:T, ec:T, v:T | "FTupleItemsAcc"(ts, "LNil"()) ~> v |- "FSubject"("SubjectTuple"(ts, "Span"(l, c, el, ec))) ~> "py:Tuple"(v, "py:Load"(), l, c, el, ec);
+      "CASES-NIL". |- "FCases"("LNil"()) ~> "LNil"();
+      "CASES-CONS". p:T, g:T, b:T, sp:T, rest:T, x:T, y:T, z:T, r:T | "FPatterns"(p) ~> x, "FGuard"(g) ~> y, "FBlock"(b) ~> z, "FCases"(rest) ~> r |- "FCases"("LCons"("Case"(p, g, b, sp), rest)) ~> "LCons"("py:match_case"(x, y, z), r);
+      "GUARD-NONE". sp:T |- "FGuard"("GuardNone"(sp)) ~> "py:None"();
+      "GUARD". n:T, sp:T, v:T | "FNamed"(n) ~> v |- "FGuard"("Guard"(n, sp)) ~> v;
+
+      -- ast.FunctionDef, AsyncFunctionDef, ClassDef: located at def or class
+      -- (or async), after their decorators
+      "FUNCTION-DEF". n:T, tp:T, ps:T, r:T, b:T, l:T, c:T, el:T, ec:T, sp:T, a:T, x:T, y:T, z:T | "FArguments"(ps) ~> a, "FBlock"(b) ~> x, "FReturns"(r) ~> y, "FTypeParams"(tp) ~> z |- "FCompound"("FunctionDef"("Def"(n, tp, ps, r, b, "Span"(l, c, el, ec)), sp)) ~> "py:FunctionDef"(n, a, x, "LNil"(), y, "py:None"(), z, l, c, el, ec);
+      "ASYNC-FUNCTION-DEF". n:T, tp:T, ps:T, r:T, b:T, dsp:T, l:T, c:T, el:T, ec:T, a:T, x:T, y:T, z:T | "FArguments"(ps) ~> a, "FBlock"(b) ~> x, "FReturns"(r) ~> y, "FTypeParams"(tp) ~> z |- "FCompound"("AsyncFunctionDef"("Def"(n, tp, ps, r, b, dsp), "Span"(l, c, el, ec))) ~> "py:AsyncFunctionDef"(n, a, x, "LNil"(), y, "py:None"(), z, l, c, el, ec);
+      "CLASS-DEF". d:T, sp:T, v:T | "FClass"(d, "LNil"()) ~> v |- "FCompound"("ClassDef"(d, sp)) ~> v;
+      "CLASS". n:T, tp:T, a:T, b:T, l:T, c:T, el:T, ec:T, ds:T, bs:T, ks:T, x:T, z:T | "FBases"(a) ~> bs, "FClassKeywords"(a) ~> ks, "FBlock"(b) ~> x, "FTypeParams"(tp) ~> z |- "FClass"("Class"(n, tp, a, b, "Span"(l, c, el, ec)), ds) ~> "py:ClassDef"(n, bs, ks, x, ds, z, l, c, el, ec);
+      "DECORATED". ds:T, d:T, sp:T, xs:T, v:T | "FDecorators"(ds) ~> xs, "FDecorated"(d, xs) ~> v |- "FCompound"("Decorated"(ds, d, sp)) ~> v;
+      "DECORATORS-NIL". |- "FDecorators"("LNil"()) ~> "LNil"();
+      "DECORATORS-CONS". n:T, sp:T, rest:T, v:T, vs:T | "FNamed"(n) ~> v, "FDecorators"(rest) ~> vs |- "FDecorators"("LCons"("Decorator"(n, sp), rest)) ~> "LCons"(v, vs);
+      "DECORATED-FUNCTION". n:T, tp:T, ps:T, r:T, b:T, l:T, c:T, el:T, ec:T, sp:T, ds:T, a:T, x:T, y:T, z:T | "FArguments"(ps) ~> a, "FBlock"(b) ~> x, "FReturns"(r) ~> y, "FTypeParams"(tp) ~> z |- "FDecorated"("DecoratedFunction"("Def"(n, tp, ps, r, b, "Span"(l, c, el, ec)), sp), ds) ~> "py:FunctionDef"(n, a, x, ds, y, "py:None"(), z, l, c, el, ec);
+      "DECORATED-ASYNC". n:T, tp:T, ps:T, r:T, b:T, dsp:T, l:T, c:T, el:T, ec:T, ds:T, a:T, x:T, y:T, z:T | "FArguments"(ps) ~> a, "FBlock"(b) ~> x, "FReturns"(r) ~> y, "FTypeParams"(tp) ~> z |- "FDecorated"("DecoratedAsync"("Def"(n, tp, ps, r, b, dsp), "Span"(l, c, el, ec)), ds) ~> "py:AsyncFunctionDef"(n, a, x, ds, y, "py:None"(), z, l, c, el, ec);
+      "DECORATED-CLASS". d:T, sp:T, ds:T, v:T | "FClass"(d, ds) ~> v |- "FDecorated"("DecoratedClass"(d, sp), ds) ~> v;
+      "RETURNS-NONE". sp:T |- "FReturns"("ReturnsNone"(sp)) ~> "py:None"();
+      "RETURNS". e:T, sp:T, v:T | "FExpr"(e) ~> v |- "FReturns"("Returns"(e, sp)) ~> v;
+      "BASES-NONE". sp:T |- "FBases"("ClassArgsNone"(sp)) ~> "LNil"();
+      "BASES-EMPTY". sp:T |- "FBases"("ClassArgsEmpty"(sp)) ~> "LNil"();
+      "BASES". a:T, sp:T, st:T, v:T | "FArgsState"(a) ~> st, "FArgsAcc"(a, "LNil"()) ~> v |- "FBases"("ClassArgsSome"(a, sp)) ~> v;
+      "CLASS-KEYWORDS-NONE". sp:T |- "FClassKeywords"("ClassArgsNone"(sp)) ~> "LNil"();
+      "CLASS-KEYWORDS-EMPTY". sp:T |- "FClassKeywords"("ClassArgsEmpty"(sp)) ~> "LNil"();
+      "CLASS-KEYWORDS". a:T, sp:T, v:T | "FKeywordsAcc"(a, "LNil"()) ~> v |- "FClassKeywords"("ClassArgsSome"(a, sp)) ~> v;
+
+      -- ================================================================ parameters
+
+      -- ast.arguments, arg: the parameters as written, walked from the left
+      -- with the fields so far: positional-only, positional, *args, keyword-
+      -- only, their defaults (None where absent), **kwargs, positional
+      -- defaults.  The state is py:pos before a star, py:kw after *args or a
+      -- named parameter after *, py:kwbare right after a bare *
+      "ARGUMENTS-NONE". sp:T |- "FArguments"("ParamsNone"(sp)) ~> "py:arguments"("LNil"(), "LNil"(), "py:None"(), "LNil"(), "LNil"(), "py:None"(), "LNil"());
+      "ARGUMENTS-SOME". ps:T, sp:T, xs:T, v:T | "FParamAcc"(ps, "LNil"()) ~> xs, "FWalk"(xs, "py:pos"(), "LNil"(), "LNil"(), "py:None"(), "LNil"(), "LNil"(), "py:None"(), "LNil"()) ~> v |- "FArguments"("ParamsSome"(ps, sp)) ~> v;
+      "ARGUMENTS-COMMA". ps:T, sp:T, xs:T, v:T | "FParamAcc"(ps, "LNil"()) ~> xs, "FWalk"(xs, "py:pos"(), "LNil"(), "LNil"(), "py:None"(), "LNil"(), "LNil"(), "py:None"(), "LNil"()) ~> v |- "FArguments"("ParamsComma"(ps, sp)) ~> v;
+      "PARAM-ONE". p:T, sp:T, acc:T |- "FParamAcc"("ParamOne"(p, sp), acc) ~> "LCons"(p, acc);
+      "PARAM-MORE". ps:T, p:T, sp:T, acc:T, r:T | "FParamAcc"(ps, "LCons"(p, acc)) ~> r |- "FParamAcc"("ParamMore"(ps, p, sp), acc) ~> r;
+      "WALK-END". s:T, po:T, pa:T, va:T, ko:T, kd:T, kw:T, ds:T | "FClosedState"(s) ~> "py:ok"() |- "FWalk"("LNil"(), s, po, pa, va, ko, kd, kw, ds) ~> "py:arguments"(po, pa, va, ko, kd, kw, ds);
+      "WALK-PLAIN-POS". n:T, an:T, l:T, c:T, el:T, ec:T, sp:T, rest:T, po:T, pa:T, va:T, ko:T, kd:T, kw:T, x:T, pa2:T, v:T | "FAnn"(an) ~> x, "FAppend"(pa, "LCons"("py:arg"(n, x, "py:None"(), l, c, el, ec), "LNil"())) ~> pa2, "FWalk"(rest, "py:pos"(), po, pa2, va, ko, kd, kw, "LNil"()) ~> v |- "FWalk"("LCons"("ParamPlain"("ArgDef"(n, an, "Span"(l, c, el, ec)), sp), rest), "py:pos"(), po, pa, va, ko, kd, kw, "LNil"()) ~> v;
+      "WALK-DEFAULT-POS". n:T, an:T, l:T, c:T, el:T, ec:T, e:T, sp:T, rest:T, po:T, pa:T, va:T, ko:T, kd:T, kw:T, ds:T, x:T, d:T, pa2:T, ds2:T, v:T | "FAnn"(an) ~> x, "FExpr"(e) ~> d, "FAppend"(pa, "LCons"("py:arg"(n, x, "py:None"(), l, c, el, ec), "LNil"())) ~> pa2, "FAppend"(ds, "LCons"(d, "LNil"())) ~> ds2, "FWalk"(rest, "py:pos"(), po, pa2, va, ko, kd, kw, ds2) ~> v |- "FWalk"("LCons"("ParamDefault"("ArgDef"(n, an, "Span"(l, c, el, ec)), e, sp), rest), "py:pos"(), po, pa, va, ko, kd, kw, ds) ~> v;
+      "WALK-SLASH". sp:T, rest:T, a:T, pa:T, va:T, ko:T, kd:T, kw:T, ds:T, v:T | "FWalk"(rest, "py:pos"(), "LCons"(a, pa), "LNil"(), va, ko, kd, kw, ds) ~> v |- "FWalk"("LCons"("ParamSlash"(sp), rest), "py:pos"(), "LNil"(), "LCons"(a, pa), va, ko, kd, kw, ds) ~> v;
+      "WALK-STAR". sp:T, rest:T, po:T, pa:T, ko:T, kd:T, kw:T, ds:T, v:T | "FWalk"(rest, "py:kwbare"(), po, pa, "py:None"(), ko, kd, kw, ds) ~> v |- "FWalk"("LCons"("ParamStar"(sp), rest), "py:pos"(), po, pa, "py:None"(), ko, kd, kw, ds) ~> v;
+      "WALK-VARARGS". n:T, an:T, l:T, c:T, el:T, ec:T, sp:T, rest:T, po:T, pa:T, ko:T, kd:T, kw:T, ds:T, x:T, v:T | "FStarAnn"(an) ~> x, "FWalk"(rest, "py:kw"(), po, pa, "py:arg"(n, x, "py:None"(), l, c, el, ec), ko, kd, kw, ds) ~> v |- "FWalk"("LCons"("ParamVarArgs"("ArgDefStar"(n, an, "Span"(l, c, el, ec)), sp), rest), "py:pos"(), po, pa, "py:None"(), ko, kd, kw, ds) ~> v;
+      "WALK-PLAIN-KW". n:T, an:T, l:T, c:T, el:T, ec:T, sp:T, rest:T, s:T, po:T, pa:T, va:T, ko:T, kd:T, kw:T, ds:T, x:T, ko2:T, kd2:T, v:T | "FKwState"(s) ~> "py:kw"(), "FAnn"(an) ~> x, "FAppend"(ko, "LCons"("py:arg"(n, x, "py:None"(), l, c, el, ec), "LNil"())) ~> ko2, "FAppend"(kd, "LCons"("py:None"(), "LNil"())) ~> kd2, "FWalk"(rest, "py:kw"(), po, pa, va, ko2, kd2, kw, ds) ~> v |- "FWalk"("LCons"("ParamPlain"("ArgDef"(n, an, "Span"(l, c, el, ec)), sp), rest), s, po, pa, va, ko, kd, kw, ds) ~> v;
+      "WALK-DEFAULT-KW". n:T, an:T, l:T, c:T, el:T, ec:T, e:T, sp:T, rest:T, s:T, po:T, pa:T, va:T, ko:T, kd:T, kw:T, ds:T, x:T, d:T, ko2:T, kd2:T, v:T | "FKwState"(s) ~> "py:kw"(), "FAnn"(an) ~> x, "FExpr"(e) ~> d, "FAppend"(ko, "LCons"("py:arg"(n, x, "py:None"(), l, c, el, ec), "LNil"())) ~> ko2, "FAppend"(kd, "LCons"(d, "LNil"())) ~> kd2, "FWalk"(rest, "py:kw"(), po, pa, va, ko2, kd2, kw, ds) ~> v |- "FWalk"("LCons"("ParamDefault"("ArgDef"(n, an, "Span"(l, c, el, ec)), e, sp), rest), s, po, pa, va, ko, kd, kw, ds) ~> v;
+      "WALK-KWARGS". n:T, an:T, l:T, c:T, el:T, ec:T, sp:T, s:T, po:T, pa:T, va:T, ko:T, kd:T, ds:T, x:T | "FClosedState"(s) ~> "py:ok"(), "FAnn"(an) ~> x |- "FWalk"("LCons"("ParamKwArgs"("ArgDef"(n, an, "Span"(l, c, el, ec)), sp), "LNil"()), s, po, pa, va, ko, kd, "py:None"(), ds) ~> "py:arguments"(po, pa, va, ko, kd, "py:arg"(n, x, "py:None"(), l, c, el, ec), ds);
+      "KW-STATE". |- "FKwState"("py:kw"()) ~> "py:kw"();
+      "KW-STATE-BARE". |- "FKwState"("py:kwbare"()) ~> "py:kw"();
+      "CLOSED-POS". |- "FClosedState"("py:pos"()) ~> "py:ok"();
+      "CLOSED-KW". |- "FClosedState"("py:kw"()) ~> "py:ok"();
+      "ANN-NONE". sp:T |- "FAnn"("AnnotationNone"(sp)) ~> "py:None"();
+      "ANN". e:T, sp:T, v:T | "FExpr"(e) ~> v |- "FAnn"("Annotation"(e, sp)) ~> v;
+      "STAR-ANN-NONE". sp:T |- "FStarAnn"("StarAnnotationNone"(sp)) ~> "py:None"();
+      "STAR-ANN". s:T, sp:T, v:T | "FStarredDefault"(s) ~> v |- "FStarAnn"("StarAnnotation"(s, sp)) ~> v;
+
+      -- a lambda's parameters are a def's without annotations: each is read
+      -- as the def parameter it is, and walked the same way
+      "LAMBDA". ps:T, e:T, l:T, c:T, el:T, ec:T, a:T, v:T | "FLambdaArgs"(ps) ~> a, "FExpr"(e) ~> v |- "FExpr"("Lambda"(ps, e, "Span"(l, c, el, ec))) ~> "py:Lambda"(a, v, l, c, el, ec);
+      "LAMBDA-ARGS-NONE". sp:T |- "FLambdaArgs"("LambdaParamsNone"(sp)) ~> "py:arguments"("LNil"(), "LNil"(), "py:None"(), "LNil"(), "LNil"(), "py:None"(), "LNil"());
+      "LAMBDA-ARGS-SOME". ps:T, sp:T, xs:T, v:T | "FLambdaAcc"(ps, "LNil"()) ~> xs, "FWalk"(xs, "py:pos"(), "LNil"(), "LNil"(), "py:None"(), "LNil"(), "LNil"(), "py:None"(), "LNil"()) ~> v |- "FLambdaArgs"("LambdaParamsSome"(ps, sp)) ~> v;
+      "LAMBDA-ARGS-COMMA". ps:T, sp:T, xs:T, v:T | "FLambdaAcc"(ps, "LNil"()) ~> xs, "FWalk"(xs, "py:pos"(), "LNil"(), "LNil"(), "py:None"(), "LNil"(), "LNil"(), "py:None"(), "LNil"()) ~> v |- "FLambdaArgs"("LambdaParamsComma"(ps, sp)) ~> v;
+      "LAMBDA-ONE". p:T, sp:T, acc:T, q:T | "FLambdaParam"(p) ~> q |- "FLambdaAcc"("LambdaParamOne"(p, sp), acc) ~> "LCons"(q, acc);
+      "LAMBDA-MORE". ps:T, p:T, sp:T, acc:T, q:T, r:T | "FLambdaParam"(p) ~> q, "FLambdaAcc"(ps, "LCons"(q, acc)) ~> r |- "FLambdaAcc"("LambdaParamMore"(ps, p, sp), acc) ~> r;
+      "LAMBDA-PLAIN". n:T, s:T, sp:T |- "FLambdaParam"("LambdaPlain"("LambdaArg"(n, s), sp)) ~> "ParamPlain"("ArgDef"(n, "AnnotationNone"(s), s), sp);
+      "LAMBDA-DEFAULT". n:T, s:T, e:T, sp:T |- "FLambdaParam"("LambdaDefault"("LambdaArg"(n, s), e, sp)) ~> "ParamDefault"("ArgDef"(n, "AnnotationNone"(s), s), e, sp);
+      "LAMBDA-SLASH". sp:T |- "FLambdaParam"("LambdaSlash"(sp)) ~> "ParamSlash"(sp);
+      "LAMBDA-STAR". sp:T |- "FLambdaParam"("LambdaStar"(sp)) ~> "ParamStar"(sp);
+      "LAMBDA-VARARGS". n:T, s:T, sp:T |- "FLambdaParam"("LambdaVarArgs"("LambdaArg"(n, s), sp)) ~> "ParamVarArgs"("ArgDefStar"(n, "StarAnnotationNone"(s), s), sp);
+      "LAMBDA-KWARGS". n:T, s:T, sp:T |- "FLambdaParam"("LambdaKwArgs"("LambdaArg"(n, s), sp)) ~> "ParamKwArgs"("ArgDef"(n, "AnnotationNone"(s), s), sp);
+
+      -- ================================================================ targets
+
+      -- what a value is stored into or deleted from: X is py:Store or py:Del
+      "TARGET-NAME". n:T, l:T, c:T, el:T, ec:T, x:T |- "FTarget"("Name"(n, "Span"(l, c, el, ec)), x) ~> "py:Name"(n, x, l, c, el, ec);
+      "TARGET-ATTRIBUTE". e:T, a:T, l:T, c:T, el:T, ec:T, x:T, v:T | "FExpr"(e) ~> v |- "FTarget"("Attribute"(e, a, "Span"(l, c, el, ec)), x) ~> "py:Attribute"(v, a, x, l, c, el, ec);
+      "TARGET-SUBSCRIPT". e:T, s:T, l:T, c:T, el:T, ec:T, x:T, v:T, w:T | "FExpr"(e) ~> v, "FSlices"(s) ~> w |- "FTarget"("Subscript"(e, s, "Span"(l, c, el, ec)), x) ~> "py:Subscript"(v, w, x, l, c, el, ec);
+      "TARGET-PAREN". e:T, sp:T, sp2:T, sp3:T, x:T, v:T | "FTarget"(e, x) ~> v |- "FTarget"("Paren"("ParenNamed"("NamedPlain"(e, sp), sp2), sp3), x) ~> v;
+      "TARGET-PAREN-TUPLE". ts:T, sp:T, l:T, c:T, el:T, ec:T, x:T, v:T | "FTupleItemsTargetAcc"(ts, x, "LNil"()) ~> v |- "FTarget"("Paren"("ParenTuple"(ts, sp), "Span"(l, c, el, ec)), x) ~> "py:Tuple"(v, x, l, c, el, ec);
+      "TARGET-TUPLE-EMPTY". l:T, c:T, el:T, ec:T, x:T |- "FTarget"("TupleEmpty"("Span"(l, c, el, ec)), x) ~> "py:Tuple"("LNil"(), x, l, c, el, ec);
+      "TARGET-LIST-EMPTY". l:T, c:T, el:T, ec:T, x:T |- "FTarget"("ListEmpty"("Span"(l, c, el, ec)), x) ~> "py:List"("LNil"(), x, l, c, el, ec);
+      "TARGET-LIST". ts:T, l:T, c:T, el:T, ec:T, x:T, v:T | "FListItemsTargetAcc"(ts, x, "LNil"()) ~> v |- "FTarget"("List"(ts, "Span"(l, c, el, ec)), x) ~> "py:List"(v, x, l, c, el, ec);
+      -- a starred target is stored into, never deleted
+      "STAR-TARGET". e:T, l:T, c:T, el:T, ec:T, v:T | "FTarget"(e, "py:Store"()) ~> v |- "FStarTarget"("StarExpr"(e, "Span"(l, c, el, ec)), "py:Store"()) ~> "py:Starred"(v, "py:Store"(), l, c, el, ec);
+
+      -- an unparenthesized target list (assignment), one target or a tuple
+      "EXPRS-TARGET-ONE". e:T, sp:T, sp2:T, x:T, v:T | "FTarget"(e, x) ~> v |- "FExprsTarget"("ListStarOne"("TestOrStarTest"(e, sp), sp2), x) ~> v;
+      -- a starred target alone is read (the compiler refuses it)
+      "EXPRS-TARGET-ONE-STAR". s:T, sp:T, sp2:T, x:T, v:T | "FStarTarget"(s, x) ~> v |- "FExprsTarget"("ListStarOne"("TestOrStarStar"(s, sp), sp2), x) ~> v;
+      "EXPRS-TARGET-TUPLE". t:T, l:T, c:T, el:T, ec:T, x:T, vs:T | "FTupleStarTargetAcc"(t, x, "LNil"()) ~> vs |- "FExprsTarget"("ListStarTuple"(t, "Span"(l, c, el, ec)), x) ~> "py:Tuple"(vs, x, l, c, el, ec);
+      "TST-TWO". a:T, b:T, sp:T, x:T, acc:T, u:T, v:T | "FTestOrStarTarget"(a, x) ~> u, "FTestOrStarTarget"(b, x) ~> v |- "FTupleStarTargetAcc"("TupleStarTwo"(a, b, sp), x, acc) ~> "LCons"(u, "LCons"(v, acc));
+      "TST-ONE". a:T, sp:T, x:T, acc:T, u:T | "FTestOrStarTarget"(a, x) ~> u |- "FTupleStarTargetAcc"("TupleStarOne"(a, sp), x, acc) ~> "LCons"(u, acc);
+      "TST-MORE". t:T, a:T, sp:T, x:T, acc:T, u:T, r:T | "FTestOrStarTarget"(a, x) ~> u, "FTupleStarTargetAcc"(t, x, "LCons"(u, acc)) ~> r |- "FTupleStarTargetAcc"("TupleStarMore"(t, a, sp), x, acc) ~> r;
+      "TST-TRAIL". t:T, sp:T, x:T, acc:T, r:T | "FTupleStarTargetAcc"(t, x, acc) ~> r |- "FTupleStarTargetAcc"("TupleStarTrail"(t, sp), x, acc) ~> r;
+      "TEST-OR-STAR-TARGET". e:T, sp:T, x:T, v:T | "FTarget"(e, x) ~> v |- "FTestOrStarTarget"("TestOrStarTest"(e, sp), x) ~> v;
+      "TEST-OR-STAR-TARGET-STAR". s:T, sp:T, x:T, v:T | "FStarTarget"(s, x) ~> v |- "FTestOrStarTarget"("TestOrStarStar"(s, sp), x) ~> v;
+
+      -- for, comprehension and del targets: expressions without comparisons
+      "EXPR-LIST-TARGET-ONE". e:T, sp:T, sp2:T, x:T, v:T | "FTarget"(e, x) ~> v |- "FExprListTarget"("ExprListOne"("ExprOrStarExpr"(e, sp), sp2), x) ~> v;
+      "EXPR-LIST-TARGET-TUPLE". t:T, l:T, c:T, el:T, ec:T, x:T, vs:T | "FExprTupleAcc"(t, x, "LNil"()) ~> vs |- "FExprListTarget"("ExprListTuple"(t, "Span"(l, c, el, ec)), x) ~> "py:Tuple"(vs, x, l, c, el, ec);
+      "ET-TWO". a:T, b:T, sp:T, x:T, acc:T, u:T, v:T | "FExprOrStarTarget"(a, x) ~> u, "FExprOrStarTarget"(b, x) ~> v |- "FExprTupleAcc"("ExprTupleTwo"(a, b, sp), x, acc) ~> "LCons"(u, "LCons"(v, acc));
+      "ET-ONE". a:T, sp:T, x:T, acc:T, u:T | "FExprOrStarTarget"(a, x) ~> u |- "FExprTupleAcc"("ExprTupleOne"(a, sp), x, acc) ~> "LCons"(u, acc);
+      "ET-MORE". t:T, a:T, sp:T, x:T, acc:T, u:T, r:T | "FExprOrStarTarget"(a, x) ~> u, "FExprTupleAcc"(t, x, "LCons"(u, acc)) ~> r |- "FExprTupleAcc"("ExprTupleMore"(t, a, sp), x, acc) ~> r;
+      "ET-TRAIL". t:T, sp:T, x:T, acc:T, r:T | "FExprTupleAcc"(t, x, acc) ~> r |- "FExprTupleAcc"("ExprTupleTrail"(t, sp), x, acc) ~> r;
+      "EXPR-OR-STAR-TARGET". e:T, sp:T, x:T, v:T | "FTarget"(e, x) ~> v |- "FExprOrStarTarget"("ExprOrStarExpr"(e, sp), x) ~> v;
+      "EXPR-OR-STAR-TARGET-STAR". s:T, sp:T, x:T, v:T | "FStarTarget"(s, x) ~> v |- "FExprOrStarTarget"("ExprOrStarStar"(s, sp), x) ~> v;
+
+      -- the items of a parenthesized tuple or a list as targets
+      "TIT-TWO". a:T, b:T, sp:T, x:T, acc:T, u:T, v:T | "FParenItemTarget"(a, x) ~> u, "FParenItemTarget"(b, x) ~> v |- "FTupleItemsTargetAcc"("TupleTwo"(a, b, sp), x, acc) ~> "LCons"(u, "LCons"(v, acc));
+      "TIT-ONE". a:T, sp:T, x:T, acc:T, u:T | "FParenItemTarget"(a, x) ~> u |- "FTupleItemsTargetAcc"("TupleOne"(a, sp), x, acc) ~> "LCons"(u, acc);
+      "TIT-MORE". t:T, a:T, sp:T, x:T, acc:T, u:T, r:T | "FParenItemTarget"(a, x) ~> u, "FTupleItemsTargetAcc"(t, x, "LCons"(u, acc)) ~> r |- "FTupleItemsTargetAcc"("TupleMore"(t, a, sp), x, acc) ~> r;
+      "TIT-TRAIL". t:T, sp:T, x:T, acc:T, r:T | "FTupleItemsTargetAcc"(t, x, acc) ~> r |- "FTupleItemsTargetAcc"("TupleTrail"(t, sp), x, acc) ~> r;
+      "PAREN-ITEM-TARGET". n:T, sp:T, x:T, v:T | "FNamedOrStarTarget"(n, x) ~> v |- "FParenItemTarget"("ParenItemPlain"(n, sp), x) ~> v;
+      "NOS-TARGET". e:T, sp:T, sp2:T, x:T, v:T | "FTarget"(e, x) ~> v |- "FNamedOrStarTarget"("NamedOrStarNamed"("NamedPlain"(e, sp), sp2), x) ~> v;
+      "NOS-TARGET-STAR". s:T, sp:T, x:T, v:T | "FStarTarget"(s, x) ~> v |- "FNamedOrStarTarget"("NamedOrStarStar"(s, sp), x) ~> v;
+      "LIT-ONE". a:T, sp:T, x:T, acc:T, u:T | "FNamedOrStarTarget"(a, x) ~> u |- "FListItemsTargetAcc"("ListOne"(a, sp), x, acc) ~> "LCons"(u, acc);
+      "LIT-MORE". t:T, a:T, sp:T, x:T, acc:T, u:T, r:T | "FNamedOrStarTarget"(a, x) ~> u, "FListItemsTargetAcc"(t, x, "LCons"(u, acc)) ~> r |- "FListItemsTargetAcc"("ListMore"(t, a, sp), x, acc) ~> r;
+      "LIT-TRAIL". t:T, sp:T, x:T, acc:T, r:T | "FListItemsTargetAcc"(t, x, acc) ~> r |- "FListItemsTargetAcc"("ListTrail"(t, sp), x, acc) ~> r;
+
+      -- ================================================================ expressions
+
+      -- expression lists read: one expression, or a tuple spanning its items
+      "EXPRS-ONE". e:T, sp:T, sp2:T, v:T | "FExpr"(e) ~> v |- "FExprs"("ListStarOne"("TestOrStarTest"(e, sp), sp2)) ~> v;
+      -- a starred expression alone is read as one (the compiler refuses it)
+      "EXPRS-ONE-STAR". s:T, sp:T, sp2:T, v:T | "FStar"(s) ~> v |- "FExprs"("ListStarOne"("TestOrStarStar"(s, sp), sp2)) ~> v;
+      "EXPRS-TUPLE". t:T, l:T, c:T, el:T, ec:T, vs:T | "FTupleStarAcc"(t, "LNil"()) ~> vs |- "FExprs"("ListStarTuple"(t, "Span"(l, c, el, ec))) ~> "py:Tuple"(vs, "py:Load"(), l, c, el, ec);
+      "TS-TWO". a:T, b:T, sp:T, acc:T, u:T, v:T | "FTestOrStar"(a) ~> u, "FTestOrStar"(b) ~> v |- "FTupleStarAcc"("TupleStarTwo"(a, b, sp), acc) ~> "LCons"(u, "LCons"(v, acc));
+      "TS-ONE". a:T, sp:T, acc:T, u:T | "FTestOrStar"(a) ~> u |- "FTupleStarAcc"("TupleStarOne"(a, sp), acc) ~> "LCons"(u, acc);
+      "TS-MORE". t:T, a:T, sp:T, acc:T, u:T, r:T | "FTestOrStar"(a) ~> u, "FTupleStarAcc"(t, "LCons"(u, acc)) ~> r |- "FTupleStarAcc"("TupleStarMore"(t, a, sp), acc) ~> r;
+      "TS-TRAIL". t:T, sp:T, acc:T, r:T | "FTupleStarAcc"(t, acc) ~> r |- "FTupleStarAcc"("TupleStarTrail"(t, sp), acc) ~> r;
+      "TEST-OR-STAR". e:T, sp:T, v:T | "FExpr"(e) ~> v |- "FTestOrStar"("TestOrStarTest"(e, sp)) ~> v;
+      "TEST-OR-STAR-STAR". s:T, sp:T, v:T | "FStar"(s) ~> v |- "FTestOrStar"("TestOrStarStar"(s, sp)) ~> v;
+      "STAR". e:T, l:T, c:T, el:T, ec:T, v:T | "FExpr"(e) ~> v |- "FStar"("StarExpr"(e, "Span"(l, c, el, ec))) ~> "py:Starred"(v, "py:Load"(), l, c, el, ec);
+
+      -- ast.NamedExpr, Yield, YieldFrom
+      "NAMED-PLAIN". e:T, sp:T, v:T | "FExpr"(e) ~> v |- "FNamed"("NamedPlain"(e, sp)) ~> v;
+      "NAMED-EXPR". t:T, e:T, l:T, c:T, el:T, ec:T, x:T, v:T | "FNamedTarget"(t) ~> x, "FExpr"(e) ~> v |- "FNamed"("NamedExpr"(t, e, "Span"(l, c, el, ec))) ~> "py:NamedExpr"(x, v, l, c, el, ec);
+      "NAMED-TARGET". n:T, l:T, c:T, el:T, ec:T |- "FNamedTarget"("Name"(n, "Span"(l, c, el, ec))) ~> "py:Name"(n, "py:Store"(), l, c, el, ec);
+      "NAMED-OR-STAR". n:T, sp:T, v:T | "FNamed"(n) ~> v |- "FNamedOrStar"("NamedOrStarNamed"(n, sp)) ~> v;
+      "NAMED-OR-STAR-STAR". s:T, sp:T, v:T | "FStar"(s) ~> v |- "FNamedOrStar"("NamedOrStarStar"(s, sp)) ~> v;
+      "YIELD". l:T, c:T, el:T, ec:T |- "FYield"("Yield"("Span"(l, c, el, ec))) ~> "py:Yield"("py:None"(), l, c, el, ec);
+      "YIELD-VALUE". e:T, l:T, c:T, el:T, ec:T, v:T | "FExprs"(e) ~> v |- "FYield"("YieldValue"(e, "Span"(l, c, el, ec))) ~> "py:Yield"(v, l, c, el, ec);
+      "YIELD-FROM". e:T, l:T, c:T, el:T, ec:T, v:T | "FExpr"(e) ~> v |- "FYield"("YieldFrom"(e, "Span"(l, c, el, ec))) ~> "py:YieldFrom"(v, l, c, el, ec);
+
+      -- atoms: ast.Name, Constant, and the displays
+      "NAME". n:T, l:T, c:T, el:T, ec:T |- "FExpr"("Name"(n, "Span"(l, c, el, ec))) ~> "py:Name"(n, "py:Load"(), l, c, el, ec);
+      "NUMBER". t:T, l:T, c:T, el:T, ec:T, v:T | "py-number"(t, v) |- "FExpr"("Number"(t, "Span"(l, c, el, ec))) ~> "py:Constant"(v, "py:None"(), l, c, el, ec);
+      "CONST-NONE". l:T, c:T, el:T, ec:T |- "FExpr"("ConstNone"("Span"(l, c, el, ec))) ~> "py:Constant"("py:None"(), "py:None"(), l, c, el, ec);
+      "CONST-TRUE". l:T, c:T, el:T, ec:T |- "FExpr"("ConstTrue"("Span"(l, c, el, ec))) ~> "py:Constant"("py:True"(), "py:None"(), l, c, el, ec);
+      "CONST-FALSE". l:T, c:T, el:T, ec:T |- "FExpr"("ConstFalse"("Span"(l, c, el, ec))) ~> "py:Constant"("py:False"(), "py:None"(), l, c, el, ec);
+      "ELLIPSIS". l:T, c:T, el:T, ec:T |- "FExpr"("Ellipsis"("Span"(l, c, el, ec))) ~> "py:Constant"("py:Ellipsis"(), "py:None"(), l, c, el, ec);
+      "STRINGS". ps:T, l:T, c:T, el:T, ec:T, v:T | "FStrings"(ps, l, c, el, ec) ~> v |- "FExpr"("Strings"(ps, "Span"(l, c, el, ec))) ~> v;
+      "TUPLE-EMPTY". l:T, c:T, el:T, ec:T |- "FExpr"("TupleEmpty"("Span"(l, c, el, ec))) ~> "py:Tuple"("LNil"(), "py:Load"(), l, c, el, ec);
+      -- parentheses locate a tuple and a generator, never what they enclose
+      "PAREN-NAMED". n:T, sp:T, sp2:T, v:T | "FNamed"(n) ~> v |- "FExpr"("Paren"("ParenNamed"(n, sp), sp2)) ~> v;
+      "PAREN-YIELD". y:T, sp:T, sp2:T, v:T | "FYield"(y) ~> v |- "FExpr"("Paren"("ParenYield"(y, sp), sp2)) ~> v;
+      "PAREN-TUPLE". ts:T, sp:T, l:T, c:T, el:T, ec:T, v:T | "FTupleItemsAcc"(ts, "LNil"()) ~> v |- "FExpr"("Paren"("ParenTuple"(ts, sp), "Span"(l, c, el, ec))) ~> "py:Tuple"(v, "py:Load"(), l, c, el, ec);
+      "PAREN-GENERATOR". n:T, cf:T, sp:T, l:T, c:T, el:T, ec:T, v:T, g:T | "FNamed"(n) ~> v, "FComp"(cf) ~> g |- "FExpr"("Paren"("ParenGenerator"(n, cf, sp), "Span"(l, c, el, ec))) ~> "py:GeneratorExp"(v, g, l, c, el, ec);
+      "PAREN-STAR-GENERATOR". s:T, cf:T, sp:T, l:T, c:T, el:T, ec:T, v:T, g:T | "FStarArg"(s) ~> v, "FComp"(cf) ~> g |- "FExpr"("Paren"("ParenStarGenerator"(s, cf, sp), "Span"(l, c, el, ec))) ~> "py:GeneratorExp"(v, g, l, c, el, ec);
+      "TI-TWO". a:T, b:T, sp:T, acc:T, u:T, v:T | "FParenItem"(a) ~> u, "FParenItem"(b) ~> v |- "FTupleItemsAcc"("TupleTwo"(a, b, sp), acc) ~> "LCons"(u, "LCons"(v, acc));
+      "TI-ONE". a:T, sp:T, acc:T, u:T | "FParenItem"(a) ~> u |- "FTupleItemsAcc"("TupleOne"(a, sp), acc) ~> "LCons"(u, acc);
+      "TI-MORE". t:T, a:T, sp:T, acc:T, u:T, r:T | "FParenItem"(a) ~> u, "FTupleItemsAcc"(t, "LCons"(u, acc)) ~> r |- "FTupleItemsAcc"("TupleMore"(t, a, sp), acc) ~> r;
+      "TI-TRAIL". t:T, sp:T, acc:T, r:T | "FTupleItemsAcc"(t, acc) ~> r |- "FTupleItemsAcc"("TupleTrail"(t, sp), acc) ~> r;
+      "PAREN-ITEM". n:T, sp:T, v:T | "FNamedOrStar"(n) ~> v |- "FParenItem"("ParenItemPlain"(n, sp)) ~> v;
+      "LIST-EMPTY". l:T, c:T, el:T, ec:T |- "FExpr"("ListEmpty"("Span"(l, c, el, ec))) ~> "py:List"("LNil"(), "py:Load"(), l, c, el, ec);
+      "LIST". ts:T, l:T, c:T, el:T, ec:T, v:T | "FListItemsAcc"(ts, "LNil"()) ~> v |- "FExpr"("List"(ts, "Span"(l, c, el, ec))) ~> "py:List"(v, "py:Load"(), l, c, el, ec);
+      "LI-ONE". a:T, sp:T, acc:T, u:T | "FNamedOrStar"(a) ~> u |- "FListItemsAcc"("ListOne"(a, sp), acc) ~> "LCons"(u, acc);
+      "LI-MORE". t:T, a:T, sp:T, acc:T, u:T, r:T | "FNamedOrStar"(a) ~> u, "FListItemsAcc"(t, "LCons"(u, acc)) ~> r |- "FListItemsAcc"("ListMore"(t, a, sp), acc) ~> r;
+      "LI-TRAIL". t:T, sp:T, acc:T, r:T | "FListItemsAcc"(t, acc) ~> r |- "FListItemsAcc"("ListTrail"(t, sp), acc) ~> r;
+      "SET". ts:T, l:T, c:T, el:T, ec:T, v:T | "FSetItemsAcc"(ts, "LNil"()) ~> v |- "FExpr"("Set"(ts, "Span"(l, c, el, ec))) ~> "py:Set"(v, l, c, el, ec);
+      "SE-ONE". a:T, sp:T, acc:T, u:T | "FNamedOrStar"(a) ~> u |- "FSetItemsAcc"("SetOne"(a, sp), acc) ~> "LCons"(u, acc);
+      "SE-MORE". t:T, a:T, sp:T, acc:T, u:T, r:T | "FNamedOrStar"(a) ~> u, "FSetItemsAcc"(t, "LCons"(u, acc)) ~> r |- "FSetItemsAcc"("SetMore"(t, a, sp), acc) ~> r;
+      "SE-TRAIL". t:T, sp:T, acc:T, r:T | "FSetItemsAcc"(t, acc) ~> r |- "FSetItemsAcc"("SetTrail"(t, sp), acc) ~> r;
+      -- ast.Dict: keys and values in two lists, None the key of **mapping
+      "DICT-EMPTY". l:T, c:T, el:T, ec:T |- "FExpr"("DictEmpty"("Span"(l, c, el, ec))) ~> "py:Dict"("LNil"(), "LNil"(), l, c, el, ec);
+      "DICT". ts:T, l:T, c:T, el:T, ec:T, k:T, v:T | "FDictKeysAcc"(ts, "LNil"()) ~> k, "FDictValuesAcc"(ts, "LNil"()) ~> v |- "FExpr"("Dict"(ts, "Span"(l, c, el, ec))) ~> "py:Dict"(k, v, l, c, el, ec);
+      "DK-ONE". i:T, sp:T, acc:T, u:T | "FDictKey"(i) ~> u |- "FDictKeysAcc"("DictOne"(i, sp), acc) ~> "LCons"(u, acc);
+      "DK-MORE". t:T, i:T, sp:T, acc:T, u:T, r:T | "FDictKey"(i) ~> u, "FDictKeysAcc"(t, "LCons"(u, acc)) ~> r |- "FDictKeysAcc"("DictMore"(t, i, sp), acc) ~> r;
+      "DK-TRAIL". t:T, sp:T, acc:T, r:T | "FDictKeysAcc"(t, acc) ~> r |- "FDictKeysAcc"("DictTrail"(t, sp), acc) ~> r;
+      "DV-ONE". i:T, sp:T, acc:T, u:T | "FDictValue"(i) ~> u |- "FDictValuesAcc"("DictOne"(i, sp), acc) ~> "LCons"(u, acc);
+      "DV-MORE". t:T, i:T, sp:T, acc:T, u:T, r:T | "FDictValue"(i) ~> u, "FDictValuesAcc"(t, "LCons"(u, acc)) ~> r |- "FDictValuesAcc"("DictMore"(t, i, sp), acc) ~> r;
+      "DV-TRAIL". t:T, sp:T, acc:T, r:T | "FDictValuesAcc"(t, acc) ~> r |- "FDictValuesAcc"("DictTrail"(t, sp), acc) ~> r;
+      "DICT-KEY". k:T, v:T, sp:T, x:T | "FExpr"(k) ~> x |- "FDictKey"("DictPair"(k, v, sp)) ~> x;
+      "DICT-KEY-UNPACK". e:T, sp:T |- "FDictKey"("DictUnpack"(e, sp)) ~> "py:None"();
+      "DICT-VALUE". k:T, v:T, sp:T, x:T | "FExpr"(v) ~> x |- "FDictValue"("DictPair"(k, v, sp)) ~> x;
+      "DICT-VALUE-UNPACK". e:T, sp:T, x:T | "FExpr"(e) ~> x |- "FDictValue"("DictUnpack"(e, sp)) ~> x;
+
+      -- comprehensions (ast.ListComp, SetComp, DictComp, comprehension); an
+      -- element is never starred
+      "LIST-COMP". n:T, cf:T, l:T, c:T, el:T, ec:T, v:T, g:T | "FCompElt"(n) ~> v, "FComp"(cf) ~> g |- "FExpr"("ListComp"(n, cf, "Span"(l, c, el, ec))) ~> "py:ListComp"(v, g, l, c, el, ec);
+      "SET-COMP". n:T, cf:T, l:T, c:T, el:T, ec:T, v:T, g:T | "FCompElt"(n) ~> v, "FComp"(cf) ~> g |- "FExpr"("SetComp"(n, cf, "Span"(l, c, el, ec))) ~> "py:SetComp"(v, g, l, c, el, ec);
+      "DICT-COMP". k:T, v:T, cf:T, l:T, c:T, el:T, ec:T, x:T, y:T, g:T | "FExpr"(k) ~> x, "FExpr"(v) ~> y, "FComp"(cf) ~> g |- "FExpr"("DictComp"(k, v, cf, "Span"(l, c, el, ec))) ~> "py:DictComp"(x, y, g, l, c, el, ec);
+      "COMP-ELT". n:T, sp:T, v:T | "FNamed"(n) ~> v |- "FCompElt"("NamedOrStarNamed"(n, sp)) ~> v;
+      -- an unpacked item, *X (PEP 798, 3.15)
+      "COMP-ELT-STAR". s:T, sp:T, v:T | "FStar"(s) ~> v |- "FCompElt"("NamedOrStarStar"(s, sp)) ~> v;
+      "STAR-ARG". e:T, l:T, c:T, el:T, ec:T, v:T | "FExpr"(e) ~> v |- "FStarArg"("StarArg"(e, "Span"(l, c, el, ec))) ~> "py:Starred"(v, "py:Load"(), l, c, el, ec);
+      "DICT-COMP-UNPACK". k:T, cf:T, l:T, c:T, el:T, ec:T, x:T, g:T | "FExpr"(k) ~> x, "FComp"(cf) ~> g |- "FExpr"("DictCompUnpack"(k, cf, "Span"(l, c, el, ec))) ~> "py:DictComp"(x, "py:None"(), g, l, c, el, ec);
+      "COMP-FOR". t:T, it:T, rest:T, sp:T, x:T, y:T, fs:T, more:T, z:T | "FExprListTarget"(t, "py:Store"()) ~> x, "FExpr"(it) ~> y, "FCompIfs"(rest) ~> fs, "FCompMore"(rest) ~> more, "py-const"("py:zero"(), z) |- "FComp"("CompFor"(t, it, rest, sp)) ~> "LCons"("py:comprehension"(x, y, fs, z), more);
+      "COMP-ASYNC-FOR". t:T, it:T, rest:T, sp:T, x:T, y:T, fs:T, more:T, z:T | "FExprListTarget"(t, "py:Store"()) ~> x, "FExpr"(it) ~> y, "FCompIfs"(rest) ~> fs, "FCompMore"(rest) ~> more, "py-const"("py:one"(), z) |- "FComp"("CompAsyncFor"(t, it, rest, sp)) ~> "LCons"("py:comprehension"(x, y, fs, z), more);
+      "COMP-IFS-NONE". sp:T |- "FCompIfs"("CompIterNone"(sp)) ~> "LNil"();
+      "COMP-IFS-FOR". cf:T, sp:T |- "FCompIfs"("CompIterFor"(cf, sp)) ~> "LNil"();
+      "COMP-IFS-IF". e:T, rest:T, sp:T, v:T, vs:T | "FExpr"(e) ~> v, "FCompIfs"(rest) ~> vs |- "FCompIfs"("CompIterIf"(e, rest, sp)) ~> "LCons"(v, vs);
+      "COMP-MORE-NONE". sp:T |- "FCompMore"("CompIterNone"(sp)) ~> "LNil"();
+      "COMP-MORE-FOR". cf:T, sp:T, v:T | "FComp"(cf) ~> v |- "FCompMore"("CompIterFor"(cf, sp)) ~> v;
+      "COMP-MORE-IF". e:T, rest:T, sp:T, v:T | "FCompMore"(rest) ~> v |- "FCompMore"("CompIterIf"(e, rest, sp)) ~> v;
+
+      -- ast.IfExp, BoolOp, UnaryOp, Compare
+      "IF-EXP". a:T, b:T, e:T, l:T, c:T, el:T, ec:T, x:T, y:T, z:T | "FExpr"(b) ~> x, "FExpr"(a) ~> y, "FExpr"(e) ~> z |- "FExpr"("IfExp"(a, b, e, "Span"(l, c, el, ec))) ~> "py:IfExp"(x, y, z, l, c, el, ec);
+      "OR". a:T, ps:T, l:T, c:T, el:T, ec:T, v:T, vs:T | "FExpr"(a) ~> v, "FOrParts"(ps) ~> vs |- "FExpr"("Or"(a, ps, "Span"(l, c, el, ec))) ~> "py:BoolOp"("py:Or"(), "LCons"(v, vs), l, c, el, ec);
+      "OR-PARTS-NIL". |- "FOrParts"("LNil"()) ~> "LNil"();
+      "OR-PARTS-CONS". e:T, sp:T, rest:T, v:T, vs:T | "FExpr"(e) ~> v, "FOrParts"(rest) ~> vs |- "FOrParts"("LCons"("OrPart"(e, sp), rest)) ~> "LCons"(v, vs);
+      "AND". a:T, ps:T, l:T, c:T, el:T, ec:T, v:T, vs:T | "FExpr"(a) ~> v, "FAndParts"(ps) ~> vs |- "FExpr"("And"(a, ps, "Span"(l, c, el, ec))) ~> "py:BoolOp"("py:And"(), "LCons"(v, vs), l, c, el, ec);
+      "AND-PARTS-NIL". |- "FAndParts"("LNil"()) ~> "LNil"();
+      "AND-PARTS-CONS". e:T, sp:T, rest:T, v:T, vs:T | "FExpr"(e) ~> v, "FAndParts"(rest) ~> vs |- "FAndParts"("LCons"("AndPart"(e, sp), rest)) ~> "LCons"(v, vs);
+      "NOT". a:T, l:T, c:T, el:T, ec:T, u:T | "FExpr"(a) ~> u |- "FExpr"("Not"(a, "Span"(l, c, el, ec))) ~> "py:UnaryOp"("py:Not"(), u, l, c, el, ec);
+      "COMPARE". a:T, ps:T, l:T, c:T, el:T, ec:T, v:T, os:T, cs:T | "FExpr"(a) ~> v, "FCmpOps"(ps) ~> os, "FCmpRights"(ps) ~> cs |- "FExpr"("Compare"(a, ps, "Span"(l, c, el, ec))) ~> "py:Compare"(v, os, cs, l, c, el, ec);
+      "CMP-OPS-NIL". |- "FCmpOps"("LNil"()) ~> "LNil"();
+      "CMP-OPS-CONS". o:T, e:T, sp:T, rest:T, x:T, xs:T | "FCmpOp"(o) ~> x, "FCmpOps"(rest) ~> xs |- "FCmpOps"("LCons"("CompPart"(o, e, sp), rest)) ~> "LCons"(x, xs);
+      "CMP-RIGHTS-NIL". |- "FCmpRights"("LNil"()) ~> "LNil"();
+      "CMP-RIGHTS-CONS". o:T, e:T, sp:T, rest:T, x:T, xs:T | "FExpr"(e) ~> x, "FCmpRights"(rest) ~> xs |- "FCmpRights"("LCons"("CompPart"(o, e, sp), rest)) ~> "LCons"(x, xs);
+      "CMP-LT". sp:T |- "FCmpOp"("Lt"(sp)) ~> "py:Lt"();
+      "CMP-GT". sp:T |- "FCmpOp"("Gt"(sp)) ~> "py:Gt"();
+      "CMP-EQ". sp:T |- "FCmpOp"("Eq"(sp)) ~> "py:Eq"();
+      "CMP-GTE". sp:T |- "FCmpOp"("GtE"(sp)) ~> "py:GtE"();
+      "CMP-LTE". sp:T |- "FCmpOp"("LtE"(sp)) ~> "py:LtE"();
+      "CMP-NOTEQ". sp:T |- "FCmpOp"("NotEq"(sp)) ~> "py:NotEq"();
+      "CMP-IN". sp:T |- "FCmpOp"("In"(sp)) ~> "py:In"();
+      "CMP-NOTIN". sp:T |- "FCmpOp"("NotIn"(sp)) ~> "py:NotIn"();
+      "CMP-IS". sp:T |- "FCmpOp"("Is"(sp)) ~> "py:Is"();
+      "CMP-ISNOT". sp:T |- "FCmpOp"("IsNot"(sp)) ~> "py:IsNot"();
+
+      -- ast.BinOp, UnaryOp, Await
+      "ADD". a:T, b:T, l:T, c:T, el:T, ec:T, u:T, v:T | "FExpr"(a) ~> u, "FExpr"(b) ~> v |- "FExpr"("Add"(a, b, "Span"(l, c, el, ec))) ~> "py:BinOp"(u, "py:Add"(), v, l, c, el, ec);
+      "SUB". a:T, b:T, l:T, c:T, el:T, ec:T, u:T, v:T | "FExpr"(a) ~> u, "FExpr"(b) ~> v |- "FExpr"("Sub"(a, b, "Span"(l, c, el, ec))) ~> "py:BinOp"(u, "py:Sub"(), v, l, c, el, ec);
+      "MULT". a:T, b:T, l:T, c:T, el:T, ec:T, u:T, v:T | "FExpr"(a) ~> u, "FExpr"(b) ~> v |- "FExpr"("Mult"(a, b, "Span"(l, c, el, ec))) ~> "py:BinOp"(u, "py:Mult"(), v, l, c, el, ec);
+      "DIV". a:T, b:T, l:T, c:T, el:T, ec:T, u:T, v:T | "FExpr"(a) ~> u, "FExpr"(b) ~> v |- "FExpr"("Div"(a, b, "Span"(l, c, el, ec))) ~> "py:BinOp"(u, "py:Div"(), v, l, c, el, ec);
+      "MOD". a:T, b:T, l:T, c:T, el:T, ec:T, u:T, v:T | "FExpr"(a) ~> u, "FExpr"(b) ~> v |- "FExpr"("Mod"(a, b, "Span"(l, c, el, ec))) ~> "py:BinOp"(u, "py:Mod"(), v, l, c, el, ec);
+      "FLOORDIV". a:T, b:T, l:T, c:T, el:T, ec:T, u:T, v:T | "FExpr"(a) ~> u, "FExpr"(b) ~> v |- "FExpr"("FloorDiv"(a, b, "Span"(l, c, el, ec))) ~> "py:BinOp"(u, "py:FloorDiv"(), v, l, c, el, ec);
+      "MATMULT". a:T, b:T, l:T, c:T, el:T, ec:T, u:T, v:T | "FExpr"(a) ~> u, "FExpr"(b) ~> v |- "FExpr"("MatMult"(a, b, "Span"(l, c, el, ec))) ~> "py:BinOp"(u, "py:MatMult"(), v, l, c, el, ec);
+      "POW". a:T, b:T, l:T, c:T, el:T, ec:T, u:T, v:T | "FExpr"(a) ~> u, "FExpr"(b) ~> v |- "FExpr"("Pow"(a, b, "Span"(l, c, el, ec))) ~> "py:BinOp"(u, "py:Pow"(), v, l, c, el, ec);
+      "BITOR". a:T, b:T, l:T, c:T, el:T, ec:T, u:T, v:T | "FExpr"(a) ~> u, "FExpr"(b) ~> v |- "FExpr"("BitOr"(a, b, "Span"(l, c, el, ec))) ~> "py:BinOp"(u, "py:BitOr"(), v, l, c, el, ec);
+      "BITXOR". a:T, b:T, l:T, c:T, el:T, ec:T, u:T, v:T | "FExpr"(a) ~> u, "FExpr"(b) ~> v |- "FExpr"("BitXor"(a, b, "Span"(l, c, el, ec))) ~> "py:BinOp"(u, "py:BitXor"(), v, l, c, el, ec);
+      "BITAND". a:T, b:T, l:T, c:T, el:T, ec:T, u:T, v:T | "FExpr"(a) ~> u, "FExpr"(b) ~> v |- "FExpr"("BitAnd"(a, b, "Span"(l, c, el, ec))) ~> "py:BinOp"(u, "py:BitAnd"(), v, l, c, el, ec);
+      "LSHIFT". a:T, b:T, l:T, c:T, el:T, ec:T, u:T, v:T | "FExpr"(a) ~> u, "FExpr"(b) ~> v |- "FExpr"("LShift"(a, b, "Span"(l, c, el, ec))) ~> "py:BinOp"(u, "py:LShift"(), v, l, c, el, ec);
+      "RSHIFT". a:T, b:T, l:T, c:T, el:T, ec:T, u:T, v:T | "FExpr"(a) ~> u, "FExpr"(b) ~> v |- "FExpr"("RShift"(a, b, "Span"(l, c, el, ec))) ~> "py:BinOp"(u, "py:RShift"(), v, l, c, el, ec);
+      "USUB". a:T, l:T, c:T, el:T, ec:T, u:T | "FExpr"(a) ~> u |- "FExpr"("USub"(a, "Span"(l, c, el, ec))) ~> "py:UnaryOp"("py:USub"(), u, l, c, el, ec);
+      "UADD". a:T, l:T, c:T, el:T, ec:T, u:T | "FExpr"(a) ~> u |- "FExpr"("UAdd"(a, "Span"(l, c, el, ec))) ~> "py:UnaryOp"("py:UAdd"(), u, l, c, el, ec);
+      "INVERT". a:T, l:T, c:T, el:T, ec:T, u:T | "FExpr"(a) ~> u |- "FExpr"("Invert"(a, "Span"(l, c, el, ec))) ~> "py:UnaryOp"("py:Invert"(), u, l, c, el, ec);
+      "AWAIT". e:T, l:T, c:T, el:T, ec:T, v:T | "FExpr"(e) ~> v |- "FExpr"("Await"(e, "Span"(l, c, el, ec))) ~> "py:Await"(v, l, c, el, ec);
+
+      -- primaries: ast.Attribute, Subscript, Slice, Call, keyword, Starred
+      "ATTRIBUTE". e:T, t:T, l:T, c:T, el:T, ec:T, v:T | "FExpr"(e) ~> v |- "FExpr"("Attribute"(e, t, "Span"(l, c, el, ec))) ~> "py:Attribute"(v, t, "py:Load"(), l, c, el, ec);
+      "SUBSCRIPT". e:T, s:T, l:T, c:T, el:T, ec:T, v:T, w:T | "FExpr"(e) ~> v, "FSlices"(s) ~> w |- "FExpr"("Subscript"(e, s, "Span"(l, c, el, ec))) ~> "py:Subscript"(v, w, "py:Load"(), l, c, el, ec);
+      "SLICES-ONE". i:T, sp:T, v:T | "FSubscriptOne"(i) ~> v |- "FSlices"("SubscriptOne"(i, sp)) ~> v;
+      "SLICES-TUPLE". ts:T, l:T, c:T, el:T, ec:T, v:T | "FSubItemsAcc"(ts, "LNil"()) ~> v |- "FSlices"("SubscriptTuple"(ts, "Span"(l, c, el, ec))) ~> "py:Tuple"(v, "py:Load"(), l, c, el, ec);
+      -- a starred index alone is a tuple of one
+      "SUBSCRIPT-INDEX". n:T, sp:T, v:T | "FNamed"(n) ~> v |- "FSubscriptOne"("SubscriptIndex"(n, sp)) ~> v;
+      "SUBSCRIPT-STAR". e:T, l:T, c:T, el:T, ec:T, sp:T, v:T | "FExpr"(e) ~> v |- "FSubscriptOne"("SubscriptStar"("StarExpr"(e, "Span"(l, c, el, ec)), sp)) ~> "py:Tuple"("LCons"("py:Starred"(v, "py:Load"(), l, c, el, ec), "LNil"()), "py:Load"(), l, c, el, ec);
+      "SUBSCRIPT-SLICE". lo:T, up:T, st:T, sp:T, v:T | "FSlice"("SubscriptSlice"(lo, up, st, sp)) ~> v |- "FSubscriptOne"("SubscriptSlice"(lo, up, st, sp)) ~> v;
+      "SLICE". lo:T, up:T, st:T, l:T, c:T, el:T, ec:T, x:T, y:T, z:T | "FSliceLower"(lo) ~> x, "FSliceUpper"(up) ~> y, "FSliceStep"(st) ~> z |- "FSlice"("SubscriptSlice"(lo, up, st, "Span"(l, c, el, ec))) ~> "py:Slice"(x, y, z, l, c, el, ec);
+      "SUB-ITEM-INDEX". n:T, sp:T, v:T | "FNamed"(n) ~> v |- "FSubItem"("SubscriptIndex"(n, sp)) ~> v;
+      "SUB-ITEM-STAR". s:T, sp:T, v:T | "FStar"(s) ~> v |- "FSubItem"("SubscriptStar"(s, sp)) ~> v;
+      "SUB-ITEM-SLICE". lo:T, up:T, st:T, sp:T, v:T | "FSlice"("SubscriptSlice"(lo, up, st, sp)) ~> v |- "FSubItem"("SubscriptSlice"(lo, up, st, sp)) ~> v;
+      "SI-TWO". a:T, b:T, sp:T, acc:T, u:T, v:T | "FSubItem"(a) ~> u, "FSubItem"(b) ~> v |- "FSubItemsAcc"("SubscriptTupleTwo"(a, b, sp), acc) ~> "LCons"(u, "LCons"(v, acc));
+      "SI-ONE". a:T, sp:T, acc:T, u:T | "FSubItem"(a) ~> u |- "FSubItemsAcc"("SubscriptTupleOne"(a, sp), acc) ~> "LCons"(u, acc);
+      "SI-MORE". t:T, a:T, sp:T, acc:T, u:T, r:T | "FSubItem"(a) ~> u, "FSubItemsAcc"(t, "LCons"(u, acc)) ~> r |- "FSubItemsAcc"("SubscriptTupleMore"(t, a, sp), acc) ~> r;
+      "SI-TRAIL". t:T, sp:T, acc:T, r:T | "FSubItemsAcc"(t, acc) ~> r |- "FSubItemsAcc"("SubscriptTupleTrail"(t, sp), acc) ~> r;
+      "LOWER-NONE". sp:T |- "FSliceLower"("SliceLowerNone"(sp)) ~> "py:None"();
+      "LOWER". e:T, sp:T, v:T | "FExpr"(e) ~> v |- "FSliceLower"("SliceLower"(e, sp)) ~> v;
+      "UPPER-NONE". sp:T |- "FSliceUpper"("SliceUpperNone"(sp)) ~> "py:None"();
+      "UPPER". e:T, sp:T, v:T | "FExpr"(e) ~> v |- "FSliceUpper"("SliceUpper"(e, sp)) ~> v;
+      "STEP-NONE". sp:T |- "FSliceStep"("SliceStepNone"(sp)) ~> "py:None"();
+      "STEP-EMPTY". sp:T |- "FSliceStep"("SliceStepEmpty"(sp)) ~> "py:None"();
+      "STEP". e:T, sp:T, v:T | "FExpr"(e) ~> v |- "FSliceStep"("SliceStep"(e, sp)) ~> v;
+      -- a call's positional arguments (starred ones among them) and its
+      -- keywords (**mapping among them, with no name), each in order
+      "CALL". f:T, l:T, c:T, el:T, ec:T, v:T | "FExpr"(f) ~> v |- "FExpr"("Call"(f, "Span"(l, c, el, ec))) ~> "py:Call"(v, "LNil"(), "LNil"(), l, c, el, ec);
+      "CALL-ARGS". f:T, a:T, l:T, c:T, el:T, ec:T, v:T, st:T, ps:T, ks:T | "FExpr"(f) ~> v, "FArgsState"(a) ~> st, "FArgsAcc"(a, "LNil"()) ~> ps, "FKeywordsAcc"(a, "LNil"()) ~> ks |- "FExpr"("CallArgs"(f, a, "Span"(l, c, el, ec))) ~> "py:Call"(v, ps, ks, l, c, el, ec);
+      -- the order of a call's arguments: positional ones (starred among them),
+      -- then keywords and starred ones, then **mappings and keywords; the
+      -- state after each argument is py:pos, py:kw or py:dstar, and an
+      -- argument out of order has no step
+      "ARGS-STATE-ONE". a:T, sp:T, s:T | "FArgStep"("py:pos"(), a) ~> s |- "FArgsState"("ArgOne"(a, sp)) ~> s;
+      "ARGS-STATE-MORE". xs:T, a:T, sp:T, s0:T, s:T | "FArgsState"(xs) ~> s0, "FArgStep"(s0, a) ~> s |- "FArgsState"("ArgMore"(xs, a, sp)) ~> s;
+      "ARGS-STATE-TRAIL". xs:T, sp:T, s:T | "FArgsState"(xs) ~> s |- "FArgsState"("ArgTrail"(xs, sp)) ~> s;
+      "STEP-POSITIONAL". n:T, sp:T |- "FArgStep"("py:pos"(), "ArgPositional"(n, sp)) ~> "py:pos"();
+      "STEP-STAR". e:T, sp:T |- "FArgStep"("py:pos"(), "ArgStar"(e, sp)) ~> "py:pos"();
+      "STEP-STAR-AFTER-KEYWORD". e:T, sp:T |- "FArgStep"("py:kw"(), "ArgStar"(e, sp)) ~> "py:kw"();
+      "STEP-KEYWORD". k:T, e:T, sp:T |- "FArgStep"("py:pos"(), "ArgKeyword"(k, e, sp)) ~> "py:kw"();
+      "STEP-KEYWORD-AFTER-KEYWORD". k:T, e:T, sp:T |- "FArgStep"("py:kw"(), "ArgKeyword"(k, e, sp)) ~> "py:kw"();
+      "STEP-KEYWORD-AFTER-MAPPING". k:T, e:T, sp:T |- "FArgStep"("py:dstar"(), "ArgKeyword"(k, e, sp)) ~> "py:dstar"();
+      "STEP-MAPPING". s:T, e:T, sp:T |- "FArgStep"(s, "ArgDoubleStar"(e, sp)) ~> "py:dstar"();
+      "CALL-GENERATOR". f:T, n:T, cf:T, gl:T, gc:T, gel:T, gec:T, l:T, c:T, el:T, ec:T, v:T, x:T, g:T | "FExpr"(f) ~> v, "FNamed"(n) ~> x, "FComp"(cf) ~> g |- "FExpr"("CallGenerator"(f, "GenParens"(n, cf, "Span"(gl, gc, gel, gec)), "Span"(l, c, el, ec))) ~> "py:Call"(v, "LCons"("py:GeneratorExp"(x, g, gl, gc, gel, gec), "LNil"()), "LNil"(), l, c, el, ec);
+      "CALL-GENERATOR-STAR". f:T, n:T, cf:T, gl:T, gc:T, gel:T, gec:T, l:T, c:T, el:T, ec:T, v:T, x:T, g:T | "FExpr"(f) ~> v, "FStarArg"(n) ~> x, "FComp"(cf) ~> g |- "FExpr"("CallGenerator"(f, "GenParensStar"(n, cf, "Span"(gl, gc, gel, gec)), "Span"(l, c, el, ec))) ~> "py:Call"(v, "LCons"("py:GeneratorExp"(x, g, gl, gc, gel, gec), "LNil"()), "LNil"(), l, c, el, ec);
+      "AA-ONE". a:T, sp:T, acc:T, r:T | "FArgPos"(a, acc) ~> r |- "FArgsAcc"("ArgOne"(a, sp), acc) ~> r;
+      "AA-MORE". xs:T, a:T, sp:T, acc:T, acc2:T, r:T | "FArgPos"(a, acc) ~> acc2, "FArgsAcc"(xs, acc2) ~> r |- "FArgsAcc"("ArgMore"(xs, a, sp), acc) ~> r;
+      "AA-TRAIL". xs:T, sp:T, acc:T, r:T | "FArgsAcc"(xs, acc) ~> r |- "FArgsAcc"("ArgTrail"(xs, sp), acc) ~> r;
+      "ARG-POS". n:T, sp:T, acc:T, v:T | "FNamed"(n) ~> v |- "FArgPos"("ArgPositional"(n, sp), acc) ~> "LCons"(v, acc);
+      "ARG-POS-STAR". e:T, l:T, c:T, el:T, ec:T, acc:T, v:T | "FExpr"(e) ~> v |- "FArgPos"("ArgStar"(e, "Span"(l, c, el, ec)), acc) ~> "LCons"("py:Starred"(v, "py:Load"(), l, c, el, ec), acc);
+      "ARG-POS-KEYWORD". k:T, e:T, sp:T, acc:T |- "FArgPos"("ArgKeyword"(k, e, sp), acc) ~> acc;
+      "ARG-POS-DOUBLE-STAR". e:T, sp:T, acc:T |- "FArgPos"("ArgDoubleStar"(e, sp), acc) ~> acc;
+      "KA-ONE". a:T, sp:T, acc:T, r:T | "FArgKw"(a, acc) ~> r |- "FKeywordsAcc"("ArgOne"(a, sp), acc) ~> r;
+      "KA-MORE". xs:T, a:T, sp:T, acc:T, acc2:T, r:T | "FArgKw"(a, acc) ~> acc2, "FKeywordsAcc"(xs, acc2) ~> r |- "FKeywordsAcc"("ArgMore"(xs, a, sp), acc) ~> r;
+      "KA-TRAIL". xs:T, sp:T, acc:T, r:T | "FKeywordsAcc"(xs, acc) ~> r |- "FKeywordsAcc"("ArgTrail"(xs, sp), acc) ~> r;
+      "ARG-KW-POSITIONAL". n:T, sp:T, acc:T |- "FArgKw"("ArgPositional"(n, sp), acc) ~> acc;
+      "ARG-KW-STAR". e:T, sp:T, acc:T |- "FArgKw"("ArgStar"(e, sp), acc) ~> acc;
+      "ARG-KW". n:T, ksp:T, e:T, l:T, c:T, el:T, ec:T, acc:T, v:T | "FExpr"(e) ~> v |- "FArgKw"("ArgKeyword"("Name"(n, ksp), e, "Span"(l, c, el, ec)), acc) ~> "LCons"("py:keyword"(n, v, l, c, el, ec), acc);
+      "ARG-KW-DOUBLE-STAR". e:T, l:T, c:T, el:T, ec:T, acc:T, v:T | "FExpr"(e) ~> v |- "FArgKw"("ArgDoubleStar"(e, "Span"(l, c, el, ec)), acc) ~> "LCons"("py:keyword"("py:None"(), v, l, c, el, ec), acc);
+
+      -- ================================================================ strings
+
+      -- adjacent string literals: plain ones are one Constant, located over
+      -- all of them, of the first one's kind; with an f-string among them
+      -- they are one JoinedStr whose values are their pieces in order, each
+      -- run of constant pieces joined into one (located from the first to
+      -- the last), empty ones dropped
+      "STRINGS-FOLD". ps:T, l:T, c:T, el:T, ec:T, k:T, v:T | "FPartsKind"(ps) ~> k, "FStringsOf"(k, ps, l, c, el, ec) ~> v |- "FStrings"(ps, l, c, el, ec) ~> v;
+      -- the kind of adjacent literals: plain strings, f-strings among them, or
+      -- template strings only (a t-string beside any other literal has no
+      -- abstract syntax, CPython's refusal to mix t-string literals with
+      -- string or bytes literals)
+      "PARTS-KIND-LAST". p:T, k:T | "FPartKind"(p) ~> k |- "FPartsKind"("LCons"(p, "LNil"())) ~> k;
+      "PARTS-KIND-MORE". p:T, q:T, rest:T, k1:T, k2:T, k:T | "FPartKind"(p) ~> k1, "FPartsKind"("LCons"(q, rest)) ~> k2, "FStrKindJoin"(k1, k2) ~> k |- "FPartsKind"("LCons"(p, "LCons"(q, rest))) ~> k;
+      "PART-KIND-PLAIN". t:T, sp:T |- "FPartKind"("StringPlain"(t, sp)) ~> "py:plain"();
+      "PART-KIND-FORMATTED". s:T, ps:T, e:T, sp:T, k:T | "py-fstring-kind"(s, k) |- "FPartKind"("StringFormatted"(s, ps, e, sp)) ~> k;
+      "STR-KIND-PLAIN-PLAIN". |- "FStrKindJoin"("py:plain"(), "py:plain"()) ~> "py:plain"();
+      "STR-KIND-PLAIN-F". |- "FStrKindJoin"("py:plain"(), "py:fstr"()) ~> "py:fstr"();
+      "STR-KIND-F-PLAIN". |- "FStrKindJoin"("py:fstr"(), "py:plain"()) ~> "py:fstr"();
+      "STR-KIND-F-F". |- "FStrKindJoin"("py:fstr"(), "py:fstr"()) ~> "py:fstr"();
+      "STR-KIND-T-T". |- "FStrKindJoin"("py:tstr"(), "py:tstr"()) ~> "py:tstr"();
+      "STRINGS-PLAIN". ps:T, l:T, c:T, el:T, ec:T, v:T, k:T | "FStringParts"(ps) ~> v, "FStringKind"(ps) ~> k |- "FStringsOf"("py:plain"(), ps, l, c, el, ec) ~> "py:Constant"(v, k, l, c, el, ec);
+      "STRINGS-FORMATTED". ps:T, l:T, c:T, el:T, ec:T, xs:T, ys:T | "FFlat"(ps) ~> xs, "FJoin"(xs) ~> ys |- "FStringsOf"("py:fstr"(), ps, l, c, el, ec) ~> "py:JoinedStr"(ys, l, c, el, ec);
+      -- template strings (PEP 750): ast.TemplateStr of constants and
+      -- ast.Interpolation, joined as an f-string's pieces are
+      "STRINGS-TEMPLATE". ps:T, l:T, c:T, el:T, ec:T, xs:T, ys:T | "FFlatT"(ps) ~> xs, "FJoinT"(xs) ~> ys |- "FStringsOf"("py:tstr"(), ps, l, c, el, ec) ~> "py:TemplateStr"(ys, l, c, el, ec);
+      "FLAT-T-NIL". |- "FFlatT"("LNil"()) ~> "LNil"();
+      "FLAT-T". s:T, ps:T, e:T, sp:T, rest:T, r:T, xs:T, ys:T, zs:T | "py-fstring-raw"(s, r), "FPiecesT"(ps, r) ~> xs, "FFlatT"(rest) ~> ys, "FAppend"(xs, ys) ~> zs |- "FFlatT"("LCons"("StringFormatted"(s, ps, e, sp), rest)) ~> zs;
+      "PIECES-T-NIL". r:T |- "FPiecesT"("LNil"(), r) ~> "LNil"();
+      "PIECES-T-TEXT". t:T, l:T, c:T, el:T, ec:T, rest:T, r:T, m:T, xs:T, ys:T | "py-fstring-middle"(t, r, m), "FPiecesT"(rest, r) ~> xs, "FTextPiece"(m, l, c, el, ec, xs) ~> ys |- "FPiecesT"("LCons"("FStringText"(t, "Span"(l, c, el, ec)), rest), r) ~> ys;
+      "PIECES-T-FIELD". b:T, l:T, c:T, el:T, ec:T, rest:T, r:T, xs:T, ys:T, zs:T | "FFieldT"(b, r, l, c, el, ec) ~> xs, "FPiecesT"(rest, r) ~> ys, "FAppend"(xs, ys) ~> zs |- "FPiecesT"("LCons"("FStringField"(b, "Span"(l, c, el, ec)), rest), r) ~> zs;
+      -- an interpolation keeps its expression's source text (str); a debug
+      -- field's text before its "=" is that expression's
+      "FIELD-T". e:T, t:T, t2:T, tl:T, tc:T, tel:T, tec:T, sp:T, cv:T, sc:T, sp2:T, r:T, l:T, c:T, el:T, ec:T, v:T, k:T, f:T | "FFieldExpr"(e) ~> v, "FConversion"(cv) ~> k, "FSpec"(sc, r) ~> f, "py-strip-comments"(t, t2) |- "FFieldT"("FieldPlain"("FieldHeadPlain"(e, t, "Span"(tl, tc, tel, tec), sp), cv, sc, sp2), r, l, c, el, ec) ~> "LCons"("py:Interpolation"(v, t2, k, f, l, c, el, ec), "LNil"());
+      "FIELD-T-DEBUG". e:T, t:T, t2:T, tl:T, tc:T, tel:T, tec:T, sp:T, cv:T, sc:T, sp2:T, r:T, l:T, c:T, el:T, ec:T, v:T, k:T, f:T, x:T | "FFieldExpr"(e) ~> v, "FDebugConversion"(cv, sc) ~> k, "FSpec"(sc, r) ~> f, "py-strip-comments"(t, t2), "py-debug-text"(t2, x) |- "FFieldT"("FieldPlain"("FieldHeadDebug"(e, t, "Span"(tl, tc, tel, tec), sp), cv, sc, sp2), r, l, c, el, ec) ~> "LCons"("py:Constant"(t2, "py:None"(), tl, tc, tel, tec), "LCons"("py:Interpolation"(v, x, k, f, l, c, el, ec), "LNil"()));
+      "JOIN-T-NIL". |- "FJoinT"("LNil"()) ~> "LNil"();
+      "JOIN-T-CONSTANTS". v1:T, k1:T, l1:T, c1:T, el1:T, ec1:T, v2:T, k2:T, l2:T, c2:T, el2:T, ec2:T, rest:T, v:T, r:T | "py-concat"(v1, v2, v), "FJoinT"("LCons"("py:Constant"(v, k1, l1, c1, el2, ec2), rest)) ~> r |- "FJoinT"("LCons"("py:Constant"(v1, k1, l1, c1, el1, ec1), "LCons"("py:Constant"(v2, k2, l2, c2, el2, ec2), rest))) ~> r;
+      "JOIN-T-CONSTANT-VALUE". v:T, k:T, l:T, c:T, el:T, ec:T, a:T, a2:T, b:T, d:T, fl:T, fc:T, fel:T, fec:T, rest:T, e:T, xs:T, ys:T | "py-is-empty"(v, e), "FJoinT"("LCons"("py:Interpolation"(a, a2, b, d, fl, fc, fel, fec), rest)) ~> xs, "FKeep"(e, "py:Constant"(v, k, l, c, el, ec), xs) ~> ys |- "FJoinT"("LCons"("py:Constant"(v, k, l, c, el, ec), "LCons"("py:Interpolation"(a, a2, b, d, fl, fc, fel, fec), rest))) ~> ys;
+      "JOIN-T-CONSTANT-LAST". v:T, k:T, l:T, c:T, el:T, ec:T, e:T, ys:T | "py-is-empty"(v, e), "FKeep"(e, "py:Constant"(v, k, l, c, el, ec), "LNil"()) ~> ys |- "FJoinT"("LCons"("py:Constant"(v, k, l, c, el, ec), "LNil"())) ~> ys;
+      "JOIN-T-VALUE". a:T, a2:T, b:T, d:T, l:T, c:T, el:T, ec:T, rest:T, xs:T | "FJoinT"(rest) ~> xs |- "FJoinT"("LCons"("py:Interpolation"(a, a2, b, d, l, c, el, ec), rest)) ~> "LCons"("py:Interpolation"(a, a2, b, d, l, c, el, ec), xs);
+      "STRING-PARTS-ONE". t:T, sp:T, v:T | "py-string"(t, v) |- "FStringParts"("LCons"("StringPlain"(t, sp), "LNil"())) ~> v;
+      "STRING-PARTS-MORE". t:T, sp:T, p:T, rest:T, v:T, w:T, r:T | "py-string"(t, v), "FStringParts"("LCons"(p, rest)) ~> w, "py-concat"(v, w, r) |- "FStringParts"("LCons"("StringPlain"(t, sp), "LCons"(p, rest))) ~> r;
+      "STRING-KIND". t:T, sp:T, rest:T, k:T | "py-string-kind"(t, k) |- "FStringKind"("LCons"("StringPlain"(t, sp), rest)) ~> k;
+      "FLAT-NIL". |- "FFlat"("LNil"()) ~> "LNil"();
+      "FLAT-PLAIN". t:T, l:T, c:T, el:T, ec:T, rest:T, v:T, k:T, xs:T | "py-string"(t, v), "py-string-kind"(t, k), "FFlat"(rest) ~> xs |- "FFlat"("LCons"("StringPlain"(t, "Span"(l, c, el, ec)), rest)) ~> "LCons"("py:Constant"(v, k, l, c, el, ec), xs);
+      "FLAT-FORMATTED". s:T, ps:T, e:T, sp:T, rest:T, r:T, xs:T, ys:T, zs:T | "py-fstring-raw"(s, r), "FPieces"(ps, r) ~> xs, "FFlat"(rest) ~> ys, "FAppend"(xs, ys) ~> zs |- "FFlat"("LCons"("StringFormatted"(s, ps, e, sp), rest)) ~> zs;
+      "JOIN-NIL". |- "FJoin"("LNil"()) ~> "LNil"();
+      "JOIN-CONSTANTS". v1:T, k1:T, l1:T, c1:T, el1:T, ec1:T, v2:T, k2:T, l2:T, c2:T, el2:T, ec2:T, rest:T, v:T, r:T | "py-concat"(v1, v2, v), "FJoin"("LCons"("py:Constant"(v, k1, l1, c1, el2, ec2), rest)) ~> r |- "FJoin"("LCons"("py:Constant"(v1, k1, l1, c1, el1, ec1), "LCons"("py:Constant"(v2, k2, l2, c2, el2, ec2), rest))) ~> r;
+      "JOIN-CONSTANT-VALUE". v:T, k:T, l:T, c:T, el:T, ec:T, a:T, b:T, d:T, fl:T, fc:T, fel:T, fec:T, rest:T, e:T, xs:T, ys:T | "py-is-empty"(v, e), "FJoin"("LCons"("py:FormattedValue"(a, b, d, fl, fc, fel, fec), rest)) ~> xs, "FKeep"(e, "py:Constant"(v, k, l, c, el, ec), xs) ~> ys |- "FJoin"("LCons"("py:Constant"(v, k, l, c, el, ec), "LCons"("py:FormattedValue"(a, b, d, fl, fc, fel, fec), rest))) ~> ys;
+      "JOIN-CONSTANT-LAST". v:T, k:T, l:T, c:T, el:T, ec:T, e:T, ys:T | "py-is-empty"(v, e), "FKeep"(e, "py:Constant"(v, k, l, c, el, ec), "LNil"()) ~> ys |- "FJoin"("LCons"("py:Constant"(v, k, l, c, el, ec), "LNil"())) ~> ys;
+      "JOIN-VALUE". a:T, b:T, d:T, l:T, c:T, el:T, ec:T, rest:T, xs:T | "FJoin"(rest) ~> xs |- "FJoin"("LCons"("py:FormattedValue"(a, b, d, l, c, el, ec), rest)) ~> "LCons"("py:FormattedValue"(a, b, d, l, c, el, ec), xs);
+      "KEEP-EMPTY". x:T, xs:T |- "FKeep"("py:True"(), x, xs) ~> xs;
+      "KEEP". x:T, xs:T |- "FKeep"("py:False"(), x, xs) ~> "LCons"(x, xs);
+
+      -- an f-string's pieces: text (decoded, an empty piece dropped) and
+      -- replacement fields (ast.FormattedValue: conversion -1 when none;
+      -- after "=" the field's source text comes first, and with neither a
+      -- conversion nor a spec the conversion is !r)
+      "PIECES-NIL". r:T |- "FPieces"("LNil"(), r) ~> "LNil"();
+      "PIECES-TEXT". t:T, l:T, c:T, el:T, ec:T, rest:T, r:T, m:T, xs:T, ys:T | "py-fstring-middle"(t, r, m), "FPieces"(rest, r) ~> xs, "FTextPiece"(m, l, c, el, ec, xs) ~> ys |- "FPieces"("LCons"("FStringText"(t, "Span"(l, c, el, ec)), rest), r) ~> ys;
+      "TEXT-PIECE". s:T, l:T, c:T, el:T, ec:T, xs:T |- "FTextPiece"("py:Text"(s), l, c, el, ec, xs) ~> "LCons"("py:Constant"(s, "py:None"(), l, c, el, ec), xs);
+      "TEXT-PIECE-EMPTY". l:T, c:T, el:T, ec:T, xs:T |- "FTextPiece"("py:Empty"(), l, c, el, ec, xs) ~> xs;
+      "PIECES-FIELD". b:T, l:T, c:T, el:T, ec:T, rest:T, r:T, xs:T, ys:T, zs:T | "FField"(b, r, l, c, el, ec) ~> xs, "FPieces"(rest, r) ~> ys, "FAppend"(xs, ys) ~> zs |- "FPieces"("LCons"("FStringField"(b, "Span"(l, c, el, ec)), rest), r) ~> zs;
+      "FIELD". e:T, t:T, ts:T, sp:T, cv:T, sc:T, sp2:T, r:T, l:T, c:T, el:T, ec:T, v:T, k:T, f:T | "FFieldExpr"(e) ~> v, "FConversion"(cv) ~> k, "FSpec"(sc, r) ~> f |- "FField"("FieldPlain"("FieldHeadPlain"(e, t, ts, sp), cv, sc, sp2), r, l, c, el, ec) ~> "LCons"("py:FormattedValue"(v, k, f, l, c, el, ec), "LNil"());
+      "FIELD-DEBUG". e:T, t:T, tl:T, tc:T, tel:T, tec:T, sp:T, cv:T, sc:T, sp2:T, r:T, l:T, c:T, el:T, ec:T, v:T, k:T, f:T, t2:T | "FFieldExpr"(e) ~> v, "FDebugConversion"(cv, sc) ~> k, "FSpec"(sc, r) ~> f, "py-strip-comments"(t, t2) |- "FField"("FieldPlain"("FieldHeadDebug"(e, t, "Span"(tl, tc, tel, tec), sp), cv, sc, sp2), r, l, c, el, ec) ~> "LCons"("py:Constant"(t2, "py:None"(), tl, tc, tel, tec), "LCons"("py:FormattedValue"(v, k, f, l, c, el, ec), "LNil"()));
+      "FIELD-EXPRS". e:T, sp:T, v:T | "FExprs"(e) ~> v |- "FFieldExpr"("FieldExprs"(e, sp)) ~> v;
+      "FIELD-YIELD". y:T, sp:T, v:T | "FYield"(y) ~> v |- "FFieldExpr"("FieldYield"(y, sp)) ~> v;
+      "CONVERSION-NONE". sp:T, k:T | "py-const"("py:minus-one"(), k) |- "FConversion"("FieldConversionNone"(sp)) ~> k;
+      "CONVERSION". t:T, sp:T, k:T | "py-conversion"(t, k) |- "FConversion"("FieldConversion"(t, sp)) ~> k;
+      "DEBUG-CONVERSION". t:T, sp:T, sc:T, k:T | "py-conversion"(t, k) |- "FDebugConversion"("FieldConversion"(t, sp), sc) ~> k;
+      "DEBUG-CONVERSION-REPR". sp:T, sp2:T, k:T | "py-const"("py:repr"(), k) |- "FDebugConversion"("FieldConversionNone"(sp), "FieldSpecNone"(sp2)) ~> k;
+      "DEBUG-CONVERSION-SPEC". sp:T, ps:T, sp2:T, k:T | "py-const"("py:minus-one"(), k) |- "FDebugConversion"("FieldConversionNone"(sp), "FieldSpec"(ps, sp2)) ~> k;
+      "SPEC-NONE". sp:T, r:T |- "FSpec"("FieldSpecNone"(sp), r) ~> "py:None"();
+      "SPEC". ps:T, l:T, c:T, el:T, ec:T, r:T, xs:T, ys:T | "FPieces"(ps, r) ~> xs, "FJoin"(xs) ~> ys |- "FSpec"("FieldSpec"(ps, "Span"(l, c, el, ec)), r) ~> "py:JoinedStr"(ys, l, c, el, ec);
+
+      -- ================================================================ patterns
+
+      -- match_case patterns (ast.MatchValue, MatchSingleton, MatchSequence,
+      -- MatchMapping, MatchClass, MatchStar, MatchAs, MatchOr)
+      "PATTERNS-ONE". p:T, sp:T, v:T | "FPattern"(p) ~> v |- "FPatterns"("PatternsOne"(p, sp)) ~> v;
+      "PATTERNS-OPEN". o:T, l:T, c:T, el:T, ec:T, v:T | "FOpenSeq"(o) ~> v |- "FPatterns"("PatternsOpen"(o, "Span"(l, c, el, ec))) ~> "py:MatchSequence"(v, l, c, el, ec);
+      -- an "as" pattern's name is never the wildcard _
+      "PATTERN-AS". o:T, n:T, l:T, c:T, el:T, ec:T, v:T | "FOr"(o) ~> v, "py-capture"(n, n) |- "FPattern"("AsPattern"(o, n, "Span"(l, c, el, ec))) ~> "py:MatchAs"(v, n, l, c, el, ec);
+      "PATTERN-OR". o:T, sp:T, v:T | "FOr"(o) ~> v |- "FPattern"("PatternOr"(o, sp)) ~> v;
+      "OR-ONE". p:T, sp:T, v:T | "FClosed"(p) ~> v |- "FOr"("OrOne"(p, sp)) ~> v;
+      "OR-MORE". o:T, p:T, l:T, c:T, el:T, ec:T, v:T, r:T | "FClosed"(p) ~> v, "FOrAcc"(o, "LCons"(v, "LNil"())) ~> r |- "FOr"("OrMore"(o, p, "Span"(l, c, el, ec))) ~> "py:MatchOr"(r, l, c, el, ec);
+      "OR-ACC-ONE". p:T, sp:T, acc:T, v:T | "FClosed"(p) ~> v |- "FOrAcc"("OrOne"(p, sp), acc) ~> "LCons"(v, acc);
+      "OR-ACC-MORE". o:T, p:T, sp:T, acc:T, v:T, r:T | "FClosed"(p) ~> v, "FOrAcc"(o, "LCons"(v, acc)) ~> r |- "FOrAcc"("OrMore"(o, p, sp), acc) ~> r;
+      "LITERAL-NUMBER". s:T, l:T, c:T, el:T, ec:T, v:T | "FSigned"(s) ~> v |- "FClosed"("LiteralNumber"(s, "Span"(l, c, el, ec))) ~> "py:MatchValue"(v, l, c, el, ec);
+      "LITERAL-COMPLEX-ADD". s:T, t:T, nl:T, nc:T, nel:T, nec:T, l:T, c:T, el:T, ec:T, u:T, n:T | "FSigned"(s) ~> u, "py-number"(t, n) |- "FClosed"("LiteralComplexAdd"(s, "PatternNumber"(t, "Span"(nl, nc, nel, nec)), "Span"(l, c, el, ec))) ~> "py:MatchValue"("py:BinOp"(u, "py:Add"(), "py:Constant"(n, "py:None"(), nl, nc, nel, nec), l, c, el, ec), l, c, el, ec);
+      "LITERAL-COMPLEX-SUB". s:T, t:T, nl:T, nc:T, nel:T, nec:T, l:T, c:T, el:T, ec:T, u:T, n:T | "FSigned"(s) ~> u, "py-number"(t, n) |- "FClosed"("LiteralComplexSub"(s, "PatternNumber"(t, "Span"(nl, nc, nel, nec)), "Span"(l, c, el, ec))) ~> "py:MatchValue"("py:BinOp"(u, "py:Sub"(), "py:Constant"(n, "py:None"(), nl, nc, nel, nec), l, c, el, ec), l, c, el, ec);
+      "LITERAL-STRINGS". ps:T, l:T, c:T, el:T, ec:T, v:T | "FStrings"(ps, l, c, el, ec) ~> v |- "FClosed"("LiteralStrings"(ps, "Span"(l, c, el, ec))) ~> "py:MatchValue"(v, l, c, el, ec);
+      "LITERAL-NONE". l:T, c:T, el:T, ec:T |- "FClosed"("LiteralNone"("Span"(l, c, el, ec))) ~> "py:MatchSingleton"("py:None"(), l, c, el, ec);
+      "LITERAL-TRUE". l:T, c:T, el:T, ec:T |- "FClosed"("LiteralTrue"("Span"(l, c, el, ec))) ~> "py:MatchSingleton"("py:True"(), l, c, el, ec);
+      "LITERAL-FALSE". l:T, c:T, el:T, ec:T |- "FClosed"("LiteralFalse"("Span"(l, c, el, ec))) ~> "py:MatchSingleton"("py:False"(), l, c, el, ec);
+      "CAPTURE". n:T, l:T, c:T, el:T, ec:T, x:T | "py-capture"(n, x) |- "FClosed"("Capture"(n, "Span"(l, c, el, ec))) ~> "py:MatchAs"("py:None"(), x, l, c, el, ec);
+      "VALUE-PATTERN". a:T, l:T, c:T, el:T, ec:T, v:T | "FAttr"(a) ~> v |- "FClosed"("ValuePattern"(a, "Span"(l, c, el, ec))) ~> "py:MatchValue"(v, l, c, el, ec);
+      "GROUP-PATTERN". p:T, sp:T, v:T | "FPattern"(p) ~> v |- "FClosed"("GroupPattern"(p, sp)) ~> v;
+      "SEQUENCE-PAREN-EMPTY". l:T, c:T, el:T, ec:T |- "FClosed"("SequenceParenEmpty"("Span"(l, c, el, ec))) ~> "py:MatchSequence"("LNil"(), l, c, el, ec);
+      "SEQUENCE-PAREN". o:T, l:T, c:T, el:T, ec:T, v:T | "FOpenSeq"(o) ~> v |- "FClosed"("SequenceParen"(o, "Span"(l, c, el, ec))) ~> "py:MatchSequence"(v, l, c, el, ec);
+      "SEQUENCE-BRACKET-EMPTY". l:T, c:T, el:T, ec:T |- "FClosed"("SequenceBracketEmpty"("Span"(l, c, el, ec))) ~> "py:MatchSequence"("LNil"(), l, c, el, ec);
+      "SEQUENCE-BRACKET". m:T, l:T, c:T, el:T, ec:T, v:T | "FMaybeSeq"(m) ~> v |- "FClosed"("SequenceBracket"(m, "Span"(l, c, el, ec))) ~> "py:MatchSequence"(v, l, c, el, ec);
+      "MAPPING-EMPTY". l:T, c:T, el:T, ec:T |- "FClosed"("MappingEmpty"("Span"(l, c, el, ec))) ~> "py:MatchMapping"("LNil"(), "LNil"(), "py:None"(), l, c, el, ec);
+      "MAPPING". m:T, l:T, c:T, el:T, ec:T, k:T, p:T, r:T | "FMapKeysAcc"(m, "LNil"()) ~> k, "FMapPatsAcc"(m, "LNil"()) ~> p, "FMapRest"(m) ~> r |- "FClosed"("Mapping"(m, "Span"(l, c, el, ec))) ~> "py:MatchMapping"(k, p, r, l, c, el, ec);
+      "CLASS-PATTERN-EMPTY". n:T, l:T, c:T, el:T, ec:T, v:T | "FNameOrAttr"(n) ~> v |- "FClosed"("ClassPatternEmpty"(n, "Span"(l, c, el, ec))) ~> "py:MatchClass"(v, "LNil"(), "LNil"(), "LNil"(), l, c, el, ec);
+      "CLASS-PATTERN". n:T, a:T, l:T, c:T, el:T, ec:T, v:T, ps:T, ks:T, kp:T | "FNameOrAttr"(n) ~> v, "FClassPosAcc"(a, "LNil"()) ~> ps, "FClassKwNamesAcc"(a, "LNil"()) ~> ks, "FClassKwPatsAcc"(a, "LNil"()) ~> kp |- "FClosed"("ClassPattern"(n, a, "Span"(l, c, el, ec))) ~> "py:MatchClass"(v, ps, ks, kp, l, c, el, ec);
+      "SIGNED-POSITIVE". t:T, l:T, c:T, el:T, ec:T, sp:T, n:T | "py-number"(t, n) |- "FSigned"("SignedPositive"("PatternNumber"(t, "Span"(l, c, el, ec)), sp)) ~> "py:Constant"(n, "py:None"(), l, c, el, ec);
+      "SIGNED-NEGATIVE". t:T, nl:T, nc:T, nel:T, nec:T, l:T, c:T, el:T, ec:T, n:T | "py-number"(t, n) |- "FSigned"("SignedNegative"("PatternNumber"(t, "Span"(nl, nc, nel, nec)), "Span"(l, c, el, ec))) ~> "py:UnaryOp"("py:USub"(), "py:Constant"(n, "py:None"(), nl, nc, nel, nec), l, c, el, ec);
+      "SIGNED-PLUS". t:T, nl:T, nc:T, nel:T, nec:T, l:T, c:T, el:T, ec:T, n:T | "py-number"(t, n) |- "FSigned"("SignedPlus"("PatternNumber"(t, "Span"(nl, nc, nel, nec)), "Span"(l, c, el, ec))) ~> "py:UnaryOp"("py:UAdd"(), "py:Constant"(n, "py:None"(), nl, nc, nel, nec), l, c, el, ec);
+      "ATTR". o:T, n:T, l:T, c:T, el:T, ec:T, v:T | "FNameOrAttr"(o) ~> v |- "FAttr"("PatternAttr"(o, n, "Span"(l, c, el, ec))) ~> "py:Attribute"(v, n, "py:Load"(), l, c, el, ec);
+      "NAME-OR-ATTR-NAME". n:T, l:T, c:T, el:T, ec:T |- "FNameOrAttr"("NameOrAttrName"(n, "Span"(l, c, el, ec))) ~> "py:Name"(n, "py:Load"(), l, c, el, ec);
+      "NAME-OR-ATTR-ATTR". a:T, sp:T, v:T | "FAttr"(a) ~> v |- "FNameOrAttr"("NameOrAttrAttr"(a, sp)) ~> v;
+      "OPEN-SEQ-ONE". m:T, sp:T, v:T | "FMaybeStar"(m) ~> v |- "FOpenSeq"("OpenSeqOne"(m, sp)) ~> "LCons"(v, "LNil"());
+      "OPEN-SEQ-MORE". m:T, r:T, sp:T, v:T, vs:T | "FMaybeStar"(m) ~> v, "FMaybeSeq"(r) ~> vs |- "FOpenSeq"("OpenSeqMore"(m, r, sp)) ~> "LCons"(v, vs);
+      "MAYBE-SEQ-ONE". m:T, sp:T, v:T | "FMaybeStar"(m) ~> v |- "FMaybeSeq"("MaybeSeqOne"(m, sp)) ~> "LCons"(v, "LNil"());
+      "MAYBE-SEQ-MORE". m:T, r:T, sp:T, v:T, vs:T | "FMaybeStar"(m) ~> v, "FMaybeSeq"(r) ~> vs |- "FMaybeSeq"("MaybeSeqMore"(m, r, sp)) ~> "LCons"(v, vs);
+      "MAYBE-SEQ-TRAIL". m:T, sp:T, v:T | "FMaybeStar"(m) ~> v |- "FMaybeSeq"("MaybeSeqTrail"(m, sp)) ~> "LCons"(v, "LNil"());
+      "STAR-PATTERN". n:T, l:T, c:T, el:T, ec:T, x:T | "py-capture"(n, x) |- "FMaybeStar"("StarPattern"(n, "Span"(l, c, el, ec))) ~> "py:MatchStar"(x, l, c, el, ec);
+      "MAYBE-STAR-PATTERN". p:T, sp:T, v:T | "FPattern"(p) ~> v |- "FMaybeStar"("MaybeStarPattern"(p, sp)) ~> v;
+      -- a mapping pattern's keys and patterns, and its **rest, which is last
+      "MK-ONE-PAIR". k:T, p:T, sp:T, sp2:T, acc:T, x:T | "FKey"(k) ~> x |- "FMapKeysAcc"("MappingOne"("MappingPair"(k, p, sp), sp2), acc) ~> "LCons"(x, acc);
+      "MK-ONE-REST". n:T, sp:T, sp2:T, acc:T |- "FMapKeysAcc"("MappingOne"("MappingRest"(n, sp), sp2), acc) ~> acc;
+      "MK-MORE-PAIR". m:T, k:T, p:T, sp:T, sp2:T, acc:T, x:T, r:T | "FKey"(k) ~> x, "FMapKeysAcc"(m, "LCons"(x, acc)) ~> r |- "FMapKeysAcc"("MappingMore"(m, "MappingPair"(k, p, sp), sp2), acc) ~> r;
+      "MK-MORE-REST". m:T, n:T, sp:T, sp2:T, acc:T, r:T | "FMapKeysAcc"(m, acc) ~> r |- "FMapKeysAcc"("MappingMore"(m, "MappingRest"(n, sp), sp2), acc) ~> r;
+      "MK-TRAIL". m:T, sp:T, acc:T, r:T | "FMapKeysAcc"(m, acc) ~> r |- "FMapKeysAcc"("MappingTrail"(m, sp), acc) ~> r;
+      "MP-ONE-PAIR". k:T, p:T, sp:T, sp2:T, acc:T, x:T | "FPattern"(p) ~> x |- "FMapPatsAcc"("MappingOne"("MappingPair"(k, p, sp), sp2), acc) ~> "LCons"(x, acc);
+      "MP-ONE-REST". n:T, sp:T, sp2:T, acc:T |- "FMapPatsAcc"("MappingOne"("MappingRest"(n, sp), sp2), acc) ~> acc;
+      "MP-MORE-PAIR". m:T, k:T, p:T, sp:T, sp2:T, acc:T, x:T, r:T | "FPattern"(p) ~> x, "FMapPatsAcc"(m, "LCons"(x, acc)) ~> r |- "FMapPatsAcc"("MappingMore"(m, "MappingPair"(k, p, sp), sp2), acc) ~> r;
+      "MP-MORE-REST". m:T, n:T, sp:T, sp2:T, acc:T, r:T | "FMapPatsAcc"(m, acc) ~> r |- "FMapPatsAcc"("MappingMore"(m, "MappingRest"(n, sp), sp2), acc) ~> r;
+      "MP-TRAIL". m:T, sp:T, acc:T, r:T | "FMapPatsAcc"(m, acc) ~> r |- "FMapPatsAcc"("MappingTrail"(m, sp), acc) ~> r;
+      "MR-ONE-PAIR". k:T, p:T, sp:T, sp2:T |- "FMapRest"("MappingOne"("MappingPair"(k, p, sp), sp2)) ~> "py:None"();
+      -- the rest's name is never the wildcard _
+      "MR-ONE-REST". n:T, sp:T, sp2:T | "py-capture"(n, n) |- "FMapRest"("MappingOne"("MappingRest"(n, sp), sp2)) ~> n;
+      "MR-MORE-PAIR". m:T, k:T, p:T, sp:T, sp2:T | "FMapRest"(m) ~> "py:None"() |- "FMapRest"("MappingMore"(m, "MappingPair"(k, p, sp), sp2)) ~> "py:None"();
+      "MR-MORE-REST". m:T, n:T, sp:T, sp2:T | "FMapRest"(m) ~> "py:None"(), "py-capture"(n, n) |- "FMapRest"("MappingMore"(m, "MappingRest"(n, sp), sp2)) ~> n;
+      "MR-TRAIL". m:T, sp:T, x:T | "FMapRest"(m) ~> x |- "FMapRest"("MappingTrail"(m, sp)) ~> x;
+      "KEY-NUMBER". s:T, sp:T, v:T | "FSigned"(s) ~> v |- "FKey"("KeyNumber"(s, sp)) ~> v;
+      "KEY-COMPLEX-ADD". s:T, t:T, nl:T, nc:T, nel:T, nec:T, l:T, c:T, el:T, ec:T, u:T, n:T | "FSigned"(s) ~> u, "py-number"(t, n) |- "FKey"("KeyComplexAdd"(s, "PatternNumber"(t, "Span"(nl, nc, nel, nec)), "Span"(l, c, el, ec))) ~> "py:BinOp"(u, "py:Add"(), "py:Constant"(n, "py:None"(), nl, nc, nel, nec), l, c, el, ec);
+      "KEY-COMPLEX-SUB". s:T, t:T, nl:T, nc:T, nel:T, nec:T, l:T, c:T, el:T, ec:T, u:T, n:T | "FSigned"(s) ~> u, "py-number"(t, n) |- "FKey"("KeyComplexSub"(s, "PatternNumber"(t, "Span"(nl, nc, nel, nec)), "Span"(l, c, el, ec))) ~> "py:BinOp"(u, "py:Sub"(), "py:Constant"(n, "py:None"(), nl, nc, nel, nec), l, c, el, ec);
+      "KEY-STRINGS". ps:T, l:T, c:T, el:T, ec:T, v:T | "FStrings"(ps, l, c, el, ec) ~> v |- "FKey"("KeyStrings"(ps, "Span"(l, c, el, ec))) ~> v;
+      "KEY-NONE". l:T, c:T, el:T, ec:T |- "FKey"("KeyNone"("Span"(l, c, el, ec))) ~> "py:Constant"("py:None"(), "py:None"(), l, c, el, ec);
+      "KEY-TRUE". l:T, c:T, el:T, ec:T |- "FKey"("KeyTrue"("Span"(l, c, el, ec))) ~> "py:Constant"("py:True"(), "py:None"(), l, c, el, ec);
+      "KEY-FALSE". l:T, c:T, el:T, ec:T |- "FKey"("KeyFalse"("Span"(l, c, el, ec))) ~> "py:Constant"("py:False"(), "py:None"(), l, c, el, ec);
+      "KEY-ATTR". a:T, sp:T, v:T | "FAttr"(a) ~> v |- "FKey"("KeyAttr"(a, sp)) ~> v;
+      -- a class pattern's positional patterns precede its keyword ones
+      "CP-ONE-POS". p:T, sp:T, sp2:T, acc:T, v:T | "FPattern"(p) ~> v |- "FClassPosAcc"("ClassArgOne"("ClassPositional"(p, sp), sp2), acc) ~> "LCons"(v, acc);
+      "CP-ONE-KW". n:T, p:T, sp:T, sp2:T, acc:T |- "FClassPosAcc"("ClassArgOne"("ClassKeyword"(n, p, sp), sp2), acc) ~> acc;
+      "CP-MORE-POS". a:T, p:T, sp:T, sp2:T, acc:T, v:T, r:T | "FClassKwNamesAcc"(a, "LNil"()) ~> "LNil"(), "FPattern"(p) ~> v, "FClassPosAcc"(a, "LCons"(v, acc)) ~> r |- "FClassPosAcc"("ClassArgMore"(a, "ClassPositional"(p, sp), sp2), acc) ~> r;
+      "CP-MORE-KW". a:T, n:T, p:T, sp:T, sp2:T, acc:T, r:T | "FClassPosAcc"(a, acc) ~> r |- "FClassPosAcc"("ClassArgMore"(a, "ClassKeyword"(n, p, sp), sp2), acc) ~> r;
+      "CP-TRAIL". a:T, sp:T, acc:T, r:T | "FClassPosAcc"(a, acc) ~> r |- "FClassPosAcc"("ClassArgTrail"(a, sp), acc) ~> r;
+      "CN-ONE-POS". p:T, sp:T, sp2:T, acc:T |- "FClassKwNamesAcc"("ClassArgOne"("ClassPositional"(p, sp), sp2), acc) ~> acc;
+      "CN-ONE-KW". n:T, p:T, sp:T, sp2:T, acc:T |- "FClassKwNamesAcc"("ClassArgOne"("ClassKeyword"(n, p, sp), sp2), acc) ~> "LCons"(n, acc);
+      "CN-MORE-POS". a:T, p:T, sp:T, sp2:T, acc:T, r:T | "FClassKwNamesAcc"(a, acc) ~> r |- "FClassKwNamesAcc"("ClassArgMore"(a, "ClassPositional"(p, sp), sp2), acc) ~> r;
+      "CN-MORE-KW". a:T, n:T, p:T, sp:T, sp2:T, acc:T, r:T | "FClassKwNamesAcc"(a, "LCons"(n, acc)) ~> r |- "FClassKwNamesAcc"("ClassArgMore"(a, "ClassKeyword"(n, p, sp), sp2), acc) ~> r;
+      "CN-TRAIL". a:T, sp:T, acc:T, r:T | "FClassKwNamesAcc"(a, acc) ~> r |- "FClassKwNamesAcc"("ClassArgTrail"(a, sp), acc) ~> r;
+      "CK-ONE-POS". p:T, sp:T, sp2:T, acc:T |- "FClassKwPatsAcc"("ClassArgOne"("ClassPositional"(p, sp), sp2), acc) ~> acc;
+      "CK-ONE-KW". n:T, p:T, sp:T, sp2:T, acc:T, v:T | "FPattern"(p) ~> v |- "FClassKwPatsAcc"("ClassArgOne"("ClassKeyword"(n, p, sp), sp2), acc) ~> "LCons"(v, acc);
+      "CK-MORE-POS". a:T, p:T, sp:T, sp2:T, acc:T, r:T | "FClassKwPatsAcc"(a, acc) ~> r |- "FClassKwPatsAcc"("ClassArgMore"(a, "ClassPositional"(p, sp), sp2), acc) ~> r;
+      "CK-MORE-KW". a:T, n:T, p:T, sp:T, sp2:T, acc:T, v:T, r:T | "FPattern"(p) ~> v, "FClassKwPatsAcc"(a, "LCons"(v, acc)) ~> r |- "FClassKwPatsAcc"("ClassArgMore"(a, "ClassKeyword"(n, p, sp), sp2), acc) ~> r;
+      "CK-TRAIL". a:T, sp:T, acc:T, r:T | "FClassKwPatsAcc"(a, acc) ~> r |- "FClassKwPatsAcc"("ClassArgTrail"(a, sp), acc) ~> r;
+    }
+  }
+  theory Fold()
+}

@@ -1,0 +1,729 @@
+{- Python 3.15: the symbol tables of a module, as CPython's symtable gives
+   them (the Python Language Reference, 4.2 Naming and binding).
+
+   Two passes over the abstract syntax Ast.module builds.
+
+   The first reads, for each block (the module, a class, a function, a
+   lambda, a comprehension, and the scopes of type parameters, type aliases
+   and type variables), the facts each name has in it: (st:ev NAME FLAG),
+   FLAG one of st:local, st:param, st:global, st:nonlocal, st:use,
+   st:import, st:annot, st:comp-iter, st:type-param.  A block is
+   (st:block KIND NAME (st:pos LINE COLUMN) PROPS EVENTS CHILDREN), PROPS
+   (st:props COMPREHENSION GENERATOR CAN-SEE-CLASS).  The walk carries a
+   context (st:ctx KIND PRIVATE MANGLED COMP-TARGET FUTURE IN-COMP
+   CAN-SEE-CLASS WALRUS-TARGET) and an accumulator (st:acc EVENTS CHILDREN
+   ESCAPES): events and children in reverse, and the facts a block states
+   of an enclosing one (st:esc TARGET NAME FLAG): a global declaration is
+   also the module's, and a named expression in a comprehension binds in
+   the nearest function or the module.
+
+   The second decides each name's scope from its facts and the names the
+   enclosing blocks bind (an attribute grammar: bound, global and type
+   parameter names flow down, free names flow up), inlines list, set and
+   dict comprehensions into their block (PEP 709) and gives each symbol
+   CPython's flags and scope.  Names written with a dot (.0, .defaults) are
+   CPython's own. -}
+Module PythonScope {
+  Theory Tables() {
+    Empty
+    Types {
+      T;
+    }
+    Rewrites {
+      -- ================================================================ lists
+
+      "APPEND-NIL". ys:T |- "SAppend"("LNil"(), ys) ~> ys;
+      "APPEND-CONS". x:T, xs:T, ys:T, r:T | "SAppend"(xs, ys) ~> r |- "SAppend"("LCons"(x, xs), ys) ~> "LCons"(x, r);
+      "REV-NIL". acc:T |- "SRev"("LNil"(), acc) ~> acc;
+      "REV-CONS". x:T, xs:T, acc:T, r:T | "SRev"(xs, "LCons"(x, acc)) ~> r |- "SRev"("LCons"(x, xs), acc) ~> r;
+
+      -- ================================================================ the module
+
+      "MODULE". body:T, ti:T, fu:T, fe:T, top:T, z:T, ev:T, ch:T, es:T, ev2:T, up:T, chs:T, r:T, a0:T, ca:T, mb:T | "py-future-error"(body, fe), "py-future-annotations"(body, fu), "py-name"("st:n-top"(), top), "py-const"("py:zero"(), z), "py-mark-imports"(body, mb), "SStmts"(mb, "st:ctx"("st:module"(), "py:None"(), "py:None"(), "py:False"(), fu, "py:False"(), "py:False"(), "py:module"()), "st:acc"("LNil"(), "LNil"(), "LNil"())) ~> a0, "py-any-annotation"(body, ca), "SCondAnn"(ca, "st:ctx"("st:module"(), "py:None"(), "py:None"(), "py:False"(), fu, "py:False"(), "py:False"(), "py:module"()), a0) ~> "st:acc"(ev, ch, es), "SAbsorb"(es, "py:mod"(), ev, "LNil"()) ~> "st:abs"(ev2, up), "SRevOpen"(ch, "LNil"()) ~> chs, "SModResult"(fe, up, "st:block"("st:module"(), top, "st:pos"(z, z), "st:props"("py:False"(), "py:False"(), "py:False"()), ev2, chs)) ~> r |- "SMod"("py:Module"(body, ti)) ~> r;
+      -- an Expression (eval's input): the symbols of a module whose one
+      -- statement is that expression (_PySymtable_Build's module block)
+      "EXPRESSION". e:T, z:T, r:T | "py-const"("py:zero"(), z), "SMod"("py:Module"("LCons"("py:Expr"(e, z, z, z, z), "LNil"()), "LNil"())) ~> r |- "SMod"("py:Expression"(e)) ~> r;
+      -- the future statements are checked before the tables are read; what
+      -- the module leaves unabsorbed is the errors, in the order the walk met
+      -- them: the first is CPython's
+      "MOD-OK". b:T |- "SModResult"("py:None"(), "LNil"(), b) ~> b;
+      "MOD-ERROR". m:T, l:T, c:T, el:T, ec:T, rest:T, b:T |- "SModResult"("py:None"(), "LCons"("st:err"(m, l, c, el, ec), rest), b) ~> "st:fail"("st:err"(m, l, c, el, ec));
+      "MOD-FUTURE". m:T, l:T, c:T, el:T, ec:T, up:T, b:T |- "SModResult"("st:err"(m, l, c, el, ec), up, b) ~> "st:fail"("st:err"(m, l, c, el, ec));
+
+      -- a block closes: its children in order, the facts it states of the
+      -- enclosing blocks absorbed where they belong (a function takes a
+      -- comprehension's named expressions, the module takes globals)
+      "CLOSE". k:T, n:T, l:T, p:T, a:T, ev:T, ch:T, es:T, pev:T, pch:T, pes:T, ev2:T, up:T, chs:T, pes2:T | "SAbsorb"(es, a, ev, "LNil"()) ~> "st:abs"(ev2, up), "SRevOpen"(ch, "LNil"()) ~> chs, "SRev"(up, pes) ~> pes2 |- "SClose"(k, n, l, p, a, "st:acc"(ev, ch, es), "st:acc"(pev, pch, pes)) ~> "st:acc"(pev, "LCons"("st:block"(k, n, l, p, ev2, chs), pch), pes2);
+      -- a block's children in order, its open annotation block closed
+      "REV-OPEN-NIL". acc:T |- "SRevOpen"("LNil"(), acc) ~> acc;
+      "REV-OPEN-BLOCK". k:T, n:T, l:T, p:T, ev:T, chs:T, rest:T, acc:T, r:T | "SRevOpen"(rest, "LCons"("st:block"(k, n, l, p, ev, chs), acc)) ~> r |- "SRevOpen"("LCons"("st:block"(k, n, l, p, ev, chs), rest), acc) ~> r;
+      "REV-OPEN-ANN". pos:T, see:T, aev:T, ach:T, aes:T, rest:T, acc:T, n:T, chs:T, r:T | "py-name"("st:n-annotate"(), n), "SRev"(ach, "LNil"()) ~> chs, "SRevOpen"(rest, "LCons"("st:block"("st:annotation"(), n, pos, "st:props"("py:False"(), "py:False"(), see), aev, chs), acc)) ~> r |- "SRevOpen"("LCons"("st:ann-open"(pos, see, "st:acc"(aev, ach, aes)), rest), acc) ~> r;
+      "ABSORB-NIL". a:T, ev:T, up:T |- "SAbsorb"("LNil"(), a, ev, up) ~> "st:abs"(ev, up);
+      "ABSORB-FUNCTION". m:T, t:T, rest:T, ev:T, up:T, r:T | "SAbsorb"(rest, "py:fun"(), "LCons"("st:ev"(m, t), ev), up) ~> r |- "SAbsorb"("LCons"("st:esc"("st:to-function"(), m, t), rest), "py:fun"(), ev, up) ~> r;
+      "ABSORB-FUNCTION-PASS". m:T, t:T, rest:T, ev:T, up:T, r:T | "SAbsorb"(rest, "py:fun"(), ev, "LCons"("st:esc"("st:to-module"(), m, t), up)) ~> r |- "SAbsorb"("LCons"("st:esc"("st:to-module"(), m, t), rest), "py:fun"(), ev, up) ~> r;
+      "ABSORB-MODULE". m:T, t:T, rest:T, ev:T, up:T, r:T | "SAbsorb"(rest, "py:mod"(), "LCons"("st:ev"(m, t), ev), up) ~> r |- "SAbsorb"("LCons"("st:esc"("st:to-module"(), m, t), rest), "py:mod"(), ev, up) ~> r;
+      "ABSORB-FUNCTION-ERROR". m:T, l:T, c:T, el:T, ec:T, rest:T, ev:T, up:T, r:T | "SAbsorb"(rest, "py:fun"(), ev, "LCons"("st:err"(m, l, c, el, ec), up)) ~> r |- "SAbsorb"("LCons"("st:err"(m, l, c, el, ec), rest), "py:fun"(), ev, up) ~> r;
+      "ABSORB-MODULE-ERROR". m:T, l:T, c:T, el:T, ec:T, rest:T, ev:T, up:T, r:T | "SAbsorb"(rest, "py:mod"(), ev, "LCons"("st:err"(m, l, c, el, ec), up)) ~> r |- "SAbsorb"("LCons"("st:err"(m, l, c, el, ec), rest), "py:mod"(), ev, up) ~> r;
+      "ABSORB-NONE". e:T, rest:T, ev:T, up:T, r:T | "SAbsorb"(rest, "py:none"(), ev, "LCons"(e, up)) ~> r |- "SAbsorb"("LCons"(e, rest), "py:none"(), ev, up) ~> r;
+
+      -- ================================================================ facts
+
+      -- a name's fact in the current block, its name mangled inside a class;
+      -- a comprehension's target names are also iteration variables
+      "DEF". n:T, t:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, m:T, r:T | "py-maybe-mangle"(pv, mg, n, m), "SAdd"(m, t, ct, acc) ~> r |- "SDef"(n, t, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "ADD". m:T, t:T, ev:T, ch:T, es:T |- "SAdd"(m, t, "py:False"(), "st:acc"(ev, ch, es)) ~> "st:acc"("LCons"("st:ev"(m, t), ev), ch, es);
+      "ADD-ITER". m:T, t:T, ev:T, ch:T, es:T |- "SAdd"(m, t, "py:True"(), "st:acc"(ev, ch, es)) ~> "st:acc"("LCons"("st:ev"(m, t), "LCons"("st:ev"(m, "st:comp-iter"()), ev)), ch, es);
+      -- a global declaration is also the module's
+      "GLOBAL-DEF". n:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, ev:T, ch:T, es:T, m:T | "py-maybe-mangle"(pv, mg, n, m) |- "SGlobal"(n, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), "st:acc"(ev, ch, es)) ~> "st:acc"("LCons"("st:ev"(m, "st:global"()), ev), ch, "LCons"("st:esc"("st:to-module"(), m, "st:global"()), es));
+      -- a named fact (a name the tables state, by its tag)
+      "DEF-NAMED". tag:T, t:T, x:T, acc:T, n:T, r:T | "py-name"(tag, n), "SDef"(n, t, x, acc) ~> r |- "SDefNamed"(tag, t, x, acc) ~> r;
+
+      -- whether a block is function-like (its names can be locals)
+      "FUN-MODULE". |- "SFunLike"("st:module"()) ~> "py:False"();
+      "FUN-CLASS". |- "SFunLike"("st:class"()) ~> "py:False"();
+      "FUN-FUNCTION". |- "SFunLike"("st:function"()) ~> "py:True"();
+      "FUN-TYPE-PARAMS". |- "SFunLike"("st:type-params"()) ~> "py:True"();
+      "FUN-TYPE-ALIAS". |- "SFunLike"("st:type-alias"()) ~> "py:True"();
+      "FUN-TYPE-VAR". |- "SFunLike"("st:type-var"()) ~> "py:True"();
+      "FUN-ANNOTATION". |- "SFunLike"("st:annotation"()) ~> "py:True"();
+      "IS-CLASS-MODULE". |- "SIsClass"("st:module"()) ~> "py:False"();
+      "IS-CLASS-CLASS". |- "SIsClass"("st:class"()) ~> "py:True"();
+      "IS-CLASS-FUNCTION". |- "SIsClass"("st:function"()) ~> "py:False"();
+      "IS-CLASS-TYPE-PARAMS". |- "SIsClass"("st:type-params"()) ~> "py:False"();
+      "IS-CLASS-TYPE-ALIAS". |- "SIsClass"("st:type-alias"()) ~> "py:False"();
+      "IS-CLASS-TYPE-VAR". |- "SIsClass"("st:type-var"()) ~> "py:False"();
+      "IS-CLASS-ANNOTATION". |- "SIsClass"("st:annotation"()) ~> "py:False"();
+
+      -- ================================================================ sequences
+
+      "STMTS-NIL". x:T, acc:T |- "SStmts"("LNil"(), x, acc) ~> acc;
+      "STMTS-CONS". s:T, rest:T, x:T, acc:T, a1:T, r:T | "SStmt"(s, x, acc) ~> a1, "SStmts"(rest, x, a1) ~> r |- "SStmts"("LCons"(s, rest), x, acc) ~> r;
+      "EXPRS-NIL". x:T, acc:T |- "SExprs"("LNil"(), x, acc) ~> acc;
+      "EXPRS-CONS". e:T, rest:T, x:T, acc:T, a1:T, r:T | "SExpr"(e, x, acc) ~> a1, "SExprs"(rest, x, a1) ~> r |- "SExprs"("LCons"(e, rest), x, acc) ~> r;
+      -- a list of optional expressions (a dict's keys, keyword-only defaults)
+      "OPTS-NIL". x:T, acc:T |- "SOpts"("LNil"(), x, acc) ~> acc;
+      "OPTS-CONS". e:T, rest:T, x:T, acc:T, a1:T, r:T | "SOpt"(e, x, acc) ~> a1, "SOpts"(rest, x, a1) ~> r |- "SOpts"("LCons"(e, rest), x, acc) ~> r;
+      "OPT". e:T, x:T, acc:T, f:T, r:T | "py-is-none"(e, f), "SOptIf"(f, e, x, acc) ~> r |- "SOpt"(e, x, acc) ~> r;
+      "OPT-NONE". e:T, x:T, acc:T |- "SOptIf"("py:True"(), e, x, acc) ~> acc;
+      "OPT-SOME". e:T, x:T, acc:T, r:T | "SExpr"(e, x, acc) ~> r |- "SOptIf"("py:False"(), e, x, acc) ~> r;
+      -- an optional name's fact
+      "NAME-OPT". n:T, t:T, x:T, acc:T, f:T, r:T | "py-is-none"(n, f), "SNameIf"(f, n, t, x, acc) ~> r |- "SNameOpt"(n, t, x, acc) ~> r;
+      "NAME-OPT-NONE". n:T, t:T, x:T, acc:T |- "SNameIf"("py:True"(), n, t, x, acc) ~> acc;
+      "NAME-OPT-SOME". n:T, t:T, x:T, acc:T, r:T | "SDef"(n, t, x, acc) ~> r |- "SNameIf"("py:False"(), n, t, x, acc) ~> r;
+
+      -- ================================================================ statements
+
+      -- def: its name, defaults and decorators here; its type parameters,
+      -- annotations and body in blocks of their own
+      "FUNCTION-DEF". n:T, args:T, body:T, ds:T, rt:T, tc:T, tps:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, a2:T, a3:T, r:T | "SDef"(n, "st:local"(), x, acc) ~> a1, "SArgDefaults"(args, x, a1) ~> a2, "SExprs"(ds, x, a2) ~> a3, "SFunctionRest"(n, args, body, rt, tps, "st:pos"(l, c), x, a3) ~> r |- "SStmt"("py:FunctionDef"(n, args, body, ds, rt, tc, tps, l, c, el, ec), x, acc) ~> r;
+      "ASYNC-FUNCTION-DEF". n:T, args:T, body:T, ds:T, rt:T, tc:T, tps:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, a2:T, a3:T, r:T | "SDef"(n, "st:local"(), x, acc) ~> a1, "SArgDefaults"(args, x, a1) ~> a2, "SExprs"(ds, x, a2) ~> a3, "SFunctionRest"(n, args, body, rt, tps, "st:pos"(l, c), x, a3) ~> r |- "SStmt"("py:AsyncFunctionDef"(n, args, body, ds, rt, tc, tps, l, c, el, ec), x, acc) ~> r;
+      "FUNCTION-PLAIN". n:T, args:T, body:T, rt:T, l:T, x:T, acc:T, a1:T, r:T | "SAnnotations"(args, rt, l, x, acc) ~> a1, "SFunctionBlock"(n, args, body, l, x, a1) ~> r |- "SFunctionRest"(n, args, body, rt, "LNil"(), l, x, acc) ~> r;
+      -- a generic function: its type parameters, annotations and body sit in
+      -- a type parameter scope (with .defaults always, .kwdefaults when a
+      -- keyword-only parameter has a default)
+      "FUNCTION-GENERIC". n:T, args:T, body:T, rt:T, tp:T, tps:T, l:T, x:T, acc:T, x2:T, x2b:T, a0:T, a1:T, a2:T, a3:T, a4:T, r:T | "STpEnter"(x, "st:tp-function"(args)) ~> "st:tpe"(x2, a0), "SKwDefaults"(args, x2, a0) ~> a1, "STypeParams"("LCons"(tp, tps), x2, a1) ~> "st:tpr"(x2b, a2), "SAnnotations"(args, rt, l, x2b, a2) ~> a3, "SFunctionBlock"(n, args, body, l, x2b, a3) ~> a4, "STpClose"(n, l, x, x2, a4, acc) ~> r |- "SFunctionRest"(n, args, body, rt, "LCons"(tp, tps), l, x, acc) ~> r;
+      "FUNCTION-BLOCK". n:T, args:T, body:T, l:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, a1:T, a2:T, r:T | "SArguments"(args, "st:ctx"("st:function"(), pv, mg, "py:False"(), fu, "py:False"(), "py:False"(), "py:function"()), "st:acc"("LNil"(), "LNil"(), "LNil"())) ~> a1, "SStmts"(body, "st:ctx"("st:function"(), pv, mg, "py:False"(), fu, "py:False"(), "py:False"(), "py:function"()), a1) ~> a2, "SClose"("st:function"(), n, l, "st:props"("py:False"(), "py:False"(), "py:False"()), "py:fun"(), a2, acc) ~> r |- "SFunctionBlock"(n, args, body, l, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+
+      -- class: its name and decorators here; its bases and keywords here (or
+      -- in its type parameter scope); its body in a class block where its
+      -- name is the private name
+      "CLASS-DEF". n:T, bs:T, ks:T, body:T, ds:T, tps:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, a2:T, r:T | "SDef"(n, "st:local"(), x, acc) ~> a1, "SExprs"(ds, x, a1) ~> a2, "SClassRest"(n, bs, ks, body, tps, "st:pos"(l, c), x, a2) ~> r |- "SStmt"("py:ClassDef"(n, bs, ks, body, ds, tps, l, c, el, ec), x, acc) ~> r;
+      "CLASS-PLAIN". n:T, bs:T, ks:T, body:T, l:T, x:T, acc:T, a1:T, a2:T, r:T | "SExprs"(bs, x, acc) ~> a1, "SKeywords"(ks, x, a1) ~> a2, "SClassBlock"(n, body, "py:False"(), l, x, a2) ~> r |- "SClassRest"(n, bs, ks, body, "LNil"(), l, x, acc) ~> r;
+      "CLASS-GENERIC". n:T, bs:T, ks:T, body:T, tp:T, tps:T, l:T, x:T, acc:T, x2:T, x3:T, x3b:T, a0:T, a1:T, a2:T, a3:T, a4:T, r:T | "STpEnter"(x, "st:tp-class"(n)) ~> "st:tpe"(x2, a0), "STpPrivate"(x2, n) ~> x3, "STypeParams"("LCons"(tp, tps), x3, a0) ~> "st:tpr"(x3b, a1), "SExprs"(bs, x3b, a1) ~> a2, "SKeywords"(ks, x3b, a2) ~> a3, "SClassBlock"(n, body, "py:True"(), l, x3b, a3) ~> a4, "STpClose"(n, l, x, x2, a4, acc) ~> r |- "SClassRest"(n, bs, ks, body, "LCons"(tp, tps), l, x, acc) ~> r;
+      "CLASS-BLOCK". n:T, body:T, g:T, l:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, a0:T, a1:T, r:T, ca:T, a2:T | "SClassInit"(g, "st:ctx"("st:class"(), n, "py:None"(), "py:False"(), fu, "py:False"(), "py:False"(), "st:no-walrus"("st:class"()))) ~> a0, "SStmts"(body, "st:ctx"("st:class"(), n, "py:None"(), "py:False"(), fu, "py:False"(), "py:False"(), "st:no-walrus"("st:class"())), a0) ~> a1, "py-cond-annotations"(body, ca), "SCondAnn"(ca, "st:ctx"("st:class"(), n, "py:None"(), "py:False"(), fu, "py:False"(), "py:False"(), "st:no-walrus"("st:class"())), a1) ~> a2, "SClose"("st:class"(), n, l, "st:props"("py:False"(), "py:False"(), "py:False"()), "py:none"(), a2, acc) ~> r |- "SClassBlock"(n, body, g, l, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "CLASS-INIT". x:T |- "SClassInit"("py:False"(), x) ~> "st:acc"("LNil"(), "LNil"(), "LNil"());
+      -- a generic class's body sets __type_params__ and reads .type_params
+      "CLASS-INIT-GENERIC". x:T, a1:T, r:T | "SDefNamed"("st:n-dunder-type-params"(), "st:local"(), x, "st:acc"("LNil"(), "LNil"(), "LNil"())) ~> a1, "SDefNamed"("st:n-type-params"(), "st:use"(), x, a1) ~> r |- "SClassInit"("py:True"(), x) ~> r;
+
+      -- type X[...] = v: the name here; v in a type alias scope (in a type
+      -- parameter scope when generic) that can see an enclosing class
+      "TYPE-ALIAS". nm:T, tps:T, v:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, r:T, n:T, nc:T, nl:T, nel:T, nec:T | "SExpr"(nm, x, acc) ~> a1, "SAliasRest"(nm, tps, v, "st:pos"(l, c), x, a1) ~> r |- "SStmt"("py:TypeAlias"(nm, tps, v, l, c, el, ec), x, acc) ~> r;
+      "ALIAS-PLAIN". n:T, ctxk:T, nl:T, nc:T, nel:T, nec:T, v:T, l:T, x:T, acc:T, r:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, inc:T | "SIsClass"(k) ~> inc, "SAliasBlock"(n, v, l, inc, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r |- "SAliasRest"("py:Name"(n, ctxk, nl, nc, nel, nec), "LNil"(), v, l, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "ALIAS-GENERIC". n:T, ctxk:T, nl:T, nc:T, nel:T, nec:T, tp:T, tps:T, v:T, l:T, x:T, acc:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, inc:T, x2:T, x2b:T, a0:T, a1:T, a2:T, r:T | "SIsClass"(k) ~> inc, "STpEnter"("st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), "st:tp-alias"()) ~> "st:tpe"(x2, a0), "STypeParams"("LCons"(tp, tps), x2, a0) ~> "st:tpr"(x2b, a1), "SAliasBlock"(n, v, l, inc, x2b, a1) ~> a2, "STpClose"(n, l, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), x2, a2, acc) ~> r |- "SAliasRest"("py:Name"(n, ctxk, nl, nc, nel, nec), "LCons"(tp, tps), v, l, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "ALIAS-BLOCK". n:T, v:T, l:T, inc:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, a0:T, a1:T, r:T | "SAnnBlockInit"(inc, "st:ctx"("st:type-alias"(), pv, mg, "py:False"(), fu, "py:False"(), inc, "st:no-walrus"("st:type-alias"()))) ~> a0, "SExpr"(v, "st:ctx"("st:type-alias"(), pv, mg, "py:False"(), fu, "py:False"(), inc, "st:no-walrus"("st:type-alias"())), a0) ~> a1, "SClose"("st:type-alias"(), n, l, "st:props"("py:False"(), "py:False"(), inc), "py:none"(), a1, acc) ~> r |- "SAliasBlock"(n, v, l, inc, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      -- a scope that can see a class reads its __classdict__
+      "SEES-CLASS-NO". x:T, acc:T |- "SSeesClass"("py:False"(), x, acc) ~> acc;
+      "SEES-CLASS". x:T, acc:T, r:T | "SDefNamed"("st:n-classdict"(), "st:use"(), x, acc) ~> r |- "SSeesClass"("py:True"(), x, acc) ~> r;
+
+      -- the simple statements
+      "RETURN". v:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SOpt"(v, x, acc) ~> r |- "SStmt"("py:Return"(v, l, c, el, ec), x, acc) ~> r;
+      "DELETE". ts:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SExprs"(ts, x, acc) ~> r |- "SStmt"("py:Delete"(ts, l, c, el, ec), x, acc) ~> r;
+      "ASSIGN". ts:T, v:T, tc:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, r:T | "SExprs"(ts, x, acc) ~> a1, "SExpr"(v, x, a1) ~> r |- "SStmt"("py:Assign"(ts, v, tc, l, c, el, ec), x, acc) ~> r;
+      "AUG-ASSIGN". t:T, op:T, v:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, r:T | "SExpr"(t, x, acc) ~> a1, "SExpr"(v, x, a1) ~> r |- "SStmt"("py:AugAssign"(t, op, v, l, c, el, ec), x, acc) ~> r;
+      -- an annotated name: annotated and local when simple, else local when
+      -- given a value; the annotation read here unless annotations are
+      -- postponed (from __future__ import annotations)
+      "ANN-ASSIGN-NAME". n:T, cx:T, nl:T, nc:T, nel:T, nec:T, an:T, v:T, s:T, l:T, c:T, el:T, ec:T, x:T, acc:T, f:T, a0:T, a1:T, a2:T, r:T | "py-truthy"(s, f), "SAnnCheck"(f, n, "st:at"(l, c, el, ec), x, acc) ~> a0, "SAnnName"(f, n, v, x, a0) ~> a1, "SAnnotation"(an, x, a1) ~> a2, "SOpt"(v, x, a2) ~> r |- "SStmt"("py:AnnAssign"("py:Name"(n, cx, nl, nc, nel, nec), an, v, s, l, c, el, ec), x, acc) ~> r;
+      "ANN-ASSIGN-ATTRIBUTE". t:T, an:T, v:T, s:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, a2:T, r:T, tv:T, ta:T, tx:T, tl:T, tc:T, tel:T, tec:T | "SExpr"("py:Attribute"(tv, ta, tx, tl, tc, tel, tec), x, acc) ~> a1, "SAnnotation"(an, x, a1) ~> a2, "SOpt"(v, x, a2) ~> r |- "SStmt"("py:AnnAssign"("py:Attribute"(tv, ta, tx, tl, tc, tel, tec), an, v, s, l, c, el, ec), x, acc) ~> r;
+      "ANN-ASSIGN-SUBSCRIPT". an:T, v:T, s:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, a2:T, r:T, tv:T, ts:T, tx:T, tl:T, tc:T, tel:T, tec:T | "SExpr"("py:Subscript"(tv, ts, tx, tl, tc, tel, tec), x, acc) ~> a1, "SAnnotation"(an, x, a1) ~> a2, "SOpt"(v, x, a2) ~> r |- "SStmt"("py:AnnAssign"("py:Subscript"(tv, ts, tx, tl, tc, tel, tec), an, v, s, l, c, el, ec), x, acc) ~> r;
+      "ANN-NAME-SIMPLE". n:T, v:T, x:T, acc:T, a1:T, r:T | "SDef"(n, "st:annot"(), x, acc) ~> a1, "SDef"(n, "st:local"(), x, a1) ~> r |- "SAnnName"("py:True"(), n, v, x, acc) ~> r;
+      "ANN-NAME-PLAIN". n:T, v:T, x:T, acc:T, f:T, r:T | "py-is-none"(v, f), "SAnnValue"(f, n, x, acc) ~> r |- "SAnnName"("py:False"(), n, v, x, acc) ~> r;
+      "ANN-VALUE-NONE". n:T, x:T, acc:T |- "SAnnValue"("py:True"(), n, x, acc) ~> acc;
+      "ANN-VALUE-SOME". n:T, x:T, acc:T, r:T | "SDef"(n, "st:local"(), x, acc) ~> r |- "SAnnValue"("py:False"(), n, x, acc) ~> r;
+      "ANNOTATION". an:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, r:T | "SAnnotationIf"(fu, an, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r |- "SAnnotation"(an, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "ANNOTATION-POSTPONED". an:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, a1:T, r:T | "SExpr"(an, "st:ctx"("st:annotation"(), pv, mg, "py:False"(), fu, "py:False"(), "py:False"(), wt), "st:acc"("LNil"(), "LNil"(), "LNil"())) ~> a1, "SKeepEscapes"(a1, acc) ~> r |- "SAnnotationIf"("py:True"(), an, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      -- an annotated assignment's annotation (3.14+): in its block's one
+      -- annotation block, __annotate__, made at the block's first annotation
+      -- and kept open in its place among the children, (st:ann-open POS
+      -- CAN-SEE ACC), until the block closes; a function's annotations are
+      -- not evaluated, so its annotation block states only .format
+      -- (symtable_visit_annotation); an annotation's errors are its block's
+      "ANNOTATION-READ". an:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, fl:T, r:T | "SFunLike"(k) ~> fl, "SAnnScope"(fl, an, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r |- "SAnnotationIf"("py:False"(), an, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "ANN-SCOPE-LOCAL". an:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, pos:T, a1:T, a2:T, r:T | "py-expr-pos"(an, pos), "SAnnOpenEnsure"(pos, "py:False"(), "st:ctx"("st:annotation"(), pv, mg, "py:False"(), fu, "py:False"(), "py:False"(), wt), acc) ~> a1, "SExpr"(an, "st:ctx"("st:annotation"(), pv, mg, "py:False"(), fu, "py:False"(), "py:False"(), wt), "st:acc"("LNil"(), "LNil"(), "LNil"())) ~> a2, "SKeepEscapes"(a2, a1) ~> r |- "SAnnScope"("py:True"(), an, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "ANN-SCOPE-EVAL". an:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, inc:T, pos:T, a1:T, r:T | "SIsClass"(k) ~> inc, "py-expr-pos"(an, pos), "SAnnOpenEnsure"(pos, inc, "st:ctx"("st:annotation"(), pv, mg, "py:False"(), fu, "py:False"(), inc, wt), acc) ~> a1, "SAnnOpenAdd"(an, "st:ctx"("st:annotation"(), pv, mg, "py:False"(), fu, "py:False"(), inc, wt), a1) ~> r |- "SAnnScope"("py:False"(), an, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "ANN-OPEN-ENSURE". pos:T, see:T, x:T, ev:T, ch:T, es:T, h:T, r:T | "SHasOpenAnn"(ch) ~> h, "SAnnOpenNew"(h, pos, see, x, "st:acc"(ev, ch, es)) ~> r |- "SAnnOpenEnsure"(pos, see, x, "st:acc"(ev, ch, es)) ~> r;
+      "ANN-OPEN-HAVE". pos:T, see:T, x:T, acc:T |- "SAnnOpenNew"("py:True"(), pos, see, x, acc) ~> acc;
+      "ANN-OPEN-NEW". pos:T, see:T, x:T, ev:T, ch:T, es:T, a0:T | "SAnnBlockInit"(see, x) ~> a0 |- "SAnnOpenNew"("py:False"(), pos, see, x, "st:acc"(ev, ch, es)) ~> "st:acc"(ev, "LCons"("st:ann-open"(pos, see, a0), ch), es);
+      "HAS-OPEN-NIL". |- "SHasOpenAnn"("LNil"()) ~> "py:False"();
+      "HAS-OPEN-HERE". pos:T, see:T, a:T, rest:T |- "SHasOpenAnn"("LCons"("st:ann-open"(pos, see, a), rest)) ~> "py:True"();
+      "HAS-OPEN-NEXT". k:T, n:T, l:T, p:T, ev:T, chs:T, rest:T, r:T | "SHasOpenAnn"(rest) ~> r |- "SHasOpenAnn"("LCons"("st:block"(k, n, l, p, ev, chs), rest)) ~> r;
+      "ANN-OPEN-ADD". an:T, x:T, ev:T, ch:T, es:T, ch2:T, ues:T, es2:T | "SAnnOpenVisit"(an, x, ch) ~> "st:aov"(ch2, ues), "SAppend"(ues, es) ~> es2 |- "SAnnOpenAdd"(an, x, "st:acc"(ev, ch, es)) ~> "st:acc"(ev, ch2, es2);
+      "AOV-HERE". an:T, x:T, pos:T, see:T, aev:T, ach:T, aes:T, rest:T, bev:T, bch:T, bes:T | "SExpr"(an, x, "st:acc"(aev, ach, "LNil"())) ~> "st:acc"(bev, bch, bes) |- "SAnnOpenVisit"(an, x, "LCons"("st:ann-open"(pos, see, "st:acc"(aev, ach, aes)), rest)) ~> "st:aov"("LCons"("st:ann-open"(pos, see, "st:acc"(bev, bch, "LNil"())), rest), bes);
+      "AOV-NEXT". an:T, x:T, k:T, n:T, l:T, p:T, ev:T, chs:T, rest:T, rest2:T, ues:T | "SAnnOpenVisit"(an, x, rest) ~> "st:aov"(rest2, ues) |- "SAnnOpenVisit"(an, x, "LCons"("st:block"(k, n, l, p, ev, chs), rest)) ~> "st:aov"("LCons"("st:block"(k, n, l, p, ev, chs), rest2), ues);
+      -- __conditional_annotations__: read by a module with an annotation, and
+      -- by a class with one in a conditional block (for, while, if, match,
+      -- try, with) (symtable_visit_annotation)
+      "COND-ANN-NO". x:T, acc:T |- "SCondAnn"("py:False"(), x, acc) ~> acc;
+      "COND-ANN-YES". x:T, acc:T, r:T | "SDefNamed"("st:n-cond-annotations"(), "st:use"(), x, acc) ~> r |- "SCondAnn"("py:True"(), x, acc) ~> r;
+      "FOR". t:T, it:T, b:T, o:T, tc:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, a2:T, a3:T, r:T | "SExpr"(t, x, acc) ~> a1, "SExpr"(it, x, a1) ~> a2, "SStmts"(b, x, a2) ~> a3, "SStmts"(o, x, a3) ~> r |- "SStmt"("py:For"(t, it, b, o, tc, l, c, el, ec), x, acc) ~> r;
+      "ASYNC-FOR". t:T, it:T, b:T, o:T, tc:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, a2:T, a3:T, r:T | "SExpr"(t, x, acc) ~> a1, "SExpr"(it, x, a1) ~> a2, "SStmts"(b, x, a2) ~> a3, "SStmts"(o, x, a3) ~> r |- "SStmt"("py:AsyncFor"(t, it, b, o, tc, l, c, el, ec), x, acc) ~> r;
+      "WHILE". t:T, b:T, o:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, a2:T, r:T | "SExpr"(t, x, acc) ~> a1, "SStmts"(b, x, a1) ~> a2, "SStmts"(o, x, a2) ~> r |- "SStmt"("py:While"(t, b, o, l, c, el, ec), x, acc) ~> r;
+      "IF". t:T, b:T, o:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, a2:T, r:T | "SExpr"(t, x, acc) ~> a1, "SStmts"(b, x, a1) ~> a2, "SStmts"(o, x, a2) ~> r |- "SStmt"("py:If"(t, b, o, l, c, el, ec), x, acc) ~> r;
+      "WITH". its:T, b:T, tc:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, r:T | "SWithItems"(its, x, acc) ~> a1, "SStmts"(b, x, a1) ~> r |- "SStmt"("py:With"(its, b, tc, l, c, el, ec), x, acc) ~> r;
+      "ASYNC-WITH". its:T, b:T, tc:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, r:T | "SWithItems"(its, x, acc) ~> a1, "SStmts"(b, x, a1) ~> r |- "SStmt"("py:AsyncWith"(its, b, tc, l, c, el, ec), x, acc) ~> r;
+      "MATCH". s:T, cs:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, r:T | "SExpr"(s, x, acc) ~> a1, "SCases"(cs, x, a1) ~> r |- "SStmt"("py:Match"(s, cs, l, c, el, ec), x, acc) ~> r;
+      "RAISE". e:T, cause:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, r:T | "SOpt"(e, x, acc) ~> a1, "SOpt"(cause, x, a1) ~> r |- "SStmt"("py:Raise"(e, cause, l, c, el, ec), x, acc) ~> r;
+      "TRY". b:T, hs:T, o:T, f:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, a2:T, a3:T, r:T | "SStmts"(b, x, acc) ~> a1, "SHandlers"(hs, x, a1) ~> a2, "SStmts"(o, x, a2) ~> a3, "SStmts"(f, x, a3) ~> r |- "SStmt"("py:Try"(b, hs, o, f, l, c, el, ec), x, acc) ~> r;
+      "TRY-STAR". b:T, hs:T, o:T, f:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, a2:T, a3:T, r:T | "SStmts"(b, x, acc) ~> a1, "SHandlers"(hs, x, a1) ~> a2, "SStmts"(o, x, a2) ~> a3, "SStmts"(f, x, a3) ~> r |- "SStmt"("py:TryStar"(b, hs, o, f, l, c, el, ec), x, acc) ~> r;
+      "ASSERT". t:T, m:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, r:T | "SExpr"(t, x, acc) ~> a1, "SOpt"(m, x, a1) ~> r |- "SStmt"("py:Assert"(t, m, l, c, el, ec), x, acc) ~> r;
+      -- import and from ... import: a lazy import is refused inside a try
+      -- statement, a function or a class, and lazily importing * is refused
+      -- (check_lazy_import_context); a from __future__ import after the
+      -- module's leading ones is refused once its names are read
+      -- (check_import_from); py-mark-imports marked both beforehand
+      "IMPORT". ns:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T, lz:T, lk:T, a0:T | "py-lazy-kind"(lz, lk), "SLazyCheck"(lk, "st:lz-import"(), "st:at"(l, c, el, ec), x, acc) ~> a0, "SAliases"(ns, x, a0) ~> r |- "SStmt"("py:Import"(ns, lz, l, c, el, ec), x, acc) ~> r;
+      "IMPORT-FROM". m:T, ns:T, lv:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T, lz:T, lk:T, a0:T, a1:T, a2:T, sr:T, lf:T | "py-lazy-kind"(lz, lk), "SLazyCheck"(lk, "st:lz-from"(), "st:at"(l, c, el, ec), x, acc) ~> a0, "py-lazy-star"(lk, ns, sr), "SErrIf"(sr, "st:m-lazy-star"(), "py:None"(), "py:None"(), "st:at"(l, c, el, ec), a0) ~> a1, "SAliases"(ns, x, a1) ~> a2, "py-late-future"(m, lf), "SErrIf"(lf, "st:m-late-future"(), "py:None"(), "py:None"(), "st:at"(l, c, el, ec), a2) ~> r |- "SStmt"("py:ImportFrom"(m, ns, lv, lz, l, c, el, ec), x, acc) ~> r;
+      "LAZY-NO". kd:T, at:T, x:T, acc:T |- "SLazyCheck"("st:lazy-no"(), kd, at, x, acc) ~> acc;
+      "LAZY-TRY". kd:T, at:T, x:T, acc:T, r:T | "SErrTag"("st:m-lazy-try"(), kd, "py:None"(), at, acc) ~> r |- "SLazyCheck"("st:lazy-try"(), kd, at, x, acc) ~> r;
+      "LAZY-HERE". kd:T, at:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, r:T | "SLazyIn"(k, kd, at, acc) ~> r |- "SLazyCheck"("st:lazy-yes"(), kd, at, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "LAZY-IN-MODULE". kd:T, at:T, acc:T |- "SLazyIn"("st:module"(), kd, at, acc) ~> acc;
+      "LAZY-IN-FUNCTION". kd:T, at:T, acc:T, r:T | "SErrTag"("st:m-lazy-function"(), kd, "py:None"(), at, acc) ~> r |- "SLazyIn"("st:function"(), kd, at, acc) ~> r;
+      "LAZY-IN-CLASS". kd:T, at:T, acc:T, r:T | "SErrTag"("st:m-lazy-class"(), kd, "py:None"(), at, acc) ~> r |- "SLazyIn"("st:class"(), kd, at, acc) ~> r;
+      "GLOBAL". ns:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SGlobals"(ns, "st:at"(l, c, el, ec), x, acc) ~> r |- "SStmt"("py:Global"(ns, l, c, el, ec), x, acc) ~> r;
+      "GLOBALS-NIL". at:T, x:T, acc:T |- "SGlobals"("LNil"(), at, x, acc) ~> acc;
+      "GLOBALS-CONS". n:T, rest:T, at:T, x:T, acc:T, f:T, a0:T, a1:T, a2:T, r:T | "SFlagsNow"(n, x, acc) ~> f, "SDeclCheck"("st:global"(), f, n, at, acc) ~> a0, "SGlobal"(n, x, a0) ~> a1, "SDirective"(n, at, x, a1) ~> a2, "SGlobals"(rest, at, x, a2) ~> r |- "SGlobals"("LCons"(n, rest), at, x, acc) ~> r;
+      "NONLOCAL". ns:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SNonlocals"(ns, "st:at"(l, c, el, ec), x, acc) ~> r |- "SStmt"("py:Nonlocal"(ns, l, c, el, ec), x, acc) ~> r;
+      "NONLOCALS-NIL". at:T, x:T, acc:T |- "SNonlocals"("LNil"(), at, x, acc) ~> acc;
+      "NONLOCALS-CONS". n:T, rest:T, at:T, x:T, acc:T, f:T, a0:T, a1:T, a2:T, r:T | "SFlagsNow"(n, x, acc) ~> f, "SDeclCheck"("st:nonlocal"(), f, n, at, acc) ~> a0, "SDef"(n, "st:nonlocal"(), x, a0) ~> a1, "SDirective"(n, at, x, a1) ~> a2, "SNonlocals"(rest, at, x, a2) ~> r |- "SNonlocals"("LCons"(n, rest), at, x, acc) ~> r;
+      "EXPR". v:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SExpr"(v, x, acc) ~> r |- "SStmt"("py:Expr"(v, l, c, el, ec), x, acc) ~> r;
+      "PASS". l:T, c:T, el:T, ec:T, x:T, acc:T |- "SStmt"("py:Pass"(l, c, el, ec), x, acc) ~> acc;
+      "BREAK". l:T, c:T, el:T, ec:T, x:T, acc:T |- "SStmt"("py:Break"(l, c, el, ec), x, acc) ~> acc;
+      "CONTINUE". l:T, c:T, el:T, ec:T, x:T, acc:T |- "SStmt"("py:Continue"(l, c, el, ec), x, acc) ~> acc;
+
+      -- ================================================================ expressions
+
+      -- a name read is used (super, read in a function, also uses __class__);
+      -- a name stored into or deleted is local
+      "NAME-LOAD". n:T, l:T, c:T, el:T, ec:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, a0:T, a1:T, fl:T, sp:T, r:T | "SIterTarget"(n, "st:at"(l, c, el, ec), "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> a0, "SDef"(n, "st:use"(), "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), a0) ~> a1, "SFunLike"(k) ~> fl, "py-name-is"(n, "st:n-super"(), sp), "SSuper"(fl, sp, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), a1) ~> r |- "SExpr"("py:Name"(n, "py:Load"(), l, c, el, ec), "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "NAME-STORE". n:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a0:T, r:T | "SIterTarget"(n, "st:at"(l, c, el, ec), x, acc) ~> a0, "SDef"(n, "st:local"(), x, a0) ~> r |- "SExpr"("py:Name"(n, "py:Store"(), l, c, el, ec), x, acc) ~> r;
+      "NAME-DEL". n:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a0:T, r:T | "SIterTarget"(n, "st:at"(l, c, el, ec), x, acc) ~> a0, "SDef"(n, "st:local"(), x, a0) ~> r |- "SExpr"("py:Name"(n, "py:Del"(), l, c, el, ec), x, acc) ~> r;
+      "SUPER". x:T, acc:T, r:T | "SDefNamed"("st:n-class"(), "st:use"(), x, acc) ~> r |- "SSuper"("py:True"(), "py:True"(), x, acc) ~> r;
+      "SUPER-NOT-FUNCTION". sp:T, x:T, acc:T |- "SSuper"("py:False"(), sp, x, acc) ~> acc;
+      "SUPER-NOT-SUPER". x:T, acc:T |- "SSuper"("py:True"(), "py:False"(), x, acc) ~> acc;
+      -- (x := v): inside a comprehension the name binds in the nearest
+      -- function, as a free name of the comprehension, or in the module
+      "NAMED-EXPR". t:T, v:T, l:T, c:T, el:T, ec:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, a0:T, a0b:T, a1:T, a2:T, r:T | "SBlockCheck"("st:w-named"(), "st:at"(l, c, el, ec), "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> a0, "SIterCheck"(wt, "st:at"(l, c, el, ec), a0) ~> a0b, "SWalrus"(ic, wt, t, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), a0b) ~> a1, "SExpr"(v, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), a1) ~> a2, "SExpr"(t, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), a2) ~> r |- "SExpr"("py:NamedExpr"(t, v, l, c, el, ec), "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "WALRUS-OUTSIDE". wt:T, t:T, x:T, acc:T |- "SWalrus"("py:False"(), wt, t, x, acc) ~> acc;
+      "BOOL-OP". op:T, vs:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SExprs"(vs, x, acc) ~> r |- "SExpr"("py:BoolOp"(op, vs, l, c, el, ec), x, acc) ~> r;
+      "BIN-OP". a:T, op:T, b:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, r:T | "SExpr"(a, x, acc) ~> a1, "SExpr"(b, x, a1) ~> r |- "SExpr"("py:BinOp"(a, op, b, l, c, el, ec), x, acc) ~> r;
+      "UNARY-OP". op:T, a:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SExpr"(a, x, acc) ~> r |- "SExpr"("py:UnaryOp"(op, a, l, c, el, ec), x, acc) ~> r;
+      -- lambda: its defaults here, its parameters and body in a function block
+      "LAMBDA". args:T, b:T, l:T, c:T, el:T, ec:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, a1:T, a2:T, a3:T, n:T, w2:T, r:T | "SLambdaWalrus"(wt) ~> w2, "SArgDefaults"(args, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> a1, "py-name"("st:n-lambda"(), n), "SArguments"(args, "st:ctx"("st:function"(), pv, mg, "py:False"(), fu, "py:False"(), "py:False"(), w2), "st:acc"("LNil"(), "LNil"(), "LNil"())) ~> a2, "SExpr"(b, "st:ctx"("st:function"(), pv, mg, "py:False"(), fu, "py:False"(), "py:False"(), w2), a2) ~> a3, "SClose"("st:function"(), n, "st:pos"(l, c), "st:props"("py:False"(), "py:False"(), "py:False"()), "py:fun"(), a3, a1) ~> r |- "SExpr"("py:Lambda"(args, b, l, c, el, ec), "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "IF-EXP". t:T, b:T, o:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, a2:T, r:T | "SExpr"(t, x, acc) ~> a1, "SExpr"(b, x, a1) ~> a2, "SExpr"(o, x, a2) ~> r |- "SExpr"("py:IfExp"(t, b, o, l, c, el, ec), x, acc) ~> r;
+      "DICT". ks:T, vs:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, r:T | "SOpts"(ks, x, acc) ~> a1, "SExprs"(vs, x, a1) ~> r |- "SExpr"("py:Dict"(ks, vs, l, c, el, ec), x, acc) ~> r;
+      "SET". es:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SExprs"(es, x, acc) ~> r |- "SExpr"("py:Set"(es, l, c, el, ec), x, acc) ~> r;
+      "LIST-COMP". e:T, gs:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SComp"("st:n-listcomp"(), "py:False"(), gs, e, "py:None"(), "st:pos"(l, c), x, acc) ~> r |- "SExpr"("py:ListComp"(e, gs, l, c, el, ec), x, acc) ~> r;
+      "SET-COMP". e:T, gs:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SComp"("st:n-setcomp"(), "py:False"(), gs, e, "py:None"(), "st:pos"(l, c), x, acc) ~> r |- "SExpr"("py:SetComp"(e, gs, l, c, el, ec), x, acc) ~> r;
+      "DICT-COMP". k:T, v:T, gs:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SComp"("st:n-dictcomp"(), "py:False"(), gs, k, v, "st:pos"(l, c), x, acc) ~> r |- "SExpr"("py:DictComp"(k, v, gs, l, c, el, ec), x, acc) ~> r;
+      "GENERATOR-EXP". e:T, gs:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SComp"("st:n-genexpr"(), "py:True"(), gs, e, "py:None"(), "st:pos"(l, c), x, acc) ~> r |- "SExpr"("py:GeneratorExp"(e, gs, l, c, el, ec), x, acc) ~> r;
+      "AWAIT". v:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a0:T, r:T | "SBlockCheck"("st:w-await"(), "st:at"(l, c, el, ec), x, acc) ~> a0, "SExpr"(v, x, a0) ~> r |- "SExpr"("py:Await"(v, l, c, el, ec), x, acc) ~> r;
+      "YIELD". v:T, l:T, c:T, el:T, ec:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, a0:T, a1:T, r:T | "SBlockCheck"("st:w-yield"(), "st:at"(l, c, el, ec), "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> a0, "SOpt"(v, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), a0) ~> a1, "SYieldComp"(ic, "st:at"(l, c, el, ec), a1) ~> r |- "SExpr"("py:Yield"(v, l, c, el, ec), "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "YIELD-FROM". v:T, l:T, c:T, el:T, ec:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, a0:T, a1:T, r:T | "SBlockCheck"("st:w-yield"(), "st:at"(l, c, el, ec), "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> a0, "SExpr"(v, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), a0) ~> a1, "SYieldComp"(ic, "st:at"(l, c, el, ec), a1) ~> r |- "SExpr"("py:YieldFrom"(v, l, c, el, ec), "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "COMPARE". a:T, ops:T, cs:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, r:T | "SExpr"(a, x, acc) ~> a1, "SExprs"(cs, x, a1) ~> r |- "SExpr"("py:Compare"(a, ops, cs, l, c, el, ec), x, acc) ~> r;
+      "CALL". f:T, args:T, ks:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, a2:T, r:T | "SExpr"(f, x, acc) ~> a1, "SExprs"(args, x, a1) ~> a2, "SKeywords"(ks, x, a2) ~> r |- "SExpr"("py:Call"(f, args, ks, l, c, el, ec), x, acc) ~> r;
+      "FORMATTED-VALUE". v:T, cv:T, sp:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, r:T | "SExpr"(v, x, acc) ~> a1, "SOpt"(sp, x, a1) ~> r |- "SExpr"("py:FormattedValue"(v, cv, sp, l, c, el, ec), x, acc) ~> r;
+      "JOINED-STR". vs:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SExprs"(vs, x, acc) ~> r |- "SExpr"("py:JoinedStr"(vs, l, c, el, ec), x, acc) ~> r;
+      -- a template string (PEP 750): its interpolations' values and format specs
+      "TEMPLATE-STR". vs:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SExprs"(vs, x, acc) ~> r |- "SExpr"("py:TemplateStr"(vs, l, c, el, ec), x, acc) ~> r;
+      "INTERPOLATION". v:T, t:T, cv:T, sp:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, r:T | "SExpr"(v, x, acc) ~> a1, "SOpt"(sp, x, a1) ~> r |- "SExpr"("py:Interpolation"(v, t, cv, sp, l, c, el, ec), x, acc) ~> r;
+      "CONSTANT". v:T, kd:T, l:T, c:T, el:T, ec:T, x:T, acc:T |- "SExpr"("py:Constant"(v, kd, l, c, el, ec), x, acc) ~> acc;
+      "ATTRIBUTE". v:T, a:T, cx:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SExpr"(v, x, acc) ~> r |- "SExpr"("py:Attribute"(v, a, cx, l, c, el, ec), x, acc) ~> r;
+      "SUBSCRIPT". v:T, s:T, cx:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, r:T | "SExpr"(v, x, acc) ~> a1, "SExpr"(s, x, a1) ~> r |- "SExpr"("py:Subscript"(v, s, cx, l, c, el, ec), x, acc) ~> r;
+      "STARRED". v:T, cx:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SExpr"(v, x, acc) ~> r |- "SExpr"("py:Starred"(v, cx, l, c, el, ec), x, acc) ~> r;
+      "SLICE". lo:T, up:T, st:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, a2:T, r:T | "SOpt"(lo, x, acc) ~> a1, "SOpt"(up, x, a1) ~> a2, "SOpt"(st, x, a2) ~> r |- "SExpr"("py:Slice"(lo, up, st, l, c, el, ec), x, acc) ~> r;
+      "LIST". es:T, cx:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SExprs"(es, x, acc) ~> r |- "SExpr"("py:List"(es, cx, l, c, el, ec), x, acc) ~> r;
+      "TUPLE". es:T, cx:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SExprs"(es, x, acc) ~> r |- "SExpr"("py:Tuple"(es, cx, l, c, el, ec), x, acc) ~> r;
+
+      -- a comprehension: its first iterable here; the rest in a function
+      -- block whose parameter .0 receives it, its targets iteration variables
+      "COMP". tag:T, gen:T, t:T, it:T, fs:T, ia:T, gs:T, e:T, v:T, l:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, a1:T, a2:T, a3:T, a4:T, a5:T, a6:T, a7:T, n:T, o:T, r:T | "SExpr"(it, "st:ctx"(k, pv, mg, ct, fu, ic, cs, "st:no-walrus"("st:iter"())), acc) ~> a1, "SOuterIters"(ic, a1) ~> o, "py-name"(tag, n), "SDefNamed"("st:n-dot0"(), "st:param"(), "st:ctx"("st:function"(), pv, mg, "py:False"(), fu, "st:in-comp"(tag, o), "py:False"(), wt), "st:acc"("LNil"(), "LNil"(), "LNil"())) ~> a2, "SExpr"(t, "st:ctx"("st:function"(), pv, mg, "py:True"(), fu, "st:in-comp"(tag, o), "py:False"(), wt), a2) ~> a3, "SExprs"(fs, "st:ctx"("st:function"(), pv, mg, "py:False"(), fu, "st:in-comp"(tag, o), "py:False"(), wt), a3) ~> a4, "SGenerators"(gs, "st:ctx"("st:function"(), pv, mg, "py:False"(), fu, "st:in-comp"(tag, o), "py:False"(), wt), a4) ~> a5, "SOpt"(v, "st:ctx"("st:function"(), pv, mg, "py:False"(), fu, "st:in-comp"(tag, o), "py:False"(), wt), a5) ~> a6, "SExpr"(e, "st:ctx"("st:function"(), pv, mg, "py:False"(), fu, "st:in-comp"(tag, o), "py:False"(), wt), a6) ~> a7, "SClose"("st:function"(), n, l, "st:props"("py:True"(), gen, "py:False"()), "py:none"(), a7, a1) ~> r |- "SComp"(tag, gen, "LCons"("py:comprehension"(t, it, fs, ia), gs), e, v, l, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "GENERATORS-NIL". x:T, acc:T |- "SGenerators"("LNil"(), x, acc) ~> acc;
+      "GENERATORS-CONS". t:T, it:T, fs:T, ia:T, rest:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, a1:T, a2:T, a3:T, r:T | "SExpr"(t, "st:ctx"(k, pv, mg, "py:True"(), fu, ic, cs, wt), acc) ~> a1, "SExpr"(it, "st:ctx"(k, pv, mg, ct, fu, ic, cs, "st:no-walrus"("st:iter"())), a1) ~> a2, "SExprs"(fs, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), a2) ~> a3, "SGenerators"(rest, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), a3) ~> r |- "SGenerators"("LCons"("py:comprehension"(t, it, fs, ia), rest), "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+
+      -- ================================================================ parameters
+
+      "ARG-DEFAULTS". po:T, pa:T, va:T, ko:T, kd:T, kw:T, ds:T, x:T, acc:T, a1:T, r:T | "SExprs"(ds, x, acc) ~> a1, "SOpts"(kd, x, a1) ~> r |- "SArgDefaults"("py:arguments"(po, pa, va, ko, kd, kw, ds), x, acc) ~> r;
+      "ARGUMENTS". po:T, pa:T, va:T, ko:T, kd:T, kw:T, ds:T, x:T, acc:T, a1:T, a2:T, a3:T, a4:T, r:T | "SParams"(po, x, acc) ~> a1, "SParams"(pa, x, a1) ~> a2, "SParams"(ko, x, a2) ~> a3, "SParamOpt"(va, x, a3) ~> a4, "SParamOpt"(kw, x, a4) ~> r |- "SArguments"("py:arguments"(po, pa, va, ko, kd, kw, ds), x, acc) ~> r;
+      "PARAMS-NIL". x:T, acc:T |- "SParams"("LNil"(), x, acc) ~> acc;
+      "PARAMS-CONS". n:T, an:T, tc:T, l:T, c:T, el:T, ec:T, rest:T, x:T, acc:T, a0:T, a1:T, r:T | "SParamCheck"(n, "st:at"(l, c, el, ec), x, acc) ~> a0, "SDef"(n, "st:param"(), x, a0) ~> a1, "SParams"(rest, x, a1) ~> r |- "SParams"("LCons"("py:arg"(n, an, tc, l, c, el, ec), rest), x, acc) ~> r;
+      "PARAM-OPT". p:T, x:T, acc:T, f:T, r:T | "py-is-none"(p, f), "SParamIf"(f, p, x, acc) ~> r |- "SParamOpt"(p, x, acc) ~> r;
+      "PARAM-OPT-NONE". p:T, x:T, acc:T |- "SParamIf"("py:True"(), p, x, acc) ~> acc;
+      "PARAM-OPT-SOME". n:T, an:T, tc:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a0:T, r:T | "SParamCheck"(n, "st:at"(l, c, el, ec), x, acc) ~> a0, "SDef"(n, "st:param"(), x, a0) ~> r |- "SParamIf"("py:False"(), "py:arg"(n, an, tc, l, c, el, ec), x, acc) ~> r;
+      -- annotations (3.14+, PEP 649): in a block of their own, __annotate__,
+      -- before the function's, whose parameter is .format; a method's (and a
+      -- generic method's) can see the class.  Postponed annotations (from
+      -- __future__ import annotations) state nothing (their errors stay).
+      "ANNOTATIONS". args:T, rt:T, pos:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, r:T | "SAnnotationsIf"(fu, args, rt, pos, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r |- "SAnnotations"(args, rt, pos, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "ANNOTATIONS-POSTPONED". args:T, rt:T, pos:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, a1:T, r:T | "SArgAnnsAll"(args, rt, "st:ctx"("st:annotation"(), pv, mg, "py:False"(), fu, "py:False"(), "py:False"(), wt), "st:acc"("LNil"(), "LNil"(), "LNil"())) ~> a1, "SKeepEscapes"(a1, acc) ~> r |- "SAnnotationsIf"("py:True"(), args, rt, pos, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "ANNOTATIONS-BLOCK". args:T, rt:T, pos:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, inc:T, see:T, n:T, a0:T, a1:T, r:T | "SIsClass"(k) ~> inc, "AOr"(cs, inc) ~> see, "py-name"("st:n-annotate"(), n), "SAnnBlockInit"(see, "st:ctx"("st:annotation"(), pv, mg, "py:False"(), fu, "py:False"(), see, wt)) ~> a0, "SArgAnnsAll"(args, rt, "st:ctx"("st:annotation"(), pv, mg, "py:False"(), fu, "py:False"(), see, wt), a0) ~> a1, "SClose"("st:annotation"(), n, pos, "st:props"("py:False"(), "py:False"(), see), "py:none"(), a1, acc) ~> r |- "SAnnotationsIf"("py:False"(), args, rt, pos, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      -- in symtable_visit_annotations' order: positional-only, positional,
+      -- *args, **kwargs, keyword-only, then the return annotation
+      "ARG-ANNS-ALL". po:T, pa:T, va:T, ko:T, kd:T, kw:T, ds:T, rt:T, x:T, acc:T, a1:T, a2:T, a3:T, a4:T, a5:T, r:T | "SArgAnns"(po, x, acc) ~> a1, "SArgAnns"(pa, x, a1) ~> a2, "SArgAnnOpt"(va, x, a2) ~> a3, "SArgAnnOpt"(kw, x, a3) ~> a4, "SArgAnns"(ko, x, a4) ~> a5, "SOpt"(rt, x, a5) ~> r |- "SArgAnnsAll"("py:arguments"(po, pa, va, ko, kd, kw, ds), rt, x, acc) ~> r;
+      -- an annotation block's start: its parameter .format, read; __classdict__
+      -- when it can see a class
+      "ANN-BLOCK-INIT". see:T, x:T, a1:T, a2:T, r:T | "SDefNamed"("st:n-dot-format"(), "st:param"(), x, "st:acc"("LNil"(), "LNil"(), "LNil"())) ~> a1, "SDefNamed"("st:n-dot-format"(), "st:use"(), x, a1) ~> a2, "SSeesClass"(see, x, a2) ~> r |- "SAnnBlockInit"(see, x) ~> r;
+      "ARG-ANNS-NIL". x:T, acc:T |- "SArgAnns"("LNil"(), x, acc) ~> acc;
+      "ARG-ANNS-CONS". n:T, an:T, tc:T, l:T, c:T, el:T, ec:T, rest:T, x:T, acc:T, a1:T, r:T | "SOpt"(an, x, acc) ~> a1, "SArgAnns"(rest, x, a1) ~> r |- "SArgAnns"("LCons"("py:arg"(n, an, tc, l, c, el, ec), rest), x, acc) ~> r;
+      "ARG-ANN-OPT". p:T, x:T, acc:T, f:T, r:T | "py-is-none"(p, f), "SArgAnnIf"(f, p, x, acc) ~> r |- "SArgAnnOpt"(p, x, acc) ~> r;
+      "ARG-ANN-NONE". p:T, x:T, acc:T |- "SArgAnnIf"("py:True"(), p, x, acc) ~> acc;
+      "ARG-ANN-SOME". n:T, an:T, tc:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SOpt"(an, x, acc) ~> r |- "SArgAnnIf"("py:False"(), "py:arg"(n, an, tc, l, c, el, ec), x, acc) ~> r;
+
+      -- ================================================================ type parameters
+
+      -- a type parameter scope: it can see an enclosing class (and reads its
+      -- __classdict__); a generic class's sets and reads .type_params and
+      -- .generic_base, a generic function's has the parameters .defaults
+      -- (and .kwdefaults, added by SKwDefaults)
+      "TP-ENTER". k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, sort:T, acc:T, inc:T, a1:T | "SIsClass"(k) ~> inc, "SSeesClass"(inc, "st:ctx"("st:type-params"(), pv, mg, "py:False"(), fu, "py:False"(), inc, "st:no-walrus"("st:type-params"())), "st:acc"("LNil"(), "LNil"(), "LNil"())) ~> a1, "STpInit"(sort, "st:ctx"("st:type-params"(), pv, mg, "py:False"(), fu, "py:False"(), inc, "st:no-walrus"("st:type-params"())), a1) ~> acc |- "STpEnter"("st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), sort) ~> "st:tpe"("st:ctx"("st:type-params"(), pv, mg, "py:False"(), fu, "py:False"(), inc, "st:no-walrus"("st:type-params"())), acc);
+      "TP-INIT-FUNCTION". args:T, x:T, acc:T, r:T | "SDefNamed"("st:n-defaults"(), "st:param"(), x, acc) ~> r |- "STpInit"("st:tp-function"(args), x, acc) ~> r;
+      "TP-INIT-CLASS". n:T, x:T, acc:T, a1:T, a2:T, a3:T, r:T | "SDefNamed"("st:n-type-params"(), "st:local"(), x, acc) ~> a1, "SDefNamed"("st:n-type-params"(), "st:use"(), x, a1) ~> a2, "SDefNamed"("st:n-generic-base"(), "st:local"(), x, a2) ~> a3, "SDefNamed"("st:n-generic-base"(), "st:use"(), x, a3) ~> r |- "STpInit"("st:tp-class"(n), x, acc) ~> r;
+      "TP-INIT-ALIAS". x:T, acc:T |- "STpInit"("st:tp-alias"(), x, acc) ~> acc;
+      "KW-DEFAULTS". po:T, pa:T, va:T, ko:T, kd:T, kw:T, ds:T, x:T, acc:T, f:T, r:T | "SAnyGiven"(kd) ~> f, "SKwDefaultsIf"(f, x, acc) ~> r |- "SKwDefaults"("py:arguments"(po, pa, va, ko, kd, kw, ds), x, acc) ~> r;
+      "KW-DEFAULTS-NONE". x:T, acc:T |- "SKwDefaultsIf"("py:False"(), x, acc) ~> acc;
+      "KW-DEFAULTS-SOME". x:T, acc:T, r:T | "SDefNamed"("st:n-kwdefaults"(), "st:param"(), x, acc) ~> r |- "SKwDefaultsIf"("py:True"(), x, acc) ~> r;
+      "ANY-GIVEN-NIL". |- "SAnyGiven"("LNil"()) ~> "py:False"();
+      "ANY-GIVEN-CONS". e:T, rest:T, f:T, r:T | "py-is-none"(e, f), "SAnyGivenIf"(f, rest) ~> r |- "SAnyGiven"("LCons"(e, rest)) ~> r;
+      "ANY-GIVEN-NONE". rest:T, r:T | "SAnyGiven"(rest) ~> r |- "SAnyGivenIf"("py:True"(), rest) ~> r;
+      "ANY-GIVEN-SOME". rest:T |- "SAnyGivenIf"("py:False"(), rest) ~> "py:True"();
+      -- a generic class's name is the private name of its type parameter
+      -- scope, where only its type parameters are mangled
+      "TP-PRIVATE". k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, n:T |- "STpPrivate"("st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), n) ~> "st:ctx"(k, n, "LNil"(), ct, fu, ic, cs, wt);
+      -- the type parameter scope closes as a child of the block around it
+      "TP-CLOSE". n:T, l:T, x:T, x2:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, a:T, acc:T, r:T | "SClose"("st:type-params"(), n, l, "st:props"("py:False"(), "py:False"(), cs), "py:none"(), a, acc) ~> r |- "STpClose"(n, l, x, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), a, acc) ~> r;
+      -- each type parameter, in order: the name (a type parameter, local;
+      -- added to the mangled names first), its bound and default each in a
+      -- type variable scope that sees what this scope sees
+      "TYPE-PARAMS-NIL". x:T, acc:T |- "STypeParams"("LNil"(), x, acc) ~> "st:tpr"(x, acc);
+      "TYPE-PARAMS-CONS". p:T, rest:T, x:T, acc:T, x1:T, a1:T, r:T | "STypeParam"(p, x, acc) ~> "st:tpr"(x1, a1), "STypeParams"(rest, x1, a1) ~> r |- "STypeParams"("LCons"(p, rest), x, acc) ~> r;
+      "TYPE-VAR". n:T, b:T, d:T, l:T, c:T, el:T, ec:T, x:T, acc:T, x1:T, a0:T, a1:T, a2:T, a3:T, bi:T, r:T | "STpMangled"(x, n) ~> x1, "STpCheck"(n, "st:at"(l, c, el, ec), x1, acc) ~> a0, "SDef"(n, "st:type-param"(), x1, a0) ~> a1, "SDef"(n, "st:local"(), x1, a1) ~> a2, "py-bound-info"(b, bi), "STypeVarScope"(b, n, bi, "st:at"(l, c, el, ec), x1, a2) ~> a3, "STypeVarScope"(d, n, "st:i-typevar-default"(), "st:at"(l, c, el, ec), x1, a3) ~> r |- "STypeParam"("py:TypeVar"(n, b, d, l, c, el, ec), x, acc) ~> "st:tpr"(x1, r);
+      "TYPE-VAR-TUPLE". n:T, d:T, l:T, c:T, el:T, ec:T, x:T, acc:T, x1:T, a0:T, a1:T, a2:T, r:T | "STpMangled"(x, n) ~> x1, "STpCheck"(n, "st:at"(l, c, el, ec), x1, acc) ~> a0, "SDef"(n, "st:type-param"(), x1, a0) ~> a1, "SDef"(n, "st:local"(), x1, a1) ~> a2, "STypeVarScope"(d, n, "st:i-typevartuple-default"(), "st:at"(l, c, el, ec), x1, a2) ~> r |- "STypeParam"("py:TypeVarTuple"(n, d, l, c, el, ec), x, acc) ~> "st:tpr"(x1, r);
+      "PARAM-SPEC". n:T, d:T, l:T, c:T, el:T, ec:T, x:T, acc:T, x1:T, a0:T, a1:T, a2:T, r:T | "STpMangled"(x, n) ~> x1, "STpCheck"(n, "st:at"(l, c, el, ec), x1, acc) ~> a0, "SDef"(n, "st:type-param"(), x1, a0) ~> a1, "SDef"(n, "st:local"(), x1, a1) ~> a2, "STypeVarScope"(d, n, "st:i-paramspec-default"(), "st:at"(l, c, el, ec), x1, a2) ~> r |- "STypeParam"("py:ParamSpec"(n, d, l, c, el, ec), x, acc) ~> "st:tpr"(x1, r);
+      "TP-MANGLED". k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, n:T, f:T, r:T | "py-is-none"(mg, f), "STpMangledIf"(f, n, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt)) ~> r |- "STpMangled"("st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), n) ~> r;
+      "TP-MANGLED-NONE". n:T, x:T |- "STpMangledIf"("py:True"(), n, x) ~> x;
+      "TP-MANGLED-ADD". n:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, mg2:T | "py-set-add"(mg, n, mg2) |- "STpMangledIf"("py:False"(), n, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt)) ~> "st:ctx"(k, pv, mg2, ct, fu, ic, cs, wt);
+      "TYPE-VAR-SCOPE". e:T, n:T, info:T, at:T, x:T, acc:T, rs:T, a0:T, f:T, r:T | "py-name-is"(n, "st:n-classdict"(), rs), "SErrIf"(rs, "st:m-reserved"(), n, "py:None"(), at, acc) ~> a0, "py-is-none"(e, f), "STypeVarScopeIf"(f, e, n, info, x, a0) ~> r |- "STypeVarScope"(e, n, info, at, x, acc) ~> r;
+      "TYPE-VAR-SCOPE-NONE". e:T, n:T, info:T, x:T, acc:T |- "STypeVarScopeIf"("py:True"(), e, n, info, x, acc) ~> acc;
+      "TYPE-VAR-SCOPE-SOME". e:T, n:T, info:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, l:T, a0:T, a1:T, r:T | "SLineOf"(e) ~> l, "SAnnBlockInit"(cs, "st:ctx"("st:type-var"(), pv, mg, "py:False"(), fu, "py:False"(), cs, "st:no-walrus"("st:type-var"(info)))) ~> a0, "SExpr"(e, "st:ctx"("st:type-var"(), pv, mg, "py:False"(), fu, "py:False"(), cs, "st:no-walrus"("st:type-var"(info))), a0) ~> a1, "SClose"("st:type-var"(), n, l, "st:props"("py:False"(), "py:False"(), cs), "py:none"(), a1, acc) ~> r |- "STypeVarScopeIf"("py:False"(), e, n, info, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      -- the line an expression starts on (a type variable scope's line)
+      "LINE-OF". e:T, l:T | "py-expr-pos"(e, l) |- "SLineOf"(e) ~> l;
+
+      -- ================================================================ the rest
+
+      "KEYWORDS-NIL". x:T, acc:T |- "SKeywords"("LNil"(), x, acc) ~> acc;
+      "KEYWORDS-CONS". a:T, v:T, l:T, c:T, el:T, ec:T, rest:T, x:T, acc:T, a1:T, r:T | "SExpr"(v, x, acc) ~> a1, "SKeywords"(rest, x, a1) ~> r |- "SKeywords"("LCons"("py:keyword"(a, v, l, c, el, ec), rest), x, acc) ~> r;
+      -- an import binds its alias, or the first name of the module it names;
+      -- from m import * binds nothing it states
+      "ALIASES-NIL". x:T, acc:T |- "SAliases"("LNil"(), x, acc) ~> acc;
+      "ALIASES-CONS". n:T, an:T, l:T, c:T, el:T, ec:T, rest:T, x:T, acc:T, f:T, a1:T, r:T | "py-is-none"(an, f), "SAlias"(f, n, an, "st:at"(l, c, el, ec), x, acc) ~> a1, "SAliases"(rest, x, a1) ~> r |- "SAliases"("LCons"("py:alias"(n, an, l, c, el, ec), rest), x, acc) ~> r;
+      "ALIAS-AS". n:T, an:T, at:T, x:T, acc:T, h:T, r:T | "py-dotted-head"(an, h), "SDef"(h, "st:import"(), x, acc) ~> r |- "SAlias"("py:False"(), n, an, at, x, acc) ~> r;
+      "ALIAS-NAME". n:T, an:T, at:T, x:T, acc:T, star:T, r:T | "py-name-is"(n, "st:n-star"(), star), "SAliasName"(star, n, at, x, acc) ~> r |- "SAlias"("py:True"(), n, an, at, x, acc) ~> r;
+      "ALIAS-STAR". n:T, at:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, r:T | "SStarCheck"(k, at, acc) ~> r |- "SAliasName"("py:True"(), n, at, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "ALIAS-MODULE". n:T, at:T, x:T, acc:T, h:T, r:T | "py-dotted-head"(n, h), "SDef"(h, "st:import"(), x, acc) ~> r |- "SAliasName"("py:False"(), n, at, x, acc) ~> r;
+      "HANDLERS-NIL". x:T, acc:T |- "SHandlers"("LNil"(), x, acc) ~> acc;
+      "HANDLERS-CONS". t:T, n:T, b:T, l:T, c:T, el:T, ec:T, rest:T, x:T, acc:T, a1:T, a2:T, a3:T, r:T | "SOpt"(t, x, acc) ~> a1, "SNameOpt"(n, "st:local"(), x, a1) ~> a2, "SStmts"(b, x, a2) ~> a3, "SHandlers"(rest, x, a3) ~> r |- "SHandlers"("LCons"("py:ExceptHandler"(t, n, b, l, c, el, ec), rest), x, acc) ~> r;
+      "WITH-ITEMS-NIL". x:T, acc:T |- "SWithItems"("LNil"(), x, acc) ~> acc;
+      "WITH-ITEMS-CONS". e:T, v:T, rest:T, x:T, acc:T, a1:T, a2:T, r:T | "SExpr"(e, x, acc) ~> a1, "SOpt"(v, x, a1) ~> a2, "SWithItems"(rest, x, a2) ~> r |- "SWithItems"("LCons"("py:withitem"(e, v), rest), x, acc) ~> r;
+      "CASES-NIL". x:T, acc:T |- "SCases"("LNil"(), x, acc) ~> acc;
+      "CASES-CONS". p:T, g:T, b:T, rest:T, x:T, acc:T, a1:T, a2:T, a3:T, r:T | "SPattern"(p, x, acc) ~> a1, "SOpt"(g, x, a1) ~> a2, "SStmts"(b, x, a2) ~> a3, "SCases"(rest, x, a3) ~> r |- "SCases"("LCons"("py:match_case"(p, g, b), rest), x, acc) ~> r;
+      "PATTERNS-NIL". x:T, acc:T |- "SPatterns"("LNil"(), x, acc) ~> acc;
+      "PATTERNS-CONS". p:T, rest:T, x:T, acc:T, a1:T, r:T | "SPattern"(p, x, acc) ~> a1, "SPatterns"(rest, x, a1) ~> r |- "SPatterns"("LCons"(p, rest), x, acc) ~> r;
+      "MATCH-VALUE". v:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SExpr"(v, x, acc) ~> r |- "SPattern"("py:MatchValue"(v, l, c, el, ec), x, acc) ~> r;
+      "MATCH-SINGLETON". v:T, l:T, c:T, el:T, ec:T, x:T, acc:T |- "SPattern"("py:MatchSingleton"(v, l, c, el, ec), x, acc) ~> acc;
+      "MATCH-SEQUENCE". ps:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SPatterns"(ps, x, acc) ~> r |- "SPattern"("py:MatchSequence"(ps, l, c, el, ec), x, acc) ~> r;
+      "MATCH-STAR". n:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SNameOpt"(n, "st:local"(), x, acc) ~> r |- "SPattern"("py:MatchStar"(n, l, c, el, ec), x, acc) ~> r;
+      "MATCH-MAPPING". ks:T, ps:T, rs:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, a2:T, r:T | "SExprs"(ks, x, acc) ~> a1, "SPatterns"(ps, x, a1) ~> a2, "SNameOpt"(rs, "st:local"(), x, a2) ~> r |- "SPattern"("py:MatchMapping"(ks, ps, rs, l, c, el, ec), x, acc) ~> r;
+      "MATCH-CLASS". cl:T, ps:T, ka:T, kp:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, a2:T, r:T | "SExpr"(cl, x, acc) ~> a1, "SPatterns"(ps, x, a1) ~> a2, "SPatterns"(kp, x, a2) ~> r |- "SPattern"("py:MatchClass"(cl, ps, ka, kp, l, c, el, ec), x, acc) ~> r;
+      "MATCH-AS". p:T, n:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a1:T, r:T, f:T | "py-is-none"(p, f), "SPatternIf"(f, p, x, acc) ~> a1, "SNameOpt"(n, "st:local"(), x, a1) ~> r |- "SPattern"("py:MatchAs"(p, n, l, c, el, ec), x, acc) ~> r;
+      "PATTERN-IF-NONE". p:T, x:T, acc:T |- "SPatternIf"("py:True"(), p, x, acc) ~> acc;
+      "PATTERN-IF-SOME". p:T, x:T, acc:T, r:T | "SPattern"(p, x, acc) ~> r |- "SPatternIf"("py:False"(), p, x, acc) ~> r;
+      "MATCH-OR". ps:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SPatterns"(ps, x, acc) ~> r |- "SPattern"("py:MatchOr"(ps, l, c, el, ec), x, acc) ~> r;
+
+      -- ================================================================ errors
+
+      -- an error, at a place: a fact for the whole program
+      "ERR". m:T, l:T, c:T, el:T, ec:T, ev:T, ch:T, es:T |- "SErr"(m, "st:at"(l, c, el, ec), "st:acc"(ev, ch, es)) ~> "st:acc"(ev, ch, "LCons"("st:err"(m, l, c, el, ec), es));
+      "ERR-TAG". tag:T, a:T, b:T, at:T, acc:T, m:T, r:T | "py-message"(tag, a, b, m), "SErr"(m, at, acc) ~> r |- "SErrTag"(tag, a, b, at, acc) ~> r;
+      "ERR-IF-YES". tag:T, a:T, b:T, at:T, acc:T, r:T | "SErrTag"(tag, a, b, at, acc) ~> r |- "SErrIf"("py:True"(), tag, a, b, at, acc) ~> r;
+      "ERR-IF-NO". tag:T, a:T, b:T, at:T, acc:T |- "SErrIf"("py:False"(), tag, a, b, at, acc) ~> acc;
+
+      -- a name's flags in the block being read, as they stand: its events,
+      -- and the facts the children read so far stated of it
+      "FLAGS-NOW". n:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, ev:T, ch:T, es:T, m:T, md:T, f:T | "py-maybe-mangle"(pv, mg, n, m), "SAbsorbMode"(k, ic) ~> md, "py-flags-now"(ev, es, md, m, f) |- "SFlagsNow"(n, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), "st:acc"(ev, ch, es)) ~> f;
+      "ABSORBS-MODULE". ic:T |- "SAbsorbMode"("st:module"(), ic) ~> "py:mod"();
+      "ABSORBS-FUNCTION". |- "SAbsorbMode"("st:function"(), "py:False"()) ~> "py:fun"();
+      "ABSORBS-COMPREHENSION". t:T, o:T |- "SAbsorbMode"("st:function"(), "st:in-comp"(t, o)) ~> "py:none"();
+      "ABSORBS-CLASS". ic:T |- "SAbsorbMode"("st:class"(), ic) ~> "py:none"();
+      "ABSORBS-TYPE-PARAMS". ic:T |- "SAbsorbMode"("st:type-params"(), ic) ~> "py:none"();
+      "ABSORBS-TYPE-ALIAS". ic:T |- "SAbsorbMode"("st:type-alias"(), ic) ~> "py:none"();
+      "ABSORBS-TYPE-VAR". ic:T |- "SAbsorbMode"("st:type-var"(), ic) ~> "py:none"();
+      "ABSORBS-ANNOTATION". ic:T |- "SAbsorbMode"("st:annotation"(), ic) ~> "py:none"();
+
+      -- a parameter twice; a type parameter twice
+      "PARAM-CHECK". n:T, at:T, x:T, acc:T, f:T, b:T, r:T | "SFlagsNow"(n, x, acc) ~> f, "py-has"(f, "st:param"(), b), "SErrIf"(b, "st:m-dup-arg"(), n, "py:None"(), at, acc) ~> r |- "SParamCheck"(n, at, x, acc) ~> r;
+      "TP-CHECK". n:T, at:T, x:T, acc:T, f:T, b:T, r:T | "SFlagsNow"(n, x, acc) ~> f, "py-has"(f, "st:type-param"(), b), "SErrIf"(b, "st:m-dup-tp"(), n, "py:None"(), at, acc) ~> r |- "STpCheck"(n, at, x, acc) ~> r;
+
+      -- a global or nonlocal declaration of a name the block already made a
+      -- parameter, used, annotated or assigned (in that order of precedence)
+      "DECL-CHECK". d:T, f:T, n:T, at:T, acc:T, p:T, u:T, a:T, lo:T, w:T, r:T | "py-has"(f, "st:param"(), p), "py-has"(f, "st:use"(), u), "py-has"(f, "st:annot"(), a), "py-has"(f, "st:local"(), lo), "SDeclWhich"(p, u, a, lo) ~> w, "SDeclErr"(w, d, n, at, acc) ~> r |- "SDeclCheck"(d, f, n, at, acc) ~> r;
+      "DECL-WHICH-PARAM". u:T, a:T, lo:T |- "SDeclWhich"("py:True"(), u, a, lo) ~> "st:some"("st:d-param"());
+      "DECL-WHICH-USE". a:T, lo:T |- "SDeclWhich"("py:False"(), "py:True"(), a, lo) ~> "st:some"("st:d-use"());
+      "DECL-WHICH-ANNOT". lo:T |- "SDeclWhich"("py:False"(), "py:False"(), "py:True"(), lo) ~> "st:some"("st:d-annot"());
+      "DECL-WHICH-LOCAL". |- "SDeclWhich"("py:False"(), "py:False"(), "py:False"(), "py:True"()) ~> "st:some"("st:d-local"());
+      "DECL-WHICH-NONE". |- "SDeclWhich"("py:False"(), "py:False"(), "py:False"(), "py:False"()) ~> "py:None"();
+      "DECL-ERR-NONE". d:T, n:T, at:T, acc:T |- "SDeclErr"("py:None"(), d, n, at, acc) ~> acc;
+      "DECL-ERR". w:T, d:T, n:T, at:T, acc:T, r:T | "SErrTag"("st:m-decl"(d, w), n, "py:None"(), at, acc) ~> r |- "SDeclErr"("st:some"(w), d, n, at, acc) ~> r;
+      -- where a declaration stands (a directive), for the errors pass 2 finds
+      "DIRECTIVE". n:T, l:T, c:T, el:T, ec:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, ev:T, ch:T, es:T, m:T | "py-maybe-mangle"(pv, mg, n, m) |- "SDirective"(n, "st:at"(l, c, el, ec), "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), "st:acc"(ev, ch, es)) ~> "st:acc"("LCons"("st:ev"(m, "st:directive"(l, c, el, ec)), ev), ch, es);
+
+      -- a simple annotated name a function or class declared global or
+      -- nonlocal
+      "ANN-CHECK-PLAIN". n:T, at:T, x:T, acc:T |- "SAnnCheck"("py:False"(), n, at, x, acc) ~> acc;
+      "ANN-CHECK-SIMPLE". n:T, at:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, r:T | "SAnnCheckIn"(k, n, at, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r |- "SAnnCheck"("py:True"(), n, at, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "ANN-CHECK-MODULE". n:T, at:T, x:T, acc:T |- "SAnnCheckIn"("st:module"(), n, at, x, acc) ~> acc;
+      "ANN-CHECK-FUNCTION". n:T, at:T, x:T, acc:T, r:T | "SAnnCheckFlags"(n, at, x, acc) ~> r |- "SAnnCheckIn"("st:function"(), n, at, x, acc) ~> r;
+      "ANN-CHECK-CLASS". n:T, at:T, x:T, acc:T, r:T | "SAnnCheckFlags"(n, at, x, acc) ~> r |- "SAnnCheckIn"("st:class"(), n, at, x, acc) ~> r;
+      "ANN-CHECK-FLAGS". n:T, at:T, x:T, acc:T, f:T, g:T, nl:T, w:T, r:T | "SFlagsNow"(n, x, acc) ~> f, "py-has"(f, "st:global"(), g), "py-has"(f, "st:nonlocal"(), nl), "SAnnWhich"(g, nl) ~> w, "SAnnErr"(w, n, at, acc) ~> r |- "SAnnCheckFlags"(n, at, x, acc) ~> r;
+      "ANN-WHICH-GLOBAL". nl:T |- "SAnnWhich"("py:True"(), nl) ~> "st:some"("st:global"());
+      "ANN-WHICH-NONLOCAL". |- "SAnnWhich"("py:False"(), "py:True"()) ~> "st:some"("st:nonlocal"());
+      "ANN-WHICH-NONE". |- "SAnnWhich"("py:False"(), "py:False"()) ~> "py:None"();
+      "ANN-ERR-NONE". n:T, at:T, acc:T |- "SAnnErr"("py:None"(), n, at, acc) ~> acc;
+      "ANN-ERR". d:T, n:T, at:T, acc:T, r:T | "SErrTag"("st:m-decl"(d, "st:d-annot"()), n, "py:None"(), at, acc) ~> r |- "SAnnErr"("st:some"(d), n, at, acc) ~> r;
+
+      -- from m import * outside the module
+      "STAR-MODULE". at:T, acc:T |- "SStarCheck"("st:module"(), at, acc) ~> acc;
+      "STAR-FUNCTION". at:T, acc:T, r:T | "SErrTag"("st:m-import-star"(), "py:None"(), "py:None"(), at, acc) ~> r |- "SStarCheck"("st:function"(), at, acc) ~> r;
+      "STAR-CLASS". at:T, acc:T, r:T | "SErrTag"("st:m-import-star"(), "py:None"(), "py:None"(), at, acc) ~> r |- "SStarCheck"("st:class"(), at, acc) ~> r;
+
+      -- a named, yield or await expression where the block cannot have one:
+      -- an annotation's, a type variable's, a type alias's, a generic's
+      "BLOCK-CHECK". w:T, at:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, r:T | "SBlockCheckIn"(k, wt, w, at, acc) ~> r |- "SBlockCheck"(w, at, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "BLOCK-CHECK-MODULE". wt:T, w:T, at:T, acc:T |- "SBlockCheckIn"("st:module"(), wt, w, at, acc) ~> acc;
+      "BLOCK-CHECK-FUNCTION". wt:T, w:T, at:T, acc:T |- "SBlockCheckIn"("st:function"(), wt, w, at, acc) ~> acc;
+      "BLOCK-CHECK-CLASS". wt:T, w:T, at:T, acc:T |- "SBlockCheckIn"("st:class"(), wt, w, at, acc) ~> acc;
+      "BLOCK-CHECK-ANNOTATION". wt:T, w:T, at:T, acc:T, r:T | "SErrTag"("st:m-in-annotation"(), w, "py:None"(), at, acc) ~> r |- "SBlockCheckIn"("st:annotation"(), wt, w, at, acc) ~> r;
+      "BLOCK-CHECK-TYPE-VAR". i:T, w:T, at:T, acc:T, r:T | "SErrTag"("st:m-in-typevar"(), w, i, at, acc) ~> r |- "SBlockCheckIn"("st:type-var"(), "st:no-walrus"("st:type-var"(i)), w, at, acc) ~> r;
+      "BLOCK-CHECK-TYPE-ALIAS". wt:T, w:T, at:T, acc:T, r:T | "SErrTag"("st:m-in-alias"(), w, "py:None"(), at, acc) ~> r |- "SBlockCheckIn"("st:type-alias"(), wt, w, at, acc) ~> r;
+      "BLOCK-CHECK-TYPE-PARAMS". wt:T, w:T, at:T, acc:T, r:T | "SErrTag"("st:m-in-generic"(), w, "py:None"(), at, acc) ~> r |- "SBlockCheckIn"("st:type-params"(), wt, w, at, acc) ~> r;
+
+      -- a named expression in a comprehension's iterable expression
+      "ITER-CHECK-ITER". at:T, acc:T, r:T | "SErrTag"("st:m-walrus-iter"(), "py:None"(), "py:None"(), at, acc) ~> r |- "SIterCheck"("st:no-walrus"("st:iter"()), at, acc) ~> r;
+      "ITER-CHECK-MODULE". at:T, acc:T |- "SIterCheck"("py:module"(), at, acc) ~> acc;
+      "ITER-CHECK-FUNCTION". at:T, acc:T |- "SIterCheck"("py:function"(), at, acc) ~> acc;
+      "ITER-CHECK-CLASS". at:T, acc:T |- "SIterCheck"("st:no-walrus"("st:class"()), at, acc) ~> acc;
+      "ITER-CHECK-TYPE-PARAMS". at:T, acc:T |- "SIterCheck"("st:no-walrus"("st:type-params"()), at, acc) ~> acc;
+      "ITER-CHECK-TYPE-ALIAS". at:T, acc:T |- "SIterCheck"("st:no-walrus"("st:type-alias"()), at, acc) ~> acc;
+      "ITER-CHECK-TYPE-VAR". i:T, at:T, acc:T |- "SIterCheck"("st:no-walrus"("st:type-var"(i)), at, acc) ~> acc;
+
+      -- a named expression in a comprehension binds where it means: in the
+      -- nearest function or the module, never one of the comprehensions'
+      -- iteration variables; in a class or a type's scope it cannot
+      "WALRUS-INSIDE". tag:T, o:T, wt:T, n:T, tx:T, l:T, c:T, el:T, ec:T, x:T, acc:T, f:T, a0:T, r:T | "SFlagsNow"(n, x, acc) ~> f, "SWalrusConflict"(f, o, n, "st:at"(l, c, el, ec), x, acc) ~> a0, "SWalrusBind"(wt, "py:Name"(n, tx, l, c, el, ec), x, a0) ~> r |- "SWalrus"("st:in-comp"(tag, o), wt, "py:Name"(n, tx, l, c, el, ec), x, acc) ~> r;
+      "WALRUS-CONFLICT". f:T, o:T, n:T, at:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, m:T, a:T, b:T, ab:T, r:T | "py-maybe-mangle"(pv, mg, n, m), "py-has"(f, "st:comp-iter"(), a), "py-has"(o, m, b), "AOr"(a, b) ~> ab, "SErrIf"(ab, "st:m-walrus-conflict"(), n, "py:None"(), at, acc) ~> r |- "SWalrusConflict"(f, o, n, at, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "BIND-MODULE". n:T, tx:T, l:T, c:T, el:T, ec:T, x:T, acc:T, a0:T, r:T | "SGlobal"(n, x, acc) ~> a0, "SDirective"(n, "st:at"(l, c, el, ec), x, a0) ~> r |- "SWalrusBind"("py:module"(), "py:Name"(n, tx, l, c, el, ec), x, acc) ~> r;
+      "BIND-FUNCTION". n:T, tx:T, l:T, c:T, el:T, ec:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, ev:T, ch:T, es:T, m:T, r:T | "py-maybe-mangle"(pv, mg, n, m), "SDirective"(n, "st:at"(l, c, el, ec), "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), "st:acc"("LCons"("st:ev"(m, "st:walrus"()), ev), ch, "LCons"("st:esc"("st:to-function"(), m, "st:local"()), es))) ~> r |- "SWalrusBind"("py:function"(), "py:Name"(n, tx, l, c, el, ec), "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), "st:acc"(ev, ch, es)) ~> r;
+      "BIND-CLASS". n:T, tx:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SErrTag"("st:m-walrus-class"(), "py:None"(), "py:None"(), "st:at"(l, c, el, ec), acc) ~> r |- "SWalrusBind"("st:no-walrus"("st:class"()), "py:Name"(n, tx, l, c, el, ec), x, acc) ~> r;
+      "BIND-TYPE-PARAMS". n:T, tx:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SErrTag"("st:m-walrus-typeparam"(), "py:None"(), "py:None"(), "st:at"(l, c, el, ec), acc) ~> r |- "SWalrusBind"("st:no-walrus"("st:type-params"()), "py:Name"(n, tx, l, c, el, ec), x, acc) ~> r;
+      "BIND-TYPE-ALIAS". n:T, tx:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SErrTag"("st:m-walrus-typealias"(), "py:None"(), "py:None"(), "st:at"(l, c, el, ec), acc) ~> r |- "SWalrusBind"("st:no-walrus"("st:type-alias"()), "py:Name"(n, tx, l, c, el, ec), x, acc) ~> r;
+      "BIND-TYPE-VAR". i:T, n:T, tx:T, l:T, c:T, el:T, ec:T, x:T, acc:T, r:T | "SErrTag"("st:m-walrus-typevar"(), "py:None"(), "py:None"(), "st:at"(l, c, el, ec), acc) ~> r |- "SWalrusBind"("st:no-walrus"("st:type-var"(i)), "py:Name"(n, tx, l, c, el, ec), x, acc) ~> r;
+      "BIND-ITER". t:T, x:T, acc:T |- "SWalrusBind"("st:no-walrus"("st:iter"()), t, x, acc) ~> acc;
+
+      -- a yield in a comprehension
+      "YIELD-COMP-NONE". at:T, acc:T |- "SYieldComp"("py:False"(), at, acc) ~> acc;
+      "YIELD-COMP". tag:T, o:T, at:T, acc:T, r:T | "SErrTag"("st:m-yield-comp"(), tag, "py:None"(), at, acc) ~> r |- "SYieldComp"("st:in-comp"(tag, o), at, acc) ~> r;
+
+      -- a comprehension's iteration variable where its named expression
+      -- already bound the name
+      "ITER-TARGET". n:T, at:T, k:T, pv:T, mg:T, ct:T, fu:T, ic:T, cs:T, wt:T, acc:T, r:T | "SIterTargetIf"(ct, n, at, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r |- "SIterTarget"(n, at, "st:ctx"(k, pv, mg, ct, fu, ic, cs, wt), acc) ~> r;
+      "ITER-TARGET-NO". n:T, at:T, x:T, acc:T |- "SIterTargetIf"("py:False"(), n, at, x, acc) ~> acc;
+      "ITER-TARGET-YES". n:T, at:T, x:T, acc:T, f:T, w:T, g:T, b:T, r:T | "SFlagsNow"(n, x, acc) ~> f, "py-has"(f, "st:walrus"(), w), "py-has"(f, "st:global"(), g), "AOr"(w, g) ~> b, "SErrIf"(b, "st:m-inner-loop"(), n, "py:None"(), at, acc) ~> r |- "SIterTargetIf"("py:True"(), n, at, x, acc) ~> r;
+
+      -- the iteration variables of the comprehensions a comprehension is in
+      "OUTER-ITERS-NONE". acc:T, e:T | "py-empty-set"(e) |- "SOuterIters"("py:False"(), acc) ~> e;
+      "OUTER-ITERS". t:T, o:T, ev:T, ch:T, es:T, i:T, r:T | "py-comp-iters"(ev, i), "py-set-union"(o, i, r) |- "SOuterIters"("st:in-comp"(t, o), "st:acc"(ev, ch, es)) ~> r;
+
+      -- a lambda is a function: a named expression in it binds there, but in
+      -- a comprehension's iterable expression it cannot be
+      "LAMBDA-WALRUS-ITER". |- "SLambdaWalrus"("st:no-walrus"("st:iter"())) ~> "st:no-walrus"("st:iter"());
+      "LAMBDA-WALRUS-MODULE". |- "SLambdaWalrus"("py:module"()) ~> "py:function"();
+      "LAMBDA-WALRUS-FUNCTION". |- "SLambdaWalrus"("py:function"()) ~> "py:function"();
+      "LAMBDA-WALRUS-CLASS". |- "SLambdaWalrus"("st:no-walrus"("st:class"())) ~> "py:function"();
+      "LAMBDA-WALRUS-TYPE-PARAMS". |- "SLambdaWalrus"("st:no-walrus"("st:type-params"())) ~> "py:function"();
+      "LAMBDA-WALRUS-TYPE-ALIAS". |- "SLambdaWalrus"("st:no-walrus"("st:type-alias"())) ~> "py:function"();
+      "LAMBDA-WALRUS-TYPE-VAR". i:T |- "SLambdaWalrus"("st:no-walrus"("st:type-var"(i))) ~> "py:function"();
+
+      -- what an annotation read in a block of its own states of the blocks
+      -- around it
+      "KEEP-ESCAPES". aev:T, ach:T, aes:T, ev:T, ch:T, es:T, es2:T | "SAppend"(aes, es) ~> es2 |- "SKeepEscapes"("st:acc"(aev, ach, aes), "st:acc"(ev, ch, es)) ~> "st:acc"(ev, ch, es2);
+
+      -- ================================================================ pass 2: scopes
+
+      -- the module's tables, and their numbers as CPython states them
+      "SCOPE". m:T, b:T, r:T | "SMod"(m) ~> b, "SScopeOf"(b) ~> r |- "SScope"(m) ~> r;
+      "SCOPE-OF". k:T, n:T, l:T, p:T, evs:T, chs:T, e:T, res:T, r:T | "py-empty-set"(e), "ABlock"("st:block"(k, n, l, p, evs, chs), "py:None"(), e, e, "py:None"(), "py:None"()) ~> res, "SScopeRes"(res) ~> r |- "SScopeOf"("st:block"(k, n, l, p, evs, chs)) ~> r;
+      "SCOPE-OF-FAIL". e:T |- "SScopeOf"("st:fail"(e)) ~> "st:fail"(e);
+      "SCOPE-RES". t:T, f:T |- "SScopeRes"("st:res"(t, f)) ~> t;
+      "SCOPE-RES-FAIL". e:T |- "SScopeRes"("st:fail"(e)) ~> "st:fail"(e);
+      "SCOPE-OUT". m:T, t:T, r:T | "SScope"(m) ~> t, "OTable"(t) ~> r |- "SScopeOut"(m) ~> r;
+
+      -- a block (analyze_block): its names' scopes from its facts and the
+      -- names around it; the names its children see; its children analyzed
+      -- (comprehensions inlined); cells; the final symbols; the names free in
+      -- it for the block around (BOUND is (py:None) at the module)
+      "BLOCK". k:T, n:T, l:T, cp:T, gn:T, cs:T, evs:T, chs:T, bd:T, gl:T, tp:T, ce:T, ws:T, evs2:T, raw:T, asyms:T, bad:T, r:T | "AWalrus"(evs, ws) ~> evs2, "py-group"(evs2, raw), "ANames"(raw, bd, gl, tp, ce) ~> asyms, "py-first-bad"(asyms, evs, bad), "ABlockNames"(bad, "st:block"(k, n, l, "st:props"(cp, gn, cs), evs, chs), bd, gl, tp, ce, ws, raw, asyms) ~> r |- "ABlock"("st:block"(k, n, l, "st:props"(cp, gn, cs), evs, chs), bd, gl, tp, ce, ws) ~> r;
+      -- a name whose scope cannot be decided: the error, at its directive
+      "BLOCK-BAD". nm:T, tag:T, k:T, n:T, l:T, p:T, evs:T, chs:T, bd:T, gl:T, tp:T, ce:T, ws:T, raw:T, asyms:T, msg:T, dl:T, dc:T, del:T, dec:T | "py-message"(tag, nm, "py:None"(), msg), "py-directive"(evs, nm, "st:at"(dl, dc, del, dec)) |- "ABlockNames"("st:bad-at"(nm, tag), "st:block"(k, n, l, p, evs, chs), bd, gl, tp, ce, ws, raw, asyms) ~> "st:fail"("st:err"(msg, dl, dc, del, dec));
+      "BLOCK-GOOD". k:T, n:T, l:T, cp:T, gn:T, cs:T, evs:T, chs:T, bd:T, gl:T, tp:T, ce:T, ws:T, raw:T, asyms:T, e:T, loc:T, gl2:T, bd2:T, tp2:T, own:T, fl:T, isc:T, nbd:T, ngl:T, wsc:T, kr:T, r:T | "py-empty-set"(e), "ASets"(asyms, "st:sets"(e, gl, bd, tp, e)) ~> "st:sets"(loc, gl2, bd2, tp2, own), "SFunLike"(k) ~> fl, "SIsClass"(k) ~> isc, "ANewSets"(isc, fl, loc, bd, gl, bd2, gl2) ~> "st:new"(nbd, ngl), "AChildWalrus"(k, cp, raw, ws) ~> wsc, "AChildren"(chs, k, cs, raw, ce, nbd, ngl, tp2, wsc, "st:kst"(asyms, e, e, "LNil"())) ~> kr, "ABlockKids"(kr, fl, isc, cs, bd2, own, k, n, l) ~> r |- "ABlockNames"("py:None"(), "st:block"(k, n, l, "st:props"(cp, gn, cs), evs, chs), bd, gl, tp, ce, ws, raw, asyms) ~> r;
+      "BLOCK-KIDS". tabs:T, asyms2:T, cells:T, nf:T, fl:T, isc:T, cs:T, bd2:T, own:T, k:T, n:T, l:T, asyms3:T, nf2:T, cf:T, syms:T, fr:T | "ACells"(fl, isc, asyms2, nf, cells) ~> "st:cells"(asyms3, nf2), "AOr"(isc, cs) ~> cf, "AUpdate"(asyms3, bd2, nf2, cells, cf) ~> syms, "py-set-union"(own, nf2, fr) |- "ABlockKids"("st:kids"(tabs, asyms2, cells, nf), fl, isc, cs, bd2, own, k, n, l) ~> "st:res"("st:table"(k, n, l, syms, tabs), fr);
+      "BLOCK-KIDS-FAIL". e:T, fl:T, isc:T, cs:T, bd2:T, own:T, k:T, n:T, l:T |- "ABlockKids"("st:fail"(e), fl, isc, cs, bd2, own, k, n, l) ~> "st:fail"(e);
+
+      -- a comprehension's named expression is a global name of it when the
+      -- function it binds in declares the name global, else a nonlocal one
+      "WALRUS-NIL". ws:T |- "AWalrus"("LNil"(), ws) ~> "LNil"();
+      "WALRUS-WALRUS". m:T, rest:T, ws:T, t:T, r:T | "AWalrusFlag"(m, ws) ~> t, "AWalrus"(rest, ws) ~> r |- "AWalrus"("LCons"("st:ev"(m, "st:walrus"()), rest), ws) ~> "LCons"("st:ev"(m, t), r);
+      "WALRUS-LOCAL". m:T, rest:T, ws:T, r:T | "AWalrus"(rest, ws) ~> r |- "AWalrus"("LCons"("st:ev"(m, "st:local"()), rest), ws) ~> "LCons"("st:ev"(m, "st:local"()), r);
+      "WALRUS-PARAM". m:T, rest:T, ws:T, r:T | "AWalrus"(rest, ws) ~> r |- "AWalrus"("LCons"("st:ev"(m, "st:param"()), rest), ws) ~> "LCons"("st:ev"(m, "st:param"()), r);
+      "WALRUS-GLOBAL". m:T, rest:T, ws:T, r:T | "AWalrus"(rest, ws) ~> r |- "AWalrus"("LCons"("st:ev"(m, "st:global"()), rest), ws) ~> "LCons"("st:ev"(m, "st:global"()), r);
+      "WALRUS-NONLOCAL". m:T, rest:T, ws:T, r:T | "AWalrus"(rest, ws) ~> r |- "AWalrus"("LCons"("st:ev"(m, "st:nonlocal"()), rest), ws) ~> "LCons"("st:ev"(m, "st:nonlocal"()), r);
+      "WALRUS-USE". m:T, rest:T, ws:T, r:T | "AWalrus"(rest, ws) ~> r |- "AWalrus"("LCons"("st:ev"(m, "st:use"()), rest), ws) ~> "LCons"("st:ev"(m, "st:use"()), r);
+      "WALRUS-IMPORT". m:T, rest:T, ws:T, r:T | "AWalrus"(rest, ws) ~> r |- "AWalrus"("LCons"("st:ev"(m, "st:import"()), rest), ws) ~> "LCons"("st:ev"(m, "st:import"()), r);
+      "WALRUS-ANNOT". m:T, rest:T, ws:T, r:T | "AWalrus"(rest, ws) ~> r |- "AWalrus"("LCons"("st:ev"(m, "st:annot"()), rest), ws) ~> "LCons"("st:ev"(m, "st:annot"()), r);
+      "WALRUS-COMP-ITER". m:T, rest:T, ws:T, r:T | "AWalrus"(rest, ws) ~> r |- "AWalrus"("LCons"("st:ev"(m, "st:comp-iter"()), rest), ws) ~> "LCons"("st:ev"(m, "st:comp-iter"()), r);
+      "WALRUS-DIRECTIVE". m:T, l:T, c:T, el:T, ec:T, rest:T, ws:T, r:T | "AWalrus"(rest, ws) ~> r |- "AWalrus"("LCons"("st:ev"(m, "st:directive"(l, c, el, ec)), rest), ws) ~> "LCons"("st:ev"(m, "st:directive"(l, c, el, ec)), r);
+      "WALRUS-TYPE-PARAM". m:T, rest:T, ws:T, r:T | "AWalrus"(rest, ws) ~> r |- "AWalrus"("LCons"("st:ev"(m, "st:type-param"()), rest), ws) ~> "LCons"("st:ev"(m, "st:type-param"()), r);
+      "WALRUS-FLAG". m:T, ws:T, f:T, z:T, r:T | "py-lookup"(ws, m, f), "py-is-none"(f, z), "AWalrusFlag1"(z, f) ~> r |- "AWalrusFlag"(m, ws) ~> r;
+      "WALRUS-FLAG-ABSENT". f:T |- "AWalrusFlag1"("py:True"(), f) ~> "st:nonlocal"();
+      "WALRUS-FLAG-PRESENT". f:T, g:T, r:T | "py-has"(f, "st:global"(), g), "AWalrusFlag2"(g) ~> r |- "AWalrusFlag1"("py:False"(), f) ~> r;
+      "WALRUS-FLAG-GLOBAL". |- "AWalrusFlag2"("py:True"()) ~> "st:global"();
+      "WALRUS-FLAG-NONLOCAL". |- "AWalrusFlag2"("py:False"()) ~> "st:nonlocal"();
+
+      -- each name's scope (analyze_name): global when declared global;
+      -- free when declared nonlocal (bound around, not a type parameter);
+      -- local when bound here; seen through an enclosing class's namespace
+      -- when that class declares it global (global) or binds it (implicitly
+      -- global); free when bound around; else implicitly global
+      "NAMES-NIL". bd:T, gl:T, tp:T, ce:T |- "ANames"("LNil"(), bd, gl, tp, ce) ~> "LNil"();
+      "NAMES-CONS". n:T, f:T, rest:T, bd:T, gl:T, tp:T, ce:T, sc:T, r:T | "AName"(n, f, bd, gl, tp, ce) ~> sc, "ANames"(rest, bd, gl, tp, ce) ~> r |- "ANames"("LCons"("st:sym"(n, f), rest), bd, gl, tp, ce) ~> "LCons"("st:asym"(n, f, sc), r);
+      "NAME". n:T, f:T, bd:T, gl:T, tp:T, ce:T, g:T, r:T | "py-has"(f, "st:global"(), g), "AName1"(g, n, f, bd, gl, tp, ce) ~> r |- "AName"(n, f, bd, gl, tp, ce) ~> r;
+      "NAME1-GLOBAL". n:T, f:T, bd:T, gl:T, tp:T, ce:T, nl:T, r:T | "py-has"(f, "st:nonlocal"(), nl), "AGlobalName"(nl) ~> r |- "AName1"("py:True"(), n, f, bd, gl, tp, ce) ~> r;
+      "GLOBAL-NAME". |- "AGlobalName"("py:False"()) ~> "st:scope-global-explicit"();
+      "GLOBAL-NAME-NONLOCAL". |- "AGlobalName"("py:True"()) ~> "st:bad"("st:m-nonlocal-global"());
+      "NAME1-OTHER". n:T, f:T, bd:T, gl:T, tp:T, ce:T, nl:T, r:T | "py-has"(f, "st:nonlocal"(), nl), "AName2"(nl, n, f, bd, gl, tp, ce) ~> r |- "AName1"("py:False"(), n, f, bd, gl, tp, ce) ~> r;
+      "NAME2-NONLOCAL". n:T, f:T, bd:T, gl:T, tp:T, ce:T, z:T, r:T | "py-is-none"(bd, z), "ANonlocalName"(z, n, bd, tp) ~> r |- "AName2"("py:True"(), n, f, bd, gl, tp, ce) ~> r;
+      "NONLOCAL-MODULE". n:T, bd:T, tp:T |- "ANonlocalName"("py:True"(), n, bd, tp) ~> "st:bad"("st:m-nonlocal-module"());
+      "NONLOCAL-NAME". n:T, bd:T, tp:T, h:T, r:T | "py-has"(bd, n, h), "ANonlocalBound"(h, n, tp) ~> r |- "ANonlocalName"("py:False"(), n, bd, tp) ~> r;
+      "NONLOCAL-UNBOUND". n:T, tp:T |- "ANonlocalBound"("py:False"(), n, tp) ~> "st:bad"("st:m-no-binding"());
+      "NONLOCAL-BOUND". n:T, tp:T, t:T, r:T | "py-has"(tp, n, t), "ANonlocalTp"(t) ~> r |- "ANonlocalBound"("py:True"(), n, tp) ~> r;
+      "NONLOCAL-TYPE-PARAM". |- "ANonlocalTp"("py:True"()) ~> "st:bad"("st:m-nonlocal-tp"());
+      "NONLOCAL-FREE". |- "ANonlocalTp"("py:False"()) ~> "st:scope-free"();
+      "NAME2-OTHER". n:T, f:T, bd:T, gl:T, tp:T, ce:T, b:T, r:T | "ABound"(f) ~> b, "AName3"(b, n, f, bd, gl, tp, ce) ~> r |- "AName2"("py:False"(), n, f, bd, gl, tp, ce) ~> r;
+      "NAME3-BOUND". n:T, f:T, bd:T, gl:T, tp:T, ce:T |- "AName3"("py:True"(), n, f, bd, gl, tp, ce) ~> "st:scope-local"();
+      "NAME3-OTHER". n:T, f:T, bd:T, gl:T, tp:T, ce:T, z:T, r:T | "py-is-none"(ce, z), "AName4"(z, n, bd, ce) ~> r |- "AName3"("py:False"(), n, f, bd, gl, tp, ce) ~> r;
+      "NAME4-NO-CLASS". n:T, bd:T, ce:T, r:T | "AName5"(n, bd) ~> r |- "AName4"("py:True"(), n, bd, ce) ~> r;
+      "NAME4-CLASS". n:T, bd:T, ce:T, cf:T, z:T, r:T | "py-lookup"(ce, n, cf), "py-is-none"(cf, z), "AClassName"(z, cf, n, bd) ~> r |- "AName4"("py:False"(), n, bd, ce) ~> r;
+      "CLASS-NAME-ABSENT". cf:T, n:T, bd:T, r:T | "AName5"(n, bd) ~> r |- "AClassName"("py:True"(), cf, n, bd) ~> r;
+      "CLASS-NAME". cf:T, n:T, bd:T, g:T, r:T | "py-has"(cf, "st:global"(), g), "AClassName1"(g, cf, n, bd) ~> r |- "AClassName"("py:False"(), cf, n, bd) ~> r;
+      "CLASS-NAME1-GLOBAL". cf:T, n:T, bd:T |- "AClassName1"("py:True"(), cf, n, bd) ~> "st:scope-global-explicit"();
+      "CLASS-NAME1-OTHER". cf:T, n:T, bd:T, b:T, nl:T, nn:T, bb:T, r:T | "ABound"(cf) ~> b, "py-has"(cf, "st:nonlocal"(), nl), "ANot"(nl) ~> nn, "AAnd"(b, nn) ~> bb, "AClassName2"(bb, n, bd) ~> r |- "AClassName1"("py:False"(), cf, n, bd) ~> r;
+      "CLASS-NAME2-BOUND". n:T, bd:T |- "AClassName2"("py:True"(), n, bd) ~> "st:scope-global-implicit"();
+      "CLASS-NAME2-OTHER". n:T, bd:T, r:T | "AName5"(n, bd) ~> r |- "AClassName2"("py:False"(), n, bd) ~> r;
+      "NAME5". n:T, bd:T, z:T, r:T | "py-is-none"(bd, z), "AName6"(z, n, bd) ~> r |- "AName5"(n, bd) ~> r;
+      "NAME6-MODULE". n:T, bd:T |- "AName6"("py:True"(), n, bd) ~> "st:scope-global-implicit"();
+      "NAME6". n:T, bd:T, h:T, r:T | "py-has"(bd, n, h), "AName7"(h) ~> r |- "AName6"("py:False"(), n, bd) ~> r;
+      "NAME7-FREE". |- "AName7"("py:True"()) ~> "st:scope-free"();
+      "NAME7-GLOBAL". |- "AName7"("py:False"()) ~> "st:scope-global-implicit"();
+      -- bound here: assigned, a parameter, or imported
+      "BOUND". f:T, a:T, b:T, c:T, ab:T, r:T | "py-has"(f, "st:local"(), a), "py-has"(f, "st:param"(), b), "py-has"(f, "st:import"(), c), "AOr"(a, b) ~> ab, "AOr"(ab, c) ~> r |- "ABound"(f) ~> r;
+      "OR-TRUE". x:T |- "AOr"("py:True"(), x) ~> "py:True"();
+      "OR-FALSE". x:T |- "AOr"("py:False"(), x) ~> x;
+      "AND-TRUE". x:T |- "AAnd"("py:True"(), x) ~> x;
+      "AND-FALSE". x:T |- "AAnd"("py:False"(), x) ~> "py:False"();
+      "NOT-TRUE". |- "ANot"("py:True"()) ~> "py:False"();
+      "NOT-FALSE". |- "ANot"("py:False"()) ~> "py:True"();
+
+      -- what deciding the names changes: the block's locals; an own global
+      -- declaration joins the globals and leaves the bound names; a local
+      -- leaves the globals, and joins the type parameters when it is one (else
+      -- leaves them); a free name is free in this block (st:sets LOCALS
+      -- GLOBALS BOUND TYPE-PARAMS FREE)
+      "SETS-NIL". s:T |- "ASets"("LNil"(), s) ~> s;
+      "SETS-CONS". n:T, f:T, sc:T, rest:T, s:T, s2:T, r:T | "ASet"(sc, n, f, s) ~> s2, "ASets"(rest, s2) ~> r |- "ASets"("LCons"("st:asym"(n, f, sc), rest), s) ~> r;
+      "SET-LOCAL". n:T, f:T, loc:T, gl:T, bd:T, tp:T, own:T, loc2:T, gl2:T, t:T, tp2:T | "py-set-add"(loc, n, loc2), "py-set-remove"(gl, n, gl2), "py-has"(f, "st:type-param"(), t), "ATypeParamSet"(t, n, tp) ~> tp2 |- "ASet"("st:scope-local"(), n, f, "st:sets"(loc, gl, bd, tp, own)) ~> "st:sets"(loc2, gl2, bd, tp2, own);
+      "TP-SET-ADD". n:T, tp:T, r:T | "py-set-add"(tp, n, r) |- "ATypeParamSet"("py:True"(), n, tp) ~> r;
+      "TP-SET-REMOVE". n:T, tp:T, r:T | "py-set-remove"(tp, n, r) |- "ATypeParamSet"("py:False"(), n, tp) ~> r;
+      "SET-GLOBAL-EXPLICIT". n:T, f:T, s:T, g:T, r:T | "py-has"(f, "st:global"(), g), "AOwnGlobal"(g, n, s) ~> r |- "ASet"("st:scope-global-explicit"(), n, f, s) ~> r;
+      "OWN-GLOBAL". n:T, loc:T, gl:T, bd:T, tp:T, own:T, gl2:T, bd2:T | "py-set-add"(gl, n, gl2), "ABoundRemove"(bd, n) ~> bd2 |- "AOwnGlobal"("py:True"(), n, "st:sets"(loc, gl, bd, tp, own)) ~> "st:sets"(loc, gl2, bd2, tp, own);
+      "OWN-GLOBAL-NOT". n:T, s:T |- "AOwnGlobal"("py:False"(), n, s) ~> s;
+      "BOUND-REMOVE". bd:T, n:T, z:T, r:T | "py-is-none"(bd, z), "ABoundRemove1"(z, bd, n) ~> r |- "ABoundRemove"(bd, n) ~> r;
+      "BOUND-REMOVE-NONE". bd:T, n:T |- "ABoundRemove1"("py:True"(), bd, n) ~> bd;
+      "BOUND-REMOVE-SET". bd:T, n:T, r:T | "py-set-remove"(bd, n, r) |- "ABoundRemove1"("py:False"(), bd, n) ~> r;
+      "SET-FREE". n:T, f:T, loc:T, gl:T, bd:T, tp:T, own:T, own2:T | "py-set-add"(own, n, own2) |- "ASet"("st:scope-free"(), n, f, "st:sets"(loc, gl, bd, tp, own)) ~> "st:sets"(loc, gl, bd, tp, own2);
+      "SET-GLOBAL-IMPLICIT". n:T, f:T, s:T |- "ASet"("st:scope-global-implicit"(), n, f, s) ~> s;
+
+      -- the names a block's children see bound and global: a class passes on
+      -- what it was given, with __class__ and __classdict__; another block
+      -- passes on its bound names (with its locals when function-like) and its
+      -- globals as deciding left them
+      "NEW-CLASS". fl:T, loc:T, bd:T, gl:T, bd2:T, gl2:T, e:T, b0:T, c:T, cd:T, b1:T, b2:T | "py-empty-set"(e), "ABoundOr"(bd, e) ~> b0, "py-name"("st:n-class"(), c), "py-name"("st:n-classdict"(), cd), "py-set-add"(b0, c, b1), "py-set-add"(b1, cd, b2) |- "ANewSets"("py:True"(), fl, loc, bd, gl, bd2, gl2) ~> "st:new"(b2, gl);
+      "NEW-OTHER". fl:T, loc:T, bd:T, gl:T, bd2:T, gl2:T, e:T, l0:T, b0:T, r:T | "py-empty-set"(e), "ALocalsIf"(fl, loc, e) ~> l0, "ABoundOr"(bd2, e) ~> b0, "py-set-union"(l0, b0, r) |- "ANewSets"("py:False"(), fl, loc, bd, gl, bd2, gl2) ~> "st:new"(r, gl2);
+      "LOCALS-IF-FUN". loc:T, e:T |- "ALocalsIf"("py:True"(), loc, e) ~> loc;
+      "LOCALS-IF-NOT". loc:T, e:T |- "ALocalsIf"("py:False"(), loc, e) ~> e;
+      "BOUND-OR". bd:T, e:T, z:T, r:T | "py-is-none"(bd, z), "ABoundOr1"(z, bd, e) ~> r |- "ABoundOr"(bd, e) ~> r;
+      "BOUND-OR-NONE". bd:T, e:T |- "ABoundOr1"("py:True"(), bd, e) ~> e;
+      "BOUND-OR-SET". bd:T, e:T |- "ABoundOr1"("py:False"(), bd, e) ~> bd;
+      -- the facts a comprehension's named expression is decided by: those of
+      -- the nearest enclosing function
+      "CHILD-WALRUS-COMP". k:T, raw:T, ws:T |- "AChildWalrus"(k, "py:True"(), raw, ws) ~> ws;
+      "CHILD-WALRUS-FUNCTION". raw:T, ws:T |- "AChildWalrus"("st:function"(), "py:False"(), raw, ws) ~> raw;
+      "CHILD-WALRUS-MODULE". raw:T, ws:T |- "AChildWalrus"("st:module"(), "py:False"(), raw, ws) ~> "py:None"();
+      "CHILD-WALRUS-CLASS". raw:T, ws:T |- "AChildWalrus"("st:class"(), "py:False"(), raw, ws) ~> "py:None"();
+      "CHILD-WALRUS-TYPE-PARAMS". raw:T, ws:T |- "AChildWalrus"("st:type-params"(), "py:False"(), raw, ws) ~> "py:None"();
+      "CHILD-WALRUS-TYPE-ALIAS". raw:T, ws:T |- "AChildWalrus"("st:type-alias"(), "py:False"(), raw, ws) ~> "py:None"();
+      "CHILD-WALRUS-TYPE-VAR". raw:T, ws:T |- "AChildWalrus"("st:type-var"(), "py:False"(), raw, ws) ~> "py:None"();
+      "CHILD-WALRUS-ANNOTATION". raw:T, ws:T |- "AChildWalrus"("st:annotation"(), "py:False"(), raw, ws) ~> "py:None"();
+
+      -- the children in order (st:kst SYMBOLS INLINED-CELLS FREE TABLES): a
+      -- child that can see a class sees this class (or the one this block
+      -- sees); a list, set or dict comprehension is inlined unless this block
+      -- can see a class; the child's free names join this block's
+      "KIDS-NIL". k:T, cs:T, raw:T, ce:T, nbd:T, ngl:T, tp:T, wsc:T, asyms:T, cells:T, nf:T, tabs:T, r:T | "SRev"(tabs, "LNil"()) ~> r |- "AChildren"("LNil"(), k, cs, raw, ce, nbd, ngl, tp, wsc, "st:kst"(asyms, cells, nf, tabs)) ~> "st:kids"(r, asyms, cells, nf);
+      "KIDS-CONS". ck:T, cn:T, cl:T, ccp:T, cgn:T, ccs:T, cevs:T, cchs:T, rest:T, k:T, cs:T, raw:T, ce:T, nbd:T, ngl:T, tp:T, wsc:T, st:T, isc:T, ce2:T, inl:T, cr:T, r:T | "SIsClass"(k) ~> isc, "AChildClass"(ccs, isc, raw, ce) ~> ce2, "AInlineIf"(ccp, cgn, cs) ~> inl, "ABlock"("st:block"(ck, cn, cl, "st:props"(ccp, cgn, ccs), cevs, cchs), nbd, ngl, tp, ce2, wsc) ~> cr, "AKid"(cr, inl, k, cs, raw, ce, nbd, ngl, tp, wsc, st, rest) ~> r |- "AChildren"("LCons"("st:block"(ck, cn, cl, "st:props"(ccp, cgn, ccs), cevs, cchs), rest), k, cs, raw, ce, nbd, ngl, tp, wsc, st) ~> r;
+      "KID-OK". ctab:T, cfree:T, inl:T, k:T, cs:T, raw:T, ce:T, nbd:T, ngl:T, tp:T, wsc:T, st:T, rest:T, st2:T, r:T | "AAfterChild"(inl, ctab, cfree, k, st) ~> st2, "AChildren"(rest, k, cs, raw, ce, nbd, ngl, tp, wsc, st2) ~> r |- "AKid"("st:res"(ctab, cfree), inl, k, cs, raw, ce, nbd, ngl, tp, wsc, st, rest) ~> r;
+      "KID-FAIL". e:T, inl:T, k:T, cs:T, raw:T, ce:T, nbd:T, ngl:T, tp:T, wsc:T, st:T, rest:T |- "AKid"("st:fail"(e), inl, k, cs, raw, ce, nbd, ngl, tp, wsc, st, rest) ~> "st:fail"(e);
+      "CHILD-CLASS-NO". isc:T, raw:T, ce:T |- "AChildClass"("py:False"(), isc, raw, ce) ~> "py:None"();
+      "CHILD-CLASS-SELF". raw:T, ce:T |- "AChildClass"("py:True"(), "py:True"(), raw, ce) ~> raw;
+      "CHILD-CLASS-INHERIT". raw:T, ce:T |- "AChildClass"("py:True"(), "py:False"(), raw, ce) ~> ce;
+      "INLINE-IF". c:T, g:T, s:T, ng:T, ns:T, a1:T, r:T | "ANot"(g) ~> ng, "ANot"(s) ~> ns, "AAnd"(c, ng) ~> a1, "AAnd"(a1, ns) ~> r |- "AInlineIf"(c, g, s) ~> r;
+      "AFTER-CHILD". ctab:T, cfree:T, k:T, asyms:T, cells:T, nf:T, tabs:T, nf2:T | "py-set-union"(nf, cfree, nf2) |- "AAfterChild"("py:False"(), ctab, cfree, k, "st:kst"(asyms, cells, nf, tabs)) ~> "st:kst"(asyms, cells, nf2, "LCons"(ctab, tabs));
+      "AFTER-CHILD-INLINE". ck:T, cn:T, cl:T, csyms:T, cchs:T, cfree:T, k:T, asyms:T, cells:T, nf:T, tabs:T, asyms2:T, cells2:T, cfree2:T, nf2:T, tabs2:T | "AInline"(csyms, cchs, k, "st:inl"(asyms, cells, cfree)) ~> "st:inl"(asyms2, cells2, cfree2), "py-set-union"(nf, cfree2, nf2), "SRev"(cchs, "LCons"("st:inlined"("st:table"(ck, cn, cl, csyms, "LNil"())), tabs)) ~> tabs2 |- "AAfterChild"("py:True"(), "st:table"(ck, cn, cl, csyms, cchs), cfree, k, "st:kst"(asyms, cells, nf, tabs)) ~> "st:kst"(asyms2, cells2, nf2, tabs2);
+
+      -- an inlined comprehension (inline_comprehension): each of its symbols
+      -- but .0 joins this block (a cell, or a comprehension cell, is an
+      -- inlined cell; __class__, __classdict__ and __conditional_annotations__
+      -- free through a class are implicitly global and no longer free); a
+      -- name this block binds is no longer free unless free in a child of the
+      -- comprehension or this block is a class
+      "INLINE-NIL". cchs:T, k:T, s:T |- "AInline"("LNil"(), cchs, k, s) ~> s;
+      "INLINE-CONS". n:T, f:T, sc:T, rest:T, cchs:T, k:T, s:T, p:T, s2:T, r:T | "py-has"(f, "st:param"(), p), "AInlineSym"(p, n, f, sc, cchs, k, s) ~> s2, "AInline"(rest, cchs, k, s2) ~> r |- "AInline"("LCons"("st:fsym"(n, f, sc), rest), cchs, k, s) ~> r;
+      "INLINE-SYM-PARAM". n:T, f:T, sc:T, cchs:T, k:T, s:T |- "AInlineSym"("py:True"(), n, f, sc, cchs, k, s) ~> s;
+      "INLINE-SYM". n:T, f:T, sc:T, cchs:T, k:T, asyms:T, cells:T, cfree:T, cl:T, cc:T, ic:T, cells2:T, dc:T, sc2:T, cfree2:T, ex:T, z:T, asyms2:T, cfree3:T | "AIsScope"(sc, "st:scope-cell"()) ~> cl, "py-has"(f, "st:comp-cell"(), cc), "AOr"(cl, cc) ~> ic, "ACellAdd"(ic, n, cells) ~> cells2, "AClassDunder"(sc, k, n) ~> dc, "ADunderScope"(dc, sc, n, cchs, cfree) ~> "st:sf"(sc2, cfree2), "py-lookup"(asyms, n, ex), "py-is-none"(ex, z), "AInlineMerge"(z, ex, n, f, sc2, cchs, k, asyms, cfree2) ~> "st:merge"(asyms2, cfree3) |- "AInlineSym"("py:False"(), n, f, sc, cchs, k, "st:inl"(asyms, cells, cfree)) ~> "st:inl"(asyms2, cells2, cfree3);
+      "IS-SCOPE". a:T, b:T, r:T | "AScopeEq"(a, b) ~> r |- "AIsScope"(a, b) ~> r;
+      "SCOPE-EQ-LOCAL". |- "AScopeEq"("st:scope-local"(), "st:scope-local"()) ~> "py:True"();
+      "SCOPE-EQ-CELL". |- "AScopeEq"("st:scope-cell"(), "st:scope-cell"()) ~> "py:True"();
+      "SCOPE-EQ-FREE". |- "AScopeEq"("st:scope-free"(), "st:scope-free"()) ~> "py:True"();
+      "SCOPE-NE-LOCAL-CELL". |- "AScopeEq"("st:scope-local"(), "st:scope-cell"()) ~> "py:False"();
+      "SCOPE-NE-LOCAL-FREE". |- "AScopeEq"("st:scope-local"(), "st:scope-free"()) ~> "py:False"();
+      "SCOPE-NE-CELL-FREE". |- "AScopeEq"("st:scope-cell"(), "st:scope-free"()) ~> "py:False"();
+      "SCOPE-NE-FREE-CELL". |- "AScopeEq"("st:scope-free"(), "st:scope-cell"()) ~> "py:False"();
+      "SCOPE-NE-GE-CELL". |- "AScopeEq"("st:scope-global-explicit"(), "st:scope-cell"()) ~> "py:False"();
+      "SCOPE-NE-GE-FREE". |- "AScopeEq"("st:scope-global-explicit"(), "st:scope-free"()) ~> "py:False"();
+      "SCOPE-NE-GI-CELL". |- "AScopeEq"("st:scope-global-implicit"(), "st:scope-cell"()) ~> "py:False"();
+      "SCOPE-NE-GI-FREE". |- "AScopeEq"("st:scope-global-implicit"(), "st:scope-free"()) ~> "py:False"();
+      "SCOPE-NE-NONE-FREE". |- "AScopeEq"("py:None"(), "st:scope-free"()) ~> "py:False"();
+      "CELL-ADD-YES". n:T, cells:T, r:T | "py-set-add"(cells, n, r) |- "ACellAdd"("py:True"(), n, cells) ~> r;
+      "CELL-ADD-NO". n:T, cells:T |- "ACellAdd"("py:False"(), n, cells) ~> cells;
+      "CLASS-DUNDER". sc:T, k:T, n:T, fr:T, ic:T, d1:T, d2:T, d3:T, d12:T, d:T, fi:T, r:T | "AIsScope"(sc, "st:scope-free"()) ~> fr, "SIsClass"(k) ~> ic, "py-name-is"(n, "st:n-class"(), d1), "py-name-is"(n, "st:n-classdict"(), d2), "py-name-is"(n, "st:n-cond-annotations"(), d3), "AOr"(d1, d2) ~> d12, "AOr"(d12, d3) ~> d, "AAnd"(fr, ic) ~> fi, "AAnd"(fi, d) ~> r |- "AClassDunder"(sc, k, n) ~> r;
+      "DUNDER-SCOPE-YES". sc:T, n:T, cchs:T, cfree:T, fic:T, nf:T, r:T | "AFreeInChildren"(cchs, n) ~> fic, "ANot"(fic) ~> nf, "ADropFree"(nf, n, cfree) ~> r |- "ADunderScope"("py:True"(), sc, n, cchs, cfree) ~> "st:sf"("st:scope-global-implicit"(), r);
+      "DUNDER-SCOPE-NO". sc:T, n:T, cchs:T, cfree:T |- "ADunderScope"("py:False"(), sc, n, cchs, cfree) ~> "st:sf"(sc, cfree);
+      "MERGE-NEW". ex:T, n:T, f:T, sc:T, cchs:T, k:T, asyms:T, cfree:T |- "AInlineMerge"("py:True"(), ex, n, f, sc, cchs, k, asyms, cfree) ~> "st:merge"("LCons"("st:asym"(n, f, sc), asyms), cfree);
+      -- a name the block has: a use in the comprehension of a free name is
+      -- the block's use too, unless the block is a class (3.14+)
+      "MERGE-EXISTING". ex:T, n:T, f:T, sc:T, cchs:T, k:T, asyms:T, cfree:T, b:T, r:T, fr:T, ic:T, nc:T, cu:T, eu:T, neu:T, c1:T, c2:T, c3:T, asyms2:T | "ABound"(ex) ~> b, "AMergeExisting"(b, n, cchs, k, cfree) ~> r, "AIsScope"(sc, "st:scope-free"()) ~> fr, "SIsClass"(k) ~> ic, "ANot"(ic) ~> nc, "py-has"(f, "st:use"(), cu), "py-has"(ex, "st:use"(), eu), "ANot"(eu) ~> neu, "AAnd"(fr, nc) ~> c1, "AAnd"(c1, cu) ~> c2, "AAnd"(c2, neu) ~> c3, "AUseUp"(c3, n, asyms) ~> asyms2 |- "AInlineMerge"("py:False"(), ex, n, f, sc, cchs, k, asyms, cfree) ~> "st:merge"(asyms2, r);
+      "USE-UP-YES". n:T, asyms:T, r:T | "py-add-flag"(asyms, n, "st:use"(), r) |- "AUseUp"("py:True"(), n, asyms) ~> r;
+      "USE-UP-NO". n:T, asyms:T |- "AUseUp"("py:False"(), n, asyms) ~> asyms;
+      "MERGE-EXISTING-UNBOUND". n:T, cchs:T, k:T, cfree:T |- "AMergeExisting"("py:False"(), n, cchs, k, cfree) ~> cfree;
+      "MERGE-EXISTING-BOUND". n:T, cchs:T, k:T, cfree:T, fic:T, ic:T, nf:T, nc:T, ok:T, r:T | "AFreeInChildren"(cchs, n) ~> fic, "SIsClass"(k) ~> ic, "ANot"(fic) ~> nf, "ANot"(ic) ~> nc, "AAnd"(nf, nc) ~> ok, "ADropFree"(ok, n, cfree) ~> r |- "AMergeExisting"("py:True"(), n, cchs, k, cfree) ~> r;
+      "DROP-FREE-YES". n:T, cfree:T, r:T | "py-set-remove"(cfree, n, r) |- "ADropFree"("py:True"(), n, cfree) ~> r;
+      "DROP-FREE-NO". n:T, cfree:T |- "ADropFree"("py:False"(), n, cfree) ~> cfree;
+      "FREE-IN-CHILDREN-NIL". n:T |- "AFreeInChildren"("LNil"(), n) ~> "py:False"();
+      "FREE-IN-CHILDREN-INLINED". t:T, rest:T, n:T, r:T | "AFreeInChildren"(rest, n) ~> r |- "AFreeInChildren"("LCons"("st:inlined"(t), rest), n) ~> r;
+      "FREE-IN-CHILDREN-CONS". ck:T, cn:T, cl:T, cs:T, cc:T, rest:T, n:T, s:T, f:T, r:T | "py-lookup-scope"(cs, n, s), "AFreeOpt"(s) ~> f, "AFreeInChildrenIf"(f, rest, n) ~> r |- "AFreeInChildren"("LCons"("st:table"(ck, cn, cl, cs, cc), rest), n) ~> r;
+      "FREE-IN-CHILDREN-YES". rest:T, n:T |- "AFreeInChildrenIf"("py:True"(), rest, n) ~> "py:True"();
+      "FREE-IN-CHILDREN-NO". rest:T, n:T, r:T | "AFreeInChildren"(rest, n) ~> r |- "AFreeInChildrenIf"("py:False"(), rest, n) ~> r;
+      "FREE-OPT-NONE". |- "AFreeOpt"("py:None"()) ~> "py:False"();
+      "FREE-OPT-FREE". |- "AFreeOpt"("st:scope-free"()) ~> "py:True"();
+      "FREE-OPT-LOCAL". |- "AFreeOpt"("st:scope-local"()) ~> "py:False"();
+      "FREE-OPT-CELL". |- "AFreeOpt"("st:scope-cell"()) ~> "py:False"();
+      "FREE-OPT-GE". |- "AFreeOpt"("st:scope-global-explicit"()) ~> "py:False"();
+      "FREE-OPT-GI". |- "AFreeOpt"("st:scope-global-implicit"()) ~> "py:False"();
+
+      -- cells (analyze_cells): in a function-like block a local that a child
+      -- names free (or an inlined comprehension holds as a cell) is a cell,
+      -- and no longer free; a class keeps __class__ and __classdict__ for
+      -- itself (drop_class_free)
+      "CELLS-FUNCTION". isc:T, asyms:T, nf:T, cells:T, r:T | "ACellsAll"(asyms, nf, cells, "LNil"()) ~> r |- "ACells"("py:True"(), isc, asyms, nf, cells) ~> r;
+      "CELLS-CLASS". asyms:T, nf:T, cells:T, c:T, cd:T, n1:T, n2:T | "py-name"("st:n-class"(), c), "py-name"("st:n-classdict"(), cd), "py-set-remove"(nf, c, n1), "py-set-remove"(n1, cd, n2) |- "ACells"("py:False"(), "py:True"(), asyms, nf, cells) ~> "st:cells"(asyms, n2);
+      "CELLS-MODULE". asyms:T, nf:T, cells:T |- "ACells"("py:False"(), "py:False"(), asyms, nf, cells) ~> "st:cells"(asyms, nf);
+      "CELLS-ALL-NIL". nf:T, cells:T, out:T |- "ACellsAll"("LNil"(), nf, cells, out) ~> "st:cells"(out, nf);
+      "CELLS-ALL-CONS". n:T, f:T, sc:T, rest:T, nf:T, cells:T, out:T, s2:T, nf2:T, r:T | "ACell"(sc, n, nf, cells) ~> "st:sf"(s2, nf2), "ACellsAll"(rest, nf2, cells, "LCons"("st:asym"(n, f, s2), out)) ~> r |- "ACellsAll"("LCons"("st:asym"(n, f, sc), rest), nf, cells, out) ~> r;
+      "CELL-LOCAL". n:T, nf:T, cells:T, a:T, b:T, c:T, r:T | "py-has"(nf, n, a), "py-has"(cells, n, b), "AOr"(a, b) ~> c, "ACellIf"(c, n, nf) ~> r |- "ACell"("st:scope-local"(), n, nf, cells) ~> r;
+      "CELL-IF-YES". n:T, nf:T, r:T | "py-set-remove"(nf, n, r) |- "ACellIf"("py:True"(), n, nf) ~> "st:sf"("st:scope-cell"(), r);
+      "CELL-IF-NO". n:T, nf:T |- "ACellIf"("py:False"(), n, nf) ~> "st:sf"("st:scope-local"(), nf);
+      "CELL-GE". n:T, nf:T, cells:T |- "ACell"("st:scope-global-explicit"(), n, nf, cells) ~> "st:sf"("st:scope-global-explicit"(), nf);
+      "CELL-GI". n:T, nf:T, cells:T |- "ACell"("st:scope-global-implicit"(), n, nf, cells) ~> "st:sf"("st:scope-global-implicit"(), nf);
+      "CELL-FREE". n:T, nf:T, cells:T |- "ACell"("st:scope-free"(), n, nf, cells) ~> "st:sf"("st:scope-free"(), nf);
+      "CELL-CELL". n:T, nf:T, cells:T |- "ACell"("st:scope-cell"(), n, nf, cells) ~> "st:sf"("st:scope-cell"(), nf);
+
+      -- the final symbols (update_symbols): an inlined cell is a comprehension
+      -- cell; a name free in a child that this block holds is a free-class name
+      -- when this block is a class or can see one; one it does not hold is free
+      -- here unless it is global (not bound around)
+      "UPDATE". asyms:T, bd:T, nf:T, cells:T, cf:T, s1:T, lst:T, r:T | "AUpdateSyms"(asyms, cells, "LNil"()) ~> s1, "py-set-list"(nf, lst), "AUpdateFree"(lst, bd, cf, s1) ~> r |- "AUpdate"(asyms, bd, nf, cells, cf) ~> r;
+      "UPDATE-SYMS-NIL". cells:T, out:T |- "AUpdateSyms"("LNil"(), cells, out) ~> out;
+      "UPDATE-SYMS-CONS". n:T, f:T, sc:T, rest:T, cells:T, out:T, c:T, f2:T, r:T | "py-has"(cells, n, c), "ACompCell"(c, f) ~> f2, "AUpdateSyms"(rest, cells, "LCons"("st:fsym"(n, f2, sc), out)) ~> r |- "AUpdateSyms"("LCons"("st:asym"(n, f, sc), rest), cells, out) ~> r;
+      "COMP-CELL-YES". f:T, r:T | "py-set-add"(f, "st:comp-cell"(), r) |- "ACompCell"("py:True"(), f) ~> r;
+      "COMP-CELL-NO". f:T |- "ACompCell"("py:False"(), f) ~> f;
+      "UPDATE-FREE-NIL". bd:T, cf:T, syms:T |- "AUpdateFree"("LNil"(), bd, cf, syms) ~> syms;
+      "UPDATE-FREE-CONS". n:T, rest:T, bd:T, cf:T, syms:T, ex:T, z:T, s2:T, r:T | "py-lookup"(syms, n, ex), "py-is-none"(ex, z), "AFreeName"(z, n, bd, cf, syms) ~> s2, "AUpdateFree"(rest, bd, cf, s2) ~> r |- "AUpdateFree"("LCons"(n, rest), bd, cf, syms) ~> r;
+      "FREE-NAME-CLASS". n:T, bd:T, syms:T, r:T | "py-add-flag"(syms, n, "st:free-class"(), r) |- "AFreeName"("py:False"(), n, bd, "py:True"(), syms) ~> r;
+      "FREE-NAME-HELD". n:T, bd:T, syms:T |- "AFreeName"("py:False"(), n, bd, "py:False"(), syms) ~> syms;
+      "FREE-NAME-NEW". n:T, bd:T, cf:T, syms:T, z:T, r:T | "py-is-none"(bd, z), "AFreeNew"(z, n, bd, syms) ~> r |- "AFreeName"("py:True"(), n, bd, cf, syms) ~> r;
+      "FREE-NEW-MODULE". n:T, bd:T, syms:T, e:T | "py-empty-set"(e) |- "AFreeNew"("py:True"(), n, bd, syms) ~> "LCons"("st:fsym"(n, e, "st:scope-free"()), syms);
+      "FREE-NEW". n:T, bd:T, syms:T, h:T, r:T | "py-has"(bd, n, h), "AFreeNewIf"(h, n, syms) ~> r |- "AFreeNew"("py:False"(), n, bd, syms) ~> r;
+      "FREE-NEW-IF-BOUND". n:T, syms:T, e:T | "py-empty-set"(e) |- "AFreeNewIf"("py:True"(), n, syms) ~> "LCons"("st:fsym"(n, e, "st:scope-free"()), syms);
+      "FREE-NEW-IF-GLOBAL". n:T, syms:T |- "AFreeNewIf"("py:False"(), n, syms) ~> syms;
+
+      -- ================================================================ the tables as CPython numbers them
+
+      "OUT". k:T, n:T, l:T, c:T, fs:T, ts:T, os:T, ots:T | "OSyms"(fs) ~> os, "OTables"(ts) ~> ots |- "OTable"("st:table"(k, n, "st:pos"(l, c), fs, ts)) ~> "st:otable"(k, n, l, os, ots);
+      "OUT-FAIL". e:T |- "OTable"("st:fail"(e)) ~> "st:fail"(e);
+      "OSYMS-NIL". |- "OSyms"("LNil"()) ~> "LNil"();
+      "OSYMS-CONS". n:T, f:T, sc:T, rest:T, v:T, r:T | "py-flags-number"(f, sc, v), "OSyms"(rest) ~> r |- "OSyms"("LCons"("st:fsym"(n, f, sc), rest)) ~> "LCons"("st:osym"(n, v), r);
+      "OTABLES-NIL". |- "OTables"("LNil"()) ~> "LNil"();
+      -- an inlined comprehension's own table stays for the core, as CPython's
+      -- symtable keeps it among its blocks, but is not among the children
+      "OTABLES-INLINED". t:T, rest:T, r:T | "OTables"(rest) ~> r |- "OTables"("LCons"("st:inlined"(t), rest)) ~> r;
+      "OTABLES-CONS". k:T, n:T, p:T, fs:T, ts:T, rest:T, x:T, r:T | "OTable"("st:table"(k, n, p, fs, ts)) ~> x, "OTables"(rest) ~> r |- "OTables"("LCons"("st:table"(k, n, p, fs, ts), rest)) ~> "LCons"(x, r);
+    }
+  }
+  theory Tables()
+}

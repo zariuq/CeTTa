@@ -7,6 +7,7 @@
 ; grammar.
 
 !(import! &self (library lib_module))
+!(import! &self (library module_files))
 !(import! &self system)
 !(import! &self fs)
 !(import! &self str)
@@ -17,8 +18,9 @@
 (= (export-presentation $path $theory $entry $out)
    (let* (($reader (langdef:load-baked-parser "module-core-reader"))
           ($module (module:read-file $reader "presentation" $path))
+          ($catalog (module-files:catalog $reader (module-files:dir-of $path) (module-files:imports $module)))
           ($closed (langdef:close-parser $reader))
-          ($th (module:assemble $module $theory LNil LNil OriginViewV1 "presentation"))
+          ($th (module:assemble $module $theory LNil $catalog OriginViewV1 "presentation"))
           ($language (module:language $th "Presentation" $entry (SyntaxLexicalPolicyV1 bnfc-documented)))
           ($syntax (module:language-syntax $language))
           ($insp (langdef:inspect-syntax-gslt $syntax)))

@@ -82,7 +82,13 @@ static Atom *declaration_label(Atom *body, unsigned group) {
                        head_is(body, "ParserBlockCommentV1", 3u) ||
                        head_is(body, "ParserLayoutV1", 2u) ||
                        head_is(body, "ParserLayoutStopV1", 2u) ||
-                       head_is(body, "ParserLayoutToplevelV1", 2u)))
+                       head_is(body, "ParserLayoutToplevelV1", 2u) ||
+                       head_is(body, "ParserLayoutIndentV1", 4u) ||
+                       head_is(body, "ParserLayoutBracketV1", 3u) ||
+                       head_is(body, "ParserLayoutContinueV1", 2u) ||
+                       head_is(body, "ParserInterpolationV1", 7u) ||
+                       head_is(body, "ParserInterpolationOptionV1", 3u) ||
+                       head_is(body, "ParserSoftKeywordV1", 4u)))
         return body->expr.elems[1];
     return NULL;
 }
@@ -101,7 +107,13 @@ static int declaration_group(Atom *body) {
     /* layout declarations are lexical-stream declarations beside comments */
     if (head_is(body, "ParserLayoutV1", 2u) ||
         head_is(body, "ParserLayoutStopV1", 2u) ||
-        head_is(body, "ParserLayoutToplevelV1", 2u)) return 5;
+        head_is(body, "ParserLayoutToplevelV1", 2u) ||
+        head_is(body, "ParserLayoutIndentV1", 4u) ||
+        head_is(body, "ParserLayoutBracketV1", 3u) ||
+        head_is(body, "ParserLayoutContinueV1", 2u) ||
+        head_is(body, "ParserInterpolationV1", 7u) ||
+        head_is(body, "ParserInterpolationOptionV1", 3u) ||
+        head_is(body, "ParserSoftKeywordV1", 4u)) return 5;
     return -1;
 }
 

@@ -93,56 +93,49 @@
    (quote (gslt:result:MM0OptionPresenceV1:10 MM0ModifierAbsentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=3 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-option-presence-present-v1 target=mode relation=MM0OptionPresenceV1 input=10 functional=semidet
-(= (gslt:fn:MM0OptionPresenceV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom some (cons-atom $source ())) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0OptionPresenceV1:10 MM0ModifierPresentV1))))
+(= (gslt:fn:MM0OptionPresenceV1:10 (some $source))
+   (quote (gslt:result:MM0OptionPresenceV1:10 MM0ModifierPresentV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=4 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-identifier-scalars-v1 target=mode relation=MM0IdentifierScalarsV1 input=10 functional=semidet
-(= (gslt:fn:MM0IdentifierScalarsV1:10 $__gslt_input_v1_0_0)
-   (let (cons-atom node (cons-atom mm0-identifier (cons-atom (cons-atom pair (cons-atom $first (cons-atom $rest ()))) ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:MM0IdentifierScalarsV1:10 (cons $first $rest)))))
+(= (gslt:fn:MM0IdentifierScalarsV1:10 (node mm0-identifier (pair $first $rest)))
+   (quote (gslt:result:MM0IdentifierScalarsV1:10 (cons $first $rest))))
 
 ; gslt-lowered-equation-v1 source-rewrite=6 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-lookup-missing-v1 target=mode relation=MM0SortLookupV1 input=110 functional=semidet
 (= (gslt:fn:MM0SortLookupV1:110 $name MM0SortEntriesNilV1)
    (quote (gslt:result:MM0SortLookupV1:110 MM0SortMissingV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=7 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-lookup-found-v1 target=mode relation=MM0SortLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0SortLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom MM0SortEntriesConsV1 (cons-atom (cons-atom MM0SortEntryV1 (cons-atom $name (cons-atom $modifiers (cons-atom $firstPosition ())))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
-   (quote (gslt:result:MM0SortLookupV1:110 (MM0SortFoundV1 $modifiers $firstPosition)))))
+(= (gslt:fn:MM0SortLookupV1:110 $name (MM0SortEntriesConsV1 (MM0SortEntryV1 $name $modifiers $firstPosition) $rest))
+   (quote (gslt:result:MM0SortLookupV1:110 (MM0SortFoundV1 $modifiers $firstPosition))))
 
 ; gslt-lowered-equation-v1 source-rewrite=8 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-lookup-tail-v1 target=mode relation=MM0SortLookupV1 input=110 functional=semidet
-(= (gslt:fn:MM0SortLookupV1:110 $name $__gslt_input_v1_0_1)
-   (let (cons-atom MM0SortEntriesConsV1 (cons-atom (cons-atom MM0SortEntryV1 (cons-atom $other (cons-atom $modifiers (cons-atom $firstPosition ())))) (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:fn:MM0SortLookupV1:110 $name (MM0SortEntriesConsV1 (MM0SortEntryV1 $other $modifiers $firstPosition) $rest))
    (let $_ (gslt:different (different $name $other))
    (let (gslt:result:MM0SortLookupV1:110 $result) (gslt:fn:MM0SortLookupV1:110 $name $rest)
-   (quote (gslt:result:MM0SortLookupV1:110 $result))))))
+   (quote (gslt:result:MM0SortLookupV1:110 $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=9 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-entries-append-nil-v1 target=mode relation=MM0SortEntriesAppendV1 input=110 functional=semidet
 (= (gslt:fn:MM0SortEntriesAppendV1:110 MM0SortEntriesNilV1 $entry)
    (quote (gslt:result:MM0SortEntriesAppendV1:110 (MM0SortEntriesConsV1 $entry MM0SortEntriesNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=10 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-entries-append-cons-v1 target=mode relation=MM0SortEntriesAppendV1 input=110 functional=semidet
-(= (gslt:fn:MM0SortEntriesAppendV1:110 $__gslt_input_v1_0_0 $entry)
-   (let (cons-atom MM0SortEntriesConsV1 (cons-atom $head (cons-atom $rest ()))) $__gslt_input_v1_0_0
+(= (gslt:fn:MM0SortEntriesAppendV1:110 (MM0SortEntriesConsV1 $head $rest) $entry)
    (let (gslt:result:MM0SortEntriesAppendV1:110 $after) (gslt:fn:MM0SortEntriesAppendV1:110 $rest $entry)
-   (quote (gslt:result:MM0SortEntriesAppendV1:110 (MM0SortEntriesConsV1 $head $after))))))
+   (quote (gslt:result:MM0SortEntriesAppendV1:110 (MM0SortEntriesConsV1 $head $after)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=19 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-environment-from-ast-v1 target=mode relation=MM0SortEnvironmentFromAstV1 input=1000 functional=semidet
-(= (gslt:fn:MM0SortEnvironmentFromAstV1:1000 $__gslt_input_v1_0_0)
-   (let (cons-atom node (cons-atom mm0-file (cons-atom $statements ()))) $__gslt_input_v1_0_0
+(= (gslt:fn:MM0SortEnvironmentFromAstV1:1000 (node mm0-file $statements))
    (let (gslt:result:MM0SortFoldV1:111000 $outcome $environment $history) (gslt:fn:MM0SortFoldV1:111000 $statements NatZeroV1 MM0SortEntriesNilV1)
-   (quote (gslt:result:MM0SortEnvironmentFromAstV1:1000 $outcome $environment $history)))))
+   (quote (gslt:result:MM0SortEnvironmentFromAstV1:1000 $outcome $environment $history))))
 
 ; gslt-lowered-equation-v1 source-rewrite=5 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-statement-v1 target=mode relation=MM0SortStatementV1 input=100 functional=semidet
-(= (gslt:fn:MM0SortStatementV1:100 $__gslt_input_v1_0_0)
-   (let (cons-atom node (cons-atom mm0-sort-statement (cons-atom (cons-atom pair (cons-atom $pure (cons-atom (cons-atom pair (cons-atom $strict (cons-atom (cons-atom pair (cons-atom $provable (cons-atom (cons-atom pair (cons-atom $free (cons-atom $identifier ()))) ()))) ()))) ()))) ()))) $__gslt_input_v1_0_0
+(= (gslt:fn:MM0SortStatementV1:100 (node mm0-sort-statement (pair $pure (pair $strict (pair $provable (pair $free $identifier))))))
    (let (gslt:result:MM0OptionPresenceV1:10 $pureFlag) (gslt:fn:MM0OptionPresenceV1:10 $pure)
    (let (gslt:result:MM0OptionPresenceV1:10 $strictFlag) (gslt:fn:MM0OptionPresenceV1:10 $strict)
    (let (gslt:result:MM0OptionPresenceV1:10 $provableFlag) (gslt:fn:MM0OptionPresenceV1:10 $provable)
    (let (gslt:result:MM0OptionPresenceV1:10 $freeFlag) (gslt:fn:MM0OptionPresenceV1:10 $free)
    (let (gslt:result:MM0IdentifierScalarsV1:10 $name) (gslt:fn:MM0IdentifierScalarsV1:10 $identifier)
-   (quote (gslt:result:MM0SortStatementV1:100 $name (MM0SortModifiersV1 $pureFlag $strictFlag $provableFlag $freeFlag))))))))))
+   (quote (gslt:result:MM0SortStatementV1:100 $name (MM0SortModifiersV1 $pureFlag $strictFlag $provableFlag $freeFlag)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=14 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-step-v1 target=mode relation=MM0SortStepV1 input=111000 functional=semidet
 (= (gslt:fn:MM0SortStepV1:111000 $position $statement $before)
@@ -168,15 +161,13 @@
    (quote (gslt:result:MM0SortApplyV1:11111000 MM0AcceptedV1 $after (MM0DeclaredSortV1 $position $name $modifiers)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=12 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-apply-existing-equal-v1 target=mode relation=MM0SortApplyV1 input=11111000 functional=semidet
-(= (gslt:fn:MM0SortApplyV1:11111000 $position $name $modifiers $__gslt_input_v1_0_3 $state)
-   (let (cons-atom MM0SortFoundV1 (cons-atom $modifiers (cons-atom $firstPosition ()))) $__gslt_input_v1_0_3
-   (quote (gslt:result:MM0SortApplyV1:11111000 MM0AcceptedV1 $state (MM0ReusedSortV1 $position $name $firstPosition)))))
+(= (gslt:fn:MM0SortApplyV1:11111000 $position $name $modifiers (MM0SortFoundV1 $modifiers $firstPosition) $state)
+   (quote (gslt:result:MM0SortApplyV1:11111000 MM0AcceptedV1 $state (MM0ReusedSortV1 $position $name $firstPosition))))
 
 ; gslt-lowered-equation-v1 source-rewrite=13 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-apply-existing-different-v1 target=mode relation=MM0SortApplyV1 input=11111000 functional=semidet
-(= (gslt:fn:MM0SortApplyV1:11111000 $position $name $newModifiers $__gslt_input_v1_0_3 $state)
-   (let (cons-atom MM0SortFoundV1 (cons-atom $oldModifiers (cons-atom $firstPosition ()))) $__gslt_input_v1_0_3
+(= (gslt:fn:MM0SortApplyV1:11111000 $position $name $newModifiers (MM0SortFoundV1 $oldModifiers $firstPosition) $state)
    (let $_ (gslt:different (different $newModifiers $oldModifiers))
-   (quote (gslt:result:MM0SortApplyV1:11111000 (MM0RefusedSortRedeclarationV1 $position $name $oldModifiers $newModifiers) $state (MM0RefusedSortRedeclarationV1 $position $name $oldModifiers $newModifiers))))))
+   (quote (gslt:result:MM0SortApplyV1:11111000 (MM0RefusedSortRedeclarationV1 $position $name $oldModifiers $newModifiers) $state (MM0RefusedSortRedeclarationV1 $position $name $oldModifiers $newModifiers)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=17 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-fold-after-accepted-v1 target=mode relation=MM0SortFoldAfterStepV1 input=11111000 functional=semidet
 (= (gslt:fn:MM0SortFoldAfterStepV1:11111000 $rest $nextPosition MM0AcceptedV1 $next $historyEntry)
@@ -184,9 +175,8 @@
    (quote (gslt:result:MM0SortFoldAfterStepV1:11111000 $outcome $after (MM0SortHistoryConsV1 $historyEntry $history)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=18 source-presentation=MM0SortEnvironmentV1 source-rule=mm0-sort-fold-after-refused-v1 target=mode relation=MM0SortFoldAfterStepV1 input=11111000 functional=semidet
-(= (gslt:fn:MM0SortFoldAfterStepV1:11111000 $rest $nextPosition $__gslt_input_v1_0_2 $state $historyEntry)
-   (let (cons-atom MM0RefusedSortRedeclarationV1 (cons-atom $position (cons-atom $name (cons-atom $oldModifiers (cons-atom $newModifiers ()))))) $__gslt_input_v1_0_2
-   (quote (gslt:result:MM0SortFoldAfterStepV1:11111000 (MM0RefusedSortRedeclarationV1 $position $name $oldModifiers $newModifiers) $state (MM0SortHistoryConsV1 $historyEntry MM0SortHistoryNilV1)))))
+(= (gslt:fn:MM0SortFoldAfterStepV1:11111000 $rest $nextPosition (MM0RefusedSortRedeclarationV1 $position $name $oldModifiers $newModifiers) $state $historyEntry)
+   (quote (gslt:result:MM0SortFoldAfterStepV1:11111000 (MM0RefusedSortRedeclarationV1 $position $name $oldModifiers $newModifiers) $state (MM0SortHistoryConsV1 $historyEntry MM0SortHistoryNilV1))))
 
 
 ; gslt-lowered-entry-v1 gslt:entry:MM0SortEnvironmentFromAstV1:1000

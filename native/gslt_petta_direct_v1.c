@@ -287,7 +287,7 @@ static bool direct_push_operator_v1(DirectOperatorsV1 *operators,
 
 static bool direct_push_rule_v1(
     DirectRulesV1 *rules, const CettaGsltRewriteV1 *source,
-    size_t source_index, char *error, size_t error_size) {
+    size_t source_index, bool external, char *error, size_t error_size) {
     if (rules->len == rules->cap) {
         size_t next = rules->cap == 0u ? 64u : rules->cap * 2u;
         DirectRuleV1 *grown;
@@ -308,6 +308,7 @@ static bool direct_push_rule_v1(
             .source_index = source_index,
             .head = source->head,
             .body = source->body,
+            .external = external,
         };
     return true;
 }
@@ -332,6 +333,17 @@ static bool direct_has_operator_v1(const DirectOperatorsV1 *operators,
     return false;
 }
 
+/* The declared modes of a capability, or NULL for a guard. */
+static const char *direct_capability_modes_v1(const DirectOperatorsV1 *capabilities,
+                                              const char *name, size_t arity) {
+    for (size_t index = 0u; index < capabilities->len; index++) {
+        if (capabilities->items[index].arity == arity &&
+            strcmp(capabilities->items[index].name, name) == 0)
+            return capabilities->items[index].modes;
+    }
+    return NULL;
+}
+
 static bool direct_is_source_variable_v1(const Atom *atom) {
     return cetta_gslt_source_variable_v1(atom);
 }
@@ -345,6 +357,89 @@ static bool direct_same_variable_v1(const Atom *left, const Atom *right) {
            direct_is_source_variable_v1(right) &&
            strcmp(direct_variable_name_v1(left),
                   direct_variable_name_v1(right)) == 0;
+}
+
+/* The capability's record, or NULL. */
+static const DirectOperatorV1 *direct_capability_v1(
+    const DirectOperatorsV1 *capabilities, const char *name, size_t arity) {
+    for (size_t index = 0u; index < capabilities->len; index++) {
+        if (capabilities->items[index].arity == arity &&
+            strcmp(capabilities->items[index].name, name) == 0)
+            return &capabilities->items[index];
+    }
+    return NULL;
+}
+
+/* The function that computes a capability's one output from its inputs: F
+ * when the capability's modes are its inputs and then one output, and its one
+ * PeTTa realization is
+ *     (= (gslt:NAME (NAME ?a0 .. ?o)) (let ?x (F ?a0 ..) (quote (NAME ?a0 .. ?x))))
+ * its inputs distinct variables passed to F in order and given back as they
+ * came.  NULL for any other capability or realization. */
+static const char *direct_capability_function_v1(
+    const DirectRulesV1 *target_equations, const DirectOperatorV1 *capability) {
+    size_t arity = capability->arity;
+    if (capability->modes == NULL || arity == 0u ||
+        capability->modes[arity - 1u] != '0')
+        return NULL;
+    for (size_t k = 0u; k + 1u < arity; k++) {
+        if (capability->modes[k] != '1')
+            return NULL;
+    }
+    char wrapper[512];
+    int written = snprintf(wrapper, sizeof(wrapper), "gslt:%s", capability->name);
+    if (written < 0 || (size_t)written >= sizeof(wrapper))
+        return NULL;
+    const char *function = NULL;
+    for (size_t index = 0u; index < target_equations->len; index++) {
+        const Atom *equation = target_equations->items[index].head;
+        const Atom *left, *relation, *right, *x, *call, *result;
+        if (!direct_head_v1(equation, "metta-equation", 2u) ||
+            !(left = equation->expr.elems[1]) ||
+            !direct_head_v1(left, wrapper, 1u) ||
+            !(relation = left->expr.elems[1]) ||
+            !direct_head_v1(relation, capability->name, (CettaExprLen)arity))
+            continue;
+        if (function != NULL)
+            return NULL;
+        right = equation->expr.elems[2];
+        if (!direct_head_v1(right, "let", 3u) ||
+            !direct_is_source_variable_v1(x = right->expr.elems[1]) ||
+            !(call = right->expr.elems[2]) || call->kind != ATOM_EXPR ||
+            call->expr.len != arity || call->expr.elems[0]->kind != ATOM_SYMBOL ||
+            !direct_head_v1(right->expr.elems[3], "quote", 1u) ||
+            !(result = right->expr.elems[3]->expr.elems[1]) ||
+            !direct_head_v1(result, capability->name, (CettaExprLen)arity) ||
+            !direct_is_source_variable_v1(relation->expr.elems[arity]) ||
+            !direct_same_variable_v1(x, result->expr.elems[arity]) ||
+            direct_same_variable_v1(x, relation->expr.elems[arity]))
+            return NULL;
+        for (size_t k = 0u; k + 1u < arity; k++) {
+            const Atom *input = relation->expr.elems[k + 1u];
+            if (!direct_is_source_variable_v1(input) ||
+                direct_same_variable_v1(input, x) ||
+                direct_same_variable_v1(input, relation->expr.elems[arity]) ||
+                !direct_same_variable_v1(input, call->expr.elems[k + 1u]) ||
+                !direct_same_variable_v1(input, result->expr.elems[k + 1u]))
+                return NULL;
+            for (size_t j = 0u; j < k; j++) {
+                if (direct_same_variable_v1(input, relation->expr.elems[j + 1u]))
+                    return NULL;
+            }
+        }
+        function = atom_name_cstr(call->expr.elems[0]);
+    }
+    return function;
+}
+
+/* Each capability's function, where its realization has one (always true:
+ * a capability without one keeps NULL and is called as a relation). */
+static bool direct_capability_functions_v1(
+    DirectOperatorsV1 *capabilities, const DirectRulesV1 *target_equations) {
+    for (size_t index = 0u; index < capabilities->len; index++)
+        capabilities->items[index].function = direct_capability_function_v1(
+            target_equations, &capabilities->items[index]);
+    return true;
 }
 
 static bool direct_variables_contains_v1(const DirectVariablesV1 *variables,
@@ -663,6 +758,35 @@ static bool direct_validate_rules_v1(
                 return false;
         }
     }
+    /* a capability's modes: one declaration, after its own, with a digit
+       per argument */
+    for (size_t index = 0u; index < rules->len; index++) {
+        Atom *head = rules->items[index].head;
+        if (!direct_head_v1(head, "oslf-external-relation-modes-v1", 2u) ||
+            rules->items[index].body->expr.len != 1u)
+            continue;
+        Atom *name = head->expr.elems[1], *bits = head->expr.elems[2];
+        if (name->kind != ATOM_SYMBOL || bits->kind != ATOM_GROUNDED || bits->ground.gkind != GV_STRING)
+            return direct_error_v1(error, error_size,
+                                   "capability modes are declared with a symbolic name and a string of digits");
+        const char *capability_name = atom_name_cstr(name), *digits = bits->ground.sval;
+        size_t arity = strlen(digits);
+        DirectOperatorV1 *found = NULL;
+        for (size_t k = 0u; k < capabilities->len; k++)
+            if (capabilities->items[k].arity == arity && strcmp(capabilities->items[k].name, capability_name) == 0)
+                found = &capabilities->items[k];
+        if (found == NULL)
+            return direct_error_v1(error, error_size,
+                                   "modes for %s/%zu, which is no declared capability", capability_name, arity);
+        if (found->modes != NULL)
+            return direct_error_v1(error, error_size, "two mode declarations for %s/%zu", capability_name, arity);
+        for (size_t k = 0u; k < arity; k++)
+            if (digits[k] != '0' && digits[k] != '1')
+                return direct_error_v1(error, error_size,
+                                       "modes of %s/%zu: a digit per argument, 1 an input, 0 an output",
+                                       capability_name, arity);
+        found->modes = digits;
+    }
     for (size_t rule_index = 0u; rule_index < rules->len; rule_index++) {
         Atom *body = rules->items[rule_index].body;
         for (CettaExprIndex body_index = 1u;
@@ -790,6 +914,31 @@ static bool direct_analyze_binding_mode_v1(
                                 relation, arity, callee_relation);
                     free(callee_input);
                     continue;
+                } else {
+                    const char *capability_modes = direct_capability_modes_v1(
+                        capabilities, callee_relation, callee_arity);
+                    bool inputs_ground = true;
+                    for (size_t argument = 0u; capability_modes && argument < callee_arity; argument++)
+                        if (capability_modes[argument] == '1' && !callee_input[argument])
+                            inputs_ground = false;
+                    if (capability_modes && !inputs_ground) {
+                        /* the host cannot answer without its inputs: in this
+                           mode the rule has no execution */
+                        rule_reachable = false;
+                        if (trace)
+                            fprintf(stderr,
+                                    "[gslt-direct-mode] %s/%zu binding-body=%s inputs-not-ground=1\n",
+                                    relation, arity, callee_relation);
+                        free(callee_input);
+                        continue;
+                    }
+                    for (size_t argument = 0u; capability_modes && rule_ok && argument < callee_arity; argument++) {
+                        if (capability_modes[argument] == '0' &&
+                            !direct_variables_add_term_v1(
+                                &known, goal->expr.elems[argument + 1u], 0u,
+                                error, error_size))
+                            rule_ok = false;
+                    }
                 }
             }
             free(callee_input);
@@ -1798,6 +1947,13 @@ static bool direct_capability_call_is_ground_semidet_v1(
     if (!direct_target_equations_define_capability_v1(
             target_equations, &capability))
         return true;
+    const char *capability_modes = direct_capability_modes_v1(capabilities, relation, arity);
+    if (capability_modes != NULL) {
+        for (size_t argument = 0u; argument < arity; argument++)
+            if (capability_modes[argument] == '1' && !input_ground[argument])
+                return false;
+        return true;
+    }
     for (size_t argument = 0u; argument < arity; argument++) {
         if (!input_ground[argument])
             return false;
@@ -2723,6 +2879,19 @@ static bool direct_rule_has_functional_body_v1(
                 functional = false;
                 goto done;
             }
+            {
+                /* a moded capability's outputs are bound after it */
+                const char *capability_modes = direct_capability_modes_v1(capabilities, relation, arity);
+                for (size_t argument = 0u; capability_modes && argument < arity; argument++) {
+                    if (capability_modes[argument] == '0' &&
+                        !direct_variables_add_term_v1(
+                            &known, goal->expr.elems[argument + 1u], 0u,
+                            error, error_size)) {
+                        functional = false;
+                        goto done;
+                    }
+                }
+            }
             continue;
         }
         callee_mode = direct_find_binding_mode_v1(
@@ -2924,6 +3093,21 @@ static bool direct_select_rule_mode_calls_v1(
                 ok = false;
                 goto done;
             }
+            /* a moded capability grounds its outputs, as the analysis and
+               the renderer count them */
+            const char *capability_modes = modes->capabilities != NULL
+                ? direct_capability_modes_v1(modes->capabilities, relation, arity)
+                : NULL;
+            for (size_t argument = 0u;
+                 capability_modes != NULL && argument < arity; argument++) {
+                if (capability_modes[argument] == '0' &&
+                    !direct_variables_add_term_v1(
+                        &known, goal->expr.elems[argument + 1u], 0u,
+                        error, error_size)) {
+                    ok = false;
+                    goto done;
+                }
+            }
             continue;
         }
         if ((select_all_internal || has_ground_input ||
@@ -3036,12 +3220,50 @@ static bool direct_render_binding_modes_v1(
     return direct_byte_v1(program, (uint8_t)'\n');
 }
 
+/* Whether every rule of a relation comes from an extern source (and there is
+ * one): its type is the owning program's to render. */
+static bool direct_relation_is_external_v1(
+    const DirectRulesV1 *rules, const DirectOperatorV1 *relation) {
+    bool any = false;
+    for (size_t index = 0u; index < rules->len; index++) {
+        const Atom *head = rules->items[index].head;
+        if ((size_t)head->expr.len - 1u != relation->arity ||
+            strcmp(atom_name_cstr(head->expr.elems[0]), relation->name) != 0)
+            continue;
+        if (!rules->items[index].external)
+            return false;
+        any = true;
+    }
+    return any;
+}
+
+/* Whether a capability is declared only in extern sources: its type, its HE
+ * declaration and its default are the owning program's to render. */
+static bool direct_capability_is_external_v1(
+    const DirectRulesV1 *rules, const DirectOperatorV1 *capability) {
+    bool any = false;
+    for (size_t index = 0u; index < rules->len; index++) {
+        const DirectRuleV1 *rule = &rules->items[index];
+        size_t arity;
+        if (!direct_head_v1(rule->head, "oslf-external-relation-decl-v1", 2u) ||
+            rule->head->expr.elems[1]->kind != ATOM_SYMBOL ||
+            strcmp(atom_name_cstr(rule->head->expr.elems[1]), capability->name) != 0 ||
+            !direct_positive_arity_v1(rule->head->expr.elems[2], &arity) ||
+            arity != capability->arity)
+            continue;
+        if (!rule->external)
+            return false;
+        any = true;
+    }
+    return any;
+}
+
 static const char *direct_source_rewrite_kind_v1(
     const CettaGsltRewriteV1 *rewrite) {
     if (direct_head_v1(rewrite->head, "metta-equation", 2u))
         return "target-equation";
-    if (direct_head_v1(
-            rewrite->head, "oslf-external-relation-decl-v1", 2u) &&
+    if ((direct_head_v1(rewrite->head, "oslf-external-relation-decl-v1", 2u) ||
+         direct_head_v1(rewrite->head, "oslf-external-relation-modes-v1", 2u)) &&
         rewrite->body->expr.len == 1u)
         return "capability-declaration";
     return "relation";
@@ -3138,6 +3360,35 @@ static bool direct_render_call_v1(DirectBufferV1 *program,
            direct_byte_v1(program, (uint8_t)')');
 }
 
+/* A premise calling a moded capability, after "(let ": with a function (see
+ * direct_capability_function_v1), its output's pattern and the function
+ * applied to its ground inputs, (let OUT (F IN ..) ..); else the capability's
+ * relation term and its realization called with the outputs open,
+ * (let (NAME ..) (gslt:NAME (NAME ..)) ..), the answer binding the outputs */
+static bool direct_render_capability_premise_v1(
+    DirectBufferV1 *program, const Atom *goal,
+    const DirectOperatorV1 *capability, Arena *scratch) {
+    size_t arity = (size_t)goal->expr.len - 1u;
+    if (capability != NULL && capability->function != NULL &&
+        !direct_target_is_he_v1(program)) {
+        if (!direct_render_data_pattern_v1(
+                program, goal->expr.elems[arity], scratch, 0u) ||
+            !direct_literal_v1(program, " (") ||
+            !direct_literal_v1(program, capability->function))
+            return false;
+        for (size_t k = 0u; k + 1u < arity; k++) {
+            if (!direct_byte_v1(program, (uint8_t)' ') ||
+                !direct_render_term_v1(
+                    program, goal->expr.elems[k + 1u], scratch, 0u))
+                return false;
+        }
+        return direct_byte_v1(program, (uint8_t)')');
+    }
+    return direct_render_data_pattern_v1(program, goal, scratch, 0u) &&
+           direct_byte_v1(program, (uint8_t)' ') &&
+           direct_render_call_v1(program, goal, scratch, false);
+}
+
 static bool direct_render_mode_name_v1(
     DirectBufferV1 *program, const char *prefix,
     const DirectBindingModeV1 *mode) {
@@ -3213,6 +3464,7 @@ static bool direct_render_he_declarations_v1(
     const char *const *entries, size_t entry_count,
     const DirectOperatorsV1 *relations,
     const DirectOperatorsV1 *capabilities,
+    const DirectRulesV1 *rules,
     bool shared_constructors) {
     if (!direct_target_is_he_v1(program))
         return true;
@@ -3254,7 +3506,8 @@ static bool direct_render_he_declarations_v1(
          index++) {
         const DirectOperatorV1 *capability = &capabilities->items[index];
         if (direct_has_operator_v1(
-                relations, capability->name, capability->arity))
+                relations, capability->name, capability->arity) ||
+            direct_capability_is_external_v1(rules, capability))
             continue;
         if (!direct_literal_v1(program, "(: ") ||
             !direct_literal_v1(program, capability->name) ||
@@ -3327,7 +3580,9 @@ static bool direct_petta_pattern_requires_body_match_v1(
     if (!term || depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1 ||
         term->kind != ATOM_EXPR || term->expr.len == 0u)
         return false;
-    const Atom *head = term->expr.elems[0];
+    /* a nullary constructor renders as the expression (S): S is its head */
+    bool nullary = direct_head_v1(term, "metta-nullary", 1u);
+    const Atom *head = term->expr.elems[nullary ? 1u : 0u];
     if (head && head->kind == ATOM_SYMBOL) {
         const char *name = atom_name_cstr((Atom *)head);
         static const char *const effectful_heads[] = {
@@ -3356,6 +3611,8 @@ static bool direct_petta_pattern_requires_body_match_v1(
                 return true;
         }
     }
+    if (nullary)
+        return false;
     for (CettaExprIndex index = 1u;
          index < term->expr.len; index++) {
         if (direct_petta_pattern_requires_body_match_v1(
@@ -3365,16 +3622,22 @@ static bool direct_petta_pattern_requires_body_match_v1(
     return false;
 }
 
+/* Whether a rule's input pattern is matched in the body rather than the head.
+ * Equation heads are evaluation positions: a head subterm naming an operation
+ * (cons, let, +, ...) is read as that operation before the rule is selected,
+ * so such a pattern is matched structurally in the body.  A pattern of inert
+ * source constructors stays in the head, where the equation index selects
+ * the rule; matched in the body, every rule of the relation would be tried
+ * for every call.  (A source constructor is data: it must not also name a
+ * function of the program that runs.) */
 static bool direct_pattern_in_body_v1(const DirectBufferV1 *program, const Atom *term) {
-    return direct_target_is_he_v1(program)
-        ? direct_petta_pattern_requires_body_match_v1(term, 0u)
-        : term && term->kind == ATOM_EXPR;
+    (void)program;
+    return direct_petta_pattern_requires_body_match_v1(term, 0u);
 }
 
-/* PeTTa equation heads are evaluation positions.  Keep the generated head
- * slot-based and match the authored source pattern structurally in the
- * body; otherwise a source constructor such as `cons` can be mistaken for a
- * target operation before the rule is selected. */
+/* A rule's head: the mode's name and its input slots, each the authored
+ * pattern when it is matched in the head (rendered as its plain structure),
+ * else a slot the body matches. */
 static bool direct_render_function_rule_head_v1(
     DirectBufferV1 *program, const Atom *application,
     const DirectBindingModeV1 *mode, Arena *scratch) {
@@ -3393,8 +3656,7 @@ static bool direct_render_function_rule_head_v1(
         if (direct_pattern_in_body_v1(program, pattern)) {
             if (!direct_render_input_slot_v1(program, argument))
                 return false;
-        } else if (!direct_render_data_pattern_v1(
-                       program, pattern, scratch, 0u)) {
+        } else if (!direct_render_term_v1(program, pattern, scratch, 0u)) {
             return false;
         }
     }
@@ -3507,6 +3769,32 @@ static bool direct_render_function_value_v1(
            direct_byte_v1(program, (uint8_t)')');
 }
 
+/* A rule whose outputs are exactly its last premise's outputs, in a call of
+ * its own mode, answers what that call answers: the call stands in tail
+ * position, with no pattern to rebind and no result to rebuild (last-call
+ * optimization: a relation that steps a state runs in constant space). Each
+ * output is a distinct variable not bound before the call; a bound or
+ * structured output is a check, and keeps its let. */
+static bool direct_last_call_v1(const Atom *head, const Atom *goal,
+                                const DirectBindingModeV1 *mode,
+                                const DirectVariablesV1 *known) {
+    for (size_t i = 0u; i < mode->arity; i++) {
+        if (mode->input_ground[i])
+            continue;
+        const Atom *out = head->expr.elems[i + 1u];
+        if (!direct_is_source_variable_v1(out) ||
+            direct_variables_contains_v1(known, out) ||
+            !direct_same_variable_v1(out, goal->expr.elems[i + 1u]))
+            return false;
+        for (size_t j = 0u; j < i; j++) {
+            if (!mode->input_ground[j] &&
+                direct_same_variable_v1(out, head->expr.elems[j + 1u]))
+                return false;
+        }
+    }
+    return true;
+}
+
 static bool direct_render_function_rule_v1(
     DirectBufferV1 *program, const DirectRuleV1 *rule,
     const DirectBindingModesV1 *modes,
@@ -3514,6 +3802,7 @@ static bool direct_render_function_rule_v1(
     DirectVariablesV1 known = {0};
     size_t body_count = (size_t)rule->body->expr.len - 1u;
     size_t input_count = 0u;
+    bool last_call = false;
     bool ok = false;
     if (!direct_choose_input_scope_v1(program, rule))
         goto done;
@@ -3562,6 +3851,17 @@ static bool direct_render_function_rule_v1(
         callee_mode = direct_find_binding_mode_v1(
             modes, relation, arity, input_ground);
         free(input_ground);
+        const char *capability_modes = callee_mode == NULL && modes->capabilities != NULL
+            ? direct_capability_modes_v1(modes->capabilities, relation, arity) : NULL;
+        if (index + 1u == body_count && callee_mode == mode && callee_mode->selected &&
+            direct_last_call_v1(rule->head, goal, mode, &known)) {
+            if (!direct_literal_v1(program, "   ") ||
+                !direct_render_selected_mode_call_v1(
+                    program, goal, callee_mode, mode, scratch))
+                goto done;
+            last_call = true;
+            break;
+        }
         if (!direct_literal_v1(program, "   (let "))
             goto done;
         if (callee_mode != NULL && callee_mode->selected) {
@@ -3571,12 +3871,25 @@ static bool direct_render_function_rule_v1(
                 !direct_render_selected_mode_call_v1(
                     program, goal, callee_mode, mode, scratch))
                 goto done;
+        } else if (capability_modes != NULL) {
+            /* a moded capability: the host's answer binds the goal's outputs */
+            if (!direct_render_capability_premise_v1(
+                    program, goal,
+                    direct_capability_v1(modes->capabilities, relation, arity),
+                    scratch))
+                goto done;
         } else if (!direct_render_guard_binder_v1(program, index) ||
                    !direct_render_call_v1(program, goal, scratch, false)) {
             goto done;
         }
         if (!direct_byte_v1(program, (uint8_t)'\n'))
             goto done;
+        for (size_t argument = 0u; capability_modes != NULL && argument < arity; argument++) {
+            if (capability_modes[argument] == '0' &&
+                !direct_variables_add_term_v1(
+                    &known, goal->expr.elems[argument + 1u], 0u, NULL, 0u))
+                goto done;
+        }
         if (callee_mode != NULL) {
             for (size_t argument = 0u; argument < arity; argument++) {
                 if (callee_mode->success_ground[argument] &&
@@ -3587,11 +3900,12 @@ static bool direct_render_function_rule_v1(
             }
         }
     }
-    if (!direct_literal_v1(program, "   ") ||
-        !direct_render_function_value_v1(
-            program, rule->head, mode, scratch))
+    if (!last_call &&
+        (!direct_literal_v1(program, "   ") ||
+         !direct_render_function_value_v1(
+             program, rule->head, mode, scratch)))
         goto done;
-    for (size_t index = 0u; index < body_count; index++) {
+    for (size_t index = last_call ? 1u : 0u; index < body_count; index++) {
         if (!direct_byte_v1(program, (uint8_t)')'))
             goto done;
     }
@@ -4380,6 +4694,8 @@ static bool direct_render_rule_v1(DirectBufferV1 *program,
         callee_mode = direct_find_binding_mode_v1(
             modes, relation, arity, input_ground);
         free(input_ground);
+        const char *capability_modes = callee_mode == NULL && modes->capabilities != NULL
+            ? direct_capability_modes_v1(modes->capabilities, relation, arity) : NULL;
         if (!direct_literal_v1(program, "   (let "))
             goto done;
         if (callee_mode != NULL && callee_mode->selected) {
@@ -4389,12 +4705,25 @@ static bool direct_render_rule_v1(DirectBufferV1 *program,
                 !direct_render_selected_mode_call_v1(
                     program, goal, callee_mode, NULL, scratch))
                 goto done;
+        } else if (capability_modes != NULL) {
+            /* a moded capability: the host's answer binds the goal's outputs */
+            if (!direct_render_capability_premise_v1(
+                    program, goal,
+                    direct_capability_v1(modes->capabilities, relation, arity),
+                    scratch))
+                goto done;
         } else if (!direct_render_guard_binder_v1(program, index) ||
                    !direct_render_call_v1(program, goal, scratch, false)) {
             goto done;
         }
         if (!direct_byte_v1(program, (uint8_t)'\n'))
             goto done;
+        for (size_t argument = 0u; capability_modes != NULL && argument < arity; argument++) {
+            if (capability_modes[argument] == '0' &&
+                !direct_variables_add_term_v1(
+                    &known, goal->expr.elems[argument + 1u], 0u, NULL, 0u))
+                goto done;
+        }
         if (callee_mode != NULL) {
             for (size_t argument = 0u; argument < arity; argument++) {
                 if (callee_mode->success_ground[argument] &&
@@ -4496,13 +4825,18 @@ static bool direct_target_equations_define_capability_v1(
 static bool direct_render_target_equations_v1(
     DirectBufferV1 *program, const DirectRulesV1 *target_equations,
     Arena *scratch) {
-    if (target_equations->len == 0u)
+    size_t own = 0u;
+    for (size_t index = 0u; index < target_equations->len; index++)
+        own += target_equations->items[index].external ? 0u : 1u;
+    if (own == 0u)
         return true;
     if (!direct_literal_v1(program, "; authored target equations\n"))
         return false;
     for (size_t index = 0u; index < target_equations->len; index++) {
         const DirectRuleV1 *rule = &target_equations->items[index];
         const Atom *equation = rule->head;
+        if (rule->external)
+            continue;
         if (!direct_render_rule_realization_v1(
                 program, rule, "authored-target-equation", NULL) ||
             !direct_literal_v1(program, "(= ") ||
@@ -4519,6 +4853,7 @@ static bool direct_render_target_equations_v1(
 
 static bool direct_compile_petta_v1(
     Atom *const *presentations,
+    const bool *external,
     size_t presentation_count,
     CettaGsltDirectTargetV1 target,
     const char *const *entry_modes,
@@ -4541,6 +4876,7 @@ static bool direct_compile_petta_v1(
     DirectRulesV1 target_equations = {0};
     DirectRuleIndexV1 rule_index = {0};
     DirectBindingModesV1 binding_modes = {0};
+    binding_modes.capabilities = &capabilities;
     DirectIntegerNativeTypesV1 native_types = {0};
     DirectAdmissionDomainsV1 domains = {0};
     DirectBufferV1 program = {0};
@@ -4579,6 +4915,27 @@ static bool direct_compile_petta_v1(
     }
     for (size_t index = 0u; index < composition.rewrite_count; index++) {
         CettaGsltRewriteV1 *rewrite = &composition.rewrites[index];
+        bool from_extern = false;
+        for (size_t p = 0u; external != NULL && p < composition.presentation_count; p++) {
+            const CettaGsltPresentationV1 *presentation = &composition.presentations[p];
+            if (index >= presentation->rewrite_begin &&
+                index - presentation->rewrite_begin < presentation->rewrite_count)
+                from_extern = p < presentation_count && external[p];
+        }
+        if (from_extern && target == CETTA_GSLT_DIRECT_TARGET_C_V1) {
+            (void)direct_error_v1(
+                error, error_size,
+                "the C target compiles a closed program: it takes no extern source");
+            goto done;
+        }
+        if (from_extern &&
+            strcmp(direct_source_rewrite_kind_v1(rewrite), "relation") == 0) {
+            (void)direct_error_v1(
+                error, error_size,
+                "extern source %s declares host relations only: its rule %s is a relation rule",
+                rewrite->presentation_name, rewrite->name);
+            goto done;
+        }
         if (direct_head_v1(rewrite->head, "metta-equation", 2u)) {
             if (rewrite->body->expr.len != 1u) {
                 (void)direct_error_v1(
@@ -4587,11 +4944,11 @@ static bool direct_compile_petta_v1(
                 goto done;
             }
             if (!direct_push_rule_v1(
-                    &target_equations, rewrite, index,
+                    &target_equations, rewrite, index, from_extern,
                     error, error_size))
                 goto done;
         } else if (!direct_push_rule_v1(
-                       &rules, rewrite, index,
+                       &rules, rewrite, index, from_extern,
                        error, error_size)) {
             goto done;
         }
@@ -4606,6 +4963,7 @@ static bool direct_compile_petta_v1(
         !direct_validate_rules_v1(
             &rules, &operators, &relations, &capabilities,
             error, error_size) ||
+        !direct_capability_functions_v1(&capabilities, &target_equations) ||
         !direct_authenticate_integer_native_types_v1(
             native_type_packet, presentations, presentation_count,
             &target_equations, &relations, &native_types, &scratch,
@@ -4704,7 +5062,8 @@ static bool direct_compile_petta_v1(
         goto allocation_failure;
     for (size_t index = 0u; index < relations.len; index++) {
         if (admitted_language != NULL) break;
-        if (!direct_render_type_v1(&program, &relations.items[index]))
+        if (!direct_relation_is_external_v1(&rules, &relations.items[index]) &&
+            !direct_render_type_v1(&program, &relations.items[index]))
             goto allocation_failure;
     }
     for (size_t index = 0u; index < capabilities.len; index++) {
@@ -4712,6 +5071,7 @@ static bool direct_compile_petta_v1(
         if (!direct_has_operator_v1(
                 &relations, capabilities.items[index].name,
                 capabilities.items[index].arity) &&
+            !direct_capability_is_external_v1(&rules, &capabilities.items[index]) &&
             !direct_render_type_v1(&program, &capabilities.items[index]))
             goto allocation_failure;
     }
@@ -4722,13 +5082,14 @@ static bool direct_compile_petta_v1(
      * heads are new. */
     if (!direct_render_he_declarations_v1(
             &program, &binding_modes, entry_modes, entry_mode_count,
-            &relations, &capabilities, admitted_language == NULL))
+            &relations, &capabilities, &rules, admitted_language == NULL))
         goto allocation_failure;
     for (size_t index = 0u; index < capabilities.len; index++) {
         if (admitted_language != NULL) break;
         const DirectOperatorV1 *capability = &capabilities.items[index];
         if (!direct_has_operator_v1(
                 &relations, capability->name, capability->arity) &&
+            !direct_capability_is_external_v1(&rules, capability) &&
             !direct_target_equations_define_capability_v1(
                 &target_equations, capability)) {
             const DirectRuleV1 *source_rule =
@@ -4760,6 +5121,8 @@ static bool direct_compile_petta_v1(
         goto allocation_failure;
     if (!closed_entry_residual) {
         for (size_t index = 0u; index < rules.len; index++) {
+            if (rules.items[index].external)
+                continue;
             if (!direct_render_rule_v1(
                     &program, &rules.items[index], &binding_modes,
                     &scratch) ||
@@ -4776,7 +5139,11 @@ static bool direct_compile_petta_v1(
 
     *program_out = program.bytes;
     *program_len_out = program.len;
-    *rule_count_out = rules.len + target_equations.len;
+    *rule_count_out = 0u;
+    for (size_t index = 0u; index < rules.len; index++)
+        *rule_count_out += rules.items[index].external ? 0u : 1u;
+    for (size_t index = 0u; index < target_equations.len; index++)
+        *rule_count_out += target_equations.items[index].external ? 0u : 1u;
     program.bytes = NULL;
     ok = true;
     goto done;
@@ -4814,7 +5181,7 @@ bool cetta_gslt_petta_direct_selected_v1(
     char *error,
     size_t error_size) {
     return direct_compile_petta_v1(
-        presentations, presentation_count, target, entry_modes, entry_mode_count,
+        presentations, NULL, presentation_count, target, entry_modes, entry_mode_count,
         false, NULL, NULL, NULL, 0u, 0u, program_out, program_len_out, rule_count_out,
         source_digest_out, error, error_size);
 }
@@ -4832,8 +5199,22 @@ bool cetta_gslt_petta_direct_closed_v1(
     char *error,
     size_t error_size) {
     return direct_compile_petta_v1(
-        presentations, presentation_count, target, entry_modes, entry_mode_count,
+        presentations, NULL, presentation_count, target, entry_modes, entry_mode_count,
         true, NULL, NULL, NULL, 0u, 0u, program_out, program_len_out, rule_count_out,
+        source_digest_out, error, error_size);
+}
+
+bool cetta_gslt_petta_direct_linked_v1(
+    Atom *const *presentations, const bool *external, size_t presentation_count,
+    CettaGsltDirectTargetV1 target,
+    const char *const *entry_modes, size_t entry_mode_count,
+    bool closed_entry_residual,
+    uint8_t **program_out, size_t *program_len_out, size_t *rule_count_out,
+    char source_digest_out[65], char *error, size_t error_size) {
+    return direct_compile_petta_v1(
+        presentations, external, presentation_count, target, entry_modes,
+        entry_mode_count, closed_entry_residual, NULL, NULL, NULL, 0u, 0u,
+        program_out, program_len_out, rule_count_out,
         source_digest_out, error, error_size);
 }
 
@@ -4865,7 +5246,7 @@ bool cetta_gslt_petta_direct_native_types_v1(
         return direct_error_v1(error, error_size,
                                "missing integer native-type packet");
     return direct_compile_petta_v1(
-        presentations, presentation_count, target, entry_modes, entry_mode_count,
+        presentations, NULL, presentation_count, target, entry_modes, entry_mode_count,
         closed_entry_residual, native_type_packet,
         NULL, NULL, 0u, 0u,
         program_out, program_len_out, rule_count_out,
@@ -4934,11 +5315,11 @@ bool cetta_gslt_petta_direct_admitted_v1(
     if (relation == NULL) goto done;
     memcpy(relation, admission_entry, relation_len);
     relation[relation_len] = '\0';
-    if (!direct_compile_petta_v1(presentations, presentation_count, target,
+    if (!direct_compile_petta_v1(presentations, NULL, presentation_count, target,
             entry_modes, entry_mode_count, true, native_type_packet,
             NULL, NULL, 0u, 0u, &raw, &raw_len, rule_count_out,
             source_digest_out, error, error_size) ||
-        !direct_compile_petta_v1(presentations, presentation_count, target,
+        !direct_compile_petta_v1(presentations, NULL, presentation_count, target,
             &selected, 1u, true, native_type_packet,
             admission_language, relation, input, type,
             &typed, &typed_len, &typed_count, typed_digest, error, error_size)) goto done;

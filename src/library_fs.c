@@ -181,6 +181,32 @@ static Atom *metadata_value(Arena *arena, const struct stat *info,
             atom_string(arena, device), atom_string(arena, inode))}, 4u);
 }
 
+/* (fs:stat PATH follow|no-follow): the whole stat record, (fs:stat MODE
+ * NLINK UID GID SIZE ATIME-NS MTIME-NS CTIME-NS BLKSIZE BLOCKS (fs:identity
+ * DEVICE INODE) RDEV), the device numbers decimal spellings as fs:metadata
+ * gives them and each time in nanoseconds since the epoch */
+static Atom *full_stat(Arena *arena, const char *path, bool follow) {
+    struct stat st;
+    if ((follow ? stat(path, &st) : lstat(path, &st)) < 0)
+        return os_failed(arena, "stat", path, errno, 0u, true);
+    char device[3u * sizeof(uintmax_t) + 1u], inode[sizeof(device)], rdev[sizeof(device)];
+    snprintf(device, sizeof(device), "%ju", (uintmax_t)st.st_dev);
+    snprintf(inode, sizeof(inode), "%ju", (uintmax_t)st.st_ino);
+    snprintf(rdev, sizeof(rdev), "%ju", (uintmax_t)st.st_rdev);
+    int64_t atime = (int64_t)st.st_atim.tv_sec * 1000000000 + (int64_t)st.st_atim.tv_nsec;
+    int64_t mtime = (int64_t)st.st_mtim.tv_sec * 1000000000 + (int64_t)st.st_mtim.tv_nsec;
+    int64_t ctime_ns = (int64_t)st.st_ctim.tv_sec * 1000000000 + (int64_t)st.st_ctim.tv_nsec;
+    return atom_expr(arena, (Atom *[]){atom_symbol(arena, "fs:stat"),
+        atom_int(arena, (int64_t)st.st_mode), atom_int(arena, (int64_t)st.st_nlink),
+        atom_int(arena, (int64_t)st.st_uid), atom_int(arena, (int64_t)st.st_gid),
+        atom_int(arena, (int64_t)st.st_size), atom_int(arena, atime), atom_int(arena, mtime),
+        atom_int(arena, ctime_ns), atom_int(arena, (int64_t)st.st_blksize),
+        atom_int(arena, (int64_t)st.st_blocks),
+        atom_expr3(arena, atom_symbol(arena, "fs:identity"),
+            atom_string(arena, device), atom_string(arena, inode)),
+        atom_string(arena, rdev)}, 13u);
+}
+
 static Atom *metadata(Arena *arena, const char *path, bool follow) {
     struct stat info;
     if ((follow ? stat(path, &info) : lstat(path, &info)) < 0)
@@ -439,12 +465,17 @@ bool cetta_fs_call(CettaLibraryContext *ctx, Arena *arena, Atom *head,
         op == g_builtin_syms.lib_fs_next_entry ? "next-entry" :
         op == g_builtin_syms.lib_fs_open_read ? "open-read" :
         op == g_builtin_syms.lib_fs_read_chunk ? "read-chunk" :
-        op == g_builtin_syms.lib_fs_close ? "close" : NULL;
+        op == g_builtin_syms.lib_fs_close ? "close" :
+        op == g_builtin_syms.lib_fs_stat ? "stat" :
+        op == g_builtin_syms.lib_fs_remove ? "remove" :
+        op == g_builtin_syms.lib_fs_make_directory ? "make-directory" :
+        op == g_builtin_syms.lib_fs_remove_directory ? "remove-directory" : NULL;
     if (!name) return false;
     if (eval_native_interrupted()) { *out = cetta_call_interrupted(); return true; }
     Atom *value;
     uint32_t arity = op == g_builtin_syms.lib_fs_metadata ||
-        op == g_builtin_syms.lib_fs_rename ||
+        op == g_builtin_syms.lib_fs_rename || op == g_builtin_syms.lib_fs_stat ||
+        op == g_builtin_syms.lib_fs_make_directory ||
         op == g_builtin_syms.lib_fs_read_chunk || op == g_builtin_syms.lib_fs_walk_step ||
         op == g_builtin_syms.lib_fs_walk_metadata ? 2u : 1u;
     const char *path = nargs ? path_arg(args[0]) : NULL;
@@ -456,6 +487,26 @@ bool cetta_fs_call(CettaLibraryContext *ctx, Arena *arena, Atom *head,
         if (!path || !target) goto argument;
         value = rename(path, target) == 0 ? atom_unit(arena)
             : os_failed(arena, name, path, errno, 0u, true);
+        goto completed;
+    }
+    if (op == g_builtin_syms.lib_fs_remove || op == g_builtin_syms.lib_fs_remove_directory) {
+        if (!path) goto argument;
+        int status = op == g_builtin_syms.lib_fs_remove ? unlink(path) : rmdir(path);
+        value = status == 0 ? atom_unit(arena) : os_failed(arena, name, path, errno, 0u, true);
+        goto completed;
+    }
+    if (op == g_builtin_syms.lib_fs_make_directory) {
+        if (!path || args[1]->kind != ATOM_GROUNDED || args[1]->ground.gkind != GV_INT ||
+            args[1]->ground.ival < 0 || args[1]->ground.ival > 07777) goto argument;
+        value = mkdir(path, (mode_t)args[1]->ground.ival) == 0 ? atom_unit(arena)
+            : os_failed(arena, name, path, errno, 0u, true);
+        goto completed;
+    }
+    if (op == g_builtin_syms.lib_fs_stat) {
+        if (!path) goto argument;
+        if (!atom_is_symbol(args[1], "follow") && !atom_is_symbol(args[1], "no-follow"))
+            goto argument;
+        value = full_stat(arena, path, atom_is_symbol(args[1], "follow"));
         goto completed;
     }
     if (op == g_builtin_syms.lib_fs_metadata || op == g_builtin_syms.lib_fs_open_read ||

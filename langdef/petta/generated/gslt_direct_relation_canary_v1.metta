@@ -57,8 +57,7 @@
 ; gslt-lowered-equation-v1 source-rewrite=4 source-presentation=DirectPeTTaAncestorV1 source-rule=direct-ancestor-step-v1 target=mode relation=DirectAncestorV1 input=10 functional=relational
 (= (gslt:mode:DirectAncestorV1:10 $first)
    (let (gslt:result:DirectParentV1:10 $middle) (superpose (collapse (gslt:mode:DirectParentV1:10 $first)))
-   (let (gslt:result:DirectAncestorV1:10 $last) (superpose (collapse (gslt:mode:DirectAncestorV1:10 $middle)))
-   (quote (gslt:result:DirectAncestorV1:10 $last)))))
+   (superpose (collapse (gslt:mode:DirectAncestorV1:10 $middle)))))
 
 
 ; gslt-lowered-equation-v1 source-rewrite=0 source-presentation=DirectPeTTaParentV1 source-rule=direct-parent-alice-bob-v1 target=relation

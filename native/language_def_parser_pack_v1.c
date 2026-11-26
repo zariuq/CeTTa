@@ -1151,6 +1151,21 @@ bool cetta_language_def_parser_pack_v1_validate_structure(
                         defined = true;
                 }
             }
+            /* the offside rule binds its three tokens: layout indent emits
+               them, and no text spells them */
+            for (Atom *p = profile->tokens->comments; ldpp_is_app(p, "LCons", 2u); p = p->expr.elems[2]) {
+                Atom *row = p->expr.elems[1];
+                /* and an interpolated string binds its text and closer tokens */
+                bool indent = ldpp_is_app(row, "ParserLayoutIndentV1", 4u);
+                if (!indent && !ldpp_is_app(row, "ParserInterpolationV1", 7u)) continue;
+                for (uint32_t k = indent ? 1u : 2u; k <= 3u; ++k) {
+                    Atom *named = row->expr.elems[k];
+                    if (!named || named->kind != ATOM_GROUNDED || named->ground.gkind != GV_STRING) continue;
+                    const char *name = named->ground.sval;
+                    if (strlen(name) == sort->len && !memcmp(name, sort->bytes, sort->len))
+                        defined = true;
+                }
+            }
         }
         for (uint32_t i = 0u; i < language->term_len; ++i) {
             const CettaLdGrammarRuleV1 *rule = &language->terms[i];

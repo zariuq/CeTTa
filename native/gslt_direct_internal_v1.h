@@ -18,6 +18,17 @@
 typedef struct {
     const char *name;
     size_t arity;
+    /* A capability's declared modes, (oslf-external-relation-modes-v1 NAME
+       "BITS"): per argument "1", an input that must be ground, or "0", an
+       output the call binds; the capability answers at most once.  NULL for
+       a guard, whose call binds nothing. */
+    const char *modes;
+    /* For a capability whose modes are its inputs and then one output, and
+       whose PeTTa realization only computes that output by a function of the
+       inputs, (let ?x (F ?a0 ..) (quote (NAME ?a0 .. ?x))): F.  A call then
+       applies F to its ground inputs, an ordinary function call, rather than
+       calling the realization with its output open.  NULL otherwise. */
+    const char *function;
 } DirectOperatorV1;
 
 typedef struct {
@@ -31,6 +42,9 @@ typedef struct {
     size_t source_index;
     Atom *head;
     Atom *body;
+    /* from an extern source: read for the analysis, rendered by the program
+       that owns the source */
+    bool external;
 } DirectRuleV1;
 
 typedef struct {
@@ -54,6 +68,9 @@ typedef struct {
     DirectBindingModeV1 *items;
     size_t len;
     size_t cap;
+    /* the composition's capabilities, for rendering a moded capability's
+       call as a binding of its outputs */
+    const DirectOperatorsV1 *capabilities;
 } DirectBindingModesV1;
 
 /* The selected modes of a closed entry residual as one C translation unit

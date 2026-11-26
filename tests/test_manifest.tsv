@@ -355,6 +355,8 @@ tests/test_import_cycle.metta	he	metta	extended	main	native	test	golden	-
 tests/test_import_foreign_pkg_error.metta	he	metta	extended	python	native	test-python	golden	Python-enabled build golden regression
 tests/test_import_foreign_python_file.metta	he	metta	extended	python	native	test-python	golden	Python-enabled build golden regression
 tests/test_import_fresh_name_conformance.metta	he	metta	extended	main	native	test	golden	-
+tests/test_import_mask_libraries_and_modules.metta	he	metta	extended	main	native	test	golden	-
+tests/test_import_mask_module_then_library.metta	he	metta	extended	main	native	test	golden	-
 tests/test_import_mm2_module_syntax.metta	he	metta	extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_import_mm2_mork_session_lowering.metta	he	metta	extended	mork	pathmap	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_import_modules.metta	he	metta	extended	main	native	test	golden	-

@@ -1,0 +1,165 @@
+{- Python 3.15, lexical analysis (the Python Language Reference, chapter 2).
+
+   Lexical: the token classes, comments and the line structure.
+     - Ident, NUMBER and STRING are the token classes of the Reference
+       (identifiers, numbers, strings).  Ident is BNFC's name for the
+       identifier class; declaring it here replaces BNFC's default, whose
+       identifiers may contain an apostrophe.
+     - A comment runs from "#" to the end of the line.
+     - Lines: `layout indent NEWLINE INDENT DEDENT` is the offside rule of
+       section 2.1: NEWLINE ends a logical line; INDENT and DEDENT change its
+       indentation.  Lines inside (), [] and {} join, and a line ending in a
+       backslash joins the next.
+     - Formatted strings (2.4.3): an FSTRING_START token opens one; its
+       literal text reads as FSTRING_MIDDLE tokens and its quote as
+       FSTRING_END; between "{" and "}" Python's own tokens are read, and a
+       ":" at a field's top level opens the field's format spec.  "{{" and
+       "}}" are literal braces; a raw string (r or R) keeps its backslashes,
+       and elsewhere \N{...} is one escape.
+     - Number and string tokens are read as their text; what a literal
+       denotes (escapes, prefixes, bases, underscores) is decided where the
+       text becomes a value, not here.
+
+   Inventory: the keywords, operators and delimiters of sections 2.3.1, 2.5
+   and 2.6, one production each, with the token classes and the layout
+   tokens: every terminal of the language, so that a reader of this theory
+   reads every token stream of Python 3.13. -}
+Module PythonLexical {
+  Theory Lexical() {
+    Empty Terms {
+      comment "#" ;
+      token Ident (letter | '_') (letter | digit | '_')* ;
+      token NUMBER
+          ( '0' ["xX"] ('_'? (digit | ["abcdefABCDEF"]))+
+          | '0' ["oO"] ('_'? ["01234567"])+
+          | '0' ["bB"] ('_'? ["01"])+
+          | ( digit ('_'? digit)*
+            | digit ('_'? digit)* '.' (digit ('_'? digit)*)?
+            | '.' digit ('_'? digit)* )
+            (["eE"] ["+-"]? digit ('_'? digit)*)?
+            ["jJ"]? ) ;
+      token STRING
+          ( ["rRuUbB"] | ["bB"] ["rR"] | ["rR"] ["bB"] )?
+          ( '\'' ((char - ["'\\\n"]) | ('\\' char))* '\''
+          | '"' ((char - ["\"\\\n"]) | ('\\' char))* '"'
+          | {"'''"} ( (char - ["'\\"]) | ('\\' char)
+                    | ('\'' (char - ["'\\"])) | ('\'' '\\' char)
+                    | ({"''"} (char - ["'\\"])) | ({"''"} '\\' char) )* {"'''"}
+          | {"\"\"\""} ( (char - ["\"\\"]) | ('\\' char)
+                       | ('"' (char - ["\"\\"])) | ('"' '\\' char)
+                       | ({"\"\""} (char - ["\"\\"])) | ({"\"\""} '\\' char) )* {"\"\"\""} ) ;
+      token FSTRING_START (["fFtT"] | ["fFtT"] ["rR"] | ["rR"] ["fFtT"]) ('\'' | '"' | {"'''"} | {"\"\"\""}) ;
+      interpolation FSTRING_START FSTRING_MIDDLE FSTRING_END "{" "}" ":" ;
+      interpolation "raw" "rR" ;
+      interpolation "named" "N" ;
+      layout indent NEWLINE INDENT DEDENT ;
+      layout bracket "(" ")" ;
+      layout bracket "[" "]" ;
+      layout bracket "{" "}" ;
+      layout continue "\\" ;
+    }
+  }
+  Theory Inventory(lex: Lexical) {
+    lex Terms {
+      Tokens . TokenStream ::= [Token] ;
+      separator Token "" ;
+      TName . Token ::= Ident ;
+      TNumber . Token ::= NUMBER ;
+      TString . Token ::= STRING ;
+      TFStringStart . Token ::= FSTRING_START ;
+      TFStringMiddle . Token ::= FSTRING_MIDDLE ;
+      TFStringEnd . Token ::= FSTRING_END ;
+      TNewline . Token ::= NEWLINE ;
+      TIndent . Token ::= INDENT ;
+      TDedent . Token ::= DEDENT ;
+      -- keywords (2.3.1); the soft keywords match, case, type and _ are names
+      KFalse . Token ::= "False" ;
+      KNone . Token ::= "None" ;
+      KTrue . Token ::= "True" ;
+      KAnd . Token ::= "and" ;
+      KAs . Token ::= "as" ;
+      KAssert . Token ::= "assert" ;
+      KAsync . Token ::= "async" ;
+      KAwait . Token ::= "await" ;
+      KBreak . Token ::= "break" ;
+      KClass . Token ::= "class" ;
+      KContinue . Token ::= "continue" ;
+      KDef . Token ::= "def" ;
+      KDel . Token ::= "del" ;
+      KElif . Token ::= "elif" ;
+      KElse . Token ::= "else" ;
+      KExcept . Token ::= "except" ;
+      KFinally . Token ::= "finally" ;
+      KFor . Token ::= "for" ;
+      KFrom . Token ::= "from" ;
+      KGlobal . Token ::= "global" ;
+      KIf . Token ::= "if" ;
+      KImport . Token ::= "import" ;
+      KIn . Token ::= "in" ;
+      KIs . Token ::= "is" ;
+      KLambda . Token ::= "lambda" ;
+      KNonlocal . Token ::= "nonlocal" ;
+      KNot . Token ::= "not" ;
+      KOr . Token ::= "or" ;
+      KPass . Token ::= "pass" ;
+      KRaise . Token ::= "raise" ;
+      KReturn . Token ::= "return" ;
+      KTry . Token ::= "try" ;
+      KWhile . Token ::= "while" ;
+      KWith . Token ::= "with" ;
+      KYield . Token ::= "yield" ;
+      -- operators (2.5)
+      OPlus . Token ::= "+" ;
+      OMinus . Token ::= "-" ;
+      OStar . Token ::= "*" ;
+      OPower . Token ::= "**" ;
+      OSlash . Token ::= "/" ;
+      OFloorDiv . Token ::= "//" ;
+      OPercent . Token ::= "%" ;
+      OAt . Token ::= "@" ;
+      OLeftShift . Token ::= "<<" ;
+      ORightShift . Token ::= ">>" ;
+      OAmper . Token ::= "&" ;
+      OVBar . Token ::= "|" ;
+      OCircumflex . Token ::= "^" ;
+      OTilde . Token ::= "~" ;
+      OColonEqual . Token ::= ":=" ;
+      OLess . Token ::= "<" ;
+      OGreater . Token ::= ">" ;
+      OLessEqual . Token ::= "<=" ;
+      OGreaterEqual . Token ::= ">=" ;
+      OEqEqual . Token ::= "==" ;
+      ONotEqual . Token ::= "!=" ;
+      -- delimiters (2.6)
+      DLPar . Token ::= "(" ;
+      DRPar . Token ::= ")" ;
+      DLSqb . Token ::= "[" ;
+      DRSqb . Token ::= "]" ;
+      DLBrace . Token ::= "{" ;
+      DRBrace . Token ::= "}" ;
+      DComma . Token ::= "," ;
+      DColon . Token ::= ":" ;
+      DExclamation . Token ::= "!" ;
+      DDot . Token ::= "." ;
+      DSemi . Token ::= ";" ;
+      DEqual . Token ::= "=" ;
+      DRArrow . Token ::= "->" ;
+      DPlusEqual . Token ::= "+=" ;
+      DMinEqual . Token ::= "-=" ;
+      DStarEqual . Token ::= "*=" ;
+      DSlashEqual . Token ::= "/=" ;
+      DDoubleSlashEqual . Token ::= "//=" ;
+      DPercentEqual . Token ::= "%=" ;
+      DAtEqual . Token ::= "@=" ;
+      DAmperEqual . Token ::= "&=" ;
+      DVBarEqual . Token ::= "|=" ;
+      DCircumflexEqual . Token ::= "^=" ;
+      DRightShiftEqual . Token ::= ">>=" ;
+      DLeftShiftEqual . Token ::= "<<=" ;
+      DDoubleStarEqual . Token ::= "**=" ;
+      DEllipsis . Token ::= "..." ;
+    }
+  }
+  Theory Tokens() { Inventory(Lexical()) }
+  theory Tokens()
+}

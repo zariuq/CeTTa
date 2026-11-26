@@ -4,6 +4,9 @@
 ; restore returns an owned opaque SourceSyntax value. write checks that the
 ; current reader reads the rendered text back to the same captured document.
 (: syntax:read (-> %Undefined% %Undefined%))
+; (syntax:read-in NAME TEXT): the atoms the presentation NAME, compiled into the
+; executable, builds from TEXT, unevaluated, as one expression.
+(: syntax:read-in (-> %Undefined% %Undefined% %Undefined%))
 (: syntax:restore (-> %Undefined% %Undefined%))
 (: syntax:freeze (-> %Undefined% %Undefined%))
 (: syntax:write (-> %Undefined% %Undefined%))

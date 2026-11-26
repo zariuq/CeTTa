@@ -1910,6 +1910,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --lang petta --profile extended --syntax <cstyle|pystyle|rhostyle|sexpr> <file> # read by a GSLT presentation compiled at build time\n", out);
     fputs("       cetta --lang petta --syntax <cstyle-gll|pystyle-gll> <file>   # the same presentation by run-time GLL in lib/presentation\n", out);
     fputs("       cetta --lang petta [--syntax S] --print-syntax T <file> # print the document's atoms in presentation T (metta, cstyle, pystyle, rhostyle, sexpr)\n", out);
+    fputs("       cetta --lang petta --syntax S --print-tokens <file> # every token of the file as presentation S lexes it (JSON, one a line)\n", out);
     fputs("       cetta --lang petta --print-syntax T --print-hard-keywords <file> # backquote every keyword-spelled symbol, as the run-time route reads it\n", out);
     fputs("       cetta --presentations                           # the compiled presentations: name, version, source digest, certificate\n", out);
     fputs("       cetta --lang petta --syntax S --check-looks <file> # report data looks written where code runs (and calls where data is held)\n", out);
@@ -2662,6 +2663,64 @@ static bool main_load_planned_declaration_block(
     return ok;
 }
 
+/* Whether a language definition's manifest is a pipeline of stages: its root
+ * is (gslt-language-pipeline-v1 ...). */
+static bool main_langdef_manifest_is_pipeline(const char *path) {
+    static const char root[] = "gslt-language-pipeline-v1";
+    FILE *in = fopen(path, "rb");
+    if (!in) return false;
+    char text[256];
+    size_t n = fread(text, 1, sizeof text - 1u, in);
+    fclose(in);
+    text[n] = '\0';
+    size_t i = 0;
+    for (;;) {
+        while (i < n && (text[i] == ' ' || text[i] == '\t' || text[i] == '\r' || text[i] == '\n')) i++;
+        if (i < n && text[i] == ';') { while (i < n && text[i] != '\n') i++; continue; }
+        break;
+    }
+    if (i >= n || text[i] != '(') return false;
+    i++;
+    size_t len = strlen(root);
+    return n - i >= len && memcmp(text + i, root, len) == 0 &&
+           (i + len == n || strchr(" \t\r\n()", text[i + len]) != NULL);
+}
+
+/* A language defined by a pipeline of stages runs as the library's
+ * lib/language_pipeline.metta on the PeTTa lane, given the manifest, the
+ * source and the stage to stop after: this process becomes that run. */
+static int main_run_language_pipeline(const char *argv0, const char *manifest_path,
+                                      const char *source_path, const char *stage) {
+    char root[PATH_MAX], runner[PATH_MAX];
+    if (!cetta_library_root_for_exec_path(argv0, root, sizeof root)) {
+        fputs("error: cannot locate the CeTTa library for the language pipeline\n", stderr);
+        return 1;
+    }
+    int written = snprintf(runner, sizeof runner, "%s/lib/language_pipeline.metta", root);
+    if (written < 0 || (size_t)written >= sizeof runner) {
+        fputs("error: language pipeline path is too long\n", stderr);
+        return 1;
+    }
+    const char *args[10];
+    size_t k = 0;
+    args[k++] = argv0;
+    args[k++] = "--lang";
+    args[k++] = "petta";
+    args[k++] = "--no-results";
+    args[k++] = runner;
+    args[k++] = "--";   /* the manifest is data, not one more program */
+    args[k++] = manifest_path;
+    args[k++] = source_path;
+    if (stage) args[k++] = stage;
+    args[k] = NULL;
+    fflush(stdout);
+    fflush(stderr);
+    execv("/proc/self/exe", (char *const *)args);
+    execvp(argv0, (char *const *)args);
+    fprintf(stderr, "error: cannot run the language pipeline: %s\n", strerror(errno));
+    return 1;
+}
+
 static int main_run_langdef_source(const char *manifest_path,
                                    const char *filename,
                                    const char *inline_text,
@@ -2934,6 +2993,8 @@ static int cetta_main(int argc, char **argv) {
     const char *filename = NULL;
     const char *inline_text = NULL;
     const char *presentation_syntax = NULL;
+    /* --stage NAME: a pipeline language stops after its stage NAME */
+    const char *pipeline_stage = NULL;
     /* the compiled presentation read, at the version asked for */
     const GSLTPresentationTablesV1 *presentation_tables = NULL;
     /* the run-time GLL route of a presentation (--syntax NAME-gll) */
@@ -2944,6 +3005,9 @@ static int cetta_main(int argc, char **argv) {
     /* --check-looks: report data written where code runs, and calls
        written where data is held, in a presentation text; run nothing */
     bool check_looks = false;
+    /* --print-tokens: every token of a presentation text, as its reader
+       lexes it and resolves its layout; run nothing */
+    bool print_tokens = false;
     char *inline_buf = NULL;
     size_t inline_len = 0;
     size_t inline_cap = 0;
@@ -3096,8 +3160,20 @@ static int cetta_main(int argc, char **argv) {
             check_looks = true;
             continue;
         }
+        if (strcmp(argv[i], "--print-tokens") == 0) {
+            print_tokens = true;
+            continue;
+        }
         if (strcmp(argv[i], "--emit-runtime-stats") == 0) {
             emit_runtime_stats = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--stage") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            pipeline_stage = argv[++i];
             continue;
         }
         if (strcmp(argv[i], "--langdef-proof-backend") == 0) {
@@ -3477,6 +3553,21 @@ static int cetta_main(int argc, char **argv) {
             print_usage(stderr);
             free(inline_buf);
             return 1;
+        }
+        if (main_langdef_manifest_is_pipeline(source_endpoint.langdef_manifest_path)) {
+            if (!filename) {
+                fputs("error: a pipeline language reads its source from a file\n", stderr);
+                free(inline_buf);
+                return 2;
+            }
+            free(inline_buf);
+            return main_run_language_pipeline(argv[0], source_endpoint.langdef_manifest_path,
+                                              filename, pipeline_stage);
+        }
+        if (pipeline_stage) {
+            fputs("error: --stage selects a stage of a pipeline language\n", stderr);
+            free(inline_buf);
+            return 2;
         }
         int langdef_rc = main_run_langdef_source(
             source_endpoint.langdef_manifest_path,
@@ -4067,6 +4158,12 @@ static int cetta_main(int argc, char **argv) {
             rc = 2;
             goto cleanup;
         }
+        if (print_tokens && (!presentation_syntax || presentation_gll || inline_text || !filename)) {
+            fprintf(stderr, "error: --print-tokens reads a file written in a compiled presentation "
+                            "(--syntax %s)\n", gslt_presentation_v1_names());
+            rc = 2;
+            goto cleanup;
+        }
         if (presentation_syntax && !inline_text && filename && presentation_gll) {
             presentation_text = main_presentation_read(presentation_syntax, filename,
                 document_reader_error, sizeof(document_reader_error));
@@ -4087,6 +4184,19 @@ static int cetta_main(int argc, char **argv) {
             }
             const GSLTPresentationTablesV1 *read_tables =
                 presentation_tables ? presentation_tables : gslt_presentation_v1_find(presentation_syntax);
+            if (print_tokens) {
+                int dumped = gslt_presentation_v1_print_tokens(read_tables, (const char *)source, source_len,
+                                                               stdout, document_reader_error,
+                                                               sizeof(document_reader_error));
+                free(source);
+                if (dumped < 0) {
+                    fprintf(stderr, "error: %s: %s\n", filename, document_reader_error);
+                    rc = 1;
+                    goto cleanup;
+                }
+                rc = 0;
+                goto cleanup;
+            }
             if (check_looks) {
                 /* the lint: a report on standard error, nothing runs */
                 char *report = NULL;

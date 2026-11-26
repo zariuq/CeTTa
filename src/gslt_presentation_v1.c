@@ -7,6 +7,7 @@
 #include "parser.h"
 #include "petta_compiled_reader.h"
 #include "native/bnfc_layout_v1.h"
+#include "native/offside_layout_v1.h"
 #include "symbol.h"
 
 #include <stdarg.h>
@@ -266,10 +267,205 @@ static int lex_next(const GSLTPresentationTablesV1 *tb, const uint8_t *s, size_t
 typedef CettaBnfcLayoutTokenV1 LTok;
 typedef CettaBnfcLayoutTokensV1 LToks;
 
+/* Interpolated strings (the tables' interp fields): a stack of regions over
+   the lexer.  A region is the literal text of a string, a field of it, or a
+   field's format spec; outside every region, and inside a field, the
+   lexer's own tokens are read. */
+enum { REGION_TEXT, REGION_FIELD, REGION_SPEC };
+
+typedef struct {
+    uint8_t kind;
+    bool raw;            /* text: backslashes keep no named escape */
+    bool resumed;        /* spec: a nested field just closed */
+    uint32_t quote, quote_len; /* text: its closing quote, a span of the opener */
+    uint32_t depth;      /* field: brackets open inside it */
+} Region;
+
+static bool region_push(Region **rs, size_t *nr, size_t *cr, Region r) {
+    if (*nr == *cr) {
+        size_t nc = *cr ? *cr * 2 : 16;
+        Region *v = realloc(*rs, nc * sizeof *v);
+        if (!v) return false;
+        *rs = v;
+        *cr = nc;
+    }
+    (*rs)[(*nr)++] = r;
+    return true;
+}
+
+static bool lex_tok_push(LToks *out, size_t a, size_t b, int term, int raw) {
+    LTok k = {(uint32_t)a, (uint32_t)b, term, 0, 0, false, raw};
+    return cetta_bnfc_layout_v1_push(out, k);
+}
+
+static size_t utf8_width(const uint8_t *s, size_t n, size_t i) {
+    uint32_t cp;
+    size_t w = utf8_decode(s, n, i, &cp);
+    return w ? w : 1;
+}
+
+static int lex_regions(const GSLTPresentationTablesV1 *tb, const uint8_t *s, size_t n, LToks *out, char *err,
+                       size_t errsz, CommentCap *cap) {
+    Region *rs = NULL;
+    size_t nr = 0, cr = 0, pos = 0, opened = 0;
+    int rc = -1;
+    const char *fo = tb->terminal_text[tb->interp_field_open], *fc = tb->terminal_text[tb->interp_field_close];
+    size_t fol = strlen(fo), fcl = strlen(fc);
+#define RG_FAIL(p, msg) do { unsigned l_, c_; line_col(s, (p), &l_, &c_); \
+        set_error(err, errsz, "line %u, column %u: %s", l_, c_, (msg)); goto rg_done; } while (0)
+#define RG_TOK(a, b, term) do { if (!lex_tok_push(out, (a), (b), (term), -1)) goto rg_oom; } while (0)
+    for (;;) {
+        Region *top = nr ? &rs[nr - 1] : NULL;
+        if (!top || top->kind == REGION_FIELD) {
+            Tok tok;
+            int r = lex_next_cap(tb, s, n, &pos, &tok, err, errsz, cap);
+            if (r < 0) goto rg_done;
+            if (r == 0) {
+                if (nr) RG_FAIL(opened, "unterminated interpolated string");
+                break;
+            }
+            if (top && top->depth == 0 && tok.term != tb->interp_spec) {
+                /* at a field's top level the spec delimiter ends the
+                   expression, whatever longer token begins with it (x:=1
+                   is x with the spec =1, as PEP 701 reads it) */
+                const char *spec_text = tb->terminal_text[tb->interp_spec];
+                size_t sl = strlen(spec_text);
+                if (tok.end - tok.start > sl && memcmp(s + tok.start, spec_text, sl) == 0) {
+                    tok.term = tb->interp_spec;
+                    tok.raw_term = -1;
+                    tok.end = tok.start + (uint32_t)sl;
+                    pos = tok.end;
+                }
+            }
+            if (!lex_tok_push(out, tok.start, tok.end, tok.term, tok.raw_term)) goto rg_oom;
+            if (top) {
+                if (top->depth == 0 && tok.term == tb->interp_field_close) {
+                    nr--; /* the field ends */
+                    if (nr && rs[nr - 1].kind == REGION_SPEC) rs[nr - 1].resumed = true;
+                    continue;
+                }
+                if (top->depth == 0 && tok.term == tb->interp_spec) {
+                    Region spec = {REGION_SPEC, false, false, 0, 0, 0};
+                    if (!region_push(&rs, &nr, &cr, spec)) goto rg_oom;
+                    continue;
+                }
+                int kind = tb->terminal_bracket ? tb->terminal_bracket[tok.term]
+                         : tok.term == tb->interp_field_open ? 1 : tok.term == tb->interp_field_close ? 2 : 0;
+                if (kind == 1) top->depth++;
+                else if (kind == 2 && top->depth > 0) top->depth--;
+            }
+            if (tok.term == tb->interp_open) {
+                /* the closing quote is the opener's text after its letters */
+                uint32_t q = tok.start;
+                for (uint32_t i = tok.start; i < tok.end; i++)
+                    if ((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z')) q = i + 1;
+                bool raw = false;
+                for (uint32_t i = tok.start; tb->interp_raw && i < q; i++)
+                    if (strchr(tb->interp_raw, s[i])) raw = true;
+                Region text = {REGION_TEXT, raw, false, q, tok.end - q, 0};
+                if (q == tok.end) RG_FAIL(tok.start, "an interpolated string's opener has no quote");
+                if (!region_push(&rs, &nr, &cr, text)) goto rg_oom;
+                opened = tok.start;
+            }
+            continue;
+        }
+        bool spec = top->kind == REGION_SPEC;
+        /* the nearest enclosing string's quote */
+        const Region *string_region = top;
+        for (size_t k = nr; k-- > 0;)
+            if (rs[k].kind == REGION_TEXT) { string_region = &rs[k]; break; }
+        size_t start = pos;
+        for (;;) {
+            if (pos >= n) RG_FAIL(opened, "unterminated interpolated string");
+            if (!spec && pos + top->quote_len <= n && memcmp(s + pos, s + top->quote, top->quote_len) == 0) {
+                if (pos > start) RG_TOK(start, pos, tb->interp_text);
+                RG_TOK(pos, pos + top->quote_len, tb->interp_close);
+                pos += top->quote_len;
+                nr--;
+                break;
+            }
+            if (starts_with(s, n, pos, fo)) {
+                if (!spec && starts_with(s, n, pos + fol, fo)) {
+                    /* a doubled bracket is one literal bracket: the text so
+                       far ends with the pair (CPython's tokenizer reports the
+                       text without the second; print_tokens does too) */
+                    RG_TOK(start, pos + 2 * fol, tb->interp_text);
+                    pos += 2 * fol;
+                    start = pos;
+                    continue;
+                }
+                /* a spec's text before a nested field is emitted only when
+                   there is some; before its closing bracket, after a nested
+                   field, it is emitted even when empty (as CPython's
+                   tokenizer does) */
+                if (pos > start) RG_TOK(start, pos, tb->interp_text);
+                top->resumed = false;
+                RG_TOK(pos, pos + fol, tb->interp_field_open);
+                pos += fol;
+                Region field = {REGION_FIELD, false, false, 0, 0, 0};
+                if (!region_push(&rs, &nr, &cr, field)) goto rg_oom;
+                break;
+            }
+            if (starts_with(s, n, pos, fc)) {
+                if (!spec) {
+                    if (!starts_with(s, n, pos + fcl, fc))
+                        RG_FAIL(pos, "a single closing field bracket in an interpolated string's text");
+                    RG_TOK(start, pos + 2 * fcl, tb->interp_text);
+                    pos += 2 * fcl;
+                    start = pos;
+                    continue;
+                }
+                /* the spec ends, and its field with it */
+                if (pos > start || top->resumed) RG_TOK(start, pos, tb->interp_text);
+                RG_TOK(pos, pos + fcl, tb->interp_field_close);
+                pos += fcl;
+                nr -= 2;
+                if (nr && rs[nr - 1].kind == REGION_SPEC) rs[nr - 1].resumed = true;
+                break;
+            }
+            uint8_t c = s[pos];
+            if (c == '\\' && pos + 1 < n) {
+                if (starts_with(s, n, pos + 1, fo) || starts_with(s, n, pos + 1, fc)) {
+                    pos++; /* a backslash before a field bracket is text; the bracket is read */
+                    continue;
+                }
+                if (!string_region->raw && tb->interp_named && tb->interp_named[0] &&
+                    (uint8_t)tb->interp_named[0] == s[pos + 1] && starts_with(s, n, pos + 2, fo)) {
+                    size_t j = pos + 2 + fol; /* a named escape runs to the closing bracket */
+                    while (j < n && !starts_with(s, n, j, fc)) j++;
+                    if (j >= n) RG_FAIL(pos, "unterminated named escape in an interpolated string");
+                    pos = j + fcl;
+                    /* its closing bracket ends the text, as a doubled one does */
+                    RG_TOK(start, pos, tb->interp_text);
+                    start = pos;
+                    continue;
+                }
+                pos++;
+                pos += utf8_width(s, n, pos);
+                continue;
+            }
+            if ((c == '\n' || c == '\r') && string_region->quote_len == 1)
+                RG_FAIL(pos, "unterminated interpolated string: a line end before its quote");
+            pos += utf8_width(s, n, pos);
+        }
+    }
+    cetta_bnfc_layout_v1_positions(s, n, out->v, out->n);
+    rc = 0;
+    goto rg_done;
+rg_oom:
+    set_error(err, errsz, "out of memory reading interpolated strings");
+rg_done:
+#undef RG_FAIL
+#undef RG_TOK
+    free(rs);
+    return rc;
+}
+
 /* Every token, with its line and column (a tab advances to the next
    multiple of 8, as BNFC's lexer counts). */
 static int lex_all(const GSLTPresentationTablesV1 *tb, const uint8_t *s, size_t n, LToks *out, char *err,
                    size_t errsz, CommentCap *cap) {
+    if (tb->interp) return lex_regions(tb, s, n, out, err, errsz, cap);
     size_t pos = 0;
     for (;;) {
         Tok tok;
@@ -295,6 +491,58 @@ static int resolve_layout(const GSLTPresentationTablesV1 *tb, const LToks *in, L
         return -1;
     }
     return 0;
+}
+
+/* The offside rule of indented blocks (native/offside_layout_v1.h); TRIVIA,
+   when given, receives the comments and the line ends that end no logical
+   line. */
+static int resolve_offside(const GSLTPresentationTablesV1 *tb, const uint8_t *s, size_t n, const LToks *in,
+                           LToks *out, CettaOffsideTriviasV1 *trivia, char *err, size_t errsz) {
+    CettaOffsideLayoutRulesV1 rules = {tb->offside_newline, tb->offside_indent, tb->offside_dedent,
+                                       tb->terminal_bracket, tb->n_terminals, tb->offside_continuation,
+                                       tb->line_comment, tb->n_line_comments};
+    char lerr[256] = "";
+    if (!cetta_offside_layout_v1_resolve(&rules, s, n, in->v, in->n, out, trivia, lerr, sizeof lerr)) {
+        set_error(err, errsz, "%s", lerr);
+        return -1;
+    }
+    return 0;
+}
+
+/* Soft keywords (the tables' has_soft), over the resolved tokens: a keyword
+   with a line or a following-token condition is one only where it holds, and
+   is otherwise the token it was lexed as; a keyword soft by the grammar stays
+   for the parser to decide; every other keyword is hard. */
+static void resolve_soft(const GSLTPresentationTablesV1 *tb, LToks *toks) {
+    for (size_t i = 0; i < toks->n; i++) {
+        LTok *t = &toks->v[i];
+        if (t->term < 0 || tb->terminal_kind[t->term] != GSLT_PRES_TERM_KEYWORD || t->extra < 0) continue;
+        int kind = tb->terminal_soft[t->term];
+        if (kind == 3) continue; /* the parser decides */
+        bool keep = true;
+        if (kind == 1) {
+            /* the first token of its logical line, which ends with the terminal */
+            bool first = i == 0;
+            if (!first && tb->offside) {
+                int prev = toks->v[i - 1].term;
+                first = prev == tb->offside_newline || prev == tb->offside_indent || prev == tb->offside_dedent;
+            }
+            int last = -1;
+            for (size_t j = i + 1; j < toks->n && toks->v[j].term != tb->offside_newline; j++)
+                last = toks->v[j].term;
+            keep = first && last == tb->terminal_soft_arg[t->term];
+        } else if (kind == 2) {
+            /* before a token of the category, or a soft keyword lexed as one
+               (a hard keyword is never a name) */
+            const LTok *next = i + 1 < toks->n ? &toks->v[i + 1] : NULL;
+            int arg = tb->terminal_soft_arg[t->term];
+            keep = next && (next->term == arg ||
+                            (next->extra == arg && tb->terminal_kind[next->term] == GSLT_PRES_TERM_KEYWORD &&
+                             tb->terminal_soft[next->term] != 0));
+        }
+        if (kind && !keep) t->term = t->extra;
+        t->extra = -1; /* decided: the parser reads it as it stands */
+    }
 }
 
 /* The parser's tokens: lexed as it goes, or resolved for layout first. */
@@ -340,6 +588,68 @@ static int lex_single(const GSLTPresentationTablesV1 *tb, const char *text, size
 /* Whether the parser could shift TERM from the state stack, after the
    reductions it would make first: an LALR(1) table may reduce on a
    terminal it later rejects, so the first action alone does not tell. */
+/* Whether the parser can take TERM from the stack made of the real stack's
+   first K states and then the NE states of EXTRA (its own copy). */
+static bool lr_viable_from(const GSLTPresentationTablesV1 *tb, const int *states, size_t k,
+                           const int *over, int nover, int term) {
+    int extra[256];
+    int ne = nover;
+    for (int i = 0; i < nover; i++) extra[i] = over[i];
+    for (int guard = 0; guard < 100000; guard++) {
+        int st = ne ? extra[ne - 1] : states[k - 1];
+        int16_t act = tb->action[(size_t)st * tb->n_terminals + (size_t)term];
+        if (act == 0) return false;
+        if (act > 0) return true; /* a shift, or the accepting action */
+        int p = -act - 1;
+        int len = tb->prod_len[p];
+        while (len > 0) {
+            if (ne) ne--;
+            else if (k > 1) k--;
+            else return false;
+            len--;
+        }
+        int top = ne ? extra[ne - 1] : states[k - 1];
+        int to = tb->goto_[(size_t)top * tb->n_nonterminals + (size_t)tb->prod_lhs[p]];
+        if (to < 0 || ne == 256) return false;
+        extra[ne++] = to;
+    }
+    return false;
+}
+
+/* Whether the parser can take T1 and then T2 (or its other reading T2RAW, a
+   soft keyword's name): T1's reductions and shift simulated, T2 asked of the
+   stack they leave. */
+static bool lr_viable_then(const GSLTPresentationTablesV1 *tb, const int *states, size_t sp,
+                           int t1, int t2, int t2raw) {
+    int extra[256];
+    int ne = 0;
+    size_t k = sp;
+    for (int guard = 0; guard < 100000; guard++) {
+        int st = ne ? extra[ne - 1] : states[k - 1];
+        int16_t act = tb->action[(size_t)st * tb->n_terminals + (size_t)t1];
+        if (act == 0 || act == GSLT_PRES_ACCEPT) return false;
+        if (act > 0) {
+            if (ne == 256) return false;
+            extra[ne++] = act - 1;
+            return lr_viable_from(tb, states, k, extra, ne, t2) ||
+                   (t2raw >= 0 && lr_viable_from(tb, states, k, extra, ne, t2raw));
+        }
+        int p = -act - 1;
+        int len = tb->prod_len[p];
+        while (len > 0) {
+            if (ne) ne--;
+            else if (k > 1) k--;
+            else return false;
+            len--;
+        }
+        int top = ne ? extra[ne - 1] : states[k - 1];
+        int to = tb->goto_[(size_t)top * tb->n_nonterminals + (size_t)tb->prod_lhs[p]];
+        if (to < 0 || ne == 256) return false;
+        extra[ne++] = to;
+    }
+    return false;
+}
+
 static bool lr_viable(const GSLTPresentationTablesV1 *tb, const int *states, size_t sp, int term) {
     int extra[256];
     int ne = 0;
@@ -375,6 +685,8 @@ typedef struct {
     uint32_t head, len;  /* V_LIST: first cell, length; V_TOKEN: start, end */
     uint32_t pos;        /* where its text begins, or UINT32_MAX */
     uint32_t node;       /* its node in a recorded parse tree (the lint) */
+    uint32_t end;        /* where its text ends, or 0 */
+    uint32_t prev_end;   /* where the token before its text ends */
 } Val;
 
 /* The parse tree a reading records for the lint: a node per token and per
@@ -450,7 +762,36 @@ typedef struct {
     size_t (*scopes)[GSLT_PRES_MAX_CHANNELS];
     size_t n_scopes, cap_scopes;
     uint32_t scope_pos;
+    /* positions: the span of the production being reduced, the span of its
+       text with the trivia around it, and the starts of the text's lines,
+       built on first use */
+    uint32_t span_pos, span_end;
+    uint32_t full_pos, full_end;
+    uint32_t *line_starts;
+    size_t n_lines;
 } Rd;
+
+/* line (from 1) and byte column (from 0) of byte P */
+static bool rd_place(Rd *r, uint32_t p, uint32_t *line, uint32_t *col) {
+    if (!r->line_starts) {
+        size_t n = 1;
+        for (size_t i = 0; i < r->src_len; i++) if (r->src[i] == '\n') n++;
+        r->line_starts = malloc(n * sizeof *r->line_starts);
+        if (!r->line_starts) return false;
+        r->line_starts[0] = 0;
+        r->n_lines = 1;
+        for (size_t i = 0; i < r->src_len; i++)
+            if (r->src[i] == '\n') r->line_starts[r->n_lines++] = (uint32_t)(i + 1);
+    }
+    size_t lo = 0, hi = r->n_lines - 1;
+    while (lo < hi) {
+        size_t mid = (lo + hi + 1) / 2;
+        if (r->line_starts[mid] <= p) lo = mid; else hi = mid - 1;
+    }
+    *line = (uint32_t)lo + 1;
+    *col = p - r->line_starts[lo];
+    return true;
+}
 
 static bool scope_open(Rd *r) {
     if (r->n_scopes == r->cap_scopes) {
@@ -573,6 +914,8 @@ static AtomId leaf_of(Rd *r, int kind, uint32_t a, uint32_t b) {
         }
         return ground_string(&r->g, t, k);
     }
+    case GSLT_PRES_LEAF_TEXT:
+        return ground_string(&r->g, s, n);
     case GSLT_PRES_LEAF_RAW:
         /* r#"..."# */
         if (n < 5) return CETTA_ATOM_ID_NONE;
@@ -585,6 +928,23 @@ static AtomId leaf_of(Rd *r, int kind, uint32_t a, uint32_t b) {
 static AtomId val_atom(Rd *r, Val v);
 
 static AtomId list_atom(Rd *r, uint32_t head, uint32_t len) {
+    if (r->tb->lists_cons) {
+        /* (LCons item rest) ... (LNil), built from the last item back */
+        size_t base = r->n_tmp;
+        for (uint32_t c = head, k = 0; c != NIL && k < len; c = r->cells[c].next, k++) {
+            AtomId id = val_atom(r, r->cells[c].v);
+            if (id == CETTA_ATOM_ID_NONE || !tmp_push(r, id)) { r->n_tmp = base; return CETTA_ATOM_ID_NONE; }
+        }
+        AtomId nil_head = ground_word(&r->g, (const uint8_t *)"LNil", 4);
+        AtomId out = ground_expression(&r->g, &nil_head, 1);
+        AtomId cons_head = ground_word(&r->g, (const uint8_t *)"LCons", 5);
+        for (size_t i = r->n_tmp; out != CETTA_ATOM_ID_NONE && i-- > base;) {
+            AtomId kids[3] = {cons_head, r->tmp[i], out};
+            out = ground_expression(&r->g, kids, 3);
+        }
+        r->n_tmp = base;
+        return out;
+    }
     size_t base = r->n_tmp;
     for (uint32_t c = head, k = 0; c != NIL && k < len; c = r->cells[c].next, k++) {
         AtomId id = val_atom(r, r->cells[c].v);
@@ -599,7 +959,9 @@ static AtomId val_atom(Rd *r, Val v) {
     switch (v.kind) {
     case V_ATOM: return v.id;
     case V_LIST: return list_atom(r, v.head, v.len);
-    case V_TOKEN: return ground_word(&r->g, r->src + v.head, v.len - v.head);
+    case V_TOKEN:
+        if (r->tb->token_default) return leaf_of(r, r->tb->token_default, v.head, v.len);
+        return ground_word(&r->g, r->src + v.head, v.len - v.head);
     case V_RUN:
         set_error(r->err, r->errsz, "a !-statement inside an expression");
         return CETTA_ATOM_ID_NONE;
@@ -641,6 +1003,28 @@ static bool t_eval(Rd *r, const int32_t **pc, const Val *args, int nargs, Val *o
         if (i < 0 || i >= nargs) return false;
         *out = args[i];
         return true;
+    }
+    case GSLT_PRES_T_FULL_TEXT:
+        out->kind = V_ATOM;
+        out->id = ground_string(&r->g, r->src + r->full_pos, r->full_end - r->full_pos);
+        return out->id != CETTA_ATOM_ID_NONE;
+    case GSLT_PRES_T_SPAN:
+    case GSLT_PRES_T_FULL_SPAN: {
+        uint32_t place[4];
+        uint32_t from = op == GSLT_PRES_T_SPAN ? r->span_pos : r->full_pos;
+        uint32_t to = op == GSLT_PRES_T_SPAN ? r->span_end : r->full_end;
+        if (!rd_place(r, from, &place[0], &place[1]) || !rd_place(r, to, &place[2], &place[3]))
+            return false;
+        AtomId kids[5];
+        kids[0] = ground_word(&r->g, (const uint8_t *)"Span", 4);
+        for (int k = 0; k < 4; k++) {
+            char digits[16];
+            int n = snprintf(digits, sizeof digits, "%u", (unsigned)place[k]);
+            kids[k + 1] = ground_word(&r->g, (const uint8_t *)digits, (size_t)n);
+        }
+        out->kind = V_ATOM;
+        out->id = ground_expression(&r->g, kids, 5);
+        return out->id != CETTA_ATOM_ID_NONE;
     }
     case GSLT_PRES_T_EXPR: {
         int32_t n = *(*pc)++;
@@ -725,10 +1109,9 @@ static void expected_terms(const GSLTPresentationTablesV1 *tb, int state, char *
     for (int t = 0; t < tb->n_terminals && k + 32 < n; t++) {
         if (!tb->action[(size_t)state * tb->n_terminals + (size_t)t]) continue;
         if (shown == 12) { k += (size_t)snprintf(out + k, n - k, ", ..."); break; }
-        k += (size_t)snprintf(out + k, n - k, "%s%s%s%s", shown ? ", " : "",
-                              tb->terminal_kind[t] == GSLT_PRES_TERM_TOKEN ? "" : "'",
-                              tb->terminal_text[t],
-                              tb->terminal_kind[t] == GSLT_PRES_TERM_TOKEN ? "" : "'");
+        bool named = tb->terminal_kind[t] == GSLT_PRES_TERM_TOKEN || tb->terminal_kind[t] == GSLT_PRES_TERM_LAYOUT;
+        k += (size_t)snprintf(out + k, n - k, "%s%s%s%s", shown ? ", " : "", named ? "" : "'",
+                              tb->terminal_text[t], named ? "" : "'");
         shown++;
     }
 }
@@ -738,10 +1121,41 @@ static int read_ids_internal(const GSLTPresentationTablesV1 *tb, GSLTPresentatio
                              GSLTPresentationCommentV1 **comments, size_t *n_comments, char *err,
                              size_t errsz, LintTree *lint);
 
+/* The text a presentation with the offside rule reads: its line ends, \r\n
+   and a lone \r as well as \n, are read as \n (the Python Language
+   Reference, "Physical lines").  NULL when TEXT needs no change, or on
+   failure with *FAILED set. */
+static char *line_ends_read(const GSLTPresentationTablesV1 *tb, const char *text, size_t len, size_t *out_len,
+                            bool *failed) {
+    *failed = false;
+    if (!tb || !tb->offside || !text || !memchr(text, '\r', len)) return NULL;
+    char *out = malloc(len + 1u);
+    if (!out) { *failed = true; return NULL; }
+    size_t k = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (text[i] == '\r') {
+            out[k++] = '\n';
+            if (i + 1 < len && text[i + 1] == '\n') i++;
+        } else {
+            out[k++] = text[i];
+        }
+    }
+    out[k] = '\0';
+    *out_len = k;
+    return out;
+}
+
 int gslt_presentation_v1_read_ids(const GSLTPresentationTablesV1 *tb, GSLTPresentationGroundingKindV1 grounding,
                                   const char *text, size_t len, TermUniverse *universe, AtomId **out_ids,
                                   char *err, size_t errsz) {
-    return read_ids_internal(tb, grounding, text, len, universe, out_ids, NULL, NULL, err, errsz, NULL);
+    bool failed;
+    size_t read_len = len;
+    char *read = line_ends_read(tb, text, len, &read_len, &failed);
+    if (failed) { set_error(err, errsz, "out of memory reading line ends"); return -1; }
+    int n = read_ids_internal(tb, grounding, read ? read : text, read_len, universe, out_ids, NULL, NULL, err,
+                              errsz, NULL);
+    free(read);
+    return n;
 }
 
 int gslt_presentation_v1_read_ids_comments(const GSLTPresentationTablesV1 *tb,
@@ -752,8 +1166,180 @@ int gslt_presentation_v1_read_ids_comments(const GSLTPresentationTablesV1 *tb,
     if (comments) *comments = NULL;
     if (n_comments) *n_comments = 0;
     if (!comments || !n_comments) return -1;
-    return read_ids_internal(tb, grounding, text, len, universe, out_ids, comments, n_comments, err, errsz,
-                             NULL);
+    bool failed;
+    size_t read_len = len;
+    char *read = line_ends_read(tb, text, len, &read_len, &failed);
+    if (failed) { set_error(err, errsz, "out of memory reading line ends"); return -1; }
+    int n = read_ids_internal(tb, grounding, read ? read : text, read_len, universe, out_ids, comments, n_comments,
+                              err, errsz, NULL);
+    free(read);
+    return n;
+}
+
+/* ------------------------------------------------------------ token dump */
+
+static void json_text(FILE *out, const uint8_t *s, size_t n) {
+    fputc('"', out);
+    for (size_t i = 0; i < n; i++) {
+        uint8_t c = s[i];
+        if (c == '"' || c == '\\') { fputc('\\', out); fputc(c, out); }
+        else if (c == '\n') fputs("\\n", out);
+        else if (c == '\r') fputs("\\r", out);
+        else if (c == '\t') fputs("\\t", out);
+        else if (c < 0x20 || c == 0x7f) fprintf(out, "\\u%04x", c);
+        else fputc(c, out);
+    }
+    fputc('"', out);
+}
+
+/* line (from 1) and column (from 0, in code points) of byte P */
+static void dump_place(const uint8_t *s, const size_t *ls, size_t nls, size_t p, unsigned *line, unsigned *col) {
+    size_t lo = 0, hi = nls - 1;
+    while (lo < hi) {
+        size_t mid = (lo + hi + 1) / 2;
+        if (ls[mid] <= p) lo = mid; else hi = mid - 1;
+    }
+    unsigned c = 0;
+    for (size_t q = ls[lo]; q < p; q++)
+        if ((s[q] & 0xC0) != 0x80) c++;
+    *line = (unsigned)lo + 1u;
+    *col = c;
+}
+
+typedef struct {
+    uint32_t start, end;
+    int rank;           /* at one place: an inserted token, then trivia, then a token */
+    const char *class_; /* or NULL: the class of TERM */
+    int term, raw;
+    bool virt, line_end;
+} DumpItem;
+
+static int dump_item_cmp(const void *a, const void *b) {
+    const DumpItem *x = a, *y = b;
+    if (x->start != y->start) return x->start < y->start ? -1 : 1;
+    return (x->rank > y->rank) - (x->rank < y->rank);
+}
+
+int gslt_presentation_v1_print_tokens(const GSLTPresentationTablesV1 *tb, const char *text, size_t len, void *file,
+                                      char *err, size_t errsz) {
+    FILE *out = file;
+    LToks lexed = {0}, resolved = {0};
+    CommentCap ccap = {0};
+    CettaOffsideTriviasV1 trivia = {0};
+    DumpItem *items = NULL;
+    size_t *ls = NULL, nls = 0;
+    int rc = -1;
+    if (err && errsz) err[0] = '\0';
+    if (!tb || !text || !out) return -1;
+    bool failed;
+    size_t read_len = len;
+    char *read = line_ends_read(tb, text, len, &read_len, &failed);
+    if (failed) { set_error(err, errsz, "out of memory reading line ends"); return -1; }
+    if (read) { text = read; len = read_len; }
+    const uint8_t *s = (const uint8_t *)text;
+    /* a last line without its line end: the end of the input stands on the
+       line after it, as if the line ended (CPython's tokenizer does so) */
+    bool open_last = len > 0 && s[len - 1] != '\n';
+    if (lex_all(tb, s, len, &lexed, err, errsz, &ccap) < 0) goto done;
+    const LToks *toks = &lexed;
+    if (tb->offside) {
+        if (resolve_offside(tb, s, len, &lexed, &resolved, &trivia, err, errsz) < 0) goto done;
+        toks = &resolved;
+    } else if (tb->has_layout) {
+        if (resolve_layout(tb, &lexed, &resolved, err, errsz) < 0) goto done;
+        toks = &resolved;
+        for (size_t k = 0; k < ccap.n; k++)
+            if (!cetta_offside_layout_v1_trivia(&trivia, CETTA_OFFSIDE_COMMENT, ccap.start[k], ccap.end[k])) goto done;
+    } else {
+        for (size_t k = 0; k < ccap.n; k++)
+            if (!cetta_offside_layout_v1_trivia(&trivia, CETTA_OFFSIDE_COMMENT, ccap.start[k], ccap.end[k])) goto done;
+    }
+    size_t n_items = toks->n + trivia.n;
+    items = calloc(n_items ? n_items : 1u, sizeof *items);
+    ls = malloc((len + 2u) * sizeof *ls);
+    if (!items || !ls) { set_error(err, errsz, "out of memory dumping tokens"); goto done; }
+    ls[nls++] = 0;
+    for (size_t p = 0; p < len;) {
+        size_t e = cetta_offside_layout_v1_eol(s, len, p);
+        if (e) { p += e; ls[nls++] = p; } else p++;
+    }
+    size_t k = 0;
+    for (size_t i = 0; i < toks->n; i++) {
+        const LTok *t = &toks->v[i];
+        DumpItem *d = &items[k++];
+        d->start = t->start;
+        d->end = t->end;
+        if (tb->interp && t->term == tb->interp_text) {
+            /* a text ending with a doubled field bracket: CPython's tokenize
+               reports it without the second bracket (only doubling ends a
+               text with two brackets: one alone opens a field or is refused,
+               and a named escape ends with one) */
+            const char *pair[2] = {tb->terminal_text[tb->interp_field_open], tb->terminal_text[tb->interp_field_close]};
+            for (int b = 0; b < 2; b++) {
+                size_t w = strlen(pair[b]);
+                if (w && t->end - t->start >= 2 * w && memcmp(s + t->end - w, pair[b], w) == 0 &&
+                    memcmp(s + t->end - 2 * w, pair[b], w) == 0) {
+                    d->end -= (uint32_t)w;
+                    break;
+                }
+            }
+        }
+        d->term = t->term;
+        d->raw = t->extra;
+        d->virt = t->virt;
+        d->rank = t->virt && t->start == t->end ? 0 : 2;
+        d->line_end = tb->offside && t->term == tb->offside_newline;
+    }
+    for (size_t i = 0; i < trivia.n; i++) {
+        DumpItem *d = &items[k++];
+        d->start = trivia.v[i].start;
+        d->end = trivia.v[i].end;
+        d->rank = 1;
+        d->term = -1;
+        d->raw = -1;
+        d->class_ = trivia.v[i].kind == CETTA_OFFSIDE_COMMENT ? "comment" : "nl";
+        d->line_end = trivia.v[i].kind == CETTA_OFFSIDE_NL;
+    }
+    qsort(items, n_items, sizeof *items, dump_item_cmp);
+    for (size_t i = 0; i < n_items; i++) {
+        const DumpItem *d = &items[i];
+        const char *cls = d->class_;
+        if (!cls) {
+            uint8_t kind = tb->terminal_kind[d->term];
+            if (kind == GSLT_PRES_TERM_SYMBOL) cls = "symbol";
+            else if (kind == GSLT_PRES_TERM_KEYWORD && d->raw >= 0) cls = tb->terminal_text[d->raw];
+            else cls = tb->terminal_text[d->term];
+        }
+        size_t a = d->start, b = d->end;
+        if (d->line_end && d->virt) b = a + cetta_offside_layout_v1_eol(s, len, a); /* the line end it stands for */
+        unsigned l0, c0, l1, c1;
+        dump_place(s, ls, nls, a, &l0, &c0);
+        if (d->line_end) { l1 = l0; c1 = c0 + 1u; }
+        else dump_place(s, ls, nls, b, &l1, &c1);
+        if (open_last && a == len && !d->line_end) { l0 = l1 = (unsigned)nls + 1u; c0 = c1 = 0; }
+        fputc('[', out);
+        json_text(out, (const uint8_t *)cls, strlen(cls));
+        fputc(',', out);
+        json_text(out, s + a, b - a);
+        fprintf(out, ",%u,%u,%u,%u]\n", l0, c0, l1, c1);
+    }
+    {
+        unsigned l0, c0;
+        dump_place(s, ls, nls, len, &l0, &c0);
+        if (open_last) { l0 = (unsigned)nls + 1u; c0 = 0; }
+        fprintf(out, "[\"end\",\"\",%u,%u,%u,%u]\n", l0, c0, l0, c0);
+    }
+    rc = 0;
+done:
+    free(read);
+    free(lexed.v);
+    free(resolved.v);
+    free(ccap.start);
+    free(ccap.end);
+    free(trivia.v);
+    free(items);
+    free(ls);
+    return rc;
 }
 
 void gslt_presentation_v1_comments_free(GSLTPresentationCommentV1 *comments, size_t n) {
@@ -803,12 +1389,17 @@ static int read_ids_internal(const GSLTPresentationTablesV1 *tb, GSLTPresentatio
     if (!ground_begin(&r.g)) goto done;
 
     TokSrc ts = {tb, r.src, len, 0, NULL, 0, comments ? &ccap : NULL};
-    if (tb->has_layout) {
+    if (tb->has_layout || tb->offside || tb->interp || tb->has_soft) {
         LToks lexed = {0};
         int lr = lex_all(tb, r.src, len, &lexed, err, errsz, comments ? &ccap : NULL);
-        if (lr == 0) lr = resolve_layout(tb, &lexed, &resolved, err, errsz);
+        if (lr == 0) {
+            if (tb->offside) lr = resolve_offside(tb, r.src, len, &lexed, &resolved, NULL, err, errsz);
+            else if (tb->has_layout) lr = resolve_layout(tb, &lexed, &resolved, err, errsz);
+            else { resolved = lexed; memset(&lexed, 0, sizeof lexed); }
+        }
         free(lexed.v);
         if (lr < 0) goto done;
+        if (tb->has_soft) resolve_soft(tb, &resolved);
         ts.arr = &resolved;
     }
     Tok tok;
@@ -822,14 +1413,24 @@ static int read_ids_internal(const GSLTPresentationTablesV1 *tb, GSLTPresentatio
     if (!states || !vals) goto done;
     states[0] = 0;
     sp = 1;
+    uint32_t last_end = 0; /* where the last real token shifted ends */
     for (;;) {
         int st = states[sp - 1];
         if (tok.raw_term >= 0) {
             /* A keyword is a name wherever the grammar cannot take the
-               keyword but can take the name; where it can take the
-               keyword, the keyword is read. */
-            if (!lr_viable(tb, states, sp, tok.term) && lr_viable(tb, states, sp, tok.raw_term))
+               keyword but can take the name.  Where it can take both, the
+               keyword is read unless the token after it can follow only the
+               name (lazy = 1 assigns; lazy import x imports). */
+            bool as_keyword = lr_viable(tb, states, sp, tok.term);
+            bool as_name = lr_viable(tb, states, sp, tok.raw_term);
+            if (!as_keyword && as_name) {
                 tok.term = tok.raw_term;
+            } else if (as_keyword && as_name && ts.arr && ts.idx < ts.arr->n) {
+                const LTok *next = &ts.arr->v[ts.idx];
+                if (!lr_viable_then(tb, states, sp, tok.term, next->term, next->extra) &&
+                    lr_viable_then(tb, states, sp, tok.raw_term, next->term, next->extra))
+                    tok.term = tok.raw_term;
+            }
             tok.raw_term = -1;
         }
         int16_t act = tb->action[(size_t)st * tb->n_terminals + (size_t)tok.term];
@@ -866,6 +1467,9 @@ static int read_ids_internal(const GSLTPresentationTablesV1 *tb, GSLTPresentatio
             vals[sp].len = tok.end;
             vals[sp].id = CETTA_ATOM_ID_NONE;
             vals[sp].pos = tok.virt ? UINT32_MAX : tok.start;
+            vals[sp].end = tok.virt ? 0 : tok.end;
+            vals[sp].prev_end = last_end;
+            if (!tok.virt) last_end = tok.end;
             vals[sp].node = 0;
             if (lint && !lint_node(lint, -1, NULL, 0, CETTA_ATOM_ID_NONE, vals[sp].pos, &vals[sp].node))
                 goto done;
@@ -891,6 +1495,21 @@ static int read_ids_internal(const GSLTPresentationTablesV1 *tb, GSLTPresentatio
                 args[nargs++] = kids[k];
             }
         }
+        /* the production's span: its first real token to its last; an empty
+           one stands, with no width, at the next token */
+        r.span_pos = UINT32_MAX;
+        r.span_end = 0;
+        for (int k = 0; k < plen; k++) {
+            if (kids[k].pos < r.span_pos) r.span_pos = kids[k].pos;
+            if (kids[k].end > r.span_end) r.span_end = kids[k].end;
+        }
+        if (r.span_pos == UINT32_MAX) r.span_pos = r.span_end = tok.start;
+        /* the production's text with the trivia around it: from the end of
+           the token before its first real token to the start of the next */
+        r.full_pos = last_end;
+        for (int k = 0; k < plen; k++)
+            if (kids[k].pos != UINT32_MAX) { r.full_pos = kids[k].prev_end; break; }
+        r.full_end = tok.start;
         Val res;
         memset(&res, 0, sizeof res);
         switch (tb->prod_kind[p]) {
@@ -944,8 +1563,12 @@ static int read_ids_internal(const GSLTPresentationTablesV1 *tb, GSLTPresentatio
             goto done;
         }
         res.pos = UINT32_MAX;
-        for (int k = 0; k < plen; k++)
+        res.end = 0;
+        for (int k = 0; k < plen; k++) {
             if (kids[k].pos < res.pos) res.pos = kids[k].pos;
+            if (kids[k].end > res.end) res.end = kids[k].end;
+        }
+        res.prev_end = r.full_pos;
         if (lint) {
             /* the program and a list of statements have no atom of their own */
             bool statements = tb->prod_lhs[p] == tb->entry_nt ||
@@ -1042,6 +1665,7 @@ done:
     free(r.cells);
     free(r.tmp);
     free(r.consts);
+    free(r.line_starts);
     free(r.buf);
     for (int k = 0; k < GSLT_PRES_MAX_CHANNELS; k++) free(r.chs[k]);
     free(r.scopes);
@@ -2198,6 +2822,11 @@ static char *print_ids_internal(const GSLTPresentationTablesV1 *tb, GSLTPresenta
     size_t next_comment = 0;
     if (err && errsz) err[0] = '\0';
     if (!tb || !universe || (n && !ids)) return NULL;
+    if (tb->offside) {
+        /* the printer lays out BNFC blocks; indented lines are not built */
+        set_error(err, errsz, "the %s presentation reads indented lines; printing in it is not built", tb->name);
+        return NULL;
+    }
     memset(&p, 0, sizeof p);
     p.tb = tb;
     p.u = universe;

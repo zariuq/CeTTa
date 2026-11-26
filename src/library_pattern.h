@@ -2,10 +2,11 @@
 #define CETTA_LIBRARY_PATTERN_H
 
 #include "call_outcome.h"
+#include "import_mask.h"
 #include "library.h"
 #include "term_graph.h"
 
-#define CETTA_NATIVE_IMPORT_PAT (1u << 27)
+#define CETTA_NATIVE_IMPORT_PAT CETTA_NATIVE_IMPORT_BIT(7)
 
 bool cetta_pattern_module_enabled(const CettaLibraryContext *context);
 SymbolId cetta_pattern_resolve_head(const CettaLibraryContext *context, SymbolId head);

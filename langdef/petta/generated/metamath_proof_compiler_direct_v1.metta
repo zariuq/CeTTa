@@ -747,10 +747,8 @@
    (quote gslt:result:proof-nat:1))
 
 ; gslt-lowered-equation-v1 source-rewrite=1 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-nat-succ target=mode relation=proof-nat input=1 functional=semidet
-(= (gslt:fn:proof-nat:1 $__gslt_input_v1_0_0)
-   (let (cons-atom proof-succ-v1 (cons-atom $value ())) $__gslt_input_v1_0_0
-   (let gslt:result:proof-nat:1 (gslt:fn:proof-nat:1 $value)
-   (quote gslt:result:proof-nat:1))))
+(= (gslt:fn:proof-nat:1 (proof-succ-v1 $value))
+   (gslt:fn:proof-nat:1 $value))
 
 ; gslt-lowered-equation-v1 source-rewrite=2 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-nat-add-zero target=mode relation=proof-nat-add input=000 functional=relational
 (= (gslt:mode:proof-nat-add:000)
@@ -768,10 +766,9 @@
    (quote (gslt:result:proof-nat-add:110 $left))))
 
 ; gslt-lowered-equation-v1 source-rewrite=3 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-nat-add-succ target=mode relation=proof-nat-add input=110 functional=semidet
-(= (gslt:fn:proof-nat-add:110 $left $__gslt_input_v1_0_1)
-   (let (cons-atom proof-succ-v1 (cons-atom $right ())) $__gslt_input_v1_0_1
+(= (gslt:fn:proof-nat-add:110 $left (proof-succ-v1 $right))
    (let (gslt:result:proof-nat-add:110 $sum) (gslt:fn:proof-nat-add:110 $left $right)
-   (quote (gslt:result:proof-nat-add:110 (proof-succ-v1 $sum))))))
+   (quote (gslt:result:proof-nat-add:110 (proof-succ-v1 $sum)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=4 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-nat-less-zero target=mode relation=proof-nat-less input=00 functional=relational
 (= (gslt:mode:proof-nat-less:00)
@@ -784,29 +781,23 @@
    (quote (gslt:result:proof-nat-less:00 (proof-succ-v1 $left) (proof-succ-v1 $right)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=4 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-nat-less-zero target=mode relation=proof-nat-less input=11 functional=semidet
-(= (gslt:fn:proof-nat-less:11 proof-zero-v1 $__gslt_input_v1_0_1)
-   (let (cons-atom proof-succ-v1 (cons-atom $right ())) $__gslt_input_v1_0_1
+(= (gslt:fn:proof-nat-less:11 proof-zero-v1 (proof-succ-v1 $right))
    (let gslt:result:proof-nat:1 (gslt:fn:proof-nat:1 $right)
-   (quote gslt:result:proof-nat-less:11))))
+   (quote gslt:result:proof-nat-less:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=5 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-nat-less-succ target=mode relation=proof-nat-less input=11 functional=semidet
-(= (gslt:fn:proof-nat-less:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom proof-succ-v1 (cons-atom $left ())) $__gslt_input_v1_0_0
-   (let (cons-atom proof-succ-v1 (cons-atom $right ())) $__gslt_input_v1_0_1
-   (let gslt:result:proof-nat-less:11 (gslt:fn:proof-nat-less:11 $left $right)
-   (quote gslt:result:proof-nat-less:11)))))
+(= (gslt:fn:proof-nat-less:11 (proof-succ-v1 $left) (proof-succ-v1 $right))
+   (gslt:fn:proof-nat-less:11 $left $right))
 
 ; gslt-lowered-equation-v1 source-rewrite=4 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-nat-less-zero target=mode relation=proof-nat-less input=01 functional=relational
-(= (gslt:mode:proof-nat-less:01 $__gslt_input_v1_0_1)
-   (let (cons-atom proof-succ-v1 (cons-atom $right ())) $__gslt_input_v1_0_1
+(= (gslt:mode:proof-nat-less:01 (proof-succ-v1 $right))
    (let gslt:result:proof-nat:1 (once (gslt:fn:proof-nat:1 $right))
-   (quote (gslt:result:proof-nat-less:01 proof-zero-v1)))))
+   (quote (gslt:result:proof-nat-less:01 proof-zero-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=5 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-nat-less-succ target=mode relation=proof-nat-less input=01 functional=relational
-(= (gslt:mode:proof-nat-less:01 $__gslt_input_v1_0_1)
-   (let (cons-atom proof-succ-v1 (cons-atom $right ())) $__gslt_input_v1_0_1
+(= (gslt:mode:proof-nat-less:01 (proof-succ-v1 $right))
    (let (gslt:result:proof-nat-less:01 $left) (superpose (collapse (gslt:mode:proof-nat-less:01 $right)))
-   (quote (gslt:result:proof-nat-less:01 (proof-succ-v1 $left))))))
+   (quote (gslt:result:proof-nat-less:01 (proof-succ-v1 $left)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=6 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-list-length-nil target=mode relation=proof-list-length input=00 functional=relational
 (= (gslt:mode:proof-list-length:00)
@@ -822,31 +813,26 @@
    (quote gslt:result:proof-list-length:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=7 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-list-length-cons target=mode relation=proof-list-length input=11 functional=semidet
-(= (gslt:fn:proof-list-length:11 $__gslt_input_v1_0_0 $__gslt_input_v1_0_1)
-   (let (cons-atom proof-list-cons-v1 (cons-atom $item (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (cons-atom proof-succ-v1 (cons-atom $length ())) $__gslt_input_v1_0_1
-   (let gslt:result:proof-list-length:11 (gslt:fn:proof-list-length:11 $rest $length)
-   (quote gslt:result:proof-list-length:11)))))
+(= (gslt:fn:proof-list-length:11 (proof-list-cons-v1 $item $rest) (proof-succ-v1 $length))
+   (gslt:fn:proof-list-length:11 $rest $length))
 
 ; gslt-lowered-equation-v1 source-rewrite=6 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-list-length-nil target=mode relation=proof-list-length input=01 functional=relational
 (= (gslt:mode:proof-list-length:01 proof-zero-v1)
    (quote (gslt:result:proof-list-length:01 proof-list-nil-v1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=7 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-list-length-cons target=mode relation=proof-list-length input=01 functional=relational
-(= (gslt:mode:proof-list-length:01 $__gslt_input_v1_0_1)
-   (let (cons-atom proof-succ-v1 (cons-atom $length ())) $__gslt_input_v1_0_1
+(= (gslt:mode:proof-list-length:01 (proof-succ-v1 $length))
    (let (gslt:result:proof-list-length:01 $rest) (superpose (collapse (gslt:mode:proof-list-length:01 $length)))
-   (quote (gslt:result:proof-list-length:01 (proof-list-cons-v1 $item $rest))))))
+   (quote (gslt:result:proof-list-length:01 (proof-list-cons-v1 $item $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=6 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-list-length-nil target=mode relation=proof-list-length input=10 functional=semidet
 (= (gslt:fn:proof-list-length:10 proof-list-nil-v1)
    (quote (gslt:result:proof-list-length:10 proof-zero-v1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=7 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-list-length-cons target=mode relation=proof-list-length input=10 functional=semidet
-(= (gslt:fn:proof-list-length:10 $__gslt_input_v1_0_0)
-   (let (cons-atom proof-list-cons-v1 (cons-atom $item (cons-atom $rest ()))) $__gslt_input_v1_0_0
+(= (gslt:fn:proof-list-length:10 (proof-list-cons-v1 $item $rest))
    (let (gslt:result:proof-list-length:10 $length) (gslt:fn:proof-list-length:10 $rest)
-   (quote (gslt:result:proof-list-length:10 (proof-succ-v1 $length))))))
+   (quote (gslt:result:proof-list-length:10 (proof-succ-v1 $length)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=8 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-capability-binders target=mode relation=proof-capability-kind input=0 functional=relational
 (= (gslt:mode:proof-capability-kind:0)
@@ -966,26 +952,20 @@
    (quote gslt:result:proof-collection-kind:1))
 
 ; gslt-lowered-equation-v1 source-rewrite=20 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-formal-member-head target=mode relation=proof-formal-member input=111 functional=relational
-(= (gslt:mode:proof-formal-member:111 $__gslt_input_v1_0_0 $name $depth)
-   (let (cons-atom proof-list-cons-v1 (cons-atom (cons-atom proof-formal-v1 (cons-atom $name (cons-atom $depth ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (quote gslt:result:proof-formal-member:111)))
+(= (gslt:mode:proof-formal-member:111 (proof-list-cons-v1 (proof-formal-v1 $name $depth) $rest) $name $depth)
+   (quote gslt:result:proof-formal-member:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=21 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-formal-member-tail target=mode relation=proof-formal-member input=111 functional=relational
-(= (gslt:mode:proof-formal-member:111 $__gslt_input_v1_0_0 $name $depth)
-   (let (cons-atom proof-list-cons-v1 (cons-atom $formal (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let gslt:result:proof-formal-member:111 (superpose (collapse (gslt:mode:proof-formal-member:111 $rest $name $depth)))
-   (quote gslt:result:proof-formal-member:111))))
+(= (gslt:mode:proof-formal-member:111 (proof-list-cons-v1 $formal $rest) $name $depth)
+   (superpose (collapse (gslt:mode:proof-formal-member:111 $rest $name $depth))))
 
 ; gslt-lowered-equation-v1 source-rewrite=20 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-formal-member-head target=mode relation=proof-formal-member input=101 functional=relational
-(= (gslt:mode:proof-formal-member:101 $__gslt_input_v1_0_0 $depth)
-   (let (cons-atom proof-list-cons-v1 (cons-atom (cons-atom proof-formal-v1 (cons-atom $name (cons-atom $depth ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:proof-formal-member:101 $name))))
+(= (gslt:mode:proof-formal-member:101 (proof-list-cons-v1 (proof-formal-v1 $name $depth) $rest) $depth)
+   (quote (gslt:result:proof-formal-member:101 $name)))
 
 ; gslt-lowered-equation-v1 source-rewrite=21 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-formal-member-tail target=mode relation=proof-formal-member input=101 functional=relational
-(= (gslt:mode:proof-formal-member:101 $__gslt_input_v1_0_0 $depth)
-   (let (cons-atom proof-list-cons-v1 (cons-atom $formal (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:proof-formal-member:101 $name) (superpose (collapse (gslt:mode:proof-formal-member:101 $rest $depth)))
-   (quote (gslt:result:proof-formal-member:101 $name)))))
+(= (gslt:mode:proof-formal-member:101 (proof-list-cons-v1 $formal $rest) $depth)
+   (superpose (collapse (gslt:mode:proof-formal-member:101 $rest $depth))))
 
 ; gslt-lowered-equation-v1 source-rewrite=22 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-formal-index-head target=mode relation=proof-formal-index input=0000 functional=relational
 (= (gslt:mode:proof-formal-index:0000)
@@ -997,78 +977,64 @@
    (quote (gslt:result:proof-formal-index:0000 (proof-list-cons-v1 $formal $rest) $name $depth (proof-succ-v1 $index)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=22 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-formal-index-head target=mode relation=proof-formal-index input=1110 functional=relational
-(= (gslt:mode:proof-formal-index:1110 $__gslt_input_v1_0_0 $name $depth)
-   (let (cons-atom proof-list-cons-v1 (cons-atom (cons-atom proof-formal-v1 (cons-atom $name (cons-atom $depth ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:proof-formal-index:1110 proof-zero-v1))))
+(= (gslt:mode:proof-formal-index:1110 (proof-list-cons-v1 (proof-formal-v1 $name $depth) $rest) $name $depth)
+   (quote (gslt:result:proof-formal-index:1110 proof-zero-v1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=23 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-formal-index-tail target=mode relation=proof-formal-index input=1110 functional=relational
-(= (gslt:mode:proof-formal-index:1110 $__gslt_input_v1_0_0 $name $depth)
-   (let (cons-atom proof-list-cons-v1 (cons-atom $formal (cons-atom $rest ()))) $__gslt_input_v1_0_0
+(= (gslt:mode:proof-formal-index:1110 (proof-list-cons-v1 $formal $rest) $name $depth)
    (let (gslt:result:proof-formal-index:1110 $index) (superpose (collapse (gslt:mode:proof-formal-index:1110 $rest $name $depth)))
-   (quote (gslt:result:proof-formal-index:1110 (proof-succ-v1 $index))))))
+   (quote (gslt:result:proof-formal-index:1110 (proof-succ-v1 $index)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=24 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-formals-valid-nil target=mode relation=proof-formals-valid input=1 functional=semidet
 (= (gslt:fn:proof-formals-valid:1 proof-list-nil-v1)
    (quote gslt:result:proof-formals-valid:1))
 
 ; gslt-lowered-equation-v1 source-rewrite=25 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-formals-valid-cons target=mode relation=proof-formals-valid input=1 functional=semidet
-(= (gslt:fn:proof-formals-valid:1 $__gslt_input_v1_0_0)
-   (let (cons-atom proof-list-cons-v1 (cons-atom (cons-atom proof-formal-v1 (cons-atom $name (cons-atom $depth ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_0
+(= (gslt:fn:proof-formals-valid:1 (proof-list-cons-v1 (proof-formal-v1 $name $depth) $rest))
    (let gslt:result:proof-nat:1 (gslt:fn:proof-nat:1 $depth)
-   (let gslt:result:proof-formals-valid:1 (gslt:fn:proof-formals-valid:1 $rest)
-   (quote gslt:result:proof-formals-valid:1)))))
+   (gslt:fn:proof-formals-valid:1 $rest)))
 
 ; gslt-lowered-equation-v1 source-rewrite=26 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-data-pattern-bvar target=mode relation=proof-data-pattern input=1111 functional=relational
-(= (gslt:mode:proof-data-pattern:1111 $owner $formals $depth $__gslt_input_v1_0_3)
-   (let (cons-atom proof-bvar-v1 (cons-atom $index ())) $__gslt_input_v1_0_3
+(= (gslt:mode:proof-data-pattern:1111 $owner $formals $depth (proof-bvar-v1 $index))
    (let gslt:result:proof-nat-less:11 (once (gslt:fn:proof-nat-less:11 $index $depth))
-   (quote gslt:result:proof-data-pattern:1111))))
+   (quote gslt:result:proof-data-pattern:1111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=27 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-data-pattern-fvar target=mode relation=proof-data-pattern input=1111 functional=relational
-(= (gslt:mode:proof-data-pattern:1111 $owner $formals $depth $__gslt_input_v1_0_3)
-   (let (cons-atom proof-fvar-v1 (cons-atom $name ())) $__gslt_input_v1_0_3
+(= (gslt:mode:proof-data-pattern:1111 $owner $formals $depth (proof-fvar-v1 $name))
    (let gslt:result:proof-formal-member:111 (superpose (collapse (gslt:mode:proof-formal-member:111 $formals $name $depth)))
-   (quote gslt:result:proof-data-pattern:1111))))
+   (quote gslt:result:proof-data-pattern:1111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=28 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-data-pattern-apply target=mode relation=proof-data-pattern input=1111 functional=relational
-(= (gslt:mode:proof-data-pattern:1111 $owner $formals $depth $__gslt_input_v1_0_3)
-   (let (cons-atom proof-apply-v1 (cons-atom $name (cons-atom $arguments ()))) $__gslt_input_v1_0_3
+(= (gslt:mode:proof-data-pattern:1111 $owner $formals $depth (proof-apply-v1 $name $arguments))
    (let (gslt:result:proof-constructor:110 $arity) (superpose (collapse (gslt:mode:proof-constructor:110 $owner $name)))
    (let gslt:result:proof-list-length:11 (once (gslt:fn:proof-list-length:11 $arguments $arity))
    (let gslt:result:proof-data-pattern-list:1111 (superpose (collapse (gslt:mode:proof-data-pattern-list:1111 $owner $formals $depth $arguments)))
-   (quote gslt:result:proof-data-pattern:1111))))))
-
-; gslt-lowered-equation-v1 source-rewrite=29 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-data-pattern-lambda target=mode relation=proof-data-pattern input=1111 functional=relational
-(= (gslt:mode:proof-data-pattern:1111 $owner $formals $depth $__gslt_input_v1_0_3)
-   (let (cons-atom proof-lambda-v1 (cons-atom $body ())) $__gslt_input_v1_0_3
-   (let gslt:result:proof-capability-declared:11 (once (gslt:fn:proof-capability-declared:11 $owner proof-cap-binders-v1))
-   (let gslt:result:proof-data-pattern:1111 (superpose (collapse (gslt:mode:proof-data-pattern:1111 $owner $formals (quote (proof-succ-v1 $depth)) $body)))
    (quote gslt:result:proof-data-pattern:1111)))))
 
+; gslt-lowered-equation-v1 source-rewrite=29 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-data-pattern-lambda target=mode relation=proof-data-pattern input=1111 functional=relational
+(= (gslt:mode:proof-data-pattern:1111 $owner $formals $depth (proof-lambda-v1 $body))
+   (let gslt:result:proof-capability-declared:11 (once (gslt:fn:proof-capability-declared:11 $owner proof-cap-binders-v1))
+   (superpose (collapse (gslt:mode:proof-data-pattern:1111 $owner $formals (quote (proof-succ-v1 $depth)) $body)))))
+
 ; gslt-lowered-equation-v1 source-rewrite=30 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-data-pattern-multi-lambda target=mode relation=proof-data-pattern input=1111 functional=relational
-(= (gslt:mode:proof-data-pattern:1111 $owner $formals $depth $__gslt_input_v1_0_3)
-   (let (cons-atom proof-multi-lambda-v1 (cons-atom $arity (cons-atom $body ()))) $__gslt_input_v1_0_3
+(= (gslt:mode:proof-data-pattern:1111 $owner $formals $depth (proof-multi-lambda-v1 $arity $body))
    (let gslt:result:proof-capability-declared:11 (once (gslt:fn:proof-capability-declared:11 $owner proof-cap-binders-v1))
    (let gslt:result:proof-nat:1 (once (gslt:fn:proof-nat:1 $arity))
    (let (gslt:result:proof-nat-add:110 $inner-depth) (once (gslt:fn:proof-nat-add:110 $depth $arity))
-   (let gslt:result:proof-data-pattern:1111 (superpose (collapse (gslt:mode:proof-data-pattern:1111 $owner $formals $inner-depth $body)))
-   (quote gslt:result:proof-data-pattern:1111)))))))
+   (superpose (collapse (gslt:mode:proof-data-pattern:1111 $owner $formals $inner-depth $body)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=31 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-data-pattern-substitution target=mode relation=proof-data-pattern input=1111 functional=relational
-(= (gslt:mode:proof-data-pattern:1111 $owner $formals $depth $__gslt_input_v1_0_3)
-   (let (cons-atom proof-subst-v1 (cons-atom $body (cons-atom $replacement ()))) $__gslt_input_v1_0_3
+(= (gslt:mode:proof-data-pattern:1111 $owner $formals $depth (proof-subst-v1 $body $replacement))
    (let gslt:result:proof-capability-declared:11 (once (gslt:fn:proof-capability-declared:11 $owner proof-cap-explicit-substitution-v1))
    (let gslt:result:proof-data-pattern:1111 (superpose (collapse (gslt:mode:proof-data-pattern:1111 $owner $formals (quote (proof-succ-v1 $depth)) $body)))
-   (let gslt:result:proof-data-pattern:1111 (superpose (collapse (gslt:mode:proof-data-pattern:1111 $owner $formals $depth $replacement)))
-   (quote gslt:result:proof-data-pattern:1111))))))
+   (superpose (collapse (gslt:mode:proof-data-pattern:1111 $owner $formals $depth $replacement))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=32 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-data-pattern-collection target=mode relation=proof-data-pattern input=1111 functional=relational
-(= (gslt:mode:proof-data-pattern:1111 $owner $formals $depth $__gslt_input_v1_0_3)
-   (let (cons-atom proof-collection-v1 (cons-atom $kind (cons-atom $elements ()))) $__gslt_input_v1_0_3
+(= (gslt:mode:proof-data-pattern:1111 $owner $formals $depth (proof-collection-v1 $kind $elements))
    (let gslt:result:proof-capability-declared:11 (once (gslt:fn:proof-capability-declared:11 $owner proof-cap-collections-v1))
    (let gslt:result:proof-collection-kind:1 (once (gslt:fn:proof-collection-kind:1 $kind))
    (let gslt:result:proof-data-pattern-list:1111 (superpose (collapse (gslt:mode:proof-data-pattern-list:1111 $owner $formals $depth $elements)))
-   (quote gslt:result:proof-data-pattern:1111))))))
+   (quote gslt:result:proof-data-pattern:1111)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=26 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-data-pattern-bvar target=mode relation=proof-data-pattern input=1110 functional=relational
 (= (gslt:mode:proof-data-pattern:1110 $owner $formals $depth)
@@ -1120,11 +1086,9 @@
    (quote gslt:result:proof-data-pattern-list:1111))
 
 ; gslt-lowered-equation-v1 source-rewrite=34 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-data-pattern-list-cons target=mode relation=proof-data-pattern-list input=1111 functional=relational
-(= (gslt:mode:proof-data-pattern-list:1111 $owner $formals $depth $__gslt_input_v1_0_3)
-   (let (cons-atom proof-list-cons-v1 (cons-atom $pattern (cons-atom $rest ()))) $__gslt_input_v1_0_3
+(= (gslt:mode:proof-data-pattern-list:1111 $owner $formals $depth (proof-list-cons-v1 $pattern $rest))
    (let gslt:result:proof-data-pattern:1111 (superpose (collapse (gslt:mode:proof-data-pattern:1111 $owner $formals $depth $pattern)))
-   (let gslt:result:proof-data-pattern-list:1111 (superpose (collapse (gslt:mode:proof-data-pattern-list:1111 $owner $formals $depth $rest)))
-   (quote gslt:result:proof-data-pattern-list:1111)))))
+   (superpose (collapse (gslt:mode:proof-data-pattern-list:1111 $owner $formals $depth $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=33 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-data-pattern-list-nil target=mode relation=proof-data-pattern-list input=1110 functional=relational
 (= (gslt:mode:proof-data-pattern-list:1110 $owner $formals $depth)
@@ -1144,77 +1108,60 @@
    (quote (gslt:result:proof-judgment-pattern:000 $owner $formals (proof-apply-v1 $head $arguments)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=35 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-judgment-pattern-apply target=mode relation=proof-judgment-pattern input=111 functional=relational
-(= (gslt:mode:proof-judgment-pattern:111 $owner $formals $__gslt_input_v1_0_2)
-   (let (cons-atom proof-apply-v1 (cons-atom $head (cons-atom $arguments ()))) $__gslt_input_v1_0_2
+(= (gslt:mode:proof-judgment-pattern:111 $owner $formals (proof-apply-v1 $head $arguments))
    (let (gslt:result:source-proof-judgment:110 $arity) (once (gslt:fn:source-proof-judgment:110 $owner $head))
    (let gslt:result:proof-list-length:11 (once (gslt:fn:proof-list-length:11 $arguments $arity))
    (let gslt:result:proof-data-pattern-list:1111 (superpose (collapse (gslt:mode:proof-data-pattern-list:1111 $owner $formals proof-zero-v1 $arguments)))
-   (quote gslt:result:proof-judgment-pattern:111))))))
+   (quote gslt:result:proof-judgment-pattern:111)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=36 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-judgment-pattern-list-nil target=mode relation=proof-judgment-pattern-list input=111 functional=relational
 (= (gslt:mode:proof-judgment-pattern-list:111 $owner $formals proof-list-nil-v1)
    (quote gslt:result:proof-judgment-pattern-list:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=37 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-judgment-pattern-list-cons target=mode relation=proof-judgment-pattern-list input=111 functional=relational
-(= (gslt:mode:proof-judgment-pattern-list:111 $owner $formals $__gslt_input_v1_0_2)
-   (let (cons-atom proof-list-cons-v1 (cons-atom $judgment (cons-atom $rest ()))) $__gslt_input_v1_0_2
+(= (gslt:mode:proof-judgment-pattern-list:111 $owner $formals (proof-list-cons-v1 $judgment $rest))
    (let gslt:result:proof-judgment-pattern:111 (superpose (collapse (gslt:mode:proof-judgment-pattern:111 $owner $formals $judgment)))
-   (let gslt:result:proof-judgment-pattern-list:111 (superpose (collapse (gslt:mode:proof-judgment-pattern-list:111 $owner $formals $rest)))
-   (quote gslt:result:proof-judgment-pattern-list:111)))))
+   (superpose (collapse (gslt:mode:proof-judgment-pattern-list:111 $owner $formals $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=38 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-pattern-contains-fvar target=mode relation=proof-pattern-contains input=1111 functional=relational
-(= (gslt:mode:proof-pattern-contains:1111 $name $target-depth $target-depth $__gslt_input_v1_0_3)
-   (let (cons-atom proof-fvar-v1 (cons-atom $name ())) $__gslt_input_v1_0_3
-   (quote gslt:result:proof-pattern-contains:1111)))
+(= (gslt:mode:proof-pattern-contains:1111 $name $target-depth $target-depth (proof-fvar-v1 $name))
+   (quote gslt:result:proof-pattern-contains:1111))
 
 ; gslt-lowered-equation-v1 source-rewrite=39 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-pattern-contains-apply target=mode relation=proof-pattern-contains input=1111 functional=relational
-(= (gslt:mode:proof-pattern-contains:1111 $name $target-depth $ambient $__gslt_input_v1_0_3)
-   (let (cons-atom proof-apply-v1 (cons-atom $constructor (cons-atom $arguments ()))) $__gslt_input_v1_0_3
+(= (gslt:mode:proof-pattern-contains:1111 $name $target-depth $ambient (proof-apply-v1 $constructor $arguments))
    (let gslt:result:proof-pattern-list-contains:1111 (superpose (collapse (gslt:mode:proof-pattern-list-contains:1111 $name $target-depth $ambient $arguments)))
-   (quote gslt:result:proof-pattern-contains:1111))))
+   (quote gslt:result:proof-pattern-contains:1111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=40 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-pattern-contains-lambda target=mode relation=proof-pattern-contains input=1111 functional=relational
-(= (gslt:mode:proof-pattern-contains:1111 $name $target-depth $ambient $__gslt_input_v1_0_3)
-   (let (cons-atom proof-lambda-v1 (cons-atom $body ())) $__gslt_input_v1_0_3
-   (let gslt:result:proof-pattern-contains:1111 (superpose (collapse (gslt:mode:proof-pattern-contains:1111 $name $target-depth (quote (proof-succ-v1 $ambient)) $body)))
-   (quote gslt:result:proof-pattern-contains:1111))))
+(= (gslt:mode:proof-pattern-contains:1111 $name $target-depth $ambient (proof-lambda-v1 $body))
+   (superpose (collapse (gslt:mode:proof-pattern-contains:1111 $name $target-depth (quote (proof-succ-v1 $ambient)) $body))))
 
 ; gslt-lowered-equation-v1 source-rewrite=41 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-pattern-contains-multi-lambda target=mode relation=proof-pattern-contains input=1111 functional=relational
-(= (gslt:mode:proof-pattern-contains:1111 $name $target-depth $ambient $__gslt_input_v1_0_3)
-   (let (cons-atom proof-multi-lambda-v1 (cons-atom $arity (cons-atom $body ()))) $__gslt_input_v1_0_3
+(= (gslt:mode:proof-pattern-contains:1111 $name $target-depth $ambient (proof-multi-lambda-v1 $arity $body))
    (let (gslt:result:proof-nat-add:110 $inner-depth) (once (gslt:fn:proof-nat-add:110 $ambient $arity))
-   (let gslt:result:proof-pattern-contains:1111 (superpose (collapse (gslt:mode:proof-pattern-contains:1111 $name $target-depth $inner-depth $body)))
-   (quote gslt:result:proof-pattern-contains:1111)))))
+   (superpose (collapse (gslt:mode:proof-pattern-contains:1111 $name $target-depth $inner-depth $body)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=42 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-pattern-contains-substitution-body target=mode relation=proof-pattern-contains input=1111 functional=relational
-(= (gslt:mode:proof-pattern-contains:1111 $name $target-depth $ambient $__gslt_input_v1_0_3)
-   (let (cons-atom proof-subst-v1 (cons-atom $body (cons-atom $replacement ()))) $__gslt_input_v1_0_3
-   (let gslt:result:proof-pattern-contains:1111 (superpose (collapse (gslt:mode:proof-pattern-contains:1111 $name $target-depth (quote (proof-succ-v1 $ambient)) $body)))
-   (quote gslt:result:proof-pattern-contains:1111))))
+(= (gslt:mode:proof-pattern-contains:1111 $name $target-depth $ambient (proof-subst-v1 $body $replacement))
+   (superpose (collapse (gslt:mode:proof-pattern-contains:1111 $name $target-depth (quote (proof-succ-v1 $ambient)) $body))))
 
 ; gslt-lowered-equation-v1 source-rewrite=43 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-pattern-contains-substitution-replacement target=mode relation=proof-pattern-contains input=1111 functional=relational
-(= (gslt:mode:proof-pattern-contains:1111 $name $target-depth $ambient $__gslt_input_v1_0_3)
-   (let (cons-atom proof-subst-v1 (cons-atom $body (cons-atom $replacement ()))) $__gslt_input_v1_0_3
-   (let gslt:result:proof-pattern-contains:1111 (superpose (collapse (gslt:mode:proof-pattern-contains:1111 $name $target-depth $ambient $replacement)))
-   (quote gslt:result:proof-pattern-contains:1111))))
+(= (gslt:mode:proof-pattern-contains:1111 $name $target-depth $ambient (proof-subst-v1 $body $replacement))
+   (superpose (collapse (gslt:mode:proof-pattern-contains:1111 $name $target-depth $ambient $replacement))))
 
 ; gslt-lowered-equation-v1 source-rewrite=44 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-pattern-contains-collection target=mode relation=proof-pattern-contains input=1111 functional=relational
-(= (gslt:mode:proof-pattern-contains:1111 $name $target-depth $ambient $__gslt_input_v1_0_3)
-   (let (cons-atom proof-collection-v1 (cons-atom $kind (cons-atom $elements ()))) $__gslt_input_v1_0_3
+(= (gslt:mode:proof-pattern-contains:1111 $name $target-depth $ambient (proof-collection-v1 $kind $elements))
    (let gslt:result:proof-pattern-list-contains:1111 (superpose (collapse (gslt:mode:proof-pattern-list-contains:1111 $name $target-depth $ambient $elements)))
-   (quote gslt:result:proof-pattern-contains:1111))))
+   (quote gslt:result:proof-pattern-contains:1111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=45 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-pattern-list-contains-head target=mode relation=proof-pattern-list-contains input=1111 functional=relational
-(= (gslt:mode:proof-pattern-list-contains:1111 $name $target-depth $ambient $__gslt_input_v1_0_3)
-   (let (cons-atom proof-list-cons-v1 (cons-atom $pattern (cons-atom $rest ()))) $__gslt_input_v1_0_3
+(= (gslt:mode:proof-pattern-list-contains:1111 $name $target-depth $ambient (proof-list-cons-v1 $pattern $rest))
    (let gslt:result:proof-pattern-contains:1111 (superpose (collapse (gslt:mode:proof-pattern-contains:1111 $name $target-depth $ambient $pattern)))
-   (quote gslt:result:proof-pattern-list-contains:1111))))
+   (quote gslt:result:proof-pattern-list-contains:1111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=46 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-pattern-list-contains-tail target=mode relation=proof-pattern-list-contains input=1111 functional=relational
-(= (gslt:mode:proof-pattern-list-contains:1111 $name $target-depth $ambient $__gslt_input_v1_0_3)
-   (let (cons-atom proof-list-cons-v1 (cons-atom $pattern (cons-atom $rest ()))) $__gslt_input_v1_0_3
-   (let gslt:result:proof-pattern-list-contains:1111 (superpose (collapse (gslt:mode:proof-pattern-list-contains:1111 $name $target-depth $ambient $rest)))
-   (quote gslt:result:proof-pattern-list-contains:1111))))
+(= (gslt:mode:proof-pattern-list-contains:1111 $name $target-depth $ambient (proof-list-cons-v1 $pattern $rest))
+   (superpose (collapse (gslt:mode:proof-pattern-list-contains:1111 $name $target-depth $ambient $rest))))
 
 ; gslt-lowered-equation-v1 source-rewrite=47 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-rule-contains-formal-premise target=mode relation=proof-rule-contains-formal input=0000 functional=relational
 (= (gslt:mode:proof-rule-contains-formal:0000)
@@ -1241,34 +1188,30 @@
    (quote gslt:result:proof-rule-formals-used:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=50 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-rule-formals-used-cons target=mode relation=proof-rule-formals-used input=111 functional=relational
-(= (gslt:mode:proof-rule-formals-used:111 $__gslt_input_v1_0_0 $premises $conclusion)
-   (let (cons-atom proof-list-cons-v1 (cons-atom (cons-atom proof-formal-v1 (cons-atom $name (cons-atom $depth ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_0
+(= (gslt:mode:proof-rule-formals-used:111 (proof-list-cons-v1 (proof-formal-v1 $name $depth) $rest) $premises $conclusion)
    (let gslt:result:proof-rule-contains-formal:1111 (superpose (collapse (gslt:mode:proof-rule-contains-formal:1111 $name $depth $premises $conclusion)))
-   (let gslt:result:proof-rule-formals-used:111 (superpose (collapse (gslt:mode:proof-rule-formals-used:111 $rest $premises $conclusion)))
-   (quote gslt:result:proof-rule-formals-used:111)))))
+   (superpose (collapse (gslt:mode:proof-rule-formals-used:111 $rest $premises $conclusion)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=51 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-side-conditions-compile-nil target=mode relation=proof-side-conditions-compile input=1110 functional=relational
 (= (gslt:mode:proof-side-conditions-compile:1110 $owner $formals proof-list-nil-v1)
    (quote (gslt:result:proof-side-conditions-compile:1110 proof-list-nil-v1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=52 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-side-conditions-compile-substitution target=mode relation=proof-side-conditions-compile input=1110 functional=relational
-(= (gslt:mode:proof-side-conditions-compile:1110 $owner $formals $__gslt_input_v1_0_2)
-   (let (cons-atom proof-list-cons-v1 (cons-atom (cons-atom proof-explicit-substitution-v1 (cons-atom $ambient (cons-atom $body-name (cons-atom $replacement-name (cons-atom $result-name ()))))) (cons-atom $source-rest ()))) $__gslt_input_v1_0_2
+(= (gslt:mode:proof-side-conditions-compile:1110 $owner $formals (proof-list-cons-v1 (proof-explicit-substitution-v1 $ambient $body-name $replacement-name $result-name) $source-rest))
    (let gslt:result:proof-capability-declared:11 (once (gslt:fn:proof-capability-declared:11 $owner proof-cap-substitution-condition-v1))
    (let (gslt:result:proof-formal-index:1110 $body-index) (superpose (collapse (gslt:mode:proof-formal-index:1110 $formals $body-name (quote (proof-succ-v1 $ambient)))))
    (let (gslt:result:proof-formal-index:1110 $replacement-index) (superpose (collapse (gslt:mode:proof-formal-index:1110 $formals $replacement-name $ambient)))
    (let (gslt:result:proof-formal-index:1110 $result-index) (superpose (collapse (gslt:mode:proof-formal-index:1110 $formals $result-name $ambient)))
    (let (gslt:result:proof-side-conditions-compile:1110 $compiled-rest) (superpose (collapse (gslt:mode:proof-side-conditions-compile:1110 $owner $formals $source-rest)))
-   (quote (gslt:result:proof-side-conditions-compile:1110 (proof-list-cons-v1 (proof-explicit-substitution-indexed-v1 $ambient $body-index $replacement-index $result-index) $compiled-rest))))))))))
+   (quote (gslt:result:proof-side-conditions-compile:1110 (proof-list-cons-v1 (proof-explicit-substitution-indexed-v1 $ambient $body-index $replacement-index $result-index) $compiled-rest)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=53 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-side-conditions-compile-unused-binder target=mode relation=proof-side-conditions-compile input=1110 functional=relational
-(= (gslt:mode:proof-side-conditions-compile:1110 $owner $formals $__gslt_input_v1_0_2)
-   (let (cons-atom proof-list-cons-v1 (cons-atom (cons-atom proof-unused-binder-v1 (cons-atom $ambient (cons-atom $body-name (cons-atom $result-name ())))) (cons-atom $source-rest ()))) $__gslt_input_v1_0_2
+(= (gslt:mode:proof-side-conditions-compile:1110 $owner $formals (proof-list-cons-v1 (proof-unused-binder-v1 $ambient $body-name $result-name) $source-rest))
    (let gslt:result:proof-capability-declared:11 (once (gslt:fn:proof-capability-declared:11 $owner proof-cap-unused-binder-condition-v1))
    (let (gslt:result:proof-formal-index:1110 $body-index) (superpose (collapse (gslt:mode:proof-formal-index:1110 $formals $body-name (quote (proof-succ-v1 $ambient)))))
    (let (gslt:result:proof-formal-index:1110 $result-index) (superpose (collapse (gslt:mode:proof-formal-index:1110 $formals $result-name $ambient)))
    (let (gslt:result:proof-side-conditions-compile:1110 $compiled-rest) (superpose (collapse (gslt:mode:proof-side-conditions-compile:1110 $owner $formals $source-rest)))
-   (quote (gslt:result:proof-side-conditions-compile:1110 (proof-list-cons-v1 (proof-unused-binder-indexed-v1 $ambient $body-index $result-index) $compiled-rest)))))))))
+   (quote (gslt:result:proof-side-conditions-compile:1110 (proof-list-cons-v1 (proof-unused-binder-indexed-v1 $ambient $body-index $result-index) $compiled-rest))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=54 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-rule-admission target=mode relation=proof-rule-admitted input=000000 functional=relational
 (= (gslt:mode:proof-rule-admitted:000000)
@@ -1296,23 +1239,19 @@
    (quote gslt:result:proof-arguments-valid:111))
 
 ; gslt-lowered-equation-v1 source-rewrite=56 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-arguments-valid-cons target=mode relation=proof-arguments-valid input=111 functional=relational
-(= (gslt:mode:proof-arguments-valid:111 $owner $__gslt_input_v1_0_1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-list-cons-v1 (cons-atom (cons-atom proof-formal-v1 (cons-atom $name (cons-atom $depth ()))) (cons-atom $formal-rest ()))) $__gslt_input_v1_0_1
-   (let (cons-atom proof-list-cons-v1 (cons-atom $argument (cons-atom $argument-rest ()))) $__gslt_input_v1_0_2
+(= (gslt:mode:proof-arguments-valid:111 $owner (proof-list-cons-v1 (proof-formal-v1 $name $depth) $formal-rest) (proof-list-cons-v1 $argument $argument-rest))
    (let gslt:result:proof-data-pattern:1111 (superpose (collapse (gslt:mode:proof-data-pattern:1111 $owner proof-list-nil-v1 $depth $argument)))
-   (let gslt:result:proof-arguments-valid:111 (superpose (collapse (gslt:mode:proof-arguments-valid:111 $owner $formal-rest $argument-rest)))
-   (quote gslt:result:proof-arguments-valid:111))))))
+   (superpose (collapse (gslt:mode:proof-arguments-valid:111 $owner $formal-rest $argument-rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=55 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-arguments-valid-nil target=mode relation=proof-arguments-valid input=110 functional=relational
 (= (gslt:mode:proof-arguments-valid:110 $owner proof-list-nil-v1)
    (quote (gslt:result:proof-arguments-valid:110 proof-list-nil-v1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=56 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-arguments-valid-cons target=mode relation=proof-arguments-valid input=110 functional=relational
-(= (gslt:mode:proof-arguments-valid:110 $owner $__gslt_input_v1_0_1)
-   (let (cons-atom proof-list-cons-v1 (cons-atom (cons-atom proof-formal-v1 (cons-atom $name (cons-atom $depth ()))) (cons-atom $formal-rest ()))) $__gslt_input_v1_0_1
+(= (gslt:mode:proof-arguments-valid:110 $owner (proof-list-cons-v1 (proof-formal-v1 $name $depth) $formal-rest))
    (let (gslt:result:proof-data-pattern:1110 $argument) (superpose (collapse (gslt:mode:proof-data-pattern:1110 $owner proof-list-nil-v1 $depth)))
    (let (gslt:result:proof-arguments-valid:110 $argument-rest) (superpose (collapse (gslt:mode:proof-arguments-valid:110 $owner $formal-rest)))
-   (quote (gslt:result:proof-arguments-valid:110 (proof-list-cons-v1 $argument $argument-rest)))))))
+   (quote (gslt:result:proof-arguments-valid:110 (proof-list-cons-v1 $argument $argument-rest))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=57 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-reference-premise target=mode relation=proof-reference-valid input=0 functional=relational
 (= (gslt:mode:proof-reference-valid:0)
@@ -1325,16 +1264,14 @@
    (quote (gslt:result:proof-reference-valid:0 (proof-node-ref-v1 $index)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=57 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-reference-premise target=mode relation=proof-reference-valid input=1 functional=semidet
-(= (gslt:fn:proof-reference-valid:1 $__gslt_input_v1_0_0)
-   (let (cons-atom proof-premise-ref-v1 (cons-atom $index ())) $__gslt_input_v1_0_0
+(= (gslt:fn:proof-reference-valid:1 (proof-premise-ref-v1 $index))
    (let gslt:result:proof-nat:1 (gslt:fn:proof-nat:1 $index)
-   (quote gslt:result:proof-reference-valid:1))))
+   (quote gslt:result:proof-reference-valid:1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=58 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-reference-node target=mode relation=proof-reference-valid input=1 functional=semidet
-(= (gslt:fn:proof-reference-valid:1 $__gslt_input_v1_0_0)
-   (let (cons-atom proof-node-ref-v1 (cons-atom $index ())) $__gslt_input_v1_0_0
+(= (gslt:fn:proof-reference-valid:1 (proof-node-ref-v1 $index))
    (let gslt:result:proof-nat:1 (gslt:fn:proof-nat:1 $index)
-   (quote gslt:result:proof-reference-valid:1))))
+   (quote gslt:result:proof-reference-valid:1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=59 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-reference-list-valid-nil target=mode relation=proof-reference-list-valid input=0 functional=relational
 (= (gslt:mode:proof-reference-list-valid:0)
@@ -1351,11 +1288,9 @@
    (quote gslt:result:proof-reference-list-valid:1))
 
 ; gslt-lowered-equation-v1 source-rewrite=60 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-reference-list-valid-cons target=mode relation=proof-reference-list-valid input=1 functional=semidet
-(= (gslt:fn:proof-reference-list-valid:1 $__gslt_input_v1_0_0)
-   (let (cons-atom proof-list-cons-v1 (cons-atom $reference (cons-atom $rest ()))) $__gslt_input_v1_0_0
+(= (gslt:fn:proof-reference-list-valid:1 (proof-list-cons-v1 $reference $rest))
    (let gslt:result:proof-reference-valid:1 (gslt:fn:proof-reference-valid:1 $reference)
-   (let gslt:result:proof-reference-list-valid:1 (gslt:fn:proof-reference-list-valid:1 $rest)
-   (quote gslt:result:proof-reference-list-valid:1)))))
+   (gslt:fn:proof-reference-list-valid:1 $rest)))
 
 ; gslt-lowered-equation-v1 source-rewrite=61 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-node-valid target=mode relation=proof-node-valid input=00 functional=relational
 (= (gslt:mode:proof-node-valid:00)
@@ -1368,15 +1303,14 @@
    (quote (gslt:result:proof-node-valid:00 $owner (proof-node-v1 $id $rule-id $arguments $references))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=61 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-node-valid target=mode relation=proof-node-valid input=11 functional=relational
-(= (gslt:mode:proof-node-valid:11 $owner $__gslt_input_v1_0_1)
-   (let (cons-atom proof-node-v1 (cons-atom $id (cons-atom $rule-id (cons-atom $arguments (cons-atom $references ()))))) $__gslt_input_v1_0_1
+(= (gslt:mode:proof-node-valid:11 $owner (proof-node-v1 $id $rule-id $arguments $references))
    (let gslt:result:proof-nat:1 (once (gslt:fn:proof-nat:1 $id))
    (let (gslt:result:source-proof-rule:110000 $formals $premises $conclusion $conditions) (once (gslt:fn:source-proof-rule:110000 $owner $rule-id))
    (let gslt:result:proof-arguments-valid:111 (superpose (collapse (gslt:mode:proof-arguments-valid:111 $owner $formals $arguments)))
    (let gslt:result:proof-reference-list-valid:1 (once (gslt:fn:proof-reference-list-valid:1 $references))
    (let (gslt:result:proof-list-length:10 $premise-length) (once (gslt:fn:proof-list-length:10 $premises))
    (let gslt:result:proof-list-length:11 (once (gslt:fn:proof-list-length:11 $references $premise-length))
-   (quote gslt:result:proof-node-valid:11)))))))))
+   (quote gslt:result:proof-node-valid:11))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=61 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-node-valid target=mode relation=proof-node-valid input=10 functional=relational
 (= (gslt:mode:proof-node-valid:10 $owner)
@@ -1393,11 +1327,9 @@
    (quote gslt:result:proof-node-list-valid:11))
 
 ; gslt-lowered-equation-v1 source-rewrite=63 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-node-list-valid-cons target=mode relation=proof-node-list-valid input=11 functional=relational
-(= (gslt:mode:proof-node-list-valid:11 $owner $__gslt_input_v1_0_1)
-   (let (cons-atom proof-list-cons-v1 (cons-atom $node (cons-atom $rest ()))) $__gslt_input_v1_0_1
+(= (gslt:mode:proof-node-list-valid:11 $owner (proof-list-cons-v1 $node $rest))
    (let gslt:result:proof-node-valid:11 (superpose (collapse (gslt:mode:proof-node-valid:11 $owner $node)))
-   (let gslt:result:proof-node-list-valid:11 (superpose (collapse (gslt:mode:proof-node-list-valid:11 $owner $rest)))
-   (quote gslt:result:proof-node-list-valid:11)))))
+   (superpose (collapse (gslt:mode:proof-node-list-valid:11 $owner $rest)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=62 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-node-list-valid-nil target=mode relation=proof-node-list-valid input=10 functional=relational
 (= (gslt:mode:proof-node-list-valid:10 $owner)
@@ -1466,10 +1398,9 @@
    (quote gslt:result:proof-article-document-order-tail-v1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=79 source-presentation=CertificateGSLTArticleDocumentV1 source-rule=proof-article-document-order-recurse-v1 target=mode relation=proof-article-document-order-tail-v1 input=111 functional=relational
-(= (gslt:mode:proof-article-document-order-tail-v1:111 $owner $article $__gslt_input_v1_0_2)
-   (let (cons-atom proof-list-cons-v1 (cons-atom $next (cons-atom $rest ()))) $__gslt_input_v1_0_2
+(= (gslt:mode:proof-article-document-order-tail-v1:111 $owner $article (proof-list-cons-v1 $next $rest))
    (let (gslt:result:proof-article-document-order-tail-v1:110 (cons-atom proof-list-cons-v1 (cons-atom $current (cons-atom (cons-atom proof-list-cons-v1 (cons-atom $next (cons-atom $rest ()))) ())))) (superpose (collapse (gslt:mode:proof-article-document-order-tail-v1:110 $owner $article)))
-   (quote gslt:result:proof-article-document-order-tail-v1:111))))
+   (quote gslt:result:proof-article-document-order-tail-v1:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=77 source-presentation=CertificateGSLTArticleDocumentV1 source-rule=proof-article-document-order-start-v1 target=mode relation=proof-article-document-order-tail-v1 input=110 functional=relational
 (= (gslt:mode:proof-article-document-order-tail-v1:110 $owner $article)
@@ -1725,230 +1656,192 @@
    (quote (gslt:result:source-proof-judgment:000 MetamathProofV1 MetamathProvableV1 (proof-succ-v1 proof-zero-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=123 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-append target=mode relation=source-proof-judgment input=111 functional=semidet
-(= (gslt:fn:source-proof-judgment:111 $owner ProofSequenceAppendV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) ())) $__gslt_input_v1_0_2
+(= (gslt:fn:source-proof-judgment:111 $owner ProofSequenceAppendV1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))
    (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
-   (quote gslt:result:source-proof-judgment:111))))
-
-; gslt-lowered-equation-v1 source-rewrite=124 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-lookup target=mode relation=source-proof-judgment input=111 functional=semidet
-(= (gslt:fn:source-proof-judgment:111 $owner ProofEnvironmentLookupV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) ())) $__gslt_input_v1_0_2
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
-   (quote gslt:result:source-proof-judgment:111))))
-
-; gslt-lowered-equation-v1 source-rewrite=125 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-instantiate target=mode relation=source-proof-judgment input=111 functional=semidet
-(= (gslt:fn:source-proof-judgment:111 $owner ProofSequenceInstantiateV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) ())) $__gslt_input_v1_0_2
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
-   (quote gslt:result:source-proof-judgment:111))))
-
-; gslt-lowered-equation-v1 source-rewrite=126 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-lookup-compared target=mode relation=source-proof-judgment input=111 functional=semidet
-(= (gslt:fn:source-proof-judgment:111 $owner ProofEnvironmentLookupComparedV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) ())) ())) ())) $__gslt_input_v1_0_2
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
-   (quote gslt:result:source-proof-judgment:111))))
-
-; gslt-lowered-equation-v1 source-rewrite=127 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-instantiate-class target=mode relation=source-proof-judgment input=111 functional=semidet
-(= (gslt:fn:source-proof-judgment:111 $owner ProofSequenceInstantiateClassV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) ())) ())) ())) $__gslt_input_v1_0_2
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
-   (quote gslt:result:source-proof-judgment:111))))
-
-; gslt-lowered-equation-v1 source-rewrite=128 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-class target=mode relation=source-proof-judgment input=111 functional=semidet
-(= (gslt:fn:source-proof-judgment:111 $owner ProofTokenClassV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) $__gslt_input_v1_0_2
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
-   (quote gslt:result:source-proof-judgment:111))))
-
-; gslt-lowered-equation-v1 source-rewrite=129 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-compare target=mode relation=source-proof-judgment input=111 functional=semidet
-(= (gslt:fn:source-proof-judgment:111 $owner ProofTokenCompareV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) ())) $__gslt_input_v1_0_2
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
-   (quote gslt:result:source-proof-judgment:111))))
-
-; gslt-lowered-equation-v1 source-rewrite=130 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-literal target=mode relation=source-proof-judgment input=111 functional=semidet
-(= (gslt:fn:source-proof-judgment:111 $owner ProofTokenLiteralV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) $__gslt_input_v1_0_2
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
-   (quote gslt:result:source-proof-judgment:111))))
-
-; gslt-lowered-equation-v1 source-rewrite=131 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-variable target=mode relation=source-proof-judgment input=111 functional=semidet
-(= (gslt:fn:source-proof-judgment:111 $owner ProofTokenVariableV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) $__gslt_input_v1_0_2
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
-   (quote gslt:result:source-proof-judgment:111))))
-
-; gslt-lowered-equation-v1 source-rewrite=132 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-different target=mode relation=source-proof-judgment input=111 functional=semidet
-(= (gslt:fn:source-proof-judgment:111 $owner ProofTokenDifferentV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) $__gslt_input_v1_0_2
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
-   (quote gslt:result:source-proof-judgment:111))))
-
-; gslt-lowered-equation-v1 source-rewrite=133 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-apart target=mode relation=source-proof-judgment input=111 functional=semidet
-(= (gslt:fn:source-proof-judgment:111 $owner ProofTokenApartV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) $__gslt_input_v1_0_2
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
-   (quote gslt:result:source-proof-judgment:111))))
-
-; gslt-lowered-equation-v1 source-rewrite=134 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-pair-allowed target=mode relation=source-proof-judgment input=111 functional=semidet
-(= (gslt:fn:source-proof-judgment:111 $owner ProofTokenPairAllowedV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) $__gslt_input_v1_0_2
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
-   (quote gslt:result:source-proof-judgment:111))))
-
-; gslt-lowered-equation-v1 source-rewrite=135 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-against-sequence target=mode relation=source-proof-judgment input=111 functional=semidet
-(= (gslt:fn:source-proof-judgment:111 $owner ProofTokenAgainstSequenceV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) $__gslt_input_v1_0_2
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
-   (quote gslt:result:source-proof-judgment:111))))
-
-; gslt-lowered-equation-v1 source-rewrite=136 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-support-apart target=mode relation=source-proof-judgment input=111 functional=semidet
-(= (gslt:fn:source-proof-judgment:111 $owner ProofSequenceSupportApartV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) $__gslt_input_v1_0_2
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
-   (quote gslt:result:source-proof-judgment:111))))
-
-; gslt-lowered-equation-v1 source-rewrite=205 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-declared target=mode relation=source-proof-judgment input=111 functional=semidet
-(= (gslt:fn:source-proof-judgment:111 $owner ProofAssertionDeclaredV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) $__gslt_input_v1_0_2
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
-   (quote gslt:result:source-proof-judgment:111))))
-
-; gslt-lowered-equation-v1 source-rewrite=206 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-build-environment target=mode relation=source-proof-judgment input=111 functional=semidet
-(= (gslt:fn:source-proof-judgment:111 $owner ProofAssertionBuildEnvironmentV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) ())) $__gslt_input_v1_0_2
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
-   (quote gslt:result:source-proof-judgment:111))))
-
-; gslt-lowered-equation-v1 source-rewrite=207 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-check-essentials target=mode relation=source-proof-judgment input=111 functional=semidet
-(= (gslt:fn:source-proof-judgment:111 $owner ProofAssertionCheckEssentialsV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) ())) $__gslt_input_v1_0_2
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
-   (quote gslt:result:source-proof-judgment:111))))
-
-; gslt-lowered-equation-v1 source-rewrite=208 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-check-disjoints target=mode relation=source-proof-judgment input=111 functional=semidet
-(= (gslt:fn:source-proof-judgment:111 $owner ProofAssertionCheckDisjointsV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) $__gslt_input_v1_0_2
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
-   (quote gslt:result:source-proof-judgment:111))))
-
-; gslt-lowered-equation-v1 source-rewrite=240 source-presentation=MetamathProofFunctionalCalculusV1 source-rule=mm-proof-functional-calculus-provable-judgment target=mode relation=source-proof-judgment input=111 functional=semidet
-(= (gslt:fn:source-proof-judgment:111 MetamathProofV1 MetamathProvableV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) $__gslt_input_v1_0_2
    (quote gslt:result:source-proof-judgment:111)))
 
+; gslt-lowered-equation-v1 source-rewrite=124 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-lookup target=mode relation=source-proof-judgment input=111 functional=semidet
+(= (gslt:fn:source-proof-judgment:111 $owner ProofEnvironmentLookupV1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
+   (quote gslt:result:source-proof-judgment:111)))
+
+; gslt-lowered-equation-v1 source-rewrite=125 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-instantiate target=mode relation=source-proof-judgment input=111 functional=semidet
+(= (gslt:fn:source-proof-judgment:111 $owner ProofSequenceInstantiateV1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
+   (quote gslt:result:source-proof-judgment:111)))
+
+; gslt-lowered-equation-v1 source-rewrite=126 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-lookup-compared target=mode relation=source-proof-judgment input=111 functional=semidet
+(= (gslt:fn:source-proof-judgment:111 $owner ProofEnvironmentLookupComparedV1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
+   (quote gslt:result:source-proof-judgment:111)))
+
+; gslt-lowered-equation-v1 source-rewrite=127 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-instantiate-class target=mode relation=source-proof-judgment input=111 functional=semidet
+(= (gslt:fn:source-proof-judgment:111 $owner ProofSequenceInstantiateClassV1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
+   (quote gslt:result:source-proof-judgment:111)))
+
+; gslt-lowered-equation-v1 source-rewrite=128 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-class target=mode relation=source-proof-judgment input=111 functional=semidet
+(= (gslt:fn:source-proof-judgment:111 $owner ProofTokenClassV1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
+   (quote gslt:result:source-proof-judgment:111)))
+
+; gslt-lowered-equation-v1 source-rewrite=129 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-compare target=mode relation=source-proof-judgment input=111 functional=semidet
+(= (gslt:fn:source-proof-judgment:111 $owner ProofTokenCompareV1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
+   (quote gslt:result:source-proof-judgment:111)))
+
+; gslt-lowered-equation-v1 source-rewrite=130 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-literal target=mode relation=source-proof-judgment input=111 functional=semidet
+(= (gslt:fn:source-proof-judgment:111 $owner ProofTokenLiteralV1 (proof-succ-v1 proof-zero-v1))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
+   (quote gslt:result:source-proof-judgment:111)))
+
+; gslt-lowered-equation-v1 source-rewrite=131 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-variable target=mode relation=source-proof-judgment input=111 functional=semidet
+(= (gslt:fn:source-proof-judgment:111 $owner ProofTokenVariableV1 (proof-succ-v1 proof-zero-v1))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
+   (quote gslt:result:source-proof-judgment:111)))
+
+; gslt-lowered-equation-v1 source-rewrite=132 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-different target=mode relation=source-proof-judgment input=111 functional=semidet
+(= (gslt:fn:source-proof-judgment:111 $owner ProofTokenDifferentV1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
+   (quote gslt:result:source-proof-judgment:111)))
+
+; gslt-lowered-equation-v1 source-rewrite=133 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-apart target=mode relation=source-proof-judgment input=111 functional=semidet
+(= (gslt:fn:source-proof-judgment:111 $owner ProofTokenApartV1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
+   (quote gslt:result:source-proof-judgment:111)))
+
+; gslt-lowered-equation-v1 source-rewrite=134 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-pair-allowed target=mode relation=source-proof-judgment input=111 functional=semidet
+(= (gslt:fn:source-proof-judgment:111 $owner ProofTokenPairAllowedV1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
+   (quote gslt:result:source-proof-judgment:111)))
+
+; gslt-lowered-equation-v1 source-rewrite=135 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-against-sequence target=mode relation=source-proof-judgment input=111 functional=semidet
+(= (gslt:fn:source-proof-judgment:111 $owner ProofTokenAgainstSequenceV1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
+   (quote gslt:result:source-proof-judgment:111)))
+
+; gslt-lowered-equation-v1 source-rewrite=136 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-support-apart target=mode relation=source-proof-judgment input=111 functional=semidet
+(= (gslt:fn:source-proof-judgment:111 $owner ProofSequenceSupportApartV1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
+   (quote gslt:result:source-proof-judgment:111)))
+
+; gslt-lowered-equation-v1 source-rewrite=205 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-declared target=mode relation=source-proof-judgment input=111 functional=semidet
+(= (gslt:fn:source-proof-judgment:111 $owner ProofAssertionDeclaredV1 (proof-succ-v1 proof-zero-v1))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
+   (quote gslt:result:source-proof-judgment:111)))
+
+; gslt-lowered-equation-v1 source-rewrite=206 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-build-environment target=mode relation=source-proof-judgment input=111 functional=semidet
+(= (gslt:fn:source-proof-judgment:111 $owner ProofAssertionBuildEnvironmentV1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
+   (quote gslt:result:source-proof-judgment:111)))
+
+; gslt-lowered-equation-v1 source-rewrite=207 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-check-essentials target=mode relation=source-proof-judgment input=111 functional=semidet
+(= (gslt:fn:source-proof-judgment:111 $owner ProofAssertionCheckEssentialsV1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
+   (quote gslt:result:source-proof-judgment:111)))
+
+; gslt-lowered-equation-v1 source-rewrite=208 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-check-disjoints target=mode relation=source-proof-judgment input=111 functional=semidet
+(= (gslt:fn:source-proof-judgment:111 $owner ProofAssertionCheckDisjointsV1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
+   (quote gslt:result:source-proof-judgment:111)))
+
+; gslt-lowered-equation-v1 source-rewrite=240 source-presentation=MetamathProofFunctionalCalculusV1 source-rule=mm-proof-functional-calculus-provable-judgment target=mode relation=source-proof-judgment input=111 functional=semidet
+(= (gslt:fn:source-proof-judgment:111 MetamathProofV1 MetamathProvableV1 (proof-succ-v1 proof-zero-v1))
+   (quote gslt:result:source-proof-judgment:111))
+
 ; gslt-lowered-equation-v1 source-rewrite=123 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-append target=mode relation=source-proof-judgment input=101 functional=relational
-(= (gslt:mode:source-proof-judgment:101 $owner $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) ())) $__gslt_input_v1_0_2
+(= (gslt:mode:source-proof-judgment:101 $owner (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))
    (let (gslt:result:source-proof-sequence-layer:10 $base) (once (gslt:fn:source-proof-sequence-layer:10 $owner))
-   (quote (gslt:result:source-proof-judgment:101 ProofSequenceAppendV1)))))
+   (quote (gslt:result:source-proof-judgment:101 ProofSequenceAppendV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=124 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-lookup target=mode relation=source-proof-judgment input=101 functional=relational
-(= (gslt:mode:source-proof-judgment:101 $owner $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) ())) $__gslt_input_v1_0_2
+(= (gslt:mode:source-proof-judgment:101 $owner (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))
    (let (gslt:result:source-proof-sequence-layer:10 $base) (once (gslt:fn:source-proof-sequence-layer:10 $owner))
-   (quote (gslt:result:source-proof-judgment:101 ProofEnvironmentLookupV1)))))
+   (quote (gslt:result:source-proof-judgment:101 ProofEnvironmentLookupV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=125 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-instantiate target=mode relation=source-proof-judgment input=101 functional=relational
-(= (gslt:mode:source-proof-judgment:101 $owner $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) ())) $__gslt_input_v1_0_2
+(= (gslt:mode:source-proof-judgment:101 $owner (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))
    (let (gslt:result:source-proof-sequence-layer:10 $base) (once (gslt:fn:source-proof-sequence-layer:10 $owner))
-   (quote (gslt:result:source-proof-judgment:101 ProofSequenceInstantiateV1)))))
+   (quote (gslt:result:source-proof-judgment:101 ProofSequenceInstantiateV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=126 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-lookup-compared target=mode relation=source-proof-judgment input=101 functional=relational
-(= (gslt:mode:source-proof-judgment:101 $owner $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) ())) ())) ())) $__gslt_input_v1_0_2
+(= (gslt:mode:source-proof-judgment:101 $owner (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))))
    (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (once (gslt:fn:source-proof-sequence-functional-layer:10 $owner))
-   (quote (gslt:result:source-proof-judgment:101 ProofEnvironmentLookupComparedV1)))))
+   (quote (gslt:result:source-proof-judgment:101 ProofEnvironmentLookupComparedV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=127 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-instantiate-class target=mode relation=source-proof-judgment input=101 functional=relational
-(= (gslt:mode:source-proof-judgment:101 $owner $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) ())) ())) ())) $__gslt_input_v1_0_2
+(= (gslt:mode:source-proof-judgment:101 $owner (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))))
    (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (once (gslt:fn:source-proof-sequence-functional-layer:10 $owner))
-   (quote (gslt:result:source-proof-judgment:101 ProofSequenceInstantiateClassV1)))))
+   (quote (gslt:result:source-proof-judgment:101 ProofSequenceInstantiateClassV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=128 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-class target=mode relation=source-proof-judgment input=101 functional=relational
-(= (gslt:mode:source-proof-judgment:101 $owner $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) $__gslt_input_v1_0_2
+(= (gslt:mode:source-proof-judgment:101 $owner (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
    (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (once (gslt:fn:source-proof-sequence-functional-layer:10 $owner))
-   (quote (gslt:result:source-proof-judgment:101 ProofTokenClassV1)))))
+   (quote (gslt:result:source-proof-judgment:101 ProofTokenClassV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=129 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-compare target=mode relation=source-proof-judgment input=101 functional=relational
-(= (gslt:mode:source-proof-judgment:101 $owner $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) ())) $__gslt_input_v1_0_2
+(= (gslt:mode:source-proof-judgment:101 $owner (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))
    (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (once (gslt:fn:source-proof-sequence-functional-layer:10 $owner))
-   (quote (gslt:result:source-proof-judgment:101 ProofTokenCompareV1)))))
+   (quote (gslt:result:source-proof-judgment:101 ProofTokenCompareV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=130 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-literal target=mode relation=source-proof-judgment input=101 functional=relational
-(= (gslt:mode:source-proof-judgment:101 $owner $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) $__gslt_input_v1_0_2
+(= (gslt:mode:source-proof-judgment:101 $owner (proof-succ-v1 proof-zero-v1))
    (let (gslt:result:source-proof-sequence-layer:10 $base) (once (gslt:fn:source-proof-sequence-layer:10 $owner))
-   (quote (gslt:result:source-proof-judgment:101 ProofTokenLiteralV1)))))
+   (quote (gslt:result:source-proof-judgment:101 ProofTokenLiteralV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=131 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-variable target=mode relation=source-proof-judgment input=101 functional=relational
-(= (gslt:mode:source-proof-judgment:101 $owner $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) $__gslt_input_v1_0_2
+(= (gslt:mode:source-proof-judgment:101 $owner (proof-succ-v1 proof-zero-v1))
    (let (gslt:result:source-proof-sequence-layer:10 $base) (once (gslt:fn:source-proof-sequence-layer:10 $owner))
-   (quote (gslt:result:source-proof-judgment:101 ProofTokenVariableV1)))))
+   (quote (gslt:result:source-proof-judgment:101 ProofTokenVariableV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=132 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-different target=mode relation=source-proof-judgment input=101 functional=relational
-(= (gslt:mode:source-proof-judgment:101 $owner $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) $__gslt_input_v1_0_2
+(= (gslt:mode:source-proof-judgment:101 $owner (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
    (let (gslt:result:source-proof-sequence-layer:10 $base) (once (gslt:fn:source-proof-sequence-layer:10 $owner))
-   (quote (gslt:result:source-proof-judgment:101 ProofTokenDifferentV1)))))
+   (quote (gslt:result:source-proof-judgment:101 ProofTokenDifferentV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=133 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-apart target=mode relation=source-proof-judgment input=101 functional=relational
-(= (gslt:mode:source-proof-judgment:101 $owner $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) $__gslt_input_v1_0_2
+(= (gslt:mode:source-proof-judgment:101 $owner (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
    (let (gslt:result:source-proof-sequence-layer:10 $base) (once (gslt:fn:source-proof-sequence-layer:10 $owner))
-   (quote (gslt:result:source-proof-judgment:101 ProofTokenApartV1)))))
+   (quote (gslt:result:source-proof-judgment:101 ProofTokenApartV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=134 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-pair-allowed target=mode relation=source-proof-judgment input=101 functional=relational
-(= (gslt:mode:source-proof-judgment:101 $owner $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) $__gslt_input_v1_0_2
+(= (gslt:mode:source-proof-judgment:101 $owner (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
    (let (gslt:result:source-proof-sequence-layer:10 $base) (once (gslt:fn:source-proof-sequence-layer:10 $owner))
-   (quote (gslt:result:source-proof-judgment:101 ProofTokenPairAllowedV1)))))
+   (quote (gslt:result:source-proof-judgment:101 ProofTokenPairAllowedV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=135 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-against-sequence target=mode relation=source-proof-judgment input=101 functional=relational
-(= (gslt:mode:source-proof-judgment:101 $owner $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) $__gslt_input_v1_0_2
+(= (gslt:mode:source-proof-judgment:101 $owner (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
    (let (gslt:result:source-proof-sequence-layer:10 $base) (once (gslt:fn:source-proof-sequence-layer:10 $owner))
-   (quote (gslt:result:source-proof-judgment:101 ProofTokenAgainstSequenceV1)))))
+   (quote (gslt:result:source-proof-judgment:101 ProofTokenAgainstSequenceV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=136 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-support-apart target=mode relation=source-proof-judgment input=101 functional=relational
-(= (gslt:mode:source-proof-judgment:101 $owner $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) $__gslt_input_v1_0_2
+(= (gslt:mode:source-proof-judgment:101 $owner (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
    (let (gslt:result:source-proof-sequence-layer:10 $base) (once (gslt:fn:source-proof-sequence-layer:10 $owner))
-   (quote (gslt:result:source-proof-judgment:101 ProofSequenceSupportApartV1)))))
+   (quote (gslt:result:source-proof-judgment:101 ProofSequenceSupportApartV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=205 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-declared target=mode relation=source-proof-judgment input=101 functional=relational
-(= (gslt:mode:source-proof-judgment:101 $owner $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) $__gslt_input_v1_0_2
+(= (gslt:mode:source-proof-judgment:101 $owner (proof-succ-v1 proof-zero-v1))
    (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (once (gslt:fn:source-proof-sequence-assertion-layer:100 $owner))
-   (quote (gslt:result:source-proof-judgment:101 ProofAssertionDeclaredV1)))))
+   (quote (gslt:result:source-proof-judgment:101 ProofAssertionDeclaredV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=206 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-build-environment target=mode relation=source-proof-judgment input=101 functional=relational
-(= (gslt:mode:source-proof-judgment:101 $owner $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) ())) $__gslt_input_v1_0_2
+(= (gslt:mode:source-proof-judgment:101 $owner (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))
    (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (once (gslt:fn:source-proof-sequence-assertion-layer:100 $owner))
-   (quote (gslt:result:source-proof-judgment:101 ProofAssertionBuildEnvironmentV1)))))
+   (quote (gslt:result:source-proof-judgment:101 ProofAssertionBuildEnvironmentV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=207 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-check-essentials target=mode relation=source-proof-judgment input=101 functional=relational
-(= (gslt:mode:source-proof-judgment:101 $owner $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) ())) $__gslt_input_v1_0_2
+(= (gslt:mode:source-proof-judgment:101 $owner (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))
    (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (once (gslt:fn:source-proof-sequence-assertion-layer:100 $owner))
-   (quote (gslt:result:source-proof-judgment:101 ProofAssertionCheckEssentialsV1)))))
+   (quote (gslt:result:source-proof-judgment:101 ProofAssertionCheckEssentialsV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=208 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-check-disjoints target=mode relation=source-proof-judgment input=101 functional=relational
-(= (gslt:mode:source-proof-judgment:101 $owner $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) ())) $__gslt_input_v1_0_2
+(= (gslt:mode:source-proof-judgment:101 $owner (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
    (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (once (gslt:fn:source-proof-sequence-assertion-layer:100 $owner))
-   (quote (gslt:result:source-proof-judgment:101 ProofAssertionCheckDisjointsV1)))))
+   (quote (gslt:result:source-proof-judgment:101 ProofAssertionCheckDisjointsV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=240 source-presentation=MetamathProofFunctionalCalculusV1 source-rule=mm-proof-functional-calculus-provable-judgment target=mode relation=source-proof-judgment input=101 functional=relational
-(= (gslt:mode:source-proof-judgment:101 MetamathProofV1 $__gslt_input_v1_0_2)
-   (let (cons-atom proof-succ-v1 (cons-atom proof-zero-v1 ())) $__gslt_input_v1_0_2
-   (quote (gslt:result:source-proof-judgment:101 MetamathProvableV1))))
+(= (gslt:mode:source-proof-judgment:101 MetamathProofV1 (proof-succ-v1 proof-zero-v1))
+   (quote (gslt:result:source-proof-judgment:101 MetamathProvableV1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=123 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-append target=mode relation=source-proof-judgment input=110 functional=semidet
 (= (gslt:fn:source-proof-judgment:110 $owner ProofSequenceAppendV1)
@@ -2490,10 +2383,9 @@
    (quote (gslt:result:proof-nat-add:010 $left $left))))
 
 ; gslt-lowered-equation-v1 source-rewrite=3 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-nat-add-succ target=mode relation=proof-nat-add input=010 functional=relational
-(= (gslt:mode:proof-nat-add:010 $__gslt_input_v1_0_1)
-   (let (cons-atom proof-succ-v1 (cons-atom $right ())) $__gslt_input_v1_0_1
+(= (gslt:mode:proof-nat-add:010 (proof-succ-v1 $right))
    (let (gslt:result:proof-nat-add:010 $left $sum) (superpose (collapse (gslt:mode:proof-nat-add:010 $right)))
-   (quote (gslt:result:proof-nat-add:010 $left (proof-succ-v1 $sum))))))
+   (quote (gslt:result:proof-nat-add:010 $left (proof-succ-v1 $sum)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=26 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-data-pattern-bvar target=mode relation=proof-data-pattern input=1010 functional=relational
 (= (gslt:mode:proof-data-pattern:1010 $owner $depth)
@@ -3190,15 +3082,12 @@
    (quote (gslt:result:proof-formal-member:001 (proof-list-cons-v1 $formal $rest) $name))))
 
 ; gslt-lowered-equation-v1 source-rewrite=20 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-formal-member-head target=mode relation=proof-formal-member input=100 functional=relational
-(= (gslt:mode:proof-formal-member:100 $__gslt_input_v1_0_0)
-   (let (cons-atom proof-list-cons-v1 (cons-atom (cons-atom proof-formal-v1 (cons-atom $name (cons-atom $depth ()))) (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (quote (gslt:result:proof-formal-member:100 $name $depth))))
+(= (gslt:mode:proof-formal-member:100 (proof-list-cons-v1 (proof-formal-v1 $name $depth) $rest))
+   (quote (gslt:result:proof-formal-member:100 $name $depth)))
 
 ; gslt-lowered-equation-v1 source-rewrite=21 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-formal-member-tail target=mode relation=proof-formal-member input=100 functional=relational
-(= (gslt:mode:proof-formal-member:100 $__gslt_input_v1_0_0)
-   (let (cons-atom proof-list-cons-v1 (cons-atom $formal (cons-atom $rest ()))) $__gslt_input_v1_0_0
-   (let (gslt:result:proof-formal-member:100 $name $depth) (superpose (collapse (gslt:mode:proof-formal-member:100 $rest)))
-   (quote (gslt:result:proof-formal-member:100 $name $depth)))))
+(= (gslt:mode:proof-formal-member:100 (proof-list-cons-v1 $formal $rest))
+   (superpose (collapse (gslt:mode:proof-formal-member:100 $rest))))
 
 ; gslt-lowered-equation-v1 source-rewrite=33 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-data-pattern-list-nil target=mode relation=proof-data-pattern-list input=1100 functional=relational
 (= (gslt:mode:proof-data-pattern-list:1100 $owner $formals)

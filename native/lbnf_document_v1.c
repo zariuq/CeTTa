@@ -321,8 +321,12 @@ static Atom *definition_from_ast(Lower *l, Atom *node) {
         Atom *values2[] = {text_string(l, token_text(children[0])), alternatives};
         if (values2[0] && atom_is_symbol(rows, "LNil")) body = make(l->arena, "LbnfRulesV1", values2, 2u);
     } else if (ast_children(node, "Layout") || ast_children(node, "LayoutStop") ||
-               ast_children(node, "LayoutTop") || ast_children(node, "Function") ||
-               ast_children(node, "Delimiters")) {
+               ast_children(node, "LayoutTop") || ast_children(node, "LayoutIndent") ||
+               ast_children(node, "LayoutBracket") || ast_children(node, "LayoutContinue") ||
+               ast_children(node, "Interpolation") || ast_children(node, "InterpolationOption") ||
+               ast_children(node, "SoftEnds") || ast_children(node, "SoftBefore") ||
+               ast_children(node, "SoftPlain") ||
+               ast_children(node, "Function") || ast_children(node, "Delimiters")) {
         Atom *label = node->expr.elems[2];
         Atom *values[] = {label, atom_deep_copy(l->arena, node)};
         body = make(l->arena, "LbnfPragmaV1", values, 2u);
@@ -457,6 +461,38 @@ static bool type(Lower *l, Atom *name, bool token) {
     Atom *site[] = {atom_string(l->arena, "LBNF:category-signatures-v1"), name};
     return push(l, &l->types, make(l->arena, "TypeDecl", values, 2u)) &&
            push(l, &l->type_origins, make(l->arena, "SyntaxOriginV1", site, 2u));
+}
+
+/* The three token categories of `layout indent NEWLINE INDENT DEDENT`, from
+   the declaration's node; distinct names. */
+static bool layout_indent_names(Lower *l, Atom *node, Atom *names[3]) {
+    Atom *children[3];
+    if (!args(ast_children(node, "LayoutIndent"), children, 3u)) return false;
+    for (size_t k = 0u; k < 3u; ++k) {
+        names[k] = text_string(l, token_text(children[k]));
+        if (!string(names[k]) || !names[k]->ground.sval[0]) return false;
+        for (size_t j = 0u; j < k; ++j)
+            if (atom_eq(names[j], names[k])) return false;
+    }
+    return true;
+}
+
+/* The parts of `interpolation OPEN TEXT CLOSE "{" "}" ":"`: the opener's
+   token category, the text and closer token categories it introduces, and
+   the field's brackets and format-spec introducer; distinct names and
+   nonempty texts. */
+static bool interpolation_parts(Lower *l, Atom *node, Atom *names[3], Atom *texts[3]) {
+    Atom *children[6];
+    if (!args(ast_children(node, "Interpolation"), children, 6u)) return false;
+    for (size_t k = 0u; k < 3u; ++k) {
+        names[k] = text_string(l, token_text(children[k]));
+        texts[k] = text_string(l, token_text(children[k + 3u]));
+        if (!string(names[k]) || !names[k]->ground.sval[0] || !string(texts[k]) || !texts[k]->ground.sval[0])
+            return false;
+        for (size_t j = 0u; j < k; ++j)
+            if (atom_eq(names[j], names[k])) return false;
+    }
+    return true;
 }
 
 static bool white(uint32_t cp) {
@@ -915,6 +951,111 @@ static bool lower_definition(Lower *l, Atom *body, size_t index) {
                                                                                 : "ParserLayoutStopV1",
                                               values, 2u));
         }
+        if (!strcmp(name, "LayoutIndent")) {
+            /* layout indent NEWLINE INDENT DEDENT: the offside rule of a
+               language whose blocks are indented lines.  The three names are
+               token categories that the layout resolver emits and no text
+               spells. */
+            Atom *names[3];
+            if (!layout_indent_names(l, body->expr.elems[2], names))
+                return fail(l, "malformed-layout", "Expected layout indent NEWLINE INDENT DEDENT.");
+            for (size_t k = 0u; k < 3u; ++k) {
+                if (has(&l->custom_tokens, names[k]))
+                    return fail(l, "duplicate-token-definition", "A layout token is declared twice.");
+                if (!push(l, &l->custom_tokens, names[k]) || !type(l, names[k], true)) return false;
+            }
+            Atom *values[] = {names[0], names[1], names[2], origin(l, "layout", index)};
+            return push(l, &l->comments, make(l->arena, "ParserLayoutIndentV1", values, 4u));
+        }
+        if (!strcmp(name, "LayoutBracket")) {
+            /* layout bracket "open" "close": a pair inside which the offside
+               rule is suspended */
+            Atom *children[2];
+            if (!args(ast_children(body->expr.elems[2], name), children, 2u))
+                return fail(l, "malformed-layout", "Expected layout bracket \"open\" \"close\".");
+            Atom *open = text_string(l, token_text(children[0]));
+            Atom *close = text_string(l, token_text(children[1]));
+            if (!string(open) || !open->ground.sval[0] || !string(close) || !close->ground.sval[0])
+                return fail(l, "malformed-layout", "A bracket is a nonempty terminal.");
+            Atom *values[] = {open, close, origin(l, "layout", index)};
+            return push(l, &l->comments, make(l->arena, "ParserLayoutBracketV1", values, 3u));
+        }
+        if (!strcmp(name, "LayoutContinue")) {
+            /* layout continue "text": a line that ends with the text joins
+               the next one */
+            Atom *children[1];
+            if (!args(ast_children(body->expr.elems[2], name), children, 1u))
+                return fail(l, "malformed-layout", "Expected layout continue \"text\".");
+            Atom *text = text_string(l, token_text(children[0]));
+            if (!string(text) || !text->ground.sval[0])
+                return fail(l, "malformed-layout", "A line continuation is a nonempty text.");
+            Atom *values[] = {text, origin(l, "layout", index)};
+            return push(l, &l->comments, make(l->arena, "ParserLayoutContinueV1", values, 2u));
+        }
+        if (!strcmp(name, "Interpolation")) {
+            /* interpolation OPEN TEXT CLOSE "{" "}" ":": a token of category
+               OPEN opens an interpolated string, closed by the quote that
+               ends OPEN's text; its literal text reads as TEXT tokens, its
+               closing quote as CLOSE, and between the field brackets the
+               language's own tokens are read, the spec introducer at a
+               field's top level opening the field's format spec.  TEXT and
+               CLOSE are token categories the reader emits. */
+            Atom *names[3], *texts[3];
+            if (!interpolation_parts(l, body->expr.elems[2], names, texts))
+                return fail(l, "malformed-interpolation",
+                            "Expected interpolation OPEN TEXT CLOSE \"open\" \"close\" \"spec\".");
+            for (size_t k = 1u; k < 3u; ++k) {
+                if (has(&l->custom_tokens, names[k]))
+                    return fail(l, "duplicate-token-definition", "An interpolation token is declared twice.");
+                if (!push(l, &l->custom_tokens, names[k]) || !type(l, names[k], true)) return false;
+            }
+            Atom *values[] = {names[0], names[1], names[2], texts[0], texts[1], texts[2],
+                              origin(l, "interpolation", index)};
+            return push(l, &l->comments, make(l->arena, "ParserInterpolationV1", values, 7u));
+        }
+        if (!strcmp(name, "InterpolationOption")) {
+            /* interpolation "raw" "letters" | "named" "letter" */
+            Atom *children[2];
+            if (!args(ast_children(body->expr.elems[2], name), children, 2u))
+                return fail(l, "malformed-interpolation", "Expected interpolation \"option\" \"value\".");
+            Atom *option = text_string(l, token_text(children[0]));
+            Atom *value = text_string(l, token_text(children[1]));
+            if (!string(option) || !string(value) || !value->ground.sval[0] ||
+                (strcmp(option->ground.sval, "raw") && strcmp(option->ground.sval, "named")))
+                return fail(l, "malformed-interpolation",
+                            "An interpolation option is \"raw\" or \"named\" with a nonempty value.");
+            Atom *values[] = {option, value, origin(l, "interpolation", index)};
+            return push(l, &l->comments, make(l->arena, "ParserInterpolationOptionV1", values, 3u));
+        }
+        if (!strcmp(name, "SoftPlain")) {
+            /* soft "w": the keyword w is a name wherever the grammar cannot
+               take the keyword */
+            Atom *children[1];
+            if (!args(ast_children(body->expr.elems[2], name), children, 1u))
+                return fail(l, "malformed-soft-keyword", "Expected soft \"word\".");
+            Atom *word = text_string(l, token_text(children[0]));
+            if (!string(word) || !word->ground.sval[0])
+                return fail(l, "malformed-soft-keyword", "A soft keyword is nonempty.");
+            Atom *values[] = {word, atom_string(l->arena, "parser"), word, origin(l, "soft", index)};
+            return push(l, &l->comments, make(l->arena, "ParserSoftKeywordV1", values, 4u));
+        }
+        if (!strcmp(name, "SoftEnds") || !strcmp(name, "SoftBefore")) {
+            /* soft "w" ends "t": the keyword w is a keyword only as the first
+               token of a logical line that ends with the terminal t;
+               soft "w" before C: only before a token of category C.  A
+               presentation with soft keywords keeps every other keyword
+               hard: never a name. */
+            Atom *children[2];
+            if (!args(ast_children(body->expr.elems[2], name), children, 2u))
+                return fail(l, "malformed-soft-keyword", "Expected soft \"word\" ends \"terminal\" or soft \"word\" before Category.");
+            Atom *word = text_string(l, token_text(children[0]));
+            Atom *arg = text_string(l, token_text(children[1]));
+            if (!string(word) || !word->ground.sval[0] || !string(arg) || !arg->ground.sval[0])
+                return fail(l, "malformed-soft-keyword", "A soft keyword and its condition are nonempty.");
+            Atom *values[] = {word, atom_string(l->arena, !strcmp(name, "SoftEnds") ? "ends" : "before"), arg,
+                              origin(l, "soft", index)};
+            return push(l, &l->comments, make(l->arena, "ParserSoftKeywordV1", values, 4u));
+        }
         if (!strcmp(name, "Function")) return fail(l, "define", "Define declarations are retained in the document but not lowered in this profile.");
     }
     return fail(l, "malformed-definition", "Unknown or malformed LBNF document declaration.");
@@ -958,6 +1099,33 @@ bool cetta_lbnf_document_v1_declarations(
                 fail(&l, "duplicate-token-definition", "Duplicate token definitions."); goto done;
             }
             if (!push(&l, &l.custom_tokens, category)) goto done;
+        } else if (form(body, "LbnfPragmaV1", 2u) && string(body->expr.elems[1]) &&
+                   !strcmp(body->expr.elems[1]->ground.sval, "LayoutIndent")) {
+            /* the offside rule's token categories, as lower_definition types them */
+            Atom *names[3];
+            if (!layout_indent_names(&l, body->expr.elems[2], names)) {
+                fail(&l, "malformed-layout", "Expected layout indent NEWLINE INDENT DEDENT."); goto done;
+            }
+            for (size_t k = 0u; k < 3u; ++k) {
+                if (has(&l.custom_tokens, names[k])) {
+                    fail(&l, "duplicate-token-definition", "A layout token is declared twice."); goto done;
+                }
+                if (!push(&l, &l.custom_tokens, names[k])) goto done;
+            }
+        } else if (form(body, "LbnfPragmaV1", 2u) && string(body->expr.elems[1]) &&
+                   !strcmp(body->expr.elems[1]->ground.sval, "Interpolation")) {
+            /* the text and closer tokens of an interpolated string */
+            Atom *names[3], *texts[3];
+            if (!interpolation_parts(&l, body->expr.elems[2], names, texts)) {
+                fail(&l, "malformed-interpolation", "Expected interpolation OPEN TEXT CLOSE \"open\" \"close\" \"spec\".");
+                goto done;
+            }
+            for (size_t k = 1u; k < 3u; ++k) {
+                if (has(&l.custom_tokens, names[k])) {
+                    fail(&l, "duplicate-token-definition", "An interpolation token is declared twice."); goto done;
+                }
+                if (!push(&l, &l.custom_tokens, names[k])) goto done;
+            }
         } else if (!form(body, "LbnfEntrypointsV1", 1u) &&
                    !form(body, "LbnfLineCommentV1", 1u) &&
                    !form(body, "LbnfBlockCommentV1", 2u) &&

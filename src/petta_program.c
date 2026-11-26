@@ -441,7 +441,7 @@ typedef struct {
     SpaceProgramToken program;
     SymbolId head;
     CettaExprLen arity;
-    uint32_t native_observers;
+    CettaImportMask native_observers;
     PettaRelationSafety safety;
     bool occupied;
 } PettaTableSafetyCacheEntry;
@@ -7370,7 +7370,7 @@ static bool petta_table_safety_form_is_pure(
 }
 
 static bool petta_table_safety_primitive(
-    SymbolId head, CettaExprLen arity, uint32_t native_observers, bool *opaque) {
+    SymbolId head, CettaExprLen arity, CettaImportMask native_observers, bool *opaque) {
     if (opaque)
         *opaque = false;
     if (head == SYMBOL_ID_NONE)
@@ -7442,7 +7442,7 @@ static bool petta_table_safety_trace_enabled(void) {
 static PettaRelationSafety petta_table_safety_scan_relation(
     PettaProgram *program, Space *space,
     PettaTableSafetyRelation relation,
-    uint32_t native_observers,
+    CettaImportMask native_observers,
     PettaTableSafetyRelation **relations,
     size_t *relation_len, size_t *relation_cap,
     bool *transient_out) {
@@ -7692,7 +7692,7 @@ PettaRelationSafety petta_program_relation_safety(
     size_t cache_slot =
         petta_table_safety_cache_slot(space, head, arity);
     SpaceProgramToken program_token = space_program_token(space);
-    uint32_t native_observers = eval_current_native_observer_mask
+    CettaImportMask native_observers = eval_current_native_observer_mask
         ? eval_current_native_observer_mask() : 0u;
     PettaTableSafetyCacheEntry *cached = NULL;
     for (size_t way = 0u; way < PETTA_TABLE_SAFETY_CACHE_WAYS; way++) {
@@ -7797,7 +7797,7 @@ PettaResolvedCallClass petta_program_classify_resolved_call(
     }
     SymbolId head = call->expr.elems[0]->sym_id;
     bool opaque = false;
-    uint32_t native_observers = cetta_binary_total_observer(head, call->expr.len - 1u) &&
+    CettaImportMask native_observers = cetta_binary_total_observer(head, call->expr.len - 1u) &&
         eval_current_native_observer_mask ? eval_current_native_observer_mask() : 0u;
     if (petta_table_safety_primitive(head, call->expr.len - 1u,
                                    native_observers, &opaque))

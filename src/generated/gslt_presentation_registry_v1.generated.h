@@ -5,6 +5,9 @@
 #include "generated/gslt_presentation_sexpr_v1.generated.h"
 #include "generated/gslt_presentation_cstyle_1_0_v1.generated.h"
 #include "generated/gslt_presentation_rhostyle_1_0_v1.generated.h"
+#include "generated/gslt_presentation_python_tokens_v1.generated.h"
+#include "generated/gslt_presentation_python_v1.generated.h"
+#include "generated/gslt_presentation_python_eval_v1.generated.h"
 
 static const GSLTPresentationTablesV1 *const gslt_presentation_registry[] = {
     &gslt_presentation_cstyle_v1,
@@ -13,6 +16,9 @@ static const GSLTPresentationTablesV1 *const gslt_presentation_registry[] = {
     &gslt_presentation_sexpr_v1,
     &gslt_presentation_cstyle_1_0_v1,
     &gslt_presentation_rhostyle_1_0_v1,
+    &gslt_presentation_python_tokens_v1,
+    &gslt_presentation_python_v1,
+    &gslt_presentation_python_eval_v1,
 };
 
-static const char gslt_presentation_registry_names[] = "cstyle, pystyle, rhostyle, sexpr";
+static const char gslt_presentation_registry_names[] = "cstyle, pystyle, rhostyle, sexpr, python-tokens, python, python-eval";

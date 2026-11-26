@@ -64,9 +64,9 @@
 #include "library_transform.h"
 /* Standalone evaluator clients need not link optional library modules. */
 extern bool cetta_native_module_builtin_enabled(struct CettaLibraryContext *,
-    uint32_t, const char *) __attribute__((weak));
-extern uint32_t cetta_native_module_available_mask(const struct CettaLibraryContext *,
-    uint32_t, uint32_t) __attribute__((weak));
+    CettaImportMask, const char *) __attribute__((weak));
+extern CettaImportMask cetta_native_module_available_mask(const struct CettaLibraryContext *,
+    CettaImportMask, CettaImportMask) __attribute__((weak));
 #include "generated/cetta_execution_contracts.generated.h"
 #include "generated/collection_ingress.generated.h"
 #include <inttypes.h>
@@ -15086,6 +15086,10 @@ static bool hyperpose_external_unsafe_head(Atom *head) {
            symbol_name_equals(head, "fs:try-canonical-from-file") ||
            symbol_name_equals(head, "fs:try-canonical-under") ||
            symbol_name_equals(head, "fs:metadata") ||
+           symbol_name_equals(head, "fs:stat") ||
+           symbol_name_equals(head, "fs:remove") ||
+           symbol_name_equals(head, "fs:make-directory") ||
+           symbol_name_equals(head, "fs:remove-directory") ||
            symbol_name_equals(head, "fs:open-read") ||
            symbol_name_equals(head, "fs:read-chunk") ||
            symbol_name_equals(head, "fs:open-directory") ||
@@ -21916,7 +21920,7 @@ CettaLibraryContext *eval_current_library_context(void) {
 
 /* Use the native provider's actual import/loaded-module availability, not a
  * second naming rule. Standalone clients without that provider get no credit. */
-uint32_t eval_current_native_observer_mask(void) {
+CettaImportMask eval_current_native_observer_mask(void) {
     return g_library_context && cetta_native_module_available_mask
         ? cetta_native_module_available_mask(g_library_context,
             g_library_context->active_mask, CETTA_NATIVE_IMPORT_BINARY) : 0u;
@@ -25205,7 +25209,7 @@ struct PreparedPureProgramCache {
     uint64_t program_current_clock;
     bool program_current_known;
     uint64_t capability_revision;
-    uint32_t library_mask;
+    CettaImportMask library_mask;
     const CettaProfile *profile;
     CettaLanguageId language;
     Arena execution_scratch;
@@ -25217,7 +25221,7 @@ struct PreparedPureProgramCache {
         Atom *body;
         CettaLanguageId language;
         const CettaProfile *profile;
-        uint32_t library_mask;
+        CettaImportMask library_mask;
         bool safe;
     } replay[64];
     size_t replay_len;
@@ -25467,7 +25471,7 @@ prepared_pure_program_cache_check_revision(
     uint64_t capability_revision) {
     if (!cache || !space || cache->root_space != space)
         return false;
-    uint32_t library_mask = g_library_context ? g_library_context->active_mask : 0u;
+    CettaImportMask library_mask = g_library_context ? g_library_context->active_mask : 0u;
     const CettaProfile *profile = active_profile();
     CettaLanguageId language = eval_current_language_id();
     /* Read before the token: a change after this read moves the clock past
@@ -25556,7 +25560,7 @@ static bool prepared_collection_cached_replay_safe(
     /* Minimal HE callbacks may borrow no library profile. NULL is a valid,
      * distinct preparation dependency, not an implicit default profile. */
     const CettaProfile *profile = active_profile();
-    uint32_t library_mask = g_library_context ? g_library_context->active_mask : 0u;
+    CettaImportMask library_mask = g_library_context ? g_library_context->active_mask : 0u;
     PreparedPureProgramCache *cache = eval_execution_prepared_cache();
     uint64_t capabilities = language == CETTA_LANGUAGE_PETTA && g_library_context
         ? petta_libpl_capability_revision(g_library_context->lib_prolog) : 0u;
@@ -43625,7 +43629,7 @@ typedef struct {
     uint64_t library_revision;
     uint64_t symbol_table_instance;
     const CettaProfile *profile;
-    uint32_t active_mask;
+    CettaImportMask active_mask;
     uint32_t loaded_modules;
     CettaLanguageId language;
     CettaLanguageId session_language;
@@ -43649,7 +43653,7 @@ typedef struct {
     uint64_t foreign_instance;
     uint64_t foreign_revision;
     uint64_t symbol_table_instance;
-    uint32_t active_mask;
+    CettaImportMask active_mask;
     SymbolId head;
     CettaExprLen arity;
     bool valid;
@@ -43664,7 +43668,7 @@ typedef struct {
     CettaOpenEquationRead reads;
     uint64_t admission_revision;
     CettaLibPrologReadToken foreign;
-    uint32_t active_mask;
+    CettaImportMask active_mask;
     /* What else the compilation read: the symbol table, the language and
      * profile, whose builtins and collection heads it consults, and
      * let/count fusion. */
@@ -43714,7 +43718,7 @@ typedef struct {
     PreparedPureProgramCache prepared_pure_cache;
     PettaBuiltinAdmissionCacheEntry
         builtin_admission_cache[PETTA_BUILTIN_ADMISSION_CACHE_SLOTS];
-    uint32_t builtin_admission_imports;
+    CettaImportMask builtin_admission_imports;
     uint32_t builtin_admission_modules;
     bool builtin_admission_cache_populated;
     PettaBuiltinEquationsCacheKey builtin_equations_key;
@@ -44893,7 +44897,7 @@ static bool petta_eval_machine_builtin_allowed(
     PettaEvalMachineContext *context = opaque;
     PettaBuiltinAdmissionCacheEntry *entry = NULL;
     if (context && head != SYMBOL_ID_NONE) {
-        uint32_t imports = g_library_context ? g_library_context->active_mask : 0u;
+        CettaImportMask imports = g_library_context ? g_library_context->active_mask : 0u;
         uint32_t modules = g_library_context ? g_library_context->loaded_module_len : 0u;
         if (context->builtin_admission_imports != imports ||
             context->builtin_admission_modules != modules) {

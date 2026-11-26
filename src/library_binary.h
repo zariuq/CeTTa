@@ -2,10 +2,11 @@
 #define CETTA_LIBRARY_BINARY_H
 
 #include "call_outcome.h"
+#include "import_mask.h"
 struct CettaLibraryContext;
 struct Space;
 
-#define CETTA_NATIVE_IMPORT_BINARY (1u << 18)
+#define CETTA_NATIVE_IMPORT_BINARY CETTA_NATIVE_IMPORT_BIT(0)
 
 /* The exact integer test is total and stable across owned atom copies.
  * Physical profile classification is not granted this permission. Other codec

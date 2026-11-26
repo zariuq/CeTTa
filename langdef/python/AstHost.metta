@@ -1,0 +1,176 @@
+; The host relations of Ast.module, with their modes and their realization on
+; CeTTa's PeTTa lane: what a Python literal's text denotes, and the constants
+; the abstract syntax states (the rule language writes no literals).
+;   (py-number TEXT VALUE)          an int, a float, or (py:Complex REAL IMAG)
+;   (py-string TEXT VALUE)          a str, or (py:Bytes TEXT) for a bytes literal
+;   (py-string-kind TEXT KIND)      "u" for a u-prefixed string, else (py:None)
+;   (py-concat A B AB)              adjacent string literals joined
+;   (py-fstring-raw OPENER FLAG)    (py:True) for a raw f-string, else (py:False)
+;   (py-strip-comments TEXT T2)     a field's source text without its comments
+;   (py-debug-text TEXT EXPR)       a debug field's expression text: TEXT before its last "="
+;   (py-fstring-kind OPENER KIND)   (py:tstr) for a t-string (PEP 750), else (py:fstr)
+;   (py-fstring-middle TEXT RAW V)  an f-string's text piece: (py:Text STR) or
+;                                   (py:Empty)
+;   (py-conversion LETTER CODE)     !r !s !a as ast numbers them
+;   (py-const NAME VALUE)           a named constant: (py:zero) 0, (py:one) 1,
+;                                   (py:three) 3, (py:minus-one) -1,
+;                                   (py:repr) 114, (py:star) "*"
+;   (py-capture NAME TARGET)        a capture pattern's target: _ is (py:None)
+;   (py-is-empty STR FLAG)          (py:True) for "", else (py:False)
+;   (py-is-future NAME FLAG)        (py:True) for the module __future__, else (py:False)
+;   (py-add A B SUM)                integer sum
+;   (py-dotted A B A.B)             a dotted module name extended
+; Each realization asks the functions of host_literals.metta.
+(gslt-presentation-v1 PythonAstHostV1
+  (signature
+    (operator py-number 2)
+    (operator py-string 2)
+    (operator py-string-kind 2)
+    (operator py-concat 3)
+    (operator py-fstring-raw 2)
+    (operator py-strip-comments 2)
+    (operator py-debug-text 2)
+    (operator py-fstring-kind 2)
+    (operator py-fstring-middle 3)
+    (operator py-conversion 2)
+    (operator py-const 2)
+    (operator py-capture 2)
+    (operator py-is-empty 2)
+    (operator py-is-future 2)
+    (operator py-add 3)
+    (operator py-dotted 3)
+    (operator gslt:py-number 1)
+    (operator gslt:py-string 1)
+    (operator gslt:py-string-kind 1)
+    (operator gslt:py-concat 1)
+    (operator gslt:py-fstring-raw 1)
+    (operator gslt:py-strip-comments 1)
+    (operator gslt:py-debug-text 1)
+    (operator gslt:py-fstring-kind 1)
+    (operator gslt:py-fstring-middle 1)
+    (operator gslt:py-conversion 1)
+    (operator gslt:py-const 1)
+    (operator gslt:py-capture 1)
+    (operator gslt:py-is-empty 1)
+    (operator gslt:py-is-future 1)
+    (operator gslt:py-add 1)
+    (operator gslt:py-dotted 1)
+    (operator pyhost:number 1)
+    (operator pyhost:string 1)
+    (operator pyhost:string-kind 1)
+    (operator pyhost:concat 2)
+    (operator pyhost:fstring-raw 1)
+    (operator pyhost:strip-comments 1)
+    (operator pyhost:debug-text 1)
+    (operator pyhost:fstring-kind 1)
+    (operator pyhost:fstring-middle 2)
+    (operator pyhost:conversion 1)
+    (operator pyhost:const 1)
+    (operator pyhost:capture 1)
+    (operator pyhost:is-empty 1)
+    (operator pyhost:is-future 1)
+    (operator pyhost:add 2)
+    (operator pyhost:dotted 2)
+    (operator oslf-external-relation-decl-v1 2)
+    (operator oslf-external-relation-modes-v1 2)
+    (operator metta-equation 2)
+    (operator let 3)
+    (operator quote 1))
+  (equations)
+  (rewrites
+    (rule py-number-capability (head (oslf-external-relation-decl-v1 py-number 2)) (body))
+    (rule py-number-modes (head (oslf-external-relation-modes-v1 py-number "10")) (body))
+    (rule py-number-petta
+      (head (metta-equation (gslt:py-number (py-number ?t ?v))
+                            (let ?n (pyhost:number ?t) (quote (py-number ?t ?n)))))
+      (body))
+    (rule py-string-capability (head (oslf-external-relation-decl-v1 py-string 2)) (body))
+    (rule py-string-modes (head (oslf-external-relation-modes-v1 py-string "10")) (body))
+    (rule py-string-petta
+      (head (metta-equation (gslt:py-string (py-string ?t ?v))
+                            (let ?s (pyhost:string ?t) (quote (py-string ?t ?s)))))
+      (body))
+    (rule py-string-kind-capability (head (oslf-external-relation-decl-v1 py-string-kind 2)) (body))
+    (rule py-string-kind-modes (head (oslf-external-relation-modes-v1 py-string-kind "10")) (body))
+    (rule py-string-kind-petta
+      (head (metta-equation (gslt:py-string-kind (py-string-kind ?t ?k))
+                            (let ?x (pyhost:string-kind ?t) (quote (py-string-kind ?t ?x)))))
+      (body))
+    (rule py-concat-capability (head (oslf-external-relation-decl-v1 py-concat 3)) (body))
+    (rule py-concat-modes (head (oslf-external-relation-modes-v1 py-concat "110")) (body))
+    (rule py-concat-petta
+      (head (metta-equation (gslt:py-concat (py-concat ?a ?b ?ab))
+                            (let ?c (pyhost:concat ?a ?b) (quote (py-concat ?a ?b ?c)))))
+      (body))
+    (rule py-fstring-kind-capability (head (oslf-external-relation-decl-v1 py-fstring-kind 2)) (body))
+    (rule py-fstring-kind-modes (head (oslf-external-relation-modes-v1 py-fstring-kind "10")) (body))
+    (rule py-fstring-kind-petta
+      (head (metta-equation (gslt:py-fstring-kind (py-fstring-kind ?t ?f))
+                            (let ?x (pyhost:fstring-kind ?t) (quote (py-fstring-kind ?t ?x)))))
+      (body))
+    (rule py-debug-text-capability (head (oslf-external-relation-decl-v1 py-debug-text 2)) (body))
+    (rule py-debug-text-modes (head (oslf-external-relation-modes-v1 py-debug-text "10")) (body))
+    (rule py-debug-text-petta
+      (head (metta-equation (gslt:py-debug-text (py-debug-text ?t ?f))
+                            (let ?x (pyhost:debug-text ?t) (quote (py-debug-text ?t ?x)))))
+      (body))
+    (rule py-strip-comments-capability (head (oslf-external-relation-decl-v1 py-strip-comments 2)) (body))
+    (rule py-strip-comments-modes (head (oslf-external-relation-modes-v1 py-strip-comments "10")) (body))
+    (rule py-strip-comments-petta
+      (head (metta-equation (gslt:py-strip-comments (py-strip-comments ?t ?f))
+                            (let ?x (pyhost:strip-comments ?t) (quote (py-strip-comments ?t ?x)))))
+      (body))
+    (rule py-fstring-raw-capability (head (oslf-external-relation-decl-v1 py-fstring-raw 2)) (body))
+    (rule py-fstring-raw-modes (head (oslf-external-relation-modes-v1 py-fstring-raw "10")) (body))
+    (rule py-fstring-raw-petta
+      (head (metta-equation (gslt:py-fstring-raw (py-fstring-raw ?t ?f))
+                            (let ?x (pyhost:fstring-raw ?t) (quote (py-fstring-raw ?t ?x)))))
+      (body))
+    (rule py-fstring-middle-capability (head (oslf-external-relation-decl-v1 py-fstring-middle 3)) (body))
+    (rule py-fstring-middle-modes (head (oslf-external-relation-modes-v1 py-fstring-middle "110")) (body))
+    (rule py-fstring-middle-petta
+      (head (metta-equation (gslt:py-fstring-middle (py-fstring-middle ?t ?r ?v))
+                            (let ?x (pyhost:fstring-middle ?t ?r) (quote (py-fstring-middle ?t ?r ?x)))))
+      (body))
+    (rule py-conversion-capability (head (oslf-external-relation-decl-v1 py-conversion 2)) (body))
+    (rule py-conversion-modes (head (oslf-external-relation-modes-v1 py-conversion "10")) (body))
+    (rule py-conversion-petta
+      (head (metta-equation (gslt:py-conversion (py-conversion ?t ?c))
+                            (let ?x (pyhost:conversion ?t) (quote (py-conversion ?t ?x)))))
+      (body))
+    (rule py-const-capability (head (oslf-external-relation-decl-v1 py-const 2)) (body))
+    (rule py-const-modes (head (oslf-external-relation-modes-v1 py-const "10")) (body))
+    (rule py-const-petta
+      (head (metta-equation (gslt:py-const (py-const ?n ?v))
+                            (let ?x (pyhost:const ?n) (quote (py-const ?n ?x)))))
+      (body))
+    (rule py-capture-capability (head (oslf-external-relation-decl-v1 py-capture 2)) (body))
+    (rule py-capture-modes (head (oslf-external-relation-modes-v1 py-capture "10")) (body))
+    (rule py-capture-petta
+      (head (metta-equation (gslt:py-capture (py-capture ?t ?n))
+                            (let ?x (pyhost:capture ?t) (quote (py-capture ?t ?x)))))
+      (body))
+    (rule py-is-empty-capability (head (oslf-external-relation-decl-v1 py-is-empty 2)) (body))
+    (rule py-is-empty-modes (head (oslf-external-relation-modes-v1 py-is-empty "10")) (body))
+    (rule py-is-empty-petta
+      (head (metta-equation (gslt:py-is-empty (py-is-empty ?s ?f))
+                            (let ?x (pyhost:is-empty ?s) (quote (py-is-empty ?s ?x)))))
+      (body))
+    (rule py-is-future-capability (head (oslf-external-relation-decl-v1 py-is-future 2)) (body))
+    (rule py-is-future-modes (head (oslf-external-relation-modes-v1 py-is-future "10")) (body))
+    (rule py-is-future-petta
+      (head (metta-equation (gslt:py-is-future (py-is-future ?s ?f))
+                            (let ?x (pyhost:is-future ?s) (quote (py-is-future ?s ?x)))))
+      (body))
+    (rule py-add-capability (head (oslf-external-relation-decl-v1 py-add 3)) (body))
+    (rule py-add-modes (head (oslf-external-relation-modes-v1 py-add "110")) (body))
+    (rule py-add-petta
+      (head (metta-equation (gslt:py-add (py-add ?a ?b ?s))
+                            (let ?x (pyhost:add ?a ?b) (quote (py-add ?a ?b ?x)))))
+      (body))
+    (rule py-dotted-capability (head (oslf-external-relation-decl-v1 py-dotted 3)) (body))
+    (rule py-dotted-modes (head (oslf-external-relation-modes-v1 py-dotted "110")) (body))
+    (rule py-dotted-petta
+      (head (metta-equation (gslt:py-dotted (py-dotted ?a ?b ?d))
+                            (let ?x (pyhost:dotted ?a ?b) (quote (py-dotted ?a ?b ?x)))))
+      (body))))

@@ -75,6 +75,27 @@
 (: fs:open-read (-> %Undefined% Atom))
 (: fs:read-chunk (-> %Undefined% %Undefined% Atom))
 (: fs:close (-> %Undefined% Atom))
+(: __cetta_lib_fs_stat (-> Atom Atom Atom))
+(: __cetta_lib_fs_remove (-> Atom Atom))
+(: __cetta_lib_fs_make_directory (-> Atom Atom Atom))
+(: __cetta_lib_fs_remove_directory (-> Atom Atom))
+(: fs:stat (-> %Undefined% %Undefined% Atom))
+(: fs:remove (-> %Undefined% Atom))
+(: fs:make-directory (-> %Undefined% %Undefined% Atom))
+(: fs:remove-directory (-> %Undefined% Atom))
+(= (fs:stat $path $links)
+   (function (chain (eval (__cetta_lib_fs_stat $path $links)) $result
+     (return $result))))
+(= (fs:remove $path)
+   (function (chain (eval (__cetta_lib_fs_remove $path)) $result
+     (return $result))))
+(= (fs:make-directory $path $mode)
+   (function (chain (eval (__cetta_lib_fs_make_directory $path $mode)) $result
+     (return $result))))
+(= (fs:remove-directory $path)
+   (function (chain (eval (__cetta_lib_fs_remove_directory $path)) $result
+     (return $result))))
+
 (= (fs:metadata $path $links)
    (function (chain (eval (__cetta_lib_fs_metadata $path $links)) $result
      (return $result))))

@@ -2,6 +2,7 @@
 #define CETTA_EVAL_H
 
 #include "answer_bank.h"
+#include "import_mask.h"
 #include "atom.h"
 #include "eval_completion.h"
 #include "space.h"
@@ -217,7 +218,7 @@ bool eval_current_builtin_symbol_allowed(SymbolId head) __attribute__((weak));
 bool eval_current_pattern_module_enabled(void) __attribute__((weak));
 uint32_t eval_current_pattern_control_arity(SymbolId head) __attribute__((weak));
 uint32_t eval_current_pattern_operation_arity(SymbolId head) __attribute__((weak));
-uint32_t eval_current_native_observer_mask(void) __attribute__((weak));
+CettaImportMask eval_current_native_observer_mask(void) __attribute__((weak));
 SymbolId eval_current_pattern_head(SymbolId head) __attribute__((weak));
 Space *eval_resolve_space_read(Space *space) __attribute__((weak));
 bool eval_current_profile_enables_dependent_telescope(void) __attribute__((weak));

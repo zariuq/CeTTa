@@ -73,6 +73,22 @@ bool cetta_gslt_petta_direct_closed_v1(
     char *error,
     size_t error_size);
 
+/* A program loaded beside the programs that own some of its sources, as
+ * the stages of a language pipeline are: a presentation marked EXTERNAL (a
+ * host theory: capability declarations, their modes and their target
+ * equations, nothing else) is read for the analysis exactly as a source is,
+ * but its declarations and equations are not rendered: the program that owns
+ * it renders them once, and the programs that share it are loaded together
+ * without answering a host call twice.  CLOSED_ENTRY_RESIDUAL is as in
+ * closed_v1; the C target, a closed program, takes no extern presentation. */
+bool cetta_gslt_petta_direct_linked_v1(
+    Atom *const *presentations, const bool *external, size_t presentation_count,
+    CettaGsltDirectTargetV1 target,
+    const char *const *entry_modes, size_t entry_mode_count,
+    bool closed_entry_residual,
+    uint8_t **program_out, size_t *program_len_out, size_t *rule_count_out,
+    char source_digest_out[65], char *error, size_t error_size);
+
 /* Consume source-inferred integer completion types, authenticated against the
  * complete ordered composition. The present consumer specializes literal
  * integer calls only; it does not infer integer types from groundness. Like

@@ -3,6 +3,9 @@
 ; HE-only native wrappers spelled as PeTTa calls.
 
 (: syntax:read (-> %Undefined% %Undefined%))
+; (syntax:read-in NAME TEXT): the atoms the presentation NAME, compiled into the
+; executable, builds from TEXT, unevaluated, as one expression.
+(: syntax:read-in (-> %Undefined% %Undefined% %Undefined%))
 (: syntax:restore (-> %Undefined% %Undefined%))
 (: syntax:freeze (-> %Undefined% %Undefined%))
 (: syntax:write (-> %Undefined% %Undefined%))

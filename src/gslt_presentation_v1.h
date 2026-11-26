@@ -29,7 +29,9 @@ enum {
     GSLT_PRES_TERM_EOF = 0,
     GSLT_PRES_TERM_KEYWORD = 1,
     GSLT_PRES_TERM_SYMBOL = 2,
-    GSLT_PRES_TERM_TOKEN = 3
+    GSLT_PRES_TERM_TOKEN = 3,
+    /* emitted by a layout rule, spelled by no text, never an argument */
+    GSLT_PRES_TERM_LAYOUT = 4
 };
 
 enum {
@@ -52,7 +54,8 @@ enum {
     GSLT_PRES_LEAF_NEGATIVE = 5, /* - number: the word "-" followed by the number */
     GSLT_PRES_LEAF_STRING = 6,   /* "...": BNFC string escapes */
     GSLT_PRES_LEAF_RAW = 7,      /* r#"..."#: the text between the fences */
-    GSLT_PRES_LEAF_WORD = 8      /* an S-expression word: variable, number or symbol */
+    GSLT_PRES_LEAF_WORD = 8,     /* an S-expression word: variable, number or symbol */
+    GSLT_PRES_LEAF_TEXT = 9      /* the token's text exactly, as a string */
 };
 
 /* Template code, prefix order. */
@@ -65,8 +68,16 @@ enum {
     GSLT_PRES_T_STRING = 6, /* STRING k: constant string k */
     GSLT_PRES_T_CHANNEL = 7, /* CHANNEL k: the one atom every channel of
                                 category k names in the enclosing scope */
-    GSLT_PRES_T_FIXED = 8   /* FIXED i k t: child i must be the constant word k
+    GSLT_PRES_T_SPAN = 9,   /* SPAN: the production's source span, (Span line col
+                               end_line end_col), lines from 1, columns in bytes
+                               from 0 (as Python's ast counts them) */
+    GSLT_PRES_T_FIXED = 8,  /* FIXED i k t: child i must be the constant word k
                                (reading refuses any other); the atom is t's */
+    GSLT_PRES_T_FULL_TEXT = 10, /* FULL_TEXT: the production's source text with
+                                   the trivia around it, from the end of the token
+                                   before it to the start of the token after it,
+                                   as a string */
+    GSLT_PRES_T_FULL_SPAN = 11  /* FULL_SPAN: that text's span, as SPAN gives one */
 };
 
 #define GSLT_PRES_MAX_CHANNELS 8
@@ -205,6 +216,14 @@ typedef struct {
     const char *statement_end;
     /* the token production read for each leaf kind, or -1 */
     int16_t leaf_prod[9];
+    /* how a token child with no token form is read: 0 as a word, or a leaf
+       kind (pres:token-default) */
+    uint8_t token_default;
+    /* (pres:positions NAME): each production's atom ends with its span */
+    bool positions;
+    /* (pres:lists NAME cons): a list reads as (LCons item rest) ... (LNil),
+       the encoding structural rewrite rules recurse on */
+    bool lists_cons;
 
     /* Channel scopes: a terminal may open a scope that the production it
        begins closes; inside it, every reduction of a channel category k must
@@ -229,6 +248,42 @@ typedef struct {
     bool layout_toplevel;
     const uint8_t *terminal_layout;
     int16_t layout_open, layout_sep, layout_close;
+
+    /* The offside rule of indented blocks (layout indent NEWLINE INDENT
+       DEDENT), the Python Language Reference's lines and indentation: the
+       first terminal ends a logical line, the next two open and close a
+       deeper indentation.  Inside a bracket pair (1 opens, 2 closes) lines
+       join; a line ending in the continuation text joins the next. */
+    bool offside;
+    int16_t offside_newline, offside_indent, offside_dedent;
+    const uint8_t *terminal_bracket;
+    const char *offside_continuation; /* or NULL */
+
+    /* Interpolated strings (interpolation OPEN TEXT CLOSE "{" "}" ":"): a
+       token of OPEN opens one, closed by the quote that ends OPEN's text; its
+       literal text reads as TEXT tokens (a doubled field bracket is one
+       literal bracket, closing the TEXT token), its quote as CLOSE; inside
+       the field brackets the language's own tokens are read, and the spec
+       introducer at a field's top level opens a format spec: TEXT up to a
+       nested field or the field's end.  A backslash escapes the next
+       character, except a field bracket; outside raw text (an opener holding
+       one of the raw letters) a backslash, the named letter and a field
+       bracket open a name that runs to the closing bracket. */
+    bool interp;
+    int16_t interp_open, interp_text, interp_close;
+    int16_t interp_field_open, interp_field_close, interp_spec;
+    const char *interp_raw;   /* or NULL */
+    const char *interp_named; /* or NULL */
+
+    /* Soft keywords (soft "w" ends "t", soft "w" before C): per terminal, 1
+       when the keyword is one only as the first token of a logical line that
+       ends with terminal_soft_arg, 2 when it is one only before a token of
+       category terminal_soft_arg, 3 when it is one wherever the grammar can
+       take it; elsewhere it is read as the token it was lexed as.  With soft
+       keywords declared, every other keyword is hard. */
+    bool has_soft;
+    const uint8_t *terminal_soft;
+    const int16_t *terminal_soft_arg;
 
     /* lexing */
     uint16_t n_classes;
@@ -313,6 +368,16 @@ char *gslt_presentation_v1_print_ids_comments(const GSLTPresentationTablesV1 *ta
                                               size_t n_comments,
                                               char *error_buf, size_t error_buf_size);
 void gslt_presentation_v1_comments_free(GSLTPresentationCommentV1 *comments, size_t n);
+/* Every token of TEXT as the presentation reads it (lexed, its layout
+ * resolved), and the comments and line ends its reader passes over, written
+ * to FILE (a FILE *) in text order, one JSON array a line:
+ *   [class, text, start line, start column, end line, end column]
+ * with lines from 1 and columns from 0 counted in code points.  The class is
+ * a token's category (a keyword's is the category it was lexed as),
+ * "symbol", a layout terminal's name, "comment", "nl" (a line end that ends
+ * no logical line), and "end" last.  0, or -1 with a diagnosis. */
+int gslt_presentation_v1_print_tokens(const GSLTPresentationTablesV1 *tables, const char *text, size_t len,
+                                      void *file, char *error_buf, size_t error_buf_size);
 /* Whether printing may write keyword-spelled symbols bare where they read
  * back as names (the compiled readers' soft keywords; the run-time route
  * reads only the backquoted spelling).  On by default. */

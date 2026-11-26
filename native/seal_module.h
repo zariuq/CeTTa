@@ -2,6 +2,7 @@
 #define CETTA_NATIVE_SEAL_MODULE_H
 
 #include "atom.h"
+#include "import_mask.h"
 #include "call_outcome.h"
 #include "space.h"
 
@@ -10,7 +11,7 @@
 
 struct CettaLibraryContext;
 
-#define CETTA_NATIVE_IMPORT_SEAL (1u << 30)
+#define CETTA_NATIVE_IMPORT_SEAL CETTA_NATIVE_IMPORT_BIT(11)
 
 /* The `seal` library's natives, heads `__cetta_lib_seal_*` (lib/seal.metta).
  * False when `head` is not one of them. */

@@ -1,0 +1,905 @@
+{- Python 3.15: the core a program runs as.
+
+   The abstract syntax Ast.module builds, with the symbol tables Scope.module
+   gives, becomes a small core in A-normal form: an operation's operands are
+   atoms, so evaluation order is explicit and every intermediate value has a
+   slot.  Atoms: (c:const V), (c:const-set VALUES) the set of constants a
+   display of constants is built from, (c:local SLOT) a function's fast local,
+   (c:cell SLOT), (c:global NAME) the module's globals then the builtins,
+   (c:name NAME) a module's or class body's namespace, (c:tmp SLOT) a
+   temporary.  Statements: (c:assign TARGET OP), (c:do OP), (c:seq LIST),
+   (c:if ATOM S S), (c:block LABEL S), (c:loop LABEL S), (c:break LABEL),
+   (c:continue LABEL), (c:return ATOM), (c:yield T ATOM), (c:yield-from T ATOM),
+   (c:await T ATOM); and (c:syntax-error MESSAGE LINE COL
+   ELINE ECOL) where CPython's compiler raises a SyntaxError (the first in the
+   core's order refuses the program).  A function is a code object,
+   (c:code NAME QUALNAME (c:args NPOSONLY NPOS NKWONLY STAR DSTAR NAMES) NSLOTS CELLS FREES FLAGS BODY),
+   NAMES the slots' names, CELLS the slots holding cells, FREES those the closure fills.
+
+   Names resolve as CPython's compiler resolves them (compiler_nameop): in a
+   function a LOCAL name is a fast local, a GLOBAL one a global, a FREE or
+   CELL one a cell; in a module or class body a LOCAL or implicitly global
+   name is looked up in the namespace, an explicitly global one in the
+   globals.  The desugaring threads the next free slot (temporaries and loop
+   labels are numbered from it) through the walk.  A context is
+   (c:cx KIND (c:tq TABLE PREFIX PRIVATE) SLOTS LOOPS): the block's kind; its
+   symbol table, the prefix of the qualified names it holds and its private
+   name (the innermost class's name, py:None outside classes); its fast
+   locals in slot order (py:None outside functions); and the labels a break
+   and a continue go to (py:None outside loops). -}
+Module PythonCore {
+  Theory Desugar() {
+    Empty
+    Types {
+      T;
+    }
+    Rewrites {
+      -- ================================================================ match
+      -- PEP 634 as compile.c compiles it (compiler_match_inner): the subject
+      -- once, in a temporary; each case a block its pattern breaks out of when
+      -- it does not match; a pattern's captures are stored only once all of it
+      -- has matched, then the guard is tested (the names stay bound when it
+      -- fails), then the body runs and the statement ends
+      "MATCH". subj:T, cases:T, l:T, c:T, el:T, ec:T, x:T, n:T, pre:T, a:T, n1:T, ts:T, n2:T, end:T, n3:T, ss:T, n4:T, b0:T, b:T | "CAtom"(subj, x, n) ~> "c:anf"(pre, a, n1), "CFresh"(n1) ~> "c:fresh"(ts, n2), "CFresh"(n2) ~> "c:fresh"(end, n3), "CCases"(cases, "c:tmp"(ts), end, x, n3) ~> "c:sts"(ss, n4), "CSnoc"(pre, "c:assign"("c:tmp"(ts), "c:atom"(a))) ~> b0, "CAppend"(b0, ss) ~> b |- "CStmt"("py:Match"(subj, cases, l, c, el, ec), x, n) ~> "c:st"("c:block"(end, "c:seq"(b)), n4);
+      "CASES-NIL". s:T, end:T, x:T, n:T |- "CCases"("LNil"(), s, end, x, n) ~> "c:sts"("LNil"(), n);
+      "CASES-LAST". cs:T, s:T, end:T, x:T, n:T, st:T, n1:T | "CCase"(cs, "py:True"(), s, end, x, n) ~> "c:st"(st, n1) |- "CCases"("LCons"(cs, "LNil"()), s, end, x, n) ~> "c:sts"("LCons"(st, "LNil"()), n1);
+      "CASES-CONS". cs:T, c2:T, rest:T, s:T, end:T, x:T, n:T, st:T, n1:T, ss:T, n2:T | "CCase"(cs, "py:False"(), s, end, x, n) ~> "c:st"(st, n1), "CCases"("LCons"(c2, rest), s, end, x, n1) ~> "c:sts"(ss, n2) |- "CCases"("LCons"(cs, "LCons"(c2, rest)), s, end, x, n) ~> "c:sts"("LCons"(st, ss), n2);
+      "CASE". p:T, g:T, body:T, lst:T, s:T, end:T, x:T, n:T, er:T, pe:T, fl:T, n1:T, ps:T, sto:T, n2:T, stv:T, gs:T, n3:T, bs:T, n4:T, b0:T, b1:T, b2:T, b:T | "py-pattern-error"(p, g, lst, er), "CPatError"(er) ~> pe, "CFresh"(n) ~> "c:fresh"(fl, n1), "CPat"(p, s, fl, x, n1) ~> "c:pat"(ps, sto, n2), "CStores"(sto, x) ~> stv, "CGuard"(g, fl, x, n2) ~> "c:sts"(gs, n3), "CBlock"(body, x, n3) ~> "c:st"(bs, n4), "CAppend"(pe, ps) ~> b0, "CAppend"(b0, stv) ~> b1, "CAppend"(b1, gs) ~> b2, "CAppend"(b2, "LCons"(bs, "LCons"("c:break"(end), "LNil"()))) ~> b |- "CCase"("py:match_case"(p, g, body), lst, s, end, x, n) ~> "c:st"("c:block"(fl, "c:seq"(b)), n4);
+      "PAT-ERROR-NONE". |- "CPatError"("c:no-error"()) ~> "LNil"();
+      "PAT-ERROR". m:T, l:T, c:T, el:T, ec:T |- "CPatError"("c:syntax-error"(m, l, c, el, ec)) ~> "LCons"("c:syntax-error"(m, l, c, el, ec), "LNil"());
+      "GUARD". g:T, fl:T, x:T, n:T, b:T, r:T | "py-is-none"(g, b), "CGuardIf"(b, g, fl, x, n) ~> r |- "CGuard"(g, fl, x, n) ~> r;
+      "GUARD-NONE". g:T, fl:T, x:T, n:T |- "CGuardIf"("py:True"(), g, fl, x, n) ~> "c:sts"("LNil"(), n);
+      "GUARD-TEST". g:T, fl:T, x:T, n:T, pre:T, a:T, n1:T, b:T | "CAtom"(g, x, n) ~> "c:anf"(pre, a, n1), "CSnoc"(pre, "c:if"(a, "c:seq"("LNil"()), "c:break"(fl))) ~> b |- "CGuardIf"("py:False"(), g, fl, x, n) ~> "c:sts"(b, n1);
+      "STORES-NIL". x:T |- "CStores"("LNil"(), x) ~> "LNil"();
+      "STORES-CONS". nm:T, a:T, rest:T, x:T, tg:T, r:T | "CName"(nm, x) ~> tg, "CStores"(rest, x) ~> r |- "CStores"("LCons"("c:store"(nm, a), rest), x) ~> "LCons"("c:assign"(tg, "c:atom"(a)), r);
+
+      -- a pattern against a subject atom S, breaking out to FAIL when it does
+      -- not match: (c:pat STATEMENTS STORES N), STORES its captures
+      -- (c:store NAME ATOM) in the order compile.c stores them
+      "PAT-VALUE". v:T, l:T, c:T, el:T, ec:T, s:T, fl:T, x:T, n:T, pre:T, a:T, n1:T, t:T, n2:T, b0:T, b:T | "CAtom"(v, x, n) ~> "c:anf"(pre, a, n1), "CFresh"(n1) ~> "c:fresh"(t, n2), "CSnoc"(pre, "c:assign"("c:tmp"(t), "c:compare"("py:Eq"(), s, a))) ~> b0, "CSnoc"(b0, "c:if"("c:tmp"(t), "c:seq"("LNil"()), "c:break"(fl))) ~> b |- "CPat"("py:MatchValue"(v, l, c, el, ec), s, fl, x, n) ~> "c:pat"(b, "LNil"(), n2);
+      "PAT-SINGLETON". v:T, l:T, c:T, el:T, ec:T, s:T, fl:T, x:T, n:T, w:T, t:T, n1:T | "py-core-value"(v, w), "CFresh"(n) ~> "c:fresh"(t, n1) |- "CPat"("py:MatchSingleton"(v, l, c, el, ec), s, fl, x, n) ~> "c:pat"("LCons"("c:assign"("c:tmp"(t), "c:compare"("py:Is"(), s, "c:const"(w))), "LCons"("c:if"("c:tmp"(t), "c:seq"("LNil"()), "c:break"(fl)), "LNil"())), "LNil"(), n1);
+      "PAT-STAR". nm:T, l:T, c:T, el:T, ec:T, s:T, fl:T, x:T, n:T, b:T, st:T | "py-is-none"(nm, b), "CCapture"(b, nm, s) ~> st |- "CPat"("py:MatchStar"(nm, l, c, el, ec), s, fl, x, n) ~> "c:pat"("LNil"(), st, n);
+      "CAPTURE-NONE". nm:T, s:T |- "CCapture"("py:True"(), nm, s) ~> "LNil"();
+      "CAPTURE". nm:T, s:T |- "CCapture"("py:False"(), nm, s) ~> "LCons"("c:store"(nm, s), "LNil"());
+      "PAT-AS". p:T, nm:T, l:T, c:T, el:T, ec:T, s:T, fl:T, x:T, n:T, bp:T, bn:T, cap:T, r:T | "py-is-none"(p, bp), "py-is-none"(nm, bn), "CCapture"(bn, nm, s) ~> cap, "CPatAs"(bp, p, cap, s, fl, x, n) ~> r |- "CPat"("py:MatchAs"(p, nm, l, c, el, ec), s, fl, x, n) ~> r;
+      "PAT-AS-BARE". p:T, cap:T, s:T, fl:T, x:T, n:T |- "CPatAs"("py:True"(), p, cap, s, fl, x, n) ~> "c:pat"("LNil"(), cap, n);
+      "PAT-AS-SUB". p:T, cap:T, s:T, fl:T, x:T, n:T, ps:T, st:T, n1:T, st2:T | "CPat"(p, s, fl, x, n) ~> "c:pat"(ps, st, n1), "CAppend"(st, cap) ~> st2 |- "CPatAs"("py:False"(), p, cap, s, fl, x, n) ~> "c:pat"(ps, st2, n1);
+      -- an or-pattern: each alternative in its own block, its captures moved
+      -- into the temporaries of the first alternative's names
+      "PAT-OR". ps:T, l:T, c:T, el:T, ec:T, s:T, fl:T, x:T, n:T, ok:T, n1:T, f1:T, ps1:T, st1:T, cs:T, n2:T, ctl:T, n3:T, bs:T, b:T | "CFresh"(n) ~> "c:fresh"(ok, n1), "COrAlts"(ps, s, x, n1) ~> "c:alts"("LCons"("c:alt"(f1, ps1, st1), cs), n2), "py-or-control"(st1, n2, "c:control"(ctl, n3)), "COrBlocks"("LCons"("c:alt"(f1, ps1, st1), cs), ctl, ok) ~> bs, "CSnoc"(bs, "c:break"(fl)) ~> b |- "CPat"("py:MatchOr"(ps, l, c, el, ec), s, fl, x, n) ~> "c:pat"("LCons"("c:block"(ok, "c:seq"(b)), "LNil"()), ctl, n3);
+      "OR-ALTS-NIL". s:T, x:T, n:T |- "COrAlts"("LNil"(), s, x, n) ~> "c:alts"("LNil"(), n);
+      "OR-ALTS-CONS". p:T, rest:T, s:T, x:T, n:T, f:T, n1:T, ps:T, st:T, n2:T, cs:T, n3:T | "CFresh"(n) ~> "c:fresh"(f, n1), "CPat"(p, s, f, x, n1) ~> "c:pat"(ps, st, n2), "COrAlts"(rest, s, x, n2) ~> "c:alts"(cs, n3) |- "COrAlts"("LCons"(p, rest), s, x, n) ~> "c:alts"("LCons"("c:alt"(f, ps, st), cs), n3);
+      "OR-BLOCKS-NIL". ctl:T, ok:T |- "COrBlocks"("LNil"(), ctl, ok) ~> "LNil"();
+      "OR-BLOCKS-CONS". f:T, ps:T, st:T, rest:T, ctl:T, ok:T, asg:T, b0:T, b:T, r:T | "py-or-assigns"(ctl, st, asg), "CAppend"(ps, asg) ~> b0, "CSnoc"(b0, "c:break"(ok)) ~> b, "COrBlocks"(rest, ctl, ok) ~> r |- "COrBlocks"("LCons"("c:alt"(f, ps, st), rest), ctl, ok) ~> "LCons"("c:block"(f, "c:seq"(b)), r);
+      -- a sequence pattern: MATCH_SEQUENCE, the length, then its items by
+      -- subscripts (a wildcard star) or by unpacking (UNPACK_SEQUENCE/UNPACK_EX)
+      "PAT-SEQUENCE". ps:T, l:T, c:T, el:T, ec:T, s:T, fl:T, x:T, n:T, lc:T, kd:T, t:T, n1:T, b1:T, n2:T, b2:T, st:T, n3:T, b:T | "py-sequence-shape"(ps, "c:seq-shape"(lc, kd)), "CFresh"(n) ~> "c:fresh"(t, n1), "CLenCheck"(lc, s, fl, n1) ~> "c:sts"(b1, n2), "CSeqExtract"(kd, s, fl, x, n2) ~> "c:pat"(b2, st, n3), "CAppend"("LCons"("c:assign"("c:tmp"(t), "c:match-sequence"(s)), "LCons"("c:if"("c:tmp"(t), "c:seq"("LNil"()), "c:break"(fl)), b1)), b2) ~> b |- "CPat"("py:MatchSequence"(ps, l, c, el, ec), s, fl, x, n) ~> "c:pat"(b, st, n3);
+      "LEN-ANY". s:T, fl:T, n:T |- "CLenCheck"("c:len-any"(), s, fl, n) ~> "c:sts"("LNil"(), n);
+      "LEN-CHECK". o:T, k:T, s:T, fl:T, n:T, tl:T, n1:T, tc:T, n2:T | "CFresh"(n) ~> "c:fresh"(tl, n1), "CFresh"(n1) ~> "c:fresh"(tc, n2) |- "CLenCheck"("c:len"(o, k), s, fl, n) ~> "c:sts"("LCons"("c:assign"("c:tmp"(tl), "c:get-len"(s)), "LCons"("c:assign"("c:tmp"(tc), "c:compare"(o, "c:tmp"(tl), "c:const"(k))), "LCons"("c:if"("c:tmp"(tc), "c:seq"("LNil"()), "c:break"(fl)), "LNil"()))), n2);
+      "EXTRACT-NONE". s:T, fl:T, x:T, n:T |- "CSeqExtract"("c:only-wildcards"(), s, fl, x, n) ~> "c:pat"("LNil"(), "LNil"(), n);
+      "EXTRACT-SUBSCRIPTS". plan:T, s:T, fl:T, x:T, n:T, r:T | "CSubscrPats"(plan, s, fl, x, n) ~> r |- "CSeqExtract"("c:subscripts"(plan), s, fl, x, n) ~> r;
+      "EXTRACT-UNPACK". sh:T, ps:T, s:T, fl:T, x:T, n:T, op:T, tu:T, n1:T, z:T, b:T, st:T, n2:T | "CUnpackOp"(sh, s) ~> op, "CFresh"(n) ~> "c:fresh"(tu, n1), "py-const"("py:zero"(), z), "CItemPats"(ps, tu, z, fl, x, n1) ~> "c:pat"(b, st, n2) |- "CSeqExtract"("c:unpack-by"(sh, ps), s, fl, x, n) ~> "c:pat"("LCons"("c:assign"("c:tmp"(tu), op), b), st, n2);
+      "ITEM-PATS-NIL". tu:T, i:T, fl:T, x:T, n:T |- "CItemPats"("LNil"(), tu, i, fl, x, n) ~> "c:pat"("LNil"(), "LNil"(), n);
+      "ITEM-PATS-CONS". p:T, ps:T, tu:T, i:T, fl:T, x:T, n:T, ti:T, n1:T, b1:T, st1:T, n2:T, one:T, i1:T, b2:T, st2:T, n3:T, b:T, st:T | "CFresh"(n) ~> "c:fresh"(ti, n1), "CPat"(p, "c:tmp"(ti), fl, x, n1) ~> "c:pat"(b1, st1, n2), "py-const"("py:one"(), one), "py-add"(i, one, i1), "CItemPats"(ps, tu, i1, fl, x, n2) ~> "c:pat"(b2, st2, n3), "CAppend"("LCons"("c:assign"("c:tmp"(ti), "c:getitem"("c:tmp"(tu), "c:const"(i))), b1), b2) ~> b, "CAppend"(st1, st2) ~> st |- "CItemPats"("LCons"(p, ps), tu, i, fl, x, n) ~> "c:pat"(b, st, n3);
+      "SUBSCR-NIL". s:T, fl:T, x:T, n:T |- "CSubscrPats"("LNil"(), s, fl, x, n) ~> "c:pat"("LNil"(), "LNil"(), n);
+      "SUBSCR-FRONT". i:T, p:T, rest:T, s:T, fl:T, x:T, n:T, ti:T, n1:T, b1:T, st1:T, n2:T, b2:T, st2:T, n3:T, b:T, st:T | "CFresh"(n) ~> "c:fresh"(ti, n1), "CPat"(p, "c:tmp"(ti), fl, x, n1) ~> "c:pat"(b1, st1, n2), "CSubscrPats"(rest, s, fl, x, n2) ~> "c:pat"(b2, st2, n3), "CAppend"("LCons"("c:assign"("c:tmp"(ti), "c:getitem"(s, "c:const"(i))), b1), b2) ~> b, "CAppend"(st1, st2) ~> st |- "CSubscrPats"("LCons"("c:front"(i, p), rest), s, fl, x, n) ~> "c:pat"(b, st, n3);
+      "SUBSCR-BACK". k:T, p:T, rest:T, s:T, fl:T, x:T, n:T, tl:T, n1:T, tk:T, n2:T, ti:T, n3:T, b1:T, st1:T, n4:T, b2:T, st2:T, n5:T, b:T, st:T | "CFresh"(n) ~> "c:fresh"(tl, n1), "CFresh"(n1) ~> "c:fresh"(tk, n2), "CFresh"(n2) ~> "c:fresh"(ti, n3), "CPat"(p, "c:tmp"(ti), fl, x, n3) ~> "c:pat"(b1, st1, n4), "CSubscrPats"(rest, s, fl, x, n4) ~> "c:pat"(b2, st2, n5), "CAppend"("LCons"("c:assign"("c:tmp"(tl), "c:get-len"(s)), "LCons"("c:assign"("c:tmp"(tk), "c:binop"("py:Sub"(), "c:tmp"(tl), "c:const"(k))), "LCons"("c:assign"("c:tmp"(ti), "c:getitem"(s, "c:tmp"(tk))), b1))), b2) ~> b, "CAppend"(st1, st2) ~> st |- "CSubscrPats"("LCons"("c:back"(k, p), rest), s, fl, x, n) ~> "c:pat"(b, st, n5);
+      -- a mapping pattern: MATCH_MAPPING, the length, the keys (literals and
+      -- attribute lookups, in order), MATCH_KEYS, the values' patterns, **rest
+      "PAT-MAPPING". ks:T, ps:T, rest:T, l:T, c:T, el:T, ec:T, s:T, fl:T, x:T, n:T, sh:T, t:T, n1:T, b0:T, st:T, n2:T | "py-mapping-shape"(ks, rest, sh), "CFresh"(n) ~> "c:fresh"(t, n1), "CMapPat"(sh, ks, ps, rest, s, fl, x, n1) ~> "c:pat"(b0, st, n2) |- "CPat"("py:MatchMapping"(ks, ps, rest, l, c, el, ec), s, fl, x, n) ~> "c:pat"("LCons"("c:assign"("c:tmp"(t), "c:match-mapping"(s)), "LCons"("c:if"("c:tmp"(t), "c:seq"("LNil"()), "c:break"(fl)), b0)), st, n2);
+      "MAP-EMPTY". ks:T, ps:T, rest:T, s:T, fl:T, x:T, n:T |- "CMapPat"("c:map-empty"(), ks, ps, rest, s, fl, x, n) ~> "c:pat"("LNil"(), "LNil"(), n);
+      "MAP-KEYS". lc:T, ks:T, ps:T, rest:T, s:T, fl:T, x:T, n:T, b1:T, n1:T, pre:T, xs:T, n2:T, tk:T, n3:T, tv:T, n4:T, tn:T, n5:T, none:T, z:T, b2:T, st:T, n6:T, br:T, sr:T, n7:T, q1:T, q2:T, q3:T, b:T, st2:T | "CLenCheck"(lc, s, fl, n) ~> "c:sts"(b1, n1), "CAtoms"(ks, x, n1) ~> "c:anfs"(pre, xs, n2), "CFresh"(n2) ~> "c:fresh"(tk, n3), "CFresh"(n3) ~> "c:fresh"(tv, n4), "CFresh"(n4) ~> "c:fresh"(tn, n5), "py-core-none"(none), "py-const"("py:zero"(), z), "CItemPats"(ps, tv, z, fl, x, n5) ~> "c:pat"(b2, st, n6), "CMapRest"(rest, s, tk, n6) ~> "c:pat"(br, sr, n7), "CAppend"(b1, pre) ~> q1, "CAppend"(q1, "LCons"("c:assign"("c:tmp"(tk), "c:tuple"(xs)), "LCons"("c:assign"("c:tmp"(tv), "c:match-keys"(s, "c:tmp"(tk))), "LCons"("c:assign"("c:tmp"(tn), "c:compare"("py:IsNot"(), "c:tmp"(tv), "c:const"(none))), "LCons"("c:if"("c:tmp"(tn), "c:seq"("LNil"()), "c:break"(fl)), "LNil"()))))) ~> q2, "CAppend"(q2, b2) ~> q3, "CAppend"(q3, br) ~> b, "CAppend"(st, sr) ~> st2 |- "CMapPat"("c:map"(lc), ks, ps, rest, s, fl, x, n) ~> "c:pat"(b, st2, n7);
+      "MAP-REST". rest:T, s:T, tk:T, n:T, b:T, r:T | "py-is-none"(rest, b), "CMapRestIf"(b, rest, s, tk, n) ~> r |- "CMapRest"(rest, s, tk, n) ~> r;
+      "MAP-REST-NONE". rest:T, s:T, tk:T, n:T |- "CMapRestIf"("py:True"(), rest, s, tk, n) ~> "c:pat"("LNil"(), "LNil"(), n);
+      "MAP-REST-NAME". rest:T, s:T, tk:T, n:T, tr:T, n1:T | "CFresh"(n) ~> "c:fresh"(tr, n1) |- "CMapRestIf"("py:False"(), rest, s, tk, n) ~> "c:pat"("LCons"("c:assign"("c:tmp"(tr), "c:match-rest"(s, "c:tmp"(tk))), "LNil"()), "LCons"("c:store"(rest, "c:tmp"(tr)), "LNil"()), n1);
+      -- a class pattern: the class, MATCH_CLASS (an instance; its attributes by
+      -- __match_args__, then by keyword), then each attribute's pattern
+      "PAT-CLASS". cls:T, ps:T, ka:T, kp:T, l:T, c:T, el:T, ec:T, s:T, fl:T, x:T, n:T, pre:T, a:T, n1:T, k:T, names:T, tr:T, n2:T, tn:T, n3:T, none:T, z:T, all:T, b1:T, st:T, n4:T, b:T | "CAtom"(cls, x, n) ~> "c:anf"(pre, a, n1), "py-slot-count"(ps, k), "py-class-names"(ka, names), "CFresh"(n1) ~> "c:fresh"(tr, n2), "CFresh"(n2) ~> "c:fresh"(tn, n3), "py-core-none"(none), "py-const"("py:zero"(), z), "CAppend"(ps, kp) ~> all, "CItemPats"(all, tr, z, fl, x, n3) ~> "c:pat"(b1, st, n4), "CAppend"(pre, "LCons"("c:assign"("c:tmp"(tr), "c:match-class"(s, a, "c:const"(k), "c:const"(names))), "LCons"("c:assign"("c:tmp"(tn), "c:compare"("py:IsNot"(), "c:tmp"(tr), "c:const"(none))), "LCons"("c:if"("c:tmp"(tn), "c:seq"("LNil"()), "c:break"(fl)), b1)))) ~> b |- "CPat"("py:MatchClass"(cls, ps, ka, kp, l, c, el, ec), s, fl, x, n) ~> "c:pat"(b, st, n4);
+
+
+      -- ================================================================ lists
+      "APPEND-NIL". ys:T |- "CAppend"("LNil"(), ys) ~> ys;
+      "APPEND-CONS". x:T, xs:T, ys:T, r:T | "CAppend"(xs, ys) ~> r |- "CAppend"("LCons"(x, xs), ys) ~> "LCons"(x, r);
+      "SNOC". xs:T, x:T, r:T | "CAppend"(xs, "LCons"(x, "LNil"())) ~> r |- "CSnoc"(xs, x) ~> r;
+
+      -- ================================================================ the module
+
+      -- a module (_PyCodegen_Module, PEP 649): its __annotate__ made first when
+      -- it annotates simple names, then __conditional_annotations__ a new set
+      -- when it annotates at all; then its docstring and its statements
+      "MODULE". one:T, body:T, ti:T, k:T, n:T, p:T, syms:T, tabs:T, z:T, b:T, nx:T, nm:T, e0:T, b0:T, d:T, an:T, es:T, mb:T, sf:T, n1:T, ha:T, sc:T, b1:T, su:T, ss:T, b2:T | "py-const"("py:zero"(), z), "py-const"("py:one"(), one), "py-core-name"("c:n-module"(), nm), "py-core-name"("c:n-empty"(), e0), "py-core-name"("c:n-annotate"(), an), "py-deferred"("c:module"(), body, "py:None"(), "c:deferred"(es, mb)), "CScopeAnnotate"(es, body, an, an, "c:cx"("c:module"(), "c:tq"("st:table"(k, n, p, syms, tabs), e0, "py:None"()), "py:None"(), "py:None"()), z) ~> "c:sts"(sf, n1), "py-any-annotation"(body, ha), "CModuleCond"(ha) ~> sc, "py-docstring"(mb, d), "CDocStatements"(d, mb, "c:cx"("c:module"(), "c:tq"("st:table"(k, n, p, syms, tabs), e0, "py:None"()), "py:None"(), "py:None"()), n1) ~> "c:sts"(b0, nx), "py-setup-annotations"(mb, su), "CSetupAnnotations"(su) ~> ss, "CAppend"(ss, b0) ~> b2, "CAppend"(sc, b2) ~> b1, "CAppend"(sf, b1) ~> b |- "CModule"("py:Module"(body, ti), "st:table"(k, n, p, syms, tabs)) ~> "c:code"(nm, nm, "c:args"(z, z, z, "py:False"(), "py:False"(), "LNil"()), nx, "LNil"(), "LNil"(), "c:module"(), "c:seq"(b), "c:line"(one));
+      -- a module's or class's __annotate__ (codegen_process_deferred_annotations),
+      -- when it has deferred annotations, stored under its name
+      "SCOPE-ANNOTATE-NONE". body:T, aqn:T, tg:T, x:T, n:T |- "CScopeAnnotate"("LNil"(), body, aqn, tg, x, n) ~> "c:sts"("LNil"(), n);
+      "SCOPE-ANNOTATE". e:T, es:T, body:T, aqn:T, tg:T, x:T, n:T, pos:T, p:T, a:T, n1:T, b:T | "py-first-annotation-pos"(body, pos), "CAnnotateDeferred"("LCons"(e, es), pos, aqn, x, n) ~> "c:anf"(p, a, n1), "CSnoc"(p, "c:assign"("c:name"(tg), "c:atom"(a))) ~> b |- "CScopeAnnotate"("LCons"(e, es), body, aqn, tg, x, n) ~> "c:sts"(b, n1);
+      "MODULE-COND-NONE". |- "CModuleCond"("py:False"()) ~> "LNil"();
+      "MODULE-COND". ca:T | "py-core-name"("c:n-cond-annotations"(), ca) |- "CModuleCond"("py:True"()) ~> "LCons"("c:assign"("c:name"(ca), "c:set"("LNil"())), "LNil"());
+      -- the function: one parameter, format; a format above 2 raises
+      -- NotImplementedError; then a new dict, each annotation stored in it
+      -- (an indexed one only when its index is in __conditional_annotations__),
+      -- the dict returned
+      "ANNOTATE-DEFERRED". pl:T, es:T, pos:T, aqn:T, k:T, tb:T, q:T, pv:T, sl:T, lp:T, n:T, at:T, aqi:T, aargs:T, slots:T, spec:T, spec2:T, cells:T, frees:T, fnames:T, n0:T, t:T, n1:T, ca:T, pro:T, ss:T, s1:T, n2:T, s2:T, n3:T, clo:T, fk:T, none:T, an:T, r:T | "py-pos-line"(pos, pl), "CChild"("c:tq"(tb, q, pv), "st:annotation"(), pos) ~> at, "py-qualname-inner"(aqn, aqi), "py-annotate-args"(pos, aargs), "py-deferred-layout"(k, es, aargs, at, pv, "c:layout"(slots, spec, cells, frees, fnames)), "py-annotate-spec"(spec, spec2), "py-slot-count"(slots, n0), "CFresh"(n0) ~> "c:fresh"(t, n1), "py-deferred-cond"(k, slots, ca), "py-annotate-prologue"(pos, pro), "py-deferred-stmts"(es, "c:tmp"(t), ca, ss), "CBlock"(pro, "c:cx"("c:function"("py:False"(), "py:False"()), "c:tq"(at, aqi, pv), slots, "py:None"()), n1) ~> "c:st"(s1, n2), "CBlock"(ss, "c:cx"("c:function"("py:False"(), "py:False"()), "c:tq"(at, aqi, pv), slots, "py:None"()), n2) ~> "c:st"(s2, n3), "CClosure"(fnames, "c:cx"(k, "c:tq"(tb, q, pv), sl, lp)) ~> clo, "py-core-none"(none), "CCodeKind"("py:False"(), "py:False"(), none) ~> fk, "py-core-name"("c:n-annotate"(), an), "CTemp"("c:function"("c:code"(an, aqn, spec2, n3, cells, frees, fk, "c:seq"("LCons"(s1, "LCons"("c:assign"("c:tmp"(t), "c:dict"("LNil"())), "LCons"(s2, "LCons"("c:return"("c:tmp"(t)), "LNil"()))))), "c:line"(pl)), "LNil"(), "LNil"(), clo, "c:no-annotate"()), "LNil"(), n) ~> r |- "CAnnotateDeferred"(es, pos, aqn, "c:cx"(k, "c:tq"(tb, q, pv), sl, lp), n) ~> r;
+      -- an Expression (eval's input): its value computed and returned
+      -- (compiler_mod's Expression_kind: the expression, RETURN_VALUE)
+      "EXPRESSION". one:T, e:T, k:T, n:T, p:T, syms:T, tabs:T, z:T, nm:T, e0:T, pre:T, a:T, n1:T, b:T | "py-const"("py:zero"(), z), "py-const"("py:one"(), one), "py-core-name"("c:n-module"(), nm), "py-core-name"("c:n-empty"(), e0), "CAtom"(e, "c:cx"("c:module"(), "c:tq"("st:table"(k, n, p, syms, tabs), e0, "py:None"()), "py:None"(), "py:None"()), z) ~> "c:anf"(pre, a, n1), "CSnoc"(pre, "c:return"(a)) ~> b |- "CModule"("py:Expression"(e), "st:table"(k, n, p, syms, tabs)) ~> "c:code"(nm, nm, "c:args"(z, z, z, "py:False"(), "py:False"(), "LNil"()), n1, "LNil"(), "LNil"(), "c:module"(), "c:seq"(b), "c:line"(one));
+
+      -- ================================================================ statements
+
+      "STMTS-NIL". x:T, n:T |- "CStmts"("LNil"(), x, n) ~> "c:sts"("LNil"(), n);
+      -- each statement marked with where it stands (c:at SPAN S), a block of them
+      -- (c:stmts LIST): the machine keeps the mark while S runs, so a frame's
+      -- line is its innermost mark
+      "STMTS-CONS". s:T, rest:T, x:T, n:T, cs:T, n1:T, cr:T, n2:T, sp:T | "CStmt"(s, x, n) ~> "c:st"(cs, n1), "py-node-span"(s, sp), "CStmts"(rest, x, n1) ~> "c:sts"(cr, n2) |- "CStmts"("LCons"(s, rest), x, n) ~> "c:sts"("LCons"("c:at"(sp, cs), cr), n2);
+      "BLOCK". ss:T, x:T, n:T, b:T, n1:T | "CStmts"(ss, x, n) ~> "c:sts"(b, n1) |- "CBlock"(ss, x, n) ~> "c:st"("c:stmts"(b), n1);
+
+      -- an expression for what it does: its operation, the value dropped
+      "EXPR". e:T, l:T, c:T, el:T, ec:T, x:T, n:T, pre:T, op:T, n1:T, b:T | "COp"(e, x, n) ~> "c:anf"(pre, op, n1), "CSnoc"(pre, "c:do"(op)) ~> b |- "CStmt"("py:Expr"(e, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n1);
+      "PASS". l:T, c:T, el:T, ec:T, x:T, n:T |- "CStmt"("py:Pass"(l, c, el, ec), x, n) ~> "c:st"("c:seq"("LNil"()), n);
+      -- ================================================================ exceptions
+
+      -- try: the except clauses around the body (and the else part), the final
+      -- part around both
+      "TRY". body:T, hs:T, ob:T, fb:T, l:T, c:T, el:T, ec:T, x:T, n:T, s1:T, n1:T, s2:T, n2:T | "CTryExcept"(body, hs, ob, x, n) ~> "c:st"(s1, n1), "CTryFinally"(s1, fb, x, n1) ~> "c:st"(s2, n2) |- "CStmt"("py:Try"(body, hs, ob, fb, l, c, el, ec), x, n) ~> "c:st"(s2, n2);
+      "TRY-EXCEPT-NONE". body:T, ob:T, x:T, n:T, r:T | "CBlock"(body, x, n) ~> r |- "CTryExcept"(body, "LNil"(), ob, x, n) ~> r;
+      "TRY-EXCEPT". body:T, h:T, hs:T, ob:T, x:T, n:T, t:T, n1:T, s1:T, n2:T, s2:T, n3:T, s3:T, n4:T | "CFresh"(n) ~> "c:fresh"(t, n1), "CBlock"(body, x, n1) ~> "c:st"(s1, n2), "CHandlers"("LCons"(h, hs), t, x, n2) ~> "c:st"(s2, n3), "CBlock"(ob, x, n3) ~> "c:st"(s3, n4) |- "CTryExcept"(body, "LCons"(h, hs), ob, x, n) ~> "c:st"("c:try"(s1, t, s2, s3), n4);
+      "TRY-FINALLY-NONE". s:T, x:T, n:T |- "CTryFinally"(s, "LNil"(), x, n) ~> "c:st"(s, n);
+      "TRY-FINALLY". s:T, f:T, fs:T, x:T, n:T, s2:T, n1:T | "CBlock"("LCons"(f, fs), x, n) ~> "c:st"(s2, n1) |- "CTryFinally"(s, "LCons"(f, fs), x, n) ~> "c:st"("c:try-finally"(s, s2), n1);
+      -- try/except* (compiler_try_star_except): the raised exception matched
+      -- against each handler in turn (CHECK_EG_MATCH: a naked exception wrapped
+      -- in an ExceptionGroup, a group split), the match handled while its
+      -- handler runs, what the handlers raise collected with the unmatched rest,
+      -- then PREP_RERAISE_STAR's group raised unless it is None
+      "TRY-STAR". body:T, hs:T, ob:T, fb:T, l:T, c:T, el:T, ec:T, x:T, n:T, s1:T, n1:T, s2:T, n2:T | "CTryStarExcept"(body, hs, ob, x, n) ~> "c:st"(s1, n1), "CTryFinally"(s1, fb, x, n1) ~> "c:st"(s2, n2) |- "CStmt"("py:TryStar"(body, hs, ob, fb, l, c, el, ec), x, n) ~> "c:st"(s2, n2);
+      "TRY-STAR-EXCEPT". body:T, hs:T, ob:T, x:T, n:T, te:T, n1:T, tres:T, n2:T, trest:T, n3:T, tr:T, n4:T, tq:T, n5:T, s1:T, n6:T, hst:T, n7:T, so:T, n8:T, none:T, q0:T, q1:T | "CFresh"(n) ~> "c:fresh"(te, n1), "CFresh"(n1) ~> "c:fresh"(tres, n2), "CFresh"(n2) ~> "c:fresh"(trest, n3), "CFresh"(n3) ~> "c:fresh"(tr, n4), "CFresh"(n4) ~> "c:fresh"(tq, n5), "py-core-none"(none), "CBlock"(body, x, n5) ~> "c:st"(s1, n6), "CStarHandlers"(hs, tres, trest, x, n6) ~> "c:sts"(hst, n7), "CBlock"(ob, x, n7) ~> "c:st"(so, n8), "CAppend"("LCons"("c:assign"("c:tmp"(tres), "c:list"("LNil"())), "LCons"("c:assign"("c:tmp"(trest), "c:atom"("c:tmp"(te))), "LNil"())), hst) ~> q0, "CAppend"(q0, "LCons"("c:do"("c:list-append"("c:tmp"(tres), "c:tmp"(trest))), "LCons"("c:assign"("c:tmp"(tr), "c:prep-reraise-star"("c:tmp"(te), "c:tmp"(tres))), "LCons"("c:assign"("c:tmp"(tq), "c:compare"("py:IsNot"(), "c:tmp"(tr), "c:const"(none))), "LCons"("c:if"("c:tmp"(tq), "c:reraise"("c:tmp"(tr)), "c:seq"("LNil"())), "LNil"()))))) ~> q1 |- "CTryStarExcept"(body, hs, ob, x, n) ~> "c:st"("c:try"(s1, te, "c:seq"(q1), so), n8);
+      "STAR-HANDLERS-NIL". tres:T, trest:T, x:T, n:T |- "CStarHandlers"("LNil"(), tres, trest, x, n) ~> "c:sts"("LNil"(), n);
+      "STAR-HANDLERS-CONS". ty:T, nm:T, body:T, l:T, c:T, el:T, ec:T, rest:T, tres:T, trest:T, x:T, n:T, pre:T, a:T, n1:T, tp:T, n2:T, tm:T, n3:T, tn:T, n4:T, z:T, one:T, none:T, hb:T, n5:T, bn:T, more:T, n6:T, q0:T, b:T | "CAtom"(ty, x, n) ~> "c:anf"(pre, a, n1), "CFresh"(n1) ~> "c:fresh"(tp, n2), "CFresh"(n2) ~> "c:fresh"(tm, n3), "CFresh"(n3) ~> "c:fresh"(tn, n4), "py-const"("py:zero"(), z), "py-const"("py:one"(), one), "py-core-none"(none), "py-is-none"(nm, bn), "CStarHandlerBody"(bn, nm, body, tm, tres, x, n4) ~> "c:sts"(hb, n5), "CStarHandlers"(rest, tres, trest, x, n5) ~> "c:sts"(more, n6), "CAppend"(pre, "LCons"("c:assign"("c:tmp"(tp), "c:eg-match"("c:tmp"(trest), a)), "LCons"("c:assign"("c:tmp"(trest), "c:getitem"("c:tmp"(tp), "c:const"(z))), "LCons"("c:assign"("c:tmp"(tm), "c:getitem"("c:tmp"(tp), "c:const"(one))), "LCons"("c:assign"("c:tmp"(tn), "c:compare"("py:IsNot"(), "c:tmp"(tm), "c:const"(none))), "LCons"("c:if"("c:tmp"(tn), "c:seq"("LCons"("c:do"("c:set-handled"("c:tmp"(tm))), hb)), "c:seq"("LNil"())), "LNil"())))))) ~> q0, "CAppend"(q0, more) ~> b |- "CStarHandlers"("LCons"("py:ExceptHandler"(ty, nm, body, l, c, el, ec), rest), tres, trest, x, n) ~> "c:sts"(b, n6);
+      "STAR-BODY-ANONYMOUS". nm:T, body:T, tm:T, tres:T, x:T, n:T, te2:T, n1:T, s:T, n2:T | "CFresh"(n) ~> "c:fresh"(te2, n1), "CBlock"(body, x, n1) ~> "c:st"(s, n2) |- "CStarHandlerBody"("py:True"(), nm, body, tm, tres, x, n) ~> "c:sts"("LCons"("c:try"(s, te2, "c:seq"("LCons"("c:do"("c:list-append"("c:tmp"(tres), "c:tmp"(te2))), "LNil"())), "c:seq"("LNil"())), "LNil"()), n2);
+      "STAR-BODY-NAMED". nm:T, body:T, tm:T, tres:T, x:T, n:T, tg:T, none:T, te2:T, n1:T, s:T, n2:T | "CName"(nm, x) ~> tg, "py-core-none"(none), "CFresh"(n) ~> "c:fresh"(te2, n1), "CBlock"(body, x, n1) ~> "c:st"(s, n2) |- "CStarHandlerBody"("py:False"(), nm, body, tm, tres, x, n) ~> "c:sts"("LCons"("c:assign"(tg, "c:atom"("c:tmp"(tm))), "LCons"("c:try"("c:seq"("LCons"(s, "LCons"("c:assign"(tg, "c:atom"("c:const"(none))), "LCons"("c:delete"(tg), "LNil"())))), te2, "c:seq"("LCons"("c:assign"(tg, "c:atom"("c:const"(none))), "LCons"("c:delete"(tg), "LCons"("c:do"("c:list-append"("c:tmp"(tres), "c:tmp"(te2))), "LNil"())))), "c:seq"("LNil"())), "LNil"())), n2);
+      -- the except clauses in order: a clause's class is evaluated only when
+      -- the ones before did not match; no match raises the exception again
+      "HANDLERS-NIL". t:T, x:T, n:T |- "CHandlers"("LNil"(), t, x, n) ~> "c:st"("c:reraise"("c:tmp"(t)), n);
+      "HANDLERS-CONS". ty:T, nm:T, body:T, l:T, c:T, el:T, ec:T, rest:T, t:T, x:T, n:T, b:T, r:T | "py-is-none"(ty, b), "CHandler"(b, ty, nm, body, rest, t, x, n) ~> r |- "CHandlers"("LCons"("py:ExceptHandler"(ty, nm, body, l, c, el, ec), rest), t, x, n) ~> r;
+      "HANDLER-BARE". ty:T, nm:T, body:T, rest:T, t:T, x:T, n:T, r:T | "CHandlerBody"(nm, body, t, x, n) ~> r |- "CHandler"("py:True"(), ty, nm, body, rest, t, x, n) ~> r;
+      "HANDLER-CLASS". ty:T, nm:T, body:T, rest:T, t:T, x:T, n:T, pre:T, a:T, n1:T, m:T, n2:T, s1:T, n3:T, s2:T, n4:T, b0:T, b:T | "CAtom"(ty, x, n) ~> "c:anf"(pre, a, n1), "CFresh"(n1) ~> "c:fresh"(m, n2), "CHandlerBody"(nm, body, t, x, n2) ~> "c:st"(s1, n3), "CHandlers"(rest, t, x, n3) ~> "c:st"(s2, n4), "CSnoc"(pre, "c:assign"("c:tmp"(m), "c:exc-match"("c:tmp"(t), a))) ~> b0, "CSnoc"(b0, "c:if"("c:tmp"(m), s1, s2)) ~> b |- "CHandler"("py:False"(), ty, nm, body, rest, t, x, n) ~> "c:st"("c:seq"(b), n4);
+      -- except ... as NAME: NAME holds the exception while the clause runs, and
+      -- is unbound after it however it ends (NAME = None; del NAME)
+      "HANDLER-BODY". nm:T, body:T, t:T, x:T, n:T, b:T, r:T | "py-is-none"(nm, b), "CHandlerBodyIf"(b, nm, body, t, x, n) ~> r |- "CHandlerBody"(nm, body, t, x, n) ~> r;
+      "HANDLER-BODY-ANONYMOUS". nm:T, body:T, t:T, x:T, n:T, r:T | "CBlock"(body, x, n) ~> r |- "CHandlerBodyIf"("py:True"(), nm, body, t, x, n) ~> r;
+      "HANDLER-BODY-NAMED". nm:T, body:T, t:T, x:T, n:T, tg:T, none:T, s:T, n1:T | "CName"(nm, x) ~> tg, "py-core-none"(none), "CBlock"(body, x, n) ~> "c:st"(s, n1) |- "CHandlerBodyIf"("py:False"(), nm, body, t, x, n) ~> "c:st"("c:seq"("LCons"("c:assign"(tg, "c:atom"("c:tmp"(t))), "LCons"("c:try-finally"(s, "c:seq"("LCons"("c:assign"(tg, "c:atom"("c:const"(none))), "LCons"("c:delete"(tg), "LNil"())))), "LNil"()))), n1);
+
+      -- raise: a bare raise raises the exception being handled again; raise X
+      -- raises X's exception (a class is called); raise X from C sets the cause
+      "RAISE". exc:T, cause:T, l:T, c:T, el:T, ec:T, x:T, n:T, b1:T, b2:T, r:T | "py-is-none"(exc, b1), "py-is-none"(cause, b2), "CRaise"(b1, b2, exc, cause, x, n) ~> r |- "CStmt"("py:Raise"(exc, cause, l, c, el, ec), x, n) ~> r;
+      "RAISE-BARE". exc:T, cause:T, x:T, n:T |- "CRaise"("py:True"(), "py:True"(), exc, cause, x, n) ~> "c:st"("c:rethrow"(), n);
+      "RAISE-ONE". exc:T, cause:T, x:T, n:T, pre:T, a0:T, n1:T, ph:T, a:T, n2:T, t:T, n3:T, q:T, b0:T, b:T | "CAtom"(exc, x, n) ~> "c:anf"(pre, a0, n1), "CHoldAtom"(a0, n1) ~> "c:anf"(ph, a, n2), "CFresh"(n2) ~> "c:fresh"(t, n3), "CAppend"(pre, ph) ~> q, "CSnoc"(q, "c:assign"("c:tmp"(t), "c:exc-of"(a))) ~> b0, "CSnoc"(b0, "c:throw"("c:tmp"(t), a)) ~> b |- "CRaise"("py:False"(), "py:True"(), exc, cause, x, n) ~> "c:st"("c:seq"(b), n3);
+      "RAISE-FROM". exc:T, cause:T, x:T, n:T, pre:T, a0:T, ca0:T, n1:T, ph1:T, a:T, n2:T, ph2:T, ca:T, n3:T, t:T, n4:T, tc:T, n5:T, q0:T, q1:T, b0:T, b1:T, b:T | "COperands"("LCons"(exc, "LCons"(cause, "LNil"())), "LNil"(), x, n) ~> "c:anfs"(pre, "LCons"(a0, "LCons"(ca0, "LNil"())), n1), "CHoldAtom"(a0, n1) ~> "c:anf"(ph1, a, n2), "CHoldAtom"(ca0, n2) ~> "c:anf"(ph2, ca, n3), "CFresh"(n3) ~> "c:fresh"(t, n4), "CFresh"(n4) ~> "c:fresh"(tc, n5), "CAppend"(pre, ph1) ~> q0, "CAppend"(q0, ph2) ~> q1, "CSnoc"(q1, "c:assign"("c:tmp"(t), "c:exc-of"(a))) ~> b0, "CSnoc"(b0, "c:assign"("c:tmp"(tc), "c:cause-of"(ca))) ~> b1, "CSnoc"(b1, "c:throw-from"("c:tmp"(t), a, "c:tmp"(tc), ca)) ~> b |- "CRaise"("py:False"(), "py:False"(), exc, cause, x, n) ~> "c:st"("c:seq"(b), n5);
+
+      -- assert T, M: unless T, AssertionError(M) raised; M evaluated only then
+      "ASSERT". t:T, msg:T, l:T, c:T, el:T, ec:T, x:T, n:T, pre:T, a:T, n1:T, b:T, s:T, n2:T, b0:T, w:T, b1:T | "py-code-warnings"("py:Assert"(t, msg, l, c, el, ec), w), "CAtom"(t, x, n) ~> "c:anf"(pre, a, n1), "py-is-none"(msg, b), "CAssertFail"(b, msg, x, n1) ~> "c:st"(s, n2), "CSnoc"(pre, "c:if"(a, "c:seq"("LNil"()), s)) ~> b0, "CAppend"(w, b0) ~> b1 |- "CStmt"("py:Assert"(t, msg, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b1), n2);
+      "ASSERT-FAIL-BARE". msg:T, x:T, n:T, t:T, n1:T | "CFresh"(n) ~> "c:fresh"(t, n1) |- "CAssertFail"("py:True"(), msg, x, n) ~> "c:st"("c:seq"("LCons"("c:assign"("c:tmp"(t), "c:assertion-error"("LNil"())), "LCons"("c:throw"("c:tmp"(t), "c:tmp"(t)), "LNil"()))), n1);
+      "ASSERT-FAIL-MESSAGE". msg:T, x:T, n:T, pre:T, a:T, n1:T, t:T, n2:T, b0:T, b:T | "CAtom"(msg, x, n) ~> "c:anf"(pre, a, n1), "CFresh"(n1) ~> "c:fresh"(t, n2), "CSnoc"(pre, "c:assign"("c:tmp"(t), "c:assertion-error"("LCons"(a, "LNil"())))) ~> b0, "CSnoc"(b0, "c:throw"("c:tmp"(t), "c:tmp"(t))) ~> b |- "CAssertFail"("py:False"(), msg, x, n) ~> "c:st"("c:seq"(b), n2);
+
+      -- del: each target in order; a name unbound, an item or attribute deleted
+      "DELETE". ts:T, l:T, c:T, el:T, ec:T, x:T, n:T, b:T, n1:T | "CDeletes"(ts, x, n) ~> "c:sts"(b, n1) |- "CStmt"("py:Delete"(ts, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n1);
+      "DELETES-NIL". x:T, n:T |- "CDeletes"("LNil"(), x, n) ~> "c:sts"("LNil"(), n);
+      "DELETES-CONS". t:T, ts:T, x:T, n:T, s1:T, n1:T, s2:T, n2:T, b:T | "CDelete"(t, x, n) ~> "c:sts"(s1, n1), "CDeletes"(ts, x, n1) ~> "c:sts"(s2, n2), "CAppend"(s1, s2) ~> b |- "CDeletes"("LCons"(t, ts), x, n) ~> "c:sts"(b, n2);
+      "DELETE-NAME". t:T, cx:T, nl:T, nc:T, nel:T, nec:T, x:T, n:T, tg:T | "CName"(t, x) ~> tg |- "CDelete"("py:Name"(t, cx, nl, nc, nel, nec), x, n) ~> "c:sts"("LCons"("c:delete"(tg), "LNil"()), n);
+      "DELETE-SUBSCRIPT". v:T, sl:T, cx:T, l:T, c:T, el:T, ec:T, x:T, n:T, pre:T, xo:T, xk:T, n1:T, b:T | "COperands"("LCons"(v, "LCons"(sl, "LNil"())), "LNil"(), x, n) ~> "c:anfs"(pre, "LCons"(xo, "LCons"(xk, "LNil"())), n1), "CSnoc"(pre, "c:del-item"(xo, xk)) ~> b |- "CDelete"("py:Subscript"(v, sl, cx, l, c, el, ec), x, n) ~> "c:sts"(b, n1);
+      "DELETE-ATTRIBUTE". v:T, at:T, cx:T, l:T, c:T, el:T, ec:T, x:T, n:T, pre:T, xo:T, n1:T, b:T, mg:T | "CMangle"(at, x) ~> mg, "CAtom"(v, x, n) ~> "c:anf"(pre, xo, n1), "CSnoc"(pre, "c:del-attr"(xo, mg)) ~> b |- "CDelete"("py:Attribute"(v, at, cx, l, c, el, ec), x, n) ~> "c:sts"(b, n1);
+      "DELETE-TUPLE". es:T, cx:T, l:T, c:T, el:T, ec:T, x:T, n:T, r:T | "CDeletes"(es, x, n) ~> r |- "CDelete"("py:Tuple"(es, cx, l, c, el, ec), x, n) ~> r;
+      "DELETE-LIST". es:T, cx:T, l:T, c:T, el:T, ec:T, x:T, n:T, r:T | "CDeletes"(es, x, n) ~> r |- "CDelete"("py:List"(es, cx, l, c, el, ec), x, n) ~> r;
+
+      -- ================================================================ classes
+
+      -- class NAME(BASES, KEYWORDS): BODY, as CPython compiles it: the
+      -- decorators; __build_class__ (LOAD_BUILD_CLASS); the body made a
+      -- function; __build_class__(body, NAME, *BASES, **KEYWORDS) through the
+      -- call shapes; the decorators applied; the name stored
+      "CLASS-DEF". nm:T, bases:T, kws:T, body:T, ds:T, l:T, c:T, el:T, ec:T, x:T, n:T, ln:T, p2:T, cv:T, n1:T, p1:T, xd:T, n2:T, p3:T, q:T, n3:T, tg:T, pre0:T, pre1:T, b:T | "py-first-line"(ds, l, ln), "CClassCall"(nm, bases, kws, body, l, c, el, ec, ln, "c:plain"(), x, n) ~> "c:anf"(p2, cv, n1), "COperands"(ds, p2, x, n1) ~> "c:anfs"(p1, xd, n2), "CDecorate"(xd, cv, n2) ~> "c:anf"(p3, q, n3), "CName"(nm, x) ~> tg, "CAppend"(p1, p2) ~> pre0, "CAppend"(pre0, p3) ~> pre1, "CSnoc"(pre1, "c:assign"(tg, "c:atom"(q))) ~> b |- "CStmt"("py:ClassDef"(nm, bases, kws, body, ds, "LNil"(), l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n3);
+      -- G: "c:plain"(), or "c:generic"() for a class with type parameters,
+      -- made inside their scope (codegen_class): its body sets
+      -- __type_params__, and after the body's function is made its generic
+      -- base (Generic[*params], .generic_base) is added to its bases
+      "CLASS-CALL". cc:T, nm:T, bases:T, kws:T, body:T, l:T, c:T, el:T, ec:T, ln:T, g:T, k:T, tb:T, q:T, sl:T, lp:T, n:T, ct:T, qn:T, qi:T, slots:T, spec:T, cells:T, frees:T, fnames:T, n0:T, cb:T, nx:T, clo:T, t1:T, n1:T, t2:T, n2:T, pg:T, bs2:T, n2g:T, p:T, op:T, n3:T, r:T, b00:T, b0:T, pv:T | "CChild"("c:tq"(tb, q, pv), "st:class"(), "st:pos"(l, c)) ~> ct, "py-qualname"(q, nm, qn), "py-class-inner"(qn, qi), "py-class-layout"(ct, body, "c:layout"(slots, spec, cells, frees, fnames)), "py-class-cells"(ct, body, cc), "py-slot-count"(slots, n0), "CClassBody"(body, qn, ln, cc, g, "c:cx"("c:class"(), "c:tq"(ct, qi, nm), slots, "py:None"()), n0) ~> "c:st"(cb, nx), "CClosure"(fnames, "c:cx"(k, "c:tq"(tb, q, pv), sl, lp)) ~> clo, "CFresh"(n) ~> "c:fresh"(t1, n1), "CFresh"(n1) ~> "c:fresh"(t2, n2), "CGenericBase"(g, bases, l, c, el, ec, "c:cx"(k, "c:tq"(tb, q, pv), sl, lp), n2) ~> "c:gb"(pg, bs2, n2g), "COp"("py:Call"("c:pre"("c:tmp"(t1)), "LCons"("c:pre"("c:tmp"(t2)), "LCons"("c:pre"("c:const"(nm)), bs2)), kws, l, c, el, ec), "c:cx"(k, "c:tq"(tb, q, pv), sl, lp), n2g) ~> "c:anf"(p, op, n3), "CAppend"("LCons"("c:assign"("c:tmp"(t1), "c:build-class"()), "LCons"("c:assign"("c:tmp"(t2), "c:function"("c:code"(nm, qn, spec, nx, cells, frees, "c:class"(), cb, "c:line"(ln)), "LNil"(), "LNil"(), clo, "c:no-annotate"())), "LNil"())), pg) ~> b00, "CAppend"(b00, p) ~> b0, "CAtomOf"(op, b0, n3) ~> r |- "CClassCall"(nm, bases, kws, body, l, c, el, ec, ln, g, "c:cx"(k, "c:tq"(tb, q, pv), sl, lp), n) ~> r;
+      "GENERIC-BASE-NONE". bases:T, l:T, c:T, el:T, ec:T, x:T, n:T |- "CGenericBase"("c:plain"(), bases, l, c, el, ec, x, n) ~> "c:gb"("LNil"(), bases, n);
+      "GENERIC-BASE". bases:T, l:T, c:T, el:T, ec:T, x:T, n:T, ntp:T, ngb:T, a:T, tg:T, bs2:T | "py-core-name"("c:n-dot-type-params"(), ntp), "py-core-name"("c:n-dot-generic-base"(), ngb), "CName"(ntp, x) ~> a, "CName"(ngb, x) ~> tg, "CSnoc"(bases, "py:Name"(ngb, "py:Load"(), l, c, el, ec)) ~> bs2 |- "CGenericBase"("c:generic"(), bases, l, c, el, ec, x, n) ~> "c:gb"("LCons"("c:assign"(tg, "c:intrinsic"("c:i-subscript-generic"(), "LCons"(a, "LNil"()))), "LNil"()), bs2, n);
+      -- class NAME[PARAMS](...): the decorators first, where the class stands;
+      -- then the scope of the type parameters (<generic parameters of NAME>),
+      -- a function called at once, which makes the parameters (stored in
+      -- .type_params, a cell the class body reads) and returns the class
+      "GENERIC-CLASS-DEF". nm:T, bases:T, kws:T, body:T, ds:T, tp:T, tps:T, l:T, c:T, el:T, ec:T, x:T, n:T, ln:T, p2:T, cv:T, n1:T, p1:T, xd:T, n2:T, p3:T, q:T, n3:T, tg:T, pre0:T, pre1:T, b:T | "py-first-line"(ds, l, ln), "CGenericClass"(nm, bases, kws, body, "LCons"(tp, tps), l, c, el, ec, ln, x, n) ~> "c:anf"(p2, cv, n1), "COperands"(ds, p2, x, n1) ~> "c:anfs"(p1, xd, n2), "CDecorate"(xd, cv, n2) ~> "c:anf"(p3, q, n3), "CName"(nm, x) ~> tg, "CAppend"(p1, p2) ~> pre0, "CAppend"(pre0, p3) ~> pre1, "CSnoc"(pre1, "c:assign"(tg, "c:atom"(q))) ~> b |- "CStmt"("py:ClassDef"(nm, bases, kws, body, ds, "LCons"(tp, tps), l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n3);
+      "GENERIC-CLASS". nm:T, bases:T, kws:T, body:T, tps:T, l:T, c:T, el:T, ec:T, ln:T, x:T, n:T, p3:T, fv:T, n3:T, fr:T, fv2:T, n4:T | "CScopeFunction"(nm, "py:arguments"("LNil"(), "LNil"(), "py:None"(), "LNil"(), "LNil"(), "py:None"(), "LNil"()), "st:pos"(l, c), ln, "c:gen-class"(nm, bases, kws, body, tps, l, c, el, ec, ln), x, n) ~> "c:anf"(p3, fv, n3), "CTemp"("c:call"(fv, "LNil"(), "LNil"()), p3, n3) ~> "c:anf"(fr, fv2, n4) |- "CGenericClass"(nm, bases, kws, body, tps, l, c, el, ec, ln, x, n) ~> "c:anf"(fr, fv2, n4);
+      "GEN-CLASS". nm:T, bases:T, kws:T, body:T, tps:T, l:T, c:T, el:T, ec:T, ln:T, x:T, n:T, p1:T, ats:T, n1:T, p2:T, tt:T, n2:T, ntp:T, tg:T, b0:T, p3:T, cv:T, n3:T, b1:T, b:T | "CTypeParams"(tps, "py:False"(), x, n) ~> "c:tps"(p1, ats, n1), "CTemp"("c:tuple"(ats), p1, n1) ~> "c:anf"(p2, tt, n2), "py-core-name"("c:n-dot-type-params"(), ntp), "CName"(ntp, x) ~> tg, "CSnoc"(p2, "c:assign"(tg, "c:atom"(tt))) ~> b0, "CClassCall"(nm, bases, kws, body, l, c, el, ec, ln, "c:generic"(), x, n2) ~> "c:anf"(p3, cv, n3), "CAppend"(b0, p3) ~> b1, "CSnoc"(b1, "c:return"(cv)) ~> b |- "CGenerate"("c:gen-class"(nm, bases, kws, body, tps, l, c, el, ec, ln), x, n) ~> "c:st"("c:seq"(b), n3);
+      -- the body: __module__, __qualname__ and __firstlineno__ set; a docstring
+      -- is __doc__; the statements; __static_attributes__ (the names X of
+      -- self.X stored in its functions); then __classcell__ set and the cell
+      -- returned when a function in it uses __class__, else None returned
+      "CLASS-BODY". body:T, qn:T, ln:T, cells:T, g:T, k:T, tb:T, q:T, pv:T, sl:T, lp:T, n:T, s0:T, nmod:T, nname:T, nqual:T, nline:T, d:T, s1:T, n1:T, sa:T, s2:T, b0:T, b:T, es:T, mb:T, aqn:T, af:T, sf:T, n2:T, s1f:T, s1a:T, su:T, ss:T, s1s:T, stp:T, n3:T, s1t:T | "py-core-name"("c:n-dunder-module"(), nmod), "py-core-name"("c:n-dunder-name"(), nname), "py-core-name"("c:n-dunder-qualname"(), nqual), "py-core-name"("c:n-dunder-firstlineno"(), nline), "py-deferred"("c:class"(), body, pv, "c:deferred"(es, mb)), "py-docstring"(mb, d), "CDocStatements"(d, mb, "c:cx"(k, "c:tq"(tb, q, pv), sl, lp), n) ~> "c:sts"(s1, n1), "py-annotate-qualname"(qn, aqn), "py-core-name"("c:n-annotate-func"(), af), "CScopeAnnotate"(es, body, aqn, af, "c:cx"(k, "c:tq"(tb, q, pv), sl, lp), n1) ~> "c:sts"(sf, n2), "CClassTypeParams"(g, "c:cx"(k, "c:tq"(tb, q, pv), sl, lp), n2) ~> "c:sts"(stp, n3), "py-static-attributes"(body, sa), "CClassEnd"(cells, sa, "c:cx"(k, "c:tq"(tb, q, pv), sl, lp)) ~> s2, "CClassStart"(cells) ~> s0, "CAppend"(s1, sf) ~> s1f, "py-setup-annotations"(mb, su), "CSetupAnnotations"(su) ~> ss, "CAppend"(ss, s1f) ~> s1s, "CAppend"(s0, s1s) ~> s1a, "CAppend"(stp, s1a) ~> s1t, "CAppend"("LCons"("c:assign"("c:name"(nmod), "c:atom"("c:name"(nname))), "LCons"("c:assign"("c:name"(nqual), "c:atom"("c:const"(qn))), "LCons"("c:assign"("c:name"(nline), "c:atom"("c:const"(ln))), "LNil"()))), s1t) ~> b0, "CAppend"(b0, s2) ~> b |- "CClassBody"(body, qn, ln, cells, g, "c:cx"(k, "c:tq"(tb, q, pv), sl, lp), n) ~> "c:st"("c:seq"(b), n3);
+      -- a generic class's body sets __type_params__ from .type_params, after
+      -- __firstlineno__ (codegen_set_type_params_in_class)
+      "CLASS-TYPE-PARAMS-NONE". x:T, n:T |- "CClassTypeParams"("c:plain"(), x, n) ~> "c:sts"("LNil"(), n);
+      "CLASS-TYPE-PARAMS". x:T, n:T, ntp:T, ndt:T, a:T, tg:T | "py-core-name"("c:n-dot-type-params"(), ntp), "py-core-name"("c:n-dunder-type-params"(), ndt), "CName"(ntp, x) ~> a, "CName"(ndt, x) ~> tg |- "CClassTypeParams"("c:generic"(), x, n) ~> "c:sts"("LCons"("c:assign"(tg, "c:atom"(a)), "LNil"()), n);
+      "DOC-STATEMENTS-DOC". v:T, rest:T, body:T, x:T, n:T, ndoc:T, s:T, n1:T | "py-core-name"("c:n-dunder-doc"(), ndoc), "CStmts"(rest, x, n) ~> "c:sts"(s, n1) |- "CDocStatements"("c:doc"(v, rest), body, x, n) ~> "c:sts"("LCons"("c:assign"("c:name"(ndoc), "c:atom"("c:const"(v))), s), n1);
+      "DOC-STATEMENTS". body:T, x:T, n:T, r:T | "CStmts"(body, x, n) ~> r |- "CDocStatements"("c:no-doc"(), body, x, n) ~> r;
+      -- __classdict__ (a scope in the body sees the class): the namespace put
+      -- in its cell first (LOAD_LOCALS, STORE_DEREF)
+      "CLASS-START". cls:T, cd:T, ca:T, l1:T, l2:T, l:T | "CClassStartDict"(cd) ~> l1, "CClassStartCond"(ca) ~> l2, "CAppend"(l1, l2) ~> l |- "CClassStart"("c:class-cells"(cls, cd, ca)) ~> l;
+      "CLASS-START-NO-DICT". |- "CClassStartDict"("c:no-cell"()) ~> "LNil"();
+      "CLASS-START-DICT". j:T |- "CClassStartDict"("c:cell"(j)) ~> "LCons"("c:assign"("c:cell"(j), "c:atom"("c:namespace"())), "LNil"());
+      "CLASS-START-NO-COND". |- "CClassStartCond"("c:no-cell"()) ~> "LNil"();
+      "CLASS-START-COND". j:T |- "CClassStartCond"("c:cell"(j)) ~> "LCons"("c:assign"("c:cell"(j), "c:set"("LNil"())), "LNil"());
+      -- the end: __static_attributes__, then __classdictcell__ and
+      -- __classcell__ for the cells there are; the __class__ cell returned, else None
+      "CLASS-END". ca:T, sa:T, x:T, nsa:T, none:T | "py-core-name"("c:n-dunder-static-attributes"(), nsa), "py-core-none"(none) |- "CClassEnd"("c:class-cells"("c:no-cell"(), "c:no-cell"(), ca), sa, x) ~> "LCons"("c:assign"("c:name"(nsa), "c:atom"("c:const"(sa))), "LCons"("c:return"("c:const"(none)), "LNil"()));
+      "CLASS-END-CELL". ca:T, i:T, sa:T, x:T, nsa:T, ncell:T | "py-core-name"("c:n-dunder-static-attributes"(), nsa), "py-core-name"("c:n-dunder-classcell"(), ncell) |- "CClassEnd"("c:class-cells"("c:cell"(i), "c:no-cell"(), ca), sa, x) ~> "LCons"("c:assign"("c:name"(nsa), "c:atom"("c:const"(sa))), "LCons"("c:assign"("c:name"(ncell), "c:atom"("c:cellref"(i))), "LCons"("c:return"("c:cellref"(i)), "LNil"())));
+      "CLASS-END-CLASSDICT". ca:T, j:T, sa:T, x:T, nsa:T, ndict:T, none:T | "py-core-name"("c:n-dunder-static-attributes"(), nsa), "py-core-name"("c:n-dunder-classdictcell"(), ndict), "py-core-none"(none) |- "CClassEnd"("c:class-cells"("c:no-cell"(), "c:cell"(j), ca), sa, x) ~> "LCons"("c:assign"("c:name"(nsa), "c:atom"("c:const"(sa))), "LCons"("c:assign"("c:name"(ndict), "c:atom"("c:cellref"(j))), "LCons"("c:return"("c:const"(none)), "LNil"())));
+      "CLASS-END-BOTH". ca:T, i:T, j:T, sa:T, x:T, nsa:T, ndict:T, ncell:T | "py-core-name"("c:n-dunder-static-attributes"(), nsa), "py-core-name"("c:n-dunder-classdictcell"(), ndict), "py-core-name"("c:n-dunder-classcell"(), ncell) |- "CClassEnd"("c:class-cells"("c:cell"(i), "c:cell"(j), ca), sa, x) ~> "LCons"("c:assign"("c:name"(nsa), "c:atom"("c:const"(sa))), "LCons"("c:assign"("c:name"(ndict), "c:atom"("c:cellref"(j))), "LCons"("c:assign"("c:name"(ncell), "c:atom"("c:cellref"(i))), "LCons"("c:return"("c:cellref"(i)), "LNil"()))));
+      -- a function's docstring, the first constant of its code; else None
+      "DOC-VALUE". v:T, rest:T |- "CDocValue"("c:doc"(v, rest)) ~> v;
+      "DOC-VALUE-NONE". none:T | "py-core-none"(none) |- "CDocValue"("c:no-doc"()) ~> none;
+      -- an atom already computed, standing in an expression's place
+      "PRE". a:T, x:T, n:T |- "COp"("c:pre"(a), x, n) ~> "c:anf"("LNil"(), "c:atom"(a), n);
+
+      -- name := value: the value, also bound to the name (in a comprehension,
+      -- the name of the block it stands in)
+      "NAMED-EXPR". nm:T, cx:T, nl:T, nc:T, nel:T, nec:T, v:T, l:T, c:T, el:T, ec:T, x:T, n:T, p:T, op:T, n1:T, t:T, n2:T, tg:T, b0:T, b:T | "COp"(v, x, n) ~> "c:anf"(p, op, n1), "CFresh"(n1) ~> "c:fresh"(t, n2), "CName"(nm, x) ~> tg, "CSnoc"(p, "c:assign"("c:tmp"(t), op)) ~> b0, "CSnoc"(b0, "c:assign"(tg, "c:atom"("c:tmp"(t)))) ~> b |- "COp"("py:NamedExpr"("py:Name"(nm, cx, nl, nc, nel, nec), v, l, c, el, ec), x, n) ~> "c:anf"(b, "c:atom"("c:tmp"(t)), n2);
+
+      -- yield VALUE: the value given to the generator's caller, and the
+      -- expression's value what the caller sends (None for next())
+      "YIELD". v:T, l:T, c:T, el:T, ec:T, gk:T, tb:T, sl:T, lp:T, n:T, b:T, r:T | "py-is-none"(v, b), "CYield"(b, v, "c:cx"("c:function"("py:False"(), gk), tb, sl, lp), n) ~> r |- "COp"("py:Yield"(v, l, c, el, ec), "c:cx"("c:function"("py:False"(), gk), tb, sl, lp), n) ~> r;
+      -- in an async generator a yield's value is wrapped: an async yield, told
+      -- apart from what an await inside passes on (_PyAsyncGenValueWrapper)
+      "YIELD-ASYNC". v:T, l:T, c:T, el:T, ec:T, gk:T, tb:T, sl:T, lp:T, n:T, b:T, r:T | "py-is-none"(v, b), "CAsyncYield"(b, v, "c:cx"("c:function"("py:True"(), gk), tb, sl, lp), n) ~> r |- "COp"("py:Yield"(v, l, c, el, ec), "c:cx"("c:function"("py:True"(), gk), tb, sl, lp), n) ~> r;
+      "ASYNC-YIELD-NONE". v:T, x:T, n:T, none:T, tw:T, n1:T, t:T, n2:T | "py-core-none"(none), "CFresh"(n) ~> "c:fresh"(tw, n1), "CFresh"(n1) ~> "c:fresh"(t, n2) |- "CAsyncYield"("py:True"(), v, x, n) ~> "c:anf"("LCons"("c:assign"("c:tmp"(tw), "c:agwrap"("c:const"(none))), "LCons"("c:yield"("c:tmp"(t), "c:tmp"(tw)), "LNil"())), "c:atom"("c:tmp"(t)), n2);
+      "ASYNC-YIELD-VALUE". v:T, x:T, n:T, p:T, a:T, n1:T, tw:T, n2:T, t:T, n3:T, b0:T, b:T | "CAtom"(v, x, n) ~> "c:anf"(p, a, n1), "CFresh"(n1) ~> "c:fresh"(tw, n2), "CFresh"(n2) ~> "c:fresh"(t, n3), "CSnoc"(p, "c:assign"("c:tmp"(tw), "c:agwrap"(a))) ~> b0, "CSnoc"(b0, "c:yield"("c:tmp"(t), "c:tmp"(tw))) ~> b |- "CAsyncYield"("py:False"(), v, x, n) ~> "c:anf"(b, "c:atom"("c:tmp"(t)), n3);
+      "YIELD-IN-MODULE". v:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, m:T, none:T | "py-core-name"("c:e-yield"(), m), "py-core-none"(none) |- "COp"("py:Yield"(v, l, c, el, ec), "c:cx"("c:module"(), tb, sl, lp), n) ~> "c:anf"("LCons"("c:syntax-error"(m, l, c, el, ec), "LNil"()), "c:atom"("c:const"(none)), n);
+      "YIELD-IN-CLASS". v:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, m:T, none:T | "py-core-name"("c:e-yield"(), m), "py-core-none"(none) |- "COp"("py:Yield"(v, l, c, el, ec), "c:cx"("c:class"(), tb, sl, lp), n) ~> "c:anf"("LCons"("c:syntax-error"(m, l, c, el, ec), "LNil"()), "c:atom"("c:const"(none)), n);
+      "YIELD-NONE". v:T, x:T, n:T, none:T, t:T, n1:T | "py-core-none"(none), "CFresh"(n) ~> "c:fresh"(t, n1) |- "CYield"("py:True"(), v, x, n) ~> "c:anf"("LCons"("c:yield"("c:tmp"(t), "c:const"(none)), "LNil"()), "c:atom"("c:tmp"(t)), n1);
+      "YIELD-VALUE". v:T, x:T, n:T, p:T, a:T, n1:T, t:T, n2:T, b:T | "CAtom"(v, x, n) ~> "c:anf"(p, a, n1), "CFresh"(n1) ~> "c:fresh"(t, n2), "CSnoc"(p, "c:yield"("c:tmp"(t), a)) ~> b |- "CYield"("py:False"(), v, x, n) ~> "c:anf"(b, "c:atom"("c:tmp"(t)), n2);
+      -- yield from ITERABLE (PEP 380): its iterator's items yielded, what is
+      -- sent and thrown passed on; its value the iterator's return value
+      "YIELD-FROM". gk:T, v:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, p:T, a:T, n1:T, t:T, n2:T, b:T | "CAtom"(v, "c:cx"("c:function"("py:False"(), gk), tb, sl, lp), n) ~> "c:anf"(p, a, n1), "CFresh"(n1) ~> "c:fresh"(t, n2), "CSnoc"(p, "c:yield-from"("c:tmp"(t), a)) ~> b |- "COp"("py:YieldFrom"(v, l, c, el, ec), "c:cx"("c:function"("py:False"(), gk), tb, sl, lp), n) ~> "c:anf"(b, "c:atom"("c:tmp"(t)), n2);
+      "YIELD-FROM-ASYNC". gk:T, v:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, m:T, none:T | "py-core-name"("c:e-yield-from-async"(), m), "py-core-none"(none) |- "COp"("py:YieldFrom"(v, l, c, el, ec), "c:cx"("c:function"("py:True"(), gk), tb, sl, lp), n) ~> "c:anf"("LCons"("c:syntax-error"(m, l, c, el, ec), "LNil"()), "c:atom"("c:const"(none)), n);
+      "YIELD-FROM-IN-MODULE". v:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, m:T, none:T | "py-core-name"("c:e-yield-from"(), m), "py-core-none"(none) |- "COp"("py:YieldFrom"(v, l, c, el, ec), "c:cx"("c:module"(), tb, sl, lp), n) ~> "c:anf"("LCons"("c:syntax-error"(m, l, c, el, ec), "LNil"()), "c:atom"("c:const"(none)), n);
+      "YIELD-FROM-IN-CLASS". v:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, m:T, none:T | "py-core-name"("c:e-yield-from"(), m), "py-core-none"(none) |- "COp"("py:YieldFrom"(v, l, c, el, ec), "c:cx"("c:class"(), tb, sl, lp), n) ~> "c:anf"("LCons"("c:syntax-error"(m, l, c, el, ec), "LNil"()), "c:atom"("c:const"(none)), n);
+      -- await (GET_AWAITABLE, then the yield-from loop) in an async function
+      "AWAIT". gk:T, v:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, p:T, a:T, n1:T, t:T, n2:T, b:T | "CAtom"(v, "c:cx"("c:function"("py:True"(), gk), tb, sl, lp), n) ~> "c:anf"(p, a, n1), "CFresh"(n1) ~> "c:fresh"(t, n2), "CSnoc"(p, "c:await"("c:tmp"(t), a, "c:aw-plain"())) ~> b |- "COp"("py:Await"(v, l, c, el, ec), "c:cx"("c:function"("py:True"(), gk), tb, sl, lp), n) ~> "c:anf"(b, "c:atom"("c:tmp"(t)), n2);
+      "AWAIT-IN-SYNC". gk:T, v:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, m:T, none:T | "py-core-name"("c:e-await-sync"(), m), "py-core-none"(none) |- "COp"("py:Await"(v, l, c, el, ec), "c:cx"("c:function"("py:False"(), gk), tb, sl, lp), n) ~> "c:anf"("LCons"("c:syntax-error"(m, l, c, el, ec), "LNil"()), "c:atom"("c:const"(none)), n);
+      "AWAIT-IN-MODULE". v:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, m:T, none:T | "py-core-name"("c:e-await"(), m), "py-core-none"(none) |- "COp"("py:Await"(v, l, c, el, ec), "c:cx"("c:module"(), tb, sl, lp), n) ~> "c:anf"("LCons"("c:syntax-error"(m, l, c, el, ec), "LNil"()), "c:atom"("c:const"(none)), n);
+      "AWAIT-IN-CLASS". v:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, m:T, none:T | "py-core-name"("c:e-await"(), m), "py-core-none"(none) |- "COp"("py:Await"(v, l, c, el, ec), "c:cx"("c:class"(), tb, sl, lp), n) ~> "c:anf"("LCons"("c:syntax-error"(m, l, c, el, ec), "LNil"()), "c:atom"("c:const"(none)), n);
+      "AWAIT-IN-COMP". v:T, l:T, c:T, el:T, ec:T, k:T, tb:T, sl:T, lp:T, n:T, p:T, a:T, n1:T, t:T, n2:T, b:T | "CAtom"(v, "c:cx"("c:comp"(k), tb, sl, lp), n) ~> "c:anf"(p, a, n1), "CFresh"(n1) ~> "c:fresh"(t, n2), "CSnoc"(p, "c:await"("c:tmp"(t), a, "c:aw-plain"())) ~> b |- "COp"("py:Await"(v, l, c, el, ec), "c:cx"("c:comp"(k), tb, sl, lp), n) ~> "c:anf"(b, "c:atom"("c:tmp"(t)), n2);
+      -- async for (compiler_async_for): GET_AITER once; each turn GET_ANEXT and
+      -- its awaiting guarded, a StopAsyncIteration there ending the loop for
+      -- its else block (END_ASYNC_FOR); the target, then the body
+      "ASYNC-FOR". gk:T, tgt:T, it:T, body:T, ob:T, tc:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, p1:T, xi:T, n1:T, ti:T, n2:T, lb:T, n3:T, ld:T, n4:T, ll:T, n5:T, ta:T, n6:T, tv:T, n7:T, te:T, n8:T, tm:T, n9:T, ts:T, n10:T, s1:T, n11:T, s2:T, n12:T, sai:T, pre:T, inner:T | "CAtom"(it, "c:cx"("c:function"("py:True"(), gk), tb, sl, lp), n) ~> "c:anf"(p1, xi, n1), "CFresh"(n1) ~> "c:fresh"(ti, n2), "CFresh"(n2) ~> "c:fresh"(lb, n3), "CFresh"(n3) ~> "c:fresh"(ld, n4), "CFresh"(n4) ~> "c:fresh"(ll, n5), "CFresh"(n5) ~> "c:fresh"(ta, n6), "CFresh"(n6) ~> "c:fresh"(tv, n7), "CFresh"(n7) ~> "c:fresh"(te, n8), "CFresh"(n8) ~> "c:fresh"(tm, n9), "CTarget"(tgt, "c:tmp"(tv), "c:cx"("c:function"("py:True"(), gk), tb, sl, lp), n9) ~> "c:sts"(ts, n10), "CBlock"(body, "c:cx"("c:function"("py:True"(), gk), tb, sl, "c:loops"(lb, ll)), n10) ~> "c:st"(s1, n11), "CBlock"(ob, "c:cx"("c:function"("py:True"(), gk), tb, sl, lp), n11) ~> "c:st"(s2, n12), "py-core-name"("c:t-stop-async-iteration"(), sai), "CSnoc"(p1, "c:assign"("c:tmp"(ti), "c:aiter"(xi))) ~> pre, "CSnoc"(ts, s1) ~> inner |- "CStmt"("py:AsyncFor"(tgt, it, body, ob, tc, l, c, el, ec), "c:cx"("c:function"("py:True"(), gk), tb, sl, lp), n) ~> "c:st"("c:seq"("LCons"("c:seq"(pre), "LCons"("c:block"(lb, "c:seq"("LCons"("c:block"(ld, "c:loop"(ll, "c:seq"("LCons"("c:try"("c:seq"("LCons"("c:assign"("c:tmp"(ta), "c:anext"("c:tmp"(ti))), "LCons"("c:send-loop"("c:tmp"(tv), "c:tmp"(ta)), "LNil"()))), te, "c:seq"("LCons"("c:assign"("c:tmp"(tm), "c:exc-match"("c:tmp"(te), "c:const"(sai))), "LCons"("c:if"("c:tmp"(tm), "c:break"(ld), "c:reraise"("c:tmp"(te))), "LNil"()))), "c:seq"("LNil"())), "LCons"("c:seq"(inner), "LNil"()))))), "LCons"(s2, "LNil"())))), "LNil"()))), n12);
+      "ASYNC-FOR-IN-SYNC". gk:T, tgt:T, it:T, body:T, ob:T, tc:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, m:T | "py-core-name"("c:e-async-for"(), m) |- "CStmt"("py:AsyncFor"(tgt, it, body, ob, tc, l, c, el, ec), "c:cx"("c:function"("py:False"(), gk), tb, sl, lp), n) ~> "c:st"("c:syntax-error"(m, l, c, el, ec), n);
+      "ASYNC-FOR-IN-MODULE". tgt:T, it:T, body:T, ob:T, tc:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, m:T | "py-core-name"("c:e-async-for"(), m) |- "CStmt"("py:AsyncFor"(tgt, it, body, ob, tc, l, c, el, ec), "c:cx"("c:module"(), tb, sl, lp), n) ~> "c:st"("c:syntax-error"(m, l, c, el, ec), n);
+      "ASYNC-FOR-IN-CLASS". tgt:T, it:T, body:T, ob:T, tc:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, m:T | "py-core-name"("c:e-async-for"(), m) |- "CStmt"("py:AsyncFor"(tgt, it, body, ob, tc, l, c, el, ec), "c:cx"("c:class"(), tb, sl, lp), n) ~> "c:st"("c:syntax-error"(m, l, c, el, ec), n);
+      -- async with (PEP 492's own expansion, as compiler_async_with runs it):
+      -- __aenter__ and __aexit__ looked up (BEFORE_ASYNC_WITH), __aenter__()
+      -- awaited; the body under a handler that awaits __aexit__(type, value,
+      -- None) and re-raises unless that is true, and a cleanup that awaits
+      -- __aexit__(None, None, None) when the handler did not run
+      "ASYNC-WITH". gk:T, its:T, body:T, tc:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, s:T, n1:T | "CAsyncWithItems"(its, body, "c:cx"("c:function"("py:True"(), gk), tb, sl, lp), n) ~> "c:st"(s, n1) |- "CStmt"("py:AsyncWith"(its, body, tc, l, c, el, ec), "c:cx"("c:function"("py:True"(), gk), tb, sl, lp), n) ~> "c:st"(s, n1);
+      "ASYNC-WITH-IN-SYNC". gk:T, its:T, body:T, tc:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, m:T | "py-core-name"("c:e-async-with"(), m) |- "CStmt"("py:AsyncWith"(its, body, tc, l, c, el, ec), "c:cx"("c:function"("py:False"(), gk), tb, sl, lp), n) ~> "c:st"("c:syntax-error"(m, l, c, el, ec), n);
+      "ASYNC-WITH-IN-MODULE". its:T, body:T, tc:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, m:T | "py-core-name"("c:e-async-with"(), m) |- "CStmt"("py:AsyncWith"(its, body, tc, l, c, el, ec), "c:cx"("c:module"(), tb, sl, lp), n) ~> "c:st"("c:syntax-error"(m, l, c, el, ec), n);
+      "ASYNC-WITH-IN-CLASS". its:T, body:T, tc:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, m:T | "py-core-name"("c:e-async-with"(), m) |- "CStmt"("py:AsyncWith"(its, body, tc, l, c, el, ec), "c:cx"("c:class"(), tb, sl, lp), n) ~> "c:st"("c:syntax-error"(m, l, c, el, ec), n);
+      "AWITH-LAST". it:T, body:T, x:T, n:T, s:T, n1:T, r:T | "CBlock"(body, x, n) ~> "c:st"(s, n1), "CAsyncWithOne"(it, s, x, n1) ~> r |- "CAsyncWithItems"("LCons"(it, "LNil"()), body, x, n) ~> r;
+      "AWITH-MORE". it:T, i2:T, rest:T, body:T, x:T, n:T, s:T, n1:T, r:T | "CAsyncWithItems"("LCons"(i2, rest), body, x, n) ~> "c:st"(s, n1), "CAsyncWithOne"(it, s, x, n1) ~> r |- "CAsyncWithItems"("LCons"(it, "LCons"(i2, rest)), body, x, n) ~> r;
+      "AWITH-ONE". ctx:T, vars:T, inner:T, x:T, n:T, p:T, a:T, n1:T, tb:T, n2:T, tx:T, n3:T, te0:T, n4:T, tv:T, n5:T, th:T, n6:T, te:T, n7:T, tt:T, n8:T, tr:T, n9:T, tr2:T, n10:T, tn:T, n11:T, tn2:T, n12:T, bv:T, ts:T, n13:T, z:T, one:T, none:T, fls:T, tru:T, ty:T, b0:T, body2:T, b:T | "CAtom"(ctx, x, n) ~> "c:anf"(p, a, n1), "CFresh"(n1) ~> "c:fresh"(tb, n2), "CFresh"(n2) ~> "c:fresh"(tx, n3), "CFresh"(n3) ~> "c:fresh"(te0, n4), "CFresh"(n4) ~> "c:fresh"(tv, n5), "CFresh"(n5) ~> "c:fresh"(th, n6), "CFresh"(n6) ~> "c:fresh"(te, n7), "CFresh"(n7) ~> "c:fresh"(tt, n8), "CFresh"(n8) ~> "c:fresh"(tr, n9), "CFresh"(n9) ~> "c:fresh"(tr2, n10), "CFresh"(n10) ~> "c:fresh"(tn, n11), "CFresh"(n11) ~> "c:fresh"(tn2, n12), "py-is-none"(vars, bv), "CWithTarget"(bv, vars, tv, x, n12) ~> "c:sts"(ts, n13), "py-const"("py:zero"(), z), "py-const"("py:one"(), one), "py-core-none"(none), "py-core-name"("c:t-false"(), fls), "py-core-name"("c:t-true"(), tru), "py-core-name"("c:t-type"(), ty), "CSnoc"(ts, inner) ~> body2, "CAppend"(p, "LCons"("c:assign"("c:tmp"(tb), "c:before-async-with"(a)), "LCons"("c:assign"("c:tmp"(tx), "c:getitem"("c:tmp"(tb), "c:const"(z))), "LCons"("c:assign"("c:tmp"(te0), "c:getitem"("c:tmp"(tb), "c:const"(one))), "LCons"("c:await"("c:tmp"(tv), "c:tmp"(te0), "c:aw-enter"()), "LCons"("c:assign"("c:tmp"(th), "c:atom"("c:const"(fls))), "LCons"("c:try-finally"("c:try"("c:seq"(body2), te, "c:seq"("LCons"("c:assign"("c:tmp"(th), "c:atom"("c:const"(tru))), "LCons"("c:assign"("c:tmp"(tt), "c:call"("c:const"(ty), "LCons"("c:tmp"(te), "LNil"()), "LNil"())), "LCons"("c:assign"("c:tmp"(tr), "c:call"("c:tmp"(tx), "LCons"("c:tmp"(tt), "LCons"("c:tmp"(te), "LCons"("c:const"(none), "LNil"()))), "LNil"())), "LCons"("c:await"("c:tmp"(tr2), "c:tmp"(tr), "c:aw-exit"()), "LCons"("c:if"("c:tmp"(tr2), "c:seq"("LNil"()), "c:reraise"("c:tmp"(te))), "LNil"())))))), "c:seq"("LNil"())), "c:if"("c:tmp"(th), "c:seq"("LNil"()), "c:seq"("LCons"("c:assign"("c:tmp"(tn), "c:call"("c:tmp"(tx), "LCons"("c:const"(none), "LCons"("c:const"(none), "LCons"("c:const"(none), "LNil"()))), "LNil"())), "LCons"("c:await"("c:tmp"(tn2), "c:tmp"(tn), "c:aw-exit"()), "LNil"()))))), "LNil"()))))))) ~> b |- "CAsyncWithOne"("py:withitem"(ctx, vars), inner, x, n) ~> "c:st"("c:seq"(b), n13);
+      -- a generator expression: a generator function of its own scope
+      -- (<genexpr>, its parameter .0) called with the iterator of its first
+      -- iterable, which is evaluated where the expression stands
+      "GENERATOR-EXP". af1:T, ag:T, io:T, e:T, tg:T, it:T, ifs:T, ia:T, rest:T, l:T, c:T, el:T, ec:T, x:T, n:T, nm:T, args:T, none:T, p1:T, fv:T, n1:T, p2:T, a0:T, n2:T, ti:T, n3:T, b0:T, b:T | "py-truthy"(ia, af1), "py-comp-async"("LCons"("py:comprehension"(tg, it, ifs, ia), rest), e, e, ag), "py-core-name"("c:n-genexpr"(), nm), "py-genexp-args"(l, c, el, ec, args), "py-core-none"(none), "CFunctionOf"(ag, nm, args, "c:genexp-body"(af1, tg, ifs, rest, e), "st:pos"(l, c), l, none, x, n) ~> "c:anf"(p1, fv, n1), "CAtom"(it, x, n1) ~> "c:anf"(p2, a0, n2), "CIterOp"(af1, a0) ~> io, "CFresh"(n2) ~> "c:fresh"(ti, n3), "CAppend"(p1, p2) ~> b0, "CSnoc"(b0, "c:assign"("c:tmp"(ti), io)) ~> b |- "COp"("py:GeneratorExp"(e, "LCons"("py:comprehension"(tg, it, ifs, ia), rest), l, c, el, ec), x, n) ~> "c:anf"(b, "c:call"(fv, "LCons"("c:tmp"(ti), "LNil"()), "LNil"()), n3);
+
+      -- ================================================================ comprehensions
+
+      -- a list, set or dict comprehension is inlined (PEP 709, CPython's
+      -- compiler_comprehension): its first iterable is evaluated in its block
+      -- and made an iterator; its own names are new temporaries (its cells new
+      -- cells); the container is made; then one loop for each generator, its
+      -- target bound, its conditions tested (a false one goes on to the next
+      -- item), the next generator's iterable evaluated inside it, and in the
+      -- innermost the element added (a dict's key before its value)
+      "LIST-COMP". e:T, gs:T, l:T, c:T, el:T, ec:T, x:T, n:T, af:T, r:T | "py-comp-async"(gs, e, e, af), "CCompIf"(af, "c:k-list"(), e, e, gs, l, c, el, ec, x, n) ~> r |- "COp"("py:ListComp"(e, gs, l, c, el, ec), x, n) ~> r;
+      "SET-COMP". e:T, gs:T, l:T, c:T, el:T, ec:T, x:T, n:T, af:T, r:T | "py-comp-async"(gs, e, e, af), "CCompIf"(af, "c:k-set"(), e, e, gs, l, c, el, ec, x, n) ~> r |- "COp"("py:SetComp"(e, gs, l, c, el, ec), x, n) ~> r;
+      "DICT-COMP". k0:T, v0:T, gs:T, l:T, c:T, el:T, ec:T, x:T, n:T, af:T, r:T | "py-comp-async"(gs, k0, v0, af), "CCompIf"(af, "c:k-dict"(), k0, v0, gs, l, c, el, ec, x, n) ~> r |- "COp"("py:DictComp"(k0, v0, gs, l, c, el, ec), x, n) ~> r;
+      -- an asynchronous comprehension (an async for, or an await, in it) only
+      -- where its context is an async function's (compiler_comprehension)
+      "COMP-IF-SYNC". kd:T, e:T, v:T, gs:T, l:T, c:T, el:T, ec:T, x:T, n:T, r:T | "CComp"(kd, e, v, gs, "st:pos"(l, c), x, n) ~> r |- "CCompIf"("py:False"(), kd, e, v, gs, l, c, el, ec, x, n) ~> r;
+      "COMP-IF-ASYNC". kd:T, e:T, v:T, gs:T, l:T, c:T, el:T, ec:T, k:T, tb:T, sl:T, lp:T, n:T, ak:T, r:T | "CAsyncKind"(k) ~> ak, "CCompAsyncIn"(ak, kd, e, v, gs, l, c, el, ec, "c:cx"(k, tb, sl, lp), n) ~> r |- "CCompIf"("py:True"(), kd, e, v, gs, l, c, el, ec, "c:cx"(k, tb, sl, lp), n) ~> r;
+      "COMP-ASYNC-ALLOWED". kd:T, e:T, v:T, gs:T, l:T, c:T, el:T, ec:T, x:T, n:T, r:T | "CComp"(kd, e, v, gs, "st:pos"(l, c), x, n) ~> r |- "CCompAsyncIn"("py:True"(), kd, e, v, gs, l, c, el, ec, x, n) ~> r;
+      "COMP-ASYNC-OUTSIDE". kd:T, e:T, v:T, gs:T, l:T, c:T, el:T, ec:T, x:T, n:T, m:T, none:T | "py-core-name"("c:e-async-comp"(), m), "py-core-none"(none) |- "CCompAsyncIn"("py:False"(), kd, e, v, gs, l, c, el, ec, x, n) ~> "c:anf"("LCons"("c:syntax-error"(m, l, c, el, ec), "LNil"()), "c:atom"("c:const"(none)), n);
+      "ASYNC-KIND-FUNCTION". asy:T, gk:T |- "CAsyncKind"("c:function"(asy, gk)) ~> asy;
+      "ASYNC-KIND-MODULE". |- "CAsyncKind"("c:module"()) ~> "py:False"();
+      "ASYNC-KIND-CLASS". |- "CAsyncKind"("c:class"()) ~> "py:False"();
+      "ASYNC-KIND-COMP". k:T, r:T | "CAsyncKind"(k) ~> r |- "CAsyncKind"("c:comp"(k)) ~> r;
+      "ITER-OP-SYNC". a:T |- "CIterOp"("py:False"(), a) ~> "c:iter"(a);
+      "ITER-OP-ASYNC". a:T |- "CIterOp"("py:True"(), a) ~> "c:aiter"(a);
+      "LOOP-FOR-SYNC". tg:T, ti:T, ifs:T, gs:T, kd:T, e:T, v:T, tr:T, x:T, n:T, r:T | "CGenLoop"(tg, ti, ifs, gs, kd, e, v, tr, x, n) ~> r |- "CLoopFor"("py:False"(), tg, ti, ifs, gs, kd, e, v, tr, x, n) ~> r;
+      "LOOP-FOR-ASYNC". tg:T, ti:T, ifs:T, gs:T, kd:T, e:T, v:T, tr:T, x:T, n:T, r:T | "CAsyncGenLoop"(tg, ti, ifs, gs, kd, e, v, tr, x, n) ~> r |- "CLoopFor"("py:True"(), tg, ti, ifs, gs, kd, e, v, tr, x, n) ~> r;
+      "COMP". af1:T, io:T, ia:T, kd:T, e:T, v:T, tg:T, it:T, ifs:T, gs:T, pos:T, k:T, tk:T, tn:T, tp:T, syms:T, tabs:T, q:T, pv:T, sl:T, lp:T, n:T, p0:T, a0:T, n1:T, ck:T, cn:T, cp:T, csyms:T, ckids:T, own:T, cells:T, n2:T, ti:T, n3:T, tr:T, n4:T, syms2:T, mk:T, loops:T, n5:T, b0:T, b1:T, b2:T, b:T | "py-truthy"(ia, af1), "CAtom"(it, "c:cx"(k, "c:tq"("st:table"(tk, tn, tp, syms, tabs), q, pv), sl, lp), n) ~> "c:anf"(p0, a0, n1), "CIterOp"(af1, a0) ~> io, "py-comp-table"(tabs, pos, "st:table"(ck, cn, cp, csyms, ckids)), "py-comp-names"(k, csyms, sl, n1, "c:comp-names"(own, cells, n2)), "CFresh"(n2) ~> "c:fresh"(ti, n3), "CFresh"(n3) ~> "c:fresh"(tr, n4), "CAppend"(own, syms) ~> syms2, "CCompContainer"(kd) ~> mk, "CLoopFor"(af1, tg, "c:tmp"(ti), ifs, gs, kd, e, v, tr, "c:cx"("c:comp"(k), "c:tq"("st:table"(tk, tn, tp, syms2, tabs), q, pv), sl, "py:None"()), n4) ~> "c:sts"(loops, n5), "CSnoc"(p0, "c:assign"("c:tmp"(ti), io)) ~> b0, "CAppend"(b0, cells) ~> b1, "CSnoc"(b1, "c:assign"("c:tmp"(tr), mk)) ~> b2, "CAppend"(b2, loops) ~> b |- "CComp"(kd, e, v, "LCons"("py:comprehension"(tg, it, ifs, ia), gs), pos, "c:cx"(k, "c:tq"("st:table"(tk, tn, tp, syms, tabs), q, pv), sl, lp), n) ~> "c:anf"(b, "c:atom"("c:tmp"(tr)), n5);
+      "COMP-CONTAINER-LIST". |- "CCompContainer"("c:k-list"()) ~> "c:list"("LNil"());
+      "COMP-CONTAINER-SET". |- "CCompContainer"("c:k-set"()) ~> "c:set"("LNil"());
+      "COMP-CONTAINER-DICT". |- "CCompContainer"("c:k-dict"()) ~> "c:dict"("LNil"());
+      -- one generator's loop over the iterator in atom TI
+      "GEN-LOOP". tg:T, ti:T, ifs:T, gs:T, kd:T, e:T, v:T, tr:T, x:T, n:T, lb:T, n1:T, ll:T, n2:T, tv:T, n3:T, te:T, n4:T, ts:T, n5:T, si:T, n6:T, sr:T, n7:T, i0:T, inner:T | "CFresh"(n) ~> "c:fresh"(lb, n1), "CFresh"(n1) ~> "c:fresh"(ll, n2), "CFresh"(n2) ~> "c:fresh"(tv, n3), "CFresh"(n3) ~> "c:fresh"(te, n4), "CTarget"(tg, "c:tmp"(tv), x, n4) ~> "c:sts"(ts, n5), "CCompIfs"(ifs, ll, x, n5) ~> "c:sts"(si, n6), "CCompRest"(gs, kd, e, v, tr, x, n6) ~> "c:sts"(sr, n7), "CAppend"(ts, si) ~> i0, "CAppend"(i0, sr) ~> inner |- "CGenLoop"(tg, ti, ifs, gs, kd, e, v, tr, x, n) ~> "c:sts"("LCons"("c:block"(lb, "c:loop"(ll, "c:seq"("LCons"("c:assign"("c:tmp"(tv), "c:next"(ti)), "LCons"("c:assign"("c:tmp"(te), "c:exhausted"("c:tmp"(tv))), "LCons"("c:if"("c:tmp"(te), "c:break"(lb), "c:seq"(inner)), "LNil"())))))), "LNil"()), n7);
+      "ASYNC-GEN-LOOP". tg:T, ti:T, ifs:T, gs:T, kd:T, e:T, v:T, tr:T, x:T, n:T, lb:T, n1:T, ll:T, n2:T, ta:T, n3:T, tv:T, n4:T, te:T, n5:T, tm:T, n6:T, ts:T, n7:T, si:T, n8:T, sr:T, n9:T, i0:T, inner:T, sai:T | "CFresh"(n) ~> "c:fresh"(lb, n1), "CFresh"(n1) ~> "c:fresh"(ll, n2), "CFresh"(n2) ~> "c:fresh"(ta, n3), "CFresh"(n3) ~> "c:fresh"(tv, n4), "CFresh"(n4) ~> "c:fresh"(te, n5), "CFresh"(n5) ~> "c:fresh"(tm, n6), "CTarget"(tg, "c:tmp"(tv), x, n6) ~> "c:sts"(ts, n7), "CCompIfs"(ifs, ll, x, n7) ~> "c:sts"(si, n8), "CCompRest"(gs, kd, e, v, tr, x, n8) ~> "c:sts"(sr, n9), "CAppend"(ts, si) ~> i0, "CAppend"(i0, sr) ~> inner, "py-core-name"("c:t-stop-async-iteration"(), sai) |- "CAsyncGenLoop"(tg, ti, ifs, gs, kd, e, v, tr, x, n) ~> "c:sts"("LCons"("c:block"(lb, "c:loop"(ll, "c:seq"("LCons"("c:try"("c:seq"("LCons"("c:assign"("c:tmp"(ta), "c:anext"(ti)), "LCons"("c:send-loop"("c:tmp"(tv), "c:tmp"(ta)), "LNil"()))), te, "c:seq"("LCons"("c:assign"("c:tmp"(tm), "c:exc-match"("c:tmp"(te), "c:const"(sai))), "LCons"("c:if"("c:tmp"(tm), "c:break"(lb), "c:reraise"("c:tmp"(te))), "LNil"()))), "c:seq"("LNil"())), "LCons"("c:seq"(inner), "LNil"()))))), "LNil"()), n9);
+      -- a condition: when false, on to the next item
+      "COMP-IFS-NIL". ll:T, x:T, n:T |- "CCompIfs"("LNil"(), ll, x, n) ~> "c:sts"("LNil"(), n);
+      "COMP-IFS-CONS". t:T, rest:T, ll:T, x:T, n:T, p:T, a:T, n1:T, s:T, n2:T, b:T, r:T | "CAtom"(t, x, n) ~> "c:anf"(p, a, n1), "CCompIfs"(rest, ll, x, n1) ~> "c:sts"(s, n2), "CSnoc"(p, "c:if"(a, "c:seq"("LNil"()), "c:continue"(ll))) ~> b, "CAppend"(b, s) ~> r |- "CCompIfs"("LCons"(t, rest), ll, x, n) ~> "c:sts"(r, n2);
+      -- the next generator, its iterable evaluated in the comprehension
+      "COMP-REST-GEN". af1:T, io:T, ia:T, tg:T, it:T, ifs:T, gs:T, kd:T, e:T, v:T, tr:T, x:T, n:T, p:T, a:T, n1:T, it2:T, ti:T, n2:T, s:T, n3:T, b0:T, b:T | "py-truthy"(ia, af1), "py-iter-operand"(af1, it, it2), "CAtom"(it2, x, n) ~> "c:anf"(p, a, n1), "CIterOp"(af1, a) ~> io, "CFresh"(n1) ~> "c:fresh"(ti, n2), "CLoopFor"(af1, tg, "c:tmp"(ti), ifs, gs, kd, e, v, tr, x, n2) ~> "c:sts"(s, n3), "CSnoc"(p, "c:assign"("c:tmp"(ti), io)) ~> b0, "CAppend"(b0, s) ~> b |- "CCompRest"("LCons"("py:comprehension"(tg, it, ifs, ia), gs), kd, e, v, tr, x, n) ~> "c:sts"(b, n3);
+      -- the innermost: the element added
+      "COMP-REST-YIELD". e:T, v:T, tr:T, gk:T, tb:T, sl:T, lp:T, n:T, ce:T, r:T | "py-comp-elt"(e, ce), "CCompYield"(ce, "c:cx"("c:function"("py:False"(), gk), tb, sl, lp), n) ~> r |- "CCompRest"("LNil"(), "c:k-yield"(), e, v, tr, "c:cx"("c:function"("py:False"(), gk), tb, sl, lp), n) ~> r;
+      "COMP-REST-YIELD-ASYNC". e:T, v:T, tr:T, gk:T, tb:T, sl:T, lp:T, n:T, ce:T, r:T | "py-comp-elt"(e, ce), "CCompYield"(ce, "c:cx"("c:function"("py:True"(), gk), tb, sl, lp), n) ~> r |- "CCompRest"("LNil"(), "c:k-yield"(), e, v, tr, "c:cx"("c:function"("py:True"(), gk), tb, sl, lp), n) ~> r;
+      "COMP-REST-LIST". e:T, v:T, tr:T, x:T, n:T, ce:T, r:T | "py-comp-elt"(e, ce), "CCompPut"(ce, "c:k-list"(), tr, x, n) ~> r |- "CCompRest"("LNil"(), "c:k-list"(), e, v, tr, x, n) ~> r;
+      "COMP-REST-SET". e:T, v:T, tr:T, x:T, n:T, ce:T, r:T | "py-comp-elt"(e, ce), "CCompPut"(ce, "c:k-set"(), tr, x, n) ~> r |- "CCompRest"("LNil"(), "c:k-set"(), e, v, tr, x, n) ~> r;
+      "COMP-REST-DICT". e:T, v:T, tr:T, x:T, n:T, b:T, r:T | "py-is-none"(v, b), "CCompDict"(b, e, v, tr, x, n) ~> r |- "CCompRest"("LNil"(), "c:k-dict"(), e, v, tr, x, n) ~> r;
+      -- an element (codegen_comprehension_generator, 3.15): a plain one appended,
+      -- added, stored or yielded; an unpacked one (PEP 798) extending the list,
+      -- updating the set or the dict, or each of its items yielded in turn
+      "COMP-DICT-PAIR". e:T, v:T, tr:T, x:T, n:T, p:T, ak0:T, av:T, n1:T, ph:T, ak:T, n2:T, q:T, b:T | "COperands"("LCons"(e, "LCons"(v, "LNil"())), "LNil"(), x, n) ~> "c:anfs"(p, "LCons"(ak0, "LCons"(av, "LNil"())), n1), "CHoldAtom"(ak0, n1) ~> "c:anf"(ph, ak, n2), "CAppend"(p, ph) ~> q, "CSnoc"(q, "c:set-item"("c:tmp"(tr), ak, av)) ~> b |- "CCompDict"("py:False"(), e, v, tr, x, n) ~> "c:sts"(b, n2);
+      "COMP-DICT-UNPACK". e:T, v:T, tr:T, x:T, n:T, p:T, a:T, n1:T, b:T | "CAtom"(e, x, n) ~> "c:anf"(p, a, n1), "CSnoc"(p, "c:do"("c:dict-update"("c:tmp"(tr), a))) ~> b |- "CCompDict"("py:True"(), e, v, tr, x, n) ~> "c:sts"(b, n1);
+      "COMP-PUT-LIST". e:T, tr:T, x:T, n:T, p:T, a:T, n1:T, b:T | "CAtom"(e, x, n) ~> "c:anf"(p, a, n1), "CSnoc"(p, "c:do"("c:list-append"("c:tmp"(tr), a))) ~> b |- "CCompPut"("c:plain"(e), "c:k-list"(), tr, x, n) ~> "c:sts"(b, n1);
+      "COMP-PUT-LIST-STAR". e:T, tr:T, x:T, n:T, p:T, a:T, n1:T, b:T | "CAtom"(e, x, n) ~> "c:anf"(p, a, n1), "CSnoc"(p, "c:do"("c:list-extend"("c:tmp"(tr), a))) ~> b |- "CCompPut"("c:star"(e), "c:k-list"(), tr, x, n) ~> "c:sts"(b, n1);
+      "COMP-PUT-SET". e:T, tr:T, x:T, n:T, p:T, a:T, n1:T, b:T | "CAtom"(e, x, n) ~> "c:anf"(p, a, n1), "CSnoc"(p, "c:do"("c:set-add"("c:tmp"(tr), a))) ~> b |- "CCompPut"("c:plain"(e), "c:k-set"(), tr, x, n) ~> "c:sts"(b, n1);
+      "COMP-PUT-SET-STAR". e:T, tr:T, x:T, n:T, p:T, a:T, n1:T, b:T | "CAtom"(e, x, n) ~> "c:anf"(p, a, n1), "CSnoc"(p, "c:do"("c:set-update"("c:tmp"(tr), a))) ~> b |- "CCompPut"("c:star"(e), "c:k-set"(), tr, x, n) ~> "c:sts"(b, n1);
+      "COMP-YIELD". e:T, gk:T, tb:T, sl:T, lp:T, n:T, p:T, a:T, n1:T, b:T | "CAtom"(e, "c:cx"("c:function"("py:False"(), gk), tb, sl, lp), n) ~> "c:anf"(p, a, n1), "CSnoc"(p, "c:yield"("c:discard"(), a)) ~> b |- "CCompYield"("c:plain"(e), "c:cx"("c:function"("py:False"(), gk), tb, sl, lp), n) ~> "c:sts"(b, n1);
+      "COMP-YIELD-ASYNC". e:T, gk:T, tb:T, sl:T, lp:T, n:T, p:T, a:T, n1:T, tw:T, n2:T, b0:T, b:T | "CAtom"(e, "c:cx"("c:function"("py:True"(), gk), tb, sl, lp), n) ~> "c:anf"(p, a, n1), "CFresh"(n1) ~> "c:fresh"(tw, n2), "CSnoc"(p, "c:assign"("c:tmp"(tw), "c:agwrap"(a))) ~> b0, "CSnoc"(b0, "c:yield"("c:discard"(), "c:tmp"(tw))) ~> b |- "CCompYield"("c:plain"(e), "c:cx"("c:function"("py:True"(), gk), tb, sl, lp), n) ~> "c:sts"(b, n2);
+      "COMP-YIELD-STAR". e:T, gk:T, tb:T, sl:T, lp:T, n:T, p:T, a:T, n1:T, ti:T, n2:T, lb:T, n3:T, ll:T, n4:T, tv:T, n5:T, te:T, n6:T, b:T | "CAtom"(e, "c:cx"("c:function"("py:False"(), gk), tb, sl, lp), n) ~> "c:anf"(p, a, n1), "CFresh"(n1) ~> "c:fresh"(ti, n2), "CFresh"(n2) ~> "c:fresh"(lb, n3), "CFresh"(n3) ~> "c:fresh"(ll, n4), "CFresh"(n4) ~> "c:fresh"(tv, n5), "CFresh"(n5) ~> "c:fresh"(te, n6), "CAppend"(p, "LCons"("c:assign"("c:tmp"(ti), "c:iter"(a)), "LCons"("c:block"(lb, "c:loop"(ll, "c:seq"("LCons"("c:assign"("c:tmp"(tv), "c:next"("c:tmp"(ti))), "LCons"("c:assign"("c:tmp"(te), "c:exhausted"("c:tmp"(tv))), "LCons"("c:if"("c:tmp"(te), "c:break"(lb), "c:seq"("LCons"("c:yield"("c:discard"(), "c:tmp"(tv)), "LNil"()))), "LNil"())))))), "LNil"()))) ~> b |- "CCompYield"("c:star"(e), "c:cx"("c:function"("py:False"(), gk), tb, sl, lp), n) ~> "c:sts"(b, n6);
+      "COMP-YIELD-ASYNC-STAR". e:T, gk:T, tb:T, sl:T, lp:T, n:T, p:T, a:T, n1:T, ti:T, n2:T, lb:T, n3:T, ll:T, n4:T, tv:T, n5:T, te:T, n6:T, tw:T, n7:T, b:T | "CAtom"(e, "c:cx"("c:function"("py:True"(), gk), tb, sl, lp), n) ~> "c:anf"(p, a, n1), "CFresh"(n1) ~> "c:fresh"(ti, n2), "CFresh"(n2) ~> "c:fresh"(lb, n3), "CFresh"(n3) ~> "c:fresh"(ll, n4), "CFresh"(n4) ~> "c:fresh"(tv, n5), "CFresh"(n5) ~> "c:fresh"(te, n6), "CFresh"(n6) ~> "c:fresh"(tw, n7), "CAppend"(p, "LCons"("c:assign"("c:tmp"(ti), "c:iter"(a)), "LCons"("c:block"(lb, "c:loop"(ll, "c:seq"("LCons"("c:assign"("c:tmp"(tv), "c:next"("c:tmp"(ti))), "LCons"("c:assign"("c:tmp"(te), "c:exhausted"("c:tmp"(tv))), "LCons"("c:if"("c:tmp"(te), "c:break"(lb), "c:seq"("LCons"("c:assign"("c:tmp"(tw), "c:agwrap"("c:tmp"(tv))), "LCons"("c:yield"("c:discard"(), "c:tmp"(tw)), "LNil"())))), "LNil"())))))), "LNil"()))) ~> b |- "CCompYield"("c:star"(e), "c:cx"("c:function"("py:True"(), gk), tb, sl, lp), n) ~> "c:sts"(b, n7);
+
+      -- ================================================================ imports
+
+      -- import NAME [as ASNAME], ... (compiler_import): IMPORT_NAME (the
+      -- builtins' __import__, no fromlist, level 0) for each; without as,
+      -- the top-level package is bound to its name; with as, the dotted
+      -- names after the first are taken in turn (IMPORT_FROM) and the last
+      -- is bound.  Each IMPORT_NAME carries its mode (codegen_import): lazy,
+      -- lazy only if the runtime's policy says so, or eager (py-import-mode)
+      "IMPORT". as0:T, l:T, c:T, el:T, ec:T, x:T, n:T, b:T, n1:T, lz:T, md:T | "py-import-mode"(lz, md), "CImports"(as0, md, x, n) ~> "c:sts"(b, n1) |- "CStmt"("py:Import"(as0, lz, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n1);
+      "IMPORTS-NIL". md:T, x:T, n:T |- "CImports"("LNil"(), md, x, n) ~> "c:sts"("LNil"(), n);
+      "IMPORTS-CONS". a:T, rest:T, md:T, x:T, n:T, s1:T, n1:T, s2:T, n2:T, b:T | "CImportOne"(a, md, x, n) ~> "c:sts"(s1, n1), "CImports"(rest, md, x, n1) ~> "c:sts"(s2, n2), "CAppend"(s1, s2) ~> b |- "CImports"("LCons"(a, rest), md, x, n) ~> "c:sts"(b, n2);
+      "IMPORT-ONE". nm:T, asn:T, l:T, c:T, el:T, ec:T, md:T, x:T, n:T, none:T, z:T, bd:T, t:T, n1:T, s:T, n2:T | "py-core-none"(none), "py-const"("py:zero"(), z), "py-import-binding"(nm, asn, bd), "CFresh"(n) ~> "c:fresh"(t, n1), "CImportBind"(bd, t, x, n1) ~> "c:sts"(s, n2) |- "CImportOne"("py:alias"(nm, asn, l, c, el, ec), md, x, n) ~> "c:sts"("LCons"("c:assign"("c:tmp"(t), "c:import"("c:const"(nm), "c:const"(none), "c:const"(z), md)), s), n2);
+      "IMPORT-BIND-TOP". top:T, t:T, x:T, n:T, tg:T | "CName"(top, x) ~> tg |- "CImportBind"("c:bind-top"(top), t, x, n) ~> "c:sts"("LCons"("c:assign"(tg, "c:atom"("c:tmp"(t))), "LNil"()), n);
+      "IMPORT-BIND-AS". attrs:T, asn:T, t:T, x:T, n:T, p:T, a:T, n1:T, tg:T, b:T | "CImportAttrs"(attrs, "c:tmp"(t), n) ~> "c:anf"(p, a, n1), "CName"(asn, x) ~> tg, "CSnoc"(p, "c:assign"(tg, "c:atom"(a))) ~> b |- "CImportBind"("c:bind-as"(attrs, asn), t, x, n) ~> "c:sts"(b, n1);
+      "IMPORT-ATTRS-NIL". a:T, n:T |- "CImportAttrs"("LNil"(), a, n) ~> "c:anf"("LNil"(), a, n);
+      "IMPORT-ATTRS-CONS". at:T, rest:T, a:T, n:T, t:T, n1:T, p:T, r:T, n2:T | "CFresh"(n) ~> "c:fresh"(t, n1), "CImportAttrs"(rest, "c:tmp"(t), n1) ~> "c:anf"(p, r, n2) |- "CImportAttrs"("LCons"(at, rest), a, n) ~> "c:anf"("LCons"("c:assign"("c:tmp"(t), "c:import-from"(a, "c:const"(at))), p), r, n2);
+      -- from MODULE import NAME [as ASNAME], ... (compiler_from_import):
+      -- IMPORT_NAME with the names as the fromlist and the level, then each
+      -- name taken (IMPORT_FROM) and bound, or * (IMPORT_STAR)
+      "IMPORT-FROM". mod:T, as0:T, lv:T, l:T, c:T, el:T, ec:T, x:T, n:T, mn:T, fl:T, ps:T, t:T, n1:T, s:T, n2:T, lz:T, md:T | "py-import-mode"(lz, md), "py-import-module-name"(mod, mn), "py-import-from-parts"(as0, "c:from-parts"(fl, ps)), "CFresh"(n) ~> "c:fresh"(t, n1), "CImportFroms"(ps, t, x, n1) ~> "c:sts"(s, n2) |- "CStmt"("py:ImportFrom"(mod, as0, lv, lz, l, c, el, ec), x, n) ~> "c:st"("c:seq"("LCons"("c:assign"("c:tmp"(t), "c:import"("c:const"(mn), "c:const"(fl), "c:const"(lv), md)), s)), n2);
+      "IMPORT-FROMS-NIL". t:T, x:T, n:T |- "CImportFroms"("LNil"(), t, x, n) ~> "c:sts"("LNil"(), n);
+      "IMPORT-FROMS-NAME". nm:T, bn:T, rest:T, t:T, x:T, n:T, tg:T, s:T, n1:T | "CName"(bn, x) ~> tg, "CImportFroms"(rest, t, x, n) ~> "c:sts"(s, n1) |- "CImportFroms"("LCons"("c:from"(nm, bn), rest), t, x, n) ~> "c:sts"("LCons"("c:assign"(tg, "c:import-from"("c:tmp"(t), "c:const"(nm))), s), n1);
+      "IMPORT-FROMS-STAR". rest:T, t:T, x:T, n:T, s:T, n1:T | "CImportFroms"(rest, t, x, n) ~> "c:sts"(s, n1) |- "CImportFroms"("LCons"("c:star"(), rest), t, x, n) ~> "c:sts"("LCons"("c:do"("c:import-star"("c:tmp"(t))), s), n1);
+
+      -- ================================================================ f-strings
+
+      -- f"...": each part in turn (compiler_joined_str): a constant as it is;
+      -- a replacement field's value, then its conversion (str, repr or ascii)
+      -- at once, then its format spec (itself an f-string) evaluated, then the
+      -- value formatted (FORMAT_SIMPLE, FORMAT_WITH_SPEC); the parts joined
+      "JOINED-STR". vs:T, l:T, c:T, el:T, ec:T, x:T, n:T, p:T, as0:T, n1:T | "CFParts"(vs, x, n) ~> "c:anfs"(p, as0, n1) |- "COp"("py:JoinedStr"(vs, l, c, el, ec), x, n) ~> "c:anf"(p, "c:build-string"(as0), n1);
+      "F-PARTS-NIL". x:T, n:T |- "CFParts"("LNil"(), x, n) ~> "c:anfs"("LNil"(), "LNil"(), n);
+      "F-PARTS-CONS". v:T, vs:T, x:T, n:T, p1:T, a:T, n1:T, p2:T, rest:T, n2:T, b:T | "CFPart"(v, x, n) ~> "c:anf"(p1, a, n1), "CFParts"(vs, x, n1) ~> "c:anfs"(p2, rest, n2), "CAppend"(p1, p2) ~> b |- "CFParts"("LCons"(v, vs), x, n) ~> "c:anfs"(b, "LCons"(a, rest), n2);
+      "F-PART-CONSTANT". v:T, k:T, l:T, c:T, el:T, ec:T, x:T, n:T |- "CFPart"("py:Constant"(v, k, l, c, el, ec), x, n) ~> "c:anf"("LNil"(), "c:const"(v), n);
+      "F-PART-FIELD". v:T, cv:T, spec:T, l:T, c:T, el:T, ec:T, x:T, n:T, p1:T, a:T, n1:T, k:T, p2:T, a2:T, n2:T, sb:T, p3:T, sa:T, n3:T, ph:T, a3:T, n4:T, t:T, n5:T, b0:T, b1:T, b2:T, b:T | "CAtom"(v, x, n) ~> "c:anf"(p1, a, n1), "py-conversion-kind"(cv, k), "CConvert"(k, a, n1) ~> "c:anf"(p2, a2, n2), "py-is-none"(spec, sb), "CFSpec"(sb, spec, x, n2) ~> "c:anf"(p3, sa, n3), "CHold"(a2, p3, "LNil"(), n3) ~> "c:anf"(ph, a3, n4), "CFresh"(n4) ~> "c:fresh"(t, n5), "CAppend"(p1, p2) ~> b0, "CAppend"(b0, ph) ~> b1, "CAppend"(b1, p3) ~> b2, "CSnoc"(b2, "c:assign"("c:tmp"(t), "c:format"(a3, sa))) ~> b |- "CFPart"("py:FormattedValue"(v, cv, spec, l, c, el, ec), x, n) ~> "c:anf"(b, "c:tmp"(t), n5);
+      "CONVERT-NONE". a:T, n:T |- "CConvert"("c:conv-none"(), a, n) ~> "c:anf"("LNil"(), a, n);
+      "CONVERT-STR". a:T, n:T, t:T, n1:T | "CFresh"(n) ~> "c:fresh"(t, n1) |- "CConvert"("c:conv-str"(), a, n) ~> "c:anf"("LCons"("c:assign"("c:tmp"(t), "c:convert"("c:conv-str"(), a)), "LNil"()), "c:tmp"(t), n1);
+      "CONVERT-REPR". a:T, n:T, t:T, n1:T | "CFresh"(n) ~> "c:fresh"(t, n1) |- "CConvert"("c:conv-repr"(), a, n) ~> "c:anf"("LCons"("c:assign"("c:tmp"(t), "c:convert"("c:conv-repr"(), a)), "LNil"()), "c:tmp"(t), n1);
+      "CONVERT-ASCII". a:T, n:T, t:T, n1:T | "CFresh"(n) ~> "c:fresh"(t, n1) |- "CConvert"("c:conv-ascii"(), a, n) ~> "c:anf"("LCons"("c:assign"("c:tmp"(t), "c:convert"("c:conv-ascii"(), a)), "LNil"()), "c:tmp"(t), n1);
+      "F-SPEC-NONE". spec:T, x:T, n:T, e0:T | "py-core-name"("c:n-empty"(), e0) |- "CFSpec"("py:True"(), spec, x, n) ~> "c:anf"("LNil"(), "c:const"(e0), n);
+      "F-SPEC". spec:T, x:T, n:T, r:T | "CAtom"(spec, x, n) ~> r |- "CFSpec"("py:False"(), spec, x, n) ~> r;
+
+      -- ================================================================ template strings
+
+      -- t"..." (PEP 750) as codegen_template_str: its strings one constant
+      -- tuple (an empty string before an interpolation that begins it or
+      -- follows another, and at its end after one); its interpolations in turn
+      -- (codegen_interpolation): the value, then the format spec (an f-string)
+      -- evaluated, made an interpolation with the expression's text and the
+      -- conversion, the value itself unconverted (BUILD_INTERPOLATION); then
+      -- the template of the two tuples (BUILD_TEMPLATE)
+      "TEMPLATE-STR". vs:T, l:T, c:T, el:T, ec:T, x:T, n:T, ss:T, p:T, as0:T, n1:T | "py-template-strings"(vs, ss), "CTParts"(vs, x, n) ~> "c:anfs"(p, as0, n1) |- "COp"("py:TemplateStr"(vs, l, c, el, ec), x, n) ~> "c:anf"(p, "c:build-template"("c:const"(ss), as0), n1);
+      "T-PARTS-NIL". x:T, n:T |- "CTParts"("LNil"(), x, n) ~> "c:anfs"("LNil"(), "LNil"(), n);
+      "T-PARTS-CONSTANT". v:T, k:T, l:T, c:T, el:T, ec:T, vs:T, x:T, n:T, r:T | "CTParts"(vs, x, n) ~> r |- "CTParts"("LCons"("py:Constant"(v, k, l, c, el, ec), vs), x, n) ~> r;
+      "T-PARTS-INTERPOLATION". v:T, s:T, cv:T, spec:T, l:T, c:T, el:T, ec:T, vs:T, x:T, n:T, p1:T, a:T, n1:T, p2:T, rest:T, n2:T, b:T | "CTInterpolation"(v, s, cv, spec, x, n) ~> "c:anf"(p1, a, n1), "CTParts"(vs, x, n1) ~> "c:anfs"(p2, rest, n2), "CAppend"(p1, p2) ~> b |- "CTParts"("LCons"("py:Interpolation"(v, s, cv, spec, l, c, el, ec), vs), x, n) ~> "c:anfs"(b, "LCons"(a, rest), n2);
+      -- the value held across the format spec's code, which may rebind it
+      "T-INTERPOLATION". v:T, s:T, cv:T, spec:T, x:T, n:T, p1:T, a:T, n1:T, k:T, sb:T, p3:T, sa:T, n3:T, ph:T, a3:T, n4:T, t:T, n5:T, b0:T, b1:T, b:T | "CAtom"(v, x, n) ~> "c:anf"(p1, a, n1), "py-conversion-kind"(cv, k), "py-is-none"(spec, sb), "CFSpec"(sb, spec, x, n1) ~> "c:anf"(p3, sa, n3), "CHold"(a, p3, "LNil"(), n3) ~> "c:anf"(ph, a3, n4), "CFresh"(n4) ~> "c:fresh"(t, n5), "CAppend"(p1, ph) ~> b0, "CAppend"(b0, p3) ~> b1, "CSnoc"(b1, "c:assign"("c:tmp"(t), "c:build-interpolation"(a3, "c:const"(s), k, sa))) ~> b |- "CTInterpolation"(v, s, cv, spec, x, n) ~> "c:anf"(b, "c:tmp"(t), n5);
+
+      -- ================================================================ with
+
+      -- with ITEM, ...: BODY as CPython's compiler_with: each item's context
+      -- expression evaluated, its __enter__'s value kept and the target bound
+      -- inside the protected region, the next item (or the body) inside it
+      "WITH". items:T, body:T, tc:T, l:T, c:T, el:T, ec:T, x:T, n:T, r:T | "CWith"(items, body, x, n) ~> r |- "CStmt"("py:With"(items, body, tc, l, c, el, ec), x, n) ~> r;
+      "WITH-ITEM". ce:T, ov:T, rest:T, body:T, x:T, n:T, p:T, a:T, n1:T, tv:T, n2:T, b:T, ts:T, n3:T, inner:T, n4:T, b0:T, w:T | "CAtom"(ce, x, n) ~> "c:anf"(p, a, n1), "CFresh"(n1) ~> "c:fresh"(tv, n2), "py-is-none"(ov, b), "CWithTarget"(b, ov, tv, x, n2) ~> "c:sts"(ts, n3), "CWithInner"(rest, body, x, n3) ~> "c:st"(inner, n4), "CSnoc"(ts, inner) ~> b0, "CSnoc"(p, "c:with"(a, "c:tmp"(tv), "c:seq"(b0))) ~> w |- "CWith"("LCons"("py:withitem"(ce, ov), rest), body, x, n) ~> "c:st"("c:seq"(w), n4);
+      "WITH-TARGET-NONE". ov:T, tv:T, x:T, n:T |- "CWithTarget"("py:True"(), ov, tv, x, n) ~> "c:sts"("LNil"(), n);
+      "WITH-TARGET". ov:T, tv:T, x:T, n:T, r:T | "CTarget"(ov, "c:tmp"(tv), x, n) ~> r |- "CWithTarget"("py:False"(), ov, tv, x, n) ~> r;
+      "WITH-INNER-BODY". body:T, x:T, n:T, r:T | "CBlock"(body, x, n) ~> r |- "CWithInner"("LNil"(), body, x, n) ~> r;
+      "WITH-INNER-MORE". i:T, is:T, body:T, x:T, n:T, r:T | "CWith"("LCons"(i, is), body, x, n) ~> r |- "CWithInner"("LCons"(i, is), body, x, n) ~> r;
+
+      -- ================================================================ annotations
+
+      -- under from __future__ import annotations, a module or class body that
+      -- annotates makes __annotations__ first (SETUP_ANNOTATIONS: a new dict
+      -- unless it has one)
+      "SETUP-ANNOTATIONS". |- "CSetupAnnotations"("py:True"()) ~> "LCons"("c:do"("c:setup-annotations"()), "LNil"());
+      "SETUP-ANNOTATIONS-NONE". |- "CSetupAnnotations"("py:False"()) ~> "LNil"();
+      -- target: annotation = value, as CPython 3.15 compiles it (codegen_annassign):
+      -- the value stored; without a value, a complex target's object (and key)
+      -- evaluated; the annotation never evaluated here (PEP 649): in a module
+      -- or class body a simple name registers its index in
+      -- __conditional_annotations__ when it has one (see py-deferred)
+      "ANN-ASSIGN". t:T, ann:T, v:T, simple:T, l:T, c:T, el:T, ec:T, x:T, n:T, b:T, r:T | "py-is-none"(v, b), "CAnnAssign"(b, t, ann, v, simple, l, c, el, ec, x, n) ~> r |- "CStmt"("py:AnnAssign"(t, ann, v, simple, l, c, el, ec), x, n) ~> r;
+      "ANN-ASSIGN-VALUE". t:T, ann:T, v:T, simple:T, l:T, c:T, el:T, ec:T, x:T, n:T, none:T, s1:T, n1:T, s2:T, n2:T | "py-core-none"(none), "CStmt"("py:Assign"("LCons"(t, "LNil"()), v, none, l, c, el, ec), x, n) ~> "c:st"(s1, n1), "CAnnPart"(t, ann, simple, x, n1) ~> "c:st"(s2, n2) |- "CAnnAssign"("py:False"(), t, ann, v, simple, l, c, el, ec, x, n) ~> "c:st"("c:seq"("LCons"(s1, "LCons"(s2, "LNil"()))), n2);
+      "ANN-ASSIGN-BARE". t:T, ann:T, v:T, simple:T, l:T, c:T, el:T, ec:T, x:T, n:T, s1:T, n1:T, s2:T, n2:T | "CAnnTargetCheck"(t, x, n) ~> "c:st"(s1, n1), "CAnnPart"(t, ann, simple, x, n1) ~> "c:st"(s2, n2) |- "CAnnAssign"("py:True"(), t, ann, v, simple, l, c, el, ec, x, n) ~> "c:st"("c:seq"("LCons"(s1, "LCons"(s2, "LNil"()))), n2);
+      "ANN-TARGET-NAME". nm:T, cx:T, l:T, c:T, el:T, ec:T, x:T, n:T |- "CAnnTargetCheck"("py:Name"(nm, cx, l, c, el, ec), x, n) ~> "c:st"("c:seq"("LNil"()), n);
+      "ANN-TARGET-ATTRIBUTE". v:T, at:T, cx:T, l:T, c:T, el:T, ec:T, x:T, n:T, b:T, n1:T | "CEvalEach"("LCons"(v, "LNil"()), x, n) ~> "c:sts"(b, n1) |- "CAnnTargetCheck"("py:Attribute"(v, at, cx, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n1);
+      "ANN-TARGET-SUBSCRIPT". v:T, sl:T, cx:T, l:T, c:T, el:T, ec:T, x:T, n:T, ps:T, b:T, n1:T | "py-ann-subscript-parts"(sl, ps), "CEvalEach"("LCons"(v, ps), x, n) ~> "c:sts"(b, n1) |- "CAnnTargetCheck"("py:Subscript"(v, sl, cx, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n1);
+      -- each expression evaluated and its value dropped, in order
+      "EVAL-EACH-NIL". x:T, n:T |- "CEvalEach"("LNil"(), x, n) ~> "c:sts"("LNil"(), n);
+      "EVAL-EACH-CONS". e:T, es:T, x:T, n:T, p:T, a:T, n1:T, b0:T, b1:T, n2:T, b:T | "COp"(e, x, n) ~> "c:anf"(p, a, n1), "CSnoc"(p, "c:do"(a)) ~> b0, "CEvalEach"(es, x, n1) ~> "c:sts"(b1, n2), "CAppend"(b0, b1) ~> b |- "CEvalEach"("LCons"(e, es), x, n) ~> "c:sts"(b, n2);
+      "ANN-PART". t:T, ann:T, simple:T, x:T, n:T, g:T, r:T | "py-ann-register"(simple, g), "CAnnRegister"(g, t, ann, x, n) ~> r |- "CAnnPart"(t, ann, simple, x, n) ~> r;
+      "ANN-REGISTER-NONE". t:T, ann:T, x:T, n:T |- "CAnnRegister"("c:no-register"(), t, ann, x, n) ~> "c:st"("c:seq"("LNil"()), n);
+      "ANN-REGISTER-MODULE". t:T, ann:T, i:T, tq:T, sl:T, lp:T, n:T, ca:T | "py-core-name"("c:n-cond-annotations"(), ca) |- "CAnnRegister"("c:register"(i), t, ann, "c:cx"("c:module"(), tq, sl, lp), n) ~> "c:st"("c:seq"("LCons"("c:do"("c:set-add"("c:name"(ca), "c:const"(i))), "LNil"())), n);
+      "ANN-REGISTER-CLASS". t:T, ann:T, i:T, tq:T, sl:T, lp:T, n:T, ca:T, j:T | "py-core-name"("c:n-cond-annotations"(), ca), "py-slot"(sl, ca, j) |- "CAnnRegister"("c:register"(i), t, ann, "c:cx"("c:class"(), tq, sl, lp), n) ~> "c:st"("c:seq"("LCons"("c:do"("c:set-add"("c:cell"(j), "c:const"(i))), "LNil"())), n);
+      -- under from __future__ import annotations: the annotation (its text) stored
+      -- in __annotations__ under the name, mangled
+      "ANN-REGISTER-FUTURE". nm:T, cx:T, l:T, c:T, el:T, ec:T, ann:T, x:T, n:T, na:T, p:T, a:T, n1:T, b:T, mg:T | "py-core-name"("c:n-dunder-annotations"(), na), "CMangle"(nm, x) ~> mg, "CAtom"(ann, x, n) ~> "c:anf"(p, a, n1), "CSnoc"(p, "c:set-item"("c:name"(na), "c:const"(mg), a)) ~> b |- "CAnnRegister"("c:future-store"(), "py:Name"(nm, cx, l, c, el, ec), ann, x, n) ~> "c:st"("c:seq"(b), n1);
+
+      -- global and nonlocal are the scope stage's: they do nothing at run time
+      "GLOBAL". ns:T, l:T, c:T, el:T, ec:T, x:T, n:T |- "CStmt"("py:Global"(ns, l, c, el, ec), x, n) ~> "c:st"("c:seq"("LNil"()), n);
+      "NONLOCAL". ns:T, l:T, c:T, el:T, ec:T, x:T, n:T |- "CStmt"("py:Nonlocal"(ns, l, c, el, ec), x, n) ~> "c:st"("c:seq"("LNil"()), n);
+
+      -- name = value: the value's operation, stored where the name lives
+      "ASSIGN-NAME". t:T, cx:T, nl:T, nc:T, nel:T, nec:T, v:T, tc:T, l:T, c:T, el:T, ec:T, x:T, n:T, pre:T, op:T, n1:T, tg:T, b:T | "COp"(v, x, n) ~> "c:anf"(pre, op, n1), "CName"(t, x) ~> tg, "CSnoc"(pre, "c:assign"(tg, op)) ~> b |- "CStmt"("py:Assign"("LCons"("py:Name"(t, cx, nl, nc, nel, nec), "LNil"()), v, tc, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n1);
+      -- name op= value: the name read first, then the value, then the
+      -- in-place operation, stored back
+      "AUG-ASSIGN-NAME". t:T, cx:T, nl:T, nc:T, nel:T, nec:T, o:T, v:T, l:T, c:T, el:T, ec:T, x:T, n:T, tg:T, t0:T, n1:T, pre:T, a:T, n2:T, b:T | "CName"(t, x) ~> tg, "CFresh"(n) ~> "c:fresh"(t0, n1), "CAtom"(v, x, n1) ~> "c:anf"(pre, a, n2), "CSnoc"("LCons"("c:assign"("c:tmp"(t0), "c:atom"(tg)), pre), "c:assign"(tg, "c:inplace"(o, "c:tmp"(t0), a))) ~> b |- "CStmt"("py:AugAssign"("py:Name"(t, cx, nl, nc, nel, nec), o, v, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n2);
+      -- obj.attr OP= value: obj evaluated once and held; the attribute loaded,
+      -- the value evaluated, the in-place operation, the attribute stored
+      "AUG-ASSIGN-ATTRIBUTE". v:T, at:T, cx:T, al:T, ac:T, ael:T, aec:T, o:T, val:T, l:T, c:T, el:T, ec:T, x:T, n:T, p1:T, xo0:T, n1:T, ph:T, xo:T, n2:T, t1:T, n3:T, p2:T, xv:T, n4:T, t2:T, n5:T, q0:T, q1:T, q2:T, b:T, mg:T | "CMangle"(at, x) ~> mg, "CAtom"(v, x, n) ~> "c:anf"(p1, xo0, n1), "CHoldAtom"(xo0, n1) ~> "c:anf"(ph, xo, n2), "CFresh"(n2) ~> "c:fresh"(t1, n3), "CAtom"(val, x, n3) ~> "c:anf"(p2, xv, n4), "CFresh"(n4) ~> "c:fresh"(t2, n5), "CAppend"(p1, ph) ~> q0, "CSnoc"(q0, "c:assign"("c:tmp"(t1), "c:getattr"(xo, mg))) ~> q1, "CAppend"(q1, p2) ~> q2, "CAppend"(q2, "LCons"("c:assign"("c:tmp"(t2), "c:inplace"(o, "c:tmp"(t1), xv)), "LCons"("c:set-attr"(xo, mg, "c:tmp"(t2)), "LNil"()))) ~> b |- "CStmt"("py:AugAssign"("py:Attribute"(v, at, cx, al, ac, ael, aec), o, val, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n5);
+      -- obj[key] OP= value: obj and key evaluated once and held; the item loaded,
+      -- the value evaluated, the in-place operation, the item stored
+      "AUG-ASSIGN-SUBSCRIPT". v:T, sl:T, cx:T, sl1:T, sc:T, sel:T, sec:T, o:T, val:T, l:T, c:T, el:T, ec:T, x:T, n:T, p1:T, xo0:T, xk0:T, n1:T, ph1:T, xo:T, n2:T, ph2:T, xk:T, n3:T, t1:T, n4:T, p2:T, xv:T, n5:T, t2:T, n6:T, q0:T, q1:T, q2:T, q3:T, b:T | "COperands"("LCons"(v, "LCons"(sl, "LNil"())), "LNil"(), x, n) ~> "c:anfs"(p1, "LCons"(xo0, "LCons"(xk0, "LNil"())), n1), "CHoldAtom"(xo0, n1) ~> "c:anf"(ph1, xo, n2), "CHoldAtom"(xk0, n2) ~> "c:anf"(ph2, xk, n3), "CFresh"(n3) ~> "c:fresh"(t1, n4), "CAtom"(val, x, n4) ~> "c:anf"(p2, xv, n5), "CFresh"(n5) ~> "c:fresh"(t2, n6), "CAppend"(p1, ph1) ~> q0, "CAppend"(q0, ph2) ~> q1, "CSnoc"(q1, "c:assign"("c:tmp"(t1), "c:getitem"(xo, xk))) ~> q2, "CAppend"(q2, p2) ~> q3, "CAppend"(q3, "LCons"("c:assign"("c:tmp"(t2), "c:inplace"(o, "c:tmp"(t1), xv)), "LCons"("c:set-item"(xo, xk, "c:tmp"(t2)), "LNil"()))) ~> b |- "CStmt"("py:AugAssign"("py:Subscript"(v, sl, cx, sl1, sc, sel, sec), o, val, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n6);
+
+      -- a, b = value (or [a, b] = value): the value, then each target in
+      -- turn; t1 = t2 = value: the value once, then each target, left to right
+      "ASSIGN-TUPLE". es:T, cx:T, tl:T, tc0:T, tel:T, tec:T, v:T, tc:T, l:T, c:T, el:T, ec:T, x:T, n:T, pre:T, a:T, n1:T, ts:T, n2:T, b:T | "CAtom"(v, x, n) ~> "c:anf"(pre, a, n1), "CTarget"("py:Tuple"(es, cx, tl, tc0, tel, tec), a, x, n1) ~> "c:sts"(ts, n2), "CAppend"(pre, ts) ~> b |- "CStmt"("py:Assign"("LCons"("py:Tuple"(es, cx, tl, tc0, tel, tec), "LNil"()), v, tc, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n2);
+      "ASSIGN-LIST". es:T, cx:T, tl:T, tc0:T, tel:T, tec:T, v:T, tc:T, l:T, c:T, el:T, ec:T, x:T, n:T, pre:T, a:T, n1:T, ts:T, n2:T, b:T | "CAtom"(v, x, n) ~> "c:anf"(pre, a, n1), "CTarget"("py:List"(es, cx, tl, tc0, tel, tec), a, x, n1) ~> "c:sts"(ts, n2), "CAppend"(pre, ts) ~> b |- "CStmt"("py:Assign"("LCons"("py:List"(es, cx, tl, tc0, tel, tec), "LNil"()), v, tc, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n2);
+      "ASSIGN-STARRED". sv:T, cx:T, sl:T, sc:T, sel:T, sec:T, v:T, tc:T, l:T, c:T, el:T, ec:T, x:T, n:T, pre:T, a:T, n1:T, ts:T, n2:T, b:T | "CAtom"(v, x, n) ~> "c:anf"(pre, a, n1), "CTarget"("py:Starred"(sv, cx, sl, sc, sel, sec), a, x, n1) ~> "c:sts"(ts, n2), "CAppend"(pre, ts) ~> b |- "CStmt"("py:Assign"("LCons"("py:Starred"(sv, cx, sl, sc, sel, sec), "LNil"()), v, tc, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n2);
+      "ASSIGN-MANY". t1:T, t2:T, rest:T, v:T, tc:T, l:T, c:T, el:T, ec:T, x:T, n:T, pre:T, a0:T, n1:T, ph:T, a:T, n2:T, ts:T, n3:T, q:T, b:T | "CAtom"(v, x, n) ~> "c:anf"(pre, a0, n1), "CHoldAtom"(a0, n1) ~> "c:anf"(ph, a, n2), "CTargets"("LCons"(t1, "LCons"(t2, rest)), a, x, n2) ~> "c:sts"(ts, n3), "CAppend"(pre, ph) ~> q, "CAppend"(q, ts) ~> b |- "CStmt"("py:Assign"("LCons"(t1, "LCons"(t2, rest)), v, tc, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n3);
+      "TARGETS-NIL". a:T, x:T, n:T |- "CTargets"("LNil"(), a, x, n) ~> "c:sts"("LNil"(), n);
+      "TARGETS-CONS". t:T, rest:T, a:T, x:T, n:T, s1:T, n1:T, s2:T, n2:T, b:T | "CTarget"(t, a, x, n) ~> "c:sts"(s1, n1), "CTargets"(rest, a, x, n1) ~> "c:sts"(s2, n2), "CAppend"(s1, s2) ~> b |- "CTargets"("LCons"(t, rest), a, x, n) ~> "c:sts"(b, n2);
+
+      -- storing an atom's value into a target: a name where it lives; a tuple
+      -- or list of targets, the value unpacked to as many values, each stored
+      -- in turn; an item or attribute, its object (and key) then the store
+      "TARGET-NAME". t:T, cx:T, nl:T, nc:T, nel:T, nec:T, a:T, x:T, n:T, tg:T | "CName"(t, x) ~> tg |- "CTarget"("py:Name"(t, cx, nl, nc, nel, nec), a, x, n) ~> "c:sts"("LCons"("c:assign"(tg, "c:atom"(a)), "LNil"()), n);
+      "TARGET-TUPLE". es:T, cx:T, l:T, c:T, el:T, ec:T, a:T, x:T, n:T, sh:T, r:T | "py-unpack-shape"(es, sh), "CSeqTarget"(sh, es, l, c, el, ec, a, x, n) ~> r |- "CTarget"("py:Tuple"(es, cx, l, c, el, ec), a, x, n) ~> r;
+      "TARGET-LIST". es:T, cx:T, l:T, c:T, el:T, ec:T, a:T, x:T, n:T, sh:T, r:T | "py-unpack-shape"(es, sh), "CSeqTarget"(sh, es, l, c, el, ec, a, x, n) ~> r |- "CTarget"("py:List"(es, cx, l, c, el, ec), a, x, n) ~> r;
+      -- a starred target takes the list UNPACK_EX makes of the middle items
+      "TARGET-STARRED". v:T, cx:T, l:T, c:T, el:T, ec:T, a:T, x:T, n:T, m:T | "py-core-name"("c:e-starred-target"(), m) |- "CTarget"("py:Starred"(v, cx, l, c, el, ec), a, x, n) ~> "c:sts"("LCons"("c:syntax-error"(m, l, c, el, ec), "LNil"()), n);
+      -- a target list (unpack_helper): unpacked as its shape says, each
+      -- element stored in turn, a starred one's value given the list
+      "SEQ-TARGET". sh:T, es:T, l:T, c:T, el:T, ec:T, a:T, x:T, n:T, op:T, t:T, n1:T, ts:T, n2:T, z:T | "CUnpackOp"(sh, a) ~> op, "CFresh"(n) ~> "c:fresh"(t, n1), "py-const"("py:zero"(), z), "CElements"(es, t, z, x, n1) ~> "c:sts"(ts, n2) |- "CSeqTarget"(sh, es, l, c, el, ec, a, x, n) ~> "c:sts"("LCons"("c:assign"("c:tmp"(t), op), ts), n2);
+      "SEQ-TARGET-MANY-STARS". es:T, l:T, c:T, el:T, ec:T, a:T, x:T, n:T, m:T | "py-core-name"("c:e-many-starred"(), m) |- "CSeqTarget"("c:many-stars"(), es, l, c, el, ec, a, x, n) ~> "c:sts"("LCons"("c:syntax-error"(m, l, c, el, ec), "LNil"()), n);
+      "SEQ-TARGET-TOO-MANY". es:T, l:T, c:T, el:T, ec:T, a:T, x:T, n:T, m:T | "py-core-name"("c:e-too-many-starred"(), m) |- "CSeqTarget"("c:too-many-stars"(), es, l, c, el, ec, a, x, n) ~> "c:sts"("LCons"("c:syntax-error"(m, l, c, el, ec), "LNil"()), n);
+      "ELEM-TARGET". e:T, a:T, x:T, n:T, b:T, r:T | "py-is-starred"(e, b), "CElemTargetIf"(b, e, a, x, n) ~> r |- "CElemTarget"(e, a, x, n) ~> r;
+      "ELEM-TARGET-STARRED". v:T, cx:T, l:T, c:T, el:T, ec:T, a:T, x:T, n:T, r:T | "CTarget"(v, a, x, n) ~> r |- "CElemTargetIf"("py:True"(), "py:Starred"(v, cx, l, c, el, ec), a, x, n) ~> r;
+      "ELEM-TARGET-PLAIN". e:T, a:T, x:T, n:T, r:T | "CTarget"(e, a, x, n) ~> r |- "CElemTargetIf"("py:False"(), e, a, x, n) ~> r;
+      "UNPACK-OP-EXACT". k:T, a:T |- "CUnpackOp"("c:exact"(k), a) ~> "c:unpack"(a, k);
+      "UNPACK-OP-STAR". b:T, af:T, a:T |- "CUnpackOp"("c:star"(b, af), a) ~> "c:unpack-ex"(a, b, af);
+      "TARGET-SUBSCRIPT". v:T, sl:T, cx:T, l:T, c:T, el:T, ec:T, a:T, x:T, n:T, pre:T, xo:T, xk:T, n1:T, b:T | "COperands"("LCons"(v, "LCons"(sl, "LNil"())), "LNil"(), x, n) ~> "c:anfs"(pre, "LCons"(xo, "LCons"(xk, "LNil"())), n1), "CSnoc"(pre, "c:set-item"(xo, xk, a)) ~> b |- "CTarget"("py:Subscript"(v, sl, cx, l, c, el, ec), a, x, n) ~> "c:sts"(b, n1);
+      "TARGET-ATTRIBUTE". v:T, at:T, cx:T, l:T, c:T, el:T, ec:T, a:T, x:T, n:T, pre:T, xo:T, n1:T, b:T, mg:T | "CMangle"(at, x) ~> mg, "CAtom"(v, x, n) ~> "c:anf"(pre, xo, n1), "CSnoc"(pre, "c:set-attr"(xo, mg, a)) ~> b |- "CTarget"("py:Attribute"(v, at, cx, l, c, el, ec), a, x, n) ~> "c:sts"(b, n1);
+      -- the unpacked values: element i of the tuple t, into target i
+      "ELEMENTS-NIL". t:T, i:T, x:T, n:T |- "CElements"("LNil"(), t, i, x, n) ~> "c:sts"("LNil"(), n);
+      "ELEMENTS-CONS". e:T, es:T, t:T, i:T, x:T, n:T, ti:T, n1:T, s1:T, n2:T, one:T, i1:T, s2:T, n3:T, b0:T, b:T | "CFresh"(n) ~> "c:fresh"(ti, n1), "CElemTarget"(e, "c:tmp"(ti), x, n1) ~> "c:sts"(s1, n2), "py-const"("py:one"(), one), "py-add"(i, one, i1), "CElements"(es, t, i1, x, n2) ~> "c:sts"(s2, n3), "CAppend"("LCons"("c:assign"("c:tmp"(ti), "c:getitem"("c:tmp"(t), "c:const"(i))), s1), s2) ~> b |- "CElements"("LCons"(e, es), t, i, x, n) ~> "c:sts"(b, n3);
+
+      -- obj[key] = value: the value first, then the object, then the key
+      "ASSIGN-SUBSCRIPT". v:T, sl:T, cx:T, sl1:T, sc:T, sel:T, sec:T, val:T, tc:T, l:T, c:T, el:T, ec:T, x:T, n:T, pre:T, xv:T, xo:T, xk:T, n1:T, b:T | "COperands"("LCons"(val, "LCons"(v, "LCons"(sl, "LNil"()))), "LNil"(), x, n) ~> "c:anfs"(pre, "LCons"(xv, "LCons"(xo, "LCons"(xk, "LNil"()))), n1), "CSnoc"(pre, "c:set-item"(xo, xk, xv)) ~> b |- "CStmt"("py:Assign"("LCons"("py:Subscript"(v, sl, cx, sl1, sc, sel, sec), "LNil"()), val, tc, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n1);
+      -- obj.attr = value: the value first, then the object
+      "ASSIGN-ATTRIBUTE". v:T, at:T, cx:T, al:T, ac:T, ael:T, aec:T, val:T, tc:T, l:T, c:T, el:T, ec:T, x:T, n:T, pre:T, xv:T, xo:T, n1:T, b:T, mg:T | "CMangle"(at, x) ~> mg, "COperands"("LCons"(val, "LCons"(v, "LNil"())), "LNil"(), x, n) ~> "c:anfs"(pre, "LCons"(xv, "LCons"(xo, "LNil"())), n1), "CSnoc"(pre, "c:set-attr"(xo, mg, xv)) ~> b |- "CStmt"("py:Assign"("LCons"("py:Attribute"(v, at, cx, al, ac, ael, aec), "LNil"()), val, tc, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n1);
+
+      -- for target in iterable: body else: orelse: the iterable's iterator, then
+      -- a loop that takes the next value until there is none (then the else
+      -- clause, and out of the block); break leaves without the else clause
+      "FOR". tgt:T, it:T, body:T, ob:T, tc:T, l:T, c:T, el:T, ec:T, k:T, tb:T, sl:T, lp:T, n:T, p1:T, xi:T, n1:T, it2:T, ti:T, n2:T, lb:T, n3:T, ll:T, n4:T, tv:T, n5:T, te:T, n6:T, ts:T, n7:T, s1:T, n8:T, s2:T, n9:T, pre:T, inner:T | "py-iter-operand"("py:False"(), it, it2), "CAtom"(it2, "c:cx"(k, tb, sl, lp), n) ~> "c:anf"(p1, xi, n1), "CFresh"(n1) ~> "c:fresh"(ti, n2), "CFresh"(n2) ~> "c:fresh"(lb, n3), "CFresh"(n3) ~> "c:fresh"(ll, n4), "CFresh"(n4) ~> "c:fresh"(tv, n5), "CFresh"(n5) ~> "c:fresh"(te, n6), "CTarget"(tgt, "c:tmp"(tv), "c:cx"(k, tb, sl, lp), n6) ~> "c:sts"(ts, n7), "CBlock"(body, "c:cx"(k, tb, sl, "c:loops"(lb, ll)), n7) ~> "c:st"(s1, n8), "CBlock"(ob, "c:cx"(k, tb, sl, lp), n8) ~> "c:st"(s2, n9), "CSnoc"(p1, "c:assign"("c:tmp"(ti), "c:iter"(xi))) ~> pre, "CSnoc"(ts, s1) ~> inner |- "CStmt"("py:For"(tgt, it, body, ob, tc, l, c, el, ec), "c:cx"(k, tb, sl, lp), n) ~> "c:st"("c:seq"("LCons"("c:seq"(pre), "LCons"("c:block"(lb, "c:loop"(ll, "c:seq"("LCons"("c:assign"("c:tmp"(tv), "c:next"("c:tmp"(ti))), "LCons"("c:assign"("c:tmp"(te), "c:exhausted"("c:tmp"(tv))), "LCons"("c:if"("c:tmp"(te), "c:seq"("LCons"(s2, "LCons"("c:break"(lb), "LNil"()))), "c:seq"(inner)), "LNil"())))))), "LNil"()))), n9);
+
+      -- if: the test's atom, then one branch
+      "IF". t:T, body:T, ob:T, l:T, c:T, el:T, ec:T, x:T, n:T, pre:T, a:T, n1:T, s1:T, n2:T, s2:T, n3:T, b:T | "CAtom"(t, x, n) ~> "c:anf"(pre, a, n1), "CBlock"(body, x, n1) ~> "c:st"(s1, n2), "CBlock"(ob, x, n2) ~> "c:st"(s2, n3), "CSnoc"(pre, "c:if"(a, s1, s2)) ~> b |- "CStmt"("py:If"(t, body, ob, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n3);
+
+      -- while test: body else: orelse, as a loop in a block: a false test runs
+      -- the else clause and leaves the block; a break in the body leaves it
+      -- without; a continue starts the loop again (its break and continue go
+      -- to the loop's labels; the else clause's to the loop around it)
+      "WHILE". t:T, body:T, ob:T, l:T, c:T, el:T, ec:T, k:T, tb:T, sl:T, lp:T, n:T, lb:T, n1:T, ll:T, n2:T, pre:T, a:T, n3:T, s1:T, n4:T, s2:T, n5:T, b:T | "CFresh"(n) ~> "c:fresh"(lb, n1), "CFresh"(n1) ~> "c:fresh"(ll, n2), "CAtom"(t, "c:cx"(k, tb, sl, lp), n2) ~> "c:anf"(pre, a, n3), "CBlock"(body, "c:cx"(k, tb, sl, "c:loops"(lb, ll)), n3) ~> "c:st"(s1, n4), "CBlock"(ob, "c:cx"(k, tb, sl, lp), n4) ~> "c:st"(s2, n5), "CSnoc"(pre, "c:if"(a, s1, "c:seq"("LCons"(s2, "LCons"("c:break"(lb), "LNil"()))))) ~> b |- "CStmt"("py:While"(t, body, ob, l, c, el, ec), "c:cx"(k, tb, sl, lp), n) ~> "c:st"("c:block"(lb, "c:loop"(ll, "c:seq"(b))), n5);
+      "BREAK". l:T, c:T, el:T, ec:T, k:T, tb:T, sl:T, lb:T, ll:T, n:T |- "CStmt"("py:Break"(l, c, el, ec), "c:cx"(k, tb, sl, "c:loops"(lb, ll)), n) ~> "c:st"("c:break"(lb), n);
+      "CONTINUE". l:T, c:T, el:T, ec:T, k:T, tb:T, sl:T, lb:T, ll:T, n:T |- "CStmt"("py:Continue"(l, c, el, ec), "c:cx"(k, tb, sl, "c:loops"(lb, ll)), n) ~> "c:st"("c:continue"(ll), n);
+      "BREAK-OUTSIDE". l:T, c:T, el:T, ec:T, k:T, tb:T, sl:T, n:T, m:T | "py-core-name"("c:e-break"(), m) |- "CStmt"("py:Break"(l, c, el, ec), "c:cx"(k, tb, sl, "py:None"()), n) ~> "c:st"("c:syntax-error"(m, l, c, el, ec), n);
+      "CONTINUE-OUTSIDE". l:T, c:T, el:T, ec:T, k:T, tb:T, sl:T, n:T, m:T | "py-core-name"("c:e-continue"(), m) |- "CStmt"("py:Continue"(l, c, el, ec), "c:cx"(k, tb, sl, "py:None"()), n) ~> "c:st"("c:syntax-error"(m, l, c, el, ec), n);
+
+      -- def name(params): body, a function made from its code and stored
+      -- where the name lives; its table is the child of this block's that
+      -- stands where the def does
+      "FUNCTION-DEF". fl:T, nm:T, args:T, body:T, ds:T, rt:T, tc:T, l:T, c:T, el:T, ec:T, x:T, n:T, p2:T, fv:T, n1:T, p1:T, xd:T, n2:T, p3:T, q:T, n3:T, tg:T, pre0:T, pre1:T, b:T | "py-first-line"(ds, l, fl), "CFunction"(nm, args, body, "st:pos"(l, c), fl, rt, x, n) ~> "c:anf"(p2, fv, n1), "COperands"(ds, p2, x, n1) ~> "c:anfs"(p1, xd, n2), "CDecorate"(xd, fv, n2) ~> "c:anf"(p3, q, n3), "CName"(nm, x) ~> tg, "CAppend"(p1, p2) ~> pre0, "CAppend"(pre0, p3) ~> pre1, "CSnoc"(pre1, "c:assign"(tg, "c:atom"(q))) ~> b |- "CStmt"("py:FunctionDef"(nm, args, body, ds, rt, tc, "LNil"(), l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n3);
+      "ASYNC-FUNCTION-DEF". fl:T, nm:T, args:T, body:T, ds:T, rt:T, tc:T, l:T, c:T, el:T, ec:T, x:T, n:T, p2:T, fv:T, n1:T, p1:T, xd:T, n2:T, p3:T, q:T, n3:T, tg:T, pre0:T, pre1:T, b:T | "py-first-line"(ds, l, fl), "CFunctionOf"("py:True"(), nm, args, body, "st:pos"(l, c), fl, rt, x, n) ~> "c:anf"(p2, fv, n1), "COperands"(ds, p2, x, n1) ~> "c:anfs"(p1, xd, n2), "CDecorate"(xd, fv, n2) ~> "c:anf"(p3, q, n3), "CName"(nm, x) ~> tg, "CAppend"(p1, p2) ~> pre0, "CAppend"(pre0, p3) ~> pre1, "CSnoc"(pre1, "c:assign"(tg, "c:atom"(q))) ~> b |- "CStmt"("py:AsyncFunctionDef"(nm, args, body, ds, rt, tc, "LNil"(), l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n3);
+
+      -- a function of no parameters whose code is the child block of KIND
+      -- standing at POS: a type alias's value, a type parameter's bound,
+      -- constraints or default, each computed when first asked for
+      "BLOCK-FUNCTION". kind:T, nm:T, body:T, pos:T, x:T, n:T, r:T | "CBlockFunctionNth"(kind, "c:first"(), nm, body, pos, x, n) ~> r |- "CBlockFunction"(kind, nm, body, pos, x, n) ~> r;
+      "BLOCK-FUNCTION-NTH". pl:T, kind:T, nth:T, tk:T, tn:T, tp:T, syms:T, tabs:T, nm:T, body:T, pos:T, k:T, q:T, pv:T, sl:T, lp:T, n:T, ft:T, qn:T, qi:T, none:T, slots:T, spec:T, cells:T, frees:T, fnames:T, n0:T, fb:T, nx:T, clo:T, fk:T, r:T | "py-pos-line"(pos, pl), "py-child-table-nth"(tabs, kind, pos, nth, ft), "py-qualname"(q, nm, qn), "py-qualname-inner"(qn, qi), "py-core-none"(none), "py-code-layout"("py:arguments"("LNil"(), "LNil"(), "py:None"(), "LNil"(), "LNil"(), "py:None"(), "LNil"()), ft, pv, "c:layout"(slots, spec, cells, frees, fnames)), "py-slot-count"(slots, n0), "CFunctionBody"(body, "c:cx"("c:function"("py:False"(), "py:False"()), "c:tq"(ft, qi, pv), slots, "py:None"()), n0) ~> "c:st"(fb, nx), "CClosure"(fnames, "c:cx"(k, "c:tq"("st:table"(tk, tn, tp, syms, tabs), q, pv), sl, lp)) ~> clo, "CCodeKind"("py:False"(), "py:False"(), none) ~> fk, "CTemp"("c:function"("c:code"(nm, qn, spec, nx, cells, frees, fk, fb, "c:line"(pl)), "LNil"(), "LNil"(), clo, "c:no-annotate"()), "LNil"(), n) ~> r |- "CBlockFunctionNth"(kind, nth, nm, body, pos, "c:cx"(k, "c:tq"("st:table"(tk, tn, tp, syms, tabs), q, pv), sl, lp), n) ~> r;
+
+      -- type NAME = VALUE: a TypeAliasType of the name and of a function
+      -- computing the value when it is first asked for (compiler_typealias)
+      "TYPE-ALIAS". name:T, ctxk:T, nl:T, nc:T, nel:T, nec:T, v:T, l:T, c:T, el:T, ec:T, x:T, n:T, none:T, fp:T, fv:T, n1:T, p2:T, ta:T, n2:T, tg:T, b:T | "py-core-none"(none), "CBlockFunction"("st:type-alias"(), name, "LCons"("py:Return"(v, l, c, el, ec), "LNil"()), "st:pos"(l, c), x, n) ~> "c:anf"(fp, fv, n1), "CTemp"("c:intrinsic"("c:i-typealias"(), "LCons"("c:const"(name), "LCons"("c:const"(none), "LCons"(fv, "LNil"())))), fp, n1) ~> "c:anf"(p2, ta, n2), "CName"(name, x) ~> tg, "CSnoc"(p2, "c:assign"(tg, "c:atom"(ta))) ~> b |- "CStmt"("py:TypeAlias"("py:Name"(name, ctxk, nl, nc, nel, nec), "LNil"(), v, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n2);
+
+
+      -- PEP 695: a generic definition's type parameters live in a scope of
+      -- their own, a function called where the definition stands
+      -- (compiler_function, compiler_typealias); it makes each parameter and
+      -- then the definition, which it returns
+      "TYPE-ALIAS-GENERIC". name:T, ctxk:T, nl:T, nc:T, nel:T, nec:T, tp:T, tps:T, v:T, l:T, c:T, el:T, ec:T, x:T, n:T, fp:T, fv:T, n1:T, p2:T, r:T, n2:T, tg:T, b:T | "CScopeFunction"(name, "py:arguments"("LNil"(), "LNil"(), "py:None"(), "LNil"(), "LNil"(), "py:None"(), "LNil"()), "st:pos"(l, c), l, "c:gen-alias"("LCons"(tp, tps), name, v, l, c, el, ec), x, n) ~> "c:anf"(fp, fv, n1), "CTemp"("c:call"(fv, "LNil"(), "LNil"()), fp, n1) ~> "c:anf"(p2, r, n2), "CName"(name, x) ~> tg, "CSnoc"(p2, "c:assign"(tg, "c:atom"(r))) ~> b |- "CStmt"("py:TypeAlias"("py:Name"(name, ctxk, nl, nc, nel, nec), "LCons"(tp, tps), v, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n2);
+      "GENERIC-FUNCTION-DEF". fl:T, nm:T, args:T, body:T, ds:T, rt:T, tc:T, tp:T, tps:T, l:T, c:T, el:T, ec:T, x:T, n:T, p2:T, fv:T, n1:T, p1:T, xd:T, n2:T, p3:T, q:T, n3:T, tg:T, pre0:T, pre1:T, b:T | "py-first-line"(ds, l, fl), "CGenericFunction"("py:False"(), nm, args, body, rt, "LCons"(tp, tps), l, c, fl, x, n) ~> "c:anf"(p2, fv, n1), "COperands"(ds, p2, x, n1) ~> "c:anfs"(p1, xd, n2), "CDecorate"(xd, fv, n2) ~> "c:anf"(p3, q, n3), "CName"(nm, x) ~> tg, "CAppend"(p1, p2) ~> pre0, "CAppend"(pre0, p3) ~> pre1, "CSnoc"(pre1, "c:assign"(tg, "c:atom"(q))) ~> b |- "CStmt"("py:FunctionDef"(nm, args, body, ds, rt, tc, "LCons"(tp, tps), l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n3);
+      "GENERIC-ASYNC-FUNCTION-DEF". fl:T, nm:T, args:T, body:T, ds:T, rt:T, tc:T, tp:T, tps:T, l:T, c:T, el:T, ec:T, x:T, n:T, p2:T, fv:T, n1:T, p1:T, xd:T, n2:T, p3:T, q:T, n3:T, tg:T, pre0:T, pre1:T, b:T | "py-first-line"(ds, l, fl), "CGenericFunction"("py:True"(), nm, args, body, rt, "LCons"(tp, tps), l, c, fl, x, n) ~> "c:anf"(p2, fv, n1), "COperands"(ds, p2, x, n1) ~> "c:anfs"(p1, xd, n2), "CDecorate"(xd, fv, n2) ~> "c:anf"(p3, q, n3), "CName"(nm, x) ~> tg, "CAppend"(p1, p2) ~> pre0, "CAppend"(pre0, p3) ~> pre1, "CSnoc"(pre1, "c:assign"(tg, "c:atom"(q))) ~> b |- "CStmt"("py:AsyncFunctionDef"(nm, args, body, ds, rt, tc, "LCons"(tp, tps), l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n3);
+      -- the defaults evaluated where the function stands, passed to the scope
+      -- as .defaults and .kwdefaults; the scope's function called
+      "GENERIC-FUNCTION". fl:T, asy:T, nm:T, args:T, body:T, rt:T, tps:T, l:T, c:T, x:T, n:T, fv2:T, fr:T, pd:T, dflts0:T, kwd0:T, n1:T, pp:T, pas:T, n2:T, tpa:T, p3:T, fv:T, n3:T, q0:T, p4:T, n4:T | "CDefaults"(args, x, n) ~> "c:defaults"(pd, dflts0, kwd0, n1), "CPassed"(dflts0, kwd0, n1) ~> "c:anfs"(pp, pas, n2), "py-tp-arguments"(args, tpa), "CScopeFunction"(nm, tpa, "st:pos"(l, c), fl, "c:gen-function"(asy, nm, args, body, "st:pos"(l, c), fl, rt, tps), x, n2) ~> "c:anf"(p3, fv, n3), "CAppend"(pd, pp) ~> q0, "CAppend"(q0, p3) ~> p4, "CTemp"("c:call"(fv, pas, "LNil"()), p4, n3) ~> "c:anf"(fr, fv2, n4) |- "CGenericFunction"(asy, nm, args, body, rt, tps, l, c, fl, x, n) ~> "c:anf"(fr, fv2, n4);
+      "PASSED-NONE". n:T |- "CPassed"("LNil"(), "LNil"(), n) ~> "c:anfs"("LNil"(), "LNil"(), n);
+      "PASSED-POS". d:T, ds:T, n:T, p:T, t:T, n1:T | "CTemp"("c:tuple"("LCons"(d, ds)), "LNil"(), n) ~> "c:anf"(p, t, n1) |- "CPassed"("LCons"(d, ds), "LNil"(), n) ~> "c:anfs"(p, "LCons"(t, "LNil"()), n1);
+      "PASSED-KW". k:T, ks:T, n:T, va:T, p:T, t:T, n1:T | "CKwValues"("LCons"(k, ks)) ~> va, "CTemp"("c:tuple"(va), "LNil"(), n) ~> "c:anf"(p, t, n1) |- "CPassed"("LNil"(), "LCons"(k, ks), n) ~> "c:anfs"(p, "LCons"(t, "LNil"()), n1);
+      "PASSED-BOTH". d:T, ds:T, k:T, ks:T, n:T, p1:T, t1:T, n1:T, va:T, p2:T, t2:T, n2:T | "CTemp"("c:tuple"("LCons"(d, ds)), "LNil"(), n) ~> "c:anf"(p1, t1, n1), "CKwValues"("LCons"(k, ks)) ~> va, "CTemp"("c:tuple"(va), p1, n1) ~> "c:anf"(p2, t2, n2) |- "CPassed"("LCons"(d, ds), "LCons"(k, ks), n) ~> "c:anfs"(p2, "LCons"(t1, "LCons"(t2, "LNil"())), n2);
+      "KW-VALUES-NIL". |- "CKwValues"("LNil"()) ~> "LNil"();
+      "KW-VALUES-CONS". nm:T, a:T, ks:T, r:T | "CKwValues"(ks) ~> r |- "CKwValues"("LCons"("c:kw"(nm, a), ks)) ~> "LCons"(a, r);
+      -- the scope: a function over the type parameter block standing where
+      -- the definition does; names made in it keep the qualified name the
+      -- definition's place gives (compiler_set_qualname skips it)
+      "SCOPE-FUNCTION". fl:T, nm:T, args:T, pos:T, gen:T, k:T, tk:T, tn:T, tp:T, syms:T, tabs:T, q:T, pv:T, sl:T, lp:T, n:T, tpn:T, ft:T, qn:T, none:T, slots:T, spec:T, cells:T, frees:T, fnames:T, n0:T, fb:T, nx:T, clo:T, fk:T, r:T | "py-generic-name"(nm, tpn), "py-child-table"(tabs, "st:type-params"(), pos, ft), "py-qualname"(q, tpn, qn), "py-core-none"(none), "py-code-layout"(args, ft, pv, "c:layout"(slots, spec, cells, frees, fnames)), "py-slot-count"(slots, n0), "CGenerate"(gen, "c:cx"("c:function"("py:False"(), "py:False"()), "c:tq"(ft, q, pv), slots, "py:None"()), n0) ~> "c:st"(fb, nx), "CClosure"(fnames, "c:cx"(k, "c:tq"("st:table"(tk, tn, tp, syms, tabs), q, pv), sl, lp)) ~> clo, "CCodeKind"("py:False"(), "py:False"(), none) ~> fk, "CTemp"("c:function"("c:code"(tpn, qn, spec, nx, cells, frees, fk, fb, "c:line"(fl)), "LNil"(), "LNil"(), clo, "c:no-annotate"()), "LNil"(), n) ~> r |- "CScopeFunction"(nm, args, pos, fl, gen, "c:cx"(k, "c:tq"("st:table"(tk, tn, tp, syms, tabs), q, pv), sl, lp), n) ~> r;
+      -- a generic alias: its parameters, then the TypeAliasType
+      "GEN-ALIAS". tps:T, nm:T, v:T, l:T, c:T, el:T, ec:T, x:T, n:T, p1:T, ats:T, n1:T, p2:T, tt:T, n2:T, p3:T, fv:T, n3:T, p23:T, p4:T, ta:T, n4:T, b:T | "CTypeParams"(tps, "py:False"(), x, n) ~> "c:tps"(p1, ats, n1), "CTemp"("c:tuple"(ats), p1, n1) ~> "c:anf"(p2, tt, n2), "CBlockFunction"("st:type-alias"(), nm, "LCons"("py:Return"(v, l, c, el, ec), "LNil"()), "st:pos"(l, c), x, n2) ~> "c:anf"(p3, fv, n3), "CAppend"(p2, p3) ~> p23, "CTemp"("c:intrinsic"("c:i-typealias"(), "LCons"("c:const"(nm), "LCons"(tt, "LCons"(fv, "LNil"())))), p23, n3) ~> "c:anf"(p4, ta, n4), "CSnoc"(p4, "c:return"(ta)) ~> b |- "CGenerate"("c:gen-alias"(tps, nm, v, l, c, el, ec), x, n) ~> "c:st"("c:seq"(b), n4);
+      -- a generic function: its parameters; its defaults read from what the
+      -- scope was given; its annotations, which see the parameters; the
+      -- function, its __type_params__ set
+      "GEN-FUNCTION". fl:T, asy:T, nm:T, args:T, body:T, pos:T, rt:T, tps:T, x:T, n:T, p1:T, ats:T, n1:T, p2:T, tt:T, n2:T, pd:T, dflts0:T, kwd0:T, n3:T, p4:T, fv:T, n4:T, p24:T, p5:T, fr:T, n5:T, b:T | "CTypeParams"(tps, "py:False"(), x, n) ~> "c:tps"(p1, ats, n1), "CTemp"("c:tuple"(ats), p1, n1) ~> "c:anf"(p2, tt, n2), "CDefaultsRead"(args, x, n2) ~> "c:defaults"(pd, dflts0, kwd0, n3), "CFunctionMade"(asy, nm, args, body, pos, fl, rt, "c:defaults"(pd, dflts0, kwd0, n3), x) ~> "c:anf"(p4, fv, n4), "CAppend"(p2, p4) ~> p24, "CTemp"("c:intrinsic"("c:i-set-function-type-params"(), "LCons"(fv, "LCons"(tt, "LNil"()))), p24, n4) ~> "c:anf"(p5, fr, n5), "CSnoc"(p5, "c:return"(fr)) ~> b |- "CGenerate"("c:gen-function"(asy, nm, args, body, pos, fl, rt, tps), x, n) ~> "c:st"("c:seq"(b), n5);
+      "DEFAULTS-READ". po:T, pa:T, va:T, ko:T, kd:T, kw:T, ds:T, x:T, n:T, p1:T, xs:T, n1:T, kn:T, p2:T, ks:T, n2:T | "CReadPos"(ds, x, n) ~> "c:anfs"(p1, xs, n1), "py-kw-default-names"(ko, kd, kn), "CReadKws"(kn, p1, x, n1) ~> "c:anfs"(p2, ks, n2) |- "CDefaultsRead"("py:arguments"(po, pa, va, ko, kd, kw, ds), x, n) ~> "c:defaults"(p2, xs, ks, n2);
+      "READ-POS-NONE". x:T, n:T |- "CReadPos"("LNil"(), x, n) ~> "c:anfs"("LNil"(), "LNil"(), n);
+      "READ-POS". d:T, ds:T, x:T, n:T, nd:T, src:T, ix:T, r:T | "py-core-name"("c:n-dot-defaults"(), nd), "CName"(nd, x) ~> src, "py-count-indexes"("LCons"(d, ds), ix), "CReadItems"(ix, src, "LNil"(), n) ~> r |- "CReadPos"("LCons"(d, ds), x, n) ~> r;
+      "READ-KWS-NONE". pre:T, x:T, n:T |- "CReadKws"("LNil"(), pre, x, n) ~> "c:anfs"(pre, "LNil"(), n);
+      "READ-KWS". k:T, ks:T, pre:T, x:T, n:T, nk:T, src:T, ix:T, p1:T, ts:T, n1:T, kws:T | "py-core-name"("c:n-dot-kwdefaults"(), nk), "CName"(nk, x) ~> src, "py-count-indexes"("LCons"(k, ks), ix), "CReadItems"(ix, src, pre, n) ~> "c:anfs"(p1, ts, n1), "CKwPairs"("LCons"(k, ks), ts, x) ~> kws |- "CReadKws"("LCons"(k, ks), pre, x, n) ~> "c:anfs"(p1, kws, n1);
+      "READ-ITEMS-NIL". src:T, pre:T, n:T |- "CReadItems"("LNil"(), src, pre, n) ~> "c:anfs"(pre, "LNil"(), n);
+      "READ-ITEMS-CONS". i:T, ix:T, src:T, pre:T, n:T, p1:T, t:T, n1:T, p2:T, ts:T, n2:T | "CTemp"("c:getitem"(src, "c:const"(i)), pre, n) ~> "c:anf"(p1, t, n1), "CReadItems"(ix, src, p1, n1) ~> "c:anfs"(p2, ts, n2) |- "CReadItems"("LCons"(i, ix), src, pre, n) ~> "c:anfs"(p2, "LCons"(t, ts), n2);
+      "KW-PAIRS-NIL". x:T |- "CKwPairs"("LNil"(), "LNil"(), x) ~> "LNil"();
+      "KW-PAIRS-CONS". k:T, ks:T, t:T, ts:T, x:T, r:T, mg:T | "CMangle"(k, x) ~> mg, "CKwPairs"(ks, ts, x) ~> r |- "CKwPairs"("LCons"(k, ks), "LCons"(t, ts), x) ~> "LCons"("c:kw"(mg, t), r);
+      -- each type parameter made by its intrinsic and stored under its name
+      -- (compiler_type_params); a bound, constraints or default is a
+      -- function computing it when first asked for
+      "TYPE-PARAMS-NIL". sd:T, x:T, n:T |- "CTypeParams"("LNil"(), sd, x, n) ~> "c:tps"("LNil"(), "LNil"(), n);
+      "TYPE-PARAMS-CONS". tp:T, tps:T, sd:T, x:T, n:T, p1:T, a:T, sd1:T, n1:T, p2:T, ats:T, n2:T, b:T | "CTypeParam"(tp, sd, x, n) ~> "c:tp"(p1, a, sd1, n1), "CTypeParams"(tps, sd1, x, n1) ~> "c:tps"(p2, ats, n2), "CAppend"(p1, p2) ~> b |- "CTypeParams"("LCons"(tp, tps), sd, x, n) ~> "c:tps"(b, "LCons"(a, ats), n2);
+      "TYPE-PARAM-TYPEVAR". nm:T, bd:T, df:T, l:T, c:T, el:T, ec:T, sd:T, x:T, n:T, bk:T, p1:T, t1:T, n1:T, f:T, p2:T, t2:T, sd1:T, n2:T, tg:T, p12:T, b:T | "py-bound-kind"(bd, bk), "CTypeVarMake"(bk, nm, bd, l, c, el, ec, x, n) ~> "c:anf"(p1, t1, n1), "py-is-none"(df, f), "CTypeParamDefault"(f, df, df, bk, sd, nm, t1, l, c, el, ec, x, n1) ~> "c:tpd"(p2, t2, sd1, n2), "CName"(nm, x) ~> tg, "CAppend"(p1, p2) ~> p12, "CSnoc"(p12, "c:assign"(tg, "c:atom"(t2))) ~> b |- "CTypeParam"("py:TypeVar"(nm, bd, df, l, c, el, ec), sd, x, n) ~> "c:tp"(b, t2, sd1, n2);
+      "TYPE-PARAM-TYPEVARTUPLE". nm:T, df:T, l:T, c:T, el:T, ec:T, sd:T, x:T, n:T, p1:T, t1:T, n1:T, f:T, dv:T, p2:T, t2:T, sd1:T, n2:T, tg:T, p12:T, b:T | "CTemp"("c:intrinsic"("c:i-typevartuple"(), "LCons"("c:const"(nm), "LNil"())), "LNil"(), n) ~> "c:anf"(p1, t1, n1), "py-is-none"(df, f), "py-star-default"(df, dv), "CTypeParamDefault"(f, df, dv, "c:no-bound"(), sd, nm, t1, l, c, el, ec, x, n1) ~> "c:tpd"(p2, t2, sd1, n2), "CName"(nm, x) ~> tg, "CAppend"(p1, p2) ~> p12, "CSnoc"(p12, "c:assign"(tg, "c:atom"(t2))) ~> b |- "CTypeParam"("py:TypeVarTuple"(nm, df, l, c, el, ec), sd, x, n) ~> "c:tp"(b, t2, sd1, n2);
+      "TYPE-PARAM-PARAMSPEC". nm:T, df:T, l:T, c:T, el:T, ec:T, sd:T, x:T, n:T, p1:T, t1:T, n1:T, f:T, p2:T, t2:T, sd1:T, n2:T, tg:T, p12:T, b:T | "CTemp"("c:intrinsic"("c:i-paramspec"(), "LCons"("c:const"(nm), "LNil"())), "LNil"(), n) ~> "c:anf"(p1, t1, n1), "py-is-none"(df, f), "CTypeParamDefault"(f, df, df, "c:no-bound"(), sd, nm, t1, l, c, el, ec, x, n1) ~> "c:tpd"(p2, t2, sd1, n2), "CName"(nm, x) ~> tg, "CAppend"(p1, p2) ~> p12, "CSnoc"(p12, "c:assign"(tg, "c:atom"(t2))) ~> b |- "CTypeParam"("py:ParamSpec"(nm, df, l, c, el, ec), sd, x, n) ~> "c:tp"(b, t2, sd1, n2);
+      "TYPEVAR-PLAIN". nm:T, bd:T, l:T, c:T, el:T, ec:T, x:T, n:T, r:T | "CTemp"("c:intrinsic"("c:i-typevar"(), "LCons"("c:const"(nm), "LNil"())), "LNil"(), n) ~> r |- "CTypeVarMake"("c:no-bound"(), nm, bd, l, c, el, ec, x, n) ~> r;
+      "TYPEVAR-BOUND". nm:T, bd:T, l:T, c:T, el:T, ec:T, x:T, n:T, bp:T, p:T, ev:T, n1:T, r:T | "py-start-pos"(bd, bp), "CBlockFunctionNth"("st:type-var"(), "c:first"(), nm, "LCons"("py:Return"(bd, l, c, el, ec), "LNil"()), bp, x, n) ~> "c:anf"(p, ev, n1), "CTemp"("c:intrinsic"("c:i-typevar-bound"(), "LCons"("c:const"(nm), "LCons"(ev, "LNil"()))), p, n1) ~> r |- "CTypeVarMake"("c:bound"(), nm, bd, l, c, el, ec, x, n) ~> r;
+      "TYPEVAR-CONSTRAINTS". nm:T, bd:T, l:T, c:T, el:T, ec:T, x:T, n:T, bp:T, p:T, ev:T, n1:T, r:T | "py-start-pos"(bd, bp), "CBlockFunctionNth"("st:type-var"(), "c:first"(), nm, "LCons"("py:Return"(bd, l, c, el, ec), "LNil"()), bp, x, n) ~> "c:anf"(p, ev, n1), "CTemp"("c:intrinsic"("c:i-typevar-constraints"(), "LCons"("c:const"(nm), "LCons"(ev, "LNil"()))), p, n1) ~> r |- "CTypeVarMake"("c:constraints"(), nm, bd, l, c, el, ec, x, n) ~> r;
+      -- a default: none (an error after a parameter with one), else a
+      -- function for it, its block the one standing where the default does
+      -- (3.15's symtable enters a bound's and a default's block each at its
+      -- own expression)
+      "TP-DEFAULT-NONE". df0:T, df:T, bk:T, nm:T, t:T, l:T, c:T, el:T, ec:T, x:T, n:T |- "CTypeParamDefault"("py:True"(), df0, df, bk, "py:False"(), nm, t, l, c, el, ec, x, n) ~> "c:tpd"("LNil"(), t, "py:False"(), n);
+      "TP-DEFAULT-NONE-AFTER". df0:T, df:T, bk:T, nm:T, t:T, l:T, c:T, el:T, ec:T, x:T, n:T, m:T | "py-tp-default-error"(nm, m) |- "CTypeParamDefault"("py:True"(), df0, df, bk, "py:True"(), nm, t, l, c, el, ec, x, n) ~> "c:tpd"("LCons"("c:syntax-error"(m, l, c, el, ec), "LNil"()), t, "py:True"(), n);
+      "TP-DEFAULT-SOME". df0:T, df:T, bk:T, sd:T, nm:T, t:T, l:T, c:T, el:T, ec:T, x:T, n:T, dp:T, p:T, dv:T, n1:T, p2:T, t2:T, n2:T | "py-start-pos"(df0, dp), "CBlockFunctionNth"("st:type-var"(), "c:first"(), nm, "LCons"("py:Return"(df, l, c, el, ec), "LNil"()), dp, x, n) ~> "c:anf"(p, dv, n1), "CTemp"("c:intrinsic"("c:i-set-default"(), "LCons"(t, "LCons"(dv, "LNil"()))), p, n1) ~> "c:anf"(p2, t2, n2) |- "CTypeParamDefault"("py:False"(), df0, df, bk, sd, nm, t, l, c, el, ec, x, n) ~> "c:tpd"(p2, t2, "py:True"(), n2);
+      -- *X as a TypeVarTuple's default: X's one item (UNPACK_SEQUENCE 1)
+      "UNPACK-ONE". v:T, x:T, n:T, p:T, a:T, n1:T | "CAtom"(v, x, n) ~> "c:anf"(p, a, n1) |- "COp"("c:unpack-one"(v), x, n) ~> "c:anf"(p, "c:intrinsic"("c:i-unpack-one"(), "LCons"(a, "LNil"())), n1);
+
+      -- a function: its defaults and keyword defaults, evaluated where it is
+      -- defined, its closure (the cells of the free names it reads), and its
+      -- code: the body in a block whose slots the host lays out
+      -- a def: ASYNC (py:True) for an async def, whose body is a coroutine's
+      "FUNCTION-SYNC". fl:T, nm:T, args:T, body:T, pos:T, rt:T, x:T, n:T, r:T | "CFunctionOf"("py:False"(), nm, args, body, pos, fl, rt, x, n) ~> r |- "CFunction"(nm, args, body, pos, fl, rt, x, n) ~> r;
+      "FUNCTION". fl:T, asy:T, nm:T, args:T, body:T, pos:T, rt:T, x:T, n:T, d:T, r:T | "CDefaults"(args, x, n) ~> d, "CFunctionMade"(asy, nm, args, body, pos, fl, rt, d, x) ~> r |- "CFunctionOf"(asy, nm, args, body, pos, fl, rt, x, n) ~> r;
+      -- a function's annotations (3.14+, PEP 649): its __annotate__ function,
+      -- made where the function is, after its defaults, in the annotation
+      -- block the symbol tables give it, its parameter .format shown as
+      -- format (codegen_function_annotations); none without annotations
+      "ANNOTATE-NONE". nm:T, qn:T, args:T, rt:T, pos:T, x:T, n:T |- "CAnnotateFor"("py:False"(), nm, qn, args, rt, pos, x, n) ~> "c:anf"("LNil"(), "c:no-annotate"(), n);
+      "ANNOTATE-FUNCTION". pl:T, nm:T, qn:T, args:T, rt:T, pos:T, k:T, tb:T, q:T, pv:T, sl:T, lp:T, n:T, at:T, aqn:T, aqi:T, abody:T, aargs:T, slots:T, spec:T, spec2:T, cells:T, frees:T, fnames:T, n0:T, fb:T, nx:T, clo:T, fk:T, none:T, an:T, r:T | "py-pos-line"(pos, pl), "CAnnotationTable"("c:tq"(tb, q, pv), pos) ~> at, "py-annotate-qualname"(qn, aqn), "py-qualname-inner"(aqn, aqi), "py-annotate-body"(args, rt, pv, pos, abody), "py-annotate-args"(pos, aargs), "py-code-layout"(aargs, at, pv, "c:layout"(slots, spec, cells, frees, fnames)), "py-annotate-spec"(spec, spec2), "py-slot-count"(slots, n0), "CFunctionBody"(abody, "c:cx"("c:function"("py:False"(), "py:False"()), "c:tq"(at, aqi, pv), slots, "py:None"()), n0) ~> "c:st"(fb, nx), "CClosure"(fnames, "c:cx"(k, "c:tq"(tb, q, pv), sl, lp)) ~> clo, "py-core-none"(none), "CCodeKind"("py:False"(), "py:False"(), none) ~> fk, "py-core-name"("c:n-annotate"(), an), "CTemp"("c:function"("c:code"(an, aqn, spec2, nx, cells, frees, fk, fb, "c:line"(pl)), "LNil"(), "LNil"(), clo, "c:no-annotate"()), "LNil"(), n) ~> r |- "CAnnotateFor"("py:True"(), nm, qn, args, rt, pos, "c:cx"(k, "c:tq"(tb, q, pv), sl, lp), n) ~> r;
+      "ANNOTATION-TABLE". k:T, n:T, p:T, syms:T, tabs:T, q:T, pv:T, pos:T, t:T | "py-annotation-table"(tabs, pos, t) |- "CAnnotationTable"("c:tq"("st:table"(k, n, p, syms, tabs), q, pv), pos) ~> t;
+      "FUNCTION-MADE". fl:T, asy:T, nm:T, args:T, body:T, pos:T, k:T, tb:T, q:T, sl:T, lp:T, ft:T, qn:T, qi:T, slots:T, spec:T, cells:T, frees:T, fnames:T, n0:T, fb:T, nx:T, pd:T, dflts:T, kwd:T, n1:T, clo:T, d:T, doc:T, r:T, rt:T, dflts0:T, kwd0:T, ha:T, pa:T, anns:T, n2:T, ph1:T, n3:T, ph2:T, n4:T, q0:T, q1:T, q2:T, pv:T, yg:T, fk:T | "py-has-yield"(body, yg), "CChild"("c:tq"(tb, q, pv), "st:function"(), pos) ~> ft, "py-qualname"(q, nm, qn), "py-qualname-inner"(qn, qi), "py-code-layout"(args, ft, pv, "c:layout"(slots, spec, cells, frees, fnames)), "py-slot-count"(slots, n0), "CFunctionBody"(body, "c:cx"("c:function"(asy, yg), "c:tq"(ft, qi, pv), slots, "py:None"()), n0) ~> "c:st"(fb, nx), "py-fn-has-annotations"(args, rt, ha), "CAnnotateFor"(ha, nm, qn, args, rt, pos, "c:cx"(k, "c:tq"(tb, q, pv), sl, lp), n1) ~> "c:anf"(pa, anns, n2), "CHoldAtoms"(dflts0, pa, n2) ~> "c:anfs"(ph1, dflts, n3), "CHoldKws"(kwd0, pa, n3) ~> "c:anfs"(ph2, kwd, n4), "CClosure"(fnames, "c:cx"(k, "c:tq"(tb, q, pv), sl, lp)) ~> clo, "py-docstring"(body, d), "CDocValue"(d) ~> doc, "CAppend"(pd, ph1) ~> q0, "CAppend"(q0, ph2) ~> q1, "CAppend"(q1, pa) ~> q2, "CCodeKind"(asy, yg, doc) ~> fk, "CTemp"("c:function"("c:code"(nm, qn, spec, nx, cells, frees, fk, fb, "c:line"(fl)), dflts, kwd, clo, anns), q2, n4) ~> r |- "CFunctionMade"(asy, nm, args, body, pos, fl, rt, "c:defaults"(pd, dflts0, kwd0, n1), "c:cx"(k, "c:tq"(tb, q, pv), sl, lp)) ~> r;
+      "DEFAULTS". po:T, pa:T, va:T, ko:T, kd:T, kw:T, ds:T, x:T, n:T, p2:T, ks:T, n1:T, p1:T, xs:T, n2:T, pre:T | "CKwDefaults"(ko, kd, x, n) ~> "c:anfs"(p2, ks, n1), "COperands"(ds, p2, x, n1) ~> "c:anfs"(p1, xs, n2), "CAppend"(p1, p2) ~> pre |- "CDefaults"("py:arguments"(po, pa, va, ko, kd, kw, ds), x, n) ~> "c:defaults"(pre, xs, ks, n2);
+      "KW-DEFAULTS-NIL". x:T, n:T |- "CKwDefaults"("LNil"(), "LNil"(), x, n) ~> "c:anfs"("LNil"(), "LNil"(), n);
+      "KW-DEFAULTS-CONS". an:T, aa:T, at:T, al:T, ac:T, ael:T, aec:T, rest:T, d:T, ds:T, x:T, n:T, f:T, r:T | "py-is-none"(d, f), "CKwDefault"(f, an, d, rest, ds, x, n) ~> r |- "CKwDefaults"("LCons"("py:arg"(an, aa, at, al, ac, ael, aec), rest), "LCons"(d, ds), x, n) ~> r;
+      "KW-DEFAULT-NONE". an:T, d:T, rest:T, ds:T, x:T, n:T, r:T | "CKwDefaults"(rest, ds, x, n) ~> r |- "CKwDefault"("py:True"(), an, d, rest, ds, x, n) ~> r;
+      -- keyed by the parameter's name mangled, as the code's names are
+      -- (compiler_visit_kwonlydefaults: _PyCompile_MaybeMangle)
+      "KW-DEFAULT-SOME". an:T, d:T, rest:T, ds:T, x:T, n:T, p2:T, ks:T, n1:T, p1:T, a:T, n2:T, ph:T, ha:T, n3:T, q:T, pre:T, mg:T | "CMangle"(an, x) ~> mg, "CKwDefaults"(rest, ds, x, n) ~> "c:anfs"(p2, ks, n1), "CAtom"(d, x, n1) ~> "c:anf"(p1, a, n2), "CHold"(a, p2, "LNil"(), n2) ~> "c:anf"(ph, ha, n3), "CAppend"(p1, ph) ~> q, "CAppend"(q, p2) ~> pre |- "CKwDefault"("py:False"(), an, d, rest, ds, x, n) ~> "c:anfs"(pre, "LCons"("c:kw"(mg, ha), ks), n3);
+      -- the closure: the cell of each free name, from the block around
+      "CLOSURE-NIL". x:T |- "CClosure"("LNil"(), x) ~> "LNil"();
+      "CLOSURE-CONS". nm:T, rest:T, k:T, tk:T, tn:T, tp:T, syms:T, tabs:T, q:T, pv:T, sl:T, lp:T, s:T, i:T, r:T | "py-closure-scope"(k, syms, nm, s), "CClosureSlot"(s, nm, sl) ~> i, "CClosure"(rest, "c:cx"(k, "c:tq"("st:table"(tk, tn, tp, syms, tabs), q, pv), sl, lp)) ~> r |- "CClosure"("LCons"(nm, rest), "c:cx"(k, "c:tq"("st:table"(tk, tn, tp, syms, tabs), q, pv), sl, lp)) ~> "LCons"("c:cellref"(i), r);
+      -- the cell a closure takes: a cell or free name's slot (in a class body
+      -- also a name it binds that a child takes from outside), or the cell a
+      -- comprehension made for its own name
+      "CLOSURE-SLOT-CELL". nm:T, sl:T, i:T | "py-slot"(sl, nm, i) |- "CClosureSlot"("st:scope-cell"(), nm, sl) ~> i;
+      "CLOSURE-SLOT-FREE". nm:T, sl:T, i:T | "py-slot"(sl, nm, i) |- "CClosureSlot"("st:scope-free"(), nm, sl) ~> i;
+      "CLOSURE-SLOT-CLASS". nm:T, sl:T, i:T | "py-slot"(sl, nm, i) |- "CClosureSlot"("st:scope-local"(), nm, sl) ~> i;
+      "CLOSURE-SLOT-RENAMED". i:T, nm:T, sl:T |- "CClosureSlot"("c:renamed"("c:cell"(i)), nm, sl) ~> i;
+      -- a class's implicit __class__ cell, which its table does not hold (drop_class_free)
+      "CLOSURE-SLOT-IMPLICIT". nm:T, sl:T, i:T | "py-slot"(sl, nm, i) |- "CClosureSlot"("py:None"(), nm, sl) ~> i;
+      -- decorators: evaluated first, applied innermost first
+      "DECORATE-NIL". fv:T, n:T |- "CDecorate"("LNil"(), fv, n) ~> "c:anf"("LNil"(), fv, n);
+      "DECORATE-CONS". d:T, ds:T, fv:T, n:T, p1:T, inner:T, n1:T, t:T, n2:T, b:T | "CDecorate"(ds, fv, n) ~> "c:anf"(p1, inner, n1), "CFresh"(n1) ~> "c:fresh"(t, n2), "CSnoc"(p1, "c:assign"("c:tmp"(t), "c:call"(d, "LCons"(inner, "LNil"()), "LNil"()))) ~> b |- "CDecorate"("LCons"(d, ds), fv, n) ~> "c:anf"(b, "c:tmp"(t), n2);
+      "RETURN-VALUE". v:T, l:T, c:T, el:T, ec:T, asy:T, gk:T, tb:T, sl:T, lp:T, n:T, f:T, r:T | "py-is-none"(v, f), "CReturnIn"(asy, gk, f, v, l, c, el, ec, "c:cx"("c:function"(asy, gk), tb, sl, lp), n) ~> r |- "CStmt"("py:Return"(v, l, c, el, ec), "c:cx"("c:function"(asy, gk), tb, sl, lp), n) ~> r;
+      "RETURN-SYNC". gk:T, f:T, v:T, l:T, c:T, el:T, ec:T, x:T, n:T, r:T | "CReturn"(f, v, x, n) ~> r |- "CReturnIn"("py:False"(), gk, f, v, l, c, el, ec, x, n) ~> r;
+      "RETURN-COROUTINE". f:T, v:T, l:T, c:T, el:T, ec:T, x:T, n:T, r:T | "CReturn"(f, v, x, n) ~> r |- "CReturnIn"("py:True"(), "py:False"(), f, v, l, c, el, ec, x, n) ~> r;
+      "RETURN-ASYNC-GEN". v:T, l:T, c:T, el:T, ec:T, x:T, n:T, r:T | "CReturn"("py:True"(), v, x, n) ~> r |- "CReturnIn"("py:True"(), "py:True"(), "py:True"(), v, l, c, el, ec, x, n) ~> r;
+      "RETURN-ASYNC-GEN-VALUE". v:T, l:T, c:T, el:T, ec:T, x:T, n:T, m:T | "py-core-name"("c:e-return-async-gen"(), m) |- "CReturnIn"("py:True"(), "py:True"(), "py:False"(), v, l, c, el, ec, x, n) ~> "c:st"("c:syntax-error"(m, l, c, el, ec), n);
+      "RETURN-IN-MODULE". v:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, m:T | "py-core-name"("c:e-return"(), m) |- "CStmt"("py:Return"(v, l, c, el, ec), "c:cx"("c:module"(), tb, sl, lp), n) ~> "c:st"("c:syntax-error"(m, l, c, el, ec), n);
+      "RETURN-IN-CLASS". v:T, l:T, c:T, el:T, ec:T, tb:T, sl:T, lp:T, n:T, m:T | "py-core-name"("c:e-return"(), m) |- "CStmt"("py:Return"(v, l, c, el, ec), "c:cx"("c:class"(), tb, sl, lp), n) ~> "c:st"("c:syntax-error"(m, l, c, el, ec), n);
+      "RETURN-NONE". v:T, x:T, n:T, none:T | "py-core-none"(none) |- "CReturn"("py:True"(), v, x, n) ~> "c:st"("c:return"("c:const"(none)), n);
+      "RETURN-SOME". v:T, x:T, n:T, pre:T, a:T, n1:T, b:T | "CAtom"(v, x, n) ~> "c:anf"(pre, a, n1), "CSnoc"(pre, "c:return"(a)) ~> b |- "CReturn"("py:False"(), v, x, n) ~> "c:st"("c:seq"(b), n1);
+
+      -- ================================================================ expressions
+
+      -- an expression as an atom: an operation's value goes to a fresh
+      -- temporary
+      "ATOM". e:T, x:T, n:T, pre:T, op:T, n1:T, r:T | "COp"(e, x, n) ~> "c:anf"(pre, op, n1), "CAtomOf"(op, pre, n1) ~> r |- "CAtom"(e, x, n) ~> r;
+      "ATOM-OF-ATOM". a:T, pre:T, n:T |- "CAtomOf"("c:atom"(a), pre, n) ~> "c:anf"(pre, a, n);
+      "ATOM-OF-CALL". f:T, xa:T, ks:T, pre:T, n:T, r:T | "CTemp"("c:call"(f, xa, ks), pre, n) ~> r |- "CAtomOf"("c:call"(f, xa, ks), pre, n) ~> r;
+      "ATOM-OF-INTRINSIC". i:T, ats:T, pre:T, n:T, r:T | "CTemp"("c:intrinsic"(i, ats), pre, n) ~> r |- "CAtomOf"("c:intrinsic"(i, ats), pre, n) ~> r;
+      "ATOM-OF-BUILD-STRING". as0:T, pre:T, n:T, r:T | "CTemp"("c:build-string"(as0), pre, n) ~> r |- "CAtomOf"("c:build-string"(as0), pre, n) ~> r;
+      "ATOM-OF-BUILD-TEMPLATE". sa:T, as0:T, pre:T, n:T, r:T | "CTemp"("c:build-template"(sa, as0), pre, n) ~> r |- "CAtomOf"("c:build-template"(sa, as0), pre, n) ~> r;
+      "ATOM-OF-BINOP". o:T, a:T, b:T, pre:T, n:T, r:T | "CTemp"("c:binop"(o, a, b), pre, n) ~> r |- "CAtomOf"("c:binop"(o, a, b), pre, n) ~> r;
+      "ATOM-OF-INPLACE". o:T, a:T, b:T, pre:T, n:T, r:T | "CTemp"("c:inplace"(o, a, b), pre, n) ~> r |- "CAtomOf"("c:inplace"(o, a, b), pre, n) ~> r;
+      "ATOM-OF-UNARY". o:T, a:T, pre:T, n:T, r:T | "CTemp"("c:unary"(o, a), pre, n) ~> r |- "CAtomOf"("c:unary"(o, a), pre, n) ~> r;
+      "ATOM-OF-COMPARE". o:T, a:T, b:T, pre:T, n:T, r:T | "CTemp"("c:compare"(o, a, b), pre, n) ~> r |- "CAtomOf"("c:compare"(o, a, b), pre, n) ~> r;
+      -- a function's code is a generator function's when its body yields
+      "CODE-KIND-FUNCTION". d:T |- "CCodeKind"("py:False"(), "py:False"(), d) ~> "c:function"(d);
+      "CODE-KIND-GENERATOR". d:T |- "CCodeKind"("py:False"(), "py:True"(), d) ~> "c:generator"(d);
+      "CODE-KIND-COROUTINE". d:T |- "CCodeKind"("py:True"(), "py:False"(), d) ~> "c:coroutine"(d);
+      "CODE-KIND-ASYNC-GENERATOR". d:T |- "CCodeKind"("py:True"(), "py:True"(), d) ~> "c:async-generator"(d);
+      "FUNCTION-BODY". st:T, sts:T, x:T, n:T, r:T | "CBlock"("LCons"(st, sts), x, n) ~> r |- "CFunctionBody"("LCons"(st, sts), x, n) ~> r;
+      -- a generator expression's body: a loop for each generator, the first
+      -- over the iterator its parameter .0 holds (no iter() again), its element
+      -- yielded innermost
+      "FUNCTION-BODY-GENEXP". sp:T, af1:T, tg:T, ifs:T, gs:T, e:T, x:T, n:T, d0:T, it:T, s:T, n1:T | "py-core-name"("c:n-dot0"(), d0), "CName"(d0, x) ~> it, "CLoopFor"(af1, tg, it, ifs, gs, "c:k-yield"(), e, e, "py:None"(), x, n) ~> "c:sts"(s, n1), "py-node-span"(e, sp) |- "CFunctionBody"("c:genexp-body"(af1, tg, ifs, gs, e), x, n) ~> "c:st"("c:at"(sp, "c:seq"(s)), n1);
+      "ATOM-OF-FUNCTION". code:T, dflts:T, kwd:T, clo:T, anns:T, pre:T, n:T, r:T | "CTemp"("c:function"(code, dflts, kwd, clo, anns), pre, n) ~> r |- "CAtomOf"("c:function"(code, dflts, kwd, clo, anns), pre, n) ~> r;
+      -- atoms held when something runs after them (each default, across the annotations)
+      "HOLD-ATOMS-NIL". lt:T, n:T |- "CHoldAtoms"("LNil"(), lt, n) ~> "c:anfs"("LNil"(), "LNil"(), n);
+      "HOLD-ATOMS-CONS". a:T, rest:T, lt:T, n:T, p1:T, ha:T, n1:T, p2:T, hs:T, n2:T, b:T | "CHold"(a, "LNil"(), lt, n) ~> "c:anf"(p1, ha, n1), "CHoldAtoms"(rest, lt, n1) ~> "c:anfs"(p2, hs, n2), "CAppend"(p1, p2) ~> b |- "CHoldAtoms"("LCons"(a, rest), lt, n) ~> "c:anfs"(b, "LCons"(ha, hs), n2);
+      "HOLD-KWS-NIL". lt:T, n:T |- "CHoldKws"("LNil"(), lt, n) ~> "c:anfs"("LNil"(), "LNil"(), n);
+      "HOLD-KWS-CONS". nm:T, a:T, ks:T, lt:T, n:T, p1:T, ha:T, n1:T, p2:T, hs:T, n2:T, b:T | "CHold"(a, "LNil"(), lt, n) ~> "c:anf"(p1, ha, n1), "CHoldKws"(ks, lt, n1) ~> "c:anfs"(p2, hs, n2), "CAppend"(p1, p2) ~> b |- "CHoldKws"("LCons"("c:kw"(nm, a), ks), lt, n) ~> "c:anfs"(b, "LCons"("c:kw"(nm, ha), hs), n2);
+      "ATOM-OF-TUPLE". xs:T, pre:T, n:T, r:T | "CTemp"("c:tuple"(xs), pre, n) ~> r |- "CAtomOf"("c:tuple"(xs), pre, n) ~> r;
+      "ATOM-OF-LIST". xs:T, pre:T, n:T, r:T | "CTemp"("c:list"(xs), pre, n) ~> r |- "CAtomOf"("c:list"(xs), pre, n) ~> r;
+      "ATOM-OF-SET". xs:T, pre:T, n:T, r:T | "CTemp"("c:set"(xs), pre, n) ~> r |- "CAtomOf"("c:set"(xs), pre, n) ~> r;
+      "ATOM-OF-DICT". ps:T, pre:T, n:T, r:T | "CTemp"("c:dict"(ps), pre, n) ~> r |- "CAtomOf"("c:dict"(ps), pre, n) ~> r;
+      "ATOM-OF-GETITEM". o:T, k:T, pre:T, n:T, r:T | "CTemp"("c:getitem"(o, k), pre, n) ~> r |- "CAtomOf"("c:getitem"(o, k), pre, n) ~> r;
+      "ATOM-OF-SLICE". a:T, b:T, st:T, pre:T, n:T, r:T | "CTemp"("c:slice"(a, b, st), pre, n) ~> r |- "CAtomOf"("c:slice"(a, b, st), pre, n) ~> r;
+      "ATOM-OF-GETATTR". o:T, at:T, pre:T, n:T, r:T | "CTemp"("c:getattr"(o, at), pre, n) ~> r |- "CAtomOf"("c:getattr"(o, at), pre, n) ~> r;
+      "ATOM-OF-LIST-TUPLE". a:T, pre:T, n:T, r:T | "CTemp"("c:list-tuple"(a), pre, n) ~> r |- "CAtomOf"("c:list-tuple"(a), pre, n) ~> r;
+      "ATOM-OF-CALL-EX". f:T, a:T, k:T, pre:T, n:T, r:T | "CTemp"("c:call-ex"(f, a, k), pre, n) ~> r |- "CAtomOf"("c:call-ex"(f, a, k), pre, n) ~> r;
+      "ATOM-OF-CALL-METHOD". o:T, at:T, xs:T, kws:T, pre:T, n:T, r:T | "CTemp"("c:call-method"(o, at, xs, kws), pre, n) ~> r |- "CAtomOf"("c:call-method"(o, at, xs, kws), pre, n) ~> r;
+      "TEMP". op:T, pre:T, n:T, t:T, n1:T, b:T | "CFresh"(n) ~> "c:fresh"(t, n1), "CSnoc"(pre, "c:assign"("c:tmp"(t), op)) ~> b |- "CTemp"(op, pre, n) ~> "c:anf"(b, "c:tmp"(t), n1);
+
+      -- constants and names are atoms
+      "CONSTANT". v:T, k:T, l:T, c:T, el:T, ec:T, x:T, n:T, w:T | "py-core-value"(v, w) |- "COp"("py:Constant"(v, k, l, c, el, ec), x, n) ~> "c:anf"("LNil"(), "c:atom"("c:const"(w)), n);
+      "NAME-LOAD". t:T, l:T, c:T, el:T, ec:T, x:T, n:T, a:T | "CName"(t, x) ~> a |- "COp"("py:Name"(t, "py:Load"(), l, c, el, ec), x, n) ~> "c:anf"("LNil"(), "c:atom"(a), n);
+
+      -- operators: the operands' atoms, left to right
+      "BINOP". a:T, o:T, b:T, l:T, c:T, el:T, ec:T, x:T, n:T, pre:T, x1:T, x2:T, n1:T | "COperands"("LCons"(a, "LCons"(b, "LNil"())), "LNil"(), x, n) ~> "c:anfs"(pre, "LCons"(x1, "LCons"(x2, "LNil"())), n1) |- "COp"("py:BinOp"(a, o, b, l, c, el, ec), x, n) ~> "c:anf"(pre, "c:binop"(o, x1, x2), n1);
+      "UNARY". o:T, a:T, l:T, c:T, el:T, ec:T, x:T, n:T, pre:T, x1:T, n1:T | "CAtom"(a, x, n) ~> "c:anf"(pre, x1, n1) |- "COp"("py:UnaryOp"(o, a, l, c, el, ec), x, n) ~> "c:anf"(pre, "c:unary"(o, x1), n1);
+
+      -- a comparison; a chain compares each operand once and stops at the
+      -- first false: r = a < b; if r: r = b < c ...
+      "COMPARE-ONE". a:T, o:T, b:T, l:T, c:T, el:T, ec:T, x:T, n:T, pre:T, x1:T, x2:T, n1:T, b2:T, w:T, pre2:T | "py-code-warnings"("py:Compare"(a, "LCons"(o, "LNil"()), "LCons"(b, "LNil"()), l, c, el, ec), w), "py-contains-operand"(o, b, b2), "COperands"("LCons"(a, "LCons"(b2, "LNil"())), "LNil"(), x, n) ~> "c:anfs"(pre, "LCons"(x1, "LCons"(x2, "LNil"())), n1), "CAppend"(w, pre) ~> pre2 |- "COp"("py:Compare"(a, "LCons"(o, "LNil"()), "LCons"(b, "LNil"()), l, c, el, ec), x, n) ~> "c:anf"(pre2, "c:compare"(o, x1, x2), n1);
+      "COMPARE-CHAIN". a:T, o:T, o2:T, os:T, b:T, b2:T, bs:T, l:T, c:T, el:T, ec:T, x:T, n:T, p1:T, x1:T, n1:T, r:T, n2:T, rest:T, n3:T, pre:T, w:T, pre2:T | "py-code-warnings"("py:Compare"(a, "LCons"(o, "LCons"(o2, os)), "LCons"(b, "LCons"(b2, bs)), l, c, el, ec), w), "CAtom"(a, x, n) ~> "c:anf"(p1, x1, n1), "CFresh"(n1) ~> "c:fresh"(r, n2), "CChain"(x1, "LCons"(o, "LCons"(o2, os)), "LCons"(b, "LCons"(b2, bs)), r, x, n2) ~> "c:st"(rest, n3), "CSnoc"(p1, rest) ~> pre, "CAppend"(w, pre) ~> pre2 |- "COp"("py:Compare"(a, "LCons"(o, "LCons"(o2, os)), "LCons"(b, "LCons"(b2, bs)), l, c, el, ec), x, n) ~> "c:anf"(pre2, "c:atom"("c:tmp"(r)), n3);
+      "CHAIN-LAST". left:T, o:T, b:T, r:T, x:T, n:T, p2:T, x2:T, n1:T, ph:T, hl:T, n2:T, q:T, s:T, b2:T | "py-contains-operand"(o, b, b2), "CAtom"(b2, x, n) ~> "c:anf"(p2, x2, n1), "CHold"(left, p2, "LNil"(), n1) ~> "c:anf"(ph, hl, n2), "CAppend"(ph, p2) ~> q, "CSnoc"(q, "c:assign"("c:tmp"(r), "c:compare"(o, hl, x2))) ~> s |- "CChain"(left, "LCons"(o, "LNil"()), "LCons"(b, "LNil"()), r, x, n) ~> "c:st"("c:seq"(s), n2);
+      -- a middle operand is read once and compared twice: held in a temporary
+      "CHAIN-MORE". left:T, o:T, o2:T, os:T, b:T, b2:T, bs:T, r:T, x:T, n:T, p2:T, x2:T, n1:T, ph:T, hl:T, n2:T, ph2:T, hx:T, n3:T, rest:T, n4:T, q0:T, q1:T, s0:T, s:T | "CAtom"(b, x, n) ~> "c:anf"(p2, x2, n1), "CHold"(left, p2, "LNil"(), n1) ~> "c:anf"(ph, hl, n2), "CHoldAtom"(x2, n2) ~> "c:anf"(ph2, hx, n3), "CChain"(hx, "LCons"(o2, os), "LCons"(b2, bs), r, x, n3) ~> "c:st"(rest, n4), "CAppend"(ph, p2) ~> q0, "CAppend"(q0, ph2) ~> q1, "CSnoc"(q1, "c:assign"("c:tmp"(r), "c:compare"(o, hl, hx))) ~> s0, "CSnoc"(s0, "c:if"("c:tmp"(r), rest, "c:seq"("LNil"()))) ~> s |- "CChain"(left, "LCons"(o, "LCons"(o2, os)), "LCons"(b, "LCons"(b2, bs)), r, x, n) ~> "c:st"("c:seq"(s), n4);
+
+      -- a and b, a or b: the value of the first operand that decides, each
+      -- evaluated only when needed
+      "BOOLOP". o:T, v:T, vs:T, l:T, c:T, el:T, ec:T, x:T, n:T, p1:T, x1:T, n1:T, r:T, n2:T, rest:T, n3:T, s0:T, pre:T | "CAtom"(v, x, n) ~> "c:anf"(p1, x1, n1), "CFresh"(n1) ~> "c:fresh"(r, n2), "CBoolRest"(o, vs, r, x, n2) ~> "c:st"(rest, n3), "CSnoc"(p1, "c:assign"("c:tmp"(r), "c:atom"(x1))) ~> s0, "CSnoc"(s0, rest) ~> pre |- "COp"("py:BoolOp"(o, "LCons"(v, vs), l, c, el, ec), x, n) ~> "c:anf"(pre, "c:atom"("c:tmp"(r)), n3);
+      "BOOL-REST-NIL". o:T, r:T, x:T, n:T |- "CBoolRest"(o, "LNil"(), r, x, n) ~> "c:st"("c:seq"("LNil"()), n);
+      "BOOL-REST-AND". v:T, vs:T, r:T, x:T, n:T, p:T, a:T, n1:T, rest:T, n2:T, s0:T, s:T | "CAtom"(v, x, n) ~> "c:anf"(p, a, n1), "CBoolRest"("py:And"(), vs, r, x, n1) ~> "c:st"(rest, n2), "CSnoc"(p, "c:assign"("c:tmp"(r), "c:atom"(a))) ~> s0, "CSnoc"(s0, rest) ~> s |- "CBoolRest"("py:And"(), "LCons"(v, vs), r, x, n) ~> "c:st"("c:if"("c:tmp"(r), "c:seq"(s), "c:seq"("LNil"())), n2);
+      "BOOL-REST-OR". v:T, vs:T, r:T, x:T, n:T, p:T, a:T, n1:T, rest:T, n2:T, s0:T, s:T | "CAtom"(v, x, n) ~> "c:anf"(p, a, n1), "CBoolRest"("py:Or"(), vs, r, x, n1) ~> "c:st"(rest, n2), "CSnoc"(p, "c:assign"("c:tmp"(r), "c:atom"(a))) ~> s0, "CSnoc"(s0, rest) ~> s |- "CBoolRest"("py:Or"(), "LCons"(v, vs), r, x, n) ~> "c:st"("c:if"("c:tmp"(r), "c:seq"("LNil"()), "c:seq"(s)), n2);
+
+      -- a if test else b: the test, then only the branch it picks
+      "IF-EXP". t:T, a:T, b:T, l:T, c:T, el:T, ec:T, x:T, n:T, pt:T, xt:T, n1:T, r:T, n2:T, pa:T, xa:T, n3:T, pb:T, xb:T, n4:T, sa:T, sb:T, pre:T | "CAtom"(t, x, n) ~> "c:anf"(pt, xt, n1), "CFresh"(n1) ~> "c:fresh"(r, n2), "CAtom"(a, x, n2) ~> "c:anf"(pa, xa, n3), "CAtom"(b, x, n3) ~> "c:anf"(pb, xb, n4), "CSnoc"(pa, "c:assign"("c:tmp"(r), "c:atom"(xa))) ~> sa, "CSnoc"(pb, "c:assign"("c:tmp"(r), "c:atom"(xb))) ~> sb, "CSnoc"(pt, "c:if"(xt, "c:seq"(sa), "c:seq"(sb))) ~> pre |- "COp"("py:IfExp"(t, a, b, l, c, el, ec), x, n) ~> "c:anf"(pre, "c:atom"("c:tmp"(r)), n4);
+
+      -- lambda args: body, a function named <lambda>
+      "LAMBDA". args:T, b:T, l:T, c:T, el:T, ec:T, x:T, n:T, nm:T, none:T, p:T, fv:T, n1:T | "py-core-name"("c:n-lambda"(), nm), "py-core-none"(none), "CFunction"(nm, args, "LCons"("py:Return"(b, l, c, el, ec), "LNil"()), "st:pos"(l, c), l, none, x, n) ~> "c:anf"(p, fv, n1) |- "COp"("py:Lambda"(args, b, l, c, el, ec), x, n) ~> "c:anf"(p, "c:atom"(fv), n1);
+
+      -- displays, as CPython builds them (its starunpack): with no starred
+      -- element, the elements' atoms left to right and one build; with one,
+      -- the elements before it built, then each later element added, or a
+      -- starred one's iterable appended, in order; a tuple is that list made
+      -- a tuple
+      "TUPLE". es:T, cx:T, l:T, c:T, el:T, ec:T, x:T, n:T, its:T, ps:T, r:T | "CSeqItems"(es) ~> its, "CRuns"(its) ~> ps, "CSeqFrom"("c:k-tuple"(), ps, x, n) ~> r |- "COp"("py:Tuple"(es, cx, l, c, el, ec), x, n) ~> r;
+      "LIST". es:T, cx:T, l:T, c:T, el:T, ec:T, x:T, n:T, its:T, ps:T, r:T | "CSeqItems"(es) ~> its, "CRuns"(its) ~> ps, "CSeqFrom"("c:k-list"(), ps, x, n) ~> r |- "COp"("py:List"(es, cx, l, c, el, ec), x, n) ~> r;
+      -- a set display of more than two constants (after constant folding) is
+      -- an empty set updated from the set of those constants, as CPython
+      -- compiles it (BUILD_SET 0, LOAD_CONST frozenset, SET_UPDATE)
+      "SET". es:T, l:T, c:T, el:T, ec:T, x:T, n:T, d:T, r:T | "py-set-display"(es, d), "CSetDisplay"(d, es, x, n) ~> r |- "COp"("py:Set"(es, l, c, el, ec), x, n) ~> r;
+      "SET-DISPLAY". es:T, x:T, n:T, its:T, ps:T, r:T | "CSeqItems"(es) ~> its, "CRuns"(its) ~> ps, "CSeqFrom"("c:k-set"(), ps, x, n) ~> r |- "CSetDisplay"("c:display"(), es, x, n) ~> r;
+      -- a set display the optimizer made a constant where the next
+      -- instruction iterates it or tests membership in it (py-iter-operand,
+      -- py-contains-operand): the frozenset constant itself
+      "FOLDED-SET". vs:T, x:T, n:T |- "COp"("c:folded-set"(vs), x, n) ~> "c:anf"("LNil"(), "c:atom"("c:const-set"(vs)), n);
+      -- a builtin the compiler names itself (LOAD_COMMON_CONSTANT), whatever
+      -- the program binds to its name
+      "COMMON-EXPR". tag:T, x:T, n:T |- "COp"("c:common-expr"(tag), x, n) ~> "c:anf"("LNil"(), "c:atom"("c:common"(tag)), n);
+      "SET-CONSTANTS". vs:T, es:T, x:T, n:T, t:T, n1:T | "CFresh"(n) ~> "c:fresh"(t, n1) |- "CSetDisplay"("c:constants"(vs), es, x, n) ~> "c:anf"("LCons"("c:assign"("c:tmp"(t), "c:set"("LNil"())), "LCons"("c:do"("c:set-update"("c:tmp"(t), "c:const-set"(vs))), "LNil"())), "c:atom"("c:tmp"(t)), n1);
+      "SEQ-FROM-EMPTY". k:T, x:T, n:T, op:T | "CSeqBuild"(k, "LNil"()) ~> op |- "CSeqFrom"(k, "LNil"(), x, n) ~> "c:anf"("LNil"(), op, n);
+      "SEQ-FROM-PLAIN". k:T, es:T, x:T, n:T, pre:T, xs:T, n1:T, op:T | "CAtoms"(es, x, n) ~> "c:anfs"(pre, xs, n1), "CSeqBuild"(k, xs) ~> op |- "CSeqFrom"(k, "LCons"("c:run"(es), "LNil"()), x, n) ~> "c:anf"(pre, op, n1);
+      "SEQ-FROM-RUN". k:T, es:T, p:T, ps:T, x:T, n:T, kc:T, p1:T, xs:T, n1:T, op0:T, t:T, n2:T, b0:T, p2:T, n3:T, pre:T, op:T | "CContainer"(k) ~> kc, "CAtoms"(es, x, n) ~> "c:anfs"(p1, xs, n1), "CSeqBuild"(kc, xs) ~> op0, "CFresh"(n1) ~> "c:fresh"(t, n2), "CSnoc"(p1, "c:assign"("c:tmp"(t), op0)) ~> b0, "CSeqLater"(kc, "LCons"(p, ps), t, x, n2) ~> "c:sts"(p2, n3), "CAppend"(b0, p2) ~> pre, "CSeqResult"(k, "c:tmp"(t)) ~> op |- "CSeqFrom"(k, "LCons"("c:run"(es), "LCons"(p, ps)), x, n) ~> "c:anf"(pre, op, n3);
+      "SEQ-FROM-SPREAD". k:T, v:T, ps:T, x:T, n:T, kc:T, op0:T, t:T, n1:T, p2:T, n2:T, pre:T, op:T | "CContainer"(k) ~> kc, "CSeqBuild"(kc, "LNil"()) ~> op0, "CFresh"(n) ~> "c:fresh"(t, n1), "CSeqLater"(kc, "LCons"("c:spread"(v), ps), t, x, n1) ~> "c:sts"(p2, n2), "CAppend"("LCons"("c:assign"("c:tmp"(t), op0), "LNil"()), p2) ~> pre, "CSeqResult"(k, "c:tmp"(t)) ~> op |- "CSeqFrom"(k, "LCons"("c:spread"(v), ps), x, n) ~> "c:anf"(pre, op, n2);
+      "SEQ-LATER-NIL". kc:T, t:T, x:T, n:T |- "CSeqLater"(kc, "LNil"(), t, x, n) ~> "c:sts"("LNil"(), n);
+      "SEQ-LATER-RUN". kc:T, es:T, ps:T, t:T, x:T, n:T, p1:T, n1:T, p2:T, n2:T, b:T | "CSeqAdds"(kc, es, t, x, n) ~> "c:sts"(p1, n1), "CSeqLater"(kc, ps, t, x, n1) ~> "c:sts"(p2, n2), "CAppend"(p1, p2) ~> b |- "CSeqLater"(kc, "LCons"("c:run"(es), ps), t, x, n) ~> "c:sts"(b, n2);
+      "SEQ-LATER-SPREAD". kc:T, v:T, ps:T, t:T, x:T, n:T, p1:T, a:T, n1:T, op:T, b0:T, p2:T, n2:T, b:T | "CAtom"(v, x, n) ~> "c:anf"(p1, a, n1), "CSeqExtend"(kc, "c:tmp"(t), a) ~> op, "CSnoc"(p1, "c:do"(op)) ~> b0, "CSeqLater"(kc, ps, t, x, n1) ~> "c:sts"(p2, n2), "CAppend"(b0, p2) ~> b |- "CSeqLater"(kc, "LCons"("c:spread"(v), ps), t, x, n) ~> "c:sts"(b, n2);
+      "SEQ-ADDS-NIL". kc:T, t:T, x:T, n:T |- "CSeqAdds"(kc, "LNil"(), t, x, n) ~> "c:sts"("LNil"(), n);
+      "SEQ-ADDS-CONS". kc:T, e:T, es:T, t:T, x:T, n:T, p1:T, a:T, n1:T, op:T, b0:T, p2:T, n2:T, b:T | "CAtom"(e, x, n) ~> "c:anf"(p1, a, n1), "CSeqAdd"(kc, "c:tmp"(t), a) ~> op, "CSnoc"(p1, "c:do"(op)) ~> b0, "CSeqAdds"(kc, es, t, x, n1) ~> "c:sts"(p2, n2), "CAppend"(b0, p2) ~> b |- "CSeqAdds"(kc, "LCons"(e, es), t, x, n) ~> "c:sts"(b, n2);
+      -- the kinds: what holds the elements while they are built, the build,
+      -- the result, an iterable's items appended, one element added
+      "CONTAINER-TUPLE". |- "CContainer"("c:k-tuple"()) ~> "c:k-list"();
+      "CONTAINER-LIST". |- "CContainer"("c:k-list"()) ~> "c:k-list"();
+      "CONTAINER-SET". |- "CContainer"("c:k-set"()) ~> "c:k-set"();
+      "BUILD-TUPLE". xs:T |- "CSeqBuild"("c:k-tuple"(), xs) ~> "c:tuple"(xs);
+      "BUILD-LIST". xs:T |- "CSeqBuild"("c:k-list"(), xs) ~> "c:list"(xs);
+      "BUILD-SET". xs:T |- "CSeqBuild"("c:k-set"(), xs) ~> "c:set"(xs);
+      "RESULT-TUPLE". a:T |- "CSeqResult"("c:k-tuple"(), a) ~> "c:list-tuple"(a);
+      "RESULT-LIST". a:T |- "CSeqResult"("c:k-list"(), a) ~> "c:atom"(a);
+      "RESULT-SET". a:T |- "CSeqResult"("c:k-set"(), a) ~> "c:atom"(a);
+      "EXTEND-LIST". t:T, a:T |- "CSeqExtend"("c:k-list"(), t, a) ~> "c:list-extend"(t, a);
+      "EXTEND-SET". t:T, a:T |- "CSeqExtend"("c:k-set"(), t, a) ~> "c:set-update"(t, a);
+      "ADD-LIST". t:T, a:T |- "CSeqAdd"("c:k-list"(), t, a) ~> "c:list-append"(t, a);
+      "ADD-SET". t:T, a:T |- "CSeqAdd"("c:k-set"(), t, a) ~> "c:set-add"(t, a);
+      -- the elements of a display or a call's positional arguments: each
+      -- one (c:one), or a starred one's iterable (c:spread); then the runs
+      -- (c:run) of ones between the spreads
+      "SEQ-ITEMS-NIL". |- "CSeqItems"("LNil"()) ~> "LNil"();
+      "SEQ-ITEMS-CONS". e:T, es:T, b:T, it:T, its:T | "py-is-starred"(e, b), "CSeqItem"(b, e) ~> it, "CSeqItems"(es) ~> its |- "CSeqItems"("LCons"(e, es)) ~> "LCons"(it, its);
+      "SEQ-ITEM-STARRED". v:T, cx:T, l:T, c:T, el:T, ec:T |- "CSeqItem"("py:True"(), "py:Starred"(v, cx, l, c, el, ec)) ~> "c:spread"(v);
+      "SEQ-ITEM-ONE". e:T |- "CSeqItem"("py:False"(), e) ~> "c:one"(e);
+      "RUNS-NIL". |- "CRuns"("LNil"()) ~> "LNil"();
+      "RUNS-SPREAD". v:T, rest:T, r:T | "CRuns"(rest) ~> r |- "CRuns"("LCons"("c:spread"(v), rest)) ~> "LCons"("c:spread"(v), r);
+      "RUNS-ONE". e:T, rest:T, r:T, r2:T | "CRuns"(rest) ~> r, "CRunPush"(e, r) ~> r2 |- "CRuns"("LCons"("c:one"(e), rest)) ~> r2;
+      "RUN-PUSH-NIL". e:T |- "CRunPush"(e, "LNil"()) ~> "LCons"("c:run"("LCons"(e, "LNil"())), "LNil"());
+      "RUN-PUSH-RUN". e:T, es:T, ps:T |- "CRunPush"(e, "LCons"("c:run"(es), ps)) ~> "LCons"("c:run"("LCons"(e, es)), ps);
+      "RUN-PUSH-SPREAD". e:T, v:T, ps:T |- "CRunPush"(e, "LCons"("c:spread"(v), ps)) ~> "LCons"("c:run"("LCons"(e, "LNil"())), "LCons"("c:spread"(v), ps));
+      -- a dict display, as CPython builds it: each key, then its value, left
+      -- to right; with a ** item, the pairs before it built, then the
+      -- mapping's items put in, and each later run of pairs built and put in
+      "DICT". ks:T, vs:T, l:T, c:T, el:T, ec:T, x:T, n:T, its:T, ps:T, r:T | "CDictItems"(ks, vs) ~> its, "CRuns"(its) ~> ps, "CMapFrom"("c:m-update"(), ps, x, n) ~> r |- "COp"("py:Dict"(ks, vs, l, c, el, ec), x, n) ~> r;
+      "DICT-ITEMS-NIL". |- "CDictItems"("LNil"(), "LNil"()) ~> "LNil"();
+      "DICT-ITEMS-CONS". k:T, ks:T, v:T, vs:T, b:T, it:T, its:T | "py-is-none"(k, b), "CDictItem"(b, k, v) ~> it, "CDictItems"(ks, vs) ~> its |- "CDictItems"("LCons"(k, ks), "LCons"(v, vs)) ~> "LCons"(it, its);
+      "DICT-ITEM-SPREAD". k:T, v:T |- "CDictItem"("py:True"(), k, v) ~> "c:spread"(v);
+      "DICT-ITEM-ONE". k:T, v:T |- "CDictItem"("py:False"(), k, v) ~> "c:one"("c:kv"(k, v));
+      "MAP-FROM-EMPTY". m:T, x:T, n:T |- "CMapFrom"(m, "LNil"(), x, n) ~> "c:anf"("LNil"(), "c:dict"("LNil"()), n);
+      "MAP-FROM-PLAIN". m:T, its:T, x:T, n:T, pre:T, xs:T, n1:T | "CPairsOf"(its, x, n) ~> "c:anfs"(pre, xs, n1) |- "CMapFrom"(m, "LCons"("c:run"(its), "LNil"()), x, n) ~> "c:anf"(pre, "c:dict"(xs), n1);
+      "MAP-FROM-RUN". m:T, its:T, p:T, ps:T, x:T, n:T, p1:T, xs:T, n1:T, t:T, n2:T, b0:T, p2:T, n3:T, pre:T | "CPairsOf"(its, x, n) ~> "c:anfs"(p1, xs, n1), "CFresh"(n1) ~> "c:fresh"(t, n2), "CSnoc"(p1, "c:assign"("c:tmp"(t), "c:dict"(xs))) ~> b0, "CMapLater"(m, "LCons"(p, ps), t, x, n2) ~> "c:sts"(p2, n3), "CAppend"(b0, p2) ~> pre |- "CMapFrom"(m, "LCons"("c:run"(its), "LCons"(p, ps)), x, n) ~> "c:anf"(pre, "c:atom"("c:tmp"(t)), n3);
+      "MAP-FROM-SPREAD". m:T, v:T, ps:T, x:T, n:T, t:T, n1:T, p2:T, n2:T, pre:T | "CFresh"(n) ~> "c:fresh"(t, n1), "CMapLater"(m, "LCons"("c:spread"(v), ps), t, x, n1) ~> "c:sts"(p2, n2), "CAppend"("LCons"("c:assign"("c:tmp"(t), "c:dict"("LNil"())), "LNil"()), p2) ~> pre |- "CMapFrom"(m, "LCons"("c:spread"(v), ps), x, n) ~> "c:anf"(pre, "c:atom"("c:tmp"(t)), n2);
+      "MAP-LATER-NIL". m:T, t:T, x:T, n:T |- "CMapLater"(m, "LNil"(), t, x, n) ~> "c:sts"("LNil"(), n);
+      "MAP-LATER-RUN". m:T, its:T, ps:T, t:T, x:T, n:T, p1:T, xs:T, n1:T, s:T, n2:T, op:T, b0:T, p2:T, n3:T, b:T | "CPairsOf"(its, x, n) ~> "c:anfs"(p1, xs, n1), "CFresh"(n1) ~> "c:fresh"(s, n2), "CMerge"(m, "c:tmp"(t), "c:tmp"(s)) ~> op, "CAppend"(p1, "LCons"("c:assign"("c:tmp"(s), "c:dict"(xs)), "LCons"("c:do"(op), "LNil"()))) ~> b0, "CMapLater"(m, ps, t, x, n2) ~> "c:sts"(p2, n3), "CAppend"(b0, p2) ~> b |- "CMapLater"(m, "LCons"("c:run"(its), ps), t, x, n) ~> "c:sts"(b, n3);
+      "MAP-LATER-SPREAD". m:T, v:T, ps:T, t:T, x:T, n:T, p1:T, a:T, n1:T, op:T, b0:T, p2:T, n2:T, b:T | "CAtom"(v, x, n) ~> "c:anf"(p1, a, n1), "CMerge"(m, "c:tmp"(t), a) ~> op, "CSnoc"(p1, "c:do"(op)) ~> b0, "CMapLater"(m, ps, t, x, n1) ~> "c:sts"(p2, n2), "CAppend"(b0, p2) ~> b |- "CMapLater"(m, "LCons"("c:spread"(v), ps), t, x, n) ~> "c:sts"(b, n2);
+      "PAIRS-OF-NIL". x:T, n:T |- "CPairsOf"("LNil"(), x, n) ~> "c:anfs"("LNil"(), "LNil"(), n);
+      "PAIRS-OF-KV". k:T, v:T, its:T, x:T, n:T, p3:T, ps:T, n1:T, p2:T, va:T, n2:T, ph2:T, hv:T, n3:T, p1:T, ka:T, n4:T, q2:T, after:T, ph1:T, hk:T, n5:T, q1:T, pre:T | "CPairsOf"(its, x, n) ~> "c:anfs"(p3, ps, n1), "CAtom"(v, x, n1) ~> "c:anf"(p2, va, n2), "CHold"(va, p3, "LNil"(), n2) ~> "c:anf"(ph2, hv, n3), "CAtom"(k, x, n3) ~> "c:anf"(p1, ka, n4), "CAppend"(p2, ph2) ~> q2, "CAppend"(q2, p3) ~> after, "CHold"(ka, after, "LNil"(), n4) ~> "c:anf"(ph1, hk, n5), "CAppend"(p1, ph1) ~> q1, "CAppend"(q1, after) ~> pre |- "CPairsOf"("LCons"("c:kv"(k, v), its), x, n) ~> "c:anfs"(pre, "LCons"("c:pair"(hk, hv), ps), n5);
+      "PAIRS-OF-KW". a:T, v:T, its:T, x:T, n:T, p2:T, ps:T, n1:T, p1:T, va:T, n2:T, ph:T, hv:T, n3:T, q:T, pre:T | "CPairsOf"(its, x, n) ~> "c:anfs"(p2, ps, n1), "CAtom"(v, x, n1) ~> "c:anf"(p1, va, n2), "CHold"(va, p2, "LNil"(), n2) ~> "c:anf"(ph, hv, n3), "CAppend"(p1, ph) ~> q, "CAppend"(q, p2) ~> pre |- "CPairsOf"("LCons"("c:kwv"(a, v), its), x, n) ~> "c:anfs"(pre, "LCons"("c:pair"("c:const"(a), hv), ps), n3);
+      -- a display's mapping put in (dict.update); a call's keywords merged,
+      -- where a repeated one is an error that names the function
+      "MERGE-UPDATE". t:T, a:T |- "CMerge"("c:m-update"(), t, a) ~> "c:dict-update"(t, a);
+      "MERGE-CALL". f:T, t:T, a:T |- "CMerge"("c:m-merge"(f), t, a) ~> "c:dict-merge"(t, a, f);
+
+      -- obj[key]; a slice: its three parts (None where absent)
+      "STARRED-HERE". v:T, cx:T, l:T, c:T, el:T, ec:T, x:T, n:T, m:T, none:T | "py-core-name"("c:e-starred-here"(), m), "py-core-none"(none) |- "COp"("py:Starred"(v, cx, l, c, el, ec), x, n) ~> "c:anf"("LCons"("c:syntax-error"(m, l, c, el, ec), "LNil"()), "c:atom"("c:const"(none)), n);
+      "SUBSCRIPT". v:T, sl:T, l:T, c:T, el:T, ec:T, x:T, n:T, pre:T, xo:T, xk:T, n1:T, w:T, pre2:T | "py-code-warnings"("py:Subscript"(v, sl, "py:Load"(), l, c, el, ec), w), "COperands"("LCons"(v, "LCons"(sl, "LNil"())), "LNil"(), x, n) ~> "c:anfs"(pre, "LCons"(xo, "LCons"(xk, "LNil"())), n1), "CAppend"(w, pre) ~> pre2 |- "COp"("py:Subscript"(v, sl, "py:Load"(), l, c, el, ec), x, n) ~> "c:anf"(pre2, "c:getitem"(xo, xk), n1);
+      "SLICE". a:T, b:T, st:T, l:T, c:T, el:T, ec:T, x:T, n:T, pre:T, xa:T, xb:T, xs:T, n1:T | "COptOperands"("LCons"(a, "LCons"(b, "LCons"(st, "LNil"()))), "LNil"(), x, n) ~> "c:anfs"(pre, "LCons"(xa, "LCons"(xb, "LCons"(xs, "LNil"()))), n1) |- "COp"("py:Slice"(a, b, st, l, c, el, ec), x, n) ~> "c:anf"(pre, "c:slice"(xa, xb, xs), n1);
+      "OPT-ATOM". e:T, x:T, n:T, f:T, r:T | "py-is-none"(e, f), "COptAtomIf"(f, e, x, n) ~> r |- "COptAtom"(e, x, n) ~> r;
+      "OPT-ATOM-NONE". e:T, x:T, n:T, none:T | "py-core-none"(none) |- "COptAtomIf"("py:True"(), e, x, n) ~> "c:anf"("LNil"(), "c:const"(none), n);
+      "OPT-ATOM-SOME". e:T, x:T, n:T, r:T | "CAtom"(e, x, n) ~> r |- "COptAtomIf"("py:False"(), e, x, n) ~> r;
+
+      -- obj.attr
+      "ATTRIBUTE". v:T, at:T, l:T, c:T, el:T, ec:T, x:T, n:T, pre:T, xo:T, n1:T, mg:T | "CMangle"(at, x) ~> mg, "CAtom"(v, x, n) ~> "c:anf"(pre, xo, n1) |- "COp"("py:Attribute"(v, at, "py:Load"(), l, c, el, ec), x, n) ~> "c:anf"(pre, "c:getattr"(xo, mg), n1);
+      -- keyword arguments: (c:kw NAME ATOM), in order, their values operands
+      "KEYWORDS". ks:T, x:T, n:T, r:T | "CKwOperands"(ks, "LNil"(), x, n) ~> r |- "CKeywords"(ks, x, n) ~> r;
+      "KW-OPERANDS-NIL". lt:T, x:T, n:T |- "CKwOperands"("LNil"(), lt, x, n) ~> "c:anfs"("LNil"(), "LNil"(), n);
+      "KW-OPERANDS-CONS". nm:T, v:T, l:T, c:T, el:T, ec:T, rest:T, lt:T, x:T, n:T, p2:T, kws:T, n1:T, p1:T, a:T, n2:T, ph:T, ha:T, n3:T, q:T, pre:T | "CKwOperands"(rest, lt, x, n) ~> "c:anfs"(p2, kws, n1), "CAtom"(v, x, n1) ~> "c:anf"(p1, a, n2), "CHold"(a, p2, lt, n2) ~> "c:anf"(ph, ha, n3), "CAppend"(p1, ph) ~> q, "CAppend"(q, p2) ~> pre |- "CKwOperands"("LCons"("py:keyword"(nm, v, l, c, el, ec), rest), lt, x, n) ~> "c:anfs"(pre, "LCons"("c:kw"(nm, ha), kws), n3);
+
+      -- a call, as CPython compiles it: with a starred argument or a **
+      -- keyword, through one sequence and one dict (CALL_FUNCTION_EX); else a
+      -- method call when the callee is obj.name; else a plain call.  The
+      -- function's atom, then each argument's, then each keyword's, in order
+      "CALL". f:T, xa:T, ks:T, l:T, c:T, el:T, ec:T, x:T, n:T, s:T, p:T, a:T, n1:T, w:T, p2:T | "py-code-warnings"("py:Call"(f, xa, ks, l, c, el, ec), w), "py-call-shape"(f, xa, ks, s), "CCall"(s, f, xa, ks, x, n) ~> "c:anf"(p, a, n1), "CAppend"(w, p) ~> p2 |- "COp"("py:Call"(f, xa, ks, l, c, el, ec), x, n) ~> "c:anf"(p2, a, n1);
+      "CALL-FUNCTION". f:T, xa:T, ks:T, x:T, n:T, p3:T, kws:T, n1:T, p2:T, xf:T, xs:T, n2:T, pre:T | "CKeywords"(ks, x, n) ~> "c:anfs"(p3, kws, n1), "COperands"("LCons"(f, xa), p3, x, n1) ~> "c:anfs"(p2, "LCons"(xf, xs), n2), "CAppend"(p2, p3) ~> pre |- "CCall"("c:shape-function"(), f, xa, ks, x, n) ~> "c:anf"(pre, "c:call"(xf, xs, kws), n2);
+      -- obj.name(args): the method looked up and called at once
+      "CALL-METHOD". v:T, at:T, cx:T, al:T, ac:T, ael:T, aec:T, xa:T, ks:T, x:T, n:T, p3:T, kws:T, n1:T, p2:T, xs:T, n2:T, pa:T, r:T | "CKeywords"(ks, x, n) ~> "c:anfs"(p3, kws, n1), "COperands"(xa, p3, x, n1) ~> "c:anfs"(p2, xs, n2), "CAppend"(p2, p3) ~> pa, "CMethodCall"(pa, v, at, xs, kws, x, n2) ~> r |- "CCall"("c:shape-method"(), "py:Attribute"(v, at, cx, al, ac, ael, aec), xa, ks, x, n) ~> r;
+      -- nothing runs between the method's lookup and the call: one operation
+      "METHOD-CALL-FUSED". v:T, at:T, xs:T, kws:T, x:T, n:T, p1:T, xo:T, n1:T, mg:T | "CMangle"(at, x) ~> mg, "CAtom"(v, x, n) ~> "c:anf"(p1, xo, n1) |- "CMethodCall"("LNil"(), v, at, xs, kws, x, n) ~> "c:anf"(p1, "c:call-method"(xo, mg, xs, kws), n1);
+      -- the arguments run code: the method is looked up first, where CPython
+      -- looks it up, and the bound method called
+      "METHOD-CALL-BOUND". s:T, ss:T, v:T, at:T, xs:T, kws:T, x:T, n:T, p1:T, xo:T, n1:T, t:T, n2:T, b0:T, pre:T, mg:T | "CMangle"(at, x) ~> mg, "CAtom"(v, x, n) ~> "c:anf"(p1, xo, n1), "CFresh"(n1) ~> "c:fresh"(t, n2), "CSnoc"(p1, "c:assign"("c:tmp"(t), "c:getattr"(xo, mg))) ~> b0, "CAppend"(b0, "LCons"(s, ss)) ~> pre |- "CMethodCall"("LCons"(s, ss), v, at, xs, kws, x, n) ~> "c:anf"(pre, "c:call"("c:tmp"(t), xs, kws), n2);
+      -- f(*args, **kwargs): the positional arguments as one sequence (a lone
+      -- starred one's value as it is), the keywords as one dict
+      "CALL-EX". f:T, xa:T, ks:T, x:T, n:T, p1:T, xf0:T, n1:T, ph:T, xf:T, n2:T, its:T, ps:T, p2:T, xs0:T, n3:T, p3:T, xk:T, n4:T, ph2:T, xs:T, n5:T, q0:T, q1:T, q2:T, pre:T | "CAtom"(f, x, n) ~> "c:anf"(p1, xf0, n1), "CHoldAtom"(xf0, n1) ~> "c:anf"(ph, xf, n2), "CSeqItems"(xa) ~> its, "CRuns"(its) ~> ps, "CExArgs"(ps, x, n2) ~> "c:anf"(p2, xs0, n3), "CExKeywords"(ks, xf, x, n3) ~> "c:anf"(p3, xk, n4), "CHold"(xs0, "LNil"(), p3, n4) ~> "c:anf"(ph2, xs, n5), "CAppend"(p1, ph) ~> q0, "CAppend"(q0, p2) ~> q1, "CAppend"(q1, ph2) ~> q2, "CAppend"(q2, p3) ~> pre |- "CCall"("c:shape-ex"(), f, xa, ks, x, n) ~> "c:anf"(pre, "c:call-ex"(xf, xs, xk), n5);
+      "EX-ARGS-LONE". v:T, x:T, n:T, r:T | "CAtom"(v, x, n) ~> r |- "CExArgs"("LCons"("c:spread"(v), "LNil"()), x, n) ~> r;
+      "EX-ARGS-NONE". x:T, n:T, p:T, op:T, n1:T, r:T | "CSeqFrom"("c:k-tuple"(), "LNil"(), x, n) ~> "c:anf"(p, op, n1), "CAtomOf"(op, p, n1) ~> r |- "CExArgs"("LNil"(), x, n) ~> r;
+      "EX-ARGS-RUN". es:T, ps:T, x:T, n:T, p:T, op:T, n1:T, r:T | "CSeqFrom"("c:k-tuple"(), "LCons"("c:run"(es), ps), x, n) ~> "c:anf"(p, op, n1), "CAtomOf"(op, p, n1) ~> r |- "CExArgs"("LCons"("c:run"(es), ps), x, n) ~> r;
+      "EX-ARGS-SPREADS". v:T, q:T, ps:T, x:T, n:T, p:T, op:T, n1:T, r:T | "CSeqFrom"("c:k-tuple"(), "LCons"("c:spread"(v), "LCons"(q, ps)), x, n) ~> "c:anf"(p, op, n1), "CAtomOf"(op, p, n1) ~> r |- "CExArgs"("LCons"("c:spread"(v), "LCons"(q, ps)), x, n) ~> r;
+      "EX-KEYWORDS-NONE". f:T, x:T, n:T |- "CExKeywords"("LNil"(), f, x, n) ~> "c:anf"("LNil"(), "c:no-kw"(), n);
+      "EX-KEYWORDS". k:T, ks:T, f:T, x:T, n:T, its:T, ps:T, p1:T, op:T, n1:T, r:T | "CKwItems"("LCons"(k, ks)) ~> its, "CRuns"(its) ~> ps, "CMapFrom"("c:m-merge"(f), ps, x, n) ~> "c:anf"(p1, op, n1), "CAtomOf"(op, p1, n1) ~> r |- "CExKeywords"("LCons"(k, ks), f, x, n) ~> r;
+      "KW-ITEMS-NIL". |- "CKwItems"("LNil"()) ~> "LNil"();
+      "KW-ITEMS-CONS". a:T, v:T, l:T, c:T, el:T, ec:T, ks:T, b:T, it:T, its:T | "py-is-none"(a, b), "CKwItem"(b, a, v) ~> it, "CKwItems"(ks) ~> its |- "CKwItems"("LCons"("py:keyword"(a, v, l, c, el, ec), ks)) ~> "LCons"(it, its);
+      "KW-ITEM-SPREAD". a:T, v:T |- "CKwItem"("py:True"(), a, v) ~> "c:spread"(v);
+      "KW-ITEM-ONE". a:T, v:T |- "CKwItem"("py:False"(), a, v) ~> "c:one"("c:kwv"(a, v));
+      -- operands, left to right, in A-normal form over mutable variables: a
+      -- name is read where it stands, so it stays an atom only when nothing
+      -- runs between it and the operation that reads it; else it is read into a
+      -- temporary first.  The rest is converted first, to know what follows
+      "ATOMS". es:T, x:T, n:T, r:T | "COperands"(es, "LNil"(), x, n) ~> r |- "CAtoms"(es, x, n) ~> r;
+      "OPERANDS-NIL". lt:T, x:T, n:T |- "COperands"("LNil"(), lt, x, n) ~> "c:anfs"("LNil"(), "LNil"(), n);
+      "OPERANDS-CONS". e:T, es:T, lt:T, x:T, n:T, p2:T, xs:T, n1:T, p1:T, a:T, n2:T, ph:T, ha:T, n3:T, q:T, pre:T | "COperands"(es, lt, x, n) ~> "c:anfs"(p2, xs, n1), "CAtom"(e, x, n1) ~> "c:anf"(p1, a, n2), "CHold"(a, p2, lt, n2) ~> "c:anf"(ph, ha, n3), "CAppend"(p1, ph) ~> q, "CAppend"(q, p2) ~> pre |- "COperands"("LCons"(e, es), lt, x, n) ~> "c:anfs"(pre, "LCons"(ha, xs), n3);
+      "OPT-OPERANDS-NIL". lt:T, x:T, n:T |- "COptOperands"("LNil"(), lt, x, n) ~> "c:anfs"("LNil"(), "LNil"(), n);
+      "OPT-OPERANDS-CONS". e:T, es:T, lt:T, x:T, n:T, p2:T, xs:T, n1:T, p1:T, a:T, n2:T, ph:T, ha:T, n3:T, q:T, pre:T | "COptOperands"(es, lt, x, n) ~> "c:anfs"(p2, xs, n1), "COptAtom"(e, x, n1) ~> "c:anf"(p1, a, n2), "CHold"(a, p2, lt, n2) ~> "c:anf"(ph, ha, n3), "CAppend"(p1, ph) ~> q, "CAppend"(q, p2) ~> pre |- "COptOperands"("LCons"(e, es), lt, x, n) ~> "c:anfs"(pre, "LCons"(ha, xs), n3);
+      "HOLD-REST". a:T, s:T, ss:T, lt:T, n:T, r:T | "CHoldAtom"(a, n) ~> r |- "CHold"(a, "LCons"(s, ss), lt, n) ~> r;
+      "HOLD-LATER". a:T, lt:T, n:T, r:T | "CHoldIf"(a, lt, n) ~> r |- "CHold"(a, "LNil"(), lt, n) ~> r;
+      "HOLD-IF-NOTHING". a:T, n:T |- "CHoldIf"(a, "LNil"(), n) ~> "c:anf"("LNil"(), a, n);
+      "HOLD-IF-SOMETHING". a:T, s:T, ss:T, n:T, r:T | "CHoldAtom"(a, n) ~> r |- "CHoldIf"(a, "LCons"(s, ss), n) ~> r;
+      -- a name's value read into a temporary; a constant or a temporary stays
+      "HOLD-LOCAL". i:T, n:T, t:T, n1:T | "CFresh"(n) ~> "c:fresh"(t, n1) |- "CHoldAtom"("c:local"(i), n) ~> "c:anf"("LCons"("c:assign"("c:tmp"(t), "c:atom"("c:local"(i))), "LNil"()), "c:tmp"(t), n1);
+      "HOLD-CELL". i:T, n:T, t:T, n1:T | "CFresh"(n) ~> "c:fresh"(t, n1) |- "CHoldAtom"("c:cell"(i), n) ~> "c:anf"("LCons"("c:assign"("c:tmp"(t), "c:atom"("c:cell"(i))), "LNil"()), "c:tmp"(t), n1);
+      "HOLD-GLOBAL". g:T, n:T, t:T, n1:T | "CFresh"(n) ~> "c:fresh"(t, n1) |- "CHoldAtom"("c:global"(g), n) ~> "c:anf"("LCons"("c:assign"("c:tmp"(t), "c:atom"("c:global"(g))), "LNil"()), "c:tmp"(t), n1);
+      "HOLD-NAME". g:T, n:T, t:T, n1:T | "CFresh"(n) ~> "c:fresh"(t, n1) |- "CHoldAtom"("c:name"(g), n) ~> "c:anf"("LCons"("c:assign"("c:tmp"(t), "c:atom"("c:name"(g))), "LNil"()), "c:tmp"(t), n1);
+      "HOLD-DICT-OR-CELL". i:T, g:T, n:T, t:T, n1:T | "CFresh"(n) ~> "c:fresh"(t, n1) |- "CHoldAtom"("c:dict-or-cell"(i, g), n) ~> "c:anf"("LCons"("c:assign"("c:tmp"(t), "c:atom"("c:dict-or-cell"(i, g))), "LNil"()), "c:tmp"(t), n1);
+      "HOLD-DICT-OR-GLOBAL". i:T, g:T, n:T, t:T, n1:T | "CFresh"(n) ~> "c:fresh"(t, n1) |- "CHoldAtom"("c:dict-or-global"(i, g), n) ~> "c:anf"("LCons"("c:assign"("c:tmp"(t), "c:atom"("c:dict-or-global"(i, g))), "LNil"()), "c:tmp"(t), n1);
+      "HOLD-CONST". v:T, n:T |- "CHoldAtom"("c:const"(v), n) ~> "c:anf"("LNil"(), "c:const"(v), n);
+      "HOLD-COMMON". g:T, n:T |- "CHoldAtom"("c:common"(g), n) ~> "c:anf"("LNil"(), "c:common"(g), n);
+      "HOLD-CONST-SET". vs:T, n:T |- "CHoldAtom"("c:const-set"(vs), n) ~> "c:anf"("LNil"(), "c:const-set"(vs), n);
+      "HOLD-TMP". i:T, n:T |- "CHoldAtom"("c:tmp"(i), n) ~> "c:anf"("LNil"(), "c:tmp"(i), n);
+
+      -- ================================================================ names, slots, tables
+
+      -- where a name lives (compiler_nameop)
+      "NAME". t:T, k:T, q:T, sl:T, lp:T, s:T, r:T, tk:T, tn:T, tp:T, syms:T, tabs:T, none:T, m:T, pv:T | "py-core-none"(none), "py-maybe-mangle"(pv, none, t, m), "py-lookup-scope"(syms, m, s), "CNameIn"(k, s, m, sl) ~> r |- "CName"(t, "c:cx"(k, "c:tq"("st:table"(tk, tn, tp, syms, tabs), q, pv), sl, lp)) ~> r;
+      -- a context's names: its table, its qualname prefix and its private name,
+      -- the innermost class's name, by which names and attribute names are
+      -- mangled (the compiler's u_private, _Py_Mangle)
+      "MANGLE". t:T, k:T, tb:T, q:T, pv:T, sl:T, lp:T, none:T, m:T | "py-core-none"(none), "py-maybe-mangle"(pv, none, t, m) |- "CMangle"(t, "c:cx"(k, "c:tq"(tb, q, pv), sl, lp)) ~> m;
+      -- in an inlined comprehension: its own names are its temporaries; any
+      -- other name is resolved as its block resolves it
+      "NAME-RENAMED". k:T, a:T, t:T, sl:T |- "CNameIn"(k, "c:renamed"(a), t, sl) ~> a;
+      "NAME-COMP-LOCAL". k:T, t:T, sl:T, r:T | "CNameIn"(k, "st:scope-local"(), t, sl) ~> r |- "CNameIn"("c:comp"(k), "st:scope-local"(), t, sl) ~> r;
+      "NAME-COMP-CELL". k:T, t:T, sl:T, r:T | "CNameIn"(k, "st:scope-cell"(), t, sl) ~> r |- "CNameIn"("c:comp"(k), "st:scope-cell"(), t, sl) ~> r;
+      "NAME-COMP-FREE". k:T, t:T, sl:T, r:T | "CNameIn"(k, "st:scope-free"(), t, sl) ~> r |- "CNameIn"("c:comp"(k), "st:scope-free"(), t, sl) ~> r;
+      "NAME-COMP-GLOBAL-IMPLICIT". k:T, t:T, sl:T, r:T | "CNameIn"(k, "st:scope-global-implicit"(), t, sl) ~> r |- "CNameIn"("c:comp"(k), "st:scope-global-implicit"(), t, sl) ~> r;
+      "NAME-COMP-GLOBAL-EXPLICIT". k:T, t:T, sl:T, r:T | "CNameIn"(k, "st:scope-global-explicit"(), t, sl) ~> r |- "CNameIn"("c:comp"(k), "st:scope-global-explicit"(), t, sl) ~> r;
+      "NAME-FUNCTION-LOCAL". gk:T, asy:T, t:T, sl:T, i:T | "py-slot"(sl, t, i) |- "CNameIn"("c:function"(asy, gk), "st:scope-local"(), t, sl) ~> "c:local"(i);
+      "NAME-FUNCTION-CELL". gk:T, asy:T, t:T, sl:T, i:T | "py-slot"(sl, t, i) |- "CNameIn"("c:function"(asy, gk), "st:scope-cell"(), t, sl) ~> "c:cell"(i);
+      "NAME-FUNCTION-FREE". gk:T, asy:T, t:T, sl:T, i:T | "py-slot"(sl, t, i) |- "CNameIn"("c:function"(asy, gk), "st:scope-free"(), t, sl) ~> "c:cell"(i);
+      "NAME-FUNCTION-GLOBAL-IMPLICIT". gk:T, asy:T, t:T, sl:T, cs:T, a:T | "py-classdict-slot"(sl, cs), "CGlobalImplicit"(cs, t) ~> a |- "CNameIn"("c:function"(asy, gk), "st:scope-global-implicit"(), t, sl) ~> a;
+      -- a scope that sees a class reads an implicit global from the class's
+      -- namespace first (LOAD_FROM_DICT_OR_GLOBALS through __classdict__)
+      "GLOBAL-IMPLICIT". t:T |- "CGlobalImplicit"("c:no-cell"(), t) ~> "c:global"(t);
+      "GLOBAL-IMPLICIT-CLASSDICT". i:T, t:T |- "CGlobalImplicit"("c:cell"(i), t) ~> "c:dict-or-global"(i, t);
+      "NAME-FUNCTION-GLOBAL-EXPLICIT". gk:T, asy:T, t:T, sl:T |- "CNameIn"("c:function"(asy, gk), "st:scope-global-explicit"(), t, sl) ~> "c:global"(t);
+      "NAME-MODULE-LOCAL". t:T, sl:T |- "CNameIn"("c:module"(), "st:scope-local"(), t, sl) ~> "c:name"(t);
+      -- a class body's names live in its namespace (LOAD_NAME, STORE_NAME); a
+      -- free name is looked for there first, then in its cell
+      -- (LOAD_FROM_DICT_OR_DEREF)
+      "NAME-CLASS-LOCAL". t:T, sl:T |- "CNameIn"("c:class"(), "st:scope-local"(), t, sl) ~> "c:name"(t);
+      "NAME-CLASS-GLOBAL-IMPLICIT". t:T, sl:T |- "CNameIn"("c:class"(), "st:scope-global-implicit"(), t, sl) ~> "c:name"(t);
+      "NAME-CLASS-GLOBAL-EXPLICIT". t:T, sl:T |- "CNameIn"("c:class"(), "st:scope-global-explicit"(), t, sl) ~> "c:global"(t);
+      "NAME-CLASS-FREE". t:T, sl:T, i:T | "py-slot"(sl, t, i) |- "CNameIn"("c:class"(), "st:scope-free"(), t, sl) ~> "c:dict-or-cell"(i, t);
+      "NAME-MODULE-GLOBAL-IMPLICIT". t:T, sl:T |- "CNameIn"("c:module"(), "st:scope-global-implicit"(), t, sl) ~> "c:name"(t);
+      "NAME-MODULE-GLOBAL-EXPLICIT". t:T, sl:T |- "CNameIn"("c:module"(), "st:scope-global-explicit"(), t, sl) ~> "c:global"(t);
+
+
+      -- the table of a block that stands at POS
+      "CHILD". pv:T, k:T, n:T, p:T, syms:T, tabs:T, q:T, ck:T, pos:T, t:T | "py-child-table"(tabs, ck, pos, t) |- "CChild"("c:tq"("st:table"(k, n, p, syms, tabs), q, pv), ck, pos) ~> t;
+
+      -- a fresh slot (a temporary or a label)
+      "FRESH". n:T, one:T, n1:T | "py-const"("py:one"(), one), "py-add"(n, one, n1) |- "CFresh"(n) ~> "c:fresh"(n, n1);
+    }
+  }
+  theory Desugar()
+}

@@ -813,7 +813,7 @@ endif
 ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
 PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
-SRC = src/symbol.c src/scalar_trie.c src/atom.c src/state_cell.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c src/raw_source_region.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_builtin_registry.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/fixpoint.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/term_domain.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/answer_storage.c src/fold_algebra.c src/native_fold.c src/exec_saturation.c src/transform_core.c src/library_presentation.c src/support_view.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_macro_expansion.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c src/foreign_provider.c src/runtime_prelude.c src/runtime_session.c
+SRC = src/symbol.c src/scalar_trie.c src/atom.c src/state_cell.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/float_natives.c src/integer_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c src/raw_source_region.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_builtin_registry.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/fixpoint.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/term_domain.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/answer_storage.c src/fold_algebra.c src/native_fold.c src/exec_saturation.c src/transform_core.c src/library_presentation.c src/support_view.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_macro_expansion.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c src/foreign_provider.c src/runtime_prelude.c src/runtime_session.c
 SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presentation.c src/run_guard.c
 SRC += src/library_proc.c
 SRC += src/library_fs.c
@@ -7291,10 +7291,13 @@ parser-artifacts: $(PARSER_BAKED_HEADER)
 # a generated table certifies its grammar unambiguous.  The generated tables
 # are checked-in sources: `make presentation-readers` regenerates them and
 # `make check-presentation-readers` requires a fresh generation byte-identical.
-# Each entry is NAME:MODULE:THEORY:ENTRY[:KEY] over lib/presentation; KEY
-# names the generated tables (gslt_presentation_KEY_v1), NAME by default.  An
-# earlier version of a presentation stays compiled, frozen, under its own KEY
-# after the current one, so that its texts stay readable (--syntax NAME@1.0).
+# Each entry is NAME:MODULE:THEORY:ENTRY[:KEY]; MODULE names a module over
+# lib/presentation, or, when it holds a "/", a module path from the top of
+# the tree (a language's own presentation under langdef/); its forms table
+# is MODULE.forms.metta beside it.  KEY names the generated tables
+# (gslt_presentation_KEY_v1), NAME by default.  An earlier version of a
+# presentation stays compiled, frozen, under its own KEY after the current
+# one, so that its texts stay readable (--syntax NAME@1.0).
 PRESENTATION_COMPILER = runtime/gslt_presentation_compile_v1
 # The declared types of builtin operations, from which every presentation's
 # printer derives which of their positions hold data and which run.
@@ -7304,11 +7307,158 @@ PRESENTATIONS = cstyle:MeTTaCStylePresentation:CStyle:Prog \
 	rhostyle:MeTTaRhoStylePresentation:RhoStyle:Prog \
 	sexpr:MeTTaSExpressionPresentation:SExpression:SProg \
 	cstyle:MeTTaCStylePresentation-1.0:CStyle:Prog:cstyle_1_0 \
-	rhostyle:MeTTaRhoStylePresentation-1.0:RhoStyle:Prog:rhostyle_1_0
+	rhostyle:MeTTaRhoStylePresentation-1.0:RhoStyle:Prog:rhostyle_1_0 \
+	python-tokens:langdef/python/Lexical:Tokens:TokenStream:python_tokens \
+	python:langdef/python/Syntax:Python:FileInput \
+	python-eval:langdef/python/Syntax:Python:EvalInput:python_eval
 
 $(PRESENTATION_COMPILER): tools/gslt_presentation_compile_v1.c src/gslt_presentation_v1.h
 	@mkdir -p $(dir $@)
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -o $@ tools/gslt_presentation_compile_v1.c
+
+# Python's abstract syntax (langdef/python/Ast.module): the fold's rules as one
+# relation, compiled by the direct compiler, with the host relations they ask
+# (langdef/python/AstHost.metta, lib/host_terms.metta), into PeTTa equations.
+PYTHON_AST_RULES_V1 = langdef/python/generated/ast_rules_v1.metta
+PYTHON_AST_PROGRAM_V1 = langdef/python/generated/ast_program_v1.metta
+
+$(PYTHON_AST_RULES_V1): langdef/python/Ast.module lib/module_rules_export.metta lib/module_files.metta $(BIN)
+	@mkdir -p $(dir $@)
+	./$(BIN) --lang petta --profile extended --no-results lib/module_rules_export.metta \
+	  langdef/python/Ast.module Fold python-ast:rewrite $@
+
+$(PYTHON_AST_PROGRAM_V1): $(PYTHON_AST_RULES_V1) langdef/python/AstHost.metta lib/host_terms.metta \
+		$(LANGDEF_COMPILER_V1_BIN)
+	@mkdir -p $(dir $@)
+	$(LANGDEF_COMPILER_V1_BIN) petta-direct --source $(PYTHON_AST_RULES_V1) \
+	  --source langdef/python/AstHost.metta --source lib/host_terms.metta \
+	  --entry-mode python-ast:rewrite:10 --out $@
+
+PYTHON_SCOPE_RULES_V1 = langdef/python/generated/scope_rules_v1.metta
+PYTHON_SCOPE_PROGRAM_V1 = langdef/python/generated/scope_program_v1.metta
+
+$(PYTHON_SCOPE_RULES_V1): langdef/python/Scope.module lib/module_rules_export.metta lib/module_files.metta $(BIN)
+	@mkdir -p $(dir $@)
+	./$(BIN) --lang petta --profile extended --no-results lib/module_rules_export.metta \
+	  langdef/python/Scope.module Tables python-scope:rewrite $@
+
+# The ast stage's program owns AstHost (the scope rules ask it for constants):
+# the scope program links it, so the two programs load together.
+$(PYTHON_SCOPE_PROGRAM_V1): $(PYTHON_SCOPE_RULES_V1) langdef/python/ScopeHost.metta \
+		langdef/python/AstHost.metta $(LANGDEF_COMPILER_V1_BIN)
+	@mkdir -p $(dir $@)
+	$(LANGDEF_COMPILER_V1_BIN) petta-direct --source $(PYTHON_SCOPE_RULES_V1) \
+	  --source langdef/python/ScopeHost.metta --extern langdef/python/AstHost.metta \
+	  --entry-mode python-scope:rewrite:10 --out $@
+
+PYTHON_CORE_RULES_V1 = langdef/python/generated/core_rules_v1.metta
+PYTHON_CORE_PROGRAM_V1 = langdef/python/generated/core_program_v1.metta
+
+$(PYTHON_CORE_RULES_V1): langdef/python/Core.module lib/module_rules_export.metta lib/module_files.metta $(BIN)
+	@mkdir -p $(dir $@)
+	./$(BIN) --lang petta --profile extended --no-results lib/module_rules_export.metta \
+	  langdef/python/Core.module Desugar python-core:rewrite $@
+
+# The core rules ask the scope stage's host (scope lookups) and the ast
+# stage's (constants): the core program links both.
+$(PYTHON_CORE_PROGRAM_V1): $(PYTHON_CORE_RULES_V1) langdef/python/CoreHost.metta \
+		langdef/python/ScopeHost.metta langdef/python/AstHost.metta $(LANGDEF_COMPILER_V1_BIN)
+	@mkdir -p $(dir $@)
+	$(LANGDEF_COMPILER_V1_BIN) petta-direct --source $(PYTHON_CORE_RULES_V1) \
+	  --source langdef/python/CoreHost.metta --extern langdef/python/ScopeHost.metta \
+	  --extern langdef/python/AstHost.metta --entry-mode python-core:rewrite:10 --out $@
+
+PYTHON_MACHINE_RULES_V1 = langdef/python/generated/machine_rules_v1.metta
+PYTHON_MACHINE_PROGRAM_V1 = langdef/python/generated/machine_program_v1.metta
+
+$(PYTHON_MACHINE_RULES_V1): langdef/python/Machine.module lib/module_rules_export.metta lib/module_files.metta $(BIN)
+	@mkdir -p $(dir $@)
+	./$(BIN) --lang petta --profile extended --no-results lib/module_rules_export.metta \
+	  langdef/python/Machine.module Run python-machine:rewrite $@
+
+$(PYTHON_MACHINE_PROGRAM_V1): $(PYTHON_MACHINE_RULES_V1) langdef/python/MachineHost.metta \
+		$(LANGDEF_COMPILER_V1_BIN)
+	@mkdir -p $(dir $@)
+	$(LANGDEF_COMPILER_V1_BIN) petta-direct --source $(PYTHON_MACHINE_RULES_V1) \
+	  --source langdef/python/MachineHost.metta --entry-mode python-machine:rewrite:10 --out $@
+
+# The prelude (the data model's protocols, in Python) compiled by the pipeline
+# itself: its core, as the value of python:prelude-code.
+PYTHON_PRELUDE_V1 = langdef/python/generated/prelude_v1.metta
+
+$(PYTHON_PRELUDE_V1): langdef/python/lib/prelude.py $(PYTHON_AST_PROGRAM_V1) $(PYTHON_SCOPE_PROGRAM_V1) \
+		$(PYTHON_CORE_PROGRAM_V1) langdef/python/core.metta langdef/python/host_core.metta $(BIN)
+	@mkdir -p $(dir $@)
+	@set -e; core=$$(./$(BIN) --lang python --stage core langdef/python/lib/prelude.py); \
+	case "$$core" in "(c:code "*) ;; *) echo "FAIL: the prelude has no core: $$core"; exit 1;; esac; \
+	{ printf '; Generated from lib/prelude.py by the core stage; do not edit.\n'; \
+	  printf '(= (python:prelude-code) (quote %s))\n' "$$core"; } > $@
+
+# The modules written in Python the runtime holds compiled, each by its file
+# under lib/ as CPython's Lib lays it out (a package's is PACKAGE/__init__,
+# a module of a package PACKAGE/NAME): their cores, as (pyrt:lib-code FILE).
+PYTHON_LIB_MODULE_NAMES = math __future__ linecache warnings string/__init__ string/templatelib typing itertools _thread _weakref _ast
+PYTHON_LIB_MODULES_V1 = $(patsubst %,langdef/python/generated/lib_%_v1.metta,$(PYTHON_LIB_MODULE_NAMES))
+
+langdef/python/generated/lib_%_v1.metta: langdef/python/lib/%.py $(PYTHON_AST_PROGRAM_V1) $(PYTHON_SCOPE_PROGRAM_V1) \
+		$(PYTHON_CORE_PROGRAM_V1) langdef/python/core.metta langdef/python/host_core.metta $(BIN)
+	@mkdir -p $(dir $@)
+	@set -e; core=$$(./$(BIN) --lang python --stage core $<); \
+	case "$$core" in "(c:code "*) ;; *) echo "FAIL: $< has no core: $$core"; exit 1;; esac; \
+	{ printf '; Generated from lib/$*.py by the core stage; do not edit.\n'; \
+	  printf '(= (pyrt:lib-code "$*") (quote %s))\n' "$$core"; } > $@
+
+# The prelude's heap image: the prelude run once, the heap it leaves written
+# as atoms, which a run loads instead of running the prelude.  The image is
+# written aside and moved into place only when it ends with its state.
+PYTHON_PRELUDE_IMAGE_V1 = langdef/python/generated/prelude_image_v1.metta
+
+$(PYTHON_PRELUDE_IMAGE_V1): $(PYTHON_PRELUDE_V1) $(PYTHON_MACHINE_PROGRAM_V1) langdef/python/image.metta \
+		langdef/python/host_runtime.metta langdef/python/host_objects.metta langdef/python/host_slots.metta \
+		langdef/python/builtin_types.metta $(BIN)
+	@mkdir -p $(dir $@)
+	@./$(BIN) --lang petta --profile extended langdef/python/image.metta -- $@.new > /dev/null
+	@case "$$(tail -n 1 $@.new)" in "(py-image-state "*) mv $@.new $@;; *) echo "FAIL: no prelude image in $@.new"; exit 1;; esac
+
+.PHONY: python-ast-program python-scope-program python-core-program python-machine-program python-prelude python-prelude-image python-lib-modules python-programs
+python-ast-program: $(PYTHON_AST_PROGRAM_V1)
+python-scope-program: $(PYTHON_SCOPE_PROGRAM_V1)
+python-core-program: $(PYTHON_CORE_PROGRAM_V1)
+python-machine-program: $(PYTHON_MACHINE_PROGRAM_V1)
+python-prelude: $(PYTHON_PRELUDE_V1)
+python-prelude-image: $(PYTHON_PRELUDE_IMAGE_V1)
+python-lib-modules: $(PYTHON_LIB_MODULES_V1)
+python-programs: python-ast-program python-scope-program python-core-program python-machine-program python-prelude python-prelude-image python-lib-modules
+
+# The Python complex's table of builtin types is generated from CPython 3.15's
+# own types; it must equal a fresh generation (PYTHON_ORACLE: a CPython 3.15).
+PYTHON_ORACLE ?= python3.15
+.PHONY: python-builtin-types check-python-builtin-types
+python-builtin-types:
+	$(PYTHON_ORACLE) -I tools/python_builtin_types_v1.py langdef/python/builtin_types.metta
+check-python-builtin-types:
+	$(PYTHON_ORACLE) -I tools/python_builtin_types_v1.py langdef/python/builtin_types.metta --check
+
+# The strings CPython 3.15 holds interned once started, which decide whether a
+# frozenset constant is built again (langdef/python/interned_strings.metta);
+# PYTHON_ORACLE_SOURCE: the oracle's source tree, where the frozen modules
+# that run at start-up are.
+PYTHON_ORACLE_SOURCE ?=
+PYTHON_INTERNED_SOURCE = $(if $(PYTHON_ORACLE_SOURCE),--source $(PYTHON_ORACLE_SOURCE))
+.PHONY: python-interned-strings check-python-interned-strings
+python-interned-strings:
+	$(PYTHON_ORACLE) -I tools/python_interned_strings_v1.py langdef/python/interned_strings.metta $(PYTHON_INTERNED_SOURCE)
+check-python-interned-strings:
+	$(PYTHON_ORACLE) -I tools/python_interned_strings_v1.py langdef/python/interned_strings.metta --check $(PYTHON_INTERNED_SOURCE)
+
+# The string library's Unicode data (src/generated/unicode_tables_v1.generated.h)
+# is generated from CPython 3.13's Unicode database (15.1.0); it must equal a
+# fresh generation (needs python3 3.13).
+.PHONY: unicode-tables check-unicode-tables
+unicode-tables:
+	python3 -I tools/unicode_tables_v1.py src/generated/unicode_tables_v1.generated.h
+check-unicode-tables:
+	python3 -I tools/unicode_tables_v1.py src/generated/unicode_tables_v1.generated.h --check
 
 # $(1): the directory the generated headers go to.  The registry header lists
 # every presentation, so a new one is a module, its forms and an entry here.
@@ -7321,10 +7471,11 @@ define presentation_generate
 	  name=$${spec%%:*}; rest=$${spec#*:}; module=$${rest%%:*}; rest=$${rest#*:}; \
 	  theory=$${rest%%:*}; rest=$${rest#*:}; entry=$${rest%%:*}; key=$$name; \
 	  case $$rest in *:*) key=$${rest#*:};; esac; \
+	  case $$module in */*) mpath=$$module;; *) mpath=lib/presentation/$$module;; esac; \
 	  ./$(BIN) --lang petta --profile extended --no-results lib/presentation/export_presentation.metta \
-	    lib/presentation/$$module.module $$theory $$entry runtime/generated/presentation/$$key.inspection; \
+	    $$mpath.module $$theory $$entry runtime/generated/presentation/$$key.inspection; \
 	  $(PRESENTATION_COMPILER) $$name runtime/generated/presentation/$$key.inspection \
-	    lib/presentation/$$module.forms.metta $$entry $(1)/gslt_presentation_$${key}_v1.generated.h \
+	    $$mpath.forms.metta $$entry $(1)/gslt_presentation_$${key}_v1.generated.h \
 	    $(PRESENTATION_POSITION_ROLES); \
 	  printf '#include "generated/gslt_presentation_%s_v1.generated.h"\n' $$key >> $$reg.tmp; \
 	  entries="$$entries    &gslt_presentation_$${key}_v1,\n"; \
@@ -12560,10 +12711,29 @@ test-gslt-petta-static-calls-v1: $(LANGDEF_COMPILER_V1_BIN) $(BIN) \
 	sh tests/support/check_gslt_petta_static_calls_v1.sh \
 		$(LANGDEF_COMPILER_V1_BIN) ./$(BIN) "$$evidence"
 
+.PHONY: test-gslt-petta-capabilities-v1
+test-gslt-petta-capabilities-v1: $(LANGDEF_COMPILER_V1_BIN) $(BIN) \
+		tests/support/check_gslt_petta_capabilities_v1.sh \
+		tests/petta/gslt_capabilities_host_v1.metta \
+		tests/petta/gslt_capabilities_a_v1.metta \
+		tests/petta/gslt_capabilities_b_v1.metta \
+		tests/petta/gslt_capabilities_query_v1.metta \
+		tests/petta/gslt_capabilities_v1.expected \
+		tests/petta/gslt_capabilities_undeclared_modes_v1.metta \
+		tests/petta/gslt_capabilities_twice_modes_v1.metta \
+		tests/petta/gslt_capabilities_bad_digits_v1.metta
+	@set -eu; \
+	mkdir -p runtime/qualification; \
+	evidence=$$(mktemp -d runtime/qualification/gslt-petta-capabilities.XXXXXX); \
+	trap 'status=$$?; if [ $$status -eq 0 ]; then rm -rf "$$evidence"; else echo "kept for inspection: $$evidence" >&2; fi' EXIT; \
+	sh tests/support/check_gslt_petta_capabilities_v1.sh \
+		$(LANGDEF_COMPILER_V1_BIN) ./$(BIN) "$$evidence"
+
 .PHONY: test-gslt-petta-direct-v1
 test-gslt-petta-direct-v1: \
 		test-gslt-petta-entries-v1 \
 		test-gslt-petta-static-calls-v1 \
+		test-gslt-petta-capabilities-v1 \
 		test-gslt-direct-source-identity-v1 \
 		$(GSLT_DIRECT_PETTA_PROGRAM_V1) \
 		$(GSLT_DIRECT_PETTA_BINDING_MODES_V1) \
@@ -18796,6 +18966,8 @@ test-all: test-list-value-lanes
 test-all: test-list-library-petta-v1
 test-all: test-string-atoms-v1
 test-all: test-string-layer-v1
+test-all: test-float-layer-v1
+test-all: test-integer-layer-v1
 test-all: test-plain-bnf-meta-parser-v1
 test-all: test-plain-bnf-meta-parser-no-python-build-dependency-v1
 test-all: test-bnf-native-entry-v1
@@ -19940,6 +20112,38 @@ test-decimal-value-v1: $(DECIMAL_VALUE_V1_TEST_BIN)
 test-string-atoms-v1: $(STRING_ATOMS_V1_TEST_BIN)
 	@$(STRING_ATOMS_V1_TEST_BIN)
 
+# lib/float, IEEE 754 binary64 as C computes it: the layer test in the HE
+# extended profile, and the same checks on the PeTTa lane through its test.
+.PHONY: test-float-layer-v1
+test-float-layer-v1: $(BIN)
+	@set -eu; \
+	got=$$(./$(BIN) --lang he --profile extended tests/float_layer/float_layer_v1.metta 2>&1 | grep -v '^\[()\]$$' || true); \
+	if [ "$$got" != "(FloatLayerV1Summary 66 66 0)" ]; then \
+		echo "FAIL: lib/float in the HE extended profile"; printf '%s\n' "$$got"; exit 1; \
+	fi; \
+	out=$$(sed 's/^!(assertEqual /!(test /' tests/float_layer/float_layer_v1.metta | ./$(BIN) --lang petta /dev/stdin 2>&1 || true); \
+	passes=$$(printf '%s\n' "$$out" | grep -c 'is .*, should .*\. ✅' || true); \
+	if [ "$$passes" != "66" ]; then \
+		echo "FAIL: lib/float on the PeTTa lane ($$passes of 66)"; printf '%s\n' "$$out" | grep -v '✅' | head -5; exit 1; \
+	fi; \
+	echo "PASS: lib/float, 66 checks in the HE extended profile and on the PeTTa lane"
+
+# lib/integer: integers of any size as two's complement bit strings, in the
+# HE extended profile and on the PeTTa lane.
+.PHONY: test-integer-layer-v1
+test-integer-layer-v1: $(BIN)
+	@set -eu; \
+	got=$$(./$(BIN) --lang he --profile extended tests/integer_layer/integer_layer_v1.metta 2>&1 | grep -v '^\[()\]$$' || true); \
+	if [ "$$got" != "(IntegerLayerV1Summary 20 20 0)" ]; then \
+		echo "FAIL: lib/integer in the HE extended profile"; printf '%s\n' "$$got"; exit 1; \
+	fi; \
+	out=$$(sed 's/^!(assertEqual /!(test /' tests/integer_layer/integer_layer_v1.metta | ./$(BIN) --lang petta /dev/stdin 2>&1 || true); \
+	passes=$$(printf '%s\n' "$$out" | grep -c 'is .*, should .*\. ✅' || true); \
+	if [ "$$passes" != "20" ]; then \
+		echo "FAIL: lib/integer on the PeTTa lane ($$passes of 20)"; printf '%s\n' "$$out" | grep -v '✅' | head -5; exit 1; \
+	fi; \
+	echo "PASS: lib/integer, 20 checks in the HE extended profile and on the PeTTa lane"
+
 # lib/str in the HE extended profile, then a string holding NUL in every lane:
 # it compares, is stored and matched, and prints and reads back by all its
 # bytes; println! writes them all.
@@ -19948,7 +20152,7 @@ test-string-layer-v1: $(BIN)
 	@set -eu; \
 	got=$$(./$(BIN) --lang he --profile extended \
 		tests/string_layer/string_layer_v1.metta 2>&1 | grep -v '^\[()\]$$' || true); \
-	if [ "$$got" != "(StringLayerV1Summary 62 62 0)" ]; then \
+	if [ "$$got" != "(StringLayerV1Summary 73 73 0)" ]; then \
 		echo "FAIL: lib/str in the HE extended profile"; \
 		printf '%s\n' "$$got"; exit 1; \
 	fi; \
@@ -46463,7 +46667,7 @@ LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 PETTA_REFERENCE_VOCABULARY_V1 = tests/support/petta_reference_vocabulary_v1.txt
 # The libraries that run on real PeTTa; the remaining native libraries run
 # on the CeTTa host's PeTTa lane, over natives real PeTTa does not have.
-LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_module lib_tptp json str
+LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_module lib_tptp json str float integer
 LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) lang list system fs io re postings postings_descriptors tensor tensor_descriptors embedding holkernel mm0kernel
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json re holkernel mm0kernel
 .PHONY: test-library-spellings-v1 test-list-prefix-search test-tensor-support

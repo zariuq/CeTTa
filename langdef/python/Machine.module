@@ -1,0 +1,249 @@
+{- Python 3.15: the machine the core runs on.
+
+   A continuation machine.  (MExec S F K) runs a statement S in frame F with
+   continuation K; (MDone F K) is a statement finished; (MAbrupt C F K) is a
+   break, continue, return or raise, C, travelling out through K until a
+   frame takes it.  Continuation frames: (k:seq REST K) the statements after,
+   (k:block L K) and (k:loop L S K) the labelled constructs, (k:call TARGET
+   F K) a caller waiting for a value in its frame F, (k:top) the module's end,
+   (k:host) the host waiting for a function's value.
+
+   One operation of the core, its operands atoms, is evaluated by the host:
+   py-eval gives (m:val V), (m:err E) or (m:call CODE FRAME), a call of a
+   Python function with its new frame; py-store puts a value where a target
+   says.  Each rule's last premise is the next configuration, so the machine
+   runs as a loop.  A run ends in (m:exit STATUS). -}
+Module PythonMachine {
+  Theory Run() {
+    Empty
+    Types {
+      T;
+    }
+    Rewrites {
+      -- the module: its frame, its body, then the end
+      "RUN". nm:T, q:T, a:T, ns:T, cs:T, fs:T, fl:T, body:T, cf:T, f:T, r:T | "py-module-frame"("c:code"(nm, q, a, ns, cs, fs, fl, body, cf), f), "MExec"(body, f, "k:top"()) ~> r |- "MRun"("c:code"(nm, q, a, ns, cs, fs, fl, body, cf)) ~> r;
+
+      -- ================================================================ statements
+
+      "SEQ-NIL". f:T, k:T, r:T | "MDone"(f, k) ~> r |- "MExec"("c:seq"("LNil"()), f, k) ~> r;
+      "SEQ-CONS". s:T, rest:T, f:T, k:T, r:T | "MExec"(s, f, "k:seq"(rest, k)) ~> r |- "MExec"("c:seq"("LCons"(s, rest)), f, k) ~> r;
+      "DONE-SEQ". f:T, rest:T, k:T, r:T | "MExec"("c:seq"(rest), f, k) ~> r |- "MDone"(f, "k:seq"(rest, k)) ~> r;
+
+      -- where a frame stands (positions as continuation marks, after Clements and
+      -- Felleisen's stack inspection): a statement marked (c:at SPAN S) runs with
+      -- (k:at SPAN K) on its continuation, which goes when S ends however it ends;
+      -- a frame's line is its innermost mark, read when a traceback entry is made
+      "AT". sp:T, s:T, f:T, k:T, r:T | "MExec"(s, f, "k:at"(sp, k)) ~> r |- "MExec"("c:at"(sp, s), f, k) ~> r;
+      "DONE-AT". f:T, sp:T, k:T, r:T | "MDone"(f, k) ~> r |- "MDone"(f, "k:at"(sp, k)) ~> r;
+      "ABRUPT-AT". c:T, f:T, sp:T, k:T, r:T | "MAbrupt"(c, f, k) ~> r |- "MAbrupt"(c, f, "k:at"(sp, k)) ~> r;
+      -- a block of marked statements (c:stmts LIST) keeps each one's mark in its own
+      -- continuation frame (k:stmts SPAN REST K), so marks cost no step of their own
+      "STMTS-NIL". f:T, k:T, r:T | "MDone"(f, k) ~> r |- "MExec"("c:stmts"("LNil"()), f, k) ~> r;
+      "STMTS-CONS". sp:T, s:T, rest:T, f:T, k:T, r:T | "MExec"(s, f, "k:stmts"(sp, rest, k)) ~> r |- "MExec"("c:stmts"("LCons"("c:at"(sp, s), rest)), f, k) ~> r;
+      "DONE-STMTS". f:T, sp:T, rest:T, k:T, r:T | "MExec"("c:stmts"(rest), f, k) ~> r |- "MDone"(f, "k:stmts"(sp, rest, k)) ~> r;
+      "ABRUPT-STMTS". c:T, f:T, sp:T, rest:T, k:T, r:T | "MAbrupt"(c, f, k) ~> r |- "MAbrupt"(c, f, "k:stmts"(sp, rest, k)) ~> r;
+
+      -- target = operation; an operation for what it does
+      "ASSIGN". t:T, op:T, f:T, k:T, v:T, r:T | "py-eval"(op, f, v), "MValue"(v, t, f, k) ~> r |- "MExec"("c:assign"(t, op), f, k) ~> r;
+      "DO". op:T, f:T, k:T, v:T, r:T | "py-eval"(op, f, v), "MValue"(v, "c:discard"(), f, k) ~> r |- "MExec"("c:do"(op), f, k) ~> r;
+      "SET-ITEM". o:T, kk:T, v:T, f:T, k:T, res:T, r:T | "py-eval"("c:set-item"(o, kk, v), f, res), "MValue"(res, "c:discard"(), f, k) ~> r |- "MExec"("c:set-item"(o, kk, v), f, k) ~> r;
+      "SET-ATTR". o:T, at:T, v:T, f:T, k:T, res:T, r:T | "py-eval"("c:set-attr"(o, at, v), f, res), "MValue"(res, "c:discard"(), f, k) ~> r |- "MExec"("c:set-attr"(o, at, v), f, k) ~> r;
+      -- a value stored where its target says; only a name (STORE_NAME) may
+      -- need its namespace's own __setitem__, so only it asks MStored
+      "VALUE-LOCAL". x:T, i:T, f:T, k:T, f2:T, r:T | "py-store"("c:local"(i), x, f, f2), "MDone"(f2, k) ~> r |- "MValue"("m:val"(x), "c:local"(i), f, k) ~> r;
+      "VALUE-TMP". x:T, i:T, f:T, k:T, f2:T, r:T | "py-store"("c:tmp"(i), x, f, f2), "MDone"(f2, k) ~> r |- "MValue"("m:val"(x), "c:tmp"(i), f, k) ~> r;
+      "VALUE-CELL". x:T, i:T, f:T, k:T, f2:T, r:T | "py-store"("c:cell"(i), x, f, f2), "MDone"(f2, k) ~> r |- "MValue"("m:val"(x), "c:cell"(i), f, k) ~> r;
+      "VALUE-DICT-OR-CELL". x:T, i:T, n:T, f:T, k:T, f2:T, r:T | "py-store"("c:dict-or-cell"(i, n), x, f, f2), "MDone"(f2, k) ~> r |- "MValue"("m:val"(x), "c:dict-or-cell"(i, n), f, k) ~> r;
+      "VALUE-GLOBAL". x:T, n:T, f:T, k:T, f2:T, r:T | "py-store"("c:global"(n), x, f, f2), "MDone"(f2, k) ~> r |- "MValue"("m:val"(x), "c:global"(n), f, k) ~> r;
+      "VALUE-DISCARD". x:T, f:T, k:T, r:T | "MDone"(f, k) ~> r |- "MValue"("m:val"(x), "c:discard"(), f, k) ~> r;
+      "VALUE-NAME". x:T, n:T, f:T, k:T, s:T, r:T | "py-store"("c:name"(n), x, f, s), "MStored"(s, k) ~> r |- "MValue"("m:val"(x), "c:name"(n), f, k) ~> r;
+      -- a store is done (the frame it leaves), or is an operation to run for
+      -- its effect first (STORE_NAME into a namespace that is not exactly a
+      -- dict: PyObject_SetItem, the mapping's own __setitem__)
+      "STORED". l:T, g:T, ns:T, c:T, k:T, r:T | "MDone"("m:frame"(l, g, ns, c), k) ~> r |- "MStored"("m:frame"(l, g, ns, c), k) ~> r;
+      "STORED-VIA". op:T, f:T, k:T, r:T | "MExec"("c:do"(op), f, k) ~> r |- "MStored"("m:via"(op, f), k) ~> r;
+      "STORED-THEN". l:T, g:T, ns:T, c:T, body:T, k:T, r:T | "MExec"(body, "m:frame"(l, g, ns, c), k) ~> r |- "MStoredThen"("m:frame"(l, g, ns, c), body, k) ~> r;
+      "STORED-THEN-VIA". op:T, f:T, body:T, k:T, r:T | "MExec"("c:seq"("LCons"("c:do"(op), "LCons"(body, "LNil"()))), f, k) ~> r |- "MStoredThen"("m:via"(op, f), body, k) ~> r;
+      "VALUE-ERROR". e:T, t:T, f:T, k:T, r:T | "MRaise"(e, f, k) ~> r |- "MValue"("m:err"(e), t, f, k) ~> r;
+      -- a question only the machine can answer (sys._getframe): the frames it is in
+      "VALUE-FRAME". d:T, t:T, f:T, k:T, v:T, r:T | "py-frame-at"(d, f, k, v), "MValue"(v, t, f, k) ~> r |- "MValue"("m:want-frame"(d), t, f, k) ~> r;
+      -- a warning the runtime raises while it computes a value (PyErr_WarnEx):
+      -- shown at the frame's line, or raised when a filter makes it an error
+      "VALUE-WARN". c:T, msg:T, v:T, t:T, f:T, k:T, w:T, r:T | "py-warn-at"(c, msg, f, k, w), "MWarned"(w, v, t, f, k) ~> r |- "MValue"("m:warn"(c, msg, v), t, f, k) ~> r;
+      "WARNED". x:T, v:T, t:T, f:T, k:T, r:T | "MValue"(v, t, f, k) ~> r |- "MWarned"("m:val"(x), v, t, f, k) ~> r;
+      "WARNED-ERROR". e:T, v:T, t:T, f:T, k:T, r:T | "MRaise"(e, f, k) ~> r |- "MWarned"("m:err"(e), v, t, f, k) ~> r;
+      -- a call of a Python function: its body runs in its frame, the caller
+      -- waiting with the target its value goes to
+      "VALUE-CALL". nm:T, q:T, a:T, ns:T, cs:T, fs:T, fl:T, body:T, cf:T, f2:T, t:T, f:T, k:T, r:T | "MExec"(body, f2, "k:call"(t, f, k)) ~> r |- "MValue"("m:call"("c:code"(nm, q, a, ns, cs, fs, fl, body, cf), f2), t, f, k) ~> r;
+
+      -- if: the atom's truth picks a branch
+      "IF". a:T, s1:T, s2:T, f:T, k:T, b:T, r:T | "py-truth"(a, f, b), "MIf"(b, s1, s2, f, k) ~> r |- "MExec"("c:if"(a, s1, s2), f, k) ~> r;
+      "IF-TRUE". s1:T, s2:T, f:T, k:T, r:T | "MExec"(s1, f, k) ~> r |- "MIf"("m:true"(), s1, s2, f, k) ~> r;
+      "IF-FALSE". s1:T, s2:T, f:T, k:T, r:T | "MExec"(s2, f, k) ~> r |- "MIf"("m:false"(), s1, s2, f, k) ~> r;
+      "IF-ERROR". e:T, s1:T, s2:T, f:T, k:T, r:T | "MRaise"(e, f, k) ~> r |- "MIf"("m:err"(e), s1, s2, f, k) ~> r;
+
+      -- labelled blocks and loops; break, continue, return
+      "BLOCK". l:T, s:T, f:T, k:T, r:T | "MExec"(s, f, "k:block"(l, k)) ~> r |- "MExec"("c:block"(l, s), f, k) ~> r;
+      "DONE-BLOCK". f:T, l:T, k:T, r:T | "MDone"(f, k) ~> r |- "MDone"(f, "k:block"(l, k)) ~> r;
+      "LOOP". l:T, s:T, f:T, k:T, r:T | "MExec"(s, f, "k:loop"(l, s, k)) ~> r |- "MExec"("c:loop"(l, s), f, k) ~> r;
+      "DONE-LOOP". f:T, l:T, s:T, k:T, r:T | "MExec"(s, f, "k:loop"(l, s, k)) ~> r |- "MDone"(f, "k:loop"(l, s, k)) ~> r;
+      "BREAK". l:T, f:T, k:T, r:T | "MAbrupt"("c:break"(l), f, k) ~> r |- "MExec"("c:break"(l), f, k) ~> r;
+      "CONTINUE". l:T, f:T, k:T, r:T | "MAbrupt"("c:continue"(l), f, k) ~> r |- "MExec"("c:continue"(l), f, k) ~> r;
+      "RETURN". a:T, f:T, k:T, v:T, r:T | "py-eval"("c:atom"(a), f, v), "MReturn"(v, f, k) ~> r |- "MExec"("c:return"(a), f, k) ~> r;
+      "RETURN-VALUE". x:T, f:T, k:T, r:T | "MAbrupt"("c:return"(x), f, k) ~> r |- "MReturn"("m:val"(x), f, k) ~> r;
+      "RETURN-ERROR". e:T, f:T, k:T, r:T | "MRaise"(e, f, k) ~> r |- "MReturn"("m:err"(e), f, k) ~> r;
+
+      -- ================================================================ exceptions
+
+      -- an exception raised: made an instance, its context the exception being
+      -- handled (CPython's _PyErr_SetObject); then it travels out
+      "RAISE-START". e:T, f:T, k:T, e2:T, r:T | "py-raise-start"(e, f, k, e2), "MAbrupt"("c:raise"(e2), f, k) ~> r |- "MRaise"(e, f, k) ~> r;
+      -- raise X (X's exception checked by the host), raise X from C
+      "THROW". t:T, a:T, f:T, k:T, v:T, r:T | "py-eval"("c:check-exc"(t, a), f, v), "MThrow"(v, f, k) ~> r |- "MExec"("c:throw"(t, a), f, k) ~> r;
+      "THROW-FROM". t:T, a:T, tc:T, ca:T, f:T, k:T, v:T, r:T | "py-eval"("c:with-cause"(t, a, tc, ca), f, v), "MThrow"(v, f, k) ~> r |- "MExec"("c:throw-from"(t, a, tc, ca), f, k) ~> r;
+      "THROW-VALUE". e:T, f:T, k:T, r:T | "MRaise"(e, f, k) ~> r |- "MThrow"("m:val"(e), f, k) ~> r;
+      "THROW-ERROR". e:T, f:T, k:T, r:T | "MRaise"(e, f, k) ~> r |- "MThrow"("m:err"(e), f, k) ~> r;
+      -- a bare raise: the exception being handled, as it is (else RuntimeError)
+      "RETHROW". f:T, k:T, v:T, r:T | "py-handled-now"(v), "MRethrow"(v, f, k) ~> r |- "MExec"("c:rethrow"(), f, k) ~> r;
+      "RETHROW-VALUE". e:T, f:T, k:T, r:T | "MAbrupt"("c:raise"(e), f, k) ~> r |- "MRethrow"("m:val"(e), f, k) ~> r;
+      "RETHROW-NONE". e:T, f:T, k:T, r:T | "MRaise"(e, f, k) ~> r |- "MRethrow"("m:err"(e), f, k) ~> r;
+      -- no except clause took it: the same exception goes on, as it is
+      "RERAISE". a:T, f:T, k:T, v:T, r:T | "py-eval"("c:atom"(a), f, v), "MRethrow"(v, f, k) ~> r |- "MExec"("c:reraise"(a), f, k) ~> r;
+
+      -- try/except/else: the body with the handlers waiting; normally then the
+      -- else part; an exception into the handlers' temporary, handled while
+      -- they run; other completions pass
+      "TRY". b:T, t:T, h:T, el:T, f:T, k:T, r:T | "MExec"(b, f, "k:try"(t, h, el, k)) ~> r |- "MExec"("c:try"(b, t, h, el), f, k) ~> r;
+      "DONE-TRY". f:T, t:T, h:T, el:T, k:T, r:T | "MExec"(el, f, k) ~> r |- "MDone"(f, "k:try"(t, h, el, k)) ~> r;
+      "TRY-CATCH". e:T, f:T, t:T, h:T, el:T, k:T, f2:T, ok:T, r:T | "py-store"("c:tmp"(t), e, f, f2), "py-handle"(e, ok), "MExec"(h, f2, "k:handling"(e, k)) ~> r |- "MAbrupt"("c:raise"(e), f, "k:try"(t, h, el, k)) ~> r;
+      "TRY-RETURN". x:T, f:T, t:T, h:T, el:T, k:T, r:T | "MAbrupt"("c:return"(x), f, k) ~> r |- "MAbrupt"("c:return"(x), f, "k:try"(t, h, el, k)) ~> r;
+      "TRY-BREAK". l:T, f:T, t:T, h:T, el:T, k:T, r:T | "MAbrupt"("c:break"(l), f, k) ~> r |- "MAbrupt"("c:break"(l), f, "k:try"(t, h, el, k)) ~> r;
+      "TRY-CONTINUE". l:T, f:T, t:T, h:T, el:T, k:T, r:T | "MAbrupt"("c:continue"(l), f, k) ~> r |- "MAbrupt"("c:continue"(l), f, "k:try"(t, h, el, k)) ~> r;
+      -- a handler's end, however it ends: the exception before is handled again
+      "DONE-HANDLING". f:T, e:T, k:T, ok:T, r:T | "py-unhandle"(ok), "MDone"(f, k) ~> r |- "MDone"(f, "k:handling"(e, k)) ~> r;
+      "ABRUPT-HANDLING". c:T, f:T, e:T, k:T, ok:T, r:T | "py-unhandle"(ok), "MAbrupt"(c, f, k) ~> r |- "MAbrupt"(c, f, "k:handling"(e, k)) ~> r;
+
+      -- try/finally: the final part runs after the body however it ends, then
+      -- the body's completion goes on, unless the final part ends abruptly;
+      -- during an exception's final part, that exception is being handled
+      "TRY-FINALLY". b:T, fin:T, f:T, k:T, r:T | "MExec"(b, f, "k:finally"(fin, k)) ~> r |- "MExec"("c:try-finally"(b, fin), f, k) ~> r;
+      "DONE-FINALLY". f:T, fin:T, k:T, r:T | "MExec"(fin, f, "k:then"("c:normal"(), k)) ~> r |- "MDone"(f, "k:finally"(fin, k)) ~> r;
+      "FINALLY-RAISE". e:T, f:T, fin:T, k:T, ok:T, r:T | "py-handle"(e, ok), "MExec"(fin, f, "k:handling"(e, "k:then"("c:pending"("c:raise"(e)), k))) ~> r |- "MAbrupt"("c:raise"(e), f, "k:finally"(fin, k)) ~> r;
+      "FINALLY-RETURN". x:T, f:T, fin:T, k:T, r:T | "MExec"(fin, f, "k:then"("c:pending"("c:return"(x)), k)) ~> r |- "MAbrupt"("c:return"(x), f, "k:finally"(fin, k)) ~> r;
+      "FINALLY-BREAK". l:T, f:T, fin:T, k:T, r:T | "MExec"(fin, f, "k:then"("c:pending"("c:break"(l)), k)) ~> r |- "MAbrupt"("c:break"(l), f, "k:finally"(fin, k)) ~> r;
+      "FINALLY-CONTINUE". l:T, f:T, fin:T, k:T, r:T | "MExec"(fin, f, "k:then"("c:pending"("c:continue"(l)), k)) ~> r |- "MAbrupt"("c:continue"(l), f, "k:finally"(fin, k)) ~> r;
+      "THEN-NORMAL". f:T, k:T, r:T | "MDone"(f, k) ~> r |- "MDone"(f, "k:then"("c:normal"(), k)) ~> r;
+      "THEN-PENDING". c:T, f:T, k:T, r:T | "MAbrupt"(c, f, k) ~> r |- "MDone"(f, "k:then"("c:pending"(c), k)) ~> r;
+      "ABRUPT-THEN". c:T, c2:T, f:T, k:T, r:T | "MAbrupt"(c, f, k) ~> r |- "MAbrupt"(c, f, "k:then"(c2, k)) ~> r;
+
+      -- del: a name unbound; an item or an attribute deleted
+      "DELETE". t:T, f:T, k:T, res:T, r:T | "py-delete"(t, f, res), "MDeleted"(res, f, k) ~> r |- "MExec"("c:delete"(t), f, k) ~> r;
+      "DELETED". f2:T, f:T, k:T, r:T | "MDone"(f2, k) ~> r |- "MDeleted"("m:val"(f2), f, k) ~> r;
+      "DELETED-VIA". op:T, f2:T, f:T, k:T, r:T | "MExec"("c:do"(op), f2, k) ~> r |- "MDeleted"("m:via"(op, f2), f, k) ~> r;
+      "DELETE-ERROR". e:T, f:T, k:T, r:T | "MRaise"(e, f, k) ~> r |- "MDeleted"("m:err"(e), f, k) ~> r;
+      "DEL-ITEM". o:T, kk:T, f:T, k:T, res:T, r:T | "py-eval"("c:del-item"(o, kk), f, res), "MValue"(res, "c:discard"(), f, k) ~> r |- "MExec"("c:del-item"(o, kk), f, k) ~> r;
+      "DEL-ATTR". o:T, at:T, f:T, k:T, res:T, r:T | "py-eval"("c:del-attr"(o, at), f, res), "MValue"(res, "c:discard"(), f, k) ~> r |- "MExec"("c:del-attr"(o, at), f, k) ~> r;
+
+      -- ================================================================ abrupt completions travel out
+
+      "ABRUPT-SEQ". c:T, f:T, rest:T, k:T, r:T | "MAbrupt"(c, f, k) ~> r |- "MAbrupt"(c, f, "k:seq"(rest, k)) ~> r;
+      -- a block takes the break to its label
+      "ABRUPT-BLOCK". c:T, f:T, l:T, k:T, w:T, r:T | "py-takes"(c, "k:block"(l, k), w), "MTaken"(w, c, f, "k:block"(l, k)) ~> r |- "MAbrupt"(c, f, "k:block"(l, k)) ~> r;
+      -- a loop takes the break and the continue to its label
+      "ABRUPT-LOOP". c:T, f:T, l:T, s:T, k:T, w:T, r:T | "py-takes"(c, "k:loop"(l, s, k), w), "MTaken"(w, c, f, "k:loop"(l, s, k)) ~> r |- "MAbrupt"(c, f, "k:loop"(l, s, k)) ~> r;
+      "TAKEN-PASS-BLOCK". c:T, f:T, l:T, k:T, r:T | "MAbrupt"(c, f, k) ~> r |- "MTaken"("m:pass"(), c, f, "k:block"(l, k)) ~> r;
+      "TAKEN-PASS-LOOP". c:T, f:T, l:T, s:T, k:T, r:T | "MAbrupt"(c, f, k) ~> r |- "MTaken"("m:pass"(), c, f, "k:loop"(l, s, k)) ~> r;
+      "TAKEN-BREAK-BLOCK". c:T, f:T, l:T, k:T, r:T | "MDone"(f, k) ~> r |- "MTaken"("m:break"(), c, f, "k:block"(l, k)) ~> r;
+      "TAKEN-BREAK-LOOP". c:T, f:T, l:T, s:T, k:T, r:T | "MDone"(f, k) ~> r |- "MTaken"("m:break"(), c, f, "k:loop"(l, s, k)) ~> r;
+      "TAKEN-CONTINUE". c:T, f:T, l:T, s:T, k:T, r:T | "MExec"(s, f, "k:loop"(l, s, k)) ~> r |- "MTaken"("m:continue"(), c, f, "k:loop"(l, s, k)) ~> r;
+
+      -- a function's value goes where its caller waits; its end is None
+      -- a call's value stored in the caller's target, by its kind (as VALUE)
+      "CALL-RETURN-LOCAL". x:T, f2:T, i:T, f:T, k:T, f3:T, r:T | "py-store"("c:local"(i), x, f, f3), "MDone"(f3, k) ~> r |- "MAbrupt"("c:return"(x), f2, "k:call"("c:local"(i), f, k)) ~> r;
+      "CALL-RETURN-TMP". x:T, f2:T, i:T, f:T, k:T, f3:T, r:T | "py-store"("c:tmp"(i), x, f, f3), "MDone"(f3, k) ~> r |- "MAbrupt"("c:return"(x), f2, "k:call"("c:tmp"(i), f, k)) ~> r;
+      "CALL-RETURN-CELL". x:T, f2:T, i:T, f:T, k:T, f3:T, r:T | "py-store"("c:cell"(i), x, f, f3), "MDone"(f3, k) ~> r |- "MAbrupt"("c:return"(x), f2, "k:call"("c:cell"(i), f, k)) ~> r;
+      "CALL-RETURN-DICT-OR-CELL". x:T, f2:T, i:T, n:T, f:T, k:T, f3:T, r:T | "py-store"("c:dict-or-cell"(i, n), x, f, f3), "MDone"(f3, k) ~> r |- "MAbrupt"("c:return"(x), f2, "k:call"("c:dict-or-cell"(i, n), f, k)) ~> r;
+      "CALL-RETURN-GLOBAL". x:T, f2:T, n:T, f:T, k:T, f3:T, r:T | "py-store"("c:global"(n), x, f, f3), "MDone"(f3, k) ~> r |- "MAbrupt"("c:return"(x), f2, "k:call"("c:global"(n), f, k)) ~> r;
+      "CALL-RETURN-NAME". x:T, f2:T, n:T, f:T, k:T, f3:T, r:T | "py-store"("c:name"(n), x, f, f3), "MStored"(f3, k) ~> r |- "MAbrupt"("c:return"(x), f2, "k:call"("c:name"(n), f, k)) ~> r;
+      "CALL-RETURN-DISCARD". x:T, f2:T, f:T, k:T, r:T | "MDone"(f, k) ~> r |- "MAbrupt"("c:return"(x), f2, "k:call"("c:discard"(), f, k)) ~> r;
+      "CALL-RAISE". e:T, f2:T, t:T, f:T, k:T, e2:T, r:T | "py-traceback-here"(e, f2, f, k, e2), "MAbrupt"("c:raise"(e2), f, k) ~> r |- "MAbrupt"("c:raise"(e), f2, "k:call"(t, f, k)) ~> r;
+      "CALL-END-LOCAL". f2:T, i:T, f:T, k:T, none:T, f3:T, r:T | "py-none"(none), "py-store"("c:local"(i), none, f, f3), "MDone"(f3, k) ~> r |- "MDone"(f2, "k:call"("c:local"(i), f, k)) ~> r;
+      "CALL-END-TMP". f2:T, i:T, f:T, k:T, none:T, f3:T, r:T | "py-none"(none), "py-store"("c:tmp"(i), none, f, f3), "MDone"(f3, k) ~> r |- "MDone"(f2, "k:call"("c:tmp"(i), f, k)) ~> r;
+      "CALL-END-CELL". f2:T, i:T, f:T, k:T, none:T, f3:T, r:T | "py-none"(none), "py-store"("c:cell"(i), none, f, f3), "MDone"(f3, k) ~> r |- "MDone"(f2, "k:call"("c:cell"(i), f, k)) ~> r;
+      "CALL-END-DICT-OR-CELL". f2:T, i:T, n:T, f:T, k:T, none:T, f3:T, r:T | "py-none"(none), "py-store"("c:dict-or-cell"(i, n), none, f, f3), "MDone"(f3, k) ~> r |- "MDone"(f2, "k:call"("c:dict-or-cell"(i, n), f, k)) ~> r;
+      "CALL-END-GLOBAL". f2:T, n:T, f:T, k:T, none:T, f3:T, r:T | "py-none"(none), "py-store"("c:global"(n), none, f, f3), "MDone"(f3, k) ~> r |- "MDone"(f2, "k:call"("c:global"(n), f, k)) ~> r;
+      "CALL-END-NAME". f2:T, n:T, f:T, k:T, none:T, f3:T, r:T | "py-none"(none), "py-store"("c:name"(n), none, f, f3), "MStored"(f3, k) ~> r |- "MDone"(f2, "k:call"("c:name"(n), f, k)) ~> r;
+      "CALL-END-DISCARD". f2:T, f:T, k:T, r:T | "MDone"(f, k) ~> r |- "MDone"(f2, "k:call"("c:discard"(), f, k)) ~> r;
+
+      -- a call from the host (k:host): the value goes back to the host, or the
+      -- exception, or None at the function's end
+      "HOST-RETURN". x:T, f:T |- "MAbrupt"("c:return"(x), f, "k:host"()) ~> "m:val"(x);
+      "HOST-RAISE". e:T, f:T, e2:T | "py-propagate"(e, e2) |- "MAbrupt"("c:raise"(e), f, "k:host"()) ~> "m:err"(e2);
+      "HOST-END". f:T, none:T | "py-none"(none) |- "MDone"(f, "k:host"()) ~> "m:val"(none);
+
+      -- ================================================================ with
+
+      -- (c:with M T BODY): BEFORE_WITH (M's __enter__ and __exit__ looked up on
+      -- its type, __enter__ called, its value put in T), then BODY under
+      -- (k:with EXIT K): leaving it normally, by return, break or continue
+      -- calls EXIT(None, None, None); an exception E calls EXIT(type, E, tb)
+      -- with E being handled, and is suppressed when the result is true, else
+      -- raised again as it was; an exception from EXIT is raised instead
+      "WITH". m:T, tv:T, body:T, f:T, k:T, res:T, r:T | "py-before-with"(m, f, res), "MWith"(res, tv, body, f, k) ~> r |- "MExec"("c:with"(m, tv, body), f, k) ~> r;
+      "WITH-ENTERED". ex:T, v:T, tv:T, body:T, f:T, k:T, f2:T, r:T | "py-store"(tv, v, f, f2), "MStoredThen"(f2, body, "k:with"(ex, k)) ~> r |- "MWith"("m:val"("c:entered"(ex, v)), tv, body, f, k) ~> r;
+      "WITH-ERROR". e:T, tv:T, body:T, f:T, k:T, r:T | "MRaise"(e, f, k) ~> r |- "MWith"("m:err"(e), tv, body, f, k) ~> r;
+      "WITH-DONE". f:T, ex:T, k:T, res:T, r:T | "py-with-exit"(ex, "c:no-exc"(), res), "MWithExit"(res, "c:normal"(), f, k) ~> r |- "MDone"(f, "k:with"(ex, k)) ~> r;
+      "WITH-RETURN". x:T, f:T, ex:T, k:T, res:T, r:T | "py-with-exit"(ex, "c:no-exc"(), res), "MWithExit"(res, "c:pending"("c:return"(x)), f, k) ~> r |- "MAbrupt"("c:return"(x), f, "k:with"(ex, k)) ~> r;
+      "WITH-BREAK". l:T, f:T, ex:T, k:T, res:T, r:T | "py-with-exit"(ex, "c:no-exc"(), res), "MWithExit"(res, "c:pending"("c:break"(l)), f, k) ~> r |- "MAbrupt"("c:break"(l), f, "k:with"(ex, k)) ~> r;
+      "WITH-CONTINUE". l:T, f:T, ex:T, k:T, res:T, r:T | "py-with-exit"(ex, "c:no-exc"(), res), "MWithExit"(res, "c:pending"("c:continue"(l)), f, k) ~> r |- "MAbrupt"("c:continue"(l), f, "k:with"(ex, k)) ~> r;
+      "WITH-RAISE". e:T, f:T, ex:T, k:T, res:T, r:T | "py-with-exit"(ex, "c:exc"(e), res), "MWithExit"(res, "c:raising"(e), f, k) ~> r |- "MAbrupt"("c:raise"(e), f, "k:with"(ex, k)) ~> r;
+      "WITH-EXIT-NORMAL". b:T, f:T, k:T, r:T | "MDone"(f, k) ~> r |- "MWithExit"("m:val"(b), "c:normal"(), f, k) ~> r;
+      "WITH-EXIT-PENDING". b:T, c:T, f:T, k:T, r:T | "MAbrupt"(c, f, k) ~> r |- "MWithExit"("m:val"(b), "c:pending"(c), f, k) ~> r;
+      "WITH-EXIT-RAISING". b:T, e:T, f:T, k:T, r:T | "MWithSuppress"(b, e, f, k) ~> r |- "MWithExit"("m:val"(b), "c:raising"(e), f, k) ~> r;
+      "WITH-SUPPRESSED". e:T, f:T, k:T, r:T | "MDone"(f, k) ~> r |- "MWithSuppress"("py:True"(), e, f, k) ~> r;
+      "WITH-RERAISE". e:T, f:T, k:T, r:T | "MAbrupt"("c:raise"(e), f, k) ~> r |- "MWithSuppress"("py:False"(), e, f, k) ~> r;
+      "WITH-EXIT-ERROR". e2:T, w:T, f:T, k:T, r:T | "MRaise"(e2, f, k) ~> r |- "MWithExit"("m:err"(e2), w, f, k) ~> r;
+
+      -- ================================================================ generators
+
+      -- A generator's body runs under its delimiter (k:gen G K).  A yield
+      -- takes the continuation up to the delimiter (once: it is resumed at
+      -- most once), keeps it in the generator with the frame and where the
+      -- sent value goes, and gives the value to the delimiter's K; a return,
+      -- the body's end or an exception ends the generator.  Resumed from the
+      -- host (K = k:host): (MGenResume WHERE VALUE F K) sends a value, and
+      -- (MGenThrow E WHERE F K) raises E where it waits.
+      "YIELD". t:T, a:T, f:T, k:T, v:T, r:T | "py-eval"("c:atom"(a), f, v), "MYield"(v, "c:sent"(t), f, k) ~> r |- "MExec"("c:yield"(t, a), f, k) ~> r;
+      "YIELDED". x:T, w:T, f:T, k:T | "py-gen-suspend"(k, w, f, "k:host"()) |- "MYield"("m:val"(x), w, f, k) ~> "m:yielded"(x);
+      "YIELD-ERROR". e:T, w:T, f:T, k:T, r:T | "MRaise"(e, f, k) ~> r |- "MYield"("m:err"(e), w, f, k) ~> r;
+      "GEN-RESUME". t:T, v:T, f:T, k:T, f2:T, r:T | "py-store"(t, v, f, f2), "MStored"(f2, k) ~> r |- "MGenResume"("c:sent"(t), v, f, k) ~> r;
+      "GEN-THROW". e:T, t:T, f:T, k:T, e2:T, r:T | "py-tb-here"(e, f, k, e2), "MAbrupt"("c:raise"(e2), f, k) ~> r |- "MGenThrow"(e, "c:sent"(t), f, k) ~> r;
+      "GEN-RETURN". x:T, f:T, g:T, u:T | "py-gen-finish"(g, u) |- "MAbrupt"("c:return"(x), f, "k:gen"(g, "k:host"())) ~> "m:returned"(x);
+      "GEN-END". f:T, g:T, u:T, none:T | "py-gen-finish"(g, u), "py-none"(none) |- "MDone"(f, "k:gen"(g, "k:host"())) ~> "m:returned"(none);
+      "GEN-RAISE". e:T, f:T, g:T, e2:T | "py-gen-raised"(g, e, e2) |- "MAbrupt"("c:raise"(e), f, "k:gen"(g, "k:host"())) ~> "m:err"(e2);
+
+      -- yield from: the iterator is sent None, then what the generator is
+      -- sent; what it yields this generator yields, waiting at (c:yf I T); an
+      -- exception thrown in is passed on (GeneratorExit closes it); its return
+      -- value is the expression's value
+      "YIELD-FROM". t:T, a:T, f:T, k:T, v:T, r:T | "py-eval"("c:yf-iter"(a), f, v), "MYFStart"(v, t, f, k) ~> r |- "MExec"("c:yield-from"(t, a), f, k) ~> r;
+      -- await: the awaitable's iterator (GET_AWAITABLE), then as yield from
+      "AWAIT". t:T, a:T, op:T, f:T, k:T, v:T, r:T | "py-eval"("c:await-iter"(a, op), f, v), "MYFStart"(v, t, f, k) ~> r |- "MExec"("c:await"(t, a, op), f, k) ~> r;
+      -- the send loop over an awaitable's iterator got already (GET_ANEXT's)
+      "SEND-LOOP". t:T, a:T, f:T, k:T, v:T, r:T | "py-eval"("c:atom"(a), f, v), "MYFStart"(v, t, f, k) ~> r |- "MExec"("c:send-loop"(t, a), f, k) ~> r;
+      "YF-START". i:T, t:T, f:T, k:T, none:T, r:T | "py-none"(none), "MYFSend"(i, none, t, f, k) ~> r |- "MYFStart"("m:val"(i), t, f, k) ~> r;
+      "YF-START-ERROR". e:T, t:T, f:T, k:T, r:T | "MRaise"(e, f, k) ~> r |- "MYFStart"("m:err"(e), t, f, k) ~> r;
+      "YF-SEND". i:T, v:T, t:T, f:T, k:T, res:T, r:T | "py-yf-send"(i, v, res), "MYFResult"(res, i, t, f, k) ~> r |- "MYFSend"(i, v, t, f, k) ~> r;
+      "YF-YIELDED". y:T, i:T, t:T, f:T, k:T, r:T | "MYield"("m:val"(y), "c:yf"(i, t), f, k) ~> r |- "MYFResult"("m:yielded"(y), i, t, f, k) ~> r;
+      "YF-RETURNED". x:T, i:T, t:T, f:T, k:T, f2:T, r:T | "py-store"(t, x, f, f2), "MStored"(f2, k) ~> r |- "MYFResult"("m:returned"(x), i, t, f, k) ~> r;
+      "YF-ERROR". e:T, i:T, t:T, f:T, k:T, e2:T, r:T | "py-tb-here"(e, f, k, e2), "MAbrupt"("c:raise"(e2), f, k) ~> r |- "MYFResult"("m:err"(e), i, t, f, k) ~> r;
+      "GEN-RESUME-YF". i:T, t:T, v:T, f:T, k:T, r:T | "MYFSend"(i, v, t, f, k) ~> r |- "MGenResume"("c:yf"(i, t), v, f, k) ~> r;
+      "GEN-THROW-YF". e:T, i:T, t:T, f:T, k:T, res:T, r:T | "py-yf-throw"(i, e, res), "MYFResult"(res, i, t, f, k) ~> r |- "MGenThrow"(e, "c:yf"(i, t), f, k) ~> r;
+
+      -- the module's end: status 0; an exception no frame took: reported, 1
+      "END". f:T, z:T | "py-status"("m:ok"(), z) |- "MDone"(f, "k:top"()) ~> "m:exit"(z);
+      "UNCAUGHT". e:T, f:T, s:T | "py-report"(e, s) |- "MAbrupt"("c:raise"(e), f, "k:top"()) ~> "m:exit"(s);
+    }
+  }
+  theory Run()
+}

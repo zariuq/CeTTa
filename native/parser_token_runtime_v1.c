@@ -290,6 +290,23 @@ static bool runtime_rules(TokenRuntime *runtime, char *error, size_t error_size)
             runtime->layout_toplevel = true;
             continue;
         }
+        if (form(row, "ParserSoftKeywordV1", 4u))
+            /* a soft keyword is decided over a whole logical line */
+            return token_error(error, error_size,
+                "the run-time token route does not decide soft keywords; "
+                "a presentation compiled at build time does");
+        if (form(row, "ParserInterpolationV1", 7u) || form(row, "ParserInterpolationOptionV1", 3u))
+            /* interpolated strings need a lexer with a stack of regions */
+            return token_error(error, error_size,
+                "the run-time token route does not read interpolated strings; "
+                "a presentation compiled at build time reads them");
+        if (form(row, "ParserLayoutIndentV1", 4u) || form(row, "ParserLayoutBracketV1", 3u) ||
+            form(row, "ParserLayoutContinueV1", 2u))
+            /* this route resolves layout by rewriting the text, and the
+               offside rule's tokens have no text */
+            return token_error(error, error_size,
+                "the run-time token route does not resolve the offside rule (layout indent); "
+                "a presentation compiled at build time reads it");
         if (form(row, "ParserLayoutV1", 2u) || form(row, "ParserLayoutStopV1", 2u)) {
             /* each word is a literal terminal of the grammar */
             uint8_t kind = form(row, "ParserLayoutV1", 2u) ? 1u : 2u;

@@ -41,9 +41,37 @@
    (function (case (__cetta_lib_system_write $stream $bytes)
        (($result (return $result))))))
 
+; (system:read-line): the next line of the standard input with its end of
+; line; "" at the end of the input
+(= (system:read-line)
+   (function (case (__cetta_lib_system_read_line)
+       (($result (return $result))))))
+
 (= (system:cwd)
    (function
      (case (__cetta_lib_system_cwd ())
+       (($result (return $result))))))
+
+; the process: its environment as (NAME VALUE) pairs, its id, the processors
+; online (() when unknown) and uname's (SYSNAME NODENAME RELEASE VERSION MACHINE)
+(= (system:environ)
+   (function
+     (case (__cetta_lib_system_environ ())
+       (($result (return $result))))))
+
+(= (system:getpid)
+   (function
+     (case (__cetta_lib_system_getpid ())
+       (($result (return $result))))))
+
+(= (system:cpu-count)
+   (function
+     (case (__cetta_lib_system_cpu_count ())
+       (($result (return $result))))))
+
+(= (system:uname)
+   (function
+     (case (__cetta_lib_system_uname ())
        (($result (return $result))))))
 
 ; The canonical directory of the top-level entry file, independent of imports.

@@ -81,11 +81,42 @@
      (case (__cetta_lib_str codepoints $text)
        (($result (return $result))))))
 
+; SipHash-1-3 (CPython's variant: the lanes xor'ed at the end) under the key
+; (k0, k1) of the text's code points written in the narrowest fixed width
+; that holds them all (1, 2 or 4 bytes, little-endian): the hash CPython
+; gives a str under that key (with PYTHONHASHSEED=0 the key is 0 0).  An
+; integer from 0 to 2^64 - 1; the empty text hashes to 0.
+(= (str:siphash13 $k0 $k1 $text)
+   (function
+     (case (__cetta_lib_str siphash13 $k0 $k1 $text)
+       (($result (return $result))))))
+
+; The bytes of a text, as integers from 0 to 255; any bytes.
+(= (str:byte-values $text)
+   (function
+     (case (__cetta_lib_str byte-values $text)
+       (($result (return $result))))))
+
+; The scalar values of a text's codepoints, as integers.
+(= (str:codepoint-values $text)
+   (function
+     (case (__cetta_lib_str codepoint-values $text)
+       (($result (return $result))))))
+
 ; One string from a list of codepoints, each a one-codepoint string or an
 ; integer scalar value.
 (= (str:from-codepoints $codepoints)
    (function
      (case (__cetta_lib_str from-codepoints $codepoints)
+       (($result (return $result))))))
+
+; One string from integer code points up to U+10FFFF, surrogates included,
+; each in UTF-8's bit pattern (generalized UTF-8): the strings of a language
+; whose text is code point sequences (Python's str); UTF-8 exactly when it
+; holds no surrogate.
+(= (str:from-codepoints-generalized $codepoints)
+   (function
+     (case (__cetta_lib_str from-codepoints-generalized $codepoints)
        (($result (return $result))))))
 
 ; Character classes over codepoints, those of the C locale: alpha, digit,
@@ -235,3 +266,66 @@
 (= (str:find-ascii-uncased $text $needle)
    (function (chain (eval (__cetta_lib_str_value find-ascii-uncased ($text $needle))) $result
      (return $result))))
+
+; Unicode (the generated data of Unicode 15.1.0): (str:case-map KIND TEXT)
+; maps each code point by its full case mapping of KIND, "lower", "upper",
+; "title" or "fold" (lowering a capital sigma by the Final_Sigma condition);
+; (str:props-all MASK TEXT) and (str:props-any MASK TEXT) ask whether every or
+; some code point has a property of the bit set MASK; (str:code-props CP) is
+; a code point's bit set (bits 0-29 its general category, then Lowercase,
+; Uppercase, Cased, Case_Ignorable, XID_Start, XID_Continue, Numeric_Type
+; Decimal, Digit and Numeric, bidirectional class WS, B and S)
+(= (str:case-map $kind $text)
+   (function
+     (case (__cetta_lib_str case-map $kind $text)
+       (($result (return $result))))))
+(= (str:props-all $mask $text)
+   (function
+     (case (__cetta_lib_str props-all $mask $text)
+       (($result (return $result))))))
+(= (str:props-any $mask $text)
+   (function
+     (case (__cetta_lib_str props-any $mask $text)
+       (($result (return $result))))))
+(= (str:code-props $cp)
+   (function
+     (case (__cetta_lib_str code-props $cp)
+       (($result (return $result))))))
+; (str:trim-props MASK SIDE TEXT) drops the code points with a property of
+; MASK from TEXT's start (SIDE "left"), end ("right") or "both";
+; (str:trim-chars CHARS SIDE TEXT) the code points of CHARS; (str:split-props
+; MASK MAXSPLIT TEXT) gives the runs of code points without a property of
+; MASK, at most MAXSPLIT splits (negative: no limit), the rest one item;
+; (str:rsplit-props ...) splits from the end
+(= (str:trim-props $mask $side $text)
+   (function
+     (case (__cetta_lib_str trim-props $mask $side $text)
+       (($result (return $result))))))
+(= (str:trim-chars $chars $side $text)
+   (function
+     (case (__cetta_lib_str trim-chars $chars $side $text)
+       (($result (return $result))))))
+(= (str:split-props $mask $limit $text)
+   (function
+     (case (__cetta_lib_str split-props $mask $limit $text)
+       (($result (return $result))))))
+(= (str:rsplit-props $mask $limit $text)
+   (function
+     (case (__cetta_lib_str rsplit-props $mask $limit $text)
+       (($result (return $result))))))
+; (str:find-index SUB TEXT) is the code point index of SUB's first
+; occurrence in TEXT, -1 when none; (str:rfind-index SUB TEXT) of its last
+(= (str:find-index $sub $text)
+   (function
+     (case (__cetta_lib_str find-index $sub $text)
+       (($result (return $result))))))
+(= (str:rfind-index $sub $text)
+   (function
+     (case (__cetta_lib_str rfind-index $sub $text)
+       (($result (return $result))))))
+; (str:from-bytes VALUES) is the string of these byte values (0 to 255),
+; whatever they encode
+(= (str:from-bytes $values)
+   (function
+     (case (__cetta_lib_str from-bytes $values)
+       (($result (return $result))))))

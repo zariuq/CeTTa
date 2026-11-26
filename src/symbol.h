@@ -403,6 +403,7 @@ static inline SymbolSpelling symbol_spelling(
     X(dag_stats, "dag:stats") \
     X(dag_close, "dag:close") \
     X(syntax_read, "syntax:read") \
+    X(syntax_read_in, "syntax:read-in") \
     X(syntax_restore, "syntax:restore") \
     X(syntax_freeze, "syntax:freeze") \
     X(syntax_write, "syntax:write") \
@@ -498,6 +499,10 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_fs_open_read, "__cetta_lib_fs_open_read") \
     X(lib_fs_read_chunk, "__cetta_lib_fs_read_chunk") \
     X(lib_fs_close, "__cetta_lib_fs_close") \
+    X(lib_fs_stat, "__cetta_lib_fs_stat") \
+    X(lib_fs_remove, "__cetta_lib_fs_remove") \
+    X(lib_fs_make_directory, "__cetta_lib_fs_make_directory") \
+    X(lib_fs_remove_directory, "__cetta_lib_fs_remove_directory") \
     X(lib_io_capabilities, "__cetta_lib_io_capabilities") \
     X(lib_io_submit, "__cetta_lib_io_submit") \
     X(lib_io_poll, "__cetta_lib_io_poll") \
@@ -516,6 +521,8 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_json_object_get, "__cetta_lib_json_object_get") \
     X(lib_str, "__cetta_lib_str") \
     X(lib_str_value, "__cetta_lib_str_value") \
+    X(lib_float, "__cetta_lib_float") \
+    X(lib_integer, "__cetta_lib_integer") \
     X(lib_re, "__cetta_lib_re") \
     X(lib_lts_he_transitions, "__cetta_lib_lts_he_transitions") \
     X(lib_lts_he_step_rules, "__cetta_lib_lts_he_step_rules") \
@@ -745,7 +752,7 @@ static inline SymbolSpelling symbol_spelling(
     X(work_epoch) X(work_source_epoch) X(work_source_status) \
     X(dag_from_forest) X(dag_from_records) X(dag_export) X(dag_roots) \
     X(dag_node) X(dag_unfold) X(dag_stats) X(dag_close) \
-    X(syntax_read) X(syntax_restore) X(syntax_freeze) X(syntax_write) X(syntax_intrinsic_head) \
+    X(syntax_read) X(syntax_read_in) X(syntax_restore) X(syntax_freeze) X(syntax_write) X(syntax_intrinsic_head) \
     X(tensor_from_values) X(tensor_from_json) X(tensor_from_coo) X(tensor_from_coordinates) X(tensor_inspect) \
     X(tensor_shape) X(tensor_dtype) X(tensor_layout) X(tensor_at) X(tensor_is_tensor) \
     X(tensor_entries) X(tensor_gather) X(tensor_gather_rows) X(tensor_where) X(tensor_merge) \
